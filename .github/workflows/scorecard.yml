@@ -43,5 +43,6 @@ jobs:
           retention-days: 5
 
       - uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+        if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_SCORECARD_SARIF == 'true' }}
         with:
           sarif_file: results.sarif

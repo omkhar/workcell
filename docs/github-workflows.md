@@ -27,6 +27,11 @@ workflow files. The linked Trail of Bits repos that informed the posture did:
 Workcell follows that smaller pattern instead of adding a wide spray of generic
 automation.
 
+For private repositories, the Scorecard run still executes and uploads its
+artifact, but SARIF upload is opt-in through
+`WORKCELL_ENABLE_PRIVATE_SCORECARD_SARIF=true`. GitHub Advanced Security is not
+assumed by default.
+
 ## Dependency update scope
 
 Dependabot currently covers:
