@@ -31,7 +31,7 @@ branding_scan() {
     --exclude-dir=.git \
     --exclude-dir=dist \
     --exclude-dir=tmp \
-    --exclude=scripts/validate-repo.sh
+    --exclude=validate-repo.sh
 }
 
 validate_manpage() {
