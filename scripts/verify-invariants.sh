@@ -22,6 +22,8 @@ for file in \
   "${ROOT_DIR}/adapters/claude/.claude/settings.json" \
   "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" \
   "${ROOT_DIR}/runtime/container/Dockerfile" \
+  "${ROOT_DIR}/runtime/container/bin/git" \
+  "${ROOT_DIR}/runtime/container/src/workcell_exec_guard.c" \
   "${ROOT_DIR}/scripts/workcell" \
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; do
   check_file "${file}"
@@ -63,6 +65,8 @@ CODEX_HOME="${CODEX_VERIFY_HOME}" codex features list >/dev/null
 codex execpolicy check --rules "${ROOT_DIR}/adapters/codex/.codex/rules/default.rules" rm -rf build | jq -e '.decision == "forbidden"' >/dev/null
 codex execpolicy check --rules "${ROOT_DIR}/adapters/codex/.codex/rules/default.rules" git push origin feature | jq -e '.decision == "prompt"' >/dev/null
 codex execpolicy check --rules "${ROOT_DIR}/adapters/codex/.codex/rules/default.rules" git push origin main --force | jq -e '.decision == "forbidden"' >/dev/null
+codex execpolicy check --rules "${ROOT_DIR}/adapters/codex/.codex/rules/default.rules" git commit --no-verify | jq -e '.decision == "forbidden"' >/dev/null
+codex execpolicy check --rules "${ROOT_DIR}/adapters/codex/.codex/rules/default.rules" /usr/bin/git push --no-verify origin feature | jq -e '.decision == "forbidden"' >/dev/null
 python3 -m json.tool "${ROOT_DIR}/adapters/claude/.claude/settings.json" >/dev/null
 python3 -m json.tool "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null
 

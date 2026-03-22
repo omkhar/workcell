@@ -40,6 +40,7 @@ The design explicitly avoids common boundary punctures:
 - no SSH, GPG, or other agent socket passthrough
 - no host `~/.codex` or similar persistent auth and state passthrough
 - no host credential helper, keychain, or browser-profile passthrough
+- common git hook-bypass flags and inline hook-path overrides are blocked on the Tier 1 path
 
 ## Scope
 

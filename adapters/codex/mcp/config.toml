@@ -1,4 +1,4 @@
-# Codex MCP defaults for the secure runtime.
+# Codex MCP defaults for the Workcell runtime.
 #
 # These servers are defined but disabled by default. They can be copied into a
 # workspace-level `~/.codex/config.toml` or enabled selectively in a profile

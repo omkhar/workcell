@@ -40,6 +40,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "CMD=$(jq -r '.tool_input.command'); if echo \"$CMD\" | grep -qiE '(^|[;&|][[:space:]]*|&&[[:space:]]*)(/usr/bin/)?git([[:space:]]|$)' && { echo \"$CMD\" | grep -q -- ' --no-verify' || echo \"$CMD\" | grep -qiE '(^|[;&|][[:space:]]*|&&[[:space:]]*)(/usr/bin/)?git[[:space:]]+commit([^;&|]|[[:space:]])*-n([[:space:]]|$)' || echo \"$CMD\" | grep -qiE '(^|[;&|][[:space:]]*|&&[[:space:]]*)(/usr/bin/)?git([^;&|]|[[:space:]])*-c[[:space:]]+core\\.hooksPath=' || echo \"$CMD\" | grep -qiE '(^|[;&|][[:space:]]*|&&[[:space:]]*)(/usr/bin/)?git([^;&|]|[[:space:]])*--config-env=core\\.hooksPath='; }; then echo 'BLOCKED: Do not bypass git hooks with --no-verify, git commit -n, or inline core.hooksPath overrides' >&2; exit 2; fi"
+          },
+          {
+            "type": "command",
             "command": "CMD=$(jq -r '.tool_input.command'); if echo \"$CMD\" | grep -qiE '(^|;[[:space:]]*|&&[[:space:]]*|[|][|][[:space:]]*|[|][[:space:]]*)rm[[:space:]]' && echo \"$CMD\" | grep -qiE '(^|[[:space:]])-[a-zA-Z]*[rR]|--recursive' && echo \"$CMD\" | grep -qiE '(^|[[:space:]])-[a-zA-Z]*[fF]|--force'; then echo 'BLOCKED: Use trash instead of rm -rf' >&2; exit 2; fi"
           },
           {

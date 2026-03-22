@@ -1,6 +1,6 @@
 #:schema https://developers.openai.com/codex/config-schema.json
 
-# Repo-local Codex defaults for the secure runtime. Keep this file usable as a
+# Repo-local Codex defaults for the Workcell runtime. Keep this file usable as a
 # standalone `.codex/config.toml` after copying it into a workspace.
 
 profile = "strict"

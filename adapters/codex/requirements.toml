@@ -1,6 +1,6 @@
 #:schema https://developers.openai.com/codex/config-schema.json
 
-# Hard requirements for the secure Codex runtime. These values are restrictive
+# Hard requirements for the Workcell Codex adapter. These values are restrictive
 # by design and are intended to be copied into an admin-enforced deployment.
 
 allowed_approval_policies = ["on-request", "never"]
@@ -50,3 +50,13 @@ justification = "Do not rewrite shared remote history from Codex."
 pattern = [{ token = "git" }, { token = "push" }]
 decision = "prompt"
 justification = "Confirm the target branch and remote before pushing."
+
+[[rules.prefix_rules]]
+pattern = [{ any_of = ["git", "/usr/bin/git"] }, { token = "commit" }, { any_of = ["--no-verify", "-n"] }]
+decision = "forbidden"
+justification = "Do not bypass git hooks with --no-verify or git commit -n from Workcell."
+
+[[rules.prefix_rules]]
+pattern = [{ any_of = ["git", "/usr/bin/git"] }, { any_of = ["push", "merge", "rebase", "am"] }, { token = "--no-verify" }]
+decision = "forbidden"
+justification = "Do not bypass git hooks with --no-verify from Workcell."

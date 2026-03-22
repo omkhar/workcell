@@ -106,3 +106,26 @@ prefix_rule(
         "git push origin feature",
     ],
 )
+
+prefix_rule(
+    pattern = [["git", "/usr/bin/git"], "commit", ["--no-verify", "-n"]],
+    decision = "forbidden",
+    justification = "Do not bypass git hooks with --no-verify or git commit -n from Workcell.",
+    match = [
+        "git commit --no-verify -m test",
+        "git commit -n -m test",
+        "/usr/bin/git commit --no-verify -m test",
+    ],
+)
+
+prefix_rule(
+    pattern = [["git", "/usr/bin/git"], ["push", "merge", "rebase", "am"], "--no-verify"],
+    decision = "forbidden",
+    justification = "Do not bypass git hooks with --no-verify from Workcell.",
+    match = [
+        "git push --no-verify origin feature",
+        "git merge --no-verify feature",
+        "git rebase --no-verify main",
+        "/usr/bin/git push --no-verify origin feature",
+    ],
+)

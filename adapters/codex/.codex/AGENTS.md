@@ -1,7 +1,7 @@
 # Codex Policy
 
-This repository defines the secure Codex runtime and policy slice for OpenAI's
-coding agents.
+This repository defines the Codex adapter for the generic Workcell runtime and
+policy boundary.
 
 ## Priorities
 

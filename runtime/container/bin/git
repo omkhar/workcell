@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REAL_GIT="/usr/local/libexec/workcell/git"
+subcommand=""
+skip_next=0
+expect_config_arg=0
+commit_short_bypass=0
+hooks_path_bypass=0
+
+for arg in "$@"; do
+  if [[ "${skip_next}" -eq 1 ]]; then
+    skip_next=0
+    continue
+  fi
+
+  if [[ "${expect_config_arg}" -eq 1 ]]; then
+    expect_config_arg=0
+    if [[ "${arg}" == core.hooksPath=* ]]; then
+      hooks_path_bypass=1
+    fi
+    continue
+  fi
+
+  if [[ -z "${subcommand}" ]]; then
+    case "${arg}" in
+      -c | --config-env)
+        expect_config_arg=1
+        continue
+        ;;
+      -C | --exec-path | --git-dir | --namespace | --super-prefix | --work-tree)
+        skip_next=1
+        continue
+        ;;
+      --config-env=core.hooksPath=*)
+        hooks_path_bypass=1
+        continue
+        ;;
+      --)
+        break
+        ;;
+      -*)
+        continue
+        ;;
+      *)
+        subcommand="${arg}"
+        continue
+        ;;
+    esac
+  fi
+
+  if [[ "${arg}" == "--no-verify" ]]; then
+    echo "Workcell blocked git hook bypass: remove --no-verify and run the configured hooks." >&2
+    exit 2
+  fi
+
+  if [[ "${arg}" == -c ]] || [[ "${arg}" == --config-env ]]; then
+    expect_config_arg=1
+    continue
+  fi
+
+  if [[ "${arg}" == --config-env=core.hooksPath=* ]]; then
+    hooks_path_bypass=1
+  fi
+
+  if [[ "${subcommand}" == "commit" ]] && [[ "${arg}" == "-n" ]]; then
+    commit_short_bypass=1
+  fi
+done
+
+if [[ "${hooks_path_bypass}" -eq 1 ]]; then
+  echo "Workcell blocked git hook bypass: remove inline core.hooksPath overrides." >&2
+  exit 2
+fi
+
+if [[ "${commit_short_bypass}" -eq 1 ]]; then
+  echo "Workcell blocked git hook bypass: remove git commit -n and run the configured hooks." >&2
+  exit 2
+fi
+
+exec "${REAL_GIT}" "$@"

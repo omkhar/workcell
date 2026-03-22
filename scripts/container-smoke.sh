@@ -72,6 +72,40 @@ run_container codex bash -lc '
   codex features list >/dev/null
   codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules rm -rf build \
     | jq -e ".decision == \"forbidden\"" >/dev/null
+  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules git commit --no-verify \
+    | jq -e ".decision == \"forbidden\"" >/dev/null
+  mkdir -p /tmp/git-guard && cd /tmp/git-guard
+  git init -q
+  git config user.name "Workcell Smoke"
+  git config user.email "workcell-smoke@example.com"
+  touch smoke.txt
+  git add smoke.txt
+  if git commit --no-verify -m smoke >/tmp/git-guard.out 2>&1; then
+    echo "expected Workcell git guard to reject --no-verify" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked git hook bypass" /tmp/git-guard.out
+  if /usr/bin/git commit -n -m smoke >/tmp/git-guard-short.out 2>&1; then
+    echo "expected Workcell git guard to reject git commit -n" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-short.out
+  if /usr/local/libexec/workcell/git commit -n -m smoke >/tmp/git-guard-real.out 2>&1; then
+    echo "expected Workcell git guard to reject direct real git execution" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-real.out
+  if git -c core.hooksPath=/dev/null commit -m smoke >/tmp/git-guard-hooks.out 2>&1; then
+    echo "expected Workcell git guard to reject inline core.hooksPath override" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-hooks.out
+  git config alias.ci "commit -n"
+  if git ci -m smoke >/tmp/git-guard-alias.out 2>&1; then
+    echo "expected Workcell git guard to reject alias-expanded git commit -n" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-alias.out
 '
 
 # shellcheck disable=SC2016
@@ -79,6 +113,7 @@ run_container claude bash -lc '
   claude --version 2>&1 | grep -q "Claude Code"
   test -f "$HOME/.claude/settings.json"
   test -f "$HOME/.mcp.json"
+  jq -r ".hooks.PreToolUse[0].hooks[].command" "$HOME/.claude/settings.json" | grep -q "no-verify"
 '
 
 # shellcheck disable=SC2016

@@ -40,6 +40,9 @@ named network mode:
 Recursive deletion, raw block writes, privileged host mutation, and history
 rewrites must not depend on prompt quality alone. They need policy controls plus
 the outer runtime boundary.
+Common git hook-bypass flags such as `--no-verify`, `git commit -n`, and inline
+`core.hooksPath` overrides are part of the same class and are not allowed on
+the Tier 1 path.
 
 ## Invariant 6: Lower-assurance modes are explicit
 

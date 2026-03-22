@@ -64,16 +64,26 @@ RUN npm install -g \
   "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
   && npm cache clean --force
 
+RUN mkdir -p /usr/local/libexec/workcell \
+  && mv /usr/bin/git /usr/local/libexec/workcell/git \
+  && chmod +x /usr/local/libexec/workcell/git
+
 COPY adapters /opt/workcell/adapters
+COPY runtime/container/bin/git /usr/local/bin/git
+COPY runtime/container/src/workcell_exec_guard.c /tmp/workcell_exec_guard.c
 COPY runtime/container/entrypoint.sh /usr/local/bin/workcell-entrypoint
 
-RUN chmod +x /usr/local/bin/workcell-entrypoint
+RUN ln -sf /usr/local/bin/git /usr/bin/git \
+  && gcc -shared -fPIC -O2 -Wall -Wextra -o /usr/local/lib/libworkcell_exec_guard.so /tmp/workcell_exec_guard.c -ldl \
+  && rm -f /tmp/workcell_exec_guard.c \
+  && chmod +x /usr/local/bin/git /usr/local/bin/workcell-entrypoint
 
 USER node
 WORKDIR /workspace
 
 ENV HOME=/state/agent-home
 ENV CODEX_HOME=/state/agent-home/.codex
+ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 ENV PATH=/usr/local/bin:/usr/bin:/bin
 
 ENTRYPOINT ["/usr/local/bin/workcell-entrypoint"]

@@ -1,7 +1,7 @@
 #:schema https://developers.openai.com/codex/config-schema.json
 
-# Admin-managed baseline for the secure Codex runtime. Keep this aligned with
-# `policy/.codex/config.toml` so the default local experience and the managed
+# Admin-managed baseline for the Workcell Codex adapter. Keep this aligned with
+# the repo-local adapter config so the default local experience and the managed
 # deployment do not drift.
 
 analytics.enabled = false
@@ -37,3 +37,13 @@ network_access = false
 
 [features]
 unified_exec = true
+
+[[rules.prefix_rules]]
+pattern = [{ any_of = ["git", "/usr/bin/git"] }, { token = "commit" }, { any_of = ["--no-verify", "-n"] }]
+decision = "forbidden"
+justification = "Do not bypass git hooks with --no-verify or git commit -n from Workcell."
+
+[[rules.prefix_rules]]
+pattern = [{ any_of = ["git", "/usr/bin/git"] }, { any_of = ["push", "merge", "rebase", "am"] }, { token = "--no-verify" }]
+decision = "forbidden"
+justification = "Do not bypass git hooks with --no-verify from Workcell."

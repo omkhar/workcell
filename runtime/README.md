@@ -15,6 +15,8 @@ providers.
 - keep the selected agent inside the boundary, not on the host
 - keep the VM mount set to the selected workspace only
 - keep the container unprivileged
+- keep common git hook-bypass flags and inline hook-path overrides blocked on
+  the safe path
 - push network enforcement to the VM layer
 
 ## Profiles
