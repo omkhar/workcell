@@ -42,7 +42,7 @@ jobs:
 
       - name: Run actionlint
         run: |
-          actionlint .github/workflows
+          actionlint
 
   zizmor:
     name: GitHub Actions security analysis

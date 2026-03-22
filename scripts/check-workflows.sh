@@ -13,7 +13,10 @@ require_tool() {
 require_tool actionlint
 require_tool zizmor
 
-actionlint "${ROOT_DIR}/.github/workflows/"*.yml
+(
+  cd "${ROOT_DIR}"
+  actionlint
+)
 zizmor "${ROOT_DIR}/.github/workflows/"*.yml
 
 echo "Workcell workflow checks passed."

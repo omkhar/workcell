@@ -14,7 +14,25 @@ require_tool shellcheck
 require_tool shfmt
 require_tool python3
 require_tool yamllint
-require_tool rg
+
+branding_scan() {
+  local pattern="agent-boundary|Agent Boundary|agent boundary"
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -n "${pattern}" "${ROOT_DIR}" \
+      -g '!**/.git/**' \
+      -g '!scripts/validate-repo.sh' \
+      -g '!dist/**' \
+      -g '!tmp/**'
+    return
+  fi
+
+  grep -RInE "${pattern}" "${ROOT_DIR}" \
+    --exclude-dir=.git \
+    --exclude-dir=dist \
+    --exclude-dir=tmp \
+    --exclude=scripts/validate-repo.sh
+}
 
 validate_manpage() {
   if command -v mandoc >/dev/null 2>&1; then
@@ -77,11 +95,7 @@ yamllint -d "{extends: default, rules: {comments: disable, document-start: disab
 
 validate_manpage
 
-if rg -n "agent-boundary|Agent Boundary|agent boundary" "${ROOT_DIR}" \
-  -g '!**/.git/**' \
-  -g '!scripts/validate-repo.sh' \
-  -g '!dist/**' \
-  -g '!tmp/**'; then
+if branding_scan; then
   echo "Found stale pre-rename branding." >&2
   exit 1
 fi
