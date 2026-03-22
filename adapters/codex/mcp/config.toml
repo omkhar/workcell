@@ -1,0 +1,22 @@
+# Codex MCP defaults for the secure runtime.
+#
+# These servers are defined but disabled by default. They can be copied into a
+# workspace-level `~/.codex/config.toml` or enabled selectively in a profile
+# that already satisfies the managed requirements.
+
+[mcp_servers.context7]
+enabled = false
+required = false
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+startup_timeout_sec = 15
+tool_timeout_sec = 30
+
+[mcp_servers.exa]
+enabled = false
+required = false
+command = "npx"
+args = ["-y", "exa-mcp-server"]
+startup_timeout_sec = 15
+tool_timeout_sec = 30
+env = { EXA_API_KEY = "set-exa-api-key-before-enabling" }

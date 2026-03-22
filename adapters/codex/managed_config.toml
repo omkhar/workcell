@@ -1,0 +1,39 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Admin-managed baseline for the secure Codex runtime. Keep this aligned with
+# `policy/.codex/config.toml` so the default local experience and the managed
+# deployment do not drift.
+
+analytics.enabled = false
+history.persistence = "none"
+web_search = "disabled"
+
+[shell_environment_policy]
+inherit = "core"
+exclude = [
+  "*_TOKEN",
+  "*_TOKEN_*",
+  "*_SECRET",
+  "*_SECRET_*",
+  "*_KEY",
+  "*_KEY_*",
+  "AWS_*",
+  "AZURE_*",
+  "GCP_*",
+  "GOOGLE_*",
+  "KUBECONFIG",
+  "SSH_AUTH_SOCK",
+  "SSH_AGENT_PID",
+  "DOCKER_HOST",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+]
+set = { WORKCELL_RUNTIME = "1" }
+
+[sandbox_workspace_write]
+exclude_slash_tmp = true
+exclude_tmpdir_env_var = true
+network_access = false
+
+[features]
+unified_exec = true

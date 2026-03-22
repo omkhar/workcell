@@ -1,0 +1,73 @@
+.TH WORKCELL 1 "2026-03-22" "Workcell" "User Commands"
+.SH NAME
+workcell \- bounded runtime launcher for coding agents
+.SH SYNOPSIS
+.B workcell
+[\fIoptions\fR] [\fB--\fR \fIprovider-args\fR ...]
+.SH DESCRIPTION
+.B workcell
+starts the selected coding agent inside the Workcell runtime boundary.
+The Tier 1 path is a dedicated Colima virtual machine profile on macOS plus a
+hardened container inside that VM.
+.SH OPTIONS
+.TP
+.B --agent codex|claude|gemini
+Select the provider to run. The default is
+.BR codex .
+.TP
+.B --ui cli|gui
+Select the surface to launch. Only
+.BR cli
+is currently implemented as a preserved-boundary path.
+.TP
+.B --mode strict|build|breakglass
+Select the runtime profile. The default is
+.BR strict .
+.TP
+.B --workspace PATH
+Select the workspace to mount inside the runtime. The default is the current
+directory.
+.TP
+.B --allow-nongit-workspace
+Allow a workspace without repository or agent marker files.
+.TP
+.B --colima-profile NAME
+Override the derived Colima profile name.
+.TP
+.B --rebuild
+Rebuild the runtime image before launch.
+.TP
+.B --dry-run
+Print the selected runtime command and exit.
+.TP
+.B -h, --help
+Show usage information.
+.SH PROFILES
+.TP
+.B strict
+Allowlisted network access only, no host credential or control socket
+passthrough, and the provider's bounded execution mode.
+.TP
+.B build
+The same mount and secret restrictions as
+.BR strict ,
+with broader network access for dependency and build traffic.
+.TP
+.B breakglass
+Still inside the Workcell VM plus container boundary, but with unrestricted
+network access and the provider's highest-trust execution mode.
+.SH FILES
+.TP
+.I ~/.local/bin/workcell
+Installed launcher path used by
+.BR scripts/install.sh .
+.TP
+.I ~/.local/share/man/man1/workcell.1
+Installed man page path used by
+.BR scripts/install.sh .
+.SH EXIT STATUS
+The command exits non-zero on validation failures, unsupported modes, missing
+dependencies, or runtime launch errors.
+.SH SEE ALSO
+.BR colima (1),
+.BR docker (1)

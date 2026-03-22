@@ -1,0 +1,59 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Repo-local Codex defaults for the secure runtime. Keep this file usable as a
+# standalone `.codex/config.toml` after copying it into a workspace.
+
+profile = "strict"
+analytics.enabled = false
+history.persistence = "none"
+web_search = "disabled"
+project_doc_fallback_filenames = ["AGENTS.md", "README.md"]
+project_root_markers = ["AGENTS.md", ".codex", ".git"]
+
+[shell_environment_policy]
+inherit = "core"
+exclude = [
+  "*_TOKEN",
+  "*_TOKEN_*",
+  "*_SECRET",
+  "*_SECRET_*",
+  "*_KEY",
+  "*_KEY_*",
+  "AWS_*",
+  "AZURE_*",
+  "GCP_*",
+  "GOOGLE_*",
+  "KUBECONFIG",
+  "SSH_AUTH_SOCK",
+  "SSH_AGENT_PID",
+  "DOCKER_HOST",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+]
+set = { WORKCELL_RUNTIME = "1" }
+
+[sandbox_workspace_write]
+exclude_slash_tmp = true
+exclude_tmpdir_env_var = true
+network_access = false
+
+[features]
+unified_exec = true
+
+[profiles.strict]
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+web_search = "disabled"
+
+[profiles.build]
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+web_search = "disabled"
+
+[profiles.build.sandbox_workspace_write]
+network_access = true
+
+[profiles.breakglass]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+web_search = "disabled"

@@ -1,0 +1,108 @@
+prefix_rule(
+    pattern = ["rm", "-rf"],
+    decision = "forbidden",
+    justification = "Use `trash` or a targeted delete instead of recursive forced removal.",
+    match = [
+        "rm -rf build",
+    ],
+    not_match = [
+        "rm file.txt",
+        "rmdir build",
+    ],
+)
+
+prefix_rule(
+    pattern = ["rm", "-fr"],
+    decision = "forbidden",
+    justification = "Use `trash` or a targeted delete instead of recursive forced removal.",
+    match = [
+        "rm -fr node_modules",
+    ],
+)
+
+prefix_rule(
+    pattern = ["rm", "-r", "-f"],
+    decision = "forbidden",
+    justification = "Use `trash` or a targeted delete instead of recursive forced removal.",
+    match = [
+        "rm -r -f build",
+    ],
+)
+
+prefix_rule(
+    pattern = ["rm", "-f", "-r"],
+    decision = "forbidden",
+    justification = "Use `trash` or a targeted delete instead of recursive forced removal.",
+    match = [
+        "rm -f -r build",
+    ],
+)
+
+prefix_rule(
+    pattern = ["sudo"],
+    decision = "forbidden",
+    justification = "Do not mutate the host with sudo; keep changes inside the container or VM.",
+    match = [
+        "sudo apt-get install ripgrep",
+    ],
+)
+
+prefix_rule(
+    pattern = [["mkfs", "mkfs.ext4", "mkfs.xfs", "mkfs.btrfs"]],
+    decision = "forbidden",
+    justification = "Filesystem creation is destructive and must stay outside Codex.",
+    match = [
+        "mkfs.ext4 /dev/sda",
+        "mkfs.xfs /dev/sdb",
+    ],
+)
+
+prefix_rule(
+    pattern = ["dd"],
+    decision = "forbidden",
+    justification = "Raw block writes are too destructive for an autonomous agent.",
+    match = [
+        "dd if=/dev/zero of=/dev/disk2",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "reset", "--hard"],
+    decision = "forbidden",
+    justification = "Use `git restore` or a new worktree instead of rewriting local history.",
+    match = [
+        "git reset --hard HEAD~1",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push", ["--force", "-f", "--force-with-lease"]],
+    decision = "forbidden",
+    justification = "Do not rewrite shared remote history from Codex.",
+    match = [
+        "git push --force origin main",
+        "git push -f origin feature",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push", "origin", ["main", "master", "develop", "feature"], ["--force", "-f", "--force-with-lease"]],
+    decision = "forbidden",
+    justification = "Do not rewrite shared remote history from Codex.",
+    match = [
+        "git push origin main --force",
+        "git push origin feature -f",
+    ],
+    not_match = [
+        "git push origin feature",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "Confirm the target branch and remote before pushing.",
+    match = [
+        "git push origin feature",
+    ],
+)

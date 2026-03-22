@@ -1,0 +1,423 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: workcell [options] [-- provider-args...]
+
+Options:
+  --agent codex|claude|gemini   Provider to run (default: codex)
+  --ui cli|gui                  Surface to launch (default: cli)
+  --mode strict|build|breakglass
+                                Runtime profile (default: strict)
+  --workspace PATH              Workspace to mount (default: current directory)
+  --allow-nongit-workspace      Allow a workspace without repo or agent markers
+  --colima-profile NAME         Override derived Colima profile name
+  --rebuild                     Rebuild the runtime image before launch
+  --dry-run                     Print the selected runtime command and exit
+  -h, --help                    Show this help text
+EOF
+}
+
+slugify() {
+  echo "$1" |
+    tr '[:upper:]' '[:lower:]' |
+    tr -cs 'a-z0-9' '-' |
+    sed -E 's/^-+//; s/-+$//; s/-+/-/g'
+}
+
+profile_dir() {
+  printf '%s/.colima/%s\n' "${HOME}" "$1"
+}
+
+profile_marker_path() {
+  printf '%s/workcell.managed\n' "$(profile_dir "$1")"
+}
+
+read_profile_marker_workspace() {
+  local marker_path
+  marker_path="$(profile_marker_path "$1")"
+  [[ -f "${marker_path}" ]] || return 1
+  tr -d '\n' <"${marker_path}"
+}
+
+workspace_has_markers() {
+  local path="$1"
+  [[ -d "${path}/.git" ]] ||
+    [[ -f "${path}/AGENTS.md" ]] ||
+    [[ -f "${path}/CLAUDE.md" ]] ||
+    [[ -f "${path}/GEMINI.md" ]]
+}
+
+workspace_is_sensitive() {
+  local path="$1"
+  local sensitive_roots=(
+    "${HOME}/.ssh"
+    "${HOME}/.aws"
+    "${HOME}/.azure"
+    "${HOME}/.config"
+    "${HOME}/.gnupg"
+    "${HOME}/.kube"
+    "${HOME}/.config/gh"
+    "${HOME}/Library/Keychains"
+  )
+  local root
+
+  for root in "${sensitive_roots[@]}"; do
+    if [[ "${path}" == "${root}" ]] || [[ "${path}" == "${root}/"* ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+validate_workspace() {
+  local path="$1"
+  local allow_nongit="$2"
+
+  if [[ "${path}" == "/" ]] || [[ "${path}" == "${HOME}" ]]; then
+    echo "Refusing broad workspace mount: ${path}" >&2
+    exit 2
+  fi
+
+  if workspace_is_sensitive "${path}"; then
+    echo "Refusing sensitive workspace mount: ${path}" >&2
+    exit 2
+  fi
+
+  if [[ "${allow_nongit}" -eq 0 ]] && ! workspace_has_markers "${path}"; then
+    echo "Workspace lacks repo or agent markers: ${path}" >&2
+    echo "Use --allow-nongit-workspace only when you intentionally want that." >&2
+    exit 2
+  fi
+}
+
+derive_profile_name() {
+  local workspace="$1"
+  local slug hash
+  slug="$(slugify "$(basename "${workspace}")" | cut -c1-10)"
+  [[ -n "${slug}" ]] || slug="workspace"
+  hash="$(printf '%s' "${workspace}" | shasum -a 256 | cut -c1-8)"
+  printf 'workcell-%s-%s\n' "${slug}" "${hash}"
+}
+
+validate_colima_mounts() {
+  local profile="$1"
+  local workspace="$2"
+  local config_path="${HOME}/.colima/${profile}/colima.yaml"
+  local lima_path="${HOME}/.colima/_lima/colima-${profile}/lima.yaml"
+
+  [[ -f "${config_path}" ]] || {
+    echo "Missing Colima config for profile ${profile}: ${config_path}" >&2
+    exit 2
+  }
+  [[ -f "${lima_path}" ]] || {
+    echo "Missing Lima config for profile ${profile}: ${lima_path}" >&2
+    exit 2
+  }
+
+  ruby -ryaml -e '
+    config = YAML.load_file(ARGV[0]) || {}
+    lima = YAML.load_file(ARGV[1]) || {}
+    expected = ARGV[2].sub(%r{/$}, "")
+    profile = ARGV[3]
+    home = File.expand_path(ENV.fetch("HOME"))
+    cache_root = File.join(home, "Library", "Caches", "colima")
+    lima_mounts = lima["mounts"] || []
+    writable_mounts = lima_mounts.select { |mount| mount["writable"] == true }
+
+    if config["forwardAgent"] == true
+      warn "Colima profile #{profile} must not forward the SSH agent."
+      exit 2
+    end
+
+    unless writable_mounts.length == 1 && writable_mounts.first["location"].sub(%r{/$}, "") == expected
+      warn "Colima profile #{profile} must mount only #{expected} as writable."
+      exit 2
+    end
+
+    bad_mount = lima_mounts.find do |mount|
+      location = mount["location"].sub(%r{/$}, "")
+      writable = mount["writable"] == true
+      next false if !writable && location.start_with?(cache_root)
+
+      location == "~" || location == home || (writable && location != expected) || (!writable && location != expected)
+    end
+
+    if bad_mount
+      warn "Colima profile #{profile} has an unexpected host mount: #{bad_mount["location"]}"
+      exit 2
+    end
+  ' "${config_path}" "${lima_path}" "${workspace}" "${profile}"
+}
+
+validate_colima_profile() {
+  local profile="$1"
+  local workspace="$2"
+  local status
+
+  status="$(colima status --profile "${profile}" 2>&1)"
+  echo "${status}" | grep -q "Virtualization.Framework" || {
+    echo "Colima profile ${profile} is not using Virtualization.Framework." >&2
+    exit 2
+  }
+  echo "${status}" | grep -q "mountType: virtiofs" || {
+    echo "Colima profile ${profile} is not using virtiofs." >&2
+    exit 2
+  }
+  echo "${status}" | grep -q "runtime: docker" || {
+    echo "Colima profile ${profile} is not using Docker runtime." >&2
+    exit 2
+  }
+
+  validate_colima_mounts "${profile}" "${workspace}"
+}
+
+require_tool() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required tool: $1" >&2
+    exit 1
+  }
+}
+
+provider_endpoints() {
+  case "$1" in
+    codex)
+      echo "api.openai.com:443 auth.openai.com:443 chatgpt.com:443"
+      ;;
+    claude)
+      echo "api.anthropic.com:443 claude.ai:443 console.anthropic.com:443"
+      ;;
+    gemini)
+      echo "generativelanguage.googleapis.com:443 ai.google.dev:443"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+bootstrap_endpoints() {
+  echo "auth.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 docker.io:443 deb.debian.org:80 deb.debian.org:443 security.debian.org:80 security.debian.org:443 github.com:443 api.github.com:443 objects.githubusercontent.com:443 raw.githubusercontent.com:443 registry.npmjs.org:443 nodejs.org:443"
+}
+
+AGENT="codex"
+UI="cli"
+MODE="strict"
+WORKSPACE="$(pwd -P)"
+COLIMA_PROFILE=""
+REBUILD=0
+DRY_RUN=0
+ALLOW_NONGIT_WORKSPACE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent)
+      AGENT="$2"
+      shift 2
+      ;;
+    --ui)
+      UI="$2"
+      shift 2
+      ;;
+    --mode)
+      MODE="$2"
+      shift 2
+      ;;
+    --workspace)
+      WORKSPACE="$(cd "$2" && pwd -P)"
+      shift 2
+      ;;
+    --colima-profile)
+      COLIMA_PROFILE="$2"
+      shift 2
+      ;;
+    --allow-nongit-workspace)
+      ALLOW_NONGIT_WORKSPACE=1
+      shift
+      ;;
+    --rebuild)
+      REBUILD=1
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+case "${AGENT}" in
+  codex | claude | gemini) ;;
+  *)
+    echo "Unsupported agent: ${AGENT}" >&2
+    exit 2
+    ;;
+esac
+
+case "${UI}" in
+  cli) ;;
+  gui)
+    echo "GUI mode is not implemented yet as a preserved-boundary path." >&2
+    exit 2
+    ;;
+  *)
+    echo "Unsupported UI mode: ${UI}" >&2
+    exit 2
+    ;;
+esac
+
+PROFILE_ENV="${ROOT_DIR}/runtime/profiles/${MODE}.env"
+[[ -f "${PROFILE_ENV}" ]] || {
+  echo "Missing runtime profile: ${PROFILE_ENV}" >&2
+  exit 1
+}
+
+# shellcheck source=/dev/null
+source "${PROFILE_ENV}"
+validate_workspace "${WORKSPACE}" "${ALLOW_NONGIT_WORKSPACE}"
+
+if [[ -z "${COLIMA_PROFILE}" ]]; then
+  COLIMA_PROFILE="$(derive_profile_name "${WORKSPACE}")"
+fi
+
+IMAGE_TAG="workcell:local"
+PROFILE_DIR="$(profile_dir "${COLIMA_PROFILE}")"
+PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
+PROFILE_PREEXISTED=0
+PROFILE_MARKER_WORKSPACE=""
+BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+
+if [[ -d "${PROFILE_DIR}" ]]; then
+  PROFILE_PREEXISTED=1
+fi
+
+if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
+  echo "Refusing to reuse unmanaged Colima profile: ${COLIMA_PROFILE}" >&2
+  echo "Use a fresh derived profile or mark an existing one explicitly after review." >&2
+  exit 2
+fi
+
+if [[ -f "${PROFILE_MARKER}" ]]; then
+  PROFILE_MARKER_WORKSPACE="$(read_profile_marker_workspace "${COLIMA_PROFILE}" || true)"
+fi
+
+if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ -z "${PROFILE_MARKER_WORKSPACE}" ]]; then
+  echo "Refusing to reuse managed Colima profile without a recorded workspace binding: ${COLIMA_PROFILE}" >&2
+  exit 2
+fi
+
+if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" != "${WORKSPACE}" ]]; then
+  echo "Refusing to reuse Colima profile ${COLIMA_PROFILE} for a different workspace." >&2
+  echo "Recorded workspace: ${PROFILE_MARKER_WORKSPACE}" >&2
+  echo "Requested workspace: ${WORKSPACE}" >&2
+  exit 2
+fi
+
+ALLOW_ENDPOINTS="$(provider_endpoints "${AGENT}") ${EXTRA_ENDPOINTS}"
+
+CONTAINER_NAME="workcell-$(slugify "${AGENT}-${MODE}-$(basename "${WORKSPACE}")")"
+
+DOCKER_RUN=(
+  docker
+  run
+  --rm
+  --init
+  --name "${CONTAINER_NAME}"
+  --read-only
+  --security-opt no-new-privileges:true
+  --cap-drop ALL
+  --user "${HOST_UID}:${HOST_GID}"
+  --pids-limit 1024
+  --memory "${CONTAINER_MEMORY}"
+  --tmpfs "/tmp:exec,nosuid,nodev,size=1g,mode=1777"
+  --tmpfs "/run:nosuid,nodev,size=64m,mode=755"
+  --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777"
+  --workdir /workspace
+  -e AGENT_NAME="${AGENT}"
+  -e AGENT_UI="${UI}"
+  -e CODEX_PROFILE="${MODE}"
+  -e HOME=/state/agent-home
+  -e CODEX_HOME=/state/agent-home/.codex
+  -e WORKCELL_RUNTIME=1
+  -e USER=agent
+  -e LOGNAME=agent
+  -e WORKSPACE=/workspace
+  -v "${WORKSPACE}:/workspace"
+  "${IMAGE_TAG}"
+)
+
+if [[ -t 0 ]] && [[ -t 1 ]]; then
+  DOCKER_RUN=(docker run --rm --init -it "${DOCKER_RUN[@]:4}")
+fi
+
+if [[ $# -gt 0 ]]; then
+  DOCKER_RUN+=("$@")
+fi
+
+printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
+  "${COLIMA_PROFILE}" "${MODE}" "${AGENT}" "${UI}" "${WORKSPACE}" >&2
+
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
+  printf '%q ' "${DOCKER_RUN[@]}"
+  printf '\n'
+  exit 0
+fi
+
+require_tool colima
+require_tool docker
+require_tool ruby
+
+colima start \
+  --profile "${COLIMA_PROFILE}" \
+  --vm-type vz \
+  --mount "${WORKSPACE}:w" \
+  --mount-type virtiofs \
+  --runtime docker \
+  --cpu "${COLIMA_CPU}" \
+  --memory "${COLIMA_MEMORY}" \
+  --disk "${COLIMA_DISK}" >/dev/null
+
+validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}"
+mkdir -p "${PROFILE_DIR}"
+printf '%s\n' "${WORKSPACE}" >"${PROFILE_MARKER}"
+
+export DOCKER_HOST="unix://${HOME}/.colima/${COLIMA_PROFILE}/docker.sock"
+
+if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
+else
+  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" clear "${COLIMA_PROFILE}"
+fi
+
+if [[ "${REBUILD}" -eq 1 ]] || ! docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+  DOCKER_BUILDKIT=0 docker build \
+    -t "${IMAGE_TAG}" \
+    -f "${ROOT_DIR}/runtime/container/Dockerfile" \
+    "${ROOT_DIR}" >/dev/null
+fi
+
+if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
+else
+  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" clear "${COLIMA_PROFILE}"
+fi
+
+exec "${DOCKER_RUN[@]}"

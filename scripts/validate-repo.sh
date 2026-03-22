@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+require_tool() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required tool: $1" >&2
+    exit 1
+  }
+}
+
+require_tool shellcheck
+require_tool shfmt
+require_tool python3
+require_tool yamllint
+require_tool rg
+
+validate_manpage() {
+  if command -v mandoc >/dev/null 2>&1; then
+    mandoc -Tlint "${ROOT_DIR}/man/workcell.1" >/dev/null
+    return
+  fi
+
+  if command -v nroff >/dev/null 2>&1; then
+    nroff -man "${ROOT_DIR}/man/workcell.1" >/dev/null
+    return
+  fi
+
+  echo "Missing required tool: mandoc or nroff" >&2
+  exit 1
+}
+
+shell_files=(
+  "${ROOT_DIR}/scripts/workcell"
+  "${ROOT_DIR}/scripts/check-workflows.sh"
+  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
+  "${ROOT_DIR}/scripts/container-smoke.sh"
+  "${ROOT_DIR}/scripts/install.sh"
+  "${ROOT_DIR}/scripts/validate-repo.sh"
+  "${ROOT_DIR}/scripts/verify-invariants.sh"
+  "${ROOT_DIR}/runtime/container/entrypoint.sh"
+)
+
+shellcheck -x "${shell_files[@]}"
+shfmt -i 2 -ci -d "${shell_files[@]}"
+
+for scratch_dir in \
+  "${ROOT_DIR}/adapters/codex/.codex/memories" \
+  "${ROOT_DIR}/adapters/codex/.codex/tmp"; do
+  if find "${scratch_dir}" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+    echo "Unexpected adapter scratch state present: ${scratch_dir}" >&2
+    exit 1
+  fi
+done
+
+while IFS= read -r file; do
+  python3 -m json.tool "${file}" >/dev/null
+done < <(find "${ROOT_DIR}/adapters" "${ROOT_DIR}/.github" -type f -name '*.json' | sort)
+
+python3 - "${ROOT_DIR}" <<'PY'
+import pathlib
+import tomllib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+for path in sorted(root.rglob("*.toml")):
+    if ".git" in path.parts:
+        continue
+    with path.open("rb") as handle:
+        tomllib.load(handle)
+PY
+
+yamllint -d "{extends: default, rules: {comments: disable, document-start: disable, line-length: disable, truthy: disable}}" \
+  "${ROOT_DIR}/.github/dependabot.yml" \
+  "${ROOT_DIR}/.github/workflows"
+
+validate_manpage
+
+if rg -n "agent-boundary|Agent Boundary|agent boundary" "${ROOT_DIR}" \
+  -g '!**/.git/**' \
+  -g '!scripts/validate-repo.sh' \
+  -g '!dist/**' \
+  -g '!tmp/**'; then
+  echo "Found stale pre-rename branding." >&2
+  exit 1
+fi
+
+echo "Workcell repository validation passed."
