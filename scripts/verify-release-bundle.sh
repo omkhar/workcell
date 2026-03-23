@@ -57,7 +57,12 @@ sanitized_git() {
 sanitized_clone_git() {
   local source_repo="$1"
   local source_git_dir="${source_repo%/}/.git"
+  local safe_git_config
   shift
+
+  safe_git_config="$(mktemp "${TMP_ROOT}/safe-gitconfig.XXXXXX")"
+  git config --file "${safe_git_config}" --add safe.directory "${source_repo}"
+  git config --file "${safe_git_config}" --add safe.directory "${source_git_dir}"
 
   env -i \
     PATH="${TRUSTED_HOST_PATH}" \
@@ -67,13 +72,10 @@ sanitized_clone_git() {
     GIT_ATTR_NOSYSTEM=1 \
     GIT_CONFIG_NOSYSTEM=1 \
     GIT_CONFIG_SYSTEM=/dev/null \
-    GIT_CONFIG_GLOBAL=/dev/null \
-    GIT_CONFIG_COUNT=2 \
-    GIT_CONFIG_KEY_0=safe.directory \
-    GIT_CONFIG_VALUE_0="${source_repo}" \
-    GIT_CONFIG_KEY_1=safe.directory \
-    GIT_CONFIG_VALUE_1="${source_git_dir}" \
+    GIT_CONFIG_GLOBAL="${safe_git_config}" \
     "$@"
+
+  rm -f "${safe_git_config}"
 }
 
 mkdir -p "${ROOT_DIR}/tmp"
@@ -198,13 +200,11 @@ build_bundle_in_validator() {
       tar_path="${DESTINATION_DIR}/${BUNDLE_NAME%.tar.gz}.tar"
       clone_dir="$(mktemp -d /tmp/workcell-release-clone.XXXXXX)"
       template_dir="$(mktemp -d /tmp/workcell-git-template.XXXXXX)"
-      trap '\''rm -rf "${clone_dir}" "${template_dir}"'\'' EXIT
-      GIT_CONFIG_COUNT=2 \
-      GIT_CONFIG_KEY_0=safe.directory \
-      GIT_CONFIG_VALUE_0=/workspace \
-      GIT_CONFIG_KEY_1=safe.directory \
-      GIT_CONFIG_VALUE_1=/workspace/.git \
-      git \
+      gitconfig="$(mktemp /tmp/workcell-safe-gitconfig.XXXXXX)"
+      trap '\''rm -rf "${clone_dir}" "${template_dir}" "${gitconfig}"'\'' EXIT
+      git config --file "${gitconfig}" --add safe.directory /workspace
+      git config --file "${gitconfig}" --add safe.directory /workspace/.git
+      GIT_CONFIG_GLOBAL="${gitconfig}" git \
         clone \
         --quiet \
         --no-checkout \
