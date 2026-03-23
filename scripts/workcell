@@ -703,7 +703,11 @@ shadow_dest_is_registered() {
   local destination="$1"
   local existing
 
-  for existing in "${SHADOW_DEST_PATHS[@]-}"; do
+  if ((${#SHADOW_DEST_PATHS[@]} == 0)); then
+    return 1
+  fi
+
+  for existing in "${SHADOW_DEST_PATHS[@]}"; do
     [[ "${existing}" == "${destination}" ]] && return 0
   done
   return 1
@@ -713,7 +717,11 @@ shadow_dest_has_ancestor() {
   local destination="$1"
   local existing
 
-  for existing in "${SHADOW_DEST_PATHS[@]-}"; do
+  if ((${#SHADOW_DEST_PATHS[@]} == 0)); then
+    return 1
+  fi
+
+  for existing in "${SHADOW_DEST_PATHS[@]}"; do
     case "${destination}" in
       "${existing}" | "${existing}"/*)
         return 0
@@ -1007,11 +1015,13 @@ if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" !=
   exit 2
 fi
 
-HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
-HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-HOST_RUBY_BIN="$(resolve_host_tool ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby)"
-sanitize_host_docker_env
-export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  HOST_RUBY_BIN="$(resolve_host_tool ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby)"
+  sanitize_host_docker_env
+  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+fi
 
 ALLOW_ENDPOINTS="$(provider_endpoints "${AGENT}") ${EXTRA_ENDPOINTS}"
 prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
@@ -1046,7 +1056,7 @@ DOCKER_RUN_BASE=(
   -e WORKSPACE=/workspace
   -v "${WORKSPACE}:/workspace"
 )
-if [[ "${SHADOW_MOUNTS+set}" == "set" ]]; then
+if ((${#SHADOW_MOUNTS[@]} > 0)); then
   DOCKER_RUN_BASE+=("${SHADOW_MOUNTS[@]}")
 fi
 

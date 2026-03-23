@@ -1004,7 +1004,11 @@ EOF
     echo "scripts/workcell executed hostile Ruby preload hooks before validating managed Colima profiles" >&2
     exit 1
   fi
-  grep -q "Unexpected Colima vmType" /tmp/workcell-rubyopt.out
+  if ! grep -Eq "Unexpected configured Colima mounts|Unexpected Colima vmType" /tmp/workcell-rubyopt.out; then
+    echo "Expected managed Colima profile validation failure output for hostile Ruby preload fixture" >&2
+    cat /tmp/workcell-rubyopt.out >&2
+    exit 1
+  fi
 fi
 
 WORKTREE_ROOT="${BARRIER_VERIFY_ROOT}/worktree-root"
