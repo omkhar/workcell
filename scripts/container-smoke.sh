@@ -69,7 +69,7 @@ prepare_smoke_workspace() {
 
   (
     cd "${ROOT_DIR}"
-    git ls-files -z --cached --modified --others --exclude-standard --deduplicate > "${path_list_raw}"
+    git ls-files -z --cached --modified --others --exclude-standard --deduplicate >"${path_list_raw}"
   )
 
   (
@@ -78,7 +78,7 @@ prepare_smoke_workspace() {
       if [[ -e "${path}" || -L "${path}" ]]; then
         printf '%s\0' "${path}"
       fi
-    done < "${path_list_raw}" > "${path_list_filtered}"
+    done <"${path_list_raw}" >"${path_list_filtered}"
   )
 
   (
