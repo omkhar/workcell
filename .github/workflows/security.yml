@@ -18,7 +18,7 @@ concurrency:
 jobs:
   dependency-review:
     name: Dependency review
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'pull_request' && (!github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_DEPENDENCY_REVIEW == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
