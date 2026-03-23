@@ -84,9 +84,13 @@ select_docker_context() {
 prepare_sanitized_clone() {
   local source_repo="$1"
   local clone_dir="$2"
+  local source_git_dir="${source_repo%/}/.git"
 
   rm -rf "${clone_dir}"
-  sanitized_git git -c safe.directory="${source_repo}" clone \
+  sanitized_git git \
+    -c safe.directory="${source_repo}" \
+    -c safe.directory="${source_git_dir}" \
+    clone \
     --quiet \
     --no-checkout \
     --no-local \
@@ -177,7 +181,10 @@ build_bundle_in_validator() {
       clone_dir="$(mktemp -d /tmp/workcell-release-clone.XXXXXX)"
       template_dir="$(mktemp -d /tmp/workcell-git-template.XXXXXX)"
       trap '\''rm -rf "${clone_dir}" "${template_dir}"'\'' EXIT
-      git -c safe.directory=/workspace clone \
+      git \
+        -c safe.directory=/workspace \
+        -c safe.directory=/workspace/.git \
+        clone \
         --quiet \
         --no-checkout \
         --no-local \
