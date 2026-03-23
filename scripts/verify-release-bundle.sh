@@ -1,7 +1,25 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  exec /usr/bin/env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME=/tmp \
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH-}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT="${WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT-}" \
+    WORKCELL_RELEASE_BUNDLE_MANIFEST_PATH="${WORKCELL_RELEASE_BUNDLE_MANIFEST_PATH-}" \
+    WORKCELL_RELEASE_BUNDLE_NAME="${WORKCELL_RELEASE_BUNDLE_NAME-}" \
+    WORKCELL_RELEASE_BUNDLE_PREFIX="${WORKCELL_RELEASE_BUNDLE_PREFIX-}" \
+    WORKCELL_RELEASE_BUNDLE_REF="${WORKCELL_RELEASE_BUNDLE_REF-}" \
+    WORKCELL_SANITIZED_ENTRYPOINT=1 \
+    WORKCELL_VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE-}" \
+    /bin/bash -p "$0" "$@"
+fi
 set -euo pipefail
+export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 DOCKER_CONTEXT_NAME="${WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT:-}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 BUNDLE_PREFIX="${WORKCELL_RELEASE_BUNDLE_PREFIX:-workcell-release-check}"
@@ -9,6 +27,13 @@ ARCHIVE_REF="${WORKCELL_RELEASE_BUNDLE_REF:-HEAD}"
 BUNDLE_NAME="${WORKCELL_RELEASE_BUNDLE_NAME:-workcell-release-check.tar.gz}"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-workcell-validator:local}"
 BUNDLE_MANIFEST_PATH="${WORKCELL_RELEASE_BUNDLE_MANIFEST_PATH:-}"
+WORKCELL_DOCKER_SANDBOX_ROOT=""
+
+if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
+  head -n 1 "$0" >/dev/null
+  echo "verify-release-bundle-entrypoint-ok"
+  exit 0
+fi
 
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -21,6 +46,7 @@ mkdir -p "${ROOT_DIR}/tmp"
 TMP_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-release-bundle.XXXXXX")"
 
 cleanup() {
+  cleanup_workcell_trusted_docker_client
   rm -rf "${TMP_ROOT}"
 }
 
@@ -48,6 +74,15 @@ docker_cmd() {
     docker "$@"
   fi
 }
+
+if [[ "${1:-}" == "--self-docker-probe" ]]; then
+  require_tool docker
+  setup_workcell_trusted_docker_client
+  select_docker_context
+  buildx_cmd version >/dev/null
+  echo "verify-release-bundle-docker-probe-ok"
+  exit 0
+fi
 
 build_bundle_locally() {
   local destination_dir="$1"
@@ -107,8 +142,13 @@ if [[ -n "${BUNDLE_MANIFEST_PATH}" ]]; then
 fi
 
 if command -v docker >/dev/null 2>&1; then
+  setup_workcell_trusted_docker_client
   select_docker_context
-  docker_cmd build -f "${ROOT_DIR}/tools/validator/Dockerfile" -t "${VALIDATOR_IMAGE}" "${ROOT_DIR}" >/dev/null
+  buildx_cmd build \
+    --load \
+    -t "${VALIDATOR_IMAGE}" \
+    -f "${ROOT_DIR}/tools/validator/Dockerfile" \
+    "${ROOT_DIR}" >/dev/null
   build_bundle_in_validator "${TMP_ROOT}/a"
   build_bundle_in_validator "${TMP_ROOT}/b"
 else

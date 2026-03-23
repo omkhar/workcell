@@ -6,6 +6,18 @@ readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/home
 export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOST_GATE_SCRIPTS=(
+  "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
+  "${ROOT_DIR}/scripts/container-smoke.sh"
+  "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
+  "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
+  "${ROOT_DIR}/scripts/generate-release-checksums.sh"
+  "${ROOT_DIR}/scripts/publish-github-release.sh"
+  "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
+  "${ROOT_DIR}/scripts/verify-release-bundle.sh"
+  "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
+)
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
   echo "verify-invariants-entrypoint-ok"
@@ -77,6 +89,7 @@ for file in \
   "${ROOT_DIR}/runtime/container/rust/src/lib.rs" \
   "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-git-launcher.rs" \
   "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-launcher.rs" \
+  "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh" \
   "${ROOT_DIR}/scripts/workcell" \
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; do
   check_file "${file}"
@@ -137,8 +150,28 @@ if ! rg -q 'unset DOCKER_CLI_PLUGIN_EXTRA_DIRS' "${ROOT_DIR}/scripts/workcell"; 
   exit 1
 fi
 
-if ! rg -q 'DOCKER_CONFIG="\$\{REAL_HOME\}/\.docker"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to pin DOCKER_CONFIG to the real host home instead of trusting caller overrides" >&2
+if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to source the trusted Docker client helper" >&2
+  exit 1
+fi
+
+if ! rg -q 'setup_workcell_trusted_docker_client' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to seed a trusted Docker client state before host Docker use" >&2
+  exit 1
+fi
+
+if rg -q 'DOCKER_CONFIG="\$\{REAL_HOME\}/\.docker"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "scripts/workcell still pins DOCKER_CONFIG to the real host home" >&2
+  exit 1
+fi
+
+if ! rg -q 'buildx_cmd build' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to invoke buildx through the trusted absolute plugin path" >&2
+  exit 1
+fi
+
+if ! rg -q -- '--self-docker-probe' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to expose a hidden self-docker probe for invariant testing" >&2
   exit 1
 fi
 
@@ -202,6 +235,47 @@ if ! rg -q 'run_clean_host_command "\$\{PYTHON3_BIN\}"' "${ROOT_DIR}/scripts/col
   exit 1
 fi
 
+for script in "${HOST_GATE_SCRIPTS[@]}"; do
+  if ! head -n 1 "${script}" | grep -q '^#!/bin/bash -p$'; then
+    echo "Expected ${script} to use an absolute privileged Bash shebang before self-sanitizing its host entrypoint" >&2
+    exit 1
+  fi
+  if ! rg -q 'WORKCELL_SANITIZED_ENTRYPOINT' "${script}"; then
+    echo "Expected ${script} to self-sanitize its host entrypoint before running release or boundary checks" >&2
+    exit 1
+  fi
+done
+
+for script in \
+  "${ROOT_DIR}/scripts/container-smoke.sh" \
+  "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh" \
+  "${ROOT_DIR}/scripts/verify-release-bundle.sh" \
+  "${ROOT_DIR}/scripts/verify-reproducible-build.sh"; do
+  if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${script}"; then
+    echo "Expected ${script} to source the trusted Docker client helper" >&2
+    exit 1
+  fi
+  if ! rg -q 'setup_workcell_trusted_docker_client' "${script}"; then
+    echo "Expected ${script} to seed a trusted Docker client state before using Docker" >&2
+    exit 1
+  fi
+  if ! rg -q 'HOME=/tmp' "${script}"; then
+    echo "Expected ${script} to stop preserving caller HOME across its sanitized entrypoint re-exec" >&2
+    exit 1
+  fi
+done
+
+for script in \
+  "${ROOT_DIR}/scripts/container-smoke.sh" \
+  "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh" \
+  "${ROOT_DIR}/scripts/verify-release-bundle.sh" \
+  "${ROOT_DIR}/scripts/verify-reproducible-build.sh"; do
+  if ! rg -q 'buildx_cmd ' "${script}"; then
+    echo "Expected ${script} to invoke buildx through the trusted absolute plugin path" >&2
+    exit 1
+  fi
+done
+
 if ! rg -q 'COLIMA_HOME="\$\{colima_home\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
   echo "Expected scripts/colima-egress-allowlist.sh to pin COLIMA_HOME while operating on Lima state" >&2
   exit 1
@@ -243,6 +317,21 @@ if [[ -e "${HOST_BASH_ENV_MARKER}" ]]; then
   exit 1
 fi
 
+for script in "${HOST_GATE_SCRIPTS[@]}"; do
+  gate_name="$(basename "${script}" .sh)"
+  gate_marker="${BARRIER_VERIFY_ROOT}/${gate_name}-bashenv-ran"
+  if ! HOST_BASH_ENV_MARKER="${gate_marker}" \
+    BASH_ENV="${HOST_BASH_ENV_PAYLOAD}" \
+    "${script}" --self-entrypoint-probe >/dev/null 2>&1; then
+    echo "Expected ${script} self-entrypoint probe to succeed under a hostile BASH_ENV" >&2
+    exit 1
+  fi
+  if [[ -e "${gate_marker}" ]]; then
+    echo "${script} executed hostile BASH_ENV content before launcher setup" >&2
+    exit 1
+  fi
+done
+
 VERIFY_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/verify-path-override-bin"
 VERIFY_PATH_BASH_MARKER="${BARRIER_VERIFY_ROOT}/verify-path-bash-ran"
 mkdir -p "${VERIFY_PATH_OVERRIDE_DIR}"
@@ -272,6 +361,93 @@ if ! env \
 fi
 if [[ -e "${VERIFY_BASH_FUNC_MARKER}" ]]; then
   echo "scripts/verify-invariants.sh imported hostile Bash functions before launcher setup" >&2
+  exit 1
+fi
+
+for script in "${HOST_GATE_SCRIPTS[@]}"; do
+  gate_name="$(basename "${script}" .sh)"
+  gate_marker="${BARRIER_VERIFY_ROOT}/${gate_name}-bash-func-ran"
+  if ! env \
+    "BASH_FUNC_head%%=() { /usr/bin/touch '${gate_marker}'; }" \
+    "${script}" --self-entrypoint-probe >/dev/null 2>&1; then
+    echo "Expected ${script} self-entrypoint probe to succeed under a hostile imported Bash function" >&2
+    exit 1
+  fi
+  if [[ -e "${gate_marker}" ]]; then
+    echo "${script} imported hostile Bash functions before launcher setup" >&2
+    exit 1
+  fi
+done
+
+CONTAINER_SMOKE_BASH_ENV_MARKER="${BARRIER_VERIFY_ROOT}/container-smoke-bashenv-ran"
+if ! HOST_BASH_ENV_MARKER="${CONTAINER_SMOKE_BASH_ENV_MARKER}" \
+  BASH_ENV="${HOST_BASH_ENV_PAYLOAD}" \
+  "${ROOT_DIR}/scripts/container-smoke.sh" --self-entrypoint-probe >/dev/null 2>&1; then
+  echo "Expected scripts/container-smoke.sh self-entrypoint probe to succeed under a hostile BASH_ENV" >&2
+  exit 1
+fi
+if [[ -e "${CONTAINER_SMOKE_BASH_ENV_MARKER}" ]]; then
+  echo "scripts/container-smoke.sh executed hostile BASH_ENV content before launcher setup" >&2
+  exit 1
+fi
+
+RELEASE_BUNDLE_BASH_ENV_MARKER="${BARRIER_VERIFY_ROOT}/verify-release-bundle-bashenv-ran"
+if ! HOST_BASH_ENV_MARKER="${RELEASE_BUNDLE_BASH_ENV_MARKER}" \
+  BASH_ENV="${HOST_BASH_ENV_PAYLOAD}" \
+  "${ROOT_DIR}/scripts/verify-release-bundle.sh" --self-entrypoint-probe >/dev/null 2>&1; then
+  echo "Expected scripts/verify-release-bundle.sh self-entrypoint probe to succeed under a hostile BASH_ENV" >&2
+  exit 1
+fi
+if [[ -e "${RELEASE_BUNDLE_BASH_ENV_MARKER}" ]]; then
+  echo "scripts/verify-release-bundle.sh executed hostile BASH_ENV content before launcher setup" >&2
+  exit 1
+fi
+
+REPRO_BUILD_BASH_ENV_MARKER="${BARRIER_VERIFY_ROOT}/verify-reproducible-build-bashenv-ran"
+if ! HOST_BASH_ENV_MARKER="${REPRO_BUILD_BASH_ENV_MARKER}" \
+  BASH_ENV="${HOST_BASH_ENV_PAYLOAD}" \
+  "${ROOT_DIR}/scripts/verify-reproducible-build.sh" --self-entrypoint-probe >/dev/null 2>&1; then
+  echo "Expected scripts/verify-reproducible-build.sh self-entrypoint probe to succeed under a hostile BASH_ENV" >&2
+  exit 1
+fi
+if [[ -e "${REPRO_BUILD_BASH_ENV_MARKER}" ]]; then
+  echo "scripts/verify-reproducible-build.sh executed hostile BASH_ENV content before launcher setup" >&2
+  exit 1
+fi
+
+CONTAINER_SMOKE_BASH_FUNC_MARKER="${BARRIER_VERIFY_ROOT}/container-smoke-bash-func-ran"
+if ! env \
+  "BASH_FUNC_head%%=() { /usr/bin/touch '${CONTAINER_SMOKE_BASH_FUNC_MARKER}'; }" \
+  "${ROOT_DIR}/scripts/container-smoke.sh" --self-entrypoint-probe >/dev/null 2>&1; then
+  echo "Expected scripts/container-smoke.sh self-entrypoint probe to succeed under a hostile imported Bash function" >&2
+  exit 1
+fi
+if [[ -e "${CONTAINER_SMOKE_BASH_FUNC_MARKER}" ]]; then
+  echo "scripts/container-smoke.sh imported hostile Bash functions before launcher setup" >&2
+  exit 1
+fi
+
+RELEASE_BUNDLE_BASH_FUNC_MARKER="${BARRIER_VERIFY_ROOT}/verify-release-bundle-bash-func-ran"
+if ! env \
+  "BASH_FUNC_head%%=() { /usr/bin/touch '${RELEASE_BUNDLE_BASH_FUNC_MARKER}'; }" \
+  "${ROOT_DIR}/scripts/verify-release-bundle.sh" --self-entrypoint-probe >/dev/null 2>&1; then
+  echo "Expected scripts/verify-release-bundle.sh self-entrypoint probe to succeed under a hostile imported Bash function" >&2
+  exit 1
+fi
+if [[ -e "${RELEASE_BUNDLE_BASH_FUNC_MARKER}" ]]; then
+  echo "scripts/verify-release-bundle.sh imported hostile Bash functions before launcher setup" >&2
+  exit 1
+fi
+
+REPRO_BUILD_BASH_FUNC_MARKER="${BARRIER_VERIFY_ROOT}/verify-reproducible-build-bash-func-ran"
+if ! env \
+  "BASH_FUNC_head%%=() { /usr/bin/touch '${REPRO_BUILD_BASH_FUNC_MARKER}'; }" \
+  "${ROOT_DIR}/scripts/verify-reproducible-build.sh" --self-entrypoint-probe >/dev/null 2>&1; then
+  echo "Expected scripts/verify-reproducible-build.sh self-entrypoint probe to succeed under a hostile imported Bash function" >&2
+  exit 1
+fi
+if [[ -e "${REPRO_BUILD_BASH_FUNC_MARKER}" ]]; then
+  echo "scripts/verify-reproducible-build.sh imported hostile Bash functions before launcher setup" >&2
   exit 1
 fi
 
@@ -322,6 +498,149 @@ if ! HOST_PATH_BASH_MARKER="${HOST_PATH_BASH_MARKER}" \
 fi
 if [[ -e "${HOST_PATH_BASH_MARKER}" ]] || [[ -e "${HOST_PATH_DIRNAME_MARKER}" ]]; then
   echo "scripts/workcell trusted caller PATH before establishing the host boundary" >&2
+  exit 1
+fi
+
+HOST_BASH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/bash-override-bin"
+HOST_BASH_OVERRIDE_MARKER="${BARRIER_VERIFY_ROOT}/bash-override-ran"
+mkdir -p "${HOST_BASH_OVERRIDE_DIR}"
+cat >"${HOST_BASH_OVERRIDE_DIR}/bash" <<'EOF'
+#!/bin/sh
+touch "${HOST_BASH_OVERRIDE_MARKER:?}"
+exit 97
+EOF
+chmod 0755 "${HOST_BASH_OVERRIDE_DIR}/bash"
+for script in "${HOST_GATE_SCRIPTS[@]}"; do
+  if ! HOST_BASH_OVERRIDE_MARKER="${HOST_BASH_OVERRIDE_MARKER}" \
+    PATH="${HOST_BASH_OVERRIDE_DIR}:${PATH}" \
+    "${script}" --self-entrypoint-probe >/dev/null 2>&1; then
+    echo "Expected ${script} self-entrypoint probe to succeed under a hostile bash on PATH" >&2
+    exit 1
+  fi
+  if [[ -e "${HOST_BASH_OVERRIDE_MARKER}" ]]; then
+    echo "${script} trusted caller PATH while selecting its interpreter" >&2
+    exit 1
+  fi
+done
+
+for script in "${HOST_GATE_SCRIPTS[@]}"; do
+  gate_name="$(basename "${script}" .sh)"
+  gate_path_override_dir="${BARRIER_VERIFY_ROOT}/${gate_name}-path-override-bin"
+  gate_path_marker="${BARRIER_VERIFY_ROOT}/${gate_name}-path-ran"
+  mkdir -p "${gate_path_override_dir}"
+  cat >"${gate_path_override_dir}/head" <<EOF
+#!/bin/sh
+touch "${gate_path_marker:?}"
+exit 99
+EOF
+  chmod 0755 "${gate_path_override_dir}/head"
+  if ! PATH="${gate_path_override_dir}:${PATH}" \
+    "${script}" --self-entrypoint-probe >/dev/null 2>&1; then
+    echo "Expected ${script} self-entrypoint probe to succeed under a hostile PATH" >&2
+    exit 1
+  fi
+  if [[ -e "${gate_path_marker}" ]]; then
+    echo "${script} trusted caller PATH before launcher setup" >&2
+    exit 1
+  fi
+done
+
+HOST_DOCKER_PLUGIN_HOME="${BARRIER_VERIFY_ROOT}/docker-plugin-home"
+HOST_DOCKER_PLUGIN_DIR="${HOST_DOCKER_PLUGIN_HOME}/.docker/cli-plugins"
+mkdir -p "${HOST_DOCKER_PLUGIN_DIR}"
+cat >"${HOST_DOCKER_PLUGIN_DIR}/docker-buildx" <<'EOF'
+#!/bin/sh
+touch "${WORKCELL_DOCKER_PLUGIN_MARKER:?}"
+exit 97
+EOF
+chmod 0755 "${HOST_DOCKER_PLUGIN_DIR}/docker-buildx"
+WORKCELL_DOCKER_PLUGIN_MARKER="${BARRIER_VERIFY_ROOT}/workcell-docker-plugin-ran"
+if ! WORKCELL_DOCKER_PLUGIN_MARKER="${WORKCELL_DOCKER_PLUGIN_MARKER}" \
+  HOME="${HOST_DOCKER_PLUGIN_HOME}" \
+  "${ROOT_DIR}/scripts/workcell" --self-docker-probe >/dev/null 2>&1; then
+  echo "Expected scripts/workcell Docker probe to succeed under a hostile HOME docker-buildx plugin" >&2
+  exit 1
+fi
+if [[ -e "${WORKCELL_DOCKER_PLUGIN_MARKER}" ]]; then
+  echo "scripts/workcell executed a caller-controlled docker-buildx plugin before trusted Docker client setup" >&2
+  exit 1
+fi
+for script in \
+  "${ROOT_DIR}/scripts/container-smoke.sh" \
+  "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh" \
+  "${ROOT_DIR}/scripts/verify-release-bundle.sh" \
+  "${ROOT_DIR}/scripts/verify-reproducible-build.sh"; do
+  gate_name="$(basename "${script}" .sh)"
+  gate_marker="${BARRIER_VERIFY_ROOT}/${gate_name}-docker-plugin-ran"
+  if ! WORKCELL_DOCKER_PLUGIN_MARKER="${gate_marker}" \
+    HOME="${HOST_DOCKER_PLUGIN_HOME}" \
+    "${script}" --self-docker-probe >/dev/null 2>&1; then
+    echo "Expected ${script} Docker probe to succeed under a hostile HOME docker-buildx plugin" >&2
+    exit 1
+  fi
+  if [[ -e "${gate_marker}" ]]; then
+    echo "${script} executed a caller-controlled docker-buildx plugin before trusted Docker client setup" >&2
+    exit 1
+  fi
+done
+
+CONTAINER_SMOKE_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/container-smoke-path-override-bin"
+CONTAINER_SMOKE_PATH_MARKER="${BARRIER_VERIFY_ROOT}/container-smoke-path-ran"
+mkdir -p "${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}"
+cat >"${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}/head" <<EOF
+#!/bin/sh
+touch "${CONTAINER_SMOKE_PATH_MARKER:?}"
+exit 99
+EOF
+chmod 0755 "${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}/head"
+if ! CONTAINER_SMOKE_PATH_MARKER="${CONTAINER_SMOKE_PATH_MARKER}" \
+  PATH="${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}:${PATH}" \
+  "${ROOT_DIR}/scripts/container-smoke.sh" --self-entrypoint-probe >/dev/null 2>&1; then
+  echo "Expected scripts/container-smoke.sh self-entrypoint probe to succeed under a hostile PATH" >&2
+  exit 1
+fi
+if [[ -e "${CONTAINER_SMOKE_PATH_MARKER}" ]]; then
+  echo "scripts/container-smoke.sh trusted caller PATH before launcher setup" >&2
+  exit 1
+fi
+
+RELEASE_BUNDLE_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/verify-release-bundle-path-override-bin"
+RELEASE_BUNDLE_PATH_MARKER="${BARRIER_VERIFY_ROOT}/verify-release-bundle-path-ran"
+mkdir -p "${RELEASE_BUNDLE_PATH_OVERRIDE_DIR}"
+cat >"${RELEASE_BUNDLE_PATH_OVERRIDE_DIR}/head" <<EOF
+#!/bin/sh
+touch "${RELEASE_BUNDLE_PATH_MARKER:?}"
+exit 99
+EOF
+chmod 0755 "${RELEASE_BUNDLE_PATH_OVERRIDE_DIR}/head"
+if ! RELEASE_BUNDLE_PATH_MARKER="${RELEASE_BUNDLE_PATH_MARKER}" \
+  PATH="${RELEASE_BUNDLE_PATH_OVERRIDE_DIR}:${PATH}" \
+  "${ROOT_DIR}/scripts/verify-release-bundle.sh" --self-entrypoint-probe >/dev/null 2>&1; then
+  echo "Expected scripts/verify-release-bundle.sh self-entrypoint probe to succeed under a hostile PATH" >&2
+  exit 1
+fi
+if [[ -e "${RELEASE_BUNDLE_PATH_MARKER}" ]]; then
+  echo "scripts/verify-release-bundle.sh trusted caller PATH before launcher setup" >&2
+  exit 1
+fi
+
+REPRO_BUILD_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/verify-reproducible-build-path-override-bin"
+REPRO_BUILD_PATH_MARKER="${BARRIER_VERIFY_ROOT}/verify-reproducible-build-path-ran"
+mkdir -p "${REPRO_BUILD_PATH_OVERRIDE_DIR}"
+cat >"${REPRO_BUILD_PATH_OVERRIDE_DIR}/head" <<EOF
+#!/bin/sh
+touch "${REPRO_BUILD_PATH_MARKER:?}"
+exit 99
+EOF
+chmod 0755 "${REPRO_BUILD_PATH_OVERRIDE_DIR}/head"
+if ! REPRO_BUILD_PATH_MARKER="${REPRO_BUILD_PATH_MARKER}" \
+  PATH="${REPRO_BUILD_PATH_OVERRIDE_DIR}:${PATH}" \
+  "${ROOT_DIR}/scripts/verify-reproducible-build.sh" --self-entrypoint-probe >/dev/null 2>&1; then
+  echo "Expected scripts/verify-reproducible-build.sh self-entrypoint probe to succeed under a hostile PATH" >&2
+  exit 1
+fi
+if [[ -e "${REPRO_BUILD_PATH_MARKER}" ]]; then
+  echo "scripts/verify-reproducible-build.sh trusted caller PATH before launcher setup" >&2
   exit 1
 fi
 

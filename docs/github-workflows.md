@@ -28,7 +28,9 @@ under platform automation.
   including runtime documentation under `runtime/**`
 - `security.yml`: GitHub Actions linting, dependency review on pull requests,
   and `zizmor`
-- `codeql.yml`: code scanning for the shipped Rust and JavaScript surfaces
+- `codeql.yml`: code scanning for the shipped Rust and JavaScript surfaces on
+  public repositories by default, or on private repositories when
+  `WORKCELL_ENABLE_PRIVATE_CODE_SCANNING=true`
 - `scorecard.yml`: weekly and default-branch OpenSSF Scorecard analysis
 - `pin-hygiene.yml`: weekly re-validation of pinned non-ecosystem inputs and
   re-verification of the pinned upstream Codex release
@@ -65,8 +67,10 @@ workflow files. The linked Trail of Bits repos that informed the posture did:
 Workcell follows that smaller pattern instead of adding a wide spray of generic
 automation.
 
-For private repositories, the Scorecard run still executes and uploads its
-artifact, but SARIF upload is opt-in through
+For private repositories, `codeql.yml` is opt-in through
+`WORKCELL_ENABLE_PRIVATE_CODE_SCANNING=true` because GitHub code scanning is
+not universally available on private repositories. The Scorecard run still
+executes and uploads its artifact, but SARIF upload is opt-in through
 `WORKCELL_ENABLE_PRIVATE_SCORECARD_SARIF=true`. The same pattern applies to
 `zizmor` through `WORKCELL_ENABLE_PRIVATE_ZIZMOR_SARIF=true`. Public
 repositories upload both SARIF result sets into the GitHub Security tab by

@@ -1,6 +1,10 @@
 #![allow(clippy::missing_safety_doc)]
 
 use libc::{c_char, c_int, c_long, c_void, pid_t};
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 use std::arch::global_asm;
 use std::env;
 use std::ffi::{CStr, CString};
@@ -15,7 +19,7 @@ unsafe extern "C" {
     static mut environ: *mut *mut c_char;
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 global_asm!(
     r#"
     .text
@@ -26,7 +30,7 @@ syscall:
 "#
 );
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 global_asm!(
     r#"
     .text

@@ -25,6 +25,7 @@ scrub_host_process_env() {
 scrub_host_process_env
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 resolve_fixed_host_tool() {
   local name="$1"
   shift
@@ -54,6 +55,7 @@ HOST_COLIMA_BIN=""
 HOST_DOCKER_BIN=""
 HOST_RUBY_BIN=""
 COLIMA_STATE_ROOT="${REAL_HOME}/.colima"
+WORKCELL_DOCKER_SANDBOX_ROOT=""
 PROFILE_PREEXISTED=0
 PROFILE_RUNNING=0
 PROFILE_VALIDATED=0
@@ -128,7 +130,8 @@ sanitize_host_docker_env() {
   unset DOCKER_CERT_PATH
   unset DOCKER_CLI_PLUGIN_EXTRA_DIRS
   unset BUILDKIT_HOST
-  export DOCKER_CONFIG="${REAL_HOME}/.docker"
+  unset DOCKER_CONFIG
+  setup_workcell_trusted_docker_client
 }
 
 CONTROL_PLANE_SHADOW_ROOT=""
@@ -136,6 +139,7 @@ SHADOW_MOUNTS=()
 SHADOW_DESTS=""
 
 cleanup() {
+  cleanup_workcell_trusted_docker_client
   if [[ "${PROFILE_RUNNING}" -eq 1 ]] &&
     [[ -n "${COLIMA_PROFILE}" ]] &&
     [[ -n "${HOST_COLIMA_BIN}" ]]; then
@@ -603,6 +607,13 @@ resolve_host_tool() {
   echo "Missing trusted host tool: ${name}" >&2
   exit 1
 }
+
+if [[ "${1:-}" == "--self-docker-probe" ]]; then
+  sanitize_host_docker_env
+  buildx_cmd version >/dev/null
+  echo "workcell-docker-probe-ok"
+  exit 0
+fi
 
 provider_endpoints() {
   case "$1" in
@@ -1109,7 +1120,7 @@ fi
 if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
   BUILD_SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
   BUILD_STATUS=0
-  SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" "${HOST_DOCKER_BIN}" buildx build \
+  SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
     --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
     --build-arg "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH}" \
     --provenance=false \

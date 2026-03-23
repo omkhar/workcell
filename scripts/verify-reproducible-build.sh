@@ -1,7 +1,22 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  exec /usr/bin/env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME=/tmp \
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH-}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_REPRO_DOCKER_CONTEXT="${WORKCELL_REPRO_DOCKER_CONTEXT-}" \
+    WORKCELL_REPRO_MANIFEST_PATH="${WORKCELL_REPRO_MANIFEST_PATH-}" \
+    WORKCELL_REPRO_PLATFORMS="${WORKCELL_REPRO_PLATFORMS-}" \
+    WORKCELL_SANITIZED_ENTRYPOINT=1 \
+    /bin/bash -p "$0" "$@"
+fi
 set -euo pipefail
+export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 DOCKER_CONTEXT_NAME="${WORKCELL_REPRO_DOCKER_CONTEXT:-}"
 REPRO_PLATFORMS="${WORKCELL_REPRO_PLATFORMS:-linux/amd64,linux/arm64}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
@@ -12,6 +27,13 @@ OCI_EXPORT_B=()
 LAYOUT_DIGESTS=()
 MANIFEST_DIGESTS=()
 CONFIG_DIGESTS=()
+WORKCELL_DOCKER_SANDBOX_ROOT=""
+
+if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
+  head -n 1 "$0" >/dev/null
+  echo "verify-reproducible-build-entrypoint-ok"
+  exit 0
+fi
 
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -43,6 +65,15 @@ docker_cmd() {
   fi
 }
 
+if [[ "${1:-}" == "--self-docker-probe" ]]; then
+  require_tool docker
+  setup_workcell_trusted_docker_client
+  select_docker_context
+  buildx_cmd version >/dev/null
+  echo "verify-reproducible-build-docker-probe-ok"
+  exit 0
+fi
+
 platform_slug() {
   printf '%s\n' "$1" | tr '/,' '__'
 }
@@ -53,7 +84,7 @@ build_oci_layout() {
   local build_source_date_epoch="${SOURCE_DATE_EPOCH}"
 
   rm -rf "${dest}"
-  SOURCE_DATE_EPOCH="${build_source_date_epoch}" docker_cmd buildx build \
+  SOURCE_DATE_EPOCH="${build_source_date_epoch}" buildx_cmd build \
     --no-cache \
     --platform "${platform}" \
     --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
@@ -112,6 +143,7 @@ PY
 }
 
 cleanup() {
+  cleanup_workcell_trusted_docker_client
   rm -rf "${OCI_EXPORT_ROOT}"
 }
 
@@ -120,8 +152,9 @@ trap cleanup EXIT
 require_tool docker
 require_tool python3
 require_tool shasum
+setup_workcell_trusted_docker_client
 select_docker_context
-docker_cmd buildx inspect --bootstrap >/dev/null
+buildx_cmd inspect --bootstrap >/dev/null
 
 OCI_EXPORT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-repro.XXXXXX")"
 IFS=',' read -r -a platform_list <<<"${REPRO_PLATFORMS}"
