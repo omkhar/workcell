@@ -129,7 +129,9 @@ build_bundle_locally() {
   local destination="${destination_dir}/${BUNDLE_NAME}"
   local tar_path="${destination%.tar.gz}.tar"
   local prefix="${BUNDLE_PREFIX%/}/"
-  local clone_dir="${TMP_ROOT}/clone-$(basename "${destination_dir}")"
+  local clone_dir
+
+  clone_dir="${TMP_ROOT}/clone-$(basename "${destination_dir}")"
 
   mkdir -p "${destination_dir}"
   prepare_sanitized_clone "${ROOT_DIR}" "${clone_dir}"
