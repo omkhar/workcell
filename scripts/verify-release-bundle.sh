@@ -21,7 +21,6 @@ export PATH="${TRUSTED_HOST_PATH}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 DOCKER_CONTEXT_NAME="${WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT:-}"
-SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 BUNDLE_PREFIX="${WORKCELL_RELEASE_BUNDLE_PREFIX:-workcell-release-check}"
 ARCHIVE_REF="${WORKCELL_RELEASE_BUNDLE_REF:-HEAD}"
 BUNDLE_NAME="${WORKCELL_RELEASE_BUNDLE_NAME:-workcell-release-check.tar.gz}"
@@ -42,8 +41,23 @@ require_tool() {
   }
 }
 
+sanitized_git() {
+  env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME=/tmp \
+    LC_ALL=C \
+    LANG=C \
+    GIT_ATTR_NOSYSTEM=1 \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    "$@"
+}
+
 mkdir -p "${ROOT_DIR}/tmp"
 TMP_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-release-bundle.XXXXXX")"
+EMPTY_GIT_TEMPLATE_DIR="${TMP_ROOT}/empty-git-template"
+mkdir -p "${EMPTY_GIT_TEMPLATE_DIR}"
 
 cleanup() {
   cleanup_workcell_trusted_docker_client
@@ -67,6 +81,32 @@ select_docker_context() {
   fi
 }
 
+prepare_sanitized_clone() {
+  local source_repo="$1"
+  local clone_dir="$2"
+
+  rm -rf "${clone_dir}"
+  sanitized_git git -c safe.directory="${source_repo}" clone \
+    --quiet \
+    --no-checkout \
+    --no-local \
+    --template "${EMPTY_GIT_TEMPLATE_DIR}" \
+    "${source_repo}" \
+    "${clone_dir}"
+}
+
+resolve_source_date_epoch() {
+  local probe_clone="${TMP_ROOT}/source-date-epoch-clone"
+  local source_date_epoch
+
+  prepare_sanitized_clone "${ROOT_DIR}" "${probe_clone}"
+  source_date_epoch="$(sanitized_git git -C "${probe_clone}" log -1 --pretty=%ct "${ARCHIVE_REF}" 2>/dev/null || printf '0')"
+  rm -rf "${probe_clone}"
+  printf '%s\n' "${source_date_epoch}"
+}
+
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(resolve_source_date_epoch)}"
+
 docker_cmd() {
   if [[ -n "${DOCKER_CONTEXT_NAME}" ]]; then
     docker --context "${DOCKER_CONTEXT_NAME}" "$@"
@@ -89,10 +129,11 @@ build_bundle_locally() {
   local destination="${destination_dir}/${BUNDLE_NAME}"
   local tar_path="${destination%.tar.gz}.tar"
   local prefix="${BUNDLE_PREFIX%/}/"
+  local clone_dir="${TMP_ROOT}/clone-$(basename "${destination_dir}")"
 
   mkdir -p "${destination_dir}"
-
-  git -C "${ROOT_DIR}" archive \
+  prepare_sanitized_clone "${ROOT_DIR}" "${clone_dir}"
+  sanitized_git git -C "${clone_dir}" archive \
     --format=tar \
     --mtime="@${SOURCE_DATE_EPOCH}" \
     --prefix="${prefix}" \
@@ -100,6 +141,7 @@ build_bundle_locally() {
     "${ARCHIVE_REF}"
   gzip -n -9 <"${tar_path}" >"${destination}"
   rm -f "${tar_path}"
+  rm -rf "${clone_dir}"
   (cd "${destination_dir}" && sha256sum "${BUNDLE_NAME}" >SHA256SUMS)
 }
 
@@ -116,16 +158,31 @@ build_bundle_in_validator() {
     --entrypoint /bin/bash \
     -v "${ROOT_DIR}:/workspace" \
     -w /workspace \
+    -e HOME=/tmp \
     -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     -e BUNDLE_NAME="${BUNDLE_NAME}" \
     -e BUNDLE_PREFIX="${prefix}" \
     -e ARCHIVE_REF="${ARCHIVE_REF}" \
     -e DESTINATION_DIR="/workspace/${relative_destination}" \
+    -e GIT_ATTR_NOSYSTEM=1 \
+    -e GIT_CONFIG_NOSYSTEM=1 \
+    -e GIT_CONFIG_SYSTEM=/dev/null \
+    -e GIT_CONFIG_GLOBAL=/dev/null \
     "${VALIDATOR_IMAGE}" \
     -lc '
       set -euo pipefail
       tar_path="${DESTINATION_DIR}/${BUNDLE_NAME%.tar.gz}.tar"
-      git archive \
+      clone_dir="$(mktemp -d /tmp/workcell-release-clone.XXXXXX)"
+      template_dir="$(mktemp -d /tmp/workcell-git-template.XXXXXX)"
+      trap '\''rm -rf "${clone_dir}" "${template_dir}"'\'' EXIT
+      git -c safe.directory=/workspace clone \
+        --quiet \
+        --no-checkout \
+        --no-local \
+        --template "${template_dir}" \
+        /workspace \
+        "${clone_dir}"
+      git -C "${clone_dir}" archive \
         --format=tar \
         --mtime="@${SOURCE_DATE_EPOCH}" \
         --prefix="${BUNDLE_PREFIX}" \
