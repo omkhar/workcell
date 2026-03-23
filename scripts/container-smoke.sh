@@ -20,6 +20,7 @@ IMAGE_TAG="${WORKCELL_IMAGE_TAG:-workcell:smoke}"
 DOCKER_CONTEXT_NAME="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT:-}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 WORKCELL_DOCKER_SANDBOX_ROOT=""
+SMOKE_WORKSPACE=""
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
@@ -35,22 +36,73 @@ require_tool() {
 }
 
 cleanup_workspace_scratch() {
+  local workspace_root="${1:-${SMOKE_WORKSPACE:-${ROOT_DIR}}}"
+
   rm -rf \
-    "${ROOT_DIR}/.workcell-provider-copy-tampered" \
-    "${ROOT_DIR}/.workcell-provider-copy-aggressive" \
-    "${ROOT_DIR}/.workcell-provider-copy-minimal" \
-    "${ROOT_DIR}/.workcell-provider-copy-split" \
-    "${ROOT_DIR}/.workcell-benign-marker-package"
+    "${workspace_root}/.workcell-provider-copy-tampered" \
+    "${workspace_root}/.workcell-provider-copy-aggressive" \
+    "${workspace_root}/.workcell-provider-copy-minimal" \
+    "${workspace_root}/.workcell-provider-copy-split" \
+    "${workspace_root}/.workcell-benign-marker-package"
   rm -f \
-    "${ROOT_DIR}/.workcell-provider-copy-no-package.js"
+    "${workspace_root}/.workcell-provider-copy-no-package.js"
   rm -rf \
-    "${ROOT_DIR}/tmp/.workcell-"* \
-    "${ROOT_DIR}/tmp/workcell-"*
+    "${workspace_root}/tmp/.workcell-"* \
+    "${workspace_root}/tmp/workcell-"*
+}
+
+prepare_smoke_workspace() {
+  local path_list_raw=""
+  local path_list_filtered=""
+
+  mkdir -p "${ROOT_DIR}/tmp"
+  chmod 0700 "${ROOT_DIR}/tmp"
+  SMOKE_WORKSPACE="$(mktemp -d "${ROOT_DIR}/tmp/workcell-smoke-workspace.XXXXXX")"
+
+  if ! git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "container-smoke requires a git checkout" >&2
+    exit 1
+  fi
+
+  path_list_raw="$(mktemp "${ROOT_DIR}/tmp/workcell-smoke-paths-raw.XXXXXX")"
+  path_list_filtered="$(mktemp "${ROOT_DIR}/tmp/workcell-smoke-paths-filtered.XXXXXX")"
+
+  (
+    cd "${ROOT_DIR}"
+    git ls-files -z --cached --modified --others --exclude-standard --deduplicate > "${path_list_raw}"
+  )
+
+  (
+    cd "${ROOT_DIR}"
+    while IFS= read -r -d '' path; do
+      if [[ -e "${path}" || -L "${path}" ]]; then
+        printf '%s\0' "${path}"
+      fi
+    done < "${path_list_raw}" > "${path_list_filtered}"
+  )
+
+  (
+    cd "${ROOT_DIR}"
+    tar --null -T "${path_list_filtered}" -cf -
+  ) | (
+    cd "${SMOKE_WORKSPACE}"
+    tar -xf -
+  )
+
+  rm -f "${path_list_raw}" "${path_list_filtered}"
+  mkdir -p "${SMOKE_WORKSPACE}/tmp"
+  chmod 1777 "${SMOKE_WORKSPACE}" "${SMOKE_WORKSPACE}/tmp"
 }
 
 cleanup() {
   cleanup_workcell_trusted_docker_client
-  cleanup_workspace_scratch
+  cleanup_workspace_scratch "${ROOT_DIR}"
+  if [[ -n "${SMOKE_WORKSPACE}" ]]; then
+    cleanup_workspace_scratch "${SMOKE_WORKSPACE}"
+  fi
+  if [[ -n "${SMOKE_WORKSPACE}" ]]; then
+    rm -rf "${SMOKE_WORKSPACE}"
+  fi
 }
 
 select_docker_context() {
@@ -93,7 +145,7 @@ run_container() {
     -e TMPDIR=/state/tmp \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
-    -v "${ROOT_DIR}:/workspace" \
+    -v "${SMOKE_WORKSPACE}:/workspace" \
     --entrypoint "$1" \
     "${IMAGE_TAG}" "${@:2}"
 }
@@ -115,7 +167,7 @@ run_entrypoint() {
     -e TMPDIR=/state/tmp \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
-    -v "${ROOT_DIR}:/workspace" \
+    -v "${SMOKE_WORKSPACE}:/workspace" \
     "${IMAGE_TAG}" "$@"
 }
 
@@ -138,13 +190,14 @@ run_entrypoint_with_profile() {
     -e TMPDIR=/state/tmp \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
-    -v "${ROOT_DIR}:/workspace" \
+    -v "${SMOKE_WORKSPACE}:/workspace" \
     "${IMAGE_TAG}" "$@"
 }
 
 require_tool docker
 trap cleanup EXIT
-cleanup_workspace_scratch
+cleanup_workspace_scratch "${ROOT_DIR}"
+prepare_smoke_workspace
 setup_workcell_trusted_docker_client
 select_docker_context
 
