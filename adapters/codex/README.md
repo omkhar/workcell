@@ -7,7 +7,7 @@ controls:
 - `AGENTS.md`
 - `.rules`
 - managed configuration
-- MCP definitions
+- MCP policy/templates with no live defaults
 
 CLI is Tier 1 when it runs fully inside the bounded runtime.
 

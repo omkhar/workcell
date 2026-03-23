@@ -9,7 +9,6 @@
   "enableAllProjectMcpServers": false,
   "alwaysThinkingEnabled": true,
   "permissions": {
-    "defaultMode": "bypassPermissions",
     "deny": [
       "Bash(rm -rf *)",
       "Bash(rm -fr *)",
@@ -30,7 +29,35 @@
       "Read(~/.git-credentials)",
       "Read(~/.docker/config.json)",
       "Read(~/.kube/**)",
-      "Read(~/Library/Keychains/**)"
+      "Read(~/Library/Keychains/**)",
+      "Read(./AGENTS.md)",
+      "Read(./**/AGENTS.md)",
+      "Edit(./AGENTS.md)",
+      "Edit(./**/AGENTS.md)",
+      "Read(./CLAUDE.md)",
+      "Read(./**/CLAUDE.md)",
+      "Edit(./CLAUDE.md)",
+      "Edit(./**/CLAUDE.md)",
+      "Read(./GEMINI.md)",
+      "Read(./**/GEMINI.md)",
+      "Edit(./GEMINI.md)",
+      "Edit(./**/GEMINI.md)",
+      "Read(./.mcp.json)",
+      "Read(./**/.mcp.json)",
+      "Edit(./.mcp.json)",
+      "Edit(./**/.mcp.json)",
+      "Read(./.claude/**)",
+      "Read(./**/.claude/**)",
+      "Edit(./.claude/**)",
+      "Edit(./**/.claude/**)",
+      "Read(./.codex/**)",
+      "Read(./**/.codex/**)",
+      "Edit(./.codex/**)",
+      "Edit(./**/.codex/**)",
+      "Read(./.gemini/**)",
+      "Read(./**/.gemini/**)",
+      "Edit(./.gemini/**)",
+      "Edit(./**/.gemini/**)"
     ]
   },
   "hooks": {
@@ -40,15 +67,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CMD=$(jq -r '.tool_input.command'); if echo \"$CMD\" | grep -qiE '(^|[;&|][[:space:]]*|&&[[:space:]]*)(/usr/bin/)?git([[:space:]]|$)' && { echo \"$CMD\" | grep -q -- ' --no-verify' || echo \"$CMD\" | grep -qiE '(^|[;&|][[:space:]]*|&&[[:space:]]*)(/usr/bin/)?git[[:space:]]+commit([^;&|]|[[:space:]])*-n([[:space:]]|$)' || echo \"$CMD\" | grep -qiE '(^|[;&|][[:space:]]*|&&[[:space:]]*)(/usr/bin/)?git([^;&|]|[[:space:]])*-c[[:space:]]+core\\.hooksPath=' || echo \"$CMD\" | grep -qiE '(^|[;&|][[:space:]]*|&&[[:space:]]*)(/usr/bin/)?git([^;&|]|[[:space:]])*--config-env=core\\.hooksPath='; }; then echo 'BLOCKED: Do not bypass git hooks with --no-verify, git commit -n, or inline core.hooksPath overrides' >&2; exit 2; fi"
-          },
-          {
-            "type": "command",
-            "command": "CMD=$(jq -r '.tool_input.command'); if echo \"$CMD\" | grep -qiE '(^|;[[:space:]]*|&&[[:space:]]*|[|][|][[:space:]]*|[|][[:space:]]*)rm[[:space:]]' && echo \"$CMD\" | grep -qiE '(^|[[:space:]])-[a-zA-Z]*[rR]|--recursive' && echo \"$CMD\" | grep -qiE '(^|[[:space:]])-[a-zA-Z]*[fF]|--force'; then echo 'BLOCKED: Use trash instead of rm -rf' >&2; exit 2; fi"
-          },
-          {
-            "type": "command",
-            "command": "CMD=$(jq -r '.tool_input.command'); if echo \"$CMD\" | grep -qE 'git[[:space:]]+push.*(main|master)'; then echo 'BLOCKED: Use a feature branch, not a direct push to main' >&2; exit 2; fi"
+            "command": "/opt/workcell/adapters/claude/hooks/guard-bash.sh"
           }
         ]
       }

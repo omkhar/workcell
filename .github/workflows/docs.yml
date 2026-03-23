@@ -1,0 +1,81 @@
+name: Docs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".codespellrc"
+      - "README.md"
+      - "AGENTS.md"
+      - "SECURITY.md"
+      - "adapters/**"
+      - "docs/**"
+      - "man/**"
+      - "policy/**"
+      - "runtime/**"
+      - "verify/**"
+      - "workflows/**"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".codespellrc"
+      - "README.md"
+      - "AGENTS.md"
+      - "SECURITY.md"
+      - "adapters/**"
+      - "docs/**"
+      - "man/**"
+      - "policy/**"
+      - "runtime/**"
+      - "verify/**"
+      - "workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spelling-and-manpage:
+    name: Spelling and manpage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check pinned input policy
+        run: ./scripts/check-pinned-inputs.sh
+
+      - name: Build validation tool image
+        run: |
+          docker build \
+            -f tools/validator/Dockerfile \
+            -t workcell-validator:${{ github.sha }} \
+            .
+
+      - name: Check docs spelling and manpage
+        run: |
+          docker run --rm \
+            -v "${PWD}:/workspace" \
+            -w /workspace \
+            workcell-validator:${{ github.sha }} \
+            /bin/bash -lc '
+              mapfile -d "" doc_files < <(
+                find /workspace \
+                  -path /workspace/.git -prune -o \
+                  -path /workspace/dist -prune -o \
+                  -path /workspace/tmp -prune -o \
+                  -path /workspace/runtime/container/providers/node_modules -prune -o \
+                  -path /workspace/runtime/container/rust/vendor -prune -o \
+                  -path /workspace/runtime/container/rust/target -prune -o \
+                  -type f \( -name "*.md" -o -name "*.txt" -o -name "*.1" \) -print0 | sort -z
+              )
+              codespell --config /workspace/.codespellrc "${doc_files[@]}"
+              mandoc -Tlint /workspace/man/workcell.1 >/dev/null
+            '

@@ -1,0 +1,32 @@
+ARG VALIDATOR_BASE_IMAGE=node:22-trixie-slim@sha256:285a78d9fdb7cd2e4a03639cc7bbf609755ce8c0aa4e3b00086211e3e86a7038
+ARG DEBIAN_SNAPSHOT=20260316T000000Z
+
+FROM ${VALIDATOR_BASE_IMAGE}
+
+ARG DEBIAN_SNAPSHOT
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99workcell-validator-snapshot \
+  && DEBIAN_FRONTEND=noninteractive apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    codespell \
+    cargo \
+    git \
+    groff-base \
+    mandoc \
+    python3 \
+    rustc \
+    rustfmt \
+    shellcheck \
+    shfmt \
+    yamllint \
+  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache
+
+WORKDIR /workspace
+
+ENTRYPOINT ["/bin/bash", "-lc"]

@@ -1,22 +1,222 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
 
-REAL_GIT="/usr/local/libexec/workcell/git"
+REAL_GIT="/usr/local/libexec/workcell/real/git"
 subcommand=""
 skip_next=0
 expect_config_arg=0
 commit_short_bypass=0
 hooks_path_bypass=0
+env_config_bypass=0
+path_override_bypass=0
+prefix_args=()
+
+git_config_key_is_blocked() {
+  local key_lower="$1"
+
+  case "${key_lower}" in
+    core.askpass | core.editor | core.hookspath | core.pager | core.sshcommand | core.worktree | credential.helper | credential.*.helper | diff.external | include.path | includeif.*.path | pager.* | sequence.editor)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+git_config_spec_is_blocked() {
+  local spec="$1"
+  local key="${spec%%=*}"
+  local key_lower="${key,,}"
+
+  git_config_key_is_blocked "${key_lower}"
+}
+
+has_hooks_path_env_bypass() {
+  local count key_var key key_lower value_var value
+
+  if [[ -n "${GIT_CONFIG_PARAMETERS:-}" ]] &&
+    { [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.hookspath"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.askpass"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.editor"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.pager"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.sshcommand"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.worktree"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"credential.helper"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"diff.external"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"include.path"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"includeif."* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"pager."* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"sequence.editor"* ]]; }; then
+    return 0
+  fi
+
+  if [[ -z "${GIT_CONFIG_COUNT:-}" ]]; then
+    return 1
+  fi
+
+  [[ "${GIT_CONFIG_COUNT}" =~ ^[0-9]+$ ]] || return 0
+
+  count="${GIT_CONFIG_COUNT}"
+  for ((i = 0; i < count; i++)); do
+    key_var="GIT_CONFIG_KEY_${i}"
+    value_var="GIT_CONFIG_VALUE_${i}"
+    key="${!key_var:-}"
+    key_lower="${key,,}"
+    value="${!value_var:-}"
+    if git_config_key_is_blocked "${key_lower}" ||
+      [[ "${value,,}" == *"core.askpass"* ]] ||
+      [[ "${value,,}" == *"core.editor"* ]] ||
+      [[ "${value,,}" == *"core.hookspath"* ]] ||
+      [[ "${value,,}" == *"core.pager"* ]] ||
+      [[ "${value,,}" == *"core.sshcommand"* ]] ||
+      [[ "${value,,}" == *"core.worktree"* ]] ||
+      [[ "${value,,}" == *"credential.helper"* ]] ||
+      [[ "${value,,}" == *"diff.external"* ]] ||
+      [[ "${value,,}" == *"pager."* ]] ||
+      [[ "${value,,}" == *"sequence.editor"* ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+alias_body_is_blocked() {
+  local alias_body="$1"
+  local alias_body_lower normalized inspected_body
+
+  if [[ -z "${alias_body}" ]]; then
+    return 1
+  fi
+
+  if [[ "${alias_body}" == '!'* ]]; then
+    return 0
+  fi
+
+  inspected_body="${alias_body}"
+  alias_body_lower="${inspected_body,,}"
+  normalized="$(printf '%s' "${alias_body_lower}" | tr "\t\r\n'\"" '     ')"
+
+  if [[ "${alias_body_lower}" == *"--no-verify"* ]] ||
+    [[ "${alias_body_lower}" == *"--exec-path"* ]] ||
+    [[ "${alias_body_lower}" == *"--git-dir"* ]] ||
+    [[ "${alias_body_lower}" == *"--work-tree"* ]] ||
+    [[ "${alias_body_lower}" == *"core.askpass"* ]] ||
+    [[ "${alias_body_lower}" == *"core.editor"* ]] ||
+    [[ "${alias_body_lower}" == *"git_exec_path="* ]] ||
+    [[ "${alias_body_lower}" == *"git_dir="* ]] ||
+    [[ "${alias_body_lower}" == *"git_work_tree="* ]] ||
+    [[ "${alias_body_lower}" == *"git_common_dir="* ]] ||
+    [[ "${alias_body_lower}" == *"core.hookspath"* ]] ||
+    [[ "${alias_body_lower}" == *"core.pager"* ]] ||
+    [[ "${alias_body_lower}" == *"core.sshcommand"* ]] ||
+    [[ "${alias_body_lower}" == *"core.worktree"* ]] ||
+    [[ "${alias_body_lower}" == *"credential.helper"* ]] ||
+    [[ "${alias_body_lower}" == *"diff.external"* ]] ||
+    [[ "${alias_body_lower}" == *"include.path"* ]] ||
+    [[ "${alias_body_lower}" == *"includeif."* ]] ||
+    [[ "${alias_body_lower}" == *"pager."* ]] ||
+    [[ "${alias_body_lower}" == *"sequence.editor"* ]]; then
+    return 0
+  fi
+
+  if echo "${normalized}" | grep -Eq '(^|[[:space:]])commit([[:space:]].*)?[[:space:]]-n([[:space:]]|$)'; then
+    return 0
+  fi
+
+  return 1
+}
+
+has_dangerous_alias() {
+  local alias_name="${1:-${subcommand}}"
+  local alias_body=""
+  local next_alias=""
+  local seen="${2:-|}"
+
+  [[ -n "${alias_name}" ]] || return 1
+  case "${seen}" in
+    *"|${alias_name}|"*)
+      return 0
+      ;;
+  esac
+
+  alias_body="$("${REAL_GIT}" "${prefix_args[@]}" config --get "alias.${alias_name}" 2>/dev/null || true)"
+  [[ -n "${alias_body}" ]] || return 1
+
+  if alias_body_is_blocked "${alias_body}"; then
+    return 0
+  fi
+
+  next_alias="${alias_body%%[[:space:]]*}"
+  if [[ "${next_alias}" != "${alias_name}" ]] &&
+    [[ "${next_alias}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    if has_dangerous_alias "${next_alias}" "${seen}${alias_name}|"; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+has_unsafe_git_env() {
+  if has_hooks_path_env_bypass; then
+    return 0
+  fi
+
+  if [[ -n "${GIT_DIR:-}" ]] ||
+    [[ -n "${GIT_WORK_TREE:-}" ]] ||
+    [[ -n "${GIT_COMMON_DIR:-}" ]] ||
+    [[ -n "${GIT_EXEC_PATH:-}" ]] ||
+    [[ -n "${GIT_ASKPASS:-}" ]] ||
+    [[ -n "${GIT_EXTERNAL_DIFF:-}" ]] ||
+    [[ -n "${GIT_CONFIG_GLOBAL:-}" ]] ||
+    [[ -n "${GIT_CONFIG_SYSTEM:-}" ]] ||
+    [[ -n "${GIT_EDITOR:-}" ]] ||
+    [[ -n "${GIT_PAGER:-}" ]] ||
+    [[ -n "${GIT_SEQUENCE_EDITOR:-}" ]] ||
+    [[ -n "${GIT_SSH:-}" ]] ||
+    [[ -n "${GIT_SSH_COMMAND:-}" ]] ||
+    [[ -n "${SSH_ASKPASS:-}" ]] ||
+    [[ -n "${EDITOR:-}" ]] ||
+    [[ -n "${PAGER:-}" ]] ||
+    [[ -n "${VISUAL:-}" ]] ||
+    [[ -n "${GIT_CONFIG_NOSYSTEM:-}" && "${GIT_CONFIG_NOSYSTEM}" != "1" ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+loader_path() {
+  case "$(uname -m)" in
+    x86_64)
+      printf '%s\n' /lib64/ld-linux-x86-64.so.2
+      ;;
+    aarch64 | arm64)
+      printf '%s\n' /lib/ld-linux-aarch64.so.1
+      ;;
+    *)
+      echo "Unsupported architecture for Workcell git loader." >&2
+      exit 126
+      ;;
+  esac
+}
+
+if has_unsafe_git_env; then
+  env_config_bypass=1
+fi
 
 for arg in "$@"; do
   if [[ "${skip_next}" -eq 1 ]]; then
+    prefix_args+=("${arg}")
     skip_next=0
     continue
   fi
 
   if [[ "${expect_config_arg}" -eq 1 ]]; then
+    prefix_args+=("${arg}")
     expect_config_arg=0
-    if [[ "${arg}" == core.hooksPath=* ]]; then
+    if git_config_spec_is_blocked "${arg}"; then
       hooks_path_bypass=1
     fi
     continue
@@ -25,21 +225,53 @@ for arg in "$@"; do
   if [[ -z "${subcommand}" ]]; then
     case "${arg}" in
       -c | --config-env)
+        prefix_args+=("${arg}")
         expect_config_arg=1
         continue
         ;;
-      -C | --exec-path | --git-dir | --namespace | --super-prefix | --work-tree)
+      -C | --namespace | --super-prefix)
+        prefix_args+=("${arg}")
         skip_next=1
         continue
         ;;
-      --config-env=core.hooksPath=*)
-        hooks_path_bypass=1
+      --exec-path)
+        path_override_bypass=1
+        prefix_args+=("${arg}")
+        skip_next=1
+        continue
+        ;;
+      --git-dir | --work-tree)
+        path_override_bypass=1
+        prefix_args+=("${arg}")
+        skip_next=1
+        continue
+        ;;
+      --config-env=*)
+        prefix_args+=("${arg}")
+        if git_config_spec_is_blocked "${arg#--config-env=}"; then
+          hooks_path_bypass=1
+        fi
+        continue
+        ;;
+      --git-dir=* | --work-tree=*)
+        path_override_bypass=1
+        prefix_args+=("${arg}")
+        continue
+        ;;
+      --namespace=* | --super-prefix=*)
+        prefix_args+=("${arg}")
+        continue
+        ;;
+      --exec-path=*)
+        path_override_bypass=1
+        prefix_args+=("${arg}")
         continue
         ;;
       --)
         break
         ;;
       -*)
+        prefix_args+=("${arg}")
         continue
         ;;
       *)
@@ -59,7 +291,7 @@ for arg in "$@"; do
     continue
   fi
 
-  if [[ "${arg}" == --config-env=core.hooksPath=* ]]; then
+  if git_config_spec_is_blocked "${arg#--config-env=}"; then
     hooks_path_bypass=1
   fi
 
@@ -69,7 +301,17 @@ for arg in "$@"; do
 done
 
 if [[ "${hooks_path_bypass}" -eq 1 ]]; then
-  echo "Workcell blocked git hook bypass: remove inline core.hooksPath overrides." >&2
+  echo "Workcell blocked git hook bypass: remove inline hook or include config overrides." >&2
+  exit 2
+fi
+
+if [[ "${env_config_bypass}" -eq 1 ]]; then
+  echo "Workcell blocked git control-plane override: remove GIT_CONFIG_*, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_EXEC_PATH, askpass/editor overrides, GIT_SSH, or GIT_SSH_COMMAND overrides." >&2
+  exit 2
+fi
+
+if [[ "${path_override_bypass}" -eq 1 ]]; then
+  echo "Workcell blocked git control-plane override: remove --exec-path, --git-dir, and --work-tree overrides." >&2
   exit 2
 fi
 
@@ -78,4 +320,14 @@ if [[ "${commit_short_bypass}" -eq 1 ]]; then
   exit 2
 fi
 
-exec "${REAL_GIT}" "$@"
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export XDG_CONFIG_HOME=/etc/workcell/empty-xdg
+unset GIT_CONFIG_SYSTEM
+
+if has_dangerous_alias; then
+  echo "Workcell blocked git alias bypass: remove shell aliases or aliases that disable hooks." >&2
+  exit 2
+fi
+
+exec "$(loader_path)" "${REAL_GIT}" "$@"

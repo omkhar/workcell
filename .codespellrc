@@ -1,0 +1,3 @@
+[codespell]
+skip = .git,dist,tmp,runtime/container/providers/node_modules,runtime/container/rust/vendor,runtime/container/rust/target
+quiet-level = 2

@@ -108,18 +108,20 @@ prefix_rule(
 )
 
 prefix_rule(
-    pattern = [["git", "/usr/bin/git"], "commit", ["--no-verify", "-n"]],
+    pattern = [["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"], "commit", ["--no-verify", "-n"]],
     decision = "forbidden",
     justification = "Do not bypass git hooks with --no-verify or git commit -n from Workcell.",
     match = [
         "git commit --no-verify -m test",
         "git commit -n -m test",
         "/usr/bin/git commit --no-verify -m test",
+        "/usr/local/libexec/workcell/core/git commit --no-verify -m test",
+        "/usr/local/libexec/workcell/real/git commit --no-verify -m test",
     ],
 )
 
 prefix_rule(
-    pattern = [["git", "/usr/bin/git"], ["push", "merge", "rebase", "am"], "--no-verify"],
+    pattern = [["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"], ["push", "merge", "rebase", "am"], "--no-verify"],
     decision = "forbidden",
     justification = "Do not bypass git hooks with --no-verify from Workcell.",
     match = [
@@ -127,5 +129,30 @@ prefix_rule(
         "git merge --no-verify feature",
         "git rebase --no-verify main",
         "/usr/bin/git push --no-verify origin feature",
+        "/usr/local/libexec/workcell/core/git push --no-verify origin feature",
+        "/usr/local/libexec/workcell/real/git push --no-verify origin feature",
+    ],
+)
+
+prefix_rule(
+    pattern = [["codex", "claude", "gemini", "/usr/local/libexec/workcell/core/codex", "/usr/local/libexec/workcell/core/claude", "/usr/local/libexec/workcell/core/gemini", "/usr/local/libexec/workcell/real/codex", "/opt/workcell/providers/node_modules/.bin/claude", "/opt/workcell/providers/node_modules/.bin/gemini"]],
+    decision = "forbidden",
+    justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex.",
+    match = [
+        "codex --search",
+        "claude --dangerously-skip-permissions",
+        "/usr/local/libexec/workcell/core/codex --search",
+        "/usr/local/libexec/workcell/core/claude --dangerously-skip-permissions",
+        "/usr/local/libexec/workcell/real/codex --dangerously-bypass-approvals-and-sandbox",
+    ],
+)
+
+prefix_rule(
+    pattern = ["node", ["/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js", "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"]],
+    decision = "forbidden",
+    justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex.",
+    match = [
+        "node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --dangerously-skip-permissions",
+        "node /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --yolo",
     ],
 )

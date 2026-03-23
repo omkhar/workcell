@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,6 +14,8 @@ require_tool shellcheck
 require_tool shfmt
 require_tool python3
 require_tool yamllint
+require_tool cargo
+require_tool rustfmt
 
 branding_scan() {
   local pattern="agent-boundary|Agent Boundary|agent boundary"
@@ -50,18 +52,40 @@ validate_manpage() {
 }
 
 shell_files=(
+  "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/check-workflows.sh"
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
+  "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
+  "${ROOT_DIR}/scripts/generate-release-checksums.sh"
+  "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/install.sh"
+  "${ROOT_DIR}/scripts/publish-github-release.sh"
   "${ROOT_DIR}/scripts/validate-repo.sh"
+  "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
+  "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-invariants.sh"
+  "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
+  "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"
   "${ROOT_DIR}/runtime/container/entrypoint.sh"
+  "${ROOT_DIR}/runtime/container/bin/git"
+  "${ROOT_DIR}/runtime/container/bin/node"
+  "${ROOT_DIR}/runtime/container/home-control-plane.sh"
+  "${ROOT_DIR}/runtime/container/provider-policy.sh"
+  "${ROOT_DIR}/runtime/container/provider-wrapper.sh"
 )
 
 shellcheck -x "${shell_files[@]}"
-shfmt -i 2 -ci -d "${shell_files[@]}"
+shfmt -ln=bash -i 2 -ci -d "${shell_files[@]}"
+
+for file in "${shell_files[@]}"; do
+  if [[ ! -x "${file}" ]]; then
+    echo "Expected executable script: ${file}" >&2
+    exit 1
+  fi
+done
 
 for scratch_dir in \
   "${ROOT_DIR}/adapters/codex/.codex/memories" \
@@ -74,7 +98,9 @@ done
 
 while IFS= read -r file; do
   python3 -m json.tool "${file}" >/dev/null
-done < <(find "${ROOT_DIR}/adapters" "${ROOT_DIR}/.github" -type f -name '*.json' | sort)
+done < <(find "${ROOT_DIR}/adapters" "${ROOT_DIR}/.github" "${ROOT_DIR}/runtime/container/providers" \
+  -path '*/node_modules' -prune -o \
+  -type f -name '*.json' -print | sort)
 
 python3 - "${ROOT_DIR}" <<'PY'
 import pathlib
@@ -85,13 +111,36 @@ root = pathlib.Path(sys.argv[1])
 for path in sorted(root.rglob("*.toml")):
     if ".git" in path.parts:
         continue
+    if "node_modules" in path.parts:
+        continue
     with path.open("rb") as handle:
         tomllib.load(handle)
 PY
 
 yamllint -d "{extends: default, rules: {comments: disable, document-start: disable, line-length: disable, truthy: disable}}" \
+  "${ROOT_DIR}/.github/dependency-review-config.yml" \
   "${ROOT_DIR}/.github/dependabot.yml" \
   "${ROOT_DIR}/.github/workflows"
+
+"${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
+
+doc_files=()
+while IFS= read -r -d '' file; do
+  doc_files+=("${file}")
+done < <(find "${ROOT_DIR}" \
+  -path "${ROOT_DIR}/.git" -prune -o \
+  -path "${ROOT_DIR}/dist" -prune -o \
+  -path "${ROOT_DIR}/tmp" -prune -o \
+  -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
+  -path "${ROOT_DIR}/runtime/container/rust/vendor" -prune -o \
+  -path "${ROOT_DIR}/runtime/container/rust/target" -prune -o \
+  -type f \( -name '*.md' -o -name '*.txt' -o -name '*.1' \) -print0 | sort -z)
+
+if command -v codespell >/dev/null 2>&1; then
+  codespell --config "${ROOT_DIR}/.codespellrc" "${doc_files[@]}"
+else
+  echo "Skipping spelling checks because codespell is not installed locally." >&2
+fi
 
 validate_manpage
 
@@ -99,5 +148,11 @@ if branding_scan; then
   echo "Found stale pre-rename branding." >&2
   exit 1
 fi
+
+(
+  cd "${ROOT_DIR}/runtime/container/rust"
+  cargo fmt --all --check
+  cargo check --locked --offline
+)
 
 echo "Workcell repository validation passed."

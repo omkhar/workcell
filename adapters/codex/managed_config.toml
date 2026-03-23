@@ -39,11 +39,21 @@ network_access = false
 unified_exec = true
 
 [[rules.prefix_rules]]
-pattern = [{ any_of = ["git", "/usr/bin/git"] }, { token = "commit" }, { any_of = ["--no-verify", "-n"] }]
+pattern = [{ any_of = ["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"] }, { token = "commit" }, { any_of = ["--no-verify", "-n"] }]
 decision = "forbidden"
 justification = "Do not bypass git hooks with --no-verify or git commit -n from Workcell."
 
 [[rules.prefix_rules]]
-pattern = [{ any_of = ["git", "/usr/bin/git"] }, { any_of = ["push", "merge", "rebase", "am"] }, { token = "--no-verify" }]
+pattern = [{ any_of = ["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"] }, { any_of = ["push", "merge", "rebase", "am"] }, { token = "--no-verify" }]
 decision = "forbidden"
 justification = "Do not bypass git hooks with --no-verify from Workcell."
+
+[[rules.prefix_rules]]
+pattern = [{ any_of = ["codex", "claude", "gemini", "/usr/local/libexec/workcell/core/codex", "/usr/local/libexec/workcell/core/claude", "/usr/local/libexec/workcell/core/gemini", "/usr/local/libexec/workcell/real/codex", "/opt/workcell/providers/node_modules/.bin/claude", "/opt/workcell/providers/node_modules/.bin/gemini"] }]
+decision = "forbidden"
+justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."
+
+[[rules.prefix_rules]]
+pattern = [{ token = "node" }, { any_of = ["/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js", "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"] }]
+decision = "forbidden"
+justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."

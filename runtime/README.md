@@ -21,8 +21,10 @@ providers.
 
 ## Profiles
 
-- `strict`: allowlisted service access only
-- `build`: broader registry allowlist for dependency installation and builds
+- `strict`: allowlisted runtime access only and requires a prebuilt reviewed
+  runtime image
+- `build`: broader registry allowlist for dependency installation, reviewed
+  image creation, and rebuilds
 - `breakglass`: unrestricted network plus the provider's highest-trust mode
   where one exists; Codex maps this to `danger-full-access`
 
@@ -34,7 +36,9 @@ the GUI is wired as a client to the same bounded runtime.
 ## Main entrypoints
 
 - `scripts/workcell`: start the VM, build the runtime image, apply the selected
-  network mode, and launch the selected agent inside the container
+  network mode, and launch the selected agent inside the container; `strict`
+  refuses image rebuilds and requires the image to have been seeded through
+  `build`
 - `scripts/colima-egress-allowlist.sh`: apply or clear VM-level egress rules
 - `scripts/verify-invariants.sh`: run basic regression checks against the
   current runtime assumptions

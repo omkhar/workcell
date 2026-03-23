@@ -1,7 +1,64 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash
+# shellcheck shell=bash
 set -euo pipefail
 
+readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+export PATH="${TRUSTED_HOST_PATH}"
+scrub_host_process_env() {
+  local env_name
+
+  unset BASH_ENV ENV
+  unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH PYTHONSTARTUP
+  unset RUBYOPT RUBYLIB GEM_HOME GEM_PATH
+  unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT
+  unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT LD_DEBUG LD_DEBUG_OUTPUT LD_BIND_NOW LD_ASSUME_KERNEL
+
+  for env_name in $(compgen -v); do
+    case "${env_name}" in
+      DYLD_*)
+        unset "${env_name}"
+        ;;
+    esac
+  done
+}
+
+scrub_host_process_env
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+resolve_fixed_host_tool() {
+  local name="$1"
+  shift
+  local candidate
+
+  for candidate in "$@"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Missing trusted host tool: ${name}" >&2
+  exit 1
+}
+
+HOST_PYTHON3_BIN="$(resolve_fixed_host_tool python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3)"
+REAL_HOME="$(
+  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - <<'PY'
+import os
+import pwd
+print(pwd.getpwuid(os.getuid()).pw_dir)
+PY
+)"
+HOST_GIT_BIN=""
+HOST_COLIMA_BIN=""
+HOST_DOCKER_BIN=""
+HOST_RUBY_BIN=""
+COLIMA_STATE_ROOT="${REAL_HOME}/.colima"
+PROFILE_PREEXISTED=0
+PROFILE_RUNNING=0
+PROFILE_VALIDATED=0
+COLIMA_PROFILE=""
+BOOTSTRAP_APPLIED=0
 
 usage() {
   cat <<'EOF'
@@ -12,8 +69,11 @@ Options:
   --ui cli|gui                  Surface to launch (default: cli)
   --mode strict|build|breakglass
                                 Runtime profile (default: strict)
+  --ack-breakglass              Required with --mode breakglass
+  --ack-arbitrary-command       Required with --allow-arbitrary-command
   --workspace PATH              Workspace to mount (default: current directory)
-  --allow-nongit-workspace      Allow a workspace without repo or agent markers
+  --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
+  --allow-arbitrary-command     Launch the runtime image with a direct container entrypoint after --
   --colima-profile NAME         Override derived Colima profile name
   --rebuild                     Rebuild the runtime image before launch
   --dry-run                     Print the selected runtime command and exit
@@ -28,12 +88,84 @@ slugify() {
     sed -E 's/^-+//; s/-+$//; s/-+/-/g'
 }
 
-profile_dir() {
-  printf '%s/.colima/%s\n' "${HOME}" "$1"
+lower_ascii() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
+validate_colima_profile_name() {
+  local profile="$1"
+
+  if [[ ! "${profile}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+    echo "Invalid Colima profile name: ${profile}" >&2
+    echo "Use only letters, numbers, '.', '_', or '-' and do not include path separators." >&2
+    exit 2
+  fi
+
+  case "${profile}" in
+    . | ..)
+      echo "Invalid Colima profile name: ${profile}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+profile_dir() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
+}
+
+run_host_colima() {
+  COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+}
+
+sanitize_host_docker_env() {
+  unset DOCKER_CONTEXT
+  unset DOCKER_HOST
+  unset DOCKER_TLS
+  unset DOCKER_TLS_VERIFY
+  unset DOCKER_CERT_PATH
+  unset DOCKER_CLI_PLUGIN_EXTRA_DIRS
+  unset BUILDKIT_HOST
+  export DOCKER_CONFIG="${REAL_HOME}/.docker"
+}
+
+CONTROL_PLANE_SHADOW_ROOT=""
+SHADOW_MOUNTS=()
+SHADOW_DESTS=""
+
+cleanup() {
+  if [[ "${PROFILE_RUNNING}" -eq 1 ]] &&
+    [[ -n "${COLIMA_PROFILE}" ]] &&
+    [[ -n "${HOST_COLIMA_BIN}" ]]; then
+    if [[ "${PROFILE_VALIDATED}" -eq 0 ]] && [[ "${PROFILE_PREEXISTED}" -eq 0 ]]; then
+      run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
+    else
+      run_host_colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if [[ -n "${CONTROL_PLANE_SHADOW_ROOT}" ]] && [[ -d "${CONTROL_PLANE_SHADOW_ROOT}" ]]; then
+    chmod -R u+w "${CONTROL_PLANE_SHADOW_ROOT}" 2>/dev/null || true
+    rm -rf "${CONTROL_PLANE_SHADOW_ROOT}"
+  fi
+}
+
+trap cleanup EXIT
+
 profile_marker_path() {
-  printf '%s/workcell.managed\n' "$(profile_dir "$1")"
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/workcell.managed\n' "$(profile_dir "${profile}")"
+}
+
+profile_audit_log_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/workcell.audit.log\n' "$(profile_dir "${profile}")"
 }
 
 read_profile_marker_workspace() {
@@ -43,30 +175,117 @@ read_profile_marker_workspace() {
   tr -d '\n' <"${marker_path}"
 }
 
+append_audit_record() {
+  local profile="$1"
+  local execution_path="$2"
+  local audit_path
+  local timestamp
+
+  audit_path="$(profile_audit_log_path "${profile}")"
+  mkdir -p "$(dirname "${audit_path}")"
+  umask 077
+  touch "${audit_path}"
+  chmod 0600 "${audit_path}" 2>/dev/null || true
+  timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  printf 'timestamp=%s profile=%q mode=%q agent=%q ui=%q network_policy=%q execution_path=%q workspace=%q endpoints=%q bootstrap_applied=%q bootstrap_endpoints=%q\n' \
+    "${timestamp}" \
+    "${profile}" \
+    "${MODE}" \
+    "${AGENT}" \
+    "${UI}" \
+    "${NETWORK_POLICY}" \
+    "${execution_path}" \
+    "${WORKSPACE}" \
+    "${ALLOW_ENDPOINTS}" \
+    "${BOOTSTRAP_APPLIED}" \
+    "$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" >>"${audit_path}"
+}
+
 workspace_has_markers() {
   local path="$1"
-  [[ -d "${path}/.git" ]] ||
-    [[ -f "${path}/AGENTS.md" ]] ||
+  [[ -n "${HOST_GIT_BIN}" ]] || return 1
+  "${HOST_GIT_BIN}" -C "${path}" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+workspace_has_agent_markers() {
+  local path="$1"
+  [[ -f "${path}/AGENTS.md" ]] ||
     [[ -f "${path}/CLAUDE.md" ]] ||
     [[ -f "${path}/GEMINI.md" ]]
 }
 
+workspace_gitdir_is_self_contained() {
+  local path="$1"
+  local git_dir
+  local git_top_level
+
+  [[ -n "${HOST_GIT_BIN}" ]] || return 1
+  git_dir="$("${HOST_GIT_BIN}" -C "${path}" rev-parse --absolute-git-dir 2>/dev/null || true)"
+  [[ -n "${git_dir}" ]] || return 1
+  git_top_level="$("${HOST_GIT_BIN}" -C "${path}" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ "${git_top_level}" == "${path}" ]] || return 1
+
+  case "${git_dir}" in
+    "${path}/.git" | "${path}/.git/"*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 workspace_is_sensitive() {
   local path="$1"
+  local path_lower
+  local real_home_lower
+  local pattern
   local sensitive_roots=(
-    "${HOME}/.ssh"
-    "${HOME}/.aws"
-    "${HOME}/.azure"
-    "${HOME}/.config"
-    "${HOME}/.gnupg"
-    "${HOME}/.kube"
-    "${HOME}/.config/gh"
-    "${HOME}/Library/Keychains"
+    "${REAL_HOME}/.ssh"
+    "${REAL_HOME}/.aws"
+    "${REAL_HOME}/.azure"
+    "${REAL_HOME}/.config"
+    "${REAL_HOME}/.docker"
+    "${REAL_HOME}/.npm"
+    "${REAL_HOME}/.gem"
+    "${REAL_HOME}/.gnupg"
+    "${REAL_HOME}/.kube"
+    "${REAL_HOME}/.config/gh"
+    "${REAL_HOME}/Library/Keychains"
+    "${REAL_HOME}/Library/Application Support"
+    "${REAL_HOME}/Library/Containers"
+    "${REAL_HOME}/Library/Group Containers"
+  )
+  real_home_lower="$(lower_ascii "${REAL_HOME}")"
+  local sensitive_patterns=(
+    "${real_home_lower}/library/application support/google/chrome*"
+    "${real_home_lower}/library/application support/google/chrome beta*"
+    "${real_home_lower}/library/application support/chromium*"
+    "${real_home_lower}/library/application support/bravesoftware/brave-browser*"
+    "${real_home_lower}/library/application support/microsoft edge*"
+    "${real_home_lower}/library/application support/firefox*"
+    "${real_home_lower}/library/application support/arc/user data*"
+    "${real_home_lower}/library/application support/com.operasoftware.opera*"
+    "${real_home_lower}/library/safari*"
+    "${real_home_lower}/library/containers/com.apple.safari*"
+    "${real_home_lower}/library/application support/*metamask*"
+    "${real_home_lower}/library/application support/*phantom*"
+    "${real_home_lower}/library/application support/*solflare*"
+    "${real_home_lower}/library/application support/*electrum*"
+    "${real_home_lower}/library/application support/*exodus*"
   )
   local root
 
+  path_lower="$(lower_ascii "${path}")"
+
   for root in "${sensitive_roots[@]}"; do
     if [[ "${path}" == "${root}" ]] || [[ "${path}" == "${root}/"* ]]; then
+      return 0
+    fi
+  done
+
+  for pattern in "${sensitive_patterns[@]}"; do
+    # shellcheck disable=SC2053
+    if [[ "${path_lower}" == ${pattern} ]]; then
       return 0
     fi
   done
@@ -78,7 +297,7 @@ validate_workspace() {
   local path="$1"
   local allow_nongit="$2"
 
-  if [[ "${path}" == "/" ]] || [[ "${path}" == "${HOME}" ]]; then
+  if [[ "${path}" == "/" ]] || [[ "${path}" == "${REAL_HOME}" ]]; then
     echo "Refusing broad workspace mount: ${path}" >&2
     exit 2
   fi
@@ -88,11 +307,92 @@ validate_workspace() {
     exit 2
   fi
 
-  if [[ "${allow_nongit}" -eq 0 ]] && ! workspace_has_markers "${path}"; then
-    echo "Workspace lacks repo or agent markers: ${path}" >&2
-    echo "Use --allow-nongit-workspace only when you intentionally want that." >&2
+  if workspace_has_markers "${path}"; then
+    if ! workspace_gitdir_is_self_contained "${path}"; then
+      echo "Refusing git workspace with admin state outside the mounted workspace: ${path}" >&2
+      echo "Use a standard checkout on the safe path; linked worktrees require breakglass or a different clone." >&2
+      exit 2
+    fi
+    return
+  fi
+
+  if [[ "${allow_nongit}" -eq 1 ]] && workspace_has_agent_markers "${path}"; then
+    return
+  fi
+
+  if [[ "${allow_nongit}" -eq 0 ]]; then
+    echo "Workspace is not a git worktree: ${path}" >&2
+    echo "Use --allow-nongit-workspace only when you intentionally want a marker-based workspace." >&2
+  else
+    echo "Non-git workspace lacks an explicit agent marker file: ${path}" >&2
+    echo "Create AGENTS.md, CLAUDE.md, or GEMINI.md before using --allow-nongit-workspace." >&2
+  fi
+  exit 2
+}
+
+run_clean_host_command() {
+  local home="${REAL_HOME:-/}"
+
+  env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME="${home}" \
+    LC_ALL=C \
+    LANG=C \
+    "$@"
+}
+
+validate_mode_requirements() {
+  local mode="$1"
+  local ack_breakglass="$2"
+  local allow_arbitrary_command="$3"
+  local ack_arbitrary_command="$4"
+  local rebuild="$5"
+
+  if [[ "${mode}" == "breakglass" ]] && [[ "${ack_breakglass}" -eq 0 ]]; then
+    echo "breakglass mode requires --ack-breakglass." >&2
+    echo "Use it only when you intentionally want to disable the normal Workcell policy boundary." >&2
     exit 2
   fi
+
+  if [[ "${allow_arbitrary_command}" -eq 1 ]] && [[ "${ack_arbitrary_command}" -eq 0 ]]; then
+    echo "arbitrary command mode requires --ack-arbitrary-command." >&2
+    echo "Use it only for lower-assurance boundary debugging when you intentionally want to bypass provider command mediation." >&2
+    exit 2
+  fi
+
+  if [[ "${mode}" == "strict" ]] && [[ "${rebuild}" -eq 1 ]]; then
+    echo "strict mode does not rebuild or cold-bootstrap the runtime image." >&2
+    echo "Seed or refresh the reviewed image with --mode build, then return to strict." >&2
+    exit 2
+  fi
+}
+
+validate_mode_name() {
+  case "$1" in
+    strict | build | breakglass) ;;
+    *)
+      echo "Unsupported mode: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+profile_env_path() {
+  case "$1" in
+    strict)
+      printf '%s/runtime/profiles/strict.env\n' "${ROOT_DIR}"
+      ;;
+    build)
+      printf '%s/runtime/profiles/build.env\n' "${ROOT_DIR}"
+      ;;
+    breakglass)
+      printf '%s/runtime/profiles/breakglass.env\n' "${ROOT_DIR}"
+      ;;
+    *)
+      echo "Unsupported mode: $1" >&2
+      exit 2
+      ;;
+  esac
 }
 
 derive_profile_name() {
@@ -100,15 +400,22 @@ derive_profile_name() {
   local slug hash
   slug="$(slugify "$(basename "${workspace}")" | cut -c1-10)"
   [[ -n "${slug}" ]] || slug="workspace"
-  hash="$(printf '%s' "${workspace}" | shasum -a 256 | cut -c1-8)"
+  hash="$(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${workspace}" <<'PY'
+import hashlib
+import sys
+
+print(hashlib.sha256(sys.argv[1].encode("utf-8")).hexdigest()[:8])
+PY
+  )"
   printf 'workcell-%s-%s\n' "${slug}" "${hash}"
 }
 
 validate_colima_mounts() {
   local profile="$1"
   local workspace="$2"
-  local config_path="${HOME}/.colima/${profile}/colima.yaml"
-  local lima_path="${HOME}/.colima/_lima/colima-${profile}/lima.yaml"
+  local config_path="${COLIMA_STATE_ROOT}/${profile}/colima.yaml"
+  local lima_path="${COLIMA_STATE_ROOT}/_lima/colima-${profile}/lima.yaml"
 
   [[ -f "${config_path}" ]] || {
     echo "Missing Colima config for profile ${profile}: ${config_path}" >&2
@@ -119,13 +426,20 @@ validate_colima_mounts() {
     exit 2
   }
 
-  ruby -ryaml -e '
-    config = YAML.load_file(ARGV[0]) || {}
-    lima = YAML.load_file(ARGV[1]) || {}
+  run_clean_host_command "${HOST_RUBY_BIN}" -rpsych -rpathname -e '
+    config = Psych.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
+    lima = Psych.safe_load(File.read(ARGV[1]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
     expected = ARGV[2].sub(%r{/$}, "")
     profile = ARGV[3]
     home = File.expand_path(ENV.fetch("HOME"))
-    cache_root = File.join(home, "Library", "Caches", "colima")
+
+    def canonicalize(path)
+      expanded = File.expand_path(path)
+      Pathname.new(expanded).exist? ? Pathname.new(expanded).realpath.to_s : Pathname.new(expanded).cleanpath.to_s
+    end
+
+    expected = canonicalize(expected)
+    cache_root = canonicalize(File.join(home, "Library", "Caches", "colima"))
     lima_mounts = lima["mounts"] || []
     writable_mounts = lima_mounts.select { |mount| mount["writable"] == true }
 
@@ -134,15 +448,20 @@ validate_colima_mounts() {
       exit 2
     end
 
-    unless writable_mounts.length == 1 && writable_mounts.first["location"].sub(%r{/$}, "") == expected
+    unless writable_mounts.length == 1 && canonicalize(writable_mounts.first["location"].sub(%r{/$}, "")) == expected
       warn "Colima profile #{profile} must mount only #{expected} as writable."
       exit 2
     end
 
     bad_mount = lima_mounts.find do |mount|
-      location = mount["location"].sub(%r{/$}, "")
+      location = canonicalize(mount["location"].sub(%r{/$}, ""))
+      mount_point = mount["mountPoint"] || mount["mount_point"]
       writable = mount["writable"] == true
-      next false if !writable && location.start_with?(cache_root)
+      if mount_point
+        mount_point = canonicalize(mount_point.sub(%r{/$}, ""))
+        next true unless mount_point == location
+      end
+      next false if !writable && (location == cache_root || location.start_with?(cache_root + "/"))
 
       location == "~" || location == home || (writable && location != expected) || (!writable && location != expected)
     end
@@ -154,12 +473,43 @@ validate_colima_mounts() {
   ' "${config_path}" "${lima_path}" "${workspace}" "${profile}"
 }
 
+validate_colima_profile_config() {
+  local profile="$1"
+  local workspace="$2"
+  local config_path="${COLIMA_STATE_ROOT}/${profile}/colima.yaml"
+
+  [[ -f "${config_path}" ]] || {
+    echo "Missing Colima config for profile ${profile}: ${config_path}" >&2
+    exit 2
+  }
+
+  run_clean_host_command "${HOST_RUBY_BIN}" -rpsych -e '
+    config = Psych.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
+    vm_type = config["vmType"] || config[:vmType] || config["vm_type"] || config[:vm_type]
+    mount_type = config["mountType"] || config[:mountType] || config["mount_type"] || config[:mount_type]
+    runtime = config["runtime"] || config[:runtime]
+    runtime_name =
+      case runtime
+      when Hash
+        runtime["name"] || runtime[:name]
+      else
+        runtime
+      end
+
+    abort("Unexpected Colima vmType for managed profile: #{vm_type.inspect}") unless vm_type == "vz"
+    abort("Unexpected Colima mountType for managed profile: #{mount_type.inspect}") unless mount_type == "virtiofs"
+    abort("Unexpected Colima runtime for managed profile: #{runtime_name.inspect}") unless runtime_name == "docker"
+  ' "${config_path}"
+
+  validate_colima_mounts "${profile}" "${workspace}"
+}
+
 validate_colima_profile() {
   local profile="$1"
   local workspace="$2"
   local status
 
-  status="$(colima status --profile "${profile}" 2>&1)"
+  status="$(run_host_colima status --profile "${profile}" 2>&1)"
   echo "${status}" | grep -q "Virtualization.Framework" || {
     echo "Colima profile ${profile} is not using Virtualization.Framework." >&2
     exit 2
@@ -176,11 +526,82 @@ validate_colima_profile() {
   validate_colima_mounts "${profile}" "${workspace}"
 }
 
-require_tool() {
-  command -v "$1" >/dev/null 2>&1 || {
-    echo "Missing required tool: $1" >&2
-    exit 1
-  }
+is_trusted_host_tool_path() {
+  local candidate="$1"
+  local trusted_prefixes=(
+    /usr/bin
+    /bin
+    /usr/sbin
+    /sbin
+    /usr/local/bin
+    /usr/local/Cellar
+    /opt/homebrew/bin
+    /opt/homebrew/Cellar
+    /Applications/Docker.app/Contents/Resources/bin
+  )
+  local prefix
+
+  [[ "${candidate}" = /* ]] || return 1
+
+  case "${candidate}" in
+    "${ROOT_DIR}"/* | "${WORKSPACE}"/*)
+      return 1
+      ;;
+  esac
+
+  for prefix in "${trusted_prefixes[@]}"; do
+    case "${candidate}" in
+      "${prefix}" | "${prefix}"/*)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+canonicalize_host_tool_path() {
+  local candidate="$1"
+  if [[ -z "${HOST_PYTHON3_BIN}" ]]; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${candidate}" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(sys.argv[1]))
+PY
+}
+
+resolve_host_tool() {
+  local name="$1"
+  shift
+  local candidate
+  local canonical_candidate
+
+  for candidate in "$@"; do
+    canonical_candidate="$(canonicalize_host_tool_path "${candidate}")"
+    if [[ -x "${candidate}" ]] &&
+      is_trusted_host_tool_path "${candidate}" &&
+      is_trusted_host_tool_path "${canonical_candidate}"; then
+      printf '%s\n' "${canonical_candidate}"
+      return 0
+    fi
+  done
+
+  candidate="$(type -P "${name}" || true)"
+  canonical_candidate="$(canonicalize_host_tool_path "${candidate}")"
+  if [[ -n "${candidate}" ]] &&
+    is_trusted_host_tool_path "${candidate}" &&
+    is_trusted_host_tool_path "${canonical_candidate}"; then
+    printf '%s\n' "${canonical_candidate}"
+    return 0
+  fi
+
+  echo "Missing trusted host tool: ${name}" >&2
+  exit 1
 }
 
 provider_endpoints() {
@@ -200,8 +621,196 @@ provider_endpoints() {
   esac
 }
 
+git_alias_value_is_blocked() {
+  local alias_body="$1"
+  local alias_body_lower normalized
+
+  alias_body_lower="$(lower_ascii "${alias_body}")"
+  normalized="$(printf '%s' "${alias_body_lower}" | tr "\t\r\n'\"" '     ')"
+
+  if [[ "${alias_body_lower}" == '!'* ]]; then
+    return 0
+  fi
+
+  if [[ "${alias_body_lower}" == *"--no-verify"* ]] ||
+    [[ "${alias_body_lower}" == *"--exec-path"* ]] ||
+    [[ "${alias_body_lower}" == *"--git-dir"* ]] ||
+    [[ "${alias_body_lower}" == *"--work-tree"* ]] ||
+    [[ "${alias_body_lower}" == *"git_exec_path="* ]] ||
+    [[ "${alias_body_lower}" == *"git_dir="* ]] ||
+    [[ "${alias_body_lower}" == *"git_work_tree="* ]] ||
+    [[ "${alias_body_lower}" == *"git_common_dir="* ]] ||
+    [[ "${alias_body_lower}" == *"core.hookspath"* ]] ||
+    [[ "${alias_body_lower}" == *"include.path"* ]] ||
+    [[ "${alias_body_lower}" == *"includeif."* ]]; then
+    return 0
+  fi
+
+  if echo "${normalized}" | grep -Eq '(^|[[:space:]])commit([[:space:]].*)?[[:space:]]-n([[:space:]]|$)'; then
+    return 0
+  fi
+
+  return 1
+}
+
+sanitize_shadowed_git_config() {
+  local config_path="$1"
+  local key value
+
+  [[ -f "${config_path}" ]] || return 0
+
+  while IFS= read -r key; do
+    case "$(lower_ascii "${key}")" in
+      core.hookspath | core.worktree | include.path | includeif.*.path)
+        "${HOST_GIT_BIN}" config --file "${config_path}" --unset-all "${key}" >/dev/null 2>&1 || true
+        ;;
+      alias.*)
+        while IFS= read -r value; do
+          if git_alias_value_is_blocked "${value}"; then
+            "${HOST_GIT_BIN}" config --file "${config_path}" --unset-all "${key}" >/dev/null 2>&1 || true
+            break
+          fi
+        done < <("${HOST_GIT_BIN}" config --file "${config_path}" --get-all "${key}" 2>/dev/null || true)
+        ;;
+    esac
+  done < <("${HOST_GIT_BIN}" config --file "${config_path}" --name-only --get-regexp '.*' 2>/dev/null || true)
+}
+
+lock_tree_readonly() {
+  local path="$1"
+
+  [[ -d "${path}" ]] || return 0
+
+  find "${path}" -type d -exec chmod 0555 {} +
+  find "${path}" -type f -exec chmod 0444 {} +
+}
+
+shadow_dest_is_registered() {
+  local destination="$1"
+  case "${SHADOW_DESTS}" in
+    *"|${destination}|"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+register_shadow_mount() {
+  local source="$1"
+  local destination="$2"
+
+  if shadow_dest_is_registered "${destination}"; then
+    return 0
+  fi
+
+  SHADOW_MOUNTS+=(-v "${source}:${destination}:ro")
+  SHADOW_DESTS="${SHADOW_DESTS}|${destination}|"
+}
+
+add_shadow_file_mount() {
+  local relative_path="$1"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/files/${relative_path}"
+  local destination="/workspace/${relative_path}"
+  local placeholder_message="# Workcell masks workspace control files inside the boundary."
+
+  mkdir -p "$(dirname "${source}")"
+  printf '%s\n' "${placeholder_message}" >"${source}"
+  chmod 0444 "${source}"
+  register_shadow_mount "${source}" "${destination}"
+}
+
+add_shadow_dir_mount() {
+  local relative_path="$1"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/dirs/${relative_path}"
+  local destination="/workspace/${relative_path}"
+
+  mkdir -p "${source}"
+  chmod 0555 "${source}"
+  register_shadow_mount "${source}" "${destination}"
+}
+
+add_shadow_git_hooks_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/git/${relative_path}"
+  local destination="/workspace/${relative_path}"
+
+  mkdir -p "${source}"
+  if [[ -d "${workspace}/${relative_path}" ]]; then
+    cp -a "${workspace}/${relative_path}/." "${source}/"
+  fi
+  lock_tree_readonly "${source}"
+  register_shadow_mount "${source}" "${destination}"
+}
+
+add_shadow_git_config_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/git/${relative_path}"
+  local destination="/workspace/${relative_path}"
+
+  mkdir -p "$(dirname "${source}")"
+  if [[ -f "${workspace}/${relative_path}" ]]; then
+    cp "${workspace}/${relative_path}" "${source}"
+    sanitize_shadowed_git_config "${source}"
+  else
+    : >"${source}"
+  fi
+  chmod 0444 "${source}"
+  register_shadow_mount "${source}" "${destination}"
+}
+
+prepare_workspace_control_plane_shadow() {
+  local workspace="$1"
+  local mode="$2"
+  local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
+  local rel path
+
+  SHADOW_MOUNTS=()
+  SHADOW_DESTS=""
+  [[ "${mode}" == "breakglass" ]] && return 0
+
+  mkdir -p "${shadow_parent}"
+  CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
+
+  while IFS= read -r -d '' path; do
+    rel="${path#"${workspace}/"}"
+    if [[ -d "${path}" ]]; then
+      add_shadow_git_hooks_mount "${workspace}" "${rel}"
+    else
+      add_shadow_git_config_mount "${workspace}" "${rel}"
+    fi
+  done < <(
+    find "${workspace}" \
+      \( \( -type d -o -type l \) \( -path '*/.git/hooks' -o -path '*/.git/modules/*/hooks' \) \) -print0 -o \
+      \( \( -type f -o -type l \) \( -path '*/.git/config' -o -path '*/.git/config.worktree' -o -path '*/.git/modules/*/config' -o -path '*/.git/modules/*/config.worktree' \) \) -print0
+  )
+
+  while IFS= read -r -d '' path; do
+    rel="${path#"${workspace}/"}"
+    add_shadow_dir_mount "${rel}"
+  done < <(
+    find "${workspace}" \
+      \( \( -type d -o -type l \) \( -path '*/.git/worktrees' -o -path '*/.git/modules/*/worktrees' \) \) -print0
+  )
+
+  while IFS= read -r -d '' path; do
+    rel="${path#"${workspace}/"}"
+    if [[ -d "${path}" ]]; then
+      add_shadow_dir_mount "${rel}"
+    else
+      add_shadow_file_mount "${rel}"
+    fi
+  done < <(
+    find "${workspace}" \
+      \( -name .git -type d -prune \) -o \
+      \( \( -type f -o -type l \) \( -name AGENTS.md -o -name CLAUDE.md -o -name GEMINI.md -o -name .mcp.json \) \) -print0 -o \
+      \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+  )
+}
+
 bootstrap_endpoints() {
-  echo "auth.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 docker.io:443 deb.debian.org:80 deb.debian.org:443 security.debian.org:80 security.debian.org:443 github.com:443 api.github.com:443 objects.githubusercontent.com:443 raw.githubusercontent.com:443 registry.npmjs.org:443 nodejs.org:443"
+  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 snapshot.debian.org:80 snapshot.debian.org:443"
 }
 
 AGENT="codex"
@@ -212,6 +821,9 @@ COLIMA_PROFILE=""
 REBUILD=0
 DRY_RUN=0
 ALLOW_NONGIT_WORKSPACE=0
+ALLOW_ARBITRARY_COMMAND=0
+ACK_BREAKGLASS=0
+ACK_ARBITRARY_COMMAND=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -237,6 +849,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --allow-nongit-workspace)
       ALLOW_NONGIT_WORKSPACE=1
+      shift
+      ;;
+    --allow-arbitrary-command)
+      ALLOW_ARBITRARY_COMMAND=1
+      shift
+      ;;
+    --ack-breakglass)
+      ACK_BREAKGLASS=1
+      shift
+      ;;
+    --ack-arbitrary-command)
+      ACK_ARBITRARY_COMMAND=1
       shift
       ;;
     --rebuild)
@@ -281,7 +905,8 @@ case "${UI}" in
     ;;
 esac
 
-PROFILE_ENV="${ROOT_DIR}/runtime/profiles/${MODE}.env"
+validate_mode_name "${MODE}"
+PROFILE_ENV="$(profile_env_path "${MODE}")"
 [[ -f "${PROFILE_ENV}" ]] || {
   echo "Missing runtime profile: ${PROFILE_ENV}" >&2
   exit 1
@@ -289,11 +914,15 @@ PROFILE_ENV="${ROOT_DIR}/runtime/profiles/${MODE}.env"
 
 # shellcheck source=/dev/null
 source "${PROFILE_ENV}"
+HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
+HOST_DOCKER_BIN="docker"
 validate_workspace "${WORKSPACE}" "${ALLOW_NONGIT_WORKSPACE}"
+validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${REBUILD}"
 
 if [[ -z "${COLIMA_PROFILE}" ]]; then
   COLIMA_PROFILE="$(derive_profile_name "${WORKSPACE}")"
 fi
+validate_colima_profile_name "${COLIMA_PROFILE}"
 
 IMAGE_TAG="workcell:local"
 PROFILE_DIR="$(profile_dir "${COLIMA_PROFILE}")"
@@ -301,8 +930,16 @@ PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
 PROFILE_PREEXISTED=0
 PROFILE_MARKER_WORKSPACE=""
 BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
+EGRESS_HELPER="${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
+SOURCE_DATE_EPOCH="$("${HOST_GIT_BIN}" -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')"
+NEEDS_REBUILD=0
+
+if [[ -n "${WORKCELL_EGRESS_HELPER:-}" ]]; then
+  echo "WORKCELL_EGRESS_HELPER is reserved for the Workcell test harness." >&2
+  exit 2
+fi
 
 if [[ -d "${PROFILE_DIR}" ]]; then
   PROFILE_PREEXISTED=1
@@ -331,11 +968,11 @@ if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" !=
 fi
 
 ALLOW_ENDPOINTS="$(provider_endpoints "${AGENT}") ${EXTRA_ENDPOINTS}"
+prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
 
 CONTAINER_NAME="workcell-$(slugify "${AGENT}-${MODE}-$(basename "${WORKSPACE}")")"
-
-DOCKER_RUN=(
-  docker
+DOCKER_RUN_BASE=(
+  "${HOST_DOCKER_BIN}"
   run
   --rm
   --init
@@ -346,46 +983,83 @@ DOCKER_RUN=(
   --user "${HOST_UID}:${HOST_GID}"
   --pids-limit 1024
   --memory "${CONTAINER_MEMORY}"
-  --tmpfs "/tmp:exec,nosuid,nodev,size=1g,mode=1777"
+  --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777"
   --tmpfs "/run:nosuid,nodev,size=64m,mode=755"
   --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777"
   --workdir /workspace
   -e AGENT_NAME="${AGENT}"
   -e AGENT_UI="${UI}"
   -e CODEX_PROFILE="${MODE}"
+  -e WORKCELL_MODE="${MODE}"
   -e HOME=/state/agent-home
   -e CODEX_HOME=/state/agent-home/.codex
   -e WORKCELL_RUNTIME=1
   -e USER=agent
   -e LOGNAME=agent
+  -e TMPDIR=/state/tmp
   -e WORKSPACE=/workspace
   -v "${WORKSPACE}:/workspace"
-  "${IMAGE_TAG}"
+  "${SHADOW_MOUNTS[@]}"
 )
 
-if [[ -t 0 ]] && [[ -t 1 ]]; then
-  DOCKER_RUN=(docker run --rm --init -it "${DOCKER_RUN[@]:4}")
+EXECUTION_PATH="managed-tier1"
+if [[ "${MODE}" == "breakglass" ]]; then
+  EXECUTION_PATH="lower-assurance-breakglass"
 fi
 
-if [[ $# -gt 0 ]]; then
-  DOCKER_RUN+=("$@")
+if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
+  if [[ $# -eq 0 ]]; then
+    echo "arbitrary command mode requires a command after --." >&2
+    exit 2
+  fi
+  EXECUTION_PATH="lower-assurance-debug-command"
+  DOCKER_RUN=(
+    "${DOCKER_RUN_BASE[@]}"
+    --entrypoint "$1"
+    "${IMAGE_TAG}"
+  )
+  shift
+  if [[ $# -gt 0 ]]; then
+    DOCKER_RUN+=("$@")
+  fi
+else
+  DOCKER_RUN=(
+    "${DOCKER_RUN_BASE[@]}"
+    "${IMAGE_TAG}"
+  )
+  if [[ $# -gt 0 ]]; then
+    DOCKER_RUN+=("$@")
+  fi
+fi
+
+if [[ -t 0 ]] && [[ -t 1 ]]; then
+  DOCKER_RUN=("${HOST_DOCKER_BIN}" run --rm --init -it "${DOCKER_RUN[@]:4}")
 fi
 
 printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
   "${COLIMA_PROFILE}" "${MODE}" "${AGENT}" "${UI}" "${WORKSPACE}" >&2
+printf 'workspace_control_plane=%s\n' "$([[ "${MODE}" == "breakglass" ]] && printf 'unmasked' || printf 'masked')" >&2
+printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
+printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
-  printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
   printf '%q ' "${DOCKER_RUN[@]}"
   printf '\n'
   exit 0
 fi
 
-require_tool colima
-require_tool docker
-require_tool ruby
+HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
+HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+HOST_RUBY_BIN="$(resolve_host_tool ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby)"
+DOCKER_RUN[0]="${HOST_DOCKER_BIN}"
+sanitize_host_docker_env
+export COLIMA_HOME="${COLIMA_STATE_ROOT}"
 
-colima start \
+if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
+  validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}"
+fi
+
+run_host_colima start \
   --profile "${COLIMA_PROFILE}" \
   --vm-type vz \
   --mount "${WORKSPACE}:w" \
@@ -394,30 +1068,63 @@ colima start \
   --cpu "${COLIMA_CPU}" \
   --memory "${COLIMA_MEMORY}" \
   --disk "${COLIMA_DISK}" >/dev/null
+PROFILE_RUNNING=1
 
 validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}"
 mkdir -p "${PROFILE_DIR}"
 printf '%s\n' "${WORKSPACE}" >"${PROFILE_MARKER}"
+PROFILE_VALIDATED=1
 
-export DOCKER_HOST="unix://${HOME}/.colima/${COLIMA_PROFILE}/docker.sock"
+export DOCKER_HOST="unix://${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/docker.sock"
 
-if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
-  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
-else
-  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" clear "${COLIMA_PROFILE}"
+restore_runtime_egress() {
+  if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+    "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
+  else
+    "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
+  fi
+}
+
+if [[ "${REBUILD}" -eq 1 ]] || ! "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+  NEEDS_REBUILD=1
 fi
 
-if [[ "${REBUILD}" -eq 1 ]] || ! docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
-  DOCKER_BUILDKIT=0 docker build \
+if [[ "${MODE}" == "strict" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
+  restore_runtime_egress
+  echo "strict mode requires a prebuilt reviewed runtime image." >&2
+  printf 'Run workcell --mode build --agent %s --workspace %q -- <provider args> once to seed the image, then rerun in strict.\n' \
+    "${AGENT}" \
+    "${WORKSPACE}" >&2
+  exit 2
+fi
+
+if [[ "${NETWORK_POLICY}" == "allowlist" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
+  BOOTSTRAP_APPLIED=1
+  printf 'bootstrap_policy=allowlist endpoints=%s\n' "${BOOTSTRAP_ENDPOINTS}" >&2
+  "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
+elif [[ "${NETWORK_POLICY}" != "allowlist" ]]; then
+  "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
+fi
+
+if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
+  BUILD_SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
+  BUILD_STATUS=0
+  SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" "${HOST_DOCKER_BIN}" buildx build \
+    --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
+    --build-arg "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH}" \
+    --provenance=false \
+    --sbom=false \
+    --load \
     -t "${IMAGE_TAG}" \
     -f "${ROOT_DIR}/runtime/container/Dockerfile" \
-    "${ROOT_DIR}" >/dev/null
+    "${ROOT_DIR}" >/dev/null || BUILD_STATUS=$?
+  if [[ "${BUILD_STATUS}" -ne 0 ]]; then
+    restore_runtime_egress
+    exit "${BUILD_STATUS}"
+  fi
 fi
 
-if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
-  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
-else
-  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" clear "${COLIMA_PROFILE}"
-fi
+restore_runtime_egress
+append_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 
-exec "${DOCKER_RUN[@]}"
+"${DOCKER_RUN[@]}"

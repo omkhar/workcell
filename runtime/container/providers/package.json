@@ -1,0 +1,11 @@
+{
+  "name": "workcell-provider-clis",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned provider CLI dependencies for Workcell runtime builds",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.81",
+    "@google/gemini-cli": "0.34.0"
+  }
+}

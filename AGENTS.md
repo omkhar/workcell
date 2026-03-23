@@ -1,7 +1,8 @@
 # Repository Working Agreement
 
-This repository exists to make coding agents safer to run locally by combining
-the Workcell runtime boundary with provider-specific adapters.
+This repository exists to provide a bounded local runtime with explicit
+isolation and policy controls for coding agents by combining the Workcell
+runtime boundary with provider-specific adapters.
 
 ## Priorities
 
@@ -28,6 +29,13 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   `ssh-agent`, GPG agent sockets, launchd sockets, host `~/.codex`, or git
   credential-helper state.
 - Keep `breakglass` paths explicit, narrow, and separately documented.
+- Require explicit operator acknowledgement for `breakglass` or equivalent
+  higher-trust paths.
+- Treat non-git workspaces and arbitrary container commands as opt-in debugging
+  paths, not the default developer flow.
+- Mask repo-local provider control files and mutable git hook/config paths on
+  the safe path so workspace content cannot silently take over the control
+  plane.
 - Ship invariant checks with new controls whenever practical.
 
 ## Change discipline

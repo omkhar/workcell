@@ -6,9 +6,18 @@ workcell \- bounded runtime launcher for coding agents
 [\fIoptions\fR] [\fB--\fR \fIprovider-args\fR ...]
 .SH DESCRIPTION
 .B workcell
-starts the selected coding agent inside the Workcell runtime boundary.
+starts the selected coding agent inside a bounded local runtime with explicit
+isolation and policy controls.
 The Tier 1 path is a dedicated Colima virtual machine profile on macOS plus a
 hardened container inside that VM.
+The managed runtime mounts
+.I /tmp
+as
+.B noexec
+and uses
+.I /state/tmp
+as the exec-capable temporary directory via
+.BR TMPDIR .
 .SH OPTIONS
 .TP
 .B --agent codex|claude|gemini
@@ -24,18 +33,39 @@ is currently implemented as a preserved-boundary path.
 Select the runtime profile. The default is
 .BR strict .
 .TP
+.B --ack-breakglass
+Required with
+.B --mode breakglass
+to make the higher-trust path explicit.
+.TP
+.B --ack-arbitrary-command
+Required with
+.B --allow-arbitrary-command
+to make lower-assurance boundary-debugging command passthrough explicit.
+.TP
 .B --workspace PATH
 Select the workspace to mount inside the runtime. The default is the current
 directory.
 .TP
 .B --allow-nongit-workspace
-Allow a workspace without repository or agent marker files.
+Allow a non-git workspace that contains an explicit agent marker file.
+.TP
+.B --allow-arbitrary-command
+Launch the runtime image with a direct container entrypoint after
+.BR -- .
+This is intended only for lower-assurance boundary debugging and is recorded in
+the host audit log as a downgraded path.
 .TP
 .B --colima-profile NAME
 Override the derived Colima profile name.
 .TP
 .B --rebuild
 Rebuild the runtime image before launch.
+This is rejected on
+.BR strict ;
+seed or refresh the reviewed image through
+.BR build
+first.
 .TP
 .B --dry-run
 Print the selected runtime command and exit.
@@ -46,16 +76,38 @@ Show usage information.
 .TP
 .B strict
 Allowlisted network access only, no host credential or control socket
-passthrough, and the provider's bounded execution mode.
+passthrough, and provider-native bounded or constrained mode only where the
+selected provider actually offers one. On this profile, direct native ELF
+execution from mutable
+.I /workspace
+and
+.I /state
+paths is blocked, and mutable shebang scripts cannot target protected real
+runtimes directly.
+This profile requires a prebuilt reviewed runtime image and does not perform
+cold builds or rebuilds.
 .TP
 .B build
 The same mount and secret restrictions as
 .BR strict ,
 with broader network access for dependency and build traffic.
+Reviewed runtime-image creation and rebuilds happen here.
 .TP
 .B breakglass
 Still inside the Workcell VM plus container boundary, but with unrestricted
-network access and the provider's highest-trust execution mode.
+network access. The managed entrypoint does not auto-inject unsafe provider
+flags; any adapter-specific high-trust launch is a lower-assurance direct
+provider path. This profile requires
+.BR --ack-breakglass .
+.SH NODE SURFACE
+The public
+.B node
+surface exposed by the managed runtime is intended for workspace JavaScript, not
+for launching provider entrypoints, repackaged workspace copies of the shipped
+provider package trees, or loading native addons. Workcell blocks those paths
+on the safe profiles so public
+.B node
+execution cannot retake unmediated native code execution.
 .SH FILES
 .TP
 .I ~/.local/bin/workcell
@@ -65,6 +117,9 @@ Installed launcher path used by
 .I ~/.local/share/man/man1/workcell.1
 Installed man page path used by
 .BR scripts/install.sh .
+.TP
+.I ~/.colima/PROFILE/workcell.audit.log
+Durable host-side audit log written by the managed launcher for real runs.
 .SH EXIT STATUS
 The command exits non-zero on validation failures, unsupported modes, missing
 dependencies, or runtime launch errors.

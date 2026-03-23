@@ -1,15 +1,28 @@
-FROM node:22-trixie-slim
+ARG NODE_BASE_IMAGE=node:22-trixie-slim@sha256:285a78d9fdb7cd2e4a03639cc7bbf609755ce8c0aa4e3b00086211e3e86a7038
+ARG SOURCE_DATE_EPOCH=0
+ARG DEBIAN_SNAPSHOT=20260316T000000Z
 
-ARG CODEX_VERSION=0.117.0-alpha.8
-ARG TARGETARCH
-ARG CLAUDE_CODE_VERSION=2.1.81
-ARG GEMINI_CLI_VERSION=0.34.0
+FROM ${NODE_BASE_IMAGE} AS runtime-base
+
+ARG SOURCE_DATE_EPOCH
+ARG DEBIAN_SNAPSHOT
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+ENV TZ=UTC
+ENV npm_config_audit=false
+ENV npm_config_fund=false
+ENV npm_config_update_notifier=false
+
+RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99workcell-snapshot \
+  && DEBIAN_FRONTEND=noninteractive apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   bash \
-  build-essential \
   ca-certificates \
   curl \
   fd-find \
@@ -18,13 +31,62 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   less \
   openssh-client \
   procps \
-  python3 \
   ripgrep \
   unzip \
   xz-utils \
-  && rm -rf /var/lib/apt/lists/*
+  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+  && mkdir -p \
+    /etc/workcell/empty-xdg \
+    /state/agent-home \
+    /usr/local/libexec/workcell \
+    /usr/local/libexec/workcell/core \
+    /usr/local/libexec/workcell/real \
+    /workspace \
+  && chmod 0555 /etc/workcell/empty-xdg \
+  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
+  && rm -f /etc/ld.so.cache \
+  && find /var/log -type f -delete \
+  && find / \
+    \( \
+      -path '/dev' -o -path '/dev/*' -o \
+      -path '/proc' -o -path '/proc/*' -o \
+      -path '/run' -o -path '/run/*' -o \
+      -path '/sys' -o -path '/sys/*' -o \
+      -path '/tmp' -o -path '/tmp/*' \
+    \) -prune -o \
+    \( -path '/etc/hostname' -o -path '/etc/hosts' -o -path '/etc/resolv.conf' \) -prune -o \
+    -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
-RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
+FROM runtime-base AS provider-builder
+
+ARG SOURCE_DATE_EPOCH
+
+COPY runtime/container/providers /opt/workcell/providers
+
+RUN cd /opt/workcell/providers \
+  && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --no-update-notifier \
+  && npm cache clean --force \
+  && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+    -cf /tmp/workcell-providers.tar -C /opt/workcell/providers . \
+  && cd / \
+  && rm -rf /opt/workcell/providers \
+  && mkdir -p /opt/workcell/providers \
+  && tar -xf /tmp/workcell-providers.tar -C /opt/workcell/providers \
+  && rm -f /tmp/workcell-providers.tar \
+  && find /opt/workcell/providers -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}" \
+  && rm -rf /root/.npm /root/.cache
+
+FROM runtime-base AS runtime-builder
+
+ARG CODEX_VERSION=0.117.0-alpha.8
+ARG TARGETARCH
+ARG BUILDKIT_MULTI_PLATFORM=1
+ARG SOURCE_DATE_EPOCH
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cargo rustc \
+  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
+  && rm -f /etc/ld.so.cache
 
 RUN TARGET_ARCH="${TARGETARCH:-}" \
   && if [[ -z "${TARGET_ARCH}" ]]; then \
@@ -55,28 +117,105 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
     -o /tmp/codex.tar.gz \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex.tar.gz -C /tmp \
-  && mv "/tmp/codex-${CODEX_ARCH}" /usr/local/bin/codex \
-  && chmod +x /usr/local/bin/codex \
+  && mv "/tmp/codex-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex \
+  && chmod 0644 /usr/local/libexec/workcell/real/codex \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/codex \
   && rm -f /tmp/codex.tar.gz
 
-RUN npm install -g \
-  "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-  "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
-  && npm cache clean --force
-
-RUN mkdir -p /usr/local/libexec/workcell \
-  && mv /usr/bin/git /usr/local/libexec/workcell/git \
-  && chmod +x /usr/local/libexec/workcell/git
-
 COPY adapters /opt/workcell/adapters
-COPY runtime/container/bin/git /usr/local/bin/git
-COPY runtime/container/src/workcell_exec_guard.c /tmp/workcell_exec_guard.c
-COPY runtime/container/entrypoint.sh /usr/local/bin/workcell-entrypoint
+COPY runtime/container/bin/git /usr/local/libexec/workcell/git-wrapper.sh
+COPY runtime/container/bin/node /usr/local/libexec/workcell/node-wrapper.sh
+COPY runtime/container/rust /workcell-rust
+COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
+COPY runtime/container/home-control-plane.sh /usr/local/libexec/workcell/home-control-plane.sh
+COPY runtime/container/provider-wrapper.sh /usr/local/libexec/workcell/provider-wrapper.sh
+COPY runtime/container/public-node-guard.mjs /usr/local/libexec/workcell/public-node-guard.mjs
+COPY runtime/container/entrypoint.sh /usr/local/libexec/workcell/entrypoint.sh
 
-RUN ln -sf /usr/local/bin/git /usr/bin/git \
-  && gcc -shared -fPIC -O2 -Wall -Wextra -o /usr/local/lib/libworkcell_exec_guard.so /tmp/workcell_exec_guard.c -ldl \
-  && rm -f /tmp/workcell_exec_guard.c \
-  && chmod +x /usr/local/bin/git /usr/local/bin/workcell-entrypoint
+RUN cd /workcell-rust \
+  && SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+    CARGO_HOME=/workcell-rust/cargo-home \
+    CARGO_TARGET_DIR=/tmp/workcell-rust-target \
+    cargo build \
+      --release \
+      --locked \
+      --offline \
+  && install -m 0644 /tmp/workcell-rust-target/release/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so \
+  && install -m 0644 /tmp/workcell-rust-target/release/workcell-launcher /usr/local/libexec/workcell/core/launcher \
+  && install -m 0644 /tmp/workcell-rust-target/release/workcell-git-launcher /usr/local/libexec/workcell/core/git \
+  && mkdir -p /etc/claude-code \
+  && cp /opt/workcell/adapters/claude/managed-settings.json /etc/claude-code/managed-settings.json \
+  && rm -rf /tmp/workcell-rust-target /workcell-rust \
+  && printf '/usr/local/lib/libworkcell_exec_guard.so\n' > /etc/ld.so.preload \
+  && chmod 0444 /etc/claude-code/managed-settings.json \
+  && chmod 0444 \
+    /usr/local/libexec/workcell/entrypoint.sh \
+    /usr/local/libexec/workcell/git-wrapper.sh \
+    /usr/local/libexec/workcell/node-wrapper.sh \
+    /usr/local/libexec/workcell/provider-wrapper.sh \
+  && chmod +x \
+    /usr/local/libexec/workcell/core/launcher \
+    /usr/local/libexec/workcell/home-control-plane.sh \
+    /usr/local/libexec/workcell/public-node-guard.mjs \
+    /usr/local/libexec/workcell/provider-policy.sh \
+    /opt/workcell/adapters/claude/hooks/guard-bash.sh \
+  && find /opt/workcell/adapters /etc/claude-code /usr/local/libexec/workcell -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}" \
+  && touch -h -d "@${SOURCE_DATE_EPOCH}" \
+    /etc/ld.so.preload \
+    /usr/local/lib/libworkcell_exec_guard.so \
+  && rm -rf /tmp/* /var/tmp/* /root/.npm /root/.cache
+
+FROM runtime-base AS runtime
+
+ARG SOURCE_DATE_EPOCH
+
+COPY --from=provider-builder /opt/workcell/providers /opt/workcell/providers
+COPY --from=runtime-builder /etc/claude-code/managed-settings.json /etc/claude-code/managed-settings.json
+COPY --from=runtime-builder /etc/ld.so.preload /etc/ld.so.preload
+COPY --from=runtime-builder /opt/workcell/adapters /opt/workcell/adapters
+COPY --from=runtime-builder /usr/local/lib/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so
+COPY --from=runtime-builder /usr/local/libexec/workcell /usr/local/libexec/workcell
+
+RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
+  && chmod 0644 /usr/local/libexec/workcell/real/git \
+  && mv /usr/local/bin/node /usr/local/libexec/workcell/real/node \
+  && chmod 0644 /usr/local/libexec/workcell/real/node \
+  && ln -sf /usr/local/libexec/workcell/core/git /usr/local/libexec/workcell/git \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/codex \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/claude \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/gemini \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/workcell-entrypoint \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/node \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/codex \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/claude \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/gemini \
+  && ln -sf /usr/local/libexec/workcell/core/git /usr/local/bin/git \
+  && ln -sf /usr/local/libexec/workcell/core/git /usr/bin/git \
+  && chmod 0444 /etc/claude-code/managed-settings.json \
+  && chmod 0644 \
+    /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js \
+    /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
+  && rm -f /usr/bin/perl /usr/bin/perl5.* /usr/bin/perlbug /usr/bin/perldoc /usr/bin/perlivp /usr/bin/perlthanks \
+  && chmod +x \
+    /usr/local/libexec/workcell/core/git \
+    /usr/local/libexec/workcell/core/launcher \
+    /usr/local/libexec/workcell/home-control-plane.sh \
+    /usr/local/libexec/workcell/public-node-guard.mjs \
+    /usr/local/libexec/workcell/provider-policy.sh \
+    /usr/local/bin/workcell-entrypoint \
+    /opt/workcell/adapters/claude/hooks/guard-bash.sh \
+  && rm -rf /tmp/* /var/tmp/* /root/.npm /root/.cache /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
+  && rm -f /etc/ld.so.cache \
+  && find / \
+    \( \
+      -path '/dev' -o -path '/dev/*' -o \
+      -path '/proc' -o -path '/proc/*' -o \
+      -path '/run' -o -path '/run/*' -o \
+      -path '/sys' -o -path '/sys/*' -o \
+      -path '/tmp' -o -path '/tmp/*' \
+    \) -prune -o \
+    \( -path '/etc/hostname' -o -path '/etc/hosts' -o -path '/etc/resolv.conf' \) -prune -o \
+    -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
 USER node
 WORKDIR /workspace

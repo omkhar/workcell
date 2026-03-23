@@ -7,8 +7,8 @@ profile = "strict"
 analytics.enabled = false
 history.persistence = "none"
 web_search = "disabled"
-project_doc_fallback_filenames = ["AGENTS.md", "README.md"]
-project_root_markers = ["AGENTS.md", ".codex", ".git"]
+project_doc_fallback_filenames = []
+project_root_markers = [".git"]
 
 [shell_environment_policy]
 inherit = "core"

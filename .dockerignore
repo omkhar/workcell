@@ -1,0 +1,8 @@
+*
+!adapters/
+!adapters/**
+!runtime/
+!runtime/container/
+!runtime/container/**
+runtime/container/providers/node_modules/
+runtime/container/rust/target/

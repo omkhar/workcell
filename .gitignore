@@ -16,7 +16,16 @@
 .codex-state/
 .colima-state/
 .runtime-secrets/
+.tmp-redteam/
+.rt-data-provider*/
+.rt-provider-claude/
+.workcell-provider-copy-*/
+.workcell-provider-copy-no-package.js
+.workcell-benign-marker-package/
 adapters/codex/.codex/memories/
 adapters/codex/.codex/tmp/
 dist/
 tmp/
+runtime/container/providers/node_modules/
+runtime/container/providers/mirror/
+runtime/container/rust/target/

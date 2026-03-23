@@ -13,7 +13,7 @@
     "enabled": false
   },
   "context": {
-    "fileName": ["GEMINI.md"],
+    "fileName": [],
     "loadFromIncludeDirectories": false,
     "fileFiltering": {
       "respectGitIgnore": true,
