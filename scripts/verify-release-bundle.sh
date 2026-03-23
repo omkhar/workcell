@@ -54,6 +54,28 @@ sanitized_git() {
     "$@"
 }
 
+sanitized_clone_git() {
+  local source_repo="$1"
+  local source_git_dir="${source_repo%/}/.git"
+  shift
+
+  env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME=/tmp \
+    LC_ALL=C \
+    LANG=C \
+    GIT_ATTR_NOSYSTEM=1 \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_COUNT=2 \
+    GIT_CONFIG_KEY_0=safe.directory \
+    GIT_CONFIG_VALUE_0="${source_repo}" \
+    GIT_CONFIG_KEY_1=safe.directory \
+    GIT_CONFIG_VALUE_1="${source_git_dir}" \
+    "$@"
+}
+
 mkdir -p "${ROOT_DIR}/tmp"
 TMP_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-release-bundle.XXXXXX")"
 EMPTY_GIT_TEMPLATE_DIR="${TMP_ROOT}/empty-git-template"
@@ -84,13 +106,9 @@ select_docker_context() {
 prepare_sanitized_clone() {
   local source_repo="$1"
   local clone_dir="$2"
-  local source_git_dir="${source_repo%/}/.git"
 
   rm -rf "${clone_dir}"
-  sanitized_git git \
-    -c safe.directory="${source_repo}" \
-    -c safe.directory="${source_git_dir}" \
-    clone \
+  sanitized_clone_git "${source_repo}" git clone \
     --quiet \
     --no-checkout \
     --no-local \
@@ -181,9 +199,12 @@ build_bundle_in_validator() {
       clone_dir="$(mktemp -d /tmp/workcell-release-clone.XXXXXX)"
       template_dir="$(mktemp -d /tmp/workcell-git-template.XXXXXX)"
       trap '\''rm -rf "${clone_dir}" "${template_dir}"'\'' EXIT
+      GIT_CONFIG_COUNT=2 \
+      GIT_CONFIG_KEY_0=safe.directory \
+      GIT_CONFIG_VALUE_0=/workspace \
+      GIT_CONFIG_KEY_1=safe.directory \
+      GIT_CONFIG_VALUE_1=/workspace/.git \
       git \
-        -c safe.directory=/workspace \
-        -c safe.directory=/workspace/.git \
         clone \
         --quiet \
         --no-checkout \
