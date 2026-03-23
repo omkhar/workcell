@@ -153,6 +153,7 @@ fi
   cd "${ROOT_DIR}/runtime/container/rust"
   cargo fmt --all --check
   cargo check --locked --offline
+  cargo test --locked --offline
 )
 
 echo "Workcell repository validation passed."

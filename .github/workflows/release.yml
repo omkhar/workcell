@@ -114,17 +114,14 @@ jobs:
             workcell-validator:${{ github.sha }} \
             ./scripts/validate-repo.sh
 
-      - uses: github/codeql-action/init@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+      - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
+        uses: github/codeql-action/init@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
         with:
           languages: rust,javascript-typescript
-          build-mode: manual
+          build-mode: none
 
-      - name: Build CodeQL Rust targets
-        run: |
-          cd runtime/container/rust
-          cargo build --locked --offline
-
-      - uses: github/codeql-action/analyze@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+      - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
+        uses: github/codeql-action/analyze@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
 
       - name: Verify host launcher invariants
         run: ./scripts/verify-invariants.sh

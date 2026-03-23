@@ -1,10 +1,31 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  exec /usr/bin/env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME=/tmp \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT-}" \
+    WORKCELL_IMAGE_TAG="${WORKCELL_IMAGE_TAG-}" \
+    WORKCELL_SANITIZED_ENTRYPOINT=1 \
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH-}" \
+    /bin/bash -p "$0" "$@"
+fi
 set -euo pipefail
+export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 IMAGE_TAG="${WORKCELL_IMAGE_TAG:-workcell:smoke}"
 DOCKER_CONTEXT_NAME="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT:-}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
+WORKCELL_DOCKER_SANDBOX_ROOT=""
+
+if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
+  head -n 1 "$0" >/dev/null
+  echo "container-smoke-entrypoint-ok"
+  exit 0
+fi
 
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -25,6 +46,11 @@ cleanup_workspace_scratch() {
   rm -rf \
     "${ROOT_DIR}/tmp/.workcell-"* \
     "${ROOT_DIR}/tmp/workcell-"*
+}
+
+cleanup() {
+  cleanup_workcell_trusted_docker_client
+  cleanup_workspace_scratch
 }
 
 select_docker_context() {
@@ -117,12 +143,19 @@ run_entrypoint_with_profile() {
 }
 
 require_tool docker
-trap cleanup_workspace_scratch EXIT
+trap cleanup EXIT
 cleanup_workspace_scratch
+setup_workcell_trusted_docker_client
 select_docker_context
 
+if [[ "${1:-}" == "--self-docker-probe" ]]; then
+  buildx_cmd version >/dev/null
+  echo "container-smoke-docker-probe-ok"
+  exit 0
+fi
+
 BUILD_SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
-SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" docker_cmd buildx build \
+SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
   --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
   --build-arg "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH}" \
   --provenance=false \

@@ -1,5 +1,23 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  exec /usr/bin/env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME="${HOME:-/tmp}" \
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH-}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_BUILD_INPUT_REF="${WORKCELL_BUILD_INPUT_REF-}" \
+    WORKCELL_SANITIZED_ENTRYPOINT=1 \
+    /bin/bash -p "$0" "$@"
+fi
 set -euo pipefail
+export PATH="${TRUSTED_HOST_PATH}"
+
+if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
+  head -n 1 "$0" >/dev/null
+  echo "verify-build-input-manifest-entrypoint-ok"
+  exit 0
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-build-inputs.XXXXXX")"
@@ -50,6 +68,7 @@ if [[ "${digest_a}" != "${digest_b}" ]]; then
 fi
 
 if git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  mkdir -p "${ROOT_DIR}/tmp"
   NESTED_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-build-input-nested.XXXXXX")"
   ARCHIVE_ROOT="${TMP_ROOT}/archived-source"
   copy_tracked_worktree "${ARCHIVE_ROOT}"
