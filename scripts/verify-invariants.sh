@@ -75,7 +75,12 @@ rg() {
     return
   fi
 
-  echo "rg fallback only supports 'rg -q PATTERN FILE'" >&2
+  if [[ "${1:-}" == "-q" ]] && [[ "${2:-}" == "--" ]] && [[ "$#" -eq 4 ]]; then
+    grep -Eq -- "$3" "$4"
+    return
+  fi
+
+  echo "rg fallback only supports 'rg -q PATTERN FILE' or 'rg -q -- PATTERN FILE'" >&2
   return 127
 }
 
