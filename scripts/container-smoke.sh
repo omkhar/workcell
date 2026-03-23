@@ -356,6 +356,14 @@ run_container codex bash -lc '
   fi
   codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules rm -rf build \
     | jq -e ".decision == \"forbidden\"" >/dev/null
+  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules git push origin feature \
+    | jq -e ".decision == \"prompt\"" >/dev/null
+  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules git push origin main --force \
+    | jq -e ".decision == \"forbidden\"" >/dev/null
+  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules git commit --no-verify \
+    | jq -e ".decision == \"forbidden\"" >/dev/null
+  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules /usr/bin/git push --no-verify origin feature \
+    | jq -e ".decision == \"forbidden\"" >/dev/null
   grep -q "Do not bypass git hooks with --no-verify or git commit -n from Workcell." \
     /workspace/adapters/codex/.codex/rules/default.rules
   grep -q "git commit --no-verify -m test" \
