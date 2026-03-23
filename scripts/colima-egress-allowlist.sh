@@ -173,15 +173,21 @@ PROFILE="${2:-}"
   exit 1
 }
 
-LIMACTL_BIN="$(resolve_host_tool limactl /opt/homebrew/bin/limactl /usr/local/bin/limactl)"
-PYTHON3_BIN="$(resolve_host_tool python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3)"
-REAL_HOME="$(
-  run_clean_host_command "${PYTHON3_BIN}" - <<'PY'
+initialize_vm_tools() {
+  if [[ -n "${LIMACTL_BIN}" && -n "${PYTHON3_BIN}" && -n "${REAL_HOME:-}" ]]; then
+    return 0
+  fi
+
+  LIMACTL_BIN="$(resolve_host_tool limactl /opt/homebrew/bin/limactl /usr/local/bin/limactl)"
+  PYTHON3_BIN="$(resolve_host_tool python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3)"
+  REAL_HOME="$(
+    run_clean_host_command "${PYTHON3_BIN}" - <<'PY'
 import os
 import pwd
 print(pwd.getpwuid(os.getuid()).pw_dir)
 PY
-)"
+  )"
+}
 
 lima_instance() {
   if [[ "${PROFILE}" == "default" ]]; then
@@ -203,6 +209,7 @@ run_in_vm() {
 }
 
 clear_rules() {
+  initialize_vm_tools
   run_in_vm '
     set -euo pipefail
     sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || true
@@ -235,6 +242,11 @@ case "${COMMAND}" in
 
     for endpoint in ${ENDPOINTS}; do
       validate_endpoint "${endpoint}"
+    done
+
+    initialize_vm_tools
+
+    for endpoint in ${ENDPOINTS}; do
       host="${endpoint%:*}"
       port="${endpoint##*:}"
       while IFS= read -r ip; do
