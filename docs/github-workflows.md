@@ -72,9 +72,10 @@ For private repositories, `codeql.yml` is opt-in through
 not universally available on private repositories. The Scorecard run still
 executes and uploads its artifact, but SARIF upload is opt-in through
 `WORKCELL_ENABLE_PRIVATE_SCORECARD_SARIF=true`. The same pattern applies to
-`zizmor` through `WORKCELL_ENABLE_PRIVATE_ZIZMOR_SARIF=true`. Public
+`zizmor` through `WORKCELL_ENABLE_PRIVATE_ZIZMOR_SARIF=true`, and to dependency
+review through `WORKCELL_ENABLE_PRIVATE_DEPENDENCY_REVIEW=true`. Public
 repositories upload both SARIF result sets into the GitHub Security tab by
-default.
+default and run dependency review on pull requests without extra flags.
 
 ## Dependency update scope
 
