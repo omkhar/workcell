@@ -23,12 +23,17 @@ mkdir -p "${HOME}"
 mkdir -p "${TMPDIR}"
 
 if [[ "$$" -ne 1 ]]; then
-  if [[ "${WORKCELL_MODE}" != "strict" ]] || [[ "${CODEX_PROFILE}" != "strict" ]]; then
+  pid1_comm="$(tr -d '\n' </proc/1/comm 2>/dev/null || true)"
+  if [[ "${PPID}" == "1" ]] &&
+    [[ "${pid1_comm}" =~ ^(docker-init|tini|dumb-init)$ ]]; then
+    :
+  elif [[ "${WORKCELL_MODE}" != "strict" ]] || [[ "${CODEX_PROFILE}" != "strict" ]]; then
     echo "Workcell blocked non-PID1 breakglass request: launch breakglass only through the host workcell command." >&2
     exit 2
+  else
+    CODEX_PROFILE="strict"
+    WORKCELL_MODE="strict"
   fi
-  CODEX_PROFILE="strict"
-  WORKCELL_MODE="strict"
 fi
 
 export TMPDIR

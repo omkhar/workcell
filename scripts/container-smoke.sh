@@ -194,6 +194,30 @@ run_entrypoint_with_profile() {
     "${IMAGE_TAG}" "$@"
 }
 
+run_entrypoint_with_init_profile() {
+  local agent="$1"
+  local profile="$2"
+  shift 2
+
+  docker_cmd run --rm \
+    --init \
+    --read-only \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e CODEX_PROFILE="${profile}" \
+    -e WORKCELL_MODE="${profile}" \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -v "${SMOKE_WORKSPACE}:/workspace" \
+    "${IMAGE_TAG}" "$@"
+}
+
 require_tool docker
 trap cleanup EXIT
 cleanup_workspace_scratch "${ROOT_DIR}"
@@ -209,7 +233,6 @@ fi
 
 BUILD_SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
 SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
-  --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
   --build-arg "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH}" \
   --provenance=false \
   --sbom=false \
@@ -300,6 +323,7 @@ fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-remote.out
 
 run_entrypoint claude claude --version >/dev/null
+run_entrypoint_with_init_profile codex build codex --version >/dev/null
 
 if run_entrypoint claude claude --dangerously-skip-permissions >/tmp/workcell-entrypoint-claude-danger.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude dangerous override outside breakglass" >&2
@@ -330,6 +354,42 @@ if run_container codex bash -lc 'AGENT_NAME=codex WORKCELL_MODE=breakglass CODEX
   exit 1
 fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-direct-codex-breakglass.out
+
+if docker_cmd run --rm \
+  --init \
+  --read-only \
+  --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+  --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+  --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+  -e AGENT_NAME=codex \
+  -e AGENT_UI=cli \
+  -e CODEX_PROFILE=build \
+  -e WORKCELL_MODE=build \
+  -e HOME=/state/agent-home \
+  -e CODEX_HOME=/state/agent-home/.codex \
+  -e TMPDIR=/state/tmp \
+  -e WORKCELL_RUNTIME=1 \
+  -e WORKSPACE=/workspace \
+  -v "${SMOKE_WORKSPACE}:/workspace" \
+  --entrypoint bash \
+  "${IMAGE_TAG}" -lc '
+    codex --version | grep -q "codex-cli"
+    if AGENT_NAME=codex WORKCELL_MODE=breakglass CODEX_PROFILE=breakglass /usr/local/bin/workcell-entrypoint codex --profile breakglass --version >/tmp/workcell-entrypoint-init-nested.out 2>&1; then
+      echo "expected nested init-path entrypoint replay to fail" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-init-nested.out
+    if AGENT_NAME=codex AGENT_UI=gui WORKCELL_MODE=build CODEX_PROFILE=build /usr/local/bin/workcell-entrypoint >/tmp/workcell-entrypoint-init-gui-replay.out 2>&1; then
+      echo "expected nested init-path GUI replay to fail" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked non-PID1 breakglass request" /tmp/workcell-entrypoint-init-gui-replay.out
+  ' >/tmp/workcell-entrypoint-init-nested-run.out 2>&1; then
+  :
+else
+  cat /tmp/workcell-entrypoint-init-nested-run.out >&2
+  exit 1
+fi
 
 # shellcheck disable=SC2016
 run_container codex bash -lc '

@@ -135,10 +135,15 @@ sanitize_host_docker_env() {
 }
 
 CONTROL_PLANE_SHADOW_ROOT=""
-SHADOW_MOUNTS=()
-SHADOW_DESTS=""
+declare -a SHADOW_MOUNTS=()
+declare -a SHADOW_DEST_PATHS=()
 
 cleanup() {
+  if [[ -n "${CONTROL_PLANE_SHADOW_ROOT}" ]] && [[ -e "${CONTROL_PLANE_SHADOW_ROOT}" ]]; then
+    chmod -R u+w "${CONTROL_PLANE_SHADOW_ROOT}" 2>/dev/null || true
+    rm -rf "${CONTROL_PLANE_SHADOW_ROOT}"
+  fi
+
   cleanup_workcell_trusted_docker_client
   if [[ "${PROFILE_RUNNING}" -eq 1 ]] &&
     [[ -n "${COLIMA_PROFILE}" ]] &&
@@ -148,11 +153,6 @@ cleanup() {
     else
       run_host_colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
     fi
-  fi
-
-  if [[ -n "${CONTROL_PLANE_SHADOW_ROOT}" ]] && [[ -d "${CONTROL_PLANE_SHADOW_ROOT}" ]]; then
-    chmod -R u+w "${CONTROL_PLANE_SHADOW_ROOT}" 2>/dev/null || true
-    rm -rf "${CONTROL_PLANE_SHADOW_ROOT}"
   fi
 }
 
@@ -415,27 +415,22 @@ PY
   printf 'workcell-%s-%s\n' "${slug}" "${hash}"
 }
 
-validate_colima_mounts() {
+validate_colima_runtime_mounts() {
   local profile="$1"
   local workspace="$2"
-  local config_path="${COLIMA_STATE_ROOT}/${profile}/colima.yaml"
   local lima_path="${COLIMA_STATE_ROOT}/_lima/colima-${profile}/lima.yaml"
 
-  [[ -f "${config_path}" ]] || {
-    echo "Missing Colima config for profile ${profile}: ${config_path}" >&2
-    exit 2
-  }
   [[ -f "${lima_path}" ]] || {
     echo "Missing Lima config for profile ${profile}: ${lima_path}" >&2
     exit 2
   }
 
   run_clean_host_command "${HOST_RUBY_BIN}" -rpsych -rpathname -e '
-    config = Psych.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
-    lima = Psych.safe_load(File.read(ARGV[1]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
-    expected = ARGV[2].sub(%r{/$}, "")
-    profile = ARGV[3]
+    lima = Psych.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
+    expected = ARGV[1].sub(%r{/$}, "")
+    profile = ARGV[2]
     home = File.expand_path(ENV.fetch("HOME"))
+    sandbox_home = ARGV[3].to_s.empty? ? nil : File.expand_path(ARGV[3])
 
     def canonicalize(path)
       expanded = File.expand_path(path)
@@ -443,14 +438,12 @@ validate_colima_mounts() {
     end
 
     expected = canonicalize(expected)
-    cache_root = canonicalize(File.join(home, "Library", "Caches", "colima"))
+    cache_roots = [canonicalize(File.join(home, "Library", "Caches", "colima"))]
+    if sandbox_home
+      cache_roots << canonicalize(File.join(sandbox_home, "Library", "Caches", "colima"))
+    end
     lima_mounts = lima["mounts"] || []
     writable_mounts = lima_mounts.select { |mount| mount["writable"] == true }
-
-    if config["forwardAgent"] == true
-      warn "Colima profile #{profile} must not forward the SSH agent."
-      exit 2
-    end
 
     unless writable_mounts.length == 1 && canonicalize(writable_mounts.first["location"].sub(%r{/$}, "")) == expected
       warn "Colima profile #{profile} must mount only #{expected} as writable."
@@ -465,7 +458,7 @@ validate_colima_mounts() {
         mount_point = canonicalize(mount_point.sub(%r{/$}, ""))
         next true unless mount_point == location
       end
-      next false if !writable && (location == cache_root || location.start_with?(cache_root + "/"))
+      next false if !writable && cache_roots.any? { |root| location == root || location.start_with?(root + "/") }
 
       location == "~" || location == home || (writable && location != expected) || (!writable && location != expected)
     end
@@ -474,7 +467,7 @@ validate_colima_mounts() {
       warn "Colima profile #{profile} has an unexpected host mount: #{bad_mount["location"]}"
       exit 2
     end
-  ' "${config_path}" "${lima_path}" "${workspace}" "${profile}"
+  ' "${lima_path}" "${workspace}" "${profile}" "${WORKCELL_DOCKER_HOME:-}"
 }
 
 validate_colima_profile_config() {
@@ -492,6 +485,8 @@ validate_colima_profile_config() {
     vm_type = config["vmType"] || config[:vmType] || config["vm_type"] || config[:vm_type]
     mount_type = config["mountType"] || config[:mountType] || config["mount_type"] || config[:mount_type]
     runtime = config["runtime"] || config[:runtime]
+    expected = ARGV[1].sub(%r{/$}, "")
+    mounts = config["mounts"] || config[:mounts] || []
     runtime_name =
       case runtime
       when Hash
@@ -500,12 +495,20 @@ validate_colima_profile_config() {
         runtime
       end
 
+    expected = File.expand_path(expected)
+
+    abort("Colima profile must not forward the SSH agent.") if config["forwardAgent"] == true || config[:forwardAgent] == true
+    abort("Unexpected configured Colima mounts: #{mounts.inspect}") unless mounts.length == 1
+
+    mount = mounts.first || {}
+    location = File.expand_path((mount["location"] || mount[:location] || "").sub(%r{/$}, ""))
+    writable = mount["writable"] == true || mount[:writable] == true
+    abort("Colima profile must mount only #{expected} as writable in colima.yaml.") unless writable && location == expected
+
     abort("Unexpected Colima vmType for managed profile: #{vm_type.inspect}") unless vm_type == "vz"
     abort("Unexpected Colima mountType for managed profile: #{mount_type.inspect}") unless mount_type == "virtiofs"
     abort("Unexpected Colima runtime for managed profile: #{runtime_name.inspect}") unless runtime_name == "docker"
-  ' "${config_path}"
-
-  validate_colima_mounts "${profile}" "${workspace}"
+  ' "${config_path}" "${workspace}"
 }
 
 validate_colima_profile() {
@@ -527,7 +530,7 @@ validate_colima_profile() {
     exit 2
   }
 
-  validate_colima_mounts "${profile}" "${workspace}"
+  validate_colima_runtime_mounts "${profile}" "${workspace}"
 }
 
 is_trusted_host_tool_path() {
@@ -698,11 +701,26 @@ lock_tree_readonly() {
 
 shadow_dest_is_registered() {
   local destination="$1"
-  case "${SHADOW_DESTS}" in
-    *"|${destination}|"*)
-      return 0
-      ;;
-  esac
+  local existing
+
+  for existing in "${SHADOW_DEST_PATHS[@]-}"; do
+    [[ "${existing}" == "${destination}" ]] && return 0
+  done
+  return 1
+}
+
+shadow_dest_has_ancestor() {
+  local destination="$1"
+  local existing
+
+  for existing in "${SHADOW_DEST_PATHS[@]-}"; do
+    case "${destination}" in
+      "${existing}" | "${existing}"/*)
+        return 0
+        ;;
+    esac
+  done
+
   return 1
 }
 
@@ -713,9 +731,12 @@ register_shadow_mount() {
   if shadow_dest_is_registered "${destination}"; then
     return 0
   fi
+  if shadow_dest_has_ancestor "${destination}"; then
+    return 0
+  fi
 
   SHADOW_MOUNTS+=(-v "${source}:${destination}:ro")
-  SHADOW_DESTS="${SHADOW_DESTS}|${destination}|"
+  SHADOW_DEST_PATHS+=("${destination}")
 }
 
 add_shadow_file_mount() {
@@ -778,8 +799,12 @@ prepare_workspace_control_plane_shadow() {
   local rel path
 
   SHADOW_MOUNTS=()
-  SHADOW_DESTS=""
+  SHADOW_DEST_PATHS=()
   [[ "${mode}" == "breakglass" ]] && return 0
+
+  if [[ -n "${WORKCELL_DOCKER_HOME:-}" ]]; then
+    shadow_parent="${WORKCELL_DOCKER_HOME}/Library/Caches/colima/workcell-shadow"
+  fi
 
   mkdir -p "${shadow_parent}"
   CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
@@ -807,16 +832,20 @@ prepare_workspace_control_plane_shadow() {
 
   while IFS= read -r -d '' path; do
     rel="${path#"${workspace}/"}"
-    if [[ -d "${path}" ]]; then
-      add_shadow_dir_mount "${rel}"
-    else
-      add_shadow_file_mount "${rel}"
-    fi
+    add_shadow_dir_mount "${rel}"
   done < <(
     find "${workspace}" \
       \( -name .git -type d -prune \) -o \
-      \( \( -type f -o -type l \) \( -name AGENTS.md -o -name CLAUDE.md -o -name GEMINI.md -o -name .mcp.json \) \) -print0 -o \
       \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+  )
+
+  while IFS= read -r -d '' path; do
+    rel="${path#"${workspace}/"}"
+    add_shadow_file_mount "${rel}"
+  done < <(
+    find "${workspace}" \
+      \( -name .git -type d -prune \) -o \
+      \( \( -type f -o -type l \) \( -name AGENTS.md -o -name CLAUDE.md -o -name GEMINI.md -o -name .mcp.json \) \) -print0
   )
 }
 
@@ -978,6 +1007,12 @@ if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" !=
   exit 2
 fi
 
+HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
+HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+HOST_RUBY_BIN="$(resolve_host_tool ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby)"
+sanitize_host_docker_env
+export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+
 ALLOW_ENDPOINTS="$(provider_endpoints "${AGENT}") ${EXTRA_ENDPOINTS}"
 prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
 
@@ -1010,8 +1045,10 @@ DOCKER_RUN_BASE=(
   -e TMPDIR=/state/tmp
   -e WORKSPACE=/workspace
   -v "${WORKSPACE}:/workspace"
-  "${SHADOW_MOUNTS[@]}"
 )
+if [[ "${SHADOW_MOUNTS+set}" == "set" ]]; then
+  DOCKER_RUN_BASE+=("${SHADOW_MOUNTS[@]}")
+fi
 
 EXECUTION_PATH="managed-tier1"
 if [[ "${MODE}" == "breakglass" ]]; then
@@ -1059,15 +1096,14 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
   exit 0
 fi
 
-HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
-HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-HOST_RUBY_BIN="$(resolve_host_tool ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby)"
-DOCKER_RUN[0]="${HOST_DOCKER_BIN}"
-sanitize_host_docker_env
-export COLIMA_HOME="${COLIMA_STATE_ROOT}"
-
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
   validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}"
+  if ! (validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"); then
+    echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts." >&2
+    run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
+    rm -rf "${PROFILE_DIR}"
+    PROFILE_PREEXISTED=0
+  fi
 fi
 
 run_host_colima start \
@@ -1121,7 +1157,6 @@ if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
   BUILD_SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
   BUILD_STATUS=0
   SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
-    --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
     --build-arg "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH}" \
     --provenance=false \
     --sbom=false \

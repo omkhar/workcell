@@ -202,7 +202,8 @@ run_in_vm() {
   local colima_home="${COLIMA_HOME:-${REAL_HOME}/.colima}"
 
   printf 'set -euo pipefail\n%s\n' "${script}" |
-    COLIMA_HOME="${colima_home}" \
+    HOME="${REAL_HOME}" \
+      COLIMA_HOME="${colima_home}" \
       LIMA_HOME="${colima_home}/_lima" \
       LIMA_WORKDIR=/ \
       "${LIMACTL_BIN}" shell "$(lima_instance)" -- bash -s --
