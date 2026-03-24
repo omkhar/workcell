@@ -8,6 +8,7 @@ scrub_host_process_env() {
   local env_name
 
   unset BASH_ENV ENV
+  unset WORKCELL_TEST_FAIL_AFTER_PROFILE_REFRESH
   unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH PYTHONSTARTUP
   unset RUBYOPT RUBYLIB GEM_HOME GEM_PATH
   unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT
@@ -418,6 +419,17 @@ append_audit_record() {
     printf '%q ' "$@"
     printf '\n'
   } >>"${audit_path}"
+}
+
+maybe_fail_after_profile_refresh_for_tests() {
+  if [[ "${TEST_FAIL_AFTER_PROFILE_REFRESH:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ -z "${PROFILE_AUDIT_LOG_STASH}" ]]; then
+    return 0
+  fi
+  echo "Workcell test hook: forcing failure after managed profile refresh." >&2
+  exit 88
 }
 
 container_assurance() {
@@ -1749,6 +1761,7 @@ ALLOW_NONGIT_WORKSPACE=0
 ALLOW_ARBITRARY_COMMAND=0
 ACK_BREAKGLASS=0
 ACK_ARBITRARY_COMMAND=0
+TEST_FAIL_AFTER_PROFILE_REFRESH=0
 declare -a AGENT_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -1823,6 +1836,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --repair-profile)
       REPAIR_PROFILE=1
+      shift
+      ;;
+    --test-fail-after-profile-refresh)
+      TEST_FAIL_AFTER_PROFILE_REFRESH=1
       shift
       ;;
     --allow-nongit-workspace)
@@ -2179,6 +2196,8 @@ if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
     PROFILE_PREEXISTED=0
   fi
 fi
+
+maybe_fail_after_profile_refresh_for_tests
 
 run_host_colima start \
   --profile "${COLIMA_PROFILE}" \

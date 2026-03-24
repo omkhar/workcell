@@ -8,6 +8,7 @@ scrub_host_process_env() {
   local env_name
 
   unset BASH_ENV ENV
+  unset WORKCELL_TEST_RUN_IN_VM_CAPTURE_DIR
   unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH PYTHONSTARTUP
   unset RUBYOPT RUBYLIB GEM_HOME GEM_PATH
   unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT
@@ -27,6 +28,7 @@ scrub_host_process_env
 LIMACTL_BIN=""
 PYTHON3_BIN=""
 CANONICALIZER_PYTHON="/usr/bin/python3"
+TEST_RUN_IN_VM_CAPTURE_DIR=""
 
 usage() {
   cat <<'EOF'
@@ -181,6 +183,15 @@ PY
 }
 
 COMMAND="${1:-}"
+if [[ "${COMMAND}" == "--test-run-in-vm-capture-dir" ]]; then
+  TEST_RUN_IN_VM_CAPTURE_DIR="${2:-}"
+  [[ -n "${TEST_RUN_IN_VM_CAPTURE_DIR}" ]] || {
+    echo "Missing capture directory for --test-run-in-vm-capture-dir" >&2
+    exit 1
+  }
+  shift 2
+  COMMAND="${1:-}"
+fi
 PROFILE="${2:-}"
 
 [[ -n "${COMMAND}" ]] || {
@@ -239,8 +250,25 @@ lima_instance() {
 
 run_in_vm() {
   local script="$1"
-  local colima_home="${COLIMA_HOME:-${REAL_HOME}/.colima}"
+  local colima_home=""
+  local capture_base=""
 
+  if [[ -n "${TEST_RUN_IN_VM_CAPTURE_DIR}" ]]; then
+    initialize_host_tools
+    colima_home="${COLIMA_HOME:-${REAL_HOME}/.colima}"
+    mkdir -p "${TEST_RUN_IN_VM_CAPTURE_DIR}"
+    capture_base="${TEST_RUN_IN_VM_CAPTURE_DIR}/${COMMAND}-${PROFILE}"
+    printf '%s\n' "${script}" >"${capture_base}.script"
+    cat >"${capture_base}.env" <<EOF
+REAL_HOME=${REAL_HOME}
+COLIMA_HOME=${colima_home}
+LIMA_HOME=${colima_home}/_lima
+LIMA_WORKDIR=/
+EOF
+    return 0
+  fi
+  initialize_vm_tools
+  colima_home="${COLIMA_HOME:-${REAL_HOME}/.colima}"
   printf 'set -euo pipefail\n%s\n' "${script}" |
     HOME="${REAL_HOME}" \
       COLIMA_HOME="${colima_home}" \

@@ -1154,6 +1154,52 @@ if sed -n '/^render_allowlist_apply_plan()/,/^}/p' "${ROOT_DIR}/scripts/colima-e
   echo "Expected dual-stack allowlist apply plan to avoid invoking clear_rules during render" >&2
   exit 1
 fi
+RUN_IN_VM_BLOCK="$(sed -n '/^run_in_vm()/,/^}/p' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh")"
+if ! printf '%s\n' "${RUN_IN_VM_BLOCK}" | awk '
+  /initialize_host_tools/ && !host_init { host_init = NR }
+  /if \[\[ -n "\$\{TEST_RUN_IN_VM_CAPTURE_DIR\}" \]\]; then/ && !capture_branch { capture_branch = NR }
+  /colima_home=/ && !capture_home { capture_home = NR }
+  /initialize_vm_tools/ && !vm_init { vm_init = NR }
+  /printf '\''set -euo pipefail\\n%s\\n'\''/ && !vm_exec { vm_exec = NR }
+  END { exit !(host_init && capture_branch && capture_home && vm_init && vm_exec && host_init < capture_home && vm_init < vm_exec) }
+'; then
+  echo "Expected run_in_vm to initialize host tools before the capture branch derives colima_home, and VM tools before real VM execution" >&2
+  exit 1
+fi
+RUN_IN_VM_CAPTURE_DIR="$(mktemp -d)"
+if ! "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" \
+  --test-run-in-vm-capture-dir "${RUN_IN_VM_CAPTURE_DIR}" \
+  apply default '127.0.0.1:443 [::1]:443' >/dev/null 2>&1; then
+  echo "Expected dual-stack allowlist apply path to succeed under the test VM capture hook" >&2
+  exit 1
+fi
+if ! grep -q 'sudo iptables -A WORKCELL_EGRESS -p tcp -d 127.0.0.1 --dport 443 -j ACCEPT' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
+  echo "Expected captured dual-stack apply script to include the IPv4 allowlist rule" >&2
+  exit 1
+fi
+if ! grep -q 'sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d ::1 --dport 443 -j ACCEPT' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
+  echo "Expected captured dual-stack apply script to include the IPv6 allowlist rule" >&2
+  exit 1
+fi
+if ! grep -q "COLIMA_HOME=${REAL_HOME}/.colima" "${RUN_IN_VM_CAPTURE_DIR}/apply-default.env"; then
+  echo "Expected captured dual-stack apply env to derive COLIMA_HOME from the real home directory" >&2
+  exit 1
+fi
+if ! "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" \
+  --test-run-in-vm-capture-dir "${RUN_IN_VM_CAPTURE_DIR}" \
+  clear default >/dev/null 2>&1; then
+  echo "Expected dual-stack allowlist clear path to succeed under the test VM capture hook" >&2
+  exit 1
+fi
+if ! grep -q 'sudo ip6tables -X WORKCELL_EGRESS6 2>/dev/null || true' "${RUN_IN_VM_CAPTURE_DIR}/clear-default.script"; then
+  echo "Expected captured dual-stack clear script to remove the IPv6 chain" >&2
+  exit 1
+fi
+if ! grep -q 'sudo iptables -X WORKCELL_EGRESS 2>/dev/null || true' "${RUN_IN_VM_CAPTURE_DIR}/clear-default.script"; then
+  echo "Expected captured dual-stack clear script to remove the IPv4 chain" >&2
+  exit 1
+fi
+rm -rf "${RUN_IN_VM_CAPTURE_DIR}"
 
 HOST_PYTHON_INJECT_DIR="${BARRIER_VERIFY_ROOT}/python-inject"
 HOST_PYTHON_MARKER="${BARRIER_VERIFY_ROOT}/pythonpath-ran"
@@ -1684,21 +1730,28 @@ if ! "${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-nongit-works
   echo "Expected marker-based non-git workspace to succeed with explicit opt-in" >&2
   exit 1
 fi
+for agent in claude gemini; do
+  if ! "${ROOT_DIR}/scripts/workcell" --agent "${agent}" --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+    echo "Expected marker-based non-git workspace prepare dry-run to succeed for ${agent}" >&2
+    exit 1
+  fi
+done
 
 if [[ "$(uname -s)" == "Darwin" ]] &&
   host_tool_exists /opt/homebrew/bin/colima /usr/local/bin/colima &&
   host_tool_exists /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker; then
-  AUDIT_PROFILE_NAME="workcell-audit-verify-$$"
-  AUDIT_LOG="${REAL_HOME}/.colima/${AUDIT_PROFILE_NAME}/workcell.audit.log"
   if ! "${ROOT_DIR}/scripts/workcell" \
     --agent codex \
     --prepare \
-    --allow-nongit-workspace \
-    --workspace "${NONGIT_WORKSPACE}" \
-    --colima-profile "${AUDIT_PROFILE_NAME}" \
+    --workspace "${ROOT_DIR}" \
     --agent-arg --version >/tmp/workcell-audit-prepare.out 2>&1; then
     echo "Expected audit verification prepare run to seed a managed image" >&2
     cat /tmp/workcell-audit-prepare.out >&2
+    exit 1
+  fi
+  AUDIT_LOG="$(sed -n 's/.*audit_log=\([^ ]*\).*/\1/p' /tmp/workcell-audit-prepare.out | head -n1)"
+  if [[ -z "${AUDIT_LOG}" ]]; then
+    echo "Expected audit verification prepare run to report an audit log path" >&2
     exit 1
   fi
   AUDIT_BASE_LINES=0
@@ -1708,9 +1761,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
   if ! "${ROOT_DIR}/scripts/workcell" \
     --agent codex \
     --mode build \
-    --allow-nongit-workspace \
-    --workspace "${NONGIT_WORKSPACE}" \
-    --colima-profile "${AUDIT_PROFILE_NAME}" \
+    --workspace "${ROOT_DIR}" \
     --allow-arbitrary-command \
     --ack-arbitrary-command \
     -- /bin/bash -lc 'sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update >/dev/null && sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y --no-install-recommends make >/dev/null'; then
@@ -1725,12 +1776,39 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
   grep -q 'session_assurance_final=lower-assurance-package-mutation' /tmp/workcell-audit-session.log
   grep -q 'event=exit' /tmp/workcell-audit-session.log
   grep -q 'package_mutation_downgraded=1' /tmp/workcell-audit-session.log
-  if [[ -x /opt/homebrew/bin/colima ]]; then
-    /opt/homebrew/bin/colima delete --profile "${AUDIT_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-  else
-    /usr/local/bin/colima delete --profile "${AUDIT_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+  AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
+  AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"
+  AUDIT_RESTORE_LOG="${AUDIT_RESTORE_DIR}/workcell.audit.log"
+  mkdir -p "${AUDIT_RESTORE_DIR}"
+  printf '%s\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_DIR}/workcell.managed"
+  cat >"${AUDIT_RESTORE_DIR}/colima.yaml" <<'EOF'
+cpu: 4
+memory: 8
+disk: 60
+runtime: docker
+vmType: vz
+mountType: virtiofs
+EOF
+  printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_LOG}"
+  if "${ROOT_DIR}/scripts/workcell" \
+    --test-fail-after-profile-refresh \
+    --agent codex \
+    --prepare \
+    --allow-nongit-workspace \
+    --workspace "${NONGIT_WORKSPACE}" \
+    --colima-profile "${AUDIT_RESTORE_PROFILE_NAME}" \
+    --agent-arg --version >/tmp/workcell-audit-restore.out 2>&1; then
+    echo "Expected managed-profile refresh test hook to fail after stashing the audit log" >&2
+    exit 1
   fi
-  rm -rf "${REAL_HOME}/.colima/${AUDIT_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${AUDIT_PROFILE_NAME}"
+  grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-audit-restore.out
+  grep -q 'timestamp=test event=launch' "${AUDIT_RESTORE_LOG}"
+  if [[ -x /opt/homebrew/bin/colima ]]; then
+    /opt/homebrew/bin/colima delete --profile "${AUDIT_RESTORE_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+  else
+    /usr/local/bin/colima delete --profile "${AUDIT_RESTORE_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+  fi
+  rm -rf "${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
 fi
 
 UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
@@ -1760,6 +1838,21 @@ if ! "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q 'repair_action=delete_unmanaged_profile' /tmp/workcell-repair-profile-dry-run.out
 grep -q 'docker run' /tmp/workcell-repair-profile-dry-run.out
+for agent in claude gemini; do
+  if ! "${ROOT_DIR}/scripts/workcell" \
+    --agent "${agent}" \
+    --repair-profile \
+    --allow-nongit-workspace \
+    --workspace "${NONGIT_WORKSPACE}" \
+    --colima-profile "${UNMANAGED_PROFILE_NAME}" \
+    --dry-run >/tmp/workcell-repair-profile-${agent}-dry-run.out 2>&1; then
+    echo "Expected --repair-profile dry-run to succeed for ${agent}" >&2
+    cat /tmp/workcell-repair-profile-${agent}-dry-run.out >&2
+    exit 1
+  fi
+  grep -q 'repair_action=delete_unmanaged_profile' /tmp/workcell-repair-profile-${agent}-dry-run.out
+  grep -q 'docker run' /tmp/workcell-repair-profile-${agent}-dry-run.out
+done
 rm -rf "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${UNMANAGED_PROFILE_NAME}"
 
 if [[ "$(uname -s)" == "Darwin" ]] &&

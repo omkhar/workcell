@@ -574,6 +574,15 @@ run_container_with_injection_bundle() {
     "${IMAGE_TAG}" "${@:2}"
 }
 
+if [[ "${1:-}" == "--self-docker-probe" ]]; then
+  require_tool docker
+  setup_workcell_trusted_docker_client
+  select_docker_context
+  buildx_cmd version >/dev/null
+  echo "container-smoke-docker-probe-ok"
+  exit 0
+fi
+
 require_tool docker
 trap cleanup EXIT
 cleanup_workspace_scratch "${ROOT_DIR}"
@@ -624,12 +633,6 @@ cat <<'EOF' >"${WORKSPACE_IMPORT_ROOT}/GEMINI.md"
 # Workspace Gemini Instructions
 EOF
 align_path_for_mapped_runtime_user "${WORKSPACE_IMPORT_ROOT}" 0644 0755
-
-if [[ "${1:-}" == "--self-docker-probe" ]]; then
-  buildx_cmd version >/dev/null
-  echo "container-smoke-docker-probe-ok"
-  exit 0
-fi
 
 BUILD_SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
 SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
@@ -798,12 +801,22 @@ run_container_with_injection_bundle claude "${INJECTION_BUNDLE_ROOT}/claude" bas
     grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
     grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
     helper_path="$(jq -r ".apiKeyHelper" "$HOME/.claude/settings.json")"
+    test ! -L "$HOME/.claude/settings.json"
     test -x "$helper_path"
     test "$("$helper_path")" = "claude-smoke-key"
     grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
+    test ! -L "$HOME/.config/claude-code/auth.json"
     test ! -L "$HOME/.mcp.json"
     grep -q "\"stub\"" "$HOME/.mcp.json"
     grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+    rm -f "$HOME/.claude/settings.json" "$HOME/.config/claude-code/auth.json" "$HOME/.mcp.json"
+    claude --version >/dev/null
+    grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
+    helper_path="$(jq -r ".apiKeyHelper" "$HOME/.claude/settings.json")"
+    test -x "$helper_path"
+    test "$("$helper_path")" = "claude-smoke-key"
+    grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
+    grep -q "\"stub\"" "$HOME/.mcp.json"
   '"'"'
 '
 
@@ -1442,6 +1455,16 @@ EOF
   fi
   grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-codex-profile-bypass.out
   mkdir -p /workspace/tmp
+  workspace_provider_scratch=/workspace/tmp/workcell-provider-scratch
+  workspace_provider_tampered="${workspace_provider_scratch}/tampered"
+  workspace_provider_aggressive="${workspace_provider_scratch}/aggressive"
+  workspace_provider_minimal="${workspace_provider_scratch}/minimal"
+  workspace_provider_split="${workspace_provider_scratch}/split"
+  workspace_provider_no_package="${workspace_provider_scratch}/no-package.js"
+  workspace_provider_no_package_split="${workspace_provider_scratch}/no-package-split"
+  workspace_provider_benign_marker="${workspace_provider_scratch}/benign-marker-package"
+  rm -rf "${workspace_provider_scratch}"
+  mkdir -p "${workspace_provider_scratch}"
   cp /bin/true /workspace/tmp/.workcell-native-helper
   chmod 0700 /workspace/tmp/.workcell-native-helper
   if /workspace/tmp/.workcell-native-helper >/tmp/workspace-native.out 2>&1; then
@@ -1820,247 +1843,153 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked provider package execution via public node.|Workcell blocked public node execution outside the mounted workspace." /tmp/node-provider-copy-tampered.out
-  rm -rf /workspace/.workcell-provider-copy-tampered
-  cp -R /opt/workcell/providers/node_modules/@anthropic-ai/claude-code /workspace/.workcell-provider-copy-tampered
-  jq ".name = \"@workcell/not-claude-workspace\"" /workspace/.workcell-provider-copy-tampered/package.json >/workspace/.workcell-provider-copy-tampered/package.json.new
-  mv /workspace/.workcell-provider-copy-tampered/package.json.new /workspace/.workcell-provider-copy-tampered/package.json
-  printf "\n// tampered workspace copy\n" >>/workspace/.workcell-provider-copy-tampered/cli.js
-  if node /workspace/.workcell-provider-copy-tampered/cli.js --version >/tmp/node-provider-copy-workspace.out 2>&1; then
+  rm -rf "${workspace_provider_tampered}"
+  cp -R /opt/workcell/providers/node_modules/@anthropic-ai/claude-code "${workspace_provider_tampered}"
+  jq ".name = \"@workcell/not-claude-workspace\"" "${workspace_provider_tampered}/package.json" >"${workspace_provider_tampered}/package.json.new"
+  mv "${workspace_provider_tampered}/package.json.new" "${workspace_provider_tampered}/package.json"
+  printf "\n// tampered workspace copy\n" >>"${workspace_provider_tampered}/cli.js"
+  if node "${workspace_provider_tampered}/cli.js" --version >/tmp/node-provider-copy-workspace.out 2>&1; then
     echo "expected tampered workspace Claude provider copy execution via public node to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-workspace.out
-  rm -rf /workspace/.workcell-provider-copy-tampered
-  rm -rf /workspace/.workcell-provider-copy-aggressive
-  cp -R /opt/workcell/providers/node_modules/@anthropic-ai/claude-code /workspace/.workcell-provider-copy-aggressive
-  cat <<'\''EOF'\'' >/workspace/tmp/workcell-provider-copy-scrub.js
-const fs = require("node:fs");
-const path = require("node:path");
+  rm -rf "${workspace_provider_tampered}"
+  rm -rf "${workspace_provider_aggressive}"
+  cp -R /opt/workcell/providers/node_modules/@anthropic-ai/claude-code "${workspace_provider_aggressive}"
+  sanitize_workspace_claude_entrypoint() {
+    local entrypoint_path="$1"
+    perl -0pi \
+      -e "s/Anthropic PBC\\. All rights reserved\\./Workcell scrubbed marker/g;" \
+      -e "s|https://code\\.claude\\.com/docs/en/legal-and-compliance\\.|https://example.invalid/workcell|g;" \
+      -e "s/Want to see the unminified source\\? We\\x27re hiring!/Workcell scrubbed hiring marker/g;" \
+      -e "s/dangerously-skip-permissions/scrubbed-danger-flag/g;" \
+      "${entrypoint_path}"
+  }
+  write_provider_token_parts() {
+    local target_root="$1"
+    local _source_entrypoint="$2"
+    local -a provider_tokens=(
+      "/usr/bin/env"
+      "https://code.claude.com/docs/en/legal-and-compliance."
+      "https://job-boards.greenhouse.io/anthropic/jobs/4816199008"
+      "createRequire"
+      "Object.create"
+      "getPrototypeOf:Xlq"
+      "defineProperty:Hy6"
+      "getOwnPropertyNames:_AA"
+      "getOwnPropertyDescriptor:Dlq"
+      "Object.prototype.hasOwnProperty"
+      "A.__esModule"
+      "get:zAA.bind"
+      "K.enumerable"
+      "configurable:"
+      "set:Zlq.bind"
+      "import.meta.url"
+      "Symbol.dispose"
+      "Symbol.asyncDispose"
+      "SuppressedError"
+      "SuppressedError:function"
+      "H.suppressed"
+      "Promise.resolve"
+      "global.Object"
+      "Object.prototype"
+    )
+    local -a part_names=(a b c)
+    local chunk=""
+    local chunk_json=""
+    local index=0
 
-const packageRoot = process.argv[2];
-const packageJsonPath = path.join(packageRoot, "package.json");
-const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-packageJson.name = "@workcell/not-claude-workspace-aggressive";
-fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
+    : "${_source_entrypoint:?}"
 
-const joinMarker = (...parts) => parts.join("");
-const replacements = [
-  [joinMarker("Anthropic ", "PBC. All rights reserved."), "Workcell scrubbed marker"],
-  [
-    joinMarker(
-      "https://code.claude.com/docs/en/legal-",
-      "and-compliance.",
-    ),
-    "https://example.invalid/workcell",
-  ],
-  [
-    joinMarker("Want to see the unminified source? We", "\x27re hiring!"),
-    "Workcell scrubbed hiring marker",
-  ],
-  [joinMarker("dangerously", "-skip-permissions"), "scrubbed-danger-flag"],
-];
-
-for (const relativePath of ["README.md", "LICENSE.md", "sdk-tools.d.ts", "resvg.wasm"]) {
-  fs.rmSync(path.join(packageRoot, relativePath), { force: true });
-}
-
-const entrypointPath = path.join(packageRoot, "cli.js");
-let entrypoint = fs.readFileSync(entrypointPath, "utf8");
-for (const [from, to] of replacements) {
-  entrypoint = entrypoint.split(from).join(to);
-}
-fs.writeFileSync(entrypointPath, entrypoint);
+    cat >"${target_root}/main.js" <<'\''EOF'\''
+import "./part-a.js";
+import "./part-b.js";
+import "./part-c.js";
+console.log("workcell split provider smoke");
 EOF
-  node /workspace/tmp/workcell-provider-copy-scrub.js /workspace/.workcell-provider-copy-aggressive >/tmp/node-provider-copy-scrub.out 2>&1
-  if node /workspace/.workcell-provider-copy-aggressive/cli.js --version >/tmp/node-provider-copy-aggressive.out 2>&1; then
+
+    for index in 0 1 2; do
+      chunk="$(printf "%s " "${provider_tokens[@]:$((index * 8)):8}")"
+      chunk="${chunk% }"
+      chunk_json="$(jq -Rn --arg s "${chunk}" "\$s")"
+      printf "export const tokenChunk%s = %s;\n" "${index}" "${chunk_json}" >"${target_root}/part-${part_names[index]}.js"
+    done
+  }
+  jq ".name = \"@workcell/not-claude-workspace-aggressive\"" "${workspace_provider_aggressive}/package.json" >"${workspace_provider_aggressive}/package.json.new"
+  mv "${workspace_provider_aggressive}/package.json.new" "${workspace_provider_aggressive}/package.json"
+  rm -f \
+    "${workspace_provider_aggressive}/README.md" \
+    "${workspace_provider_aggressive}/LICENSE.md" \
+    "${workspace_provider_aggressive}/sdk-tools.d.ts" \
+    "${workspace_provider_aggressive}/resvg.wasm"
+  sanitize_workspace_claude_entrypoint "${workspace_provider_aggressive}/cli.js"
+  if node "${workspace_provider_aggressive}/cli.js" --version >/tmp/node-provider-copy-aggressive.out 2>&1; then
     echo "expected aggressively scrubbed workspace Claude provider copy execution via public node to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-aggressive.out
-  rm -rf /workspace/.workcell-provider-copy-aggressive
-  rm -rf /workspace/.workcell-provider-copy-minimal
-  mkdir -p /workspace/.workcell-provider-copy-minimal
-  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js /workspace/.workcell-provider-copy-minimal/main.js
-  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/package.json /workspace/.workcell-provider-copy-minimal/
-  cat <<'\''EOF'\'' >/workspace/tmp/workcell-provider-copy-minimalize.js
-const fs = require("node:fs");
-const path = require("node:path");
-
-const packageRoot = process.argv[2];
-const packageJsonPath = path.join(packageRoot, "package.json");
-const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-packageJson.name = "@workcell/not-claude-workspace-minimal";
-packageJson.workcellTampered = true;
-fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
-
-const entrypointPath = path.join(packageRoot, "main.js");
-let entrypoint = fs.readFileSync(entrypointPath, "utf8");
-for (const [from, to] of [
-  [("Anthropic " + "PBC. All rights reserved."), "Workcell scrubbed marker"],
-  [
-    ("https://code.claude.com/docs/en/legal-" + "and-compliance."),
-    "https://example.invalid/workcell",
-  ],
-  [
-    ("Want to see the unminified source? We" + "\x27re hiring!"),
-    "Workcell scrubbed hiring marker",
-  ],
-  [("dangerously" + "-skip-permissions"), "scrubbed-danger-flag"],
-]) {
-  entrypoint = entrypoint.split(from).join(to);
-}
-fs.writeFileSync(entrypointPath, entrypoint);
-EOF
-  node /workspace/tmp/workcell-provider-copy-minimalize.js /workspace/.workcell-provider-copy-minimal >/tmp/node-provider-copy-minimalize.out 2>&1
-  if node /workspace/.workcell-provider-copy-minimal/main.js --version >/tmp/node-provider-copy-minimal.out 2>&1; then
+  rm -rf "${workspace_provider_aggressive}"
+  rm -rf "${workspace_provider_minimal}"
+  mkdir -p "${workspace_provider_minimal}"
+  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js "${workspace_provider_minimal}/main.js"
+  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/package.json "${workspace_provider_minimal}/"
+  jq ".name = \"@workcell/not-claude-workspace-minimal\" | .workcellTampered = true" "${workspace_provider_minimal}/package.json" >"${workspace_provider_minimal}/package.json.new"
+  mv "${workspace_provider_minimal}/package.json.new" "${workspace_provider_minimal}/package.json"
+  sanitize_workspace_claude_entrypoint "${workspace_provider_minimal}/main.js"
+  if node "${workspace_provider_minimal}/main.js" --version >/tmp/node-provider-copy-minimal.out 2>&1; then
     echo "expected minimized scrubbed renamed workspace Claude provider subset execution via public node to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-minimal.out
-  rm -rf /workspace/.workcell-provider-copy-minimal
-  rm -rf /workspace/.workcell-provider-copy-split
-  mkdir -p /workspace/.workcell-provider-copy-split
-  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/package.json /workspace/.workcell-provider-copy-split/
-  cat <<'\''EOF'\'' >/workspace/tmp/workcell-provider-copy-split.js
-const fs = require("node:fs");
-const path = require("node:path");
-
-const packageRoot = process.argv[2];
-const sourceEntrypoint = "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js";
-const packageJsonPath = path.join(packageRoot, "package.json");
-const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-packageJson.name = "@workcell/not-claude-workspace-split";
-packageJson.workcellTampered = true;
-fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
-
-const tokenPattern = /[A-Za-z0-9_./:-]{12,}/g;
-const sourceText = fs.readFileSync(sourceEntrypoint, "utf8");
-const tokens = [...new Set(sourceText.match(tokenPattern) ?? [])].slice(0, 24);
-if (tokens.length !== 24) {
-  throw new Error(`expected at least 24 provider signature tokens, received ${tokens.length}`);
-}
-
-fs.writeFileSync(
-  path.join(packageRoot, "main.js"),
-  [
-    "import \"./part-a.js\";",
-    "import \"./part-b.js\";",
-    "import \"./part-c.js\";",
-    "console.log(\"workcell split provider smoke\");",
-    "",
-  ].join("\n"),
-);
-
-for (const [index, partTokens] of [
-  [0, tokens.slice(0, 8)],
-  [1, tokens.slice(8, 16)],
-  [2, tokens.slice(16, 24)],
-]) {
-  fs.writeFileSync(
-    path.join(packageRoot, `part-${String.fromCharCode(97 + index)}.js`),
-    `export const tokenChunk${index} = ${JSON.stringify(partTokens.join(" "))};\n`,
-  );
-}
-EOF
-  node /workspace/tmp/workcell-provider-copy-split.js /workspace/.workcell-provider-copy-split >/tmp/node-provider-copy-splitize.out 2>&1
-  if node /workspace/.workcell-provider-copy-split/main.js >/tmp/node-provider-copy-split.out 2>&1; then
+  rm -rf "${workspace_provider_minimal}"
+  rm -rf "${workspace_provider_split}"
+  mkdir -p "${workspace_provider_split}"
+  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/package.json "${workspace_provider_split}/"
+  jq ".name = \"@workcell/not-claude-workspace-split\" | .workcellTampered = true" "${workspace_provider_split}/package.json" >"${workspace_provider_split}/package.json.new"
+  mv "${workspace_provider_split}/package.json.new" "${workspace_provider_split}/package.json"
+  write_provider_token_parts "${workspace_provider_split}" "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js"
+  if node "${workspace_provider_split}/main.js" >/tmp/node-provider-copy-split.out 2>&1; then
     echo "expected split workspace Claude provider subset execution via public node to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-split.out
-  rm -rf /workspace/.workcell-provider-copy-split
-  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js /workspace/.workcell-provider-copy-no-package.js
-  cat <<'\''EOF'\'' >/workspace/tmp/workcell-provider-copy-no-package.js
-const fs = require("node:fs");
-
-const entrypointPath = process.argv[2];
-let entrypoint = fs.readFileSync(entrypointPath, "utf8");
-for (const [from, to] of [
-  [("Anthropic " + "PBC. All rights reserved."), "Workcell scrubbed marker"],
-  [
-    ("https://code.claude.com/docs/en/legal-" + "and-compliance."),
-    "https://example.invalid/workcell",
-  ],
-  [
-    ("Want to see the unminified source? We" + "\x27re hiring!"),
-    "Workcell scrubbed hiring marker",
-  ],
-  [("dangerously" + "-skip-permissions"), "scrubbed-danger-flag"],
-]) {
-  entrypoint = entrypoint.split(from).join(to);
-}
-fs.writeFileSync(entrypointPath, entrypoint);
-EOF
-  node /workspace/tmp/workcell-provider-copy-no-package.js /workspace/.workcell-provider-copy-no-package.js >/tmp/node-provider-copy-no-packageize.out 2>&1
-  if node /workspace/.workcell-provider-copy-no-package.js --version >/tmp/node-provider-copy-no-package.out 2>&1; then
+  rm -rf "${workspace_provider_split}"
+  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js "${workspace_provider_no_package}"
+  sanitize_workspace_claude_entrypoint "${workspace_provider_no_package}"
+  if node "${workspace_provider_no_package}" --version >/tmp/node-provider-copy-no-package.out 2>&1; then
     echo "expected package-less scrubbed Claude provider copy execution via public node to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-no-package.out
-  rm -f /workspace/.workcell-provider-copy-no-package.js
-  rm -rf /workspace/.workcell-provider-copy-no-package-split
-  mkdir -p /workspace/.workcell-provider-copy-no-package-split
-  cat <<'\''EOF'\'' >/workspace/tmp/workcell-provider-copy-no-package-split.js
-const fs = require("node:fs");
-const path = require("node:path");
-
-const root = process.argv[2];
-const sourceEntrypoint = "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js";
-const tokenPattern = /[A-Za-z0-9_./:-]{12,}/g;
-const sourceText = fs.readFileSync(sourceEntrypoint, "utf8");
-const tokens = [...new Set(sourceText.match(tokenPattern) ?? [])].slice(0, 24);
-if (tokens.length !== 24) {
-  throw new Error(`expected at least 24 provider signature tokens, received ${tokens.length}`);
-}
-
-fs.writeFileSync(
-  path.join(root, "main.js"),
-  [
-    "import \"./part-a.js\";",
-    "import \"./part-b.js\";",
-    "import \"./part-c.js\";",
-    "console.log(\"workcell split no-package smoke\");",
-    "",
-  ].join("\n"),
-);
-
-for (const [index, partTokens] of [
-  [0, tokens.slice(0, 8)],
-  [1, tokens.slice(8, 16)],
-  [2, tokens.slice(16, 24)],
-]) {
-  fs.writeFileSync(
-    path.join(root, `part-${String.fromCharCode(97 + index)}.js`),
-    `export const tokenChunk${index} = ${JSON.stringify(partTokens.join(" "))};\n`,
-  );
-}
-EOF
-  node /workspace/tmp/workcell-provider-copy-no-package-split.js /workspace/.workcell-provider-copy-no-package-split >/tmp/node-provider-copy-no-package-splitize.out 2>&1
-  if node /workspace/.workcell-provider-copy-no-package-split/main.js >/tmp/node-provider-copy-no-package-split.out 2>&1; then
+  rm -f "${workspace_provider_no_package}"
+  rm -rf "${workspace_provider_no_package_split}"
+  mkdir -p "${workspace_provider_no_package_split}"
+  write_provider_token_parts "${workspace_provider_no_package_split}" "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js"
+  if node "${workspace_provider_no_package_split}/main.js" >/tmp/node-provider-copy-no-package-split.out 2>&1; then
     echo "expected split package-less Claude provider subset execution via public node to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-no-package-split.out
-  rm -rf /workspace/.workcell-provider-copy-no-package-split
-  rm -rf /workspace/.workcell-benign-marker-package
-  mkdir -p /workspace/.workcell-benign-marker-package
-  cat <<'\''EOF'\'' >/workspace/.workcell-benign-marker-package/package.json
+  rm -rf "${workspace_provider_no_package_split}"
+  rm -rf "${workspace_provider_benign_marker}"
+  mkdir -p "${workspace_provider_benign_marker}"
+  cat <<'\''EOF'\'' >"${workspace_provider_benign_marker}/package.json"
 {
   "name": "@workcell/benign-marker-package",
   "version": "1.0.0",
   "type": "module"
 }
 EOF
-  cat <<'\''EOF'\'' >/workspace/.workcell-benign-marker-package/script.js
+  cat <<'\''EOF'\'' >"${workspace_provider_benign_marker}/script.js"
 console.log("dangerously-skip-permissions");
 EOF
-  if ! node /workspace/.workcell-benign-marker-package/script.js >/tmp/node-provider-marker-benign.out 2>&1; then
+  if ! node "${workspace_provider_benign_marker}/script.js" >/tmp/node-provider-marker-benign.out 2>&1; then
     cat /tmp/node-provider-marker-benign.out >&2
     echo "expected benign workspace package file containing a single provider marker to remain executable" >&2
     exit 1
   fi
   grep -q "dangerously-skip-permissions" /tmp/node-provider-marker-benign.out
-  rm -rf /workspace/.workcell-benign-marker-package
+  rm -rf "${workspace_provider_benign_marker}"
   rm -f /workspace/tmp/workcell-provider-copy-scrub.js
   rm -f /workspace/tmp/workcell-provider-copy-minimalize.js
   rm -f /workspace/tmp/workcell-provider-copy-split.js
