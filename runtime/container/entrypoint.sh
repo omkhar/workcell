@@ -1,12 +1,13 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
 
-AGENT_NAME="${AGENT_NAME:-codex}"
+AGENT_NAME="${AGENT_NAME:-}"
 AGENT_UI="${AGENT_UI:-cli}"
 HOME="${HOME:-/state/agent-home}"
 CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
 CODEX_PROFILE="${CODEX_PROFILE:-strict}"
 WORKCELL_MODE="${WORKCELL_MODE:-${CODEX_PROFILE}}"
+WORKCELL_AGENT_AUTONOMY="${WORKCELL_AGENT_AUTONOMY:-yolo}"
 TMPDIR="${TMPDIR:-/state/tmp}"
 WORKSPACE="${WORKSPACE:-/workspace}"
 export ADAPTER_ROOT="/opt/workcell/adapters"
@@ -37,6 +38,19 @@ if [[ "$$" -ne 1 ]]; then
 fi
 
 export TMPDIR
+
+if [[ -z "${AGENT_NAME}" ]]; then
+  echo "Workcell requires AGENT_NAME to be set explicitly at the runtime entrypoint." >&2
+  exit 2
+fi
+
+case "${WORKCELL_AGENT_AUTONOMY}" in
+  yolo | prompt) ;;
+  *)
+    echo "Unsupported Workcell agent autonomy mode at runtime: ${WORKCELL_AGENT_AUTONOMY}" >&2
+    exit 2
+    ;;
+esac
 
 seed_agent_home "${AGENT_NAME}"
 
@@ -90,5 +104,5 @@ if [[ $# -gt 0 ]]; then
   esac
 fi
 
-printf 'agent=%s ui=%s mode=%s workspace=%s\n' "${AGENT_NAME}" "${AGENT_UI}" "${WORKCELL_MODE}" "${WORKSPACE}" >&2
+printf 'agent=%s ui=%s mode=%s autonomy=%s workspace=%s\n' "${AGENT_NAME}" "${AGENT_UI}" "${WORKCELL_MODE}" "${WORKCELL_AGENT_AUTONOMY}" "${WORKSPACE}" >&2
 exec "$@"

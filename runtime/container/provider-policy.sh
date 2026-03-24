@@ -78,7 +78,7 @@ reject_unsafe_codex_args() {
     fi
 
     case "${arg}" in
-      --dangerously-bypass-approvals-and-sandbox | --search | --add-dir | --remote | -a | --ask-for-approval)
+      --dangerously-bypass-approvals-and-sandbox | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       -p | --profile)
@@ -116,35 +116,20 @@ reject_unsafe_codex_args() {
 }
 
 reject_unsafe_claude_args() {
-  local expect_value=""
   local arg
 
   provider_policy_allows_breakglass && return 0
 
   for arg in "$@"; do
-    if [[ -n "${expect_value}" ]]; then
-      case "${expect_value}" in
-        permission-mode)
-          case "${arg}" in
-            bypassPermissions | dontAsk)
-              workcell_die "Workcell blocked unsafe Claude permission override: ${arg}"
-              ;;
-          esac
-          ;;
-      esac
-      expect_value=""
-      continue
-    fi
-
     case "${arg}" in
       --dangerously-skip-permissions | --allow-dangerously-skip-permissions | --add-dir | --allowedTools | --mcp-config | --plugin-dir | --settings | --setting-sources | --system-prompt | --append-system-prompt)
         workcell_die "Workcell blocked unsafe Claude override: ${arg}"
         ;;
       --permission-mode)
-        expect_value="permission-mode"
+        workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
-      --permission-mode=bypassPermissions | --permission-mode=dontAsk)
-        workcell_die "Workcell blocked unsafe Claude permission override: ${arg}"
+      --permission-mode=*)
+        workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
       --add-dir=* | --allowedTools=* | --mcp-config=* | --plugin-dir=* | --settings=* | --setting-sources=* | --system-prompt=* | --append-system-prompt=*)
         workcell_die "Workcell blocked unsafe Claude override: ${arg%%=*}"
@@ -154,14 +139,31 @@ reject_unsafe_claude_args() {
 }
 
 reject_unsafe_gemini_args() {
+  local expect_value=""
   local arg
 
   provider_policy_allows_breakglass && return 0
 
   for arg in "$@"; do
+    if [[ -n "${expect_value}" ]]; then
+      case "${expect_value}" in
+        approval-mode)
+          workcell_die "Workcell blocked Gemini autonomy override: use the host workcell --agent-autonomy option instead."
+          ;;
+      esac
+      expect_value=""
+      continue
+    fi
+
     case "${arg}" in
-      *dangerously* | *bypass*permission* | --sandbox | --sandbox=* | --add-dir | --add-dir=* | --yolo)
+      *dangerously* | *bypass*permission* | --sandbox | --sandbox=* | --add-dir | --add-dir=* | -y | --yolo)
         workcell_die "Workcell blocked unsafe Gemini override: ${arg}"
+        ;;
+      --approval-mode)
+        expect_value="approval-mode"
+        ;;
+      --approval-mode=*)
+        workcell_die "Workcell blocked Gemini autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
     esac
   done

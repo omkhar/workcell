@@ -24,7 +24,29 @@ scrub_host_process_env() {
 
 scrub_host_process_env
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+resolve_self_path() {
+  local source_path="${BASH_SOURCE[0]}"
+  local source_dir=""
+  local link_target=""
+
+  if [[ "${source_path}" != */* ]]; then
+    source_path="$(command -v -- "${source_path}")"
+  fi
+
+  while [[ -L "${source_path}" ]]; do
+    source_dir="$(cd -P "$(dirname "${source_path}")" && pwd)"
+    link_target="$(readlink "${source_path}")"
+    if [[ "${link_target}" == /* ]]; then
+      source_path="${link_target}"
+    else
+      source_path="${source_dir}/${link_target}"
+    fi
+  done
+
+  printf '%s\n' "${source_path}"
+}
+
+ROOT_DIR="$(cd -P "$(dirname "$(resolve_self_path)")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 resolve_fixed_host_tool() {
   local name="$1"
@@ -67,10 +89,15 @@ usage() {
 Usage: workcell [options] [-- provider-args...]
 
 Options:
-  --agent codex|claude|gemini   Provider to run (default: codex)
+  --agent codex|claude|gemini   Provider to run (required)
+  --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
+  --agent-arg VALUE             Additional provider argv to append (repeatable)
   --ui cli|gui                  Surface to launch (default: cli)
   --mode strict|build|breakglass
                                 Runtime profile (default: strict)
+  --prepare                     Seed or refresh the reviewed runtime image before launch
+  --repair-profile              Delete a conflicting unmanaged Colima profile before launch
+                                (implies --prepare on strict)
   --ack-breakglass              Required with --mode breakglass
   --ack-arbitrary-command       Required with --allow-arbitrary-command
   --workspace PATH              Workspace to mount (default: current directory)
@@ -92,6 +119,43 @@ slugify() {
 
 lower_ascii() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+option_value_or_die() {
+  local option_name="$1"
+  local option_value="${2-}"
+
+  if [[ -z "${option_value}" ]] || [[ "${option_value}" == --* ]]; then
+    echo "Option ${option_name} requires a value." >&2
+    usage >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
+raw_option_value_or_die() {
+  local option_name="$1"
+  local option_value="${2-}"
+
+  if [[ -z "${option_value}" ]]; then
+    echo "Option ${option_name} requires a value." >&2
+    usage >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
+validate_agent_autonomy_name() {
+  case "$1" in
+    yolo | prompt) ;;
+    *)
+      echo "Unsupported agent autonomy mode: $1" >&2
+      echo "Use --agent-autonomy yolo or --agent-autonomy prompt." >&2
+      exit 2
+      ;;
+  esac
 }
 
 validate_colima_profile_name() {
@@ -116,6 +180,13 @@ profile_dir() {
 
   validate_colima_profile_name "${profile}"
   printf '%s/%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
+}
+
+profile_lima_dir() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/_lima/colima-%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 run_host_colima() {
@@ -165,6 +236,13 @@ profile_marker_path() {
   printf '%s/workcell.managed\n' "$(profile_dir "${profile}")"
 }
 
+profile_image_marker_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/workcell.image-ready\n' "$(profile_dir "${profile}")"
+}
+
 profile_audit_log_path() {
   local profile="$1"
 
@@ -191,11 +269,12 @@ append_audit_record() {
   touch "${audit_path}"
   chmod 0600 "${audit_path}" 2>/dev/null || true
   timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  printf 'timestamp=%s profile=%q mode=%q agent=%q ui=%q network_policy=%q execution_path=%q workspace=%q endpoints=%q bootstrap_applied=%q bootstrap_endpoints=%q\n' \
+  printf 'timestamp=%s profile=%q mode=%q agent=%q agent_autonomy=%q ui=%q network_policy=%q execution_path=%q workspace=%q endpoints=%q bootstrap_applied=%q bootstrap_endpoints=%q\n' \
     "${timestamp}" \
     "${profile}" \
     "${MODE}" \
     "${AGENT}" \
+    "${AGENT_AUTONOMY}" \
     "${UI}" \
     "${NETWORK_POLICY}" \
     "${execution_path}" \
@@ -203,6 +282,88 @@ append_audit_record() {
     "${ALLOW_ENDPOINTS}" \
     "${BOOTSTRAP_APPLIED}" \
     "$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" >>"${audit_path}"
+}
+
+write_profile_image_marker() {
+  local profile="$1"
+  local marker_path
+
+  marker_path="$(profile_image_marker_path "${profile}")"
+  mkdir -p "$(dirname "${marker_path}")"
+  umask 077
+  printf 'image=%s source_date_epoch=%s\n' "workcell:local" "${SOURCE_DATE_EPOCH}" >"${marker_path}"
+  chmod 0600 "${marker_path}" 2>/dev/null || true
+}
+
+emit_command() {
+  local -a cmd=("$@")
+
+  printf '  '
+  printf '%q ' "${cmd[@]}"
+  printf '\n'
+}
+
+build_recommended_command() {
+  local include_prepare="$1"
+  local include_repair="$2"
+  local target_mode="${3}"
+  local -a cmd=("workcell")
+
+  [[ "${include_prepare}" -eq 1 ]] && cmd+=(--prepare)
+  [[ "${include_repair}" -eq 1 ]] && cmd+=(--repair-profile)
+  cmd+=(--agent "${AGENT}")
+  [[ "${AGENT_AUTONOMY}" != "yolo" ]] && cmd+=(--agent-autonomy "${AGENT_AUTONOMY}")
+  [[ "${UI}" != "cli" ]] && cmd+=(--ui "${UI}")
+  cmd+=(--mode "${target_mode}" --workspace "${WORKSPACE}")
+  [[ "${ALLOW_NONGIT_WORKSPACE}" -eq 1 ]] && cmd+=(--allow-nongit-workspace)
+  [[ -n "${COLIMA_PROFILE}" ]] && cmd+=(--colima-profile "${COLIMA_PROFILE}")
+  if ((${#AGENT_ARGS[@]} > 0)); then
+    local agent_arg
+    for agent_arg in "${AGENT_ARGS[@]}"; do
+      cmd+=(--agent-arg "${agent_arg}")
+    done
+  fi
+  if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
+    cmd+=(--allow-arbitrary-command --ack-arbitrary-command)
+  fi
+  if [[ "${ACK_BREAKGLASS}" -eq 1 ]]; then
+    cmd+=(--ack-breakglass)
+  fi
+  if [[ "${REBUILD}" -eq 1 ]]; then
+    cmd+=(--rebuild)
+  fi
+  if ((${#PROVIDER_ARGS[@]} > 0)); then
+    cmd+=(-- "${PROVIDER_ARGS[@]}")
+  fi
+
+  emit_command "${cmd[@]}"
+}
+
+delete_unmanaged_profile() {
+  local profile="$1"
+  local state_dir
+  local lima_dir
+
+  state_dir="$(profile_dir "${profile}")"
+  lima_dir="$(profile_lima_dir "${profile}")"
+
+  echo "Repairing conflicting unmanaged Colima profile: ${profile}" >&2
+  echo "Workcell will delete the profile state and recreate it with reviewed mounts and policy." >&2
+
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    printf 'repair_action=delete_unmanaged_profile profile=%s dry_run=1\n' "${profile}" >&2
+    return 0
+  fi
+
+  HOST_COLIMA_BIN="${HOST_COLIMA_BIN:-$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)}"
+  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+  run_host_colima delete --profile "${profile}" --force >/dev/null 2>&1 || true
+  rm -rf "${state_dir}" "${lima_dir}"
+
+  if [[ -e "${state_dir}" ]] || [[ -e "${lima_dir}" ]]; then
+    echo "Failed to remove conflicting Colima profile state for ${profile}." >&2
+    exit 2
+  fi
 }
 
 workspace_has_markers() {
@@ -351,6 +512,7 @@ validate_mode_requirements() {
   local allow_arbitrary_command="$3"
   local ack_arbitrary_command="$4"
   local rebuild="$5"
+  local prepare="$6"
 
   if [[ "${mode}" == "breakglass" ]] && [[ "${ack_breakglass}" -eq 0 ]]; then
     echo "breakglass mode requires --ack-breakglass." >&2
@@ -364,9 +526,9 @@ validate_mode_requirements() {
     exit 2
   fi
 
-  if [[ "${mode}" == "strict" ]] && [[ "${rebuild}" -eq 1 ]]; then
+  if [[ "${mode}" == "strict" ]] && [[ "${rebuild}" -eq 1 ]] && [[ "${prepare}" -eq 0 ]]; then
     echo "strict mode does not rebuild or cold-bootstrap the runtime image." >&2
-    echo "Seed or refresh the reviewed image with --mode build, then return to strict." >&2
+    echo "Rerun with --prepare when you intentionally want Workcell to seed the reviewed image before strict launch." >&2
     exit 2
   fi
 }
@@ -861,39 +1023,59 @@ bootstrap_endpoints() {
   echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 snapshot.debian.org:80 snapshot.debian.org:443"
 }
 
-AGENT="codex"
+AGENT=""
+AGENT_AUTONOMY="yolo"
 UI="cli"
 MODE="strict"
 WORKSPACE="$(pwd -P)"
 COLIMA_PROFILE=""
 REBUILD=0
 DRY_RUN=0
+PREPARE=0
+REPAIR_PROFILE=0
 ALLOW_NONGIT_WORKSPACE=0
 ALLOW_ARBITRARY_COMMAND=0
 ACK_BREAKGLASS=0
 ACK_ARBITRARY_COMMAND=0
+declare -a AGENT_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent)
-      AGENT="$2"
+      AGENT="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --agent-autonomy)
+      AGENT_AUTONOMY="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --agent-arg)
+      AGENT_ARGS+=("$(raw_option_value_or_die "$1" "${2-}")")
       shift 2
       ;;
     --ui)
-      UI="$2"
+      UI="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
     --mode)
-      MODE="$2"
+      MODE="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
     --workspace)
-      WORKSPACE="$(cd "$2" && pwd -P)"
+      WORKSPACE="$(cd "$(option_value_or_die "$1" "${2-}")" && pwd -P)"
       shift 2
       ;;
     --colima-profile)
-      COLIMA_PROFILE="$2"
+      COLIMA_PROFILE="$(option_value_or_die "$1" "${2-}")"
       shift 2
+      ;;
+    --prepare)
+      PREPARE=1
+      shift
+      ;;
+    --repair-profile)
+      REPAIR_PROFILE=1
+      shift
       ;;
     --allow-nongit-workspace)
       ALLOW_NONGIT_WORKSPACE=1
@@ -933,6 +1115,30 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+validate_agent_autonomy_name "${AGENT_AUTONOMY}"
+declare -a PROVIDER_ARGS=()
+if ((${#AGENT_ARGS[@]} > 0)); then
+  PROVIDER_ARGS=("${AGENT_ARGS[@]}")
+fi
+if [[ $# -gt 0 ]]; then
+  PROVIDER_ARGS+=("$@")
+fi
+if ((${#PROVIDER_ARGS[@]} > 0)); then
+  set -- "${PROVIDER_ARGS[@]}"
+else
+  set --
+fi
+
+if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 0 ]] && [[ $# -gt 0 ]] && [[ "$1" != "${AGENT}" ]]; then
+  set -- "${AGENT}" "$@"
+fi
+
+if [[ -z "${AGENT}" ]]; then
+  echo "Option --agent is required." >&2
+  usage >&2
+  exit 2
+fi
+
 case "${AGENT}" in
   codex | claude | gemini) ;;
   *)
@@ -953,6 +1159,10 @@ case "${UI}" in
     ;;
 esac
 
+if [[ "${REPAIR_PROFILE}" -eq 1 ]] && [[ "${MODE}" == "strict" ]]; then
+  PREPARE=1
+fi
+
 validate_mode_name "${MODE}"
 PROFILE_ENV="$(profile_env_path "${MODE}")"
 [[ -f "${PROFILE_ENV}" ]] || {
@@ -965,7 +1175,7 @@ source "${PROFILE_ENV}"
 HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
 HOST_DOCKER_BIN="docker"
 validate_workspace "${WORKSPACE}" "${ALLOW_NONGIT_WORKSPACE}"
-validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${REBUILD}"
+validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${REBUILD}" "${PREPARE}"
 
 if [[ -z "${COLIMA_PROFILE}" ]]; then
   COLIMA_PROFILE="$(derive_profile_name "${WORKSPACE}")"
@@ -975,6 +1185,7 @@ validate_colima_profile_name "${COLIMA_PROFILE}"
 IMAGE_TAG="workcell:local"
 PROFILE_DIR="$(profile_dir "${COLIMA_PROFILE}")"
 PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
+PROFILE_IMAGE_MARKER="$(profile_image_marker_path "${COLIMA_PROFILE}")"
 PROFILE_PREEXISTED=0
 PROFILE_MARKER_WORKSPACE=""
 BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
@@ -994,9 +1205,24 @@ if [[ -d "${PROFILE_DIR}" ]]; then
 fi
 
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
-  echo "Refusing to reuse unmanaged Colima profile: ${COLIMA_PROFILE}" >&2
-  echo "Use a fresh derived profile or mark an existing one explicitly after review." >&2
-  exit 2
+  if [[ "${REPAIR_PROFILE}" -eq 1 ]]; then
+    delete_unmanaged_profile "${COLIMA_PROFILE}"
+    PROFILE_PREEXISTED=0
+  else
+    echo "Refusing to reuse unmanaged Colima profile: ${COLIMA_PROFILE}" >&2
+    echo "Workcell found a profile with the right name but without Workcell ownership metadata." >&2
+    echo "That profile might carry broader mounts, credentials, or network state than the reviewed path allows." >&2
+    echo "Next step:" >&2
+    if [[ "${MODE}" == "strict" ]]; then
+      build_recommended_command 1 1 "${MODE}"
+    else
+      build_recommended_command 0 1 "${MODE}"
+    fi
+    echo "Manual cleanup, if you prefer to inspect and delete it yourself:" >&2
+    printf '  colima delete --profile %q --force\n' "${COLIMA_PROFILE}" >&2
+    printf '  rm -rf %q %q\n' "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")" >&2
+    exit 2
+  fi
 fi
 
 if [[ -f "${PROFILE_MARKER}" ]]; then
@@ -1012,6 +1238,16 @@ if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" !=
   echo "Refusing to reuse Colima profile ${COLIMA_PROFILE} for a different workspace." >&2
   echo "Recorded workspace: ${PROFILE_MARKER_WORKSPACE}" >&2
   echo "Requested workspace: ${WORKSPACE}" >&2
+  exit 2
+fi
+
+if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
+  echo "No reviewed runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." >&2
+  echo "This is expected on the first launch for a workspace or after profile cleanup." >&2
+  echo "Next step:" >&2
+  build_recommended_command 1 0 "${MODE}"
+  echo "That command seeds the reviewed runtime image inside the isolated VM and then launches ${AGENT} in strict mode." >&2
+  echo "No VM or container was started." >&2
   exit 2
 fi
 
@@ -1044,6 +1280,7 @@ DOCKER_RUN_BASE=(
   --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777"
   --workdir /workspace
   -e AGENT_NAME="${AGENT}"
+  -e WORKCELL_AGENT_AUTONOMY="${AGENT_AUTONOMY}"
   -e AGENT_UI="${UI}"
   -e CODEX_PROFILE="${MODE}"
   -e WORKCELL_MODE="${MODE}"
@@ -1096,6 +1333,7 @@ fi
 
 printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
   "${COLIMA_PROFILE}" "${MODE}" "${AGENT}" "${UI}" "${WORKSPACE}" >&2
+printf 'agent_autonomy=%s\n' "${AGENT_AUTONOMY}" >&2
 printf 'workspace_control_plane=%s\n' "$([[ "${MODE}" == "breakglass" ]] && printf 'unmasked' || printf 'masked')" >&2
 printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
 printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
@@ -1144,18 +1382,23 @@ restore_runtime_egress() {
 
 if [[ "${REBUILD}" -eq 1 ]] || ! "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
   NEEDS_REBUILD=1
+else
+  write_profile_image_marker "${COLIMA_PROFILE}"
 fi
 
-if [[ "${MODE}" == "strict" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
+if [[ "${MODE}" == "strict" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]] && [[ "${PREPARE}" -eq 0 ]]; then
   restore_runtime_egress
-  echo "strict mode requires a prebuilt reviewed runtime image." >&2
-  printf 'Run workcell --mode build --agent %s --workspace %q -- <provider args> once to seed the image, then rerun in strict.\n' \
-    "${AGENT}" \
-    "${WORKSPACE}" >&2
+  echo "Strict mode needs a prepared reviewed runtime image for profile ${COLIMA_PROFILE}." >&2
+  echo "The profile started successfully, but the runtime image is missing or stale." >&2
+  echo "Next step:" >&2
+  build_recommended_command 1 0 "${MODE}"
   exit 2
 fi
 
 if [[ "${NETWORK_POLICY}" == "allowlist" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
+  if [[ "${PREPARE}" -eq 1 ]]; then
+    echo "prepare=1 seeding the reviewed runtime image before launch." >&2
+  fi
   BOOTSTRAP_APPLIED=1
   printf 'bootstrap_policy=allowlist endpoints=%s\n' "${BOOTSTRAP_ENDPOINTS}" >&2
   "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
@@ -1178,6 +1421,7 @@ if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
     restore_runtime_egress
     exit "${BUILD_STATUS}"
   fi
+  write_profile_image_marker "${COLIMA_PROFILE}"
 fi
 
 restore_runtime_egress

@@ -62,6 +62,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/install.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
+  "${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
   "${ROOT_DIR}/scripts/validate-repo.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"

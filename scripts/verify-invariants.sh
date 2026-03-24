@@ -43,10 +43,12 @@ CODEX_VERIFY_HOME="$(mktemp -d)"
 BARRIER_VERIFY_ROOT="$(mktemp -d)"
 BROWSER_PROFILE_FIXTURE=""
 COLIMA_PROFILE_FIXTURE=""
+INSTALL_VERIFY_HOME="$(mktemp -d)"
 
 cleanup() {
   rm -rf "${CODEX_VERIFY_HOME}"
   rm -rf "${BARRIER_VERIFY_ROOT}"
+  rm -rf "${INSTALL_VERIFY_HOME}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
@@ -160,6 +162,48 @@ if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${RO
   exit 1
 fi
 
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" >/tmp/workcell-install.out 2>&1; then
+  echo "Expected scripts/install.sh to succeed in a clean temporary HOME" >&2
+  cat /tmp/workcell-install.out >&2
+  exit 1
+fi
+
+if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" --help >/tmp/workcell-installed-help.out 2>&1; then
+  echo "Expected installed ~/.local/bin/workcell symlink to resolve support files correctly" >&2
+  cat /tmp/workcell-installed-help.out >&2
+  exit 1
+fi
+
+if ! grep -q '^Usage: workcell' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to print usage" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--prepare' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --prepare" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--repair-profile' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --repair-profile" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--agent-autonomy yolo|prompt' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --agent-autonomy" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--agent-arg VALUE' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --agent-arg" >&2
+  exit 1
+fi
+
+if ! grep -q 'Provider to run (required)' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --agent as required" >&2
+  exit 1
+fi
+
 if ! rg -q 'setup_workcell_trusted_docker_client' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell to seed a trusted Docker client state before host Docker use" >&2
   exit 1
@@ -197,6 +241,11 @@ fi
 
 if rg -q 'set -- codex --cd ' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
   echo "runtime/container/entrypoint.sh still injects a blocked default Codex --cd override" >&2
+  exit 1
+fi
+
+if rg -q 'AGENT_NAME="\$\{AGENT_NAME:-codex\}"' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "runtime/container/entrypoint.sh still defaults AGENT_NAME to codex" >&2
   exit 1
 fi
 
@@ -694,7 +743,7 @@ EOF
 if ! WORKCELL_PERL_MARKER="${HOST_PERL_MARKER}" \
   PERL5OPT=-MWorkcellMarker \
   PERL5LIB="${HOST_PERL_INJECT_DIR}" \
-  "${ROOT_DIR}/scripts/workcell" --dry-run >/dev/null 2>&1; then
+  "${ROOT_DIR}/scripts/workcell" --agent codex --dry-run >/dev/null 2>&1; then
   echo "Expected scripts/workcell --dry-run to succeed under a hostile Perl environment" >&2
   exit 1
 fi
@@ -764,6 +813,7 @@ touch "${MODE_TRAVERSAL_MARKER:?}"
 EOF
 if MODE_TRAVERSAL_MARKER="${MODE_TRAVERSAL_MARKER}" \
   "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
   --mode ../../tmp/workcell-mode-traversal \
   --allow-nongit-workspace \
   --workspace "${MODE_TRAVERSAL_WORKSPACE}" \
@@ -778,11 +828,141 @@ fi
 grep -q "Unsupported mode" /tmp/workcell-mode-traversal.out
 rm -f "${MODE_TRAVERSAL_ENV}"
 
-if "${ROOT_DIR}/scripts/workcell" --mode strict --rebuild --dry-run >/tmp/workcell-strict-rebuild.out 2>&1; then
+if "${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --rebuild --dry-run >/tmp/workcell-strict-rebuild.out 2>&1; then
   echo "Expected strict mode to reject explicit --rebuild requests" >&2
   exit 1
 fi
 grep -q "strict mode does not rebuild or cold-bootstrap the runtime image" /tmp/workcell-strict-rebuild.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --mode >/tmp/workcell-missing-mode.out 2>&1; then
+  echo "Expected --mode without a value to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --mode requires a value." /tmp/workcell-missing-mode.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-mode.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace >/tmp/workcell-missing-workspace.out 2>&1; then
+  echo "Expected --workspace without a value to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --workspace requires a value." /tmp/workcell-missing-workspace.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-workspace.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --agent-autonomy >/tmp/workcell-missing-agent-autonomy.out 2>&1; then
+  echo "Expected --agent-autonomy without a value to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --agent-autonomy requires a value." /tmp/workcell-missing-agent-autonomy.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-agent-autonomy.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --agent-autonomy turbo --dry-run >/tmp/workcell-invalid-agent-autonomy.out 2>&1; then
+  echo "Expected invalid --agent-autonomy values to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Unsupported agent autonomy mode: turbo" /tmp/workcell-invalid-agent-autonomy.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --agent-arg >/tmp/workcell-missing-agent-arg.out 2>&1; then
+  echo "Expected --agent-arg without a value to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --agent-arg requires a value." /tmp/workcell-missing-agent-arg.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-agent-arg.out
+
+if "${ROOT_DIR}/scripts/workcell" --dry-run >/tmp/workcell-missing-agent.out 2>&1; then
+  echo "Expected workcell without --agent to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --agent is required." /tmp/workcell-missing-agent.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-agent.out
+
+STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"
+mkdir -p "${STRICT_PREFLIGHT_WORKSPACE}"
+printf '# marker\n' >"${STRICT_PREFLIGHT_WORKSPACE}/AGENTS.md"
+STRICT_PREFLIGHT_PROFILE="workcell-preflight-$$"
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" >/tmp/workcell-strict-preflight.out 2>&1; then
+  echo "Expected strict mode without a prepared image marker to fail fast before launch" >&2
+  exit 1
+fi
+grep -q "No reviewed runtime image is recorded for strict mode" /tmp/workcell-strict-preflight.out
+grep -q -- '--prepare' /tmp/workcell-strict-preflight.out
+if grep -q "starting colima" /tmp/workcell-strict-preflight.out; then
+  echo "Strict preflight should fail before Colima startup when the reviewed image marker is absent" >&2
+  exit 1
+fi
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --dry-run >/tmp/workcell-dry-run-no-image.out 2>&1; then
+  echo "Expected strict dry-run to work without a prepared image marker" >&2
+  cat /tmp/workcell-dry-run-no-image.out >&2
+  exit 1
+fi
+grep -q 'docker run' /tmp/workcell-dry-run-no-image.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --prepare \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --dry-run >/tmp/workcell-prepare-dry-run.out 2>&1; then
+  echo "Expected --prepare dry-run to continue working" >&2
+  cat /tmp/workcell-prepare-dry-run.out >&2
+  exit 1
+fi
+grep -q 'docker run' /tmp/workcell-prepare-dry-run.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --mode strict \
+  --dry-run >/tmp/workcell-default-autonomy-dry-run.stdout 2>/tmp/workcell-default-autonomy-dry-run.stderr; then
+  echo "Expected default autonomy dry-run to succeed" >&2
+  exit 1
+fi
+grep -q 'agent_autonomy=yolo' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'WORKCELL_AGENT_AUTONOMY=yolo' /tmp/workcell-default-autonomy-dry-run.stdout
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --agent-autonomy prompt \
+  --agent-arg --version \
+  --dry-run >/tmp/workcell-prompt-autonomy-dry-run.stdout 2>/tmp/workcell-prompt-autonomy-dry-run.stderr; then
+  echo "Expected prompt autonomy dry-run with --agent-arg to succeed" >&2
+  cat /tmp/workcell-prompt-autonomy-dry-run.stderr >&2
+  exit 1
+fi
+grep -q 'agent_autonomy=prompt' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'WORKCELL_AGENT_AUTONOMY=prompt' /tmp/workcell-prompt-autonomy-dry-run.stdout
+grep -q 'workcell:local codex --version' /tmp/workcell-prompt-autonomy-dry-run.stdout
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent claude \
+  --agent-arg --version \
+  --dry-run >/tmp/workcell-claude-agent-arg-dry-run.stdout 2>/tmp/workcell-claude-agent-arg-dry-run.stderr; then
+  echo "Expected Claude --agent-arg dry-run to succeed" >&2
+  cat /tmp/workcell-claude-agent-arg-dry-run.stderr >&2
+  exit 1
+fi
+grep -q 'agent_autonomy=yolo' /tmp/workcell-claude-agent-arg-dry-run.stderr
+grep -q 'workcell:local claude --version' /tmp/workcell-claude-agent-arg-dry-run.stdout
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --agent-arg --version \
+  --dry-run >/tmp/workcell-gemini-agent-arg-dry-run.stdout 2>/tmp/workcell-gemini-agent-arg-dry-run.stderr; then
+  echo "Expected Gemini --agent-arg dry-run to succeed" >&2
+  cat /tmp/workcell-gemini-agent-arg-dry-run.stderr >&2
+  exit 1
+fi
+grep -q 'agent_autonomy=yolo' /tmp/workcell-gemini-agent-arg-dry-run.stderr
+grep -q 'workcell:local gemini --version' /tmp/workcell-gemini-agent-arg-dry-run.stdout
 
 DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --dry-run 2>/dev/null)"
 
@@ -865,7 +1045,7 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-arbitrary-command --dry-
   exit 1
 fi
 
-ARBITRARY_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --allow-arbitrary-command --ack-arbitrary-command --dry-run -- bash -lc true 2>/dev/null)"
+ARBITRARY_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command --dry-run -- bash -lc true 2>/dev/null)"
 if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
   echo "Expected acknowledged arbitrary command dry-run to succeed" >&2
   exit 1
@@ -967,10 +1147,39 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${NONGIT_WORKSPACE}
   exit 1
 fi
 printf '# marker\n' >"${NONGIT_WORKSPACE}/AGENTS.md"
-if ! "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+if ! "${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
   echo "Expected marker-based non-git workspace to succeed with explicit opt-in" >&2
   exit 1
 fi
+
+UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
+mkdir -p "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}"
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --allow-nongit-workspace \
+  --workspace "${NONGIT_WORKSPACE}" \
+  --colima-profile "${UNMANAGED_PROFILE_NAME}" >/tmp/workcell-unmanaged-profile.out 2>&1; then
+  echo "Expected unmanaged Colima profile reuse to fail" >&2
+  exit 1
+fi
+grep -q "Refusing to reuse unmanaged Colima profile" /tmp/workcell-unmanaged-profile.out
+grep -q -- '--repair-profile' /tmp/workcell-unmanaged-profile.out
+grep -q "colima delete --profile" /tmp/workcell-unmanaged-profile.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --repair-profile \
+  --allow-nongit-workspace \
+  --workspace "${NONGIT_WORKSPACE}" \
+  --colima-profile "${UNMANAGED_PROFILE_NAME}" \
+  --dry-run >/tmp/workcell-repair-profile-dry-run.out 2>&1; then
+  echo "Expected --repair-profile dry-run to explain the repair action and continue on strict without an extra --prepare flag" >&2
+  cat /tmp/workcell-repair-profile-dry-run.out >&2
+  exit 1
+fi
+grep -q 'repair_action=delete_unmanaged_profile' /tmp/workcell-repair-profile-dry-run.out
+grep -q 'docker run' /tmp/workcell-repair-profile-dry-run.out
+rm -rf "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${UNMANAGED_PROFILE_NAME}"
 
 if [[ "$(uname -s)" == "Darwin" ]] &&
   host_tool_exists /opt/homebrew/bin/colima /usr/local/bin/colima &&
@@ -982,6 +1191,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
   COLIMA_PROFILE_FIXTURE="${REAL_HOME}/.colima/${RUBY_PROFILE_NAME}"
   mkdir -p "${COLIMA_PROFILE_FIXTURE}"
   printf '%s\n' "${NONGIT_WORKSPACE}" >"${COLIMA_PROFILE_FIXTURE}/workcell.managed"
+  printf 'image=workcell:local source_date_epoch=0\n' >"${COLIMA_PROFILE_FIXTURE}/workcell.image-ready"
   cat >"${COLIMA_PROFILE_FIXTURE}/colima.yaml" <<'EOF'
 vmType: qemu
 mountType: virtiofs

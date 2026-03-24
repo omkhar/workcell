@@ -9,7 +9,7 @@ on:
       - main
   workflow_dispatch:
 
-permissions: {}
+permissions: read-all
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,8 +20,6 @@ jobs:
     name: Dependency review
     if: ${{ github.event_name == 'pull_request' && (!github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_DEPENDENCY_REVIEW == 'true') }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -34,8 +32,6 @@ jobs:
   actionlint:
     name: GitHub Actions lint
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

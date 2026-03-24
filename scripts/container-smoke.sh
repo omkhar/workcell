@@ -218,6 +218,55 @@ run_entrypoint_with_init_profile() {
     "${IMAGE_TAG}" "$@"
 }
 
+run_entrypoint_with_autonomy() {
+  local agent="$1"
+  local autonomy="$2"
+  shift 2
+
+  docker_cmd run --rm \
+    --read-only \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e CODEX_PROFILE=strict \
+    -e WORKCELL_AGENT_AUTONOMY="${autonomy}" \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -v "${SMOKE_WORKSPACE}:/workspace" \
+    "${IMAGE_TAG}" "$@"
+}
+
+run_entrypoint_with_autonomy_and_bind() {
+  local agent="$1"
+  local autonomy="$2"
+  local bind_source="$3"
+  local bind_target="$4"
+  shift 4
+
+  docker_cmd run --rm \
+    --read-only \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e CODEX_PROFILE=strict \
+    -e WORKCELL_AGENT_AUTONOMY="${autonomy}" \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -v "${SMOKE_WORKSPACE}:/workspace" \
+    -v "${bind_source}:${bind_target}:ro" \
+    "${IMAGE_TAG}" "$@"
+}
+
 require_tool docker
 trap cleanup EXIT
 cleanup_workspace_scratch "${ROOT_DIR}"
@@ -244,6 +293,105 @@ SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
 run_entrypoint codex codex --version >/dev/null
 run_entrypoint_with_profile codex build codex --version >/dev/null
 
+if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
+  CODEX_YOLO_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      codex \
+      yolo \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/codex \
+      codex --version
+  )"
+  if [[ "${CODEX_YOLO_ARGS}" != "--ask-for-approval never --profile strict --version" ]]; then
+    echo "unexpected Codex yolo argv: ${CODEX_YOLO_ARGS}" >&2
+    exit 1
+  fi
+
+  CODEX_PROMPT_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      codex \
+      prompt \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/codex \
+      codex --version
+  )"
+  if [[ "${CODEX_PROMPT_ARGS}" != "--ask-for-approval on-request --profile strict --version" ]]; then
+    echo "unexpected Codex prompt argv: ${CODEX_PROMPT_ARGS}" >&2
+    exit 1
+  fi
+
+  CLAUDE_YOLO_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      claude \
+      yolo \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/node \
+      claude --version
+  )"
+  if [[ "${CLAUDE_YOLO_ARGS}" != "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --permission-mode bypassPermissions --version" ]]; then
+    echo "unexpected Claude yolo argv: ${CLAUDE_YOLO_ARGS}" >&2
+    exit 1
+  fi
+
+  CLAUDE_PROMPT_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      claude \
+      prompt \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/node \
+      claude --version
+  )"
+  if [[ "${CLAUDE_PROMPT_ARGS}" != "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --permission-mode default --version" ]]; then
+    echo "unexpected Claude prompt argv: ${CLAUDE_PROMPT_ARGS}" >&2
+    exit 1
+  fi
+
+  GEMINI_YOLO_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      gemini \
+      yolo \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/node \
+      gemini --version
+  )"
+  if [[ "${GEMINI_YOLO_ARGS}" != "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode yolo --version" ]]; then
+    echo "unexpected Gemini yolo argv: ${GEMINI_YOLO_ARGS}" >&2
+    exit 1
+  fi
+
+  GEMINI_PROMPT_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      gemini \
+      prompt \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/node \
+      gemini --version
+  )"
+  if [[ "${GEMINI_PROMPT_ARGS}" != "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode default --version" ]]; then
+    echo "unexpected Gemini prompt argv: ${GEMINI_PROMPT_ARGS}" >&2
+    exit 1
+  fi
+fi
+
+if docker_cmd run --rm \
+  --read-only \
+  --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+  --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+  --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+  -e AGENT_UI=cli \
+  -e CODEX_PROFILE=strict \
+  -e HOME=/state/agent-home \
+  -e CODEX_HOME=/state/agent-home/.codex \
+  -e TMPDIR=/state/tmp \
+  -e WORKCELL_RUNTIME=1 \
+  -e WORKSPACE=/workspace \
+  -v "${SMOKE_WORKSPACE}:/workspace" \
+  "${IMAGE_TAG}" codex --version >/tmp/workcell-entrypoint-missing-agent.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a missing AGENT_NAME instead of defaulting to codex" >&2
+  exit 1
+fi
+grep -q "Workcell requires AGENT_NAME to be set explicitly" /tmp/workcell-entrypoint-missing-agent.out
+
 if run_entrypoint codex bash -lc true >/tmp/workcell-entrypoint-command.out 2>&1; then
   echo "expected Workcell entrypoint to reject non-provider commands by default" >&2
   exit 1
@@ -267,6 +415,12 @@ if run_entrypoint codex codex -a never --version >/tmp/workcell-entrypoint-codex
   exit 1
 fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-approval.out
+
+if run_entrypoint codex codex --full-auto --version >/tmp/workcell-entrypoint-codex-full-auto.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Codex full-auto overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-full-auto.out
 
 if run_entrypoint codex codex app-server >/tmp/workcell-entrypoint-codex-app-server.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex GUI subcommands on the CLI surface" >&2
@@ -324,6 +478,7 @@ grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-
 
 run_entrypoint claude claude --version >/dev/null
 run_entrypoint_with_init_profile codex build codex --version >/dev/null
+run_entrypoint gemini gemini --version >/dev/null
 
 if run_entrypoint claude claude --dangerously-skip-permissions >/tmp/workcell-entrypoint-claude-danger.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude dangerous override outside breakglass" >&2
@@ -342,6 +497,24 @@ if run_entrypoint claude claude --add-dir=/state --version >/tmp/workcell-entryp
   exit 1
 fi
 grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-add-dir.out
+
+if run_entrypoint claude claude --permission-mode default --version >/tmp/workcell-entrypoint-claude-permission-mode.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude autonomy overrides outside host policy" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Claude autonomy override" /tmp/workcell-entrypoint-claude-permission-mode.out
+
+if run_entrypoint gemini gemini --approval-mode default --version >/tmp/workcell-entrypoint-gemini-approval-mode.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Gemini autonomy overrides outside host policy" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Gemini autonomy override" /tmp/workcell-entrypoint-gemini-approval-mode.out
+
+if run_entrypoint gemini gemini -y --version >/tmp/workcell-entrypoint-gemini-yolo-short.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Gemini short yolo overrides outside host policy" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Gemini override" /tmp/workcell-entrypoint-gemini-yolo-short.out
 
 if run_container codex bash -lc 'AGENT_NAME=claude WORKCELL_MODE=breakglass CODEX_PROFILE=breakglass /usr/local/bin/workcell-entrypoint claude --dangerously-skip-permissions' >/tmp/workcell-entrypoint-direct-claude-breakglass.out 2>&1; then
   echo "expected direct entrypoint Claude breakglass override to fail" >&2
@@ -453,6 +626,11 @@ run_container codex bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-approval.out
+  if codex --full-auto --version >/tmp/codex-nested-full-auto.out 2>&1; then
+    echo "expected nested Codex invocation to reject full-auto overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-full-auto.out
   if codex app-server >/tmp/codex-nested-app-server.out 2>&1; then
     echo "expected nested Codex invocation to reject GUI subcommands on the CLI surface" >&2
     exit 1
@@ -1559,6 +1737,11 @@ run_container claude bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked unsafe Claude override" /tmp/claude-nested-add-dir.out
+  if claude --permission-mode default --version >/tmp/claude-nested-permission-mode.out 2>&1; then
+    echo "expected nested Claude invocation to reject autonomy overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked Claude autonomy override" /tmp/claude-nested-permission-mode.out
   if WORKCELL_MODE=breakglass claude --dangerously-skip-permissions >/tmp/claude-nested-breakglass.out 2>&1; then
     echo "expected nested Claude invocation to ignore caller-supplied breakglass env" >&2
     exit 1
@@ -1686,11 +1869,21 @@ run_container gemini bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-yolo.out
+  if gemini -y >/tmp/gemini-nested-yolo-short.out 2>&1; then
+    echo "expected nested Gemini invocation to reject short yolo overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-yolo-short.out
   if gemini --add-dir=/state --version >/tmp/gemini-nested-add-dir.out 2>&1; then
     echo "expected nested Gemini invocation to reject add-dir overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-add-dir.out
+  if gemini --approval-mode default --version >/tmp/gemini-nested-approval-mode.out 2>&1; then
+    echo "expected nested Gemini invocation to reject autonomy overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked Gemini autonomy override" /tmp/gemini-nested-approval-mode.out
   if WORKCELL_MODE=breakglass gemini --yolo >/tmp/gemini-nested-breakglass.out 2>&1; then
     echo "expected nested Gemini invocation to ignore caller-supplied breakglass env" >&2
     exit 1

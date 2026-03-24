@@ -16,15 +16,18 @@ pid1_env_value() {
 pin_runtime_env() {
   local pid1_mode=""
   local pid1_profile=""
+  local pid1_autonomy=""
 
   HOME=/state/agent-home
   CODEX_HOME="${HOME}/.codex"
   TMPDIR=/state/tmp
   pid1_mode="$(pid1_env_value WORKCELL_MODE || true)"
   pid1_profile="$(pid1_env_value CODEX_PROFILE || true)"
+  pid1_autonomy="$(pid1_env_value WORKCELL_AGENT_AUTONOMY || true)"
   WORKCELL_MODE="${pid1_mode:-strict}"
   CODEX_PROFILE="${pid1_profile:-${WORKCELL_MODE}}"
-  export HOME CODEX_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE
+  WORKCELL_AGENT_AUTONOMY="${pid1_autonomy:-yolo}"
+  export HOME CODEX_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY
 }
 
 sanitize_provider_env() {
@@ -70,16 +73,50 @@ pin_runtime_env
 mkdir -p "${TMPDIR}"
 seed_agent_home "${AGENT_NAME}"
 
+case "${WORKCELL_AGENT_AUTONOMY}" in
+  yolo | prompt) ;;
+  *)
+    workcell_die "Unsupported Workcell agent autonomy mode: ${WORKCELL_AGENT_AUTONOMY}"
+    ;;
+esac
+
+# Managed autonomy flags stay ahead of provider subcommands. User-authored
+# autonomy overrides are denied before exec, so there should be no conflicting
+# later flag left in "$@" to outvote the host-selected mode.
+declare -a MANAGED_AUTONOMY_ARGS=()
+
+case "${AGENT_NAME}:${WORKCELL_AGENT_AUTONOMY}" in
+  codex:yolo)
+    MANAGED_AUTONOMY_ARGS=(--ask-for-approval never)
+    ;;
+  codex:prompt)
+    MANAGED_AUTONOMY_ARGS=(--ask-for-approval on-request)
+    ;;
+  claude:yolo)
+    MANAGED_AUTONOMY_ARGS=(--permission-mode bypassPermissions)
+    ;;
+  claude:prompt)
+    MANAGED_AUTONOMY_ARGS=(--permission-mode default)
+    ;;
+  gemini:yolo)
+    MANAGED_AUTONOMY_ARGS=(--approval-mode yolo)
+    ;;
+  gemini:prompt)
+    MANAGED_AUTONOMY_ARGS=(--approval-mode default)
+    ;;
+esac
+
 case "${AGENT_NAME}" in
   codex)
     reject_unsafe_codex_args "$@"
-    exec "$(loader_path)" /usr/local/libexec/workcell/real/codex "$@"
+    exec "$(loader_path)" /usr/local/libexec/workcell/real/codex "${MANAGED_AUTONOMY_ARGS[@]}" "$@"
     ;;
   claude)
     reject_unsafe_claude_args "$@"
     exec "$(loader_path)" \
       /usr/local/libexec/workcell/real/node \
       /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js \
+      "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"
     ;;
   gemini)
@@ -87,6 +124,7 @@ case "${AGENT_NAME}" in
     exec "$(loader_path)" \
       /usr/local/libexec/workcell/real/node \
       /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
+      "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"
     ;;
   *)

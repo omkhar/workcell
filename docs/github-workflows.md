@@ -46,8 +46,11 @@ under platform automation.
   attestations on tagged releases, deterministic fixed-order multi-arch
   manifest assembly, preflight-to-publish digest binding for the source bundle
   and both per-platform image manifests, byte-for-byte preflight binding for
-  the build-input manifest, a release-preflight CodeQL rerun, an
-  explicit release-asset allowlist, exact pinned BuildKit, Cosign, and Syft
+  the build-input manifest, a conditional release-preflight CodeQL rerun when
+  repository settings enable private code scanning or the repository is public,
+  a protected `release` environment with a human approval gate before publish
+  when the repository visibility and billing plan support required reviewers,
+  an explicit release-asset allowlist, exact pinned BuildKit, Cosign, and Syft
   tooling, archived-source-tree image publication instead of live-worktree
   publication, and pinned GitHub Release publication instead of an ambient `gh`
   binary
@@ -67,6 +70,41 @@ workflow files. The linked Trail of Bits repos that informed the posture did:
 Workcell follows that smaller pattern instead of adding a wide spray of generic
 automation.
 
+## Repository-hosted controls
+
+Workcell keeps several repository settings outside git, but they are still part
+of the reviewed control plane:
+
+- active rulesets on the default branch for signed commits and anti-rewrite
+  integrity
+- an active required-status-checks ruleset on the default branch for the core
+  CI and GitHub workflow security checks
+- an active review ruleset on the default branch that requires pull requests,
+  at least one approval, code owner review, and resolved review threads, with
+  only an explicit repository-role pull-request-only bypass to preserve a
+  workable single-maintainer path
+- an active ruleset on `refs/tags/v*` that blocks tag creation, updates, and
+  deletion except for explicit repository-role bypass actors
+- GitHub Actions SHA pinning required at the repository level
+- a protected `release` environment whose expected protection mode is declared
+  in [`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml)
+- explicit CODEOWNERS entries for high-risk paths such as
+  `.github/workflows/`, `scripts/`, and the runtime boundary
+
+The repository includes [`scripts/verify-github-hosted-controls.sh`](../scripts/verify-github-hosted-controls.sh)
+to audit those hosted settings with the GitHub API. Tagged releases rerun that
+audit in release preflight before publish and refuse publication if the hosted
+controls drift.
+
+The current repository policy uses `release_environment.mode = "single-owner-private"`
+because this is a private single-owner repository. The audit enforces that as a
+private user-owned repository whose only direct collaborator is the owner. In
+that mode, the audited expectation is a named `release` environment, not a
+multi-party human approval gate. If the repository later moves to a
+multi-maintainer or public operating model, flip that policy to `review-gated`
+and Workcell will require at least one human reviewer and no administrator
+bypass before tagged publication.
+
 For private repositories, `codeql.yml` is opt-in through
 `WORKCELL_ENABLE_PRIVATE_CODE_SCANNING=true` because GitHub code scanning is
 not universally available on private repositories. The Scorecard run still
@@ -76,6 +114,14 @@ executes and uploads its artifact, but SARIF upload is opt-in through
 review through `WORKCELL_ENABLE_PRIVATE_DEPENDENCY_REVIEW=true`. Public
 repositories upload both SARIF result sets into the GitHub Security tab by
 default and run dependency review on pull requests without extra flags.
+
+Every workflow sets `permissions: read-all` at the workflow level and then
+elevates only the specific jobs that need write access, such as CodeQL SARIF
+upload, Scorecard SARIF upload, or tagged release publication. Workcell also
+forbids `pull_request_target` and disallows long-lived PAT-style workflow
+credentials in the reviewed workflow set. Release publication uses OIDC-backed
+ephemeral credentials for signing and attestations instead of long-lived cloud
+keys.
 
 ## Dependency update scope
 

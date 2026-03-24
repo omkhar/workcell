@@ -83,18 +83,29 @@ Initial adapters target:
 
 ```bash
 ./scripts/install.sh
-workcell --agent codex --mode build --workspace /path/to/repo -- codex --version
-workcell --agent codex --mode strict --workspace /path/to/repo
+workcell --prepare --agent codex --workspace /path/to/repo
+workcell --agent codex --workspace /path/to/repo
+workcell --agent claude --agent-autonomy prompt --workspace /path/to/repo
+workcell --agent gemini --agent-arg --version --workspace /path/to/repo
 man workcell
 ```
 
-The safe path is `strict`. `build` widens network access for dependency and
-build traffic. `breakglass` is explicit, higher trust, visibly different, and
-requires `--ack-breakglass`, but the managed in-container entrypoint still does
-not auto-inject unsafe provider flags.
-`strict` also refuses cold image builds and `--rebuild`; seed or refresh the
-reviewed runtime image through `build`, then return to `strict` for normal
-work.
+The safe path is `strict`, and it is also the default. `--prepare` is the
+recommended first-run path: it seeds or refreshes the reviewed runtime image
+inside the isolated VM, then continues with the requested launch. `build`
+still exists as the explicit wider-egress runtime profile for dependency and
+image creation work. `breakglass` is explicit, higher trust, visibly
+different, and requires `--ack-breakglass`, but the managed in-container
+entrypoint still does not auto-inject unsafe provider flags.
+There is no default agent; pass `--agent codex`, `--agent claude`, or
+`--agent gemini` explicitly on every launch.
+Workcell does default the selected provider to no-prompt autonomy:
+`--agent-autonomy yolo` is the default, and `--agent-autonomy prompt` is the
+explicit opt-out when you want the provider’s ordinary approval flow.
+`--agent-arg` is repeatable and appends provider-native argv at launch without
+making you repeat `codex`, `claude`, or `gemini` yourself. `--agent-arg`
+values are still treated as ordinary user-supplied provider argv and go
+through the same in-container denylist as raw `-- ...` arguments.
 
 By default, Workcell expects a git worktree and only forwards the selected
 provider command through the bounded runtime. Use `--allow-nongit-workspace`
@@ -104,6 +115,21 @@ exists only for lower-assurance boundary debugging with
 is recorded in the host audit log as a downgraded path.
 The safe path requires self-contained git admin state inside the mounted
 workspace; linked worktrees with external gitdirs are rejected.
+
+Common recovery paths:
+
+- First launch or missing reviewed runtime image:
+  `workcell --prepare --agent codex --workspace /path/to/repo`
+- First launch with provider prompts enabled:
+  `workcell --prepare --agent claude --agent-autonomy prompt --workspace /path/to/repo`
+- One-off provider flags without repeating the provider command:
+  `workcell --agent gemini --agent-arg --version --workspace /path/to/repo`
+- Conflicting unmanaged Colima profile:
+  `workcell --repair-profile --prepare --agent codex --workspace /path/to/repo`
+
+`--repair-profile` deletes only the conflicting derived Colima profile so
+Workcell can recreate it with reviewed mounts and policy. On `strict`, it also
+acts like `--prepare`, because the recreated profile starts empty.
 
 ## Repository layout
 
