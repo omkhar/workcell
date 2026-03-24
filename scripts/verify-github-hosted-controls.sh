@@ -210,11 +210,11 @@ required_status_contexts = {
     if entry.get("context")
 }
 expected_status_contexts = {
-    "CI / Validate repository",
-    "CI / Container smoke",
-    "CI / Reproducible build",
-    "Security / GitHub Actions lint",
-    "Security / GitHub Actions security analysis",
+    "Validate repository",
+    "Container smoke",
+    "Reproducible build",
+    "GitHub Actions lint",
+    "GitHub Actions security analysis",
 }
 missing_status_contexts = sorted(expected_status_contexts - required_status_contexts)
 if missing_status_contexts:
