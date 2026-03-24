@@ -56,7 +56,10 @@ under platform automation.
   binary
 - `hosted-controls.yml`: live GitHub control-plane drift detection on `main`
   pushes, schedule, and manual dispatch, using the same hosted-controls policy
-  that release preflight enforces before publish
+  that release preflight enforces before publish; on private repositories it
+  uses an optional dedicated `WORKCELL_HOSTED_CONTROLS_TOKEN` because the
+  default workflow token cannot read rulesets/collaborator/environment
+  metadata for this audit
 - `.github/dependabot.yml`: grouped weekly updates for GitHub Actions and the
   runtime base image, validator base image, pinned provider CLI dependency
   graph, and shipped Rust runtime crate, with cooldowns
@@ -100,6 +103,19 @@ to audit those hosted settings with the GitHub API.
 audit continuously against the live repository, and tagged releases rerun it in
 release preflight before publish and refuse publication if the hosted controls
 drift.
+
+For private repositories, GitHub's default workflow token does not have enough
+access to read the rulesets, direct collaborators, and protected environment
+metadata that the hosted-controls audit requires. Workcell therefore uses a
+dedicated `WORKCELL_HOSTED_CONTROLS_TOKEN` secret for workflow-based audits.
+The continuous `hosted-controls.yml` workflow skips cleanly when that secret is
+absent so `main` does not stay red on a known GitHub token limitation, but the
+tagged `release.yml` preflight fails closed unless the secret is configured.
+That token should be a fine-grained token or GitHub App token scoped only to
+this repository and only to the repository-administration metadata needed for
+the audit. Workflow jobs that can read that token run inside a dedicated
+`hosted-controls-audit` environment so the secret is not exposed to unrelated
+jobs.
 
 The current repository policy uses
 `branch_review.mode = "single-owner-private-pr"` and
