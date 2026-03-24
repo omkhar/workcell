@@ -16,6 +16,7 @@ require_tool python3
 require_tool yamllint
 require_tool cargo
 require_tool rustfmt
+require_tool git
 
 mapfile -t python_files < <(
   find "${ROOT_DIR}/scripts/lib" "${ROOT_DIR}/tests/python" "${ROOT_DIR}/tests/mutation" \
@@ -69,6 +70,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/install.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
   "${ROOT_DIR}/scripts/run-mutation-tests.sh"
+  "${ROOT_DIR}/scripts/verify-coverage.sh"
   "${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
   "${ROOT_DIR}/scripts/validate-repo.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
@@ -80,6 +82,7 @@ shell_files=(
   "${ROOT_DIR}/runtime/container/entrypoint.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
+  "${ROOT_DIR}/runtime/container/assurance.sh"
   "${ROOT_DIR}/runtime/container/bin/git"
   "${ROOT_DIR}/runtime/container/bin/node"
   "${ROOT_DIR}/runtime/container/home-control-plane.sh"
@@ -163,6 +166,11 @@ if branding_scan; then
   exit 1
 fi
 
+if [[ -e "${ROOT_DIR}/.workcell.remote.local" ]]; then
+  echo "Legacy repo-local remote builder config must not exist: ${ROOT_DIR}/.workcell.remote.local" >&2
+  exit 1
+fi
+
 (
   cd "${ROOT_DIR}/runtime/container/rust"
   cargo fmt --all --check
@@ -171,5 +179,6 @@ fi
 )
 
 "${ROOT_DIR}/scripts/run-mutation-tests.sh"
+"${ROOT_DIR}/scripts/verify-coverage.sh"
 
 echo "Workcell repository validation passed."

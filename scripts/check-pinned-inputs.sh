@@ -21,6 +21,7 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCKERFILE_PATH="${ROOT_DIR}/runtime/container/Dockerfile"
 VALIDATOR_DOCKERFILE_PATH="${ROOT_DIR}/tools/validator/Dockerfile"
+REMOTE_VALIDATOR_DOCKERFILE_PATH="${ROOT_DIR}/tools/remote-validator/Dockerfile"
 PROVIDERS_PACKAGE_JSON_PATH="${ROOT_DIR}/runtime/container/providers/package.json"
 PROVIDERS_PACKAGE_LOCK_PATH="${ROOT_DIR}/runtime/container/providers/package-lock.json"
 WORKFLOWS_DIR="${ROOT_DIR}/.github/workflows"
@@ -41,7 +42,7 @@ require_tool() {
 
 require_tool python3
 
-python3 - "${DOCKERFILE_PATH}" "${VALIDATOR_DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${PROVIDERS_PACKAGE_LOCK_PATH}" "${WORKFLOWS_DIR}" "${CI_WORKFLOW_PATH}" "${RELEASE_WORKFLOW_PATH}" "${CODEOWNERS_PATH}" "${CODEX_REQUIREMENTS_PATH}" "${CODEX_MCP_CONFIG_PATH}" "${HOSTED_CONTROLS_POLICY_PATH}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}" <<'PY'
+python3 - "${DOCKERFILE_PATH}" "${VALIDATOR_DOCKERFILE_PATH}" "${REMOTE_VALIDATOR_DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${PROVIDERS_PACKAGE_LOCK_PATH}" "${WORKFLOWS_DIR}" "${CI_WORKFLOW_PATH}" "${RELEASE_WORKFLOW_PATH}" "${CODEOWNERS_PATH}" "${CODEX_REQUIREMENTS_PATH}" "${CODEX_MCP_CONFIG_PATH}" "${HOSTED_CONTROLS_POLICY_PATH}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -51,16 +52,17 @@ import tomllib
 
 runtime_dockerfile = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 validator_dockerfile = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
-providers_package_json = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8"))
-providers_package_lock = json.loads(pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))
-workflows_dir = pathlib.Path(sys.argv[5])
-ci_workflow = pathlib.Path(sys.argv[6]).read_text(encoding="utf-8")
-release_workflow = pathlib.Path(sys.argv[7]).read_text(encoding="utf-8")
-codeowners = pathlib.Path(sys.argv[8]).read_text(encoding="utf-8")
-codex_requirements = tomllib.loads(pathlib.Path(sys.argv[9]).read_text(encoding="utf-8"))
-codex_mcp_config = tomllib.loads(pathlib.Path(sys.argv[10]).read_text(encoding="utf-8"))
-hosted_controls_policy = tomllib.loads(pathlib.Path(sys.argv[11]).read_text(encoding="utf-8"))
-max_snapshot_age_days = int(sys.argv[12])
+remote_validator_dockerfile = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+providers_package_json = json.loads(pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))
+providers_package_lock = json.loads(pathlib.Path(sys.argv[5]).read_text(encoding="utf-8"))
+workflows_dir = pathlib.Path(sys.argv[6])
+ci_workflow = pathlib.Path(sys.argv[7]).read_text(encoding="utf-8")
+release_workflow = pathlib.Path(sys.argv[8]).read_text(encoding="utf-8")
+codeowners = pathlib.Path(sys.argv[9]).read_text(encoding="utf-8")
+codex_requirements = tomllib.loads(pathlib.Path(sys.argv[10]).read_text(encoding="utf-8"))
+codex_mcp_config = tomllib.loads(pathlib.Path(sys.argv[11]).read_text(encoding="utf-8"))
+hosted_controls_policy = tomllib.loads(pathlib.Path(sys.argv[12]).read_text(encoding="utf-8"))
+max_snapshot_age_days = int(sys.argv[13])
 
 def require_arg(text: str, name: str, path: str) -> str:
     match = re.search(rf"^ARG {re.escape(name)}=(.+)$", text, re.MULTILINE)
@@ -158,16 +160,36 @@ def require_no_registry_bootstrap_mcp(config: dict, path: str) -> None:
 
 runtime_base_image = require_arg(runtime_dockerfile, "NODE_BASE_IMAGE", "runtime/container/Dockerfile")
 validator_base_image = require_arg(validator_dockerfile, "VALIDATOR_BASE_IMAGE", "tools/validator/Dockerfile")
+remote_validator_base_image = require_arg(
+    remote_validator_dockerfile,
+    "VALIDATOR_BASE_IMAGE",
+    "tools/remote-validator/Dockerfile",
+)
 runtime_snapshot = require_arg(runtime_dockerfile, "DEBIAN_SNAPSHOT", "runtime/container/Dockerfile")
 validator_snapshot = require_arg(validator_dockerfile, "DEBIAN_SNAPSHOT", "tools/validator/Dockerfile")
+remote_validator_snapshot = require_arg(
+    remote_validator_dockerfile,
+    "DEBIAN_SNAPSHOT",
+    "tools/remote-validator/Dockerfile",
+)
 codex_version = require_arg(runtime_dockerfile, "CODEX_VERSION", "runtime/container/Dockerfile")
 runtime_install_blocks = extract_install_blocks(runtime_dockerfile, "runtime/container/Dockerfile")
 validator_install_blocks = extract_install_blocks(validator_dockerfile, "tools/validator/Dockerfile")
+remote_validator_install_blocks = extract_install_blocks(
+    remote_validator_dockerfile,
+    "tools/remote-validator/Dockerfile",
+)
 
 require_pinned_base_image(runtime_base_image, "NODE_BASE_IMAGE", "runtime/container/Dockerfile")
 require_pinned_base_image(validator_base_image, "VALIDATOR_BASE_IMAGE", "tools/validator/Dockerfile")
+require_pinned_base_image(
+    remote_validator_base_image,
+    "VALIDATOR_BASE_IMAGE",
+    "tools/remote-validator/Dockerfile",
+)
 verify_snapshot_freshness(runtime_snapshot, "runtime/container/Dockerfile")
 verify_snapshot_freshness(validator_snapshot, "tools/validator/Dockerfile")
+verify_snapshot_freshness(remote_validator_snapshot, "tools/remote-validator/Dockerfile")
 require_no_registry_bootstrap_mcp(codex_requirements, "adapters/codex/requirements.toml")
 require_no_registry_bootstrap_mcp(codex_mcp_config, "adapters/codex/mcp/config.toml")
 require_regex(
@@ -197,6 +219,8 @@ if len(runtime_install_blocks) != 2:
     )
 if len(validator_install_blocks) != 1:
     raise SystemExit("tools/validator/Dockerfile must contain exactly one apt install block")
+if len(remote_validator_install_blocks) != 1:
+    raise SystemExit("tools/remote-validator/Dockerfile must contain exactly one apt install block")
 require_exact_packages(
     runtime_install_blocks[0],
     [
@@ -235,8 +259,10 @@ require_exact_packages(
         "cargo",
         "git",
         "groff-base",
+        "llvm",
         "mandoc",
         "python3",
+        "python3-coverage",
         "rustc",
         "rustfmt",
         "shellcheck",
@@ -245,6 +271,28 @@ require_exact_packages(
     ],
     "Validator",
     "tools/validator/Dockerfile",
+)
+require_exact_packages(
+    remote_validator_install_blocks[0],
+    [
+        "codespell",
+        "cargo",
+        "docker-cli",
+        "docker-buildx",
+        "git",
+        "groff-base",
+        "llvm",
+        "mandoc",
+        "python3",
+        "python3-coverage",
+        "rustc",
+        "rustfmt",
+        "shellcheck",
+        "shfmt",
+        "yamllint",
+    ],
+    "Remote validator",
+    "tools/remote-validator/Dockerfile",
 )
 
 root_package = providers_package_lock.get("packages", {}).get("", {})

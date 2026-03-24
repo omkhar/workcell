@@ -115,6 +115,13 @@ Workcell surfaces that posture explicitly in the launch audit output.
 making you repeat `codex`, `claude`, or `gemini` yourself. `--agent-arg`
 values are still treated as ordinary user-supplied provider argv and go
 through the same in-container denylist as raw `-- ...` arguments.
+`--codex-rules-mutability readonly` is the clean-session default. That keeps
+Codex execpolicy rules immutable on the managed path until either
+`--agent-autonomy prompt` or a package-manager mutation has already lowered the
+live session. If you explicitly want session-local Codex execpolicy amendments
+to persist across nested Codex launches until container exit even on the yolo
+path, opt in with `--codex-rules-mutability session`. Workcell surfaces both
+the configured and effective Codex rules posture in launch audit output.
 `--injection-policy` lets you stage reviewed per-session inputs such as
 org-wide instructions, persistent provider credentials, SSH material, and
 read-only config files without passing through host homes or sockets. If
@@ -131,6 +138,22 @@ lower-assurance in-session downgrade: maintainer scripts run as root inside the
 mutable container, so Workcell warns, records the downgrade in runtime state,
 and keeps that warning attached to later provider launches until the container
 evaporates on exit.
+That lane also adds only the minimal Linux capabilities needed for Workcell’s
+root-to-runtime-user handoff inside the container:
+`SETUID` and `SETGID`.
+
+Choose the mutability lane explicitly:
+
+- `strict` + `--container-mutability ephemeral`: default DX lane,
+  `container_assurance=managed-mutable`. This allows transient package installs,
+  but a successful package mutation downgrades the live session to
+  `lower-assurance-package-mutation` until exit.
+- `strict` + `--container-mutability readonly`: strongest managed lane,
+  `container_assurance=managed-readonly`. Package-manager writes stay blocked,
+  so the in-session control-plane posture does not downgrade.
+- `--agent-autonomy prompt`: keeps the provider’s ordinary approval flow, but
+  Workcell surfaces that separately as
+  `autonomy_assurance=lower-assurance-prompt-autonomy`.
 
 By default, Workcell expects a git worktree and only forwards the selected
 provider command through the bounded runtime. Use `--allow-nongit-workspace`
@@ -152,6 +175,7 @@ Common recovery paths:
   `workcell --agent gemini --agent-arg --version --workspace /path/to/repo`
 - Conflicting unmanaged Colima profile:
   `workcell --repair-profile --agent codex --workspace /path/to/repo`
+  Replace `codex` with `claude` or `gemini` for the corresponding provider.
 
 `--repair-profile` deletes only the conflicting derived Colima profile so
 Workcell can recreate it with reviewed mounts and policy. On `strict`, it also
@@ -178,12 +202,14 @@ Workcell treats injected content as three separate classes:
 The immutable adapter baselines under `adapters/` are never mutated in place.
 Repo-local `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` are masked inside the
 workspace on the safe path and imported into the provider-native home docs
-instead. On the default `--agent-autonomy yolo` path, managed provider policy
-such as Codex `rules/default.rules` stays read-only inside the session. On the
-explicit lower-assurance `--agent-autonomy prompt` path, Workcell seeds a
-session-local writable copy of the Codex rules tree so provider-approved
-session amendments can persist across nested Codex launches until the container
-exits.
+instead. By default, Codex rules stay linked to the immutable adapter baseline
+until the session is already downgraded by package mutation or the operator has
+selected `--agent-autonomy prompt`. If you explicitly opt into
+`--codex-rules-mutability session`, or if prompt autonomy or package mutation
+has already lowered the session assurance, Workcell seeds a session-local
+writable copy of the Codex rules tree so provider-approved execpolicy
+amendments can persist across nested Codex launches until the container exits,
+while the immutable adapter baseline remains unchanged under `adapters/`.
 
 Example policy:
 
@@ -275,6 +301,9 @@ Intentional non-goals for the safe path:
   release assets against OpenAI's published Sigstore bundle
 - `scripts/verify-build-input-manifest.sh`: deterministic local verification
   for the release build-input manifest generator
+- `scripts/verify-coverage.sh`: `>=90%` numeric coverage for first-party Python
+  helpers and Rust launcher wrappers, with shell boundary code kept under
+  integration and mutation tests instead of a fake line-coverage target
 - `scripts/container-smoke.sh`: direct container build and adapter smoke tests
 - `scripts/verify-invariants.sh`: local invariant regression checks against the
   launcher and shipped adapter policy
@@ -282,16 +311,20 @@ Intentional non-goals for the safe path:
   runtime export verification under a fixed `SOURCE_DATE_EPOCH`
 - `scripts/verify-release-bundle.sh`: deterministic source bundle verification
   under a fixed `SOURCE_DATE_EPOCH`
-- `scripts/dev-remote-validate.sh`: stage the current working tree to a remote
-  amd64 builder such as `builder@bewear`, build an ephemeral remote helper
-  container there from `tools/remote-validator/Dockerfile`, and run
+- `scripts/dev-remote-validate.sh`: stage the current working tree to a private
+  remote amd64 builder, build an ephemeral remote helper container there from
+  `tools/remote-validator/Dockerfile`, and run
   `validate-repo`, `container-smoke`,
   `verify-reproducible-build`, and `verify-release-bundle` inside that
-  container as a single pre-push preflight. The default remote snapshot is the
-  local index; `--snapshot worktree` and `--include-untracked` are explicit
-  opt-ins. The remote reproducibility lane is intentionally native
-  `linux/amd64` only; the canonical multi-architecture release gate remains the
-  local macOS plus GitHub release path.
+  container as a single pre-push preflight. Set the builder explicitly with
+  `--host <user@host>` or `WORKCELL_REMOTE_VALIDATE_HOST`. The default remote
+  snapshot is the local index; `--snapshot worktree` and `--include-untracked`
+  are explicit opt-ins. For host-local defaults, point
+  `WORKCELL_REMOTE_VALIDATE_CONFIG_PATH` at a host-local config file or use the
+  default `~/.config/workcell/remote-validate.env`. The remote
+  reproducibility lane is intentionally native `linux/amd64` only; the
+  canonical multi-architecture release gate remains the local macOS plus GitHub
+  release path.
 
 Full Colima plus Virtualization.Framework boundary verification remains a local
 or self-hosted macOS exercise. GitHub-hosted CI validates the repo shape and
@@ -310,11 +343,13 @@ Recommended split:
   and parity aid, not as a provenance or multi-tenant isolation boundary.
 - GitHub CI and release: final policy, signing, attestations, and publication
 
-Each real launch appends a durable audit record under the managed Colima profile
-directory with the workspace, runtime profile, network mode, selected adapter,
-and whether the run stayed on the managed Tier 1 path or used an explicitly
-lower-assurance mode. `build` sessions additionally record when the temporary
-bootstrap allowlist was applied for image creation.
+Each real launch appends durable host-side audit events under the managed
+Colima profile directory. Those events record the workspace, runtime profile,
+network mode, selected adapter, launch-time assurance fields, whether the run
+stayed on the managed Tier 1 path or used an explicitly lower-assurance mode,
+and whether the session later downgraded itself through package mutation.
+`build` sessions additionally record when the temporary bootstrap allowlist was
+applied for image creation.
 
 ## Release posture
 

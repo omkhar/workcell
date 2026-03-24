@@ -45,6 +45,17 @@ or
 in the provider argv. These values are still validated as ordinary user-supplied
 provider arguments inside the managed runtime.
 .TP
+.B --codex-rules-mutability readonly|session
+Select Codex execpolicy mutability. The default is
+.BR readonly ,
+which keeps Codex rules linked to the immutable adapter baseline on the managed
+path until the session is already downgraded by package mutation or prompt
+autonomy. Use
+.BR session
+only when you explicitly want session-local Codex execpolicy amendments to
+persist across nested Codex launches until container exit. That is surfaced as
+.BR codex_rules_assurance_effective_initial=lower-assurance-session-rules .
+.TP
 .B --container-mutability ephemeral|readonly
 Select whether the inner runtime root filesystem is writable but session-local
 .RB ( ephemeral )
@@ -64,6 +75,31 @@ Successful package mutations are treated as a lower-assurance in-session
 downgrade because maintainer scripts run as root inside the mutable container;
 Workcell warns when that happens and keeps the downgrade visible until the
 container exits.
+This lane adds only the minimal Linux capabilities required for the
+root-to-runtime-user handoff inside the container:
+.BR SETUID
+and
+.BR SETGID .
+.RS
+.TP
+.B strict + ephemeral
+Default developer path with
+.BR container_assurance=managed-mutable .
+This allows transient package installs, but a successful package mutation
+downgrades the live session to
+.BR lower-assurance-package-mutation
+until exit.
+.TP
+.B strict + readonly
+Strongest managed path with
+.BR container_assurance=managed-readonly .
+Package-manager writes stay blocked, so the in-session control-plane posture
+does not downgrade.
+.TP
+.B --agent-autonomy prompt
+Keeps the provider's approval flow, but Workcell surfaces that separately as
+.BR autonomy_assurance=lower-assurance-prompt-autonomy .
+.RE
 .TP
 .B --container-cpu COUNT
 Set an explicit CPU limit for the inner runtime container.
@@ -242,15 +278,15 @@ are never mutated in place. Repo-local
 and
 .BR GEMINI.md
 are masked inside the workspace and imported into the provider home docs
-instead. On the default
-.B --agent-autonomy yolo
-path, managed provider policy such as Codex
-.I rules/default.rules
-stays read-only inside the session. On the explicit lower-assurance
-.B --agent-autonomy prompt
-path, Workcell seeds a session-local writable copy of the Codex rules tree so
+instead. By default, Codex rules stay linked to the immutable adapter baseline
+until prompt autonomy or package mutation has already downgraded the session.
+If you explicitly opt into
+.B --codex-rules-mutability session
+Workcell seeds a session-local writable copy of the Codex rules tree so
 provider-approved session amendments can persist across nested Codex launches
-until the container exits.
+until the container exits, while the immutable adapter baseline under
+.I adapters/
+remains unchanged.
 Reusable provider and GitHub auth should go through
 .BR [credentials]
 in the injection policy rather than generic copied files.
@@ -299,6 +335,14 @@ If Workcell reports an unmanaged Colima profile, rerun with:
 .EX
 workcell --repair-profile --agent codex --workspace /path/to/repo
 .EE
+.PP
+Replace
+.B codex
+with
+.B claude
+or
+.B gemini
+for the corresponding provider.
 .SH EXIT STATUS
 The command exits non-zero on validation failures, unsupported modes, missing
 dependencies, or runtime launch errors.

@@ -134,6 +134,7 @@ COPY runtime/container/bin/node /usr/local/libexec/workcell/node-wrapper.sh
 COPY runtime/container/bin/apt-helper.sh /usr/local/libexec/workcell/apt-helper.sh
 COPY runtime/container/bin/apt-wrapper.sh /usr/local/libexec/workcell/apt-wrapper.sh
 COPY runtime/container/rust /workcell-rust
+COPY runtime/container/assurance.sh /usr/local/libexec/workcell/assurance.sh
 COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
 COPY runtime/container/home-control-plane.sh /usr/local/libexec/workcell/home-control-plane.sh
 COPY runtime/container/provider-wrapper.sh /usr/local/libexec/workcell/provider-wrapper.sh
@@ -158,6 +159,7 @@ RUN cd /workcell-rust \
   && printf '/usr/local/lib/libworkcell_exec_guard.so\n' > /etc/ld.so.preload \
   && chmod 0444 /etc/claude-code/managed-settings.json \
   && chmod 0444 \
+    /usr/local/libexec/workcell/assurance.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
     /usr/local/libexec/workcell/entrypoint.sh \
@@ -167,6 +169,7 @@ RUN cd /workcell-rust \
     /usr/local/libexec/workcell/runtime-user.sh \
   && chmod +x \
     /usr/local/libexec/workcell/core/launcher \
+    /usr/local/libexec/workcell/assurance.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \

@@ -16,8 +16,12 @@ Workcell separates three planes:
 At provider launch, Workcell re-seeds the provider-facing home from the
 immutable baseline plus the staged operator input. Mutable provider state such
 as provider auth tokens stays session-local, not a write-back into the adapter
-baseline. Managed policy files such as Codex `rules/default.rules` stay
-read-only inside the session. The staged host bundle lives in a launcher-owned state
+baseline. By default, Codex rules remain linked to the immutable adapter
+baseline. If you explicitly opt into
+`--codex-rules-mutability session`, Workcell copies the Codex rules tree into a
+session-local writable tree so provider-approved execpolicy amendments can
+persist for the life of the container, while the adapter baseline remains
+immutable. The staged host bundle lives in a launcher-owned state
 directory under `~/.local/state/workcell/tmp`, is mounted read-only into the
 runtime, and is cleaned up on exit with dead-owner stale
 bundle garbage collection on later launches. Secret-bearing inputs are treated
@@ -125,4 +129,4 @@ Selectors let you scope injected material to only some launches:
 
 ## Example
 
-See [docs/examples/injection-policy.toml](/Users/omkharanarasaratnam/src/workcell/docs/examples/injection-policy.toml).
+See [`docs/examples/injection-policy.toml`](./examples/injection-policy.toml).

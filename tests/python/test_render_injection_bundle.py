@@ -99,6 +99,100 @@ class RenderInjectionBundleTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.module.render_ssh(policy, root / "bundle", root, "codex", "strict")
 
+    def test_render_documents_stages_common_and_agent_specific_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "bundle"
+            output.mkdir()
+            (root / "common.md").write_text("common\n", encoding="utf-8")
+            (root / "codex.md").write_text("codex\n", encoding="utf-8")
+
+            rendered = self.module.render_documents(
+                {
+                    "documents": {
+                        "common": "common.md",
+                        "codex": "codex.md",
+                    }
+                },
+                output,
+                root,
+            )
+
+            self.assertEqual(rendered["common"], "documents/common.md")
+            self.assertEqual(rendered["codex"], "documents/codex.md")
+            self.assertEqual(
+                (output / "documents/common.md").read_text(encoding="utf-8"),
+                "common\n",
+            )
+
+    def test_render_copies_respects_provider_and_mode_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "bundle"
+            output.mkdir()
+            (root / "shared.txt").write_text("shared\n", encoding="utf-8")
+            (root / "codex-only.txt").write_text("codex\n", encoding="utf-8")
+
+            rendered = self.module.render_copies(
+                {
+                    "copies": [
+                        {
+                            "source": "shared.txt",
+                            "target": "/state/injected/shared.txt",
+                            "classification": "public",
+                            "providers": ["claude"],
+                        },
+                        {
+                            "source": "codex-only.txt",
+                            "target": "/state/injected/codex-only.txt",
+                            "classification": "public",
+                            "providers": ["codex"],
+                            "modes": ["strict"],
+                        },
+                    ]
+                },
+                output,
+                root,
+                "codex",
+                "strict",
+            )
+
+            self.assertEqual(len(rendered), 1)
+            self.assertEqual(rendered[0]["target"], "/state/injected/codex-only.txt")
+
+    def test_parse_toml_subset_rejects_unsupported_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.toml"
+            with self.assertRaises(SystemExit):
+                self.module.parse_toml_subset("[unsupported]\nfoo = \"bar\"\n", policy_path)
+
+    def test_selected_for_rejects_invalid_values(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.module.selected_for(["codex", "invalid"], "codex", "providers", {"codex"})
+
+    def test_render_ssh_respects_provider_filtering(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "bundle"
+            output.mkdir()
+            (root / "id_agent").write_text("key\n", encoding="utf-8")
+
+            rendered = self.module.render_ssh(
+                {
+                    "ssh": {
+                        "enabled": True,
+                        "identities": ["id_agent"],
+                        "providers": ["claude"],
+                    }
+                },
+                output,
+                root,
+                "codex",
+                "strict",
+            )
+
+            self.assertEqual(rendered, {})
+
 
 if __name__ == "__main__":
     unittest.main()

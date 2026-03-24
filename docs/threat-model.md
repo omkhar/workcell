@@ -48,7 +48,8 @@ profile, or mount host state that should remain outside the trust boundary.
 ## Controls
 
 - dedicated Colima VM profile rather than the shared default profile
-- non-privileged inner container with `no-new-privileges`
+- inner container with `no-new-privileges`; mutable sessions add only
+  `SETUID` and `SETGID` to support the root-to-runtime-user handoff
 - explicit mount allowlist
 - Workcell profile split: `strict`, `build`, `breakglass`
 - disabled web search by default

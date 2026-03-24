@@ -54,14 +54,51 @@ sanitize_provider_env() {
 emit_session_assurance_notice() {
   local assurance=""
 
+  if [[ "${WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED:-0}" == "1" ]]; then
+    return 0
+  fi
+
   assurance="$(workcell_runtime_state_value WORKCELL_SESSION_ASSURANCE || true)"
   case "${assurance}" in
     lower-assurance-package-mutation)
       echo "Workcell warning: this session previously ran package-manager mutations as root. In-container control-plane integrity is now lower-assurance until container exit." >&2
+      export WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED=1
       ;;
   esac
 }
 
+emit_codex_rules_mutability_notice() {
+  local configured_mutability=""
+  local effective_mutability=""
+  local effective_reason=""
+
+  if [[ "${AGENT_NAME}" != "codex" ]]; then
+    return 0
+  fi
+
+  configured_mutability="$(workcell_codex_rules_mutability)"
+  effective_mutability="$(workcell_current_effective_codex_rules_mutability)"
+  effective_reason="$(workcell_codex_rules_effective_reason)"
+
+  if [[ "${effective_mutability}" == "${configured_mutability}" ]]; then
+    return 0
+  fi
+
+  case "${effective_reason}" in
+    prompt-autonomy)
+      echo "Workcell note: Codex prompt autonomy uses session-local execpolicy rules until this container exits." >&2
+      echo "WORKCELL_EVENT codex-rules-mutability effective=session reason=prompt-autonomy" >&2
+      ;;
+    package-mutation)
+      echo "Workcell warning: package-manager mutation forced session-local Codex execpolicy rules for the remainder of this already-lower-assurance session." >&2
+      echo "WORKCELL_EVENT codex-rules-mutability effective=session reason=package-mutation" >&2
+      ;;
+  esac
+}
+
+# shellcheck disable=SC1091
+# shellcheck source=assurance.sh
+source /usr/local/libexec/workcell/assurance.sh
 # shellcheck disable=SC1091
 # shellcheck source=provider-policy.sh
 source /usr/local/libexec/workcell/provider-policy.sh
@@ -80,6 +117,7 @@ if workcell_should_reexec_as_runtime_user; then
 fi
 seed_agent_home "${AGENT_NAME}"
 emit_session_assurance_notice
+emit_codex_rules_mutability_notice
 
 codex_args_include_profile() {
   local arg=""

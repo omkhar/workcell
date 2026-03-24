@@ -7,6 +7,7 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     HOME=/tmp \
     TMPDIR="${TMPDIR:-/tmp}" \
     WORKCELL_REMOTE_VALIDATE_BASE_DIR="${WORKCELL_REMOTE_VALIDATE_BASE_DIR-}" \
+    WORKCELL_REMOTE_VALIDATE_CONFIG_PATH="${WORKCELL_REMOTE_VALIDATE_CONFIG_PATH-}" \
     WORKCELL_REMOTE_VALIDATE_HOST="${WORKCELL_REMOTE_VALIDATE_HOST-}" \
     WORKCELL_SANITIZED_ENTRYPOINT=1 \
     /bin/bash -p "$0" "$@"
@@ -15,7 +16,17 @@ set -euo pipefail
 export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REMOTE_HOST="${WORKCELL_REMOTE_VALIDATE_HOST:-builder@bewear}"
+REAL_HOME="$(
+  /usr/bin/env -i PATH="${TRUSTED_HOST_PATH}" /usr/bin/python3 - <<'PY'
+import os
+import pwd
+
+print(pwd.getpwuid(os.getuid()).pw_dir)
+PY
+)"
+LEGACY_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/.workcell.remote.local"
+REMOTE_CONFIG_PATH="${WORKCELL_REMOTE_VALIDATE_CONFIG_PATH:-${REAL_HOME}/.config/workcell/remote-validate.env}"
+REMOTE_HOST="${WORKCELL_REMOTE_VALIDATE_HOST:-}"
 REMOTE_BASE_DIR="${WORKCELL_REMOTE_VALIDATE_BASE_DIR:-/tmp}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 REMOTE_USE_SUDO=1
@@ -42,8 +53,18 @@ Stage a local Workcell snapshot to a remote amd64 builder, build a disposable
 remote helper container there, and run the selected heavy validation inside
 that container.
 
+If ${REMOTE_CONFIG_PATH} exists, Workcell loads simple KEY=VALUE entries for
+WORKCELL_REMOTE_VALIDATE_HOST, WORKCELL_REMOTE_VALIDATE_BASE_DIR, and
+WORKCELL_REMOTE_VALIDATE_USE_SUDO from that host-local config before CLI
+parsing. Override the path with WORKCELL_REMOTE_VALIDATE_CONFIG_PATH or
+--config <path>.
+
 Options:
-  --host <user@host>          Remote builder host (default: ${REMOTE_HOST})
+  --config <path>             Optional host-local config file to read before
+                              CLI parsing
+  --host <user@host>          Remote builder host
+                              (required; may also be set via
+                              WORKCELL_REMOTE_VALIDATE_HOST)
   --remote-base-dir <path>    Base directory for remote temp workspaces
                               (default: ${REMOTE_BASE_DIR})
   --source-date-epoch <sec>   SOURCE_DATE_EPOCH to use for remote checks
@@ -69,6 +90,125 @@ require_tool() {
   }
 }
 
+require_remote_host() {
+  if [[ -z "${REMOTE_HOST}" ]]; then
+    echo "Remote builder host is required. Pass --host <user@host> or set WORKCELL_REMOTE_VALIDATE_HOST." >&2
+    exit 1
+  fi
+}
+
+canonicalize_host_path() {
+  local path="$1"
+
+  /usr/bin/env -i PATH="${TRUSTED_HOST_PATH}" /usr/bin/python3 - "$path" <<'PY'
+import os
+import pathlib
+import sys
+
+print(pathlib.Path(sys.argv[1]).expanduser().resolve(strict=False))
+PY
+}
+
+assert_supported_remote_config_path() {
+  local candidate="$1"
+  local canonical_candidate=""
+  local canonical_root=""
+
+  [[ -n "${candidate}" ]] || return 0
+  canonical_candidate="$(canonicalize_host_path "${candidate}")"
+  canonical_root="$(canonicalize_host_path "${ROOT_DIR}")"
+
+  if [[ "${canonical_candidate}" == "${canonical_root}" ]] ||
+    [[ "${canonical_candidate}" == "${canonical_root}"/* ]]; then
+    echo "Remote builder config must live outside the repo checkout: ${canonical_candidate}" >&2
+    exit 1
+  fi
+}
+
+preparse_config_path() {
+  local args=("$@")
+  local i=0
+
+  while [[ ${i} -lt ${#args[@]} ]]; do
+    case "${args[${i}]}" in
+      --config)
+        if [[ $((i + 1)) -ge ${#args[@]} ]]; then
+          echo "Option --config requires a value." >&2
+          usage >&2
+          exit 1
+        fi
+        REMOTE_CONFIG_PATH="${args[$((i + 1))]}"
+        return 0
+        ;;
+      --config=*)
+        REMOTE_CONFIG_PATH="${args[${i}]#--config=}"
+        return 0
+        ;;
+    esac
+    i=$((i + 1))
+  done
+}
+
+load_local_remote_config() {
+  local line=""
+  local key=""
+  local value=""
+
+  if [[ -e "${LEGACY_LOCAL_REMOTE_CONFIG_PATH}" ]]; then
+    echo "Legacy repo-local remote builder config is no longer supported: ${LEGACY_LOCAL_REMOTE_CONFIG_PATH}" >&2
+    echo "Move it to ${REMOTE_CONFIG_PATH} or point WORKCELL_REMOTE_VALIDATE_CONFIG_PATH/--config at a host-local file." >&2
+    exit 1
+  fi
+
+  assert_supported_remote_config_path "${REMOTE_CONFIG_PATH}"
+
+  [[ -f "${REMOTE_CONFIG_PATH}" ]] || return 0
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "${line}" ]] && continue
+    [[ "${line}" == \#* ]] && continue
+    if [[ "${line}" != *=* ]]; then
+      echo "Unsupported entry in ${REMOTE_CONFIG_PATH}: ${line}" >&2
+      exit 1
+    fi
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    case "${key}" in
+      WORKCELL_REMOTE_VALIDATE_HOST)
+        REMOTE_HOST="${value}"
+        ;;
+      WORKCELL_REMOTE_VALIDATE_BASE_DIR)
+        REMOTE_BASE_DIR="${value}"
+        ;;
+      WORKCELL_REMOTE_VALIDATE_USE_SUDO)
+        case "${value}" in
+          0 | 1)
+            REMOTE_USE_SUDO="${value}"
+            ;;
+          *)
+            echo "WORKCELL_REMOTE_VALIDATE_USE_SUDO in ${REMOTE_CONFIG_PATH} must be 0 or 1." >&2
+            exit 1
+            ;;
+        esac
+        ;;
+      *)
+        echo "Unsupported key in ${REMOTE_CONFIG_PATH}: ${key}" >&2
+        exit 1
+        ;;
+    esac
+  done <"${REMOTE_CONFIG_PATH}"
+}
+
 add_check() {
   local check="$1"
   case "${check}" in
@@ -82,6 +222,9 @@ add_check() {
       ;;
   esac
 }
+
+preparse_config_path "$@"
+load_local_remote_config
 
 prepare_snapshot_dir() {
   local path_list_raw
@@ -172,6 +315,23 @@ trap cleanup EXIT
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --config)
+      [[ $# -ge 2 ]] || {
+        echo "Option --config requires a value." >&2
+        usage >&2
+        exit 1
+      }
+      REMOTE_CONFIG_PATH="$2"
+      assert_supported_remote_config_path "${REMOTE_CONFIG_PATH}"
+      load_local_remote_config
+      shift 2
+      ;;
+    --config=*)
+      REMOTE_CONFIG_PATH="${1#--config=}"
+      assert_supported_remote_config_path "${REMOTE_CONFIG_PATH}"
+      load_local_remote_config
+      shift
+      ;;
     --host)
       [[ $# -ge 2 ]] || {
         echo "Option --host requires a value." >&2
@@ -245,6 +405,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+require_remote_host
+
 if [[ "${#CHECKS[@]}" -eq 0 ]]; then
   CHECKS=(validate smoke repro release-bundle)
 fi
@@ -273,6 +435,7 @@ cp "${ROOT_DIR}/tools/remote-validator/Dockerfile" "${HELPER_CONTEXT_DIR}/Docker
 echo "Remote host: ${REMOTE_HOST}"
 echo "Remote base dir: ${REMOTE_BASE_DIR}"
 echo "Remote sudo: ${REMOTE_USE_SUDO}"
+echo "Remote config path: ${REMOTE_CONFIG_PATH}"
 echo "Snapshot mode: ${SNAPSHOT_MODE}"
 if [[ "${SNAPSHOT_MODE}" == "worktree" ]]; then
   echo "Include untracked: ${INCLUDE_UNTRACKED}"

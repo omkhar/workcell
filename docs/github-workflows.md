@@ -54,6 +54,9 @@ under platform automation.
   tooling, archived-source-tree image publication instead of live-worktree
   publication, and pinned GitHub Release publication instead of an ambient `gh`
   binary
+- `hosted-controls.yml`: live GitHub control-plane drift detection on `main`
+  pushes, schedule, and manual dispatch, using the same hosted-controls policy
+  that release preflight enforces before publish
 - `.github/dependabot.yml`: grouped weekly updates for GitHub Actions and the
   runtime base image, validator base image, pinned provider CLI dependency
   graph, and shipped Rust runtime crate, with cooldowns
@@ -92,9 +95,11 @@ of the reviewed control plane:
   `.github/workflows/`, `scripts/`, and the runtime boundary
 
 The repository includes [`scripts/verify-github-hosted-controls.sh`](../scripts/verify-github-hosted-controls.sh)
-to audit those hosted settings with the GitHub API. Tagged releases rerun that
-audit in release preflight before publish and refuse publication if the hosted
-controls drift.
+to audit those hosted settings with the GitHub API.
+[`hosted-controls.yml`](../.github/workflows/hosted-controls.yml) runs that
+audit continuously against the live repository, and tagged releases rerun it in
+release preflight before publish and refuse publication if the hosted controls
+drift.
 
 The current repository policy uses `release_environment.mode = "single-owner-private"`
 because this is a private single-owner repository. The audit enforces that as a

@@ -73,6 +73,48 @@ class ExtractDirectMountsTests(unittest.TestCase):
                 "/opt/workcell/host-inputs/copies/0",
             )
 
+    def test_require_direct_mount_rejects_missing_source(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.module.require_direct_mount(
+                {"mount_path": "/opt/workcell/host-inputs/credentials/codex-auth.json"},
+                "credentials.codex_auth",
+            )
+
+    def test_main_leaves_plain_copy_sources_inline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "manifest.json"
+            mount_spec_path = root / "mounts.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "copies": [
+                            {
+                                "source": "copies/0",
+                                "target": "/state/injected/public.txt",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            argv = [
+                "extract_direct_mounts.py",
+                "--manifest",
+                str(manifest_path),
+                "--mount-spec",
+                str(mount_spec_path),
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                self.assertEqual(self.module.main(), 0)
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            mounts = json.loads(mount_spec_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(manifest["copies"][0]["source"], "copies/0")
+            self.assertEqual(mounts, [])
+
 
 if __name__ == "__main__":
     unittest.main()

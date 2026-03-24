@@ -1,5 +1,8 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 
+# shellcheck disable=SC1091
+source /usr/local/libexec/workcell/assurance.sh
+
 workcell_link_control_plane_path() {
   local source_path="$1"
   local target_path="$2"
@@ -25,6 +28,15 @@ workcell_copy_control_plane_tree() {
 }
 
 WORKCELL_WORKSPACE_IMPORT_ROOT="${WORKCELL_WORKSPACE_IMPORT_ROOT:-/opt/workcell/workspace-control-plane}"
+WORKCELL_CODEX_RULES_MUTABILITY="${WORKCELL_CODEX_RULES_MUTABILITY:-readonly}"
+
+workcell_session_assurance() {
+  workcell_runtime_state_value WORKCELL_SESSION_ASSURANCE || true
+}
+
+workcell_current_agent_autonomy() {
+  workcell_runtime_state_value WORKCELL_AGENT_AUTONOMY || printf '%s\n' "${WORKCELL_AGENT_AUTONOMY:-yolo}"
+}
 
 workcell_assert_session_regular_writable_file() {
   local target_path="$1"
@@ -41,19 +53,67 @@ workcell_assert_session_regular_writable_file() {
   fi
 }
 
-workcell_assert_codex_execpolicy_baseline() {
-  local rules_dir="${CODEX_HOME}/rules"
-  local rules_path="${rules_dir}/default.rules"
+workcell_codex_rules_mutability() {
+  case "${WORKCELL_CODEX_RULES_MUTABILITY:-readonly}" in
+    readonly | session)
+      printf '%s\n' "${WORKCELL_CODEX_RULES_MUTABILITY:-readonly}"
+      ;;
+    *)
+      workcell_die "Unsupported Workcell Codex rules mutability: ${WORKCELL_CODEX_RULES_MUTABILITY}"
+      ;;
+  esac
+}
 
-  if [[ ! -d "${rules_dir}" ]]; then
-    workcell_die "Workcell failed to seed Codex execpolicy baseline: missing directory ${rules_dir}"
+workcell_codex_rules_promoted_for_session_assurance() {
+  local configured_mutability=""
+  local assurance=""
+
+  configured_mutability="$(workcell_codex_rules_mutability)"
+  assurance="$(workcell_session_assurance)"
+  [[ "${configured_mutability}" == "readonly" ]] &&
+    [[ "${assurance}" == "lower-assurance-package-mutation" ]]
+}
+
+workcell_codex_rules_promoted_for_prompt_autonomy() {
+  local configured_mutability=""
+  local autonomy=""
+
+  configured_mutability="$(workcell_codex_rules_mutability)"
+  autonomy="$(workcell_current_agent_autonomy)"
+  [[ "${configured_mutability}" == "readonly" ]] &&
+    [[ "${autonomy}" == "prompt" ]]
+}
+
+workcell_codex_rules_effective_reason() {
+  local configured_mutability=""
+  local autonomy=""
+  local assurance=""
+
+  configured_mutability="$(workcell_codex_rules_mutability)"
+  autonomy="$(workcell_current_agent_autonomy)"
+  assurance="$(workcell_session_assurance)"
+
+  if [[ "${configured_mutability}" == "session" ]]; then
+    printf 'operator-opt-in\n'
+    return 0
   fi
-  if [[ ! -f "${rules_path}" ]]; then
-    workcell_die "Workcell failed to seed Codex execpolicy baseline: missing file ${rules_path}"
+  if [[ "${autonomy}" == "prompt" ]]; then
+    printf 'prompt-autonomy\n'
+    return 0
   fi
-  if [[ -w "${rules_path}" ]]; then
-    workcell_die "Workcell failed to seed Codex execpolicy baseline: managed rules must remain read-only: ${rules_path}"
+  if [[ "${assurance}" == "lower-assurance-package-mutation" ]]; then
+    printf 'package-mutation\n'
+    return 0
   fi
+
+  printf 'managed-default\n'
+}
+
+workcell_current_effective_codex_rules_mutability() {
+  workcell_effective_codex_rules_mutability \
+    "$(workcell_codex_rules_mutability)" \
+    "$(workcell_current_agent_autonomy)" \
+    "$(workcell_session_assurance)"
 }
 
 workcell_manifest_active() {
@@ -322,17 +382,20 @@ workcell_seed_codex_rules() {
   local baseline_rules="${ADAPTER_ROOT}/codex/.codex/rules"
   local rules_target="${CODEX_HOME}/rules"
   local default_rules_target="${rules_target}/default.rules"
+  local rules_mutability=""
 
-  if [[ "${WORKCELL_AGENT_AUTONOMY:-yolo}" == "prompt" ]]; then
-    if [[ ! -d "${rules_target}" ]] || [[ -L "${rules_target}" ]] || [[ ! -f "${default_rules_target}" ]]; then
-      workcell_copy_control_plane_tree "${baseline_rules}" "${rules_target}" 0600 0700
-    fi
-    workcell_assert_session_regular_writable_file "${default_rules_target}" "Codex execpolicy session rules"
-    return 0
-  fi
-
-  workcell_link_control_plane_path "${baseline_rules}" "${rules_target}"
-  workcell_assert_codex_execpolicy_baseline
+  rules_mutability="$(workcell_current_effective_codex_rules_mutability)"
+  case "${rules_mutability}" in
+    readonly)
+      workcell_link_control_plane_path "${baseline_rules}" "${rules_target}"
+      ;;
+    session)
+      if [[ ! -d "${rules_target}" ]] || [[ -L "${rules_target}" ]] || [[ ! -f "${default_rules_target}" ]]; then
+        workcell_copy_control_plane_tree "${baseline_rules}" "${rules_target}" 0600 0700
+      fi
+      workcell_assert_session_regular_writable_file "${default_rules_target}" "Codex execpolicy session rules"
+      ;;
+  esac
 }
 
 workcell_apply_manifest_copies() {

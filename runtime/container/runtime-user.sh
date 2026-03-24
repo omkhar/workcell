@@ -1,5 +1,9 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 
+# shellcheck disable=SC1091
+# shellcheck source=assurance.sh
+source /usr/local/libexec/workcell/assurance.sh
+
 WORKCELL_RUNTIME_STATE_DIR="/run/workcell"
 WORKCELL_RUNTIME_MUTABILITY_FILE="${WORKCELL_RUNTIME_STATE_DIR}/container-mutability"
 WORKCELL_RUNTIME_MODE_FILE="${WORKCELL_RUNTIME_STATE_DIR}/mode"
@@ -183,21 +187,25 @@ workcell_prepare_runtime_identity() {
   workcell_append_shadow_entry "${user_name}"
 
   mkdir -p /etc/sudoers.d
+  if [[ -e /etc/sudoers.d/workcell-runtime-user ]]; then
+    chmod u+w /etc/sudoers.d/workcell-runtime-user
+  fi
   printf '%s ALL=(root) NOPASSWD: /usr/local/libexec/workcell/apt-helper.sh\n' "${user_name}" >/etc/sudoers.d/workcell-runtime-user
   chmod 0440 /etc/sudoers.d/workcell-runtime-user
 
   printf '%s\n' "${user_name}"
 }
 
-workcell_prepare_runtime_state_ownership() {
-  local uid="$1"
-  local gid="$2"
+workcell_write_readonly_state_file() {
+  local path="$1"
+  local value="$2"
 
-  mkdir -p "${HOME}" "${TMPDIR}"
-  chown -R "${uid}:${gid}" "${HOME}" "${TMPDIR}"
-  if [[ -d /state/injected ]]; then
-    chown -R "${uid}:${gid}" /state/injected
+  mkdir -p "$(dirname "${path}")"
+  if [[ -e "${path}" ]]; then
+    chmod u+w "${path}"
   fi
+  printf '%s\n' "${value}" >"${path}"
+  chmod 0444 "${path}"
 }
 
 workcell_write_runtime_state() {
@@ -205,31 +213,21 @@ workcell_write_runtime_state() {
   local mode=""
   local profile=""
   local autonomy=""
-  local assurance=""
+  local session_assurance=""
 
   mutability="$(workcell_runtime_mutability)"
   mode="${WORKCELL_MODE:-${CODEX_PROFILE:-strict}}"
   profile="${CODEX_PROFILE:-${mode}}"
   autonomy="${WORKCELL_AGENT_AUTONOMY:-yolo}"
-  assurance="managed-readonly"
-  if [[ "${autonomy}" == "prompt" ]]; then
-    assurance="lower-assurance-prompt-autonomy"
-  elif [[ "${mutability}" == "ephemeral" ]]; then
-    assurance="managed-mutable"
-  fi
+  session_assurance="$(workcell_container_assurance "${mutability}")"
   mkdir -p "${WORKCELL_RUNTIME_STATE_DIR}"
   chmod 0755 "${WORKCELL_RUNTIME_STATE_DIR}"
-  printf '%s\n' "${mutability}" >"${WORKCELL_RUNTIME_MUTABILITY_FILE}"
-  chmod 0444 "${WORKCELL_RUNTIME_MUTABILITY_FILE}"
-  printf '%s\n' "${mode}" >"${WORKCELL_RUNTIME_MODE_FILE}"
-  chmod 0444 "${WORKCELL_RUNTIME_MODE_FILE}"
-  printf '%s\n' "${profile}" >"${WORKCELL_RUNTIME_PROFILE_FILE}"
-  chmod 0444 "${WORKCELL_RUNTIME_PROFILE_FILE}"
-  printf '%s\n' "${autonomy}" >"${WORKCELL_RUNTIME_AUTONOMY_FILE}"
-  chmod 0444 "${WORKCELL_RUNTIME_AUTONOMY_FILE}"
+  workcell_write_readonly_state_file "${WORKCELL_RUNTIME_MUTABILITY_FILE}" "${mutability}"
+  workcell_write_readonly_state_file "${WORKCELL_RUNTIME_MODE_FILE}" "${mode}"
+  workcell_write_readonly_state_file "${WORKCELL_RUNTIME_PROFILE_FILE}" "${profile}"
+  workcell_write_readonly_state_file "${WORKCELL_RUNTIME_AUTONOMY_FILE}" "${autonomy}"
   if [[ ! -e "${WORKCELL_RUNTIME_ASSURANCE_FILE}" ]]; then
-    printf '%s\n' "${assurance}" >"${WORKCELL_RUNTIME_ASSURANCE_FILE}"
-    chmod 0444 "${WORKCELL_RUNTIME_ASSURANCE_FILE}"
+    workcell_write_readonly_state_file "${WORKCELL_RUNTIME_ASSURANCE_FILE}" "${session_assurance}"
   fi
 }
 
@@ -279,7 +277,6 @@ workcell_reexec_as_runtime_user() {
   gid="$(workcell_runtime_host_gid)"
   user_name="$(workcell_prepare_runtime_identity)"
   workcell_write_runtime_state
-  workcell_prepare_runtime_state_ownership "${uid}" "${gid}"
   export USER="${user_name}"
   export LOGNAME="${user_name}"
 

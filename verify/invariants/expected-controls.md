@@ -25,8 +25,8 @@
 - `strict` applies the base egress allowlist
 - `build` applies the expanded egress allowlist
 - allowlist modes program reviewed IPv4 and, when available, IPv6 destination
-  allowlists; if IPv6 enforcement is unavailable, Workcell disables IPv6 in the
-  VM instead of leaving an unmanaged parallel egress path
+  allowlists; if IPv6 enforcement is unavailable, Workcell fails closed instead
+  of leaving an unmanaged parallel egress path
 - `breakglass` clears the allowlist and documents the loss
 
 ## Audit and operator controls
