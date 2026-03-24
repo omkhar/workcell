@@ -278,7 +278,6 @@ EOF
 }
 
 clear_rules() {
-  initialize_vm_tools
   run_in_vm '
     set -euo pipefail
     sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || true
