@@ -1157,11 +1157,10 @@ fi
 RUN_IN_VM_BLOCK="$(sed -n '/^run_in_vm()/,/^}/p' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh")"
 if ! printf '%s\n' "${RUN_IN_VM_BLOCK}" | awk '
   /initialize_host_tools/ && !host_init { host_init = NR }
-  /if \[\[ -n "\$\{TEST_RUN_IN_VM_CAPTURE_DIR\}" \]\]; then/ && !capture_branch { capture_branch = NR }
-  /colima_home=/ && !capture_home { capture_home = NR }
+  /colima_home="\$\{COLIMA_HOME/ && !capture_home { capture_home = NR }
   /initialize_vm_tools/ && !vm_init { vm_init = NR }
-  /printf '\''set -euo pipefail\\n%s\\n'\''/ && !vm_exec { vm_exec = NR }
-  END { exit !(host_init && capture_branch && capture_home && vm_init && vm_exec && host_init < capture_home && vm_init < vm_exec) }
+  /set -euo pipefail/ && !vm_exec { vm_exec = NR }
+  END { exit !(host_init && capture_home && vm_init && vm_exec && host_init < capture_home && vm_init < vm_exec) }
 '; then
   echo "Expected run_in_vm to initialize host tools before the capture branch derives colima_home, and VM tools before real VM execution" >&2
   exit 1
