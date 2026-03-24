@@ -774,10 +774,11 @@ add_shadow_git_hooks_mount() {
   local relative_path="$2"
   local source="${CONTROL_PLANE_SHADOW_ROOT}/git/${relative_path}"
   local destination="/workspace/${relative_path}"
+  local source_path="${workspace}/${relative_path}"
 
   mkdir -p "${source}"
-  if [[ -d "${workspace}/${relative_path}" ]]; then
-    cp -a "${workspace}/${relative_path}/." "${source}/"
+  if [[ -d "${source_path}" && ! -L "${source_path}" ]]; then
+    cp -a "${source_path}/." "${source}/"
   fi
   lock_tree_readonly "${source}"
   register_shadow_mount "${source}" "${destination}"
@@ -788,10 +789,11 @@ add_shadow_git_config_mount() {
   local relative_path="$2"
   local source="${CONTROL_PLANE_SHADOW_ROOT}/git/${relative_path}"
   local destination="/workspace/${relative_path}"
+  local source_path="${workspace}/${relative_path}"
 
   mkdir -p "$(dirname "${source}")"
-  if [[ -f "${workspace}/${relative_path}" ]]; then
-    cp "${workspace}/${relative_path}" "${source}"
+  if [[ -f "${source_path}" && ! -L "${source_path}" ]]; then
+    cp "${source_path}" "${source}"
     sanitize_shadowed_git_config "${source}"
   else
     : >"${source}"
@@ -826,8 +828,8 @@ prepare_workspace_control_plane_shadow() {
     fi
   done < <(
     find "${workspace}" \
-      \( \( -type d -o -type l \) \( -path '*/.git/hooks' -o -path '*/.git/modules/*/hooks' \) \) -print0 -o \
-      \( \( -type f -o -type l \) \( -path '*/.git/config' -o -path '*/.git/config.worktree' -o -path '*/.git/modules/*/config' -o -path '*/.git/modules/*/config.worktree' \) \) -print0
+      \( -type d \( -path '*/.git/hooks' -o -path '*/.git/modules/*/hooks' \) \) -print0 -o \
+      \( -type f \( -path '*/.git/config' -o -path '*/.git/config.worktree' -o -path '*/.git/modules/*/config' -o -path '*/.git/modules/*/config.worktree' \) \) -print0
   )
 
   while IFS= read -r -d '' path; do
