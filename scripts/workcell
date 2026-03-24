@@ -1341,6 +1341,7 @@ validate_colima_profile() {
     exit 2
   }
 
+  validate_colima_profile_config "${profile}" "${workspace}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"
   validate_colima_runtime_mounts "${profile}" "${workspace}"
 }
 
@@ -1448,7 +1449,7 @@ provider_endpoints() {
 
 git_alias_value_is_blocked() {
   local alias_body="$1"
-  local alias_body_lower normalized
+  local alias_body_lower normalized token saw_commit
 
   alias_body_lower="$(lower_ascii "${alias_body}")"
   normalized="$(printf '%s' "${alias_body_lower}" | tr "\t\r\n'\"" '     ')"
@@ -1471,9 +1472,39 @@ git_alias_value_is_blocked() {
     return 0
   fi
 
-  if echo "${normalized}" | grep -Eq '(^|[[:space:]])commit([[:space:]].*)?[[:space:]]-n([[:space:]]|$)'; then
-    return 0
-  fi
+  saw_commit=0
+  for token in ${normalized}; do
+    if [[ "${token}" == "commit" ]]; then
+      saw_commit=1
+      continue
+    fi
+    if [[ "${saw_commit}" -eq 1 ]] && git_commit_short_arg_is_no_verify "${token}"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+git_commit_short_arg_is_no_verify() {
+  local arg="$1"
+  local bundle char i
+
+  [[ "${arg}" == -?* ]] || return 1
+  [[ "${arg}" == --* ]] && return 1
+
+  bundle="${arg#-}"
+  for ((i = 0; i < ${#bundle}; i++)); do
+    char="${bundle:i:1}"
+    case "${char}" in
+      n)
+        return 0
+        ;;
+      m | F | C | c | t | u | S)
+        return 1
+        ;;
+    esac
+  done
 
   return 1
 }
@@ -1592,6 +1623,30 @@ add_shadow_dir_mount() {
   register_shadow_mount "${source}" "${destination}"
 }
 
+copy_tree_without_symlinks() {
+  local source_root="$1"
+  local destination_root="$2"
+  local path=""
+  local relative_path=""
+  local destination_path=""
+
+  [[ -d "${source_root}" ]] || return 0
+
+  while IFS= read -r -d '' path; do
+    relative_path="${path#"${source_root}/"}"
+    destination_path="${destination_root}/${relative_path}"
+    if [[ -d "${path}" ]]; then
+      mkdir -p "${destination_path}"
+    else
+      mkdir -p "$(dirname "${destination_path}")"
+      cp -p "${path}" "${destination_path}"
+    fi
+  done < <(
+    find "${source_root}" -mindepth 1 \
+      \( -type d -o -type f \) -print0 | LC_ALL=C sort -z
+  )
+}
+
 add_workspace_import_file() {
   local workspace="$1"
   local relative_path="$2"
@@ -1625,10 +1680,11 @@ add_shadow_git_hooks_mount() {
   local relative_path="$2"
   local source="${CONTROL_PLANE_SHADOW_ROOT}/git/${relative_path}"
   local destination="/workspace/${relative_path}"
+  local source_path="${workspace}/${relative_path}"
 
   mkdir -p "${source}"
-  if [[ -d "${workspace}/${relative_path}" ]]; then
-    cp -a "${workspace}/${relative_path}/." "${source}/"
+  if [[ -d "${source_path}" && ! -L "${source_path}" ]]; then
+    copy_tree_without_symlinks "${source_path}" "${source}"
   fi
   lock_tree_readonly "${source}"
   register_shadow_mount "${source}" "${destination}"
@@ -1639,10 +1695,11 @@ add_shadow_git_config_mount() {
   local relative_path="$2"
   local source="${CONTROL_PLANE_SHADOW_ROOT}/git/${relative_path}"
   local destination="/workspace/${relative_path}"
+  local source_path="${workspace}/${relative_path}"
 
   mkdir -p "$(dirname "${source}")"
-  if [[ -f "${workspace}/${relative_path}" ]]; then
-    cp "${workspace}/${relative_path}" "${source}"
+  if [[ -f "${source_path}" && ! -L "${source_path}" ]]; then
+    cp "${source_path}" "${source}"
     sanitize_shadowed_git_config "${source}"
   else
     : >"${source}"
@@ -1697,8 +1754,8 @@ prepare_workspace_control_plane_shadow() {
       done < <(
         find "${workspace}/${git_rel}/modules" \
           \( \
-          \( -type d -name hooks \) -o \
-          \( -type f \( -name config -o -name config.worktree \) \) \
+          \( \( -type d -o -type l \) -name hooks \) -o \
+          \( \( -type f -o -type l \) \( -name config -o -name config.worktree \) \) \
           \) \
           -print0
       )
@@ -1706,7 +1763,8 @@ prepare_workspace_control_plane_shadow() {
         rel="${path#"${workspace}/"}"
         add_shadow_dir_mount "${rel}"
       done < <(
-        find "${workspace}/${git_rel}/modules" -type d -name worktrees -print0
+        find "${workspace}/${git_rel}/modules" \
+          \( \( -type d -o -type l \) -name worktrees \) -print0
       )
     fi
   done < <(
