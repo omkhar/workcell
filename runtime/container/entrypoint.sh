@@ -18,6 +18,20 @@ source /usr/local/libexec/workcell/provider-policy.sh
 # shellcheck disable=SC1091
 # shellcheck source=home-control-plane.sh
 source /usr/local/libexec/workcell/home-control-plane.sh
+# shellcheck disable=SC1091
+# shellcheck source=runtime-user.sh
+source /usr/local/libexec/workcell/runtime-user.sh
+
+emit_session_assurance_notice() {
+  local assurance=""
+
+  assurance="$(workcell_runtime_state_value WORKCELL_SESSION_ASSURANCE || true)"
+  case "${assurance}" in
+    lower-assurance-package-mutation)
+      echo "Workcell warning: this session previously ran package-manager mutations as root. In-container control-plane integrity is now lower-assurance until container exit." >&2
+      ;;
+  esac
+}
 
 umask 077
 mkdir -p "${HOME}"
@@ -52,7 +66,16 @@ case "${WORKCELL_AGENT_AUTONOMY}" in
     ;;
 esac
 
+if [[ "$(id -u)" == "0" ]]; then
+  workcell_write_runtime_state
+fi
+
+if workcell_should_reexec_as_runtime_user; then
+  workcell_reexec_as_runtime_user /usr/local/libexec/workcell/entrypoint.sh "$@"
+fi
+
 seed_agent_home "${AGENT_NAME}"
+emit_session_assurance_notice
 
 if [[ $# -eq 0 ]]; then
   case "${AGENT_NAME}:${AGENT_UI}" in
@@ -81,14 +104,7 @@ if [[ $# -gt 0 ]]; then
   case "${AGENT_NAME}" in
     codex)
       if [[ "$1" == "codex" ]]; then
-        case "${CODEX_PROFILE}" in
-          strict | build)
-            set -- /usr/local/libexec/workcell/core/codex --profile "${CODEX_PROFILE}" "${@:2}"
-            ;;
-          *)
-            set -- /usr/local/libexec/workcell/core/codex "${@:2}"
-            ;;
-        esac
+        set -- /usr/local/libexec/workcell/core/codex "${@:2}"
       fi
       ;;
     claude)

@@ -17,6 +17,11 @@ require_tool yamllint
 require_tool cargo
 require_tool rustfmt
 
+mapfile -t python_files < <(
+  find "${ROOT_DIR}/scripts/lib" "${ROOT_DIR}/tests/python" "${ROOT_DIR}/tests/mutation" \
+    -type f -name '*.py' -print | sort
+)
+
 branding_scan() {
   local pattern="agent-boundary|Agent Boundary|agent boundary"
 
@@ -57,11 +62,13 @@ shell_files=(
   "${ROOT_DIR}/scripts/check-workflows.sh"
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
+  "${ROOT_DIR}/scripts/dev-remote-validate.sh"
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/install.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
+  "${ROOT_DIR}/scripts/run-mutation-tests.sh"
   "${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
   "${ROOT_DIR}/scripts/validate-repo.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
@@ -71,11 +78,14 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
   "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"
   "${ROOT_DIR}/runtime/container/entrypoint.sh"
+  "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
+  "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
   "${ROOT_DIR}/runtime/container/bin/git"
   "${ROOT_DIR}/runtime/container/bin/node"
   "${ROOT_DIR}/runtime/container/home-control-plane.sh"
   "${ROOT_DIR}/runtime/container/provider-policy.sh"
   "${ROOT_DIR}/runtime/container/provider-wrapper.sh"
+  "${ROOT_DIR}/runtime/container/runtime-user.sh"
 )
 
 shellcheck -x "${shell_files[@]}"
@@ -96,6 +106,9 @@ for scratch_dir in \
     exit 1
   fi
 done
+
+python3 -m py_compile "${python_files[@]}"
+python3 -m unittest discover -s "${ROOT_DIR}/tests/python" -p 'test_*.py'
 
 while IFS= read -r file; do
   python3 -m json.tool "${file}" >/dev/null
@@ -156,5 +169,7 @@ fi
   cargo check --locked --offline
   cargo test --locked --offline
 )
+
+"${ROOT_DIR}/scripts/run-mutation-tests.sh"
 
 echo "Workcell repository validation passed."

@@ -8,6 +8,9 @@ workcell \- bounded runtime launcher for coding agents
 .B workcell
 starts the selected coding agent inside a bounded local runtime with explicit
 isolation and policy controls.
+.B workcell
+launches the selected provider directly inside that runtime; there is no
+separate attach or connect step after launch.
 The Tier 1 path is a dedicated Colima virtual machine profile on macOS plus a
 hardened container inside that VM.
 The managed runtime mounts
@@ -29,6 +32,8 @@ Select the provider approval posture. The default is
 which means Workcell injects the provider's no-prompt mode. Use
 .BR prompt
 to opt back into the provider's normal approval flow.
+Prompt autonomy is a lower-assurance choice because provider-native approval
+state or session-local policy can change during the live session.
 .TP
 .B --agent-arg VALUE
 Append provider-native argv at launch. This option is repeatable and does not
@@ -39,6 +44,44 @@ or
 .BR gemini
 in the provider argv. These values are still validated as ordinary user-supplied
 provider arguments inside the managed runtime.
+.TP
+.B --container-mutability ephemeral|readonly
+Select whether the inner runtime root filesystem is writable but session-local
+.RB ( ephemeral )
+or read-only
+.RB ( readonly ).
+The default is
+.BR ephemeral .
+When
+.B ephemeral
+is selected, Workcell also allows
+.BR apt
+and
+.BR apt-get
+to reach the pinned Debian snapshot endpoints so transient build tooling can be
+installed without widening to arbitrary distro mirrors.
+Successful package mutations are treated as a lower-assurance in-session
+downgrade because maintainer scripts run as root inside the mutable container;
+Workcell warns when that happens and keeps the downgrade visible until the
+container exits.
+.TP
+.B --container-cpu COUNT
+Set an explicit CPU limit for the inner runtime container.
+.TP
+.B --container-memory SIZE
+Set an explicit memory limit for the inner runtime container, for example
+.BR 4g .
+.TP
+.B --injection-policy PATH
+Use an explicit host-side injection policy for this launch. Workcell mounts
+credential sources read-only from their original host paths and stages the
+selected docs, copied files, and SSH material into per-session runtime state
+instead of passing through host homes or sockets directly.
+.TP
+.B --no-default-injection-policy
+Ignore
+.I ~/.config/workcell/injection-policy.toml
+for this launch even if it exists.
 .TP
 .B --ui cli|gui
 Select the surface to launch. Only
@@ -86,6 +129,15 @@ the host audit log as a downgraded path.
 .TP
 .B --colima-profile NAME
 Override the derived Colima profile name.
+.TP
+.B --vm-cpu COUNT
+Set an explicit CPU count for the dedicated Colima VM.
+.TP
+.B --vm-memory GIB
+Set an explicit memory size in GiB for the dedicated Colima VM.
+.TP
+.B --vm-disk GIB
+Set an explicit disk size in GiB for the dedicated Colima VM.
 .TP
 .B --rebuild
 Rebuild the runtime image before launch.
@@ -148,14 +200,68 @@ Installed launcher path used by
 Installed man page path used by
 .BR scripts/install.sh .
 .TP
+.I ~/.config/workcell/injection-policy.toml
+Default optional host-side injection policy. If present, Workcell mounts
+credential sources read-only from their original host paths and stages the rest
+of its contents into per-session runtime state unless
+.B --no-default-injection-policy
+is set.
+.TP
 .I ~/.colima/PROFILE/workcell.audit.log
 Durable host-side audit log written by the managed launcher for real runs.
+.SH SESSION INJECTIONS
+The safe path does not allow ambient host passthrough for secrets, SSH agents,
+or provider state. The supported way to place consistent material into every
+session is a host-side injection policy.
+.PP
+Workcell treats injected content as three classes:
+.IP \(bu 2
+Non-secret common or provider-specific instructions rendered into provider home
+docs such as
+.BR AGENTS.md ,
+.BR CLAUDE.md ,
+and
+.BR GEMINI.md .
+.IP \(bu 2
+Provider-native credentials mounted read-only from their original host paths
+and copied into the ephemeral session home.
+.IP \(bu 2
+Copied files or directories staged into
+.I /state/injected
+or a non-reserved path under the ephemeral session home.
+.IP \(bu 2
+SSH material copied into the ephemeral in-container
+.I ~/.ssh
+with strict permissions.
+.PP
+The immutable adapter baselines under
+.I adapters/
+are never mutated in place. Repo-local
+.BR AGENTS.md ,
+.BR CLAUDE.md ,
+and
+.BR GEMINI.md
+are masked inside the workspace and imported into the provider home docs
+instead. Managed provider policy such as Codex
+.I rules/default.rules
+stays read-only inside the session.
+Reusable provider and GitHub auth should go through
+.BR [credentials]
+in the injection policy rather than generic copied files.
 .SH FIRST RUN AND RECOVERY
 Recommended first launch:
 .IP
 .EX
 workcell --prepare --agent codex --workspace /path/to/repo
 .EE
+.PP
+Replace
+.B codex
+with
+.B claude
+or
+.B gemini
+for the corresponding provider.
 .PP
 Normal launch after the reviewed image already exists:
 .IP
@@ -175,10 +281,17 @@ Passing provider flags without repeating the provider command:
 workcell --agent gemini --agent-arg --version --workspace /path/to/repo
 .EE
 .PP
+Using an explicit injection policy:
+.IP
+.EX
+workcell --prepare --agent codex --workspace /path/to/repo \\
+  --injection-policy ~/.config/workcell/injection-policy.toml
+.EE
+.PP
 If Workcell reports an unmanaged Colima profile, rerun with:
 .IP
 .EX
-workcell --repair-profile --prepare --agent codex --workspace /path/to/repo
+workcell --repair-profile --agent codex --workspace /path/to/repo
 .EE
 .SH EXIT STATUS
 The command exits non-zero on validation failures, unsupported modes, missing

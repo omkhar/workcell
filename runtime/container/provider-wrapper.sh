@@ -6,28 +6,32 @@ TRUSTED_PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
 export WORKCELL_WRAPPER_CONTEXT=1
 export ADAPTER_ROOT="/opt/workcell/adapters"
 
-pid1_env_value() {
-  local key="$1"
-
-  [[ -r /proc/1/environ ]] || return 1
-  tr '\0' '\n' </proc/1/environ | sed -n "s/^${key}=//p" | head -n1
-}
-
 pin_runtime_env() {
+  local state_mode=""
+  local state_profile=""
+  local state_autonomy=""
+  local state_mutability=""
   local pid1_mode=""
   local pid1_profile=""
   local pid1_autonomy=""
+  local pid1_mutability=""
 
   HOME=/state/agent-home
   CODEX_HOME="${HOME}/.codex"
   TMPDIR=/state/tmp
-  pid1_mode="$(pid1_env_value WORKCELL_MODE || true)"
-  pid1_profile="$(pid1_env_value CODEX_PROFILE || true)"
-  pid1_autonomy="$(pid1_env_value WORKCELL_AGENT_AUTONOMY || true)"
-  WORKCELL_MODE="${pid1_mode:-strict}"
-  CODEX_PROFILE="${pid1_profile:-${WORKCELL_MODE}}"
-  WORKCELL_AGENT_AUTONOMY="${pid1_autonomy:-yolo}"
-  export HOME CODEX_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY
+  state_mode="$(workcell_runtime_state_value WORKCELL_MODE || true)"
+  state_profile="$(workcell_runtime_state_value CODEX_PROFILE || true)"
+  state_autonomy="$(workcell_runtime_state_value WORKCELL_AGENT_AUTONOMY || true)"
+  state_mutability="$(workcell_runtime_state_value WORKCELL_CONTAINER_MUTABILITY || true)"
+  pid1_mode="$(workcell_pid1_env_value WORKCELL_MODE || true)"
+  pid1_profile="$(workcell_pid1_env_value CODEX_PROFILE || true)"
+  pid1_autonomy="$(workcell_pid1_env_value WORKCELL_AGENT_AUTONOMY || true)"
+  pid1_mutability="$(workcell_pid1_env_value WORKCELL_CONTAINER_MUTABILITY || true)"
+  WORKCELL_MODE="${state_mode:-${pid1_mode:-strict}}"
+  CODEX_PROFILE="${state_profile:-${pid1_profile:-${WORKCELL_MODE}}}"
+  WORKCELL_AGENT_AUTONOMY="${state_autonomy:-${pid1_autonomy:-yolo}}"
+  WORKCELL_CONTAINER_MUTABILITY="${state_mutability:-${pid1_mutability:-ephemeral}}"
+  export HOME CODEX_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY
 }
 
 sanitize_provider_env() {
@@ -47,16 +51,13 @@ sanitize_provider_env() {
   export PATH="${TRUSTED_PATH}"
 }
 
-loader_path() {
-  case "$(uname -m)" in
-    x86_64)
-      printf '%s\n' /lib64/ld-linux-x86-64.so.2
-      ;;
-    aarch64 | arm64)
-      printf '%s\n' /lib/ld-linux-aarch64.so.1
-      ;;
-    *)
-      workcell_die "Unsupported architecture for Workcell provider loader."
+emit_session_assurance_notice() {
+  local assurance=""
+
+  assurance="$(workcell_runtime_state_value WORKCELL_SESSION_ASSURANCE || true)"
+  case "${assurance}" in
+    lower-assurance-package-mutation)
+      echo "Workcell warning: this session previously ran package-manager mutations as root. In-container control-plane integrity is now lower-assurance until container exit." >&2
       ;;
   esac
 }
@@ -67,11 +68,39 @@ source /usr/local/libexec/workcell/provider-policy.sh
 # shellcheck disable=SC1091
 # shellcheck source=home-control-plane.sh
 source /usr/local/libexec/workcell/home-control-plane.sh
+# shellcheck disable=SC1091
+# shellcheck source=runtime-user.sh
+source /usr/local/libexec/workcell/runtime-user.sh
 
 sanitize_provider_env
 pin_runtime_env
 mkdir -p "${TMPDIR}"
+if workcell_should_reexec_as_runtime_user; then
+  workcell_reexec_as_runtime_user /usr/local/libexec/workcell/provider-wrapper.sh "$@"
+fi
 seed_agent_home "${AGENT_NAME}"
+emit_session_assurance_notice
+
+codex_args_include_profile() {
+  local arg=""
+  local expect_value=0
+
+  for arg in "$@"; do
+    if [[ "${expect_value}" -eq 1 ]]; then
+      return 0
+    fi
+    case "${arg}" in
+      -p | --profile)
+        expect_value=1
+        ;;
+      --profile=*)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
 
 case "${WORKCELL_AGENT_AUTONOMY}" in
   yolo | prompt) ;;
@@ -108,21 +137,23 @@ esac
 
 case "${AGENT_NAME}" in
   codex)
+    declare -a MANAGED_CODEX_PROFILE_ARGS=()
+    if ! codex_args_include_profile "$@"; then
+      MANAGED_CODEX_PROFILE_ARGS=(--profile "${CODEX_PROFILE}")
+    fi
     reject_unsafe_codex_args "$@"
-    exec "$(loader_path)" /usr/local/libexec/workcell/real/codex "${MANAGED_AUTONOMY_ARGS[@]}" "$@"
+    exec /usr/local/libexec/workcell/real/codex "${MANAGED_CODEX_PROFILE_ARGS[@]}" "${MANAGED_AUTONOMY_ARGS[@]}" "$@"
     ;;
   claude)
     reject_unsafe_claude_args "$@"
-    exec "$(loader_path)" \
-      /usr/local/libexec/workcell/real/node \
+    exec /usr/local/libexec/workcell/real/node \
       /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"
     ;;
   gemini)
     reject_unsafe_gemini_args "$@"
-    exec "$(loader_path)" \
-      /usr/local/libexec/workcell/real/node \
+    exec /usr/local/libexec/workcell/real/node \
       /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 resolve_workcell_real_home() {
   local python_bin
 
@@ -88,4 +89,123 @@ buildx_cmd() {
   else
     "${WORKCELL_TRUSTED_BUILDX_BIN}" "$@"
   fi
+}
+
+prepare_workcell_buildkitd_config() {
+  local config_path=""
+  local cert_root=""
+  local cert_bundle=""
+  local cert_file=""
+  local cert_name=""
+  local -a ca_paths=()
+
+  [[ -n "${WORKCELL_REMOTE_BUILDKIT_SSL_CERTS:-}" ]] || return 0
+  [[ -d "${WORKCELL_REMOTE_BUILDKIT_SSL_CERTS}" ]] || return 0
+  [[ -n "${WORKCELL_DOCKER_SANDBOX_ROOT:-}" ]] || return 0
+
+  cert_root="${WORKCELL_DOCKER_SANDBOX_ROOT}/buildkit-certs/docker.io"
+  config_path="${WORKCELL_DOCKER_SANDBOX_ROOT}/buildkitd.toml"
+  mkdir -p "${cert_root}"
+
+  cert_bundle="${WORKCELL_REMOTE_BUILDKIT_SSL_CERTS}/ca-certificates.crt"
+  if [[ -f "${cert_bundle}" ]]; then
+    cp "${cert_bundle}" "${cert_root}/ca-certificates.crt"
+    ca_paths+=("${cert_root}/ca-certificates.crt")
+  fi
+
+  if [[ -n "${WORKCELL_REMOTE_BUILDKIT_LOCAL_CA:-}" ]] && [[ -d "${WORKCELL_REMOTE_BUILDKIT_LOCAL_CA}" ]]; then
+    while IFS= read -r -d '' cert_file; do
+      cert_name="$(basename "${cert_file}")"
+      cp "${cert_file}" "${cert_root}/${cert_name}"
+      ca_paths+=("${cert_root}/${cert_name}")
+    done < <(find "${WORKCELL_REMOTE_BUILDKIT_LOCAL_CA}" -type f -name '*.crt' -print0 | sort -z)
+  fi
+
+  if [[ "${#ca_paths[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  {
+    printf '[registry."docker.io"]\n'
+    printf '  ca = ['
+    local first=1
+    for cert_file in "${ca_paths[@]}"; do
+      if [[ "${first}" -eq 0 ]]; then
+        printf ', '
+      fi
+      first=0
+      printf '"%s"' "${cert_file}"
+    done
+    printf ']\n'
+    printf '[registry."registry-1.docker.io"]\n'
+    printf '  ca = ['
+    first=1
+    for cert_file in "${ca_paths[@]}"; do
+      if [[ "${first}" -eq 0 ]]; then
+        printf ', '
+      fi
+      first=0
+      printf '"%s"' "${cert_file}"
+    done
+    printf ']\n'
+  } >"${config_path}"
+
+  printf '%s\n' "${config_path}"
+}
+
+ensure_workcell_selected_builder() {
+  local builder_name="${BUILDX_BUILDER:-}"
+  local buildkitd_config=""
+
+  [[ -n "${builder_name}" ]] || return 0
+  if buildx_cmd inspect "${builder_name}" >/dev/null 2>&1; then
+    :
+  else
+    buildkitd_config="$(prepare_workcell_buildkitd_config || true)"
+    if [[ -n "${buildkitd_config}" ]]; then
+      buildx_cmd create \
+        --driver docker-container \
+        --buildkitd-config "${buildkitd_config}" \
+        --name "${builder_name}" \
+        --use >/dev/null
+    else
+      buildx_cmd create --driver docker-container --name "${builder_name}" --use >/dev/null
+    fi
+  fi
+
+  buildx_cmd inspect "${builder_name}" --bootstrap >/dev/null
+}
+
+workcell_docker_host_path() {
+  local path="$1"
+  local workspace_root="${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT:-}"
+  local home_root="${WORKCELL_DOCKER_HOST_HOME_ROOT:-}"
+
+  if [[ -n "${workspace_root}" ]] && [[ -n "${ROOT_DIR:-}" ]]; then
+    case "${path}" in
+      "${ROOT_DIR}")
+        printf '%s\n' "${workspace_root}"
+        return 0
+        ;;
+      "${ROOT_DIR}"/*)
+        printf '%s%s\n' "${workspace_root}" "${path#"${ROOT_DIR}"}"
+        return 0
+        ;;
+    esac
+  fi
+
+  if [[ -n "${home_root}" ]] && [[ -n "${HOME:-}" ]]; then
+    case "${path}" in
+      "${HOME}")
+        printf '%s\n' "${home_root}"
+        return 0
+        ;;
+      "${HOME}"/*)
+        printf '%s%s\n' "${home_root}" "${path#"${HOME}"}"
+        return 0
+        ;;
+    esac
+  fi
+
+  printf '%s\n' "${path}"
 }
