@@ -178,8 +178,12 @@ Workcell treats injected content as three separate classes:
 The immutable adapter baselines under `adapters/` are never mutated in place.
 Repo-local `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` are masked inside the
 workspace on the safe path and imported into the provider-native home docs
-instead. Managed provider policy such as Codex `rules/default.rules` stays
-read-only inside the session.
+instead. On the default `--agent-autonomy yolo` path, managed provider policy
+such as Codex `rules/default.rules` stays read-only inside the session. On the
+explicit lower-assurance `--agent-autonomy prompt` path, Workcell seeds a
+session-local writable copy of the Codex rules tree so provider-approved
+session amendments can persist across nested Codex launches until the container
+exits.
 
 Example policy:
 

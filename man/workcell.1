@@ -242,9 +242,15 @@ are never mutated in place. Repo-local
 and
 .BR GEMINI.md
 are masked inside the workspace and imported into the provider home docs
-instead. Managed provider policy such as Codex
+instead. On the default
+.B --agent-autonomy yolo
+path, managed provider policy such as Codex
 .I rules/default.rules
-stays read-only inside the session.
+stays read-only inside the session. On the explicit lower-assurance
+.B --agent-autonomy prompt
+path, Workcell seeds a session-local writable copy of the Codex rules tree so
+provider-approved session amendments can persist across nested Codex launches
+until the container exits.
 Reusable provider and GitHub auth should go through
 .BR [credentials]
 in the injection policy rather than generic copied files.
