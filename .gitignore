@@ -29,3 +29,5 @@ tmp/
 runtime/container/providers/node_modules/
 runtime/container/providers/mirror/
 runtime/container/rust/target/
+__pycache__/
+*.pyc
