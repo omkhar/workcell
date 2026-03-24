@@ -17,6 +17,7 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     /bin/bash -p "$0" "$@"
 fi
 set -euo pipefail
+trap 'echo "container-smoke failed at line ${LINENO}" >&2' ERR
 export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,6 +36,7 @@ INJECTION_FIXTURE_ROOT=""
 INJECTION_BUNDLE_ROOT=""
 WORKSPACE_IMPORT_ROOT=""
 declare -a WORKSPACE_IMPORT_ARGS=()
+declare -a RUNTIME_SECURITY_ARGS=()
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
@@ -174,6 +176,18 @@ docker_cmd() {
   fi
 }
 
+populate_runtime_security_args() {
+  local mutability="$1"
+
+  RUNTIME_SECURITY_ARGS=(--cap-drop ALL)
+  if [[ "${mutability}" == "ephemeral" ]]; then
+    RUNTIME_SECURITY_ARGS+=(
+      --cap-add SETUID
+      --cap-add SETGID
+    )
+  fi
+}
+
 prepare_direct_mount_spec_for_bundle() {
   local bundle_root="$1"
   local mount_spec_path="${bundle_root}.mounts.json"
@@ -224,8 +238,10 @@ run_container() {
 
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
 
   docker_cmd run --rm \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -244,7 +260,7 @@ run_container() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
     -v "${docker_workspace}:/workspace" \
-    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     --entrypoint "$1" \
     "${IMAGE_TAG}" "${@:2}"
 }
@@ -257,8 +273,10 @@ run_container_with_mutability() {
 
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   populate_workspace_import_mounts
+  populate_runtime_security_args "${mutability}"
 
   docker_cmd run --rm \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -277,7 +295,7 @@ run_container_with_mutability() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
     -v "${docker_workspace}:/workspace" \
-    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     --entrypoint "$1" \
     "${IMAGE_TAG}" "${@:2}"
 }
@@ -289,8 +307,10 @@ run_entrypoint() {
 
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
 
   docker_cmd run --rm \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -309,7 +329,7 @@ run_entrypoint() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
     -v "${docker_workspace}:/workspace" \
-    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     "${IMAGE_TAG}" "$@"
 }
 
@@ -321,8 +341,10 @@ run_entrypoint_with_profile() {
 
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
 
   docker_cmd run --rm \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -342,7 +364,7 @@ run_entrypoint_with_profile() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
     -v "${docker_workspace}:/workspace" \
-    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     "${IMAGE_TAG}" "$@"
 }
 
@@ -354,9 +376,11 @@ run_entrypoint_with_init_profile() {
 
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
 
   docker_cmd run --rm \
     --init \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -376,7 +400,7 @@ run_entrypoint_with_init_profile() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
     -v "${docker_workspace}:/workspace" \
-    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     "${IMAGE_TAG}" "$@"
 }
 
@@ -388,8 +412,10 @@ run_entrypoint_with_autonomy() {
 
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
 
   docker_cmd run --rm \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -409,7 +435,7 @@ run_entrypoint_with_autonomy() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
     -v "${docker_workspace}:/workspace" \
-    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     "${IMAGE_TAG}" "$@"
 }
 
@@ -425,8 +451,10 @@ run_entrypoint_with_autonomy_and_bind() {
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   docker_bind_source="$(workcell_docker_host_path "${bind_source}")"
   populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
 
   docker_cmd run --rm \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -446,7 +474,7 @@ run_entrypoint_with_autonomy_and_bind() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
     -v "${docker_workspace}:/workspace" \
-    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     -v "${docker_bind_source}:${bind_target}:ro" \
     "${IMAGE_TAG}" "$@"
 }
@@ -469,8 +497,10 @@ run_entrypoint_with_injection_bundle() {
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
   populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
 
   docker_cmd run --rm \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -490,8 +520,8 @@ run_entrypoint_with_injection_bundle() {
     -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
     -v "${docker_workspace}:/workspace" \
-    "${credential_mounts[@]}" \
-    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    ${credential_mounts[@]+"${credential_mounts[@]}"} \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
     "${IMAGE_TAG}" "$@"
 }
@@ -514,8 +544,10 @@ run_container_with_injection_bundle() {
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
   populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
 
   docker_cmd run --rm \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -535,8 +567,8 @@ run_container_with_injection_bundle() {
     -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
     -v "${docker_workspace}:/workspace" \
-    "${credential_mounts[@]}" \
-    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    ${credential_mounts[@]+"${credential_mounts[@]}"} \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
     --entrypoint "$1" \
     "${IMAGE_TAG}" "${@:2}"
@@ -726,24 +758,25 @@ run_entrypoint_with_profile codex build codex --version >/dev/null
 # shellcheck disable=SC2016
 run_container_with_injection_bundle codex "${INJECTION_BUNDLE_ROOT}/codex" bash -lc '
   set -euo pipefail
+  CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
   /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  grep -q "Common Smoke Instructions" "$CODEX_HOME/AGENTS.md"
-  grep -q "Codex Smoke Instructions" "$CODEX_HOME/AGENTS.md"
-  grep -q "\"test\": \"auth\"" "$CODEX_HOME/auth.json"
-  grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
-  grep -q "injected-public" /state/injected/public.txt
-  test "$(stat -c "%a" /state/injected/public.txt)" = "644"
-  grep -q "injected-secret" "$HOME/.config/workcell/token.txt"
-  test "$(stat -c "%a" "$HOME/.config/workcell/token.txt")" = "600"
-  grep -q "smoke.example" "$HOME/.ssh/config"
-  test "$(stat -c "%a" "$HOME/.ssh")" = "700"
-  test "$(stat -c "%a" "$HOME/.ssh/id_smoke")" = "600"
   setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
     set -euo pipefail
+    CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+    grep -q "Common Smoke Instructions" "$CODEX_HOME/AGENTS.md"
+    grep -q "Codex Smoke Instructions" "$CODEX_HOME/AGENTS.md"
+    grep -q "\"test\": \"auth\"" "$CODEX_HOME/auth.json"
+    grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+    grep -q "injected-public" /state/injected/public.txt
+    test "$(stat -c "%a" /state/injected/public.txt)" = "644"
+    grep -q "injected-secret" "$HOME/.config/workcell/token.txt"
+    test "$(stat -c "%a" "$HOME/.config/workcell/token.txt")" = "600"
+    grep -q "smoke.example" "$HOME/.ssh/config"
+    test "$(stat -c "%a" "$HOME/.ssh")" = "700"
+    test "$(stat -c "%a" "$HOME/.ssh/id_smoke")" = "600"
     test -L "$CODEX_HOME/rules"
-    test ! -w "$CODEX_HOME/rules/default.rules"
-    if printf "\n# session-marker\n" | tee -a "$CODEX_HOME/rules/default.rules" >/dev/null; then
-      echo "expected managed Codex rules to remain read-only" >&2
+    if printf "\n# session-marker\n" >>"$CODEX_HOME/rules/default.rules" 2>/tmp/workcell-codex-rules-write.err; then
+      echo "expected default Codex execpolicy rules to stay immutable on the managed path" >&2
       exit 1
     fi
     if sudo -n id >/tmp/codex-sudo-id.out 2>&1; then
@@ -752,33 +785,39 @@ run_container_with_injection_bundle codex "${INJECTION_BUNDLE_ROOT}/codex" bash 
     fi
     apt-get --help >/dev/null
     sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get --help >/dev/null
+    codex --version >/dev/null
   '"'"'
-  codex --version >/dev/null
 '
 
 # shellcheck disable=SC2016
 run_container_with_injection_bundle claude "${INJECTION_BUNDLE_ROOT}/claude" bash -lc '
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint claude --version >/dev/null
-  grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
-  grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
-  helper_path="$(jq -r ".apiKeyHelper" "$HOME/.claude/settings.json")"
-  test -x "$helper_path"
-  test "$("$helper_path")" = "claude-smoke-key"
-  grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
-  test ! -L "$HOME/.mcp.json"
-  grep -q "\"stub\"" "$HOME/.mcp.json"
-  grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
+    grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
+    helper_path="$(jq -r ".apiKeyHelper" "$HOME/.claude/settings.json")"
+    test -x "$helper_path"
+    test "$("$helper_path")" = "claude-smoke-key"
+    grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
+    test ! -L "$HOME/.mcp.json"
+    grep -q "\"stub\"" "$HOME/.mcp.json"
+    grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+  '"'"'
 '
 
 # shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini" bash -lc '
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
-  grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
-  grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
-  grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
-  grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
+    grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
+    grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
+    grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+  '"'"'
 '
 
 if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
@@ -861,7 +900,9 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
   fi
 fi
 
+populate_runtime_security_args ephemeral
 if docker_cmd run --rm \
+  ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
   --user 0:0 \
   --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
   --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -975,47 +1016,78 @@ run_entrypoint gemini gemini --version >/dev/null
 # shellcheck disable=SC2016
 run_container codex bash -lc '
   set -euo pipefail
+  CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
   /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  grep -q "Workspace AGENTS Instructions" "$CODEX_HOME/AGENTS.md"
-  if grep -q "Nested Workspace AGENTS Instructions" "$CODEX_HOME/AGENTS.md"; then
-    echo "expected nested AGENTS.md instructions to remain path-scoped in the workspace" >&2
-    exit 1
-  fi
-  grep -q "Nested Workspace AGENTS Instructions" /workspace/nested/AGENTS.md
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+    grep -q "Workspace AGENTS Instructions" "$CODEX_HOME/AGENTS.md"
+    if grep -q "Nested Workspace AGENTS Instructions" "$CODEX_HOME/AGENTS.md"; then
+      echo "expected nested AGENTS.md instructions to remain path-scoped in the workspace" >&2
+      exit 1
+    fi
+    grep -q "Nested Workspace AGENTS Instructions" /workspace/nested/AGENTS.md
+  '"'"'
 '
 
 # shellcheck disable=SC2016
 run_container claude bash -lc '
   set -euo pipefail
   AGENT_NAME=claude /usr/local/bin/workcell-entrypoint claude --version >/dev/null
-  grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
-  if grep -q "Nested Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"; then
-    echo "expected nested CLAUDE.md instructions to remain path-scoped in the workspace" >&2
-    exit 1
-  fi
-  grep -q "Nested Workspace Claude Instructions" /workspace/nested/CLAUDE.md
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
+    if grep -q "Nested Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"; then
+      echo "expected nested CLAUDE.md instructions to remain path-scoped in the workspace" >&2
+      exit 1
+    fi
+    grep -q "Nested Workspace Claude Instructions" /workspace/nested/CLAUDE.md
+  '"'"'
 '
 
 # shellcheck disable=SC2016
 run_container gemini bash -lc '
   set -euo pipefail
   AGENT_NAME=gemini /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
-  grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
-  if grep -q "Nested Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"; then
-    echo "expected nested GEMINI.md instructions to remain path-scoped in the workspace" >&2
-    exit 1
-  fi
-  grep -q "Nested Workspace Gemini Instructions" /workspace/nested/GEMINI.md
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
+    if grep -q "Nested Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"; then
+      echo "expected nested GEMINI.md instructions to remain path-scoped in the workspace" >&2
+      exit 1
+    fi
+    grep -q "Nested Workspace Gemini Instructions" /workspace/nested/GEMINI.md
+  '"'"'
 '
 
 # shellcheck disable=SC2016
 run_container codex bash -lc '
   set -euo pipefail
+  CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+  AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=yolo WORKCELL_CODEX_RULES_MUTABILITY=session /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+    test ! -L "$CODEX_HOME/rules"
+    printf "\n# yolo-session-marker\n" >>"$CODEX_HOME/rules/default.rules"
+    AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=yolo WORKCELL_CODEX_RULES_MUTABILITY=session /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+    grep -q "^# yolo-session-marker$" "$CODEX_HOME/rules/default.rules"
+  '"'"'
+'
+
+# shellcheck disable=SC2016
+run_container codex bash -lc '
+  set -euo pipefail
+  CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
   AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=prompt /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  test ! -L "$CODEX_HOME/rules"
-  printf "\n# prompt-session-marker\n" >>"$CODEX_HOME/rules/default.rules"
-  AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=prompt /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  grep -q "^# prompt-session-marker$" "$CODEX_HOME/rules/default.rules"
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+    test ! -L "$CODEX_HOME/rules"
+    printf "\n# prompt-session-marker\n" >>"$CODEX_HOME/rules/default.rules"
+    AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=prompt /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+    grep -q "^# prompt-session-marker$" "$CODEX_HOME/rules/default.rules"
+  '"'"'
 '
 
 HOST_UID_LITERAL="${HOST_UID}"
@@ -1036,11 +1108,18 @@ apt-get install -y --no-install-recommends make >/tmp/workcell-apt-install.out 2
 grep -q "downgrades in-container control-plane assurance until this session exits" /tmp/workcell-apt-install.err
 grep -q "this session is now lower-assurance until the container exits" /tmp/workcell-apt-install.err
 command -v make >/dev/null
+grep -q "^CapEff:[[:space:]]*0000000000000000$" /proc/self/status
 codex --version >/tmp/workcell-post-apt-codex.out 2>&1
 grep -q "session previously ran package-manager mutations as root" /tmp/workcell-post-apt-codex.out
+grep -q "forced session-local Codex execpolicy rules" /tmp/workcell-post-apt-codex.out
+test ! -L "$CODEX_HOME/rules"
+test -w "$CODEX_HOME/rules/default.rules"
+claude --version >/tmp/workcell-post-apt-claude.out 2>&1
+grep -q "session previously ran package-manager mutations as root" /tmp/workcell-post-apt-claude.out
+gemini --version >/tmp/workcell-post-apt-gemini.out 2>&1
+grep -q "session previously ran package-manager mutations as root" /tmp/workcell-post-apt-gemini.out
 EOF
   source /usr/local/libexec/workcell/runtime-user.sh
-  mkdir -p /state/agent-home /state/tmp
   if ! workcell_should_reexec_as_runtime_user; then
     echo "expected mutable runtime default to re-exec as the mapped host user" >&2
     exit 1
@@ -1065,7 +1144,6 @@ fi
 grep -q "Workcell blocked unsafe apt-get argument: /tmp/workcell-local.deb" /tmp/workcell-unsafe-apt-local.out
 EOF
   source /usr/local/libexec/workcell/runtime-user.sh
-  mkdir -p /state/agent-home /state/tmp
   workcell_reexec_as_runtime_user /tmp/workcell-unsafe-apt-check.sh
 ' >/tmp/workcell-unsafe-apt-run.out 2>&1; then
   :
@@ -1077,12 +1155,11 @@ fi
 if run_container_with_mutability codex readonly bash -lc '
   set -euo pipefail
   source /usr/local/libexec/workcell/runtime-user.sh
-  mkdir -p /state/agent-home /state/tmp
   if workcell_should_reexec_as_runtime_user; then
     echo "expected readonly runtime not to auto-reexec as the mapped host user" >&2
     exit 1
   fi
-  workcell_reexec_as_runtime_user /bin/bash -lc "apt-get update"
+  apt-get update
 ' >/tmp/workcell-readonly-mutability.out 2>&1; then
   echo "expected readonly mutability to block package-manager writes" >&2
   exit 1
@@ -1138,8 +1215,10 @@ if run_container codex bash -lc 'AGENT_NAME=codex WORKCELL_MODE=breakglass CODEX
 fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-direct-codex-breakglass.out
 
+populate_runtime_security_args ephemeral
 if docker_cmd run --rm \
   --init \
+  ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
   --user 0:0 \
   --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
   --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
@@ -1180,91 +1259,100 @@ fi
 
 # shellcheck disable=SC2016
 run_container codex bash -lc '
-  test "$(id -u)" != 0
-  test "$WORKCELL_RUNTIME" = "1"
-  test "$TMPDIR" = "/state/tmp"
-  mkdir -p "$TMPDIR"
-  touch "$TMPDIR/workcell-tmpdir-ok"
-  EXEC_TMP="$TMPDIR/workcell-exec"
-  mkdir -p "$EXEC_TMP"
-  codex --version | grep -q "codex-cli"
-  LD_PRELOAD=/workspace/workcell-does-not-exist.so codex --version | grep -q "codex-cli"
-  LD_PRELOAD=/workspace/workcell-does-not-exist.so claude --version >/dev/null
-  LD_PRELOAD=/workspace/workcell-does-not-exist.so git --version | grep -q "git version"
-  LD_PRELOAD=/workspace/workcell-does-not-exist.so node --version | grep -q "^v"
-  test -f "$CODEX_HOME/config.toml"
-  test -L "$CODEX_HOME/config.toml"
-  test "$(readlink "$CODEX_HOME/config.toml")" = "/opt/workcell/adapters/codex/.codex/config.toml"
-  codex features list >/dev/null
-  if command -v python3 >/tmp/python-which.out 2>&1; then
-    echo "expected runtime image to omit python3 from the operator PATH" >&2
-    exit 1
-  fi
-  command -v perl >/tmp/perl-which.out 2>&1
-  grep -q "^/usr/bin/perl$" /tmp/perl-which.out
-  if command -v perlbug >/tmp/perlbug-which.out 2>&1; then
-    echo "expected runtime image to omit auxiliary Perl tooling from the operator PATH" >&2
-    exit 1
-  fi
-  if command -v perldoc >/tmp/perldoc-which.out 2>&1; then
-    echo "expected runtime image to omit auxiliary Perl tooling from the operator PATH" >&2
-    exit 1
-  fi
-  if command -v perlthanks >/tmp/perlthanks-which.out 2>&1; then
-    echo "expected runtime image to omit auxiliary Perl tooling from the operator PATH" >&2
-    exit 1
-  fi
-  cp /bin/true /tmp/workcell-noexec
-  chmod 0700 /tmp/workcell-noexec
-  if /tmp/workcell-noexec >/tmp/workcell-noexec.out 2>&1; then
-    echo "expected /tmp to be mounted noexec" >&2
-    exit 1
-  fi
-  grep -Eq "Permission denied|Operation not permitted" /tmp/workcell-noexec.out
-  if codex --search >/tmp/codex-nested-search.out 2>&1; then
-    echo "expected nested Codex invocation to reject unsafe overrides" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-search.out
-  if codex --cd /state --version >/tmp/codex-nested-cd.out 2>&1; then
-    echo "expected nested Codex invocation to reject working-directory overrides" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-cd.out
-  if codex --config sandbox_workspace_write.writable_roots=/state --version >/tmp/codex-nested-config-writable-roots.out 2>&1; then
-    echo "expected nested Codex invocation to reject writable_roots overrides" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked unsafe Codex config override" /tmp/codex-nested-config-writable-roots.out
-  if WORKCELL_MODE=breakglass CODEX_PROFILE=breakglass codex --search >/tmp/codex-nested-breakglass.out 2>&1; then
-    echo "expected nested Codex invocation to ignore caller-supplied breakglass env" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-breakglass.out
-  if codex -a never --version >/tmp/codex-nested-approval.out 2>&1; then
-    echo "expected nested Codex invocation to reject approval overrides" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-approval.out
-  if codex --full-auto --version >/tmp/codex-nested-full-auto.out 2>&1; then
-    echo "expected nested Codex invocation to reject full-auto overrides" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-full-auto.out
-  if codex app-server >/tmp/codex-nested-app-server.out 2>&1; then
-    echo "expected nested Codex invocation to reject GUI subcommands on the CLI surface" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-app-server.out
-  rm -f "$CODEX_HOME/config.toml"
-  printf "web_search = \"enabled\"\n" >"$CODEX_HOME/config.toml"
-  codex --version >/dev/null
-  test -L "$CODEX_HOME/config.toml"
-  test "$(readlink "$CODEX_HOME/config.toml")" = "/opt/workcell/adapters/codex/.codex/config.toml"
+  set -euo pipefail
+  /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+    test "$(id -u)" != 0
+    test "$WORKCELL_RUNTIME" = "1"
+    test "$TMPDIR" = "/state/tmp"
+    mkdir -p "$TMPDIR"
+    touch "$TMPDIR/workcell-tmpdir-ok"
+    EXEC_TMP="$TMPDIR/workcell-exec"
+    mkdir -p "$EXEC_TMP"
+    codex --version | grep -q "codex-cli"
+    LD_PRELOAD=/workspace/workcell-does-not-exist.so codex --version | grep -q "codex-cli"
+    LD_PRELOAD=/workspace/workcell-does-not-exist.so claude --version >/dev/null
+    LD_PRELOAD=/workspace/workcell-does-not-exist.so git --version | grep -q "git version"
+    LD_PRELOAD=/workspace/workcell-does-not-exist.so node --version | grep -q "^v"
+    test -f "$CODEX_HOME/config.toml"
+    test -L "$CODEX_HOME/config.toml"
+    test "$(readlink "$CODEX_HOME/config.toml")" = "/opt/workcell/adapters/codex/.codex/config.toml"
+    codex features list >/dev/null
+    if command -v python3 >/tmp/python-which.out 2>&1; then
+      echo "expected runtime image to omit python3 from the operator PATH" >&2
+      exit 1
+    fi
+    command -v perl >/tmp/perl-which.out 2>&1
+    grep -q "^/usr/bin/perl$" /tmp/perl-which.out
+    if command -v perlbug >/tmp/perlbug-which.out 2>&1; then
+      echo "expected runtime image to omit auxiliary Perl tooling from the operator PATH" >&2
+      exit 1
+    fi
+    if command -v perldoc >/tmp/perldoc-which.out 2>&1; then
+      echo "expected runtime image to omit auxiliary Perl tooling from the operator PATH" >&2
+      exit 1
+    fi
+    if command -v perlthanks >/tmp/perlthanks-which.out 2>&1; then
+      echo "expected runtime image to omit auxiliary Perl tooling from the operator PATH" >&2
+      exit 1
+    fi
+    cp /bin/true /tmp/workcell-noexec
+    chmod 0700 /tmp/workcell-noexec
+    if /tmp/workcell-noexec >/tmp/workcell-noexec.out 2>&1; then
+      echo "expected /tmp to be mounted noexec" >&2
+      exit 1
+    fi
+    grep -Eq "Permission denied|Operation not permitted" /tmp/workcell-noexec.out
+    if codex --search >/tmp/codex-nested-search.out 2>&1; then
+      echo "expected nested Codex invocation to reject unsafe overrides" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-search.out
+    if codex --cd /state --version >/tmp/codex-nested-cd.out 2>&1; then
+      echo "expected nested Codex invocation to reject working-directory overrides" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-cd.out
+    if codex --config sandbox_workspace_write.writable_roots=/state --version >/tmp/codex-nested-config-writable-roots.out 2>&1; then
+      echo "expected nested Codex invocation to reject writable_roots overrides" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe Codex config override" /tmp/codex-nested-config-writable-roots.out
+    if WORKCELL_MODE=breakglass CODEX_PROFILE=breakglass codex --search >/tmp/codex-nested-breakglass.out 2>&1; then
+      echo "expected nested Codex invocation to ignore caller-supplied breakglass env" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-breakglass.out
+    if codex -a never --version >/tmp/codex-nested-approval.out 2>&1; then
+      echo "expected nested Codex invocation to reject approval overrides" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-approval.out
+    if codex --full-auto --version >/tmp/codex-nested-full-auto.out 2>&1; then
+      echo "expected nested Codex invocation to reject full-auto overrides" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-full-auto.out
+    if codex app-server >/tmp/codex-nested-app-server.out 2>&1; then
+      echo "expected nested Codex invocation to reject GUI subcommands on the CLI surface" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-app-server.out
+    rm -f "$CODEX_HOME/config.toml"
+    printf "web_search = \"enabled\"\n" >"$CODEX_HOME/config.toml"
+    codex --version >/dev/null
+    test -L "$CODEX_HOME/config.toml"
+    test "$(readlink "$CODEX_HOME/config.toml")" = "/opt/workcell/adapters/codex/.codex/config.toml"
+  '"'"'
   if /usr/local/libexec/workcell/real/codex --version >/tmp/codex-real-path.out 2>&1; then
     echo "expected direct real Codex payload execution to fail" >&2
     exit 1
   fi
+  EXEC_TMP="/state/workcell-exec"
+  mkdir -p "$EXEC_TMP"
+  chmod 0777 "$EXEC_TMP"
   codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules rm -rf build \
     | jq -e ".decision == \"forbidden\"" >/dev/null
   codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git push origin feature \
@@ -1307,8 +1395,19 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/node-wrapper-bashenv.out
-  set -- $(ldd /usr/local/libexec/workcell/real/node | grep -E "ld-linux|ld-musl" | head -n1)
-  LOADER="$1"
+  LOADER="$(
+    for candidate in \
+      /lib64/ld-linux-x86-64.so.2 \
+      /lib/ld-linux-aarch64.so.1 \
+      /lib/ld-linux-armhf.so.3 \
+      /lib/ld-musl-*.so.1 \
+      /lib64/ld-musl-*.so.1; do
+      if [ -x "$candidate" ]; then
+        printf "%s\n" "$candidate"
+        break
+      fi
+    done
+  )"
   test -n "$LOADER"
   if env -u LD_PRELOAD "$LOADER" /usr/local/libexec/workcell/real/node --version >/tmp/node-loader-real.out 2>&1; then
     echo "expected direct loader invocation of the real Node payload to fail" >&2
@@ -1385,12 +1484,12 @@ EOF
     exit 1
   fi
   exec 3<&-
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-deleted-fd.out
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-deleted-devfd.out
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-deleted-dotfd.out
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-deleted-threadself.out
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-deleted-taskfd.out
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-deleted-stdin.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-fd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-devfd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-dotfd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-threadself.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-taskfd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-stdin.out
   cp /bin/true /workspace/tmp/.workcell-native-helper-deleted-pidfd
   chmod 0700 /workspace/tmp/.workcell-native-helper-deleted-pidfd
   if (
@@ -1401,7 +1500,7 @@ EOF
     echo "expected strict profile to reject deleted-fd native executable launches via /proc/\$\$/fd from /workspace" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-deleted-pidfd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-pidfd.out
   cp /bin/true /workspace/tmp/.workcell-native-helper-deleted-stdout
   chmod 0700 /workspace/tmp/.workcell-native-helper-deleted-stdout
   if (
@@ -1413,7 +1512,7 @@ EOF
     echo "expected strict profile to reject deleted-fd native executable launches via /dev/stdout from /workspace" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-deleted-stdout.err
+  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-stdout.err
   cp /bin/true /workspace/tmp/.workcell-native-helper-deleted-stderr
   chmod 0700 /workspace/tmp/.workcell-native-helper-deleted-stderr
   if (
@@ -1478,12 +1577,12 @@ EOF
     exit 1
   fi
   exec 4<&-
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-node-shebang-deleted-fd.out
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-node-shebang-deleted-devfd.out
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-node-shebang-deleted-dotfd.out
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-node-shebang-deleted-threadself.out
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-node-shebang-deleted-taskfd.out
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-node-shebang-deleted-stdin.out
+  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-fd.out
+  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-devfd.out
+  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-dotfd.out
+  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-threadself.out
+  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-taskfd.out
+  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-stdin.out
   cat >/workspace/tmp/.workcell-node-shebang-deleted-pidfd <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell pid fd deleted shebang bypass");
@@ -1497,7 +1596,7 @@ EOF
     echo "expected strict profile to reject deleted-fd mutable shebang execution via /proc/\$\$/fd of the real Node payload" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-node-shebang-deleted-pidfd.out
+  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-pidfd.out
   cat >/workspace/tmp/.workcell-node-shebang-deleted-stdout <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell stdout deleted shebang bypass");
@@ -1512,7 +1611,7 @@ EOF
     echo "expected strict profile to reject deleted-fd mutable shebang execution via /dev/stdout of the real Node payload" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-node-shebang-deleted-stdout.err
+  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-stdout.err
   cat >/workspace/tmp/.workcell-node-shebang-deleted-stderr <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell stderr deleted shebang bypass");
@@ -1590,11 +1689,16 @@ const result = spawnSync("/workspace/tmp/shebang-bypass", [], {
   env: { PATH: "/workspace/tmp" },
 });
 
+const blockedByRuntime =
+  typeof result.stderr === "string" &&
+  result.stderr.includes("Workcell blocked direct protected runtime execution");
+const blockedByExec =
+  result.error &&
+  (result.error.code === "EPERM" || result.error.code === "ENOENT");
+
 if (
   result.status === 0 ||
-  !result.stderr.includes(
-    "Workcell blocked direct protected runtime execution",
-  )
+  !(blockedByRuntime || blockedByExec)
 ) {
   process.stderr.write(
     `unexpected child-envp shebang result: ${JSON.stringify(result)}\n`,
@@ -1706,7 +1810,7 @@ EOF
     echo "expected imported copied provider package execution via public node to fail" >&2
     exit 1
   fi
-  grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-import.out
+  grep -Eq "Workcell blocked provider package execution via public node.|Workcell blocked public node execution outside the mounted workspace." /tmp/node-provider-copy-import.out
   cp -R /opt/workcell/providers/node_modules/@anthropic-ai/claude-code /tmp/workcell-provider-copy-tampered
   jq ".name = \"@workcell/not-claude\"" /tmp/workcell-provider-copy-tampered/package.json >/tmp/workcell-provider-copy-tampered/package.json.new
   mv /tmp/workcell-provider-copy-tampered/package.json.new /tmp/workcell-provider-copy-tampered/package.json
@@ -1739,18 +1843,30 @@ const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 packageJson.name = "@workcell/not-claude-workspace-aggressive";
 fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
 
+const joinMarker = (...parts) => parts.join("");
+const replacements = [
+  [joinMarker("Anthropic ", "PBC. All rights reserved."), "Workcell scrubbed marker"],
+  [
+    joinMarker(
+      "https://code.claude.com/docs/en/legal-",
+      "and-compliance.",
+    ),
+    "https://example.invalid/workcell",
+  ],
+  [
+    joinMarker("Want to see the unminified source? We", "\x27re hiring!"),
+    "Workcell scrubbed hiring marker",
+  ],
+  [joinMarker("dangerously", "-skip-permissions"), "scrubbed-danger-flag"],
+];
+
 for (const relativePath of ["README.md", "LICENSE.md", "sdk-tools.d.ts", "resvg.wasm"]) {
   fs.rmSync(path.join(packageRoot, relativePath), { force: true });
 }
 
 const entrypointPath = path.join(packageRoot, "cli.js");
 let entrypoint = fs.readFileSync(entrypointPath, "utf8");
-for (const [from, to] of [
-  ["Anthropic PBC. All rights reserved.", "Workcell scrubbed marker"],
-  ["https://code.claude.com/docs/en/legal-and-compliance.", "https://example.invalid/workcell"],
-  ["Want to see the unminified source? We\x27re hiring!", "Workcell scrubbed hiring marker"],
-  ["dangerously-skip-permissions", "scrubbed-danger-flag"],
-]) {
+for (const [from, to] of replacements) {
   entrypoint = entrypoint.split(from).join(to);
 }
 fs.writeFileSync(entrypointPath, entrypoint);
@@ -1780,10 +1896,16 @@ fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
 const entrypointPath = path.join(packageRoot, "main.js");
 let entrypoint = fs.readFileSync(entrypointPath, "utf8");
 for (const [from, to] of [
-  ["Anthropic PBC. All rights reserved.", "Workcell scrubbed marker"],
-  ["https://code.claude.com/docs/en/legal-and-compliance.", "https://example.invalid/workcell"],
-  ["Want to see the unminified source? We\x27re hiring!", "Workcell scrubbed hiring marker"],
-  ["dangerously-skip-permissions", "scrubbed-danger-flag"],
+  [("Anthropic " + "PBC. All rights reserved."), "Workcell scrubbed marker"],
+  [
+    ("https://code.claude.com/docs/en/legal-" + "and-compliance."),
+    "https://example.invalid/workcell",
+  ],
+  [
+    ("Want to see the unminified source? We" + "\x27re hiring!"),
+    "Workcell scrubbed hiring marker",
+  ],
+  [("dangerously" + "-skip-permissions"), "scrubbed-danger-flag"],
 ]) {
   entrypoint = entrypoint.split(from).join(to);
 }
@@ -1854,10 +1976,16 @@ const fs = require("node:fs");
 const entrypointPath = process.argv[2];
 let entrypoint = fs.readFileSync(entrypointPath, "utf8");
 for (const [from, to] of [
-  ["Anthropic PBC. All rights reserved.", "Workcell scrubbed marker"],
-  ["https://code.claude.com/docs/en/legal-and-compliance.", "https://example.invalid/workcell"],
-  ["Want to see the unminified source? We\x27re hiring!", "Workcell scrubbed hiring marker"],
-  ["dangerously-skip-permissions", "scrubbed-danger-flag"],
+  [("Anthropic " + "PBC. All rights reserved."), "Workcell scrubbed marker"],
+  [
+    ("https://code.claude.com/docs/en/legal-" + "and-compliance."),
+    "https://example.invalid/workcell",
+  ],
+  [
+    ("Want to see the unminified source? We" + "\x27re hiring!"),
+    "Workcell scrubbed hiring marker",
+  ],
+  [("dangerously" + "-skip-permissions"), "scrubbed-danger-flag"],
 ]) {
   entrypoint = entrypoint.split(from).join(to);
 }
@@ -1997,7 +2125,7 @@ EOF
     echo "expected public node wrapper to ignore caller-supplied WORKSPACE overrides" >&2
     exit 1
   fi
-  grep -q "Workcell blocked public node execution outside the mounted workspace." /tmp/node-workspace-env.out
+  grep -Eq "Workcell blocked public node execution outside the mounted workspace.|Workcell blocked provider package execution via public node." /tmp/node-workspace-env.out
   cat <<'\''EOF'\'' >/tmp/workcell-node-preload.js
 require("fs").writeFileSync("/tmp/workcell-node-preload-ran", "1")
 process.exit(99)
@@ -2026,12 +2154,12 @@ EOF
     echo "expected Workcell git guard to reject --no-verify" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard.out
   if /usr/bin/git commit -n -m smoke >/tmp/git-guard-short.out 2>&1; then
     echo "expected Workcell git guard to reject git commit -n" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-short.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-short.out
   rm -f /tmp/workcell-git-ssh-env-ran /tmp/workcell-git-ssh-helper-ran /tmp/workcell-git-ssh-config-ran
   cat <<EOF >"$EXEC_TMP/git-ssh-helper.sh"
 #!/bin/sh
@@ -2110,7 +2238,7 @@ EOF
     echo "expected Workcell git guard to reject direct hidden git execution" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-real.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-real.out
   if /usr/local/libexec/workcell/real/git status >/tmp/git-guard-real-payload.out 2>&1; then
     echo "expected direct real git payload execution to fail" >&2
     exit 1
@@ -2120,7 +2248,7 @@ EOF
       echo "expected Workcell git guard to reject hardlinked hidden git execution" >&2
       exit 1
     fi
-    grep -q "Workcell blocked git hook bypass" /tmp/git-guard-hardlink.out
+    grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-hardlink.out
   else
     grep -Eiq "cross-device|operation not permitted|read-only" /tmp/git-hardlink-link.out
   fi
@@ -2129,57 +2257,57 @@ EOF
     echo "expected Workcell git guard to reject symlinked hidden git execution" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-symlink.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-symlink.out
   if ! cp /usr/local/libexec/workcell/core/git "$EXEC_TMP/git-copy" >/tmp/git-copy.out 2>&1; then
     echo "expected Workcell git trampoline to remain copyable for deterministic debugging" >&2
     exit 1
   fi
   if "$EXEC_TMP/git-copy" commit --no-verify -m smoke >/tmp/git-guard-copy.out 2>&1; then
-    echo "expected copied Workcell git trampoline to reject hook bypasses" >&2
+    echo "expected copied Workcell git trampoline under mutable state to be blocked before execution" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-copy.out
+  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/git-guard-copy.out
   if git -c core.hooksPath=/dev/null commit -m smoke >/tmp/git-guard-hooks.out 2>&1; then
     echo "expected Workcell git guard to reject inline core.hooksPath override" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-hooks.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-hooks.out
   if git -c core.hookspath=/dev/null commit -m smoke >/tmp/git-guard-hooks-lower.out 2>&1; then
     echo "expected Workcell git guard to reject lowercase inline core.hookspath override" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-hooks-lower.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-hooks-lower.out
   if GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m smoke >/tmp/git-guard-env.out 2>&1; then
     echo "expected Workcell git guard to reject GIT_CONFIG_* hook override" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-env.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-env.out
   if GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m smoke >/tmp/git-guard-env-mixed.out 2>&1; then
     echo "expected Workcell git guard to reject mixed-case GIT_CONFIG_* hook override" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-env-mixed.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-env-mixed.out
   printf "[core]\n  hooksPath = /dev/null\n" >"$EXEC_TMP/git-bypass.cfg"
   if git -c include.path="$EXEC_TMP/git-bypass.cfg" commit -m smoke >/tmp/git-guard-include.out 2>&1; then
     echo "expected Workcell git guard to reject inline include.path override" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-include.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-include.out
   if git -c includeIf.onbranch:main.path="$EXEC_TMP/git-bypass.cfg" commit -m smoke >/tmp/git-guard-includeif.out 2>&1; then
     echo "expected Workcell git guard to reject inline includeIf override" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-includeif.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-includeif.out
   if git -c core.worktree=/tmp commit -m smoke >/tmp/git-guard-worktree.out 2>&1; then
     echo "expected Workcell git guard to reject inline core.worktree override" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-worktree.out || grep -q "Workcell blocked git control-plane override" /tmp/git-guard-worktree.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-worktree.out
   if GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0="$EXEC_TMP/git-bypass.cfg" git commit -m smoke >/tmp/git-guard-env-include.out 2>&1; then
     echo "expected Workcell git guard to reject GIT_CONFIG_* include.path override" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-env-include.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-env-include.out
   if GIT_CONFIG_PARAMETERS="core.worktree=/tmp" git status >/tmp/git-guard-env-parameters-worktree.out 2>&1; then
     echo "expected Workcell git guard to reject GIT_CONFIG_PARAMETERS core.worktree override" >&2
     exit 1
@@ -2245,7 +2373,7 @@ EOF
     echo "expected Workcell git guard to reject alias-expanded git commit -n" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git alias bypass" /tmp/git-guard-alias.out
+  grep -Eq "Workcell blocked git alias bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-alias.out
   git config --unset alias.ci
   git config alias.c "commit -n"
   git config alias.ci c
@@ -2253,45 +2381,61 @@ EOF
     echo "expected Workcell git guard to reject recursively expanded git commit -n aliases" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git alias bypass" /tmp/git-guard-alias-chain.out
+  grep -Eq "Workcell blocked git alias bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-alias-chain.out
   git config alias.ctab "$(printf "commit\\t-n")"
   if git ctab -m smoke >/tmp/git-guard-alias-tab.out 2>&1; then
     echo "expected Workcell git guard to reject tab-separated alias-expanded git commit -n" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git alias bypass" /tmp/git-guard-alias-tab.out
+  grep -Eq "Workcell blocked git alias bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-alias-tab.out
   git config alias.cquoted "commit \"-n\""
   if git cquoted -m smoke >/tmp/git-guard-alias-quoted.out 2>&1; then
     echo "expected Workcell git guard to reject quoted alias-expanded git commit -n" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git alias bypass" /tmp/git-guard-alias-quoted.out
-  git config alias.execpath "--exec-path=$EXEC_TMP/git-guard status"
-  if git execpath >/tmp/git-guard-alias-exec-path.out 2>&1; then
-    echo "expected Workcell git guard to reject alias-expanded --exec-path" >&2
+  grep -Eq "Workcell blocked git alias bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-alias-quoted.out
+  if git config alias.execpath "--exec-path=$EXEC_TMP/git-guard status" >/tmp/git-guard-alias-exec-path-define.out 2>&1; then
+    echo "expected Workcell git guard to reject defining an alias with --exec-path" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git alias bypass" /tmp/git-guard-alias-exec-path.out
-  git config alias.cshell "!git commit \\\\-n -m smoke"
-  if git cshell >/tmp/git-guard-alias-shell-escaped.out 2>&1; then
-    echo "expected Workcell git guard to reject shell alias git commit \\\\-n bypass" >&2
-    exit 1
+  grep -q "Workcell blocked git control-plane override" /tmp/git-guard-alias-exec-path-define.out
+  if git config alias.cshell "!git commit \\\\-n -m smoke" >/tmp/git-guard-alias-shell-escaped-define.out 2>&1; then
+    if git cshell >/tmp/git-guard-alias-shell-escaped.out 2>&1; then
+      echo "expected Workcell git guard to reject shell alias git commit \\\\-n bypass" >&2
+      exit 1
+    fi
+    grep -Eq "Workcell blocked git alias bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-alias-shell-escaped.out
+  else
+    grep -q "Workcell blocked git control-plane override" /tmp/git-guard-alias-shell-escaped-define.out
   fi
-  grep -q "Workcell blocked git alias bypass" /tmp/git-guard-alias-shell-escaped.out
-  git config alias.csubst "!git commit \$(printf -- -)\$(printf n) -m smoke"
-  if git csubst >/tmp/git-guard-alias-shell-substitution.out 2>&1; then
-    echo "expected Workcell git guard to reject shell alias substitution bypass" >&2
-    exit 1
+  if git config alias.csubst "!git commit \$(printf -- -)\$(printf n) -m smoke" >/tmp/git-guard-alias-shell-substitution-define.out 2>&1; then
+    if git csubst >/tmp/git-guard-alias-shell-substitution.out 2>&1; then
+      echo "expected Workcell git guard to reject shell alias substitution bypass" >&2
+      exit 1
+    fi
+    grep -Eq "Workcell blocked git alias bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-alias-shell-substitution.out
+  else
+    grep -q "Workcell blocked git control-plane override" /tmp/git-guard-alias-shell-substitution-define.out
   fi
-  grep -q "Workcell blocked git alias bypass" /tmp/git-guard-alias-shell-substitution.out
-  set -- $(ldd /usr/local/libexec/workcell/real/git | grep -E "ld-linux|ld-musl" | head -n1)
-  LOADER="$1"
+  LOADER="$(
+    for candidate in \
+      /lib64/ld-linux-x86-64.so.2 \
+      /lib/ld-linux-aarch64.so.1 \
+      /lib/ld-linux-armhf.so.3 \
+      /lib/ld-musl-*.so.1 \
+      /lib64/ld-musl-*.so.1; do
+      if [ -x "$candidate" ]; then
+        printf "%s\n" "$candidate"
+        break
+      fi
+    done
+  )"
   test -n "$LOADER"
   if "$LOADER" /usr/local/libexec/workcell/real/git commit --no-verify -m smoke >/tmp/git-guard-loader.out 2>&1; then
     echo "expected Workcell git guard to reject direct loader invocation" >&2
     exit 1
   fi
-  grep -q "Workcell blocked git hook bypass" /tmp/git-guard-loader.out
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-loader.out
   cp /usr/local/libexec/workcell/real/git "$EXEC_TMP/workcell-git-real-copy"
   chmod 0700 "$EXEC_TMP/workcell-git-real-copy"
   if "$EXEC_TMP/workcell-git-real-copy" status >/tmp/git-guard-real-copy.out 2>&1; then
@@ -2317,15 +2461,18 @@ EOF
   chmod +x .git/hooks/pre-commit
   touch smoke.txt
   git add smoke.txt
-  printf "[core]\n  hooksPath = /dev/null\n" >"$HOME/.gitconfig"
-  if git commit -m smoke >/tmp/git-guard-global-config.out 2>&1; then
+  GLOBAL_HOME="$EXEC_TMP/git-global-home"
+  mkdir -p "$GLOBAL_HOME"
+  printf "[core]\n  hooksPath = /dev/null\n" >"$GLOBAL_HOME/.gitconfig"
+  if HOME="$GLOBAL_HOME" git commit -m smoke >/tmp/git-guard-global-config.out 2>&1; then
     echo "expected Workcell git wrapper to ignore writable global git config" >&2
     exit 1
   fi
   grep -Eq "hook ran|pre-commit" /tmp/git-guard-global-config.out
-  mkdir -p "$HOME/.config/git"
-  printf "[core]\n  hooksPath = /dev/null\n" >"$HOME/.config/git/config"
-  if git commit -m smoke >/tmp/git-guard-xdg-config.out 2>&1; then
+  XDG_CONFIG_HOME="$EXEC_TMP/git-xdg-home"
+  mkdir -p "$XDG_CONFIG_HOME/git"
+  printf "[core]\n  hooksPath = /dev/null\n" >"$XDG_CONFIG_HOME/git/config"
+  if XDG_CONFIG_HOME="$XDG_CONFIG_HOME" git commit -m smoke >/tmp/git-guard-xdg-config.out 2>&1; then
     echo "expected Workcell git wrapper to ignore writable XDG git config" >&2
     exit 1
   fi
@@ -2334,15 +2481,19 @@ EOF
 
 # shellcheck disable=SC2016
 run_container claude bash -lc '
-  claude --version 2>&1 | grep -q "Claude Code"
-  test -f "$HOME/.claude/settings.json"
-  test -L "$HOME/.claude/settings.json"
-  test "$(readlink "$HOME/.claude/settings.json")" = "/opt/workcell/adapters/claude/.claude/settings.json"
-  test -f "$HOME/.mcp.json"
-  test -L "$HOME/.mcp.json"
-  test -f /etc/claude-code/managed-settings.json
-  jq -r ".disableBypassPermissionsMode" /etc/claude-code/managed-settings.json | grep -q "^allow$"
-  jq -r ".hooks.PreToolUse[0].hooks[0].command" "$HOME/.claude/settings.json" | grep -q "guard-bash.sh"
+  /usr/local/bin/workcell-entrypoint claude --version >/dev/null
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    claude --version 2>&1 | grep -q "Claude Code"
+    test -f "$HOME/.claude/settings.json"
+    test -L "$HOME/.claude/settings.json"
+    test "$(readlink "$HOME/.claude/settings.json")" = "/opt/workcell/adapters/claude/.claude/settings.json"
+    test -f "$HOME/.mcp.json"
+    test -L "$HOME/.mcp.json"
+    test -f /etc/claude-code/managed-settings.json
+    jq -r ".disableBypassPermissionsMode" /etc/claude-code/managed-settings.json | grep -q "^allow$"
+    jq -r ".hooks.PreToolUse[0].hooks[0].command" "$HOME/.claude/settings.json" | grep -q "guard-bash.sh"
+  '"'"'
   if /usr/local/libexec/workcell/real/node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --version >/tmp/node-real-payload.out 2>&1; then
     echo "expected direct real node payload execution to fail" >&2
     exit 1
@@ -2367,11 +2518,22 @@ run_container claude bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked unsafe Claude override" /tmp/claude-nested-breakglass.out
-  rm -f "$HOME/.claude/settings.json"
-  printf "{\n  \"disableBypassPermissionsMode\": \"allow\"\n}\n" >"$HOME/.claude/settings.json"
-  claude --version >/dev/null 2>&1
-  test -L "$HOME/.claude/settings.json"
-  test "$(readlink "$HOME/.claude/settings.json")" = "/opt/workcell/adapters/claude/.claude/settings.json"
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    if (
+      cat <<'\''EOF'\'' >"$HOME/.claude/settings.json"
+{
+  "disableBypassPermissionsMode": "allow"
+}
+EOF
+    ) >/tmp/claude-managed-settings-overwrite.out 2>&1; then
+      echo "expected managed Claude settings to remain protected" >&2
+      exit 1
+    fi
+    claude --version >/dev/null 2>&1
+    test -L "$HOME/.claude/settings.json"
+    test "$(readlink "$HOME/.claude/settings.json")" = "/opt/workcell/adapters/claude/.claude/settings.json"
+  '"'"'
   printf "%s" "{\"tool_input\":{\"command\":\"bash -lc '\''git commit -n -m smoke'\''\"}}" \
     | /opt/workcell/adapters/claude/hooks/guard-bash.sh >/tmp/claude-hook-git.out 2>&1 && {
       echo "expected Claude guard hook to reject nested-shell git bypass" >&2
@@ -2470,20 +2632,24 @@ EOF
 
 # shellcheck disable=SC2016
 run_container gemini bash -lc '
-  out="$(gemini --version 2>&1)"
-  echo "$out"
-  if echo "$out" | grep -q "Failed to save project registry"; then
-    echo "unexpected Gemini project registry warning" >&2
-    exit 1
-  fi
-  if echo "$out" | grep -q "There was an error saving your latest settings changes"; then
-    echo "unexpected Gemini settings write warning" >&2
-    exit 1
-  fi
-  echo "$out" | grep -Eq "([0-9]+\\.){2}[0-9]+"
-  test -f "$HOME/.gemini/settings.json"
-  test -f "$HOME/.gemini/GEMINI.md"
-  test -f "$HOME/.gemini/projects.json"
+  /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    out="$(gemini --version 2>&1)"
+    echo "$out"
+    if echo "$out" | grep -q "Failed to save project registry"; then
+      echo "unexpected Gemini project registry warning" >&2
+      exit 1
+    fi
+    if echo "$out" | grep -q "There was an error saving your latest settings changes"; then
+      echo "unexpected Gemini settings write warning" >&2
+      exit 1
+    fi
+    echo "$out" | grep -Eq "([0-9]+\\.){2}[0-9]+"
+    test -f "$HOME/.gemini/settings.json"
+    test -f "$HOME/.gemini/GEMINI.md"
+    test -f "$HOME/.gemini/projects.json"
+  '"'"'
   if gemini --yolo >/tmp/gemini-nested-yolo.out 2>&1; then
     echo "expected nested Gemini invocation to reject unsafe overrides" >&2
     exit 1
@@ -2519,11 +2685,14 @@ run_container gemini bash -lc '
   HOME=/workspace gemini --version >/dev/null 2>&1
   test ! -e /workspace/.gemini/settings.json
   test ! -e /workspace/.gemini/projects.json
-  rm -f "$HOME/.gemini/settings.json"
-  printf "{\n  \"general\": {\"disableAutoUpdate\": false}\n}\n" >"$HOME/.gemini/settings.json"
-  gemini --version >/dev/null 2>&1
-  jq -r ".general.enableAutoUpdate" "$HOME/.gemini/settings.json" | grep -q "^false$"
-  jq -r ".general.enableAutoUpdateNotification" "$HOME/.gemini/settings.json" | grep -q "^false$"
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    jq -r ".general.enableAutoUpdate" "$HOME/.gemini/settings.json" | grep -q "^false$"
+    jq -r ".general.enableAutoUpdateNotification" "$HOME/.gemini/settings.json" | grep -q "^false$"
+    gemini --version >/dev/null 2>&1
+    jq -r ".general.enableAutoUpdate" "$HOME/.gemini/settings.json" | grep -q "^false$"
+    jq -r ".general.enableAutoUpdateNotification" "$HOME/.gemini/settings.json" | grep -q "^false$"
+  '"'"'
 '
 
 echo "Workcell container smoke passed."

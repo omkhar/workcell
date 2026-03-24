@@ -20,8 +20,10 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     docker-buildx \
     git \
     groff-base \
+    llvm \
     mandoc \
     python3 \
+    python3-coverage \
     rustc \
     rustfmt \
     shellcheck \
@@ -30,5 +32,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache
 
 WORKDIR /workspace
+
+ENV WORKCELL_REQUIRE_SUPPORTED_COVERAGE=1
 
 ENTRYPOINT ["/bin/bash", "-lc"]

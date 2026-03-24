@@ -31,6 +31,7 @@ CANONICALIZER_PYTHON="/usr/bin/python3"
 usage() {
   cat <<'EOF'
 Usage:
+  colima-egress-allowlist.sh plan <profile> "<host:port ...>"
   colima-egress-allowlist.sh apply <profile> "<host:port ...>"
   colima-egress-allowlist.sh clear <profile>
 EOF
@@ -116,25 +117,41 @@ run_clean_host_command() {
 
 validate_endpoint() {
   local endpoint="$1"
-  local host="${endpoint%:*}"
-  local port="${endpoint##*:}"
+  local host=""
+  local port=""
+
+  if [[ "${endpoint}" =~ ^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$ ]]; then
+    host="[${BASH_REMATCH[1]}]"
+    port="${BASH_REMATCH[2]}"
+  elif [[ "${endpoint}" =~ ^([^:]+):([0-9]{1,5})$ ]]; then
+    host="${BASH_REMATCH[1]}"
+    port="${BASH_REMATCH[2]}"
+  fi
 
   [[ -n "${host}" ]] || {
     echo "Invalid endpoint host: ${endpoint}" >&2
     exit 1
   }
-  [[ "${host}" =~ ^[A-Za-z0-9.-]+$ ]] || {
-    echo "Invalid endpoint host: ${endpoint}" >&2
-    exit 1
-  }
-  [[ "${host}" != .* ]] || {
-    echo "Invalid endpoint host: ${endpoint}" >&2
-    exit 1
-  }
-  [[ "${host}" != *..* ]] || {
-    echo "Invalid endpoint host: ${endpoint}" >&2
-    exit 1
-  }
+  if [[ "${host}" == \[*\] ]]; then
+    local ipv6_host="${host:1:${#host}-2}"
+    [[ "${ipv6_host}" =~ ^[0-9A-Fa-f:.]+$ ]] || {
+      echo "Invalid endpoint host: ${endpoint}" >&2
+      exit 1
+    }
+  else
+    [[ "${host}" =~ ^[A-Za-z0-9.-]+$ ]] || {
+      echo "Invalid endpoint host: ${endpoint}" >&2
+      exit 1
+    }
+    [[ "${host}" != .* ]] || {
+      echo "Invalid endpoint host: ${endpoint}" >&2
+      exit 1
+    }
+    [[ "${host}" != *..* ]] || {
+      echo "Invalid endpoint host: ${endpoint}" >&2
+      exit 1
+    }
+  fi
   [[ "${port}" =~ ^[0-9]{1,5}$ ]] || {
     echo "Invalid endpoint port: ${endpoint}" >&2
     exit 1
@@ -147,6 +164,9 @@ validate_endpoint() {
 
 resolve_ips() {
   local host="$1"
+  if [[ "${host}" == \[*\] ]]; then
+    host="${host:1:${#host}-2}"
+  fi
   run_clean_host_command "${PYTHON3_BIN}" - "$host" <<'PY'
 import socket, sys
 host = sys.argv[1]
@@ -174,11 +194,31 @@ PROFILE="${2:-}"
 }
 
 initialize_vm_tools() {
-  if [[ -n "${LIMACTL_BIN}" && -n "${PYTHON3_BIN}" && -n "${REAL_HOME:-}" ]]; then
+  if [[ -n "${PYTHON3_BIN}" && -n "${REAL_HOME:-}" ]]; then
+    :
+  else
+    PYTHON3_BIN="$(resolve_host_tool python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3)"
+    REAL_HOME="$(
+      run_clean_host_command "${PYTHON3_BIN}" - <<'PY'
+import os
+import pwd
+print(pwd.getpwuid(os.getuid()).pw_dir)
+PY
+    )"
+  fi
+
+  if [[ -n "${LIMACTL_BIN}" ]]; then
     return 0
   fi
 
   LIMACTL_BIN="$(resolve_host_tool limactl /opt/homebrew/bin/limactl /usr/local/bin/limactl)"
+}
+
+initialize_host_tools() {
+  if [[ -n "${PYTHON3_BIN}" && -n "${REAL_HOME:-}" ]]; then
+    return 0
+  fi
+
   PYTHON3_BIN="$(resolve_host_tool python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3)"
   REAL_HOME="$(
     run_clean_host_command "${PYTHON3_BIN}" - <<'PY'
@@ -224,9 +264,105 @@ clear_rules() {
   '
 }
 
+render_clear_plan() {
+  cat <<'EOF'
+sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || true
+sudo iptables -F WORKCELL_EGRESS 2>/dev/null || true
+sudo iptables -X WORKCELL_EGRESS 2>/dev/null || true
+if type ip6tables >/dev/null 2>&1; then
+  sudo ip6tables -D DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || true
+  sudo ip6tables -F WORKCELL_EGRESS6 2>/dev/null || true
+  sudo ip6tables -X WORKCELL_EGRESS6 2>/dev/null || true
+fi
+EOF
+}
+
+declare -a RULES=()
+declare -a IPV6_RULES=()
+
+build_allowlist_rules() {
+  local endpoints="$1"
+  local endpoint=""
+  local host=""
+  local port=""
+  local ip=""
+
+  RULES=(
+    "sudo iptables -N WORKCELL_EGRESS 2>/dev/null || true"
+    "sudo iptables -F WORKCELL_EGRESS"
+    "sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS"
+    "sudo iptables -A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+  )
+  IPV6_RULES=(
+    "if ! type ip6tables >/dev/null 2>&1; then echo \"Workcell requires ip6tables support to enforce dual-stack allowlist egress policy.\" >&2; exit 1; fi"
+    "sudo ip6tables -N WORKCELL_EGRESS6 2>/dev/null || true"
+    "sudo ip6tables -F WORKCELL_EGRESS6"
+    "sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6"
+    "sudo ip6tables -A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+  )
+
+  for endpoint in ${endpoints}; do
+    validate_endpoint "${endpoint}"
+  done
+
+  initialize_host_tools
+
+  for endpoint in ${endpoints}; do
+    if [[ "${endpoint}" =~ ^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$ ]]; then
+      host="[${BASH_REMATCH[1]}]"
+      port="${BASH_REMATCH[2]}"
+    else
+      host="${endpoint%:*}"
+      port="${endpoint##*:}"
+    fi
+    while IFS= read -r ip; do
+      [[ -n "${ip}" ]] || continue
+      if [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        RULES+=("sudo iptables -A WORKCELL_EGRESS -p tcp -d ${ip} --dport ${port} -j ACCEPT")
+        continue
+      fi
+      if [[ "${ip}" == *:* ]]; then
+        IPV6_RULES+=("sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d ${ip} --dport ${port} -j ACCEPT")
+        continue
+      fi
+      echo "Resolver returned invalid IP address: ${ip}" >&2
+      exit 1
+    done < <(resolve_ips "${host}")
+  done
+
+  RULES+=("sudo iptables -A WORKCELL_EGRESS -j DROP")
+  IPV6_RULES+=("sudo ip6tables -A WORKCELL_EGRESS6 -j DROP")
+}
+
+render_allowlist_plan() {
+  printf '%s\n' "${RULES[@]}"
+  printf '%s\n' "${IPV6_RULES[@]}"
+}
+
+render_allowlist_apply_plan() {
+  cat <<'EOF'
+if ! type ip6tables >/dev/null 2>&1; then
+  echo "Workcell requires ip6tables support to enforce dual-stack allowlist egress policy." >&2
+  exit 1
+fi
+sudo ip6tables -L WORKCELL_EGRESS6 >/dev/null 2>&1 || true
+EOF
+  render_clear_plan
+  render_allowlist_plan
+}
+
 case "${COMMAND}" in
   clear)
     clear_rules
+    ;;
+  plan)
+    ENDPOINTS="${3:-}"
+    [[ -n "${ENDPOINTS}" ]] || {
+      echo "Missing endpoint list for plan" >&2
+      exit 1
+    }
+    build_allowlist_rules "${ENDPOINTS}"
+    render_allowlist_plan
     ;;
   apply)
     ENDPOINTS="${3:-}"
@@ -234,64 +370,8 @@ case "${COMMAND}" in
       echo "Missing endpoint list for apply" >&2
       exit 1
     }
-
-    RULES=("sudo iptables -N WORKCELL_EGRESS 2>/dev/null || true"
-      "sudo iptables -F WORKCELL_EGRESS"
-      "sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS"
-      "sudo iptables -A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT")
-    IPV6_RULES=()
-
-    for endpoint in ${ENDPOINTS}; do
-      validate_endpoint "${endpoint}"
-    done
-
-    initialize_vm_tools
-
-    for endpoint in ${ENDPOINTS}; do
-      host="${endpoint%:*}"
-      port="${endpoint##*:}"
-      while IFS= read -r ip; do
-        [[ -n "${ip}" ]] || continue
-        if [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-          RULES+=("sudo iptables -A WORKCELL_EGRESS -p tcp -d ${ip} --dport ${port} -j ACCEPT")
-          continue
-        fi
-        if [[ "${ip}" == *:* ]]; then
-          IPV6_RULES+=("sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d ${ip} --dport ${port} -j ACCEPT")
-          continue
-        fi
-        echo "Resolver returned invalid IP address: ${ip}" >&2
-        exit 1
-      done < <(resolve_ips "${host}")
-    done
-
-    RULES+=("sudo iptables -A WORKCELL_EGRESS -j DROP")
-    if [[ "${#IPV6_RULES[@]}" -gt 0 ]]; then
-      IPV6_RULES=("sudo ip6tables -N WORKCELL_EGRESS6 2>/dev/null || true"
-        "sudo ip6tables -F WORKCELL_EGRESS6"
-        "sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6"
-        "sudo ip6tables -A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
-        "${IPV6_RULES[@]}"
-        "sudo ip6tables -A WORKCELL_EGRESS6 -j DROP")
-    fi
-
-    clear_rules
-    run_in_vm "$(
-      cat <<EOF
-$(printf '%s\n' "${RULES[@]}")
-if type ip6tables >/dev/null 2>&1; then
-  sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null 2>&1 || true
-  sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1 || true
-$(if [[ "${#IPV6_RULES[@]}" -gt 0 ]]; then printf '%s\n' "${IPV6_RULES[@]}"; else
-        printf '%s\n%s\n' "sudo ip6tables -N WORKCELL_EGRESS6 2>/dev/null || true" "sudo ip6tables -F WORKCELL_EGRESS6"
-        printf '%s\n%s\n' "sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6" "sudo ip6tables -A WORKCELL_EGRESS6 -j DROP"
-      fi)
-else
-  sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
-  sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
-fi
-EOF
-    )"
+    build_allowlist_rules "${ENDPOINTS}"
+    run_in_vm "$(render_allowlist_apply_plan)"
     ;;
   *)
     usage

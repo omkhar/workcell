@@ -84,6 +84,15 @@ if release_mode not in {"review-gated", "single-owner-private"}:
         f"{policy_path} must set release_environment.mode to "
         f"'review-gated' or 'single-owner-private'"
     )
+expected_status_contexts = policy.get("required_status_checks", {}).get("contexts")
+if not isinstance(expected_status_contexts, list) or not expected_status_contexts:
+    raise SystemExit(
+        f"{policy_path} must define required_status_checks.contexts as a non-empty array"
+    )
+if not all(isinstance(context, str) and context for context in expected_status_contexts):
+    raise SystemExit(
+        f"{policy_path} must define required_status_checks.contexts as non-empty strings"
+    )
 
 if not actions_permissions.get("enabled"):
     raise SystemExit(f"GitHub Actions must be enabled on {repo}")
@@ -209,14 +218,7 @@ required_status_contexts = {
     for entry in status_parameters.get("required_status_checks", [])
     if entry.get("context")
 }
-expected_status_contexts = {
-    "Validate repository",
-    "Container smoke",
-    "Reproducible build",
-    "GitHub Actions lint",
-    "GitHub Actions security analysis",
-}
-missing_status_contexts = sorted(expected_status_contexts - required_status_contexts)
+missing_status_contexts = sorted(set(expected_status_contexts) - required_status_contexts)
 if missing_status_contexts:
     raise SystemExit(
         f"Default-branch status-check ruleset on {repo} is missing required contexts: "

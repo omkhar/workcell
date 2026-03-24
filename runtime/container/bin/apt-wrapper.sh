@@ -21,14 +21,14 @@ if [[ ! -x "${real_command}" ]]; then
   exit 127
 fi
 
-if [[ "$(id -u)" == "0" ]]; then
-  exec "${real_command}" "$@"
-fi
-
 if [[ "${mutability}" != "ephemeral" ]]; then
   echo "Workcell blocked ${command_name}: readonly container mutability is active." >&2
   echo "Relaunch with --container-mutability ephemeral to allow ephemeral package-manager writes." >&2
   exit 2
+fi
+
+if [[ "$(id -u)" == "0" ]]; then
+  exec "${real_command}" "$@"
 fi
 
 if [[ ! -x "${helper_command}" ]]; then

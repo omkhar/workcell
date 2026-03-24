@@ -44,20 +44,46 @@ BARRIER_VERIFY_ROOT="$(mktemp -d)"
 BROWSER_PROFILE_FIXTURE=""
 COLIMA_PROFILE_FIXTURE=""
 INSTALL_VERIFY_HOME="$(mktemp -d)"
+REMOTE_VALIDATE_CONFIG_ROOT="$(mktemp -d)"
+LOCAL_REMOTE_CONFIG_PATH="${REMOTE_VALIDATE_CONFIG_ROOT}/remote-validate.env"
+LEGACY_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/.workcell.remote.local"
+REPO_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/tmp/verify-remote-validate-repo.env"
+ROOT_DRY_RUN_PROFILE_NAME="$(
+  python3 - "${ROOT_DIR}" <<'PY'
+import hashlib
+import pathlib
+import re
+import sys
+
+workspace = pathlib.Path(sys.argv[1]).resolve()
+slug = re.sub(r"[^a-z0-9]+", "-", workspace.name.lower()).strip("-")[:10] or "workspace"
+digest = hashlib.sha256(str(workspace).encode("utf-8")).hexdigest()[:8]
+print(f"workcell-{slug}-{digest}")
+PY
+)"
+ROOT_DRY_RUN_PROFILE_DIR="${REAL_HOME}/.colima/${ROOT_DRY_RUN_PROFILE_NAME}"
+ROOT_DRY_RUN_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${ROOT_DRY_RUN_PROFILE_NAME}"
 
 cleanup() {
   rm -rf "${CODEX_VERIFY_HOME}"
   rm -rf "${BARRIER_VERIFY_ROOT}"
   rm -rf "${INSTALL_VERIFY_HOME}"
+  rm -rf "${REMOTE_VALIDATE_CONFIG_ROOT}"
+  rm -f "${REPO_LOCAL_REMOTE_CONFIG_PATH}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
   if [[ -n "${COLIMA_PROFILE_FIXTURE}" ]] && [[ -d "${COLIMA_PROFILE_FIXTURE}" ]]; then
     rm -rf "${COLIMA_PROFILE_FIXTURE}"
   fi
+  rm -f "${LEGACY_LOCAL_REMOTE_CONFIG_PATH}"
 }
 
 trap cleanup EXIT
+
+if [[ -d "${ROOT_DRY_RUN_PROFILE_DIR}" ]] && [[ ! -f "${ROOT_DRY_RUN_PROFILE_DIR}/workcell.managed" ]]; then
+  rm -rf "${ROOT_DRY_RUN_PROFILE_DIR}" "${ROOT_DRY_RUN_LIMA_DIR}"
+fi
 
 check_file() {
   [[ -f "$1" ]] || {
@@ -698,7 +724,8 @@ if ! rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
-if ! rg -q 'bootstrap_applied=%q bootstrap_endpoints=%q' "${ROOT_DIR}/scripts/workcell"; then
+if ! rg -q '"bootstrap_applied=\$\{BOOTSTRAP_APPLIED\}"' "${ROOT_DIR}/scripts/workcell" ||
+  ! rg -q '"bootstrap_endpoints=\$\(\[\[ "\$\{BOOTSTRAP_APPLIED\}" -eq 1 \]\] && printf '\''%s'\'' "\$\{BOOTSTRAP_ENDPOINTS\}" \|\| printf '\'''\''\)"' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell audit records to include bootstrap network metadata" >&2
   exit 1
 fi
@@ -708,8 +735,13 @@ if ! rg -q 'bootstrap_policy=allowlist endpoints=%s' "${ROOT_DIR}/scripts/workce
   exit 1
 fi
 
-if ! rg -q 'net\.ipv6\.conf\.(all|default)\.disable_ipv6=1' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected allowlist egress helper to disable IPv6 while the IPv4 allowlist is active" >&2
+if rg -q 'disable_ipv6=1' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
+  echo "Workcell should not silently disable IPv6 as a fallback for allowlist enforcement" >&2
+  exit 1
+fi
+
+if ! rg -q 'requires ip6tables support to enforce dual-stack allowlist egress policy' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
+  echo "Expected allowlist egress helper to fail closed when dual-stack allowlist enforcement is unavailable" >&2
   exit 1
 fi
 
@@ -1065,6 +1097,64 @@ if [[ -e "${HOST_PATH_BASH_MARKER}" ]] || [[ -e "${HOST_PATH_DIRNAME_MARKER}" ]]
   exit 1
 fi
 
+EGRESS_PLAN_OUTPUT="$("${ROOT_DIR}/scripts/colima-egress-allowlist.sh" plan default 'localhost:443')"
+if ! echo "${EGRESS_PLAN_OUTPUT}" | grep -q 'iptables -A WORKCELL_EGRESS -p tcp -d 127\.0\.0\.1 --dport 443 -j ACCEPT'; then
+  echo "Expected dual-stack egress plan to include the IPv4 localhost rule" >&2
+  exit 1
+fi
+if ! echo "${EGRESS_PLAN_OUTPUT}" | grep -q 'ip6tables -A WORKCELL_EGRESS6 -p tcp -d ::1 --dport 443 -j ACCEPT'; then
+  echo "Expected dual-stack egress plan to include the IPv6 localhost rule" >&2
+  exit 1
+fi
+if ! echo "${EGRESS_PLAN_OUTPUT}" | grep -q 'ip6tables -A WORKCELL_EGRESS6 -j DROP'; then
+  echo "Expected dual-stack egress plan to default-drop IPv6 traffic" >&2
+  exit 1
+fi
+if echo "${EGRESS_PLAN_OUTPUT}" | grep -q 'disable_ipv6'; then
+  echo "Dual-stack egress plan must not toggle kernel IPv6 disablement" >&2
+  exit 1
+fi
+
+EGRESS_PLAN_IPV4_ONLY="$("${ROOT_DIR}/scripts/colima-egress-allowlist.sh" plan default '127.0.0.1:443')"
+if ! echo "${EGRESS_PLAN_IPV4_ONLY}" | grep -q 'ip6tables -N WORKCELL_EGRESS6'; then
+  echo "Expected IPv4-only allowlist plans to still install the IPv6 chain" >&2
+  exit 1
+fi
+if ! echo "${EGRESS_PLAN_IPV4_ONLY}" | grep -q 'ip6tables -A WORKCELL_EGRESS6 -j DROP'; then
+  echo "Expected IPv4-only allowlist plans to still default-drop IPv6 traffic" >&2
+  exit 1
+fi
+
+EGRESS_PLAN_IPV6_LITERAL="$("${ROOT_DIR}/scripts/colima-egress-allowlist.sh" plan default '[::1]:443')"
+if ! echo "${EGRESS_PLAN_IPV6_LITERAL}" | grep -q 'ip6tables -A WORKCELL_EGRESS6 -p tcp -d ::1 --dport 443 -j ACCEPT'; then
+  echo "Expected bracketed IPv6 literal endpoints to produce an IPv6 allowlist rule" >&2
+  exit 1
+fi
+if ! echo "${EGRESS_PLAN_IPV6_LITERAL}" | grep -q 'iptables -A WORKCELL_EGRESS -j DROP'; then
+  echo "Expected bracketed IPv6 literal endpoints to still default-drop IPv4 traffic" >&2
+  exit 1
+fi
+if ! rg -q 'run_in_vm "\$\(render_allowlist_apply_plan\)"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
+  echo "Expected dual-stack allowlist apply path to use the guarded apply plan" >&2
+  exit 1
+fi
+if ! rg -q 'if ! type ip6tables >/dev/null 2>&1; then' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
+  echo "Expected dual-stack allowlist apply plan to preflight ip6tables before rewriting rules" >&2
+  exit 1
+fi
+if ! rg -q '^render_clear_plan\(\)' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
+  echo "Expected dual-stack allowlist helper to render clear rules in the VM apply plan" >&2
+  exit 1
+fi
+if ! sed -n '/^render_allowlist_apply_plan()/,/^}/p' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" | grep -q 'render_clear_plan'; then
+  echo "Expected dual-stack allowlist apply plan to include render_clear_plan" >&2
+  exit 1
+fi
+if sed -n '/^render_allowlist_apply_plan()/,/^}/p' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" | grep -q '^[[:space:]]*clear_rules$'; then
+  echo "Expected dual-stack allowlist apply plan to avoid invoking clear_rules during render" >&2
+  exit 1
+fi
+
 HOST_PYTHON_INJECT_DIR="${BARRIER_VERIFY_ROOT}/python-inject"
 HOST_PYTHON_MARKER="${BARRIER_VERIFY_ROOT}/pythonpath-ran"
 mkdir -p "${HOST_PYTHON_INJECT_DIR}"
@@ -1294,8 +1384,18 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q 'agent_autonomy=yolo' /tmp/workcell-default-autonomy-dry-run.stderr
-grep -q 'assurance_posture=mutable-session' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'container_assurance=managed-mutable' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'autonomy_assurance=managed-yolo' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'codex_rules_mutability_configured=readonly' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'codex_rules_assurance_configured=managed-immutable-rules' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'codex_rules_mutability_effective_initial=readonly' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'codex_rules_assurance_effective_initial=managed-immutable-rules' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'session_assurance_initial=managed-mutable' /tmp/workcell-default-autonomy-dry-run.stderr
 grep -q 'WORKCELL_AGENT_AUTONOMY=yolo' /tmp/workcell-default-autonomy-dry-run.stdout
+grep -q 'WORKCELL_CODEX_RULES_MUTABILITY=readonly' /tmp/workcell-default-autonomy-dry-run.stdout
+grep -q -- '--cap-drop ALL' /tmp/workcell-default-autonomy-dry-run.stdout
+grep -q -- '--cap-add SETUID' /tmp/workcell-default-autonomy-dry-run.stdout
+grep -q -- '--cap-add SETGID' /tmp/workcell-default-autonomy-dry-run.stdout
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
@@ -1307,9 +1407,30 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q 'agent_autonomy=prompt' /tmp/workcell-prompt-autonomy-dry-run.stderr
-grep -q 'assurance_posture=lower-assurance-prompt-autonomy,mutable-session' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'container_assurance=managed-mutable' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'autonomy_assurance=lower-assurance-prompt-autonomy' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'codex_rules_mutability_configured=readonly' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'codex_rules_assurance_configured=managed-immutable-rules' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'codex_rules_mutability_effective_initial=session' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'codex_rules_assurance_effective_initial=lower-assurance-session-rules' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'session_assurance_initial=managed-mutable' /tmp/workcell-prompt-autonomy-dry-run.stderr
 grep -q 'WORKCELL_AGENT_AUTONOMY=prompt' /tmp/workcell-prompt-autonomy-dry-run.stdout
 grep -q 'workcell:local codex --version' /tmp/workcell-prompt-autonomy-dry-run.stdout
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --codex-rules-mutability session \
+  --agent-arg --version \
+  --dry-run >/tmp/workcell-codex-session-rules-dry-run.stdout 2>/tmp/workcell-codex-session-rules-dry-run.stderr; then
+  echo "Expected session Codex rules mutability dry-run to succeed" >&2
+  cat /tmp/workcell-codex-session-rules-dry-run.stderr >&2
+  exit 1
+fi
+grep -q 'codex_rules_mutability_configured=session' /tmp/workcell-codex-session-rules-dry-run.stderr
+grep -q 'codex_rules_assurance_configured=lower-assurance-session-rules' /tmp/workcell-codex-session-rules-dry-run.stderr
+grep -q 'codex_rules_mutability_effective_initial=session' /tmp/workcell-codex-session-rules-dry-run.stderr
+grep -q 'codex_rules_assurance_effective_initial=lower-assurance-session-rules' /tmp/workcell-codex-session-rules-dry-run.stderr
+grep -q 'WORKCELL_CODEX_RULES_MUTABILITY=session' /tmp/workcell-codex-session-rules-dry-run.stdout
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent claude \
@@ -1334,6 +1455,17 @@ grep -q 'agent_autonomy=yolo' /tmp/workcell-gemini-agent-arg-dry-run.stderr
 grep -q 'workcell:local gemini --version' /tmp/workcell-gemini-agent-arg-dry-run.stdout
 
 DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --dry-run 2>/dev/null)"
+SECOND_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --dry-run 2>/dev/null)"
+DRY_RUN_CONTAINER_NAME="$(printf '%s\n' "${DRY_RUN_OUTPUT}" | sed -n 's/.*--name \([^ ]*\).*/\1/p' | head -n1)"
+SECOND_DRY_RUN_CONTAINER_NAME="$(printf '%s\n' "${SECOND_DRY_RUN_OUTPUT}" | sed -n 's/.*--name \([^ ]*\).*/\1/p' | head -n1)"
+if [[ -z "${DRY_RUN_CONTAINER_NAME}" ]] || [[ -z "${SECOND_DRY_RUN_CONTAINER_NAME}" ]]; then
+  echo "Expected workcell --dry-run to expose a managed container name" >&2
+  exit 1
+fi
+if [[ "${DRY_RUN_CONTAINER_NAME}" == "${SECOND_DRY_RUN_CONTAINER_NAME}" ]]; then
+  echo "Expected repeated workcell --dry-run launches to use unique container names per session" >&2
+  exit 1
+fi
 
 MASK_VERIFY_WORKSPACE="${BARRIER_VERIFY_ROOT}/mask-workspace"
 mkdir -p "${MASK_VERIFY_WORKSPACE}/nested/.claude"
@@ -1410,10 +1542,21 @@ if ! "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q 'vm_resources=cpu=4 memory_gib=8 disk_gib=80' /tmp/workcell-resource-tunables.stderr
 grep -q 'container_resources=mutability=readonly cpu=2 memory=3g' /tmp/workcell-resource-tunables.stderr
-grep -q 'assurance_posture=managed-readonly' /tmp/workcell-resource-tunables.stderr
+grep -q 'container_assurance=managed-readonly' /tmp/workcell-resource-tunables.stderr
+grep -q 'autonomy_assurance=managed-yolo' /tmp/workcell-resource-tunables.stderr
+grep -q 'session_assurance_initial=managed-readonly' /tmp/workcell-resource-tunables.stderr
 grep -q 'WORKCELL_CONTAINER_MUTABILITY=readonly' /tmp/workcell-resource-tunables.stdout
 grep -q -- '--cpus 2' /tmp/workcell-resource-tunables.stdout
 grep -q -- '--memory 3g' /tmp/workcell-resource-tunables.stdout
+grep -q -- '--cap-drop ALL' /tmp/workcell-resource-tunables.stdout
+if grep -q -- '--cap-add SETUID' /tmp/workcell-resource-tunables.stdout; then
+  echo "Readonly dry-run should not add mutable-session handoff capabilities" >&2
+  exit 1
+fi
+if grep -q -- '--cap-add SETGID' /tmp/workcell-resource-tunables.stdout; then
+  echo "Readonly dry-run should not add mutable-session handoff capabilities" >&2
+  exit 1
+fi
 
 if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${REAL_HOME}" --dry-run >/dev/null 2>&1; then
   echo "Expected broad workspace rejection for ${REAL_HOME}" >&2
@@ -1466,7 +1609,7 @@ EOF
 chmod 0755 "${FAKE_VM_BIN}/colima" "${FAKE_VM_BIN}/limactl"
 rm -f /tmp/workcell-egress-pwned
 if PATH="${FAKE_VM_BIN}:${PATH}" WORKCELL_FAKE_LIMACTL_MARKER="${BARRIER_VERIFY_ROOT}/fake-limactl-ran" \
-  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" apply default 'example.com:443; touch /tmp/workcell-egress-pwned' \
+  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" plan default 'example.com:443; touch /tmp/workcell-egress-pwned' \
   >/tmp/workcell-egress-invalid.out 2>&1; then
   echo "Expected invalid egress endpoint rejection" >&2
   exit 1
@@ -1475,8 +1618,8 @@ if ! grep -q "Invalid endpoint" /tmp/workcell-egress-invalid.out; then
   echo "Expected explicit invalid-endpoint validation failure" >&2
   exit 1
 fi
-if [[ -e "${BARRIER_VERIFY_ROOT}/fake-limactl-ran" ]]; then
-  echo "Invalid egress endpoint reached limactl execution" >&2
+if [[ -e /tmp/workcell-egress-pwned ]]; then
+  echo "Invalid egress endpoint survived validation and reached the shell" >&2
   exit 1
 fi
 if [[ -e /tmp/workcell-egress-pwned ]]; then
@@ -1542,6 +1685,54 @@ if ! "${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-nongit-works
   exit 1
 fi
 
+if [[ "$(uname -s)" == "Darwin" ]] &&
+  host_tool_exists /opt/homebrew/bin/colima /usr/local/bin/colima &&
+  host_tool_exists /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker; then
+  AUDIT_PROFILE_NAME="workcell-audit-verify-$$"
+  AUDIT_LOG="${REAL_HOME}/.colima/${AUDIT_PROFILE_NAME}/workcell.audit.log"
+  if ! "${ROOT_DIR}/scripts/workcell" \
+    --agent codex \
+    --prepare \
+    --allow-nongit-workspace \
+    --workspace "${NONGIT_WORKSPACE}" \
+    --colima-profile "${AUDIT_PROFILE_NAME}" \
+    --agent-arg --version >/tmp/workcell-audit-prepare.out 2>&1; then
+    echo "Expected audit verification prepare run to seed a managed image" >&2
+    cat /tmp/workcell-audit-prepare.out >&2
+    exit 1
+  fi
+  AUDIT_BASE_LINES=0
+  if [[ -f "${AUDIT_LOG}" ]]; then
+    AUDIT_BASE_LINES="$(wc -l <"${AUDIT_LOG}")"
+  fi
+  if ! "${ROOT_DIR}/scripts/workcell" \
+    --agent codex \
+    --mode build \
+    --allow-nongit-workspace \
+    --workspace "${NONGIT_WORKSPACE}" \
+    --colima-profile "${AUDIT_PROFILE_NAME}" \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    -- /bin/bash -lc 'sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update >/dev/null && sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y --no-install-recommends make >/dev/null'; then
+    echo "Expected package-mutation audit verification run to succeed" >&2
+    exit 1
+  fi
+  tail -n "+$((AUDIT_BASE_LINES + 1))" "${AUDIT_LOG}" >/tmp/workcell-audit-session.log
+  grep -q 'event=launch' /tmp/workcell-audit-session.log
+  grep -q 'execution_path=lower-assurance-debug-command' /tmp/workcell-audit-session.log
+  grep -q 'event=assurance-change' /tmp/workcell-audit-session.log
+  grep -q 'reason=package-mutation' /tmp/workcell-audit-session.log
+  grep -q 'session_assurance_final=lower-assurance-package-mutation' /tmp/workcell-audit-session.log
+  grep -q 'event=exit' /tmp/workcell-audit-session.log
+  grep -q 'package_mutation_downgraded=1' /tmp/workcell-audit-session.log
+  if [[ -x /opt/homebrew/bin/colima ]]; then
+    /opt/homebrew/bin/colima delete --profile "${AUDIT_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+  else
+    /usr/local/bin/colima delete --profile "${AUDIT_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+  fi
+  rm -rf "${REAL_HOME}/.colima/${AUDIT_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${AUDIT_PROFILE_NAME}"
+fi
+
 UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
 mkdir -p "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}"
 if "${ROOT_DIR}/scripts/workcell" \
@@ -1590,16 +1781,13 @@ EOF
   cat >"${RUBYOPT_PAYLOAD}" <<'EOF'
 File.write(ENV.fetch("RUBYOPT_MARKER"), "ran\n")
 EOF
-  if RUBYOPT_MARKER="${RUBYOPT_MARKER}" \
+  RUBYOPT_MARKER="${RUBYOPT_MARKER}" \
     RUBYOPT="-r${RUBYOPT_PAYLOAD}" \
     "${ROOT_DIR}/scripts/workcell" \
     --agent codex \
     --allow-nongit-workspace \
     --workspace "${NONGIT_WORKSPACE}" \
-    --colima-profile "${RUBY_PROFILE_NAME}" >/tmp/workcell-rubyopt.out 2>&1; then
-    echo "Expected invalid managed Colima profile validation to fail" >&2
-    exit 1
-  fi
+    --colima-profile "${RUBY_PROFILE_NAME}" >/tmp/workcell-rubyopt.out 2>&1 || true
   if [[ -e "${RUBYOPT_MARKER}" ]]; then
     echo "scripts/workcell executed hostile Ruby preload hooks before validating managed Colima profiles" >&2
     exit 1
@@ -1637,6 +1825,53 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${REDIRECTED_REPO}"
   echo "Expected redirected core.worktree repo to be rejected" >&2
   exit 1
 fi
+
+cat <<'EOF' >"${LOCAL_REMOTE_CONFIG_PATH}"
+WORKCELL_REMOTE_VALIDATE_HOST=builder@example.internal
+WORKCELL_REMOTE_VALIDATE_BASE_DIR=/var/tmp/workcell
+WORKCELL_REMOTE_VALIDATE_USE_SUDO=0
+EOF
+if ! WORKCELL_REMOTE_VALIDATE_CONFIG_PATH="${LOCAL_REMOTE_CONFIG_PATH}" \
+  "${ROOT_DIR}/scripts/dev-remote-validate.sh" --check validate --dry-run >/tmp/workcell-remote-config.out 2>&1; then
+  echo "Expected host-local remote builder config to be accepted" >&2
+  cat /tmp/workcell-remote-config.out >&2
+  exit 1
+fi
+grep -q 'Remote host: builder@example.internal' /tmp/workcell-remote-config.out
+grep -q 'Remote base dir: /var/tmp/workcell' /tmp/workcell-remote-config.out
+grep -q "Remote config path: ${LOCAL_REMOTE_CONFIG_PATH}" /tmp/workcell-remote-config.out
+if ! "${ROOT_DIR}/scripts/dev-remote-validate.sh" --config "${LOCAL_REMOTE_CONFIG_PATH}" --check validate --dry-run >/tmp/workcell-remote-config-cli.out 2>&1; then
+  echo "Expected --config host-local remote builder config to be accepted" >&2
+  cat /tmp/workcell-remote-config-cli.out >&2
+  exit 1
+fi
+grep -q 'Remote host: builder@example.internal' /tmp/workcell-remote-config-cli.out
+grep -q "Remote config path: ${LOCAL_REMOTE_CONFIG_PATH}" /tmp/workcell-remote-config-cli.out
+
+cat <<'EOF' >"${LEGACY_LOCAL_REMOTE_CONFIG_PATH}"
+WORKCELL_REMOTE_VALIDATE_HOST=builder@example.internal
+EOF
+if "${ROOT_DIR}/scripts/dev-remote-validate.sh" --check validate --dry-run >/tmp/workcell-remote-config-legacy.out 2>&1; then
+  echo "Expected legacy repo-local remote builder config to be rejected" >&2
+  exit 1
+fi
+grep -q 'Legacy repo-local remote builder config is no longer supported' /tmp/workcell-remote-config-legacy.out
+rm -f "${LEGACY_LOCAL_REMOTE_CONFIG_PATH}"
+
+cat <<'EOF' >"${REPO_LOCAL_REMOTE_CONFIG_PATH}"
+WORKCELL_REMOTE_VALIDATE_HOST=builder@example.internal
+EOF
+if WORKCELL_REMOTE_VALIDATE_CONFIG_PATH="${REPO_LOCAL_REMOTE_CONFIG_PATH}" \
+  "${ROOT_DIR}/scripts/dev-remote-validate.sh" --check validate --dry-run >/tmp/workcell-remote-config-repo-env.out 2>&1; then
+  echo "Expected repo-local remote builder config override via environment to be rejected" >&2
+  exit 1
+fi
+grep -q 'Remote builder config must live outside the repo checkout' /tmp/workcell-remote-config-repo-env.out
+if "${ROOT_DIR}/scripts/dev-remote-validate.sh" --config "${REPO_LOCAL_REMOTE_CONFIG_PATH}" --check validate --dry-run >/tmp/workcell-remote-config-repo-cli.out 2>&1; then
+  echo "Expected repo-local remote builder config override via --config to be rejected" >&2
+  exit 1
+fi
+grep -q 'Remote builder config must live outside the repo checkout' /tmp/workcell-remote-config-repo-cli.out
 
 cp -R "${ROOT_DIR}/adapters/codex/.codex/." "${CODEX_VERIFY_HOME}/"
 if command -v codex >/dev/null 2>&1; then

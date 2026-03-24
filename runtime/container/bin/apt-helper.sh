@@ -76,6 +76,9 @@ workcell_validate_apt_args() {
 
 workcell_mark_lower_assurance_session() {
   mkdir -p "${WORKCELL_RUNTIME_STATE_DIR}"
+  if [[ -e "${WORKCELL_RUNTIME_ASSURANCE_FILE}" ]]; then
+    chmod u+w "${WORKCELL_RUNTIME_ASSURANCE_FILE}"
+  fi
   printf '%s\n' "lower-assurance-package-mutation" >"${WORKCELL_RUNTIME_ASSURANCE_FILE}"
   chmod 0444 "${WORKCELL_RUNTIME_ASSURANCE_FILE}"
 }
@@ -118,5 +121,6 @@ fi
 
 if [[ "${mutates_packages}" -eq 1 ]]; then
   workcell_mark_lower_assurance_session
+  echo "WORKCELL_EVENT package-mutation assurance=lower-assurance-package-mutation" >&2
   echo "Workcell note: this session is now lower-assurance until the container exits." >&2
 fi

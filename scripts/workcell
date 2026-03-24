@@ -48,6 +48,8 @@ resolve_self_path() {
 
 ROOT_DIR="$(cd -P "$(dirname "$(resolve_self_path)")/.." && pwd)"
 # shellcheck source=/dev/null
+source "${ROOT_DIR}/runtime/container/assurance.sh"
+# shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 resolve_fixed_host_tool() {
   local name="$1"
@@ -85,6 +87,9 @@ PROFILE_RUNNING=0
 PROFILE_VALIDATED=0
 COLIMA_PROFILE=""
 BOOTSTRAP_APPLIED=0
+SESSION_AUDIT_DIR=""
+SESSION_AUDIT_STATE_FILE=""
+SESSION_AUDIT_EVENT_FILE=""
 
 usage() {
   cat <<'EOF'
@@ -94,6 +99,8 @@ Options:
   --agent codex|claude|gemini   Provider to run (required)
   --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
   --agent-arg VALUE             Additional provider argv to append (repeatable)
+  --codex-rules-mutability readonly|session
+                                Codex execpolicy session mutability (default: readonly)
   --container-mutability ephemeral|readonly
                                 Runtime rootfs posture (default: ephemeral)
   --container-cpu COUNT         Inner container CPU limit (default: unmanaged)
@@ -122,10 +129,16 @@ Options:
 Workflows:
   First run:
     workcell --prepare --agent codex --workspace /path/to/repo
+    workcell --prepare --agent claude --workspace /path/to/repo
+    workcell --prepare --agent gemini --workspace /path/to/repo
   Normal run:
     workcell --agent codex --workspace /path/to/repo
+    workcell --agent claude --workspace /path/to/repo
+    workcell --agent gemini --workspace /path/to/repo
   Repair a conflicting unmanaged profile:
     workcell --repair-profile --agent codex --workspace /path/to/repo
+    workcell --repair-profile --agent claude --workspace /path/to/repo
+    workcell --repair-profile --agent gemini --workspace /path/to/repo
 
 Workcell launches the selected provider directly inside the bounded runtime.
 There is no separate container attach/connect step after launch.
@@ -137,6 +150,14 @@ slugify() {
     tr '[:upper:]' '[:lower:]' |
     tr -cs 'a-z0-9' '-' |
     sed -E 's/^-+//; s/-+$//; s/-+/-/g'
+}
+
+generate_session_suffix() {
+  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - <<'PY'
+import secrets
+
+print(secrets.token_hex(4))
+PY
 }
 
 lower_ascii() {
@@ -175,6 +196,17 @@ validate_agent_autonomy_name() {
     *)
       echo "Unsupported agent autonomy mode: $1" >&2
       echo "Use --agent-autonomy yolo or --agent-autonomy prompt." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_codex_rules_mutability_name() {
+  case "$1" in
+    readonly | session) ;;
+    *)
+      echo "Unsupported Codex rules mutability: $1" >&2
+      echo "Use --codex-rules-mutability readonly or --codex-rules-mutability session." >&2
       exit 2
       ;;
   esac
@@ -230,6 +262,8 @@ sanitize_host_docker_env() {
 CONTROL_PLANE_SHADOW_ROOT=""
 INJECTION_BUNDLE_ROOT=""
 DIRECT_MOUNT_SPEC_PATH=""
+PROFILE_AUDIT_LOG_STASH=""
+PRESERVE_FAILED_PROFILE_STATE=0
 declare -a SHADOW_MOUNTS=()
 declare -a SHADOW_DEST_PATHS=()
 declare -a DIRECT_SOURCE_MOUNTS=()
@@ -252,12 +286,37 @@ cleanup() {
     rm -f "${DIRECT_MOUNT_SPEC_PATH}"
   fi
 
+  if [[ -n "${PROFILE_AUDIT_LOG_STASH}" ]] && [[ -e "${PROFILE_AUDIT_LOG_STASH}" ]]; then
+    if [[ -n "${COLIMA_PROFILE:-}" ]]; then
+      restore_profile_audit_log "${COLIMA_PROFILE}" || true
+      PRESERVE_FAILED_PROFILE_STATE=1
+    fi
+  fi
+
+  if [[ -n "${PROFILE_AUDIT_LOG_STASH}" ]] && [[ -e "${PROFILE_AUDIT_LOG_STASH}" ]]; then
+    chmod u+w "${PROFILE_AUDIT_LOG_STASH}" 2>/dev/null || true
+    rm -f "${PROFILE_AUDIT_LOG_STASH}"
+  fi
+
+  if [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -e "${SESSION_AUDIT_DIR}" ]]; then
+    chmod -R u+w "${SESSION_AUDIT_DIR}" 2>/dev/null || true
+    rm -rf "${SESSION_AUDIT_DIR}"
+  fi
+
+  if [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
+    "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  fi
+
   cleanup_workcell_trusted_docker_client
   if [[ "${PROFILE_RUNNING}" -eq 1 ]] &&
     [[ -n "${COLIMA_PROFILE}" ]] &&
     [[ -n "${HOST_COLIMA_BIN}" ]]; then
     if [[ "${PROFILE_VALIDATED}" -eq 0 ]] && [[ "${PROFILE_PREEXISTED}" -eq 0 ]]; then
-      run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
+      if [[ "${PRESERVE_FAILED_PROFILE_STATE}" -eq 1 ]]; then
+        run_host_colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
+      else
+        run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
+      fi
     else
       run_host_colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
     fi
@@ -297,6 +356,44 @@ profile_audit_log_path() {
   printf '%s/workcell.audit.log\n' "$(profile_dir "${profile}")"
 }
 
+stash_profile_audit_log() {
+  local profile="$1"
+  local audit_log=""
+
+  audit_log="$(profile_audit_log_path "${profile}")"
+  [[ -f "${audit_log}" ]] || return 0
+
+  PROFILE_AUDIT_LOG_STASH="$(mktemp "${TMPDIR:-/tmp}/workcell-audit-log.XXXXXX")"
+  cp "${audit_log}" "${PROFILE_AUDIT_LOG_STASH}"
+  chmod 0600 "${PROFILE_AUDIT_LOG_STASH}" 2>/dev/null || true
+}
+
+restore_profile_audit_log() {
+  local profile="$1"
+  local audit_log=""
+  local merged_log=""
+
+  [[ -n "${PROFILE_AUDIT_LOG_STASH}" ]] || return 0
+  [[ -f "${PROFILE_AUDIT_LOG_STASH}" ]] || {
+    PROFILE_AUDIT_LOG_STASH=""
+    return 0
+  }
+
+  audit_log="$(profile_audit_log_path "${profile}")"
+  mkdir -p "$(dirname "${audit_log}")"
+  if [[ -f "${audit_log}" ]] && [[ -s "${audit_log}" ]]; then
+    merged_log="$(mktemp "${TMPDIR:-/tmp}/workcell-audit-merged.XXXXXX")"
+    cat "${PROFILE_AUDIT_LOG_STASH}" "${audit_log}" >"${merged_log}"
+    chmod 0600 "${merged_log}" 2>/dev/null || true
+    mv "${merged_log}" "${audit_log}"
+  else
+    cp "${PROFILE_AUDIT_LOG_STASH}" "${audit_log}"
+  fi
+  chmod 0600 "${audit_log}" 2>/dev/null || true
+  rm -f "${PROFILE_AUDIT_LOG_STASH}"
+  PROFILE_AUDIT_LOG_STASH=""
+}
+
 read_profile_marker_workspace() {
   local marker_path
   marker_path="$(profile_marker_path "$1")"
@@ -306,7 +403,7 @@ read_profile_marker_workspace() {
 
 append_audit_record() {
   local profile="$1"
-  local execution_path="$2"
+  shift
   local audit_path
   local timestamp
 
@@ -316,19 +413,189 @@ append_audit_record() {
   touch "${audit_path}"
   chmod 0600 "${audit_path}" 2>/dev/null || true
   timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  printf 'timestamp=%s profile=%q mode=%q agent=%q agent_autonomy=%q ui=%q network_policy=%q execution_path=%q workspace=%q endpoints=%q bootstrap_applied=%q bootstrap_endpoints=%q\n' \
-    "${timestamp}" \
-    "${profile}" \
-    "${MODE}" \
-    "${AGENT}" \
-    "${AGENT_AUTONOMY}" \
-    "${UI}" \
-    "${NETWORK_POLICY}" \
-    "${execution_path}" \
-    "${WORKSPACE}" \
-    "${ALLOW_ENDPOINTS}" \
-    "${BOOTSTRAP_APPLIED}" \
-    "$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" >>"${audit_path}"
+  {
+    printf 'timestamp=%q ' "${timestamp}"
+    printf '%q ' "$@"
+    printf '\n'
+  } >>"${audit_path}"
+}
+
+container_assurance() {
+  workcell_container_assurance "${CONTAINER_MUTABILITY}"
+}
+
+autonomy_assurance() {
+  workcell_autonomy_assurance "${AGENT_AUTONOMY}"
+}
+
+codex_rules_assurance() {
+  if [[ "${AGENT}" != "codex" ]]; then
+    printf 'not-applicable\n'
+    return 0
+  fi
+  workcell_codex_rules_assurance "${CODEX_RULES_MUTABILITY}"
+}
+
+codex_rules_effective_mutability_with_session_assurance() {
+  local session_assurance="$1"
+
+  if [[ "${AGENT}" != "codex" ]]; then
+    printf 'not-applicable\n'
+    return 0
+  fi
+  workcell_effective_codex_rules_mutability "${CODEX_RULES_MUTABILITY}" "${AGENT_AUTONOMY}" "${session_assurance}"
+}
+
+codex_rules_effective_assurance_with_session_assurance() {
+  local session_assurance="$1"
+
+  if [[ "${AGENT}" != "codex" ]]; then
+    printf 'not-applicable\n'
+    return 0
+  fi
+  workcell_effective_codex_rules_assurance "${CODEX_RULES_MUTABILITY}" "${AGENT_AUTONOMY}" "${session_assurance}"
+}
+
+session_assurance_initial() {
+  container_assurance
+}
+
+session_assurance_final() {
+  local initial_assurance
+  local final_assurance
+
+  initial_assurance="$(session_assurance_initial)"
+  final_assurance="${initial_assurance}"
+  if [[ -n "${SESSION_AUDIT_EVENT_FILE}" ]] && [[ -r "${SESSION_AUDIT_EVENT_FILE}" ]] &&
+    grep -q '^WORKCELL_EVENT package-mutation assurance=lower-assurance-package-mutation$' "${SESSION_AUDIT_EVENT_FILE}"; then
+    printf '%s\n' "lower-assurance-package-mutation"
+    return 0
+  fi
+  if [[ -n "${SESSION_AUDIT_STATE_FILE}" ]] && [[ -r "${SESSION_AUDIT_STATE_FILE}" ]]; then
+    case "$(head -n1 "${SESSION_AUDIT_STATE_FILE}")" in
+      lower-assurance-package-mutation)
+        final_assurance="lower-assurance-package-mutation"
+        ;;
+    esac
+  fi
+  printf '%s\n' "${final_assurance}"
+}
+
+codex_rules_effective_mutability_initial() {
+  codex_rules_effective_mutability_with_session_assurance "$(session_assurance_initial)"
+}
+
+codex_rules_effective_assurance_initial() {
+  codex_rules_effective_assurance_with_session_assurance "$(session_assurance_initial)"
+}
+
+append_launch_audit_record() {
+  local profile="$1"
+  local execution_path="$2"
+
+  append_audit_record "${profile}" \
+    "event=launch" \
+    "profile=${profile}" \
+    "mode=${MODE}" \
+    "agent=${AGENT}" \
+    "agent_autonomy=${AGENT_AUTONOMY}" \
+    "autonomy_assurance=$(autonomy_assurance)" \
+    "codex_rules_mutability_configured=${CODEX_RULES_MUTABILITY}" \
+    "codex_rules_assurance_configured=$(codex_rules_assurance)" \
+    "codex_rules_mutability_effective_initial=$(codex_rules_effective_mutability_initial)" \
+    "codex_rules_assurance_effective_initial=$(codex_rules_effective_assurance_initial)" \
+    "ui=${UI}" \
+    "network_policy=${NETWORK_POLICY}" \
+    "execution_path=${execution_path}" \
+    "workspace=${WORKSPACE}" \
+    "endpoints=${ALLOW_ENDPOINTS}" \
+    "bootstrap_applied=${BOOTSTRAP_APPLIED}" \
+    "bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" \
+    "container_assurance=$(container_assurance)" \
+    "session_assurance_initial=$(session_assurance_initial)"
+}
+
+append_assurance_change_audit_record() {
+  local profile="$1"
+  local final_assurance="$2"
+
+  append_audit_record "${profile}" \
+    "event=assurance-change" \
+    "profile=${profile}" \
+    "mode=${MODE}" \
+    "agent=${AGENT}" \
+    "workspace=${WORKSPACE}" \
+    "reason=package-mutation" \
+    "codex_rules_mutability_effective_final=$(codex_rules_effective_mutability_with_session_assurance "${final_assurance}")" \
+    "codex_rules_assurance_effective_final=$(codex_rules_effective_assurance_with_session_assurance "${final_assurance}")" \
+    "session_assurance_final=${final_assurance}"
+}
+
+append_exit_audit_record() {
+  local profile="$1"
+  local execution_path="$2"
+  local exit_status="$3"
+  local final_assurance="$4"
+  local downgraded="$5"
+
+  append_audit_record "${profile}" \
+    "event=exit" \
+    "profile=${profile}" \
+    "mode=${MODE}" \
+    "agent=${AGENT}" \
+    "workspace=${WORKSPACE}" \
+    "execution_path=${execution_path}" \
+    "exit_status=${exit_status}" \
+    "container_assurance=$(container_assurance)" \
+    "autonomy_assurance=$(autonomy_assurance)" \
+    "codex_rules_mutability_configured=${CODEX_RULES_MUTABILITY}" \
+    "codex_rules_assurance_configured=$(codex_rules_assurance)" \
+    "codex_rules_mutability_effective_final=$(codex_rules_effective_mutability_with_session_assurance "${final_assurance}")" \
+    "codex_rules_assurance_effective_final=$(codex_rules_effective_assurance_with_session_assurance "${final_assurance}")" \
+    "session_assurance_initial=$(session_assurance_initial)" \
+    "session_assurance_final=${final_assurance}" \
+    "package_mutation_downgraded=${downgraded}"
+}
+
+prepare_session_audit_state() {
+  local profile="$1"
+
+  mkdir -p "$(profile_dir "${profile}")"
+  SESSION_AUDIT_DIR="$(mktemp -d "$(profile_dir "${profile}")/session-audit.XXXXXX")"
+  chmod 0700 "${SESSION_AUDIT_DIR}" 2>/dev/null || true
+  SESSION_AUDIT_STATE_FILE="${SESSION_AUDIT_DIR}/session-assurance"
+  SESSION_AUDIT_EVENT_FILE="${SESSION_AUDIT_DIR}/events.log"
+}
+
+capture_session_audit_state() {
+  local container_name="$1"
+
+  [[ -n "${SESSION_AUDIT_STATE_FILE}" ]] || return 0
+  mkdir -p "$(dirname "${SESSION_AUDIT_STATE_FILE}")"
+  if ! "${HOST_DOCKER_BIN}" cp "${container_name}:/run/workcell/session-assurance" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
+    :
+  fi
+  chmod 0600 "${SESSION_AUDIT_STATE_FILE}" 2>/dev/null || true
+  if [[ -n "${SESSION_AUDIT_EVENT_FILE}" ]]; then
+    mkdir -p "$(dirname "${SESSION_AUDIT_EVENT_FILE}")"
+    "${HOST_DOCKER_BIN}" logs "${container_name}" >"${SESSION_AUDIT_EVENT_FILE}" 2>&1 || true
+    chmod 0600 "${SESSION_AUDIT_EVENT_FILE}" 2>/dev/null || true
+  fi
+}
+
+finalize_session_audit() {
+  local profile="$1"
+  local execution_path="$2"
+  local exit_status="$3"
+  local final_assurance
+  local downgraded=0
+
+  final_assurance="$(session_assurance_final)"
+  if [[ "${final_assurance}" == "lower-assurance-package-mutation" ]]; then
+    downgraded=1
+    append_assurance_change_audit_record "${profile}" "${final_assurance}"
+  fi
+  append_exit_audit_record "${profile}" "${execution_path}" "${exit_status}" "${final_assurance}" "${downgraded}"
 }
 
 write_profile_image_marker() {
@@ -872,25 +1139,6 @@ validate_container_mutability() {
   esac
 }
 
-assurance_posture() {
-  local autonomy="$1"
-  local mutability="$2"
-
-  if [[ "${autonomy}" == "prompt" ]] && [[ "${mutability}" == "ephemeral" ]]; then
-    printf 'lower-assurance-prompt-autonomy,mutable-session\n'
-    return 0
-  fi
-  if [[ "${autonomy}" == "prompt" ]]; then
-    printf 'lower-assurance-prompt-autonomy\n'
-    return 0
-  fi
-  if [[ "${mutability}" == "ephemeral" ]]; then
-    printf 'mutable-session\n'
-    return 0
-  fi
-  printf 'managed-readonly\n'
-}
-
 validate_positive_integer() {
   local label="$1"
   local value="$2"
@@ -1391,11 +1639,24 @@ add_shadow_git_config_mount() {
   register_shadow_mount "${source}" "${destination}"
 }
 
+add_shadow_git_path_if_present() {
+  local workspace="$1"
+  local relative_path="$2"
+  local path="${workspace}/${relative_path}"
+
+  [[ -e "${path}" ]] || return 0
+  if [[ -d "${path}" ]]; then
+    add_shadow_git_hooks_mount "${workspace}" "${relative_path}"
+  else
+    add_shadow_git_config_mount "${workspace}" "${relative_path}"
+  fi
+}
+
 prepare_workspace_control_plane_shadow() {
   local workspace="$1"
   local mode="$2"
   local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
-  local rel path
+  local rel path git_dir git_rel
 
   SHADOW_MOUNTS=()
   SHADOW_DEST_PATHS=()
@@ -1409,25 +1670,35 @@ prepare_workspace_control_plane_shadow() {
   mkdir -p "${shadow_parent}"
   CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
 
-  while IFS= read -r -d '' path; do
-    rel="${path#"${workspace}/"}"
-    if [[ -d "${path}" ]]; then
-      add_shadow_git_hooks_mount "${workspace}" "${rel}"
-    else
-      add_shadow_git_config_mount "${workspace}" "${rel}"
+  while IFS= read -r -d '' git_dir; do
+    git_rel="${git_dir#"${workspace}/"}"
+    for rel in "${git_rel}/hooks" "${git_rel}/config" "${git_rel}/config.worktree"; do
+      add_shadow_git_path_if_present "${workspace}" "${rel}"
+    done
+    if [[ -e "${workspace}/${git_rel}/worktrees" ]]; then
+      add_shadow_dir_mount "${git_rel}/worktrees"
+    fi
+    if [[ -d "${workspace}/${git_rel}/modules" ]]; then
+      while IFS= read -r -d '' path; do
+        rel="${path#"${workspace}/"}"
+        add_shadow_git_path_if_present "${workspace}" "${rel}"
+      done < <(
+        find "${workspace}/${git_rel}/modules" \
+          \( \
+          \( -type d -name hooks \) -o \
+          \( -type f \( -name config -o -name config.worktree \) \) \
+          \) \
+          -print0
+      )
+      while IFS= read -r -d '' path; do
+        rel="${path#"${workspace}/"}"
+        add_shadow_dir_mount "${rel}"
+      done < <(
+        find "${workspace}/${git_rel}/modules" -type d -name worktrees -print0
+      )
     fi
   done < <(
-    find "${workspace}" \
-      \( \( -type d -o -type l \) \( -path '*/.git/hooks' -o -path '*/.git/modules/*/hooks' \) \) -print0 -o \
-      \( \( -type f -o -type l \) \( -path '*/.git/config' -o -path '*/.git/config.worktree' -o -path '*/.git/modules/*/config' -o -path '*/.git/modules/*/config.worktree' \) \) -print0
-  )
-
-  while IFS= read -r -d '' path; do
-    rel="${path#"${workspace}/"}"
-    add_shadow_dir_mount "${rel}"
-  done < <(
-    find "${workspace}" \
-      \( \( -type d -o -type l \) \( -path '*/.git/worktrees' -o -path '*/.git/modules/*/worktrees' \) \) -print0
+    find "${workspace}" -type d -name .git -prune -print0
   )
 
   while IFS= read -r -d '' path; do
@@ -1457,6 +1728,7 @@ bootstrap_endpoints() {
 
 AGENT=""
 AGENT_AUTONOMY="yolo"
+CODEX_RULES_MUTABILITY="readonly"
 CONTAINER_MUTABILITY="ephemeral"
 CONTAINER_CPU_OVERRIDE=""
 CONTAINER_MEMORY_OVERRIDE=""
@@ -1491,6 +1763,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --agent-arg)
       AGENT_ARGS+=("$(raw_option_value_or_die "$1" "${2-}")")
+      shift 2
+      ;;
+    --codex-rules-mutability)
+      CODEX_RULES_MUTABILITY="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
     --container-mutability)
@@ -1588,6 +1864,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 validate_agent_autonomy_name "${AGENT_AUTONOMY}"
+validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
 declare -a PROVIDER_ARGS=()
 if ((${#AGENT_ARGS[@]} > 0)); then
   PROVIDER_ARGS=("${AGENT_ARGS[@]}")
@@ -1760,11 +2037,10 @@ if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
 fi
 prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
 
-CONTAINER_NAME="workcell-$(slugify "${AGENT}-${MODE}-$(basename "${WORKSPACE}")")"
+CONTAINER_NAME="workcell-$(slugify "${AGENT}-${MODE}-$(basename "${WORKSPACE}")")-$(generate_session_suffix)"
 DOCKER_RUN_BASE=(
   "${HOST_DOCKER_BIN}"
   run
-  --rm
   --init
   --name "${CONTAINER_NAME}"
   --security-opt no-new-privileges:true
@@ -1777,6 +2053,7 @@ DOCKER_RUN_BASE=(
   --workdir /workspace
   -e AGENT_NAME="${AGENT}"
   -e WORKCELL_AGENT_AUTONOMY="${AGENT_AUTONOMY}"
+  -e WORKCELL_CODEX_RULES_MUTABILITY="${CODEX_RULES_MUTABILITY}"
   -e WORKCELL_CONTAINER_MUTABILITY="${CONTAINER_MUTABILITY}"
   -e AGENT_UI="${UI}"
   -e CODEX_PROFILE="${MODE}"
@@ -1798,6 +2075,11 @@ if [[ "${CONTAINER_MUTABILITY}" == "readonly" ]]; then
   )
 else
   DOCKER_RUN_BASE+=(
+    # Mutable sessions still drop the default capability set, but need the
+    # minimal handoff capabilities required to re-exec as the mapped runtime
+    # user.
+    --cap-add SETUID
+    --cap-add SETGID
     --user 0:0
     -e WORKCELL_HOST_UID="${HOST_UID}"
     -e WORKCELL_HOST_GID="${HOST_GID}"
@@ -1821,6 +2103,9 @@ if [[ -n "${INJECTION_BUNDLE_ROOT}" ]]; then
     -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json
     -v "${INJECTION_BUNDLE_ROOT}:/opt/workcell/host-injections:ro"
   )
+fi
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  prepare_session_audit_state "${COLIMA_PROFILE}"
 fi
 
 EXECUTION_PATH="managed-tier1"
@@ -1854,7 +2139,7 @@ else
 fi
 
 if [[ -t 0 ]] && [[ -t 1 ]]; then
-  DOCKER_RUN=("${HOST_DOCKER_BIN}" run --rm --init -it "${DOCKER_RUN[@]:4}")
+  DOCKER_RUN=("${HOST_DOCKER_BIN}" run --init -it "${DOCKER_RUN[@]:3}")
 fi
 
 printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
@@ -1863,7 +2148,13 @@ printf 'agent_autonomy=%s\n' "${AGENT_AUTONOMY}" >&2
 printf 'vm_resources=cpu=%s memory_gib=%s disk_gib=%s\n' "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}" >&2
 printf 'container_resources=mutability=%s cpu=%s memory=%s\n' \
   "${CONTAINER_MUTABILITY}" "${CONTAINER_CPU_OVERRIDE:-unmanaged}" "${CONTAINER_MEMORY}" >&2
-printf 'assurance_posture=%s\n' "$(assurance_posture "${AGENT_AUTONOMY}" "${CONTAINER_MUTABILITY}")" >&2
+printf 'container_assurance=%s\n' "$(container_assurance)" >&2
+printf 'autonomy_assurance=%s\n' "$(autonomy_assurance)" >&2
+printf 'codex_rules_mutability_configured=%s\n' "${CODEX_RULES_MUTABILITY}" >&2
+printf 'codex_rules_assurance_configured=%s\n' "$(codex_rules_assurance)" >&2
+printf 'codex_rules_mutability_effective_initial=%s\n' "$(codex_rules_effective_mutability_initial)" >&2
+printf 'codex_rules_assurance_effective_initial=%s\n' "$(codex_rules_effective_assurance_initial)" >&2
+printf 'session_assurance_initial=%s\n' "$(session_assurance_initial)" >&2
 printf 'workspace_control_plane=%s\n' "$([[ "${MODE}" == "breakglass" ]] && printf 'unmasked' || printf 'masked')" >&2
 printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
 printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
@@ -1876,11 +2167,13 @@ fi
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
   if ! validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
     echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources." >&2
+    stash_profile_audit_log "${COLIMA_PROFILE}"
     run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
     rm -rf "${PROFILE_DIR}"
     PROFILE_PREEXISTED=0
   elif ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"; then
     echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts." >&2
+    stash_profile_audit_log "${COLIMA_PROFILE}"
     run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
     rm -rf "${PROFILE_DIR}"
     PROFILE_PREEXISTED=0
@@ -1900,6 +2193,7 @@ PROFILE_RUNNING=1
 
 validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}"
 mkdir -p "${PROFILE_DIR}"
+restore_profile_audit_log "${COLIMA_PROFILE}"
 printf '%s\n' "${WORKSPACE}" >"${PROFILE_MARKER}"
 PROFILE_VALIDATED=1
 
@@ -1969,10 +2263,14 @@ if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
 fi
 
 restore_runtime_egress
-append_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
+append_launch_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 
 DOCKER_STATUS=0
+"${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 "${DOCKER_RUN[@]}" || DOCKER_STATUS=$?
+capture_session_audit_state "${CONTAINER_NAME}"
+finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${DOCKER_STATUS}"
+"${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
   echo "Workcell ephemeral runtime ended. Changes not persisted to /workspace or provided from the host control plane were discarded." >&2
 fi

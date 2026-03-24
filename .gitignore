@@ -11,6 +11,7 @@
 *.pem
 *.key
 *.p12
+.workcell.remote.local
 
 .codex-local/
 .codex-state/

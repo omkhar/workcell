@@ -65,16 +65,18 @@ named network mode:
 - `breakglass`: unrestricted outbound access, explicitly chosen and acknowledged
 
 On the allowlist path, Workcell enforces reviewed destination-IP allowlists
-derived from the configured hostnames at launch time. It programs both IPv4
-and, when available in the VM, IPv6 rules; if IPv6 enforcement is unavailable,
-Workcell disables IPv6 rather than leaving an unmanaged parallel egress path.
+derived from the configured hostnames at launch time. It programs an IPv4
+allowlist and a deny-by-default IPv6 chain for every allowlist launch, adding
+explicit IPv6 allowlist entries when the resolved destination set is dual-stack.
+If `ip6tables` enforcement is unavailable in the VM, Workcell fails closed
+rather than silently downgrading to IPv4-only enforcement.
 The current enforcement model is not a hostname-aware proxy. `strict` does not
 perform cold image builds or rebuilds; runtime-image creation is an explicit
 `build`-mode operation that may temporarily apply a separate pinned bootstrap
 endpoint set before returning to the steady-state runtime allowlist. When the
 operator keeps the default `ephemeral` container mutability, the steady-state
 allowlist also includes the pinned Debian snapshot endpoints used by
-`apt`/`apt-get` so transient build tooling can be installed without enabling
+`apt` and `apt-get` so transient build tooling can be installed without enabling
 arbitrary distro mirrors. A successful package mutation is an explicit
 lower-assurance event for the live session because maintainer scripts run as
 root inside the mutable container. Workcell must warn when that happens and
@@ -100,7 +102,8 @@ runtimes or loaders that target them.
 If a workflow cannot preserve the Tier 1 guarantees, it must be labeled
 lower-assurance rather than presented as equivalent.
 That includes provider prompt-autonomy mode and any mutable session that has
-successfully performed package-manager mutations as root.
+successfully performed package-manager mutations as root. It also includes any
+session that explicitly opts into writable Codex execpolicy rules.
 
 ## Invariant 7: Autonomous runs remain auditable
 
@@ -112,11 +115,13 @@ reconstruct:
 - which network mode was applied
 - which provider adapter was selected
 - whether the run stayed on the managed Tier 1 path or used an explicitly
-  lower-assurance mode
+lower-assurance mode
 
 The reference launcher satisfies this by appending an operator-visible audit log
-entry under the managed Colima profile directory on each real launch.
-Injected secret values themselves are not part of that durable record.
+under the managed Colima profile directory on each real launch and exit,
+including package-mutation downgrade events inferred from host-captured runtime
+markers rather than mutable in-container state alone. Injected secret values
+themselves are not part of that durable record.
 
 ## Profile expectations
 
@@ -133,6 +138,21 @@ Injected secret values themselves are not part of that durable record.
   `ephemeral` container mutability is active
 - requires a prebuilt reviewed runtime image; `strict` does not rebuild or
   cold-bootstrap that image
+
+Assurance mapping within `strict`:
+
+- `ephemeral`: default DX lane, `container_assurance=managed-mutable`
+- `ephemeral` adds only the handoff capabilities required to move from root to
+  the mapped runtime user inside the container: `SETUID`, `SETGID`
+- `readonly`: strongest managed lane, `container_assurance=managed-readonly`
+- prompt autonomy: separate lower-assurance flag,
+  `autonomy_assurance=lower-assurance-prompt-autonomy`
+- session Codex rules mutability: explicit lower-assurance flag,
+  `codex_rules_assurance_effective_initial=lower-assurance-session-rules`
+- package mutation can also force this session-local copy for the remainder of
+  an already-downgraded container
+- successful package mutation: runtime downgrade to
+  `lower-assurance-package-mutation` until exit
 
 ### `build`
 
