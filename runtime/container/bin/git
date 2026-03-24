@@ -295,7 +295,7 @@ for arg in "$@"; do
     hooks_path_bypass=1
   fi
 
-  if [[ "${subcommand}" == "commit" ]] && [[ "${arg}" == "-n" ]]; then
+  if [[ "${subcommand}" == "commit" ]] && [[ "${arg}" == -?* ]] && [[ "${arg}" != --* ]] && [[ "${arg#-}" == *n* ]]; then
     commit_short_bypass=1
   fi
 done

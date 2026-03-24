@@ -842,7 +842,11 @@ fn should_block(path: &str, args: &[String]) -> bool {
         }
     }
 
-    saw_commit && args.iter().skip(1).any(|arg| arg == "-n")
+    saw_commit
+        && args
+            .iter()
+            .skip(1)
+            .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg[1..].contains('n'))
 }
 
 fn env_has_unsafe_git_override(env_entries: &[String]) -> bool {
