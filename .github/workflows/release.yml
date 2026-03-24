@@ -24,6 +24,8 @@ jobs:
   preflight:
     name: Release preflight
     runs-on: ubuntu-latest
+    environment:
+      name: hosted-controls-audit
     permissions:
       contents: read
       security-events: write
@@ -52,8 +54,9 @@ jobs:
 
       - name: Verify GitHub-hosted controls
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./scripts/verify-github-hosted-controls.sh "${GITHUB_REPOSITORY}"
+          WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
+          WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
+        run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
 
       - name: Check pinned input policy
         run: ./scripts/check-pinned-inputs.sh

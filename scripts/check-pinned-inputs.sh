@@ -465,9 +465,28 @@ if "./scripts/publish-github-release.sh" not in release_workflow:
     )
 require_contains(
     release_workflow,
-    'run: ./scripts/verify-github-hosted-controls.sh "${GITHUB_REPOSITORY}"',
+    'run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"',
     "a hosted-controls audit in release preflight",
     ".github/workflows/release.yml",
+)
+require_contains(
+    release_workflow,
+    'WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"',
+    "a fail-closed hosted-controls requirement in release preflight",
+    ".github/workflows/release.yml",
+)
+hosted_controls_workflow = (workflows_dir / "hosted-controls.yml").read_text(encoding="utf-8")
+require_contains(
+    hosted_controls_workflow,
+    'run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"',
+    "the hosted-controls workflow wrapper",
+    ".github/workflows/hosted-controls.yml",
+)
+require_contains(
+    hosted_controls_workflow,
+    'WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}',
+    "the hosted-controls workflow token injection",
+    ".github/workflows/hosted-controls.yml",
 )
 require_contains(
     release_workflow,
