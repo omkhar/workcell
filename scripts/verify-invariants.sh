@@ -750,7 +750,7 @@ if ! sed -n '/^add_shadow_git_config_mount()/,/^}/p' "${ROOT_DIR}/scripts/workce
   exit 1
 fi
 
-if ! rg -Fq 'find "${workspace}" -type d -name .git -prune -print0' "${ROOT_DIR}/scripts/workcell"; then
+if ! grep -Fq "find \"\${workspace}\" -type d -name .git -prune -print0" "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories" >&2
   exit 1
 fi
