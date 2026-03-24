@@ -5,8 +5,7 @@ on:
     - cron: "0 14 * * 2"
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: read-all
 
 env:
   WORKCELL_COSIGN_VERSION: v3.0.5

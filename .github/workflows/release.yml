@@ -50,6 +50,11 @@ jobs:
         run: |
           [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
 
+      - name: Verify GitHub-hosted controls
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/verify-github-hosted-controls.sh "${GITHUB_REPOSITORY}"
+
       - name: Check pinned input policy
         run: ./scripts/check-pinned-inputs.sh
 
@@ -173,6 +178,9 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - preflight
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
     permissions:
       actions: read
       artifact-metadata: write
@@ -217,6 +225,11 @@ jobs:
       - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           syft-version: ${{ env.WORKCELL_SYFT_VERSION }}
+
+      - name: Expose signing and SBOM tools in trusted system path
+        run: |
+          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
+          sudo install -m 0755 "$(command -v syft)" /usr/local/bin/syft
 
       - uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:

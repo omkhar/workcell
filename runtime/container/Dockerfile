@@ -30,13 +30,19 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
   jq \
   less \
   openssh-client \
+  passwd \
   procps \
   ripgrep \
+  sudo \
   unzip \
+  util-linux \
   xz-utils \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
   && mkdir -p \
     /etc/workcell/empty-xdg \
+    /opt/workcell/host-injections \
+    /opt/workcell/host-inputs \
+    /opt/workcell/workspace-control-plane \
     /state/agent-home \
     /usr/local/libexec/workcell \
     /usr/local/libexec/workcell/core \
@@ -118,17 +124,20 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex.tar.gz -C /tmp \
   && mv "/tmp/codex-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex \
-  && chmod 0644 /usr/local/libexec/workcell/real/codex \
+  && chmod 0755 /usr/local/libexec/workcell/real/codex \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/codex \
   && rm -f /tmp/codex.tar.gz
 
 COPY adapters /opt/workcell/adapters
 COPY runtime/container/bin/git /usr/local/libexec/workcell/git-wrapper.sh
 COPY runtime/container/bin/node /usr/local/libexec/workcell/node-wrapper.sh
+COPY runtime/container/bin/apt-helper.sh /usr/local/libexec/workcell/apt-helper.sh
+COPY runtime/container/bin/apt-wrapper.sh /usr/local/libexec/workcell/apt-wrapper.sh
 COPY runtime/container/rust /workcell-rust
 COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
 COPY runtime/container/home-control-plane.sh /usr/local/libexec/workcell/home-control-plane.sh
 COPY runtime/container/provider-wrapper.sh /usr/local/libexec/workcell/provider-wrapper.sh
+COPY runtime/container/runtime-user.sh /usr/local/libexec/workcell/runtime-user.sh
 COPY runtime/container/public-node-guard.mjs /usr/local/libexec/workcell/public-node-guard.mjs
 COPY runtime/container/entrypoint.sh /usr/local/libexec/workcell/entrypoint.sh
 
@@ -149,15 +158,21 @@ RUN cd /workcell-rust \
   && printf '/usr/local/lib/libworkcell_exec_guard.so\n' > /etc/ld.so.preload \
   && chmod 0444 /etc/claude-code/managed-settings.json \
   && chmod 0444 \
+    /usr/local/libexec/workcell/apt-wrapper.sh \
+    /usr/local/libexec/workcell/apt-helper.sh \
     /usr/local/libexec/workcell/entrypoint.sh \
     /usr/local/libexec/workcell/git-wrapper.sh \
     /usr/local/libexec/workcell/node-wrapper.sh \
     /usr/local/libexec/workcell/provider-wrapper.sh \
+    /usr/local/libexec/workcell/runtime-user.sh \
   && chmod +x \
     /usr/local/libexec/workcell/core/launcher \
+    /usr/local/libexec/workcell/apt-wrapper.sh \
+    /usr/local/libexec/workcell/apt-helper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
     /usr/local/libexec/workcell/provider-policy.sh \
+    /usr/local/libexec/workcell/runtime-user.sh \
     /opt/workcell/adapters/claude/hooks/guard-bash.sh \
   && find /opt/workcell/adapters /etc/claude-code /usr/local/libexec/workcell -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}" \
   && touch -h -d "@${SOURCE_DATE_EPOCH}" \
@@ -179,12 +194,14 @@ COPY --from=runtime-builder /usr/local/libexec/workcell /usr/local/libexec/workc
 RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && chmod 0644 /usr/local/libexec/workcell/real/git \
   && mv /usr/local/bin/node /usr/local/libexec/workcell/real/node \
-  && chmod 0644 /usr/local/libexec/workcell/real/node \
+  && chmod 0755 /usr/local/libexec/workcell/real/node \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/libexec/workcell/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/codex \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/claude \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/gemini \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/workcell-entrypoint \
+  && ln -sf /usr/local/libexec/workcell/apt-wrapper.sh /usr/local/bin/apt \
+  && ln -sf /usr/local/libexec/workcell/apt-wrapper.sh /usr/local/bin/apt-get \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/node \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/codex \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/claude \
@@ -195,7 +212,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && chmod 0644 \
     /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js \
     /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
-  && rm -f /usr/bin/perl /usr/bin/perl5.* /usr/bin/perlbug /usr/bin/perldoc /usr/bin/perlivp /usr/bin/perlthanks \
+  && rm -f /usr/bin/perlbug /usr/bin/perldoc /usr/bin/perlthanks \
   && chmod +x \
     /usr/local/libexec/workcell/core/git \
     /usr/local/libexec/workcell/core/launcher \
@@ -217,7 +234,6 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
     \( -path '/etc/hostname' -o -path '/etc/hosts' -o -path '/etc/resolv.conf' \) -prune -o \
     -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
-USER node
 WORKDIR /workspace
 
 ENV HOME=/state/agent-home

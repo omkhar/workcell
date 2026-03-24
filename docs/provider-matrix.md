@@ -17,9 +17,9 @@ same runtime, not host-native executors.
 |---|---|---|---|---|
 | Codex | CLI | `~/.codex/config.toml`, `AGENTS.md`, `.rules`, MCP config | Clean | Best fit for runtime-plus-adapter design |
 | Codex | App / GUI | app plus `app-server` | Partial | Tier 2 only when execution stays in the bounded runtime |
-| Claude | Claude Code CLI | `~/.claude/settings.json`, `CLAUDE.md`, `.mcp.json`, hooks | Partial | Hooks are guardrails, not the boundary |
+| Claude | Claude Code CLI | `~/.claude/settings.json`, imported `CLAUDE.md`, `.mcp.json`, hooks | Partial | Hooks are guardrails, not the boundary; reviewed `.mcp.json` and auth can be injected explicitly |
 | Claude | IDE / GUI workflows | IDE and host integrations | Partial | Lower assurance unless attached to the same bounded workspace/runtime |
-| Gemini | Gemini CLI | `~/.gemini/settings.json`, `GEMINI.md`, `.gemini/` project files | Partial | Internal sandbox is not the primary boundary here |
+| Gemini | Gemini CLI | `~/.gemini/settings.json`, imported `GEMINI.md`, injected `projects.json` | Partial | Internal sandbox is not the primary boundary here; repo `.gemini/` stays masked on the safe path |
 | Gemini | IDE / GUI workflows | IDE integration and host UI surfaces | Partial | Tier 2 only if execution is still fully remote/containerized |
 
 ## Adapter rule

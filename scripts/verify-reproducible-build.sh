@@ -2,10 +2,15 @@
 readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   exec /usr/bin/env -i \
+    BUILDX_BUILDER="${BUILDX_BUILDER-}" \
     PATH="${TRUSTED_HOST_PATH}" \
     HOME=/tmp \
     SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH-}" \
     TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_REMOTE_BUILDKIT_LOCAL_CA="${WORKCELL_REMOTE_BUILDKIT_LOCAL_CA-}" \
+    WORKCELL_REMOTE_BUILDKIT_SSL_CERTS="${WORKCELL_REMOTE_BUILDKIT_SSL_CERTS-}" \
+    WORKCELL_DOCKER_HOST_HOME_ROOT="${WORKCELL_DOCKER_HOST_HOME_ROOT-}" \
+    WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT-}" \
     WORKCELL_REPRO_DOCKER_CONTEXT="${WORKCELL_REPRO_DOCKER_CONTEXT-}" \
     WORKCELL_REPRO_MANIFEST_PATH="${WORKCELL_REPRO_MANIFEST_PATH-}" \
     WORKCELL_REPRO_PLATFORMS="${WORKCELL_REPRO_PLATFORMS-}" \
@@ -84,6 +89,7 @@ build_oci_layout() {
   local build_source_date_epoch="${SOURCE_DATE_EPOCH}"
 
   rm -rf "${dest}"
+  mkdir -p "$(dirname "${dest}")"
   SOURCE_DATE_EPOCH="${build_source_date_epoch}" buildx_cmd build \
     --no-cache \
     --platform "${platform}" \
@@ -154,9 +160,15 @@ require_tool python3
 require_tool shasum
 setup_workcell_trusted_docker_client
 select_docker_context
+ensure_workcell_selected_builder
 buildx_cmd inspect --bootstrap >/dev/null
 
-OCI_EXPORT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-repro.XXXXXX")"
+if [[ -n "${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT:-}" ]]; then
+  mkdir -p "${ROOT_DIR}/tmp"
+  OCI_EXPORT_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-repro.XXXXXX")"
+else
+  OCI_EXPORT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-repro.XXXXXX")"
+fi
 IFS=',' read -r -a platform_list <<<"${REPRO_PLATFORMS}"
 for index in "${!platform_list[@]}"; do
   platform="${platform_list[${index}]}"
