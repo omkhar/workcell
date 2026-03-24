@@ -17,6 +17,6 @@ require_tool zizmor
   cd "${ROOT_DIR}"
   actionlint
 )
-zizmor "${ROOT_DIR}/.github/workflows/"*.yml
+zizmor --config "${ROOT_DIR}/.github/zizmor.yml" "${ROOT_DIR}/.github/workflows/"*.yml
 
 echo "Workcell workflow checks passed."

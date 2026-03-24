@@ -9,8 +9,7 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: read-all
 
 env:
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:37539dd4d60fc70968d164d3850d903a2c56f6402214a1953fbf9fcb81ada731

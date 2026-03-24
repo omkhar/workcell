@@ -77,21 +77,6 @@ no_script_invocation_is_safe() {
   return 0
 }
 
-loader_path() {
-  case "$(uname -m)" in
-    x86_64)
-      printf '%s\n' /lib64/ld-linux-x86-64.so.2
-      ;;
-    aarch64 | arm64)
-      printf '%s\n' /lib/ld-linux-aarch64.so.1
-      ;;
-    *)
-      echo "Unsupported architecture for Workcell node loader." >&2
-      exit 126
-      ;;
-  esac
-}
-
 for arg in "$@"; do
   case "${arg}" in
     *"/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js"* | \
@@ -134,4 +119,4 @@ if [[ -z "${SCRIPT_PATH}" ]] && ! no_script_invocation_is_safe "$@"; then
 fi
 
 sanitize_node_env
-exec "$(loader_path)" "${REAL_NODE}" --import "${NODE_GUARD}" "$@"
+exec "${REAL_NODE}" --import "${NODE_GUARD}" "$@"

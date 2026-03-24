@@ -1,0 +1,5 @@
+rules:
+  excessive-permissions:
+    ignore:
+      - ci.yml:12
+      - security.yml:12

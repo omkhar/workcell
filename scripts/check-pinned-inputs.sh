@@ -23,10 +23,13 @@ DOCKERFILE_PATH="${ROOT_DIR}/runtime/container/Dockerfile"
 VALIDATOR_DOCKERFILE_PATH="${ROOT_DIR}/tools/validator/Dockerfile"
 PROVIDERS_PACKAGE_JSON_PATH="${ROOT_DIR}/runtime/container/providers/package.json"
 PROVIDERS_PACKAGE_LOCK_PATH="${ROOT_DIR}/runtime/container/providers/package-lock.json"
+WORKFLOWS_DIR="${ROOT_DIR}/.github/workflows"
 CI_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/ci.yml"
 RELEASE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/release.yml"
+CODEOWNERS_PATH="${ROOT_DIR}/.github/CODEOWNERS"
 CODEX_REQUIREMENTS_PATH="${ROOT_DIR}/adapters/codex/requirements.toml"
 CODEX_MCP_CONFIG_PATH="${ROOT_DIR}/adapters/codex/mcp/config.toml"
+HOSTED_CONTROLS_POLICY_PATH="${ROOT_DIR}/policy/github-hosted-controls.toml"
 MAX_DEBIAN_SNAPSHOT_AGE_DAYS="${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-45}"
 
 require_tool() {
@@ -38,7 +41,7 @@ require_tool() {
 
 require_tool python3
 
-python3 - "${DOCKERFILE_PATH}" "${VALIDATOR_DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${PROVIDERS_PACKAGE_LOCK_PATH}" "${CI_WORKFLOW_PATH}" "${RELEASE_WORKFLOW_PATH}" "${CODEX_REQUIREMENTS_PATH}" "${CODEX_MCP_CONFIG_PATH}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}" <<'PY'
+python3 - "${DOCKERFILE_PATH}" "${VALIDATOR_DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${PROVIDERS_PACKAGE_LOCK_PATH}" "${WORKFLOWS_DIR}" "${CI_WORKFLOW_PATH}" "${RELEASE_WORKFLOW_PATH}" "${CODEOWNERS_PATH}" "${CODEX_REQUIREMENTS_PATH}" "${CODEX_MCP_CONFIG_PATH}" "${HOSTED_CONTROLS_POLICY_PATH}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -50,11 +53,14 @@ runtime_dockerfile = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 validator_dockerfile = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 providers_package_json = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8"))
 providers_package_lock = json.loads(pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))
-ci_workflow = pathlib.Path(sys.argv[5]).read_text(encoding="utf-8")
-release_workflow = pathlib.Path(sys.argv[6]).read_text(encoding="utf-8")
-codex_requirements = tomllib.loads(pathlib.Path(sys.argv[7]).read_text(encoding="utf-8"))
-codex_mcp_config = tomllib.loads(pathlib.Path(sys.argv[8]).read_text(encoding="utf-8"))
-max_snapshot_age_days = int(sys.argv[9])
+workflows_dir = pathlib.Path(sys.argv[5])
+ci_workflow = pathlib.Path(sys.argv[6]).read_text(encoding="utf-8")
+release_workflow = pathlib.Path(sys.argv[7]).read_text(encoding="utf-8")
+codeowners = pathlib.Path(sys.argv[8]).read_text(encoding="utf-8")
+codex_requirements = tomllib.loads(pathlib.Path(sys.argv[9]).read_text(encoding="utf-8"))
+codex_mcp_config = tomllib.loads(pathlib.Path(sys.argv[10]).read_text(encoding="utf-8"))
+hosted_controls_policy = tomllib.loads(pathlib.Path(sys.argv[11]).read_text(encoding="utf-8"))
+max_snapshot_age_days = int(sys.argv[12])
 
 def require_arg(text: str, name: str, path: str) -> str:
     match = re.search(rf"^ARG {re.escape(name)}=(.+)$", text, re.MULTILINE)
@@ -111,6 +117,14 @@ def require_regex(text: str, pattern: str, label: str, path: str) -> re.Match[st
     if not match:
         raise SystemExit(f"{label} in {path} must match {pattern!r}")
     return match
+
+def require_contains(text: str, needle: str, label: str, path: str) -> None:
+    if needle not in text:
+        raise SystemExit(f"{path} must contain {label}: {needle!r}")
+
+def require_not_regex(text: str, pattern: str, label: str, path: str) -> None:
+    if re.search(pattern, text, re.MULTILINE):
+        raise SystemExit(f"{path} must not contain {label} matching {pattern!r}")
 
 def walk_strings(value):
     if isinstance(value, str):
@@ -194,9 +208,12 @@ require_exact_packages(
         "jq",
         "less",
         "openssh-client",
+        "passwd",
         "procps",
         "ripgrep",
+        "sudo",
         "unzip",
+        "util-linux",
         "xz-utils",
     ],
     "Runtime base",
@@ -375,7 +392,7 @@ if "github/codeql-action/init@" not in release_workflow or "github/codeql-action
     raise SystemExit(
         ".github/workflows/release.yml must rerun CodeQL before publishing release artifacts"
     )
-if "language: rust" not in pathlib.Path(sys.argv[6]).with_name("codeql.yml").read_text(encoding="utf-8"):
+if "language: rust" not in (workflows_dir / "codeql.yml").read_text(encoding="utf-8"):
     raise SystemExit(".github/workflows/codeql.yml must analyze the shipped Rust boundary code")
 for required_release_asset in (
     'dist/${{ env.BUNDLE_NAME }}.sigstore.json',
@@ -397,6 +414,73 @@ if "gh release " in release_workflow:
 if "./scripts/publish-github-release.sh" not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must publish assets through the reviewed repo-local GitHub Release API script"
+    )
+require_contains(
+    release_workflow,
+    'run: ./scripts/verify-github-hosted-controls.sh "${GITHUB_REPOSITORY}"',
+    "a hosted-controls audit in release preflight",
+    ".github/workflows/release.yml",
+)
+require_contains(
+    release_workflow,
+    "environment:\n      name: release",
+    "a protected release environment gate",
+    ".github/workflows/release.yml",
+)
+require_contains(
+    release_workflow,
+    'sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign',
+    "trusted-path cosign exposure in the publish job",
+    ".github/workflows/release.yml",
+)
+require_contains(
+    release_workflow,
+    'sudo install -m 0755 "$(command -v syft)" /usr/local/bin/syft',
+    "trusted-path syft exposure in the publish job",
+    ".github/workflows/release.yml",
+)
+for workflow_path in sorted(workflows_dir.glob("*.yml")):
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    require_regex(
+        workflow_text,
+        r"^permissions:\s+read-all$",
+        "workflow-level read-all permissions",
+        str(workflow_path.relative_to(workflows_dir.parent.parent)),
+    )
+    require_not_regex(
+        workflow_text,
+        r"^\s*pull_request_target\s*:",
+        "pull_request_target triggers",
+        str(workflow_path.relative_to(workflows_dir.parent.parent)),
+    )
+    require_not_regex(
+        workflow_text,
+        r"secrets\.[A-Z0-9_]*(?:PAT|PERSONAL_ACCESS_TOKEN)\b|GH_PAT\b|PERSONAL_ACCESS_TOKEN\b",
+        "long-lived personal access tokens",
+        str(workflow_path.relative_to(workflows_dir.parent.parent)),
+    )
+    for match in re.finditer(r"^\s*-\s+uses:\s+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)", workflow_text, re.MULTILINE):
+        ref = match.group(2)
+        if not re.fullmatch(r"[0-9a-f]{40}", ref):
+            raise SystemExit(
+                f"{workflow_path.relative_to(workflows_dir.parent.parent)} must pin GitHub Actions by full commit SHA; "
+                f"found {match.group(1)}@{ref}"
+            )
+for required_codeowner in (
+    "/.github/workflows/ @omkhar",
+    "/scripts/ @omkhar",
+    "/runtime/container/ @omkhar",
+    "/docs/provenance.md @omkhar",
+):
+    if required_codeowner not in codeowners:
+        raise SystemExit(
+            f".github/CODEOWNERS must declare high-risk ownership for {required_codeowner!r}"
+        )
+release_mode = hosted_controls_policy.get("release_environment", {}).get("mode")
+if release_mode not in {"review-gated", "single-owner-private"}:
+    raise SystemExit(
+        "policy/github-hosted-controls.toml must set release_environment.mode "
+        "to 'review-gated' or 'single-owner-private'"
     )
 
 print("Workcell pinned input policy check passed.")
