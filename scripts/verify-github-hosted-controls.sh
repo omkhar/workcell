@@ -78,6 +78,12 @@ policy = tomllib.loads(policy_path.read_text(encoding="utf-8"))
 default_branch = repo_meta["default_branch"]
 owner_login = repo_meta["owner"]["login"]
 owner_type = repo_meta["owner"]["type"]
+branch_review_mode = policy.get("branch_review", {}).get("mode", "review-gated")
+if branch_review_mode not in {"review-gated", "single-owner-private-pr"}:
+    raise SystemExit(
+        f"{policy_path} must set branch_review.mode to "
+        f"'review-gated' or 'single-owner-private-pr'"
+    )
 release_mode = policy.get("release_environment", {}).get("mode", "review-gated")
 if release_mode not in {"review-gated", "single-owner-private"}:
     raise SystemExit(
@@ -194,18 +200,52 @@ require_bypass_shape(
 
 pull_request_rule = has_rule(branch_review, "pull_request")
 parameters = pull_request_rule.get("parameters", {})
-if parameters.get("required_approving_review_count", 0) < 1:
-    raise SystemExit(
-        f"Default-branch review ruleset on {repo} must require at least one approving review"
-    )
-if not parameters.get("require_code_owner_review"):
-    raise SystemExit(
-        f"Default-branch review ruleset on {repo} must require code owner review"
-    )
-if not parameters.get("required_review_thread_resolution"):
-    raise SystemExit(
-        f"Default-branch review ruleset on {repo} must require resolved review threads"
-    )
+if branch_review_mode == "review-gated":
+    if parameters.get("required_approving_review_count", 0) < 1:
+        raise SystemExit(
+            f"Default-branch review ruleset on {repo} must require at least one approving review"
+        )
+    if not parameters.get("require_code_owner_review"):
+        raise SystemExit(
+            f"Default-branch review ruleset on {repo} must require code owner review"
+        )
+    if not parameters.get("required_review_thread_resolution"):
+        raise SystemExit(
+            f"Default-branch review ruleset on {repo} must require resolved review threads"
+        )
+else:
+    if not repo_meta.get("private"):
+        raise SystemExit(
+            f"Branch review mode 'single-owner-private-pr' on {repo} is only valid for private repositories"
+        )
+    if owner_type != "User":
+        raise SystemExit(
+            f"Branch review mode 'single-owner-private-pr' on {repo} is only valid for user-owned repositories"
+        )
+    if len(direct_collaborators) != 1:
+        raise SystemExit(
+            f"Branch review mode 'single-owner-private-pr' on {repo} requires exactly one direct collaborator"
+        )
+    if direct_collaborators[0].get("login") != owner_login:
+        raise SystemExit(
+            f"Branch review mode 'single-owner-private-pr' on {repo} requires the owner to be the only direct collaborator"
+        )
+    if not direct_collaborators[0].get("permissions", {}).get("admin"):
+        raise SystemExit(
+            f"Branch review mode 'single-owner-private-pr' on {repo} requires the owner to retain admin permission"
+        )
+    if parameters.get("required_approving_review_count", 0) != 0:
+        raise SystemExit(
+            f"Default-branch review ruleset on {repo} must require zero approving reviews in single-owner-private-pr mode"
+        )
+    if parameters.get("require_code_owner_review"):
+        raise SystemExit(
+            f"Default-branch review ruleset on {repo} must not require code owner review in single-owner-private-pr mode"
+        )
+    if parameters.get("required_review_thread_resolution"):
+        raise SystemExit(
+            f"Default-branch review ruleset on {repo} must not require resolved review threads in single-owner-private-pr mode"
+        )
 
 status_rule = has_rule(branch_status_checks, "required_status_checks")
 status_parameters = status_rule.get("parameters", {})

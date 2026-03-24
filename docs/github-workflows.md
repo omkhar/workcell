@@ -82,10 +82,10 @@ of the reviewed control plane:
   integrity
 - an active required-status-checks ruleset on the default branch for the core
   CI and GitHub workflow security checks
-- an active review ruleset on the default branch that requires pull requests,
-  at least one approval, code owner review, and resolved review threads, with
-  only an explicit repository-role pull-request-only bypass to preserve a
-  workable single-maintainer path
+- an active review ruleset on the default branch that requires pull requests;
+  in the current single-owner-private mode it requires zero approvals and no
+  code-owner/thread gate, while multi-maintainer mode raises that back to
+  human-reviewed approval plus review resolution
 - an active ruleset on `refs/tags/v*` that blocks tag creation, updates, and
   deletion except for explicit repository-role bypass actors
 - GitHub Actions SHA pinning required at the repository level
@@ -101,14 +101,23 @@ audit continuously against the live repository, and tagged releases rerun it in
 release preflight before publish and refuse publication if the hosted controls
 drift.
 
-The current repository policy uses `release_environment.mode = "single-owner-private"`
-because this is a private single-owner repository. The audit enforces that as a
-private user-owned repository whose only direct collaborator is the owner. In
-that mode, the audited expectation is a named `release` environment, not a
-multi-party human approval gate. If the repository later moves to a
-multi-maintainer or public operating model, flip that policy to `review-gated`
-and Workcell will require at least one human reviewer and no administrator
-bypass before tagged publication.
+The current repository policy uses
+`branch_review.mode = "single-owner-private-pr"` and
+`release_environment.mode = "single-owner-private"` because this is a private
+single-owner repository. The audit enforces that as a private user-owned
+repository whose only direct collaborator is the owner. In that mode, the
+audited expectation is:
+
+- `main` still requires pull requests and green required checks, but does not
+  require impossible third-party approvals, code-owner review, or review-thread
+  resolution
+- the named `release` environment exists, but it is not treated as a
+  multi-party human approval gate
+
+If the repository later moves to a multi-maintainer or public operating model,
+flip those policies back to `review-gated` and Workcell will require at least
+one human reviewer and no administrator bypass before protected-branch merges
+or tagged publication.
 
 For private repositories, `codeql.yml` is opt-in through
 `WORKCELL_ENABLE_PRIVATE_CODE_SCANNING=true` because GitHub code scanning is
