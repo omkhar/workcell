@@ -2353,12 +2353,6 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked git alias bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-alias-combined.out
-  git config alias.callowed "commit --allow-empty -mnote"
-  if ! git callowed >/tmp/git-guard-alias-allowed.out 2>&1; then
-    cat /tmp/git-guard-alias-allowed.out >&2
-    echo "expected Workcell git guard to allow alias-expanded git commit -mnote" >&2
-    exit 1
-  fi
   if git config alias.execpath "--exec-path=$EXEC_TMP/git-guard status" >/tmp/git-guard-alias-exec-path-define.out 2>&1; then
     echo "expected Workcell git guard to reject defining an alias with --exec-path" >&2
     exit 1

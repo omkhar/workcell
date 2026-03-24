@@ -740,6 +740,11 @@ if ! sed -n '/^validate_colima_profile()/,/^}/p' "${ROOT_DIR}/scripts/workcell" 
   exit 1
 fi
 
+if ! sed -n '/^git_alias_value_is_blocked()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'git_commit_short_arg_is_no_verify'; then
+  echo "Expected git_alias_value_is_blocked to reuse the precise short-option no-verify parser" >&2
+  exit 1
+fi
+
 if ! sed -n '/^add_shadow_git_hooks_mount()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "copy_tree_without_symlinks"; then
   echo "Expected add_shadow_git_hooks_mount to avoid copying symlinked hook content into the readonly shadow" >&2
   exit 1
