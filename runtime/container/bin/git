@@ -83,7 +83,7 @@ has_hooks_path_env_bypass() {
 
 alias_body_is_blocked() {
   local alias_body="$1"
-  local alias_body_lower normalized inspected_body
+  local alias_body_lower normalized inspected_body token saw_commit
 
   if [[ -z "${alias_body}" ]]; then
     return 1
@@ -120,9 +120,39 @@ alias_body_is_blocked() {
     return 0
   fi
 
-  if echo "${normalized}" | grep -Eq '(^|[[:space:]])commit([[:space:]].*)?[[:space:]]-n([[:space:]]|$)'; then
-    return 0
-  fi
+  saw_commit=0
+  for token in ${normalized}; do
+    if [[ "${token}" == "commit" ]]; then
+      saw_commit=1
+      continue
+    fi
+    if [[ "${saw_commit}" -eq 1 ]] && git_commit_short_arg_is_no_verify "${token}"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+git_commit_short_arg_is_no_verify() {
+  local arg="$1"
+  local bundle char i
+
+  [[ "${arg}" == -?* ]] || return 1
+  [[ "${arg}" == --* ]] && return 1
+
+  bundle="${arg#-}"
+  for ((i = 0; i < ${#bundle}; i++)); do
+    char="${bundle:i:1}"
+    case "${char}" in
+      n)
+        return 0
+        ;;
+      m | F | C | c | t | u | S)
+        return 1
+        ;;
+    esac
+  done
 
   return 1
 }
@@ -295,7 +325,7 @@ for arg in "$@"; do
     hooks_path_bypass=1
   fi
 
-  if [[ "${subcommand}" == "commit" ]] && [[ "${arg}" == "-n" ]]; then
+  if [[ "${subcommand}" == "commit" ]] && git_commit_short_arg_is_no_verify "${arg}"; then
     commit_short_bypass=1
   fi
 done

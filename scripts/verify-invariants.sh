@@ -735,6 +735,40 @@ if ! rg -q 'bootstrap_policy=allowlist endpoints=%s' "${ROOT_DIR}/scripts/workce
   exit 1
 fi
 
+if ! sed -n '/^validate_colima_profile()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'validate_colima_profile_config'; then
+  echo "Expected validate_colima_profile to re-check the managed Colima config before reusing a running profile" >&2
+  exit 1
+fi
+
+if ! sed -n '/^add_shadow_git_hooks_mount()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "copy_tree_without_symlinks"; then
+  echo "Expected add_shadow_git_hooks_mount to avoid copying symlinked hook content into the readonly shadow" >&2
+  exit 1
+fi
+
+if ! sed -n '/^add_shadow_git_config_mount()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "! -L \"\${source_path}\""; then
+  echo "Expected add_shadow_git_config_mount to ignore symlinked git config files" >&2
+  exit 1
+fi
+
+if ! rg -Fq 'find "${workspace}" -type d -name .git -prune -print0' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories" >&2
+  exit 1
+fi
+python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+if 'find "${workspace}/${git_rel}/modules" \\' not in text:
+    raise SystemExit("Expected prepare_workspace_control_plane_shadow to enumerate module git control-plane paths")
+if '-type l \\) -name hooks' not in text:
+    raise SystemExit("Expected prepare_workspace_control_plane_shadow to mask symlinked module hook directories as empty readonly mounts")
+if '-type l \\) \\( -name config -o -name config.worktree \\)' not in text:
+    raise SystemExit("Expected prepare_workspace_control_plane_shadow to mask symlinked module git config files as empty readonly mounts")
+if '-type l \\) -name worktrees' not in text:
+    raise SystemExit("Expected prepare_workspace_control_plane_shadow to mask symlinked module worktree directories as empty readonly mounts")
+PY
+
 if rg -q 'disable_ipv6=1' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
   echo "Workcell should not silently disable IPv6 as a fallback for allowlist enforcement" >&2
   exit 1
@@ -1563,6 +1597,35 @@ if "${ROOT_DIR}/scripts/workcell" --agent gemini --mode strict --workspace "${MA
   exit 1
 fi
 grep -q 'Workcell refuses symlinked workspace control files' /tmp/workcell-symlinked-doc.out
+
+SHADOW_SYMLINK_REPO="${BARRIER_VERIFY_ROOT}/shadow-symlink-repo"
+git init -q "${SHADOW_SYMLINK_REPO}"
+git -C "${SHADOW_SYMLINK_REPO}" config user.name "Workcell Verify"
+git -C "${SHADOW_SYMLINK_REPO}" config user.email "workcell-verify@example.com"
+touch "${SHADOW_SYMLINK_REPO}/tracked.txt"
+git -C "${SHADOW_SYMLINK_REPO}" add tracked.txt
+git -C "${SHADOW_SYMLINK_REPO}" commit -q -m init
+mkdir -p "${SHADOW_SYMLINK_REPO}/.git/hooks"
+mkdir -p "${SHADOW_SYMLINK_REPO}/external-hooks-dir" "${SHADOW_SYMLINK_REPO}/external-worktrees"
+printf '#!/bin/sh\nexit 0\n' >"${SHADOW_SYMLINK_REPO}/external-hook.sh"
+chmod 0755 "${SHADOW_SYMLINK_REPO}/external-hook.sh"
+printf '[core]\nrepositoryformatversion = 0\n' >"${SHADOW_SYMLINK_REPO}/external-config"
+ln -sf "${SHADOW_SYMLINK_REPO}/external-hook.sh" "${SHADOW_SYMLINK_REPO}/.git/hooks/post-commit"
+mkdir -p "${SHADOW_SYMLINK_REPO}/.git/modules/demo"
+ln -sf "${SHADOW_SYMLINK_REPO}/external-config" "${SHADOW_SYMLINK_REPO}/.git/modules/demo/config"
+ln -sf "${SHADOW_SYMLINK_REPO}/external-hooks-dir" "${SHADOW_SYMLINK_REPO}/.git/modules/demo/hooks"
+ln -sf "${SHADOW_SYMLINK_REPO}/external-worktrees" "${SHADOW_SYMLINK_REPO}/.git/modules/demo/worktrees"
+SHADOW_SYMLINK_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --workspace "${SHADOW_SYMLINK_REPO}" --dry-run 2>/dev/null)"
+for required in \
+  "/workspace/.git/hooks:ro" \
+  "/workspace/.git/modules/demo/config:ro" \
+  "/workspace/.git/modules/demo/hooks:ro" \
+  "/workspace/.git/modules/demo/worktrees:ro"; do
+  if ! echo "${SHADOW_SYMLINK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
+    echo "Expected symlinked git control-plane entry to be masked by a readonly shadow mount: ${required}" >&2
+    exit 1
+  fi
+done
 
 for forbidden in "github.com:443" "api.github.com:443" "objects.githubusercontent.com:443" "raw.githubusercontent.com:443"; do
   if echo "${DRY_RUN_OUTPUT}" | grep -q "${forbidden}"; then

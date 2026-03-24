@@ -842,7 +842,27 @@ fn should_block(path: &str, args: &[String]) -> bool {
         }
     }
 
-    saw_commit && args.iter().skip(1).any(|arg| arg == "-n")
+    saw_commit
+        && args
+            .iter()
+            .skip(1)
+            .any(|arg| git_commit_short_arg_invokes_no_verify(arg))
+}
+
+fn git_commit_short_arg_invokes_no_verify(arg: &str) -> bool {
+    if !arg.starts_with('-') || arg.starts_with("--") || arg.len() <= 1 {
+        return false;
+    }
+
+    for ch in arg[1..].chars() {
+        match ch {
+            'n' => return true,
+            'm' | 'F' | 'C' | 'c' | 't' | 'u' | 'S' => return false,
+            _ => {}
+        }
+    }
+
+    false
 }
 
 fn env_has_unsafe_git_override(env_entries: &[String]) -> bool {
@@ -1413,6 +1433,16 @@ mod tests {
     fn trim_deleted_suffix_only_removes_kernel_deleted_suffix() {
         assert_eq!(trim_deleted_suffix("/tmp/tool (deleted)"), "/tmp/tool");
         assert_eq!(trim_deleted_suffix("/tmp/tool"), "/tmp/tool");
+    }
+
+    #[test]
+    fn git_commit_short_arg_invokes_no_verify_only_for_real_no_verify_flags() {
+        assert!(git_commit_short_arg_invokes_no_verify("-n"));
+        assert!(git_commit_short_arg_invokes_no_verify("-nm"));
+        assert!(git_commit_short_arg_invokes_no_verify("-anm"));
+        assert!(!git_commit_short_arg_invokes_no_verify("-mnote"));
+        assert!(!git_commit_short_arg_invokes_no_verify("-uno"));
+        assert!(!git_commit_short_arg_invokes_no_verify("--no-verify"));
     }
 
     #[test]

@@ -2089,6 +2089,25 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-short.out
+  if /usr/bin/git commit -nm smoke >/tmp/git-guard-short-combined.out 2>&1; then
+    echo "expected Workcell git guard to reject combined short-option git commit -nm" >&2
+    exit 1
+  fi
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-short-combined.out
+  mkdir -p "$EXEC_TMP/git-guard-allow" && cd "$EXEC_TMP/git-guard-allow"
+  git init -q
+  git config user.name "Workcell Smoke"
+  git config user.email "workcell-smoke@example.com"
+  if ! /usr/bin/git commit --allow-empty -mnote >/tmp/git-guard-allow-message.out 2>&1; then
+    cat /tmp/git-guard-allow-message.out >&2
+    echo "expected Workcell git guard to allow git commit -mnote" >&2
+    exit 1
+  fi
+  if ! /usr/bin/git commit -uno --allow-empty -m note >/tmp/git-guard-allow-u.out 2>&1; then
+    cat /tmp/git-guard-allow-u.out >&2
+    echo "expected Workcell git guard to allow git commit -uno" >&2
+    exit 1
+  fi
   rm -f /tmp/workcell-git-ssh-env-ran /tmp/workcell-git-ssh-helper-ran /tmp/workcell-git-ssh-config-ran
   cat <<EOF >"$EXEC_TMP/git-ssh-helper.sh"
 #!/bin/sh
@@ -2168,6 +2187,11 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-real.out
+  if /usr/local/libexec/workcell/core/git commit -nm smoke >/tmp/git-guard-real-combined.out 2>&1; then
+    echo "expected Workcell git guard to reject direct hidden git execution with combined short options" >&2
+    exit 1
+  fi
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-real-combined.out
   if /usr/local/libexec/workcell/real/git status >/tmp/git-guard-real-payload.out 2>&1; then
     echo "expected direct real git payload execution to fail" >&2
     exit 1
@@ -2323,6 +2347,18 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked git alias bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-alias-quoted.out
+  git config alias.cbundle "commit -nm"
+  if git cbundle smoke >/tmp/git-guard-alias-combined.out 2>&1; then
+    echo "expected Workcell git guard to reject alias-expanded combined git commit -nm" >&2
+    exit 1
+  fi
+  grep -Eq "Workcell blocked git alias bypass|Workcell blocked git control-plane override|Workcell blocked direct protected runtime execution" /tmp/git-guard-alias-combined.out
+  git config alias.callowed "commit --allow-empty -mnote"
+  if ! git callowed >/tmp/git-guard-alias-allowed.out 2>&1; then
+    cat /tmp/git-guard-alias-allowed.out >&2
+    echo "expected Workcell git guard to allow alias-expanded git commit -mnote" >&2
+    exit 1
+  fi
   if git config alias.execpath "--exec-path=$EXEC_TMP/git-guard status" >/tmp/git-guard-alias-exec-path-define.out 2>&1; then
     echo "expected Workcell git guard to reject defining an alias with --exec-path" >&2
     exit 1
