@@ -530,6 +530,7 @@ validate_colima_profile() {
     exit 2
   }
 
+  validate_colima_profile_config "${profile}" "${workspace}"
   validate_colima_runtime_mounts "${profile}" "${workspace}"
 }
 
