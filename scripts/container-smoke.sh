@@ -6,21 +6,35 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     HOME=/tmp \
     TMPDIR="${TMPDIR:-/tmp}" \
     WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT-}" \
+    WORKCELL_DOCKER_HOST_HOME_ROOT="${WORKCELL_DOCKER_HOST_HOME_ROOT-}" \
+    WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT-}" \
     WORKCELL_IMAGE_TAG="${WORKCELL_IMAGE_TAG-}" \
     WORKCELL_SANITIZED_ENTRYPOINT=1 \
     SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH-}" \
+    WORKCELL_TEST_HOST_GID="${WORKCELL_TEST_HOST_GID-}" \
+    WORKCELL_TEST_HOST_UID="${WORKCELL_TEST_HOST_UID-}" \
+    WORKCELL_TEST_HOST_USER="${WORKCELL_TEST_HOST_USER-}" \
     /bin/bash -p "$0" "$@"
 fi
 set -euo pipefail
 export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 IMAGE_TAG="${WORKCELL_IMAGE_TAG:-workcell:smoke}"
 DOCKER_CONTEXT_NAME="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT:-}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
+HOST_UID="${WORKCELL_TEST_HOST_UID:-$(id -u)}"
+HOST_GID="${WORKCELL_TEST_HOST_GID:-$(id -g)}"
+HOST_USER="${WORKCELL_TEST_HOST_USER:-$(id -un)}"
+# shellcheck disable=SC2034
 WORKCELL_DOCKER_SANDBOX_ROOT=""
 SMOKE_WORKSPACE=""
+INJECTION_FIXTURE_ROOT=""
+INJECTION_BUNDLE_ROOT=""
+WORKSPACE_IMPORT_ROOT=""
+declare -a WORKSPACE_IMPORT_ARGS=()
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
@@ -33,6 +47,27 @@ require_tool() {
     echo "Missing required tool: $1" >&2
     exit 1
   }
+}
+
+align_path_for_mapped_runtime_user() {
+  local target_path="$1"
+  local file_mode="$2"
+  local dir_mode="$3"
+
+  [[ -e "${target_path}" ]] || return 0
+
+  if [[ "$(id -u)" == "0" ]]; then
+    chown -R "${HOST_UID}:${HOST_GID}" "${target_path}"
+  fi
+
+  if [[ -d "${target_path}" ]]; then
+    find "${target_path}" -type d -exec chmod "${dir_mode}" {} +
+    find "${target_path}" -type f -exec chmod "${file_mode}" {} +
+    chmod "${dir_mode}" "${target_path}"
+    return 0
+  fi
+
+  chmod "${file_mode}" "${target_path}"
 }
 
 cleanup_workspace_scratch() {
@@ -92,6 +127,8 @@ prepare_smoke_workspace() {
   rm -f "${path_list_raw}" "${path_list_filtered}"
   mkdir -p "${SMOKE_WORKSPACE}/tmp"
   chmod 1777 "${SMOKE_WORKSPACE}" "${SMOKE_WORKSPACE}/tmp"
+  align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}" 0644 0755
+  chmod 1777 "${SMOKE_WORKSPACE}/tmp"
 }
 
 cleanup() {
@@ -99,6 +136,15 @@ cleanup() {
   cleanup_workspace_scratch "${ROOT_DIR}"
   if [[ -n "${SMOKE_WORKSPACE}" ]]; then
     cleanup_workspace_scratch "${SMOKE_WORKSPACE}"
+  fi
+  if [[ -n "${INJECTION_FIXTURE_ROOT}" ]]; then
+    rm -rf "${INJECTION_FIXTURE_ROOT}"
+  fi
+  if [[ -n "${INJECTION_BUNDLE_ROOT}" ]]; then
+    rm -rf "${INJECTION_BUNDLE_ROOT}"
+  fi
+  if [[ -n "${WORKSPACE_IMPORT_ROOT}" ]]; then
+    rm -rf "${WORKSPACE_IMPORT_ROOT}"
   fi
   if [[ -n "${SMOKE_WORKSPACE}" ]]; then
     rm -rf "${SMOKE_WORKSPACE}"
@@ -128,61 +174,165 @@ docker_cmd() {
   fi
 }
 
+prepare_direct_mount_spec_for_bundle() {
+  local bundle_root="$1"
+  local mount_spec_path="${bundle_root}.mounts.json"
+
+  python3 "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
+    --manifest "${bundle_root}/manifest.json" \
+    --mount-spec "${mount_spec_path}" >/dev/null
+  align_path_for_mapped_runtime_user "${bundle_root}" 0644 0755
+  align_path_for_mapped_runtime_user "${mount_spec_path}" 0644 0755
+}
+
+direct_mount_specs_for_bundle() {
+  local bundle_root="$1"
+  local mount_spec_path="${bundle_root}.mounts.json"
+  [[ -f "${mount_spec_path}" ]] || return 0
+
+  python3 - "${mount_spec_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+for entry in json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")):
+    print(f'{entry["source"]}\t{entry["mount_path"]}')
+PY
+}
+
+workspace_import_mounts() {
+  if [[ -d "${WORKSPACE_IMPORT_ROOT}" ]] && find "${WORKSPACE_IMPORT_ROOT}" -type f -print -quit | grep -q .; then
+    printf -- '%s\0' \
+      -v \
+      "$(workcell_docker_host_path "${WORKSPACE_IMPORT_ROOT}"):/opt/workcell/workspace-control-plane:ro"
+  fi
+}
+
+populate_workspace_import_mounts() {
+  local mount_spec=""
+
+  WORKSPACE_IMPORT_ARGS=()
+  while IFS= read -r -d '' mount_spec; do
+    WORKSPACE_IMPORT_ARGS+=("${mount_spec}")
+  done < <(workspace_import_mounts)
+}
+
 run_container() {
   local agent="$1"
+  local docker_workspace=""
   shift
 
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  populate_workspace_import_mounts
+
   docker_cmd run --rm \
-    --read-only \
+    --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
     --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
     -e AGENT_NAME="${agent}" \
     -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
     -e CODEX_PROFILE=strict \
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
-    -v "${SMOKE_WORKSPACE}:/workspace" \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    --entrypoint "$1" \
+    "${IMAGE_TAG}" "${@:2}"
+}
+
+run_container_with_mutability() {
+  local agent="$1"
+  local mutability="$2"
+  local docker_workspace=""
+  shift 2
+
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  populate_workspace_import_mounts
+
+  docker_cmd run --rm \
+    --user 0:0 \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY="${mutability}" \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
+    -e CODEX_PROFILE=strict \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    "${WORKSPACE_IMPORT_ARGS[@]}" \
     --entrypoint "$1" \
     "${IMAGE_TAG}" "${@:2}"
 }
 
 run_entrypoint() {
   local agent="$1"
+  local docker_workspace=""
   shift
 
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  populate_workspace_import_mounts
+
   docker_cmd run --rm \
-    --read-only \
+    --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
     --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
     -e AGENT_NAME="${agent}" \
     -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
     -e CODEX_PROFILE=strict \
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
-    -v "${SMOKE_WORKSPACE}:/workspace" \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    "${WORKSPACE_IMPORT_ARGS[@]}" \
     "${IMAGE_TAG}" "$@"
 }
 
 run_entrypoint_with_profile() {
   local agent="$1"
   local profile="$2"
+  local docker_workspace=""
   shift 2
 
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  populate_workspace_import_mounts
+
   docker_cmd run --rm \
-    --read-only \
+    --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
     --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
     -e AGENT_NAME="${agent}" \
     -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
     -e CODEX_PROFILE="${profile}" \
     -e WORKCELL_MODE="${profile}" \
     -e HOME=/state/agent-home \
@@ -190,23 +340,33 @@ run_entrypoint_with_profile() {
     -e TMPDIR=/state/tmp \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
-    -v "${SMOKE_WORKSPACE}:/workspace" \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    "${WORKSPACE_IMPORT_ARGS[@]}" \
     "${IMAGE_TAG}" "$@"
 }
 
 run_entrypoint_with_init_profile() {
   local agent="$1"
   local profile="$2"
+  local docker_workspace=""
   shift 2
+
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  populate_workspace_import_mounts
 
   docker_cmd run --rm \
     --init \
-    --read-only \
+    --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
     --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
     --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
     -e AGENT_NAME="${agent}" \
     -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
     -e CODEX_PROFILE="${profile}" \
     -e WORKCELL_MODE="${profile}" \
     -e HOME=/state/agent-home \
@@ -214,8 +374,172 @@ run_entrypoint_with_init_profile() {
     -e TMPDIR=/state/tmp \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
-    -v "${SMOKE_WORKSPACE}:/workspace" \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    "${WORKSPACE_IMPORT_ARGS[@]}" \
     "${IMAGE_TAG}" "$@"
+}
+
+run_entrypoint_with_autonomy() {
+  local agent="$1"
+  local autonomy="$2"
+  local docker_workspace=""
+  shift 2
+
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  populate_workspace_import_mounts
+
+  docker_cmd run --rm \
+    --user 0:0 \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
+    -e CODEX_PROFILE=strict \
+    -e WORKCELL_AGENT_AUTONOMY="${autonomy}" \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    "${IMAGE_TAG}" "$@"
+}
+
+run_entrypoint_with_autonomy_and_bind() {
+  local agent="$1"
+  local autonomy="$2"
+  local bind_source="$3"
+  local bind_target="$4"
+  local docker_workspace=""
+  local docker_bind_source=""
+  shift 4
+
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  docker_bind_source="$(workcell_docker_host_path "${bind_source}")"
+  populate_workspace_import_mounts
+
+  docker_cmd run --rm \
+    --user 0:0 \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
+    -e CODEX_PROFILE=strict \
+    -e WORKCELL_AGENT_AUTONOMY="${autonomy}" \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    -v "${docker_bind_source}:${bind_target}:ro" \
+    "${IMAGE_TAG}" "$@"
+}
+
+run_entrypoint_with_injection_bundle() {
+  local agent="$1"
+  local bundle_root="$2"
+  shift 2
+  local -a credential_mounts=()
+  local docker_workspace=""
+  local docker_bundle_root=""
+  local host_source=""
+  local mount_path=""
+
+  while IFS=$'\t' read -r host_source mount_path; do
+    [[ -n "${host_source}" ]] || continue
+    credential_mounts+=(-v "$(workcell_docker_host_path "${host_source}"):${mount_path}:ro")
+  done < <(direct_mount_specs_for_bundle "${bundle_root}")
+
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
+  populate_workspace_import_mounts
+
+  docker_cmd run --rm \
+    --user 0:0 \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
+    -e CODEX_PROFILE=strict \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    "${credential_mounts[@]}" \
+    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
+    "${IMAGE_TAG}" "$@"
+}
+
+run_container_with_injection_bundle() {
+  local agent="$1"
+  local bundle_root="$2"
+  shift 2
+  local -a credential_mounts=()
+  local docker_workspace=""
+  local docker_bundle_root=""
+  local host_source=""
+  local mount_path=""
+
+  while IFS=$'\t' read -r host_source mount_path; do
+    [[ -n "${host_source}" ]] || continue
+    credential_mounts+=(-v "$(workcell_docker_host_path "${host_source}"):${mount_path}:ro")
+  done < <(direct_mount_specs_for_bundle "${bundle_root}")
+
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
+  populate_workspace_import_mounts
+
+  docker_cmd run --rm \
+    --user 0:0 \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
+    -e CODEX_PROFILE=strict \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    "${credential_mounts[@]}" \
+    "${WORKSPACE_IMPORT_ARGS[@]}" \
+    -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
+    --entrypoint "$1" \
+    "${IMAGE_TAG}" "${@:2}"
 }
 
 require_tool docker
@@ -224,6 +548,50 @@ cleanup_workspace_scratch "${ROOT_DIR}"
 prepare_smoke_workspace
 setup_workcell_trusted_docker_client
 select_docker_context
+
+cat <<'EOF' >"${SMOKE_WORKSPACE}/AGENTS.md"
+# Workspace AGENTS Instructions
+EOF
+cat <<'EOF' >"${SMOKE_WORKSPACE}/CLAUDE.md"
+# Workspace Claude Instructions
+EOF
+cat <<'EOF' >"${SMOKE_WORKSPACE}/GEMINI.md"
+# Workspace Gemini Instructions
+EOF
+mkdir -p "${SMOKE_WORKSPACE}/nested"
+cat <<'EOF' >"${SMOKE_WORKSPACE}/nested/AGENTS.md"
+# Nested Workspace AGENTS Instructions
+EOF
+cat <<'EOF' >"${SMOKE_WORKSPACE}/nested/CLAUDE.md"
+# Nested Workspace Claude Instructions
+EOF
+cat <<'EOF' >"${SMOKE_WORKSPACE}/nested/GEMINI.md"
+# Nested Workspace Gemini Instructions
+EOF
+align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/AGENTS.md" 0644 0755
+align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/CLAUDE.md" 0644 0755
+align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/GEMINI.md" 0644 0755
+align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/nested/AGENTS.md" 0644 0755
+align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/nested/CLAUDE.md" 0644 0755
+align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/nested/GEMINI.md" 0644 0755
+
+WORKSPACE_IMPORT_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-import-fixtures.XXXXXX")"
+cat <<'EOF' >"${WORKSPACE_IMPORT_ROOT}/AGENTS.md"
+<!-- Workcell imported workspace AGENTS.md -->
+
+# Workspace AGENTS Instructions
+EOF
+cat <<'EOF' >"${WORKSPACE_IMPORT_ROOT}/CLAUDE.md"
+<!-- Workcell imported workspace CLAUDE.md -->
+
+# Workspace Claude Instructions
+EOF
+cat <<'EOF' >"${WORKSPACE_IMPORT_ROOT}/GEMINI.md"
+<!-- Workcell imported workspace GEMINI.md -->
+
+# Workspace Gemini Instructions
+EOF
+align_path_for_mapped_runtime_user "${WORKSPACE_IMPORT_ROOT}" 0644 0755
 
 if [[ "${1:-}" == "--self-docker-probe" ]]; then
   buildx_cmd version >/dev/null
@@ -241,8 +609,280 @@ SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
   -f "${ROOT_DIR}/runtime/container/Dockerfile" \
   "${ROOT_DIR}" >/dev/null
 
+mkdir -p "${ROOT_DIR}/tmp"
+INJECTION_FIXTURE_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-injection-fixtures.XXXXXX")"
+INJECTION_BUNDLE_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-injection-bundle.XXXXXX")"
+mkdir -p "${INJECTION_FIXTURE_ROOT}"
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/common.md"
+# Common Smoke Instructions
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/codex.md"
+# Codex Smoke Instructions
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/public.txt"
+injected-public
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/secret.txt"
+injected-secret
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/codex-auth.json"
+{"test": "auth"}
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/claude-auth.json"
+{"token": "claude-auth"}
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/claude-mcp.json"
+{"mcpServers": {"stub": {"command": "echo", "args": ["ok"]}}}
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gh-hosts.yml"
+github.com:
+  oauth_token: smoke-token
+  user: workcell
+  git_protocol: ssh
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/claude-api-key.txt"
+claude-smoke-key
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini.env"
+GEMINI_API_KEY=smoke-gemini-key
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-projects.json"
+{"projects":{"smoke":{"path":"/workspace"}}}
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/ssh-config"
+Host smoke
+  HostName smoke.example
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/known_hosts"
+smoke.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISmokeKey
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/id_smoke"
+-----BEGIN OPENSSH PRIVATE KEY-----
+smoke
+-----END OPENSSH PRIVATE KEY-----
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy.toml"
+version = 1
+
+[documents]
+common = "common.md"
+codex = "codex.md"
+
+[credentials]
+codex_auth = "codex-auth.json"
+claude_auth = "claude-auth.json"
+claude_api_key = "claude-api-key.txt"
+claude_mcp = "claude-mcp.json"
+gemini_env = "gemini.env"
+gemini_projects = "gemini-projects.json"
+github_hosts = "gh-hosts.yml"
+
+[ssh]
+enabled = true
+config = "ssh-config"
+known_hosts = "known_hosts"
+identities = ["id_smoke"]
+providers = ["codex"]
+
+[[copies]]
+source = "public.txt"
+target = "/state/injected/public.txt"
+classification = "public"
+providers = ["codex"]
+
+[[copies]]
+source = "secret.txt"
+target = "~/.config/workcell/token.txt"
+classification = "secret"
+providers = ["codex"]
+EOF
+
+align_path_for_mapped_runtime_user "${INJECTION_FIXTURE_ROOT}" 0644 0755
+
+python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_BUNDLE_ROOT}/codex" >/dev/null
+prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/codex"
+
+python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
+  --agent claude \
+  --mode strict \
+  --output-root "${INJECTION_BUNDLE_ROOT}/claude" >/dev/null
+prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/claude"
+
+python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
+  --agent gemini \
+  --mode strict \
+  --output-root "${INJECTION_BUNDLE_ROOT}/gemini" >/dev/null
+prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/gemini"
+
 run_entrypoint codex codex --version >/dev/null
 run_entrypoint_with_profile codex build codex --version >/dev/null
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle codex "${INJECTION_BUNDLE_ROOT}/codex" bash -lc '
+  set -euo pipefail
+  /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+  grep -q "Common Smoke Instructions" "$CODEX_HOME/AGENTS.md"
+  grep -q "Codex Smoke Instructions" "$CODEX_HOME/AGENTS.md"
+  grep -q "\"test\": \"auth\"" "$CODEX_HOME/auth.json"
+  grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+  grep -q "injected-public" /state/injected/public.txt
+  test "$(stat -c "%a" /state/injected/public.txt)" = "644"
+  grep -q "injected-secret" "$HOME/.config/workcell/token.txt"
+  test "$(stat -c "%a" "$HOME/.config/workcell/token.txt")" = "600"
+  grep -q "smoke.example" "$HOME/.ssh/config"
+  test "$(stat -c "%a" "$HOME/.ssh")" = "700"
+  test "$(stat -c "%a" "$HOME/.ssh/id_smoke")" = "600"
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    test -L "$CODEX_HOME/rules"
+    test ! -w "$CODEX_HOME/rules/default.rules"
+    if printf "\n# session-marker\n" | tee -a "$CODEX_HOME/rules/default.rules" >/dev/null; then
+      echo "expected managed Codex rules to remain read-only" >&2
+      exit 1
+    fi
+    if sudo -n id >/tmp/codex-sudo-id.out 2>&1; then
+      echo "expected unrestricted sudo to stay blocked for the runtime user" >&2
+      exit 1
+    fi
+    apt-get --help >/dev/null
+    sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get --help >/dev/null
+  '"'"'
+  codex --version >/dev/null
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle claude "${INJECTION_BUNDLE_ROOT}/claude" bash -lc '
+  set -euo pipefail
+  /usr/local/bin/workcell-entrypoint claude --version >/dev/null
+  grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
+  grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
+  helper_path="$(jq -r ".apiKeyHelper" "$HOME/.claude/settings.json")"
+  test -x "$helper_path"
+  test "$("$helper_path")" = "claude-smoke-key"
+  grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
+  test ! -L "$HOME/.mcp.json"
+  grep -q "\"stub\"" "$HOME/.mcp.json"
+  grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini" bash -lc '
+  set -euo pipefail
+  /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
+  grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
+  grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
+  grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
+  grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+'
+
+if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
+  CODEX_YOLO_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      codex \
+      yolo \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/codex \
+      codex --version
+  )"
+  if [[ "${CODEX_YOLO_ARGS}" != "--profile strict --ask-for-approval never --version" ]]; then
+    echo "unexpected Codex yolo argv: ${CODEX_YOLO_ARGS}" >&2
+    exit 1
+  fi
+
+  CODEX_PROMPT_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      codex \
+      prompt \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/codex \
+      codex --version
+  )"
+  if [[ "${CODEX_PROMPT_ARGS}" != "--profile strict --ask-for-approval on-request --version" ]]; then
+    echo "unexpected Codex prompt argv: ${CODEX_PROMPT_ARGS}" >&2
+    exit 1
+  fi
+
+  CLAUDE_YOLO_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      claude \
+      yolo \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/node \
+      claude --version
+  )"
+  if [[ "${CLAUDE_YOLO_ARGS}" != "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --permission-mode bypassPermissions --version" ]]; then
+    echo "unexpected Claude yolo argv: ${CLAUDE_YOLO_ARGS}" >&2
+    exit 1
+  fi
+
+  CLAUDE_PROMPT_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      claude \
+      prompt \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/node \
+      claude --version
+  )"
+  if [[ "${CLAUDE_PROMPT_ARGS}" != "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --permission-mode default --version" ]]; then
+    echo "unexpected Claude prompt argv: ${CLAUDE_PROMPT_ARGS}" >&2
+    exit 1
+  fi
+
+  GEMINI_YOLO_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      gemini \
+      yolo \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/node \
+      gemini --version
+  )"
+  if [[ "${GEMINI_YOLO_ARGS}" != "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode yolo --version" ]]; then
+    echo "unexpected Gemini yolo argv: ${GEMINI_YOLO_ARGS}" >&2
+    exit 1
+  fi
+
+  GEMINI_PROMPT_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      gemini \
+      prompt \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/node \
+      gemini --version
+  )"
+  if [[ "${GEMINI_PROMPT_ARGS}" != "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode default --version" ]]; then
+    echo "unexpected Gemini prompt argv: ${GEMINI_PROMPT_ARGS}" >&2
+    exit 1
+  fi
+fi
+
+if docker_cmd run --rm \
+  --user 0:0 \
+  --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+  --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+  --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+  -e AGENT_UI=cli \
+  -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+  -e WORKCELL_HOST_UID="${HOST_UID}" \
+  -e WORKCELL_HOST_GID="${HOST_GID}" \
+  -e WORKCELL_HOST_USER="${HOST_USER}" \
+  -e CODEX_PROFILE=strict \
+  -e HOME=/state/agent-home \
+  -e CODEX_HOME=/state/agent-home/.codex \
+  -e TMPDIR=/state/tmp \
+  -e WORKCELL_RUNTIME=1 \
+  -e WORKSPACE=/workspace \
+  -v "$(workcell_docker_host_path "${SMOKE_WORKSPACE}"):/workspace" \
+  "${IMAGE_TAG}" codex --version >/tmp/workcell-entrypoint-missing-agent.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a missing AGENT_NAME instead of defaulting to codex" >&2
+  exit 1
+fi
+grep -q "Workcell requires AGENT_NAME to be set explicitly" /tmp/workcell-entrypoint-missing-agent.out
 
 if run_entrypoint codex bash -lc true >/tmp/workcell-entrypoint-command.out 2>&1; then
   echo "expected Workcell entrypoint to reject non-provider commands by default" >&2
@@ -267,6 +907,12 @@ if run_entrypoint codex codex -a never --version >/tmp/workcell-entrypoint-codex
   exit 1
 fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-approval.out
+
+if run_entrypoint codex codex --full-auto --version >/tmp/workcell-entrypoint-codex-full-auto.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Codex full-auto overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-full-auto.out
 
 if run_entrypoint codex codex app-server >/tmp/workcell-entrypoint-codex-app-server.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex GUI subcommands on the CLI surface" >&2
@@ -324,6 +970,125 @@ grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-
 
 run_entrypoint claude claude --version >/dev/null
 run_entrypoint_with_init_profile codex build codex --version >/dev/null
+run_entrypoint gemini gemini --version >/dev/null
+
+# shellcheck disable=SC2016
+run_container codex bash -lc '
+  set -euo pipefail
+  /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+  grep -q "Workspace AGENTS Instructions" "$CODEX_HOME/AGENTS.md"
+  if grep -q "Nested Workspace AGENTS Instructions" "$CODEX_HOME/AGENTS.md"; then
+    echo "expected nested AGENTS.md instructions to remain path-scoped in the workspace" >&2
+    exit 1
+  fi
+  grep -q "Nested Workspace AGENTS Instructions" /workspace/nested/AGENTS.md
+'
+
+# shellcheck disable=SC2016
+run_container claude bash -lc '
+  set -euo pipefail
+  AGENT_NAME=claude /usr/local/bin/workcell-entrypoint claude --version >/dev/null
+  grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
+  if grep -q "Nested Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"; then
+    echo "expected nested CLAUDE.md instructions to remain path-scoped in the workspace" >&2
+    exit 1
+  fi
+  grep -q "Nested Workspace Claude Instructions" /workspace/nested/CLAUDE.md
+'
+
+# shellcheck disable=SC2016
+run_container gemini bash -lc '
+  set -euo pipefail
+  AGENT_NAME=gemini /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
+  grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
+  if grep -q "Nested Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"; then
+    echo "expected nested GEMINI.md instructions to remain path-scoped in the workspace" >&2
+    exit 1
+  fi
+  grep -q "Nested Workspace Gemini Instructions" /workspace/nested/GEMINI.md
+'
+
+# shellcheck disable=SC2016
+run_container codex bash -lc '
+  set -euo pipefail
+  AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=prompt /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+  test ! -L "$CODEX_HOME/rules"
+  printf "\n# prompt-session-marker\n" >>"$CODEX_HOME/rules/default.rules"
+  AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=prompt /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+  grep -q "^# prompt-session-marker$" "$CODEX_HOME/rules/default.rules"
+'
+
+HOST_UID_LITERAL="${HOST_UID}"
+HOST_GID_LITERAL="${HOST_GID}"
+# shellcheck disable=SC2016
+run_container codex bash -lc '
+  set -euo pipefail
+  cat <<EOF >/tmp/workcell-mutable-runtime-check.sh
+set -euo pipefail
+test "\$(id -u)" = "'"${HOST_UID_LITERAL}"'"
+test "\$(id -g)" = "'"${HOST_GID_LITERAL}"'"
+if sudo -n true >/tmp/workcell-mutable-sudo.out 2>&1; then
+  echo "expected mutable runtime user to keep unrestricted sudo blocked" >&2
+  exit 1
+fi
+apt-get update >/dev/null
+apt-get install -y --no-install-recommends make >/tmp/workcell-apt-install.out 2>/tmp/workcell-apt-install.err
+grep -q "downgrades in-container control-plane assurance until this session exits" /tmp/workcell-apt-install.err
+grep -q "this session is now lower-assurance until the container exits" /tmp/workcell-apt-install.err
+command -v make >/dev/null
+codex --version >/tmp/workcell-post-apt-codex.out 2>&1
+grep -q "session previously ran package-manager mutations as root" /tmp/workcell-post-apt-codex.out
+EOF
+  source /usr/local/libexec/workcell/runtime-user.sh
+  mkdir -p /state/agent-home /state/tmp
+  if ! workcell_should_reexec_as_runtime_user; then
+    echo "expected mutable runtime default to re-exec as the mapped host user" >&2
+    exit 1
+  fi
+  workcell_reexec_as_runtime_user /tmp/workcell-mutable-runtime-check.sh
+'
+
+if run_container codex bash -lc '
+  set -euo pipefail
+  cat <<EOF >/tmp/workcell-unsafe-apt-check.sh
+set -euo pipefail
+if apt-get -o APT::Update::Pre-Invoke::=/bin/true update >/tmp/workcell-unsafe-apt-hook.out 2>&1; then
+  echo "expected apt-get hook override to stay blocked" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe apt-get argument: -o" /tmp/workcell-unsafe-apt-hook.out
+touch /tmp/workcell-local.deb
+if apt-get install -y /tmp/workcell-local.deb >/tmp/workcell-unsafe-apt-local.out 2>&1; then
+  echo "expected local package installs to stay blocked" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe apt-get argument: /tmp/workcell-local.deb" /tmp/workcell-unsafe-apt-local.out
+EOF
+  source /usr/local/libexec/workcell/runtime-user.sh
+  mkdir -p /state/agent-home /state/tmp
+  workcell_reexec_as_runtime_user /tmp/workcell-unsafe-apt-check.sh
+' >/tmp/workcell-unsafe-apt-run.out 2>&1; then
+  :
+else
+  cat /tmp/workcell-unsafe-apt-run.out >&2
+  exit 1
+fi
+
+if run_container_with_mutability codex readonly bash -lc '
+  set -euo pipefail
+  source /usr/local/libexec/workcell/runtime-user.sh
+  mkdir -p /state/agent-home /state/tmp
+  if workcell_should_reexec_as_runtime_user; then
+    echo "expected readonly runtime not to auto-reexec as the mapped host user" >&2
+    exit 1
+  fi
+  workcell_reexec_as_runtime_user /bin/bash -lc "apt-get update"
+' >/tmp/workcell-readonly-mutability.out 2>&1; then
+  echo "expected readonly mutability to block package-manager writes" >&2
+  exit 1
+fi
+grep -q 'Workcell blocked apt-get: readonly container mutability is active.' /tmp/workcell-readonly-mutability.out
+grep -q 'Relaunch with --container-mutability ephemeral to allow ephemeral package-manager writes.' /tmp/workcell-readonly-mutability.out
 
 if run_entrypoint claude claude --dangerously-skip-permissions >/tmp/workcell-entrypoint-claude-danger.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude dangerous override outside breakglass" >&2
@@ -343,6 +1108,24 @@ if run_entrypoint claude claude --add-dir=/state --version >/tmp/workcell-entryp
 fi
 grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-add-dir.out
 
+if run_entrypoint claude claude --permission-mode default --version >/tmp/workcell-entrypoint-claude-permission-mode.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude autonomy overrides outside host policy" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Claude autonomy override" /tmp/workcell-entrypoint-claude-permission-mode.out
+
+if run_entrypoint gemini gemini --approval-mode default --version >/tmp/workcell-entrypoint-gemini-approval-mode.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Gemini autonomy overrides outside host policy" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Gemini autonomy override" /tmp/workcell-entrypoint-gemini-approval-mode.out
+
+if run_entrypoint gemini gemini -y --version >/tmp/workcell-entrypoint-gemini-yolo-short.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Gemini short yolo overrides outside host policy" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Gemini override" /tmp/workcell-entrypoint-gemini-yolo-short.out
+
 if run_container codex bash -lc 'AGENT_NAME=claude WORKCELL_MODE=breakglass CODEX_PROFILE=breakglass /usr/local/bin/workcell-entrypoint claude --dangerously-skip-permissions' >/tmp/workcell-entrypoint-direct-claude-breakglass.out 2>&1; then
   echo "expected direct entrypoint Claude breakglass override to fail" >&2
   exit 1
@@ -357,12 +1140,16 @@ grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-direct
 
 if docker_cmd run --rm \
   --init \
-  --read-only \
+  --user 0:0 \
   --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
   --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
   --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
   -e AGENT_NAME=codex \
   -e AGENT_UI=cli \
+  -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+  -e WORKCELL_HOST_UID="${HOST_UID}" \
+  -e WORKCELL_HOST_GID="${HOST_GID}" \
+  -e WORKCELL_HOST_USER="${HOST_USER}" \
   -e CODEX_PROFILE=build \
   -e WORKCELL_MODE=build \
   -e HOME=/state/agent-home \
@@ -370,7 +1157,7 @@ if docker_cmd run --rm \
   -e TMPDIR=/state/tmp \
   -e WORKCELL_RUNTIME=1 \
   -e WORKSPACE=/workspace \
-  -v "${SMOKE_WORKSPACE}:/workspace" \
+  -v "$(workcell_docker_host_path "${SMOKE_WORKSPACE}"):/workspace" \
   --entrypoint bash \
   "${IMAGE_TAG}" -lc '
     codex --version | grep -q "codex-cli"
@@ -413,12 +1200,18 @@ run_container codex bash -lc '
     echo "expected runtime image to omit python3 from the operator PATH" >&2
     exit 1
   fi
-  if command -v perl >/tmp/perl-which.out 2>&1; then
-    echo "expected runtime image to omit perl from the operator PATH" >&2
+  command -v perl >/tmp/perl-which.out 2>&1
+  grep -q "^/usr/bin/perl$" /tmp/perl-which.out
+  if command -v perlbug >/tmp/perlbug-which.out 2>&1; then
+    echo "expected runtime image to omit auxiliary Perl tooling from the operator PATH" >&2
     exit 1
   fi
-  if find /usr/bin -maxdepth 1 -name "perl*" -print -quit | grep -q .; then
-    echo "expected runtime image to remove raw Perl entrypoints" >&2
+  if command -v perldoc >/tmp/perldoc-which.out 2>&1; then
+    echo "expected runtime image to omit auxiliary Perl tooling from the operator PATH" >&2
+    exit 1
+  fi
+  if command -v perlthanks >/tmp/perlthanks-which.out 2>&1; then
+    echo "expected runtime image to omit auxiliary Perl tooling from the operator PATH" >&2
     exit 1
   fi
   cp /bin/true /tmp/workcell-noexec
@@ -453,6 +1246,11 @@ run_container codex bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-approval.out
+  if codex --full-auto --version >/tmp/codex-nested-full-auto.out 2>&1; then
+    echo "expected nested Codex invocation to reject full-auto overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-full-auto.out
   if codex app-server >/tmp/codex-nested-app-server.out 2>&1; then
     echo "expected nested Codex invocation to reject GUI subcommands on the CLI surface" >&2
     exit 1
@@ -467,26 +1265,26 @@ run_container codex bash -lc '
     echo "expected direct real Codex payload execution to fail" >&2
     exit 1
   fi
-  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules rm -rf build \
+  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules rm -rf build \
     | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules git push origin feature \
+  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git push origin feature \
     | jq -e ".decision == \"prompt\"" >/dev/null
-  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules git push origin main --force \
+  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git push origin main --force \
     | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules git commit --no-verify \
+  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git commit --no-verify \
     | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules /usr/bin/git push --no-verify origin feature \
+  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/bin/git push --no-verify origin feature \
+    | jq -e ".decision == \"forbidden\"" >/dev/null
+  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/local/libexec/workcell/core/claude --dangerously-skip-permissions \
+    | jq -e ".decision == \"forbidden\"" >/dev/null
+  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --dangerously-skip-permissions \
     | jq -e ".decision == \"forbidden\"" >/dev/null
   grep -q "Do not bypass git hooks with --no-verify or git commit -n from Workcell." \
-    /workspace/adapters/codex/.codex/rules/default.rules
+    /opt/workcell/adapters/codex/.codex/rules/default.rules
   grep -q "git commit --no-verify -m test" \
-    /workspace/adapters/codex/.codex/rules/default.rules
+    /opt/workcell/adapters/codex/.codex/rules/default.rules
   grep -q "git commit -n -m test" \
-    /workspace/adapters/codex/.codex/rules/default.rules
-  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules /usr/local/libexec/workcell/core/claude --dangerously-skip-permissions \
-    | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /workspace/adapters/codex/.codex/rules/default.rules node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --dangerously-skip-permissions \
-    | jq -e ".decision == \"forbidden\"" >/dev/null
+    /opt/workcell/adapters/codex/.codex/rules/default.rules
   cat <<'\''EOF'\'' >/tmp/workcell-bashenv.sh
 touch /tmp/workcell-bashenv-ran
 EOF
@@ -1543,7 +2341,7 @@ run_container claude bash -lc '
   test -f "$HOME/.mcp.json"
   test -L "$HOME/.mcp.json"
   test -f /etc/claude-code/managed-settings.json
-  jq -r ".disableBypassPermissionsMode" /etc/claude-code/managed-settings.json | grep -q "^disable$"
+  jq -r ".disableBypassPermissionsMode" /etc/claude-code/managed-settings.json | grep -q "^allow$"
   jq -r ".hooks.PreToolUse[0].hooks[0].command" "$HOME/.claude/settings.json" | grep -q "guard-bash.sh"
   if /usr/local/libexec/workcell/real/node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --version >/tmp/node-real-payload.out 2>&1; then
     echo "expected direct real node payload execution to fail" >&2
@@ -1559,6 +2357,11 @@ run_container claude bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked unsafe Claude override" /tmp/claude-nested-add-dir.out
+  if claude --permission-mode default --version >/tmp/claude-nested-permission-mode.out 2>&1; then
+    echo "expected nested Claude invocation to reject autonomy overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked Claude autonomy override" /tmp/claude-nested-permission-mode.out
   if WORKCELL_MODE=breakglass claude --dangerously-skip-permissions >/tmp/claude-nested-breakglass.out 2>&1; then
     echo "expected nested Claude invocation to ignore caller-supplied breakglass env" >&2
     exit 1
@@ -1686,11 +2489,21 @@ run_container gemini bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-yolo.out
+  if gemini -y >/tmp/gemini-nested-yolo-short.out 2>&1; then
+    echo "expected nested Gemini invocation to reject short yolo overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-yolo-short.out
   if gemini --add-dir=/state --version >/tmp/gemini-nested-add-dir.out 2>&1; then
     echo "expected nested Gemini invocation to reject add-dir overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-add-dir.out
+  if gemini --approval-mode default --version >/tmp/gemini-nested-approval-mode.out 2>&1; then
+    echo "expected nested Gemini invocation to reject autonomy overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked Gemini autonomy override" /tmp/gemini-nested-approval-mode.out
   if WORKCELL_MODE=breakglass gemini --yolo >/tmp/gemini-nested-breakglass.out 2>&1; then
     echo "expected nested Gemini invocation to ignore caller-supplied breakglass env" >&2
     exit 1

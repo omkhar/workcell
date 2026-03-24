@@ -1,1 +1,19 @@
 * @omkhar
+
+# High-risk repository policy and automation surfaces.
+/.github/workflows/ @omkhar
+/.github/dependabot.yml @omkhar
+/.github/dependency-review-config.yml @omkhar
+
+# Runtime boundary, launchers, and release/signing paths.
+/scripts/ @omkhar
+/runtime/container/ @omkhar
+/runtime/profiles/ @omkhar
+/adapters/ @omkhar
+/policy/ @omkhar
+
+# Security, provenance, and operator-facing policy docs.
+/SECURITY.md @omkhar
+/docs/github-workflows.md @omkhar
+/docs/provenance.md @omkhar
+/man/workcell.1 @omkhar

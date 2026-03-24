@@ -6,8 +6,7 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: read-all
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

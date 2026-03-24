@@ -1,0 +1,9 @@
+# GitHub-hosted repository controls that live outside the git tree but remain
+# part of the reviewed Workcell control plane.
+
+[release_environment]
+# Valid modes:
+# - "review-gated": require at least one human reviewer and no admin bypass
+# - "single-owner-private": allow a private single-owner repo to use the
+#   release environment without a reviewer gate
+mode = "single-owner-private"

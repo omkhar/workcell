@@ -1390,3 +1390,46 @@ pub unsafe extern "C" fn posix_spawnp(
 
     posix_spawnp_fn()(pid, file, file_actions, attrp, argv, envp)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_non_strict_recognizes_only_non_empty_non_strict_values() {
+        assert!(!matches_non_strict(None));
+        assert!(!matches_non_strict(Some("")));
+        assert!(!matches_non_strict(Some("strict")));
+        assert!(!matches_non_strict(Some("STRICT")));
+        assert!(matches_non_strict(Some("build")));
+        assert!(matches_non_strict(Some("breakglass")));
+    }
+
+    #[test]
+    fn path_has_root_prefix_requires_boundary_match() {
+        assert!(path_has_root_prefix("/workspace", "/workspace"));
+        assert!(path_has_root_prefix("/workspace/project", "/workspace"));
+        assert!(!path_has_root_prefix("/workspace-elsewhere", "/workspace"));
+        assert!(!path_has_root_prefix("/stateful", "/state"));
+    }
+
+    #[test]
+    fn trim_deleted_suffix_only_removes_kernel_deleted_suffix() {
+        assert_eq!(trim_deleted_suffix("/tmp/tool (deleted)"), "/tmp/tool");
+        assert_eq!(trim_deleted_suffix("/tmp/tool"), "/tmp/tool");
+    }
+
+    #[test]
+    fn path_is_current_process_fd_path_accepts_supported_fd_forms() {
+        assert_eq!(
+            path_is_current_process_fd_path("/dev/stdin"),
+            Some(libc::STDIN_FILENO)
+        );
+        assert_eq!(path_is_current_process_fd_path("/proc/self/fd/9"), Some(9));
+        assert_eq!(
+            path_is_current_process_fd_path(&format!("/proc/{}/fd/4", unsafe { libc::getpid() })),
+            Some(4)
+        );
+        assert_eq!(path_is_current_process_fd_path("/proc/999999/fd/4"), None);
+    }
+}
