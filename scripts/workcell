@@ -24,7 +24,30 @@ scrub_host_process_env() {
 
 scrub_host_process_env
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+resolve_self_path() {
+  local source_path="${BASH_SOURCE[0]}"
+  local source_dir=""
+  local link_target=""
+
+  if [[ "${source_path}" != */* ]]; then
+    source_path="$(command -v -- "${source_path}")"
+  fi
+
+  while [[ -L "${source_path}" ]]; do
+    source_dir="$(cd -P "$(dirname "${source_path}")" && pwd)"
+    link_target="$(readlink "${source_path}")"
+    if [[ "${link_target}" == /* ]]; then
+      source_path="${link_target}"
+    else
+      source_path="${source_dir}/${link_target}"
+    fi
+  done
+
+  printf '%s\n' "${source_path}"
+}
+
+ROOT_DIR="$(cd -P "$(dirname "$(resolve_self_path)")/.." && pwd)"
+# shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 resolve_fixed_host_tool() {
   local name="$1"
@@ -55,6 +78,7 @@ HOST_COLIMA_BIN=""
 HOST_DOCKER_BIN=""
 HOST_RUBY_BIN=""
 COLIMA_STATE_ROOT="${REAL_HOME}/.colima"
+# shellcheck disable=SC2034
 WORKCELL_DOCKER_SANDBOX_ROOT=""
 PROFILE_PREEXISTED=0
 PROFILE_RUNNING=0
@@ -67,19 +91,44 @@ usage() {
 Usage: workcell [options] [-- provider-args...]
 
 Options:
-  --agent codex|claude|gemini   Provider to run (default: codex)
+  --agent codex|claude|gemini   Provider to run (required)
+  --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
+  --agent-arg VALUE             Additional provider argv to append (repeatable)
+  --container-mutability ephemeral|readonly
+                                Runtime rootfs posture (default: ephemeral)
+  --container-cpu COUNT         Inner container CPU limit (default: unmanaged)
+  --container-memory SIZE       Inner container memory limit (default: profile value)
+  --injection-policy PATH       Host-side injection policy to stage into each session
+  --no-default-injection-policy Ignore ~/.config/workcell/injection-policy.toml for this launch
   --ui cli|gui                  Surface to launch (default: cli)
   --mode strict|build|breakglass
                                 Runtime profile (default: strict)
+  --prepare                     Seed or refresh the reviewed runtime image before launch
+  --repair-profile              Delete a conflicting unmanaged Colima profile before launch
+                                (implies --prepare on strict)
   --ack-breakglass              Required with --mode breakglass
   --ack-arbitrary-command       Required with --allow-arbitrary-command
   --workspace PATH              Workspace to mount (default: current directory)
   --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
   --allow-arbitrary-command     Launch the runtime image with a direct container entrypoint after --
   --colima-profile NAME         Override derived Colima profile name
+  --vm-cpu COUNT                Colima VM CPU count (default: profile value)
+  --vm-memory GIB               Colima VM memory in GiB (default: profile value)
+  --vm-disk GIB                 Colima VM disk in GiB (default: profile value)
   --rebuild                     Rebuild the runtime image before launch
   --dry-run                     Print the selected runtime command and exit
   -h, --help                    Show this help text
+
+Workflows:
+  First run:
+    workcell --prepare --agent codex --workspace /path/to/repo
+  Normal run:
+    workcell --agent codex --workspace /path/to/repo
+  Repair a conflicting unmanaged profile:
+    workcell --repair-profile --agent codex --workspace /path/to/repo
+
+Workcell launches the selected provider directly inside the bounded runtime.
+There is no separate container attach/connect step after launch.
 EOF
 }
 
@@ -92,6 +141,43 @@ slugify() {
 
 lower_ascii() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+option_value_or_die() {
+  local option_name="$1"
+  local option_value="${2-}"
+
+  if [[ -z "${option_value}" ]] || [[ "${option_value}" == --* ]]; then
+    echo "Option ${option_name} requires a value." >&2
+    usage >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
+raw_option_value_or_die() {
+  local option_name="$1"
+  local option_value="${2-}"
+
+  if [[ -z "${option_value}" ]]; then
+    echo "Option ${option_name} requires a value." >&2
+    usage >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
+validate_agent_autonomy_name() {
+  case "$1" in
+    yolo | prompt) ;;
+    *)
+      echo "Unsupported agent autonomy mode: $1" >&2
+      echo "Use --agent-autonomy yolo or --agent-autonomy prompt." >&2
+      exit 2
+      ;;
+  esac
 }
 
 validate_colima_profile_name() {
@@ -118,6 +204,13 @@ profile_dir() {
   printf '%s/%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
+profile_lima_dir() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/_lima/colima-%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
+}
+
 run_host_colima() {
   COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
 }
@@ -135,13 +228,28 @@ sanitize_host_docker_env() {
 }
 
 CONTROL_PLANE_SHADOW_ROOT=""
+INJECTION_BUNDLE_ROOT=""
+DIRECT_MOUNT_SPEC_PATH=""
 declare -a SHADOW_MOUNTS=()
 declare -a SHADOW_DEST_PATHS=()
+declare -a DIRECT_SOURCE_MOUNTS=()
+declare -a WORKSPACE_IMPORT_MOUNTS=()
 
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   if [[ -n "${CONTROL_PLANE_SHADOW_ROOT}" ]] && [[ -e "${CONTROL_PLANE_SHADOW_ROOT}" ]]; then
     chmod -R u+w "${CONTROL_PLANE_SHADOW_ROOT}" 2>/dev/null || true
     rm -rf "${CONTROL_PLANE_SHADOW_ROOT}"
+  fi
+
+  if [[ -n "${INJECTION_BUNDLE_ROOT}" ]] && [[ -e "${INJECTION_BUNDLE_ROOT}" ]]; then
+    chmod -R u+w "${INJECTION_BUNDLE_ROOT}" 2>/dev/null || true
+    rm -rf "${INJECTION_BUNDLE_ROOT}"
+  fi
+
+  if [[ -n "${DIRECT_MOUNT_SPEC_PATH}" ]] && [[ -e "${DIRECT_MOUNT_SPEC_PATH}" ]]; then
+    chmod u+w "${DIRECT_MOUNT_SPEC_PATH}" 2>/dev/null || true
+    rm -f "${DIRECT_MOUNT_SPEC_PATH}"
   fi
 
   cleanup_workcell_trusted_docker_client
@@ -163,6 +271,23 @@ profile_marker_path() {
 
   validate_colima_profile_name "${profile}"
   printf '%s/workcell.managed\n' "$(profile_dir "${profile}")"
+}
+
+profile_image_marker_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/workcell.image-ready\n' "$(profile_dir "${profile}")"
+}
+
+profile_image_marker_value() {
+  local profile="$1"
+  local key="$2"
+  local marker_path=""
+
+  marker_path="$(profile_image_marker_path "${profile}")"
+  [[ -f "${marker_path}" ]] || return 1
+  sed -n "s/^${key}=//p" "${marker_path}" | head -n1
 }
 
 profile_audit_log_path() {
@@ -191,11 +316,12 @@ append_audit_record() {
   touch "${audit_path}"
   chmod 0600 "${audit_path}" 2>/dev/null || true
   timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  printf 'timestamp=%s profile=%q mode=%q agent=%q ui=%q network_policy=%q execution_path=%q workspace=%q endpoints=%q bootstrap_applied=%q bootstrap_endpoints=%q\n' \
+  printf 'timestamp=%s profile=%q mode=%q agent=%q agent_autonomy=%q ui=%q network_policy=%q execution_path=%q workspace=%q endpoints=%q bootstrap_applied=%q bootstrap_endpoints=%q\n' \
     "${timestamp}" \
     "${profile}" \
     "${MODE}" \
     "${AGENT}" \
+    "${AGENT_AUTONOMY}" \
     "${UI}" \
     "${NETWORK_POLICY}" \
     "${execution_path}" \
@@ -203,6 +329,360 @@ append_audit_record() {
     "${ALLOW_ENDPOINTS}" \
     "${BOOTSTRAP_APPLIED}" \
     "$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" >>"${audit_path}"
+}
+
+write_profile_image_marker() {
+  local profile="$1"
+  local image_id="$2"
+  local marker_path
+
+  marker_path="$(profile_image_marker_path "${profile}")"
+  mkdir -p "$(dirname "${marker_path}")"
+  umask 077
+  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\n' "workcell:local" "${image_id}" "${SOURCE_DATE_EPOCH}" >"${marker_path}"
+  chmod 0600 "${marker_path}" 2>/dev/null || true
+}
+
+current_image_id() {
+  "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
+}
+
+emit_command() {
+  local -a cmd=("$@")
+
+  printf '  '
+  printf '%q ' "${cmd[@]}"
+  printf '\n'
+}
+
+emit_redacted_command() {
+  local token=""
+  local redacted=""
+
+  for token in "$@"; do
+    case "${token}" in
+      *:/opt/workcell/host-inputs/* | *:/opt/workcell/host-injections:ro)
+        redacted="<redacted-host-path>:${token#*:}"
+        ;;
+      *)
+        redacted="${token}"
+        ;;
+    esac
+    printf '%q ' "${redacted}"
+  done
+  printf '\n'
+}
+
+resolve_host_path() {
+  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - "$1" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(os.path.expanduser(sys.argv[1])))
+PY
+}
+
+resolve_existing_directory_or_die() {
+  local raw_path="$1"
+  local resolved_path=""
+
+  resolved_path="$(resolve_host_path "${raw_path}")"
+  if [[ ! -e "${resolved_path}" ]]; then
+    echo "Workspace path does not exist: ${raw_path}" >&2
+    echo "Resolve it to an existing directory, then rerun with --workspace ${resolved_path}" >&2
+    exit 2
+  fi
+  if [[ ! -d "${resolved_path}" ]]; then
+    echo "Workspace path is not a directory: ${resolved_path}" >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${resolved_path}"
+}
+
+default_injection_policy_path() {
+  printf '%s/.config/workcell/injection-policy.toml\n' "${REAL_HOME}"
+}
+
+default_injection_bundle_parent() {
+  resolve_host_path "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/tmp"
+}
+
+cleanup_stale_injection_bundles() {
+  local bundle_parent="$1"
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${bundle_parent}" <<'PY'
+import os
+import json
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+root = Path(sys.argv[1]).expanduser()
+if not root.exists():
+    raise SystemExit(0)
+
+cutoff = time.time() - (12 * 60 * 60)
+uid = os.getuid()
+
+def process_start(pid):
+    try:
+        return subprocess.check_output(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip() or None
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+def sidecar_path(bundle_dir: Path) -> Path:
+    return bundle_dir.parent / f"{bundle_dir.name}.mounts.json"
+
+for candidate in root.iterdir():
+    if not candidate.name.startswith("workcell-injections."):
+        continue
+    try:
+        stat = candidate.lstat()
+    except FileNotFoundError:
+        continue
+    if stat.st_uid != uid:
+        continue
+    if not candidate.is_dir() or candidate.is_symlink():
+        continue
+    owner_meta_path = candidate / "owner.json"
+    owner_pid = None
+    owner_started = None
+    if owner_meta_path.is_file():
+        try:
+            owner_meta = json.loads(owner_meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            owner_meta = {}
+        owner_pid = owner_meta.get("pid")
+        owner_started = owner_meta.get("started")
+    if isinstance(owner_pid, int):
+        current_start = process_start(owner_pid)
+        if current_start is not None and current_start == owner_started:
+            continue
+    elif stat.st_mtime > cutoff:
+        continue
+    shutil.rmtree(candidate, ignore_errors=False)
+    try:
+        sidecar = sidecar_path(candidate)
+        if sidecar.is_file():
+            sidecar.unlink()
+    except FileNotFoundError:
+        pass
+
+for candidate in root.iterdir():
+    if not candidate.name.startswith("workcell-injections.") or not candidate.name.endswith(".mounts.json"):
+        continue
+    try:
+        stat = candidate.lstat()
+    except FileNotFoundError:
+        continue
+    if stat.st_uid != uid or not candidate.is_file() or candidate.is_symlink():
+        continue
+    if (root / candidate.name.removesuffix(".mounts.json")).exists():
+        continue
+    candidate.unlink()
+PY
+}
+
+prepare_injection_direct_mounts() {
+  local mount_spec_path="$1"
+  local host_source=""
+  local mount_path=""
+
+  DIRECT_SOURCE_MOUNTS=()
+  [[ -f "${mount_spec_path}" ]] || return 0
+
+  while IFS=$'\t' read -r host_source mount_path; do
+    [[ -n "${host_source}" ]] || continue
+
+    if [[ "${host_source}" != /* ]] || [[ ! -e "${host_source}" ]] ||
+      { [[ ! -f "${host_source}" ]] && [[ ! -d "${host_source}" ]]; }; then
+      echo "Direct input source is missing, not absolute, or not a regular file/directory: ${host_source}" >&2
+      exit 2
+    fi
+
+    case "${mount_path}" in
+      /opt/workcell/host-inputs/*) ;;
+      *)
+        echo "Direct input mount path is outside the managed host-input root: ${mount_path}" >&2
+        exit 2
+        ;;
+    esac
+
+    DIRECT_SOURCE_MOUNTS+=(-v "${host_source}:${mount_path}:ro")
+  done < <(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${mount_spec_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+entries = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for entry in entries:
+    source = entry["source"]
+    mount_path = entry["mount_path"]
+    print(f"{source}\t{mount_path}")
+PY
+  )
+}
+
+prepare_injection_bundle() {
+  local agent="$1"
+  local mode="$2"
+  local policy_path="${INJECTION_POLICY}"
+  local bundle_parent=""
+  local default_policy_path=""
+  local manifest_path=""
+
+  if [[ -z "${policy_path}" ]] && [[ "${USE_DEFAULT_INJECTION_POLICY}" -eq 1 ]]; then
+    default_policy_path="$(default_injection_policy_path)"
+    if [[ -f "${default_policy_path}" ]]; then
+      policy_path="${default_policy_path}"
+    fi
+  fi
+
+  if [[ -z "${policy_path}" ]]; then
+    return 0
+  fi
+
+  policy_path="$(resolve_host_path "${policy_path}")"
+  if [[ ! -f "${policy_path}" ]]; then
+    echo "Injection policy file does not exist: ${policy_path}" >&2
+    exit 2
+  fi
+
+  bundle_parent="$(default_injection_bundle_parent)"
+  mkdir -p "${bundle_parent}"
+  chmod 0700 "${bundle_parent}" 2>/dev/null || true
+  cleanup_stale_injection_bundles "${bundle_parent}"
+  INJECTION_BUNDLE_ROOT="$(mktemp -d "${bundle_parent%/}/workcell-injections.XXXXXX")"
+  INJECTION_BUNDLE_ROOT="$(resolve_host_path "${INJECTION_BUNDLE_ROOT}")"
+  chmod 0700 "${INJECTION_BUNDLE_ROOT}"
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${INJECTION_BUNDLE_ROOT}/owner.json" "$$" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+started = subprocess.check_output(
+    ["ps", "-o", "lstart=", "-p", sys.argv[2]],
+    text=True,
+    stderr=subprocess.DEVNULL,
+).strip()
+owner_path = Path(sys.argv[1])
+owner_path.write_text(
+    json.dumps({"pid": int(sys.argv[2]), "started": started}, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+owner_path.chmod(0o600)
+PY
+
+  manifest_path="$(run_clean_host_command \
+    "${HOST_PYTHON3_BIN}" \
+    "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+    --policy "${policy_path}" \
+    --agent "${agent}" \
+    --mode "${mode}" \
+    --output-root "${INJECTION_BUNDLE_ROOT}")"
+  manifest_path="${manifest_path//$'\n'/}"
+
+  if [[ "${manifest_path}" != "${INJECTION_BUNDLE_ROOT}/manifest.json" ]]; then
+    echo "Unexpected injection manifest path from renderer: ${manifest_path}" >&2
+    exit 2
+  fi
+
+  if [[ ! -f "${manifest_path}" ]]; then
+    echo "Injection manifest was not rendered: ${manifest_path}" >&2
+    exit 2
+  fi
+
+  DIRECT_MOUNT_SPEC_PATH="${INJECTION_BUNDLE_ROOT}.mounts.json"
+  DIRECT_MOUNT_SPEC_PATH="$(resolve_host_path "${DIRECT_MOUNT_SPEC_PATH}")"
+  run_clean_host_command \
+    "${HOST_PYTHON3_BIN}" \
+    "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
+    --manifest "${manifest_path}" \
+    --mount-spec "${DIRECT_MOUNT_SPEC_PATH}" >/dev/null
+  prepare_injection_direct_mounts "${DIRECT_MOUNT_SPEC_PATH}"
+}
+
+build_recommended_command() {
+  local include_prepare="$1"
+  local include_repair="$2"
+  local target_mode="${3}"
+  local -a cmd=("workcell")
+
+  if [[ "${include_repair}" -eq 1 ]] && [[ "${target_mode}" == "strict" ]]; then
+    include_prepare=0
+  fi
+  [[ "${include_prepare}" -eq 1 ]] && cmd+=(--prepare)
+  [[ "${include_repair}" -eq 1 ]] && cmd+=(--repair-profile)
+  cmd+=(--agent "${AGENT}")
+  [[ "${AGENT_AUTONOMY}" != "yolo" ]] && cmd+=(--agent-autonomy "${AGENT_AUTONOMY}")
+  [[ "${CONTAINER_MUTABILITY}" != "ephemeral" ]] && cmd+=(--container-mutability "${CONTAINER_MUTABILITY}")
+  [[ -n "${CONTAINER_CPU_OVERRIDE}" ]] && cmd+=(--container-cpu "${CONTAINER_CPU_OVERRIDE}")
+  [[ -n "${CONTAINER_MEMORY_OVERRIDE}" ]] && cmd+=(--container-memory "${CONTAINER_MEMORY_OVERRIDE}")
+  [[ "${USE_DEFAULT_INJECTION_POLICY}" -eq 0 ]] && cmd+=(--no-default-injection-policy)
+  [[ -n "${INJECTION_POLICY}" ]] && cmd+=(--injection-policy "${INJECTION_POLICY}")
+  [[ "${UI}" != "cli" ]] && cmd+=(--ui "${UI}")
+  cmd+=(--mode "${target_mode}" --workspace "${WORKSPACE}")
+  [[ "${ALLOW_NONGIT_WORKSPACE}" -eq 1 ]] && cmd+=(--allow-nongit-workspace)
+  [[ -n "${COLIMA_PROFILE}" ]] && cmd+=(--colima-profile "${COLIMA_PROFILE}")
+  [[ -n "${VM_CPU_OVERRIDE}" ]] && cmd+=(--vm-cpu "${VM_CPU_OVERRIDE}")
+  [[ -n "${VM_MEMORY_OVERRIDE}" ]] && cmd+=(--vm-memory "${VM_MEMORY_OVERRIDE}")
+  [[ -n "${VM_DISK_OVERRIDE}" ]] && cmd+=(--vm-disk "${VM_DISK_OVERRIDE}")
+  if ((${#AGENT_ARGS[@]} > 0)); then
+    local agent_arg
+    for agent_arg in "${AGENT_ARGS[@]}"; do
+      cmd+=(--agent-arg "${agent_arg}")
+    done
+  fi
+  if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
+    cmd+=(--allow-arbitrary-command --ack-arbitrary-command)
+  fi
+  if [[ "${ACK_BREAKGLASS}" -eq 1 ]]; then
+    cmd+=(--ack-breakglass)
+  fi
+  if [[ "${REBUILD}" -eq 1 ]]; then
+    cmd+=(--rebuild)
+  fi
+  if ((${#PROVIDER_ARGS[@]} > 0)); then
+    cmd+=(-- "${PROVIDER_ARGS[@]}")
+  fi
+
+  emit_command "${cmd[@]}"
+}
+
+delete_unmanaged_profile() {
+  local profile="$1"
+  local state_dir
+  local lima_dir
+
+  state_dir="$(profile_dir "${profile}")"
+  lima_dir="$(profile_lima_dir "${profile}")"
+
+  echo "Repairing conflicting unmanaged Colima profile: ${profile}" >&2
+  echo "Workcell will delete the profile state and recreate it with reviewed mounts and policy." >&2
+
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    printf 'repair_action=delete_unmanaged_profile profile=%s dry_run=1\n' "${profile}" >&2
+    return 0
+  fi
+
+  HOST_COLIMA_BIN="${HOST_COLIMA_BIN:-$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)}"
+  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+  run_host_colima delete --profile "${profile}" --force >/dev/null 2>&1 || true
+  rm -rf "${state_dir}" "${lima_dir}"
+
+  if [[ -e "${state_dir}" ]] || [[ -e "${lima_dir}" ]]; then
+    echo "Failed to remove conflicting Colima profile state for ${profile}." >&2
+    exit 2
+  fi
 }
 
 workspace_has_markers() {
@@ -351,6 +831,7 @@ validate_mode_requirements() {
   local allow_arbitrary_command="$3"
   local ack_arbitrary_command="$4"
   local rebuild="$5"
+  local prepare="$6"
 
   if [[ "${mode}" == "breakglass" ]] && [[ "${ack_breakglass}" -eq 0 ]]; then
     echo "breakglass mode requires --ack-breakglass." >&2
@@ -364,9 +845,9 @@ validate_mode_requirements() {
     exit 2
   fi
 
-  if [[ "${mode}" == "strict" ]] && [[ "${rebuild}" -eq 1 ]]; then
+  if [[ "${mode}" == "strict" ]] && [[ "${rebuild}" -eq 1 ]] && [[ "${prepare}" -eq 0 ]]; then
     echo "strict mode does not rebuild or cold-bootstrap the runtime image." >&2
-    echo "Seed or refresh the reviewed image with --mode build, then return to strict." >&2
+    echo "Rerun with --prepare when you intentionally want Workcell to seed the reviewed image before strict launch." >&2
     exit 2
   fi
 }
@@ -379,6 +860,64 @@ validate_mode_name() {
       exit 2
       ;;
   esac
+}
+
+validate_container_mutability() {
+  case "$1" in
+    ephemeral | readonly) ;;
+    *)
+      echo "Unsupported container mutability: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+assurance_posture() {
+  local autonomy="$1"
+  local mutability="$2"
+
+  if [[ "${autonomy}" == "prompt" ]] && [[ "${mutability}" == "ephemeral" ]]; then
+    printf 'lower-assurance-prompt-autonomy,mutable-session\n'
+    return 0
+  fi
+  if [[ "${autonomy}" == "prompt" ]]; then
+    printf 'lower-assurance-prompt-autonomy\n'
+    return 0
+  fi
+  if [[ "${mutability}" == "ephemeral" ]]; then
+    printf 'mutable-session\n'
+    return 0
+  fi
+  printf 'managed-readonly\n'
+}
+
+validate_positive_integer() {
+  local label="$1"
+  local value="$2"
+
+  [[ "${value}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Unsupported ${label}: ${value}" >&2
+    exit 2
+  }
+}
+
+validate_positive_decimal() {
+  local label="$1"
+  local value="$2"
+
+  [[ "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+    echo "Unsupported ${label}: ${value}" >&2
+    exit 2
+  }
+}
+
+validate_container_memory_value() {
+  local value="$1"
+
+  [[ "${value}" =~ ^[0-9]+([kKmMgGtTpP][iI]?[bB]?)?$ ]] || {
+    echo "Unsupported container memory limit: ${value}" >&2
+    exit 2
+  }
 }
 
 profile_env_path() {
@@ -473,6 +1012,9 @@ validate_colima_runtime_mounts() {
 validate_colima_profile_config() {
   local profile="$1"
   local workspace="$2"
+  local expected_cpu="$3"
+  local expected_memory="$4"
+  local expected_disk="$5"
   local config_path="${COLIMA_STATE_ROOT}/${profile}/colima.yaml"
 
   [[ -f "${config_path}" ]] || {
@@ -486,6 +1028,12 @@ validate_colima_profile_config() {
     mount_type = config["mountType"] || config[:mountType] || config["mount_type"] || config[:mount_type]
     runtime = config["runtime"] || config[:runtime]
     expected = ARGV[1].sub(%r{/$}, "")
+    expected_cpu = ARGV[2]
+    expected_memory = ARGV[3]
+    expected_disk = ARGV[4]
+    cpu = config["cpu"] || config[:cpu]
+    memory = config["memory"] || config[:memory]
+    disk = config["disk"] || config[:disk]
     mounts = config["mounts"] || config[:mounts] || []
     runtime_name =
       case runtime
@@ -508,7 +1056,10 @@ validate_colima_profile_config() {
     abort("Unexpected Colima vmType for managed profile: #{vm_type.inspect}") unless vm_type == "vz"
     abort("Unexpected Colima mountType for managed profile: #{mount_type.inspect}") unless mount_type == "virtiofs"
     abort("Unexpected Colima runtime for managed profile: #{runtime_name.inspect}") unless runtime_name == "docker"
-  ' "${config_path}" "${workspace}"
+    abort("Unexpected Colima CPU count for managed profile: #{cpu.inspect}") unless cpu.to_s == expected_cpu
+    abort("Unexpected Colima memory size for managed profile: #{memory.inspect}") unless memory.to_s == expected_memory
+    abort("Unexpected Colima disk size for managed profile: #{disk.inspect}") unless disk.to_s == expected_disk
+  ' "${config_path}" "${workspace}" "${expected_cpu}" "${expected_memory}" "${expected_disk}"
 }
 
 validate_colima_profile() {
@@ -747,6 +1298,18 @@ register_shadow_mount() {
   SHADOW_DEST_PATHS+=("${destination}")
 }
 
+register_workspace_import_root_mount() {
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/imports"
+  local destination="/opt/workcell/workspace-control-plane"
+
+  [[ -d "${source}" ]] || return 0
+  if ! find "${source}" -type f -print -quit | grep -q .; then
+    return 0
+  fi
+
+  WORKSPACE_IMPORT_MOUNTS+=(-v "${source}:${destination}:ro")
+}
+
 add_shadow_file_mount() {
   local relative_path="$1"
   local source="${CONTROL_PLANE_SHADOW_ROOT}/files/${relative_path}"
@@ -767,6 +1330,34 @@ add_shadow_dir_mount() {
   mkdir -p "${source}"
   chmod 0555 "${source}"
   register_shadow_mount "${source}" "${destination}"
+}
+
+add_workspace_import_file() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/imports/${relative_path}"
+  local doc_path=""
+
+  while IFS= read -r -d '' doc_path; do
+    echo "Workcell refuses symlinked workspace control files: ${doc_path}" >&2
+    echo "Replace the symlink with a regular file under the workspace root." >&2
+    exit 2
+  done < <(
+    find "${workspace}" \
+      \( -name .git -type d -prune \) -o \
+      \( -type l -name "${relative_path}" \) -print0 | LC_ALL=C sort -z
+  )
+
+  doc_path="${workspace}/${relative_path}"
+  [[ -f "${doc_path}" ]] || return 0
+
+  mkdir -p "$(dirname "${source}")"
+  {
+    printf '<!-- Workcell imported workspace %s -->\n\n' "${relative_path}"
+    cat "${doc_path}"
+    printf '\n'
+  } >"${source}"
+  chmod 0444 "${source}"
 }
 
 add_shadow_git_hooks_mount() {
@@ -810,6 +1401,7 @@ prepare_workspace_control_plane_shadow() {
 
   SHADOW_MOUNTS=()
   SHADOW_DEST_PATHS=()
+  WORKSPACE_IMPORT_MOUNTS=()
   [[ "${mode}" == "breakglass" ]] && return 0
 
   if [[ -n "${WORKCELL_DOCKER_HOME:-}" ]]; then
@@ -849,53 +1441,115 @@ prepare_workspace_control_plane_shadow() {
       \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
   )
 
-  while IFS= read -r -d '' path; do
-    rel="${path#"${workspace}/"}"
-    add_shadow_file_mount "${rel}"
-  done < <(
-    find "${workspace}" \
-      \( -name .git -type d -prune \) -o \
-      \( \( -type f -o -type l \) \( -name AGENTS.md -o -name CLAUDE.md -o -name GEMINI.md -o -name .mcp.json \) \) -print0
-  )
+  for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json; do
+    if [[ -f "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]]; then
+      add_shadow_file_mount "${rel}"
+    fi
+  done
+
+  add_workspace_import_file "${workspace}" "AGENTS.md"
+  add_workspace_import_file "${workspace}" "CLAUDE.md"
+  add_workspace_import_file "${workspace}" "GEMINI.md"
+  register_workspace_import_root_mount
 }
 
 bootstrap_endpoints() {
   echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 snapshot.debian.org:80 snapshot.debian.org:443"
 }
 
-AGENT="codex"
+AGENT=""
+AGENT_AUTONOMY="yolo"
+CONTAINER_MUTABILITY="ephemeral"
+CONTAINER_CPU_OVERRIDE=""
+CONTAINER_MEMORY_OVERRIDE=""
 UI="cli"
 MODE="strict"
 WORKSPACE="$(pwd -P)"
 COLIMA_PROFILE=""
+INJECTION_POLICY=""
+USE_DEFAULT_INJECTION_POLICY=1
+VM_CPU_OVERRIDE=""
+VM_MEMORY_OVERRIDE=""
+VM_DISK_OVERRIDE=""
 REBUILD=0
 DRY_RUN=0
+PREPARE=0
+REPAIR_PROFILE=0
 ALLOW_NONGIT_WORKSPACE=0
 ALLOW_ARBITRARY_COMMAND=0
 ACK_BREAKGLASS=0
 ACK_ARBITRARY_COMMAND=0
+declare -a AGENT_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent)
-      AGENT="$2"
+      AGENT="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
+    --agent-autonomy)
+      AGENT_AUTONOMY="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --agent-arg)
+      AGENT_ARGS+=("$(raw_option_value_or_die "$1" "${2-}")")
+      shift 2
+      ;;
+    --container-mutability)
+      CONTAINER_MUTABILITY="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --container-cpu)
+      CONTAINER_CPU_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --container-memory)
+      CONTAINER_MEMORY_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --injection-policy)
+      INJECTION_POLICY="$(raw_option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --no-default-injection-policy)
+      USE_DEFAULT_INJECTION_POLICY=0
+      shift
+      ;;
     --ui)
-      UI="$2"
+      UI="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
     --mode)
-      MODE="$2"
+      MODE="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
     --workspace)
-      WORKSPACE="$(cd "$2" && pwd -P)"
+      WORKSPACE="$(resolve_existing_directory_or_die "$(option_value_or_die "$1" "${2-}")")"
       shift 2
       ;;
     --colima-profile)
-      COLIMA_PROFILE="$2"
+      COLIMA_PROFILE="$(option_value_or_die "$1" "${2-}")"
       shift 2
+      ;;
+    --vm-cpu)
+      VM_CPU_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --vm-memory)
+      VM_MEMORY_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --vm-disk)
+      VM_DISK_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --prepare)
+      PREPARE=1
+      shift
+      ;;
+    --repair-profile)
+      REPAIR_PROFILE=1
+      shift
       ;;
     --allow-nongit-workspace)
       ALLOW_NONGIT_WORKSPACE=1
@@ -935,6 +1589,30 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+validate_agent_autonomy_name "${AGENT_AUTONOMY}"
+declare -a PROVIDER_ARGS=()
+if ((${#AGENT_ARGS[@]} > 0)); then
+  PROVIDER_ARGS=("${AGENT_ARGS[@]}")
+fi
+if [[ $# -gt 0 ]]; then
+  PROVIDER_ARGS+=("$@")
+fi
+if ((${#PROVIDER_ARGS[@]} > 0)); then
+  set -- "${PROVIDER_ARGS[@]}"
+else
+  set --
+fi
+
+if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 0 ]] && [[ $# -gt 0 ]] && [[ "$1" != "${AGENT}" ]]; then
+  set -- "${AGENT}" "$@"
+fi
+
+if [[ -z "${AGENT}" ]]; then
+  echo "Option --agent is required." >&2
+  usage >&2
+  exit 2
+fi
+
 case "${AGENT}" in
   codex | claude | gemini) ;;
   *)
@@ -955,7 +1633,12 @@ case "${UI}" in
     ;;
 esac
 
+if [[ "${REPAIR_PROFILE}" -eq 1 ]] && [[ "${MODE}" == "strict" ]]; then
+  PREPARE=1
+fi
+
 validate_mode_name "${MODE}"
+validate_container_mutability "${CONTAINER_MUTABILITY}"
 PROFILE_ENV="$(profile_env_path "${MODE}")"
 [[ -f "${PROFILE_ENV}" ]] || {
   echo "Missing runtime profile: ${PROFILE_ENV}" >&2
@@ -964,10 +1647,31 @@ PROFILE_ENV="$(profile_env_path "${MODE}")"
 
 # shellcheck source=/dev/null
 source "${PROFILE_ENV}"
+if [[ -n "${VM_CPU_OVERRIDE}" ]]; then
+  COLIMA_CPU="${VM_CPU_OVERRIDE}"
+fi
+if [[ -n "${VM_MEMORY_OVERRIDE}" ]]; then
+  COLIMA_MEMORY="${VM_MEMORY_OVERRIDE}"
+fi
+if [[ -n "${VM_DISK_OVERRIDE}" ]]; then
+  COLIMA_DISK="${VM_DISK_OVERRIDE}"
+fi
+if [[ -n "${CONTAINER_MEMORY_OVERRIDE}" ]]; then
+  CONTAINER_MEMORY="${CONTAINER_MEMORY_OVERRIDE}"
+fi
+validate_positive_integer "VM CPU count" "${COLIMA_CPU}"
+validate_positive_integer "VM memory size (GiB)" "${COLIMA_MEMORY}"
+validate_positive_integer "VM disk size (GiB)" "${COLIMA_DISK}"
+validate_container_memory_value "${CONTAINER_MEMORY}"
+if [[ -n "${CONTAINER_CPU_OVERRIDE}" ]]; then
+  validate_positive_decimal "container CPU limit" "${CONTAINER_CPU_OVERRIDE}"
+fi
 HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
 HOST_DOCKER_BIN="docker"
 validate_workspace "${WORKSPACE}" "${ALLOW_NONGIT_WORKSPACE}"
-validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${REBUILD}"
+validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${REBUILD}" "${PREPARE}"
+cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
+prepare_injection_bundle "${AGENT}" "${MODE}"
 
 if [[ -z "${COLIMA_PROFILE}" ]]; then
   COLIMA_PROFILE="$(derive_profile_name "${WORKSPACE}")"
@@ -977,12 +1681,14 @@ validate_colima_profile_name "${COLIMA_PROFILE}"
 IMAGE_TAG="workcell:local"
 PROFILE_DIR="$(profile_dir "${COLIMA_PROFILE}")"
 PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
+PROFILE_IMAGE_MARKER="$(profile_image_marker_path "${COLIMA_PROFILE}")"
 PROFILE_PREEXISTED=0
 PROFILE_MARKER_WORKSPACE=""
 BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
 EGRESS_HELPER="${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
+HOST_USER="$(id -un 2>/dev/null || printf 'agent')"
 SOURCE_DATE_EPOCH="$("${HOST_GIT_BIN}" -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')"
 NEEDS_REBUILD=0
 
@@ -996,9 +1702,24 @@ if [[ -d "${PROFILE_DIR}" ]]; then
 fi
 
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
-  echo "Refusing to reuse unmanaged Colima profile: ${COLIMA_PROFILE}" >&2
-  echo "Use a fresh derived profile or mark an existing one explicitly after review." >&2
-  exit 2
+  if [[ "${REPAIR_PROFILE}" -eq 1 ]]; then
+    delete_unmanaged_profile "${COLIMA_PROFILE}"
+    PROFILE_PREEXISTED=0
+  else
+    echo "Refusing to reuse unmanaged Colima profile: ${COLIMA_PROFILE}" >&2
+    echo "Workcell found a profile with the right name but without Workcell ownership metadata." >&2
+    echo "That profile might carry broader mounts, credentials, or network state than the reviewed path allows." >&2
+    echo "Next step:" >&2
+    if [[ "${MODE}" == "strict" ]]; then
+      build_recommended_command 1 1 "${MODE}"
+    else
+      build_recommended_command 0 1 "${MODE}"
+    fi
+    echo "Manual cleanup, if you prefer to inspect and delete it yourself:" >&2
+    printf '  colima delete --profile %q --force\n' "${COLIMA_PROFILE}" >&2
+    printf '  rm -rf %q %q\n' "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")" >&2
+    exit 2
+  fi
 fi
 
 if [[ -f "${PROFILE_MARKER}" ]]; then
@@ -1017,6 +1738,16 @@ if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" !=
   exit 2
 fi
 
+if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
+  echo "No reviewed runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." >&2
+  echo "This is expected on the first launch for a workspace or after profile cleanup." >&2
+  echo "Next step:" >&2
+  build_recommended_command 1 0 "${MODE}"
+  echo "That command seeds the reviewed runtime image inside the isolated VM and then launches ${AGENT} in strict mode." >&2
+  echo "No VM or container was started." >&2
+  exit 2
+fi
+
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
@@ -1026,6 +1757,9 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
 fi
 
 ALLOW_ENDPOINTS="$(provider_endpoints "${AGENT}") ${EXTRA_ENDPOINTS}"
+if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
+  ALLOW_ENDPOINTS="${ALLOW_ENDPOINTS} snapshot.debian.org:80 snapshot.debian.org:443"
+fi
 prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
 
 CONTAINER_NAME="workcell-$(slugify "${AGENT}-${MODE}-$(basename "${WORKSPACE}")")"
@@ -1035,10 +1769,8 @@ DOCKER_RUN_BASE=(
   --rm
   --init
   --name "${CONTAINER_NAME}"
-  --read-only
   --security-opt no-new-privileges:true
   --cap-drop ALL
-  --user "${HOST_UID}:${HOST_GID}"
   --pids-limit 1024
   --memory "${CONTAINER_MEMORY}"
   --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777"
@@ -1046,20 +1778,51 @@ DOCKER_RUN_BASE=(
   --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777"
   --workdir /workspace
   -e AGENT_NAME="${AGENT}"
+  -e WORKCELL_AGENT_AUTONOMY="${AGENT_AUTONOMY}"
+  -e WORKCELL_CONTAINER_MUTABILITY="${CONTAINER_MUTABILITY}"
   -e AGENT_UI="${UI}"
   -e CODEX_PROFILE="${MODE}"
   -e WORKCELL_MODE="${MODE}"
   -e HOME=/state/agent-home
   -e CODEX_HOME=/state/agent-home/.codex
   -e WORKCELL_RUNTIME=1
-  -e USER=agent
-  -e LOGNAME=agent
   -e TMPDIR=/state/tmp
   -e WORKSPACE=/workspace
+  -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane
   -v "${WORKSPACE}:/workspace"
 )
+if [[ "${CONTAINER_MUTABILITY}" == "readonly" ]]; then
+  DOCKER_RUN_BASE+=(
+    --read-only
+    --user "${HOST_UID}:${HOST_GID}"
+    -e USER=agent
+    -e LOGNAME=agent
+  )
+else
+  DOCKER_RUN_BASE+=(
+    --user 0:0
+    -e WORKCELL_HOST_UID="${HOST_UID}"
+    -e WORKCELL_HOST_GID="${HOST_GID}"
+    -e WORKCELL_HOST_USER="${HOST_USER}"
+  )
+fi
+if [[ -n "${CONTAINER_CPU_OVERRIDE}" ]]; then
+  DOCKER_RUN_BASE+=(--cpus "${CONTAINER_CPU_OVERRIDE}")
+fi
 if ((${#SHADOW_MOUNTS[@]} > 0)); then
   DOCKER_RUN_BASE+=("${SHADOW_MOUNTS[@]}")
+fi
+if ((${#WORKSPACE_IMPORT_MOUNTS[@]} > 0)); then
+  DOCKER_RUN_BASE+=("${WORKSPACE_IMPORT_MOUNTS[@]}")
+fi
+if ((${#DIRECT_SOURCE_MOUNTS[@]} > 0)); then
+  DOCKER_RUN_BASE+=("${DIRECT_SOURCE_MOUNTS[@]}")
+fi
+if [[ -n "${INJECTION_BUNDLE_ROOT}" ]]; then
+  DOCKER_RUN_BASE+=(
+    -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json
+    -v "${INJECTION_BUNDLE_ROOT}:/opt/workcell/host-injections:ro"
+  )
 fi
 
 EXECUTION_PATH="managed-tier1"
@@ -1098,19 +1861,27 @@ fi
 
 printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
   "${COLIMA_PROFILE}" "${MODE}" "${AGENT}" "${UI}" "${WORKSPACE}" >&2
+printf 'agent_autonomy=%s\n' "${AGENT_AUTONOMY}" >&2
+printf 'vm_resources=cpu=%s memory_gib=%s disk_gib=%s\n' "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}" >&2
+printf 'container_resources=mutability=%s cpu=%s memory=%s\n' \
+  "${CONTAINER_MUTABILITY}" "${CONTAINER_CPU_OVERRIDE:-unmanaged}" "${CONTAINER_MEMORY}" >&2
+printf 'assurance_posture=%s\n' "$(assurance_posture "${AGENT_AUTONOMY}" "${CONTAINER_MUTABILITY}")" >&2
 printf 'workspace_control_plane=%s\n' "$([[ "${MODE}" == "breakglass" ]] && printf 'unmasked' || printf 'masked')" >&2
 printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
 printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
-  printf '%q ' "${DOCKER_RUN[@]}"
-  printf '\n'
+  emit_redacted_command "${DOCKER_RUN[@]}"
   exit 0
 fi
 
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
-  validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}"
-  if ! (validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"); then
+  if ! validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
+    echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources." >&2
+    run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
+    rm -rf "${PROFILE_DIR}"
+    PROFILE_PREEXISTED=0
+  elif ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"; then
     echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts." >&2
     run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
     rm -rf "${PROFILE_DIR}"
@@ -1144,20 +1915,30 @@ restore_runtime_egress() {
   fi
 }
 
-if [[ "${REBUILD}" -eq 1 ]] || ! "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+RECORDED_IMAGE_ID="$(profile_image_marker_value "${COLIMA_PROFILE}" image_id || true)"
+CURRENT_IMAGE_ID=""
+if [[ "${REBUILD}" -eq 1 ]]; then
   NEEDS_REBUILD=1
+else
+  CURRENT_IMAGE_ID="$(current_image_id)"
+  if [[ -z "${CURRENT_IMAGE_ID}" ]] || [[ -z "${RECORDED_IMAGE_ID}" ]] || [[ "${CURRENT_IMAGE_ID}" != "${RECORDED_IMAGE_ID}" ]]; then
+    NEEDS_REBUILD=1
+  fi
 fi
 
-if [[ "${MODE}" == "strict" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
+if [[ "${MODE}" == "strict" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]] && [[ "${PREPARE}" -eq 0 ]]; then
   restore_runtime_egress
-  echo "strict mode requires a prebuilt reviewed runtime image." >&2
-  printf 'Run workcell --mode build --agent %s --workspace %q -- <provider args> once to seed the image, then rerun in strict.\n' \
-    "${AGENT}" \
-    "${WORKSPACE}" >&2
+  echo "Strict mode needs a prepared reviewed runtime image for profile ${COLIMA_PROFILE}." >&2
+  echo "The profile started successfully, but the runtime image is missing or stale." >&2
+  echo "Next step:" >&2
+  build_recommended_command 1 0 "${MODE}"
   exit 2
 fi
 
 if [[ "${NETWORK_POLICY}" == "allowlist" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
+  if [[ "${PREPARE}" -eq 1 ]]; then
+    echo "prepare=1 seeding the reviewed runtime image before launch." >&2
+  fi
   BOOTSTRAP_APPLIED=1
   printf 'bootstrap_policy=allowlist endpoints=%s\n' "${BOOTSTRAP_ENDPOINTS}" >&2
   "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
@@ -1180,9 +1961,21 @@ if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
     restore_runtime_egress
     exit "${BUILD_STATUS}"
   fi
+  CURRENT_IMAGE_ID="$(current_image_id)"
+  if [[ -z "${CURRENT_IMAGE_ID}" ]]; then
+    restore_runtime_egress
+    echo "Workcell failed to record the reviewed runtime image ID for ${IMAGE_TAG}." >&2
+    exit 2
+  fi
+  write_profile_image_marker "${COLIMA_PROFILE}" "${CURRENT_IMAGE_ID}"
 fi
 
 restore_runtime_egress
 append_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 
-"${DOCKER_RUN[@]}"
+DOCKER_STATUS=0
+"${DOCKER_RUN[@]}" || DOCKER_STATUS=$?
+if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
+  echo "Workcell ephemeral runtime ended. Changes not persisted to /workspace or provided from the host control plane were discarded." >&2
+fi
+exit "${DOCKER_STATUS}"

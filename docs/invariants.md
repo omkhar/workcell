@@ -17,6 +17,15 @@ includes:
 - container or VM control sockets such as `docker.sock`
 - split git-admin directories outside the mounted workspace
 
+Explicit operator-owned injection is a separate path, not a default exception.
+When an operator chooses to inject docs, config, or secrets, Workcell must
+copy or mount them into per-session runtime state and keep them out of the
+immutable adapter baseline, workspace mount, durable host logs, and ambient
+environment. Provider credentials injected through the dedicated
+`[credentials]` path must not be re-staged into a second plaintext host-side
+bundle before launch; they are validated on the host, mounted read-only for the
+current session, and then copied into the ephemeral agent home.
+
 ## Invariant 2: Writes stay inside the intended workspace
 
 The active provider must not be able to modify files outside the chosen task
@@ -30,9 +39,12 @@ It should also refuse broad non-git workspace mounts and unsafe provider
 command overrides unless the operator opts into them explicitly.
 On the safe path it should also mask repo-local provider control files and
 mutable git hook/config paths so workspace content cannot silently retake the
-control plane between runs. Home-scoped provider control files must be
-re-seeded on provider launch, and nested coding-agent CLI launches must not be
-an unmediated escape hatch. Public in-container launch surfaces must also
+control plane between runs. Repo-local `AGENTS.md`, `CLAUDE.md`, and
+`GEMINI.md` may be imported into provider-native home docs from hidden
+read-only copies, but the workspace-visible files remain masked. Home-scoped
+provider control files must be re-seeded on provider launch, and nested
+coding-agent CLI launches must not be an unmediated escape hatch. Public
+in-container launch surfaces must also
 sanitize hostile loader environment variables before shell or provider wrapper
 logic starts. This claim applies to the public launcher surface under
 `/usr/local/bin`, not
@@ -59,7 +71,15 @@ Workcell disables IPv6 rather than leaving an unmanaged parallel egress path.
 The current enforcement model is not a hostname-aware proxy. `strict` does not
 perform cold image builds or rebuilds; runtime-image creation is an explicit
 `build`-mode operation that may temporarily apply a separate pinned bootstrap
-endpoint set before returning to the steady-state runtime allowlist.
+endpoint set before returning to the steady-state runtime allowlist. When the
+operator keeps the default `ephemeral` container mutability, the steady-state
+allowlist also includes the pinned Debian snapshot endpoints used by
+`apt`/`apt-get` so transient build tooling can be installed without enabling
+arbitrary distro mirrors. A successful package mutation is an explicit
+lower-assurance event for the live session because maintainer scripts run as
+root inside the mutable container. Workcell must warn when that happens and
+must not imply that the rest of the session preserves the same in-container
+control-plane integrity as a readonly launch.
 
 ## Invariant 5: Destructive command paths have defense in depth
 
@@ -79,6 +99,8 @@ runtimes or loaders that target them.
 
 If a workflow cannot preserve the Tier 1 guarantees, it must be labeled
 lower-assurance rather than presented as equivalent.
+That includes provider prompt-autonomy mode and any mutable session that has
+successfully performed package-manager mutations as root.
 
 ## Invariant 7: Autonomous runs remain auditable
 
@@ -94,6 +116,7 @@ reconstruct:
 
 The reference launcher satisfies this by appending an operator-visible audit log
 entry under the managed Colima profile directory on each real launch.
+Injected secret values themselves are not part of that durable record.
 
 ## Profile expectations
 
@@ -106,6 +129,8 @@ entry under the managed Colima profile directory on each real launch.
 - provider-native bounded or constrained mode only where the provider offers
   one, with the shared Workcell runtime remaining the primary boundary
 - allowlisted steady-state egress only
+- pinned Debian snapshot egress for `apt` and `apt-get` when the default
+  `ephemeral` container mutability is active
 - requires a prebuilt reviewed runtime image; `strict` does not rebuild or
   cold-bootstrap that image
 

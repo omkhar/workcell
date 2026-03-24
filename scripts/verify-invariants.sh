@@ -43,10 +43,12 @@ CODEX_VERIFY_HOME="$(mktemp -d)"
 BARRIER_VERIFY_ROOT="$(mktemp -d)"
 BROWSER_PROFILE_FIXTURE=""
 COLIMA_PROFILE_FIXTURE=""
+INSTALL_VERIFY_HOME="$(mktemp -d)"
 
 cleanup() {
   rm -rf "${CODEX_VERIFY_HOME}"
   rm -rf "${BARRIER_VERIFY_ROOT}"
+  rm -rf "${INSTALL_VERIFY_HOME}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
@@ -90,10 +92,12 @@ for file in \
   "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" \
   "${ROOT_DIR}/runtime/container/Dockerfile" \
   "${ROOT_DIR}/runtime/container/bin/git" \
+  "${ROOT_DIR}/runtime/container/runtime-user.sh" \
   "${ROOT_DIR}/runtime/container/rust/Cargo.toml" \
   "${ROOT_DIR}/runtime/container/rust/src/lib.rs" \
   "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-git-launcher.rs" \
   "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-launcher.rs" \
+  "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
   "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh" \
   "${ROOT_DIR}/scripts/workcell" \
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; do
@@ -160,6 +164,404 @@ if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${RO
   exit 1
 fi
 
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" >/tmp/workcell-install.out 2>&1; then
+  echo "Expected scripts/install.sh to succeed in a clean temporary HOME" >&2
+  cat /tmp/workcell-install.out >&2
+  exit 1
+fi
+
+if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" --help >/tmp/workcell-installed-help.out 2>&1; then
+  echo "Expected installed ~/.local/bin/workcell symlink to resolve support files correctly" >&2
+  cat /tmp/workcell-installed-help.out >&2
+  exit 1
+fi
+
+if ! grep -q '^Usage: workcell' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to print usage" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--prepare' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --prepare" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--repair-profile' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --repair-profile" >&2
+  exit 1
+fi
+
+if ! grep -q 'Repair a conflicting unmanaged profile' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe unmanaged-profile repair accurately" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--agent-autonomy yolo|prompt' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --agent-autonomy" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--agent-arg VALUE' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --agent-arg" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--container-mutability ephemeral|readonly' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --container-mutability" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--injection-policy PATH' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --injection-policy" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--no-default-injection-policy' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --no-default-injection-policy" >&2
+  exit 1
+fi
+
+if ! grep -q 'Provider to run (required)' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --agent as required" >&2
+  exit 1
+fi
+
+INJECTION_POLICY_FIXTURE_ROOT="${BARRIER_VERIFY_ROOT}/injection-policy"
+INJECTION_STATE_ROOT="${INJECTION_POLICY_FIXTURE_ROOT}/xdg-state"
+mkdir -p "${INJECTION_POLICY_FIXTURE_ROOT}" "${INJECTION_STATE_ROOT}/workcell/tmp"
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/common.md"
+# Common Workcell Instructions
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/codex.md"
+# Codex Workcell Instructions
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/public.txt"
+public fixture
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/secret.txt"
+secret fixture
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/codex-auth.json"
+{"test": "auth"}
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/claude-auth.json"
+{"token": "claude-auth"}
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/claude-mcp.json"
+{"mcpServers": {"stub": {"command": "echo", "args": ["ok"]}}}
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/gemini-projects.json"
+{"projects":{"fixture":{"path":"/workspace"}}}
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/gh-hosts.yml"
+github.com:
+  oauth_token: test-token
+  user: workcell
+  git_protocol: ssh
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/ssh-config"
+Host example
+  HostName example.com
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/known_hosts"
+example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/id_test"
+-----BEGIN OPENSSH PRIVATE KEY-----
+test
+-----END OPENSSH PRIVATE KEY-----
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/config"
+not-an-identity
+EOF
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml"
+version = 1
+
+[documents]
+common = "common.md"
+codex = "codex.md"
+
+[credentials]
+codex_auth = "codex-auth.json"
+claude_auth = "claude-auth.json"
+claude_mcp = "claude-mcp.json"
+gemini_projects = "gemini-projects.json"
+github_hosts = "gh-hosts.yml"
+
+[ssh]
+enabled = true
+config = "ssh-config"
+known_hosts = "known_hosts"
+identities = ["id_test"]
+providers = ["codex"]
+modes = ["strict", "build"]
+
+[[copies]]
+source = "public.txt"
+target = "/state/injected/public.txt"
+classification = "public"
+providers = ["codex"]
+
+[[copies]]
+source = "secret.txt"
+target = "~/.config/workcell/token.txt"
+classification = "secret"
+providers = ["codex"]
+EOF
+
+python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle" >/tmp/workcell-injection-manifest.out
+python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
+  --agent claude \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-claude" >/dev/null
+python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
+  --agent gemini \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-gemini" >/dev/null
+python3 "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
+  --manifest "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/manifest.json" \
+  --mount-spec "${INJECTION_POLICY_FIXTURE_ROOT}/bundle.mounts.json" >/dev/null
+
+python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if manifest["documents"]["common"] != "documents/common.md":
+    raise SystemExit("expected common document to be staged in the injection bundle")
+if manifest["documents"]["codex"] != "documents/codex.md":
+    raise SystemExit("expected codex document to be staged in the injection bundle")
+targets = {entry["target"]: entry for entry in manifest["copies"]}
+if "/state/injected/public.txt" not in targets:
+    raise SystemExit("expected public injected file target in manifest")
+if "/state/agent-home/.config/workcell/token.txt" not in targets:
+    raise SystemExit("expected home-relative injected file target in manifest")
+if targets["/state/injected/public.txt"]["source"] != "copies/0":
+    raise SystemExit("expected public injected files to stay staged in the bundle")
+if targets["/state/agent-home/.config/workcell/token.txt"]["source"]["mount_path"] != "/opt/workcell/host-inputs/copies/1":
+    raise SystemExit("expected secret injected files to use the managed direct-mount path")
+if "source" in targets["/state/agent-home/.config/workcell/token.txt"]["source"]:
+    raise SystemExit("expected secret copy manifests to hide host source paths from the runtime")
+if manifest["credentials"]["codex_auth"]["mount_path"] != "/opt/workcell/host-inputs/credentials/codex-auth.json":
+    raise SystemExit("expected codex auth credential to use the managed credential mount path")
+if "source" in manifest["credentials"]["codex_auth"]:
+    raise SystemExit("expected credential manifests to hide host source paths from the runtime")
+if manifest["credentials"]["github_hosts"]["mount_path"] != "/opt/workcell/host-inputs/credentials/github-hosts.yml":
+    raise SystemExit("expected shared GitHub hosts credential to use the managed credential mount path")
+if manifest["ssh"]["config"]["mount_path"] != "/opt/workcell/host-inputs/ssh/config":
+    raise SystemExit("expected SSH config to use the managed direct-mount path")
+if "source" in manifest["ssh"]["config"]:
+    raise SystemExit("expected ssh manifests to hide host source paths from the runtime")
+if manifest["ssh"]["identities"][0]["mount_path"] != "/opt/workcell/host-inputs/ssh/identity-0":
+    raise SystemExit("expected SSH identities to use the managed direct-mount path")
+if "source" in manifest["ssh"]["identities"][0]:
+    raise SystemExit("expected ssh identity manifests to hide host source paths from the runtime")
+if manifest["ssh"]["identities"][0]["target_name"] != "id_test":
+    raise SystemExit("expected ssh identity target name to preserve the source basename")
+PY
+
+if [[ -e "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/credentials/codex-auth.json" ]]; then
+  echo "Expected credentials.* sources to mount directly from the host instead of being restaged into the bundle" >&2
+  exit 1
+fi
+
+python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle.mounts.json" <<'PY'
+import json
+import pathlib
+import sys
+
+mounts = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+mount_paths = {entry["mount_path"] for entry in mounts}
+expected = {
+    "/opt/workcell/host-inputs/credentials/codex-auth.json",
+    "/opt/workcell/host-inputs/credentials/github-hosts.yml",
+    "/opt/workcell/host-inputs/copies/1",
+    "/opt/workcell/host-inputs/ssh/config",
+    "/opt/workcell/host-inputs/ssh/known_hosts",
+    "/opt/workcell/host-inputs/ssh/identity-0",
+}
+if expected - mount_paths:
+    raise SystemExit("expected direct-mount spec to preserve all secret input mount paths")
+PY
+
+if [[ -e "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/ssh/config" ]]; then
+  echo "Expected ssh.* sources to mount directly from the host instead of being restaged into the bundle" >&2
+  exit 1
+fi
+
+python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-claude/manifest.json" "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-gemini/manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+
+claude_manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+gemini_manifest = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+
+if claude_manifest["credentials"]["claude_auth"]["mount_path"] != "/opt/workcell/host-inputs/credentials/claude-auth.json":
+    raise SystemExit("expected claude auth credential to use the managed credential mount path")
+if claude_manifest["credentials"]["claude_mcp"]["mount_path"] != "/opt/workcell/host-inputs/credentials/claude-mcp.json":
+    raise SystemExit("expected claude MCP credential to use the managed credential mount path")
+if gemini_manifest["credentials"]["gemini_projects"]["mount_path"] != "/opt/workcell/host-inputs/credentials/gemini-projects.json":
+    raise SystemExit("expected Gemini projects credential to use the managed credential mount path")
+PY
+
+INJECTION_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --no-default-injection-policy \
+  --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
+  --dry-run)"
+
+if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json'* ]]; then
+  echo "Expected workcell --dry-run to pass the staged injection manifest into the runtime" >&2
+  exit 1
+fi
+
+if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-injections:ro'* ]]; then
+  echo "Expected workcell --dry-run to mount the staged injection bundle read-only" >&2
+  exit 1
+fi
+
+if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/codex-auth.json:ro'* ]]; then
+  echo "Expected workcell --dry-run to mount validated credential sources directly into the runtime" >&2
+  exit 1
+fi
+
+if [[ "${INJECTION_DRY_RUN_OUTPUT}" == *"${INJECTION_POLICY_FIXTURE_ROOT}/codex-auth.json"* ]]; then
+  echo "Expected workcell --dry-run to redact host credential source paths" >&2
+  exit 1
+fi
+
+if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_CONTAINER_MUTABILITY=ephemeral'* ]]; then
+  echo "Expected workcell --dry-run to default the runtime to ephemeral container mutability" >&2
+  exit 1
+fi
+
+STALE_INJECTION_BUNDLE="${REAL_HOME}/.local/state/workcell/tmp/workcell-injections.verify-stale.$$"
+STALE_INJECTION_SIDECAR="${STALE_INJECTION_BUNDLE}.mounts.json"
+mkdir -p "$(dirname "${STALE_INJECTION_BUNDLE}")"
+mkdir -p "${STALE_INJECTION_BUNDLE}"
+printf '999999\n' >"${STALE_INJECTION_BUNDLE}/owner.pid"
+printf 'stale-secret\n' >"${STALE_INJECTION_BUNDLE}/stale.txt"
+printf '[{"source":"/tmp/stale-secret","mount_path":"/opt/workcell/host-inputs/credentials/stale"}]\n' >"${STALE_INJECTION_SIDECAR}"
+touch -t 202001010000 "${STALE_INJECTION_BUNDLE}" "${STALE_INJECTION_BUNDLE}/owner.pid" "${STALE_INJECTION_BUNDLE}/stale.txt" "${STALE_INJECTION_SIDECAR}"
+"${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --no-default-injection-policy \
+  --dry-run >/tmp/workcell-no-policy-dry-run.out
+
+if [[ -e "${STALE_INJECTION_BUNDLE}" ]]; then
+  echo "Expected startup cleanup to remove dead-owner injection bundles even when no injection policy is active" >&2
+  exit 1
+fi
+
+if [[ -e "${STALE_INJECTION_SIDECAR}" ]]; then
+  echo "Expected startup cleanup to remove stale direct-mount sidecars alongside dead-owner injection bundles" >&2
+  exit 1
+fi
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/bad-policy.toml"
+version = 1
+
+[[copies]]
+source = "secret.txt"
+target = "~/.codex/config.toml"
+EOF
+
+if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-policy.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bad-bundle" >/tmp/workcell-injection-bad.out 2>&1; then
+  echo "Expected injection policy renderer to reject reserved managed targets" >&2
+  exit 1
+fi
+
+if ! grep -q 'Workcell-managed control-plane path' /tmp/workcell-injection-bad.out; then
+  echo "Expected reserved-target injection failure to explain the control-plane collision" >&2
+  cat /tmp/workcell-injection-bad.out >&2
+  exit 1
+fi
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/bad-keys.toml"
+version = 1
+
+[[copies]]
+source = "secret.txt"
+target = "~/.config/workcell/secret.txt"
+provider = ["codex"]
+classification = "secret"
+EOF
+
+if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-keys.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bad-keys-bundle" >/tmp/workcell-injection-bad-keys.out 2>&1; then
+  echo "Expected injection policy renderer to reject unknown keys that would otherwise broaden scope" >&2
+  exit 1
+fi
+
+if ! grep -q 'unsupported keys: provider' /tmp/workcell-injection-bad-keys.out; then
+  echo "Expected unknown-key rejection to call out the unexpected key name" >&2
+  cat /tmp/workcell-injection-bad-keys.out >&2
+  exit 1
+fi
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/missing-classification.toml"
+version = 1
+
+[[copies]]
+source = "secret.txt"
+target = "~/.config/workcell/secret.txt"
+EOF
+
+if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/missing-classification.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/missing-classification-bundle" >/tmp/workcell-injection-missing-classification.out 2>&1; then
+  echo "Expected injection policy renderer to require explicit copy classification" >&2
+  exit 1
+fi
+
+if ! grep -q 'copies.classification is required' /tmp/workcell-injection-missing-classification.out; then
+  echo "Expected missing classification failure to explain the requirement" >&2
+  cat /tmp/workcell-injection-missing-classification.out >&2
+  exit 1
+fi
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/bad-ssh.toml"
+version = 1
+
+[ssh]
+enabled = true
+identities = ["config"]
+EOF
+
+if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-ssh.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bad-ssh-bundle" >/tmp/workcell-injection-bad-ssh.out 2>&1; then
+  echo "Expected injection policy renderer to reject SSH identity names that collide with reserved files" >&2
+  exit 1
+fi
+
+if ! grep -q 'reserved SSH file' /tmp/workcell-injection-bad-ssh.out; then
+  echo "Expected SSH collision failure to explain the reserved filename" >&2
+  cat /tmp/workcell-injection-bad-ssh.out >&2
+  exit 1
+fi
+
 if ! rg -q 'setup_workcell_trusted_docker_client' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell to seed a trusted Docker client state before host Docker use" >&2
   exit 1
@@ -197,6 +599,11 @@ fi
 
 if rg -q 'set -- codex --cd ' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
   echo "runtime/container/entrypoint.sh still injects a blocked default Codex --cd override" >&2
+  exit 1
+fi
+
+if rg -q 'AGENT_NAME="\$\{AGENT_NAME:-codex\}"' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "runtime/container/entrypoint.sh still defaults AGENT_NAME to codex" >&2
   exit 1
 fi
 
@@ -694,7 +1101,7 @@ EOF
 if ! WORKCELL_PERL_MARKER="${HOST_PERL_MARKER}" \
   PERL5OPT=-MWorkcellMarker \
   PERL5LIB="${HOST_PERL_INJECT_DIR}" \
-  "${ROOT_DIR}/scripts/workcell" --dry-run >/dev/null 2>&1; then
+  "${ROOT_DIR}/scripts/workcell" --agent codex --dry-run >/dev/null 2>&1; then
   echo "Expected scripts/workcell --dry-run to succeed under a hostile Perl environment" >&2
   exit 1
 fi
@@ -764,6 +1171,7 @@ touch "${MODE_TRAVERSAL_MARKER:?}"
 EOF
 if MODE_TRAVERSAL_MARKER="${MODE_TRAVERSAL_MARKER}" \
   "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
   --mode ../../tmp/workcell-mode-traversal \
   --allow-nongit-workspace \
   --workspace "${MODE_TRAVERSAL_WORKSPACE}" \
@@ -778,11 +1186,152 @@ fi
 grep -q "Unsupported mode" /tmp/workcell-mode-traversal.out
 rm -f "${MODE_TRAVERSAL_ENV}"
 
-if "${ROOT_DIR}/scripts/workcell" --mode strict --rebuild --dry-run >/tmp/workcell-strict-rebuild.out 2>&1; then
+if "${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --rebuild --dry-run >/tmp/workcell-strict-rebuild.out 2>&1; then
   echo "Expected strict mode to reject explicit --rebuild requests" >&2
   exit 1
 fi
 grep -q "strict mode does not rebuild or cold-bootstrap the runtime image" /tmp/workcell-strict-rebuild.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --mode >/tmp/workcell-missing-mode.out 2>&1; then
+  echo "Expected --mode without a value to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --mode requires a value." /tmp/workcell-missing-mode.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-mode.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace >/tmp/workcell-missing-workspace.out 2>&1; then
+  echo "Expected --workspace without a value to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --workspace requires a value." /tmp/workcell-missing-workspace.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-workspace.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --agent-autonomy >/tmp/workcell-missing-agent-autonomy.out 2>&1; then
+  echo "Expected --agent-autonomy without a value to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --agent-autonomy requires a value." /tmp/workcell-missing-agent-autonomy.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-agent-autonomy.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --agent-autonomy turbo --dry-run >/tmp/workcell-invalid-agent-autonomy.out 2>&1; then
+  echo "Expected invalid --agent-autonomy values to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Unsupported agent autonomy mode: turbo" /tmp/workcell-invalid-agent-autonomy.out
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --agent-arg >/tmp/workcell-missing-agent-arg.out 2>&1; then
+  echo "Expected --agent-arg without a value to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --agent-arg requires a value." /tmp/workcell-missing-agent-arg.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-agent-arg.out
+
+if "${ROOT_DIR}/scripts/workcell" --dry-run >/tmp/workcell-missing-agent.out 2>&1; then
+  echo "Expected workcell without --agent to fail cleanly" >&2
+  exit 1
+fi
+grep -q "Option --agent is required." /tmp/workcell-missing-agent.out
+grep -q '^Usage: workcell' /tmp/workcell-missing-agent.out
+
+STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"
+mkdir -p "${STRICT_PREFLIGHT_WORKSPACE}"
+printf '# marker\n' >"${STRICT_PREFLIGHT_WORKSPACE}/AGENTS.md"
+STRICT_PREFLIGHT_PROFILE="workcell-preflight-$$"
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}/missing" \
+  --dry-run >/tmp/workcell-missing-workspace.out 2>&1; then
+  echo "Expected nonexistent workspace resolution to fail with a Workcell-owned diagnostic" >&2
+  exit 1
+fi
+grep -q "Workspace path does not exist" /tmp/workcell-missing-workspace.out
+grep -q -- '--workspace' /tmp/workcell-missing-workspace.out
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" >/tmp/workcell-strict-preflight.out 2>&1; then
+  echo "Expected strict mode without a prepared image marker to fail fast before launch" >&2
+  exit 1
+fi
+grep -q "No reviewed runtime image is recorded for strict mode" /tmp/workcell-strict-preflight.out
+grep -q -- '--prepare' /tmp/workcell-strict-preflight.out
+if grep -q "starting colima" /tmp/workcell-strict-preflight.out; then
+  echo "Strict preflight should fail before Colima startup when the reviewed image marker is absent" >&2
+  exit 1
+fi
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --dry-run >/tmp/workcell-dry-run-no-image.out 2>&1; then
+  echo "Expected strict dry-run to work without a prepared image marker" >&2
+  cat /tmp/workcell-dry-run-no-image.out >&2
+  exit 1
+fi
+grep -q 'docker run' /tmp/workcell-dry-run-no-image.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --prepare \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --dry-run >/tmp/workcell-prepare-dry-run.out 2>&1; then
+  echo "Expected --prepare dry-run to continue working" >&2
+  cat /tmp/workcell-prepare-dry-run.out >&2
+  exit 1
+fi
+grep -q 'docker run' /tmp/workcell-prepare-dry-run.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --mode strict \
+  --dry-run >/tmp/workcell-default-autonomy-dry-run.stdout 2>/tmp/workcell-default-autonomy-dry-run.stderr; then
+  echo "Expected default autonomy dry-run to succeed" >&2
+  exit 1
+fi
+grep -q 'agent_autonomy=yolo' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'assurance_posture=mutable-session' /tmp/workcell-default-autonomy-dry-run.stderr
+grep -q 'WORKCELL_AGENT_AUTONOMY=yolo' /tmp/workcell-default-autonomy-dry-run.stdout
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --agent-autonomy prompt \
+  --agent-arg --version \
+  --dry-run >/tmp/workcell-prompt-autonomy-dry-run.stdout 2>/tmp/workcell-prompt-autonomy-dry-run.stderr; then
+  echo "Expected prompt autonomy dry-run with --agent-arg to succeed" >&2
+  cat /tmp/workcell-prompt-autonomy-dry-run.stderr >&2
+  exit 1
+fi
+grep -q 'agent_autonomy=prompt' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'assurance_posture=lower-assurance-prompt-autonomy,mutable-session' /tmp/workcell-prompt-autonomy-dry-run.stderr
+grep -q 'WORKCELL_AGENT_AUTONOMY=prompt' /tmp/workcell-prompt-autonomy-dry-run.stdout
+grep -q 'workcell:local codex --version' /tmp/workcell-prompt-autonomy-dry-run.stdout
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent claude \
+  --agent-arg --version \
+  --dry-run >/tmp/workcell-claude-agent-arg-dry-run.stdout 2>/tmp/workcell-claude-agent-arg-dry-run.stderr; then
+  echo "Expected Claude --agent-arg dry-run to succeed" >&2
+  cat /tmp/workcell-claude-agent-arg-dry-run.stderr >&2
+  exit 1
+fi
+grep -q 'agent_autonomy=yolo' /tmp/workcell-claude-agent-arg-dry-run.stderr
+grep -q 'workcell:local claude --version' /tmp/workcell-claude-agent-arg-dry-run.stdout
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --agent-arg --version \
+  --dry-run >/tmp/workcell-gemini-agent-arg-dry-run.stdout 2>/tmp/workcell-gemini-agent-arg-dry-run.stderr; then
+  echo "Expected Gemini --agent-arg dry-run to succeed" >&2
+  cat /tmp/workcell-gemini-agent-arg-dry-run.stderr >&2
+  exit 1
+fi
+grep -q 'agent_autonomy=yolo' /tmp/workcell-gemini-agent-arg-dry-run.stderr
+grep -q 'workcell:local gemini --version' /tmp/workcell-gemini-agent-arg-dry-run.stdout
 
 DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --dry-run 2>/dev/null)"
 
@@ -794,12 +1343,6 @@ mkdir -p "${MASK_VERIFY_WORKSPACE}/.codex"
 printf 'profile = "strict"\n' >"${MASK_VERIFY_WORKSPACE}/.codex/config.toml"
 printf '# nested agent marker\n' >"${MASK_VERIFY_WORKSPACE}/nested/AGENTS.md"
 printf '{\n  "masked": true\n}\n' >"${MASK_VERIFY_WORKSPACE}/nested/.claude/settings.json"
-mkdir -p "${MASK_VERIFY_WORKSPACE}/symlink-targets/.codex"
-printf '# symlinked agent marker\n' >"${MASK_VERIFY_WORKSPACE}/symlink-targets/AGENTS.md"
-printf 'profile = "strict"\n' >"${MASK_VERIFY_WORKSPACE}/symlink-targets/.codex/config.toml"
-mkdir -p "${MASK_VERIFY_WORKSPACE}/symlinked"
-ln -s "${MASK_VERIFY_WORKSPACE}/symlink-targets/AGENTS.md" "${MASK_VERIFY_WORKSPACE}/symlinked/AGENTS.md"
-ln -s "${MASK_VERIFY_WORKSPACE}/symlink-targets/.codex" "${MASK_VERIFY_WORKSPACE}/symlinked/.codex"
 git init -q "${MASK_VERIFY_WORKSPACE}/.alt"
 MASK_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run 2>/dev/null)"
 
@@ -824,19 +1367,25 @@ for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.gi
   fi
 done
 
-for required in "/workspace/nested/AGENTS.md:ro" "/workspace/nested/.claude:ro" "/workspace/.alt/.git/config:ro"; do
+for required in "/workspace/nested/.claude:ro" "/workspace/.alt/.git/config:ro"; do
   if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
     echo "Missing nested workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
   fi
 done
 
-for required in "/workspace/symlinked/AGENTS.md:ro" "/workspace/symlinked/.codex:ro"; do
-  if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
-    echo "Missing symlinked workspace control-plane masking mount in dry-run output: ${required}" >&2
-    exit 1
-  fi
-done
+if echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "/workspace/nested/AGENTS.md:ro"; then
+  echo "Nested AGENTS.md should remain visible in the workspace for path-scoped agent instructions" >&2
+  exit 1
+fi
+
+mkdir -p "${MASK_VERIFY_WORKSPACE}/symlinked"
+ln -s "${REAL_HOME}/.ssh/config" "${MASK_VERIFY_WORKSPACE}/symlinked/GEMINI.md"
+if "${ROOT_DIR}/scripts/workcell" --agent gemini --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run >/tmp/workcell-symlinked-doc.out 2>&1; then
+  echo "Expected symlinked workspace control docs to be rejected" >&2
+  exit 1
+fi
+grep -q 'Workcell refuses symlinked workspace control files' /tmp/workcell-symlinked-doc.out
 
 for forbidden in "github.com:443" "api.github.com:443" "objects.githubusercontent.com:443" "raw.githubusercontent.com:443"; do
   if echo "${DRY_RUN_OUTPUT}" | grep -q "${forbidden}"; then
@@ -844,6 +1393,27 @@ for forbidden in "github.com:443" "api.github.com:443" "objects.githubuserconten
     exit 1
   fi
 done
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --mode strict \
+  --container-mutability readonly \
+  --container-cpu 2 \
+  --container-memory 3g \
+  --vm-cpu 4 \
+  --vm-memory 8 \
+  --vm-disk 80 \
+  --dry-run >/tmp/workcell-resource-tunables.stdout 2>/tmp/workcell-resource-tunables.stderr; then
+  echo "Expected resource-tunable dry-run to succeed" >&2
+  cat /tmp/workcell-resource-tunables.stderr >&2
+  exit 1
+fi
+grep -q 'vm_resources=cpu=4 memory_gib=8 disk_gib=80' /tmp/workcell-resource-tunables.stderr
+grep -q 'container_resources=mutability=readonly cpu=2 memory=3g' /tmp/workcell-resource-tunables.stderr
+grep -q 'assurance_posture=managed-readonly' /tmp/workcell-resource-tunables.stderr
+grep -q 'WORKCELL_CONTAINER_MUTABILITY=readonly' /tmp/workcell-resource-tunables.stdout
+grep -q -- '--cpus 2' /tmp/workcell-resource-tunables.stdout
+grep -q -- '--memory 3g' /tmp/workcell-resource-tunables.stdout
 
 if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${REAL_HOME}" --dry-run >/dev/null 2>&1; then
   echo "Expected broad workspace rejection for ${REAL_HOME}" >&2
@@ -865,7 +1435,7 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-arbitrary-command --dry-
   exit 1
 fi
 
-ARBITRARY_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --allow-arbitrary-command --ack-arbitrary-command --dry-run -- bash -lc true 2>/dev/null)"
+ARBITRARY_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command --dry-run -- bash -lc true 2>/dev/null)"
 if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
   echo "Expected acknowledged arbitrary command dry-run to succeed" >&2
   exit 1
@@ -967,10 +1537,39 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${NONGIT_WORKSPACE}
   exit 1
 fi
 printf '# marker\n' >"${NONGIT_WORKSPACE}/AGENTS.md"
-if ! "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+if ! "${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
   echo "Expected marker-based non-git workspace to succeed with explicit opt-in" >&2
   exit 1
 fi
+
+UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
+mkdir -p "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}"
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --allow-nongit-workspace \
+  --workspace "${NONGIT_WORKSPACE}" \
+  --colima-profile "${UNMANAGED_PROFILE_NAME}" >/tmp/workcell-unmanaged-profile.out 2>&1; then
+  echo "Expected unmanaged Colima profile reuse to fail" >&2
+  exit 1
+fi
+grep -q "Refusing to reuse unmanaged Colima profile" /tmp/workcell-unmanaged-profile.out
+grep -q -- '--repair-profile' /tmp/workcell-unmanaged-profile.out
+grep -q "colima delete --profile" /tmp/workcell-unmanaged-profile.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --repair-profile \
+  --allow-nongit-workspace \
+  --workspace "${NONGIT_WORKSPACE}" \
+  --colima-profile "${UNMANAGED_PROFILE_NAME}" \
+  --dry-run >/tmp/workcell-repair-profile-dry-run.out 2>&1; then
+  echo "Expected --repair-profile dry-run to explain the repair action and continue on strict without an extra --prepare flag" >&2
+  cat /tmp/workcell-repair-profile-dry-run.out >&2
+  exit 1
+fi
+grep -q 'repair_action=delete_unmanaged_profile' /tmp/workcell-repair-profile-dry-run.out
+grep -q 'docker run' /tmp/workcell-repair-profile-dry-run.out
+rm -rf "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${UNMANAGED_PROFILE_NAME}"
 
 if [[ "$(uname -s)" == "Darwin" ]] &&
   host_tool_exists /opt/homebrew/bin/colima /usr/local/bin/colima &&
@@ -982,6 +1581,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
   COLIMA_PROFILE_FIXTURE="${REAL_HOME}/.colima/${RUBY_PROFILE_NAME}"
   mkdir -p "${COLIMA_PROFILE_FIXTURE}"
   printf '%s\n' "${NONGIT_WORKSPACE}" >"${COLIMA_PROFILE_FIXTURE}/workcell.managed"
+  printf 'image_tag=workcell:local\nimage_id=sha256:test\nsource_date_epoch=0\n' >"${COLIMA_PROFILE_FIXTURE}/workcell.image-ready"
   cat >"${COLIMA_PROFILE_FIXTURE}/colima.yaml" <<'EOF'
 vmType: qemu
 mountType: virtiofs
@@ -1071,8 +1671,8 @@ for label, settings in (("claude", claude_settings), ("claude managed", claude_m
     if guard != "/opt/workcell/adapters/claude/hooks/guard-bash.sh":
         raise SystemExit(f"{label} settings must use the managed guard-bash.sh hook")
 
-if claude_managed.get("disableBypassPermissionsMode") != "disable":
-    raise SystemExit("Claude managed settings must disable bypass-permissions mode")
+if claude_managed.get("disableBypassPermissionsMode") != "allow":
+    raise SystemExit("Claude managed settings must allow bypass-permissions mode under the external Workcell boundary")
 
 if gemini_settings.get("tools", {}).get("allowed") != []:
     raise SystemExit("Gemini adapter must not seed allowed tools")

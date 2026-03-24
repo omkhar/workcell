@@ -2,10 +2,15 @@
 readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   exec /usr/bin/env -i \
+    BUILDX_BUILDER="${BUILDX_BUILDER-}" \
     PATH="${TRUSTED_HOST_PATH}" \
     HOME=/tmp \
     SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH-}" \
     TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_REMOTE_BUILDKIT_LOCAL_CA="${WORKCELL_REMOTE_BUILDKIT_LOCAL_CA-}" \
+    WORKCELL_REMOTE_BUILDKIT_SSL_CERTS="${WORKCELL_REMOTE_BUILDKIT_SSL_CERTS-}" \
+    WORKCELL_DOCKER_HOST_HOME_ROOT="${WORKCELL_DOCKER_HOST_HOME_ROOT-}" \
+    WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT-}" \
     WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT="${WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT-}" \
     WORKCELL_RELEASE_BUNDLE_MANIFEST_PATH="${WORKCELL_RELEASE_BUNDLE_MANIFEST_PATH-}" \
     WORKCELL_RELEASE_BUNDLE_NAME="${WORKCELL_RELEASE_BUNDLE_NAME-}" \
@@ -174,15 +179,17 @@ build_bundle_locally() {
 build_bundle_in_validator() {
   local destination_dir="$1"
   local prefix="${BUNDLE_PREFIX%/}/"
+  local docker_root=""
   local relative_destination
 
   mkdir -p "${destination_dir}"
+  docker_root="$(workcell_docker_host_path "${ROOT_DIR}")"
   relative_destination="${destination_dir#"${ROOT_DIR}/"}"
 
   # shellcheck disable=SC2016
   docker_cmd run --rm \
     --entrypoint /bin/bash \
-    -v "${ROOT_DIR}:/workspace" \
+    -v "${docker_root}:/workspace" \
     -w /workspace \
     -e HOME=/tmp \
     -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
@@ -231,6 +238,7 @@ fi
 if command -v docker >/dev/null 2>&1; then
   setup_workcell_trusted_docker_client
   select_docker_context
+  ensure_workcell_selected_builder
   buildx_cmd build \
     --load \
     -t "${VALIDATOR_IMAGE}" \
