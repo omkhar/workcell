@@ -6,6 +6,7 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     PATH="${TRUSTED_HOST_PATH}" \
     HOME=/tmp \
     TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_REMOTE_VALIDATE_ALLOW_SHARED_DAEMON_HEAVY_CHECKS="${WORKCELL_REMOTE_VALIDATE_ALLOW_SHARED_DAEMON_HEAVY_CHECKS-}" \
     WORKCELL_REMOTE_VALIDATE_BASE_DIR="${WORKCELL_REMOTE_VALIDATE_BASE_DIR-}" \
     WORKCELL_REMOTE_VALIDATE_CONFIG_PATH="${WORKCELL_REMOTE_VALIDATE_CONFIG_PATH-}" \
     WORKCELL_REMOTE_VALIDATE_HOST="${WORKCELL_REMOTE_VALIDATE_HOST-}" \
@@ -28,6 +29,7 @@ LEGACY_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/.workcell.remote.local"
 REMOTE_CONFIG_PATH="${WORKCELL_REMOTE_VALIDATE_CONFIG_PATH:-${REAL_HOME}/.config/workcell/remote-validate.env}"
 REMOTE_HOST="${WORKCELL_REMOTE_VALIDATE_HOST:-}"
 REMOTE_BASE_DIR="${WORKCELL_REMOTE_VALIDATE_BASE_DIR:-/tmp}"
+ALLOW_SHARED_DAEMON_HEAVY_CHECKS="${WORKCELL_REMOTE_VALIDATE_ALLOW_SHARED_DAEMON_HEAVY_CHECKS:-0}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 REMOTE_USE_SUDO=1
 KEEP_REMOTE_DIR=0
@@ -56,7 +58,10 @@ that container.
 If ${REMOTE_CONFIG_PATH} exists, Workcell loads simple KEY=VALUE entries for
 WORKCELL_REMOTE_VALIDATE_HOST, WORKCELL_REMOTE_VALIDATE_BASE_DIR, and
 WORKCELL_REMOTE_VALIDATE_USE_SUDO from that host-local config before CLI
-parsing. Override the path with WORKCELL_REMOTE_VALIDATE_CONFIG_PATH or
+parsing. It also honors
+WORKCELL_REMOTE_VALIDATE_ALLOW_SHARED_DAEMON_HEAVY_CHECKS=1 there when you
+explicitly accept lower-assurance heavy checks on a shared remote Docker
+daemon. Override the path with WORKCELL_REMOTE_VALIDATE_CONFIG_PATH or
 --config <path>.
 
 Options:
@@ -76,7 +81,12 @@ Options:
                               remote docker commands
   --check <name>              One or more checks to run. Valid values:
                               validate, smoke, repro, release-bundle
-                              Default: all
+                              Default: validate
+  --allow-shared-daemon-heavy-checks
+                              Allow heavy remote checks that mount the shared
+                              remote Docker daemon into the helper container.
+                              This is lower-assurance and should be enabled
+                              only on a reviewed builder.
   --keep-remote-dir           Preserve the remote temp directory after exit
   --dry-run                   Print the plan without staging or executing
   -h, --help                  Show this help
@@ -163,6 +173,7 @@ load_local_remote_config() {
   assert_supported_remote_config_path "${REMOTE_CONFIG_PATH}"
 
   [[ -f "${REMOTE_CONFIG_PATH}" ]] || return 0
+  ALLOW_SHARED_DAEMON_HEAVY_CHECKS=0
 
   while IFS= read -r line || [[ -n "${line}" ]]; do
     line="${line#"${line%%[![:space:]]*}"}"
@@ -197,6 +208,17 @@ load_local_remote_config() {
             ;;
           *)
             echo "WORKCELL_REMOTE_VALIDATE_USE_SUDO in ${REMOTE_CONFIG_PATH} must be 0 or 1." >&2
+            exit 1
+            ;;
+        esac
+        ;;
+      WORKCELL_REMOTE_VALIDATE_ALLOW_SHARED_DAEMON_HEAVY_CHECKS)
+        case "${value}" in
+          0 | 1)
+            ALLOW_SHARED_DAEMON_HEAVY_CHECKS="${value}"
+            ;;
+          *)
+            echo "WORKCELL_REMOTE_VALIDATE_ALLOW_SHARED_DAEMON_HEAVY_CHECKS in ${REMOTE_CONFIG_PATH} must be 0 or 1." >&2
             exit 1
             ;;
         esac
@@ -385,6 +407,10 @@ while [[ $# -gt 0 ]]; do
       add_check "$2"
       shift 2
       ;;
+    --allow-shared-daemon-heavy-checks)
+      ALLOW_SHARED_DAEMON_HEAVY_CHECKS=1
+      shift
+      ;;
     --keep-remote-dir)
       KEEP_REMOTE_DIR=1
       shift
@@ -408,7 +434,7 @@ done
 require_remote_host
 
 if [[ "${#CHECKS[@]}" -eq 0 ]]; then
-  CHECKS=(validate smoke repro release-bundle)
+  CHECKS=(validate)
 fi
 
 if [[ "${SNAPSHOT_MODE}" != "worktree" ]] && [[ "${INCLUDE_UNTRACKED}" == "1" ]]; then
@@ -441,7 +467,27 @@ if [[ "${SNAPSHOT_MODE}" == "worktree" ]]; then
   echo "Include untracked: ${INCLUDE_UNTRACKED}"
 fi
 echo "Checks: ${CHECKS[*]}"
+echo "Allow shared-daemon heavy checks: ${ALLOW_SHARED_DAEMON_HEAVY_CHECKS}"
 echo "SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
+
+LIGHT_CHECKS=()
+HEAVY_CHECKS=()
+for check in "${CHECKS[@]}"; do
+  case "${check}" in
+    validate)
+      LIGHT_CHECKS+=("${check}")
+      ;;
+    smoke | repro | release-bundle)
+      HEAVY_CHECKS+=("${check}")
+      ;;
+  esac
+done
+
+if ((${#HEAVY_CHECKS[@]} > 0)) && [[ "${ALLOW_SHARED_DAEMON_HEAVY_CHECKS}" != "1" ]]; then
+  echo "Heavy remote checks require --allow-shared-daemon-heavy-checks or WORKCELL_REMOTE_VALIDATE_ALLOW_SHARED_DAEMON_HEAVY_CHECKS=1 in the host-local config." >&2
+  echo "Those checks mount the shared remote Docker daemon into the helper container and are lower-assurance on a shared builder." >&2
+  exit 1
+fi
 
 if [[ "${DRY_RUN}" == "1" ]]; then
   echo "Dry run only; no files were staged to the remote builder."
@@ -539,33 +585,46 @@ remote_docker build \
   -f "${REMOTE_DIR}/helper/Dockerfile" \
   "${REMOTE_DIR}/helper" >/dev/null
 
-remote_docker run --rm \
-  -i \
-  -e HOME=/tmp/workcell-home \
-  -e SSL_CERT_DIR=/etc/ssl/certs \
-  -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
-  -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-  -e WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT=default \
-  -e WORKCELL_DOCKER_HOST_HOME_ROOT="${REMOTE_HOME}" \
-  -e WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${REMOTE_DIR}/repo" \
-  -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC=1 \
-  -e WORKCELL_REMOTE_BUILDKIT_LOCAL_CA=/host-local-ca \
-  -e WORKCELL_REMOTE_BUILDKIT_SSL_CERTS=/host-ssl-certs \
-  -e WORKCELL_REPRO_PLATFORMS=linux/amd64 \
-  -e WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT=default \
-  -e WORKCELL_REPRO_DOCKER_CONTEXT=default \
-  -e WORKCELL_TEST_HOST_GID="${REMOTE_LOGIN_GID}" \
-  -e WORKCELL_TEST_HOST_UID="${REMOTE_LOGIN_UID}" \
-  -e WORKCELL_TEST_HOST_USER="${REMOTE_LOGIN_USER}" \
-  -v /etc/ssl/certs:/host-ssl-certs:ro \
-  -v /etc/ssl/certs:/etc/ssl/certs:ro \
-  -v /usr/local/share/ca-certificates:/host-local-ca:ro \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "${REMOTE_DIR}/repo:/workspace" \
-  -v "${REMOTE_HOME}:/tmp/workcell-home" \
-  --entrypoint /bin/bash \
-  "${REMOTE_VALIDATOR_IMAGE}" \
-  -s -- "${CHECKS[@]}" <<'EOF'
+run_remote_validator_container() {
+  local needs_docker="$1"
+  shift
+  local -a selected_checks=("$@")
+  local -a docker_args=(
+    run --rm
+    -i
+    -e HOME=/tmp/workcell-home
+    -e SSL_CERT_DIR=/etc/ssl/certs
+    -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
+    -e WORKCELL_TEST_HOST_GID="${REMOTE_LOGIN_GID}"
+    -e WORKCELL_TEST_HOST_UID="${REMOTE_LOGIN_UID}"
+    -e WORKCELL_TEST_HOST_USER="${REMOTE_LOGIN_USER}"
+    -v /etc/ssl/certs:/etc/ssl/certs:ro
+    -v "${REMOTE_DIR}/repo:/workspace"
+  )
+
+  if [[ "${needs_docker}" == "1" ]]; then
+    docker_args+=(
+      -e WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT=default
+      -e WORKCELL_DOCKER_HOST_HOME_ROOT="${REMOTE_HOME}"
+      -e WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${REMOTE_DIR}/repo"
+      -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC=1
+      -e WORKCELL_REMOTE_BUILDKIT_LOCAL_CA=/host-local-ca
+      -e WORKCELL_REMOTE_BUILDKIT_SSL_CERTS=/host-ssl-certs
+      -e WORKCELL_REPRO_PLATFORMS=linux/amd64
+      -e WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT=default
+      -e WORKCELL_REPRO_DOCKER_CONTEXT=default
+      -v /etc/ssl/certs:/host-ssl-certs:ro
+      -v /usr/local/share/ca-certificates:/host-local-ca:ro
+      -v "${REMOTE_HOME}:/tmp/workcell-home"
+      -v /var/run/docker.sock:/var/run/docker.sock
+    )
+  fi
+
+  remote_docker "${docker_args[@]}" \
+    --entrypoint /bin/bash \
+    "${REMOTE_VALIDATOR_IMAGE}" \
+    -s -- "${selected_checks[@]}" <<'EOF'
 set -euo pipefail
 
 REMOTE_BUILDER_NAME=""
@@ -584,6 +643,7 @@ mkdir -p /workspace/tmp
 chown "${WORKCELL_TEST_HOST_UID}:${WORKCELL_TEST_HOST_GID}" /workspace/tmp
 chmod 0755 /workspace/tmp
 
+rm -rf /workspace/.git
 git init -q
 git config user.name "Workcell Remote Validate"
 git config user.email "workcell@example.invalid"
@@ -632,6 +692,15 @@ for check in "$@"; do
   esac
 done
 EOF
+}
+
+if ((${#LIGHT_CHECKS[@]} > 0)); then
+  run_remote_validator_container 0 "${LIGHT_CHECKS[@]}"
+fi
+
+if ((${#HEAVY_CHECKS[@]} > 0)); then
+  run_remote_validator_container 1 "${HEAVY_CHECKS[@]}"
+fi
 
 if [[ "${KEEP_REMOTE_DIR}" == "1" ]]; then
   echo "Remote validation finished. Preserved workspace: ${REMOTE_DIR}"

@@ -87,10 +87,11 @@ Initial adapters target:
 ```bash
 ./scripts/install.sh
 workcell --prepare --agent codex --workspace /path/to/repo
+workcell --prepare-only --agent codex --workspace /path/to/repo
 workcell --agent codex --workspace /path/to/repo
 workcell --agent codex --inspect --workspace /path/to/repo
 workcell --agent codex --doctor --workspace /path/to/repo
-workcell --agent claude --agent-autonomy prompt --workspace /path/to/repo
+workcell --agent claude --workspace /path/to/repo
 workcell --prepare --agent gemini --agent-arg --version --workspace /path/to/repo
 man workcell
 ```
@@ -117,9 +118,14 @@ Workcell surfaces that posture explicitly in the launch audit output.
 making you repeat `codex`, `claude`, or `gemini` yourself. `--agent-arg`
 values are still treated as ordinary user-supplied provider argv and go
 through the same in-container denylist as raw `-- ...` arguments.
+`--prepare-only` is the prewarm path when you want to seed or refresh the
+reviewed runtime image without launching an agent session yet.
 `--cache-profile off` is the default. `--cache-profile standard` opt-ins to a
 host-persisted non-secret cache plane for package/build tooling such as npm,
-pip, Cargo registry/git, Go module/build cache, and `ccache`. That is a
+pnpm, pip, uv, Poetry, Cargo registry/git, Go module/build cache, `ccache`,
+`bun`, and XDG-cache-backed tooling. The persistent cache plane is scoped to
+the current workspace by default so one repo does not silently seed tool caches
+for another. That is a
 lower-assurance path and is not treated as part of the clean `strict`
 session boundary.
 `--codex-rules-mutability readonly` is the clean-session default. That keeps
@@ -159,13 +165,14 @@ root-to-runtime-user handoff inside the container:
 
 Choose the mutability lane explicitly:
 
-- `strict` + `--container-mutability ephemeral`: default DX lane,
-  `container_assurance=managed-mutable`. This allows transient package installs,
-  but a successful package mutation downgrades the live session to
-  `lower-assurance-package-mutation` until exit.
+- `strict`: default developer lane, `container_assurance=managed-mutable`.
+  This allows transient package installs, but a successful package mutation
+  downgrades the live session to `lower-assurance-package-mutation` until exit.
 - `strict` + `--container-mutability readonly`: strongest managed lane,
   `container_assurance=managed-readonly`. Package-manager writes stay blocked,
   so the in-session control-plane posture does not downgrade.
+- `build`: explicit mutable preparation lane with broader egress for dependency
+  and image creation work.
 - `--agent-autonomy prompt`: keeps the provider’s ordinary approval flow, but
   Workcell surfaces that separately as
   `autonomy_assurance=lower-assurance-prompt-autonomy`.
@@ -184,6 +191,8 @@ Common recovery paths:
 - First launch or missing prepared runtime image:
   `workcell --prepare --agent codex --workspace /path/to/repo`
   Replace `codex` with `claude` or `gemini` for the corresponding provider.
+- Prewarm the runtime image without launching:
+  `workcell --prepare-only --agent codex --workspace /path/to/repo`
 - First launch with provider prompts enabled:
   `workcell --prepare --agent claude --agent-autonomy prompt --workspace /path/to/repo`
 - One-off provider flags without repeating the provider command:
@@ -206,6 +215,8 @@ Common recovery paths:
   `workcell auth-status --agent codex --workspace /path/to/repo`
   This includes the primary provider auth mode, the ordered auth mode set, and
   SSH config assurance when injection is active.
+- Fast local validation during normal editing:
+  `./scripts/dev-quick-check.sh`
 - Clean stale Workcell temp state:
   `workcell --gc`
   Alias: `workcell gc`
@@ -264,7 +275,10 @@ claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
 claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
 gemini_env = "/Users/example/.config/workcell/gemini.env"
 gemini_projects = "/Users/example/.config/workcell/gemini-projects.json"
-github_hosts = "/Users/example/.config/gh/hosts.yml"
+
+[credentials.github_hosts]
+source = "/Users/example/.config/gh/hosts.yml"
+providers = ["codex", "claude", "gemini"]
 
 [ssh]
 enabled = true
@@ -293,7 +307,11 @@ as `[credentials]` and are copied into the session from their original host
 paths. Secret sources must be owned by the launching user, must not be
 symlinks, and must not be group/world-readable. `ssh.known_hosts` is treated
 separately: the source file may stay world-readable as usual, but it must not
-be a symlink or group/world-writable. When you need provider- or mode-specific
+be a symlink or group/world-writable. Shared GitHub CLI credentials must use
+`[credentials.github_hosts]` or `[credentials.github_config]` tables with
+explicit `providers = [...]` selection. Legacy scalar shared GitHub credential
+entries still work as an all-provider shorthand for existing local policies.
+When you need provider- or mode-specific
 scoping, use `[credentials.<name>]` tables with `source`, `providers`, and
 `modes`.
 
@@ -337,11 +355,14 @@ Intentional non-goals for the safe path:
   validator image, runs workflow lint, validates the repo inside the validator
   container, then runs invariants, container smoke, release-bundle
   reproducibility, runtime reproducibility, and optionally the remote
-  linux/amd64 lane. By default it requires a clean worktree, including
-  untracked files. With `--allow-dirty`, local validation runs against the live
-  worktree and the remote lane auto-switches to `--remote-snapshot worktree`
-  plus `--include-untracked` unless you explicitly override the snapshot mode.
-  Workflow lint still depends on host `actionlint` and `zizmor`.
+  linux/amd64 lane. `--remote` runs the safe remote `validate` lane only;
+  `--remote-heavy` is the explicit shared-daemon escape hatch for remote
+  `smoke` / `repro` / `release-bundle` checks. By default it requires a clean
+  worktree, including untracked files. With `--allow-dirty`, local validation
+  runs against the live worktree and the remote lane auto-switches to
+  `--remote-snapshot worktree` plus `--include-untracked` unless you explicitly
+  override the snapshot mode. Workflow lint still depends on host `actionlint`
+  and `zizmor`.
 - `scripts/check-workflows.sh`: `actionlint` and `zizmor`
 - `scripts/check-pinned-inputs.sh`: pin-policy checks for non-ecosystem release
   inputs such as the Debian snapshot, immutable base-image digests, and exact
@@ -364,18 +385,18 @@ Intentional non-goals for the safe path:
   under a fixed `SOURCE_DATE_EPOCH`
 - `scripts/dev-remote-validate.sh`: stage the current working tree to a private
   remote amd64 builder, build an ephemeral remote helper container there from
-  `tools/remote-validator/Dockerfile`, and run
-  `validate-repo`, `container-smoke`,
-  `verify-reproducible-build`, and `verify-release-bundle` inside that
-  container as a single pre-push preflight. Set the builder explicitly with
-  `--host <user@host>` or `WORKCELL_REMOTE_VALIDATE_HOST`. The default remote
-  snapshot is the local index; `--snapshot worktree` and `--include-untracked`
-  are explicit opt-ins. For host-local defaults, point
-  `WORKCELL_REMOTE_VALIDATE_CONFIG_PATH` at a host-local config file or use the
-  default `~/.config/workcell/remote-validate.env`. The remote
-  reproducibility lane is intentionally native `linux/amd64` only; the
-  canonical multi-architecture release gate remains the local macOS plus GitHub
-  release path.
+  `tools/remote-validator/Dockerfile`. The default remote run is the safe
+  `validate` check only. Heavy shared-daemon checks such as `smoke`, `repro`,
+  and `release-bundle` require explicit `--check ...` selection plus
+  `--allow-shared-daemon-heavy-checks` or the corresponding host-local config
+  toggle. Set the builder explicitly with `--host <user@host>` or
+  `WORKCELL_REMOTE_VALIDATE_HOST`. The default remote snapshot is the local
+  index; `--snapshot worktree` and `--include-untracked` are explicit opt-ins.
+  For host-local defaults, point `WORKCELL_REMOTE_VALIDATE_CONFIG_PATH` at a
+  host-local config file or use the default
+  `~/.config/workcell/remote-validate.env`. The remote reproducibility lane is
+  intentionally native `linux/amd64` only; the canonical multi-architecture
+  release gate remains the local macOS plus GitHub release path.
 
 Full Colima plus Virtualization.Framework boundary verification remains a local
 or self-hosted macOS exercise. GitHub-hosted CI validates the repo shape and

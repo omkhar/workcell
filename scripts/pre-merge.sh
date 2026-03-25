@@ -8,6 +8,7 @@ VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-${VALIDATOR_IMAGE_DEFAULT_TAG}}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 REBUILD_VALIDATOR=0
 RUN_REMOTE=0
+RUN_REMOTE_HEAVY=0
 RUN_RELEASE_BUNDLE=1
 RUN_REPRO=1
 ALLOW_DIRTY=0
@@ -30,7 +31,10 @@ Options:
   --rebuild-validator        Rebuild the local validator image before validation
   --skip-release-bundle      Skip verify-release-bundle.sh
   --skip-repro               Skip verify-reproducible-build.sh
-  --remote                   Also run dev-remote-validate.sh with all checks
+  --remote                   Also run dev-remote-validate.sh with the safe
+                             remote validate-only lane
+  --remote-heavy             Extend --remote with explicit shared-daemon
+                             heavy checks (smoke/repro/release-bundle)
   --remote-host <user@host>  Override the remote builder host for this run
   --remote-config <path>     Override the host-local remote config file
   --remote-snapshot <mode>   Remote snapshot mode: head, index, or worktree
@@ -110,7 +114,12 @@ run_remote_validation() {
   cmd+=(--snapshot "${REMOTE_SNAPSHOT}")
   [[ "${REMOTE_INCLUDE_UNTRACKED}" -eq 1 ]] && cmd+=(--include-untracked)
   [[ "${REMOTE_KEEP_DIR}" -eq 1 ]] && cmd+=(--keep-remote-dir)
-  cmd+=(--check validate --check smoke --check repro --check release-bundle)
+  cmd+=(--check validate)
+  if [[ "${RUN_REMOTE_HEAVY}" -eq 1 ]]; then
+    cmd+=(--allow-shared-daemon-heavy-checks --check smoke)
+    [[ "${RUN_REPRO}" -eq 1 ]] && cmd+=(--check repro)
+    [[ "${RUN_RELEASE_BUNDLE}" -eq 1 ]] && cmd+=(--check release-bundle)
+  fi
 
   "${cmd[@]}"
 }
@@ -135,6 +144,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --remote)
       RUN_REMOTE=1
+      shift
+      ;;
+    --remote-heavy)
+      RUN_REMOTE=1
+      RUN_REMOTE_HEAVY=1
       shift
       ;;
     --remote-host)

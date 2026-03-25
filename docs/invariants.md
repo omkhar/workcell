@@ -79,7 +79,7 @@ The current enforcement model is not a hostname-aware proxy. `strict` does not
 perform cold image builds or rebuilds; runtime-image creation is an explicit
 `build`-mode operation that may temporarily apply a separate pinned bootstrap
 endpoint set before returning to the steady-state runtime allowlist. When the
-operator keeps the default `ephemeral` container mutability, the steady-state
+operator explicitly opts into `ephemeral` container mutability, the steady-state
 allowlist also includes the pinned Debian snapshot endpoints used by
 `apt` and `apt-get` so transient build tooling can be installed without enabling
 arbitrary distro mirrors. A successful package mutation is an explicit
@@ -145,21 +145,23 @@ command.
 - provider-native bounded or constrained mode only where the provider offers
   one, with the shared Workcell runtime remaining the primary boundary
 - allowlisted steady-state egress only
-- pinned Debian snapshot egress for `apt` and `apt-get` when the default
+- pinned Debian snapshot egress for `apt` and `apt-get` when explicit
   `ephemeral` container mutability is active
 - requires a prebuilt prepared runtime image; `strict` does not rebuild or
   cold-bootstrap that image
 - requires active Docker seccomp support in the managed runtime before launch
 - may mount an opt-in host-persisted non-secret cache plane for package
-  indexes and compiler caches when `cache_profile=standard`; this is a
+  indexes and compiler caches when `cache_profile=standard`; the default cache
+  namespace is scoped to the current workspace, and this is still a
   lower-assurance path and is not part of the clean `strict` session boundary
 
 Assurance mapping within `strict`:
 
-- `ephemeral`: default DX lane, `container_assurance=managed-mutable`
+- `ephemeral`: default developer lane, `container_assurance=managed-mutable`
 - `ephemeral` adds only the handoff capabilities required to move from root to
   the mapped runtime user inside the container: `SETUID`, `SETGID`
-- `readonly`: strongest managed lane, `container_assurance=managed-readonly`
+- `readonly`: strongest managed lane for `strict`,
+  `container_assurance=managed-readonly`
 - prompt autonomy: separate lower-assurance flag,
   `autonomy_assurance=lower-assurance-prompt-autonomy`
 - session Codex rules mutability: explicit lower-assurance flag,

@@ -122,6 +122,153 @@ rg() {
   return 127
 }
 
+canonicalize_verify_tool_path() {
+  local candidate="$1"
+
+  python3 - "${candidate}" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(sys.argv[1]))
+PY
+}
+
+verify_tool_path_is_trusted() {
+  local candidate="$1"
+  local workspace_root="${2:-}"
+  local trusted_prefixes=(
+    /usr/bin
+    /bin
+    /usr/sbin
+    /sbin
+    /usr/local/bin
+    /usr/local/Cellar
+    /opt/homebrew/bin
+    /opt/homebrew/Cellar
+    /Applications/Docker.app/Contents/Resources/bin
+  )
+  local prefix=""
+
+  [[ "${candidate}" = /* ]] || return 1
+  case "${candidate}" in
+    "${ROOT_DIR}" | "${ROOT_DIR}"/*)
+      return 1
+      ;;
+  esac
+  if [[ -n "${workspace_root}" ]]; then
+    case "${candidate}" in
+      "${workspace_root}" | "${workspace_root}"/*)
+        return 1
+        ;;
+    esac
+  fi
+  for prefix in "${trusted_prefixes[@]}"; do
+    case "${candidate}" in
+      "${prefix}" | "${prefix}"/*)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+doctor_tool_is_available() {
+  local workspace_root="$1"
+  shift
+  local name="$1"
+  shift
+  local candidate=""
+  local canonical_candidate=""
+
+  for candidate in "$@"; do
+    canonical_candidate="$(canonicalize_verify_tool_path "${candidate}")"
+    if [[ -x "${candidate}" ]] &&
+      verify_tool_path_is_trusted "${candidate}" "${workspace_root}" &&
+      verify_tool_path_is_trusted "${canonical_candidate}" "${workspace_root}"; then
+      return 0
+    fi
+  done
+
+  candidate="$(type -P "${name}" || true)"
+  canonical_candidate="$(canonicalize_verify_tool_path "${candidate}")"
+  if [[ -n "${candidate}" ]] &&
+    verify_tool_path_is_trusted "${candidate}" "${workspace_root}" &&
+    verify_tool_path_is_trusted "${canonical_candidate}" "${workspace_root}"; then
+    return 0
+  fi
+
+  return 1
+}
+
+expected_doctor_missing_host_tools_csv_for_workspace() {
+  local workspace_root="$1"
+  local -a missing=()
+
+  doctor_tool_is_available "${workspace_root}" colima /opt/homebrew/bin/colima /usr/local/bin/colima || missing+=(colima)
+  doctor_tool_is_available "${workspace_root}" docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker || missing+=(docker)
+  doctor_tool_is_available "${workspace_root}" ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby || missing+=(ruby)
+
+  if ((${#missing[@]} == 0)); then
+    printf 'none\n'
+    return 0
+  fi
+
+  local IFS=','
+  printf '%s\n' "${missing[*]}"
+}
+
+assert_doctor_missing_host_tools() {
+  local file="$1"
+  local expected="$2"
+
+  if ! grep -q "^doctor_missing_host_tools=${expected}$" "${file}"; then
+    echo "Expected ${file} to report doctor_missing_host_tools=${expected}" >&2
+    cat "${file}" >&2
+    exit 1
+  fi
+}
+
+assert_doctor_next_for_prepare() {
+  local file="$1"
+  local expected_missing="$2"
+
+  if [[ "${expected_missing}" == "none" ]]; then
+    if ! grep -q -- '--prepare' "${file}"; then
+      echo "Expected ${file} to recommend --prepare when required host tools are present" >&2
+      cat "${file}" >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  if ! grep -q '^doctor_recommended_next=install-host-tools$' "${file}"; then
+    echo "Expected ${file} to recommend installing missing host tools before prepare" >&2
+    cat "${file}" >&2
+    exit 1
+  fi
+}
+
+assert_doctor_next_for_missing_workspace() {
+  local file="$1"
+  local expected_missing="$2"
+
+  if [[ "${expected_missing}" == "none" ]]; then
+    if ! grep -q '^doctor_recommended_next=fix-workspace$' "${file}"; then
+      echo "Expected ${file} to recommend fixing the missing workspace when required host tools are present" >&2
+      cat "${file}" >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  if ! grep -q '^doctor_recommended_next=install-host-tools$' "${file}"; then
+    echo "Expected ${file} to prioritize installing missing host tools before fixing the workspace" >&2
+    cat "${file}" >&2
+    exit 1
+  fi
+}
+
 for file in \
   "${ROOT_DIR}/adapters/codex/.codex/config.toml" \
   "${ROOT_DIR}/adapters/claude/.claude/settings.json" \
@@ -219,6 +366,11 @@ fi
 
 if ! grep -q -- '--prepare' /tmp/workcell-installed-help.out; then
   echo "Expected installed ~/.local/bin/workcell --help to describe --prepare" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--prepare-only' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --prepare-only" >&2
   exit 1
 fi
 
@@ -333,7 +485,10 @@ codex_auth = "codex-auth.json"
 claude_auth = "claude-auth.json"
 claude_mcp = "claude-mcp.json"
 gemini_projects = "gemini-projects.json"
-github_hosts = "gh-hosts.yml"
+
+[credentials.github_hosts]
+source = "gh-hosts.yml"
+providers = ["codex"]
 
 [ssh]
 enabled = true
@@ -487,7 +642,7 @@ if [[ "${INJECTION_DRY_RUN_OUTPUT}" == *"${INJECTION_POLICY_FIXTURE_ROOT}/codex-
 fi
 
 if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_CONTAINER_MUTABILITY=ephemeral'* ]]; then
-  echo "Expected workcell --dry-run to default the runtime to ephemeral container mutability" >&2
+  echo "Expected workcell --dry-run to default strict mode to ephemeral container mutability" >&2
   exit 1
 fi
 
@@ -1431,6 +1586,13 @@ grep -q '^Usage: workcell' /tmp/workcell-missing-agent.out
 STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"
 mkdir -p "${STRICT_PREFLIGHT_WORKSPACE}"
 printf '# marker\n' >"${STRICT_PREFLIGHT_WORKSPACE}/AGENTS.md"
+MISSING_DOCTOR_WORKSPACE="${BARRIER_VERIFY_ROOT}/missing-workspace-for-doctor"
+EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS="$(
+  expected_doctor_missing_host_tools_csv_for_workspace "${STRICT_PREFLIGHT_WORKSPACE}"
+)"
+EXPECTED_MISSING_DOCTOR_MISSING_HOST_TOOLS="$(
+  expected_doctor_missing_host_tools_csv_for_workspace "${MISSING_DOCTOR_WORKSPACE}"
+)"
 STRICT_PREFLIGHT_PROFILE="workcell-preflight-$$"
 rm -rf \
   "${REAL_HOME}/.colima/${STRICT_PREFLIGHT_PROFILE}" \
@@ -1525,8 +1687,9 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor.out
+assert_doctor_missing_host_tools /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 grep -q '^doctor_prepared_image=0$' /tmp/workcell-doctor.out
-grep -q -- '--prepare' /tmp/workcell-doctor.out
+assert_doctor_next_for_prepare /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 if ! "${ROOT_DIR}/scripts/workcell" \
   doctor \
   --agent codex \
@@ -1538,20 +1701,23 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor-subcommand.out
+assert_doctor_missing_host_tools /tmp/workcell-doctor-subcommand.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
+assert_doctor_next_for_prepare /tmp/workcell-doctor-subcommand.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --no-default-injection-policy \
-  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-doctor" \
+  --workspace "${MISSING_DOCTOR_WORKSPACE}" \
   --colima-profile "${STRICT_PREFLIGHT_PROFILE}-missing-doctor" \
   --doctor >/tmp/workcell-doctor-missing.out 2>&1; then
   echo "Expected --doctor to succeed even when the workspace is missing" >&2
   exit 1
 fi
 grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor-missing.out
+assert_doctor_missing_host_tools /tmp/workcell-doctor-missing.out "${EXPECTED_MISSING_DOCTOR_MISSING_HOST_TOOLS}"
 grep -Eq '^workspace=.*/missing-workspace-for-doctor$' /tmp/workcell-doctor-missing.out
 grep -q '^workspace_status=missing$' /tmp/workcell-doctor-missing.out
-grep -q '^doctor_recommended_next=fix-workspace$' /tmp/workcell-doctor-missing.out
+assert_doctor_next_for_missing_workspace /tmp/workcell-doctor-missing.out "${EXPECTED_MISSING_DOCTOR_MISSING_HOST_TOOLS}"
 
 STALE_MARKER_PROFILE="${STRICT_PREFLIGHT_PROFILE}-stale"
 STALE_MARKER_DIR="${REAL_HOME}/.colima/${STALE_MARKER_PROFILE}"
@@ -1574,8 +1740,9 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^current_image_id=none$' /tmp/workcell-doctor-stale.out
+assert_doctor_missing_host_tools /tmp/workcell-doctor-stale.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 grep -q '^doctor_prepared_image=0$' /tmp/workcell-doctor-stale.out
-grep -q -- '--prepare' /tmp/workcell-doctor-stale.out
+assert_doctor_next_for_prepare /tmp/workcell-doctor-stale.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 rm -rf "${STALE_MARKER_DIR}" "${REAL_HOME}/.colima/_lima/colima-${STALE_MARKER_PROFILE}"
 
 DEBUG_LOG_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.log"
@@ -1595,6 +1762,22 @@ test -f "${DEBUG_LOG_CAPTURE}"
 test "$(file_mode_octal "${DEBUG_LOG_CAPTURE}")" = "600"
 grep -q 'Workcell warning: full host-persisted debug log capture is enabled for this session:' /tmp/workcell-debug-log.out
 grep -q 'execution_path=' "${DEBUG_LOG_CAPTURE}"
+DEBUG_LOG_SYMLINK_TARGET="${BARRIER_VERIFY_ROOT}/debug/redirected.log"
+DEBUG_LOG_SYMLINK="${BARRIER_VERIFY_ROOT}/debug/symlink.log"
+rm -f "${DEBUG_LOG_SYMLINK_TARGET}" "${DEBUG_LOG_SYMLINK}"
+printf 'seed\n' >"${DEBUG_LOG_SYMLINK_TARGET}"
+ln -s "${DEBUG_LOG_SYMLINK_TARGET}" "${DEBUG_LOG_SYMLINK}"
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --debug-log "${DEBUG_LOG_SYMLINK}" \
+  --dry-run >/tmp/workcell-debug-log-symlink.out 2>&1; then
+  echo "Expected --debug-log to reject symlinked host output paths" >&2
+  exit 1
+fi
+grep -q 'Refusing symlinked host output path component:' /tmp/workcell-debug-log-symlink.out
 mkdir -p "${REAL_HOME}/.colima/${DEBUG_LOG_PROFILE}"
 printf '%s\n' "${DEBUG_LOG_CAPTURE}" >"${REAL_HOME}/.colima/${DEBUG_LOG_PROFILE}/workcell.latest-debug-log"
 if ! "${ROOT_DIR}/scripts/workcell" \
@@ -1678,12 +1861,18 @@ claude_auth = "claude-auth.json"
 claude_api_key = "claude-api-key.txt"
 gemini_env = "gemini.env"
 gcloud_adc = "gcloud-adc.json"
-github_hosts = "hosts.yml"
+[credentials.github_hosts]
+source = "hosts.yml"
+providers = ["codex", "claude", "gemini"]
 [ssh]
 enabled = true
 config = "ssh-config"
 allow_unsafe_config = true
 EOF
+cat >"${AUTH_STATUS_ROOT}/gemini.env" <<'EOF'
+GOOGLE_CLOUD_LOCATION=us-central1
+EOF
+chmod 0600 "${AUTH_STATUS_ROOT}/gemini.env"
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
@@ -1733,6 +1922,19 @@ grep -q '^provider_auth_mode=gemini_env$' /tmp/workcell-auth-status-gemini.out
 grep -q '^provider_auth_modes=gemini_env,gcloud_adc$' /tmp/workcell-auth-status-gemini.out
 grep -q '^shared_auth_modes=github_hosts$' /tmp/workcell-auth-status-gemini.out
 grep -q '^github_auth_present=1$' /tmp/workcell-auth-status-gemini.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${ROOT_DIR}" \
+  --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+  --dry-run >/tmp/workcell-gemini-network.stdout 2>/tmp/workcell-gemini-network.stderr; then
+  echo "Expected Gemini dry-run with scoped auth policy to succeed" >&2
+  exit 1
+fi
+grep -q 'accounts.google.com:443' /tmp/workcell-gemini-network.stderr
+grep -q 'api.github.com:443' /tmp/workcell-gemini-network.stderr
+grep -q 'us-central1-aiplatform.googleapis.com:443' /tmp/workcell-gemini-network.stderr
+grep -q -- '--add-host accounts.google.com:' /tmp/workcell-gemini-network.stdout
+grep -q -- '--add-host us-central1-aiplatform.googleapis.com:' /tmp/workcell-gemini-network.stdout
 
 BROKEN_DEBUG_POINTER_PROFILE="${STRICT_PREFLIGHT_PROFILE}-broken-debug-pointer"
 mkdir -p "${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}"
@@ -1836,7 +2038,7 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'remote validation will use --remote-snapshot worktree --include-untracked' /tmp/workcell-premerge-allow-dirty.out
-grep -q 'dev-remote-validate.sh --snapshot worktree --include-untracked --check validate --check smoke --check repro --check release-bundle' "${PREMERGE_LOG}"
+grep -q 'dev-remote-validate.sh --snapshot worktree --include-untracked --check validate' "${PREMERGE_LOG}"
 
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
@@ -1851,7 +2053,7 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'warning: --allow-dirty validates the live worktree locally, but remote validation will use --remote-snapshot index.' /tmp/workcell-premerge-remote-index.out
-grep -q 'dev-remote-validate.sh --snapshot index --check validate --check smoke --check repro --check release-bundle' "${PREMERGE_LOG}"
+grep -q 'dev-remote-validate.sh --snapshot index --check validate' "${PREMERGE_LOG}"
 
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
@@ -1867,6 +2069,19 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
 fi
 grep -q 'local validation sees untracked files, but remote worktree validation will exclude them without --include-untracked.' /tmp/workcell-premerge-remote-worktree.out
 
+: >"${PREMERGE_LOG}"
+if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --allow-dirty \
+  --remote-heavy >/tmp/workcell-premerge-remote-heavy.out 2>&1; then
+  echo "Expected explicit heavy remote pre-merge harness to succeed" >&2
+  cat /tmp/workcell-premerge-remote-heavy.out >&2
+  exit 1
+fi
+grep -q 'dev-remote-validate.sh --snapshot worktree --include-untracked --check validate --allow-shared-daemon-heavy-checks --check smoke --check repro --check release-bundle' "${PREMERGE_LOG}"
+
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --prepare \
@@ -1879,6 +2094,19 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q 'docker run' /tmp/workcell-prepare-dry-run.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --prepare-only \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --dry-run >/tmp/workcell-prepare-only-dry-run.out 2>&1; then
+  echo "Expected --prepare-only dry-run to succeed" >&2
+  cat /tmp/workcell-prepare-only-dry-run.out >&2
+  exit 1
+fi
+grep -q '^prepare_only=1 no_session_launch=1$' /tmp/workcell-prepare-only-dry-run.out
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
@@ -2449,6 +2677,25 @@ if ! "${ROOT_DIR}/scripts/dev-remote-validate.sh" --config "${LOCAL_REMOTE_CONFI
 fi
 grep -q 'Remote host: builder@example.internal' /tmp/workcell-remote-config-cli.out
 grep -q "Remote config path: ${LOCAL_REMOTE_CONFIG_PATH}" /tmp/workcell-remote-config-cli.out
+
+if "${ROOT_DIR}/scripts/dev-remote-validate.sh" --config "${LOCAL_REMOTE_CONFIG_PATH}" --check smoke --dry-run >/tmp/workcell-remote-heavy-no-ack.out 2>&1; then
+  echo "Expected heavy remote validation without an explicit shared-daemon acknowledgement to be rejected" >&2
+  exit 1
+fi
+grep -q 'Heavy remote checks require --allow-shared-daemon-heavy-checks' /tmp/workcell-remote-heavy-no-ack.out
+
+cat <<'EOF' >"${LOCAL_REMOTE_CONFIG_PATH}"
+WORKCELL_REMOTE_VALIDATE_HOST=builder@example.internal
+WORKCELL_REMOTE_VALIDATE_BASE_DIR=/var/tmp/workcell
+WORKCELL_REMOTE_VALIDATE_USE_SUDO=0
+WORKCELL_REMOTE_VALIDATE_ALLOW_SHARED_DAEMON_HEAVY_CHECKS=1
+EOF
+if ! "${ROOT_DIR}/scripts/dev-remote-validate.sh" --config "${LOCAL_REMOTE_CONFIG_PATH}" --check smoke --dry-run >/tmp/workcell-remote-heavy-ack.out 2>&1; then
+  echo "Expected heavy remote validation with an explicit shared-daemon acknowledgement to be accepted" >&2
+  cat /tmp/workcell-remote-heavy-ack.out >&2
+  exit 1
+fi
+grep -q 'Allow shared-daemon heavy checks: 1' /tmp/workcell-remote-heavy-ack.out
 
 cat <<'EOF' >"${LEGACY_LOCAL_REMOTE_CONFIG_PATH}"
 WORKCELL_REMOTE_VALIDATE_HOST=builder@example.internal

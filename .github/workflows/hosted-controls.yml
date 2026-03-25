@@ -27,5 +27,6 @@ jobs:
 
       - name: Verify GitHub-hosted controls
         env:
+          WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
           WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
         run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"

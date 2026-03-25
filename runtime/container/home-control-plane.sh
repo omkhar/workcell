@@ -3,12 +3,87 @@
 # shellcheck disable=SC1091
 source /usr/local/libexec/workcell/assurance.sh
 
+workcell_managed_session_root_for_path() {
+  local path="$1"
+
+  case "${path}" in
+    /state/agent-home | /state/agent-home/*)
+      printf '/state/agent-home\n'
+      ;;
+    /state/injected | /state/injected/*)
+      printf '/state/injected\n'
+      ;;
+    *)
+      workcell_die "Workcell session target is outside the managed session roots: ${path}"
+      ;;
+  esac
+}
+
+workcell_assert_no_symlink_path_components() {
+  local path="$1"
+  local label="$2"
+  local include_target="${3:-1}"
+  local root=""
+  local current=""
+
+  root="$(workcell_managed_session_root_for_path "${path}")"
+  if [[ "${include_target}" == "1" ]]; then
+    current="${path}"
+  else
+    current="$(dirname "${path}")"
+  fi
+  while :; do
+    if [[ -L "${current}" ]]; then
+      workcell_die "Workcell refused ${label}: symlinked session path component ${current}"
+    fi
+    if [[ "${current}" == "${root}" ]]; then
+      return 0
+    fi
+    current="$(dirname "${current}")"
+  done
+}
+
+workcell_prepare_session_parent() {
+  local target_path="$1"
+  local label="$2"
+  local parent_path=""
+
+  workcell_assert_no_symlink_path_components "${target_path}" "${label}" 0
+  parent_path="$(dirname "${target_path}")"
+  mkdir -p "${parent_path}"
+  workcell_assert_no_symlink_path_components "${target_path}" "${label}" 0
+}
+
+workcell_prepare_session_directory() {
+  local target_path="$1"
+  local label="$2"
+
+  workcell_prepare_session_parent "${target_path}" "${label}"
+  if [[ -e "${target_path}" ]] && [[ ! -d "${target_path}" ]]; then
+    rm -rf "${target_path}"
+  fi
+  mkdir -p "${target_path}"
+  workcell_assert_no_symlink_path_components "${target_path}" "${label}"
+}
+
+workcell_reset_session_target() {
+  local target_path="$1"
+  local label="$2"
+
+  workcell_prepare_session_parent "${target_path}" "${label}"
+  if [[ -L "${target_path}" ]]; then
+    rm -f "${target_path}"
+  elif [[ -e "${target_path}" ]]; then
+    rm -rf "${target_path}"
+  fi
+  workcell_assert_no_symlink_path_components "${target_path}" "${label}"
+}
+
 workcell_link_control_plane_path() {
   local source_path="$1"
   local target_path="$2"
 
-  mkdir -p "$(dirname "${target_path}")"
-  rm -rf "${target_path}"
+  workcell_reset_session_target "${target_path}" "control-plane link"
   ln -s "${source_path}" "${target_path}"
 }
 
@@ -18,8 +93,7 @@ workcell_copy_control_plane_tree() {
   local file_mode="$3"
   local dir_mode="$4"
 
-  mkdir -p "$(dirname "${target_path}")"
-  rm -rf "${target_path}"
+  workcell_reset_session_target "${target_path}" "control-plane tree"
   mkdir -p "${target_path}"
   cp -R "${source_path}/." "${target_path}"
   find "${target_path}" -type d -exec chmod "${dir_mode}" {} +
@@ -199,7 +273,7 @@ workcell_copy_manifest_credential_file() {
   source_path="$(workcell_manifest_direct_mount_path ".credentials[\"${key}\"].mount_path // empty" || true)"
   [[ -n "${source_path}" ]] || return 1
 
-  mkdir -p "$(dirname "${target_path}")"
+  workcell_reset_session_target "${target_path}" "credential copy"
   if [[ ! -f "${source_path}" ]]; then
     workcell_die "Workcell expected mounted credential file for ${key}: ${source_path}"
   fi
@@ -234,18 +308,21 @@ workcell_render_claude_settings() {
   helper_secret="${helper_dir}/claude-api-key"
   helper_script="${helper_dir}/api-key-helper.sh"
 
-  mkdir -p "${helper_dir}"
+  workcell_prepare_session_directory "${helper_dir}" "Claude helper directory"
   if [[ ! -f "${api_key_source}" ]]; then
     workcell_die "Workcell expected mounted credential file for claude_api_key: ${api_key_source}"
   fi
+  workcell_reset_session_target "${helper_secret}" "Claude helper secret"
   cp "${api_key_source}" "${helper_secret}"
   chmod 0600 "${helper_secret}"
+  workcell_reset_session_target "${helper_script}" "Claude helper script"
   cat >"${helper_script}" <<EOF
 #!/bin/sh
 set -eu
 cat "${helper_secret}"
 EOF
   chmod 0700 "${helper_script}"
+  workcell_reset_session_target "${target_path}" "Claude settings"
   jq --arg helper "${helper_script}" '.apiKeyHelper = $helper' "${baseline_path}" >"${target_path}"
   chmod 0600 "${target_path}"
 }
@@ -308,14 +385,12 @@ workcell_copy_manifest_entry() {
 
   case "${kind}" in
     file)
-      mkdir -p "$(dirname "${target_path}")"
-      rm -rf "${target_path}"
+      workcell_reset_session_target "${target_path}" "injected copy"
       cp "${source_path}" "${target_path}"
       chmod "${file_mode}" "${target_path}"
       ;;
     dir)
-      mkdir -p "$(dirname "${target_path}")"
-      rm -rf "${target_path}"
+      workcell_reset_session_target "${target_path}" "injected copy"
       mkdir -p "${target_path}"
       cp -R "${source_path}/." "${target_path}"
       find "${target_path}" -type d -exec chmod "${dir_mode}" {} +
@@ -362,8 +437,7 @@ workcell_render_provider_doc() {
     return 0
   fi
 
-  mkdir -p "$(dirname "${target_path}")"
-  rm -rf "${target_path}"
+  workcell_reset_session_target "${target_path}" "provider document"
   {
     cat "${baseline_path}"
     if [[ -n "${workspace_common_doc}" ]]; then
@@ -455,15 +529,17 @@ workcell_apply_manifest_ssh() {
     return 0
   fi
 
-  mkdir -p "${HOME}/.ssh"
+  workcell_prepare_session_directory "${HOME}/.ssh" "SSH home"
   chmod 0700 "${HOME}/.ssh"
 
   if [[ -n "${config_source}${config_mount_path}" ]]; then
+    workcell_reset_session_target "${HOME}/.ssh/config" "SSH config"
     cp "$(workcell_resolve_manifest_input_path "${config_source}" "${config_mount_path}")" "${HOME}/.ssh/config"
     chmod 0600 "${HOME}/.ssh/config"
   fi
 
   if [[ -n "${known_hosts_source}${known_hosts_mount_path}" ]]; then
+    workcell_reset_session_target "${HOME}/.ssh/known_hosts" "known_hosts"
     cp "$(workcell_resolve_manifest_input_path "${known_hosts_source}" "${known_hosts_mount_path}")" "${HOME}/.ssh/known_hosts"
     chmod 0600 "${HOME}/.ssh/known_hosts"
   fi
@@ -473,13 +549,15 @@ workcell_apply_manifest_ssh() {
     identity_mount_path="$(jq -r '.mount_path // ""' <<<"${entry_json}")"
     identity_name="$(jq -r '.target_name' <<<"${entry_json}")"
     [[ -n "${identity_source}${identity_mount_path}" ]] || continue
+    workcell_reset_session_target "${HOME}/.ssh/${identity_name}" "SSH identity"
     cp "$(workcell_resolve_manifest_input_path "${identity_source}" "${identity_mount_path}")" "${HOME}/.ssh/${identity_name}"
     chmod 0600 "${HOME}/.ssh/${identity_name}"
   done < <(jq -c '.ssh.identities[]?' "$(workcell_manifest_path)")
 }
 
 seed_codex_home() {
-  mkdir -p "${CODEX_HOME}" "${CODEX_HOME}/mcp"
+  workcell_prepare_session_directory "${CODEX_HOME}" "Codex home"
+  workcell_prepare_session_directory "${CODEX_HOME}/mcp" "Codex MCP directory"
   workcell_render_provider_doc "${ADAPTER_ROOT}/codex/.codex/AGENTS.md" "${CODEX_HOME}/AGENTS.md" codex
   workcell_link_control_plane_path "${ADAPTER_ROOT}/codex/.codex/config.toml" "${CODEX_HOME}/config.toml"
   workcell_link_control_plane_path "${ADAPTER_ROOT}/codex/managed_config.toml" "${CODEX_HOME}/managed_config.toml"
@@ -491,10 +569,10 @@ seed_codex_home() {
 }
 
 seed_claude_home() {
-  mkdir -p "${HOME}/.claude"
+  workcell_prepare_session_directory "${HOME}/.claude" "Claude home"
   workcell_render_claude_settings
   workcell_render_provider_doc "${ADAPTER_ROOT}/claude/CLAUDE.md" "${HOME}/.claude/CLAUDE.md" claude
-  mkdir -p "${HOME}/.config/claude-code"
+  workcell_prepare_session_directory "${HOME}/.config/claude-code" "Claude auth directory"
   workcell_copy_manifest_credential_file claude_auth "${HOME}/.config/claude-code/auth.json" || true
   if ! workcell_copy_manifest_credential_file claude_mcp "${HOME}/.mcp.json"; then
     workcell_link_control_plane_path "${ADAPTER_ROOT}/claude/mcp-template.json" "${HOME}/.mcp.json"
@@ -502,21 +580,24 @@ seed_claude_home() {
 }
 
 seed_gemini_home() {
-  mkdir -p "${HOME}/.gemini"
+  workcell_prepare_session_directory "${HOME}/.gemini" "Gemini home"
   rm -f "${HOME}/.gemini/settings.json"
   cp "${ADAPTER_ROOT}/gemini/.gemini/settings.json" "${HOME}/.gemini/settings.json"
   chmod 0600 "${HOME}/.gemini/settings.json"
   workcell_render_provider_doc "${ADAPTER_ROOT}/gemini/GEMINI.md" "${HOME}/.gemini/GEMINI.md" gemini
   workcell_copy_manifest_credential_file gemini_env "${HOME}/.gemini/.env" || true
   workcell_copy_manifest_credential_file gemini_oauth "${HOME}/.gemini/oauth_creds.json" || true
+  workcell_prepare_session_directory "${HOME}/.config/gcloud" "Google ADC directory"
   workcell_copy_manifest_credential_file gcloud_adc "${HOME}/.config/gcloud/application_default_credentials.json" || true
   if ! workcell_copy_manifest_credential_file gemini_projects "${HOME}/.gemini/projects.json"; then
+    workcell_reset_session_target "${HOME}/.gemini/projects.json" "Gemini projects"
     printf '{\n  "projects": {}\n}\n' >"${HOME}/.gemini/projects.json"
     chmod 0600 "${HOME}/.gemini/projects.json"
   fi
 }
 
 workcell_seed_shared_credentials() {
+  workcell_prepare_session_directory "${HOME}/.config/gh" "GitHub CLI config directory"
   workcell_copy_manifest_credential_file github_config "${HOME}/.config/gh/config.yml" || true
   workcell_copy_manifest_credential_file github_hosts "${HOME}/.config/gh/hosts.yml" || true
 }

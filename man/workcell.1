@@ -116,7 +116,8 @@ Using
 .BR standard
 persists package-index and compiler caches such as npm, pip, Cargo, Go, and
 .BR ccache ,
-but it is a lower-assurance path and is not treated as part of the clean
+scoped to the current workspace by default, but it is still a lower-assurance
+path and is not treated as part of the clean
 .B strict
 session boundary.
 .TP
@@ -169,6 +170,11 @@ Select the runtime profile. The default is
 .B --prepare
 Seed or refresh the prepared runtime image before continuing with the requested
 launch. This is the recommended first-run path.
+.TP
+.B --prepare-only
+Seed or refresh the prepared runtime image and then exit without launching a
+session. This is the recommended prewarm path when you want to remove the cold
+build cost ahead of time.
 .TP
 .B --repair-profile
 Delete a conflicting unmanaged Colima profile before launch so Workcell can
@@ -386,6 +392,12 @@ Recommended first launch:
 .IP
 .EX
 workcell --prepare --agent codex --workspace /path/to/repo
+.EE
+.PP
+Prewarm the prepared runtime image without launching:
+.IP
+.EX
+workcell --prepare-only --agent codex --workspace /path/to/repo
 .EE
 .PP
 Replace

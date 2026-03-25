@@ -14,8 +14,14 @@ claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
 gemini_env = "/Users/example/.config/workcell/gemini.env"
 gemini_projects = "/Users/example/.config/workcell/gemini-projects.json"
 gcloud_adc = "/Users/example/.config/gcloud/application_default_credentials.json"
-github_hosts = "/Users/example/.config/gh/hosts.yml"
-github_config = "/Users/example/.config/gh/config.yml"
+
+[credentials.github_hosts]
+source = "/Users/example/.config/gh/hosts.yml"
+providers = ["codex", "claude", "gemini"]
+
+[credentials.github_config]
+source = "/Users/example/.config/gh/config.yml"
+providers = ["codex", "claude", "gemini"]
 
 [ssh]
 enabled = true
