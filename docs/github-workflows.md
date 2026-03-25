@@ -81,8 +81,8 @@ automation.
 Workcell keeps several repository settings outside git, but they are still part
 of the reviewed control plane:
 
-- active rulesets on the default branch for signed commits and anti-rewrite
-  integrity
+- active rulesets on the default branch for signed commits, anti-rewrite
+  integrity, and branch-deletion protection
 - an active required-status-checks ruleset on the default branch for the core
   CI and GitHub workflow security checks
 - an active review ruleset on the default branch that requires pull requests;
@@ -123,14 +123,18 @@ the audit. Workflow jobs that can read that token run inside a dedicated
 jobs.
 
 The current repository policy uses
-`branch_review.mode = "single-owner-private-pr"` and
+`branch_integrity.require_signed_commits = true`,
+`branch_integrity.block_force_pushes = true`,
+`branch_integrity.block_deletions = true`,
+`branch_review.mode = "single-owner-private-pr"`, and
 `release_environment.mode = "single-owner-private"` because this is a private
 single-owner repository. The audit enforces that as a private user-owned
 repository whose only direct collaborator is the owner. In that mode, the
 audited expectation is:
 
-- `main` still requires pull requests and green required checks, but does not
-  require impossible third-party approvals, code-owner review, or review-thread
+- `main` requires signed commits, blocks force-push and deletion, and still
+  requires pull requests plus green required checks, but does not require
+  impossible third-party approvals, code-owner review, or review-thread
   resolution
 - the named `release` environment exists, but it is not treated as a
   multi-party human approval gate

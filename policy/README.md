@@ -10,5 +10,7 @@ captures the shared rules that every adapter must preserve:
 - network modes are explicit
 - `breakglass` is named and narrow
 - lower-assurance GUI modes are clearly labeled
+- repository-hosted controls that live outside git still need explicit,
+  auditable policy declarations
 
 Provider-native config belongs under `adapters/`.
