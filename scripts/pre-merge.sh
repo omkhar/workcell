@@ -1,0 +1,240 @@
+#!/usr/bin/env -S BASH_ENV= ENV= bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VALIDATOR_DOCKERFILE="${ROOT_DIR}/tools/validator/Dockerfile"
+VALIDATOR_IMAGE_DEFAULT_TAG="workcell-validator:local-premerge-$(cksum "${VALIDATOR_DOCKERFILE}" | awk '{print $1}')"
+VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-${VALIDATOR_IMAGE_DEFAULT_TAG}}"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
+REBUILD_VALIDATOR=0
+RUN_REMOTE=0
+RUN_RELEASE_BUNDLE=1
+RUN_REPRO=1
+ALLOW_DIRTY=0
+REMOTE_HOST=""
+REMOTE_CONFIG=""
+REMOTE_SNAPSHOT="index"
+REMOTE_SNAPSHOT_EXPLICIT=0
+REMOTE_INCLUDE_UNTRACKED=0
+REMOTE_KEEP_DIR=0
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
+
+Run the standard local pre-merge verification stack, and optionally the remote
+linux/amd64 validation lane.
+
+Options:
+  --allow-dirty             Run against the live worktree even when it is dirty
+  --rebuild-validator        Rebuild the local validator image before validation
+  --skip-release-bundle      Skip verify-release-bundle.sh
+  --skip-repro               Skip verify-reproducible-build.sh
+  --remote                   Also run dev-remote-validate.sh with all checks
+  --remote-host <user@host>  Override the remote builder host for this run
+  --remote-config <path>     Override the host-local remote config file
+  --remote-snapshot <mode>   Remote snapshot mode: head, index, or worktree
+  --include-untracked        Include untracked files with --remote-snapshot worktree
+  --keep-remote-dir          Preserve the remote temp directory after exit
+  -h, --help                 Show this help
+EOF
+}
+
+require_tool() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required tool: $1" >&2
+    exit 1
+  }
+}
+
+require_clean_tree() {
+  local status_output=""
+
+  status_output="$(git -C "${ROOT_DIR}" status --short --untracked-files=all)"
+  if [[ -n "${status_output}" ]]; then
+    echo "pre-merge requires a clean worktree, including untracked files, by default." >&2
+    echo "Commit or stash local changes first, or rerun with --allow-dirty when you intentionally want to validate the live worktree." >&2
+    printf '%s\n' "${status_output}" >&2
+    exit 2
+  fi
+}
+
+has_untracked_files() {
+  local status_output="${1:-}"
+  grep -qE '^\?\?' <<<"${status_output}"
+}
+
+resolve_remote_snapshot_policy() {
+  local status_output=""
+
+  [[ "${RUN_REMOTE}" -eq 1 ]] || return 0
+  [[ "${ALLOW_DIRTY}" -eq 1 ]] || return 0
+
+  status_output="$(git -C "${ROOT_DIR}" status --short --untracked-files=all)"
+  [[ -n "${status_output}" ]] || return 0
+
+  if [[ "${REMOTE_SNAPSHOT_EXPLICIT}" -eq 0 ]]; then
+    REMOTE_SNAPSHOT="worktree"
+    if has_untracked_files "${status_output}"; then
+      REMOTE_INCLUDE_UNTRACKED=1
+      echo "[pre-merge] dirty worktree requested; remote validation will use --remote-snapshot worktree --include-untracked to match the local artifact." >&2
+    else
+      echo "[pre-merge] dirty worktree requested; remote validation will use --remote-snapshot worktree to match the local artifact." >&2
+    fi
+    return 0
+  fi
+
+  if [[ "${REMOTE_SNAPSHOT}" != "worktree" ]]; then
+    echo "[pre-merge] warning: --allow-dirty validates the live worktree locally, but remote validation will use --remote-snapshot ${REMOTE_SNAPSHOT}." >&2
+  elif has_untracked_files "${status_output}" && [[ "${REMOTE_INCLUDE_UNTRACKED}" -eq 0 ]]; then
+    echo "[pre-merge] warning: local validation sees untracked files, but remote worktree validation will exclude them without --include-untracked." >&2
+  fi
+}
+
+build_validator_image() {
+  if [[ "${REBUILD_VALIDATOR}" -eq 0 ]] && docker image inspect "${VALIDATOR_IMAGE}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  docker build \
+    -f "${ROOT_DIR}/tools/validator/Dockerfile" \
+    -t "${VALIDATOR_IMAGE}" \
+    "${ROOT_DIR}"
+}
+
+run_remote_validation() {
+  local -a cmd=("${ROOT_DIR}/scripts/dev-remote-validate.sh")
+
+  [[ -n "${REMOTE_CONFIG}" ]] && cmd+=(--config "${REMOTE_CONFIG}")
+  [[ -n "${REMOTE_HOST}" ]] && cmd+=(--host "${REMOTE_HOST}")
+  cmd+=(--snapshot "${REMOTE_SNAPSHOT}")
+  [[ "${REMOTE_INCLUDE_UNTRACKED}" -eq 1 ]] && cmd+=(--include-untracked)
+  [[ "${REMOTE_KEEP_DIR}" -eq 1 ]] && cmd+=(--keep-remote-dir)
+  cmd+=(--check validate --check smoke --check repro --check release-bundle)
+
+  "${cmd[@]}"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --allow-dirty)
+      ALLOW_DIRTY=1
+      shift
+      ;;
+    --rebuild-validator)
+      REBUILD_VALIDATOR=1
+      shift
+      ;;
+    --skip-release-bundle)
+      RUN_RELEASE_BUNDLE=0
+      shift
+      ;;
+    --skip-repro)
+      RUN_REPRO=0
+      shift
+      ;;
+    --remote)
+      RUN_REMOTE=1
+      shift
+      ;;
+    --remote-host)
+      REMOTE_HOST="${2-}"
+      [[ -n "${REMOTE_HOST}" ]] || {
+        echo "Option --remote-host requires a value." >&2
+        usage >&2
+        exit 2
+      }
+      shift 2
+      ;;
+    --remote-config)
+      REMOTE_CONFIG="${2-}"
+      [[ -n "${REMOTE_CONFIG}" ]] || {
+        echo "Option --remote-config requires a value." >&2
+        usage >&2
+        exit 2
+      }
+      shift 2
+      ;;
+    --remote-snapshot)
+      REMOTE_SNAPSHOT="${2-}"
+      [[ -n "${REMOTE_SNAPSHOT}" ]] || {
+        echo "Option --remote-snapshot requires a value." >&2
+        usage >&2
+        exit 2
+      }
+      REMOTE_SNAPSHOT_EXPLICIT=1
+      shift 2
+      ;;
+    --include-untracked)
+      REMOTE_INCLUDE_UNTRACKED=1
+      shift
+      ;;
+    --keep-remote-dir)
+      REMOTE_KEEP_DIR=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+require_tool docker
+require_tool git
+
+if [[ "${ALLOW_DIRTY}" -eq 0 ]]; then
+  require_clean_tree
+fi
+
+resolve_remote_snapshot_policy
+
+echo "[pre-merge] pinned-input policy"
+"${ROOT_DIR}/scripts/check-pinned-inputs.sh"
+
+echo "[pre-merge] upstream Codex release verification"
+"${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
+
+echo "[pre-merge] building validator image"
+build_validator_image
+
+echo "[pre-merge] workflow lint and policy analysis"
+"${ROOT_DIR}/scripts/check-workflows.sh"
+
+echo "[pre-merge] repository validation in validator container"
+docker run --rm \
+  -v "${ROOT_DIR}:/workspace" \
+  -w /workspace \
+  "${VALIDATOR_IMAGE}" \
+  ./scripts/validate-repo.sh
+
+echo "[pre-merge] host launcher invariants"
+"${ROOT_DIR}/scripts/verify-invariants.sh"
+
+echo "[pre-merge] container smoke"
+"${ROOT_DIR}/scripts/container-smoke.sh"
+
+if [[ "${RUN_RELEASE_BUNDLE}" -eq 1 ]]; then
+  echo "[pre-merge] release bundle reproducibility"
+  WORKCELL_VALIDATOR_IMAGE="${VALIDATOR_IMAGE}" \
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+    "${ROOT_DIR}/scripts/verify-release-bundle.sh"
+fi
+
+if [[ "${RUN_REPRO}" -eq 1 ]]; then
+  echo "[pre-merge] runtime reproducibility"
+  SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+    "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
+fi
+
+if [[ "${RUN_REMOTE}" -eq 1 ]]; then
+  echo "[pre-merge] remote linux/amd64 validation"
+  SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" run_remote_validation
+fi
+
+echo "Workcell pre-merge validation passed."

@@ -25,6 +25,18 @@ MUTATIONS = [
         "claude mcp credential support",
     ),
     (
+        "scripts/lib/render_injection_bundle.py",
+        "    if stat.S_IMODE(path_stat.st_mode) & 0o077:",
+        "    if False and stat.S_IMODE(path_stat.st_mode) & 0o077:",
+        "secret permission hygiene",
+    ),
+    (
+        "scripts/lib/pty_transcript.py",
+        '    if command[:1] == ["--"]:',
+        '    if False and command[:1] == ["--"]:',
+        "pty separator stripping",
+    ),
+    (
         "scripts/lib/extract_direct_mounts.py",
         'source = entry.pop("source", None)',
         'source = entry.get("source")',

@@ -25,6 +25,11 @@ environment. Provider credentials injected through the dedicated
 `[credentials]` path must not be re-staged into a second plaintext host-side
 bundle before launch; they are validated on the host, mounted read-only for the
 current session, and then copied into the ephemeral agent home.
+Secret-bearing sources used by the injection policy must be explicit files or
+directories owned by the invoking UID, must not be symlinks, and must not be
+group- or world-readable by default. Credential entries may also be scoped to
+specific providers or runtime modes so a safe launch does not receive broader
+credential material than it needs.
 
 ## Invariant 2: Writes stay inside the intended workspace
 
@@ -119,9 +124,15 @@ lower-assurance mode
 
 The reference launcher satisfies this by appending an operator-visible audit log
 under the managed Colima profile directory on each real launch and exit,
-including package-mutation downgrade events inferred from host-captured runtime
-markers rather than mutable in-container state alone. Injected secret values
-themselves are not part of that durable record.
+including package-mutation downgrade events inferred from the session-assurance
+marker that the launcher copies out of the runtime after exit. Injected secret
+values themselves are not part of that durable record. By default, this durable
+audit is metadata-only. Full host-persisted stdout/stderr debug capture and
+full interactive transcript capture are explicit opt-in observability paths and
+are classified as lower-assurance because they can persist provider content
+outside the ephemeral runtime boundary. The transcript path retains terminal I/O
+plus session timestamps and the final exit code, but not the raw host launch
+command.
 
 ## Profile expectations
 
@@ -136,8 +147,12 @@ themselves are not part of that durable record.
 - allowlisted steady-state egress only
 - pinned Debian snapshot egress for `apt` and `apt-get` when the default
   `ephemeral` container mutability is active
-- requires a prebuilt reviewed runtime image; `strict` does not rebuild or
+- requires a prebuilt prepared runtime image; `strict` does not rebuild or
   cold-bootstrap that image
+- requires active Docker seccomp support in the managed runtime before launch
+- may mount an opt-in host-persisted non-secret cache plane for package
+  indexes and compiler caches when `cache_profile=standard`; this is a
+  lower-assurance path and is not part of the clean `strict` session boundary
 
 Assurance mapping within `strict`:
 
@@ -159,7 +174,7 @@ Assurance mapping within `strict`:
 - same VM and container boundary as `strict`
 - same secret and mount restrictions
 - broader network allowlist for dependency and build traffic
-- reviewed runtime-image creation and rebuilds happen here, with any temporary
+- prepared runtime-image creation and rebuilds happen here, with any temporary
   bootstrap allowlist logged separately and restored before the session starts
 - still no host credential or control-plane passthrough
 

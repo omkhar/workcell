@@ -334,7 +334,8 @@ workcell_render_provider_doc() {
   local provider_key="$3"
   local common_rel=""
   local provider_rel=""
-  local workspace_doc=""
+  local workspace_common_doc=""
+  local workspace_provider_doc=""
 
   if workcell_manifest_active; then
     common_rel="$(workcell_manifest_string '.documents.common // empty')"
@@ -343,17 +344,20 @@ workcell_render_provider_doc() {
 
   case "${provider_key}" in
     codex)
-      workspace_doc="$(workcell_workspace_import_path 'AGENTS.md' || true)"
+      workspace_common_doc="$(workcell_workspace_import_path 'AGENTS.md' || true)"
       ;;
     claude)
-      workspace_doc="$(workcell_workspace_import_path 'CLAUDE.md' || true)"
+      workspace_common_doc="$(workcell_workspace_import_path 'AGENTS.md' || true)"
+      workspace_provider_doc="$(workcell_workspace_import_path 'CLAUDE.md' || true)"
       ;;
     gemini)
-      workspace_doc="$(workcell_workspace_import_path 'GEMINI.md' || true)"
+      workspace_common_doc="$(workcell_workspace_import_path 'AGENTS.md' || true)"
+      workspace_provider_doc="$(workcell_workspace_import_path 'GEMINI.md' || true)"
       ;;
   esac
 
-  if [[ -z "${workspace_doc}" ]] && [[ -z "${common_rel}" ]] && [[ -z "${provider_rel}" ]]; then
+  if [[ -z "${workspace_common_doc}" ]] && [[ -z "${workspace_provider_doc}" ]] &&
+    [[ -z "${common_rel}" ]] && [[ -z "${provider_rel}" ]]; then
     workcell_link_control_plane_path "${baseline_path}" "${target_path}"
     return 0
   fi
@@ -362,9 +366,13 @@ workcell_render_provider_doc() {
   rm -rf "${target_path}"
   {
     cat "${baseline_path}"
-    if [[ -n "${workspace_doc}" ]]; then
-      printf '\n\n<!-- Workcell imported workspace %s -->\n\n' "$(basename "${workspace_doc}")"
-      cat "${workspace_doc}"
+    if [[ -n "${workspace_common_doc}" ]]; then
+      printf '\n\n<!-- Workcell imported workspace %s -->\n\n' "$(basename "${workspace_common_doc}")"
+      cat "${workspace_common_doc}"
+    fi
+    if [[ -n "${workspace_provider_doc}" ]]; then
+      printf '\n\n<!-- Workcell imported workspace %s -->\n\n' "$(basename "${workspace_provider_doc}")"
+      cat "${workspace_provider_doc}"
     fi
     if [[ -n "${common_rel}" ]]; then
       printf '\n\n<!-- Workcell injected common instructions -->\n\n'

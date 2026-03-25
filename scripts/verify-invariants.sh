@@ -64,6 +64,16 @@ PY
 ROOT_DRY_RUN_PROFILE_DIR="${REAL_HOME}/.colima/${ROOT_DRY_RUN_PROFILE_NAME}"
 ROOT_DRY_RUN_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${ROOT_DRY_RUN_PROFILE_NAME}"
 
+file_mode_octal() {
+  local path="$1"
+
+  if stat -f '%Lp' "${path}" >/dev/null 2>&1; then
+    stat -f '%Lp' "${path}"
+  else
+    stat -c '%a' "${path}"
+  fi
+}
+
 cleanup() {
   rm -rf "${CODEX_VERIFY_HOME}"
   rm -rf "${BARRIER_VERIFY_ROOT}"
@@ -300,6 +310,17 @@ EOF
 cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/config"
 not-an-identity
 EOF
+chmod 0600 \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/secret.txt" \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/codex-auth.json" \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/claude-auth.json" \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/claude-mcp.json" \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/gemini-projects.json" \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/gh-hosts.yml" \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/ssh-config" \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/known_hosts" \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/id_test" \
+  "${INJECTION_POLICY_FIXTURE_ROOT}/config"
 cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml"
 version = 1
 
@@ -1411,6 +1432,9 @@ STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"
 mkdir -p "${STRICT_PREFLIGHT_WORKSPACE}"
 printf '# marker\n' >"${STRICT_PREFLIGHT_WORKSPACE}/AGENTS.md"
 STRICT_PREFLIGHT_PROFILE="workcell-preflight-$$"
+rm -rf \
+  "${REAL_HOME}/.colima/${STRICT_PREFLIGHT_PROFILE}" \
+  "${REAL_HOME}/.colima/_lima/colima-${STRICT_PREFLIGHT_PROFILE}"
 if "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}/missing" \
@@ -1428,15 +1452,16 @@ if "${ROOT_DIR}/scripts/workcell" \
   echo "Expected strict mode without a prepared image marker to fail fast before launch" >&2
   exit 1
 fi
-grep -q "No reviewed runtime image is recorded for strict mode" /tmp/workcell-strict-preflight.out
+grep -q "No prepared runtime image is recorded for strict mode" /tmp/workcell-strict-preflight.out
 grep -q -- '--prepare' /tmp/workcell-strict-preflight.out
 if grep -q "starting colima" /tmp/workcell-strict-preflight.out; then
-  echo "Strict preflight should fail before Colima startup when the reviewed image marker is absent" >&2
+  echo "Strict preflight should fail before Colima startup when the prepared image marker is absent" >&2
   exit 1
 fi
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
+  --no-default-injection-policy \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
   --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
@@ -1446,6 +1471,401 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q 'docker run' /tmp/workcell-dry-run-no-image.out
+grep -q 'cache_profile=off' /tmp/workcell-dry-run-no-image.out
+grep -q 'cache_assurance=managed-no-persistent-cache' /tmp/workcell-dry-run-no-image.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --inspect >/tmp/workcell-inspect.out 2>&1; then
+  echo "Expected --inspect to succeed without launching the runtime" >&2
+  exit 1
+fi
+grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}"'$' /tmp/workcell-inspect.out
+grep -q '^workspace_status=marker-only$' /tmp/workcell-inspect.out
+grep -q '^cache_profile=off$' /tmp/workcell-inspect.out
+grep -q '^cache_assurance=managed-no-persistent-cache$' /tmp/workcell-inspect.out
+grep -q '^injection_policy=none$' /tmp/workcell-inspect.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  inspect \
+  --agent codex \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" >/tmp/workcell-inspect-subcommand.out 2>&1; then
+  echo "Expected inspect subcommand alias to succeed without launching the runtime" >&2
+  exit 1
+fi
+grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}"'$' /tmp/workcell-inspect-subcommand.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --no-default-injection-policy \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-inspect" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}-missing-inspect" \
+  --inspect >/tmp/workcell-inspect-missing.out 2>&1; then
+  echo "Expected --inspect to succeed even when the workspace is missing" >&2
+  exit 1
+fi
+grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}-missing-inspect"'$' /tmp/workcell-inspect-missing.out
+grep -Eq '^workspace=.*/missing-workspace-for-inspect$' /tmp/workcell-inspect-missing.out
+grep -q '^workspace_status=missing$' /tmp/workcell-inspect-missing.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --doctor >/tmp/workcell-doctor.out 2>&1; then
+  echo "Expected --doctor to succeed without launching the runtime" >&2
+  exit 1
+fi
+grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor.out
+grep -q '^doctor_prepared_image=0$' /tmp/workcell-doctor.out
+grep -q -- '--prepare' /tmp/workcell-doctor.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  doctor \
+  --agent codex \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" >/tmp/workcell-doctor-subcommand.out 2>&1; then
+  echo "Expected doctor subcommand alias to succeed without launching the runtime" >&2
+  exit 1
+fi
+grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor-subcommand.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --no-default-injection-policy \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-doctor" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}-missing-doctor" \
+  --doctor >/tmp/workcell-doctor-missing.out 2>&1; then
+  echo "Expected --doctor to succeed even when the workspace is missing" >&2
+  exit 1
+fi
+grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor-missing.out
+grep -Eq '^workspace=.*/missing-workspace-for-doctor$' /tmp/workcell-doctor-missing.out
+grep -q '^workspace_status=missing$' /tmp/workcell-doctor-missing.out
+grep -q '^doctor_recommended_next=fix-workspace$' /tmp/workcell-doctor-missing.out
+
+STALE_MARKER_PROFILE="${STRICT_PREFLIGHT_PROFILE}-stale"
+STALE_MARKER_DIR="${REAL_HOME}/.colima/${STALE_MARKER_PROFILE}"
+rm -rf "${STALE_MARKER_DIR}" "${REAL_HOME}/.colima/_lima/colima-${STALE_MARKER_PROFILE}"
+mkdir -p "${STALE_MARKER_DIR}"
+printf '%s\n' "${STRICT_PREFLIGHT_WORKSPACE}" >"${STALE_MARKER_DIR}/workcell.managed"
+cat >"${STALE_MARKER_DIR}/workcell.image-ready" <<'EOF'
+image_tag=workcell:local
+image_id=sha256:stale
+source_date_epoch=0
+EOF
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STALE_MARKER_PROFILE}" \
+  --doctor >/tmp/workcell-doctor-stale.out 2>&1; then
+  echo "Expected stale-marker --doctor to succeed without launching the runtime" >&2
+  exit 1
+fi
+grep -q '^current_image_id=none$' /tmp/workcell-doctor-stale.out
+grep -q '^doctor_prepared_image=0$' /tmp/workcell-doctor-stale.out
+grep -q -- '--prepare' /tmp/workcell-doctor-stale.out
+rm -rf "${STALE_MARKER_DIR}" "${REAL_HOME}/.colima/_lima/colima-${STALE_MARKER_PROFILE}"
+
+DEBUG_LOG_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.log"
+DEBUG_LOG_PROFILE="${STRICT_PREFLIGHT_PROFILE}-logs"
+rm -rf "$(dirname "${DEBUG_LOG_CAPTURE}")"
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --debug-log "${DEBUG_LOG_CAPTURE}" \
+  --dry-run >/tmp/workcell-debug-log.out 2>&1; then
+  echo "Expected --debug-log dry-run to succeed" >&2
+  exit 1
+fi
+test -f "${DEBUG_LOG_CAPTURE}"
+test "$(file_mode_octal "${DEBUG_LOG_CAPTURE}")" = "600"
+grep -q 'Workcell warning: full host-persisted debug log capture is enabled for this session:' /tmp/workcell-debug-log.out
+grep -q 'execution_path=' "${DEBUG_LOG_CAPTURE}"
+mkdir -p "${REAL_HOME}/.colima/${DEBUG_LOG_PROFILE}"
+printf '%s\n' "${DEBUG_LOG_CAPTURE}" >"${REAL_HOME}/.colima/${DEBUG_LOG_PROFILE}/workcell.latest-debug-log"
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --logs debug \
+  --colima-profile "${DEBUG_LOG_PROFILE}" >/tmp/workcell-logs-debug.out 2>&1; then
+  echo "Expected --logs debug to print the latest retained debug log" >&2
+  exit 1
+fi
+grep -q 'execution_path=' /tmp/workcell-logs-debug.out
+
+TRANSCRIPT_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.transcript"
+TRANSCRIPT_LOG_PROFILE="${STRICT_PREFLIGHT_PROFILE}-transcript-logs"
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --audit-transcript "${TRANSCRIPT_CAPTURE}" \
+  --dry-run >/tmp/workcell-transcript.out 2>&1; then
+  echo "Expected --audit-transcript dry-run to succeed" >&2
+  exit 1
+fi
+printf 'sample transcript line\n' >"${TRANSCRIPT_CAPTURE}"
+mkdir -p "${REAL_HOME}/.colima/${TRANSCRIPT_LOG_PROFILE}"
+printf '%s\n' "${TRANSCRIPT_CAPTURE}" >"${REAL_HOME}/.colima/${TRANSCRIPT_LOG_PROFILE}/workcell.latest-transcript-log"
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --logs transcript \
+  --colima-profile "${TRANSCRIPT_LOG_PROFILE}" >/tmp/workcell-logs-transcript.out 2>&1; then
+  echo "Expected --logs transcript to print the latest retained transcript log" >&2
+  exit 1
+fi
+grep -q 'sample transcript line' /tmp/workcell-logs-transcript.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  logs transcript \
+  --colima-profile "${TRANSCRIPT_LOG_PROFILE}" >/tmp/workcell-logs-transcript-subcommand.out 2>&1; then
+  echo "Expected logs subcommand alias to print the latest retained transcript log" >&2
+  exit 1
+fi
+grep -q 'sample transcript line' /tmp/workcell-logs-transcript-subcommand.out
+if ! "${ROOT_DIR}/scripts/workcell" logs --help >/tmp/workcell-logs-help.out 2>&1; then
+  echo "Expected logs subcommand help to succeed" >&2
+  exit 1
+fi
+grep -q 'Print the latest retained log of the selected type' /tmp/workcell-logs-help.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --logs transcript \
+  --colima-profile "${TRANSCRIPT_LOG_PROFILE}" \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-logs" >/tmp/workcell-logs-transcript-missing-workspace.out 2>&1; then
+  echo "Expected --logs transcript to ignore a nonexistent workspace path" >&2
+  exit 1
+fi
+grep -q 'sample transcript line' /tmp/workcell-logs-transcript-missing-workspace.out
+rm -rf "${REAL_HOME}/.colima/${DEBUG_LOG_PROFILE}" "${REAL_HOME}/.colima/${TRANSCRIPT_LOG_PROFILE}"
+
+AUTH_STATUS_ROOT="${BARRIER_VERIFY_ROOT}/auth-status"
+mkdir -p "${AUTH_STATUS_ROOT}"
+printf '{}\n' >"${AUTH_STATUS_ROOT}/auth.json"
+chmod 0600 "${AUTH_STATUS_ROOT}/auth.json"
+printf '{"token":"claude-auth"}\n' >"${AUTH_STATUS_ROOT}/claude-auth.json"
+chmod 0600 "${AUTH_STATUS_ROOT}/claude-auth.json"
+printf 'claude-key\n' >"${AUTH_STATUS_ROOT}/claude-api-key.txt"
+chmod 0600 "${AUTH_STATUS_ROOT}/claude-api-key.txt"
+printf 'GEMINI_API_KEY=verify-gemini-key\n' >"${AUTH_STATUS_ROOT}/gemini.env"
+chmod 0600 "${AUTH_STATUS_ROOT}/gemini.env"
+printf '{"type":"authorized_user"}\n' >"${AUTH_STATUS_ROOT}/gcloud-adc.json"
+chmod 0600 "${AUTH_STATUS_ROOT}/gcloud-adc.json"
+cat >"${AUTH_STATUS_ROOT}/hosts.yml" <<'EOF'
+github.com:
+  oauth_token: test-token
+EOF
+chmod 0600 "${AUTH_STATUS_ROOT}/hosts.yml"
+cat >"${AUTH_STATUS_ROOT}/ssh-config" <<'EOF'
+ProxyCommand nc %h %p
+EOF
+chmod 0600 "${AUTH_STATUS_ROOT}/ssh-config"
+cat >"${AUTH_STATUS_ROOT}/policy.toml" <<'EOF'
+version = 1
+[credentials]
+codex_auth = "auth.json"
+claude_auth = "claude-auth.json"
+claude_api_key = "claude-api-key.txt"
+gemini_env = "gemini.env"
+gcloud_adc = "gcloud-adc.json"
+github_hosts = "hosts.yml"
+[ssh]
+enabled = true
+config = "ssh-config"
+allow_unsafe_config = true
+EOF
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+  --auth-status >/tmp/workcell-auth-status.out 2>&1; then
+  echo "Expected --auth-status to succeed" >&2
+  exit 1
+fi
+grep -Eq '^credential_keys=(codex_auth,github_hosts|github_hosts,codex_auth)$' /tmp/workcell-auth-status.out
+grep -q '^provider_auth_mode=codex_auth$' /tmp/workcell-auth-status.out
+grep -q '^provider_auth_modes=codex_auth$' /tmp/workcell-auth-status.out
+grep -q '^shared_auth_modes=github_hosts$' /tmp/workcell-auth-status.out
+grep -q '^github_auth_present=1$' /tmp/workcell-auth-status.out
+grep -q '^ssh_injected=1$' /tmp/workcell-auth-status.out
+grep -q '^ssh_config_assurance=lower-assurance-unsafe-config$' /tmp/workcell-auth-status.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  auth-status \
+  --agent codex \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" >/tmp/workcell-auth-status-subcommand.out 2>&1; then
+  echo "Expected auth-status subcommand alias to succeed" >&2
+  exit 1
+fi
+grep -q '^provider_auth_mode=codex_auth$' /tmp/workcell-auth-status-subcommand.out
+grep -q '^shared_auth_modes=github_hosts$' /tmp/workcell-auth-status-subcommand.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent claude \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+  --auth-status >/tmp/workcell-auth-status-claude.out 2>&1; then
+  echo "Expected Claude --auth-status to succeed" >&2
+  exit 1
+fi
+grep -q '^provider_auth_mode=claude_api_key$' /tmp/workcell-auth-status-claude.out
+grep -q '^provider_auth_modes=claude_api_key,claude_auth$' /tmp/workcell-auth-status-claude.out
+grep -q '^shared_auth_modes=github_hosts$' /tmp/workcell-auth-status-claude.out
+grep -q '^github_auth_present=1$' /tmp/workcell-auth-status-claude.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+  --auth-status >/tmp/workcell-auth-status-gemini.out 2>&1; then
+  echo "Expected Gemini --auth-status to succeed" >&2
+  exit 1
+fi
+grep -q '^provider_auth_mode=gemini_env$' /tmp/workcell-auth-status-gemini.out
+grep -q '^provider_auth_modes=gemini_env,gcloud_adc$' /tmp/workcell-auth-status-gemini.out
+grep -q '^shared_auth_modes=github_hosts$' /tmp/workcell-auth-status-gemini.out
+grep -q '^github_auth_present=1$' /tmp/workcell-auth-status-gemini.out
+
+BROKEN_DEBUG_POINTER_PROFILE="${STRICT_PREFLIGHT_PROFILE}-broken-debug-pointer"
+mkdir -p "${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}"
+printf '%s\n' "${BARRIER_VERIFY_ROOT}/missing-debug.log" >"${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}/workcell.latest-debug-log"
+if "${ROOT_DIR}/scripts/workcell" \
+  --inspect \
+  --agent codex \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --debug-log "${BARRIER_VERIFY_ROOT}/debug/nonlaunch.log" >/tmp/workcell-nonlaunch-debug-log.out 2>&1; then
+  echo "Expected non-launch --inspect to reject --debug-log" >&2
+  exit 1
+fi
+grep -q -- '--debug-log and --audit-transcript apply only to launched sessions.' /tmp/workcell-nonlaunch-debug-log.out
+
+if ! "${ROOT_DIR}/scripts/workcell" --gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc.out 2>&1; then
+  echo "Expected --gc to succeed" >&2
+  exit 1
+fi
+grep -q 'Cleaned stale Workcell injection, session-audit, and broken latest-log pointer state.' /tmp/workcell-gc.out
+test ! -f "${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}/workcell.latest-debug-log"
+if ! "${ROOT_DIR}/scripts/workcell" gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc-subcommand.out 2>&1; then
+  echo "Expected gc subcommand alias to succeed" >&2
+  exit 1
+fi
+
+PREMERGE_HARNESS_ROOT="${BARRIER_VERIFY_ROOT}/premerge-harness"
+PREMERGE_FAKEBIN="${PREMERGE_HARNESS_ROOT}/fakebin"
+PREMERGE_LOG="${PREMERGE_HARNESS_ROOT}/premerge.log"
+rm -rf "${PREMERGE_HARNESS_ROOT}"
+mkdir -p "${PREMERGE_HARNESS_ROOT}/scripts" "${PREMERGE_HARNESS_ROOT}/tools/validator" "${PREMERGE_FAKEBIN}"
+install -m 0755 "${ROOT_DIR}/scripts/pre-merge.sh" "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh"
+cat >"${PREMERGE_HARNESS_ROOT}/tools/validator/Dockerfile" <<'EOF'
+FROM scratch
+EOF
+for stub in \
+  check-pinned-inputs.sh \
+  verify-upstream-codex-release.sh \
+  check-workflows.sh \
+  validate-repo.sh \
+  verify-invariants.sh \
+  container-smoke.sh \
+  verify-release-bundle.sh \
+  verify-reproducible-build.sh \
+  dev-remote-validate.sh; do
+  cat >"${PREMERGE_HARNESS_ROOT}/scripts/${stub}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
+EOF
+  chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/${stub}"
+done
+cat >"${PREMERGE_FAKEBIN}/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1-}" == "-C" ]]; then
+  shift 2
+fi
+case "${1-}" in
+  status)
+    printf '%s' "${WORKCELL_FAKE_GIT_STATUS_OUTPUT:-}"
+    ;;
+  log)
+    printf '%s\n' "${WORKCELL_FAKE_GIT_EPOCH:-1700000000}"
+    ;;
+  *)
+    echo "unexpected git invocation: $*" >&2
+    exit 1
+    ;;
+esac
+EOF
+chmod 0755 "${PREMERGE_FAKEBIN}/git"
+cat >"${PREMERGE_FAKEBIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'docker %s\n' "$*" >>"${PREMERGE_LOG}"
+if [[ "${1-}" == "image" && "${2-}" == "inspect" ]]; then
+  exit 1
+fi
+exit 0
+EOF
+chmod 0755 "${PREMERGE_FAKEBIN}/docker"
+
+if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT='?? stray.txt' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" >/tmp/workcell-premerge-dirty.out 2>&1; then
+  echo "Expected pre-merge to reject a dirty worktree by default" >&2
+  exit 1
+fi
+grep -q 'clean worktree, including untracked files' /tmp/workcell-premerge-dirty.out
+
+: >"${PREMERGE_LOG}"
+if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --allow-dirty \
+  --remote >/tmp/workcell-premerge-allow-dirty.out 2>&1; then
+  echo "Expected --allow-dirty --remote pre-merge harness to succeed" >&2
+  cat /tmp/workcell-premerge-allow-dirty.out >&2
+  exit 1
+fi
+grep -q 'remote validation will use --remote-snapshot worktree --include-untracked' /tmp/workcell-premerge-allow-dirty.out
+grep -q 'dev-remote-validate.sh --snapshot worktree --include-untracked --check validate --check smoke --check repro --check release-bundle' "${PREMERGE_LOG}"
+
+: >"${PREMERGE_LOG}"
+if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --allow-dirty \
+  --remote \
+  --remote-snapshot index >/tmp/workcell-premerge-remote-index.out 2>&1; then
+  echo "Expected explicit remote snapshot pre-merge harness to succeed" >&2
+  cat /tmp/workcell-premerge-remote-index.out >&2
+  exit 1
+fi
+grep -q 'warning: --allow-dirty validates the live worktree locally, but remote validation will use --remote-snapshot index.' /tmp/workcell-premerge-remote-index.out
+grep -q 'dev-remote-validate.sh --snapshot index --check validate --check smoke --check repro --check release-bundle' "${PREMERGE_LOG}"
+
+: >"${PREMERGE_LOG}"
+if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --allow-dirty \
+  --remote \
+  --remote-snapshot worktree >/tmp/workcell-premerge-remote-worktree.out 2>&1; then
+  echo "Expected explicit worktree remote snapshot pre-merge harness to succeed" >&2
+  cat /tmp/workcell-premerge-remote-worktree.out >&2
+  exit 1
+fi
+grep -q 'local validation sees untracked files, but remote worktree validation will exclude them without --include-untracked.' /tmp/workcell-premerge-remote-worktree.out
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
@@ -1807,15 +2227,29 @@ done
 if [[ "$(uname -s)" == "Darwin" ]] &&
   host_tool_exists /opt/homebrew/bin/colima /usr/local/bin/colima &&
   host_tool_exists /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker; then
+  LIVE_DEBUG_PROFILE_NAME="workcell-live-debug-$$"
+  LIVE_DEBUG_LOG="${BARRIER_VERIFY_ROOT}/debug/live-debug.log"
   if ! "${ROOT_DIR}/scripts/workcell" \
     --agent codex \
     --prepare \
+    --rebuild \
     --workspace "${ROOT_DIR}" \
+    --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
+    --debug-log "${LIVE_DEBUG_LOG}" \
     --agent-arg --version >/tmp/workcell-audit-prepare.out 2>&1; then
     echo "Expected audit verification prepare run to seed a managed image" >&2
     cat /tmp/workcell-audit-prepare.out >&2
     exit 1
   fi
+  grep -q 'starting colima' "${LIVE_DEBUG_LOG}"
+  grep -q 'runtime-builder' "${LIVE_DEBUG_LOG}"
+  if ! "${ROOT_DIR}/scripts/workcell" \
+    --logs debug \
+    --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >/tmp/workcell-live-logs-debug.out 2>&1; then
+    echo "Expected successful prepare run to persist the latest debug-log pointer" >&2
+    exit 1
+  fi
+  grep -q 'starting colima' /tmp/workcell-live-logs-debug.out
   AUDIT_LOG="$(sed -n 's/.*audit_log=\([^ ]*\).*/\1/p' /tmp/workcell-audit-prepare.out | head -n1)"
   if [[ -z "${AUDIT_LOG}" ]]; then
     echo "Expected audit verification prepare run to report an audit log path" >&2
@@ -1829,6 +2263,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     --agent codex \
     --mode build \
     --workspace "${ROOT_DIR}" \
+    --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
     --allow-arbitrary-command \
     --ack-arbitrary-command \
     -- /bin/bash -lc 'sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update >/dev/null && sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y --no-install-recommends make >/dev/null'; then
@@ -1837,12 +2272,19 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
   fi
   tail -n "+$((AUDIT_BASE_LINES + 1))" "${AUDIT_LOG}" >/tmp/workcell-audit-session.log
   grep -q 'event=launch' /tmp/workcell-audit-session.log
+  grep -q 'record_digest=' /tmp/workcell-audit-session.log
   grep -q 'execution_path=lower-assurance-debug-command' /tmp/workcell-audit-session.log
   grep -q 'event=assurance-change' /tmp/workcell-audit-session.log
   grep -q 'reason=package-mutation' /tmp/workcell-audit-session.log
   grep -q 'session_assurance_final=lower-assurance-package-mutation' /tmp/workcell-audit-session.log
   grep -q 'event=exit' /tmp/workcell-audit-session.log
   grep -q 'package_mutation_downgraded=1' /tmp/workcell-audit-session.log
+  if [[ -x /opt/homebrew/bin/colima ]]; then
+    /opt/homebrew/bin/colima delete --profile "${LIVE_DEBUG_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+  else
+    /usr/local/bin/colima delete --profile "${LIVE_DEBUG_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+  fi
+  rm -rf "${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${LIVE_DEBUG_PROFILE_NAME}"
   AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
   AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"
   AUDIT_RESTORE_LOG="${AUDIT_RESTORE_DIR}/workcell.audit.log"

@@ -1,4 +1,4 @@
-.TH WORKCELL 1 "2026-03-22" "Workcell" "User Commands"
+.TH WORKCELL 1 "2026-03-24" "Workcell" "User Commands"
 .SH NAME
 workcell \- bounded runtime launcher for coding agents
 .SH SYNOPSIS
@@ -108,11 +108,49 @@ Set an explicit CPU limit for the inner runtime container.
 Set an explicit memory limit for the inner runtime container, for example
 .BR 4g .
 .TP
+.B --cache-profile off|standard
+Select whether Workcell mounts an opt-in host-persisted non-secret cache plane
+into the runtime. The default is
+.BR off .
+Using
+.BR standard
+persists package-index and compiler caches such as npm, pip, Cargo, Go, and
+.BR ccache ,
+but it is a lower-assurance path and is not treated as part of the clean
+.B strict
+session boundary.
+.TP
 .B --injection-policy PATH
 Use an explicit host-side injection policy for this launch. Workcell mounts
 credential sources read-only from their original host paths and stages the
 selected docs, copied files, and SSH material into per-session runtime state
 instead of passing through host homes or sockets directly.
+.TP
+.B --log-level normal|debug
+Select launch-time logging verbosity. The default is
+.BR normal .
+Use
+.BR debug
+to surface successful Colima and runtime-build output in addition to the normal
+high-signal launcher messages.
+.TP
+.B --debug-log PATH
+Persist the full launcher plus container stdout/stderr stream to
+.IR PATH .
+This is an explicit lower-assurance host logging path because provider output
+may be retained outside the ephemeral runtime, and Workcell prints an explicit
+warning banner when it is enabled. This flag is only valid for real launched
+sessions.
+.TP
+.B --audit-transcript PATH
+Persist a full interactive terminal transcript, including typed input and child
+output, to
+.IR PATH .
+The retained transcript also includes session start and end timestamps plus the
+final exit code.
+This requires an interactive terminal and is an explicit lower-assurance host
+logging path. Workcell prints an explicit warning banner when it is enabled.
+This flag is only valid for real launched sessions.
 .TP
 .B --no-default-injection-policy
 Ignore
@@ -129,7 +167,7 @@ Select the runtime profile. The default is
 .BR strict .
 .TP
 .B --prepare
-Seed or refresh the reviewed runtime image before continuing with the requested
+Seed or refresh the prepared runtime image before continuing with the requested
 launch. This is the recommended first-run path.
 .TP
 .B --repair-profile
@@ -186,6 +224,38 @@ is also set.
 .B --dry-run
 Print the selected runtime command and exit.
 .TP
+.B --doctor
+Print derived profile and workspace state, identify whether the managed profile
+or prepared image is missing, and emit the recommended next command without
+launching the runtime. Also available as
+.BR "workcell doctor" .
+When the workspace path is missing or invalid, this reports that first instead
+of recommending
+.BR --prepare .
+.TP
+.B --inspect
+Print the derived launch configuration, active assurance labels, injection
+metadata, and latest retained host-log pointers without launching the runtime.
+Also available as
+.BR "workcell inspect" .
+.TP
+.B --logs audit|debug|transcript
+Print the latest retained log of the selected type for the derived or explicit
+Colima profile and exit. Also available as
+.BR "workcell logs audit|debug|transcript" .
+.TP
+.B --auth-status
+Print the selected injection or credential posture derived from the rendered
+injection manifest, including the primary provider auth mode, the ordered
+provider auth mode set, and SSH config assurance, and exit. Also available as
+.BR "workcell auth-status" .
+.TP
+.B --gc
+Remove stale host-side session audit and injection-bundle directories plus
+broken latest-log pointers from managed profile state and exit. Also available
+as
+.BR "workcell gc" .
+.TP
 .B -h, --help
 Show usage information.
 .SH PROFILES
@@ -200,7 +270,7 @@ and
 .I /state
 paths is blocked, and mutable shebang scripts cannot target protected real
 runtimes directly.
-This profile requires a prebuilt reviewed runtime image and does not perform
+This profile requires a prebuilt prepared runtime image and does not perform
 cold builds or rebuilds unless
 .B --prepare
 explicitly tells Workcell to seed the image before continuing.
@@ -209,7 +279,7 @@ explicitly tells Workcell to seed the image before continuing.
 The same mount and secret restrictions as
 .BR strict ,
 with broader network access for dependency and build traffic.
-Reviewed runtime-image creation and rebuilds happen here.
+Prepared runtime-image creation and rebuilds happen here.
 .TP
 .B breakglass
 Still inside the Workcell VM plus container boundary, but with unrestricted
@@ -244,7 +314,8 @@ of its contents into per-session runtime state unless
 is set.
 .TP
 .I ~/.colima/PROFILE/workcell.audit.log
-Durable host-side audit log written by the managed launcher for real runs.
+Durable host-side metadata audit log written by the managed launcher for real
+runs.
 .SH SESSION INJECTIONS
 The safe path does not allow ambient host passthrough for secrets, SSH agents,
 or provider state. The supported way to place consistent material into every
@@ -270,6 +341,19 @@ SSH material copied into the ephemeral in-container
 .I ~/.ssh
 with strict permissions.
 .PP
+Secret-bearing injection sources must be owner-only host files or directories
+and must not be symlinks. Standard world-readable
+.I ssh known_hosts
+files are accepted, but they must not be symlinks or group/world-writable.
+Credential entries may be scoped to selected
+providers or runtime modes, and unsafe raw
+.I ssh_config
+directives such as
+.BR ProxyCommand
+or
+.BR Match\ exec
+are rejected unless the operator explicitly opts into them.
+.PP
 The immutable adapter baselines under
 .I adapters/
 are never mutated in place. Repo-local
@@ -278,7 +362,14 @@ are never mutated in place. Repo-local
 and
 .BR GEMINI.md
 are masked inside the workspace and imported into the provider home docs
-instead. By default, Codex rules stay linked to the immutable adapter baseline
+instead. Claude and Gemini import shared
+.BR AGENTS.md
+first and then append
+.BR CLAUDE.md
+or
+.BR GEMINI.md
+when present.
+By default, Codex rules stay linked to the immutable adapter baseline
 until prompt autonomy or package mutation has already downgraded the session.
 If you explicitly opt into
 .B --codex-rules-mutability session
@@ -305,10 +396,33 @@ or
 .B gemini
 for the corresponding provider.
 .PP
-Normal launch after the reviewed image already exists:
+Normal launch after the prepared image already exists:
 .IP
 .EX
 workcell --agent codex --workspace /path/to/repo
+.EE
+.PP
+Inspecting or diagnosing state without launching:
+.IP
+.EX
+workcell --agent codex --inspect --workspace /path/to/repo
+workcell --agent codex --doctor --workspace /path/to/repo
+.EE
+.PP
+Capturing lower-assurance host logs explicitly:
+.IP
+.EX
+workcell --agent codex --workspace /path/to/repo \\
+  --log-level debug --debug-log ~/logs/workcell-debug.log
+workcell --agent codex --workspace /path/to/repo \\
+  --audit-transcript ~/logs/workcell-transcript.log
+.EE
+.PP
+Viewing the latest retained host logs for a profile:
+.IP
+.EX
+workcell --agent codex --workspace /path/to/repo --logs audit
+workcell --agent codex --workspace /path/to/repo --logs debug
 .EE
 .PP
 Prompted launch for a selected provider:

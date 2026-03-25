@@ -6,6 +6,7 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     HOME=/tmp \
     TMPDIR="${TMPDIR:-/tmp}" \
     WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT-}" \
+    WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     WORKCELL_DOCKER_HOST_HOME_ROOT="${WORKCELL_DOCKER_HOST_HOME_ROOT-}" \
     WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT-}" \
     WORKCELL_IMAGE_TAG="${WORKCELL_IMAGE_TAG-}" \
@@ -72,6 +73,15 @@ align_path_for_mapped_runtime_user() {
   chmod "${file_mode}" "${target_path}"
 }
 
+run_as_mapped_host_user() {
+  if [[ "$(id -u)" == "0" ]] && [[ "${HOST_UID}" != "$(id -u)" || "${HOST_GID}" != "$(id -g)" ]]; then
+    setpriv --reuid "${HOST_UID}" --regid "${HOST_GID}" --clear-groups "$@"
+    return
+  fi
+
+  "$@"
+}
+
 cleanup_workspace_scratch() {
   local workspace_root="${1:-${SMOKE_WORKSPACE:-${ROOT_DIR}}}"
 
@@ -93,8 +103,8 @@ prepare_smoke_workspace() {
   local path_list_filtered=""
 
   mkdir -p "${ROOT_DIR}/tmp"
-  chmod 0700 "${ROOT_DIR}/tmp"
-  SMOKE_WORKSPACE="$(mktemp -d "${ROOT_DIR}/tmp/workcell-smoke-workspace.XXXXXX")"
+  align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp" 0644 0755
+  SMOKE_WORKSPACE="$(run_as_mapped_host_user mktemp -d "${ROOT_DIR}/tmp/workcell-smoke-workspace.XXXXXX")"
 
   if ! git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "container-smoke requires a git checkout" >&2
@@ -256,6 +266,7 @@ run_container() {
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
+    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
@@ -291,6 +302,7 @@ run_container_with_mutability() {
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
+    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
@@ -325,6 +337,7 @@ run_entrypoint() {
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
+    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
@@ -360,6 +373,7 @@ run_entrypoint_with_profile() {
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
+    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
@@ -396,6 +410,7 @@ run_entrypoint_with_init_profile() {
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
+    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
@@ -431,6 +446,7 @@ run_entrypoint_with_autonomy() {
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
+    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
@@ -470,6 +486,7 @@ run_entrypoint_with_autonomy_and_bind() {
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
+    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
@@ -515,6 +532,7 @@ run_entrypoint_with_injection_bundle() {
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
+    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
     -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
@@ -645,14 +663,22 @@ SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
   "${ROOT_DIR}" >/dev/null
 
 mkdir -p "${ROOT_DIR}/tmp"
-INJECTION_FIXTURE_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-injection-fixtures.XXXXXX")"
-INJECTION_BUNDLE_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-injection-bundle.XXXXXX")"
+align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp" 0644 0755
+INJECTION_FIXTURE_ROOT="$(run_as_mapped_host_user mktemp -d "${ROOT_DIR}/tmp/workcell-injection-fixtures.XXXXXX")"
+INJECTION_BUNDLE_ROOT="$(run_as_mapped_host_user mktemp -d "${ROOT_DIR}/tmp/workcell-injection-bundle.XXXXXX")"
 mkdir -p "${INJECTION_FIXTURE_ROOT}"
+align_path_for_mapped_runtime_user "${INJECTION_BUNDLE_ROOT}" 0644 0755
 cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/common.md"
 # Common Smoke Instructions
 EOF
 cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/codex.md"
 # Codex Smoke Instructions
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/claude.md"
+# Claude Smoke Instructions
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini.md"
+# Gemini Smoke Instructions
 EOF
 cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/public.txt"
 injected-public
@@ -702,6 +728,8 @@ version = 1
 [documents]
 common = "common.md"
 codex = "codex.md"
+claude = "claude.md"
+gemini = "gemini.md"
 
 [credentials]
 codex_auth = "codex-auth.json"
@@ -733,22 +761,33 @@ providers = ["codex"]
 EOF
 
 align_path_for_mapped_runtime_user "${INJECTION_FIXTURE_ROOT}" 0644 0755
+chmod 0600 \
+  "${INJECTION_FIXTURE_ROOT}/secret.txt" \
+  "${INJECTION_FIXTURE_ROOT}/codex-auth.json" \
+  "${INJECTION_FIXTURE_ROOT}/claude-auth.json" \
+  "${INJECTION_FIXTURE_ROOT}/claude-mcp.json" \
+  "${INJECTION_FIXTURE_ROOT}/gh-hosts.yml" \
+  "${INJECTION_FIXTURE_ROOT}/claude-api-key.txt" \
+  "${INJECTION_FIXTURE_ROOT}/gemini.env" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-projects.json" \
+  "${INJECTION_FIXTURE_ROOT}/ssh-config" \
+  "${INJECTION_FIXTURE_ROOT}/id_smoke"
 
-python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
   --agent codex \
   --mode strict \
   --output-root "${INJECTION_BUNDLE_ROOT}/codex" >/dev/null
 prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/codex"
 
-python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
   --agent claude \
   --mode strict \
   --output-root "${INJECTION_BUNDLE_ROOT}/claude" >/dev/null
 prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/claude"
 
-python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
   --agent gemini \
   --mode strict \
@@ -796,10 +835,13 @@ run_container_with_injection_bundle codex "${INJECTION_BUNDLE_ROOT}/codex" bash 
 run_container_with_injection_bundle claude "${INJECTION_BUNDLE_ROOT}/claude" bash -lc '
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint claude --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
-    set -euo pipefail
-    grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
-    grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
+    setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+      set -euo pipefail
+      grep -q "Common Smoke Instructions" "$HOME/.claude/CLAUDE.md"
+      grep -q "Claude Smoke Instructions" "$HOME/.claude/CLAUDE.md"
+      grep -q "Workspace AGENTS Instructions" "$HOME/.claude/CLAUDE.md"
+      grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
+      grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
     helper_path="$(jq -r ".apiKeyHelper" "$HOME/.claude/settings.json")"
     test ! -L "$HOME/.claude/settings.json"
     test -x "$helper_path"
@@ -824,14 +866,49 @@ run_container_with_injection_bundle claude "${INJECTION_BUNDLE_ROOT}/claude" bas
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini" bash -lc '
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
-    set -euo pipefail
-    grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
-    grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
+    setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+      set -euo pipefail
+      grep -q "Common Smoke Instructions" "$HOME/.gemini/GEMINI.md"
+      grep -q "Gemini Smoke Instructions" "$HOME/.gemini/GEMINI.md"
+      grep -q "Workspace AGENTS Instructions" "$HOME/.gemini/GEMINI.md"
+      grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
+      grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
     grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
     grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
   '"'"'
 '
+
+WORKSPACE_IMPORT_ROOT_FALLBACK="$(mktemp -d "${ROOT_DIR}/tmp/workcell-import-fallback.XXXXXX")"
+cat <<'EOF' >"${WORKSPACE_IMPORT_ROOT_FALLBACK}/AGENTS.md"
+<!-- Workcell imported workspace AGENTS.md -->
+
+# Workspace AGENTS Instructions
+EOF
+align_path_for_mapped_runtime_user "${WORKSPACE_IMPORT_ROOT_FALLBACK}" 0644 0755
+ORIGINAL_WORKSPACE_IMPORT_ROOT="${WORKSPACE_IMPORT_ROOT}"
+WORKSPACE_IMPORT_ROOT="${WORKSPACE_IMPORT_ROOT_FALLBACK}"
+
+# shellcheck disable=SC2016
+run_container claude bash -lc '
+  set -euo pipefail
+  /usr/local/bin/workcell-entrypoint claude --version >/dev/null
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    grep -q "Workspace AGENTS Instructions" "$HOME/.claude/CLAUDE.md"
+  '"'"'
+'
+
+# shellcheck disable=SC2016
+run_container gemini bash -lc '
+  set -euo pipefail
+  /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    grep -q "Workspace AGENTS Instructions" "$HOME/.gemini/GEMINI.md"
+  '"'"'
+'
+
+WORKSPACE_IMPORT_ROOT="${ORIGINAL_WORKSPACE_IMPORT_ROOT}"
 
 if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
   CODEX_YOLO_ARGS="$(
@@ -1049,9 +1126,14 @@ run_container claude bash -lc '
   AGENT_NAME=claude /usr/local/bin/workcell-entrypoint claude --version >/dev/null
   setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
     set -euo pipefail
+    grep -q "Workspace AGENTS Instructions" "$HOME/.claude/CLAUDE.md"
     grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
     if grep -q "Nested Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"; then
       echo "expected nested CLAUDE.md instructions to remain path-scoped in the workspace" >&2
+      exit 1
+    fi
+    if grep -q "Nested Workspace AGENTS Instructions" "$HOME/.claude/CLAUDE.md"; then
+      echo "expected nested AGENTS.md instructions to remain path-scoped in the workspace" >&2
       exit 1
     fi
     grep -q "Nested Workspace Claude Instructions" /workspace/nested/CLAUDE.md
@@ -1064,9 +1146,14 @@ run_container gemini bash -lc '
   AGENT_NAME=gemini /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
   setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
     set -euo pipefail
+    grep -q "Workspace AGENTS Instructions" "$HOME/.gemini/GEMINI.md"
     grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
     if grep -q "Nested Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"; then
       echo "expected nested GEMINI.md instructions to remain path-scoped in the workspace" >&2
+      exit 1
+    fi
+    if grep -q "Nested Workspace AGENTS Instructions" "$HOME/.gemini/GEMINI.md"; then
+      echo "expected nested AGENTS.md instructions to remain path-scoped in the workspace" >&2
       exit 1
     fi
     grep -q "Nested Workspace Gemini Instructions" /workspace/nested/GEMINI.md
@@ -1454,8 +1541,15 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-codex-profile-bypass.out
-  mkdir -p /workspace/tmp
-  workspace_provider_scratch=/workspace/tmp/workcell-provider-scratch
+  if [[ "${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC:-0}" != "1" ]] && [[ ! -w /workspace ]]; then
+    echo "Workcell note: skipping workspace mutable execution smoke because /workspace is not writable for the runtime user." >&2
+    WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC=1
+  fi
+  if [[ "${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC:-0}" != "1" ]]; then
+  workspace_exec_scratch=/workspace/.workcell-exec-scratch
+  rm -rf "${workspace_exec_scratch}"
+  mkdir -p "${workspace_exec_scratch}"
+  workspace_provider_scratch="${workspace_exec_scratch}/workcell-provider-scratch"
   workspace_provider_tampered="${workspace_provider_scratch}/tampered"
   workspace_provider_aggressive="${workspace_provider_scratch}/aggressive"
   workspace_provider_minimal="${workspace_provider_scratch}/minimal"
@@ -1465,17 +1559,17 @@ EOF
   workspace_provider_benign_marker="${workspace_provider_scratch}/benign-marker-package"
   rm -rf "${workspace_provider_scratch}"
   mkdir -p "${workspace_provider_scratch}"
-  cp /bin/true /workspace/tmp/.workcell-native-helper
-  chmod 0700 /workspace/tmp/.workcell-native-helper
-  if /workspace/tmp/.workcell-native-helper >/tmp/workspace-native.out 2>&1; then
+  cp /bin/true "${workspace_exec_scratch}/.workcell-native-helper"
+  chmod 0700 "${workspace_exec_scratch}/.workcell-native-helper"
+  if "${workspace_exec_scratch}/.workcell-native-helper" >/tmp/workspace-native.out 2>&1; then
     echo "expected strict profile to reject direct native executable launches from /workspace" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native.out
-  cp /bin/true /workspace/tmp/.workcell-native-helper-deleted-fd
-  chmod 0700 /workspace/tmp/.workcell-native-helper-deleted-fd
-  exec 3</workspace/tmp/.workcell-native-helper-deleted-fd
-  rm -f /workspace/tmp/.workcell-native-helper-deleted-fd
+  cp /bin/true "${workspace_exec_scratch}/.workcell-native-helper-deleted-fd"
+  chmod 0700 "${workspace_exec_scratch}/.workcell-native-helper-deleted-fd"
+  exec 3<"${workspace_exec_scratch}/.workcell-native-helper-deleted-fd"
+  rm -f "${workspace_exec_scratch}/.workcell-native-helper-deleted-fd"
   if /proc/self/fd/3 >/tmp/workspace-native-deleted-fd.out 2>&1; then
     echo "expected strict profile to reject deleted-fd native executable launches from /workspace" >&2
     exec 3<&-
@@ -1513,22 +1607,22 @@ EOF
   grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-threadself.out
   grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-taskfd.out
   grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-stdin.out
-  cp /bin/true /workspace/tmp/.workcell-native-helper-deleted-pidfd
-  chmod 0700 /workspace/tmp/.workcell-native-helper-deleted-pidfd
+  cp /bin/true "${workspace_exec_scratch}/.workcell-native-helper-deleted-pidfd"
+  chmod 0700 "${workspace_exec_scratch}/.workcell-native-helper-deleted-pidfd"
   if (
-    exec 5</workspace/tmp/.workcell-native-helper-deleted-pidfd
-    rm -f /workspace/tmp/.workcell-native-helper-deleted-pidfd
+    exec 5<"${workspace_exec_scratch}/.workcell-native-helper-deleted-pidfd"
+    rm -f "${workspace_exec_scratch}/.workcell-native-helper-deleted-pidfd"
     exec /proc/"$BASHPID"/fd/5
   ) >/tmp/workspace-native-deleted-pidfd.out 2>&1; then
     echo "expected strict profile to reject deleted-fd native executable launches via /proc/\$\$/fd from /workspace" >&2
     exit 1
   fi
   grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-pidfd.out
-  cp /bin/true /workspace/tmp/.workcell-native-helper-deleted-stdout
-  chmod 0700 /workspace/tmp/.workcell-native-helper-deleted-stdout
+  cp /bin/true "${workspace_exec_scratch}/.workcell-native-helper-deleted-stdout"
+  chmod 0700 "${workspace_exec_scratch}/.workcell-native-helper-deleted-stdout"
   if (
-    exec 5</workspace/tmp/.workcell-native-helper-deleted-stdout
-    rm -f /workspace/tmp/.workcell-native-helper-deleted-stdout
+    exec 5<"${workspace_exec_scratch}/.workcell-native-helper-deleted-stdout"
+    rm -f "${workspace_exec_scratch}/.workcell-native-helper-deleted-stdout"
     exec 1<&5
     exec /dev/stdout
   ) >/tmp/workspace-native-deleted-stdout.out 2>/tmp/workspace-native-deleted-stdout.err; then
@@ -1536,39 +1630,39 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-stdout.err
-  cp /bin/true /workspace/tmp/.workcell-native-helper-deleted-stderr
-  chmod 0700 /workspace/tmp/.workcell-native-helper-deleted-stderr
+  cp /bin/true "${workspace_exec_scratch}/.workcell-native-helper-deleted-stderr"
+  chmod 0700 "${workspace_exec_scratch}/.workcell-native-helper-deleted-stderr"
   if (
-    exec 5</workspace/tmp/.workcell-native-helper-deleted-stderr
-    rm -f /workspace/tmp/.workcell-native-helper-deleted-stderr
+    exec 5<"${workspace_exec_scratch}/.workcell-native-helper-deleted-stderr"
+    rm -f "${workspace_exec_scratch}/.workcell-native-helper-deleted-stderr"
     exec 2<&5
     exec /dev/stderr
   ) >/tmp/workspace-native-deleted-stderr.out 2>&1; then
     echo "expected strict profile to reject deleted-fd native executable launches via /dev/stderr from /workspace" >&2
     exit 1
   fi
-  if env -u LD_PRELOAD "$LOADER" /workspace/tmp/.workcell-native-helper >/tmp/workspace-native-loader.out 2>&1; then
+  if env -u LD_PRELOAD "$LOADER" "${workspace_exec_scratch}/.workcell-native-helper" >/tmp/workspace-native-loader.out 2>&1; then
     echo "expected strict profile to reject loader-mediated native executable launches from /workspace" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-loader.out
-  cat >/workspace/tmp/.workcell-node-shebang <<EOF
+  cat >"${workspace_exec_scratch}/.workcell-node-shebang" <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell shebang bypass");
 EOF
-  chmod 0700 /workspace/tmp/.workcell-node-shebang
-  if /workspace/tmp/.workcell-node-shebang >/tmp/workspace-node-shebang.out 2>&1; then
+  chmod 0700 "${workspace_exec_scratch}/.workcell-node-shebang"
+  if "${workspace_exec_scratch}/.workcell-node-shebang" >/tmp/workspace-node-shebang.out 2>&1; then
     echo "expected strict profile to reject mutable shebang execution of the real Node payload" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-node-shebang.out
-  cat >/workspace/tmp/.workcell-node-shebang-deleted-fd <<EOF
+  cat >"${workspace_exec_scratch}/.workcell-node-shebang-deleted-fd" <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell deleted fd shebang bypass");
 EOF
-  chmod 0700 /workspace/tmp/.workcell-node-shebang-deleted-fd
-  exec 4</workspace/tmp/.workcell-node-shebang-deleted-fd
-  rm -f /workspace/tmp/.workcell-node-shebang-deleted-fd
+  chmod 0700 "${workspace_exec_scratch}/.workcell-node-shebang-deleted-fd"
+  exec 4<"${workspace_exec_scratch}/.workcell-node-shebang-deleted-fd"
+  rm -f "${workspace_exec_scratch}/.workcell-node-shebang-deleted-fd"
   if /proc/self/fd/4 >/tmp/workspace-node-shebang-deleted-fd.out 2>&1; then
     echo "expected strict profile to reject deleted-fd mutable shebang execution of the real Node payload" >&2
     exec 4<&-
@@ -1606,28 +1700,28 @@ EOF
   grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-threadself.out
   grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-taskfd.out
   grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-stdin.out
-  cat >/workspace/tmp/.workcell-node-shebang-deleted-pidfd <<EOF
+  cat >"${workspace_exec_scratch}/.workcell-node-shebang-deleted-pidfd" <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell pid fd deleted shebang bypass");
 EOF
-  chmod 0700 /workspace/tmp/.workcell-node-shebang-deleted-pidfd
+  chmod 0700 "${workspace_exec_scratch}/.workcell-node-shebang-deleted-pidfd"
   if (
-    exec 5</workspace/tmp/.workcell-node-shebang-deleted-pidfd
-    rm -f /workspace/tmp/.workcell-node-shebang-deleted-pidfd
+    exec 5<"${workspace_exec_scratch}/.workcell-node-shebang-deleted-pidfd"
+    rm -f "${workspace_exec_scratch}/.workcell-node-shebang-deleted-pidfd"
     exec /proc/"$BASHPID"/fd/5
   ) >/tmp/workspace-node-shebang-deleted-pidfd.out 2>&1; then
     echo "expected strict profile to reject deleted-fd mutable shebang execution via /proc/\$\$/fd of the real Node payload" >&2
     exit 1
   fi
   grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-pidfd.out
-  cat >/workspace/tmp/.workcell-node-shebang-deleted-stdout <<EOF
+  cat >"${workspace_exec_scratch}/.workcell-node-shebang-deleted-stdout" <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell stdout deleted shebang bypass");
 EOF
-  chmod 0700 /workspace/tmp/.workcell-node-shebang-deleted-stdout
+  chmod 0700 "${workspace_exec_scratch}/.workcell-node-shebang-deleted-stdout"
   if (
-    exec 5</workspace/tmp/.workcell-node-shebang-deleted-stdout
-    rm -f /workspace/tmp/.workcell-node-shebang-deleted-stdout
+    exec 5<"${workspace_exec_scratch}/.workcell-node-shebang-deleted-stdout"
+    rm -f "${workspace_exec_scratch}/.workcell-node-shebang-deleted-stdout"
     exec 1<&5
     exec /dev/stdout
   ) >/tmp/workspace-node-shebang-deleted-stdout.out 2>/tmp/workspace-node-shebang-deleted-stdout.err; then
@@ -1635,81 +1729,82 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-stdout.err
-  cat >/workspace/tmp/.workcell-node-shebang-deleted-stderr <<EOF
+  cat >"${workspace_exec_scratch}/.workcell-node-shebang-deleted-stderr" <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell stderr deleted shebang bypass");
 EOF
-  chmod 0700 /workspace/tmp/.workcell-node-shebang-deleted-stderr
+  chmod 0700 "${workspace_exec_scratch}/.workcell-node-shebang-deleted-stderr"
   if (
-    exec 5</workspace/tmp/.workcell-node-shebang-deleted-stderr
-    rm -f /workspace/tmp/.workcell-node-shebang-deleted-stderr
+    exec 5<"${workspace_exec_scratch}/.workcell-node-shebang-deleted-stderr"
+    rm -f "${workspace_exec_scratch}/.workcell-node-shebang-deleted-stderr"
     exec 2<&5
     exec /dev/stderr
   ) >/tmp/workspace-node-shebang-deleted-stderr.out 2>&1; then
     echo "expected strict profile to reject deleted-fd mutable shebang execution via /dev/stderr of the real Node payload" >&2
     exit 1
   fi
-  cat >/workspace/tmp/.workcell-loader-node-shebang <<EOF
+  cat >"${workspace_exec_scratch}/.workcell-loader-node-shebang" <<EOF
 #!${LOADER} /usr/local/libexec/workcell/real/node
 console.log("workcell loader shebang bypass");
 EOF
-  chmod 0700 /workspace/tmp/.workcell-loader-node-shebang
-  if /workspace/tmp/.workcell-loader-node-shebang >/tmp/workspace-loader-node-shebang.out 2>&1; then
+  chmod 0700 "${workspace_exec_scratch}/.workcell-loader-node-shebang"
+  if "${workspace_exec_scratch}/.workcell-loader-node-shebang" >/tmp/workspace-loader-node-shebang.out 2>&1; then
     echo "expected strict profile to reject mutable loader shebang execution of the real Node payload" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-loader-node-shebang.out
-  cat >/workspace/tmp/.workcell-env-node-shebang <<EOF
+  cat >"${workspace_exec_scratch}/.workcell-env-node-shebang" <<EOF
 #!/usr/bin/env -S /usr/local/libexec/workcell/real/node
 console.log("workcell env shebang bypass");
 EOF
-  chmod 0700 /workspace/tmp/.workcell-env-node-shebang
-  if /workspace/tmp/.workcell-env-node-shebang >/tmp/workspace-env-node-shebang.out 2>&1; then
+  chmod 0700 "${workspace_exec_scratch}/.workcell-env-node-shebang"
+  if "${workspace_exec_scratch}/.workcell-env-node-shebang" >/tmp/workspace-env-node-shebang.out 2>&1; then
     echo "expected strict profile to reject env -S shebang execution of the real Node payload" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-node-shebang.out
-  cat >/workspace/tmp/.workcell-env-loader-node-shebang <<EOF
+  cat >"${workspace_exec_scratch}/.workcell-env-loader-node-shebang" <<EOF
 #!/usr/bin/env -S ${LOADER} /usr/local/libexec/workcell/real/node
 console.log("workcell env loader shebang bypass");
 EOF
-  chmod 0700 /workspace/tmp/.workcell-env-loader-node-shebang
-  if /workspace/tmp/.workcell-env-loader-node-shebang >/tmp/workspace-env-loader-node-shebang.out 2>&1; then
+  chmod 0700 "${workspace_exec_scratch}/.workcell-env-loader-node-shebang"
+  if "${workspace_exec_scratch}/.workcell-env-loader-node-shebang" >/tmp/workspace-env-loader-node-shebang.out 2>&1; then
     echo "expected strict profile to reject env -S loader shebang execution of the real Node payload" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-loader-node-shebang.out
-  cp /usr/local/libexec/workcell/real/node /workspace/tmp/node
-  chmod 0700 /workspace/tmp/node
-  cat >/workspace/tmp/.workcell-env-path-node-shebang <<EOF
-#!/usr/bin/env -S PATH=/workspace/tmp node --version
+  cp /usr/local/libexec/workcell/real/node "${workspace_exec_scratch}/node"
+  chmod 0700 "${workspace_exec_scratch}/node"
+  cat >"${workspace_exec_scratch}/.workcell-env-path-node-shebang" <<EOF
+#!/usr/bin/env -S PATH=${workspace_exec_scratch} node --version
 EOF
-  chmod 0700 /workspace/tmp/.workcell-env-path-node-shebang
-  if /workspace/tmp/.workcell-env-path-node-shebang >/tmp/workspace-env-path-node-shebang.out 2>&1; then
+  chmod 0700 "${workspace_exec_scratch}/.workcell-env-path-node-shebang"
+  if "${workspace_exec_scratch}/.workcell-env-path-node-shebang" >/tmp/workspace-env-path-node-shebang.out 2>&1; then
     echo "expected strict profile to reject env -S PATH-rebound execution of a protected Node copy" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-path-node-shebang.out
-  if env -i PATH=/workspace/tmp /usr/bin/env node --version >/tmp/env-path-node.out 2>&1; then
+  if env -i PATH="${workspace_exec_scratch}" /usr/bin/env node --version >/tmp/env-path-node.out 2>&1; then
     echo "expected strict profile to reject env basename resolution to a protected Node copy" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/env-path-node.out
-  cat <<'\''EOF'\'' >/workspace/tmp/workcell-child-envp-bypass.js
+  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/workcell-child-envp-bypass.js"
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
+const scratch = process.env.WORKCELL_EXEC_SCRATCH;
 
-fs.copyFileSync("/usr/local/libexec/workcell/real/node", "/workspace/tmp/node");
-fs.chmodSync("/workspace/tmp/node", 0o700);
+fs.copyFileSync("/usr/local/libexec/workcell/real/node", `${scratch}/node`);
+fs.chmodSync(`${scratch}/node`, 0o700);
 fs.writeFileSync(
-  "/workspace/tmp/shebang-bypass",
-  "#!/usr/bin/env node\nconsole.log(\"bypass-ok\")\n",
+  `${scratch}/shebang-bypass`,
+  `#!/usr/bin/env -S PATH=${scratch} node --version\n`,
   { mode: 0o700 },
 );
 
-const result = spawnSync("/workspace/tmp/shebang-bypass", [], {
+const result = spawnSync(`${scratch}/shebang-bypass`, [], {
   encoding: "utf8",
-  env: { PATH: "/workspace/tmp" },
+  env: { PATH: scratch },
 });
 
 const blockedByRuntime =
@@ -1731,22 +1826,22 @@ if (
 
 console.log("child-envp-shebang-blocked");
 EOF
-  node /workspace/tmp/workcell-child-envp-bypass.js >/tmp/workspace-child-envp-bypass.out 2>/tmp/workspace-child-envp-bypass.err
+  WORKCELL_EXEC_SCRATCH="${workspace_exec_scratch}" node "${workspace_exec_scratch}/workcell-child-envp-bypass.js" >/tmp/workspace-child-envp-bypass.out 2>/tmp/workspace-child-envp-bypass.err
   grep -q "child-envp-shebang-blocked" /tmp/workspace-child-envp-bypass.out
-  cat >/workspace/tmp/.workcell-env-shell-node-shebang <<EOF
+  cat >"${workspace_exec_scratch}/.workcell-env-shell-node-shebang" <<EOF
 #!/usr/bin/env -S /bin/sh -c /usr/local/libexec/workcell/real/node
 EOF
-  chmod 0700 /workspace/tmp/.workcell-env-shell-node-shebang
-  if /workspace/tmp/.workcell-env-shell-node-shebang >/tmp/workspace-env-shell-node-shebang.out 2>&1; then
+  chmod 0700 "${workspace_exec_scratch}/.workcell-env-shell-node-shebang"
+  if "${workspace_exec_scratch}/.workcell-env-shell-node-shebang" >/tmp/workspace-env-shell-node-shebang.out 2>&1; then
     echo "expected strict profile to reject env -S shell trampoline execution of the real Node payload" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-shell-node-shebang.out
-  rm -f /workspace/tmp/.workcell-node-shebang /workspace/tmp/.workcell-loader-node-shebang
-  rm -f /workspace/tmp/.workcell-env-node-shebang /workspace/tmp/.workcell-env-loader-node-shebang /workspace/tmp/.workcell-env-path-node-shebang /workspace/tmp/.workcell-env-shell-node-shebang
-  rm -f /workspace/tmp/shebang-bypass /workspace/tmp/workcell-child-envp-bypass.js
-  rm -f /workspace/tmp/node
-  rm -f /workspace/tmp/.workcell-native-helper
+  rm -f "${workspace_exec_scratch}/.workcell-node-shebang" "${workspace_exec_scratch}/.workcell-loader-node-shebang"
+  rm -f "${workspace_exec_scratch}/.workcell-env-node-shebang" "${workspace_exec_scratch}/.workcell-env-loader-node-shebang" "${workspace_exec_scratch}/.workcell-env-path-node-shebang" "${workspace_exec_scratch}/.workcell-env-shell-node-shebang"
+  rm -f "${workspace_exec_scratch}/shebang-bypass" "${workspace_exec_scratch}/workcell-child-envp-bypass.js"
+  rm -f "${workspace_exec_scratch}/node"
+  rm -f "${workspace_exec_scratch}/.workcell-native-helper"
   cp /usr/local/libexec/workcell/real/node "$EXEC_TMP/workcell-node-real-copy"
   chmod 0700 "$EXEC_TMP/workcell-node-real-copy"
   if "$EXEC_TMP/workcell-node-real-copy" --version >/tmp/node-real-copy.out 2>&1; then
@@ -1800,10 +1895,12 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct provider script execution via node." /tmp/node-provider-env.out
-  cp /bin/true /workspace/tmp/not-an-addon.node
-  cat <<'\''EOF'\'' >/workspace/tmp/workcell-native-addon-require.js
+  cp /bin/true "${workspace_exec_scratch}/not-an-addon.node"
+  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/workcell-native-addon-require.js"
+const scratch = process.env.WORKCELL_EXEC_SCRATCH;
+
 try {
-  require("/workspace/tmp/not-an-addon.node");
+  require(`${scratch}/not-an-addon.node`);
   console.error("expected Workcell to block native addon loading");
   process.exit(1);
 } catch (error) {
@@ -1813,7 +1910,7 @@ try {
   console.log("native-addon-load-blocked");
 }
 EOF
-  node /workspace/tmp/workcell-native-addon-require.js >/tmp/node-native-addon.out 2>&1
+  WORKCELL_EXEC_SCRATCH="${workspace_exec_scratch}" node "${workspace_exec_scratch}/workcell-native-addon-require.js" >/tmp/node-native-addon.out 2>&1
   grep -q "native-addon-load-blocked" /tmp/node-native-addon.out
   cp -R /opt/workcell/providers /tmp/workcell-provider-copy
   if node /tmp/workcell-provider-copy/node_modules/@anthropic-ai/claude-code/cli.js --version >/tmp/node-provider-copy-claude.out 2>&1; then
@@ -1990,12 +2087,12 @@ EOF
   fi
   grep -q "dangerously-skip-permissions" /tmp/node-provider-marker-benign.out
   rm -rf "${workspace_provider_benign_marker}"
-  rm -f /workspace/tmp/workcell-provider-copy-scrub.js
-  rm -f /workspace/tmp/workcell-provider-copy-minimalize.js
-  rm -f /workspace/tmp/workcell-provider-copy-split.js
-  rm -f /workspace/tmp/workcell-provider-copy-no-package.js
-  rm -f /workspace/tmp/workcell-provider-copy-no-package-split.js
-  rm -f /workspace/tmp/not-an-addon.node /workspace/tmp/workcell-native-addon-require.js
+  rm -f "${workspace_exec_scratch}/workcell-provider-copy-scrub.js"
+  rm -f "${workspace_exec_scratch}/workcell-provider-copy-minimalize.js"
+  rm -f "${workspace_exec_scratch}/workcell-provider-copy-split.js"
+  rm -f "${workspace_exec_scratch}/workcell-provider-copy-no-package.js"
+  rm -f "${workspace_exec_scratch}/workcell-provider-copy-no-package-split.js"
+  rm -f "${workspace_exec_scratch}/not-an-addon.node" "${workspace_exec_scratch}/workcell-native-addon-require.js"
   cat <<'\''EOF'\'' >/tmp/workcell-node-public-preload.js
 require("fs").writeFileSync("/tmp/workcell-node-public-preload-ran", "1")
 process.exit(99)
@@ -2008,16 +2105,16 @@ EOF
     exit 1
   fi
   test ! -e /tmp/workcell-node-public-preload-ran
-  cat <<'\''EOF'\'' >/workspace/tmp/git
+  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/git"
 #!/bin/sh
 printf '\''path-bypass-git\n'\''
 EOF
-  cat <<'\''EOF'\'' >/workspace/tmp/node
+  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/node"
 #!/bin/sh
 printf '\''path-bypass-node\n'\''
 EOF
-  chmod 0700 /workspace/tmp/git /workspace/tmp/node
-  cat <<'\''EOF'\'' >/workspace/tmp/workcell-path-sanitize.js
+  chmod 0700 "${workspace_exec_scratch}/git" "${workspace_exec_scratch}/node"
+  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/workcell-path-sanitize.js"
 const { spawnSync } = require("node:child_process");
 
 const git = spawnSync("git", ["--version"], { encoding: "utf8" });
@@ -2038,13 +2135,17 @@ if (!node.stdout.trim().startsWith("v")) {
 
 console.log("trusted-path-preserved");
 EOF
-  env PATH=/workspace/tmp:$PATH /usr/local/bin/node /workspace/tmp/workcell-path-sanitize.js >/tmp/node-path-sanitize.out 2>&1
+  env PATH="${workspace_exec_scratch}:$PATH" /usr/local/bin/node "${workspace_exec_scratch}/workcell-path-sanitize.js" >/tmp/node-path-sanitize.out 2>&1
   grep -q "trusted-path-preserved" /tmp/node-path-sanitize.out
   if grep -q "path-bypass-" /tmp/node-path-sanitize.out; then
     echo "expected public node wrapper to sanitize PATH for child processes" >&2
     exit 1
   fi
-  rm -f /workspace/tmp/git /workspace/tmp/node /workspace/tmp/workcell-path-sanitize.js
+  rm -f "${workspace_exec_scratch}/git" "${workspace_exec_scratch}/node" "${workspace_exec_scratch}/workcell-path-sanitize.js"
+  rm -rf "${workspace_exec_scratch}"
+  else
+    echo "Skipping nested workspace mutable-exec smoke checks for the remote validator bind-mount path." >&2
+  fi
   if printf '\''console.log("workcell")\n'\'' | node >/tmp/node-stdin.out 2>&1; then
     echo "expected public node wrapper to reject stdin-driven execution" >&2
     exit 1

@@ -17,6 +17,9 @@ class RenderInjectionBundleTests(unittest.TestCase):
             (root / "claude-auth.json").write_text('{"token":"claude"}\n', encoding="utf-8")
             (root / "claude-mcp.json").write_text('{"mcpServers":{}}\n', encoding="utf-8")
             (root / "gemini-projects.json").write_text('{"projects":{}}\n', encoding="utf-8")
+            (root / "claude-auth.json").chmod(0o600)
+            (root / "claude-mcp.json").chmod(0o600)
+            (root / "gemini-projects.json").chmod(0o600)
 
             policy = {
                 "credentials": {
@@ -26,8 +29,8 @@ class RenderInjectionBundleTests(unittest.TestCase):
                 }
             }
 
-            claude_rendered = self.module.render_credentials(policy, root, "claude")
-            gemini_rendered = self.module.render_credentials(policy, root, "gemini")
+            claude_rendered = self.module.render_credentials(policy, root, "claude", "strict")
+            gemini_rendered = self.module.render_credentials(policy, root, "gemini", "strict")
 
             self.assertEqual(
                 claude_rendered["claude_auth"]["mount_path"],
@@ -55,6 +58,7 @@ class RenderInjectionBundleTests(unittest.TestCase):
             output.mkdir()
             (root / "public.txt").write_text("public\n", encoding="utf-8")
             (root / "secret.txt").write_text("secret\n", encoding="utf-8")
+            (root / "secret.txt").chmod(0o600)
 
             policy = {
                 "copies": [
@@ -176,6 +180,7 @@ class RenderInjectionBundleTests(unittest.TestCase):
             output = root / "bundle"
             output.mkdir()
             (root / "id_agent").write_text("key\n", encoding="utf-8")
+            (root / "id_agent").chmod(0o600)
 
             rendered = self.module.render_ssh(
                 {
@@ -192,6 +197,203 @@ class RenderInjectionBundleTests(unittest.TestCase):
             )
 
             self.assertEqual(rendered, {})
+
+    def test_render_credentials_respects_provider_and_mode_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            auth = root / "github-hosts.yml"
+            auth.write_text("github.com:\n", encoding="utf-8")
+            auth.chmod(0o600)
+
+            rendered = self.module.render_credentials(
+                {
+                    "credentials": {
+                        "github_hosts": {
+                            "source": "github-hosts.yml",
+                            "providers": ["claude"],
+                            "modes": ["build"],
+                        }
+                    }
+                },
+                root,
+                "codex",
+                "strict",
+            )
+
+            self.assertEqual(rendered, {})
+
+    def test_render_ssh_rejects_unsafe_config_without_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "bundle"
+            output.mkdir()
+            config = root / "ssh-config"
+            config.write_text("ProxyCommand nc %h %p\n", encoding="utf-8")
+            config.chmod(0o600)
+
+            with self.assertRaises(SystemExit):
+                self.module.render_ssh(
+                    {"ssh": {"enabled": True, "config": "ssh-config"}},
+                    output,
+                    root,
+                    "codex",
+                    "strict",
+                )
+
+    def test_render_credentials_rejects_world_readable_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            auth = root / "auth.json"
+            auth.write_text("{}\n", encoding="utf-8")
+            auth.chmod(0o644)
+
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {"credentials": {"codex_auth": "auth.json"}},
+                    root,
+                    "codex",
+                    "strict",
+                )
+
+    def test_render_credentials_rejects_symlink_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            auth = root / "auth.json"
+            auth.write_text("{}\n", encoding="utf-8")
+            auth.chmod(0o600)
+            link = root / "auth-link.json"
+            link.symlink_to(auth)
+
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {"credentials": {"codex_auth": "auth-link.json"}},
+                    root,
+                    "codex",
+                    "strict",
+                )
+
+    def test_render_credentials_rejects_symlinked_parent_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            real_dir = root / "real"
+            real_dir.mkdir()
+            auth = real_dir / "auth.json"
+            auth.write_text("{}\n", encoding="utf-8")
+            auth.chmod(0o600)
+            link_dir = root / "linked"
+            link_dir.symlink_to(real_dir, target_is_directory=True)
+
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {"credentials": {"codex_auth": "linked/auth.json"}},
+                    root,
+                    "codex",
+                    "strict",
+                )
+
+    def test_render_credentials_rejects_absolute_paths_with_symlinked_parents_under_policy_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            real_dir = root / "real"
+            real_dir.mkdir()
+            nested_dir = real_dir / "sub"
+            nested_dir.mkdir()
+            auth = nested_dir / "auth.json"
+            auth.write_text("{}\n", encoding="utf-8")
+            auth.chmod(0o600)
+            link_dir = root / "linked"
+            link_dir.symlink_to(real_dir, target_is_directory=True)
+
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {"credentials": {"codex_auth": str(link_dir / "sub/auth.json")}},
+                    root,
+                    "codex",
+                    "strict",
+                )
+
+    def test_render_credentials_rejects_absolute_paths_with_symlinked_parents_outside_policy_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            policy_root = base / "policy"
+            policy_root.mkdir()
+            outside_root = base / "outside"
+            real_dir = outside_root / "real"
+            real_dir.mkdir(parents=True)
+            nested_dir = real_dir / "sub"
+            nested_dir.mkdir()
+            auth = nested_dir / "auth.json"
+            auth.write_text("{}\n", encoding="utf-8")
+            auth.chmod(0o600)
+            link_dir = outside_root / "linked"
+            link_dir.symlink_to(real_dir, target_is_directory=True)
+
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {"credentials": {"codex_auth": str(link_dir / "sub/auth.json")}},
+                    policy_root,
+                    "codex",
+                    "strict",
+                )
+
+    def test_render_ssh_allows_standard_known_hosts_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            known_hosts = root / "known_hosts"
+            known_hosts.write_text("github.com ssh-ed25519 AAAA\n", encoding="utf-8")
+            known_hosts.chmod(0o644)
+
+            rendered = self.module.render_ssh(
+                {"ssh": {"enabled": True, "known_hosts": "known_hosts"}},
+                root / "bundle",
+                root,
+                "codex",
+                "strict",
+            )
+
+            self.assertEqual(
+                rendered["known_hosts"]["mount_path"],
+                "/opt/workcell/host-inputs/ssh/known_hosts",
+            )
+
+    def test_render_ssh_marks_safe_and_unsafe_config_assurance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "bundle"
+            output.mkdir()
+            config = root / "ssh-config"
+            config.write_text("Host github.com\n  IdentityFile ~/.ssh/id_ed25519\n", encoding="utf-8")
+            config.chmod(0o600)
+            unsafe_config = root / "unsafe-ssh-config"
+            unsafe_config.write_text("ProxyCommand nc %h %p\n", encoding="utf-8")
+            unsafe_config.chmod(0o600)
+
+            safe_rendered = self.module.render_ssh(
+                {"ssh": {"enabled": True, "config": "ssh-config"}},
+                output,
+                root,
+                "codex",
+                "strict",
+            )
+            unsafe_rendered = self.module.render_ssh(
+                {
+                    "ssh": {
+                        "enabled": True,
+                        "config": "unsafe-ssh-config",
+                        "allow_unsafe_config": True,
+                    }
+                },
+                output,
+                root,
+                "codex",
+                "strict",
+            )
+
+            self.assertEqual(safe_rendered["config_assurance"], "safe")
+            self.assertEqual(
+                unsafe_rendered["config_assurance"],
+                "lower-assurance-unsafe-config",
+            )
 
 
 if __name__ == "__main__":
