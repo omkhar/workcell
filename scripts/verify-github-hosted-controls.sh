@@ -78,6 +78,16 @@ policy = tomllib.loads(policy_path.read_text(encoding="utf-8"))
 default_branch = repo_meta["default_branch"]
 owner_login = repo_meta["owner"]["login"]
 owner_type = repo_meta["owner"]["type"]
+branch_integrity_policy = policy.get("branch_integrity")
+if not isinstance(branch_integrity_policy, dict):
+    raise SystemExit(
+        f"{policy_path} must define branch_integrity as a table with explicit booleans"
+    )
+for key in ("require_signed_commits", "block_force_pushes", "block_deletions"):
+    if branch_integrity_policy.get(key) is not True:
+        raise SystemExit(
+            f"{policy_path} must set branch_integrity.{key} = true"
+        )
 branch_review_mode = policy.get("branch_review", {}).get("mode", "review-gated")
 if branch_review_mode not in {"review-gated", "single-owner-private-pr"}:
     raise SystemExit(
@@ -151,7 +161,8 @@ for ruleset in active_rulesets:
     if ruleset.get("target") == "branch" and has_ref_include(ruleset, "~DEFAULT_BRANCH"):
         signatures = has_rule(ruleset, "required_signatures")
         non_fast_forward = has_rule(ruleset, "non_fast_forward")
-        if signatures and non_fast_forward:
+        deletion = has_rule(ruleset, "deletion")
+        if signatures and non_fast_forward and deletion:
             branch_integrity = ruleset
         pull_request = has_rule(ruleset, "pull_request")
         if pull_request:
@@ -169,7 +180,7 @@ for ruleset in active_rulesets:
 if branch_integrity is None:
     raise SystemExit(
         f"Missing active default-branch integrity ruleset on {repo} "
-        f"with required_signatures and non_fast_forward"
+        f"with required_signatures, non_fast_forward, and deletion"
     )
 
 if branch_review is None:

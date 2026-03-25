@@ -1,6 +1,15 @@
 # GitHub-hosted repository controls that live outside the git tree but remain
 # part of the reviewed Workcell control plane.
 
+[branch_integrity]
+# These integrity controls stay enabled regardless of repository size:
+# - require signed commits on the default branch
+# - block force-pushes on the default branch
+# - block deletion of the default branch
+require_signed_commits = true
+block_force_pushes = true
+block_deletions = true
+
 [branch_review]
 # Valid modes:
 # - "review-gated": require pull requests, at least one approving review,
