@@ -1541,6 +1541,10 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-codex-profile-bypass.out
+  if [[ "${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC:-0}" != "1" ]] && [[ ! -w /workspace ]]; then
+    echo "Workcell note: skipping workspace mutable execution smoke because /workspace is not writable for the runtime user." >&2
+    WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC=1
+  fi
   if [[ "${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC:-0}" != "1" ]]; then
   workspace_exec_scratch=/workspace/.workcell-exec-scratch
   rm -rf "${workspace_exec_scratch}"
