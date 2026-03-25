@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -67,6 +68,20 @@ class RenderInjectionHelperTests(unittest.TestCase):
         self.assertTrue(parsed["ssh"]["enabled"])
         self.assertEqual(len(parsed["copies"]), 1)
 
+    def test_parse_toml_subset_parses_scoped_credential_table(self) -> None:
+        policy = Path("/tmp/policy.toml")
+        parsed = self.module.parse_toml_subset(
+            """
+            [credentials.codex_auth]
+            source = "auth.json"
+            providers = ["codex"]
+            modes = ["strict"]
+            """,
+            policy,
+        )
+        self.assertEqual(parsed["credentials"]["codex_auth"]["source"], "auth.json")
+        self.assertEqual(parsed["credentials"]["codex_auth"]["providers"], ["codex"])
+
     def test_parse_toml_subset_rejects_invalid_lines(self) -> None:
         policy = Path("/tmp/policy.toml")
         with self.assertRaises(SystemExit):
@@ -80,7 +95,15 @@ class RenderInjectionHelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             relative = self.module.expand_host_path("child/file.txt", base)
-            self.assertEqual(relative, (base / "child/file.txt").resolve())
+            self.assertEqual(
+                relative,
+                Path(os.path.abspath(os.fspath(base / "child/file.txt"))),
+            )
+            target = base / "target.txt"
+            target.write_text("target\n", encoding="utf-8")
+            link = base / "link.txt"
+            link.symlink_to(target)
+            self.assertEqual(self.module.expand_host_path("link.txt", base), link)
             candidate = self.module.normalize_container_target("~/test.txt")
             self.assertEqual(
                 candidate,
@@ -89,6 +112,12 @@ class RenderInjectionHelperTests(unittest.TestCase):
             self.assertTrue(
                 self.module.target_is_under(
                     PurePosixPath("/state/agent-home/.config"),
+                    PurePosixPath("/state/agent-home"),
+                )
+            )
+            self.assertTrue(
+                self.module.target_is_under(
+                    PurePosixPath("/state/agent-home"),
                     PurePosixPath("/state/agent-home"),
                 )
             )
@@ -121,6 +150,8 @@ class RenderInjectionHelperTests(unittest.TestCase):
             self.module.selected_for([], "codex", "providers", {"codex"})
         with self.assertRaises(SystemExit):
             self.module.selected_for(["invalid"], "codex", "providers", {"codex"})
+        with self.assertRaises(SystemExit):
+            self.module.selected_for(["codex", 7], "codex", "providers", {"codex"})
         self.module.validate_allowed_keys({"a": 1}, {"a"}, "table")
         with self.assertRaises(SystemExit):
             self.module.validate_allowed_keys({"a": 1, "b": 2}, {"a"}, "table")
@@ -130,6 +161,7 @@ class RenderInjectionHelperTests(unittest.TestCase):
             root = Path(tmpdir)
             source_file = root / "source.txt"
             source_file.write_text("hello\n", encoding="utf-8")
+            source_file.chmod(0o600)
             staged_file = root / "bundle/file.txt"
             self.assertEqual(self.module.copy_source(source_file, staged_file), "file")
             self.assertEqual(staged_file.read_text(encoding="utf-8"), "hello\n")
@@ -137,7 +169,9 @@ class RenderInjectionHelperTests(unittest.TestCase):
 
             source_dir = root / "dir-source"
             source_dir.mkdir()
+            source_dir.chmod(0o700)
             (source_dir / "nested.txt").write_text("nested\n", encoding="utf-8")
+            (source_dir / "nested.txt").chmod(0o600)
             staged_dir = root / "bundle/dir"
             self.assertEqual(self.module.copy_source(source_dir, staged_dir), "dir")
             self.assertTrue((staged_dir / "nested.txt").is_file())
@@ -167,6 +201,11 @@ class RenderInjectionHelperTests(unittest.TestCase):
             policy_path = root / "policy.toml"
             source = root / "common.md"
             source.write_text("common\n", encoding="utf-8")
+            source.chmod(0o600)
+            self.assertEqual(
+                self.module.expand_host_path(str(source), root),
+                Path(os.path.abspath(os.fspath(source))),
+            )
             policy_path.write_text(
                 'version = 1\n[documents]\ncommon = "common.md"\n',
                 encoding="utf-8",
@@ -175,7 +214,7 @@ class RenderInjectionHelperTests(unittest.TestCase):
             self.assertEqual(loaded["documents"]["common"], "common.md")
             self.assertEqual(
                 self.module.validate_source_path("common.md", "documents.common", root),
-                source.resolve(),
+                Path(os.path.abspath(os.fspath(source))),
             )
 
             policy_path.write_text('version = 2\n', encoding="utf-8")
@@ -183,6 +222,8 @@ class RenderInjectionHelperTests(unittest.TestCase):
                 self.module.load_policy(policy_path)
             with self.assertRaises(SystemExit):
                 self.module.validate_source_path("", "documents.common", root)
+            with self.assertRaises(SystemExit):
+                self.module.validate_source_path("missing.md", "documents.common", root)
 
     def test_render_documents_rejects_non_file_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -197,6 +238,27 @@ class RenderInjectionHelperTests(unittest.TestCase):
                     root,
                 )
 
+    def test_optional_sections_accept_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "bundle"
+            output.mkdir()
+            self.assertEqual(self.module.render_documents({"documents": None}, output, root), {})
+            self.assertEqual(
+                self.module.render_copies({"copies": None}, output, root, "codex", "strict"),
+                [],
+            )
+            self.assertEqual(
+                self.module.render_ssh({"ssh": None}, output, root, "codex", "strict"),
+                {},
+            )
+            self.assertEqual(
+                self.module.render_credentials(
+                    {"credentials": None}, root, "codex", "strict"
+                ),
+                {},
+            )
+
     def test_render_copies_supports_public_and_secret_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -207,7 +269,9 @@ class RenderInjectionHelperTests(unittest.TestCase):
             (public_dir / "note.txt").write_text("note\n", encoding="utf-8")
             secret_dir = root / "secret-dir"
             secret_dir.mkdir()
+            secret_dir.chmod(0o700)
             (secret_dir / "token.txt").write_text("token\n", encoding="utf-8")
+            (secret_dir / "token.txt").chmod(0o600)
 
             rendered = self.module.render_copies(
                 {
@@ -244,6 +308,7 @@ class RenderInjectionHelperTests(unittest.TestCase):
             output = root / "bundle"
             output.mkdir()
             (root / "file.txt").write_text("data\n", encoding="utf-8")
+            (root / "file.txt").chmod(0o600)
 
             with self.assertRaises(SystemExit):
                 self.module.render_copies(
@@ -273,6 +338,10 @@ class RenderInjectionHelperTests(unittest.TestCase):
             (root / "known_hosts").write_text("host key\n", encoding="utf-8")
             (root / "id_a").write_text("key a\n", encoding="utf-8")
             (root / "id_b").write_text("key b\n", encoding="utf-8")
+            (root / "config").chmod(0o600)
+            (root / "known_hosts").chmod(0o600)
+            (root / "id_a").chmod(0o600)
+            (root / "id_b").chmod(0o600)
 
             rendered = self.module.render_ssh(
                 {
@@ -335,15 +404,21 @@ class RenderInjectionHelperTests(unittest.TestCase):
                     "strict",
                 )
 
+            (root / "unsafe").write_text("Host *\nProxyCommand nope\n", encoding="utf-8")
+            (root / "unsafe").chmod(0o600)
+            self.module.validate_ssh_config_safety(root / "unsafe", allow_unsafe=True)
+            self.assertIsNone(self.module.parse_ssh_directive("   "))
+            self.assertIsNone(self.module.parse_ssh_directive("# comment"))
+
     def test_render_credentials_rejects_invalid_tables_and_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / "dir").mkdir()
             with self.assertRaises(SystemExit):
-                self.module.render_credentials({"credentials": []}, root, "codex")
+                self.module.render_credentials({"credentials": []}, root, "codex", "strict")
             with self.assertRaises(SystemExit):
                 self.module.render_credentials(
-                    {"credentials": {"codex_auth": "dir"}}, root, "codex"
+                    {"credentials": {"codex_auth": "dir"}}, root, "codex", "strict"
                 )
 
     def test_main_writes_manifest_for_supported_policy(self) -> None:
@@ -353,6 +428,7 @@ class RenderInjectionHelperTests(unittest.TestCase):
             policy_path = root / "policy.toml"
             (root / "common.md").write_text("common\n", encoding="utf-8")
             (root / "auth.json").write_text('{"token":"abc"}\n', encoding="utf-8")
+            (root / "auth.json").chmod(0o600)
             policy_path.write_text(
                 """
                 version = 1

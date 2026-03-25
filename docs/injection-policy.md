@@ -34,14 +34,16 @@ host-side bundle for provider credentials, SSH material, and
 Provider docs are rendered in a fixed precedence order:
 
 1. immutable baseline doc from `adapters/`
-2. imported workspace provider doc such as repo-local `AGENTS.md`,
-   `CLAUDE.md`, or `GEMINI.md` when present
-3. `documents.common`
-4. provider-specific fragment such as `documents.claude`
+2. imported workspace common doc from repo-local `AGENTS.md` when present
+3. imported workspace provider overlay such as repo-local `CLAUDE.md` or
+   `GEMINI.md` when present
+4. `documents.common`
+5. provider-specific fragment such as `documents.claude`
 
 That lets you keep one common `AGENTS.md`-style instruction file and have
 Workcell append it to the provider-native home doc for Codex, Claude, or
-Gemini without replacing the reviewed baseline.
+Gemini without replacing the reviewed baseline, while still layering
+`CLAUDE.md` or `GEMINI.md` provider-specific deltas when they exist.
 
 ## Supported inputs
 
@@ -65,6 +67,16 @@ Selectors let you scope injected material to only some launches:
 - `providers = ["codex", "claude", "gemini"]`
 - `modes = ["strict", "build"]`
 
+For `[credentials]`, simple `key = "/path/to/file"` entries still work, and
+scoped entries can be expressed as nested tables:
+
+```toml
+[credentials.github_hosts]
+source = "/Users/example/.config/gh/hosts.yml"
+providers = ["claude", "gemini"]
+modes = ["strict", "build"]
+```
+
 ## Deliberate limits
 
 - no arbitrary environment-variable secret injection on the safe path
@@ -80,6 +92,9 @@ Selectors let you scope injected material to only some launches:
   process-to-process inside the container
 - no writes into Workcell-generated helper state such as
   `~/.claude/workcell/`
+- no unsafe SSH config directives such as `ProxyCommand`, `LocalCommand`,
+  `Include`, `IdentityAgent`, or `Match exec` unless you explicitly set
+  `ssh.allow_unsafe_config = true`
 
 ## Recommended patterns
 
@@ -90,6 +105,10 @@ Selectors let you scope injected material to only some launches:
 - Use `[credentials]` for provider and GitHub auth material that should land in
   Workcell-managed session paths without a fresh login every time. This is the
   safest way to persist reusable provider auth on the host.
+- Keep secret sources owner-only (`0600` for files, `0700` for directories) and
+  avoid symlinks. Workcell rejects looser permissions on secret-bearing inputs.
+  `ssh.known_hosts` is the exception: standard world-readable files are
+  accepted, but symlinks and group/world-writable paths are rejected.
 - Use `[[copies]]` with `target = "/state/injected/..."` for shared read-only
   material such as CA bundles or repo policy files. Public copies are staged
   through the launcher-owned bundle.

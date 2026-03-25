@@ -515,6 +515,13 @@ if [[ "${REMOTE_USE_SUDO}" == "1" ]]; then
   rsync_args=(--rsync-path="sudo -n rsync" --chown=0:0 "${rsync_args[@]}")
 fi
 rsync "${rsync_args[@]}"
+if [[ "${REMOTE_USE_SUDO}" == "1" ]]; then
+  remote_cmd install -d -m 0755 -o "${REMOTE_LOGIN_UID}" -g "${REMOTE_LOGIN_GID}" "${REMOTE_DIR}/repo/tmp"
+else
+  remote_cmd mkdir -p -- "${REMOTE_DIR}/repo/tmp"
+  remote_cmd chown "${REMOTE_LOGIN_UID}:${REMOTE_LOGIN_GID}" "${REMOTE_DIR}/repo/tmp"
+  remote_cmd chmod 0755 "${REMOTE_DIR}/repo/tmp"
+fi
 
 helper_rsync_args=(
   --archive
@@ -541,6 +548,7 @@ remote_docker run --rm \
   -e WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT=default \
   -e WORKCELL_DOCKER_HOST_HOME_ROOT="${REMOTE_HOME}" \
   -e WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${REMOTE_DIR}/repo" \
+  -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC=1 \
   -e WORKCELL_REMOTE_BUILDKIT_LOCAL_CA=/host-local-ca \
   -e WORKCELL_REMOTE_BUILDKIT_SSL_CERTS=/host-ssl-certs \
   -e WORKCELL_REPRO_PLATFORMS=linux/amd64 \
@@ -571,6 +579,10 @@ cleanup_remote_builder() {
 trap cleanup_remote_builder EXIT
 
 cd /workspace
+
+mkdir -p /workspace/tmp
+chown "${WORKCELL_TEST_HOST_UID}:${WORKCELL_TEST_HOST_GID}" /workspace/tmp
+chmod 0755 /workspace/tmp
 
 git init -q
 git config user.name "Workcell Remote Validate"

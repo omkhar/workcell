@@ -88,13 +88,15 @@ Initial adapters target:
 ./scripts/install.sh
 workcell --prepare --agent codex --workspace /path/to/repo
 workcell --agent codex --workspace /path/to/repo
+workcell --agent codex --inspect --workspace /path/to/repo
+workcell --agent codex --doctor --workspace /path/to/repo
 workcell --agent claude --agent-autonomy prompt --workspace /path/to/repo
 workcell --prepare --agent gemini --agent-arg --version --workspace /path/to/repo
 man workcell
 ```
 
 The safe path is `strict`, and it is also the default. `--prepare` is the
-recommended first-run path: it seeds or refreshes the reviewed runtime image
+recommended first-run path: it seeds or refreshes the prepared runtime image
 inside the isolated VM, then continues with the requested launch. `build`
 still exists as the explicit wider-egress runtime profile for dependency and
 image creation work. `breakglass` is explicit, higher trust, visibly
@@ -115,6 +117,11 @@ Workcell surfaces that posture explicitly in the launch audit output.
 making you repeat `codex`, `claude`, or `gemini` yourself. `--agent-arg`
 values are still treated as ordinary user-supplied provider argv and go
 through the same in-container denylist as raw `-- ...` arguments.
+`--cache-profile off` is the default. `--cache-profile standard` opt-ins to a
+host-persisted non-secret cache plane for package/build tooling such as npm,
+pip, Cargo registry/git, Go module/build cache, and `ccache`. That is a
+lower-assurance path and is not treated as part of the clean `strict`
+session boundary.
 `--codex-rules-mutability readonly` is the clean-session default. That keeps
 Codex execpolicy rules immutable on the managed path until either
 `--agent-autonomy prompt` or a package-manager mutation has already lowered the
@@ -130,6 +137,14 @@ default; `--no-default-injection-policy` disables that for a specific launch.
 `--vm-cpu`, `--vm-memory`, and `--vm-disk` tune the dedicated Colima VM;
 `--container-cpu` and `--container-memory` tune the inner runtime container
 without changing the reviewed profile defaults for other launches.
+`--log-level debug` surfaces the previously-suppressed Colima/image-build
+output during startup. `--debug-log /path/to/file` persistently captures full
+launcher plus container stdout/stderr, and `--audit-transcript /path/to/file`
+captures the full interactive terminal transcript including prompts and typed
+responses plus session timestamps and exit status. Both persistent host-side
+capture knobs are explicit lower-assurance choices, emit an explicit warning
+banner when enabled, apply only to real launched sessions, and stay off by
+default.
 With `--container-mutability ephemeral`, Workcell also allows `apt` and
 `apt-get` to reach the pinned Debian snapshot endpoints so transient build
 tooling can be installed without opening the session to arbitrary distro
@@ -166,7 +181,7 @@ workspace; linked worktrees with external gitdirs are rejected.
 
 Common recovery paths:
 
-- First launch or missing reviewed runtime image:
+- First launch or missing prepared runtime image:
   `workcell --prepare --agent codex --workspace /path/to/repo`
   Replace `codex` with `claude` or `gemini` for the corresponding provider.
 - First launch with provider prompts enabled:
@@ -176,6 +191,24 @@ Common recovery paths:
 - Conflicting unmanaged Colima profile:
   `workcell --repair-profile --agent codex --workspace /path/to/repo`
   Replace `codex` with `claude` or `gemini` for the corresponding provider.
+- Inspect current derived state without launching:
+  `workcell --agent codex --inspect --workspace /path/to/repo`
+  Alias: `workcell inspect --agent codex --workspace /path/to/repo`
+- Validate host/workspace/profile posture and print the next safe command:
+  `workcell --agent codex --doctor --workspace /path/to/repo`
+  Alias: `workcell doctor --agent codex --workspace /path/to/repo`
+  When the workspace path is missing or invalid, `doctor` reports that first
+  instead of treating `--prepare` as the next step.
+- Print the last retained audit/debug/transcript log for a profile:
+  `workcell --logs audit --colima-profile workcell-...`
+  Alias: `workcell logs audit --colima-profile workcell-...`
+- Print the effective auth posture without launching:
+  `workcell auth-status --agent codex --workspace /path/to/repo`
+  This includes the primary provider auth mode, the ordered auth mode set, and
+  SSH config assurance when injection is active.
+- Clean stale Workcell temp state:
+  `workcell --gc`
+  Alias: `workcell gc`
 
 `--repair-profile` deletes only the conflicting derived Colima profile so
 Workcell can recreate it with reviewed mounts and policy. On `strict`, it also
@@ -202,7 +235,11 @@ Workcell treats injected content as three separate classes:
 The immutable adapter baselines under `adapters/` are never mutated in place.
 Repo-local `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` are masked inside the
 workspace on the safe path and imported into the provider-native home docs
-instead. By default, Codex rules stay linked to the immutable adapter baseline
+instead. Claude and Gemini import repo-local `AGENTS.md` as the shared
+workspace layer and then append `CLAUDE.md` or `GEMINI.md` when present. When
+a workspace only ships `AGENTS.md`, Claude and Gemini still fall back to that
+imported file rather than silently dropping shared instructions.
+By default, Codex rules stay linked to the immutable adapter baseline
 until the session is already downgraded by package mutation or the operator has
 selected `--agent-autonomy prompt`. If you explicitly opt into
 `--codex-rules-mutability session`, or if prompt autonomy or package mutation
@@ -253,7 +290,12 @@ in-container home. Generic `[[copies]]` and `[ssh]` entries are still staged
 through the launcher-owned injection bundle only for non-secret material. SSH
 inputs and `classification = "secret"` copies use the same direct-mount model
 as `[credentials]` and are copied into the session from their original host
-paths.
+paths. Secret sources must be owned by the launching user, must not be
+symlinks, and must not be group/world-readable. `ssh.known_hosts` is treated
+separately: the source file may stay world-readable as usual, but it must not
+be a symlink or group/world-writable. When you need provider- or mode-specific
+scoping, use `[credentials.<name>]` tables with `source`, `providers`, and
+`modes`.
 
 Use it explicitly:
 
@@ -291,6 +333,15 @@ Intentional non-goals for the safe path:
 
 - `scripts/validate-repo.sh`: repo-local shell, JSON, TOML, YAML, and manpage
   checks
+- `scripts/pre-merge.sh`: one-command local pre-merge path that builds the
+  validator image, runs workflow lint, validates the repo inside the validator
+  container, then runs invariants, container smoke, release-bundle
+  reproducibility, runtime reproducibility, and optionally the remote
+  linux/amd64 lane. By default it requires a clean worktree, including
+  untracked files. With `--allow-dirty`, local validation runs against the live
+  worktree and the remote lane auto-switches to `--remote-snapshot worktree`
+  plus `--include-untracked` unless you explicitly override the snapshot mode.
+  Workflow lint still depends on host `actionlint` and `zizmor`.
 - `scripts/check-workflows.sh`: `actionlint` and `zizmor`
 - `scripts/check-pinned-inputs.sh`: pin-policy checks for non-ecosystem release
   inputs such as the Debian snapshot, immutable base-image digests, and exact
@@ -348,6 +399,9 @@ Colima profile directory. Those events record the workspace, runtime profile,
 network mode, selected adapter, launch-time assurance fields, whether the run
 stayed on the managed Tier 1 path or used an explicitly lower-assurance mode,
 and whether the session later downgraded itself through package mutation.
+The durable audit log is metadata-only by default. Full stdout/stderr capture
+and full prompt/response transcript capture are separate explicit lower-
+assurance operator choices.
 `build` sessions additionally record when the temporary bootstrap allowlist was
 applied for image creation.
 

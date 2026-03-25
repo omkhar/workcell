@@ -68,6 +68,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/install.sh"
+  "${ROOT_DIR}/scripts/pre-merge.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
   "${ROOT_DIR}/scripts/run-hosted-controls-audit.sh"
   "${ROOT_DIR}/scripts/run-mutation-tests.sh"

@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
+import stat
 import sys
 from typing import NoReturn
 
@@ -17,9 +19,18 @@ SUPPORTED_AGENTS = {"codex", "claude", "gemini"}
 SUPPORTED_MODES = {"strict", "build", "breakglass"}
 SUPPORTED_CLASSIFICATIONS = {"public", "secret"}
 RESERVED_SSH_FILENAMES = {"config", "known_hosts"}
+RISKY_SSH_DIRECTIVES = {
+    "identityagent",
+    "include",
+    "localcommand",
+    "proxycommand",
+}
 SESSION_HOME_ROOT = PurePosixPath("/state/agent-home")
 RUN_INJECTED_ROOT = PurePosixPath("/state/injected")
 DIRECT_MOUNT_ROOT = PurePosixPath("/opt/workcell/host-inputs")
+SYSTEM_SYMLINK_ALLOWLIST = (
+    {Path("/var"), Path("/tmp")} if sys.platform == "darwin" else set()
+)
 RESERVED_TARGETS = (
     "/state/agent-home/.codex/AGENTS.md",
     "/state/agent-home/.codex/auth.json",
@@ -83,10 +94,8 @@ def parse_args() -> argparse.Namespace:
 def expand_host_path(raw: str, base: Path) -> Path:
     expanded = Path(os.path.expanduser(raw))
     if not expanded.is_absolute():
-        expanded = (base / expanded).resolve()
-    else:
-        expanded = expanded.resolve()
-    return expanded
+        expanded = base / expanded
+    return Path(os.path.abspath(os.fspath(expanded)))
 
 
 def normalize_container_target(raw: str) -> PurePosixPath:
@@ -213,7 +222,101 @@ def validate_source_path(raw: object, label: str, base: Path) -> Path:
     source = expand_host_path(raw, base)
     if not source.exists():
         die(f"{label} does not exist: {source}")
+    require_no_symlink_in_path_chain(source, label)
     return source
+
+
+def require_no_symlink(path: Path, label: str) -> None:
+    if path.is_symlink():
+        die(f"{label} must not be a symlink: {path}")
+
+
+def require_no_symlink_in_path_chain(path: Path, label: str) -> None:
+    current = path
+    while True:
+        if current.is_symlink() and current not in SYSTEM_SYMLINK_ALLOWLIST:
+            die(f"{label} must not be a symlink: {current}")
+        if current.parent == current:
+            return
+        current = current.parent
+
+
+def require_secret_owner_only(path: Path, label: str) -> None:
+    path_stat = path.lstat()
+    expected_uid = os.getuid()
+    if path_stat.st_uid != expected_uid:
+        die(f"{label} must be owned by uid {expected_uid}: {path}")
+    if stat.S_IMODE(path_stat.st_mode) & 0o077:
+        die(f"{label} must not be group/world-accessible: {path}")
+
+
+def validate_secret_file(source: Path, label: str) -> Path:
+    require_no_symlink(source, label)
+    if not source.is_file():
+        die(f"{label} must point at a file: {source}")
+    require_secret_owner_only(source, label)
+    return source
+
+
+def validate_secret_tree(source: Path, label: str) -> Path:
+    require_no_symlink(source, label)
+    if source.is_file():
+        return validate_secret_file(source, label)
+    if not source.is_dir():
+        die(f"{label} must point at a file or directory: {source}")
+    require_secret_owner_only(source, label)
+    ensure_no_symlinks_within(source)
+    for child in source.rglob("*"):
+        require_no_symlink(child, label)
+        require_secret_owner_only(child, label)
+    return source
+
+
+def validate_known_hosts_file(source: Path, label: str) -> Path:
+    require_no_symlink(source, label)
+    if not source.is_file():
+        die(f"{label} must point at a file: {source}")
+    path_stat = source.lstat()
+    if stat.S_IMODE(path_stat.st_mode) & 0o022:
+        die(f"{label} must not be group/world-writable: {source}")
+    return source
+
+
+def parse_ssh_directive(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    parts = stripped.split(None, 1)
+    directive = parts[0].lower()
+    remainder = parts[1] if len(parts) > 1 else ""
+    return directive, remainder
+
+
+def validate_ssh_config_safety(source: Path, allow_unsafe: bool) -> None:
+    if allow_unsafe:
+        return
+    for lineno, raw_line in enumerate(
+        source.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        parsed = parse_ssh_directive(raw_line)
+        if parsed is None:
+            continue
+        directive, remainder = parsed
+        if directive in RISKY_SSH_DIRECTIVES:
+            die(
+                f"ssh.config contains unsafe directive {directive!r} at line {lineno}; "
+                "set ssh.allow_unsafe_config = true only when you explicitly accept lower assurance"
+            )
+        if directive == "match" and " exec " in f" {remainder.lower()} ":
+            die(
+                "ssh.config contains unsafe Match exec at line "
+                f"{lineno}; set ssh.allow_unsafe_config = true only when you explicitly accept lower assurance"
+            )
+
+
+def policy_sha256(policy_path: Path) -> str:
+    return f"sha256:{hashlib.sha256(policy_path.read_bytes()).hexdigest()}"
 
 
 def load_policy(policy_path: Path) -> dict:
@@ -298,6 +401,23 @@ def parse_toml_subset(content: str, policy_path: Path) -> dict:
 
         if line.startswith("[") and line.endswith("]"):
             table_name = line[1:-1].strip()
+            if table_name.startswith("credentials."):
+                credential_key = table_name.split(".", 1)[1]
+                if credential_key not in CREDENTIAL_CONTAINER_PATHS:
+                    die(
+                        f"{policy_path}:{lineno}: unsupported credentials table "
+                        f"[{table_name}]"
+                    )
+                credentials = root.setdefault("credentials", {})
+                if not isinstance(credentials, dict):
+                    die(f"{policy_path}:{lineno}: credentials must remain a table")
+                entry = credentials.setdefault(credential_key, {})
+                if not isinstance(entry, dict):
+                    die(
+                        f"{policy_path}:{lineno}: credentials.{credential_key} must remain a table"
+                    )
+                current = entry
+                continue
             if table_name not in {"documents", "ssh", "credentials"}:
                 die(f"{policy_path}:{lineno}: unsupported table [{table_name}]")
             table = root.setdefault(table_name, {})
@@ -390,6 +510,7 @@ def render_copies(
         file_mode, dir_mode = classification_modes(classification, is_dir=(staged_kind == "dir"))
         rendered_source: dict[str, str] | str
         if classification == "secret":
+            validate_secret_tree(source, "copies.source")
             rendered_source = direct_mount_entry(source, mount_path)
         else:
             staged_kind = copy_source(source, output_root / relpath)
@@ -421,7 +542,15 @@ def render_ssh(
         die("ssh must be a TOML table")
     validate_allowed_keys(
         ssh,
-        {"enabled", "config", "known_hosts", "identities", "providers", "modes"},
+        {
+            "enabled",
+            "config",
+            "known_hosts",
+            "identities",
+            "providers",
+            "modes",
+            "allow_unsafe_config",
+        },
         "ssh",
     )
 
@@ -437,18 +566,30 @@ def render_ssh(
         return {}
 
     rendered: dict[str, object] = {"identities": []}
+    allow_unsafe_config = ssh.get("allow_unsafe_config", False)
+    if not isinstance(allow_unsafe_config, bool):
+        die("ssh.allow_unsafe_config must be a boolean when specified")
     config = ssh.get("config")
+    if config is None:
+        rendered["config_assurance"] = "no-config"
+    elif allow_unsafe_config:
+        rendered["config_assurance"] = "lower-assurance-unsafe-config"
+    else:
+        rendered["config_assurance"] = "safe"
     if config is not None:
-        source = validate_source_path(config, "ssh.config", policy_dir)
-        if not source.is_file():
-            die(f"ssh.config must point at a file: {source}")
+        source = validate_secret_file(
+            validate_source_path(config, "ssh.config", policy_dir),
+            "ssh.config",
+        )
+        validate_ssh_config_safety(source, allow_unsafe_config)
         rendered["config"] = direct_mount_entry(source, f"{DIRECT_MOUNT_ROOT}/ssh/config")
 
     known_hosts = ssh.get("known_hosts")
     if known_hosts is not None:
-        source = validate_source_path(known_hosts, "ssh.known_hosts", policy_dir)
-        if not source.is_file():
-            die(f"ssh.known_hosts must point at a file: {source}")
+        source = validate_known_hosts_file(
+            validate_source_path(known_hosts, "ssh.known_hosts", policy_dir),
+            "ssh.known_hosts",
+        )
         rendered["known_hosts"] = direct_mount_entry(
             source, f"{DIRECT_MOUNT_ROOT}/ssh/known_hosts"
         )
@@ -461,9 +602,10 @@ def render_ssh(
     rendered_identities: list[dict[str, str]] = []
     seen_identity_targets: set[str] = set()
     for index, raw in enumerate(identities):
-        source = validate_source_path(raw, f"ssh.identities[{index}]", policy_dir)
-        if not source.is_file():
-            die(f"ssh.identities[{index}] must point at a file: {source}")
+        source = validate_secret_file(
+            validate_source_path(raw, f"ssh.identities[{index}]", policy_dir),
+            f"ssh.identities[{index}]",
+        )
         if source.name in RESERVED_SSH_FILENAMES:
             die(
                 f"ssh.identities[{index}] basename collides with a reserved SSH file: {source.name}"
@@ -488,6 +630,7 @@ def render_credentials(
     policy: dict,
     policy_dir: Path,
     agent: str,
+    mode: str,
 ) -> dict:
     credentials = policy.get("credentials", {})
     if credentials is None:
@@ -503,9 +646,38 @@ def render_credentials(
         raw = credentials.get(key)
         if raw is None:
             continue
-        source = validate_source_path(raw, f"credentials.{key}", policy_dir)
-        if not source.is_file():
-            die(f"credentials.{key} must point at a file: {source}")
+        providers = None
+        modes = None
+        source_raw = raw
+        if isinstance(raw, dict):
+            validate_allowed_keys(
+                raw,
+                {"source", "providers", "modes"},
+                f"credentials.{key}",
+            )
+            source_raw = raw.get("source")
+            providers = raw.get("providers")
+            modes = raw.get("modes")
+        elif not isinstance(raw, str):
+            die(f"credentials.{key} must be a string path or a table")
+        if not selected_for(
+            providers,
+            agent,
+            f"credentials.{key}.providers",
+            SUPPORTED_AGENTS,
+        ):
+            continue
+        if not selected_for(
+            modes,
+            mode,
+            f"credentials.{key}.modes",
+            SUPPORTED_MODES,
+        ):
+            continue
+        source = validate_secret_file(
+            validate_source_path(source_raw, f"credentials.{key}", policy_dir),
+            f"credentials.{key}",
+        )
         rendered[key] = {
             "source": str(source),
             "mount_path": CREDENTIAL_CONTAINER_PATHS[key],
@@ -522,16 +694,33 @@ def main() -> int:
     output_root.chmod(0o700)
 
     policy = load_policy(policy_path)
+    rendered_documents = render_documents(policy, output_root, policy_path.parent)
+    rendered_copies = render_copies(
+        policy, output_root, policy_path.parent, args.agent, args.mode
+    )
+    rendered_credentials = render_credentials(
+        policy, policy_path.parent, args.agent, args.mode
+    )
+    rendered_ssh = render_ssh(policy, output_root, policy_path.parent, args.agent, args.mode)
     manifest = {
         "version": 1,
-        "documents": render_documents(policy, output_root, policy_path.parent),
-        "copies": render_copies(
-            policy, output_root, policy_path.parent, args.agent, args.mode
-        ),
-        "credentials": render_credentials(
-            policy, policy_path.parent, args.agent
-        ),
-        "ssh": render_ssh(policy, output_root, policy_path.parent, args.agent, args.mode),
+        "metadata": {
+            "policy_sha256": policy_sha256(policy_path),
+            "credential_keys": sorted(rendered_credentials),
+            "secret_copy_targets": sorted(
+                entry["target"]
+                for entry in rendered_copies
+                if entry.get("classification") == "secret"
+            ),
+            "ssh_enabled": bool(rendered_ssh),
+            "ssh_config_assurance": rendered_ssh.get("config_assurance", "off")
+            if rendered_ssh
+            else "off",
+        },
+        "documents": rendered_documents,
+        "copies": rendered_copies,
+        "credentials": rendered_credentials,
+        "ssh": rendered_ssh,
     }
 
     manifest_path = output_root / "manifest.json"
