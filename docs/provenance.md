@@ -81,17 +81,18 @@ release workflow additionally requires the tagged commit to be reachable from
 `main`, but consumers should still verify branch protection and review policy in
 the repository itself.
 
-The reproducibility check compares two OCI layout exports of each supported
-runtime platform that are built with the same `SOURCE_DATE_EPOCH` and without
-attached attestations. This is intentional: BuildKit attestations are
-separately signed and verified release metadata, while the reproducibility gate
-measures the image contents themselves. Release publication then assembles the
-final multi-architecture manifest list in a fixed platform order from those
-reviewed per-platform outputs and requires the pushed per-platform digests to
-match the preflight manifest before the final multi-architecture manifest is
-published. The release preflight also verifies deterministic source bundle
-generation, records the expected tarball digest for the tag-specific prefix and
-ref, and requires the published source bundle to match that preflight digest.
+The reproducibility check compares two multi-platform OCI layout exports that
+cover every supported runtime platform, built with the same
+`SOURCE_DATE_EPOCH` and without attached attestations. This is intentional:
+BuildKit attestations are separately signed and verified release metadata,
+while the reproducibility gate measures the image contents themselves. The
+check compares the stable OCI subject digest from those exports and still
+records reviewed per-platform manifest and config digests, and release
+publication requires the pushed per-platform digests to match the preflight
+manifest before the final multi-architecture manifest is published. The release
+preflight also verifies deterministic source bundle generation, records the
+expected tarball digest for the tag-specific prefix and ref, and requires the
+published source bundle to match that preflight digest.
 The publish job then rebuilds the signed build-input manifest and the published
 runtime image from the extracted signed source bundle tree, not from the live
 checkout, so the signed tarball is the authoritative source for the shipped
