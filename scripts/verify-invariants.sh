@@ -122,6 +122,153 @@ rg() {
   return 127
 }
 
+canonicalize_verify_tool_path() {
+  local candidate="$1"
+
+  python3 - "${candidate}" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(sys.argv[1]))
+PY
+}
+
+verify_tool_path_is_trusted() {
+  local candidate="$1"
+  local workspace_root="${2:-}"
+  local trusted_prefixes=(
+    /usr/bin
+    /bin
+    /usr/sbin
+    /sbin
+    /usr/local/bin
+    /usr/local/Cellar
+    /opt/homebrew/bin
+    /opt/homebrew/Cellar
+    /Applications/Docker.app/Contents/Resources/bin
+  )
+  local prefix=""
+
+  [[ "${candidate}" = /* ]] || return 1
+  case "${candidate}" in
+    "${ROOT_DIR}" | "${ROOT_DIR}"/*)
+      return 1
+      ;;
+  esac
+  if [[ -n "${workspace_root}" ]]; then
+    case "${candidate}" in
+      "${workspace_root}" | "${workspace_root}"/*)
+        return 1
+        ;;
+    esac
+  fi
+  for prefix in "${trusted_prefixes[@]}"; do
+    case "${candidate}" in
+      "${prefix}" | "${prefix}"/*)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+doctor_tool_is_available() {
+  local workspace_root="$1"
+  shift
+  local name="$1"
+  shift
+  local candidate=""
+  local canonical_candidate=""
+
+  for candidate in "$@"; do
+    canonical_candidate="$(canonicalize_verify_tool_path "${candidate}")"
+    if [[ -x "${candidate}" ]] &&
+      verify_tool_path_is_trusted "${candidate}" "${workspace_root}" &&
+      verify_tool_path_is_trusted "${canonical_candidate}" "${workspace_root}"; then
+      return 0
+    fi
+  done
+
+  candidate="$(type -P "${name}" || true)"
+  canonical_candidate="$(canonicalize_verify_tool_path "${candidate}")"
+  if [[ -n "${candidate}" ]] &&
+    verify_tool_path_is_trusted "${candidate}" "${workspace_root}" &&
+    verify_tool_path_is_trusted "${canonical_candidate}" "${workspace_root}"; then
+    return 0
+  fi
+
+  return 1
+}
+
+expected_doctor_missing_host_tools_csv_for_workspace() {
+  local workspace_root="$1"
+  local -a missing=()
+
+  doctor_tool_is_available "${workspace_root}" colima /opt/homebrew/bin/colima /usr/local/bin/colima || missing+=(colima)
+  doctor_tool_is_available "${workspace_root}" docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker || missing+=(docker)
+  doctor_tool_is_available "${workspace_root}" ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby || missing+=(ruby)
+
+  if ((${#missing[@]} == 0)); then
+    printf 'none\n'
+    return 0
+  fi
+
+  local IFS=','
+  printf '%s\n' "${missing[*]}"
+}
+
+assert_doctor_missing_host_tools() {
+  local file="$1"
+  local expected="$2"
+
+  if ! grep -q "^doctor_missing_host_tools=${expected}$" "${file}"; then
+    echo "Expected ${file} to report doctor_missing_host_tools=${expected}" >&2
+    cat "${file}" >&2
+    exit 1
+  fi
+}
+
+assert_doctor_next_for_prepare() {
+  local file="$1"
+  local expected_missing="$2"
+
+  if [[ "${expected_missing}" == "none" ]]; then
+    if ! grep -q -- '--prepare' "${file}"; then
+      echo "Expected ${file} to recommend --prepare when required host tools are present" >&2
+      cat "${file}" >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  if ! grep -q '^doctor_recommended_next=install-host-tools$' "${file}"; then
+    echo "Expected ${file} to recommend installing missing host tools before prepare" >&2
+    cat "${file}" >&2
+    exit 1
+  fi
+}
+
+assert_doctor_next_for_missing_workspace() {
+  local file="$1"
+  local expected_missing="$2"
+
+  if [[ "${expected_missing}" == "none" ]]; then
+    if ! grep -q '^doctor_recommended_next=fix-workspace$' "${file}"; then
+      echo "Expected ${file} to recommend fixing the missing workspace when required host tools are present" >&2
+      cat "${file}" >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  if ! grep -q '^doctor_recommended_next=install-host-tools$' "${file}"; then
+    echo "Expected ${file} to prioritize installing missing host tools before fixing the workspace" >&2
+    cat "${file}" >&2
+    exit 1
+  fi
+}
+
 for file in \
   "${ROOT_DIR}/adapters/codex/.codex/config.toml" \
   "${ROOT_DIR}/adapters/claude/.claude/settings.json" \
@@ -1439,6 +1586,13 @@ grep -q '^Usage: workcell' /tmp/workcell-missing-agent.out
 STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"
 mkdir -p "${STRICT_PREFLIGHT_WORKSPACE}"
 printf '# marker\n' >"${STRICT_PREFLIGHT_WORKSPACE}/AGENTS.md"
+MISSING_DOCTOR_WORKSPACE="${BARRIER_VERIFY_ROOT}/missing-workspace-for-doctor"
+EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS="$(
+  expected_doctor_missing_host_tools_csv_for_workspace "${STRICT_PREFLIGHT_WORKSPACE}"
+)"
+EXPECTED_MISSING_DOCTOR_MISSING_HOST_TOOLS="$(
+  expected_doctor_missing_host_tools_csv_for_workspace "${MISSING_DOCTOR_WORKSPACE}"
+)"
 STRICT_PREFLIGHT_PROFILE="workcell-preflight-$$"
 rm -rf \
   "${REAL_HOME}/.colima/${STRICT_PREFLIGHT_PROFILE}" \
@@ -1533,9 +1687,9 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor.out
-grep -q '^doctor_missing_host_tools=none$' /tmp/workcell-doctor.out
+assert_doctor_missing_host_tools /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 grep -q '^doctor_prepared_image=0$' /tmp/workcell-doctor.out
-grep -q -- '--prepare' /tmp/workcell-doctor.out
+assert_doctor_next_for_prepare /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 if ! "${ROOT_DIR}/scripts/workcell" \
   doctor \
   --agent codex \
@@ -1547,20 +1701,23 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor-subcommand.out
+assert_doctor_missing_host_tools /tmp/workcell-doctor-subcommand.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
+assert_doctor_next_for_prepare /tmp/workcell-doctor-subcommand.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --no-default-injection-policy \
-  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-doctor" \
+  --workspace "${MISSING_DOCTOR_WORKSPACE}" \
   --colima-profile "${STRICT_PREFLIGHT_PROFILE}-missing-doctor" \
   --doctor >/tmp/workcell-doctor-missing.out 2>&1; then
   echo "Expected --doctor to succeed even when the workspace is missing" >&2
   exit 1
 fi
 grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor-missing.out
+assert_doctor_missing_host_tools /tmp/workcell-doctor-missing.out "${EXPECTED_MISSING_DOCTOR_MISSING_HOST_TOOLS}"
 grep -Eq '^workspace=.*/missing-workspace-for-doctor$' /tmp/workcell-doctor-missing.out
 grep -q '^workspace_status=missing$' /tmp/workcell-doctor-missing.out
-grep -q '^doctor_recommended_next=fix-workspace$' /tmp/workcell-doctor-missing.out
+assert_doctor_next_for_missing_workspace /tmp/workcell-doctor-missing.out "${EXPECTED_MISSING_DOCTOR_MISSING_HOST_TOOLS}"
 
 STALE_MARKER_PROFILE="${STRICT_PREFLIGHT_PROFILE}-stale"
 STALE_MARKER_DIR="${REAL_HOME}/.colima/${STALE_MARKER_PROFILE}"
@@ -1583,8 +1740,9 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^current_image_id=none$' /tmp/workcell-doctor-stale.out
+assert_doctor_missing_host_tools /tmp/workcell-doctor-stale.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 grep -q '^doctor_prepared_image=0$' /tmp/workcell-doctor-stale.out
-grep -q -- '--prepare' /tmp/workcell-doctor-stale.out
+assert_doctor_next_for_prepare /tmp/workcell-doctor-stale.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 rm -rf "${STALE_MARKER_DIR}" "${REAL_HOME}/.colima/_lima/colima-${STALE_MARKER_PROFILE}"
 
 DEBUG_LOG_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.log"
