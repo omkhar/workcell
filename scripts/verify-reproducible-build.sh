@@ -27,9 +27,8 @@ REPRO_PLATFORMS="${WORKCELL_REPRO_PLATFORMS:-linux/amd64,linux/arm64}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 REPRO_MANIFEST_PATH="${WORKCELL_REPRO_MANIFEST_PATH:-}"
 OCI_EXPORT_ROOT=""
-OCI_EXPORT_A=()
-OCI_EXPORT_B=()
-LAYOUT_DIGESTS=()
+OCI_EXPORT_A=""
+OCI_EXPORT_B=""
 MANIFEST_DIGESTS=()
 CONFIG_DIGESTS=()
 WORKCELL_DOCKER_SANDBOX_ROOT=""
@@ -79,12 +78,8 @@ if [[ "${1:-}" == "--self-docker-probe" ]]; then
   exit 0
 fi
 
-platform_slug() {
-  printf '%s\n' "$1" | tr '/,' '__'
-}
-
 build_oci_layout() {
-  local platform="$1"
+  local platforms="$1"
   local dest="$2"
   local build_source_date_epoch="${SOURCE_DATE_EPOCH}"
 
@@ -92,7 +87,7 @@ build_oci_layout() {
   mkdir -p "$(dirname "${dest}")"
   SOURCE_DATE_EPOCH="${build_source_date_epoch}" buildx_cmd build \
     --no-cache \
-    --platform "${platform}" \
+    --platform "${platforms}" \
     --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
     --build-arg "SOURCE_DATE_EPOCH=${build_source_date_epoch}" \
     --provenance=false \
@@ -102,27 +97,111 @@ build_oci_layout() {
     "${ROOT_DIR}" >/dev/null
 }
 
-layout_digest() {
+oci_subject_digest() {
   local dir="$1"
 
-  (
-    cd "${dir}"
-    find . -type f | LC_ALL=C sort | while IFS= read -r file; do
-      shasum -a 256 "${file}"
-    done
-  ) | shasum -a 256 | awk '{print $1}'
+  python3 - "${dir}" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+layout_dir = pathlib.Path(sys.argv[1])
+index_path = layout_dir / "index.json"
+index_bytes = index_path.read_bytes()
+index = json.loads(index_bytes)
+manifests = index.get("manifests", [])
+
+if not manifests:
+    raise SystemExit("OCI export index does not contain any manifests")
+
+if manifests and all("platform" not in entry for entry in manifests):
+    if len(manifests) != 1:
+        raise SystemExit(
+            "Expected a single top-level OCI index wrapper entry for multi-platform export"
+        )
+    digest = manifests[0].get("digest")
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        raise SystemExit(f"Malformed wrapped OCI index digest: {digest!r}")
+    print(digest)
+elif len(manifests) == 1:
+    digest = manifests[0].get("digest")
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        raise SystemExit(f"Malformed OCI subject digest: {digest!r}")
+    print(digest)
+else:
+    def strip_annotations(value):
+        if isinstance(value, dict):
+            return {
+                key: strip_annotations(item)
+                for key, item in value.items()
+                if key != "annotations"
+            }
+        if isinstance(value, list):
+            return [strip_annotations(item) for item in value]
+        return value
+
+    canonical = json.dumps(
+        strip_annotations(index),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    print(f"sha256:{hashlib.sha256(canonical).hexdigest()}")
+PY
 }
 
 manifest_digest() {
   local dir="$1"
+  local platform="$2"
 
-  python3 - "${dir}/index.json" <<'PY'
+  python3 - "${dir}" "${platform}" <<'PY'
 import json
+import pathlib
 import sys
 
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
+platform_parts = sys.argv[2].split("/")
+if len(platform_parts) not in (2, 3):
+    raise SystemExit(f"Unsupported platform selector: {sys.argv[2]!r}")
+
+layout_dir = pathlib.Path(sys.argv[1])
+with (layout_dir / "index.json").open("r", encoding="utf-8") as handle:
     index = json.load(handle)
-print(index["manifests"][0]["digest"])
+
+manifests = index.get("manifests", [])
+if manifests and all("platform" not in entry for entry in manifests):
+    if len(manifests) != 1:
+        raise SystemExit(
+            "Expected a single top-level OCI index wrapper entry for multi-platform export"
+        )
+    digest = manifests[0].get("digest")
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        raise SystemExit(f"Malformed wrapped OCI index digest: {digest!r}")
+    nested_index_path = layout_dir / "blobs" / "sha256" / digest.split(":", 1)[1]
+    with nested_index_path.open("r", encoding="utf-8") as handle:
+        index = json.load(handle)
+    manifests = index.get("manifests", [])
+
+requested_os = platform_parts[0]
+requested_arch = platform_parts[1]
+requested_variant = platform_parts[2] if len(platform_parts) == 3 else None
+matches = []
+
+for manifest in manifests:
+    candidate = manifest.get("platform", {})
+    if candidate.get("os") != requested_os:
+        continue
+    if candidate.get("architecture") != requested_arch:
+        continue
+    if candidate.get("variant") != requested_variant:
+        continue
+    matches.append(manifest["digest"])
+
+if len(matches) != 1:
+    raise SystemExit(
+        f"Expected exactly one manifest for {sys.argv[2]!r}, found {len(matches)}"
+    )
+
+print(matches[0])
 PY
 }
 
@@ -170,46 +249,57 @@ else
   OCI_EXPORT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-repro.XXXXXX")"
 fi
 IFS=',' read -r -a platform_list <<<"${REPRO_PLATFORMS}"
-for index in "${!platform_list[@]}"; do
-  platform="${platform_list[${index}]}"
-  slug="$(platform_slug "${platform}")"
-  OCI_EXPORT_A[index]="${OCI_EXPORT_ROOT}/a-${slug}"
-  OCI_EXPORT_B[index]="${OCI_EXPORT_ROOT}/b-${slug}"
-  build_oci_layout "${platform}" "${OCI_EXPORT_A[${index}]}"
-  build_oci_layout "${platform}" "${OCI_EXPORT_B[${index}]}"
-done
+
+OCI_EXPORT_A="${OCI_EXPORT_ROOT}/a"
+OCI_EXPORT_B="${OCI_EXPORT_ROOT}/b"
+build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}"
+build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_B}"
+
+subject_digest_a="$(oci_subject_digest "${OCI_EXPORT_A}")"
+subject_digest_b="$(oci_subject_digest "${OCI_EXPORT_B}")"
+repro_failed=0
 
 for index in "${!platform_list[@]}"; do
   platform="${platform_list[${index}]}"
-  digest_a="$(layout_digest "${OCI_EXPORT_A[${index}]}")"
-  digest_b="$(layout_digest "${OCI_EXPORT_B[${index}]}")"
-  manifest_a="$(manifest_digest "${OCI_EXPORT_A[${index}]}")"
-  manifest_b="$(manifest_digest "${OCI_EXPORT_B[${index}]}")"
-  config_a="$(config_digest "${OCI_EXPORT_A[${index}]}" "${manifest_a}")"
-  config_b="$(config_digest "${OCI_EXPORT_B[${index}]}" "${manifest_b}")"
+  manifest_a="$(manifest_digest "${OCI_EXPORT_A}" "${platform}")"
+  manifest_b="$(manifest_digest "${OCI_EXPORT_B}" "${platform}")"
+  config_a="$(config_digest "${OCI_EXPORT_A}" "${manifest_a}")"
+  config_b="$(config_digest "${OCI_EXPORT_B}" "${manifest_b}")"
 
-  if [[ "${digest_a}" != "${digest_b}" ]]; then
-    echo "Non-reproducible OCI export for ${platform}: ${digest_a} != ${digest_b}" >&2
+  if [[ "${manifest_a}" != "${manifest_b}" ]]; then
     echo "Manifest digests (${platform}): ${manifest_a} != ${manifest_b}" >&2
-    echo "Config digests (${platform}): ${config_a} != ${config_b}" >&2
-    exit 1
+    repro_failed=1
   fi
 
-  LAYOUT_DIGESTS[index]="${digest_a}"
+  if [[ "${config_a}" != "${config_b}" ]]; then
+    echo "Config digests (${platform}): ${config_a} != ${config_b}" >&2
+    repro_failed=1
+  fi
+
   MANIFEST_DIGESTS[index]="${manifest_a}"
   CONFIG_DIGESTS[index]="${config_a}"
 done
 
+if [[ "${subject_digest_a}" != "${subject_digest_b}" ]]; then
+  echo "Non-reproducible OCI export subject digest: ${subject_digest_a} != ${subject_digest_b}" >&2
+  repro_failed=1
+fi
+
+if [[ "${repro_failed}" -ne 0 ]]; then
+  exit 1
+fi
+
 if [[ -n "${REPRO_MANIFEST_PATH}" ]]; then
-  python3 - "${REPRO_MANIFEST_PATH}" "${SOURCE_DATE_EPOCH}" "${#platform_list[@]}" "${platform_list[@]}" "${LAYOUT_DIGESTS[@]}" -- "${MANIFEST_DIGESTS[@]}" -- "${CONFIG_DIGESTS[@]}" <<'PY'
+  python3 - "${REPRO_MANIFEST_PATH}" "${SOURCE_DATE_EPOCH}" "${subject_digest_a}" "${#platform_list[@]}" "${platform_list[@]}" "${MANIFEST_DIGESTS[@]}" -- "${CONFIG_DIGESTS[@]}" <<'PY'
 import json
 import pathlib
 import sys
 
 manifest_path = pathlib.Path(sys.argv[1])
 source_date_epoch = int(sys.argv[2])
-count = int(sys.argv[3])
-argv = list(sys.argv[4:])
+oci_subject_digest = sys.argv[3]
+count = int(sys.argv[4])
+argv = list(sys.argv[5:])
 
 platforms = argv[:count]
 argv = argv[count:]
@@ -223,23 +313,22 @@ def take_until_separator(items):
     items.pop(0)
     return values
 
-layouts = take_until_separator(argv)
 manifests = take_until_separator(argv)
 configs = argv
 
-if not (len(platforms) == len(layouts) == len(manifests) == len(configs) == count):
+if not (len(platforms) == len(manifests) == len(configs) == count):
     raise SystemExit("Reproducibility manifest argument lengths do not match")
 
 manifest = {
+    "oci_subject_digest": oci_subject_digest,
     "source_date_epoch": source_date_epoch,
     "platforms": {
         platform: {
-            "layout_sha256": layout,
             "image_manifest_digest": manifest_digest,
             "config_digest": config_digest,
         }
-        for platform, layout, manifest_digest, config_digest in zip(
-            platforms, layouts, manifests, configs, strict=True
+        for platform, manifest_digest, config_digest in zip(
+            platforms, manifests, configs, strict=True
         )
     },
 }

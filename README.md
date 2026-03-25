@@ -379,8 +379,9 @@ Intentional non-goals for the safe path:
 - `scripts/container-smoke.sh`: direct container build and adapter smoke tests
 - `scripts/verify-invariants.sh`: local invariant regression checks against the
   launcher and shipped adapter policy
-- `scripts/verify-reproducible-build.sh`: deterministic per-platform OCI
-  runtime export verification under a fixed `SOURCE_DATE_EPOCH`
+- `scripts/verify-reproducible-build.sh`: deterministic paired multi-platform
+  OCI runtime image verification under a fixed `SOURCE_DATE_EPOCH`, with a
+  stable OCI subject digest plus per-platform digest binding for release preflight
 - `scripts/verify-release-bundle.sh`: deterministic source bundle verification
   under a fixed `SOURCE_DATE_EPOCH`
 - `scripts/dev-remote-validate.sh`: stage the current working tree to a private

@@ -8,8 +8,9 @@ under platform automation.
 
 - `ci.yml`: repo validation and direct container smoke on every pull request and
   push to `main`
-- `ci.yml`: also verifies that two OCI exports of each supported pinned runtime
-  platform are byte-for-byte identical when built with the same
+- `ci.yml`: also verifies that two multi-platform OCI exports covering every
+  supported pinned runtime platform produce the same stable OCI subject digest and the
+  same reviewed per-platform digests when built with the same
   `SOURCE_DATE_EPOCH`
 - `ci.yml`: caches only exact pinned QEMU and Buildx helper artifacts; it does
   not add layer caching to the reviewed runtime build path
