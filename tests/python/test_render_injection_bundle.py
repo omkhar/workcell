@@ -222,6 +222,57 @@ class RenderInjectionBundleTests(unittest.TestCase):
 
             self.assertEqual(rendered, {})
 
+    def test_render_credentials_accepts_legacy_scalar_github_auth_and_requires_providers_for_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            auth = root / "github-hosts.yml"
+            auth.write_text("github.com:\n", encoding="utf-8")
+            auth.chmod(0o600)
+
+            rendered = self.module.render_credentials(
+                {"credentials": {"github_hosts": "github-hosts.yml"}},
+                root,
+                "codex",
+                "strict",
+            )
+            self.assertEqual(
+                rendered["github_hosts"]["mount_path"],
+                "/opt/workcell/host-inputs/credentials/github-hosts.yml",
+            )
+
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {
+                        "credentials": {
+                            "github_hosts": {
+                                "source": "github-hosts.yml",
+                            }
+                        }
+                    },
+                    root,
+                    "codex",
+                    "strict",
+                )
+
+    def test_derive_credential_extra_endpoints_adds_vertex_region_from_gemini_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            env_file = root / "gemini.env"
+            env_file.write_text('export GOOGLE_CLOUD_LOCATION="us-central1"\n', encoding="utf-8")
+            env_file.chmod(0o600)
+
+            rendered = self.module.render_credentials(
+                {"credentials": {"gemini_env": "gemini.env"}},
+                root,
+                "gemini",
+                "strict",
+            )
+
+            self.assertEqual(
+                self.module.derive_credential_extra_endpoints(rendered),
+                ["us-central1-aiplatform.googleapis.com:443"],
+            )
+
     def test_render_ssh_rejects_unsafe_config_without_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -229,6 +280,24 @@ class RenderInjectionBundleTests(unittest.TestCase):
             output.mkdir()
             config = root / "ssh-config"
             config.write_text("ProxyCommand nc %h %p\n", encoding="utf-8")
+            config.chmod(0o600)
+
+            with self.assertRaises(SystemExit):
+                self.module.render_ssh(
+                    {"ssh": {"enabled": True, "config": "ssh-config"}},
+                    output,
+                    root,
+                    "codex",
+                    "strict",
+                )
+
+    def test_render_ssh_rejects_other_exec_capable_directives_without_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "bundle"
+            output.mkdir()
+            config = root / "ssh-config"
+            config.write_text("KnownHostsCommand /bin/true\n", encoding="utf-8")
             config.chmod(0o600)
 
             with self.assertRaises(SystemExit):

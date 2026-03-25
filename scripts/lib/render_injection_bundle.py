@@ -22,8 +22,11 @@ RESERVED_SSH_FILENAMES = {"config", "known_hosts"}
 RISKY_SSH_DIRECTIVES = {
     "identityagent",
     "include",
+    "knownhostscommand",
     "localcommand",
+    "pkcs11provider",
     "proxycommand",
+    "securitykeyprovider",
 }
 SESSION_HOME_ROOT = PurePosixPath("/state/agent-home")
 RUN_INJECTED_ROOT = PurePosixPath("/state/injected")
@@ -76,6 +79,13 @@ AGENT_SCOPED_CREDENTIAL_KEYS = {
 }
 
 SHARED_CREDENTIAL_KEYS = {"github_hosts", "github_config"}
+GEMINI_VERTEX_LOCATION_KEYS = (
+    "GOOGLE_CLOUD_LOCATION",
+    "GOOGLE_CLOUD_REGION",
+    "CLOUD_ML_REGION",
+    "VERTEX_LOCATION",
+    "VERTEX_AI_LOCATION",
+)
 
 
 def die(message: str) -> NoReturn:
@@ -214,6 +224,57 @@ def direct_mount_entry(source: Path, mount_path: str) -> dict[str, str]:
         "source": str(source),
         "mount_path": mount_path,
     }
+
+
+def parse_simple_env_file(source: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in source.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or any(char.isspace() for char in key):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            try:
+                parsed = ast.literal_eval(value)
+            except (SyntaxError, ValueError):
+                parsed = value[1:-1]
+            value = parsed if isinstance(parsed, str) else str(parsed)
+        values[key] = value
+    return values
+
+
+def normalize_vertex_location(value: str | None) -> str | None:
+    if value is None:
+        return None
+    candidate = value.strip().lower()
+    if not candidate:
+        return None
+    allowed = set("abcdefghijklmnopqrstuvwxyz0123456789-")
+    if any(char not in allowed for char in candidate):
+        return None
+    if candidate.startswith("-") or candidate.endswith("-") or "--" in candidate:
+        return None
+    return candidate
+
+
+def derive_credential_extra_endpoints(rendered_credentials: dict[str, dict[str, str]]) -> list[str]:
+    endpoints: set[str] = set()
+    gemini_env = rendered_credentials.get("gemini_env")
+    if gemini_env is not None:
+        env_values = parse_simple_env_file(Path(gemini_env["source"]))
+        for key in GEMINI_VERTEX_LOCATION_KEYS:
+            location = normalize_vertex_location(env_values.get(key))
+            if location is not None:
+                endpoints.add(f"{location}-aiplatform.googleapis.com:443")
+    return sorted(endpoints)
 
 
 def validate_source_path(raw: object, label: str, base: Path) -> Path:
@@ -660,6 +721,11 @@ def render_credentials(
             modes = raw.get("modes")
         elif not isinstance(raw, str):
             die(f"credentials.{key} must be a string path or a table")
+        if key in SHARED_CREDENTIAL_KEYS and isinstance(raw, dict) and providers is None:
+            die(
+                f"credentials.{key}.providers is required so shared GitHub credentials "
+                "stay least-privilege"
+            )
         if not selected_for(
             providers,
             agent,
@@ -702,11 +768,13 @@ def main() -> int:
         policy, policy_path.parent, args.agent, args.mode
     )
     rendered_ssh = render_ssh(policy, output_root, policy_path.parent, args.agent, args.mode)
+    extra_endpoints = derive_credential_extra_endpoints(rendered_credentials)
     manifest = {
         "version": 1,
         "metadata": {
             "policy_sha256": policy_sha256(policy_path),
             "credential_keys": sorted(rendered_credentials),
+            "extra_endpoints": extra_endpoints,
             "secret_copy_targets": sorted(
                 entry["target"]
                 for entry in rendered_copies

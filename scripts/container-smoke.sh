@@ -738,7 +738,10 @@ claude_api_key = "claude-api-key.txt"
 claude_mcp = "claude-mcp.json"
 gemini_env = "gemini.env"
 gemini_projects = "gemini-projects.json"
-github_hosts = "gh-hosts.yml"
+
+[credentials.github_hosts]
+source = "gh-hosts.yml"
+providers = ["codex", "claude", "gemini"]
 
 [ssh]
 enabled = true
@@ -828,6 +831,15 @@ run_container_with_injection_bundle codex "${INJECTION_BUNDLE_ROOT}/codex" bash 
     apt-get --help >/dev/null
     sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get --help >/dev/null
     codex --version >/dev/null
+    mkdir -p /workspace/exfil
+    rm -rf "$HOME/.config/workcell"
+    ln -s /workspace/exfil "$HOME/.config/workcell"
+    if codex --version >/tmp/codex-injected-copy-symlink.out 2>&1; then
+      echo "expected nested Codex launch to reject symlinked injected-copy parents" >&2
+      exit 1
+    fi
+    grep -q "symlinked session path component" /tmp/codex-injected-copy-symlink.out
+    test ! -e /workspace/exfil/token.txt
   '"'"'
 '
 

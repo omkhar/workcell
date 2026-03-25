@@ -94,8 +94,10 @@ SESSION_AUDIT_CONTAINER_FILE=""
 FINAL_SESSION_ASSURANCE=""
 INJECTION_POLICY_SHA256=""
 INJECTION_CREDENTIAL_KEYS=""
+INJECTION_EXTRA_ENDPOINTS=""
 INJECTION_SSH_ENABLED=0
 INJECTION_SECRET_COPY_TARGETS=""
+PROFILE_LOCK_DIR=""
 
 usage() {
   cat <<'EOF'
@@ -109,7 +111,7 @@ Options:
   --codex-rules-mutability readonly|session
                                 Codex execpolicy session mutability (default: readonly)
   --container-mutability ephemeral|readonly
-                                Runtime rootfs posture (default: ephemeral)
+                                Runtime rootfs posture (default: ephemeral on strict/build/breakglass)
   --container-cpu COUNT         Inner container CPU limit (default: unmanaged)
   --container-memory SIZE       Inner container memory limit (default: profile value)
   --injection-policy PATH       Host-side injection policy to stage into each session
@@ -126,6 +128,7 @@ Options:
   --auth-status                 Print selected injection/auth posture and exit
   --gc                          Clean stale Workcell temp state and exit
   --prepare                     Seed or refresh the prepared runtime image before launch
+  --prepare-only                Seed or refresh the prepared runtime image, then exit without launching
   --repair-profile              Delete a conflicting unmanaged Colima profile before launch
                                 (implies --prepare on strict)
   --ack-breakglass              Required with --mode breakglass
@@ -146,6 +149,8 @@ Workflows:
     workcell --prepare --agent codex --workspace /path/to/repo
     workcell --prepare --agent claude --workspace /path/to/repo
     workcell --prepare --agent gemini --workspace /path/to/repo
+  Prewarm only:
+    workcell --prepare-only --agent codex --workspace /path/to/repo
   Normal run:
     workcell --agent codex --workspace /path/to/repo
     workcell --agent claude --workspace /path/to/repo
@@ -325,6 +330,7 @@ declare -a SHADOW_DEST_PATHS=()
 declare -a DIRECT_SOURCE_MOUNTS=()
 declare -a WORKSPACE_IMPORT_MOUNTS=()
 declare -a CACHE_MOUNTS=()
+declare -a RUNTIME_NETWORK_ARGS=()
 
 # shellcheck disable=SC2317,SC2329
 cleanup() {
@@ -362,6 +368,10 @@ cleanup() {
 
   if [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
     "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${PROFILE_LOCK_DIR}" ]] && [[ -d "${PROFILE_LOCK_DIR}" ]]; then
+    rm -rf "${PROFILE_LOCK_DIR}"
   fi
 
   cleanup_workcell_trusted_docker_client
@@ -411,6 +421,13 @@ profile_audit_log_path() {
 
   validate_colima_profile_name "${profile}"
   printf '%s/workcell.audit.log\n' "$(profile_dir "${profile}")"
+}
+
+profile_lock_dir_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/locks/%s.lock\n' "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 profile_latest_log_pointer_path() {
@@ -481,6 +498,88 @@ for profile_dir in root.iterdir():
         if target_path is None or not target_path.exists():
             pointer_path.unlink(missing_ok=True)
 PY
+}
+
+profile_lock_is_stale() {
+  local lock_dir="$1"
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${lock_dir}" <<'PY'
+import json
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+lock_dir = Path(sys.argv[1])
+owner_path = lock_dir / "owner.json"
+if not owner_path.is_file():
+    print("1")
+    raise SystemExit(0)
+
+try:
+    owner = json.loads(owner_path.read_text(encoding="utf-8"))
+    pid = int(owner["pid"])
+    started = str(owner["started"])
+except Exception:
+    print("1")
+    raise SystemExit(0)
+
+try:
+    os.kill(pid, 0)
+except OSError:
+    print("1")
+    raise SystemExit(0)
+
+observed = subprocess.check_output(
+    ["ps", "-o", "lstart=", "-p", str(pid)],
+    text=True,
+    stderr=subprocess.DEVNULL,
+).strip()
+print("0" if observed == started else "1")
+PY
+}
+
+acquire_profile_lock() {
+  local profile="$1"
+  local lock_dir=""
+  local lock_parent=""
+  local attempts=0
+
+  lock_dir="$(profile_lock_dir_path "${profile}")"
+  lock_parent="$(dirname "${lock_dir}")"
+  mkdir -p "${lock_parent}"
+
+  while ! mkdir "${lock_dir}" 2>/dev/null; do
+    if [[ "$(profile_lock_is_stale "${lock_dir}")" == "1" ]]; then
+      rm -rf "${lock_dir}"
+      continue
+    fi
+    attempts=$((attempts + 1))
+    if [[ "${attempts}" -eq 1 ]]; then
+      echo "Waiting for the active Workcell session on profile ${profile} to release the managed runtime lock." >&2
+    fi
+    sleep 1
+  done
+
+  PROFILE_LOCK_DIR="${lock_dir}"
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${lock_dir}/owner.json" "$$" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+started = subprocess.check_output(
+    ["ps", "-o", "lstart=", "-p", sys.argv[2]],
+    text=True,
+    stderr=subprocess.DEVNULL,
+).strip()
+Path(sys.argv[1]).write_text(
+    json.dumps({"pid": int(sys.argv[2]), "started": started}, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+  chmod 0600 "${lock_dir}/owner.json" 2>/dev/null || true
 }
 
 cleanup_stale_session_audit_dirs() {
@@ -891,6 +990,41 @@ print(os.path.realpath(os.path.expanduser(sys.argv[1])))
 PY
 }
 
+resolve_host_output_candidate() {
+  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - "$1" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+target = Path(os.path.abspath(os.path.expanduser(sys.argv[1])))
+allowed_symlink_roots = {Path("/var"), Path("/tmp")} if sys.platform == "darwin" else set()
+
+current = target
+while True:
+    try:
+        path_stat = current.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        if stat.S_ISLNK(path_stat.st_mode):
+            if current in allowed_symlink_roots:
+                if current == current.parent:
+                    break
+                current = current.parent
+                continue
+            raise SystemExit(f"Refusing symlinked host output path component: {current}")
+    if current == current.parent:
+        break
+    current = current.parent
+
+if target.exists() and not target.is_file():
+    raise SystemExit(f"Host output path must be a regular file or a new file path: {target}")
+
+print(target)
+PY
+}
+
 resolve_existing_directory_or_die() {
   local raw_path="$1"
   local resolved_path=""
@@ -1059,6 +1193,7 @@ prepare_injection_bundle() {
   if [[ -z "${policy_path}" ]]; then
     INJECTION_POLICY_SHA256=""
     INJECTION_CREDENTIAL_KEYS=""
+    INJECTION_EXTRA_ENDPOINTS=""
     INJECTION_SSH_ENABLED=0
     INJECTION_SSH_CONFIG_ASSURANCE="off"
     INJECTION_SECRET_COPY_TARGETS=""
@@ -1134,6 +1269,7 @@ manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 metadata = manifest.get("metadata", {})
 print(metadata.get("policy_sha256", ""))
 print(",".join(metadata.get("credential_keys", [])))
+print(" ".join(metadata.get("extra_endpoints", [])))
 print("1" if metadata.get("ssh_enabled") else "0")
 print(metadata.get("ssh_config_assurance", "off"))
 print(",".join(metadata.get("secret_copy_targets", [])))
@@ -1141,9 +1277,10 @@ PY
   )"
   INJECTION_POLICY_SHA256="$(printf '%s\n' "${metadata}" | sed -n '1p')"
   INJECTION_CREDENTIAL_KEYS="$(printf '%s\n' "${metadata}" | sed -n '2p')"
-  INJECTION_SSH_ENABLED="$(printf '%s\n' "${metadata}" | sed -n '3p')"
-  INJECTION_SSH_CONFIG_ASSURANCE="$(printf '%s\n' "${metadata}" | sed -n '4p')"
-  INJECTION_SECRET_COPY_TARGETS="$(printf '%s\n' "${metadata}" | sed -n '5p')"
+  INJECTION_EXTRA_ENDPOINTS="$(printf '%s\n' "${metadata}" | sed -n '3p')"
+  INJECTION_SSH_ENABLED="$(printf '%s\n' "${metadata}" | sed -n '4p')"
+  INJECTION_SSH_CONFIG_ASSURANCE="$(printf '%s\n' "${metadata}" | sed -n '5p')"
+  INJECTION_SECRET_COPY_TARGETS="$(printf '%s\n' "${metadata}" | sed -n '6p')"
 }
 
 build_recommended_command() {
@@ -1151,16 +1288,20 @@ build_recommended_command() {
   local include_repair="$2"
   local target_mode="${3}"
   local -a cmd=("workcell")
+  local target_mutability=""
 
   if [[ "${include_repair}" -eq 1 ]] && [[ "${target_mode}" == "strict" ]]; then
     include_prepare=0
   fi
+  target_mutability="${CONTAINER_MUTABILITY:-$(default_container_mutability_for_mode "${target_mode}")}"
   [[ "${include_prepare}" -eq 1 ]] && cmd+=(--prepare)
   [[ "${include_repair}" -eq 1 ]] && cmd+=(--repair-profile)
   cmd+=(--agent "${AGENT}")
   [[ "${AGENT_AUTONOMY}" != "yolo" ]] && cmd+=(--agent-autonomy "${AGENT_AUTONOMY}")
   [[ "${CACHE_PROFILE}" != "off" ]] && cmd+=(--cache-profile "${CACHE_PROFILE}")
-  [[ "${CONTAINER_MUTABILITY}" != "ephemeral" ]] && cmd+=(--container-mutability "${CONTAINER_MUTABILITY}")
+  if ! container_mutability_is_default_for_mode "${target_mutability}" "${target_mode}"; then
+    cmd+=(--container-mutability "${target_mutability}")
+  fi
   [[ -n "${CONTAINER_CPU_OVERRIDE}" ]] && cmd+=(--container-cpu "${CONTAINER_CPU_OVERRIDE}")
   [[ -n "${CONTAINER_MEMORY_OVERRIDE}" ]] && cmd+=(--container-memory "${CONTAINER_MEMORY_OVERRIDE}")
   [[ "${USE_DEFAULT_INJECTION_POLICY}" -eq 0 ]] && cmd+=(--no-default-injection-policy)
@@ -1169,9 +1310,12 @@ build_recommended_command() {
   [[ -n "${DEBUG_LOG_PATH}" ]] && cmd+=(--debug-log "${DEBUG_LOG_PATH}")
   [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]] && cmd+=(--audit-transcript "${AUDIT_TRANSCRIPT_PATH}")
   [[ "${UI}" != "cli" ]] && cmd+=(--ui "${UI}")
-  cmd+=(--mode "${target_mode}" --workspace "${WORKSPACE}")
+  if [[ "${target_mode}" != "strict" ]]; then
+    cmd+=(--mode "${target_mode}")
+  fi
+  cmd+=(--workspace "${WORKSPACE}")
   [[ "${ALLOW_NONGIT_WORKSPACE}" -eq 1 ]] && cmd+=(--allow-nongit-workspace)
-  [[ -n "${COLIMA_PROFILE}" ]] && cmd+=(--colima-profile "${COLIMA_PROFILE}")
+  [[ "${COLIMA_PROFILE_EXPLICIT:-0}" -eq 1 ]] && [[ -n "${COLIMA_PROFILE}" ]] && cmd+=(--colima-profile "${COLIMA_PROFILE}")
   [[ -n "${VM_CPU_OVERRIDE}" ]] && cmd+=(--vm-cpu "${VM_CPU_OVERRIDE}")
   [[ -n "${VM_MEMORY_OVERRIDE}" ]] && cmd+=(--vm-memory "${VM_MEMORY_OVERRIDE}")
   [[ -n "${VM_DISK_OVERRIDE}" ]] && cmd+=(--vm-disk "${VM_DISK_OVERRIDE}")
@@ -1228,9 +1372,14 @@ prepare_host_output_path() {
   local resolved_path=""
   local parent_dir=""
 
-  resolved_path="$(resolve_host_path "${raw_path}")"
+  if ! resolved_path="$(resolve_host_output_candidate "${raw_path}")"; then
+    exit 2
+  fi
   parent_dir="$(dirname "${resolved_path}")"
   mkdir -p "${parent_dir}"
+  if ! resolved_path="$(resolve_host_output_candidate "${resolved_path}")"; then
+    exit 2
+  fi
   chmod 0700 "${parent_dir}" 2>/dev/null || true
   : >"${resolved_path}"
   chmod 0600 "${resolved_path}" 2>/dev/null || true
@@ -1246,9 +1395,10 @@ csv_contains_value() {
   local csv="${1:-}"
   local needle="$2"
   local item=""
+  local IFS=','
 
-  IFS=',' read -r -a _csv_items <<<"${csv}"
-  for item in "${_csv_items[@]}"; do
+  [[ -n "${csv}" ]] || return 1
+  for item in ${csv}; do
     [[ -n "${item}" ]] || continue
     if [[ "${item}" == "${needle}" ]]; then
       return 0
@@ -1337,6 +1487,8 @@ selected_provider_auth_mode() {
 print_injection_status() {
   if [[ -z "${INJECTION_POLICY_SHA256}" ]]; then
     printf 'injection_policy=none\n'
+    printf 'default_injection_policy_path=%s\n' "$(default_injection_policy_path)"
+    printf 'supported_credential_keys=codex_auth,claude_api_key,claude_auth,claude_mcp,gemini_env,gemini_oauth,gemini_projects,gcloud_adc,github_config,github_hosts\n'
     return 0
   fi
   printf 'injection_policy_sha256=%s\n' "${INJECTION_POLICY_SHA256}"
@@ -1634,12 +1786,34 @@ validate_mode_name() {
 
 validate_container_mutability() {
   case "$1" in
-    ephemeral | readonly) ;;
+    "" | ephemeral | readonly) ;;
     *)
       echo "Unsupported container mutability: $1" >&2
       exit 2
       ;;
   esac
+}
+
+default_container_mutability_for_mode() {
+  case "$1" in
+    strict)
+      printf 'ephemeral\n'
+      ;;
+    build | breakglass)
+      printf 'ephemeral\n'
+      ;;
+    *)
+      echo "Unsupported mode for container mutability defaults: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+container_mutability_is_default_for_mode() {
+  local mutability="$1"
+  local mode="$2"
+
+  [[ "${mutability}" == "$(default_container_mutability_for_mode "${mode}")" ]]
 }
 
 normalize_cli_aliases() {
@@ -1674,9 +1848,11 @@ normalize_cli_aliases() {
 }
 
 prepare_cache_mounts() {
-  local profile="$1"
+  local agent="$1"
   local cache_profile="$2"
+  local workspace="$3"
   local cache_root=""
+  local workspace_cache_key=""
 
   CACHE_MOUNTS=()
   case "${cache_profile}" in
@@ -1690,32 +1866,58 @@ prepare_cache_mounts() {
       ;;
   esac
 
-  cache_root="$(profile_dir "${profile}")/cache"
+  workspace_cache_key="$(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${workspace}" <<'PY'
+import hashlib
+import os
+import pathlib
+import sys
+
+workspace = pathlib.Path(os.path.realpath(os.path.expanduser(sys.argv[1])))
+print(hashlib.sha256(os.fspath(workspace).encode("utf-8")).hexdigest()[:16])
+PY
+  )"
+  cache_root="$(resolve_host_path "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/cache/${agent}/${workspace_cache_key}")"
   if [[ "${DRY_RUN}" -eq 0 ]]; then
     mkdir -p \
       "${cache_root}/npm" \
+      "${cache_root}/pnpm" \
       "${cache_root}/pip" \
+      "${cache_root}/uv" \
+      "${cache_root}/poetry" \
       "${cache_root}/cargo-registry" \
       "${cache_root}/cargo-git" \
       "${cache_root}/go-mod" \
       "${cache_root}/go-build" \
-      "${cache_root}/ccache"
+      "${cache_root}/ccache" \
+      "${cache_root}/bun" \
+      "${cache_root}/xdg"
     chmod 0700 "${cache_root}" 2>/dev/null || true
   fi
   CACHE_MOUNTS=(
     -e npm_config_cache=/state/cache/npm
+    -e PNPM_STORE_DIR=/state/cache/pnpm
     -e PIP_CACHE_DIR=/state/cache/pip
+    -e UV_CACHE_DIR=/state/cache/uv
+    -e POETRY_CACHE_DIR=/state/cache/poetry
     -e CARGO_HOME=/state/cache/cargo-home
     -e GOMODCACHE=/state/cache/go-mod
     -e GOCACHE=/state/cache/go-build
     -e CCACHE_DIR=/state/cache/ccache
+    -e BUN_INSTALL_CACHE_DIR=/state/cache/bun
+    -e XDG_CACHE_HOME=/state/cache/xdg
     -v "${cache_root}/npm:/state/cache/npm"
+    -v "${cache_root}/pnpm:/state/cache/pnpm"
     -v "${cache_root}/pip:/state/cache/pip"
+    -v "${cache_root}/uv:/state/cache/uv"
+    -v "${cache_root}/poetry:/state/cache/poetry"
     -v "${cache_root}/cargo-registry:/state/cache/cargo-home/registry"
     -v "${cache_root}/cargo-git:/state/cache/cargo-home/git"
     -v "${cache_root}/go-mod:/state/cache/go-mod"
     -v "${cache_root}/go-build:/state/cache/go-build"
     -v "${cache_root}/ccache:/state/cache/ccache"
+    -v "${cache_root}/bun:/state/cache/bun"
+    -v "${cache_root}/xdg:/state/cache/xdg"
   )
 }
 
@@ -1725,7 +1927,7 @@ run_command_with_debug_log() {
   local log_path=""
   local status=0
 
-  log_path="$(mktemp "${TMPDIR:-/tmp}/workcell-${label}.XXXXXX.log")"
+  log_path="$(mktemp "${TMPDIR:-/tmp}/workcell-${label}.log.XXXXXX")"
   if "$@" >"${log_path}" 2>&1; then
     if [[ "${LOG_LEVEL}" == "debug" ]]; then
       cat "${log_path}" >&2
@@ -2034,6 +2236,50 @@ resolve_host_tool() {
   exit 1
 }
 
+resolve_host_tool_optional() {
+  local name="$1"
+  shift
+  local candidate=""
+  local canonical_candidate=""
+
+  for candidate in "$@"; do
+    canonical_candidate="$(canonicalize_host_tool_path "${candidate}")"
+    if [[ -x "${candidate}" ]] &&
+      is_trusted_host_tool_path "${candidate}" &&
+      is_trusted_host_tool_path "${canonical_candidate}"; then
+      printf '%s\n' "${canonical_candidate}"
+      return 0
+    fi
+  done
+
+  candidate="$(type -P "${name}" || true)"
+  canonical_candidate="$(canonicalize_host_tool_path "${candidate}")"
+  if [[ -n "${candidate}" ]] &&
+    is_trusted_host_tool_path "${candidate}" &&
+    is_trusted_host_tool_path "${canonical_candidate}"; then
+    printf '%s\n' "${canonical_candidate}"
+    return 0
+  fi
+
+  return 1
+}
+
+missing_launch_host_tools_csv() {
+  local -a missing=()
+
+  resolve_host_tool_optional colima /opt/homebrew/bin/colima /usr/local/bin/colima >/dev/null || missing+=(colima)
+  resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker >/dev/null || missing+=(docker)
+  resolve_host_tool_optional ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby >/dev/null || missing+=(ruby)
+
+  if ((${#missing[@]} == 0)); then
+    printf 'none\n'
+    return 0
+  fi
+
+  local IFS=','
+  printf '%s\n' "${missing[*]}"
+}
+
 if [[ "${1:-}" == "--self-docker-probe" ]]; then
   sanitize_host_docker_env
   buildx_cmd version >/dev/null
@@ -2056,6 +2302,101 @@ provider_endpoints() {
       return 1
       ;;
   esac
+}
+
+credential_extra_endpoints() {
+  local credential_keys="${INJECTION_CREDENTIAL_KEYS:-}"
+  local -a endpoints=()
+
+  if csv_contains_value "${credential_keys}" "github_hosts" || csv_contains_value "${credential_keys}" "github_config"; then
+    endpoints+=(
+      github.com:443
+      api.github.com:443
+      objects.githubusercontent.com:443
+      raw.githubusercontent.com:443
+    )
+  fi
+
+  if [[ "${AGENT}" == "gemini" ]]; then
+    if csv_contains_value "${credential_keys}" "gemini_oauth" || csv_contains_value "${credential_keys}" "gcloud_adc"; then
+      endpoints+=(
+        accounts.google.com:443
+        oauth2.googleapis.com:443
+        sts.googleapis.com:443
+        aiplatform.googleapis.com:443
+      )
+    fi
+  fi
+
+  if ((${#endpoints[@]} == 0)); then
+    return 0
+  fi
+
+  printf '%s\n' "${endpoints[*]}"
+}
+
+dedupe_endpoint_list() {
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "$1" <<'PY'
+import sys
+
+seen = set()
+ordered = []
+for entry in sys.argv[1].split():
+    if entry and entry not in seen:
+        seen.add(entry)
+        ordered.append(entry)
+print(" ".join(ordered))
+PY
+}
+
+build_runtime_host_aliases() {
+  local endpoint_list="$1"
+  local host=""
+  local ip=""
+
+  RUNTIME_NETWORK_ARGS=()
+  [[ "${NETWORK_POLICY}" == "allowlist" ]] || return 0
+
+  while IFS=$'\t' read -r host ip; do
+    [[ -n "${host}" ]] || continue
+    if [[ "${ip}" == *:* ]]; then
+      RUNTIME_NETWORK_ARGS+=(--add-host "${host}:[${ip}]")
+    else
+      RUNTIME_NETWORK_ARGS+=(--add-host "${host}:${ip}")
+    fi
+  done < <(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${endpoint_list}" <<'PY'
+import socket
+import sys
+
+for endpoint in sys.argv[1].split():
+    host, _, _port = endpoint.rpartition(":")
+    if host.startswith("[") and host.endswith("]"):
+        continue
+    if host.replace(".", "").isdigit():
+        continue
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        continue
+    seen = set()
+    ipv4_addrs = []
+    ipv6_addrs = []
+    for family, _socktype, _proto, _canonname, sockaddr in infos:
+        ip = sockaddr[0]
+        key = (host, ip)
+        if key in seen:
+            continue
+        seen.add(key)
+        if family == socket.AF_INET6:
+            ipv6_addrs.append(ip)
+        else:
+            ipv4_addrs.append(ip)
+    for ip in ipv4_addrs + ipv6_addrs:
+        print(f"{host}\t{ip}")
+PY
+  )
+
 }
 
 git_alias_value_is_blocked() {
@@ -2411,7 +2752,7 @@ AGENT=""
 AGENT_AUTONOMY="yolo"
 CACHE_PROFILE="off"
 CODEX_RULES_MUTABILITY="readonly"
-CONTAINER_MUTABILITY="ephemeral"
+CONTAINER_MUTABILITY=""
 CONTAINER_CPU_OVERRIDE=""
 CONTAINER_MEMORY_OVERRIDE=""
 UI="cli"
@@ -2421,6 +2762,7 @@ DEBUG_LOG_PATH=""
 AUDIT_TRANSCRIPT_PATH=""
 WORKSPACE="$(pwd -P)"
 COLIMA_PROFILE=""
+COLIMA_PROFILE_EXPLICIT=0
 INJECTION_POLICY=""
 USE_DEFAULT_INJECTION_POLICY=1
 VM_CPU_OVERRIDE=""
@@ -2429,6 +2771,7 @@ VM_DISK_OVERRIDE=""
 REBUILD=0
 DRY_RUN=0
 PREPARE=0
+PREPARE_ONLY=0
 REPAIR_PROFILE=0
 DOCTOR=0
 INSPECT=0
@@ -2516,6 +2859,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --colima-profile)
       COLIMA_PROFILE="$(option_value_or_die "$1" "${2-}")"
+      COLIMA_PROFILE_EXPLICIT=1
       shift 2
       ;;
     --vm-cpu)
@@ -2532,6 +2876,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --prepare)
       PREPARE=1
+      shift
+      ;;
+    --prepare-only)
+      PREPARE=1
+      PREPARE_ONLY=1
       shift
       ;;
     --repair-profile)
@@ -2699,6 +3048,9 @@ if [[ "${REPAIR_PROFILE}" -eq 1 ]] && [[ "${MODE}" == "strict" ]]; then
 fi
 
 validate_mode_name "${MODE}"
+if [[ -z "${CONTAINER_MUTABILITY}" ]]; then
+  CONTAINER_MUTABILITY="$(default_container_mutability_for_mode "${MODE}")"
+fi
 validate_container_mutability "${CONTAINER_MUTABILITY}"
 PROFILE_ENV="$(profile_env_path "${MODE}")"
 [[ -f "${PROFILE_ENV}" ]] || {
@@ -2727,6 +3079,7 @@ validate_container_memory_value "${CONTAINER_MEMORY}"
 if [[ -n "${CONTAINER_CPU_OVERRIDE}" ]]; then
   validate_positive_decimal "container CPU limit" "${CONTAINER_CPU_OVERRIDE}"
 fi
+HOST_TOOL_MISSING_CSV="$(missing_launch_host_tools_csv)"
 HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
 HOST_DOCKER_BIN="docker"
 if [[ -z "${COLIMA_PROFILE}" ]]; then
@@ -2801,10 +3154,13 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
     prepared_image=1
   fi
   print_inspect_state "${recorded_image_id}" "${local_current_image_id}"
+  printf 'doctor_missing_host_tools=%s\n' "${HOST_TOOL_MISSING_CSV}"
   printf 'doctor_profile_state=%s\n' "${profile_state}"
   printf 'doctor_workspace_binding=%s\n' "${PROFILE_MARKER_WORKSPACE:-none}"
   printf 'doctor_prepared_image=%s\n' "${prepared_image}"
-  if [[ "${workspace_state}" == "missing" ]] || [[ "${workspace_state}" == "not-directory" ]]; then
+  if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
+    printf 'doctor_recommended_next=install-host-tools\n'
+  elif [[ "${workspace_state}" == "missing" ]] || [[ "${workspace_state}" == "not-directory" ]]; then
     printf 'doctor_recommended_next=fix-workspace\n'
   elif [[ "${profile_state}" == "unmanaged" ]]; then
     printf 'doctor_recommended_next='
@@ -2820,6 +3176,10 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
     printf 'doctor_recommended_next=none\n'
   fi
   exit 0
+fi
+
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  acquire_profile_lock "${COLIMA_PROFILE}"
 fi
 
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
@@ -2873,12 +3233,13 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
   export COLIMA_HOME="${COLIMA_STATE_ROOT}"
 fi
 
-ALLOW_ENDPOINTS="$(provider_endpoints "${AGENT}") ${EXTRA_ENDPOINTS}"
+ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(credential_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS}")"
 if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
-  ALLOW_ENDPOINTS="${ALLOW_ENDPOINTS} snapshot.debian.org:80 snapshot.debian.org:443"
+  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:80 snapshot.debian.org:443")"
 fi
 prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
-prepare_cache_mounts "${COLIMA_PROFILE}" "${CACHE_PROFILE}"
+prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
+build_runtime_host_aliases "${ALLOW_ENDPOINTS}"
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   prepare_session_audit_state "${COLIMA_PROFILE}"
 fi
@@ -2941,6 +3302,9 @@ if ((${#SHADOW_MOUNTS[@]} > 0)); then
 fi
 if ((${#WORKSPACE_IMPORT_MOUNTS[@]} > 0)); then
   DOCKER_RUN_BASE+=("${WORKSPACE_IMPORT_MOUNTS[@]}")
+fi
+if ((${#RUNTIME_NETWORK_ARGS[@]} > 0)); then
+  DOCKER_RUN_BASE+=("${RUNTIME_NETWORK_ARGS[@]}")
 fi
 if ((${#DIRECT_SOURCE_MOUNTS[@]} > 0)); then
   DOCKER_RUN_BASE+=("${DIRECT_SOURCE_MOUNTS[@]}")
@@ -3015,6 +3379,10 @@ printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS
 printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
+  if [[ "${PREPARE_ONLY}" -eq 1 ]]; then
+    printf 'prepare_only=1 no_session_launch=1\n'
+    exit 0
+  fi
   emit_redacted_command "${DOCKER_RUN[@]}"
   exit 0
 fi
@@ -3126,6 +3494,10 @@ if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
 fi
 
 restore_runtime_egress
+if [[ "${PREPARE_ONLY}" -eq 1 ]]; then
+  echo "Prepared runtime image recorded for profile ${COLIMA_PROFILE}. No session launched because --prepare-only was requested." >&2
+  exit 0
+fi
 append_launch_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 
 DOCKER_STATUS=0

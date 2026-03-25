@@ -63,6 +63,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/check-workflows.sh"
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
+  "${ROOT_DIR}/scripts/dev-quick-check.sh"
   "${ROOT_DIR}/scripts/dev-remote-validate.sh"
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"

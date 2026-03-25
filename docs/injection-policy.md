@@ -67,8 +67,11 @@ Selectors let you scope injected material to only some launches:
 - `providers = ["codex", "claude", "gemini"]`
 - `modes = ["strict", "build"]`
 
-For `[credentials]`, simple `key = "/path/to/file"` entries still work, and
-scoped entries can be expressed as nested tables:
+For `[credentials]`, simple `key = "/path/to/file"` entries still work for
+provider-native credentials. Shared GitHub CLI credentials should use scoped
+nested tables so you explicitly choose which provider sessions receive them.
+Legacy scalar shared GitHub entries still work as an all-provider shorthand for
+existing local policies:
 
 ```toml
 [credentials.github_hosts]
@@ -93,7 +96,8 @@ modes = ["strict", "build"]
 - no writes into Workcell-generated helper state such as
   `~/.claude/workcell/`
 - no unsafe SSH config directives such as `ProxyCommand`, `LocalCommand`,
-  `Include`, `IdentityAgent`, or `Match exec` unless you explicitly set
+  `Include`, `IdentityAgent`, `KnownHostsCommand`, `PKCS11Provider`,
+  `SecurityKeyProvider`, or `Match exec` unless you explicitly set
   `ssh.allow_unsafe_config = true`
 
 ## Recommended patterns
@@ -135,7 +139,11 @@ modes = ["strict", "build"]
   session without widening trust to the whole workspace copy.
 - `credentials.gemini_env` mounts a provider-native `~/.gemini/.env`.
   This matches Gemini CLI's documented env-file auth flow for API keys,
-  Vertex project settings, and related variables.
+  Vertex project settings, and related variables. When the file includes
+  `GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_REGION`, `CLOUD_ML_REGION`,
+  `VERTEX_LOCATION`, or `VERTEX_AI_LOCATION`, Workcell also derives the
+  corresponding regional `LOCATION-aiplatform.googleapis.com` allowlist entry
+  for strict-mode Vertex sessions.
 - `credentials.gemini_oauth` mounts a cached Gemini OAuth credential file when
   you already have one on the host.
 - `credentials.gemini_projects` mounts a persisted Gemini `projects.json`
@@ -144,7 +152,10 @@ modes = ["strict", "build"]
   `~/.config/gcloud/application_default_credentials.json` for Gemini Vertex
   flows.
 - `credentials.github_hosts` and `credentials.github_config` mount GitHub CLI
-  auth/config into `~/.config/gh/`.
+  auth/config into `~/.config/gh/`. Because those credentials are shared across
+  tools rather than provider-native, prefer `[credentials.github_hosts]` or
+  `[credentials.github_config]` tables with explicit `providers = [...]`
+  selection over the legacy scalar shorthand.
 
 ## Example
 
