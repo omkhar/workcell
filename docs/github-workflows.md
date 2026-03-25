@@ -111,6 +111,11 @@ dedicated `WORKCELL_HOSTED_CONTROLS_TOKEN` secret for workflow-based audits.
 The continuous `hosted-controls.yml` workflow skips cleanly when that secret is
 absent so `main` does not stay red on a known GitHub token limitation, but the
 tagged `release.yml` preflight fails closed unless the secret is configured.
+The workflow enforces that split explicitly with
+`WORKCELL_HOSTED_CONTROLS_REQUIRED="0"` in
+[`hosted-controls.yml`](../.github/workflows/hosted-controls.yml) and
+`WORKCELL_HOSTED_CONTROLS_REQUIRED="1"` in
+[`release.yml`](../.github/workflows/release.yml).
 That token should be a fine-grained token or GitHub App token scoped only to
 this repository and only to the repository-administration metadata needed for
 the audit. Workflow jobs that can read that token run inside a dedicated

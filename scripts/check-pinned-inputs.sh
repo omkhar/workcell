@@ -489,6 +489,12 @@ require_contains(
     ".github/workflows/hosted-controls.yml",
 )
 require_contains(
+    hosted_controls_workflow,
+    'WORKCELL_HOSTED_CONTROLS_REQUIRED: "0"',
+    "a non-blocking hosted-controls audit mode for continuous drift detection",
+    ".github/workflows/hosted-controls.yml",
+)
+require_contains(
     release_workflow,
     "environment:\n      name: release",
     "a protected release environment gate",
