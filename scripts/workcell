@@ -1924,6 +1924,7 @@ PY
 run_command_with_debug_log() {
   local label="$1"
   shift
+  local -a debug_pipe_status=()
   local log_path=""
   local heartbeat_pid=""
   local start_seconds=0
@@ -1987,12 +1988,15 @@ run_command_with_debug_log() {
   start_seconds="${SECONDS}"
   maybe_print_progress_update start "0s"
   if [[ "${LOG_LEVEL}" == "debug" ]]; then
-    if [[ -n "${DEBUG_LOG_PATH}" ]]; then
-      "$@" 2>&1 | tee -a "${DEBUG_LOG_PATH}" "${log_path}" >&2
-    else
-      "$@" 2>&1 | tee "${log_path}" >&2
+    set +e
+    "$@" 2>&1 | tee "${log_path}" >&2
+    debug_pipe_status=("${PIPESTATUS[@]}")
+    set -e
+    if [[ "${debug_pipe_status[0]}" -ne 0 ]]; then
+      status="${debug_pipe_status[0]}"
+    elif [[ "${debug_pipe_status[1]}" -ne 0 ]]; then
+      status="${debug_pipe_status[1]}"
     fi
-    status="${PIPESTATUS[0]}"
   else
     "$@" >"${log_path}" 2>&1 &
     pid=$!

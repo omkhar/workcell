@@ -74,6 +74,17 @@ file_mode_octal() {
   fi
 }
 
+extract_top_level_bash_function() {
+  local source_file="$1"
+  local function_name="$2"
+
+  awk -v function_name="${function_name}" '
+    $0 ~ "^" function_name "\\(\\) \\{" { capture = 1 }
+    capture { print }
+    capture && $0 == "}" { exit }
+  ' "${source_file}"
+}
+
 cleanup() {
   rm -rf "${CODEX_VERIFY_HOME}"
   rm -rf "${BARRIER_VERIFY_ROOT}"
@@ -1762,6 +1773,49 @@ test -f "${DEBUG_LOG_CAPTURE}"
 test "$(file_mode_octal "${DEBUG_LOG_CAPTURE}")" = "600"
 grep -q 'Workcell warning: full host-persisted debug log capture is enabled for this session:' /tmp/workcell-debug-log.out
 grep -q 'execution_path=' "${DEBUG_LOG_CAPTURE}"
+RUN_COMMAND_DEBUG_FAILURE_HARNESS="${BARRIER_VERIFY_ROOT}/debug/run-command-debug-failure.sh"
+RUN_COMMAND_DEBUG_FAILURE_LOG="${BARRIER_VERIFY_ROOT}/debug/run-command-debug-failure.log"
+extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_command_with_debug_log >"${RUN_COMMAND_DEBUG_FAILURE_HARNESS}"
+cat >>"${RUN_COMMAND_DEBUG_FAILURE_HARNESS}" <<EOF
+set -euo pipefail
+LOG_LEVEL=debug
+DEBUG_LOG_PATH=""
+COLIMA_PROFILE="${STRICT_PREFLIGHT_PROFILE}"
+PREPARE_ONLY=0
+AGENT=codex
+BUILD_STATUS=0
+run_command_with_debug_log runtime-build bash -lc 'echo debug-pipeline-failure >&2; exit 23' || BUILD_STATUS=\$?
+printf 'build_status=%s\n' "\${BUILD_STATUS}"
+EOF
+chmod +x "${RUN_COMMAND_DEBUG_FAILURE_HARNESS}"
+if ! bash "${RUN_COMMAND_DEBUG_FAILURE_HARNESS}" >"${RUN_COMMAND_DEBUG_FAILURE_LOG}" 2>&1; then
+  echo "Expected debug-mode command failures to return control to the caller" >&2
+  cat "${RUN_COMMAND_DEBUG_FAILURE_LOG}" >&2
+  exit 1
+fi
+grep -q '^build_status=23$' "${RUN_COMMAND_DEBUG_FAILURE_LOG}"
+grep -q 'Workcell runtime-build failed\.' "${RUN_COMMAND_DEBUG_FAILURE_LOG}"
+grep -q 'debug-pipeline-failure' "${RUN_COMMAND_DEBUG_FAILURE_LOG}"
+RUN_COMMAND_DEBUG_DUP_HARNESS="${BARRIER_VERIFY_ROOT}/debug/run-command-debug-dup.sh"
+RUN_COMMAND_DEBUG_DUP_LOG="${BARRIER_VERIFY_ROOT}/debug/run-command-debug-dup.log"
+extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_command_with_debug_log >"${RUN_COMMAND_DEBUG_DUP_HARNESS}"
+cat >>"${RUN_COMMAND_DEBUG_DUP_HARNESS}" <<EOF
+set -euo pipefail
+LOG_LEVEL=debug
+DEBUG_LOG_PATH="${RUN_COMMAND_DEBUG_DUP_LOG}"
+COLIMA_PROFILE="${STRICT_PREFLIGHT_PROFILE}"
+PREPARE_ONLY=0
+AGENT=codex
+exec > >(tee -a "${RUN_COMMAND_DEBUG_DUP_LOG}") 2>&1
+run_command_with_debug_log runtime-build bash -lc 'echo workcell-debug-unique-line >&2'
+EOF
+chmod +x "${RUN_COMMAND_DEBUG_DUP_HARNESS}"
+if ! bash "${RUN_COMMAND_DEBUG_DUP_HARNESS}" >/tmp/workcell-run-command-debug-dup.out 2>&1; then
+  echo "Expected debug-mode log duplication harness to succeed" >&2
+  cat /tmp/workcell-run-command-debug-dup.out >&2
+  exit 1
+fi
+test "$(grep -c '^workcell-debug-unique-line$' "${RUN_COMMAND_DEBUG_DUP_LOG}")" = "1"
 DEBUG_LOG_SYMLINK_TARGET="${BARRIER_VERIFY_ROOT}/debug/redirected.log"
 DEBUG_LOG_SYMLINK="${BARRIER_VERIFY_ROOT}/debug/symlink.log"
 rm -f "${DEBUG_LOG_SYMLINK_TARGET}" "${DEBUG_LOG_SYMLINK}"
