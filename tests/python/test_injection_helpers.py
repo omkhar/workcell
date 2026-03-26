@@ -410,6 +410,21 @@ class RenderInjectionHelperTests(unittest.TestCase):
             self.assertIsNone(self.module.parse_ssh_directive("   "))
             self.assertIsNone(self.module.parse_ssh_directive("# comment"))
 
+            # New risky directives should also be blocked
+            for directive, content in [
+                ("ForwardAgent", "Host *\nForwardAgent yes\n"),
+                ("SendEnv", "Host *\nSendEnv LC_ALL\n"),
+                ("ControlPath", "Host *\nControlPath /tmp/ssh-%r@%h:%p\n"),
+                ("UserKnownHostsFile", "Host *\nUserKnownHostsFile /dev/null\n"),
+            ]:
+                risky_file = root / f"risky_{directive.lower()}"
+                risky_file.write_text(content, encoding="utf-8")
+                risky_file.chmod(0o600)
+                with self.assertRaises(SystemExit):
+                    self.module.validate_ssh_config_safety(risky_file, allow_unsafe=False)
+                # Verify allow_unsafe bypasses the block
+                self.module.validate_ssh_config_safety(risky_file, allow_unsafe=True)
+
     def test_render_credentials_rejects_invalid_tables_and_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

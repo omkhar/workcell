@@ -20,13 +20,21 @@ SUPPORTED_MODES = {"strict", "build", "breakglass"}
 SUPPORTED_CLASSIFICATIONS = {"public", "secret"}
 RESERVED_SSH_FILENAMES = {"config", "known_hosts"}
 RISKY_SSH_DIRECTIVES = {
+    "controlmaster",
+    "controlpath",
+    "controlpersist",
+    "forwardagent",
     "identityagent",
     "include",
     "knownhostscommand",
     "localcommand",
+    "permitlocalcommand",
     "pkcs11provider",
     "proxycommand",
     "securitykeyprovider",
+    "sendenv",
+    "setenv",
+    "userknownhostsfile",
 }
 SESSION_HOME_ROOT = PurePosixPath("/state/agent-home")
 RUN_INJECTED_ROOT = PurePosixPath("/state/injected")

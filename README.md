@@ -21,6 +21,24 @@ runtime boundary or weakening defined security guarantees.
 The invariant set is non-negotiable. The numbered priority order applies only
 after the boundary and trust assumptions are fixed.
 
+## Documentation index
+
+| Topic | File |
+|-------|------|
+| Getting started | [Quick start](#quick-start) (below) |
+| Threat model | [docs/threat-model.md](docs/threat-model.md) |
+| Security invariants | [docs/invariants.md](docs/invariants.md) |
+| Provider matrix | [docs/provider-matrix.md](docs/provider-matrix.md) |
+| Injection policy | [docs/injection-policy.md](docs/injection-policy.md) |
+| Provenance & signing | [docs/provenance.md](docs/provenance.md) |
+| GitHub workflows | [docs/github-workflows.md](docs/github-workflows.md) |
+| Adapter control planes | [docs/adapter-control-planes.md](docs/adapter-control-planes.md) |
+| Claude adapter | [adapters/claude/README.md](adapters/claude/README.md) |
+| Codex adapter | [adapters/codex/README.md](adapters/codex/README.md) |
+| Gemini adapter | [adapters/gemini/README.md](adapters/gemini/README.md) |
+| Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Security policy | [SECURITY.md](SECURITY.md) |
+
 ## Design stance
 
 This repository does not treat prompts, provider config files, or IDE settings

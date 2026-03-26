@@ -520,6 +520,8 @@ fn current_process_wrapper_env_is_clean() -> bool {
         && env::var_os("ENV").is_none()
         && env::var_os("LD_AUDIT").is_none()
         && env::var_os("LD_LIBRARY_PATH").is_none()
+        && env::var_os("SSL_CERT_FILE").is_none()
+        && env::var_os("SSL_CERT_DIR").is_none()
         && ld_preload
             .as_deref()
             .is_none_or(|value| value.is_empty() || value == ALLOWED_LD_PRELOAD)

@@ -1,5 +1,15 @@
+# Node.js LTS base image (v22 trixie-slim). Pin includes digest for reproducibility.
+# To update: fetch new digest with `docker pull node:22-trixie-slim` and update both
+# the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
 ARG NODE_BASE_IMAGE=node:22-trixie-slim@sha256:285a78d9fdb7cd2e4a03639cc7bbf609755ce8c0aa4e3b00086211e3e86a7038
+
+# Unix epoch timestamp for reproducible build artifact normalization.
+# Set to 0 to use epoch; set to a specific date for release builds.
 ARG SOURCE_DATE_EPOCH=0
+
+# Debian snapshot date for apt sources. Pinned for reproducibility.
+# To update: choose a newer snapshot date at https://snapshot.debian.org/,
+# verify packages are available, update this value, and re-run verify-reproducible-build.sh.
 ARG DEBIAN_SNAPSHOT=20260316T000000Z
 
 FROM ${NODE_BASE_IMAGE} AS runtime-base
@@ -84,6 +94,10 @@ RUN cd /opt/workcell/providers \
 
 FROM runtime-base AS runtime-builder
 
+# OpenAI Codex CLI version and SHA256 checksums for each architecture.
+# To update: find the new release at https://github.com/openai/codex/releases,
+# update CODEX_VERSION, download both architecture tarballs, compute sha256sum,
+# and update the CODEX_SHA256 values for arm64 and amd64 below.
 ARG CODEX_VERSION=0.117.0-alpha.8
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
@@ -226,16 +240,15 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
     /opt/workcell/adapters/claude/hooks/guard-bash.sh \
   && rm -rf /tmp/* /var/tmp/* /root/.npm /root/.cache /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
   && rm -f /etc/ld.so.cache \
-  && find / \
-    \( \
-      -path '/dev' -o -path '/dev/*' -o \
-      -path '/proc' -o -path '/proc/*' -o \
-      -path '/run' -o -path '/run/*' -o \
-      -path '/sys' -o -path '/sys/*' -o \
-      -path '/tmp' -o -path '/tmp/*' \
-    \) -prune -o \
-    \( -path '/etc/hostname' -o -path '/etc/hosts' -o -path '/etc/resolv.conf' \) -prune -o \
-    -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
+  && find \
+      /opt/workcell \
+      /etc/claude-code \
+      /etc/ld.so.preload \
+      /usr/local/bin \
+      /usr/local/lib/libworkcell_exec_guard.so \
+      /usr/local/libexec/workcell \
+      /usr/bin/git \
+      -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
 WORKDIR /workspace
 
