@@ -1752,6 +1752,8 @@ run_container codex bash -lc '
     test "$TMPDIR" = "/state/tmp"
     mkdir -p "$TMPDIR"
     touch "$TMPDIR/workcell-tmpdir-ok"
+    test -x /usr/bin/bwrap
+    test ! -u /usr/bin/bwrap
     EXEC_TMP="$TMPDIR/workcell-exec"
     mkdir -p "$EXEC_TMP"
     codex --version | grep -q "codex-cli"
@@ -1760,8 +1762,9 @@ run_container codex bash -lc '
     LD_PRELOAD=/workspace/workcell-does-not-exist.so git --version | grep -q "git version"
     LD_PRELOAD=/workspace/workcell-does-not-exist.so node --version | grep -q "^v"
     test -f "$CODEX_HOME/config.toml"
-    test -L "$CODEX_HOME/config.toml"
-    test "$(readlink "$CODEX_HOME/config.toml")" = "/opt/workcell/adapters/codex/.codex/config.toml"
+    test ! -L "$CODEX_HOME/config.toml"
+    test -w "$CODEX_HOME/config.toml"
+    cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
     codex features list >/dev/null
     if command -v python3 >/tmp/python-which.out 2>&1; then
       echo "expected runtime image to omit python3 from the operator PATH" >&2
@@ -1826,8 +1829,9 @@ run_container codex bash -lc '
     rm -f "$CODEX_HOME/config.toml"
     printf "web_search = \"enabled\"\n" >"$CODEX_HOME/config.toml"
     codex --version >/dev/null
-    test -L "$CODEX_HOME/config.toml"
-    test "$(readlink "$CODEX_HOME/config.toml")" = "/opt/workcell/adapters/codex/.codex/config.toml"
+    test ! -L "$CODEX_HOME/config.toml"
+    test -w "$CODEX_HOME/config.toml"
+    cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
   '"'"'
   if /usr/local/libexec/workcell/real/codex --version >/tmp/codex-real-path.out 2>&1; then
     echo "expected direct real Codex payload execution to fail" >&2

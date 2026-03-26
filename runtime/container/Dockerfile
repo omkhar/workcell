@@ -33,6 +33,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
   && install_runtime_packages() { \
        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        bash \
+       bubblewrap \
        ca-certificates \
        curl \
        fd-find \

@@ -101,6 +101,16 @@ workcell_copy_control_plane_tree() {
   chmod "${dir_mode}" "${target_path}"
 }
 
+workcell_copy_control_plane_file() {
+  local source_path="$1"
+  local target_path="$2"
+  local file_mode="$3"
+
+  workcell_reset_session_target "${target_path}" "control-plane file"
+  cp "${source_path}" "${target_path}"
+  chmod "${file_mode}" "${target_path}"
+}
+
 WORKCELL_WORKSPACE_IMPORT_ROOT="${WORKCELL_WORKSPACE_IMPORT_ROOT:-/opt/workcell/workspace-control-plane}"
 WORKCELL_CODEX_RULES_MUTABILITY="${WORKCELL_CODEX_RULES_MUTABILITY:-readonly}"
 
@@ -952,7 +962,8 @@ seed_codex_home() {
   workcell_prepare_session_directory "${CODEX_HOME}" "Codex home"
   workcell_prepare_session_directory "${CODEX_HOME}/mcp" "Codex MCP directory"
   workcell_render_provider_doc "${ADAPTER_ROOT}/codex/.codex/AGENTS.md" "${CODEX_HOME}/AGENTS.md" codex
-  workcell_link_control_plane_path "${ADAPTER_ROOT}/codex/.codex/config.toml" "${CODEX_HOME}/config.toml"
+  workcell_copy_control_plane_file "${ADAPTER_ROOT}/codex/.codex/config.toml" "${CODEX_HOME}/config.toml" 0600
+  workcell_assert_session_regular_writable_file "${CODEX_HOME}/config.toml" "Codex config"
   workcell_link_control_plane_path "${ADAPTER_ROOT}/codex/managed_config.toml" "${CODEX_HOME}/managed_config.toml"
   workcell_link_control_plane_path "${ADAPTER_ROOT}/codex/requirements.toml" "${CODEX_HOME}/requirements.toml"
   workcell_link_control_plane_path "${ADAPTER_ROOT}/codex/.codex/agents" "${CODEX_HOME}/agents"
