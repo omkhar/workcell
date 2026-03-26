@@ -1,6 +1,27 @@
 #!/usr/bin/env -S -i PATH=/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash
 # shellcheck shell=bash
-set -euo pipefail
+set -Eeuo pipefail
+
+report_verify_invariants_failure() {
+  local status="$1"
+  local line="$2"
+  local command="$3"
+  local caller_frame=""
+
+  if [[ "${FUNCNAME[1]:-}" == "rg" ]]; then
+    return 0
+  fi
+
+  trap - ERR
+  caller_frame="$(caller 0 2>/dev/null || true)"
+  if [[ -n "${caller_frame}" ]]; then
+    echo "verify-invariants failed with status ${status} at ${caller_frame}: ${command}" >&2
+  else
+    echo "verify-invariants failed with status ${status} at line ${line}: ${command}" >&2
+  fi
+}
+
+trap 'report_verify_invariants_failure "$?" "${LINENO}" "${BASH_COMMAND}"' ERR
 
 readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
@@ -114,19 +135,36 @@ check_file() {
 }
 
 rg() {
+  local status=0
+
   if builtin type -P rg >/dev/null 2>&1; then
+    set +E
+    set +e
     command rg "$@"
-    return
+    status=$?
+    set -e
+    set -E
+    return "${status}"
   fi
 
   if [[ "${1:-}" == "-q" ]] && [[ "$#" -eq 3 ]]; then
+    set +E
+    set +e
     grep -Eq -- "$2" "$3"
-    return
+    status=$?
+    set -e
+    set -E
+    return "${status}"
   fi
 
   if [[ "${1:-}" == "-q" ]] && [[ "${2:-}" == "--" ]] && [[ "$#" -eq 4 ]]; then
+    set +E
+    set +e
     grep -Eq -- "$3" "$4"
-    return
+    status=$?
+    set -e
+    set -E
+    return "${status}"
   fi
 
   echo "rg fallback only supports 'rg -q PATTERN FILE' or 'rg -q -- PATTERN FILE'" >&2
