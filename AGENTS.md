@@ -17,6 +17,8 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 
 ## Mandatory rules
 
+- Sign every commit. Do not create or rewrite commits in this repository
+  without a verified signature from the maintainer identity.
 - Do not treat provider config, prompt files, or rules as the sole security
   boundary.
 - Preserve the dedicated VM plus container boundary as the Tier 1 design for
