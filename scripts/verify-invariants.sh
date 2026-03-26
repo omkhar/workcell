@@ -378,15 +378,175 @@ if ! rg -q 'REAL_HOME=' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
-if ! rg -q '^\[profiles\.strict\]$' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
-  echo "Expected adapters/codex/managed_config.toml to pin the strict profile block" >&2
-  exit 1
-fi
+toml_section_assignments() {
+  local file="$1"
+  local section="$2"
 
-if ! rg -q '^profile = "strict"$' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
-  echo "Expected adapters/codex/managed_config.toml to pin the default profile to strict" >&2
-  exit 1
-fi
+  awk -v want="${section}" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+
+    BEGIN {
+      current = "__top__"
+      if (want == "") {
+        want = "__top__"
+      }
+    }
+
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+
+      if (line ~ /^[[:space:]]*$/) {
+        next
+      }
+
+      if (line ~ /^[[:space:]]*\[/) {
+        current = line
+        gsub(/^[[:space:]]*\[/, "", current)
+        gsub(/\][[:space:]]*$/, "", current)
+        next
+      }
+
+      if (current != want) {
+        next
+      }
+
+      if (line !~ /=/) {
+        next
+      }
+
+      split(line, parts, "=")
+      key = trim(parts[1])
+      value = trim(substr(line, index(line, "=") + 1))
+      print key "=" value
+    }
+  ' "${file}"
+}
+
+require_toml_assignment() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  local expected="$4"
+  local actual=""
+
+  actual="$(
+    toml_section_assignments "${file}" "${section}" | awk -F= -v want="${key}" '
+      $1 == want {
+        print substr($0, length($1) + 2)
+        found = 1
+        exit
+      }
+      END {
+        if (!found) {
+          exit 1
+        }
+      }
+    '
+  )" || {
+    echo "Expected ${file} section [${section:-top-level}] to define ${key}" >&2
+    exit 1
+  }
+
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "Expected ${file} section [${section:-top-level}] to set ${key}=${expected}, got ${actual}" >&2
+    exit 1
+  fi
+}
+
+require_toml_key_absent() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+
+  if toml_section_assignments "${file}" "${section}" | cut -d= -f1 | grep -Fxq -- "${key}"; then
+    echo "Expected ${file} section [${section:-top-level}] not to define ${key}" >&2
+    exit 1
+  fi
+}
+
+require_toml_exact_keys() {
+  local file="$1"
+  local section="$2"
+  local tmpdir=""
+  local expected_keys=""
+  local actual_keys=""
+  shift 2
+
+  tmpdir="$(mktemp -d)"
+  expected_keys="${tmpdir}/expected"
+  actual_keys="${tmpdir}/actual"
+
+  printf '%s\n' "$@" | sort >"${expected_keys}"
+  toml_section_assignments "${file}" "${section}" | cut -d= -f1 | sort >"${actual_keys}"
+
+  if ! diff -u "${expected_keys}" "${actual_keys}" >/dev/null; then
+    echo "Expected ${file} section [${section:-top-level}] to contain the exact reviewed key set" >&2
+    diff -u "${expected_keys}" "${actual_keys}" >&2 || true
+    rm -rf "${tmpdir}"
+    exit 1
+  fi
+
+  rm -rf "${tmpdir}"
+}
+
+require_toml_section_absent() {
+  local file="$1"
+  local section="$2"
+
+  if grep -Fxq -- "[${section}]" "${file}"; then
+    echo "Expected ${file} not to define [${section}]" >&2
+    exit 1
+  fi
+}
+
+CODEX_MANAGED_CONFIG="${ROOT_DIR}/adapters/codex/managed_config.toml"
+
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "" "profile" '"strict"'
+require_toml_key_absent "${CODEX_MANAGED_CONFIG}" "" "sandbox"
+require_toml_key_absent "${CODEX_MANAGED_CONFIG}" "" "sandbox_mode"
+require_toml_key_absent "${CODEX_MANAGED_CONFIG}" "" "sandbox_permissions"
+require_toml_key_absent "${CODEX_MANAGED_CONFIG}" "" "approval_policy"
+
+require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "sandbox_workspace_write" \
+  "exclude_slash_tmp" \
+  "exclude_tmpdir_env_var" \
+  "network_access"
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "sandbox_workspace_write" "exclude_slash_tmp" "true"
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "sandbox_workspace_write" "exclude_tmpdir_env_var" "true"
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "sandbox_workspace_write" "network_access" "false"
+
+require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "profiles.strict" \
+  "approval_policy" \
+  "sandbox_mode" \
+  "web_search"
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.strict" "sandbox_mode" '"workspace-write"'
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.strict" "approval_policy" '"on-request"'
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.strict" "web_search" '"disabled"'
+require_toml_section_absent "${CODEX_MANAGED_CONFIG}" "profiles.strict.sandbox_workspace_write"
+
+require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "profiles.build" \
+  "approval_policy" \
+  "sandbox_mode" \
+  "web_search"
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.build" "sandbox_mode" '"workspace-write"'
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.build" "approval_policy" '"never"'
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.build" "web_search" '"disabled"'
+
+require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "profiles.build.sandbox_workspace_write" "network_access"
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.build.sandbox_workspace_write" "network_access" "true"
+
+require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "profiles.breakglass" \
+  "approval_policy" \
+  "sandbox_mode" \
+  "web_search"
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.breakglass" "sandbox_mode" '"danger-full-access"'
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.breakglass" "approval_policy" '"never"'
+require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.breakglass" "web_search" '"disabled"'
 
 if ! sed -n '/^run_host_colima()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "HOME=\"\${REAL_HOME}\""; then
   echo "Expected run_host_colima to restore the real host HOME instead of the Docker client sandbox home" >&2
