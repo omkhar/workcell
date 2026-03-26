@@ -162,8 +162,12 @@ has_dangerous_alias() {
   local alias_body=""
   local next_alias=""
   local seen="${2:-|}"
+  local depth="${3:-0}"
 
   [[ -n "${alias_name}" ]] || return 1
+  if [[ "${depth}" -gt 20 ]]; then
+    return 0
+  fi
   case "${seen}" in
     *"|${alias_name}|"*)
       return 0
@@ -180,7 +184,7 @@ has_dangerous_alias() {
   next_alias="${alias_body%%[[:space:]]*}"
   if [[ "${next_alias}" != "${alias_name}" ]] &&
     [[ "${next_alias}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-    if has_dangerous_alias "${next_alias}" "${seen}${alias_name}|"; then
+    if has_dangerous_alias "${next_alias}" "${seen}${alias_name}|" $((depth + 1)); then
       return 0
     fi
   fi

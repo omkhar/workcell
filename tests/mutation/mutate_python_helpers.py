@@ -42,6 +42,18 @@ MUTATIONS = [
         'source = entry.get("source")',
         "manifest source stripping",
     ),
+    (
+        "scripts/lib/render_injection_bundle.py",
+        '"forwardagent",',
+        '# removed forwardagent mutation',
+        "forwardagent ssh directive blocking",
+    ),
+    (
+        "scripts/lib/render_injection_bundle.py",
+        '"sendenv",',
+        '# removed sendenv mutation',
+        "sendenv ssh directive blocking",
+    ),
 ]
 
 

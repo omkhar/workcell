@@ -32,6 +32,8 @@ fn sanitize_env() {
         "NODE_PATH",
         "npm_config_userconfig",
         "NPM_CONFIG_USERCONFIG",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
     ] {
         env::remove_var(key);
     }
@@ -121,12 +123,16 @@ mod tests {
         env::set_var("BASH_ENV", "/tmp/bashenv");
         env::set_var("LD_PRELOAD", "/tmp/preload.so");
         env::set_var("NODE_OPTIONS", "--inspect");
+        env::set_var("SSL_CERT_FILE", "/tmp/cert.pem");
+        env::set_var("SSL_CERT_DIR", "/tmp/certs");
 
         sanitize_env();
 
         assert!(env::var_os("BASH_ENV").is_none());
         assert!(env::var_os("LD_PRELOAD").is_none());
         assert!(env::var_os("NODE_OPTIONS").is_none());
+        assert!(env::var_os("SSL_CERT_FILE").is_none());
+        assert!(env::var_os("SSL_CERT_DIR").is_none());
     }
 
     #[test]

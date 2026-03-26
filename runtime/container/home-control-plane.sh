@@ -316,11 +316,7 @@ workcell_render_claude_settings() {
   cp "${api_key_source}" "${helper_secret}"
   chmod 0600 "${helper_secret}"
   workcell_reset_session_target "${helper_script}" "Claude helper script"
-  cat >"${helper_script}" <<EOF
-#!/bin/sh
-set -eu
-cat "${helper_secret}"
-EOF
+  printf '#!/bin/sh\nset -eu\ncat %s\n' "${helper_secret@Q}" >"${helper_script}"
   chmod 0700 "${helper_script}"
   workcell_reset_session_target "${target_path}" "Claude settings"
   jq --arg helper "${helper_script}" '.apiKeyHelper = $helper' "${baseline_path}" >"${target_path}"
@@ -386,11 +382,13 @@ workcell_copy_manifest_entry() {
   case "${kind}" in
     file)
       workcell_reset_session_target "${target_path}" "injected copy"
+      workcell_assert_no_symlink_path_components "${target_path}" "injected copy" 0
       cp "${source_path}" "${target_path}"
       chmod "${file_mode}" "${target_path}"
       ;;
     dir)
       workcell_reset_session_target "${target_path}" "injected copy"
+      workcell_assert_no_symlink_path_components "${target_path}" "injected copy" 0
       mkdir -p "${target_path}"
       cp -R "${source_path}/." "${target_path}"
       find "${target_path}" -type d -exec chmod "${dir_mode}" {} +
