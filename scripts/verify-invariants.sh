@@ -1980,14 +1980,15 @@ grep -q '^provider_auth_modes=gemini_env,gcloud_adc$' /tmp/workcell-auth-status-
 grep -q '^shared_auth_modes=github_hosts$' /tmp/workcell-auth-status-gemini.out
 grep -q '^github_auth_present=1$' /tmp/workcell-auth-status-gemini.out
 GEMINI_AUTH_FAILURE_HARNESS="$(mktemp)"
-extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" csv_contains_value >"${GEMINI_AUTH_FAILURE_HARNESS}"
-printf '\n' >>"${GEMINI_AUTH_FAILURE_HARNESS}"
-extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" provider_auth_modes >>"${GEMINI_AUTH_FAILURE_HARNESS}"
-printf '\n' >>"${GEMINI_AUTH_FAILURE_HARNESS}"
-extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" selected_provider_auth_mode >>"${GEMINI_AUTH_FAILURE_HARNESS}"
-printf '\n' >>"${GEMINI_AUTH_FAILURE_HARNESS}"
-extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" fail_fast_for_missing_gemini_auth >>"${GEMINI_AUTH_FAILURE_HARNESS}"
-cat >>"${GEMINI_AUTH_FAILURE_HARNESS}" <<'EOF'
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" csv_contains_value
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" provider_auth_modes
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" selected_provider_auth_mode
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" fail_fast_for_missing_gemini_auth
+  cat <<'EOF'
 AGENT=gemini
 PREPARE_ONLY=0
 ALLOW_ARBITRARY_COMMAND=0
@@ -2021,6 +2022,7 @@ if [[ -s /tmp/workcell-gemini-auth-dry-run.stderr ]]; then
   exit 1
 fi
 EOF
+} >"${GEMINI_AUTH_FAILURE_HARNESS}"
 /bin/bash "${GEMINI_AUTH_FAILURE_HARNESS}"
 rm -f "${GEMINI_AUTH_FAILURE_HARNESS}"
 if ! "${ROOT_DIR}/scripts/workcell" \
