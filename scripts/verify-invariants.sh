@@ -400,7 +400,7 @@ toml_section_assignments() {
       return -1
     }
 
-    function decode_toml_basic_string(value, i, ch, escaped, hex, code, j) {
+    function decode_toml_basic_string(value, i, ch, escaped, hex, code, digit, j) {
       escaped = ""
 
       for (i = 1; i <= length(value); i++) {
@@ -411,6 +411,10 @@ toml_section_assignments() {
         }
 
         i++
+        if (i > length(value)) {
+          parse_error = 1
+          return value
+        }
         ch = substr(value, i, 1)
 
         if (ch == "b") {
@@ -427,14 +431,24 @@ toml_section_assignments() {
           escaped = escaped ch
         } else if (ch == "u" || ch == "U") {
           hex = substr(value, i + 1, (ch == "u" ? 4 : 8))
+          if (length(hex) != (ch == "u" ? 4 : 8)) {
+            parse_error = 1
+            return value
+          }
           code = 0
           for (j = 1; j <= length(hex); j++) {
-            code = (code * 16) + hex_value(substr(hex, j, 1))
+            digit = hex_value(substr(hex, j, 1))
+            if (digit < 0) {
+              parse_error = 1
+              return value
+            }
+            code = (code * 16) + digit
           }
           escaped = escaped sprintf("%c", code)
           i += length(hex)
         } else {
-          escaped = escaped ch
+          parse_error = 1
+          return value
         }
       }
 
@@ -447,13 +461,13 @@ toml_section_assignments() {
       last = substr(value, length(value), 1)
 
       if (first == "\"" && last == "\"") {
-        return decode_toml_basic_string(substr(value, 2, length(value) - 2))
+        value = decode_toml_basic_string(substr(value, 2, length(value) - 2))
+      } else if (first == "'"'"'" && last == "'"'"'") {
+        value = substr(value, 2, length(value) - 2)
       }
 
-      if (first == "'"'"'" && last == "'"'"'") {
-        return substr(value, 2, length(value) - 2)
-      }
-
+      gsub(/\\/, "\\\\", value)
+      gsub(/\./, "\\.", value)
       return value
     }
 
@@ -503,6 +517,7 @@ toml_section_assignments() {
     }
 
     BEGIN {
+      parse_error = 0
       current = "__top__"
       if (want == "") {
         want = "__top__"
@@ -540,6 +555,11 @@ toml_section_assignments() {
       value = trim(substr(line, index(line, "=") + 1))
       print key "=" value
     }
+    END {
+      if (parse_error) {
+        exit 2
+      }
+    }
   ' "${file}"
 }
 
@@ -564,7 +584,7 @@ toml_section_names() {
       return -1
     }
 
-    function decode_toml_basic_string(value, i, ch, escaped, hex, code, j) {
+    function decode_toml_basic_string(value, i, ch, escaped, hex, code, digit, j) {
       escaped = ""
 
       for (i = 1; i <= length(value); i++) {
@@ -575,6 +595,10 @@ toml_section_names() {
         }
 
         i++
+        if (i > length(value)) {
+          parse_error = 1
+          return value
+        }
         ch = substr(value, i, 1)
 
         if (ch == "b") {
@@ -591,14 +615,24 @@ toml_section_names() {
           escaped = escaped ch
         } else if (ch == "u" || ch == "U") {
           hex = substr(value, i + 1, (ch == "u" ? 4 : 8))
+          if (length(hex) != (ch == "u" ? 4 : 8)) {
+            parse_error = 1
+            return value
+          }
           code = 0
           for (j = 1; j <= length(hex); j++) {
-            code = (code * 16) + hex_value(substr(hex, j, 1))
+            digit = hex_value(substr(hex, j, 1))
+            if (digit < 0) {
+              parse_error = 1
+              return value
+            }
+            code = (code * 16) + digit
           }
           escaped = escaped sprintf("%c", code)
           i += length(hex)
         } else {
-          escaped = escaped ch
+          parse_error = 1
+          return value
         }
       }
 
@@ -611,13 +645,13 @@ toml_section_names() {
       last = substr(value, length(value), 1)
 
       if (first == "\"" && last == "\"") {
-        return decode_toml_basic_string(substr(value, 2, length(value) - 2))
+        value = decode_toml_basic_string(substr(value, 2, length(value) - 2))
+      } else if (first == "'"'"'" && last == "'"'"'") {
+        value = substr(value, 2, length(value) - 2)
       }
 
-      if (first == "'"'"'" && last == "'"'"'") {
-        return substr(value, 2, length(value) - 2)
-      }
-
+      gsub(/\\/, "\\\\", value)
+      gsub(/\./, "\\.", value)
       return value
     }
 
@@ -666,6 +700,10 @@ toml_section_names() {
       return normalized
     }
 
+    BEGIN {
+      parse_error = 0
+    }
+
     {
       line = $0
       sub(/[[:space:]]+#.*$/, "", line)
@@ -678,6 +716,11 @@ toml_section_names() {
       gsub(/^[[:space:]]*\[/, "", section)
       gsub(/\][[:space:]]*$/, "", section)
       print normalize_toml_name(section)
+    }
+    END {
+      if (parse_error) {
+        exit 2
+      }
     }
   ' "${file}"
 }
@@ -717,8 +760,11 @@ require_toml_key_absent() {
   local file="$1"
   local section="$2"
   local key="$3"
+  local actual_keys=""
 
-  if toml_section_assignments "${file}" "${section}" | cut -d= -f1 | grep -Fxq -- "${key}"; then
+  actual_keys="$(toml_section_assignments "${file}" "${section}" | cut -d= -f1)" || return 1
+
+  if printf '%s\n' "${actual_keys}" | grep -Fxq -- "${key}"; then
     echo "Expected ${file} section [${section:-top-level}] not to define ${key}" >&2
     return 1
   fi
@@ -737,7 +783,10 @@ require_toml_exact_keys() {
   actual_keys="${tmpdir}/actual"
 
   printf '%s\n' "$@" | sort >"${expected_keys}"
-  toml_section_assignments "${file}" "${section}" | cut -d= -f1 | sort >"${actual_keys}"
+  if ! toml_section_assignments "${file}" "${section}" | cut -d= -f1 | sort >"${actual_keys}"; then
+    rm -rf "${tmpdir}"
+    return 1
+  fi
 
   if ! diff -u "${expected_keys}" "${actual_keys}" >/dev/null; then
     echo "Expected ${file} section [${section:-top-level}] to contain the exact reviewed key set" >&2
@@ -752,8 +801,11 @@ require_toml_exact_keys() {
 require_toml_section_absent() {
   local file="$1"
   local section="$2"
+  local sections=""
 
-  if toml_section_names "${file}" | grep -Fxq -- "${section}"; then
+  sections="$(toml_section_names "${file}")" || return 1
+
+  if printf '%s\n' "${sections}" | grep -Fxq -- "${section}"; then
     echo "Expected ${file} not to define [${section}]" >&2
     return 1
   fi
@@ -851,6 +903,25 @@ quoted_segment_section_config="${codex_managed_config_tmpdir}/quoted-segment-sec
 cp "${CODEX_MANAGED_CONFIG}" "${quoted_segment_section_config}"
 printf '\n[ "profiles" . "strict" . "sandbox_workspace_write" ]\nnetwork_access = true\n' >>"${quoted_segment_section_config}"
 assert_codex_managed_config_rejected "${quoted_segment_section_config}" 'quoted strict segment sandbox override section' || exit 1
+
+invalid_escape_key_config="${codex_managed_config_tmpdir}/invalid-escape-key.toml"
+awk '
+  {
+    print
+    if ($0 == "profile = \"strict\"") {
+      print "\"approval\\u00ZZpolicy\" = \"never\""
+    }
+  }
+' "${CODEX_MANAGED_CONFIG}" >"${invalid_escape_key_config}"
+assert_codex_managed_config_rejected "${invalid_escape_key_config}" 'malformed escaped approval_policy override' || exit 1
+
+literal_dot_section_config="${codex_managed_config_tmpdir}/literal-dot-section.toml"
+cp "${CODEX_MANAGED_CONFIG}" "${literal_dot_section_config}"
+printf '\n["profiles.strict.sandbox_workspace_write"]\nnetwork_access = true\n' >>"${literal_dot_section_config}"
+if ! verify_codex_managed_config_invariants "${literal_dot_section_config}" >/dev/null 2>&1; then
+  echo 'Expected quoted single-segment section names with literal dots to remain distinct from forbidden dotted paths' >&2
+  exit 1
+fi
 
 rm -rf "${codex_managed_config_tmpdir}"
 
