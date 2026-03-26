@@ -3484,7 +3484,8 @@ GEMINI_AUTH_SELECTION_HARNESS="$(mktemp)"
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_target_is_allowed
   cat <<'EOF'
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "Gemini auth selection harness failed at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
