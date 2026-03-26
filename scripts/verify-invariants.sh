@@ -1410,6 +1410,89 @@ for script in \
   fi
 done
 
+while read -r env_name script; do
+  output_file="/tmp/$(basename "${script}").bad-docker-context.out"
+  if env "${env_name}=workcell-missing-context" "${script}" --self-docker-probe >/dev/null 2>"${output_file}"; then
+    echo "Expected ${script} Docker probe to fail for an explicit unhealthy Docker context" >&2
+    exit 1
+  fi
+  grep -q "Requested Docker context 'workcell-missing-context' is not healthy" "${output_file}"
+done <<EOF
+WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT ${ROOT_DIR}/scripts/container-smoke.sh
+WORKCELL_BUILDER_ENV_DOCKER_CONTEXT ${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh
+WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT ${ROOT_DIR}/scripts/verify-release-bundle.sh
+WORKCELL_REPRO_DOCKER_CONTEXT ${ROOT_DIR}/scripts/verify-reproducible-build.sh
+EOF
+
+DOCKER_CONTEXT_SELECTOR_FAKEBIN="${BARRIER_VERIFY_ROOT}/docker-context-selector-bin"
+DOCKER_CONTEXT_SELECTOR_HARNESS="${BARRIER_VERIFY_ROOT}/docker-context-selector-harness.sh"
+mkdir -p "${DOCKER_CONTEXT_SELECTOR_FAKEBIN}"
+cat >"${DOCKER_CONTEXT_SELECTOR_FAKEBIN}/docker" <<'EOF'
+#!/bin/sh
+case "$1 $2 $3" in
+  "context inspect colima")
+    exit 0
+    ;;
+  "context inspect default")
+    exit 0
+    ;;
+  "--context colima info")
+    exit 1
+    ;;
+  "--context default info")
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+chmod 0755 "${DOCKER_CONTEXT_SELECTOR_FAKEBIN}/docker"
+cat >"${DOCKER_CONTEXT_SELECTOR_HARNESS}" <<'EOF'
+set -euo pipefail
+
+explicit_context_output="${BARRIER_VERIFY_ROOT}/docker-context-selector-explicit.out"
+if PATH="${DOCKER_CONTEXT_SELECTOR_FAKEBIN}:${PATH}" \
+  ROOT_DIR="${ROOT_DIR}" \
+  BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
+  /bin/bash -lc '
+    set -euo pipefail
+    source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+    export DOCKER_CONTEXT_NAME=colima
+    select_workcell_docker_context \
+      "Requested Docker context" \
+      "No healthy Docker contexts" \
+      colima default
+  ' >/dev/null 2>"${explicit_context_output}"; then
+  echo "Expected explicit unhealthy Docker context to fail selection" >&2
+  exit 1
+fi
+grep -q "Requested Docker context 'colima' is not healthy" "${explicit_context_output}"
+
+selected_context="$(
+  PATH="${DOCKER_CONTEXT_SELECTOR_FAKEBIN}:${PATH}" \
+  ROOT_DIR="${ROOT_DIR}" \
+  BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
+  /bin/bash -lc '
+    set -euo pipefail
+    source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+    unset DOCKER_CONTEXT_NAME
+    select_workcell_docker_context \
+      "Requested Docker context" \
+      "No healthy Docker contexts" \
+      colima default >/dev/null
+    printf "%s\n" "${DOCKER_CONTEXT_NAME:-}"
+  '
+)"
+if [[ "${selected_context}" != "default" ]]; then
+  echo "Expected auto-selection to continue past unhealthy colima" >&2
+  exit 1
+fi
+EOF
+chmod 0755 "${DOCKER_CONTEXT_SELECTOR_HARNESS}"
+DOCKER_CONTEXT_SELECTOR_PATH="${DOCKER_CONTEXT_SELECTOR_FAKEBIN}:${PATH}"
+DOCKER_CONTEXT_SELECTOR_FAKEBIN="${DOCKER_CONTEXT_SELECTOR_FAKEBIN}" \
+PATH="${DOCKER_CONTEXT_SELECTOR_PATH}" ROOT_DIR="${ROOT_DIR}" BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
+  /bin/bash "${DOCKER_CONTEXT_SELECTOR_HARNESS}"
+
 CONTAINER_SMOKE_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/container-smoke-path-override-bin"
 CONTAINER_SMOKE_PATH_MARKER="${BARRIER_VERIFY_ROOT}/container-smoke-path-ran"
 mkdir -p "${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}"

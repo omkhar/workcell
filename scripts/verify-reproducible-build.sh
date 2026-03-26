@@ -47,18 +47,7 @@ require_tool() {
 }
 
 select_docker_context() {
-  if [[ -n "${DOCKER_CONTEXT_NAME}" ]]; then
-    return
-  fi
-
-  if docker context inspect colima >/dev/null 2>&1; then
-    DOCKER_CONTEXT_NAME="colima"
-    return
-  fi
-
-  if docker context inspect default >/dev/null 2>&1; then
-    DOCKER_CONTEXT_NAME="default"
-  fi
+  select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
 }
 
 docker_cmd() {

@@ -82,6 +82,53 @@ ensure_workcell_trusted_buildx() {
   }
 }
 
+docker_context_exists() {
+  local context_name="$1"
+  docker context inspect "${context_name}" >/dev/null 2>&1
+}
+
+docker_context_is_healthy() {
+  local context_name="$1"
+  docker --context "${context_name}" info >/dev/null 2>&1
+}
+
+select_workcell_docker_context() {
+  local explicit_error_prefix="$1"
+  local missing_error_prefix="$2"
+  shift 2
+
+  local candidate=""
+  local attempted=""
+
+  if [[ "$#" -eq 0 ]]; then
+    set -- colima default
+  fi
+
+  if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
+    if docker_context_exists "${DOCKER_CONTEXT_NAME}" && docker_context_is_healthy "${DOCKER_CONTEXT_NAME}"; then
+      return 0
+    fi
+
+    echo "${explicit_error_prefix} '${DOCKER_CONTEXT_NAME}' is not healthy" >&2
+    exit 1
+  fi
+
+  for candidate in "$@"; do
+    if [[ -n "${attempted}" ]]; then
+      attempted+=", "
+    fi
+    attempted+="${candidate}"
+
+    if docker_context_exists "${candidate}" && docker_context_is_healthy "${candidate}"; then
+      DOCKER_CONTEXT_NAME="${candidate}"
+      return 0
+    fi
+  done
+
+  echo "${missing_error_prefix} (tried: ${attempted})" >&2
+  exit 1
+}
+
 buildx_cmd() {
   ensure_workcell_trusted_buildx
   if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
