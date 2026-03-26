@@ -32,7 +32,7 @@ The following table covers all files seeded by `seed_codex_home()`,
 | File / Path | Provider | Safe path status | Breakglass status | Description |
 |---|---|---|---|---|
 | `~/.codex/AGENTS.md` | Codex | Rendered (baseline + workspace + injection layers) | Same | Provider instruction doc; workspace `AGENTS.md` is imported as a layer |
-| `~/.codex/config.toml` | Codex | Symlink → immutable baseline | Same | Linked to `adapters/codex/.codex/config.toml`; disables analytics, history, web search; sets env exclusion list |
+| `~/.codex/config.toml` | Codex | Session-local writable copy of the baseline; reset on each launch | Same | Seeded from `adapters/codex/.codex/config.toml`; disables analytics, history, web search; sets env exclusion list while still allowing Codex to persist per-session preferences |
 | `~/.codex/managed_config.toml` | Codex | Symlink → immutable baseline | Same | Linked to `adapters/codex/managed_config.toml`; admin-enforced allowed approval policies, sandbox modes, web search modes, and execpolicy rules |
 | `~/.codex/requirements.toml` | Codex | Symlink → immutable baseline | Same | Linked to `adapters/codex/requirements.toml`; hard requirements for the adapter including forbidden command patterns |
 | `~/.codex/agents/` | Codex | Symlink → immutable baseline agents dir | Same | Linked to `adapters/codex/.codex/agents/` |
