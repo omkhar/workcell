@@ -29,6 +29,7 @@ after the boundary and trust assumptions are fixed.
 | Threat model | [docs/threat-model.md](docs/threat-model.md) |
 | Security invariants | [docs/invariants.md](docs/invariants.md) |
 | Provider matrix | [docs/provider-matrix.md](docs/provider-matrix.md) |
+| Validation scenarios | [docs/validation-scenarios.md](docs/validation-scenarios.md) |
 | Injection policy | [docs/injection-policy.md](docs/injection-policy.md) |
 | Provenance & signing | [docs/provenance.md](docs/provenance.md) |
 | GitHub workflows | [docs/github-workflows.md](docs/github-workflows.md) |
@@ -215,6 +216,8 @@ Common recovery paths:
   `workcell --prepare --agent claude --agent-autonomy prompt --workspace /path/to/repo`
 - One-off provider flags without repeating the provider command:
   `workcell --agent gemini --agent-arg --version --workspace /path/to/repo`
+- Manual provider-authenticated smoke with explicit injected credentials:
+  `./scripts/provider-e2e.sh --agent codex --workspace /path/to/repo`
 - Conflicting unmanaged Colima profile:
   `workcell --repair-profile --agent codex --workspace /path/to/repo`
   Replace `codex` with `claude` or `gemini` for the corresponding provider.
@@ -361,7 +364,7 @@ Intentional non-goals for the safe path:
 - `policy/`: generic policy contracts and operator expectations
 - `adapters/`: thin provider mappings for Codex, Claude, and Gemini
 - `verify/`: invariant verification specs and harnesses
-- `docs/`: threat model, assurance tiers, and provider matrix
+- `docs/`: threat model, assurance tiers, provider matrix, and validation scenarios
 - `workflows/`: launch, migration, and downgrade-path notes
 - `scripts/`: installers, launchers, and verification entrypoints
 
