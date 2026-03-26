@@ -429,7 +429,8 @@ workcell_validate_gemini_env_file_syntax() {
   local line=""
   local parsed_key=""
   local value=""
-  local -A seen_keys=()
+  # Keep duplicate-key tracking compatible with host-side Bash 3.2 invariant runs.
+  local seen_keys=$'\n'
 
   [[ -f "${env_path}" ]] || return 0
 
@@ -450,10 +451,12 @@ workcell_validate_gemini_env_file_syntax() {
 
     parsed_key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
-    if [[ -n "${seen_keys[${parsed_key}]:-}" ]]; then
-      workcell_die "Gemini auth env file ${env_path} configures ${parsed_key} more than once."
-    fi
-    seen_keys["${parsed_key}"]=1
+    case "${seen_keys}" in
+      *$'\n'"${parsed_key}"$'\n'*)
+        workcell_die "Gemini auth env file ${env_path} configures ${parsed_key} more than once."
+        ;;
+    esac
+    seen_keys+="${parsed_key}"$'\n'
 
     if ! workcell_gemini_env_key_is_supported "${parsed_key}"; then
       workcell_die "Unsupported key in Gemini auth env file ${env_path}: ${parsed_key}."
