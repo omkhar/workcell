@@ -3499,6 +3499,18 @@ workcell_die() {
   exit 1
 }
 
+expect_fatal_function_failure() {
+  local stdout_path="$1"
+  local stderr_path="$2"
+  shift 2
+
+  if ( "$@" ) >"${stdout_path}" 2>"${stderr_path}"; then
+    return 0
+  fi
+
+  return 1
+}
+
 expect_auth_type() {
   local env_contents="$1"
   local oauth_present="$2"
@@ -3543,28 +3555,32 @@ if workcell_gemini_selected_auth_type "${TMP_DIR}/missing.env" "${TMP_DIR}/missi
 fi
 
 printf 'GOOGLE_GENAI_USE_GCA=maybe\n' >"${TMP_DIR}/invalid-bool.env"
-if workcell_validate_gemini_env_auth_config "${TMP_DIR}/invalid-bool.env" >/tmp/gemini-invalid-bool.stdout 2>/tmp/gemini-invalid-bool.stderr; then
+if expect_fatal_function_failure /tmp/gemini-invalid-bool.stdout /tmp/gemini-invalid-bool.stderr \
+  workcell_validate_gemini_env_auth_config "${TMP_DIR}/invalid-bool.env"; then
   echo "Expected invalid Gemini auth booleans to be rejected" >&2
   exit 1
 fi
 grep -q 'Invalid boolean in Gemini auth env file' /tmp/gemini-invalid-bool.stderr
 
 printf 'GOOGLE_GENAI_USE_VERTEXAI true\n' >"${TMP_DIR}/malformed.env"
-if workcell_validate_gemini_env_auth_config "${TMP_DIR}/malformed.env" >/tmp/gemini-malformed.stdout 2>/tmp/gemini-malformed.stderr; then
+if expect_fatal_function_failure /tmp/gemini-malformed.stdout /tmp/gemini-malformed.stderr \
+  workcell_validate_gemini_env_auth_config "${TMP_DIR}/malformed.env"; then
   echo "Expected malformed Gemini auth env syntax to be rejected" >&2
   exit 1
 fi
 grep -q 'Malformed Gemini auth env file' /tmp/gemini-malformed.stderr
 
 printf 'UNSUPPORTED_KEY=test\n' >"${TMP_DIR}/unsupported.env"
-if workcell_validate_gemini_env_auth_config "${TMP_DIR}/unsupported.env" >/tmp/gemini-unsupported.stdout 2>/tmp/gemini-unsupported.stderr; then
+if expect_fatal_function_failure /tmp/gemini-unsupported.stdout /tmp/gemini-unsupported.stderr \
+  workcell_validate_gemini_env_auth_config "${TMP_DIR}/unsupported.env"; then
   echo "Expected unsupported Gemini auth env keys to be rejected" >&2
   exit 1
 fi
 grep -q 'Unsupported key in Gemini auth env file' /tmp/gemini-unsupported.stderr
 
 printf 'GOOGLE_GENAI_USE_GCA=true\nGOOGLE_GENAI_USE_VERTEXAI=true\n' >"${TMP_DIR}/conflicting-selectors.env"
-if workcell_validate_gemini_env_auth_config "${TMP_DIR}/conflicting-selectors.env" >/tmp/gemini-conflicting.stdout 2>/tmp/gemini-conflicting.stderr; then
+if expect_fatal_function_failure /tmp/gemini-conflicting.stdout /tmp/gemini-conflicting.stderr \
+  workcell_validate_gemini_env_auth_config "${TMP_DIR}/conflicting-selectors.env"; then
   echo "Expected contradictory Gemini auth selectors to be rejected" >&2
   exit 1
 fi
@@ -3578,21 +3594,24 @@ if ! workcell_validate_gemini_env_auth_config "${TMP_DIR}/vertex-express.env" >/
 fi
 
 printf 'GOOGLE_API_KEY=vertex-key\n' >"${TMP_DIR}/google-api-key-only.env"
-if workcell_validate_gemini_env_auth_config "${TMP_DIR}/google-api-key-only.env" >/tmp/gemini-google-api-key.stdout 2>/tmp/gemini-google-api-key.stderr; then
+if expect_fatal_function_failure /tmp/gemini-google-api-key.stdout /tmp/gemini-google-api-key.stderr \
+  workcell_validate_gemini_env_auth_config "${TMP_DIR}/google-api-key-only.env"; then
   echo "Expected bare GOOGLE_API_KEY to be rejected without GOOGLE_GENAI_USE_VERTEXAI=true" >&2
   exit 1
 fi
 grep -q 'sets GOOGLE_API_KEY without GOOGLE_GENAI_USE_VERTEXAI=true' /tmp/gemini-google-api-key.stderr
 
 printf 'GOOGLE_CLOUD_LOCATION=us-central1\n' >"${TMP_DIR}/location-only.env"
-if workcell_validate_gemini_env_auth_config "${TMP_DIR}/location-only.env" >/tmp/gemini-location-only.stdout 2>/tmp/gemini-location-only.stderr; then
+if expect_fatal_function_failure /tmp/gemini-location-only.stdout /tmp/gemini-location-only.stderr \
+  workcell_validate_gemini_env_auth_config "${TMP_DIR}/location-only.env"; then
   echo "Expected location-only Gemini env config to be rejected" >&2
   exit 1
 fi
 grep -q 'sets a Google Cloud location without a project' /tmp/gemini-location-only.stderr
 
 printf 'GOOGLE_CLOUD_PROJECT=my-proj\n' >"${TMP_DIR}/project-only.env"
-if workcell_validate_gemini_env_auth_config "${TMP_DIR}/project-only.env" >/tmp/gemini-project-only.stdout 2>/tmp/gemini-project-only.stderr; then
+if expect_fatal_function_failure /tmp/gemini-project-only.stdout /tmp/gemini-project-only.stderr \
+  workcell_validate_gemini_env_auth_config "${TMP_DIR}/project-only.env"; then
   echo "Expected project-only Gemini env config to be rejected" >&2
   exit 1
 fi
