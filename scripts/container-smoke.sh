@@ -1103,7 +1103,7 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini" bas
       grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
       jq -r ".security.auth.selectedType" "$HOME/.gemini/settings.json" | grep -q "^gemini-api-key$"
       jq -r ".security.folderTrust.enabled" "$HOME/.gemini/settings.json" | grep -q "^false$"
-      jq -e --arg workspace "/workspace" ". == {(\\$workspace): \"TRUST_FOLDER\"}" "$HOME/.gemini/trustedFolders.json" >/dev/null
+      jq -e --arg workspace "/workspace" ". == {(\$workspace): \"TRUST_FOLDER\"}" "$HOME/.gemini/trustedFolders.json" >/dev/null
       grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
       grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
       mkdir -p /workspace/exfil
