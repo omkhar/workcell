@@ -140,6 +140,20 @@ def walk_strings(value):
         for nested in value:
             yield from walk_strings(nested)
 
+def extract_repro_matrix_entries(strategy_block: str, path: str) -> list[tuple[str, str, str]]:
+    entries = re.findall(
+        r"^\s{10}- platform:\s*(\S+)\n"
+        r"^\s{12}platform_name:\s*(\S+)\n"
+        r"^\s{12}runner:\s*(\S+)$",
+        strategy_block,
+        re.MULTILINE,
+    )
+    if not entries:
+        raise SystemExit(
+            f"Unable to extract reproducible-build matrix entries from {path}"
+        )
+    return entries
+
 def require_no_registry_bootstrap_mcp(config: dict, path: str) -> None:
     disallowed_fragments = (
         "npx",
@@ -404,6 +418,18 @@ expected_ci_repro_strategy_block = (
 if ci_repro_strategy_block != expected_ci_repro_strategy_block:
     raise SystemExit(
         ".github/workflows/ci.yml must keep the reviewed reproducible-build matrix structure, including a single native ubuntu-24.04-arm lane for linux/arm64"
+    )
+ci_repro_matrix_entries = extract_repro_matrix_entries(
+    ci_repro_strategy_block,
+    ".github/workflows/ci.yml",
+)
+arm64_entries = [
+    entry for entry in ci_repro_matrix_entries
+    if entry[0] == "linux/arm64"
+]
+if arm64_entries != [("linux/arm64", "arm64", "ubuntu-24.04-arm")]:
+    raise SystemExit(
+        ".github/workflows/ci.yml must define exactly one linux/arm64 reproducible-build matrix entry and it must use runner ubuntu-24.04-arm"
     )
 if "docker/setup-qemu-action@" in ci_workflow:
     raise SystemExit(".github/workflows/ci.yml must not configure QEMU in CI now that arm64 reproducible builds use a native runner")
