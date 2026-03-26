@@ -2512,6 +2512,9 @@ profile_process_pids() {
     workcell-stale)
       printf '%s\n' 49909
       ;;
+    workcell-empty-list)
+      printf '%s\n' 49919
+      ;;
     workcell-parse-failure)
       printf '%s\n' 49991
       ;;
@@ -2556,6 +2559,16 @@ fi
 reaped="$(maybe_reap_stale_profile_processes workcell-stale)"
 if [[ "${reaped}" != "reaped:workcell-stale" ]]; then
   echo "Expected maybe_reap_stale_profile_processes to reap missing profiles that still have orphaned processes, got: ${reaped}" >&2
+  exit 1
+fi
+
+run_host_colima() {
+  return 0
+}
+
+reaped="$(maybe_reap_stale_profile_processes workcell-empty-list)"
+if [[ "${reaped}" != "reaped:workcell-empty-list" ]]; then
+  echo "Expected maybe_reap_stale_profile_processes to reap orphaned processes when colima list returns an empty profile set, got: ${reaped}" >&2
   exit 1
 fi
 

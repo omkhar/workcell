@@ -315,8 +315,10 @@ colima_profile_status() {
   local profile="$1"
   local list_output=""
 
-  list_output="$(run_host_colima list --json 2>/dev/null || true)"
-  [[ -n "${list_output}" ]] || return 1
+  if ! list_output="$(run_host_colima list --json 2>/dev/null)"; then
+    return 1
+  fi
+  [[ -n "${list_output}" ]] || return 3
 
   env -i \
     PATH="${TRUSTED_HOST_PATH}" \
