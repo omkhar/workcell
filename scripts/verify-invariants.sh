@@ -3447,6 +3447,8 @@ if not isinstance(gemini_settings.get("advanced", {}).get("excludedEnvVars"), li
 PY
 
 GEMINI_AUTH_SELECTION_HARNESS="$(mktemp)"
+GEMINI_AUTH_SELECTION_STDOUT="$(mktemp)"
+GEMINI_AUTH_SELECTION_STDERR="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_trim_leading_whitespace
   printf '\n'
@@ -3657,8 +3659,15 @@ if workcell_target_is_allowed '/state/agent-home/.gemini/trustedFolders.json'; t
 fi
 EOF
 } >"${GEMINI_AUTH_SELECTION_HARNESS}"
-/bin/bash "${GEMINI_AUTH_SELECTION_HARNESS}"
+/bin/bash "${GEMINI_AUTH_SELECTION_HARNESS}" >"${GEMINI_AUTH_SELECTION_STDOUT}" 2>"${GEMINI_AUTH_SELECTION_STDERR}" || {
+  echo "Gemini auth selection harness stdout (tail):" >&2
+  tail -n 200 "${GEMINI_AUTH_SELECTION_STDOUT}" >&2 || true
+  echo "Gemini auth selection harness stderr (tail):" >&2
+  tail -n 200 "${GEMINI_AUTH_SELECTION_STDERR}" >&2 || true
+  exit 1
+}
 rm -f "${GEMINI_AUTH_SELECTION_HARNESS}"
+rm -f "${GEMINI_AUTH_SELECTION_STDOUT}" "${GEMINI_AUTH_SELECTION_STDERR}"
 
 if ! rg -q 'trustedFolders\.json' "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
   echo "Expected Gemini home seeding to provision trustedFolders.json" >&2
