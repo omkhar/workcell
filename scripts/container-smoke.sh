@@ -988,6 +988,26 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
     exit 1
   fi
 
+  cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-gemini-node-env.sh"
+#!/bin/sh
+printf 'GEMINI_CLI_NO_RELAUNCH=%s\n' "${GEMINI_CLI_NO_RELAUNCH-}"
+printf '%s\n' "$*"
+EOF
+  align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp/workcell-gemini-node-env.sh" 0755 0755
+
+  GEMINI_NO_RELAUNCH_ENV="$(
+    run_entrypoint_with_autonomy_and_bind \
+      gemini \
+      yolo \
+      "${ROOT_DIR}/tmp/workcell-gemini-node-env.sh" \
+      /usr/local/libexec/workcell/real/node \
+      gemini --version
+  )"
+  if [[ "${GEMINI_NO_RELAUNCH_ENV}" != $'GEMINI_CLI_NO_RELAUNCH=1\n/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode yolo --version' ]]; then
+    echo "unexpected Gemini relaunch env/argv: ${GEMINI_NO_RELAUNCH_ENV}" >&2
+    exit 1
+  fi
+
   GEMINI_PROMPT_ARGS="$(
     run_entrypoint_with_autonomy_and_bind \
       gemini \

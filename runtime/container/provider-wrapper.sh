@@ -191,7 +191,8 @@ case "${AGENT_NAME}" in
     ;;
   gemini)
     reject_unsafe_gemini_args "$@"
-    exec /usr/local/libexec/workcell/real/node \
+    # Gemini CLI self-relaunch conflicts with Workcell's protected exec boundary.
+    GEMINI_CLI_NO_RELAUNCH=1 exec /usr/local/libexec/workcell/real/node \
       /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"

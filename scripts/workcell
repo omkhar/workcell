@@ -1484,6 +1484,25 @@ selected_provider_auth_mode() {
   fi
 }
 
+fail_fast_for_missing_gemini_auth() {
+  if [[ "${AGENT}" != "gemini" ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ "$(selected_provider_auth_mode)" != "none" ]]; then
+    return 0
+  fi
+
+  echo "Gemini auth is not configured for this session." >&2
+  if [[ -n "${INJECTION_POLICY}" ]]; then
+    echo "Update ${INJECTION_POLICY} to include credentials.gemini_env, credentials.gemini_oauth, or credentials.gcloud_adc." >&2
+  else
+    echo "Create $(default_injection_policy_path) or pass --injection-policy PATH with credentials.gemini_env, credentials.gemini_oauth, or credentials.gcloud_adc." >&2
+  fi
+  printf 'Next step: workcell --auth-status --agent gemini --workspace %q\n' "${WORKSPACE}" >&2
+  exit 2
+}
+
 print_injection_status() {
   if [[ -z "${INJECTION_POLICY_SHA256}" ]]; then
     printf 'injection_policy=none\n'
@@ -1951,7 +1970,7 @@ run_command_with_debug_log() {
       colima-start)
         case "${phase}" in
           start)
-            echo "Starting managed Colima profile ${COLIMA_PROFILE}. This can take a moment on first use." >&2
+            echo "Starting managed Colima profile ${COLIMA_PROFILE}. This can take a moment, especially on first use." >&2
             ;;
           heartbeat)
             echo "Workcell is still starting Colima for profile ${COLIMA_PROFILE} (${elapsed} elapsed)." >&2
@@ -3269,6 +3288,8 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
   fi
   exit 0
 fi
+
+fail_fast_for_missing_gemini_auth
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   acquire_profile_lock "${COLIMA_PROFILE}"

@@ -1979,6 +1979,50 @@ grep -q '^provider_auth_mode=gemini_env$' /tmp/workcell-auth-status-gemini.out
 grep -q '^provider_auth_modes=gemini_env,gcloud_adc$' /tmp/workcell-auth-status-gemini.out
 grep -q '^shared_auth_modes=github_hosts$' /tmp/workcell-auth-status-gemini.out
 grep -q '^github_auth_present=1$' /tmp/workcell-auth-status-gemini.out
+GEMINI_AUTH_FAILURE_HARNESS="$(mktemp)"
+extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" csv_contains_value >"${GEMINI_AUTH_FAILURE_HARNESS}"
+printf '\n' >>"${GEMINI_AUTH_FAILURE_HARNESS}"
+extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" provider_auth_modes >>"${GEMINI_AUTH_FAILURE_HARNESS}"
+printf '\n' >>"${GEMINI_AUTH_FAILURE_HARNESS}"
+extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" selected_provider_auth_mode >>"${GEMINI_AUTH_FAILURE_HARNESS}"
+printf '\n' >>"${GEMINI_AUTH_FAILURE_HARNESS}"
+extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" fail_fast_for_missing_gemini_auth >>"${GEMINI_AUTH_FAILURE_HARNESS}"
+cat >>"${GEMINI_AUTH_FAILURE_HARNESS}" <<'EOF'
+AGENT=gemini
+PREPARE_ONLY=0
+ALLOW_ARBITRARY_COMMAND=0
+DRY_RUN=0
+INJECTION_POLICY=/tmp/no-gemini-policy.toml
+WORKSPACE=/tmp/workcell-gemini-workspace
+INJECTION_CREDENTIAL_KEYS=github_hosts
+
+status=0
+if ( fail_fast_for_missing_gemini_auth ) >/tmp/workcell-gemini-auth-harness.stdout 2>/tmp/workcell-gemini-auth-harness.stderr; then
+  echo "Expected Gemini missing-auth harness to fail fast" >&2
+  exit 1
+else
+  status=$?
+fi
+if [[ "${status}" -ne 2 ]]; then
+  echo "Expected Gemini missing-auth harness to exit 2, got ${status}" >&2
+  exit 1
+fi
+grep -q 'Gemini auth is not configured for this session.' /tmp/workcell-gemini-auth-harness.stderr
+grep -q 'Update /tmp/no-gemini-policy.toml to include credentials.gemini_env, credentials.gemini_oauth, or credentials.gcloud_adc.' /tmp/workcell-gemini-auth-harness.stderr
+grep -q '^Next step: workcell --auth-status --agent gemini --workspace /tmp/workcell-gemini-workspace$' /tmp/workcell-gemini-auth-harness.stderr
+
+DRY_RUN=1
+if ! ( fail_fast_for_missing_gemini_auth ) >/tmp/workcell-gemini-auth-dry-run.stdout 2>/tmp/workcell-gemini-auth-dry-run.stderr; then
+  echo "Expected Gemini missing-auth harness to skip dry-run" >&2
+  exit 1
+fi
+if [[ -s /tmp/workcell-gemini-auth-dry-run.stderr ]]; then
+  echo "Expected Gemini missing-auth dry-run harness to stay silent" >&2
+  exit 1
+fi
+EOF
+/bin/bash "${GEMINI_AUTH_FAILURE_HARNESS}"
+rm -f "${GEMINI_AUTH_FAILURE_HARNESS}"
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent gemini \
   --workspace "${ROOT_DIR}" \
