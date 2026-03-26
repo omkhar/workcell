@@ -389,23 +389,117 @@ toml_section_assignments() {
       return value
     }
 
-    function strip_wrapping_quotes(value, first, last) {
+    function hex_value(ch) {
+      if (ch >= "0" && ch <= "9") {
+        return ch + 0
+      }
+      ch = tolower(ch)
+      if (ch >= "a" && ch <= "f") {
+        return index("abcdef", ch) + 9
+      }
+      return -1
+    }
+
+    function decode_toml_basic_string(value, i, ch, escaped, hex, code, j) {
+      escaped = ""
+
+      for (i = 1; i <= length(value); i++) {
+        ch = substr(value, i, 1)
+        if (ch != "\\") {
+          escaped = escaped ch
+          continue
+        }
+
+        i++
+        ch = substr(value, i, 1)
+
+        if (ch == "b") {
+          escaped = escaped sprintf("%c", 8)
+        } else if (ch == "t") {
+          escaped = escaped sprintf("%c", 9)
+        } else if (ch == "n") {
+          escaped = escaped sprintf("%c", 10)
+        } else if (ch == "f") {
+          escaped = escaped sprintf("%c", 12)
+        } else if (ch == "r") {
+          escaped = escaped sprintf("%c", 13)
+        } else if (ch == "\"" || ch == "\\") {
+          escaped = escaped ch
+        } else if (ch == "u" || ch == "U") {
+          hex = substr(value, i + 1, (ch == "u" ? 4 : 8))
+          code = 0
+          for (j = 1; j <= length(hex); j++) {
+            code = (code * 16) + hex_value(substr(hex, j, 1))
+          }
+          escaped = escaped sprintf("%c", code)
+          i += length(hex)
+        } else {
+          escaped = escaped ch
+        }
+      }
+
+      return escaped
+    }
+
+    function normalize_toml_segment(value, first, last) {
       value = trim(value)
       first = substr(value, 1, 1)
       last = substr(value, length(value), 1)
 
-      if ((first == "\"" && last == "\"") || (first == "'"'"'" && last == "'"'"'")) {
+      if (first == "\"" && last == "\"") {
+        return decode_toml_basic_string(substr(value, 2, length(value) - 2))
+      }
+
+      if (first == "'"'"'" && last == "'"'"'") {
         return substr(value, 2, length(value) - 2)
       }
 
       return value
     }
 
-    function normalize_toml_name(value) {
+    function normalize_toml_name(value, i, ch, prev, quote, segment, normalized) {
       value = trim(value)
-      gsub(/[[:space:]]*\.[[:space:]]*/, ".", value)
-      value = strip_wrapping_quotes(value)
-      return value
+      quote = ""
+      segment = ""
+      normalized = ""
+
+      for (i = 1; i <= length(value); i++) {
+        ch = substr(value, i, 1)
+        prev = (i > 1 ? substr(value, i - 1, 1) : "")
+
+        if (quote != "") {
+          segment = segment ch
+          if (ch == quote && prev != "\\") {
+            quote = ""
+          }
+          continue
+        }
+
+        if (ch == "\"" || ch == "'"'"'" ) {
+          quote = ch
+          segment = segment ch
+          continue
+        }
+
+        if (ch == ".") {
+          segment = normalize_toml_segment(segment)
+          if (normalized != "") {
+            normalized = normalized "."
+          }
+          normalized = normalized segment
+          segment = ""
+          continue
+        }
+
+        segment = segment ch
+      }
+
+      segment = normalize_toml_segment(segment)
+      if (normalized != "") {
+        normalized = normalized "."
+      }
+      normalized = normalized segment
+      return normalized
     }
 
     BEGIN {
@@ -459,23 +553,117 @@ toml_section_names() {
       return value
     }
 
-    function strip_wrapping_quotes(value, first, last) {
+    function hex_value(ch) {
+      if (ch >= "0" && ch <= "9") {
+        return ch + 0
+      }
+      ch = tolower(ch)
+      if (ch >= "a" && ch <= "f") {
+        return index("abcdef", ch) + 9
+      }
+      return -1
+    }
+
+    function decode_toml_basic_string(value, i, ch, escaped, hex, code, j) {
+      escaped = ""
+
+      for (i = 1; i <= length(value); i++) {
+        ch = substr(value, i, 1)
+        if (ch != "\\") {
+          escaped = escaped ch
+          continue
+        }
+
+        i++
+        ch = substr(value, i, 1)
+
+        if (ch == "b") {
+          escaped = escaped sprintf("%c", 8)
+        } else if (ch == "t") {
+          escaped = escaped sprintf("%c", 9)
+        } else if (ch == "n") {
+          escaped = escaped sprintf("%c", 10)
+        } else if (ch == "f") {
+          escaped = escaped sprintf("%c", 12)
+        } else if (ch == "r") {
+          escaped = escaped sprintf("%c", 13)
+        } else if (ch == "\"" || ch == "\\") {
+          escaped = escaped ch
+        } else if (ch == "u" || ch == "U") {
+          hex = substr(value, i + 1, (ch == "u" ? 4 : 8))
+          code = 0
+          for (j = 1; j <= length(hex); j++) {
+            code = (code * 16) + hex_value(substr(hex, j, 1))
+          }
+          escaped = escaped sprintf("%c", code)
+          i += length(hex)
+        } else {
+          escaped = escaped ch
+        }
+      }
+
+      return escaped
+    }
+
+    function normalize_toml_segment(value, first, last) {
       value = trim(value)
       first = substr(value, 1, 1)
       last = substr(value, length(value), 1)
 
-      if ((first == "\"" && last == "\"") || (first == "'"'"'" && last == "'"'"'")) {
+      if (first == "\"" && last == "\"") {
+        return decode_toml_basic_string(substr(value, 2, length(value) - 2))
+      }
+
+      if (first == "'"'"'" && last == "'"'"'") {
         return substr(value, 2, length(value) - 2)
       }
 
       return value
     }
 
-    function normalize_toml_name(value) {
+    function normalize_toml_name(value, i, ch, prev, quote, segment, normalized) {
       value = trim(value)
-      gsub(/[[:space:]]*\.[[:space:]]*/, ".", value)
-      value = strip_wrapping_quotes(value)
-      return value
+      quote = ""
+      segment = ""
+      normalized = ""
+
+      for (i = 1; i <= length(value); i++) {
+        ch = substr(value, i, 1)
+        prev = (i > 1 ? substr(value, i - 1, 1) : "")
+
+        if (quote != "") {
+          segment = segment ch
+          if (ch == quote && prev != "\\") {
+            quote = ""
+          }
+          continue
+        }
+
+        if (ch == "\"" || ch == "'"'"'" ) {
+          quote = ch
+          segment = segment ch
+          continue
+        }
+
+        if (ch == ".") {
+          segment = normalize_toml_segment(segment)
+          if (normalized != "") {
+            normalized = normalized "."
+          }
+          normalized = normalized segment
+          segment = ""
+          continue
+        }
+
+        segment = segment ch
+      }
+
+      segment = normalize_toml_segment(segment)
+      if (normalized != "") {
+        normalized = normalized "."
+      }
+      normalized = normalized segment
+      return normalized
     }
 
     {
@@ -643,10 +831,27 @@ awk '
 ' "${CODEX_MANAGED_CONFIG}" >"${quoted_key_config}"
 assert_codex_managed_config_rejected "${quoted_key_config}" 'quoted top-level approval_policy override' || exit 1
 
+escaped_key_config="${codex_managed_config_tmpdir}/escaped-key.toml"
+awk '
+  {
+    print
+    if ($0 == "profile = \"strict\"") {
+      print "\"approval\\u005fpolicy\" = \"never\""
+    }
+  }
+' "${CODEX_MANAGED_CONFIG}" >"${escaped_key_config}"
+assert_codex_managed_config_rejected "${escaped_key_config}" 'escaped top-level approval_policy override' || exit 1
+
 spaced_section_config="${codex_managed_config_tmpdir}/spaced-section.toml"
 cp "${CODEX_MANAGED_CONFIG}" "${spaced_section_config}"
 printf '\n[ profiles.strict.sandbox_workspace_write ]\nnetwork_access = true\n' >>"${spaced_section_config}"
 assert_codex_managed_config_rejected "${spaced_section_config}" 'whitespace-padded strict sandbox override section' || exit 1
+
+quoted_segment_section_config="${codex_managed_config_tmpdir}/quoted-segment-section.toml"
+cp "${CODEX_MANAGED_CONFIG}" "${quoted_segment_section_config}"
+printf '\n[ "profiles" . "strict" . "sandbox_workspace_write" ]\nnetwork_access = true\n' >>"${quoted_segment_section_config}"
+assert_codex_managed_config_rejected "${quoted_segment_section_config}" 'quoted strict segment sandbox override section' || exit 1
+
 rm -rf "${codex_managed_config_tmpdir}"
 
 if ! sed -n '/^run_host_colima()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "HOME=\"\${REAL_HOME}\""; then
