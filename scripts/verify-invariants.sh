@@ -3760,6 +3760,22 @@ if expect_fatal_function_failure /tmp/gemini-unsupported.stdout /tmp/gemini-unsu
 fi
 grep -q 'Unsupported key in Gemini auth env file' /tmp/gemini-unsupported.stderr
 
+printf 'GEMINI_API_KEY=one\nGEMINI_API_KEY=two\n' >"${TMP_DIR}/duplicate-api-key.env"
+if expect_fatal_function_failure /tmp/gemini-duplicate-api-key.stdout /tmp/gemini-duplicate-api-key.stderr \
+  workcell_validate_gemini_env_auth_config "${TMP_DIR}/duplicate-api-key.env"; then
+  echo "Expected duplicate GEMINI_API_KEY assignments to be rejected" >&2
+  exit 1
+fi
+grep -q 'configures GEMINI_API_KEY more than once' /tmp/gemini-duplicate-api-key.stderr
+
+printf ' export GOOGLE_GENAI_USE_GCA=true\nGOOGLE_GENAI_USE_GCA=false\n' >"${TMP_DIR}/duplicate-exported-bool.env"
+if expect_fatal_function_failure /tmp/gemini-duplicate-exported-bool.stdout /tmp/gemini-duplicate-exported-bool.stderr \
+  workcell_validate_gemini_env_auth_config "${TMP_DIR}/duplicate-exported-bool.env"; then
+  echo "Expected duplicate exported Gemini auth selectors to be rejected" >&2
+  exit 1
+fi
+grep -q 'configures GOOGLE_GENAI_USE_GCA more than once' /tmp/gemini-duplicate-exported-bool.stderr
+
 printf 'GOOGLE_GENAI_USE_GCA=true\nGOOGLE_GENAI_USE_VERTEXAI=true\n' >"${TMP_DIR}/conflicting-selectors.env"
 if expect_fatal_function_failure /tmp/gemini-conflicting.stdout /tmp/gemini-conflicting.stderr \
   workcell_validate_gemini_env_auth_config "${TMP_DIR}/conflicting-selectors.env"; then
