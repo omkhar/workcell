@@ -305,6 +305,9 @@ profile_lima_dir() {
 }
 
 run_host_colima() {
+  if [[ -z "${HOST_COLIMA_BIN}" ]]; then
+    HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
+  fi
   HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
 }
 
@@ -3464,7 +3467,6 @@ fi
 fail_fast_for_missing_gemini_auth "$@"
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
-  HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
   export COLIMA_HOME="${COLIMA_STATE_ROOT}"
   acquire_profile_lock "${COLIMA_PROFILE}"
 fi
