@@ -239,6 +239,7 @@ require_exact_packages(
     runtime_install_blocks[0],
     [
         "bash",
+        "bubblewrap",
         "ca-certificates",
         "curl",
         "fd-find",
