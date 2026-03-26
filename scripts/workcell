@@ -308,6 +308,75 @@ run_host_colima() {
   COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
 }
 
+profile_process_pids() {
+  local profile="$1"
+  local instance_name
+  local pid=""
+  local command=""
+
+  instance_name="colima-${profile}"
+  pgrep -f "${instance_name}" 2>/dev/null | while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    case "${command}" in
+      */limactl\ hostagent*"${instance_name}")
+        printf '%s\n' "${pid}"
+        ;;
+      ssh:\ *"${instance_name}"/ssh.sock\ \[mux\])
+        printf '%s\n' "${pid}"
+        ;;
+    esac
+  done | sort -u
+}
+
+reap_stale_profile_processes() {
+  local profile="$1"
+  local -a pids=()
+  local -a remaining=()
+  local pid=""
+  local deadline=0
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] && pids+=("${pid}")
+  done < <(profile_process_pids "${profile}")
+
+  if ((${#pids[@]} == 0)); then
+    return 0
+  fi
+
+  echo "Stopping stale Lima processes for profile ${profile}." >&2
+  kill "${pids[@]}" >/dev/null 2>&1 || true
+  deadline=$((SECONDS + 5))
+
+  while :; do
+    remaining=()
+    for pid in "${pids[@]}"; do
+      if kill -0 "${pid}" >/dev/null 2>&1; then
+        remaining+=("${pid}")
+      fi
+    done
+    if ((${#remaining[@]} == 0)); then
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      break
+    fi
+    sleep 1
+    pids=("${remaining[@]}")
+  done
+
+  kill -9 "${remaining[@]}" >/dev/null 2>&1 || true
+}
+
+maybe_reap_stale_profile_processes() {
+  local profile="$1"
+
+  if run_host_colima status --profile "${profile}" >/dev/null 2>&1; then
+    return 0
+  fi
+  reap_stale_profile_processes "${profile}"
+}
+
 sanitize_host_docker_env() {
   unset DOCKER_CONTEXT
   unset DOCKER_HOST
@@ -1595,6 +1664,7 @@ delete_unmanaged_profile() {
 
   HOST_COLIMA_BIN="${HOST_COLIMA_BIN:-$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)}"
   export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+  maybe_reap_stale_profile_processes "${profile}"
   run_host_colima delete --profile "${profile}" --force >/dev/null 2>&1 || true
   rm -rf "${state_dir}" "${lima_dir}"
 
@@ -3296,6 +3366,8 @@ fi
 fail_fast_for_missing_gemini_auth "$@"
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
+  HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
+  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
   acquire_profile_lock "${COLIMA_PROFILE}"
 fi
 
@@ -3343,11 +3415,9 @@ if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -e
 fi
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
-  HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
   HOST_RUBY_BIN="$(resolve_host_tool ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby)"
   sanitize_host_docker_env
-  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
 fi
 
 ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(credential_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS}")"
@@ -3522,6 +3592,7 @@ fi
 
 maybe_fail_after_profile_refresh_for_tests
 
+maybe_reap_stale_profile_processes "${COLIMA_PROFILE}"
 run_command_with_debug_log colima-start \
   run_host_colima start \
   --profile "${COLIMA_PROFILE}" \
