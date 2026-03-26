@@ -1762,6 +1762,15 @@ run_container codex bash -lc '
         exit 1
       fi
     }
+    assert_codex_feature_value() {
+      local expected_value="$1"
+      if grep -Eq "^\[profiles\.strict\.features\]$" "$CODEX_HOME/config.toml"; then
+        grep -q "^unified_exec = ${expected_value}$" "$CODEX_HOME/config.toml"
+        return 0
+      fi
+      grep -Eq "^\[features\]$" "$CODEX_HOME/config.toml"
+      grep -q "^unified_exec = ${expected_value}$" "$CODEX_HOME/config.toml"
+    }
     EXEC_TMP="$TMPDIR/workcell-exec"
     mkdir -p "$EXEC_TMP"
     codex --version >/tmp/codex-version.out 2>/tmp/codex-version.err
@@ -1837,16 +1846,22 @@ run_container codex bash -lc '
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-app-server.out
+    rm -f "$CODEX_HOME/config.toml"
+    printf "web_search = \"enabled\"\n" >"$CODEX_HOME/config.toml"
+    codex --version >/tmp/codex-version-after-tamper.out 2>/tmp/codex-version-after-tamper.err
+    grep -q "codex-cli" /tmp/codex-version-after-tamper.out
+    assert_codex_stderr_clean /tmp/codex-version-after-tamper.err
+    test ! -L "$CODEX_HOME/config.toml"
+    test -w "$CODEX_HOME/config.toml"
+    cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
     codex features disable unified_exec >/tmp/codex-features-disable.out 2>/tmp/codex-features-disable.err
     assert_codex_stderr_clean /tmp/codex-features-disable.err
     test ! -L "$CODEX_HOME/config.toml"
     test -w "$CODEX_HOME/config.toml"
-    grep -q "^\[profiles\.strict\.features\]$" "$CODEX_HOME/config.toml"
-    grep -q "^unified_exec = false$" "$CODEX_HOME/config.toml"
+    assert_codex_feature_value false
     codex features enable unified_exec >/tmp/codex-features-enable.out 2>/tmp/codex-features-enable.err
     assert_codex_stderr_clean /tmp/codex-features-enable.err
-    grep -q "^\[profiles\.strict\.features\]$" "$CODEX_HOME/config.toml"
-    grep -q "^unified_exec = true$" "$CODEX_HOME/config.toml"
+    assert_codex_feature_value true
   '"'"'
   if /usr/local/libexec/workcell/real/codex --version >/tmp/codex-real-path.out 2>&1; then
     echo "expected direct real Codex payload execution to fail" >&2
