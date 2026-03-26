@@ -1,6 +1,6 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 
-# shellcheck disable=SC1091
+# shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh
 
 workcell_managed_session_root_for_path() {

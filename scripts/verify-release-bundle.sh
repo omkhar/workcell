@@ -31,7 +31,6 @@ ARCHIVE_REF="${WORKCELL_RELEASE_BUNDLE_REF:-HEAD}"
 BUNDLE_NAME="${WORKCELL_RELEASE_BUNDLE_NAME:-workcell-release-check.tar.gz}"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-workcell-validator:local}"
 BUNDLE_MANIFEST_PATH="${WORKCELL_RELEASE_BUNDLE_MANIFEST_PATH:-}"
-WORKCELL_DOCKER_SANDBOX_ROOT=""
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null

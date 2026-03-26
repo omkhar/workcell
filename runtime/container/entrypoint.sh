@@ -12,17 +12,13 @@ TMPDIR="${TMPDIR:-/state/tmp}"
 WORKSPACE="${WORKSPACE:-/workspace}"
 export ADAPTER_ROOT="/opt/workcell/adapters"
 
-# shellcheck disable=SC1091
-# shellcheck source=assurance.sh
+# shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh
-# shellcheck disable=SC1091
-# shellcheck source=provider-policy.sh
+# shellcheck source=runtime/container/provider-policy.sh
 source /usr/local/libexec/workcell/provider-policy.sh
-# shellcheck disable=SC1091
-# shellcheck source=home-control-plane.sh
+# shellcheck source=runtime/container/home-control-plane.sh
 source /usr/local/libexec/workcell/home-control-plane.sh
-# shellcheck disable=SC1091
-# shellcheck source=runtime-user.sh
+# shellcheck source=runtime/container/runtime-user.sh
 source /usr/local/libexec/workcell/runtime-user.sh
 
 emit_session_assurance_notice() {

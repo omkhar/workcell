@@ -1,7 +1,6 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 
-# shellcheck disable=SC1091
-# shellcheck source=assurance.sh
+# shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh
 
 WORKCELL_RUNTIME_STATE_DIR="/run/workcell"
