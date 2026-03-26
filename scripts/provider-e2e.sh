@@ -14,8 +14,6 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     WORKCELL_E2E_GEMINI_ENV="${WORKCELL_E2E_GEMINI_ENV-}" \
     WORKCELL_E2E_GEMINI_OAUTH_JSON="${WORKCELL_E2E_GEMINI_OAUTH_JSON-}" \
     WORKCELL_E2E_GEMINI_PROJECTS_JSON="${WORKCELL_E2E_GEMINI_PROJECTS_JSON-}" \
-    WORKCELL_E2E_GITHUB_CONFIG_YML="${WORKCELL_E2E_GITHUB_CONFIG_YML-}" \
-    WORKCELL_E2E_GITHUB_HOSTS_YML="${WORKCELL_E2E_GITHUB_HOSTS_YML-}" \
     WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT-}" \
     WORKCELL_SANITIZED_ENTRYPOINT=1 \
     /bin/bash -p "$0" "$@"
@@ -110,29 +108,6 @@ write_secret_file() {
   printf '%s\n' "${path}"
 }
 
-append_shared_github_credentials() {
-  local policy_path="$1"
-  local provider="$2"
-  local hosts_path="$3"
-  local config_path="$4"
-
-  if [[ -n "${hosts_path}" ]]; then
-    {
-      printf '\n[credentials.github_hosts]\n'
-      printf 'source = %s\n' "$(toml_quote "${hosts_path}")"
-      printf 'providers = [%s]\n' "$(toml_quote "${provider}")"
-    } >>"${policy_path}"
-  fi
-
-  if [[ -n "${config_path}" ]]; then
-    {
-      printf '\n[credentials.github_config]\n'
-      printf 'source = %s\n' "$(toml_quote "${config_path}")"
-      printf 'providers = [%s]\n' "$(toml_quote "${provider}")"
-    } >>"${policy_path}"
-  fi
-}
-
 generate_policy_from_env() {
   local policy_path=""
   local codex_auth_path=""
@@ -143,8 +118,6 @@ generate_policy_from_env() {
   local gemini_oauth_path=""
   local gemini_projects_path=""
   local gcloud_adc_path=""
-  local github_hosts_path=""
-  local github_config_path=""
 
   if [[ -n "${INJECTION_POLICY}" ]]; then
     GENERATED_POLICY=""
@@ -152,44 +125,43 @@ generate_policy_from_env() {
     return 0
   fi
 
-  TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-provider-e2e.XXXXXX")"
-  policy_path="${TMP_ROOT}/policy.toml"
   GENERATED_CREDENTIAL_KEYS=()
-
-  codex_auth_path="$(write_secret_file WORKCELL_E2E_CODEX_AUTH_JSON codex-auth.json 0 || true)"
-  claude_auth_path="$(write_secret_file WORKCELL_E2E_CLAUDE_AUTH_JSON claude-auth.json 0 || true)"
-  claude_api_key_path="$(write_secret_file WORKCELL_E2E_CLAUDE_API_KEY claude-api-key.txt 0 || true)"
-  claude_mcp_path="$(write_secret_file WORKCELL_E2E_CLAUDE_MCP_JSON claude-mcp.json 0 || true)"
-  gemini_env_path="$(write_secret_file WORKCELL_E2E_GEMINI_ENV gemini.env 0 || true)"
-  gemini_oauth_path="$(write_secret_file WORKCELL_E2E_GEMINI_OAUTH_JSON gemini-oauth.json 0 || true)"
-  gemini_projects_path="$(write_secret_file WORKCELL_E2E_GEMINI_PROJECTS_JSON gemini-projects.json 0 || true)"
-  gcloud_adc_path="$(write_secret_file WORKCELL_E2E_GCLOUD_ADC_JSON gcloud-adc.json 0 || true)"
-  github_hosts_path="$(write_secret_file WORKCELL_E2E_GITHUB_HOSTS_YML gh-hosts.yml 0 || true)"
-  github_config_path="$(write_secret_file WORKCELL_E2E_GITHUB_CONFIG_YML gh-config.yml 0 || true)"
-  [[ -n "${codex_auth_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("codex_auth")
-  [[ -n "${claude_auth_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("claude_auth")
-  [[ -n "${claude_api_key_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("claude_api_key")
-  [[ -n "${claude_mcp_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("claude_mcp")
-  [[ -n "${gemini_env_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("gemini_env")
-  [[ -n "${gemini_oauth_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("gemini_oauth")
-  [[ -n "${gemini_projects_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("gemini_projects")
-  [[ -n "${gcloud_adc_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("gcloud_adc")
-  [[ -n "${github_hosts_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("github_hosts")
-  [[ -n "${github_config_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("github_config")
 
   case "${AGENT}" in
     codex)
-      [[ -n "${codex_auth_path}" ]] || return 0
+      [[ -n "${WORKCELL_E2E_CODEX_AUTH_JSON-}" ]] || return 0
+      ensure_tmp_root
+      policy_path="${TMP_ROOT}/policy.toml"
+      codex_auth_path="$(write_secret_file WORKCELL_E2E_CODEX_AUTH_JSON codex-auth.json 1)"
+      GENERATED_CREDENTIAL_KEYS+=("codex_auth")
       ;;
     claude)
-      if [[ -z "${claude_auth_path}" ]] && [[ -z "${claude_api_key_path}" ]]; then
+      if [[ -z "${WORKCELL_E2E_CLAUDE_AUTH_JSON-}" ]] && [[ -z "${WORKCELL_E2E_CLAUDE_API_KEY-}" ]]; then
         return 0
       fi
+      ensure_tmp_root
+      policy_path="${TMP_ROOT}/policy.toml"
+      claude_auth_path="$(write_secret_file WORKCELL_E2E_CLAUDE_AUTH_JSON claude-auth.json 0 || true)"
+      claude_api_key_path="$(write_secret_file WORKCELL_E2E_CLAUDE_API_KEY claude-api-key.txt 0 || true)"
+      claude_mcp_path="$(write_secret_file WORKCELL_E2E_CLAUDE_MCP_JSON claude-mcp.json 0 || true)"
+      [[ -n "${claude_auth_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("claude_auth")
+      [[ -n "${claude_api_key_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("claude_api_key")
+      [[ -n "${claude_mcp_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("claude_mcp")
       ;;
     gemini)
-      if [[ -z "${gemini_env_path}" ]] && [[ -z "${gemini_oauth_path}" ]]; then
+      if [[ -z "${WORKCELL_E2E_GEMINI_ENV-}" ]] && [[ -z "${WORKCELL_E2E_GEMINI_OAUTH_JSON-}" ]]; then
         return 0
       fi
+      ensure_tmp_root
+      policy_path="${TMP_ROOT}/policy.toml"
+      gemini_env_path="$(write_secret_file WORKCELL_E2E_GEMINI_ENV gemini.env 0 || true)"
+      gemini_oauth_path="$(write_secret_file WORKCELL_E2E_GEMINI_OAUTH_JSON gemini-oauth.json 0 || true)"
+      gemini_projects_path="$(write_secret_file WORKCELL_E2E_GEMINI_PROJECTS_JSON gemini-projects.json 0 || true)"
+      gcloud_adc_path="$(write_secret_file WORKCELL_E2E_GCLOUD_ADC_JSON gcloud-adc.json 0 || true)"
+      [[ -n "${gemini_env_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("gemini_env")
+      [[ -n "${gemini_oauth_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("gemini_oauth")
+      [[ -n "${gemini_projects_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("gemini_projects")
+      [[ -n "${gcloud_adc_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("gcloud_adc")
       ;;
   esac
 
@@ -224,8 +196,6 @@ generate_policy_from_env() {
       fi
       ;;
   esac
-
-  append_shared_github_credentials "${policy_path}" "${AGENT}" "${github_hosts_path}" "${github_config_path}"
 
   GENERATED_POLICY="${policy_path}"
   INJECTION_SOURCE="generated-env"

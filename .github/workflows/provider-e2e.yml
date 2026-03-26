@@ -57,27 +57,46 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.sha }}
 
       - name: Derive managed Colima profile
         run: |
           echo "WORKCELL_MACOS_PROFILE=wc-pe2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_ENV}"
 
-      - name: Run provider authenticated probe
+      - name: Run Codex authenticated probe
+        if: ${{ inputs.provider == 'codex' }}
         env:
           WORKCELL_E2E_CODEX_AUTH_JSON: ${{ secrets.WORKCELL_E2E_CODEX_AUTH_JSON }}
+        run: |
+          ./scripts/provider-e2e.sh \
+            --agent "codex" \
+            --workspace "${GITHUB_WORKSPACE}" \
+            --require-injection \
+            --colima-profile "${WORKCELL_MACOS_PROFILE}"
+
+      - name: Run Claude authenticated probe
+        if: ${{ inputs.provider == 'claude' }}
+        env:
           WORKCELL_E2E_CLAUDE_API_KEY: ${{ secrets.WORKCELL_E2E_CLAUDE_API_KEY }}
           WORKCELL_E2E_CLAUDE_AUTH_JSON: ${{ secrets.WORKCELL_E2E_CLAUDE_AUTH_JSON }}
           WORKCELL_E2E_CLAUDE_MCP_JSON: ${{ secrets.WORKCELL_E2E_CLAUDE_MCP_JSON }}
+        run: |
+          ./scripts/provider-e2e.sh \
+            --agent "claude" \
+            --workspace "${GITHUB_WORKSPACE}" \
+            --require-injection \
+            --colima-profile "${WORKCELL_MACOS_PROFILE}"
+
+      - name: Run Gemini authenticated probe
+        if: ${{ inputs.provider == 'gemini' }}
+        env:
           WORKCELL_E2E_GCLOUD_ADC_JSON: ${{ secrets.WORKCELL_E2E_GCLOUD_ADC_JSON }}
           WORKCELL_E2E_GEMINI_ENV: ${{ secrets.WORKCELL_E2E_GEMINI_ENV }}
           WORKCELL_E2E_GEMINI_OAUTH_JSON: ${{ secrets.WORKCELL_E2E_GEMINI_OAUTH_JSON }}
           WORKCELL_E2E_GEMINI_PROJECTS_JSON: ${{ secrets.WORKCELL_E2E_GEMINI_PROJECTS_JSON }}
-          WORKCELL_E2E_GITHUB_CONFIG_YML: ${{ secrets.WORKCELL_E2E_GITHUB_CONFIG_YML }}
-          WORKCELL_E2E_GITHUB_HOSTS_YML: ${{ secrets.WORKCELL_E2E_GITHUB_HOSTS_YML }}
         run: |
           ./scripts/provider-e2e.sh \
-            --agent "${{ inputs.provider }}" \
+            --agent "gemini" \
             --workspace "${GITHUB_WORKSPACE}" \
             --require-injection \
             --colima-profile "${WORKCELL_MACOS_PROFILE}"

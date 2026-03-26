@@ -93,8 +93,11 @@ Recommended GitHub environment secret names:
 - `WORKCELL_E2E_GEMINI_OAUTH_JSON`
 - `WORKCELL_E2E_GEMINI_PROJECTS_JSON`
 - `WORKCELL_E2E_GCLOUD_ADC_JSON`
-- `WORKCELL_E2E_GITHUB_HOSTS_YML`
-- `WORKCELL_E2E_GITHUB_CONFIG_YML`
+
+The `provider-e2e.sh` helper intentionally limits its generated env-backed
+policy to the selected provider's credentials. If a future scenario needs
+shared GitHub CLI auth, pass an explicit injection policy instead of expanding
+the `WORKCELL_E2E_*` environment surface for this smoke lane.
 
 ## Out Of Scope And Breakglass
 

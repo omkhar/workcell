@@ -213,7 +213,8 @@ path remains the standard repository gate. Keep the `provider-e2e`
 environment protected so only approved operators can access its secrets, and
 keep the owner-only plus default-branch job gate in place so a manual dispatch
 by another actor or from a non-default branch cannot consume those
-credentials.
+credentials. Keep its checkout pinned to the dispatched SHA so the reviewed
+workflow run cannot drift to newer default-branch code after dispatch.
 
 ## Review standard
 
