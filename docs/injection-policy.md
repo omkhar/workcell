@@ -22,14 +22,16 @@ baseline. If you explicitly opt into
 session-local writable tree so provider-approved execpolicy amendments can
 persist for the life of the container, while the adapter baseline remains
 immutable. The staged host bundle lives in a launcher-owned state
-directory under `~/.local/state/workcell/tmp`, is mounted read-only into the
-runtime, and is cleaned up on exit with dead-owner stale
+directory under `~/Library/Caches/colima/workcell-host-inputs`, is mounted
+read-only into the runtime, and is cleaned up on exit with dead-owner stale
 bundle garbage collection on later launches. Secret-bearing inputs are treated
-more strictly: Workcell validates their host source files, mounts those sources
-read-only into the runtime for the current session, and only then copies them
-into the ephemeral session home. That avoids creating an extra plaintext
-host-side bundle for provider credentials, SSH material, and
-`classification = "secret"` copied files.
+more strictly: Workcell validates their host source files, restages those files
+under the same launcher-owned cache root with restrictive permissions so the
+managed Colima VM can bind-mount them read-only, and only then copies them into
+the ephemeral session home. That means provider credentials, SSH material, and
+`classification = "secret"` copied files do create a short-lived extra
+host-side plaintext staging copy, which later launches garbage-collect if a
+previous session crashes before cleanup.
 
 Provider docs are rendered in a fixed precedence order:
 
@@ -138,8 +140,10 @@ modes = ["strict", "build"]
 - `credentials.claude_mcp` mounts an approved Claude `.mcp.json` into the
   session without widening trust to the whole workspace copy.
 - `credentials.gemini_env` mounts a provider-native `~/.gemini/.env`.
-  This matches Gemini CLI's documented env-file auth flow for API keys,
-  Vertex project settings, and related variables. When the file includes
+  This matches Gemini CLI's documented env-file auth flow for `GEMINI_API_KEY`,
+  `GOOGLE_GENAI_USE_GCA=true`, or explicit Vertex settings such as
+  `GOOGLE_GENAI_USE_VERTEXAI=true` paired with either `GOOGLE_API_KEY` or both
+  `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. When the file includes
   `GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_REGION`, `CLOUD_ML_REGION`,
   `VERTEX_LOCATION`, or `VERTEX_AI_LOCATION`, Workcell also derives the
   corresponding regional `LOCATION-aiplatform.googleapis.com` allowlist entry
@@ -148,9 +152,12 @@ modes = ["strict", "build"]
   you already have one on the host.
 - `credentials.gemini_projects` mounts a persisted Gemini `projects.json`
   when you want Gemini CLI's project registry to survive across sessions.
+  Workcell validates that the file is a JSON object with an object-valued
+  `projects` field before launch.
 - `credentials.gcloud_adc` mounts Google ADC into
-  `~/.config/gcloud/application_default_credentials.json` for Gemini Vertex
-  flows.
+  `~/.config/gcloud/application_default_credentials.json` as a supplemental
+  input for Gemini Vertex flows that are explicitly configured through
+  `credentials.gemini_env`. It is not a standalone Gemini auth mode.
 - `credentials.github_hosts` and `credentials.github_config` mount GitHub CLI
   auth/config into `~/.config/gh/`. Because those credentials are shared across
   tools rather than provider-native, prefer `[credentials.github_hosts]` or

@@ -282,6 +282,397 @@ workcell_copy_manifest_credential_file() {
   return 0
 }
 
+workcell_trim_leading_whitespace() {
+  local value="$1"
+
+  printf '%s' "${value#"${value%%[![:space:]]*}"}"
+}
+
+workcell_trim_trailing_whitespace() {
+  local value="$1"
+
+  printf '%s' "${value%"${value##*[![:space:]]}"}"
+}
+
+workcell_env_file_assignment_value() {
+  local env_path="$1"
+  local expected_key="$2"
+  local line=""
+  local parsed_key=""
+  local value=""
+
+  [[ -f "${env_path}" ]] || return 1
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    line="$(workcell_trim_leading_whitespace "${line}")"
+    [[ -n "${line}" ]] || continue
+    [[ "${line}" == \#* ]] && continue
+
+    if [[ "${line}" == export[[:space:]]* ]]; then
+      line="${line#export}"
+      line="$(workcell_trim_leading_whitespace "${line}")"
+    fi
+
+    if [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+      parsed_key="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+      [[ "${parsed_key}" == "${expected_key}" ]] || continue
+
+      value="$(workcell_trim_trailing_whitespace "$(workcell_trim_leading_whitespace "${value}")")"
+
+      if [[ "${value}" =~ ^\"(.*)\"[[:space:]]*(#.*)?$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      elif [[ "${value}" =~ ^\'(.*)\'[[:space:]]*(#.*)?$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      else
+        value="${value%%#*}"
+        value="$(workcell_trim_trailing_whitespace "$(workcell_trim_leading_whitespace "${value}")")"
+      fi
+
+      printf '%s\n' "${value}"
+      return 0
+    fi
+  done <"${env_path}"
+
+  return 1
+}
+
+workcell_env_file_has_assignment_key() {
+  local env_path="$1"
+  local expected_key="$2"
+  local line=""
+  local parsed_key=""
+
+  [[ -f "${env_path}" ]] || return 1
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    line="$(workcell_trim_leading_whitespace "${line}")"
+    [[ -n "${line}" ]] || continue
+    [[ "${line}" == \#* ]] && continue
+
+    if [[ "${line}" == export[[:space:]]* ]]; then
+      line="${line#export}"
+      line="$(workcell_trim_leading_whitespace "${line}")"
+    fi
+
+    if [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*= ]]; then
+      parsed_key="${BASH_REMATCH[1]}"
+      [[ "${parsed_key}" == "${expected_key}" ]] || continue
+      return 0
+    fi
+  done <"${env_path}"
+
+  return 1
+}
+
+workcell_env_file_boolean_value() {
+  local env_path="$1"
+  local expected_key="$2"
+  local value=""
+
+  value="$(workcell_env_file_assignment_value "${env_path}" "${expected_key}" || true)"
+  [[ -n "${value}" ]] || return 1
+  value="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${value}" in
+    true | false)
+      printf '%s\n' "${value}"
+      return 0
+      ;;
+    *)
+      workcell_die "Invalid boolean in Gemini auth env file ${env_path}: ${expected_key}=${value}. Use true or false."
+      ;;
+  esac
+}
+
+workcell_gemini_env_has_project_config() {
+  local env_path="$1"
+  local env_value=""
+
+  env_value="$(workcell_env_file_assignment_value "${env_path}" "GOOGLE_CLOUD_PROJECT" || true)"
+  [[ -n "${env_value}" ]] && return 0
+  env_value="$(workcell_env_file_assignment_value "${env_path}" "GOOGLE_CLOUD_PROJECT_ID" || true)"
+  [[ -n "${env_value}" ]]
+}
+
+workcell_gemini_env_has_location_config() {
+  local env_path="$1"
+  local env_value=""
+
+  env_value="$(workcell_env_file_assignment_value "${env_path}" "GOOGLE_CLOUD_LOCATION" || true)"
+  [[ -n "${env_value}" ]] && return 0
+  env_value="$(workcell_env_file_assignment_value "${env_path}" "GOOGLE_CLOUD_REGION" || true)"
+  [[ -n "${env_value}" ]] && return 0
+  env_value="$(workcell_env_file_assignment_value "${env_path}" "CLOUD_ML_REGION" || true)"
+  [[ -n "${env_value}" ]] && return 0
+  env_value="$(workcell_env_file_assignment_value "${env_path}" "VERTEX_LOCATION" || true)"
+  [[ -n "${env_value}" ]] && return 0
+  env_value="$(workcell_env_file_assignment_value "${env_path}" "VERTEX_AI_LOCATION" || true)"
+  [[ -n "${env_value}" ]]
+}
+
+workcell_gemini_env_key_is_supported() {
+  case "$1" in
+    GEMINI_API_KEY | GOOGLE_API_KEY | GOOGLE_GENAI_USE_GCA | GOOGLE_GENAI_USE_VERTEXAI | GOOGLE_CLOUD_PROJECT | GOOGLE_CLOUD_PROJECT_ID | GOOGLE_CLOUD_LOCATION | GOOGLE_CLOUD_REGION | CLOUD_ML_REGION | VERTEX_LOCATION | VERTEX_AI_LOCATION)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+workcell_validate_gemini_env_file_syntax() {
+  local env_path="$1"
+  local line=""
+  local parsed_key=""
+  local value=""
+  local -A seen_keys=()
+
+  [[ -f "${env_path}" ]] || return 0
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    line="$(workcell_trim_leading_whitespace "${line}")"
+    [[ -n "${line}" ]] || continue
+    [[ "${line}" == \#* ]] && continue
+
+    if [[ "${line}" == export[[:space:]]* ]]; then
+      line="${line#export}"
+      line="$(workcell_trim_leading_whitespace "${line}")"
+    fi
+
+    if ! [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+      workcell_die "Malformed Gemini auth env file ${env_path}: ${line}. Use KEY=value assignments."
+    fi
+
+    parsed_key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    if [[ -n "${seen_keys[${parsed_key}]:-}" ]]; then
+      workcell_die "Gemini auth env file ${env_path} configures ${parsed_key} more than once."
+    fi
+    seen_keys["${parsed_key}"]=1
+
+    if ! workcell_gemini_env_key_is_supported "${parsed_key}"; then
+      workcell_die "Unsupported key in Gemini auth env file ${env_path}: ${parsed_key}."
+    fi
+
+    value="$(workcell_trim_trailing_whitespace "$(workcell_trim_leading_whitespace "${value}")")"
+    if [[ "${value}" =~ ^\"(.*)\"[[:space:]]*(#.*)?$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    elif [[ "${value}" =~ ^\'(.*)\'[[:space:]]*(#.*)?$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    else
+      value="${value%%#*}"
+      value="$(workcell_trim_trailing_whitespace "$(workcell_trim_leading_whitespace "${value}")")"
+    fi
+
+    case "${parsed_key}" in
+      GEMINI_API_KEY | GOOGLE_API_KEY | GOOGLE_CLOUD_PROJECT | GOOGLE_CLOUD_PROJECT_ID | GOOGLE_CLOUD_LOCATION | GOOGLE_CLOUD_REGION | CLOUD_ML_REGION | VERTEX_LOCATION | VERTEX_AI_LOCATION)
+        if [[ -z "${value}" ]]; then
+          workcell_die "Gemini auth env file ${env_path} sets ${parsed_key} but leaves it empty."
+        fi
+        ;;
+    esac
+  done <"${env_path}"
+}
+
+workcell_validate_gemini_env_auth_config() {
+  local env_path="$1"
+  local gca_value=""
+  local vertex_value=""
+  local gemini_api_key=""
+  local google_api_key=""
+  local has_project=0
+  local has_location=0
+
+  [[ -f "${env_path}" ]] || return 0
+
+  workcell_validate_gemini_env_file_syntax "${env_path}"
+  gca_value="$(workcell_env_file_boolean_value "${env_path}" "GOOGLE_GENAI_USE_GCA" || true)"
+  vertex_value="$(workcell_env_file_boolean_value "${env_path}" "GOOGLE_GENAI_USE_VERTEXAI" || true)"
+  gemini_api_key="$(workcell_env_file_assignment_value "${env_path}" "GEMINI_API_KEY" || true)"
+  google_api_key="$(workcell_env_file_assignment_value "${env_path}" "GOOGLE_API_KEY" || true)"
+
+  if [[ "${gca_value}" == "true" ]] && [[ "${vertex_value}" == "true" ]]; then
+    workcell_die "Gemini auth env file ${env_path} enables both GOOGLE_GENAI_USE_GCA and GOOGLE_GENAI_USE_VERTEXAI. Choose exactly one auth selector."
+  fi
+
+  if workcell_gemini_env_has_project_config "${env_path}"; then
+    has_project=1
+  fi
+  if workcell_gemini_env_has_location_config "${env_path}"; then
+    has_location=1
+  fi
+
+  if [[ "${has_location}" == "1" ]] && [[ "${has_project}" != "1" ]]; then
+    workcell_die "Gemini auth env file ${env_path} sets a Google Cloud location without a project."
+  fi
+
+  if [[ "${vertex_value}" == "true" ]]; then
+    if [[ -n "${google_api_key}" ]] || { [[ "${has_project}" == "1" ]] && [[ "${has_location}" == "1" ]]; }; then
+      return 0
+    fi
+    workcell_die "Gemini auth env file ${env_path} enables GOOGLE_GENAI_USE_VERTEXAI=true without either GOOGLE_API_KEY or both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION."
+  fi
+
+  if [[ -n "${google_api_key}" ]]; then
+    workcell_die "Gemini auth env file ${env_path} sets GOOGLE_API_KEY without GOOGLE_GENAI_USE_VERTEXAI=true."
+  fi
+
+  if [[ "${gca_value}" == "true" ]] || [[ -n "${gemini_api_key}" ]]; then
+    return 0
+  fi
+
+  workcell_die "Gemini auth env file ${env_path} does not configure a supported Gemini auth mode. Use GEMINI_API_KEY, GOOGLE_GENAI_USE_GCA=true, or GOOGLE_GENAI_USE_VERTEXAI=true with GOOGLE_API_KEY or both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION."
+}
+
+workcell_validate_json_object_file() {
+  local json_path="$1"
+  local label="$2"
+
+  [[ -f "${json_path}" ]] || return 0
+
+  if ! jq -e 'type == "object"' "${json_path}" >/dev/null 2>&1; then
+    workcell_die "${label} must contain a JSON object: ${json_path}"
+  fi
+}
+
+workcell_validate_gemini_oauth_config() {
+  local oauth_path="$1"
+
+  workcell_validate_json_object_file "${oauth_path}" "Gemini OAuth config"
+}
+
+workcell_validate_gcloud_adc_config() {
+  local adc_path="$1"
+
+  [[ -f "${adc_path}" ]] || return 0
+
+  if ! jq -e 'type == "object" and (.type | type == "string") and (.type | length > 0)' "${adc_path}" >/dev/null 2>&1; then
+    workcell_die "Google ADC config must contain a JSON object with a non-empty string type: ${adc_path}"
+  fi
+}
+
+workcell_validate_gemini_projects_config() {
+  local projects_path="$1"
+
+  [[ -f "${projects_path}" ]] || return 0
+
+  if ! jq -e 'type == "object" and (.projects | type == "object")' "${projects_path}" >/dev/null 2>&1; then
+    workcell_die "Gemini projects config must contain a JSON object with an object-valued projects field: ${projects_path}"
+  fi
+}
+
+workcell_render_gemini_trusted_folders() {
+  local target_path="$1"
+  local workspace_root="$2"
+  local target_dir=""
+  local target_name=""
+  local rendered_path=""
+
+  target_dir="$(dirname "${target_path}")"
+  target_name="$(basename "${target_path}")"
+  rendered_path="$(mktemp "${target_dir}/${target_name}.tmp.XXXXXX")"
+
+  jq -n --arg workspace_root "${workspace_root}" \
+    '{($workspace_root): "TRUST_FOLDER"}' >"${rendered_path}" || {
+    rm -f "${rendered_path}"
+    return 1
+  }
+  mv "${rendered_path}" "${target_path}"
+
+  return 0
+}
+
+workcell_env_file_value_is_true() {
+  local env_path="$1"
+  local expected_key="$2"
+  local value=""
+
+  value="$(workcell_env_file_boolean_value "${env_path}" "${expected_key}" || true)"
+  [[ "${value}" == "true" ]]
+}
+
+workcell_gemini_selected_auth_type_from_env_file() {
+  local env_path="$1"
+  local env_value=""
+
+  [[ -f "${env_path}" ]] || return 1
+
+  if workcell_env_file_value_is_true "${env_path}" "GOOGLE_GENAI_USE_GCA"; then
+    printf 'oauth-personal\n'
+    return 0
+  fi
+  if workcell_env_file_value_is_true "${env_path}" "GOOGLE_GENAI_USE_VERTEXAI"; then
+    printf 'vertex-ai\n'
+    return 0
+  fi
+  env_value="$(workcell_env_file_assignment_value "${env_path}" "GEMINI_API_KEY" || true)"
+  if [[ -n "${env_value}" ]]; then
+    printf 'gemini-api-key\n'
+    return 0
+  fi
+
+  return 1
+}
+
+workcell_gemini_selected_auth_type() {
+  local env_path="$1"
+  local oauth_path="$2"
+  local selected_auth_type=""
+
+  selected_auth_type="$(workcell_gemini_selected_auth_type_from_env_file "${env_path}" || true)"
+  if [[ -z "${selected_auth_type}" ]] && [[ -f "${oauth_path}" ]]; then
+    selected_auth_type="oauth-personal"
+  fi
+  [[ -n "${selected_auth_type}" ]] || return 1
+  printf '%s\n' "${selected_auth_type}"
+}
+
+workcell_set_gemini_selected_auth_type() {
+  local settings_path="$1"
+  local selected_auth_type="$2"
+  local settings_dir=""
+  local settings_name=""
+  local rendered_path=""
+
+  [[ -n "${selected_auth_type}" ]] || return 0
+  settings_dir="$(dirname "${settings_path}")"
+  settings_name="$(basename "${settings_path}")"
+  rendered_path="$(mktemp "${settings_dir}/${settings_name}.tmp.XXXXXX")"
+  jq --arg selected_auth_type "${selected_auth_type}" \
+    '.security.auth.selectedType = $selected_auth_type' \
+    "${settings_path}" >"${rendered_path}" || {
+    rm -f "${rendered_path}"
+    return 1
+  }
+  mv "${rendered_path}" "${settings_path}"
+  chmod 0600 "${settings_path}"
+}
+
+workcell_set_gemini_folder_trust_enabled() {
+  local settings_path="$1"
+  local enabled="$2"
+  local settings_dir=""
+  local settings_name=""
+  local rendered_path=""
+
+  settings_dir="$(dirname "${settings_path}")"
+  settings_name="$(basename "${settings_path}")"
+  rendered_path="$(mktemp "${settings_dir}/${settings_name}.tmp.XXXXXX")"
+  jq --argjson enabled "${enabled}" \
+    '.security.folderTrust.enabled = $enabled' \
+    "${settings_path}" >"${rendered_path}" || {
+    rm -f "${rendered_path}"
+    return 1
+  }
+  mv "${rendered_path}" "${settings_path}"
+  chmod 0600 "${settings_path}"
+}
+
 workcell_workspace_import_path() {
   local relative_path="$1"
   local import_path="${WORKCELL_WORKSPACE_IMPORT_ROOT}/${relative_path}"
@@ -350,6 +741,7 @@ workcell_target_is_allowed() {
       /state/agent-home/.gemini/.env | \
       /state/agent-home/.gemini/oauth_creds.json | \
       /state/agent-home/.gemini/projects.json | \
+      /state/agent-home/.gemini/trustedFolders.json | \
       /state/agent-home/.config/gcloud/application_default_credentials.json | \
       /state/agent-home/.config/gh/config.yml | \
       /state/agent-home/.config/gh/hosts.yml | \
@@ -578,20 +970,41 @@ seed_claude_home() {
 }
 
 seed_gemini_home() {
+  local workspace_root="${WORKSPACE:-/workspace}"
+  local selected_auth_type=""
+
   workcell_prepare_session_directory "${HOME}/.gemini" "Gemini home"
   rm -f "${HOME}/.gemini/settings.json"
   cp "${ADAPTER_ROOT}/gemini/.gemini/settings.json" "${HOME}/.gemini/settings.json"
   chmod 0600 "${HOME}/.gemini/settings.json"
+  if [[ "${WORKCELL_MODE:-strict}" == "breakglass" ]]; then
+    workcell_set_gemini_folder_trust_enabled "${HOME}/.gemini/settings.json" true
+    workcell_reset_session_target "${HOME}/.gemini/trustedFolders.json" "Gemini trusted folders"
+    rm -f "${HOME}/.gemini/trustedFolders.json"
+  else
+    workcell_set_gemini_folder_trust_enabled "${HOME}/.gemini/settings.json" false
+    workcell_reset_session_target "${HOME}/.gemini/trustedFolders.json" "Gemini trusted folders"
+    workcell_render_gemini_trusted_folders "${HOME}/.gemini/trustedFolders.json" "${workspace_root}"
+    chmod 0600 "${HOME}/.gemini/trustedFolders.json"
+  fi
   workcell_render_provider_doc "${ADAPTER_ROOT}/gemini/GEMINI.md" "${HOME}/.gemini/GEMINI.md" gemini
   workcell_copy_manifest_credential_file gemini_env "${HOME}/.gemini/.env" || true
+  workcell_validate_gemini_env_auth_config "${HOME}/.gemini/.env"
   workcell_copy_manifest_credential_file gemini_oauth "${HOME}/.gemini/oauth_creds.json" || true
+  workcell_validate_gemini_oauth_config "${HOME}/.gemini/oauth_creds.json"
   workcell_prepare_session_directory "${HOME}/.config/gcloud" "Google ADC directory"
   workcell_copy_manifest_credential_file gcloud_adc "${HOME}/.config/gcloud/application_default_credentials.json" || true
+  workcell_validate_gcloud_adc_config "${HOME}/.config/gcloud/application_default_credentials.json"
+  selected_auth_type="$(workcell_gemini_selected_auth_type \
+    "${HOME}/.gemini/.env" \
+    "${HOME}/.gemini/oauth_creds.json" || true)"
+  workcell_set_gemini_selected_auth_type "${HOME}/.gemini/settings.json" "${selected_auth_type}"
   if ! workcell_copy_manifest_credential_file gemini_projects "${HOME}/.gemini/projects.json"; then
     workcell_reset_session_target "${HOME}/.gemini/projects.json" "Gemini projects"
     printf '{\n  "projects": {}\n}\n' >"${HOME}/.gemini/projects.json"
     chmod 0600 "${HOME}/.gemini/projects.json"
   fi
+  workcell_validate_gemini_projects_config "${HOME}/.gemini/projects.json"
 }
 
 workcell_seed_shared_credentials() {

@@ -29,24 +29,37 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
   && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
   && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
   && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99workcell-snapshot \
-  && DEBIAN_FRONTEND=noninteractive apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  bash \
-  ca-certificates \
-  curl \
-  fd-find \
-  git \
-  jq \
-  less \
-  openssh-client \
-  passwd \
-  procps \
-  ripgrep \
-  sudo \
-  unzip \
-  util-linux \
-  xz-utils \
+  && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/99workcell-snapshot \
+  && install_runtime_packages() { \
+       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       bash \
+       ca-certificates \
+       curl \
+       fd-find \
+       git \
+       jq \
+       less \
+       openssh-client \
+       passwd \
+       procps \
+       ripgrep \
+       sudo \
+       unzip \
+       util-linux \
+       xz-utils \
+       && return 0; \
+     } \
+  && for attempt in 1 2 3; do \
+       rm -rf /var/lib/apt/lists/*; \
+       if DEBIAN_FRONTEND=noninteractive apt-get update \
+         && install_runtime_packages; then \
+         break; \
+       fi; \
+       if [[ "${attempt}" -eq 3 ]]; then \
+         exit 1; \
+       fi; \
+       sleep "$((attempt * 5))"; \
+     done \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
   && mkdir -p \
     /etc/workcell/empty-xdg \
@@ -103,8 +116,23 @@ ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
 
-RUN DEBIAN_FRONTEND=noninteractive apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cargo rustc \
+RUN install_runtime_builder_packages() { \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      cargo \
+      rustc \
+      && return 0; \
+    } \
+  && for attempt in 1 2 3; do \
+       rm -rf /var/lib/apt/lists/*; \
+       if DEBIAN_FRONTEND=noninteractive apt-get update \
+         && install_runtime_builder_packages; then \
+         break; \
+       fi; \
+       if [[ "${attempt}" -eq 3 ]]; then \
+         exit 1; \
+       fi; \
+       sleep "$((attempt * 5))"; \
+     done \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
   && rm -f /etc/ld.so.cache
 

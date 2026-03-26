@@ -46,7 +46,12 @@ class RenderInjectionBundleTests(unittest.TestCase):
             )
 
     def test_reserved_targets_cover_managed_provider_state(self) -> None:
-        for target in ("~/.mcp.json", "~/.gemini/projects.json", "~/.config/claude-code/auth.json"):
+        for target in (
+            "~/.mcp.json",
+            "~/.gemini/projects.json",
+            "~/.gemini/trustedFolders.json",
+            "~/.config/claude-code/auth.json",
+        ):
             with self.assertRaises(SystemExit):
                 candidate = self.module.normalize_container_target(target)
                 self.module.validate_container_target(candidate)
@@ -258,7 +263,12 @@ class RenderInjectionBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             env_file = root / "gemini.env"
-            env_file.write_text('export GOOGLE_CLOUD_LOCATION="us-central1"\n', encoding="utf-8")
+            env_file.write_text(
+                'export GOOGLE_GENAI_USE_VERTEXAI=true\n'
+                'GOOGLE_CLOUD_PROJECT=test-project\n'
+                'GOOGLE_CLOUD_LOCATION="us-central1" # comment\n',
+                encoding="utf-8",
+            )
             env_file.chmod(0o600)
 
             rendered = self.module.render_credentials(
@@ -270,8 +280,76 @@ class RenderInjectionBundleTests(unittest.TestCase):
 
             self.assertEqual(
                 self.module.derive_credential_extra_endpoints(rendered),
-                ["us-central1-aiplatform.googleapis.com:443"],
+                ["aiplatform.googleapis.com:443", "us-central1-aiplatform.googleapis.com:443"],
             )
+
+    def test_derive_credential_extra_endpoints_adds_google_auth_endpoints_for_gca(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            env_file = root / "gemini.env"
+            env_file.write_text("GOOGLE_GENAI_USE_GCA=true\n", encoding="utf-8")
+            env_file.chmod(0o600)
+
+            rendered = self.module.render_credentials(
+                {"credentials": {"gemini_env": "gemini.env"}},
+                root,
+                "gemini",
+                "strict",
+            )
+
+            self.assertEqual(
+                self.module.derive_credential_extra_endpoints(rendered),
+                [
+                    "accounts.google.com:443",
+                    "oauth2.googleapis.com:443",
+                    "sts.googleapis.com:443",
+                ],
+            )
+
+    def test_render_credentials_rejects_invalid_gemini_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            invalid_env = root / "gemini.env"
+            invalid_env.write_text("GOOGLE_GENAI_USE_VERTEXAI true\n", encoding="utf-8")
+            invalid_env.chmod(0o600)
+            invalid_oauth = root / "gemini-oauth.json"
+            invalid_oauth.write_text("[]\n", encoding="utf-8")
+            invalid_oauth.chmod(0o600)
+            invalid_adc = root / "gcloud-adc.json"
+            invalid_adc.write_text("{}\n", encoding="utf-8")
+            invalid_adc.chmod(0o600)
+            invalid_projects = root / "gemini-projects.json"
+            invalid_projects.write_text('{"projects":[]}\n', encoding="utf-8")
+            invalid_projects.chmod(0o600)
+
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {"credentials": {"gemini_env": "gemini.env"}},
+                    root,
+                    "gemini",
+                    "strict",
+                )
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {"credentials": {"gemini_oauth": "gemini-oauth.json"}},
+                    root,
+                    "gemini",
+                    "strict",
+                )
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {"credentials": {"gcloud_adc": "gcloud-adc.json"}},
+                    root,
+                    "gemini",
+                    "strict",
+                )
+            with self.assertRaises(SystemExit):
+                self.module.render_credentials(
+                    {"credentials": {"gemini_projects": "gemini-projects.json"}},
+                    root,
+                    "gemini",
+                    "strict",
+                )
 
     def test_render_ssh_rejects_unsafe_config_without_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

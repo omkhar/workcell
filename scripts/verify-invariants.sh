@@ -318,6 +318,11 @@ if ! rg -q 'REAL_HOME=' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
+if ! sed -n '/^run_host_colima()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "HOME=\"\${REAL_HOME}\""; then
+  echo "Expected run_host_colima to restore the real host HOME instead of the Docker client sandbox home" >&2
+  exit 1
+fi
+
 if ! head -n 1 "${ROOT_DIR}/scripts/workcell" | grep -q '^#!/usr/bin/env -S -i PATH=.* BASH_ENV= ENV= /bin/bash$'; then
   echo "Expected scripts/workcell to use env -S -i with an absolute /bin/bash and cleared host environment" >&2
   exit 1
@@ -657,7 +662,7 @@ if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_CONTAINER_MUTABILITY=ephemeral
   exit 1
 fi
 
-STALE_INJECTION_BUNDLE="${REAL_HOME}/.local/state/workcell/tmp/workcell-injections.verify-stale.$$"
+STALE_INJECTION_BUNDLE="${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections.verify-stale.$$"
 STALE_INJECTION_SIDECAR="${STALE_INJECTION_BUNDLE}.mounts.json"
 mkdir -p "$(dirname "${STALE_INJECTION_BUNDLE}")"
 mkdir -p "${STALE_INJECTION_BUNDLE}"
@@ -752,6 +757,73 @@ if ! grep -q 'copies.classification is required' /tmp/workcell-injection-missing
   exit 1
 fi
 
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/bad-duplicate-key.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini.env"
+gemini_env = "gemini.env"
+EOF
+
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-duplicate-key.toml" \
+  --auth-status >/tmp/workcell-injection-bad-duplicate-key.out 2>&1; then
+  echo "Expected workcell --auth-status to reject duplicate keys in injection policies" >&2
+  exit 1
+fi
+
+if ! grep -q 'duplicate key: gemini_env' /tmp/workcell-injection-bad-duplicate-key.out; then
+  echo "Expected duplicate-key rejection to name the repeated key" >&2
+  cat /tmp/workcell-injection-bad-duplicate-key.out >&2
+  exit 1
+fi
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/bad-value.toml"
+version = 1
+
+[credentials]
+gemini_env = gemini.env
+EOF
+
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-value.toml" \
+  --auth-status >/tmp/workcell-injection-bad-value.out 2>&1; then
+  echo "Expected workcell --auth-status to reject unsupported TOML values in injection policies" >&2
+  exit 1
+fi
+
+if ! grep -q 'unsupported TOML value' /tmp/workcell-injection-bad-value.out; then
+  echo "Expected invalid-value rejection to explain the supported TOML subset" >&2
+  cat /tmp/workcell-injection-bad-value.out >&2
+  exit 1
+fi
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/bad-github-scope.toml"
+version = 1
+
+[credentials.github_hosts]
+source = "gh-hosts.yml"
+EOF
+
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-github-scope.toml" \
+  --auth-status >/tmp/workcell-injection-bad-github-scope.out 2>&1; then
+  echo "Expected workcell --auth-status to reject unscoped shared GitHub credentials" >&2
+  exit 1
+fi
+
+if ! grep -q 'providers is required' /tmp/workcell-injection-bad-github-scope.out; then
+  echo "Expected shared GitHub credential rejection to require explicit providers scoping" >&2
+  cat /tmp/workcell-injection-bad-github-scope.out >&2
+  exit 1
+fi
+
 cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/bad-ssh.toml"
 version = 1
 
@@ -792,6 +864,11 @@ fi
 
 if ! rg -q -- '--self-docker-probe' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell to expose a hidden self-docker probe for invariant testing" >&2
+  exit 1
+fi
+
+if ! rg -q -- '--self-staging-probe' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to expose a hidden staging probe for invariant testing" >&2
   exit 1
 fi
 
@@ -910,6 +987,25 @@ if ! rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to allow snapshot.debian.org" >&2
   exit 1
 fi
+
+if rg -q 'snapshot\.debian\.org:443' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:443 egress" >&2
+  exit 1
+fi
+
+for dockerfile in \
+  "${ROOT_DIR}/runtime/container/Dockerfile" \
+  "${ROOT_DIR}/tools/validator/Dockerfile" \
+  "${ROOT_DIR}/tools/remote-validator/Dockerfile"; do
+  if ! rg -q 'Acquire::Retries "5";' "${dockerfile}"; then
+    echo "Expected ${dockerfile} to pin apt retry count for snapshot fetch resilience" >&2
+    exit 1
+  fi
+  if ! rg -q 'Acquire::http::Timeout "30";' "${dockerfile}"; then
+    echo "Expected ${dockerfile} to pin apt HTTP timeout for snapshot fetch resilience" >&2
+    exit 1
+  fi
+done
 
 if ! rg -q '"bootstrap_applied=\$\{BOOTSTRAP_APPLIED\}"' "${ROOT_DIR}/scripts/workcell" ||
   ! rg -q '"bootstrap_endpoints=\$\(\[\[ "\$\{BOOTSTRAP_APPLIED\}" -eq 1 \]\] && printf '\''%s'\'' "\$\{BOOTSTRAP_ENDPOINTS\}" \|\| printf '\'''\''\)"' "${ROOT_DIR}/scripts/workcell"; then
@@ -1901,6 +1997,24 @@ printf 'GEMINI_API_KEY=verify-gemini-key\n' >"${AUTH_STATUS_ROOT}/gemini.env"
 chmod 0600 "${AUTH_STATUS_ROOT}/gemini.env"
 printf '{"type":"authorized_user"}\n' >"${AUTH_STATUS_ROOT}/gcloud-adc.json"
 chmod 0600 "${AUTH_STATUS_ROOT}/gcloud-adc.json"
+printf '{"projects":{"verify":{"path":"/workspace"}}}\n' >"${AUTH_STATUS_ROOT}/gemini-projects.json"
+chmod 0600 "${AUTH_STATUS_ROOT}/gemini-projects.json"
+printf 'GOOGLE_GENAI_USE_VERTEXAI true\n' >"${AUTH_STATUS_ROOT}/gemini-invalid.env"
+chmod 0600 "${AUTH_STATUS_ROOT}/gemini-invalid.env"
+printf '[]\n' >"${AUTH_STATUS_ROOT}/gemini-invalid-oauth.json"
+chmod 0600 "${AUTH_STATUS_ROOT}/gemini-invalid-oauth.json"
+printf '{}\n' >"${AUTH_STATUS_ROOT}/gcloud-adc-invalid.json"
+chmod 0600 "${AUTH_STATUS_ROOT}/gcloud-adc-invalid.json"
+printf '{"projects":[]}\n' >"${AUTH_STATUS_ROOT}/gemini-projects-invalid.json"
+chmod 0600 "${AUTH_STATUS_ROOT}/gemini-projects-invalid.json"
+printf 'GOOGLE_GENAI_USE_GCA=true\n' >"${AUTH_STATUS_ROOT}/gemini-gca.env"
+chmod 0600 "${AUTH_STATUS_ROOT}/gemini-gca.env"
+cat >"${AUTH_STATUS_ROOT}/gemini-vertex-comment.env" <<'EOF'
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=verify-project
+GOOGLE_CLOUD_LOCATION="us-central1" # comment
+EOF
+chmod 0600 "${AUTH_STATUS_ROOT}/gemini-vertex-comment.env"
 cat >"${AUTH_STATUS_ROOT}/hosts.yml" <<'EOF'
 github.com:
   oauth_token: test-token
@@ -1917,6 +2031,7 @@ codex_auth = "auth.json"
 claude_auth = "claude-auth.json"
 claude_api_key = "claude-api-key.txt"
 gemini_env = "gemini.env"
+gemini_projects = "gemini-projects.json"
 gcloud_adc = "gcloud-adc.json"
 [credentials.github_hosts]
 source = "hosts.yml"
@@ -1927,7 +2042,8 @@ config = "ssh-config"
 allow_unsafe_config = true
 EOF
 cat >"${AUTH_STATUS_ROOT}/gemini.env" <<'EOF'
-GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_API_KEY=verify-google-key
 EOF
 chmod 0600 "${AUTH_STATUS_ROOT}/gemini.env"
 if ! "${ROOT_DIR}/scripts/workcell" \
@@ -1976,9 +2092,222 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^provider_auth_mode=gemini_env$' /tmp/workcell-auth-status-gemini.out
-grep -q '^provider_auth_modes=gemini_env,gcloud_adc$' /tmp/workcell-auth-status-gemini.out
+grep -q '^provider_auth_modes=gemini_env$' /tmp/workcell-auth-status-gemini.out
 grep -q '^shared_auth_modes=github_hosts$' /tmp/workcell-auth-status-gemini.out
 grep -q '^github_auth_present=1$' /tmp/workcell-auth-status-gemini.out
+
+cat >"${AUTH_STATUS_ROOT}/adc-only.toml" <<'EOF'
+version = 1
+
+[credentials]
+gcloud_adc = "gcloud-adc.json"
+EOF
+cat >"${AUTH_STATUS_ROOT}/invalid-gemini-env.toml" <<'EOF'
+version = 1
+
+[credentials]
+gemini_env = "gemini-invalid.env"
+EOF
+cat >"${AUTH_STATUS_ROOT}/invalid-gemini-oauth.toml" <<'EOF'
+version = 1
+
+[credentials]
+gemini_oauth = "gemini-invalid-oauth.json"
+EOF
+cat >"${AUTH_STATUS_ROOT}/invalid-gcloud-adc.toml" <<'EOF'
+version = 1
+
+[credentials]
+gcloud_adc = "gcloud-adc-invalid.json"
+EOF
+cat >"${AUTH_STATUS_ROOT}/invalid-gemini-projects.toml" <<'EOF'
+version = 1
+
+[credentials]
+gemini_projects = "gemini-projects-invalid.json"
+EOF
+cat >"${AUTH_STATUS_ROOT}/gca-only.toml" <<'EOF'
+version = 1
+
+[credentials]
+gemini_env = "gemini-gca.env"
+EOF
+cat >"${AUTH_STATUS_ROOT}/vertex-comment.toml" <<'EOF'
+version = 1
+
+[credentials]
+gemini_env = "gemini-vertex-comment.env"
+EOF
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/adc-only.toml" \
+  --auth-status >/tmp/workcell-auth-status-gemini-adc-only.out 2>&1; then
+  echo "Expected Gemini --auth-status to succeed for supplemental gcloud_adc inputs" >&2
+  exit 1
+fi
+grep -q '^provider_auth_mode=none$' /tmp/workcell-auth-status-gemini-adc-only.out
+grep -q '^provider_auth_modes=none$' /tmp/workcell-auth-status-gemini-adc-only.out
+
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/invalid-gemini-env.toml" \
+  --auth-status >/tmp/workcell-auth-status-gemini-invalid-env.out 2>&1; then
+  echo "Expected Gemini --auth-status to reject malformed Gemini env auth" >&2
+  exit 1
+fi
+grep -q 'Malformed Gemini auth env file' /tmp/workcell-auth-status-gemini-invalid-env.out
+
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/invalid-gemini-oauth.toml" \
+  --auth-status >/tmp/workcell-auth-status-gemini-invalid-oauth.out 2>&1; then
+  echo "Expected Gemini --auth-status to reject malformed Gemini OAuth JSON" >&2
+  exit 1
+fi
+grep -q 'credentials.gemini_oauth must contain a JSON object' /tmp/workcell-auth-status-gemini-invalid-oauth.out
+
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/invalid-gcloud-adc.toml" \
+  --auth-status >/tmp/workcell-auth-status-gemini-invalid-adc.out 2>&1; then
+  echo "Expected Gemini --auth-status to reject malformed Google ADC JSON" >&2
+  exit 1
+fi
+grep -q 'credentials.gcloud_adc must contain a non-empty JSON string field: type' /tmp/workcell-auth-status-gemini-invalid-adc.out
+
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/invalid-gemini-projects.toml" \
+  --auth-status >/tmp/workcell-auth-status-gemini-invalid-projects.out 2>&1; then
+  echo "Expected Gemini --auth-status to reject malformed Gemini projects JSON" >&2
+  exit 1
+fi
+grep -q 'credentials.gemini_projects must contain a JSON object with an object-valued projects field' /tmp/workcell-auth-status-gemini-invalid-projects.out
+
+cat >"${AUTH_STATUS_ROOT}/invalid-dotted.toml" <<'EOF'
+version = 1
+credentials.gemini_env = "gemini.env"
+EOF
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/invalid-dotted.toml" \
+  --auth-status >/tmp/workcell-auth-status-invalid-dotted.out 2>&1; then
+  echo "Expected workcell to reject dotted injection-policy keys through the CLI path" >&2
+  exit 1
+fi
+grep -q 'dotted TOML keys are not supported' /tmp/workcell-auth-status-invalid-dotted.out
+
+cat >"${AUTH_STATUS_ROOT}/invalid-credential-key.toml" <<'EOF'
+version = 1
+[credentials]
+gemini = "gemini.env"
+EOF
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/invalid-credential-key.toml" \
+  --auth-status >/tmp/workcell-auth-status-invalid-credential-key.out 2>&1; then
+  echo "Expected workcell to reject unsupported credential keys through the CLI path" >&2
+  exit 1
+fi
+grep -q 'credentials contains unsupported keys: gemini' /tmp/workcell-auth-status-invalid-credential-key.out
+
+cat >"${AUTH_STATUS_ROOT}/invalid-duplicate-table.toml" <<'EOF'
+version = 1
+
+[credentials]
+gemini_env = "gemini.env"
+
+[credentials]
+gcloud_adc = "adc.json"
+EOF
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/invalid-duplicate-table.toml" \
+  --auth-status >/tmp/workcell-auth-status-invalid-duplicate-table.out 2>&1; then
+  echo "Expected workcell to reject duplicate top-level tables through the CLI path" >&2
+  exit 1
+fi
+grep -q 'duplicate table \[credentials\]' /tmp/workcell-auth-status-invalid-duplicate-table.out
+
+cat >"${AUTH_STATUS_ROOT}/invalid-duplicate-shared-credential-table.toml" <<'EOF'
+version = 1
+
+[credentials.github_hosts]
+source = "gh-hosts.yml"
+providers = ["gemini"]
+
+[credentials.github_hosts]
+source = "gh-hosts.yml"
+providers = ["codex"]
+EOF
+if "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/invalid-duplicate-shared-credential-table.toml" \
+  --auth-status >/tmp/workcell-auth-status-invalid-duplicate-shared-credential-table.out 2>&1; then
+  echo "Expected workcell to reject duplicate shared credential tables through the CLI path" >&2
+  exit 1
+fi
+grep -q 'duplicate table \[credentials.github_hosts\]' /tmp/workcell-auth-status-invalid-duplicate-shared-credential-table.out
+
+STAGING_PROBE_WORKSPACE="${AUTH_STATUS_ROOT}/staging-probe-workspace"
+mkdir -p "${STAGING_PROBE_WORKSPACE}"
+printf '# staging probe\n' >"${STAGING_PROBE_WORKSPACE}/AGENTS.md"
+STAGING_PROBE_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
+  --self-staging-probe \
+  gemini \
+  "${STAGING_PROBE_WORKSPACE}" \
+  "${AUTH_STATUS_ROOT}/policy.toml" \
+  strict)"
+if [[ "${STAGING_PROBE_OUTPUT}" != *"injection_bundle_root=${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections."* ]]; then
+  echo "Expected staging probe to keep rendered injection bundles under the real Colima-visible cache root" >&2
+  printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
+  exit 1
+fi
+if [[ "${STAGING_PROBE_OUTPUT}" != *"shadow_root=${REAL_HOME}/Library/Caches/colima/workcell-shadow/shadow."* ]]; then
+  echo "Expected staging probe to keep workspace control-plane shadows under the real Colima-visible cache root" >&2
+  printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
+  exit 1
+fi
+if [[ "${STAGING_PROBE_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/gemini.env:ro'* ]]; then
+  echo "Expected staging probe to include the rendered Gemini credential mount" >&2
+  printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
+  exit 1
+fi
+if ! printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Eq "^direct_mount=${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections\\.[^:]*/direct-mounts/[0-9a-f]{16}:/opt/workcell/host-inputs/credentials/gemini.env:ro$"; then
+  echo "Expected staging probe to restage direct credential mounts under the injection bundle root" >&2
+  printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
+  exit 1
+fi
+if printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Fq "direct_mount=${AUTH_STATUS_ROOT}/gemini.env:/opt/workcell/host-inputs/credentials/gemini.env:ro"; then
+  echo "Expected staging probe to avoid binding the original host credential path directly into the runtime" >&2
+  printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
+  exit 1
+fi
+if [[ "${STAGING_PROBE_OUTPUT}" != *'/workspace/AGENTS.md:ro'* ]]; then
+  echo "Expected staging probe to include the masked workspace AGENTS.md mount" >&2
+  printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
+  exit 1
+fi
+if [[ "${STAGING_PROBE_OUTPUT}" != *'/opt/workcell/workspace-control-plane:ro'* ]]; then
+  echo "Expected staging probe to include the workspace import mount" >&2
+  printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
+  exit 1
+fi
+if printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Eq '^(direct_mount|shadow_mount|workspace_import_mount)=/tmp/workcell-docker\.'; then
+  echo "Expected staging probe mount sources to avoid the temporary Docker client sandbox home" >&2
+  printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
+  exit 1
+fi
+
 GEMINI_AUTH_FAILURE_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" csv_contains_value
@@ -2010,8 +2339,23 @@ if [[ "${status}" -ne 2 ]]; then
   exit 1
 fi
 grep -q 'Gemini auth is not configured for this session.' /tmp/workcell-gemini-auth-harness.stderr
-grep -q 'Update /tmp/no-gemini-policy.toml to include credentials.gemini_env, credentials.gemini_oauth, or credentials.gcloud_adc.' /tmp/workcell-gemini-auth-harness.stderr
+grep -q 'Update /tmp/no-gemini-policy.toml to include credentials.gemini_env or credentials.gemini_oauth.' /tmp/workcell-gemini-auth-harness.stderr
+grep -q 'credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env.' /tmp/workcell-gemini-auth-harness.stderr
 grep -q '^Next step: workcell --auth-status --agent gemini --workspace /tmp/workcell-gemini-workspace$' /tmp/workcell-gemini-auth-harness.stderr
+
+INJECTION_CREDENTIAL_KEYS=gcloud_adc
+set -- gemini
+if ( fail_fast_for_missing_gemini_auth "$@" ) >/tmp/workcell-gemini-auth-adc-only.stdout 2>/tmp/workcell-gemini-auth-adc-only.stderr; then
+  echo "Expected bare gcloud_adc to remain insufficient for Gemini fail-fast" >&2
+  exit 1
+else
+  status=$?
+fi
+if [[ "${status}" -ne 2 ]]; then
+  echo "Expected bare gcloud_adc fail-fast to exit 2, got ${status}" >&2
+  exit 1
+fi
+grep -q 'credentials.gcloud_adc only supplements Gemini Vertex auth' /tmp/workcell-gemini-auth-adc-only.stderr
 
 set -- gemini --version
 if ! ( fail_fast_for_missing_gemini_auth "$@" ) >/tmp/workcell-gemini-auth-version.stdout 2>/tmp/workcell-gemini-auth-version.stderr; then
@@ -2086,9 +2430,35 @@ if ! "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q 'accounts.google.com:443' /tmp/workcell-gemini-network.stderr
 grep -q 'api.github.com:443' /tmp/workcell-gemini-network.stderr
-grep -q 'us-central1-aiplatform.googleapis.com:443' /tmp/workcell-gemini-network.stderr
+grep -q 'aiplatform.googleapis.com:443' /tmp/workcell-gemini-network.stderr
 grep -q -- '--add-host accounts.google.com:' /tmp/workcell-gemini-network.stdout
-grep -q -- '--add-host us-central1-aiplatform.googleapis.com:' /tmp/workcell-gemini-network.stdout
+grep -q -- '--add-host aiplatform.googleapis.com:' /tmp/workcell-gemini-network.stdout
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${ROOT_DIR}" \
+  --injection-policy "${AUTH_STATUS_ROOT}/gca-only.toml" \
+  --dry-run >/tmp/workcell-gemini-gca-network.stdout 2>/tmp/workcell-gemini-gca-network.stderr; then
+  echo "Expected Gemini dry-run with GOOGLE_GENAI_USE_GCA=true auth to succeed" >&2
+  exit 1
+fi
+grep -q 'accounts.google.com:443' /tmp/workcell-gemini-gca-network.stderr
+grep -q 'oauth2.googleapis.com:443' /tmp/workcell-gemini-gca-network.stderr
+grep -q 'sts.googleapis.com:443' /tmp/workcell-gemini-gca-network.stderr
+grep -q -- '--add-host accounts.google.com:' /tmp/workcell-gemini-gca-network.stdout
+grep -q -- '--add-host oauth2.googleapis.com:' /tmp/workcell-gemini-gca-network.stdout
+grep -q -- '--add-host sts.googleapis.com:' /tmp/workcell-gemini-gca-network.stdout
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --workspace "${ROOT_DIR}" \
+  --injection-policy "${AUTH_STATUS_ROOT}/vertex-comment.toml" \
+  --dry-run >/tmp/workcell-gemini-vertex-comment.stdout 2>/tmp/workcell-gemini-vertex-comment.stderr; then
+  echo "Expected Gemini dry-run with commented Vertex location auth to succeed" >&2
+  exit 1
+fi
+grep -q 'aiplatform.googleapis.com:443' /tmp/workcell-gemini-vertex-comment.stderr
+grep -q 'us-central1-aiplatform.googleapis.com:443' /tmp/workcell-gemini-vertex-comment.stderr
+grep -q -- '--add-host aiplatform.googleapis.com:' /tmp/workcell-gemini-vertex-comment.stdout
+grep -q -- '--add-host us-central1-aiplatform.googleapis.com:' /tmp/workcell-gemini-vertex-comment.stdout
 
 BROKEN_DEBUG_POINTER_PROFILE="${STRICT_PREFLIGHT_PROFILE}-broken-debug-pointer"
 mkdir -p "${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}"
@@ -2616,6 +2986,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     --prepare \
     --rebuild \
     --workspace "${ROOT_DIR}" \
+    --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
     --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
     --debug-log "${LIVE_DEBUG_LOG}" \
     --agent-arg --version >/tmp/workcell-audit-prepare.out 2>&1; then
@@ -2645,6 +3016,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     --agent codex \
     --mode build \
     --workspace "${ROOT_DIR}" \
+    --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
     --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
     --allow-arbitrary-command \
     --ack-arbitrary-command \
@@ -2661,6 +3033,18 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
   grep -q 'session_assurance_final=lower-assurance-package-mutation' /tmp/workcell-audit-session.log
   grep -q 'event=exit' /tmp/workcell-audit-session.log
   grep -q 'package_mutation_downgraded=1' /tmp/workcell-audit-session.log
+  if ! "${ROOT_DIR}/scripts/workcell" \
+    --agent codex \
+    --mode build \
+    --workspace "${ROOT_DIR}" \
+    --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+    --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    -- /bin/bash -lc 'test -f /opt/workcell/host-injections/manifest.json && grep -q "Workcell masks workspace control files inside the boundary." /workspace/AGENTS.md && test ! -d /workspace/AGENTS.md'; then
+    echo "Expected live launcher run to stage an injection manifest and mount /workspace/AGENTS.md as a file" >&2
+    exit 1
+  fi
   if [[ -x /opt/homebrew/bin/colima ]]; then
     /opt/homebrew/bin/colima delete --profile "${LIVE_DEBUG_PROFILE_NAME}" --force >/dev/null 2>&1 || true
   else
@@ -2700,6 +3084,70 @@ EOF
     /usr/local/bin/colima delete --profile "${AUDIT_RESTORE_PROFILE_NAME}" --force >/dev/null 2>&1 || true
   fi
   rm -rf "${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
+
+  STRICT_REFRESH_PROFILE_NAME="workcell-strict-refresh-$$"
+  STRICT_REFRESH_DIR="${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}"
+  mkdir -p "${STRICT_REFRESH_DIR}"
+  printf '%s\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.managed"
+  cat >"${STRICT_REFRESH_DIR}/colima.yaml" <<'EOF'
+cpu: 4
+memory: 7
+disk: 60
+runtime: docker
+vmType: vz
+mountType: virtiofs
+EOF
+  printf 'image_id=stale-image\n' >"${STRICT_REFRESH_DIR}/workcell.image-ready"
+  printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.audit.log"
+  set +e
+  "${ROOT_DIR}/scripts/workcell" \
+    --test-fail-after-profile-refresh \
+    --agent codex \
+    --allow-nongit-workspace \
+    --workspace "${NONGIT_WORKSPACE}" \
+    --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
+    --agent-arg --version >/tmp/workcell-strict-refresh-preflight.out 2>&1
+  strict_refresh_status=$?
+  set -e
+  if [[ "${strict_refresh_status}" -ne 2 ]]; then
+    echo "Expected strict-mode refresh preflight to fail with exit 2 before the test hook, got ${strict_refresh_status}" >&2
+    cat /tmp/workcell-strict-refresh-preflight.out >&2
+    exit 1
+  fi
+  grep -q "Refreshing managed Colima profile ${STRICT_REFRESH_PROFILE_NAME} to apply the requested reviewed VM resources." /tmp/workcell-strict-refresh-preflight.out
+  grep -q "No prepared runtime image is recorded for strict mode on profile ${STRICT_REFRESH_PROFILE_NAME}." /tmp/workcell-strict-refresh-preflight.out
+  grep -q "No VM or container was started." /tmp/workcell-strict-refresh-preflight.out
+  if grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-preflight.out; then
+    echo "Strict-mode refresh preflight should fail before the post-refresh test hook runs" >&2
+    exit 1
+  fi
+  set +e
+  "${ROOT_DIR}/scripts/workcell" \
+    --test-fail-after-profile-refresh \
+    --agent codex \
+    --prepare \
+    --allow-nongit-workspace \
+    --workspace "${NONGIT_WORKSPACE}" \
+    --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
+    --agent-arg --version >/tmp/workcell-strict-refresh-prepare.out 2>&1
+  strict_refresh_prepare_status=$?
+  set -e
+  if [[ "${strict_refresh_prepare_status}" -ne 88 ]]; then
+    echo "Expected follow-up strict prepare to reach the post-refresh hook instead of tripping unmanaged-profile preflight, got ${strict_refresh_prepare_status}" >&2
+    cat /tmp/workcell-strict-refresh-prepare.out >&2
+    exit 1
+  fi
+  grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-prepare.out
+  if grep -q 'Refusing to reuse unmanaged Colima profile' /tmp/workcell-strict-refresh-prepare.out; then
+    echo "Strict-mode refresh preflight should leave the profile recoverable by --prepare" >&2
+    exit 1
+  fi
+  if [[ -x /opt/homebrew/bin/colima ]]; then
+    /opt/homebrew/bin/colima delete --profile "${STRICT_REFRESH_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+  else
+    /usr/local/bin/colima delete --profile "${STRICT_REFRESH_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+  fi
+  rm -rf "${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${STRICT_REFRESH_PROFILE_NAME}"
 fi
 
 UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
@@ -2916,10 +3364,228 @@ if gemini_settings.get("tools", {}).get("allowed") != []:
     raise SystemExit("Gemini adapter must not seed allowed tools")
 if gemini_settings.get("mcp", {}).get("allowed") != []:
     raise SystemExit("Gemini adapter must not seed allowed MCP servers")
+if "selectedType" in gemini_settings.get("security", {}).get("auth", {}):
+    raise SystemExit("Gemini adapter baseline must not hardcode a selected auth type")
+if gemini_settings.get("security", {}).get("folderTrust", {}).get("enabled") is not False:
+    raise SystemExit("Gemini adapter must disable Gemini folder trust inside the managed runtime")
 if gemini_settings.get("tools", {}).get("shell", {}).get("enableInteractiveShell") is not False:
     raise SystemExit("Gemini adapter must disable interactive shell mode")
 if not isinstance(gemini_settings.get("advanced", {}).get("excludedEnvVars"), list):
     raise SystemExit("Gemini adapter must exclude sensitive environment variables")
 PY
+
+GEMINI_AUTH_SELECTION_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_trim_leading_whitespace
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_trim_trailing_whitespace
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_env_file_assignment_value
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_env_key_is_supported
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_validate_gemini_env_file_syntax
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_env_file_boolean_value
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_env_file_value_is_true
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_env_has_project_config
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_env_has_location_config
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_validate_gemini_env_auth_config
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_validate_json_object_file
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_validate_gemini_projects_config
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_selected_auth_type_from_env_file
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_selected_auth_type
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_set_gemini_selected_auth_type
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_set_gemini_folder_trust_enabled
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_render_gemini_trusted_folders
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_target_is_allowed
+  cat <<'EOF'
+set -euo pipefail
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
+workcell_die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+expect_auth_type() {
+  local env_contents="$1"
+  local oauth_present="$2"
+  local expected="$3"
+  local env_path="${TMP_DIR}/gemini.env"
+  local oauth_path="${TMP_DIR}/oauth.json"
+  local selected=""
+
+  rm -f "${env_path}" "${oauth_path}"
+  if [[ -n "${env_contents}" ]]; then
+    printf '%s\n' "${env_contents}" >"${env_path}"
+  fi
+  if [[ "${oauth_present}" == "1" ]]; then
+    printf '{}\n' >"${oauth_path}"
+  fi
+
+  selected="$(workcell_gemini_selected_auth_type "${env_path}" "${oauth_path}")"
+  if [[ "${selected}" != "${expected}" ]]; then
+    echo "Expected Gemini auth type ${expected}, got ${selected}" >&2
+    exit 1
+  fi
+}
+
+expect_auth_type 'GEMINI_API_KEY=test-key' 0 'gemini-api-key'
+expect_auth_type ' export GEMINI_API_KEY = "quoted-key" # comment' 0 'gemini-api-key'
+expect_auth_type $'GOOGLE_GENAI_USE_GCA=true\nGEMINI_API_KEY=test-key' 0 'oauth-personal'
+expect_auth_type $'GOOGLE_GENAI_USE_GCA="true" # comment\nGOOGLE_CLOUD_PROJECT=my-proj' 0 'oauth-personal'
+expect_auth_type $'GOOGLE_GENAI_USE_VERTEXAI="true" # comment\nGOOGLE_CLOUD_PROJECT=my-proj\nGOOGLE_CLOUD_LOCATION="us-central1" # comment' 0 'vertex-ai'
+expect_auth_type $'GOOGLE_GENAI_USE_VERTEXAI=true\nGOOGLE_API_KEY=vertex-key' 0 'vertex-ai'
+expect_auth_type $'GEMINI_API_KEY=test-key\nGOOGLE_CLOUD_PROJECT=my-proj' 0 'gemini-api-key'
+expect_auth_type '' 1 'oauth-personal'
+
+printf 'GOOGLE_API_KEY=test-key\n' >"${TMP_DIR}/google-api-key-only.env"
+if workcell_gemini_selected_auth_type "${TMP_DIR}/google-api-key-only.env" "${TMP_DIR}/missing-oauth.json" >/dev/null 2>&1; then
+  echo "Expected bare GOOGLE_API_KEY to stay unset until Gemini Vertex auth is explicitly selected" >&2
+  exit 1
+fi
+
+if workcell_gemini_selected_auth_type "${TMP_DIR}/missing.env" "${TMP_DIR}/missing-oauth.json" >/dev/null 2>&1; then
+  echo "Expected Gemini auth selection to stay unset when no credential material is present" >&2
+  exit 1
+fi
+
+printf 'GOOGLE_GENAI_USE_GCA=maybe\n' >"${TMP_DIR}/invalid-bool.env"
+if workcell_validate_gemini_env_auth_config "${TMP_DIR}/invalid-bool.env" >/tmp/gemini-invalid-bool.stdout 2>/tmp/gemini-invalid-bool.stderr; then
+  echo "Expected invalid Gemini auth booleans to be rejected" >&2
+  exit 1
+fi
+grep -q 'Invalid boolean in Gemini auth env file' /tmp/gemini-invalid-bool.stderr
+
+printf 'GOOGLE_GENAI_USE_VERTEXAI true\n' >"${TMP_DIR}/malformed.env"
+if workcell_validate_gemini_env_auth_config "${TMP_DIR}/malformed.env" >/tmp/gemini-malformed.stdout 2>/tmp/gemini-malformed.stderr; then
+  echo "Expected malformed Gemini auth env syntax to be rejected" >&2
+  exit 1
+fi
+grep -q 'Malformed Gemini auth env file' /tmp/gemini-malformed.stderr
+
+printf 'UNSUPPORTED_KEY=test\n' >"${TMP_DIR}/unsupported.env"
+if workcell_validate_gemini_env_auth_config "${TMP_DIR}/unsupported.env" >/tmp/gemini-unsupported.stdout 2>/tmp/gemini-unsupported.stderr; then
+  echo "Expected unsupported Gemini auth env keys to be rejected" >&2
+  exit 1
+fi
+grep -q 'Unsupported key in Gemini auth env file' /tmp/gemini-unsupported.stderr
+
+printf 'GOOGLE_GENAI_USE_GCA=true\nGOOGLE_GENAI_USE_VERTEXAI=true\n' >"${TMP_DIR}/conflicting-selectors.env"
+if workcell_validate_gemini_env_auth_config "${TMP_DIR}/conflicting-selectors.env" >/tmp/gemini-conflicting.stdout 2>/tmp/gemini-conflicting.stderr; then
+  echo "Expected contradictory Gemini auth selectors to be rejected" >&2
+  exit 1
+fi
+grep -q 'enables both GOOGLE_GENAI_USE_GCA and GOOGLE_GENAI_USE_VERTEXAI' /tmp/gemini-conflicting.stderr
+
+printf 'GOOGLE_GENAI_USE_VERTEXAI=true\nGOOGLE_API_KEY=vertex-key\n' >"${TMP_DIR}/vertex-express.env"
+if ! workcell_validate_gemini_env_auth_config "${TMP_DIR}/vertex-express.env" >/tmp/gemini-vertex-express.stdout 2>/tmp/gemini-vertex-express.stderr; then
+  echo "Expected Gemini Vertex express-mode env config to validate" >&2
+  cat /tmp/gemini-vertex-express.stderr >&2
+  exit 1
+fi
+
+printf 'GOOGLE_API_KEY=vertex-key\n' >"${TMP_DIR}/google-api-key-only.env"
+if workcell_validate_gemini_env_auth_config "${TMP_DIR}/google-api-key-only.env" >/tmp/gemini-google-api-key.stdout 2>/tmp/gemini-google-api-key.stderr; then
+  echo "Expected bare GOOGLE_API_KEY to be rejected without GOOGLE_GENAI_USE_VERTEXAI=true" >&2
+  exit 1
+fi
+grep -q 'sets GOOGLE_API_KEY without GOOGLE_GENAI_USE_VERTEXAI=true' /tmp/gemini-google-api-key.stderr
+
+printf 'GOOGLE_CLOUD_LOCATION=us-central1\n' >"${TMP_DIR}/location-only.env"
+if workcell_validate_gemini_env_auth_config "${TMP_DIR}/location-only.env" >/tmp/gemini-location-only.stdout 2>/tmp/gemini-location-only.stderr; then
+  echo "Expected location-only Gemini env config to be rejected" >&2
+  exit 1
+fi
+grep -q 'sets a Google Cloud location without a project' /tmp/gemini-location-only.stderr
+
+printf 'GOOGLE_CLOUD_PROJECT=my-proj\n' >"${TMP_DIR}/project-only.env"
+if workcell_validate_gemini_env_auth_config "${TMP_DIR}/project-only.env" >/tmp/gemini-project-only.stdout 2>/tmp/gemini-project-only.stderr; then
+  echo "Expected project-only Gemini env config to be rejected" >&2
+  exit 1
+fi
+grep -q 'does not configure a supported Gemini auth mode' /tmp/gemini-project-only.stderr
+
+SETTINGS_PATH="${TMP_DIR}/settings.json"
+cat >"${SETTINGS_PATH}" <<'JSON'
+{"security":{"folderTrust":{"enabled":false}}}
+JSON
+workcell_set_gemini_selected_auth_type "${SETTINGS_PATH}" "gemini-api-key"
+python3 - "${SETTINGS_PATH}" <<'PY'
+import json
+import sys
+
+settings = json.load(open(sys.argv[1], encoding="utf-8"))
+if settings.get("security", {}).get("auth", {}).get("selectedType") != "gemini-api-key":
+    raise SystemExit("Gemini selected auth type should be persisted into the seeded settings")
+if settings.get("security", {}).get("folderTrust", {}).get("enabled") is not False:
+    raise SystemExit("Gemini selected auth type update should preserve existing settings")
+PY
+workcell_set_gemini_folder_trust_enabled "${SETTINGS_PATH}" true
+python3 - "${SETTINGS_PATH}" <<'PY'
+import json
+import sys
+
+settings = json.load(open(sys.argv[1], encoding="utf-8"))
+if settings.get("security", {}).get("folderTrust", {}).get("enabled") is not True:
+    raise SystemExit("Gemini folder-trust helper should restore trust prompts for breakglass sessions")
+PY
+workcell_set_gemini_folder_trust_enabled "${SETTINGS_PATH}" false
+
+TRUSTED_FOLDERS_PATH="${TMP_DIR}/trustedFolders.json"
+TRUSTED_WORKSPACE=$'/workspace/quoted"path\\segment'
+workcell_render_gemini_trusted_folders "${TRUSTED_FOLDERS_PATH}" "${TRUSTED_WORKSPACE}"
+python3 - "${TRUSTED_FOLDERS_PATH}" "${TRUSTED_WORKSPACE}" <<'PY'
+import json
+import sys
+
+trusted = json.load(open(sys.argv[1], encoding="utf-8"))
+expected = {sys.argv[2]: "TRUST_FOLDER"}
+if trusted != expected:
+    raise SystemExit(f"Expected trustedFolders.json to preserve the exact workspace path, got {trusted!r}")
+PY
+
+printf '{"projects":[]}\n' >"${TMP_DIR}/invalid-projects.json"
+if workcell_validate_gemini_projects_config "${TMP_DIR}/invalid-projects.json" >/tmp/gemini-invalid-projects.stdout 2>/tmp/gemini-invalid-projects.stderr; then
+  echo "Expected invalid Gemini projects config to be rejected" >&2
+  exit 1
+fi
+grep -q 'Gemini projects config must contain a JSON object with an object-valued projects field' /tmp/gemini-invalid-projects.stderr
+
+printf '{"projects":{}}\n' >"${TMP_DIR}/valid-projects.json"
+if ! workcell_validate_gemini_projects_config "${TMP_DIR}/valid-projects.json" >/tmp/gemini-valid-projects.stdout 2>/tmp/gemini-valid-projects.stderr; then
+  echo "Expected valid Gemini projects config to be accepted" >&2
+  cat /tmp/gemini-valid-projects.stderr >&2
+  exit 1
+fi
+
+if workcell_target_is_allowed '/state/agent-home/.gemini/trustedFolders.json'; then
+  echo "Expected runtime manifest guard to reserve Gemini trustedFolders.json" >&2
+  exit 1
+fi
+EOF
+} >"${GEMINI_AUTH_SELECTION_HARNESS}"
+/bin/bash "${GEMINI_AUTH_SELECTION_HARNESS}"
+rm -f "${GEMINI_AUTH_SELECTION_HARNESS}"
+
+if ! rg -q 'trustedFolders\.json' "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
+  echo "Expected Gemini home seeding to provision trustedFolders.json" >&2
+  exit 1
+fi
 
 echo "Workcell invariant verification passed."

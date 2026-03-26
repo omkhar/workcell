@@ -305,7 +305,7 @@ profile_lima_dir() {
 }
 
 run_host_colima() {
-  COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+  HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
 }
 
 profile_process_pids() {
@@ -393,6 +393,7 @@ CONTROL_PLANE_SHADOW_ROOT=""
 INJECTION_BUNDLE_ROOT=""
 DIRECT_MOUNT_SPEC_PATH=""
 PROFILE_AUDIT_LOG_STASH=""
+PROFILE_WAS_REFRESHED=0
 PRESERVE_FAILED_PROFILE_STATE=0
 declare -a SHADOW_MOUNTS=()
 declare -a SHADOW_DEST_PATHS=()
@@ -782,6 +783,20 @@ maybe_fail_after_profile_refresh_for_tests() {
   exit 88
 }
 
+fail_missing_strict_prepared_image_prelaunch() {
+  if [[ "${PROFILE_WAS_REFRESHED:-0}" -eq 1 ]]; then
+    mkdir -p "${PROFILE_DIR}"
+    printf '%s\n' "${WORKSPACE}" >"${PROFILE_MARKER}"
+  fi
+  echo "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." >&2
+  echo "This is expected on the first launch for a workspace or after profile cleanup." >&2
+  echo "Next step:" >&2
+  build_recommended_command 1 0 "${MODE}"
+  echo "That command seeds the prepared runtime image inside the isolated VM and then launches ${AGENT} in strict mode." >&2
+  echo "No VM or container was started." >&2
+  exit 2
+}
+
 container_assurance() {
   workcell_container_assurance "${CONTAINER_MUTABILITY}"
 }
@@ -1117,7 +1132,7 @@ default_injection_policy_path() {
 }
 
 default_injection_bundle_parent() {
-  resolve_host_path "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/tmp"
+  resolve_host_path "${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
 }
 
 cleanup_stale_injection_bundles() {
@@ -1179,7 +1194,10 @@ for candidate in root.iterdir():
             continue
     elif stat.st_mtime > cutoff:
         continue
-    shutil.rmtree(candidate, ignore_errors=False)
+    try:
+        shutil.rmtree(candidate, ignore_errors=False)
+    except FileNotFoundError:
+        continue
     try:
         sidecar = sidecar_path(candidate)
         if sidecar.is_file():
@@ -1206,9 +1224,18 @@ prepare_injection_direct_mounts() {
   local mount_spec_path="$1"
   local host_source=""
   local mount_path=""
+  local staged_root=""
+  local staged_source=""
+  local entry_hash=""
 
   DIRECT_SOURCE_MOUNTS=()
   [[ -f "${mount_spec_path}" ]] || return 0
+  [[ -n "${INJECTION_BUNDLE_ROOT}" ]] || {
+    echo "Direct input staging requires an injection bundle root." >&2
+    exit 2
+  }
+  staged_root="${INJECTION_BUNDLE_ROOT}/direct-mounts"
+  mkdir -p "${staged_root}"
 
   while IFS=$'\t' read -r host_source mount_path; do
     [[ -n "${host_source}" ]] || continue
@@ -1227,7 +1254,30 @@ prepare_injection_direct_mounts() {
         ;;
     esac
 
-    DIRECT_SOURCE_MOUNTS+=(-v "${host_source}:${mount_path}:ro")
+    entry_hash="$(
+      run_clean_host_command "${HOST_PYTHON3_BIN}" - "${host_source}" "${mount_path}" <<'PY'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+for value in sys.argv[1:]:
+    digest.update(value.encode("utf-8"))
+    digest.update(b"\0")
+print(digest.hexdigest()[:16])
+PY
+    )"
+    staged_source="${staged_root}/${entry_hash}"
+    rm -rf "${staged_source}"
+    if [[ -d "${host_source}" ]]; then
+      mkdir -p "${staged_source}"
+      cp -R "${host_source}/." "${staged_source}"
+    else
+      mkdir -p "$(dirname "${staged_source}")"
+      cp -f "${host_source}" "${staged_source}"
+    fi
+    chmod -R go-rwx "${staged_source}" 2>/dev/null || true
+
+    DIRECT_SOURCE_MOUNTS+=(-v "${staged_source}:${mount_path}:ro")
   done < <(
     run_clean_host_command "${HOST_PYTHON3_BIN}" - "${mount_spec_path}" <<'PY'
 import json
@@ -1502,9 +1552,6 @@ provider_auth_modes() {
       if csv_contains_value "${credential_keys}" "gemini_oauth"; then
         modes+=(gemini_oauth)
       fi
-      if csv_contains_value "${credential_keys}" "gcloud_adc"; then
-        modes+=(gcloud_adc)
-      fi
       ;;
   esac
 
@@ -1544,6 +1591,20 @@ github_auth_present() {
 
 selected_provider_auth_mode() {
   local auth_modes=""
+  local credential_keys="${INJECTION_CREDENTIAL_KEYS:-}"
+
+  if [[ "${AGENT:-}" == "gemini" ]]; then
+    if csv_contains_value "${credential_keys}" "gemini_env"; then
+      printf 'gemini_env\n'
+      return 0
+    fi
+    if csv_contains_value "${credential_keys}" "gemini_oauth"; then
+      printf 'gemini_oauth\n'
+      return 0
+    fi
+    printf 'none\n'
+    return 0
+  fi
 
   auth_modes="$(provider_auth_modes)"
   if [[ "${auth_modes}" == "none" ]]; then
@@ -1568,9 +1629,11 @@ fail_fast_for_missing_gemini_auth() {
 
   echo "Gemini auth is not configured for this session." >&2
   if [[ -n "${INJECTION_POLICY}" ]]; then
-    echo "Update ${INJECTION_POLICY} to include credentials.gemini_env, credentials.gemini_oauth, or credentials.gcloud_adc." >&2
+    echo "Update ${INJECTION_POLICY} to include credentials.gemini_env or credentials.gemini_oauth." >&2
+    echo "credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env." >&2
   else
-    echo "Create $(default_injection_policy_path) or pass --injection-policy PATH with credentials.gemini_env, credentials.gemini_oauth, or credentials.gcloud_adc." >&2
+    echo "Create $(default_injection_policy_path) or pass --injection-policy PATH with credentials.gemini_env or credentials.gemini_oauth." >&2
+    echo "credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env." >&2
   fi
   printf 'Next step: workcell --auth-status --agent gemini --workspace %q\n' "${WORKSPACE}" >&2
   exit 2
@@ -2206,7 +2269,6 @@ validate_colima_runtime_mounts() {
     expected = ARGV[1].sub(%r{/$}, "")
     profile = ARGV[2]
     home = File.expand_path(ENV.fetch("HOME"))
-    sandbox_home = ARGV[3].to_s.empty? ? nil : File.expand_path(ARGV[3])
 
     def canonicalize(path)
       expanded = File.expand_path(path)
@@ -2215,9 +2277,6 @@ validate_colima_runtime_mounts() {
 
     expected = canonicalize(expected)
     cache_roots = [canonicalize(File.join(home, "Library", "Caches", "colima"))]
-    if sandbox_home
-      cache_roots << canonicalize(File.join(sandbox_home, "Library", "Caches", "colima"))
-    end
     lima_mounts = lima["mounts"] || []
     writable_mounts = lima_mounts.select { |mount| mount["writable"] == true }
 
@@ -2243,7 +2302,7 @@ validate_colima_runtime_mounts() {
       warn "Colima profile #{profile} has an unexpected host mount: #{bad_mount["location"]}"
       exit 2
     end
-  ' "${lima_path}" "${workspace}" "${profile}" "${WORKCELL_DOCKER_HOME:-}"
+  ' "${lima_path}" "${workspace}" "${profile}"
 }
 
 validate_colima_profile_config() {
@@ -2869,10 +2928,6 @@ prepare_workspace_control_plane_shadow() {
   WORKSPACE_IMPORT_MOUNTS=()
   [[ "${mode}" == "breakglass" ]] && return 0
 
-  if [[ -n "${WORKCELL_DOCKER_HOME:-}" ]]; then
-    shadow_parent="${WORKCELL_DOCKER_HOME}/Library/Caches/colima/workcell-shadow"
-  fi
-
   mkdir -p "${shadow_parent}"
   CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
 
@@ -2930,7 +2985,7 @@ prepare_workspace_control_plane_shadow() {
 }
 
 bootstrap_endpoints() {
-  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 snapshot.debian.org:80 snapshot.debian.org:443"
+  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 snapshot.debian.org:80"
 }
 
 AGENT=""
@@ -2970,6 +3025,49 @@ ACK_ARBITRARY_COMMAND=0
 TEST_FAIL_AFTER_PROFILE_REFRESH=0
 declare -a AGENT_ARGS=()
 declare -a NORMALIZED_ARGS=()
+
+if [[ "${1:-}" == "--self-staging-probe" ]]; then
+  shift
+  AGENT="${1:-}"
+  WORKSPACE="${2:-}"
+  INJECTION_POLICY="${3:-}"
+  MODE="${4:-strict}"
+
+  [[ -n "${AGENT}" ]] || {
+    echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
+    exit 2
+  }
+  [[ -n "${WORKSPACE}" ]] || {
+    echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
+    exit 2
+  }
+  [[ -n "${INJECTION_POLICY}" ]] || {
+    echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
+    exit 2
+  }
+
+  sanitize_host_docker_env
+  WORKSPACE="$(resolve_existing_directory_or_die "${WORKSPACE}")"
+  INJECTION_POLICY="$(resolve_host_path "${INJECTION_POLICY}")"
+  USE_DEFAULT_INJECTION_POLICY=0
+  prepare_injection_bundle "${AGENT}" "${MODE}"
+  prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
+
+  printf 'workcell_docker_home=%s\n' "${WORKCELL_DOCKER_HOME:-}"
+  printf 'injection_bundle_root=%s\n' "${INJECTION_BUNDLE_ROOT}"
+  printf 'shadow_root=%s\n' "${CONTROL_PLANE_SHADOW_ROOT}"
+  printf 'workspace=%s\n' "${WORKSPACE}"
+  for ((i = 0; i < ${#DIRECT_SOURCE_MOUNTS[@]}; i += 2)); do
+    printf 'direct_mount=%s\n' "${DIRECT_SOURCE_MOUNTS[i+1]}"
+  done
+  for ((i = 0; i < ${#SHADOW_MOUNTS[@]}; i += 2)); do
+    printf 'shadow_mount=%s\n' "${SHADOW_MOUNTS[i+1]}"
+  done
+  for ((i = 0; i < ${#WORKSPACE_IMPORT_MOUNTS[@]}; i += 2)); do
+    printf 'workspace_import_mount=%s\n' "${WORKSPACE_IMPORT_MOUNTS[i+1]}"
+  done
+  exit 0
+fi
 
 if [[ $# -gt 0 ]]; then
   normalize_cli_aliases "$@"
@@ -3405,13 +3503,7 @@ if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" !=
 fi
 
 if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
-  echo "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." >&2
-  echo "This is expected on the first launch for a workspace or after profile cleanup." >&2
-  echo "Next step:" >&2
-  build_recommended_command 1 0 "${MODE}"
-  echo "That command seeds the prepared runtime image inside the isolated VM and then launches ${AGENT} in strict mode." >&2
-  echo "No VM or container was started." >&2
-  exit 2
+  fail_missing_strict_prepared_image_prelaunch
 fi
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -3422,7 +3514,7 @@ fi
 
 ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(credential_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS}")"
 if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
-  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:80 snapshot.debian.org:443")"
+  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:80")"
 fi
 prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
 prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
@@ -3575,19 +3667,29 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
 fi
 
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
-  if ! validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
+  profile_config_path="${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/colima.yaml"
+  lima_config_path="${COLIMA_STATE_ROOT}/_lima/colima-${COLIMA_PROFILE}/lima.yaml"
+  if [[ ! -f "${profile_config_path}" ]] ||
+    ! validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
     echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources." >&2
     stash_profile_audit_log "${COLIMA_PROFILE}"
     run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
     rm -rf "${PROFILE_DIR}"
+    PROFILE_WAS_REFRESHED=1
     PROFILE_PREEXISTED=0
-  elif ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+  elif [[ ! -f "${lima_config_path}" ]] ||
+    ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"; then
     echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts." >&2
     stash_profile_audit_log "${COLIMA_PROFILE}"
     run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
     rm -rf "${PROFILE_DIR}"
+    PROFILE_WAS_REFRESHED=1
     PROFILE_PREEXISTED=0
   fi
+fi
+
+if [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
+  fail_missing_strict_prepared_image_prelaunch
 fi
 
 maybe_fail_after_profile_refresh_for_tests

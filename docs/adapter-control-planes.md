@@ -44,12 +44,13 @@ The following table covers all files seeded by `seed_codex_home()`,
 | `~/.claude/workcell/` | Claude | Created only when `claude_api_key` credential is injected | Same | Holds the session-local `api-key-helper.sh` script and secret file |
 | `~/.config/claude-code/auth.json` | Claude | Copied from injection credential `claude_auth` if present | Same | Session-local Claude CLI auth; not present if `credentials.claude_auth` is not configured |
 | `~/.mcp.json` | Claude | Symlink → immutable `mcp-template.json` (empty), or copied from `claude_mcp` credential if injected | Same | MCP server registry; ships empty by default |
-| `~/.gemini/settings.json` | Gemini | Copied (not symlinked) from immutable baseline; mode `0600` | Same | Copied from `adapters/gemini/.gemini/settings.json` |
+| `~/.gemini/settings.json` | Gemini | Copied (not symlinked) from immutable baseline; mode `0600` | Same, but `breakglass` re-enables Gemini folder trust before launch | Copied from `adapters/gemini/.gemini/settings.json` |
+| `~/.gemini/trustedFolders.json` | Gemini | Seeded session-local with `/workspace` trusted; mode `0600` | Same for strict/build; omitted in `breakglass` | Prevents Gemini's restart-only trust prompt inside masked ephemeral sessions while preserving Gemini's own prompt on `breakglass` |
 | `~/.gemini/GEMINI.md` | Gemini | Rendered (baseline + workspace + injection layers) | Same | Provider instruction doc; workspace `AGENTS.md` and `GEMINI.md` are imported as layers |
-| `~/.gemini/.env` | Gemini | Copied from injection credential `gemini_env` if present | Same | Provider-native env-file auth (API keys, Vertex project settings) |
+| `~/.gemini/.env` | Gemini | Copied from injection credential `gemini_env` if present | Same | Provider-native env-file auth (API keys, Vertex project settings); Workcell derives Gemini's selected auth type from this file when possible |
 | `~/.gemini/oauth_creds.json` | Gemini | Copied from injection credential `gemini_oauth` if present | Same | Cached Gemini OAuth credential |
 | `~/.gemini/projects.json` | Gemini | Copied from injection credential `gemini_projects` if present; otherwise seeded with empty `{"projects":{}}` | Same | Gemini CLI project registry |
-| `~/.config/gcloud/application_default_credentials.json` | Gemini | Copied from injection credential `gcloud_adc` if present | Same | Google ADC for Vertex flows |
+| `~/.config/gcloud/application_default_credentials.json` | Gemini | Copied from injection credential `gcloud_adc` if present | Same | Supplemental Google ADC for Vertex flows driven by `~/.gemini/.env`; not a standalone Gemini auth mode |
 | `~/.config/gh/config.yml` | All | Copied from injection credential `github_config` if present | Same | GitHub CLI config; shared across providers |
 | `~/.config/gh/hosts.yml` | All | Copied from injection credential `github_hosts` if present | Same | GitHub CLI auth; shared across providers |
 | `~/.ssh/` | All | Seeded from `[ssh]` injection section if configured | Same | SSH config, known_hosts, and identity files; `SSH_AUTH_SOCK` is never forwarded |

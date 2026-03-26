@@ -209,6 +209,29 @@ prepare_direct_mount_spec_for_bundle() {
   align_path_for_mapped_runtime_user "${mount_spec_path}" 0644 0755
 }
 
+clone_bundle_with_credential_override() {
+  local source_bundle="$1"
+  local bundle_root="$2"
+  local credential_key="$3"
+  local override_source="$4"
+
+  rm -rf "${bundle_root}"
+  cp -R "${source_bundle}" "${bundle_root}"
+  python3 - "${bundle_root}/manifest.json" "${credential_key}" "${override_source}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+credential_key = sys.argv[2]
+override_source = sys.argv[3]
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+manifest["credentials"][credential_key]["source"] = override_source
+manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+PY
+  prepare_direct_mount_spec_for_bundle "${bundle_root}"
+}
+
 direct_mount_specs_for_bundle() {
   local bundle_root="$1"
   local mount_spec_path="${bundle_root}.mounts.json"
@@ -707,8 +730,48 @@ EOF
 cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini.env"
 GEMINI_API_KEY=smoke-gemini-key
 EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-invalid-bool.env"
+GOOGLE_GENAI_USE_GCA=maybe
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-conflicting.env"
+GOOGLE_GENAI_USE_GCA=true
+GOOGLE_GENAI_USE_VERTEXAI=true
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-partial-vertex.env"
+GOOGLE_CLOUD_PROJECT=smoke-project
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-google-api-key-only.env"
+GOOGLE_API_KEY=smoke-google-key
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-malformed.env"
+GOOGLE_GENAI_USE_VERTEXAI true
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-vertex.env"
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=smoke-project
+GOOGLE_CLOUD_LOCATION=us-central1
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-vertex-express.env"
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_API_KEY=smoke-google-key
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gcloud-adc.json"
+{"type":"authorized_user","client_id":"smoke-client","client_secret":"smoke-secret","refresh_token":"smoke-refresh"}
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gcloud-adc-invalid.json"
+{}
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-oauth.json"
+{"token":"smoke-gemini-oauth"}
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-invalid-oauth.json"
+[]
+EOF
 cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-projects.json"
 {"projects":{"smoke":{"path":"/workspace"}}}
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini-projects-invalid.json"
+{"projects":[]}
 EOF
 cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/ssh-config"
 Host smoke
@@ -762,6 +825,65 @@ target = "~/.config/workcell/token.txt"
 classification = "secret"
 providers = ["codex"]
 EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy-gemini-invalid-bool.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini-invalid-bool.env"
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy-gemini-conflicting.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini-conflicting.env"
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy-gemini-partial-vertex.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini-partial-vertex.env"
+gcloud_adc = "gcloud-adc.json"
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy-gemini-google-api-key-only-oauth.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini-google-api-key-only.env"
+gemini_oauth = "gemini-oauth.json"
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy-gemini-project-only-oauth.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini-partial-vertex.env"
+gemini_oauth = "gemini-oauth.json"
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy-gemini-malformed.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini-malformed.env"
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy-gemini-gcloud-adc.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini-vertex.env"
+gcloud_adc = "gcloud-adc.json"
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy-gemini-vertex-express.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini-vertex-express.env"
+EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/policy-gemini-env-plus-oauth.toml"
+version = 1
+
+[credentials]
+gemini_env = "gemini-vertex-express.env"
+gemini_oauth = "gemini-oauth.json"
+EOF
 
 align_path_for_mapped_runtime_user "${INJECTION_FIXTURE_ROOT}" 0644 0755
 chmod 0600 \
@@ -772,7 +894,19 @@ chmod 0600 \
   "${INJECTION_FIXTURE_ROOT}/gh-hosts.yml" \
   "${INJECTION_FIXTURE_ROOT}/claude-api-key.txt" \
   "${INJECTION_FIXTURE_ROOT}/gemini.env" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-invalid-bool.env" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-conflicting.env" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-partial-vertex.env" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-google-api-key-only.env" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-malformed.env" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-vertex.env" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-vertex-express.env" \
+  "${INJECTION_FIXTURE_ROOT}/gcloud-adc.json" \
+  "${INJECTION_FIXTURE_ROOT}/gcloud-adc-invalid.json" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-oauth.json" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-invalid-oauth.json" \
   "${INJECTION_FIXTURE_ROOT}/gemini-projects.json" \
+  "${INJECTION_FIXTURE_ROOT}/gemini-projects-invalid.json" \
   "${INJECTION_FIXTURE_ROOT}/ssh-config" \
   "${INJECTION_FIXTURE_ROOT}/id_smoke"
 
@@ -796,6 +930,73 @@ run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle
   --mode strict \
   --output-root "${INJECTION_BUNDLE_ROOT}/gemini" >/dev/null
 prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/gemini"
+
+run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_FIXTURE_ROOT}/policy-gemini-gcloud-adc.toml" \
+  --agent gemini \
+  --mode strict \
+  --output-root "${INJECTION_BUNDLE_ROOT}/gemini-gcloud-adc" >/dev/null
+prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/gemini-gcloud-adc"
+
+run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_FIXTURE_ROOT}/policy-gemini-vertex-express.toml" \
+  --agent gemini \
+  --mode strict \
+  --output-root "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express" >/dev/null
+prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express"
+
+run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_FIXTURE_ROOT}/policy-gemini-env-plus-oauth.toml" \
+  --agent gemini \
+  --mode strict \
+  --output-root "${INJECTION_BUNDLE_ROOT}/gemini-env-plus-oauth" >/dev/null
+prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/gemini-env-plus-oauth"
+
+clone_bundle_with_credential_override \
+  "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express" \
+  "${INJECTION_BUNDLE_ROOT}/gemini-invalid-bool" \
+  gemini_env \
+  "${INJECTION_FIXTURE_ROOT}/gemini-invalid-bool.env"
+clone_bundle_with_credential_override \
+  "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express" \
+  "${INJECTION_BUNDLE_ROOT}/gemini-conflicting" \
+  gemini_env \
+  "${INJECTION_FIXTURE_ROOT}/gemini-conflicting.env"
+clone_bundle_with_credential_override \
+  "${INJECTION_BUNDLE_ROOT}/gemini-gcloud-adc" \
+  "${INJECTION_BUNDLE_ROOT}/gemini-partial-vertex" \
+  gemini_env \
+  "${INJECTION_FIXTURE_ROOT}/gemini-partial-vertex.env"
+clone_bundle_with_credential_override \
+  "${INJECTION_BUNDLE_ROOT}/gemini-env-plus-oauth" \
+  "${INJECTION_BUNDLE_ROOT}/gemini-google-api-key-only-oauth" \
+  gemini_env \
+  "${INJECTION_FIXTURE_ROOT}/gemini-google-api-key-only.env"
+clone_bundle_with_credential_override \
+  "${INJECTION_BUNDLE_ROOT}/gemini-env-plus-oauth" \
+  "${INJECTION_BUNDLE_ROOT}/gemini-project-only-oauth" \
+  gemini_env \
+  "${INJECTION_FIXTURE_ROOT}/gemini-partial-vertex.env"
+clone_bundle_with_credential_override \
+  "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express" \
+  "${INJECTION_BUNDLE_ROOT}/gemini-malformed" \
+  gemini_env \
+  "${INJECTION_FIXTURE_ROOT}/gemini-malformed.env"
+clone_bundle_with_credential_override \
+  "${INJECTION_BUNDLE_ROOT}/gemini-env-plus-oauth" \
+  "${INJECTION_BUNDLE_ROOT}/gemini-invalid-oauth" \
+  gemini_oauth \
+  "${INJECTION_FIXTURE_ROOT}/gemini-invalid-oauth.json"
+clone_bundle_with_credential_override \
+  "${INJECTION_BUNDLE_ROOT}/gemini-gcloud-adc" \
+  "${INJECTION_BUNDLE_ROOT}/gemini-invalid-adc" \
+  gcloud_adc \
+  "${INJECTION_FIXTURE_ROOT}/gcloud-adc-invalid.json"
+clone_bundle_with_credential_override \
+  "${INJECTION_BUNDLE_ROOT}/gemini" \
+  "${INJECTION_BUNDLE_ROOT}/gemini-invalid-projects" \
+  gemini_projects \
+  "${INJECTION_FIXTURE_ROOT}/gemini-projects-invalid.json"
 
 run_entrypoint codex codex --version >/dev/null
 run_entrypoint_with_profile codex build codex --version >/dev/null
@@ -885,8 +1086,132 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini" bas
       grep -q "Workspace AGENTS Instructions" "$HOME/.gemini/GEMINI.md"
       grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
       grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
-    grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
-    grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+      jq -r ".security.auth.selectedType" "$HOME/.gemini/settings.json" | grep -q "^gemini-api-key$"
+      jq -r ".security.folderTrust.enabled" "$HOME/.gemini/settings.json" | grep -q "^false$"
+      jq -e --arg workspace "/workspace" '"'"'. == {($workspace): "TRUST_FOLDER"}'"'"' "$HOME/.gemini/trustedFolders.json" >/dev/null
+      grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
+      grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+      mkdir -p /workspace/exfil
+      rm -f "$HOME/.gemini/settings.json.tmp" "$HOME/.gemini/trustedFolders.json.tmp"
+      ln -s /workspace/exfil/settings-clobber "$HOME/.gemini/settings.json.tmp"
+      ln -s /workspace/exfil/trusted-clobber "$HOME/.gemini/trustedFolders.json.tmp"
+      gemini --version >/dev/null 2>&1
+      test ! -e /workspace/exfil/settings-clobber
+      test ! -e /workspace/exfil/trusted-clobber
+  '"'"'
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-invalid-bool" bash -lc '
+  set -euo pipefail
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-invalid-bool.out 2>&1; then
+    echo "expected Gemini invalid boolean env config to fail fast" >&2
+    exit 1
+  fi
+  grep -q "Invalid boolean in Gemini auth env file" /tmp/gemini-invalid-bool.out
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-conflicting" bash -lc '
+  set -euo pipefail
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-conflicting.out 2>&1; then
+    echo "expected Gemini conflicting auth selectors to fail fast" >&2
+    exit 1
+  fi
+  grep -q "enables both GOOGLE_GENAI_USE_GCA and GOOGLE_GENAI_USE_VERTEXAI" /tmp/gemini-conflicting.out
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-partial-vertex" bash -lc '
+  set -euo pipefail
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-partial-vertex.out 2>&1; then
+    echo "expected Gemini partial Vertex config to fail fast" >&2
+    exit 1
+  fi
+  grep -q "does not configure a supported Gemini auth mode" /tmp/gemini-partial-vertex.out
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-google-api-key-only-oauth" bash -lc '
+  set -euo pipefail
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-google-api-key-only-oauth.out 2>&1; then
+    echo "expected Gemini GOOGLE_API_KEY config without explicit Vertex selection to fail fast" >&2
+    exit 1
+  fi
+  grep -q "sets GOOGLE_API_KEY without GOOGLE_GENAI_USE_VERTEXAI=true" /tmp/gemini-google-api-key-only-oauth.out
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-project-only-oauth" bash -lc '
+  set -euo pipefail
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-project-only-oauth.out 2>&1; then
+    echo "expected project-only Gemini env config to remain invalid even when gemini_oauth is present" >&2
+    exit 1
+  fi
+  grep -q "does not configure a supported Gemini auth mode" /tmp/gemini-project-only-oauth.out
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-malformed" bash -lc '
+  set -euo pipefail
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-malformed.out 2>&1; then
+    echo "expected malformed Gemini env config to fail fast" >&2
+    exit 1
+  fi
+  grep -q "Malformed Gemini auth env file" /tmp/gemini-malformed.out
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-gcloud-adc" bash -lc '
+  set -euo pipefail
+  /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    jq -r ".security.auth.selectedType" "$HOME/.gemini/settings.json" | grep -q "^vertex-ai$"
+    grep -q "GOOGLE_CLOUD_PROJECT=smoke-project" "$HOME/.gemini/.env"
+    grep -q "\"authorized_user\"" "$HOME/.config/gcloud/application_default_credentials.json"
+  '"'"'
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-invalid-oauth" bash -lc '
+  set -euo pipefail
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-invalid-oauth.out 2>&1; then
+    echo "expected malformed Gemini OAuth JSON to fail fast" >&2
+    exit 1
+  fi
+  grep -q "Gemini OAuth config must contain a JSON object" /tmp/gemini-invalid-oauth.out
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-invalid-adc" bash -lc '
+  set -euo pipefail
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-invalid-adc.out 2>&1; then
+    echo "expected malformed Google ADC JSON to fail fast" >&2
+    exit 1
+  fi
+  grep -q "Google ADC config must contain a JSON object with a non-empty string type" /tmp/gemini-invalid-adc.out
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-invalid-projects" bash -lc '
+  set -euo pipefail
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-invalid-projects.out 2>&1; then
+    echo "expected malformed Gemini projects JSON to fail fast" >&2
+    exit 1
+  fi
+  grep -q "Gemini projects config must contain a JSON object with an object-valued projects field" /tmp/gemini-invalid-projects.out
+'
+
+# shellcheck disable=SC2016
+run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express" bash -lc '
+  set -euo pipefail
+  /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+    set -euo pipefail
+    jq -r ".security.auth.selectedType" "$HOME/.gemini/settings.json" | grep -q "^vertex-ai$"
+    grep -q "GOOGLE_GENAI_USE_VERTEXAI=true" "$HOME/.gemini/.env"
+    grep -q "GOOGLE_API_KEY=smoke-google-key" "$HOME/.gemini/.env"
   '"'"'
 '
 
