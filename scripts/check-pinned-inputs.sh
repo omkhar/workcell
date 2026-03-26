@@ -373,8 +373,40 @@ if "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}" not in release_workfl
     raise SystemExit(".github/workflows/release.yml must pin the BuildKit daemon image used by setup-buildx-action")
 if "cache-binary: true" not in ci_workflow:
     raise SystemExit("Pinned buildx binary caching must stay enabled in .github/workflows/ci.yml")
-if "cache-image: true" not in ci_workflow:
-    raise SystemExit("Pinned QEMU image caching must stay enabled in .github/workflows/ci.yml")
+ci_repro_build_job = require_regex(
+    ci_workflow,
+    r"^  reproducible-build-platform:\n(?P<body>[\s\S]*?)(?=^  reproducible-build:\n)",
+    "reproducible-build-platform job",
+    ".github/workflows/ci.yml",
+).group("body")
+if not re.search(r"^\s{4}runs-on:\s*\$\{\{\s*matrix\.runner\s*\}\}$", ci_repro_build_job, re.MULTILINE):
+    raise SystemExit(
+        ".github/workflows/ci.yml must route reproducible-build-platform through runs-on: ${{ matrix.runner }}"
+    )
+ci_repro_strategy_block = require_regex(
+    ci_repro_build_job,
+    r"^    strategy:\n(?P<body>[\s\S]*?)(?=^    steps:\n)",
+    "reproducible-build-platform strategy block",
+    ".github/workflows/ci.yml",
+).group(0)
+expected_ci_repro_strategy_block = (
+    "    strategy:\n"
+    "      fail-fast: false\n"
+    "      matrix:\n"
+    "        include:\n"
+    "          - platform: linux/amd64\n"
+    "            platform_name: amd64\n"
+    "            runner: ubuntu-latest\n"
+    "          - platform: linux/arm64\n"
+    "            platform_name: arm64\n"
+    "            runner: ubuntu-24.04-arm\n"
+)
+if ci_repro_strategy_block != expected_ci_repro_strategy_block:
+    raise SystemExit(
+        ".github/workflows/ci.yml must keep the reviewed reproducible-build matrix structure, including a single native ubuntu-24.04-arm lane for linux/arm64"
+    )
+if "docker/setup-qemu-action@" in ci_workflow:
+    raise SystemExit(".github/workflows/ci.yml must not configure QEMU in CI now that arm64 reproducible builds use a native runner")
 if "cache-binary: false" not in release_workflow:
     raise SystemExit("The publishing release workflow must not cache the Buildx binary")
 if "cache-image: false" not in release_workflow:
