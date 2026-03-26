@@ -389,10 +389,31 @@ toml_section_assignments() {
       return value
     }
 
+    function strip_wrapping_quotes(value, first, last) {
+      value = trim(value)
+      first = substr(value, 1, 1)
+      last = substr(value, length(value), 1)
+
+      if ((first == "\"" && last == "\"") || (first == "'"'"'" && last == "'"'"'")) {
+        return substr(value, 2, length(value) - 2)
+      }
+
+      return value
+    }
+
+    function normalize_toml_name(value) {
+      value = trim(value)
+      gsub(/[[:space:]]*\.[[:space:]]*/, ".", value)
+      value = strip_wrapping_quotes(value)
+      return value
+    }
+
     BEGIN {
       current = "__top__"
       if (want == "") {
         want = "__top__"
+      } else {
+        want = normalize_toml_name(want)
       }
     }
 
@@ -408,6 +429,7 @@ toml_section_assignments() {
         current = line
         gsub(/^[[:space:]]*\[/, "", current)
         gsub(/\][[:space:]]*$/, "", current)
+        current = normalize_toml_name(current)
         next
       }
 
@@ -420,9 +442,54 @@ toml_section_assignments() {
       }
 
       split(line, parts, "=")
-      key = trim(parts[1])
+      key = normalize_toml_name(parts[1])
       value = trim(substr(line, index(line, "=") + 1))
       print key "=" value
+    }
+  ' "${file}"
+}
+
+toml_section_names() {
+  local file="$1"
+
+  awk '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+
+    function strip_wrapping_quotes(value, first, last) {
+      value = trim(value)
+      first = substr(value, 1, 1)
+      last = substr(value, length(value), 1)
+
+      if ((first == "\"" && last == "\"") || (first == "'"'"'" && last == "'"'"'")) {
+        return substr(value, 2, length(value) - 2)
+      }
+
+      return value
+    }
+
+    function normalize_toml_name(value) {
+      value = trim(value)
+      gsub(/[[:space:]]*\.[[:space:]]*/, ".", value)
+      value = strip_wrapping_quotes(value)
+      return value
+    }
+
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+
+      if (line !~ /^[[:space:]]*\[/) {
+        next
+      }
+
+      section = line
+      gsub(/^[[:space:]]*\[/, "", section)
+      gsub(/\][[:space:]]*$/, "", section)
+      print normalize_toml_name(section)
     }
   ' "${file}"
 }
@@ -449,12 +516,12 @@ require_toml_assignment() {
     '
   )" || {
     echo "Expected ${file} section [${section:-top-level}] to define ${key}" >&2
-    exit 1
+    return 1
   }
 
   if [[ "${actual}" != "${expected}" ]]; then
     echo "Expected ${file} section [${section:-top-level}] to set ${key}=${expected}, got ${actual}" >&2
-    exit 1
+    return 1
   fi
 }
 
@@ -465,7 +532,7 @@ require_toml_key_absent() {
 
   if toml_section_assignments "${file}" "${section}" | cut -d= -f1 | grep -Fxq -- "${key}"; then
     echo "Expected ${file} section [${section:-top-level}] not to define ${key}" >&2
-    exit 1
+    return 1
   fi
 }
 
@@ -488,7 +555,7 @@ require_toml_exact_keys() {
     echo "Expected ${file} section [${section:-top-level}] to contain the exact reviewed key set" >&2
     diff -u "${expected_keys}" "${actual_keys}" >&2 || true
     rm -rf "${tmpdir}"
-    exit 1
+    return 1
   fi
 
   rm -rf "${tmpdir}"
@@ -498,55 +565,89 @@ require_toml_section_absent() {
   local file="$1"
   local section="$2"
 
-  if grep -Fxq -- "[${section}]" "${file}"; then
+  if toml_section_names "${file}" | grep -Fxq -- "${section}"; then
     echo "Expected ${file} not to define [${section}]" >&2
-    exit 1
+    return 1
+  fi
+}
+
+verify_codex_managed_config_invariants() {
+  local file="$1"
+
+  require_toml_assignment "${file}" "" "profile" '"strict"' || return 1
+  require_toml_key_absent "${file}" "" "sandbox" || return 1
+  require_toml_key_absent "${file}" "" "sandbox_mode" || return 1
+  require_toml_key_absent "${file}" "" "sandbox_permissions" || return 1
+  require_toml_key_absent "${file}" "" "approval_policy" || return 1
+
+  require_toml_exact_keys "${file}" "sandbox_workspace_write" \
+    "exclude_slash_tmp" \
+    "exclude_tmpdir_env_var" \
+    "network_access" || return 1
+  require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_slash_tmp" "true" || return 1
+  require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_tmpdir_env_var" "true" || return 1
+  require_toml_assignment "${file}" "sandbox_workspace_write" "network_access" "false" || return 1
+
+  require_toml_exact_keys "${file}" "profiles.strict" \
+    "approval_policy" \
+    "sandbox_mode" \
+    "web_search" || return 1
+  require_toml_assignment "${file}" "profiles.strict" "sandbox_mode" '"workspace-write"' || return 1
+  require_toml_assignment "${file}" "profiles.strict" "approval_policy" '"on-request"' || return 1
+  require_toml_assignment "${file}" "profiles.strict" "web_search" '"disabled"' || return 1
+  require_toml_section_absent "${file}" "profiles.strict.sandbox_workspace_write" || return 1
+
+  require_toml_exact_keys "${file}" "profiles.build" \
+    "approval_policy" \
+    "sandbox_mode" \
+    "web_search" || return 1
+  require_toml_assignment "${file}" "profiles.build" "sandbox_mode" '"workspace-write"' || return 1
+  require_toml_assignment "${file}" "profiles.build" "approval_policy" '"never"' || return 1
+  require_toml_assignment "${file}" "profiles.build" "web_search" '"disabled"' || return 1
+
+  require_toml_exact_keys "${file}" "profiles.build.sandbox_workspace_write" "network_access" || return 1
+  require_toml_assignment "${file}" "profiles.build.sandbox_workspace_write" "network_access" "true" || return 1
+
+  require_toml_exact_keys "${file}" "profiles.breakglass" \
+    "approval_policy" \
+    "sandbox_mode" \
+    "web_search" || return 1
+  require_toml_assignment "${file}" "profiles.breakglass" "sandbox_mode" '"danger-full-access"' || return 1
+  require_toml_assignment "${file}" "profiles.breakglass" "approval_policy" '"never"' || return 1
+  require_toml_assignment "${file}" "profiles.breakglass" "web_search" '"disabled"' || return 1
+}
+
+assert_codex_managed_config_rejected() {
+  local file="$1"
+  local reason="$2"
+
+  if verify_codex_managed_config_invariants "${file}" >/dev/null 2>&1; then
+    echo "Expected Codex managed config invariant to reject ${reason}" >&2
+    return 1
   fi
 }
 
 CODEX_MANAGED_CONFIG="${ROOT_DIR}/adapters/codex/managed_config.toml"
+verify_codex_managed_config_invariants "${CODEX_MANAGED_CONFIG}" || exit 1
 
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "" "profile" '"strict"'
-require_toml_key_absent "${CODEX_MANAGED_CONFIG}" "" "sandbox"
-require_toml_key_absent "${CODEX_MANAGED_CONFIG}" "" "sandbox_mode"
-require_toml_key_absent "${CODEX_MANAGED_CONFIG}" "" "sandbox_permissions"
-require_toml_key_absent "${CODEX_MANAGED_CONFIG}" "" "approval_policy"
+codex_managed_config_tmpdir="$(mktemp -d)"
 
-require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "sandbox_workspace_write" \
-  "exclude_slash_tmp" \
-  "exclude_tmpdir_env_var" \
-  "network_access"
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "sandbox_workspace_write" "exclude_slash_tmp" "true"
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "sandbox_workspace_write" "exclude_tmpdir_env_var" "true"
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "sandbox_workspace_write" "network_access" "false"
+quoted_key_config="${codex_managed_config_tmpdir}/quoted-key.toml"
+awk '
+  {
+    print
+    if ($0 == "profile = \"strict\"") {
+      print "\"approval_policy\" = \"never\""
+    }
+  }
+' "${CODEX_MANAGED_CONFIG}" >"${quoted_key_config}"
+assert_codex_managed_config_rejected "${quoted_key_config}" 'quoted top-level approval_policy override' || exit 1
 
-require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "profiles.strict" \
-  "approval_policy" \
-  "sandbox_mode" \
-  "web_search"
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.strict" "sandbox_mode" '"workspace-write"'
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.strict" "approval_policy" '"on-request"'
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.strict" "web_search" '"disabled"'
-require_toml_section_absent "${CODEX_MANAGED_CONFIG}" "profiles.strict.sandbox_workspace_write"
-
-require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "profiles.build" \
-  "approval_policy" \
-  "sandbox_mode" \
-  "web_search"
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.build" "sandbox_mode" '"workspace-write"'
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.build" "approval_policy" '"never"'
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.build" "web_search" '"disabled"'
-
-require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "profiles.build.sandbox_workspace_write" "network_access"
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.build.sandbox_workspace_write" "network_access" "true"
-
-require_toml_exact_keys "${CODEX_MANAGED_CONFIG}" "profiles.breakglass" \
-  "approval_policy" \
-  "sandbox_mode" \
-  "web_search"
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.breakglass" "sandbox_mode" '"danger-full-access"'
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.breakglass" "approval_policy" '"never"'
-require_toml_assignment "${CODEX_MANAGED_CONFIG}" "profiles.breakglass" "web_search" '"disabled"'
+spaced_section_config="${codex_managed_config_tmpdir}/spaced-section.toml"
+cp "${CODEX_MANAGED_CONFIG}" "${spaced_section_config}"
+printf '\n[ profiles.strict.sandbox_workspace_write ]\nnetwork_access = true\n' >>"${spaced_section_config}"
+assert_codex_managed_config_rejected "${spaced_section_config}" 'whitespace-padded strict sandbox override section' || exit 1
+rm -rf "${codex_managed_config_tmpdir}"
 
 if ! sed -n '/^run_host_colima()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "HOME=\"\${REAL_HOME}\""; then
   echo "Expected run_host_colima to restore the real host HOME instead of the Docker client sandbox home" >&2
