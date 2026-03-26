@@ -9,7 +9,7 @@ on:
       - main
   workflow_dispatch:
 
-permissions: read-all
+permissions: {}
 
 env:
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:37539dd4d60fc70968d164d3850d903a2c56f6402214a1953fbf9fcb81ada731
@@ -25,6 +25,8 @@ jobs:
   validate:
     name: Validate repository
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -77,6 +79,8 @@ jobs:
     name: Container smoke
     runs-on: ubuntu-latest
     needs: validate
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -89,6 +93,8 @@ jobs:
     name: Reproducible build (${{ matrix.platform_name }})
     runs-on: ${{ matrix.runner }}
     needs: validate
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:

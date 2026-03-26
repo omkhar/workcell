@@ -33,7 +33,7 @@ on:
       - "workflows/**"
   workflow_dispatch:
 
-permissions: read-all
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -43,6 +43,8 @@ jobs:
   spelling-and-manpage:
     name: Spelling and manpage
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

@@ -574,8 +574,8 @@ for workflow_path in sorted(workflows_dir.glob("*.yml")):
     workflow_text = workflow_path.read_text(encoding="utf-8")
     require_regex(
         workflow_text,
-        r"^permissions:\s+read-all$",
-        "workflow-level read-all permissions",
+        r"^permissions:\s+\{\}$",
+        "workflow-level empty permissions declaration",
         str(workflow_path.relative_to(workflows_dir.parent.parent)),
     )
     require_not_regex(
