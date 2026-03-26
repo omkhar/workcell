@@ -378,6 +378,553 @@ if ! rg -q 'REAL_HOME=' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
+toml_section_assignments() {
+  local file="$1"
+  local section="$2"
+
+  awk -v want="${section}" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+
+    function hex_value(ch) {
+      if (ch >= "0" && ch <= "9") {
+        return ch + 0
+      }
+      ch = tolower(ch)
+      if (ch >= "a" && ch <= "f") {
+        return index("abcdef", ch) + 9
+      }
+      return -1
+    }
+
+    function decode_toml_basic_string(value, i, ch, escaped, hex, code, digit, j) {
+      escaped = ""
+
+      for (i = 1; i <= length(value); i++) {
+        ch = substr(value, i, 1)
+        if (ch != "\\") {
+          escaped = escaped ch
+          continue
+        }
+
+        i++
+        if (i > length(value)) {
+          parse_error = 1
+          return value
+        }
+        ch = substr(value, i, 1)
+
+        if (ch == "b") {
+          escaped = escaped sprintf("%c", 8)
+        } else if (ch == "t") {
+          escaped = escaped sprintf("%c", 9)
+        } else if (ch == "n") {
+          escaped = escaped sprintf("%c", 10)
+        } else if (ch == "f") {
+          escaped = escaped sprintf("%c", 12)
+        } else if (ch == "r") {
+          escaped = escaped sprintf("%c", 13)
+        } else if (ch == "\"" || ch == "\\") {
+          escaped = escaped ch
+        } else if (ch == "u" || ch == "U") {
+          hex = substr(value, i + 1, (ch == "u" ? 4 : 8))
+          if (length(hex) != (ch == "u" ? 4 : 8)) {
+            parse_error = 1
+            return value
+          }
+          code = 0
+          for (j = 1; j <= length(hex); j++) {
+            digit = hex_value(substr(hex, j, 1))
+            if (digit < 0) {
+              parse_error = 1
+              return value
+            }
+            code = (code * 16) + digit
+          }
+          escaped = escaped sprintf("%c", code)
+          i += length(hex)
+        } else {
+          parse_error = 1
+          return value
+        }
+      }
+
+      return escaped
+    }
+
+    function normalize_toml_segment(value, first, last) {
+      value = trim(value)
+      first = substr(value, 1, 1)
+      last = substr(value, length(value), 1)
+
+      if (first == "\"" && last == "\"") {
+        value = decode_toml_basic_string(substr(value, 2, length(value) - 2))
+      } else if (first == "'"'"'" && last == "'"'"'") {
+        value = substr(value, 2, length(value) - 2)
+      }
+
+      gsub(/\\/, "\\\\", value)
+      gsub(/\./, "\\.", value)
+      return value
+    }
+
+    function normalize_toml_name(value, i, ch, prev, quote, segment, normalized) {
+      value = trim(value)
+      quote = ""
+      segment = ""
+      normalized = ""
+
+      for (i = 1; i <= length(value); i++) {
+        ch = substr(value, i, 1)
+        prev = (i > 1 ? substr(value, i - 1, 1) : "")
+
+        if (quote != "") {
+          segment = segment ch
+          if (ch == quote && prev != "\\") {
+            quote = ""
+          }
+          continue
+        }
+
+        if (ch == "\"" || ch == "'"'"'" ) {
+          quote = ch
+          segment = segment ch
+          continue
+        }
+
+        if (ch == ".") {
+          segment = normalize_toml_segment(segment)
+          if (normalized != "") {
+            normalized = normalized "."
+          }
+          normalized = normalized segment
+          segment = ""
+          continue
+        }
+
+        segment = segment ch
+      }
+
+      segment = normalize_toml_segment(segment)
+      if (normalized != "") {
+        normalized = normalized "."
+      }
+      normalized = normalized segment
+      return normalized
+    }
+
+    BEGIN {
+      parse_error = 0
+      current = "__top__"
+      if (want == "") {
+        want = "__top__"
+      } else {
+        want = normalize_toml_name(want)
+      }
+    }
+
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+
+      if (line ~ /^[[:space:]]*$/) {
+        next
+      }
+
+      if (line ~ /^[[:space:]]*\[/) {
+        current = line
+        gsub(/^[[:space:]]*\[/, "", current)
+        gsub(/\][[:space:]]*$/, "", current)
+        current = normalize_toml_name(current)
+        next
+      }
+
+      if (current != want) {
+        next
+      }
+
+      if (line !~ /=/) {
+        next
+      }
+
+      split(line, parts, "=")
+      key = normalize_toml_name(parts[1])
+      value = trim(substr(line, index(line, "=") + 1))
+      print key "=" value
+    }
+    END {
+      if (parse_error) {
+        exit 2
+      }
+    }
+  ' "${file}"
+}
+
+toml_section_names() {
+  local file="$1"
+
+  awk '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+
+    function hex_value(ch) {
+      if (ch >= "0" && ch <= "9") {
+        return ch + 0
+      }
+      ch = tolower(ch)
+      if (ch >= "a" && ch <= "f") {
+        return index("abcdef", ch) + 9
+      }
+      return -1
+    }
+
+    function decode_toml_basic_string(value, i, ch, escaped, hex, code, digit, j) {
+      escaped = ""
+
+      for (i = 1; i <= length(value); i++) {
+        ch = substr(value, i, 1)
+        if (ch != "\\") {
+          escaped = escaped ch
+          continue
+        }
+
+        i++
+        if (i > length(value)) {
+          parse_error = 1
+          return value
+        }
+        ch = substr(value, i, 1)
+
+        if (ch == "b") {
+          escaped = escaped sprintf("%c", 8)
+        } else if (ch == "t") {
+          escaped = escaped sprintf("%c", 9)
+        } else if (ch == "n") {
+          escaped = escaped sprintf("%c", 10)
+        } else if (ch == "f") {
+          escaped = escaped sprintf("%c", 12)
+        } else if (ch == "r") {
+          escaped = escaped sprintf("%c", 13)
+        } else if (ch == "\"" || ch == "\\") {
+          escaped = escaped ch
+        } else if (ch == "u" || ch == "U") {
+          hex = substr(value, i + 1, (ch == "u" ? 4 : 8))
+          if (length(hex) != (ch == "u" ? 4 : 8)) {
+            parse_error = 1
+            return value
+          }
+          code = 0
+          for (j = 1; j <= length(hex); j++) {
+            digit = hex_value(substr(hex, j, 1))
+            if (digit < 0) {
+              parse_error = 1
+              return value
+            }
+            code = (code * 16) + digit
+          }
+          escaped = escaped sprintf("%c", code)
+          i += length(hex)
+        } else {
+          parse_error = 1
+          return value
+        }
+      }
+
+      return escaped
+    }
+
+    function normalize_toml_segment(value, first, last) {
+      value = trim(value)
+      first = substr(value, 1, 1)
+      last = substr(value, length(value), 1)
+
+      if (first == "\"" && last == "\"") {
+        value = decode_toml_basic_string(substr(value, 2, length(value) - 2))
+      } else if (first == "'"'"'" && last == "'"'"'") {
+        value = substr(value, 2, length(value) - 2)
+      }
+
+      gsub(/\\/, "\\\\", value)
+      gsub(/\./, "\\.", value)
+      return value
+    }
+
+    function normalize_toml_name(value, i, ch, prev, quote, segment, normalized) {
+      value = trim(value)
+      quote = ""
+      segment = ""
+      normalized = ""
+
+      for (i = 1; i <= length(value); i++) {
+        ch = substr(value, i, 1)
+        prev = (i > 1 ? substr(value, i - 1, 1) : "")
+
+        if (quote != "") {
+          segment = segment ch
+          if (ch == quote && prev != "\\") {
+            quote = ""
+          }
+          continue
+        }
+
+        if (ch == "\"" || ch == "'"'"'" ) {
+          quote = ch
+          segment = segment ch
+          continue
+        }
+
+        if (ch == ".") {
+          segment = normalize_toml_segment(segment)
+          if (normalized != "") {
+            normalized = normalized "."
+          }
+          normalized = normalized segment
+          segment = ""
+          continue
+        }
+
+        segment = segment ch
+      }
+
+      segment = normalize_toml_segment(segment)
+      if (normalized != "") {
+        normalized = normalized "."
+      }
+      normalized = normalized segment
+      return normalized
+    }
+
+    BEGIN {
+      parse_error = 0
+    }
+
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+
+      if (line !~ /^[[:space:]]*\[/) {
+        next
+      }
+
+      section = line
+      gsub(/^[[:space:]]*\[/, "", section)
+      gsub(/\][[:space:]]*$/, "", section)
+      print normalize_toml_name(section)
+    }
+    END {
+      if (parse_error) {
+        exit 2
+      }
+    }
+  ' "${file}"
+}
+
+require_toml_assignment() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  local expected="$4"
+  local actual=""
+
+  actual="$(
+    toml_section_assignments "${file}" "${section}" | awk -F= -v want="${key}" '
+      $1 == want {
+        print substr($0, length($1) + 2)
+        found = 1
+        exit
+      }
+      END {
+        if (!found) {
+          exit 1
+        }
+      }
+    '
+  )" || {
+    echo "Expected ${file} section [${section:-top-level}] to define ${key}" >&2
+    return 1
+  }
+
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "Expected ${file} section [${section:-top-level}] to set ${key}=${expected}, got ${actual}" >&2
+    return 1
+  fi
+}
+
+require_toml_key_absent() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  local actual_keys=""
+
+  actual_keys="$(toml_section_assignments "${file}" "${section}" | cut -d= -f1)" || return 1
+
+  if printf '%s\n' "${actual_keys}" | grep -Fxq -- "${key}"; then
+    echo "Expected ${file} section [${section:-top-level}] not to define ${key}" >&2
+    return 1
+  fi
+}
+
+require_toml_exact_keys() {
+  local file="$1"
+  local section="$2"
+  local tmpdir=""
+  local expected_keys=""
+  local actual_keys=""
+  shift 2
+
+  tmpdir="$(mktemp -d)"
+  expected_keys="${tmpdir}/expected"
+  actual_keys="${tmpdir}/actual"
+
+  printf '%s\n' "$@" | sort >"${expected_keys}"
+  if ! toml_section_assignments "${file}" "${section}" | cut -d= -f1 | sort >"${actual_keys}"; then
+    rm -rf "${tmpdir}"
+    return 1
+  fi
+
+  if ! diff -u "${expected_keys}" "${actual_keys}" >/dev/null; then
+    echo "Expected ${file} section [${section:-top-level}] to contain the exact reviewed key set" >&2
+    diff -u "${expected_keys}" "${actual_keys}" >&2 || true
+    rm -rf "${tmpdir}"
+    return 1
+  fi
+
+  rm -rf "${tmpdir}"
+}
+
+require_toml_section_absent() {
+  local file="$1"
+  local section="$2"
+  local sections=""
+
+  sections="$(toml_section_names "${file}")" || return 1
+
+  if printf '%s\n' "${sections}" | grep -Fxq -- "${section}"; then
+    echo "Expected ${file} not to define [${section}]" >&2
+    return 1
+  fi
+}
+
+verify_codex_managed_config_invariants() {
+  local file="$1"
+
+  require_toml_assignment "${file}" "" "profile" '"strict"' || return 1
+  require_toml_key_absent "${file}" "" "sandbox" || return 1
+  require_toml_key_absent "${file}" "" "sandbox_mode" || return 1
+  require_toml_key_absent "${file}" "" "sandbox_permissions" || return 1
+  require_toml_key_absent "${file}" "" "approval_policy" || return 1
+
+  require_toml_exact_keys "${file}" "sandbox_workspace_write" \
+    "exclude_slash_tmp" \
+    "exclude_tmpdir_env_var" \
+    "network_access" || return 1
+  require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_slash_tmp" "true" || return 1
+  require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_tmpdir_env_var" "true" || return 1
+  require_toml_assignment "${file}" "sandbox_workspace_write" "network_access" "false" || return 1
+
+  require_toml_exact_keys "${file}" "profiles.strict" \
+    "approval_policy" \
+    "sandbox_mode" \
+    "web_search" || return 1
+  require_toml_assignment "${file}" "profiles.strict" "sandbox_mode" '"workspace-write"' || return 1
+  require_toml_assignment "${file}" "profiles.strict" "approval_policy" '"on-request"' || return 1
+  require_toml_assignment "${file}" "profiles.strict" "web_search" '"disabled"' || return 1
+  require_toml_section_absent "${file}" "profiles.strict.sandbox_workspace_write" || return 1
+
+  require_toml_exact_keys "${file}" "profiles.build" \
+    "approval_policy" \
+    "sandbox_mode" \
+    "web_search" || return 1
+  require_toml_assignment "${file}" "profiles.build" "sandbox_mode" '"workspace-write"' || return 1
+  require_toml_assignment "${file}" "profiles.build" "approval_policy" '"never"' || return 1
+  require_toml_assignment "${file}" "profiles.build" "web_search" '"disabled"' || return 1
+
+  require_toml_exact_keys "${file}" "profiles.build.sandbox_workspace_write" "network_access" || return 1
+  require_toml_assignment "${file}" "profiles.build.sandbox_workspace_write" "network_access" "true" || return 1
+
+  require_toml_exact_keys "${file}" "profiles.breakglass" \
+    "approval_policy" \
+    "sandbox_mode" \
+    "web_search" || return 1
+  require_toml_assignment "${file}" "profiles.breakglass" "sandbox_mode" '"danger-full-access"' || return 1
+  require_toml_assignment "${file}" "profiles.breakglass" "approval_policy" '"never"' || return 1
+  require_toml_assignment "${file}" "profiles.breakglass" "web_search" '"disabled"' || return 1
+}
+
+assert_codex_managed_config_rejected() {
+  local file="$1"
+  local reason="$2"
+
+  if verify_codex_managed_config_invariants "${file}" >/dev/null 2>&1; then
+    echo "Expected Codex managed config invariant to reject ${reason}" >&2
+    return 1
+  fi
+}
+
+CODEX_MANAGED_CONFIG="${ROOT_DIR}/adapters/codex/managed_config.toml"
+verify_codex_managed_config_invariants "${CODEX_MANAGED_CONFIG}" || exit 1
+
+codex_managed_config_tmpdir="$(mktemp -d)"
+
+quoted_key_config="${codex_managed_config_tmpdir}/quoted-key.toml"
+awk '
+  {
+    print
+    if ($0 == "profile = \"strict\"") {
+      print "\"approval_policy\" = \"never\""
+    }
+  }
+' "${CODEX_MANAGED_CONFIG}" >"${quoted_key_config}"
+assert_codex_managed_config_rejected "${quoted_key_config}" 'quoted top-level approval_policy override' || exit 1
+
+escaped_key_config="${codex_managed_config_tmpdir}/escaped-key.toml"
+awk '
+  {
+    print
+    if ($0 == "profile = \"strict\"") {
+      print "\"approval\\u005fpolicy\" = \"never\""
+    }
+  }
+' "${CODEX_MANAGED_CONFIG}" >"${escaped_key_config}"
+assert_codex_managed_config_rejected "${escaped_key_config}" 'escaped top-level approval_policy override' || exit 1
+
+spaced_section_config="${codex_managed_config_tmpdir}/spaced-section.toml"
+cp "${CODEX_MANAGED_CONFIG}" "${spaced_section_config}"
+printf '\n[ profiles.strict.sandbox_workspace_write ]\nnetwork_access = true\n' >>"${spaced_section_config}"
+assert_codex_managed_config_rejected "${spaced_section_config}" 'whitespace-padded strict sandbox override section' || exit 1
+
+quoted_segment_section_config="${codex_managed_config_tmpdir}/quoted-segment-section.toml"
+cp "${CODEX_MANAGED_CONFIG}" "${quoted_segment_section_config}"
+printf '\n[ "profiles" . "strict" . "sandbox_workspace_write" ]\nnetwork_access = true\n' >>"${quoted_segment_section_config}"
+assert_codex_managed_config_rejected "${quoted_segment_section_config}" 'quoted strict segment sandbox override section' || exit 1
+
+invalid_escape_key_config="${codex_managed_config_tmpdir}/invalid-escape-key.toml"
+awk '
+  {
+    print
+    if ($0 == "profile = \"strict\"") {
+      print "\"approval\\u00ZZpolicy\" = \"never\""
+    }
+  }
+' "${CODEX_MANAGED_CONFIG}" >"${invalid_escape_key_config}"
+assert_codex_managed_config_rejected "${invalid_escape_key_config}" 'malformed escaped approval_policy override' || exit 1
+
+literal_dot_section_config="${codex_managed_config_tmpdir}/literal-dot-section.toml"
+cp "${CODEX_MANAGED_CONFIG}" "${literal_dot_section_config}"
+printf '\n["profiles.strict.sandbox_workspace_write"]\nnetwork_access = true\n' >>"${literal_dot_section_config}"
+if ! verify_codex_managed_config_invariants "${literal_dot_section_config}" >/dev/null 2>&1; then
+  echo 'Expected quoted single-segment section names with literal dots to remain distinct from forbidden dotted paths' >&2
+  exit 1
+fi
+
+rm -rf "${codex_managed_config_tmpdir}"
+
 if ! sed -n '/^run_host_colima()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "HOME=\"\${REAL_HOME}\""; then
   echo "Expected run_host_colima to restore the real host HOME instead of the Docker client sandbox home" >&2
   exit 1

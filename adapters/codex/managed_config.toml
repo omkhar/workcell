@@ -7,6 +7,7 @@
 analytics.enabled = false
 history.persistence = "none"
 web_search = "disabled"
+profile = "strict"
 
 [shell_environment_policy]
 inherit = "core"
@@ -37,6 +38,24 @@ network_access = false
 
 [features]
 unified_exec = true
+
+[profiles.strict]
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+web_search = "disabled"
+
+[profiles.build]
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+web_search = "disabled"
+
+[profiles.build.sandbox_workspace_write]
+network_access = true
+
+[profiles.breakglass]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+web_search = "disabled"
 
 [[rules.prefix_rules]]
 pattern = [{ any_of = ["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"] }, { token = "commit" }, { any_of = ["--no-verify", "-n"] }]
