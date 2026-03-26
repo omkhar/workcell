@@ -2485,6 +2485,92 @@ EOF
 } >"${PROFILE_PROCESS_MATCH_HARNESS}"
 /bin/bash "${PROFILE_PROCESS_MATCH_HARNESS}"
 rm -f "${PROFILE_PROCESS_MATCH_HARNESS}"
+COLIMA_PROFILE_STATUS_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_profile_status
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" maybe_reap_stale_profile_processes
+  cat <<'EOF'
+set -euo pipefail
+
+HOST_PYTHON3_BIN="$(command -v python3)"
+TRUSTED_HOST_PATH="${PATH}"
+
+run_host_colima() {
+  cat <<'JSON'
+{"name":"default","status":"Running"}
+{"name":"workcell-workcell-ac42b1dc","status":"Stopped"}
+{"name":"workcell-other","status":"Running"}
+JSON
+}
+
+reap_stale_profile_processes() {
+  printf 'reaped:%s\n' "$1"
+}
+
+profile_process_pids() {
+  case "$1" in
+    workcell-stale)
+      printf '%s\n' 49909
+      ;;
+    workcell-parse-failure)
+      printf '%s\n' 49991
+      ;;
+  esac
+}
+
+status="$(colima_profile_status workcell-workcell-ac42b1dc)"
+if [[ "${status}" != "Stopped" ]]; then
+  echo "Expected colima_profile_status to return Stopped for the matching profile, got: ${status}" >&2
+  exit 1
+fi
+
+status="$(colima_profile_status workcell-other)"
+if [[ "${status}" != "Running" ]]; then
+  echo "Expected colima_profile_status to return Running for the matching profile, got: ${status}" >&2
+  exit 1
+fi
+
+missing_status_rc=0
+if colima_profile_status does-not-exist >/tmp/workcell-colima-profile-status-missing.out 2>&1; then
+  echo "Expected colima_profile_status to fail for a missing profile" >&2
+  exit 1
+else
+  missing_status_rc=$?
+fi
+if ((missing_status_rc != 3)); then
+  echo "Expected colima_profile_status to return exit status 3 for a missing profile, got: ${missing_status_rc}" >&2
+  exit 1
+fi
+
+reaped="$(maybe_reap_stale_profile_processes workcell-workcell-ac42b1dc)"
+if [[ "${reaped}" != "reaped:workcell-workcell-ac42b1dc" ]]; then
+  echo "Expected maybe_reap_stale_profile_processes to reap only explicit Stopped profiles, got: ${reaped}" >&2
+  exit 1
+fi
+
+if [[ -n "$(maybe_reap_stale_profile_processes workcell-other)" ]]; then
+  echo "Expected maybe_reap_stale_profile_processes to ignore Running profiles" >&2
+  exit 1
+fi
+
+reaped="$(maybe_reap_stale_profile_processes workcell-stale)"
+if [[ "${reaped}" != "reaped:workcell-stale" ]]; then
+  echo "Expected maybe_reap_stale_profile_processes to reap missing profiles that still have orphaned processes, got: ${reaped}" >&2
+  exit 1
+fi
+
+run_host_colima() {
+  printf '%s\n' '{not-json'
+}
+
+if [[ -n "$(maybe_reap_stale_profile_processes workcell-parse-failure)" ]]; then
+  echo "Expected maybe_reap_stale_profile_processes to ignore parse failures instead of reaping live profiles blindly" >&2
+  exit 1
+fi
+EOF
+} >"${COLIMA_PROFILE_STATUS_HARNESS}"
+/bin/bash "${COLIMA_PROFILE_STATUS_HARNESS}"
+rm -f "${COLIMA_PROFILE_STATUS_HARNESS}"
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent gemini \
   --workspace "${ROOT_DIR}" \

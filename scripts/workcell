@@ -311,6 +311,43 @@ run_host_colima() {
   HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
 }
 
+colima_profile_status() {
+  local profile="$1"
+  local list_output=""
+
+  list_output="$(run_host_colima list --json 2>/dev/null || true)"
+  [[ -n "${list_output}" ]] || return 1
+
+  env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    PROFILE_NAME="${profile}" \
+    COLIMA_LIST_JSON="${list_output}" \
+    "${HOST_PYTHON3_BIN}" - <<'PY'
+import json
+import os
+import sys
+
+profile_name = os.environ.get("PROFILE_NAME", "")
+for line in os.environ.get("COLIMA_LIST_JSON", "").splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        sys.exit(1)
+    if record.get("name") != profile_name:
+        continue
+    status = record.get("status")
+    if isinstance(status, str) and status:
+        print(status)
+        sys.exit(0)
+    sys.exit(1)
+
+sys.exit(3)
+PY
+}
+
 profile_process_pids() {
   local profile="$1"
   local instance_name
@@ -373,11 +410,28 @@ reap_stale_profile_processes() {
 
 maybe_reap_stale_profile_processes() {
   local profile="$1"
+  local status=""
+  local status_rc=0
 
-  if run_host_colima status --profile "${profile}" >/dev/null 2>&1; then
-    return 0
+  if status="$(colima_profile_status "${profile}")"; then
+    status_rc=0
+  else
+    status_rc=$?
   fi
-  reap_stale_profile_processes "${profile}"
+
+  case "${status}" in
+    Running)
+      return 0
+      ;;
+    Stopped)
+      reap_stale_profile_processes "${profile}"
+      return 0
+      ;;
+  esac
+
+  if ((status_rc == 3)) && profile_process_pids "${profile}" | grep -q .; then
+    reap_stale_profile_processes "${profile}"
+  fi
 }
 
 sanitize_host_docker_env() {

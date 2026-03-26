@@ -1113,6 +1113,30 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini" bas
       gemini --version >/dev/null 2>&1
       test ! -e /workspace/exfil/settings-clobber
       test ! -e /workspace/exfil/trusted-clobber
+      interactive_status=0
+      if timeout 20 script -qefc "gemini" /tmp/workcell-gemini-interactive.typescript </dev/null >/dev/null 2>&1; then
+        interactive_status=0
+      else
+        interactive_status=$?
+      fi
+      if [[ "${interactive_status}" != "0" ]] && [[ "${interactive_status}" != "124" ]]; then
+        echo "Gemini interactive startup probe failed; transcript follows:" >&2
+        tail -n 80 /tmp/workcell-gemini-interactive.typescript >&2 || true
+        exit 1
+      fi
+      grep -q "Gemini CLI v" /tmp/workcell-gemini-interactive.typescript
+      if grep -q "Do you trust the files in this folder\\?" /tmp/workcell-gemini-interactive.typescript; then
+        echo "expected seeded Gemini trustedFolders.json to suppress the trust prompt" >&2
+        exit 1
+      fi
+      if grep -q "Gemini CLI is restarting to apply the trust changes" /tmp/workcell-gemini-interactive.typescript; then
+        echo "expected Gemini startup not to restart when the workspace is already trusted" >&2
+        exit 1
+      fi
+      if grep -q "Failed to relaunch the CLI process" /tmp/workcell-gemini-interactive.typescript; then
+        echo "expected Gemini startup not to hit the relaunch failure path" >&2
+        exit 1
+      fi
   '"'"'
 '
 
