@@ -378,6 +378,16 @@ if ! rg -q 'REAL_HOME=' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
+if ! rg -q '^\[profiles\.strict\]$' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
+  echo "Expected adapters/codex/managed_config.toml to pin the strict profile block" >&2
+  exit 1
+fi
+
+if ! rg -q '^profile = "strict"$' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
+  echo "Expected adapters/codex/managed_config.toml to pin the default profile to strict" >&2
+  exit 1
+fi
+
 if ! sed -n '/^run_host_colima()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "HOME=\"\${REAL_HOME}\""; then
   echo "Expected run_host_colima to restore the real host HOME instead of the Docker client sandbox home" >&2
   exit 1
