@@ -1925,17 +1925,103 @@ run_command_with_debug_log() {
   local label="$1"
   shift
   local log_path=""
+  local heartbeat_pid=""
+  local start_seconds=0
+  local pid=""
   local status=0
 
+  format_elapsed_compact() {
+    local total_seconds="$1"
+    local minutes=$((total_seconds / 60))
+    local seconds=$((total_seconds % 60))
+
+    if ((minutes > 0)); then
+      printf '%dm%02ds' "${minutes}" "${seconds}"
+    else
+      printf '%ds' "${seconds}"
+    fi
+  }
+
+  maybe_print_progress_update() {
+    local phase="$1"
+    local elapsed="$2"
+
+    case "${label}" in
+      colima-start)
+        case "${phase}" in
+          start)
+            echo "Starting managed Colima profile ${COLIMA_PROFILE}. This can take a moment on first use." >&2
+            ;;
+          heartbeat)
+            echo "Workcell is still starting Colima for profile ${COLIMA_PROFILE} (${elapsed} elapsed)." >&2
+            ;;
+          success)
+            echo "Managed Colima profile ${COLIMA_PROFILE} is ready (${elapsed})." >&2
+            ;;
+        esac
+        ;;
+      runtime-build)
+        case "${phase}" in
+          start)
+            echo "Preparing the runtime image for profile ${COLIMA_PROFILE}. First-time prepares can take several minutes; reruns are usually faster." >&2
+            if [[ "${LOG_LEVEL}" != "debug" ]]; then
+              echo "Use --log-level debug for live Docker build output." >&2
+            fi
+            ;;
+          heartbeat)
+            echo "Workcell is still preparing the runtime image for profile ${COLIMA_PROFILE} (${elapsed} elapsed)." >&2
+            ;;
+          success)
+            if [[ "${PREPARE_ONLY}" -eq 1 ]]; then
+              echo "Prepared runtime image is ready for profile ${COLIMA_PROFILE} (${elapsed})." >&2
+            else
+              echo "Prepared runtime image is ready for profile ${COLIMA_PROFILE} (${elapsed}). Launching ${AGENT}." >&2
+            fi
+            ;;
+        esac
+        ;;
+    esac
+  }
+
   log_path="$(mktemp "${TMPDIR:-/tmp}/workcell-${label}.log.XXXXXX")"
-  if "$@" >"${log_path}" 2>&1; then
-    if [[ "${LOG_LEVEL}" == "debug" ]]; then
-      cat "${log_path}" >&2
-    elif [[ -n "${DEBUG_LOG_PATH}" ]]; then
+  start_seconds="${SECONDS}"
+  maybe_print_progress_update start "0s"
+  if [[ "${LOG_LEVEL}" == "debug" ]]; then
+    if [[ -n "${DEBUG_LOG_PATH}" ]]; then
+      "$@" 2>&1 | tee -a "${DEBUG_LOG_PATH}" "${log_path}" >&2
+    else
+      "$@" 2>&1 | tee "${log_path}" >&2
+    fi
+    status="${PIPESTATUS[0]}"
+  else
+    "$@" >"${log_path}" 2>&1 &
+    pid=$!
+    (
+      while kill -0 "${pid}" >/dev/null 2>&1; do
+        sleep 30
+        if ! kill -0 "${pid}" >/dev/null 2>&1; then
+          break
+        fi
+        maybe_print_progress_update heartbeat "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
+      done
+    ) &
+    heartbeat_pid=$!
+    if wait "${pid}"; then
+      :
+    else
+      status=$?
+    fi
+    if [[ -n "${heartbeat_pid}" ]]; then
+      kill "${heartbeat_pid}" >/dev/null 2>&1 || true
+      wait "${heartbeat_pid}" 2>/dev/null || true
+    fi
+    if [[ "${status}" -eq 0 ]] && [[ -n "${DEBUG_LOG_PATH}" ]]; then
       cat "${log_path}" >>"${DEBUG_LOG_PATH}"
     fi
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    maybe_print_progress_update success "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
   else
-    status=$?
     echo "Workcell ${label} failed." >&2
     cat "${log_path}" >&2
   fi
