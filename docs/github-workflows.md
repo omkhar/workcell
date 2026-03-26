@@ -26,6 +26,12 @@ under platform automation.
   image so release gating does not trust mutable runner apt packages
 - `docs.yml`: fast spelling and manpage feedback for documentation-only changes,
   including runtime documentation under `runtime/**`
+- `provider-e2e.yml`: manual `workflow_dispatch` provider-authenticated smoke
+  on the self-hosted macOS boundary path, with explicit provider selection,
+  explicit injection required, an owner-only plus default-branch job gate, and
+  credentials supplied only through the dedicated `provider-e2e` environment;
+  it stays separate from default CI so the secretless path remains the normal
+  gate
 - `security.yml`: GitHub Actions linting, dependency review on pull requests,
   and `zizmor`
 - `codeql.yml`: code scanning for the shipped Rust and JavaScript surfaces on
@@ -154,13 +160,13 @@ review through `WORKCELL_ENABLE_PRIVATE_DEPENDENCY_REVIEW=true`. Public
 repositories upload both SARIF result sets into the GitHub Security tab by
 default and run dependency review on pull requests without extra flags.
 
-Every workflow sets `permissions: read-all` at the workflow level and then
-elevates only the specific jobs that need write access, such as CodeQL SARIF
-upload, Scorecard SARIF upload, or tagged release publication. Workcell also
-forbids `pull_request_target` and disallows long-lived PAT-style workflow
-credentials in the reviewed workflow set. Release publication uses OIDC-backed
-ephemeral credentials for signing and attestations instead of long-lived cloud
-keys.
+Workcell now defaults workflows to `permissions: {}` or other minimal
+read-only scopes, and elevates only the specific jobs that need write access,
+such as CodeQL SARIF upload, Scorecard SARIF upload, or tagged release
+publication. Workcell also forbids `pull_request_target` and disallows
+long-lived PAT-style workflow credentials in the reviewed workflow set.
+Release publication uses OIDC-backed ephemeral credentials for signing and
+attestations instead of long-lived cloud keys.
 
 ## Dependency update scope
 
@@ -199,6 +205,15 @@ These are omitted on purpose:
 The small exception is `docs.yml`, which exists only to give faster spelling
 and manpage feedback on documentation-only changes. It does not replace the
 full validation and release gates in `ci.yml`.
+
+The manual provider-e2e workflow is not a default CI replacement. It is a
+separate dispatch-only lane for credential detection, control-plane seeding,
+and a small authenticated provider probe, kept narrow so the secretless CI
+path remains the standard repository gate. Keep the `provider-e2e`
+environment protected so only approved operators can access its secrets, and
+keep the owner-only plus default-branch job gate in place so a manual dispatch
+by another actor or from a non-default branch cannot consume those
+credentials.
 
 ## Review standard
 

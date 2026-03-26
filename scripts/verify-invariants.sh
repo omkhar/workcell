@@ -3496,10 +3496,11 @@ touch "${WORKTREE_MAIN}/tracked.txt"
 git -C "${WORKTREE_MAIN}" add tracked.txt
 git -C "${WORKTREE_MAIN}" commit -q -m init
 git -C "${WORKTREE_MAIN}" worktree add -q -b linked "${WORKTREE_LINKED}"
-if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKTREE_LINKED}" --dry-run >/dev/null 2>&1; then
+if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKTREE_LINKED}" --dry-run >/tmp/workcell-linked-worktree.out 2>&1; then
   echo "Expected linked git worktree with external admin state to be rejected" >&2
   exit 1
 fi
+grep -q 'linked worktrees require breakglass or a different clone' /tmp/workcell-linked-worktree.out
 
 REDIRECTED_ROOT="${BARRIER_VERIFY_ROOT}/redirected-root"
 REDIRECTED_REPO="${REDIRECTED_ROOT}/repo"
@@ -3523,6 +3524,217 @@ if ! WORKCELL_REMOTE_VALIDATE_CONFIG_PATH="${LOCAL_REMOTE_CONFIG_PATH}" \
   cat /tmp/workcell-remote-config.out >&2
   exit 1
 fi
+
+if ! WORKCELL_E2E_CODEX_AUTH_JSON='{"token":"codex-smoke"}' \
+  WORKCELL_E2E_GITHUB_HOSTS_YML=$'github.com:\n  user: smoke\n' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --dry-run >/tmp/workcell-provider-e2e-codex.out 2>&1; then
+  echo "Expected provider-e2e codex dry-run to succeed with generated env credentials" >&2
+  cat /tmp/workcell-provider-e2e-codex.out >&2
+  exit 1
+fi
+grep -q '^provider_e2e_agent=codex$' /tmp/workcell-provider-e2e-codex.out
+grep -q '^provider_e2e_injection_source=generated-env$' /tmp/workcell-provider-e2e-codex.out
+grep -q '^provider_e2e_steps=auth-status,prepare-only,live-probe$' /tmp/workcell-provider-e2e-codex.out
+grep -q 'codex_auth' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_auth_status_cmd=.*--auth-status' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_prepare_only_cmd=.*--prepare-only' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_probe_cmd=.*--agent-arg exec' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_probe_cmd=.*--agent-arg --json' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-codex.out
+
+if ! WORKCELL_E2E_CLAUDE_API_KEY='smoke-api-key' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent claude \
+  --workspace "${ROOT_DIR}" \
+  --dry-run >/tmp/workcell-provider-e2e-claude.out 2>&1; then
+  echo "Expected provider-e2e claude dry-run to succeed with generated env credentials" >&2
+  cat /tmp/workcell-provider-e2e-claude.out >&2
+  exit 1
+fi
+grep -q '^provider_e2e_agent=claude$' /tmp/workcell-provider-e2e-claude.out
+grep -q '^provider_e2e_injection_source=generated-env$' /tmp/workcell-provider-e2e-claude.out
+grep -q 'claude_api_key' /tmp/workcell-provider-e2e-claude.out
+grep -q 'provider_e2e_probe_cmd=.*--agent-arg -p' /tmp/workcell-provider-e2e-claude.out
+grep -q 'provider_e2e_probe_cmd=.*--agent-arg json' /tmp/workcell-provider-e2e-claude.out
+grep -q 'provider_e2e_probe_cmd=.*--agent-arg --no-session-persistence' /tmp/workcell-provider-e2e-claude.out
+grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-claude.out
+
+if ! WORKCELL_E2E_GEMINI_ENV=$'GOOGLE_GENAI_USE_VERTEXAI=true\nGOOGLE_CLOUD_PROJECT=smoke-project\nGOOGLE_CLOUD_LOCATION=us-central1\n' \
+  WORKCELL_E2E_GCLOUD_ADC_JSON='{"type":"authorized_user","client_id":"smoke-client","client_secret":"smoke-secret","refresh_token":"smoke-refresh"}' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent gemini \
+  --workspace "${ROOT_DIR}" \
+  --dry-run >/tmp/workcell-provider-e2e-gemini.out 2>&1; then
+  echo "Expected provider-e2e gemini dry-run to succeed with generated env credentials" >&2
+  cat /tmp/workcell-provider-e2e-gemini.out >&2
+  exit 1
+fi
+grep -q '^provider_e2e_agent=gemini$' /tmp/workcell-provider-e2e-gemini.out
+grep -q '^provider_e2e_injection_source=generated-env$' /tmp/workcell-provider-e2e-gemini.out
+grep -q 'gemini_env' /tmp/workcell-provider-e2e-gemini.out
+grep -q 'gcloud_adc' /tmp/workcell-provider-e2e-gemini.out
+grep -q 'provider_e2e_probe_cmd=.*--agent-arg -p' /tmp/workcell-provider-e2e-gemini.out
+grep -q 'provider_e2e_probe_cmd=.*--agent-arg json' /tmp/workcell-provider-e2e-gemini.out
+grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-gemini.out
+
+FAKE_PROVIDER_E2E_WORKCELL_OK="${BARRIER_VERIFY_ROOT}/provider-e2e-fake-workcell-ok.sh"
+cat >"${FAKE_PROVIDER_E2E_WORKCELL_OK}" <<'EOF_FAKE_PROVIDER_E2E_OK'
+#!/bin/bash
+set -euo pipefail
+
+for arg in "$@"; do
+  if [[ "${arg}" == "--auth-status" ]]; then
+    cat <<'STATUS'
+credential_keys=codex_auth
+provider_auth_mode=codex_auth
+provider_auth_modes=codex_auth
+shared_auth_modes=none
+github_auth_present=0
+ssh_injected=0
+ssh_config_assurance=off
+secret_copy_targets=none
+STATUS
+    exit 0
+  fi
+done
+
+if [[ "${1:-}" == "--prepare-only" ]]; then
+  exit 0
+fi
+
+case " $* " in
+  *" --agent-arg exec "* ) ;;
+  * )
+    echo "missing codex exec probe args: $*" >&2
+    exit 98
+    ;;
+esac
+case " $* " in
+  *" --agent-arg --json "* ) ;;
+  * )
+    echo "missing codex json probe args: $*" >&2
+    exit 97
+    ;;
+esac
+
+printf '{"type":"item.completed","item":{"type":"agent_message","text":"WORKCELL_PROVIDER_E2E_OK"}}\n'
+EOF_FAKE_PROVIDER_E2E_OK
+chmod +x "${FAKE_PROVIDER_E2E_WORKCELL_OK}"
+
+if ! WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_OK}" \
+  WORKCELL_E2E_CODEX_AUTH_JSON='{"token":"codex-smoke"}' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --require-injection >/tmp/workcell-provider-e2e-live-probe.out 2>&1; then
+  echo "Expected provider-e2e live probe to succeed against the fake Workcell shim" >&2
+  cat /tmp/workcell-provider-e2e-live-probe.out >&2
+  exit 1
+fi
+grep -q '\[provider-e2e\] auth-status (codex)' /tmp/workcell-provider-e2e-live-probe.out
+grep -q '\[provider-e2e\] prepare-only (codex)' /tmp/workcell-provider-e2e-live-probe.out
+grep -q '\[provider-e2e\] live-probe (codex)' /tmp/workcell-provider-e2e-live-probe.out
+grep -q '"text":"WORKCELL_PROVIDER_E2E_OK"' /tmp/workcell-provider-e2e-live-probe.out
+
+FAKE_PROVIDER_E2E_WORKCELL_GEMINI="${BARRIER_VERIFY_ROOT}/provider-e2e-fake-workcell-gemini.sh"
+cat >"${FAKE_PROVIDER_E2E_WORKCELL_GEMINI}" <<'EOF_FAKE_PROVIDER_E2E_GEMINI'
+#!/bin/bash
+set -euo pipefail
+
+for arg in "$@"; do
+  if [[ "${arg}" == "--auth-status" ]]; then
+    cat <<'STATUS'
+credential_keys=gemini_env
+provider_auth_mode=gemini_env
+provider_auth_modes=gemini_env
+shared_auth_modes=none
+github_auth_present=0
+ssh_injected=0
+ssh_config_assurance=off
+secret_copy_targets=none
+STATUS
+    exit 0
+  fi
+done
+
+if [[ "${1:-}" == "--prepare-only" ]]; then
+  exit 0
+fi
+
+case " $* " in
+  *" --agent-arg -p "* ) ;;
+  * )
+    echo "missing gemini prompt probe args: $*" >&2
+    exit 96
+    ;;
+esac
+case " $* " in
+  *" --agent-arg --output-format "* ) ;;
+  * )
+    echo "missing gemini output-format probe args: $*" >&2
+    exit 95
+    ;;
+esac
+
+printf '{\n  "response": "WORKCELL_PROVIDER_E2E_OK"\n}\n'
+EOF_FAKE_PROVIDER_E2E_GEMINI
+chmod +x "${FAKE_PROVIDER_E2E_WORKCELL_GEMINI}"
+
+if ! WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_GEMINI}" \
+  WORKCELL_E2E_GEMINI_ENV=$'GOOGLE_GENAI_USE_VERTEXAI=true\nGOOGLE_CLOUD_PROJECT=smoke-project\nGOOGLE_CLOUD_LOCATION=us-central1\n' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent gemini \
+  --workspace "${ROOT_DIR}" \
+  --require-injection >/tmp/workcell-provider-e2e-live-probe-gemini.out 2>&1; then
+  echo "Expected provider-e2e Gemini probe to succeed against the fake Workcell shim" >&2
+  cat /tmp/workcell-provider-e2e-live-probe-gemini.out >&2
+  exit 1
+fi
+grep -q '\[provider-e2e\] auth-status (gemini)' /tmp/workcell-provider-e2e-live-probe-gemini.out
+grep -q '\[provider-e2e\] prepare-only (gemini)' /tmp/workcell-provider-e2e-live-probe-gemini.out
+grep -q '\[provider-e2e\] live-probe (gemini)' /tmp/workcell-provider-e2e-live-probe-gemini.out
+grep -q '"response": "WORKCELL_PROVIDER_E2E_OK"' /tmp/workcell-provider-e2e-live-probe-gemini.out
+
+FAKE_PROVIDER_E2E_WORKCELL_NONE="${BARRIER_VERIFY_ROOT}/provider-e2e-fake-workcell-none.sh"
+cat >"${FAKE_PROVIDER_E2E_WORKCELL_NONE}" <<'EOF_FAKE_PROVIDER_E2E_NONE'
+#!/bin/bash
+set -euo pipefail
+
+for arg in "$@"; do
+  if [[ "${arg}" == "--auth-status" ]]; then
+    printf 'provider_auth_mode=none\n'
+    exit 0
+  fi
+done
+
+echo "unexpected fake provider-e2e workcell invocation: $*" >&2
+exit 99
+EOF_FAKE_PROVIDER_E2E_NONE
+chmod +x "${FAKE_PROVIDER_E2E_WORKCELL_NONE}"
+
+if WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_NONE}" \
+  WORKCELL_E2E_CODEX_AUTH_JSON='{"token":"codex-smoke"}' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" >/tmp/workcell-provider-e2e-auth-guard.out 2>&1; then
+  echo "Expected provider-e2e auth guard to fail when injected credentials are not recognized" >&2
+  exit 1
+fi
+grep -q 'Workcell did not detect provider auth for codex' /tmp/workcell-provider-e2e-auth-guard.out
+
+if "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent claude \
+  --workspace "${ROOT_DIR}" \
+  --require-injection \
+  --dry-run >/tmp/workcell-provider-e2e-missing-injection.out 2>&1; then
+  echo "Expected provider-e2e require-injection mode to fail without explicit or generated credentials" >&2
+  exit 1
+fi
+grep -q 'No injection policy is available' /tmp/workcell-provider-e2e-missing-injection.out
+grep -q -- '--require-injection' "${ROOT_DIR}/.github/workflows/provider-e2e.yml"
 grep -q 'Remote host: builder@example.internal' /tmp/workcell-remote-config.out
 grep -q 'Remote base dir: /var/tmp/workcell' /tmp/workcell-remote-config.out
 grep -q "Remote config path: ${LOCAL_REMOTE_CONFIG_PATH}" /tmp/workcell-remote-config.out
