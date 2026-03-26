@@ -305,7 +305,79 @@ profile_lima_dir() {
 }
 
 run_host_colima() {
-  COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+  if [[ -z "${HOST_COLIMA_BIN}" ]]; then
+    HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
+  fi
+  HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+}
+
+profile_process_pids() {
+  local profile="$1"
+  local instance_name
+  local pid=""
+  local command=""
+
+  instance_name="colima-${profile}"
+  pgrep -f "${instance_name}" 2>/dev/null | while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    case "${command}" in
+      */limactl\ hostagent*"${instance_name}")
+        printf '%s\n' "${pid}"
+        ;;
+      ssh:\ *"${instance_name}"/ssh.sock\ \[mux\])
+        printf '%s\n' "${pid}"
+        ;;
+    esac
+  done | sort -u
+}
+
+reap_stale_profile_processes() {
+  local profile="$1"
+  local -a pids=()
+  local -a remaining=()
+  local pid=""
+  local deadline=0
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] && pids+=("${pid}")
+  done < <(profile_process_pids "${profile}")
+
+  if ((${#pids[@]} == 0)); then
+    return 0
+  fi
+
+  echo "Stopping stale Lima processes for profile ${profile}." >&2
+  kill "${pids[@]}" >/dev/null 2>&1 || true
+  deadline=$((SECONDS + 5))
+
+  while :; do
+    remaining=()
+    for pid in "${pids[@]}"; do
+      if kill -0 "${pid}" >/dev/null 2>&1; then
+        remaining+=("${pid}")
+      fi
+    done
+    if ((${#remaining[@]} == 0)); then
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      break
+    fi
+    sleep 1
+    pids=("${remaining[@]}")
+  done
+
+  kill -9 "${remaining[@]}" >/dev/null 2>&1 || true
+}
+
+maybe_reap_stale_profile_processes() {
+  local profile="$1"
+
+  if run_host_colima status --profile "${profile}" >/dev/null 2>&1; then
+    return 0
+  fi
+  reap_stale_profile_processes "${profile}"
 }
 
 sanitize_host_docker_env() {
@@ -324,6 +396,7 @@ CONTROL_PLANE_SHADOW_ROOT=""
 INJECTION_BUNDLE_ROOT=""
 DIRECT_MOUNT_SPEC_PATH=""
 PROFILE_AUDIT_LOG_STASH=""
+PROFILE_WAS_REFRESHED=0
 PRESERVE_FAILED_PROFILE_STATE=0
 declare -a SHADOW_MOUNTS=()
 declare -a SHADOW_DEST_PATHS=()
@@ -713,6 +786,20 @@ maybe_fail_after_profile_refresh_for_tests() {
   exit 88
 }
 
+fail_missing_strict_prepared_image_prelaunch() {
+  if [[ "${PROFILE_WAS_REFRESHED:-0}" -eq 1 ]]; then
+    mkdir -p "${PROFILE_DIR}"
+    printf '%s\n' "${WORKSPACE}" >"${PROFILE_MARKER}"
+  fi
+  echo "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." >&2
+  echo "This is expected on the first launch for a workspace or after profile cleanup." >&2
+  echo "Next step:" >&2
+  build_recommended_command 1 0 "${MODE}"
+  echo "That command seeds the prepared runtime image inside the isolated VM and then launches ${AGENT} in strict mode." >&2
+  echo "No VM or container was started." >&2
+  exit 2
+}
+
 container_assurance() {
   workcell_container_assurance "${CONTAINER_MUTABILITY}"
 }
@@ -1048,7 +1135,7 @@ default_injection_policy_path() {
 }
 
 default_injection_bundle_parent() {
-  resolve_host_path "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/tmp"
+  resolve_host_path "${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
 }
 
 cleanup_stale_injection_bundles() {
@@ -1110,7 +1197,10 @@ for candidate in root.iterdir():
             continue
     elif stat.st_mtime > cutoff:
         continue
-    shutil.rmtree(candidate, ignore_errors=False)
+    try:
+        shutil.rmtree(candidate, ignore_errors=False)
+    except FileNotFoundError:
+        continue
     try:
         sidecar = sidecar_path(candidate)
         if sidecar.is_file():
@@ -1137,9 +1227,18 @@ prepare_injection_direct_mounts() {
   local mount_spec_path="$1"
   local host_source=""
   local mount_path=""
+  local staged_root=""
+  local staged_source=""
+  local entry_hash=""
 
   DIRECT_SOURCE_MOUNTS=()
   [[ -f "${mount_spec_path}" ]] || return 0
+  [[ -n "${INJECTION_BUNDLE_ROOT}" ]] || {
+    echo "Direct input staging requires an injection bundle root." >&2
+    exit 2
+  }
+  staged_root="${INJECTION_BUNDLE_ROOT}/direct-mounts"
+  mkdir -p "${staged_root}"
 
   while IFS=$'\t' read -r host_source mount_path; do
     [[ -n "${host_source}" ]] || continue
@@ -1158,7 +1257,30 @@ prepare_injection_direct_mounts() {
         ;;
     esac
 
-    DIRECT_SOURCE_MOUNTS+=(-v "${host_source}:${mount_path}:ro")
+    entry_hash="$(
+      run_clean_host_command "${HOST_PYTHON3_BIN}" - "${host_source}" "${mount_path}" <<'PY'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+for value in sys.argv[1:]:
+    digest.update(value.encode("utf-8"))
+    digest.update(b"\0")
+print(digest.hexdigest()[:16])
+PY
+    )"
+    staged_source="${staged_root}/${entry_hash}"
+    rm -rf "${staged_source}"
+    if [[ -d "${host_source}" ]]; then
+      mkdir -p "${staged_source}"
+      cp -R "${host_source}/." "${staged_source}"
+    else
+      mkdir -p "$(dirname "${staged_source}")"
+      cp -f "${host_source}" "${staged_source}"
+    fi
+    chmod -R go-rwx "${staged_source}" 2>/dev/null || true
+
+    DIRECT_SOURCE_MOUNTS+=(-v "${staged_source}:${mount_path}:ro")
   done < <(
     run_clean_host_command "${HOST_PYTHON3_BIN}" - "${mount_spec_path}" <<'PY'
 import json
@@ -1433,9 +1555,6 @@ provider_auth_modes() {
       if csv_contains_value "${credential_keys}" "gemini_oauth"; then
         modes+=(gemini_oauth)
       fi
-      if csv_contains_value "${credential_keys}" "gcloud_adc"; then
-        modes+=(gcloud_adc)
-      fi
       ;;
   esac
 
@@ -1475,6 +1594,20 @@ github_auth_present() {
 
 selected_provider_auth_mode() {
   local auth_modes=""
+  local credential_keys="${INJECTION_CREDENTIAL_KEYS:-}"
+
+  if [[ "${AGENT:-}" == "gemini" ]]; then
+    if csv_contains_value "${credential_keys}" "gemini_env"; then
+      printf 'gemini_env\n'
+      return 0
+    fi
+    if csv_contains_value "${credential_keys}" "gemini_oauth"; then
+      printf 'gemini_oauth\n'
+      return 0
+    fi
+    printf 'none\n'
+    return 0
+  fi
 
   auth_modes="$(provider_auth_modes)"
   if [[ "${auth_modes}" == "none" ]]; then
@@ -1482,6 +1615,31 @@ selected_provider_auth_mode() {
   else
     printf '%s\n' "${auth_modes%%,*}"
   fi
+}
+
+fail_fast_for_missing_gemini_auth() {
+  if [[ "${AGENT}" != "gemini" ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ "$#" -eq 2 ]] && [[ "$1" == "gemini" ]] && [[ "$2" == "--version" ]]; then
+    return 0
+  fi
+
+  if [[ "$(selected_provider_auth_mode)" != "none" ]]; then
+    return 0
+  fi
+
+  echo "Gemini auth is not configured for this session." >&2
+  if [[ -n "${INJECTION_POLICY}" ]]; then
+    echo "Update ${INJECTION_POLICY} to include credentials.gemini_env or credentials.gemini_oauth." >&2
+    echo "credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env." >&2
+  else
+    echo "Create $(default_injection_policy_path) or pass --injection-policy PATH with credentials.gemini_env or credentials.gemini_oauth." >&2
+    echo "credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env." >&2
+  fi
+  printf 'Next step: workcell --auth-status --agent gemini --workspace %q\n' "${WORKSPACE}" >&2
+  exit 2
 }
 
 print_injection_status() {
@@ -1572,6 +1730,7 @@ delete_unmanaged_profile() {
 
   HOST_COLIMA_BIN="${HOST_COLIMA_BIN:-$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)}"
   export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+  maybe_reap_stale_profile_processes "${profile}"
   run_host_colima delete --profile "${profile}" --force >/dev/null 2>&1 || true
   rm -rf "${state_dir}" "${lima_dir}"
 
@@ -1924,20 +2083,112 @@ PY
 run_command_with_debug_log() {
   local label="$1"
   shift
+  local -a debug_pipe_status=()
   local log_path=""
+  local heartbeat_pid=""
+  local start_seconds=0
+  local pid=""
   local status=0
 
+  format_elapsed_compact() {
+    local total_seconds="$1"
+    local minutes=$((total_seconds / 60))
+    local seconds=$((total_seconds % 60))
+
+    if ((minutes > 0)); then
+      printf '%dm%02ds' "${minutes}" "${seconds}"
+    else
+      printf '%ds' "${seconds}"
+    fi
+  }
+
+  maybe_print_progress_update() {
+    local phase="$1"
+    local elapsed="$2"
+
+    case "${label}" in
+      colima-start)
+        case "${phase}" in
+          start)
+            echo "Starting managed Colima profile ${COLIMA_PROFILE}. This can take a moment, especially on first use." >&2
+            ;;
+          heartbeat)
+            echo "Workcell is still starting Colima for profile ${COLIMA_PROFILE} (${elapsed} elapsed)." >&2
+            ;;
+          success)
+            echo "Managed Colima profile ${COLIMA_PROFILE} is ready (${elapsed})." >&2
+            ;;
+        esac
+        ;;
+      runtime-build)
+        case "${phase}" in
+          start)
+            echo "Preparing the runtime image for profile ${COLIMA_PROFILE}. First-time prepares can take several minutes; reruns are usually faster." >&2
+            if [[ "${LOG_LEVEL}" != "debug" ]]; then
+              echo "Use --log-level debug for live Docker build output." >&2
+            fi
+            ;;
+          heartbeat)
+            echo "Workcell is still preparing the runtime image for profile ${COLIMA_PROFILE} (${elapsed} elapsed)." >&2
+            ;;
+          success)
+            if [[ "${PREPARE_ONLY}" -eq 1 ]]; then
+              echo "Prepared runtime image is ready for profile ${COLIMA_PROFILE} (${elapsed})." >&2
+            else
+              echo "Prepared runtime image is ready for profile ${COLIMA_PROFILE} (${elapsed}). Launching ${AGENT}." >&2
+            fi
+            ;;
+        esac
+        ;;
+    esac
+  }
+
   log_path="$(mktemp "${TMPDIR:-/tmp}/workcell-${label}.log.XXXXXX")"
-  if "$@" >"${log_path}" 2>&1; then
-    if [[ "${LOG_LEVEL}" == "debug" ]]; then
-      cat "${log_path}" >&2
-    elif [[ -n "${DEBUG_LOG_PATH}" ]]; then
-      cat "${log_path}" >>"${DEBUG_LOG_PATH}"
+  start_seconds="${SECONDS}"
+  maybe_print_progress_update start "0s"
+  if [[ "${LOG_LEVEL}" == "debug" ]]; then
+    set +e
+    "$@" 2>&1 | tee "${log_path}" >&2
+    debug_pipe_status=("${PIPESTATUS[@]}")
+    set -e
+    if [[ "${debug_pipe_status[0]}" -ne 0 ]]; then
+      status="${debug_pipe_status[0]}"
+    elif [[ "${debug_pipe_status[1]}" -ne 0 ]]; then
+      status="${debug_pipe_status[1]}"
     fi
   else
-    status=$?
+    "$@" >"${log_path}" 2>&1 &
+    pid=$!
+    (
+      while kill -0 "${pid}" >/dev/null 2>&1; do
+        sleep 30
+        if ! kill -0 "${pid}" >/dev/null 2>&1; then
+          break
+        fi
+        maybe_print_progress_update heartbeat "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
+      done
+    ) &
+    heartbeat_pid=$!
+    if wait "${pid}"; then
+      :
+    else
+      status=$?
+    fi
+    if [[ -n "${heartbeat_pid}" ]]; then
+      kill "${heartbeat_pid}" >/dev/null 2>&1 || true
+      wait "${heartbeat_pid}" 2>/dev/null || true
+    fi
+    if [[ "${status}" -eq 0 ]] && [[ -n "${DEBUG_LOG_PATH}" ]]; then
+      cat "${log_path}" >>"${DEBUG_LOG_PATH}"
+    fi
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    maybe_print_progress_update success "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
+  else
     echo "Workcell ${label} failed." >&2
-    cat "${log_path}" >&2
+    if [[ "${LOG_LEVEL}" != "debug" ]]; then
+      cat "${log_path}" >&2
+    fi
   fi
   rm -f "${log_path}"
   return "${status}"
@@ -2021,7 +2272,6 @@ validate_colima_runtime_mounts() {
     expected = ARGV[1].sub(%r{/$}, "")
     profile = ARGV[2]
     home = File.expand_path(ENV.fetch("HOME"))
-    sandbox_home = ARGV[3].to_s.empty? ? nil : File.expand_path(ARGV[3])
 
     def canonicalize(path)
       expanded = File.expand_path(path)
@@ -2030,9 +2280,6 @@ validate_colima_runtime_mounts() {
 
     expected = canonicalize(expected)
     cache_roots = [canonicalize(File.join(home, "Library", "Caches", "colima"))]
-    if sandbox_home
-      cache_roots << canonicalize(File.join(sandbox_home, "Library", "Caches", "colima"))
-    end
     lima_mounts = lima["mounts"] || []
     writable_mounts = lima_mounts.select { |mount| mount["writable"] == true }
 
@@ -2058,7 +2305,7 @@ validate_colima_runtime_mounts() {
       warn "Colima profile #{profile} has an unexpected host mount: #{bad_mount["location"]}"
       exit 2
     end
-  ' "${lima_path}" "${workspace}" "${profile}" "${WORKCELL_DOCKER_HOME:-}"
+  ' "${lima_path}" "${workspace}" "${profile}"
 }
 
 validate_colima_profile_config() {
@@ -2684,10 +2931,6 @@ prepare_workspace_control_plane_shadow() {
   WORKSPACE_IMPORT_MOUNTS=()
   [[ "${mode}" == "breakglass" ]] && return 0
 
-  if [[ -n "${WORKCELL_DOCKER_HOME:-}" ]]; then
-    shadow_parent="${WORKCELL_DOCKER_HOME}/Library/Caches/colima/workcell-shadow"
-  fi
-
   mkdir -p "${shadow_parent}"
   CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
 
@@ -2745,7 +2988,7 @@ prepare_workspace_control_plane_shadow() {
 }
 
 bootstrap_endpoints() {
-  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 snapshot.debian.org:80 snapshot.debian.org:443"
+  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 snapshot.debian.org:80"
 }
 
 AGENT=""
@@ -2785,6 +3028,49 @@ ACK_ARBITRARY_COMMAND=0
 TEST_FAIL_AFTER_PROFILE_REFRESH=0
 declare -a AGENT_ARGS=()
 declare -a NORMALIZED_ARGS=()
+
+if [[ "${1:-}" == "--self-staging-probe" ]]; then
+  shift
+  AGENT="${1:-}"
+  WORKSPACE="${2:-}"
+  INJECTION_POLICY="${3:-}"
+  MODE="${4:-strict}"
+
+  [[ -n "${AGENT}" ]] || {
+    echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
+    exit 2
+  }
+  [[ -n "${WORKSPACE}" ]] || {
+    echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
+    exit 2
+  }
+  [[ -n "${INJECTION_POLICY}" ]] || {
+    echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
+    exit 2
+  }
+
+  sanitize_host_docker_env
+  WORKSPACE="$(resolve_existing_directory_or_die "${WORKSPACE}")"
+  INJECTION_POLICY="$(resolve_host_path "${INJECTION_POLICY}")"
+  USE_DEFAULT_INJECTION_POLICY=0
+  prepare_injection_bundle "${AGENT}" "${MODE}"
+  prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
+
+  printf 'workcell_docker_home=%s\n' "${WORKCELL_DOCKER_HOME:-}"
+  printf 'injection_bundle_root=%s\n' "${INJECTION_BUNDLE_ROOT}"
+  printf 'shadow_root=%s\n' "${CONTROL_PLANE_SHADOW_ROOT}"
+  printf 'workspace=%s\n' "${WORKSPACE}"
+  for ((i = 1; i < ${#DIRECT_SOURCE_MOUNTS[@]}; i += 2)); do
+    printf 'direct_mount=%s\n' "${DIRECT_SOURCE_MOUNTS[i]}"
+  done
+  for ((i = 1; i < ${#SHADOW_MOUNTS[@]}; i += 2)); do
+    printf 'shadow_mount=%s\n' "${SHADOW_MOUNTS[i]}"
+  done
+  for ((i = 1; i < ${#WORKSPACE_IMPORT_MOUNTS[@]}; i += 2)); do
+    printf 'workspace_import_mount=%s\n' "${WORKSPACE_IMPORT_MOUNTS[i]}"
+  done
+  exit 0
+fi
 
 if [[ $# -gt 0 ]]; then
   normalize_cli_aliases "$@"
@@ -3178,7 +3464,10 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
   exit 0
 fi
 
+fail_fast_for_missing_gemini_auth "$@"
+
 if [[ "${DRY_RUN}" -eq 0 ]]; then
+  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
   acquire_profile_lock "${COLIMA_PROFILE}"
 fi
 
@@ -3216,26 +3505,18 @@ if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" !=
 fi
 
 if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
-  echo "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." >&2
-  echo "This is expected on the first launch for a workspace or after profile cleanup." >&2
-  echo "Next step:" >&2
-  build_recommended_command 1 0 "${MODE}"
-  echo "That command seeds the prepared runtime image inside the isolated VM and then launches ${AGENT} in strict mode." >&2
-  echo "No VM or container was started." >&2
-  exit 2
+  fail_missing_strict_prepared_image_prelaunch
 fi
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
-  HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
   HOST_RUBY_BIN="$(resolve_host_tool ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby)"
   sanitize_host_docker_env
-  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
 fi
 
 ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(credential_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS}")"
 if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
-  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:80 snapshot.debian.org:443")"
+  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:80")"
 fi
 prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
 prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
@@ -3388,23 +3669,34 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
 fi
 
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
-  if ! validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
+  profile_config_path="${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/colima.yaml"
+  lima_config_path="${COLIMA_STATE_ROOT}/_lima/colima-${COLIMA_PROFILE}/lima.yaml"
+  if [[ ! -f "${profile_config_path}" ]] ||
+    ! validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
     echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources." >&2
     stash_profile_audit_log "${COLIMA_PROFILE}"
     run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
     rm -rf "${PROFILE_DIR}"
+    PROFILE_WAS_REFRESHED=1
     PROFILE_PREEXISTED=0
-  elif ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+  elif [[ ! -f "${lima_config_path}" ]] ||
+    ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"; then
     echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts." >&2
     stash_profile_audit_log "${COLIMA_PROFILE}"
     run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
     rm -rf "${PROFILE_DIR}"
+    PROFILE_WAS_REFRESHED=1
     PROFILE_PREEXISTED=0
   fi
 fi
 
+if [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
+  fail_missing_strict_prepared_image_prelaunch
+fi
+
 maybe_fail_after_profile_refresh_for_tests
 
+maybe_reap_stale_profile_processes "${COLIMA_PROFILE}"
 run_command_with_debug_log colima-start \
   run_host_colima start \
   --profile "${COLIMA_PROFILE}" \

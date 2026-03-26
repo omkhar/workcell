@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import stat
 import sys
@@ -61,6 +62,7 @@ RESERVED_TARGETS = (
     "/state/agent-home/.gemini/.env",
     "/state/agent-home/.gemini/oauth_creds.json",
     "/state/agent-home/.gemini/projects.json",
+    "/state/agent-home/.gemini/trustedFolders.json",
     "/state/agent-home/.config/gcloud/application_default_credentials.json",
     "/state/agent-home/.config/gh/config.yml",
     "/state/agent-home/.config/gh/hosts.yml",
@@ -87,6 +89,13 @@ AGENT_SCOPED_CREDENTIAL_KEYS = {
 }
 
 SHARED_CREDENTIAL_KEYS = {"github_hosts", "github_config"}
+GOOGLE_AUTH_ENDPOINTS = (
+    "accounts.google.com:443",
+    "oauth2.googleapis.com:443",
+    "sts.googleapis.com:443",
+)
+VERTEX_ENDPOINT = "aiplatform.googleapis.com:443"
+GEMINI_PROJECT_KEYS = ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID")
 GEMINI_VERTEX_LOCATION_KEYS = (
     "GOOGLE_CLOUD_LOCATION",
     "GOOGLE_CLOUD_REGION",
@@ -94,6 +103,14 @@ GEMINI_VERTEX_LOCATION_KEYS = (
     "VERTEX_LOCATION",
     "VERTEX_AI_LOCATION",
 )
+GEMINI_SUPPORTED_ENV_KEYS = {
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENAI_USE_GCA",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    *GEMINI_PROJECT_KEYS,
+    *GEMINI_VERTEX_LOCATION_KEYS,
+}
 
 
 def die(message: str) -> NoReturn:
@@ -236,25 +253,29 @@ def direct_mount_entry(source: Path, mount_path: str) -> dict[str, str]:
 
 def parse_simple_env_file(source: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    for raw_line in source.read_text(encoding="utf-8").splitlines():
+    for lineno, raw_line in enumerate(source.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
             line = line[len("export ") :].lstrip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key or any(char.isspace() for char in key):
-            continue
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)", line)
+        if match is None:
+            die(f"Malformed Gemini auth env file {source}: {raw_line.strip()}. Use KEY=value assignments.")
+        key, value = match.groups()
+        if key in values:
+            die(f"Gemini auth env file {source} configures {key} more than once.")
+        value = strip_comment(value)
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            try:
-                parsed = ast.literal_eval(value)
-            except (SyntaxError, ValueError):
+            if value[0] == '"':
+                try:
+                    parsed = ast.literal_eval(value)
+                except (SyntaxError, ValueError):
+                    parsed = value[1:-1]
+                value = parsed if isinstance(parsed, str) else str(parsed)
+            else:
                 parsed = value[1:-1]
-            value = parsed if isinstance(parsed, str) else str(parsed)
+                value = parsed if isinstance(parsed, str) else str(parsed)
         values[key] = value
     return values
 
@@ -273,15 +294,108 @@ def normalize_vertex_location(value: str | None) -> str | None:
     return candidate
 
 
+def validate_json_object_file(source: Path, label: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(source.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        die(f"{label} must contain valid JSON: {source} ({exc.msg})")
+    if not isinstance(parsed, dict):
+        die(f"{label} must contain a JSON object: {source}")
+    return parsed
+
+
+def parse_env_boolean_value(values: dict[str, str], source: Path, key: str) -> bool | None:
+    raw = values.get(key)
+    if raw is None:
+        return None
+    normalized = raw.strip().lower()
+    if normalized not in {"true", "false"}:
+        die(f"Invalid boolean in Gemini auth env file {source}: {key}={raw}. Use true or false.")
+    return normalized == "true"
+
+
+def validate_gcloud_adc_file(source: Path, label: str) -> None:
+    parsed = validate_json_object_file(source, label)
+    adc_type = parsed.get("type")
+    if not isinstance(adc_type, str) or not adc_type.strip():
+        die(f"{label} must contain a non-empty JSON string field: type")
+
+
+def validate_gemini_projects_file(source: Path, label: str) -> None:
+    parsed = validate_json_object_file(source, label)
+    projects = parsed.get("projects")
+    if not isinstance(projects, dict):
+        die(f"{label} must contain a JSON object with an object-valued projects field")
+
+
+def validate_gemini_env_file(source: Path) -> dict[str, object]:
+    values = parse_simple_env_file(source)
+    for key, value in values.items():
+        if key not in GEMINI_SUPPORTED_ENV_KEYS:
+            die(f"Unsupported key in Gemini auth env file {source}: {key}.")
+        if key not in {"GOOGLE_GENAI_USE_GCA", "GOOGLE_GENAI_USE_VERTEXAI"} and not value.strip():
+            die(f"Gemini auth env file {source} sets {key} but leaves it empty.")
+
+    gca_enabled = parse_env_boolean_value(values, source, "GOOGLE_GENAI_USE_GCA")
+    vertex_enabled = parse_env_boolean_value(values, source, "GOOGLE_GENAI_USE_VERTEXAI")
+    gemini_api_key = values.get("GEMINI_API_KEY", "").strip()
+    google_api_key = values.get("GOOGLE_API_KEY", "").strip()
+    has_project = any(values.get(key, "").strip() for key in GEMINI_PROJECT_KEYS)
+    has_location = any(values.get(key, "").strip() for key in GEMINI_VERTEX_LOCATION_KEYS)
+
+    if gca_enabled and vertex_enabled:
+        die(
+            f"Gemini auth env file {source} enables both GOOGLE_GENAI_USE_GCA and "
+            "GOOGLE_GENAI_USE_VERTEXAI. Choose exactly one auth selector."
+        )
+    if has_location and not has_project:
+        die(f"Gemini auth env file {source} sets a Google Cloud location without a project.")
+
+    endpoints: set[str] = set()
+    if vertex_enabled:
+        if google_api_key or (has_project and has_location):
+            endpoints.add(VERTEX_ENDPOINT)
+            for key in GEMINI_VERTEX_LOCATION_KEYS:
+                location = normalize_vertex_location(values.get(key))
+                if location is not None:
+                    endpoints.add(f"{location}-aiplatform.googleapis.com:443")
+            return {
+                "selected_auth_type": "vertex-ai",
+                "extra_endpoints": sorted(endpoints),
+            }
+        die(
+            f"Gemini auth env file {source} enables GOOGLE_GENAI_USE_VERTEXAI=true without "
+            "either GOOGLE_API_KEY or both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION."
+        )
+
+    if google_api_key:
+        die(f"Gemini auth env file {source} sets GOOGLE_API_KEY without GOOGLE_GENAI_USE_VERTEXAI=true.")
+
+    if gca_enabled:
+        return {
+            "selected_auth_type": "oauth-personal",
+            "extra_endpoints": list(GOOGLE_AUTH_ENDPOINTS),
+        }
+
+    if gemini_api_key:
+        return {
+            "selected_auth_type": "gemini-api-key",
+            "extra_endpoints": [],
+        }
+
+    die(
+        f"Gemini auth env file {source} does not configure a supported Gemini auth mode. "
+        "Use GEMINI_API_KEY, GOOGLE_GENAI_USE_GCA=true, or GOOGLE_GENAI_USE_VERTEXAI=true "
+        "with GOOGLE_API_KEY or both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION."
+    )
+
+
 def derive_credential_extra_endpoints(rendered_credentials: dict[str, dict[str, str]]) -> list[str]:
     endpoints: set[str] = set()
     gemini_env = rendered_credentials.get("gemini_env")
     if gemini_env is not None:
-        env_values = parse_simple_env_file(Path(gemini_env["source"]))
-        for key in GEMINI_VERTEX_LOCATION_KEYS:
-            location = normalize_vertex_location(env_values.get(key))
-            if location is not None:
-                endpoints.add(f"{location}-aiplatform.googleapis.com:443")
+        metadata = validate_gemini_env_file(Path(gemini_env["source"]))
+        endpoints.update(metadata["extra_endpoints"])
     return sorted(endpoints)
 
 
@@ -403,7 +517,7 @@ def load_policy(policy_path: Path) -> dict:
 
 def strip_comment(line: str) -> str:
     escaped = False
-    in_string = False
+    quote_char = ""
     result = []
 
     for char in line:
@@ -411,15 +525,18 @@ def strip_comment(line: str) -> str:
             result.append(char)
             escaped = False
             continue
-        if char == "\\" and in_string:
+        if char == "\\" and quote_char == '"':
             result.append(char)
             escaped = True
             continue
-        if char == '"':
-            in_string = not in_string
+        if char in {'"', "'"}:
+            if not quote_char:
+                quote_char = char
+            elif quote_char == char:
+                quote_char = ""
             result.append(char)
             continue
-        if char == "#" and not in_string:
+        if char == "#" and not quote_char:
             break
         result.append(char)
     return "".join(result).strip()
@@ -450,6 +567,7 @@ def parse_value(raw: str, policy_path: Path, lineno: int) -> object:
 def parse_toml_subset(content: str, policy_path: Path) -> dict:
     root: dict[str, object] = {}
     current: dict[str, object] = root
+    seen_tables: set[str] = set()
 
     for lineno, raw_line in enumerate(content.splitlines(), start=1):
         line = strip_comment(raw_line)
@@ -470,6 +588,9 @@ def parse_toml_subset(content: str, policy_path: Path) -> dict:
 
         if line.startswith("[") and line.endswith("]"):
             table_name = line[1:-1].strip()
+            if table_name in seen_tables:
+                die(f"{policy_path}:{lineno}: duplicate table [{table_name}]")
+            seen_tables.add(table_name)
             if table_name.startswith("credentials."):
                 credential_key = table_name.split(".", 1)[1]
                 if credential_key not in CREDENTIAL_CONTAINER_PATHS:
@@ -502,6 +623,13 @@ def parse_toml_subset(content: str, policy_path: Path) -> dict:
         key = key.strip()
         if not key:
             die(f"{policy_path}:{lineno}: empty key")
+        if "." in key:
+            die(
+                f"{policy_path}:{lineno}: dotted TOML keys are not supported; "
+                "use explicit [table] headers instead"
+            )
+        if key in current:
+            die(f"{policy_path}:{lineno}: duplicate key: {key}")
         current[key] = parse_value(value, policy_path, lineno)
 
     return root
@@ -752,6 +880,14 @@ def render_credentials(
             validate_source_path(source_raw, f"credentials.{key}", policy_dir),
             f"credentials.{key}",
         )
+        if key == "gemini_env":
+            validate_gemini_env_file(source)
+        elif key == "gemini_oauth":
+            validate_json_object_file(source, "credentials.gemini_oauth")
+        elif key == "gcloud_adc":
+            validate_gcloud_adc_file(source, "credentials.gcloud_adc")
+        elif key == "gemini_projects":
+            validate_gemini_projects_file(source, "credentials.gemini_projects")
         rendered[key] = {
             "source": str(source),
             "mount_path": CREDENTIAL_CONTAINER_PATHS[key],

@@ -33,7 +33,7 @@
   },
   "security": {
     "folderTrust": {
-      "enabled": true
+      "enabled": false
     }
   },
   "advanced": {

@@ -22,6 +22,10 @@ class RenderInjectionHelperTests(unittest.TestCase):
             'value = "keep # hash"',
         )
         self.assertEqual(
+            self.module.strip_comment("value = 'keep # hash' # remove"),
+            "value = 'keep # hash'",
+        )
+        self.assertEqual(
             self.module.strip_comment(r'value = "escaped \"#\" hash" # remove'),
             r'value = "escaped \"#\" hash"',
         )
@@ -42,6 +46,68 @@ class RenderInjectionHelperTests(unittest.TestCase):
             self.module.parse_value("[1, 2]", policy, 2)
         with self.assertRaises(SystemExit):
             self.module.parse_value("", policy, 3)
+
+    def test_validate_gemini_env_file_accepts_gca_and_commented_vertex_location(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            gca_env = root / "gemini-gca.env"
+            gca_env.write_text("GOOGLE_GENAI_USE_GCA=true\n", encoding="utf-8")
+            vertex_env = root / "gemini-vertex.env"
+            vertex_env.write_text(
+                'GOOGLE_GENAI_USE_VERTEXAI=true\n'
+                'GOOGLE_CLOUD_PROJECT=test-project\n'
+                'GOOGLE_CLOUD_LOCATION="us-central1" # comment\n',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                self.module.validate_gemini_env_file(gca_env)["selected_auth_type"],
+                "oauth-personal",
+            )
+            self.assertEqual(
+                self.module.validate_gemini_env_file(vertex_env)["extra_endpoints"],
+                ["aiplatform.googleapis.com:443", "us-central1-aiplatform.googleapis.com:443"],
+            )
+
+    def test_validate_gemini_env_file_rejects_malformed_and_duplicate_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            malformed_env = root / "gemini-malformed.env"
+            malformed_env.write_text("GOOGLE_GENAI_USE_VERTEXAI true\n", encoding="utf-8")
+            duplicate_env = root / "gemini-duplicate.env"
+            duplicate_env.write_text(
+                "GOOGLE_GENAI_USE_GCA=true\nGOOGLE_GENAI_USE_GCA=false\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(SystemExit):
+                self.module.validate_gemini_env_file(malformed_env)
+            with self.assertRaises(SystemExit):
+                self.module.validate_gemini_env_file(duplicate_env)
+
+    def test_validate_json_helpers_reject_invalid_gemini_oauth_and_adc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            invalid_oauth = root / "gemini-oauth.json"
+            invalid_oauth.write_text("[]\n", encoding="utf-8")
+            invalid_adc = root / "gcloud-adc.json"
+            invalid_adc.write_text("{}\n", encoding="utf-8")
+            invalid_projects = root / "gemini-projects.json"
+            invalid_projects.write_text('{"projects":[]}\n', encoding="utf-8")
+            valid_projects = root / "gemini-projects-valid.json"
+            valid_projects.write_text('{"projects":{}}\n', encoding="utf-8")
+
+            with self.assertRaises(SystemExit):
+                self.module.validate_json_object_file(invalid_oauth, "credentials.gemini_oauth")
+            with self.assertRaises(SystemExit):
+                self.module.validate_gcloud_adc_file(invalid_adc, "credentials.gcloud_adc")
+            with self.assertRaises(SystemExit):
+                self.module.validate_gemini_projects_file(
+                    invalid_projects, "credentials.gemini_projects"
+                )
+            self.module.validate_gemini_projects_file(
+                valid_projects, "credentials.gemini_projects"
+            )
 
     def test_parse_toml_subset_parses_supported_tables(self) -> None:
         policy = Path("/tmp/policy.toml")
@@ -90,6 +156,25 @@ class RenderInjectionHelperTests(unittest.TestCase):
             self.module.parse_toml_subset("= \"bar\"\n", policy)
         with self.assertRaises(SystemExit):
             self.module.parse_toml_subset("nope\n", policy)
+        with self.assertRaises(SystemExit) as excinfo:
+            self.module.parse_toml_subset('credentials.gemini_env = "gemini.env"\n', policy)
+        self.assertIn("dotted TOML keys are not supported", str(excinfo.exception))
+
+    def test_parse_toml_subset_rejects_duplicate_keys_and_tables(self) -> None:
+        policy = Path("/tmp/policy.toml")
+        with self.assertRaises(SystemExit) as excinfo:
+            self.module.parse_toml_subset(
+                '[credentials]\ngemini_env = "a"\ngemini_env = "b"\n',
+                policy,
+            )
+        self.assertIn("duplicate key: gemini_env", str(excinfo.exception))
+
+        with self.assertRaises(SystemExit) as excinfo:
+            self.module.parse_toml_subset(
+                '[credentials]\n[credentials]\n',
+                policy,
+            )
+        self.assertIn("duplicate table [credentials]", str(excinfo.exception))
 
     def test_path_and_target_validation_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
