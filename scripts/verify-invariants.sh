@@ -3657,7 +3657,8 @@ if trusted != expected:
 PY
 
 printf '{"projects":[]}\n' >"${TMP_DIR}/invalid-projects.json"
-if workcell_validate_gemini_projects_config "${TMP_DIR}/invalid-projects.json" >/tmp/gemini-invalid-projects.stdout 2>/tmp/gemini-invalid-projects.stderr; then
+if expect_fatal_function_failure /tmp/gemini-invalid-projects.stdout /tmp/gemini-invalid-projects.stderr \
+  workcell_validate_gemini_projects_config "${TMP_DIR}/invalid-projects.json"; then
   echo "Expected invalid Gemini projects config to be rejected" >&2
   exit 1
 fi
