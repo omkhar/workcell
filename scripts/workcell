@@ -2027,7 +2027,9 @@ run_command_with_debug_log() {
     maybe_print_progress_update success "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
   else
     echo "Workcell ${label} failed." >&2
-    cat "${log_path}" >&2
+    if [[ "${LOG_LEVEL}" != "debug" ]]; then
+      cat "${log_path}" >&2
+    fi
   fi
   rm -f "${log_path}"
   return "${status}"
