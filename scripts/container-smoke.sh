@@ -217,15 +217,30 @@ clone_bundle_with_credential_override() {
 
   rm -rf "${bundle_root}"
   cp -R "${source_bundle}" "${bundle_root}"
-  python3 - "${bundle_root}/manifest.json" "${credential_key}" "${override_source}" <<'PY'
+  python3 - "${bundle_root}/manifest.json" "${source_bundle}.mounts.json" "${credential_key}" "${override_source}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 manifest_path = Path(sys.argv[1])
-credential_key = sys.argv[2]
-override_source = sys.argv[3]
+mount_spec_path = Path(sys.argv[2])
+credential_key = sys.argv[3]
+override_source = sys.argv[4]
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+mount_sources = {}
+
+if mount_spec_path.is_file():
+    for entry in json.loads(mount_spec_path.read_text(encoding="utf-8")):
+        mount_path = entry.get("mount_path")
+        source = entry.get("source")
+        if isinstance(mount_path, str) and mount_path and isinstance(source, str) and source:
+            mount_sources[mount_path] = source
+
+for entry in manifest.get("credentials", {}).values():
+    mount_path = entry.get("mount_path")
+    if "source" not in entry and isinstance(mount_path, str) and mount_path in mount_sources:
+        entry["source"] = mount_sources[mount_path]
+
 manifest["credentials"][credential_key]["source"] = override_source
 manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 PY
