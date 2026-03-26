@@ -269,20 +269,15 @@ command="$(printf '%s' "${WORKCELL_HOOK_PAYLOAD}" | jq -er '.tool_input.command 
 command_lower="${command,,}"
 command_lower_dequoted="$(printf '%s' "${command_lower}" | tr -d "\"'")"
 command_lower_deescaped="$(printf '%s' "${command_lower_dequoted}" | tr -d "\\")"
-# shellcheck disable=SC2016
-command_substitution_marker='$('
-# shellcheck disable=SC2016
-parameter_expansion_marker='${'
+command_substitution_marker="\$("
+parameter_expansion_marker="\${"
 ansi_c_quote_marker="\$'"
-localized_quote_marker='$"'
+localized_quote_marker="\$\""
 process_substitution_in_marker='<('
 process_substitution_out_marker='>('
-# shellcheck disable=SC2016
-shell_variable_expansion_regex='\$([[:alnum:]_]+|[#?*@!$-])'
-# shellcheck disable=SC2016
-home_control_regex='(^|[[:space:]'"'"'";|&])(~|\$home|/state/agent-home)/(\.claude|\.codex|\.gemini)(/|[[:space:]'"'"'";|&]|$)'
-# shellcheck disable=SC2016
-mcp_home_control_regex='(^|[[:space:]'"'"'";|&])(~|\$home|/state/agent-home)/\.mcp\.json([[:space:]'"'"'";|&]|$)'
+shell_variable_expansion_regex="\\\$([[:alnum:]_]+|[#?*@!\$-])"
+home_control_regex="(^|[[:space:]'\";|&])(~|\$home|/state/agent-home)/(\\.claude|\\.codex|\\.gemini)(/|[[:space:]'\";|&]|$)"
+mcp_home_control_regex="(^|[[:space:]'\";|&])(~|\$home|/state/agent-home)/\\.mcp\\.json([[:space:]'\";|&]|$)"
 
 if grep_command '(^|[^[:alnum:]_./-])(git|/usr/bin/git|/usr/local/libexec/workcell/git|/usr/local/libexec/workcell/core/git|/usr/local/libexec/workcell/real/git)([^[:alnum:]_./-]|$)'; then
   if [[ "${command_lower}" == *"--no-verify"* ]] ||
