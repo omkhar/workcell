@@ -8,11 +8,10 @@ report_verify_invariants_failure() {
   local command="$3"
   local caller_frame=""
 
-  if [[ "${FUNCNAME[1]:-}" == "rg" ]]; then
+  if [[ "${FUNCNAME[1]:-}" == "rg" ]] || [[ "${VERIFY_INVARIANTS_EXPECTED_FAILURE:-0}" -eq 1 ]]; then
     return 0
   fi
 
-  trap - ERR
   caller_frame="$(caller 0 2>/dev/null || true)"
   if [[ -n "${caller_frame}" ]]; then
     echo "verify-invariants failed with status ${status} at ${caller_frame}: ${command}" >&2
@@ -22,6 +21,29 @@ report_verify_invariants_failure() {
 }
 
 trap 'report_verify_invariants_failure "$?" "${LINENO}" "${BASH_COMMAND}"' ERR
+
+assert_output_did_not_start_colima() {
+  local output_path="$1"
+  local context="$2"
+
+  if grep -Eq 'Starting managed Colima profile|starting colima' "${output_path}"; then
+    echo "${context}" >&2
+    cat "${output_path}" >&2
+    exit 1
+  fi
+}
+
+assert_output_contains() {
+  local needle="$1"
+  local output_path="$2"
+  local context="$3"
+
+  if ! grep -Fq -- "${needle}" "${output_path}"; then
+    echo "${context}" >&2
+    cat "${output_path}" >&2
+    exit 1
+  fi
+}
 
 readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
@@ -1759,12 +1781,17 @@ if "${ROOT_DIR}/scripts/workcell" \
   echo "Expected strict mode without a prepared image marker to fail fast before launch" >&2
   exit 1
 fi
-grep -q "No prepared runtime image is recorded for strict mode" /tmp/workcell-strict-preflight.out
-grep -q -- '--prepare' /tmp/workcell-strict-preflight.out
-if grep -q "starting colima" /tmp/workcell-strict-preflight.out; then
-  echo "Strict preflight should fail before Colima startup when the prepared image marker is absent" >&2
-  exit 1
-fi
+assert_output_contains \
+  "No prepared runtime image is recorded for strict mode" \
+  /tmp/workcell-strict-preflight.out \
+  "Expected strict preflight output to explain that the prepared image marker is missing"
+assert_output_contains \
+  "--prepare" \
+  /tmp/workcell-strict-preflight.out \
+  "Expected strict preflight output to recommend a strict prepare command"
+assert_output_did_not_start_colima \
+  /tmp/workcell-strict-preflight.out \
+  "Strict preflight should fail before Colima startup when the prepared image marker is absent"
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
@@ -3137,6 +3164,7 @@ mountType: virtiofs
 EOF
   printf 'image_id=stale-image\n' >"${STRICT_REFRESH_DIR}/workcell.image-ready"
   printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.audit.log"
+  VERIFY_INVARIANTS_EXPECTED_FAILURE=1
   set +e
   "${ROOT_DIR}/scripts/workcell" \
     --test-fail-after-profile-refresh \
@@ -3147,6 +3175,7 @@ EOF
     --agent-arg --version >/tmp/workcell-strict-refresh-preflight.out 2>&1
   strict_refresh_status=$?
   set -e
+  VERIFY_INVARIANTS_EXPECTED_FAILURE=0
   if [[ "${strict_refresh_status}" -ne 2 ]]; then
     echo "Expected strict-mode refresh preflight to fail with exit 2 before the test hook, got ${strict_refresh_status}" >&2
     cat /tmp/workcell-strict-refresh-preflight.out >&2
@@ -3155,10 +3184,14 @@ EOF
   grep -q "Refreshing managed Colima profile ${STRICT_REFRESH_PROFILE_NAME} to apply the requested reviewed VM resources." /tmp/workcell-strict-refresh-preflight.out
   grep -q "No prepared runtime image is recorded for strict mode on profile ${STRICT_REFRESH_PROFILE_NAME}." /tmp/workcell-strict-refresh-preflight.out
   grep -q "No VM or container was started." /tmp/workcell-strict-refresh-preflight.out
+  assert_output_did_not_start_colima \
+    /tmp/workcell-strict-refresh-preflight.out \
+    "Strict-mode refresh preflight should fail before Colima startup when the prepared image marker is absent"
   if grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-preflight.out; then
     echo "Strict-mode refresh preflight should fail before the post-refresh test hook runs" >&2
     exit 1
   fi
+  VERIFY_INVARIANTS_EXPECTED_FAILURE=1
   set +e
   "${ROOT_DIR}/scripts/workcell" \
     --test-fail-after-profile-refresh \
@@ -3170,6 +3203,7 @@ EOF
     --agent-arg --version >/tmp/workcell-strict-refresh-prepare.out 2>&1
   strict_refresh_prepare_status=$?
   set -e
+  VERIFY_INVARIANTS_EXPECTED_FAILURE=0
   if [[ "${strict_refresh_prepare_status}" -ne 88 ]]; then
     echo "Expected follow-up strict prepare to reach the post-refresh hook instead of tripping unmanaged-profile preflight, got ${strict_refresh_prepare_status}" >&2
     cat /tmp/workcell-strict-refresh-prepare.out >&2
