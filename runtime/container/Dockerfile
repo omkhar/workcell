@@ -94,7 +94,21 @@ ARG SOURCE_DATE_EPOCH
 COPY runtime/container/providers /opt/workcell/providers
 
 RUN cd /opt/workcell/providers \
-  && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --no-update-notifier \
+  && install_provider_packages() { \
+       npm ci --omit=dev --ignore-scripts --no-audit --no-fund --no-update-notifier \
+       && return 0; \
+     } \
+  && for attempt in 1 2 3; do \
+       rm -rf /opt/workcell/providers/node_modules; \
+       if install_provider_packages; then \
+         break; \
+       fi; \
+       if [[ "${attempt}" -eq 3 ]]; then \
+         exit 1; \
+       fi; \
+       npm cache clean --force >/dev/null 2>&1 || true; \
+       sleep "$((attempt * 5))"; \
+     done \
   && npm cache clean --force \
   && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
     -cf /tmp/workcell-providers.tar -C /opt/workcell/providers . \
