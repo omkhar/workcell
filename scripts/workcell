@@ -3057,14 +3057,14 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
   printf 'injection_bundle_root=%s\n' "${INJECTION_BUNDLE_ROOT}"
   printf 'shadow_root=%s\n' "${CONTROL_PLANE_SHADOW_ROOT}"
   printf 'workspace=%s\n' "${WORKSPACE}"
-  for ((i = 0; i < ${#DIRECT_SOURCE_MOUNTS[@]}; i += 2)); do
-    printf 'direct_mount=%s\n' "${DIRECT_SOURCE_MOUNTS[i+1]}"
+  for ((i = 1; i < ${#DIRECT_SOURCE_MOUNTS[@]}; i += 2)); do
+    printf 'direct_mount=%s\n' "${DIRECT_SOURCE_MOUNTS[i]}"
   done
-  for ((i = 0; i < ${#SHADOW_MOUNTS[@]}; i += 2)); do
-    printf 'shadow_mount=%s\n' "${SHADOW_MOUNTS[i+1]}"
+  for ((i = 1; i < ${#SHADOW_MOUNTS[@]}; i += 2)); do
+    printf 'shadow_mount=%s\n' "${SHADOW_MOUNTS[i]}"
   done
-  for ((i = 0; i < ${#WORKSPACE_IMPORT_MOUNTS[@]}; i += 2)); do
-    printf 'workspace_import_mount=%s\n' "${WORKSPACE_IMPORT_MOUNTS[i+1]}"
+  for ((i = 1; i < ${#WORKSPACE_IMPORT_MOUNTS[@]}; i += 2)); do
+    printf 'workspace_import_mount=%s\n' "${WORKSPACE_IMPORT_MOUNTS[i]}"
   done
   exit 0
 fi
