@@ -1754,9 +1754,19 @@ run_container codex bash -lc '
     touch "$TMPDIR/workcell-tmpdir-ok"
     test -x /usr/bin/bwrap
     test ! -u /usr/bin/bwrap
+    assert_codex_stderr_clean() {
+      local stderr_path="$1"
+      if grep -Eq "Codex could not find system bubblewrap|Failed to save model migration prompt preference|Failed to save model for profile|failed to persist config.toml" "$stderr_path"; then
+        echo "expected Codex startup to avoid bubblewrap/config persistence warnings" >&2
+        cat "$stderr_path" >&2
+        exit 1
+      fi
+    }
     EXEC_TMP="$TMPDIR/workcell-exec"
     mkdir -p "$EXEC_TMP"
-    codex --version | grep -q "codex-cli"
+    codex --version >/tmp/codex-version.out 2>/tmp/codex-version.err
+    grep -q "codex-cli" /tmp/codex-version.out
+    assert_codex_stderr_clean /tmp/codex-version.err
     LD_PRELOAD=/workspace/workcell-does-not-exist.so codex --version | grep -q "codex-cli"
     LD_PRELOAD=/workspace/workcell-does-not-exist.so claude --version >/dev/null
     LD_PRELOAD=/workspace/workcell-does-not-exist.so git --version | grep -q "git version"
@@ -1765,7 +1775,8 @@ run_container codex bash -lc '
     test ! -L "$CODEX_HOME/config.toml"
     test -w "$CODEX_HOME/config.toml"
     cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
-    codex features list >/dev/null
+    codex features list >/tmp/codex-features.out 2>/tmp/codex-features.err
+    assert_codex_stderr_clean /tmp/codex-features.err
     if command -v python3 >/tmp/python-which.out 2>&1; then
       echo "expected runtime image to omit python3 from the operator PATH" >&2
       exit 1
@@ -1826,12 +1837,16 @@ run_container codex bash -lc '
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-app-server.out
-    rm -f "$CODEX_HOME/config.toml"
-    printf "web_search = \"enabled\"\n" >"$CODEX_HOME/config.toml"
-    codex --version >/dev/null
+    codex features disable unified_exec >/tmp/codex-features-disable.out 2>/tmp/codex-features-disable.err
+    assert_codex_stderr_clean /tmp/codex-features-disable.err
     test ! -L "$CODEX_HOME/config.toml"
     test -w "$CODEX_HOME/config.toml"
-    cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
+    grep -q "^\[profiles\.strict\.features\]$" "$CODEX_HOME/config.toml"
+    grep -q "^unified_exec = false$" "$CODEX_HOME/config.toml"
+    codex features enable unified_exec >/tmp/codex-features-enable.out 2>/tmp/codex-features-enable.err
+    assert_codex_stderr_clean /tmp/codex-features-enable.err
+    grep -q "^\[profiles\.strict\.features\]$" "$CODEX_HOME/config.toml"
+    grep -q "^unified_exec = true$" "$CODEX_HOME/config.toml"
   '"'"'
   if /usr/local/libexec/workcell/real/codex --version >/tmp/codex-real-path.out 2>&1; then
     echo "expected direct real Codex payload execution to fail" >&2
