@@ -3488,10 +3488,8 @@ GEMINI_AUTH_SELECTION_STDERR="$(mktemp)"
   cat <<'EOF'
 set -Eeuo pipefail
 trap 'echo "Gemini auth selection harness failed at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
-if [[ "${CI:-}" == "true" ]] || [[ "${CI:-}" == "1" ]]; then
-  export PS4='+ gemini-harness:${LINENO}: '
-  set -x
-fi
+export PS4='+ gemini-harness:${LINENO}: '
+set -x
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
