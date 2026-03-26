@@ -1489,6 +1489,10 @@ fail_fast_for_missing_gemini_auth() {
     return 0
   fi
 
+  if [[ "$#" -eq 2 ]] && [[ "$1" == "gemini" ]] && [[ "$2" == "--version" ]]; then
+    return 0
+  fi
+
   if [[ "$(selected_provider_auth_mode)" != "none" ]]; then
     return 0
   fi
@@ -3289,7 +3293,7 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
   exit 0
 fi
 
-fail_fast_for_missing_gemini_auth
+fail_fast_for_missing_gemini_auth "$@"
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   acquire_profile_lock "${COLIMA_PROFILE}"

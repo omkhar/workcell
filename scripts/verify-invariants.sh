@@ -1998,7 +1998,8 @@ WORKSPACE=/tmp/workcell-gemini-workspace
 INJECTION_CREDENTIAL_KEYS=github_hosts
 
 status=0
-if ( fail_fast_for_missing_gemini_auth ) >/tmp/workcell-gemini-auth-harness.stdout 2>/tmp/workcell-gemini-auth-harness.stderr; then
+set -- gemini
+if ( fail_fast_for_missing_gemini_auth "$@" ) >/tmp/workcell-gemini-auth-harness.stdout 2>/tmp/workcell-gemini-auth-harness.stderr; then
   echo "Expected Gemini missing-auth harness to fail fast" >&2
   exit 1
 else
@@ -2012,8 +2013,19 @@ grep -q 'Gemini auth is not configured for this session.' /tmp/workcell-gemini-a
 grep -q 'Update /tmp/no-gemini-policy.toml to include credentials.gemini_env, credentials.gemini_oauth, or credentials.gcloud_adc.' /tmp/workcell-gemini-auth-harness.stderr
 grep -q '^Next step: workcell --auth-status --agent gemini --workspace /tmp/workcell-gemini-workspace$' /tmp/workcell-gemini-auth-harness.stderr
 
+set -- gemini --version
+if ! ( fail_fast_for_missing_gemini_auth "$@" ) >/tmp/workcell-gemini-auth-version.stdout 2>/tmp/workcell-gemini-auth-version.stderr; then
+  echo "Expected Gemini --version harness to bypass missing-auth fail-fast" >&2
+  exit 1
+fi
+if [[ -s /tmp/workcell-gemini-auth-version.stderr ]]; then
+  echo "Expected Gemini --version harness to stay silent" >&2
+  exit 1
+fi
+
 DRY_RUN=1
-if ! ( fail_fast_for_missing_gemini_auth ) >/tmp/workcell-gemini-auth-dry-run.stdout 2>/tmp/workcell-gemini-auth-dry-run.stderr; then
+set -- gemini
+if ! ( fail_fast_for_missing_gemini_auth "$@" ) >/tmp/workcell-gemini-auth-dry-run.stdout 2>/tmp/workcell-gemini-auth-dry-run.stderr; then
   echo "Expected Gemini missing-auth harness to skip dry-run" >&2
   exit 1
 fi
