@@ -21,6 +21,15 @@ Recommended commands:
 - `./scripts/container-smoke.sh`
 - `./scripts/pre-merge.sh`
 
+If you want the broader local validation stack to run against a disposable
+snapshot instead of the live worktree, use the reviewed pre-merge flags:
+
+- `./scripts/pre-merge.sh --local-snapshot worktree --local-include-untracked`
+- `./scripts/pre-merge.sh --local-snapshot head`
+
+The snapshot mode is intentionally scoped to `pre-merge.sh` today. Provider
+authenticated smoke remains an explicit live-worktree lane.
+
 ## Local Provider Authenticated Smoke
 
 Use this lane when you need to validate that Workcell stages real provider

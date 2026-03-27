@@ -6,6 +6,7 @@ VALIDATOR_DOCKERFILE="${ROOT_DIR}/tools/validator/Dockerfile"
 VALIDATOR_IMAGE_DEFAULT_TAG="workcell-validator:local-premerge-$(cksum "${VALIDATOR_DOCKERFILE}" | awk '{print $1}')"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-${VALIDATOR_IMAGE_DEFAULT_TAG}}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
+LOCAL_SNAPSHOT_ACTIVE="${WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE:-0}"
 REBUILD_VALIDATOR=0
 RUN_REMOTE=0
 RUN_REMOTE_HEAVY=0
@@ -18,6 +19,10 @@ REMOTE_SNAPSHOT="index"
 REMOTE_SNAPSHOT_EXPLICIT=0
 REMOTE_INCLUDE_UNTRACKED=0
 REMOTE_KEEP_DIR=0
+LOCAL_SNAPSHOT_MODE=""
+LOCAL_INCLUDE_UNTRACKED=0
+LOCAL_KEEP_DIR=0
+ORIGINAL_ARGS=("$@")
 
 usage() {
   cat <<EOF
@@ -28,6 +33,11 @@ linux/amd64 validation lane.
 
 Options:
   --allow-dirty             Run against the live worktree even when it is dirty
+  --local-snapshot <mode>   Run the local validation stack from a disposable
+                            snapshot: head, index, or worktree
+  --local-include-untracked Include untracked files with
+                            --local-snapshot worktree
+  --keep-local-dir          Preserve the local snapshot directory after exit
   --rebuild-validator        Rebuild the local validator image before validation
   --skip-release-bundle      Skip verify-release-bundle.sh
   --skip-repro               Skip verify-reproducible-build.sh
@@ -66,6 +76,37 @@ require_clean_tree() {
 has_untracked_files() {
   local status_output="${1:-}"
   grep -qE '^\?\?' <<<"${status_output}"
+}
+
+run_from_local_snapshot() {
+  local -a snapshot_cmd=()
+  local status=0
+
+  [[ -n "${LOCAL_SNAPSHOT_MODE}" ]] || return 0
+  [[ "${LOCAL_SNAPSHOT_ACTIVE}" == "1" ]] && return 0
+
+  echo "[pre-merge] local validation will run from snapshot (${LOCAL_SNAPSHOT_MODE})." >&2
+  snapshot_cmd=(
+    "${ROOT_DIR}/scripts/with-validation-snapshot.sh"
+    --repo "${ROOT_DIR}"
+    --mode "${LOCAL_SNAPSHOT_MODE}"
+  )
+  if [[ "${LOCAL_INCLUDE_UNTRACKED}" -eq 1 ]]; then
+    snapshot_cmd+=(--include-untracked)
+  fi
+  if [[ "${LOCAL_KEEP_DIR}" -eq 1 ]]; then
+    snapshot_cmd+=(--keep-snapshot)
+  fi
+  snapshot_cmd+=(
+    --
+    env
+    WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1
+    ./scripts/pre-merge.sh
+    "${ORIGINAL_ARGS[@]}"
+  )
+
+  "${snapshot_cmd[@]}" || status=$?
+  exit "${status}"
 }
 
 resolve_remote_snapshot_policy() {
@@ -128,6 +169,23 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --allow-dirty)
       ALLOW_DIRTY=1
+      shift
+      ;;
+    --local-snapshot)
+      LOCAL_SNAPSHOT_MODE="${2-}"
+      [[ -n "${LOCAL_SNAPSHOT_MODE}" ]] || {
+        echo "Option --local-snapshot requires a value." >&2
+        usage >&2
+        exit 2
+      }
+      shift 2
+      ;;
+    --local-include-untracked)
+      LOCAL_INCLUDE_UNTRACKED=1
+      shift
+      ;;
+    --keep-local-dir)
+      LOCAL_KEEP_DIR=1
       shift
       ;;
     --rebuild-validator)
@@ -202,8 +260,17 @@ done
 require_tool docker
 require_tool git
 
+if [[ "${LOCAL_INCLUDE_UNTRACKED}" -eq 1 ]] && [[ "${LOCAL_SNAPSHOT_MODE}" != "worktree" ]]; then
+  echo "--local-include-untracked requires --local-snapshot worktree." >&2
+  exit 2
+fi
+
+run_from_local_snapshot
+
 if [[ "${ALLOW_DIRTY}" -eq 0 ]]; then
-  require_clean_tree
+  if [[ -z "${LOCAL_SNAPSHOT_MODE}" ]]; then
+    require_clean_tree
+  fi
 fi
 
 resolve_remote_snapshot_policy

@@ -16,6 +16,8 @@ Tagged releases publish:
 - a published image digest file
 - a machine-readable build input manifest
 - a keyless Sigstore bundle for the build input manifest
+- a machine-readable control-plane manifest
+- a keyless Sigstore bundle for the control-plane manifest
 - a machine-readable builder environment manifest
 - a keyless Sigstore bundle for the builder environment manifest
 - `SHA256SUMS`
@@ -25,8 +27,8 @@ Tagged releases publish:
 - a keyless Sigstore bundle for the image SBOM
 - keyless Sigstore signatures for the published image
 - a keyless Sigstore bundle for `SHA256SUMS`, which covers the source bundle,
-  published image digest, build input manifest, builder environment manifest,
-  and both SBOM files
+  published image digest, build input manifest, control-plane manifest, builder
+  environment manifest, and both SBOM files
 - GitHub attestations when `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` is set on
   a repository and plan that support them
 
@@ -57,6 +59,12 @@ The release workflow uses:
   sources, and runtime enforcement code, plus the rest of the tracked
   repository inputs that control release publication, and is itself directly
   signed and also covered by the signed checksum set
+- a deterministic control-plane manifest that records the reviewed adapter
+  baselines, runtime control-plane scripts that seed provider-facing homes,
+  and the host-side launcher and injection-policy renderer that stage those
+  homes, is copied into the runtime image, drives runtime hash checks for the
+  adapter baselines and selected seeding inputs, is directly signed at release
+  time, and is also bound into the signed checksum set
 - host-side pin-hygiene checks that run before rebuilding the validator image
   in CI and release preflight, including exact package-set checks for both the
   runtime and validator Dockerfiles, pinned workflow-side BuildKit and signing
@@ -139,7 +147,17 @@ gh attestation verify oci://ghcr.io/OWNER/workcell@sha256:DIGEST \
    Cosign.
 3. Verify the checksum file bundle with Cosign.
 4. Verify the tarball, image digest file, build input manifest, builder
-   environment manifest, and SBOM digests against `SHA256SUMS`.
+  environment manifest, control-plane manifest, and SBOM digests against
+  `SHA256SUMS`.
+
+The control-plane manifest publishes two reviewed domains in one deterministic
+artifact:
+
+- `runtime_artifacts`: reviewed files baked into the runtime image; current
+  runtime hash checks cover the adapter baselines and selected seeding inputs
+- `host_artifacts`: reviewed host-side launcher and injection-renderer inputs
+  that are signed and published for release provenance, but not verified inside
+  the runtime
 
 ```bash
 cosign verify-blob SHA256SUMS \
@@ -149,6 +167,11 @@ cosign verify-blob SHA256SUMS \
 
 cosign verify-blob workcell-build-inputs.json \
   --bundle workcell-build-inputs.sigstore.json \
+  --certificate-identity-regexp 'https://github.com/OWNER/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+cosign verify-blob workcell-control-plane.json \
+  --bundle workcell-control-plane.sigstore.json \
   --certificate-identity-regexp 'https://github.com/OWNER/workcell/.github/workflows/release.yml@refs/tags/.+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 

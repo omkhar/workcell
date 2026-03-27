@@ -65,6 +65,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/dev-quick-check.sh"
   "${ROOT_DIR}/scripts/dev-remote-validate.sh"
+  "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
@@ -77,10 +78,12 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
   "${ROOT_DIR}/scripts/validate-repo.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
+  "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-invariants.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
+  "${ROOT_DIR}/scripts/with-validation-snapshot.sh"
   "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"
   "${ROOT_DIR}/runtime/container/entrypoint.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
@@ -143,6 +146,7 @@ yamllint -d "{extends: default, rules: {comments: disable, document-start: disab
   "${ROOT_DIR}/.github/workflows"
 
 "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
+"${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
 
 doc_files=()
 while IFS= read -r -d '' file; do

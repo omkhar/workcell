@@ -617,6 +617,54 @@ run_container_with_injection_bundle() {
     "${IMAGE_TAG}" "${@:2}"
 }
 
+run_container_with_injection_bundle_stdin() {
+  local agent="$1"
+  local bundle_root="$2"
+  shift 2
+  local -a credential_mounts=()
+  local docker_workspace=""
+  local docker_bundle_root=""
+  local host_source=""
+  local mount_path=""
+
+  while IFS=$'\t' read -r host_source mount_path; do
+    [[ -n "${host_source}" ]] || continue
+    credential_mounts+=(-v "$(workcell_docker_host_path "${host_source}"):${mount_path}:ro")
+  done < <(direct_mount_specs_for_bundle "${bundle_root}")
+
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
+  populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
+
+  docker_cmd run --rm -i \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
+    --user 0:0 \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
+    -e CODEX_PROFILE=strict \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    ${credential_mounts[@]+"${credential_mounts[@]}"} \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
+    -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
+    --entrypoint "$1" \
+    "${IMAGE_TAG}" "${@:2}"
+}
+
 if [[ "${1:-}" == "--self-docker-probe" ]]; then
   require_tool docker
   setup_workcell_trusted_docker_client
@@ -1003,79 +1051,85 @@ clone_bundle_with_credential_override \
 run_entrypoint codex codex --version >/dev/null
 run_entrypoint_with_profile codex build codex --version >/dev/null
 
-# shellcheck disable=SC2016
-run_container_with_injection_bundle codex "${INJECTION_BUNDLE_ROOT}/codex" bash -lc '
-  set -euo pipefail
-  CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
-  /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
-    set -euo pipefail
-    CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
-    grep -q "Common Smoke Instructions" "$CODEX_HOME/AGENTS.md"
-    grep -q "Codex Smoke Instructions" "$CODEX_HOME/AGENTS.md"
-    grep -q "\"test\": \"auth\"" "$CODEX_HOME/auth.json"
-    grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
-    grep -q "injected-public" /state/injected/public.txt
-    test "$(stat -c "%a" /state/injected/public.txt)" = "644"
-    grep -q "injected-secret" "$HOME/.config/workcell/token.txt"
-    test "$(stat -c "%a" "$HOME/.config/workcell/token.txt")" = "600"
-    grep -q "smoke.example" "$HOME/.ssh/config"
-    test "$(stat -c "%a" "$HOME/.ssh")" = "700"
-    test "$(stat -c "%a" "$HOME/.ssh/id_smoke")" = "600"
-    test -L "$CODEX_HOME/rules"
-    if printf "\n# session-marker\n" >>"$CODEX_HOME/rules/default.rules" 2>/tmp/workcell-codex-rules-write.err; then
-      echo "expected default Codex execpolicy rules to stay immutable on the managed path" >&2
-      exit 1
-    fi
-    if sudo -n id >/tmp/codex-sudo-id.out 2>&1; then
-      echo "expected unrestricted sudo to stay blocked for the runtime user" >&2
-      exit 1
-    fi
-    apt-get --help >/dev/null
-    sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get --help >/dev/null
-    codex --version >/dev/null
-    mkdir -p /workspace/exfil
-    rm -rf "$HOME/.config/workcell"
-    ln -s /workspace/exfil "$HOME/.config/workcell"
-    if codex --version >/tmp/codex-injected-copy-symlink.out 2>&1; then
-      echo "expected nested Codex launch to reject symlinked injected-copy parents" >&2
-      exit 1
-    fi
-    grep -q "symlinked session path component" /tmp/codex-injected-copy-symlink.out
-    test ! -e /workspace/exfil/token.txt
-  '"'"'
-'
+run_container_with_injection_bundle_stdin codex "${INJECTION_BUNDLE_ROOT}/codex" bash -s <<'SCRIPT'
+set -euo pipefail
+CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+/usr/local/bin/workcell-entrypoint codex --version >/dev/null
+setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -s <<'INNER'
+set -euo pipefail
+CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+grep -q "Common Smoke Instructions" "$CODEX_HOME/AGENTS.md"
+grep -q "Codex Smoke Instructions" "$CODEX_HOME/AGENTS.md"
+grep -q "\"test\": \"auth\"" "$CODEX_HOME/auth.json"
+grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+grep -q "injected-public" /state/injected/public.txt
+test "$(stat -c "%a" /state/injected/public.txt)" = "644"
+grep -q "injected-secret" "$HOME/.config/workcell/token.txt"
+test "$(stat -c "%a" "$HOME/.config/workcell/token.txt")" = "600"
+grep -q "smoke.example" "$HOME/.ssh/config"
+test "$(stat -c "%a" "$HOME/.ssh")" = "700"
+test "$(stat -c "%a" "$HOME/.ssh/id_smoke")" = "600"
+test -L "$CODEX_HOME/rules"
+if (printf "\n# session-marker\n" >>"$CODEX_HOME/rules/default.rules") 2>/tmp/workcell-codex-rules-write.err; then
+  echo "expected default Codex execpolicy rules to stay immutable on the managed path" >&2
+  exit 1
+fi
+grep -Eq "Permission denied|Read-only file system" /tmp/workcell-codex-rules-write.err
+if sudo -n id >/tmp/codex-sudo-id.out 2>&1; then
+  echo "expected unrestricted sudo to stay blocked for the runtime user" >&2
+  exit 1
+fi
+apt-get --help >/dev/null
+sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get --help >/dev/null
+codex --version >/dev/null
+mkdir -p /workspace/exfil
+rm -rf "$HOME/.config/workcell"
+ln -s /workspace/exfil "$HOME/.config/workcell"
+if codex --version >/tmp/codex-injected-copy-symlink.out 2>&1; then
+  echo "expected nested Codex launch to reject symlinked injected-copy parents" >&2
+  exit 1
+fi
+grep -q "symlinked session path component" /tmp/codex-injected-copy-symlink.out
+test ! -e /workspace/exfil/token.txt
+INNER
+SCRIPT
 
-# shellcheck disable=SC2016
-run_container_with_injection_bundle claude "${INJECTION_BUNDLE_ROOT}/claude" bash -lc '
-  set -euo pipefail
-  /usr/local/bin/workcell-entrypoint claude --version >/dev/null
-    setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
-      set -euo pipefail
-      grep -q "Common Smoke Instructions" "$HOME/.claude/CLAUDE.md"
-      grep -q "Claude Smoke Instructions" "$HOME/.claude/CLAUDE.md"
-      grep -q "Workspace AGENTS Instructions" "$HOME/.claude/CLAUDE.md"
-      grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
-      grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
-    helper_path="$(jq -r ".apiKeyHelper" "$HOME/.claude/settings.json")"
-    test ! -L "$HOME/.claude/settings.json"
-    test -x "$helper_path"
-    test "$("$helper_path")" = "claude-smoke-key"
-    grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
-    test ! -L "$HOME/.config/claude-code/auth.json"
-    test ! -L "$HOME/.mcp.json"
-    grep -q "\"stub\"" "$HOME/.mcp.json"
-    grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
-    rm -f "$HOME/.claude/settings.json" "$HOME/.config/claude-code/auth.json" "$HOME/.mcp.json"
-    claude --version >/dev/null
-    grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
-    helper_path="$(jq -r ".apiKeyHelper" "$HOME/.claude/settings.json")"
-    test -x "$helper_path"
-    test "$("$helper_path")" = "claude-smoke-key"
-    grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
-    grep -q "\"stub\"" "$HOME/.mcp.json"
-  '"'"'
-'
+run_container_with_injection_bundle_stdin claude "${INJECTION_BUNDLE_ROOT}/claude" bash -s <<'SCRIPT'
+set -euo pipefail
+/usr/local/bin/workcell-entrypoint claude --version >/dev/null
+setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -s <<'INNER'
+set -euo pipefail
+test -f /usr/local/libexec/workcell/control-plane-manifest.json
+jq -e '.runtime_artifacts[] | select(.runtime_path == "/usr/local/libexec/workcell/home-control-plane.sh")' \
+  /usr/local/libexec/workcell/control-plane-manifest.json >/dev/null
+grep -q "Common Smoke Instructions" "$HOME/.claude/CLAUDE.md"
+grep -q "Claude Smoke Instructions" "$HOME/.claude/CLAUDE.md"
+grep -q "Workspace AGENTS Instructions" "$HOME/.claude/CLAUDE.md"
+grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
+grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
+helper_path="$(jq -r '.apiKeyHelper' "$HOME/.claude/settings.json")"
+test ! -L "$HOME/.claude/settings.json"
+test -x "$helper_path"
+grep -q "/opt/workcell/host-inputs/credentials/claude-api-key.txt" "$helper_path"
+test ! -e "$HOME/.claude/workcell/claude-api-key"
+test "$("$helper_path")" = "claude-smoke-key"
+grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
+test ! -L "$HOME/.config/claude-code/auth.json"
+test ! -L "$HOME/.mcp.json"
+grep -q "\"stub\"" "$HOME/.mcp.json"
+grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+rm -f "$HOME/.claude/settings.json" "$HOME/.config/claude-code/auth.json" "$HOME/.mcp.json"
+claude --version >/dev/null
+grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
+helper_path="$(jq -r '.apiKeyHelper' "$HOME/.claude/settings.json")"
+test -x "$helper_path"
+grep -q "/opt/workcell/host-inputs/credentials/claude-api-key.txt" "$helper_path"
+test ! -e "$HOME/.claude/workcell/claude-api-key"
+test "$("$helper_path")" = "claude-smoke-key"
+grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
+grep -q "\"stub\"" "$HOME/.mcp.json"
+INNER
+SCRIPT
 
 # shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini" bash -lc '
@@ -1739,6 +1793,74 @@ else
   cat /tmp/workcell-entrypoint-init-nested-run.out >&2
   exit 1
 fi
+
+# shellcheck disable=SC2016
+run_container codex bash -lc '
+  set -euo pipefail
+  test -f /usr/local/libexec/workcell/control-plane-manifest.json
+  jq -e ".schema_version == 2" /usr/local/libexec/workcell/control-plane-manifest.json >/dev/null
+  printf "\n# tampered during smoke\n" >>/opt/workcell/adapters/codex/.codex/config.toml
+  if /usr/local/bin/workcell-entrypoint codex --version >/tmp/workcell-control-plane-tamper.out 2>&1; then
+    echo "expected tampered Codex adapter baseline to fail control-plane verification" >&2
+    exit 1
+  fi
+  grep -q "Workcell control-plane manifest mismatch for /opt/workcell/adapters/codex/.codex/config.toml" /tmp/workcell-control-plane-tamper.out
+'
+
+# shellcheck disable=SC2016
+run_container claude bash -lc '
+  set -euo pipefail
+  if (printf "\n# tampered during smoke\n" >>/etc/claude-code/managed-settings.json) \
+      >/tmp/workcell-control-plane-claude-write.out 2>&1; then
+    if /usr/local/bin/workcell-entrypoint claude --version >/tmp/workcell-control-plane-claude-tamper.out 2>&1; then
+      echo "expected tampered Claude managed settings to fail control-plane verification" >&2
+      exit 1
+    fi
+    grep -q "Workcell control-plane manifest mismatch for /etc/claude-code/managed-settings.json" \
+      /tmp/workcell-control-plane-claude-tamper.out
+  else
+    grep -Eq "Permission denied|Read-only file system" /tmp/workcell-control-plane-claude-write.out
+  fi
+'
+
+# shellcheck disable=SC2016
+run_container claude bash -lc '
+  set -euo pipefail
+  rm -f /etc/claude-code/managed-settings.json
+  ln -s /opt/workcell/adapters/claude/managed-settings.json /etc/claude-code/managed-settings.json
+  if /usr/local/bin/workcell-entrypoint claude --version >/tmp/workcell-control-plane-claude-symlink.out 2>&1; then
+    echo "expected symlinked Claude managed settings to fail control-plane verification" >&2
+    exit 1
+  fi
+  grep -q "Workcell control-plane artifact must not be a symlink: /etc/claude-code/managed-settings.json" \
+    /tmp/workcell-control-plane-claude-symlink.out
+'
+
+# shellcheck disable=SC2016
+run_container codex bash -lc '
+  set -euo pipefail
+  mkdir -p /tmp/workcell-control-plane-codex-parent
+  cp /opt/workcell/adapters/codex/.codex/config.toml /tmp/workcell-control-plane-codex-parent/config.toml
+  rm -rf /opt/workcell/adapters/codex/.codex
+  ln -s /tmp/workcell-control-plane-codex-parent /opt/workcell/adapters/codex/.codex
+  if /usr/local/bin/workcell-entrypoint codex --version >/tmp/workcell-control-plane-codex-parent-symlink.out 2>&1; then
+    echo "expected symlinked Codex control-plane parent to fail verification" >&2
+    exit 1
+  fi
+  grep -q "Workcell control-plane artifact parent must not be a symlink: /opt/workcell/adapters/codex/.codex" \
+    /tmp/workcell-control-plane-codex-parent-symlink.out
+'
+
+# shellcheck disable=SC2016
+run_container gemini bash -lc '
+  set -euo pipefail
+  printf "\n# tampered during smoke\n" >>/opt/workcell/adapters/gemini/.gemini/settings.json
+  if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/workcell-control-plane-gemini-tamper.out 2>&1; then
+    echo "expected tampered Gemini adapter baseline to fail control-plane verification" >&2
+    exit 1
+  fi
+  grep -q "Workcell control-plane manifest mismatch for /opt/workcell/adapters/gemini/.gemini/settings.json" /tmp/workcell-control-plane-gemini-tamper.out
+'
 
 # shellcheck disable=SC2016
 run_container codex bash -lc '

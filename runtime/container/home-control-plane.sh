@@ -113,6 +113,7 @@ workcell_copy_control_plane_file() {
 
 WORKCELL_WORKSPACE_IMPORT_ROOT="${WORKCELL_WORKSPACE_IMPORT_ROOT:-/opt/workcell/workspace-control-plane}"
 WORKCELL_CODEX_RULES_MUTABILITY="${WORKCELL_CODEX_RULES_MUTABILITY:-readonly}"
+WORKCELL_CONTROL_PLANE_MANIFEST="${WORKCELL_CONTROL_PLANE_MANIFEST:-/usr/local/libexec/workcell/control-plane-manifest.json}"
 
 workcell_session_assurance() {
   workcell_runtime_state_value WORKCELL_SESSION_ASSURANCE || true
@@ -210,6 +211,89 @@ workcell_manifest_path() {
 
 workcell_manifest_root() {
   dirname "$(workcell_manifest_path)"
+}
+
+workcell_control_plane_manifest_path() {
+  printf '%s\n' "${WORKCELL_CONTROL_PLANE_MANIFEST}"
+}
+
+workcell_ensure_control_plane_manifest() {
+  if [[ ! -f "$(workcell_control_plane_manifest_path)" ]]; then
+    workcell_die "Workcell control-plane manifest is missing: $(workcell_control_plane_manifest_path)"
+  fi
+}
+
+workcell_control_plane_expected_sha() {
+  local runtime_path="$1"
+
+  workcell_ensure_control_plane_manifest
+  jq -r --arg runtime_path "${runtime_path}" \
+    '.runtime_artifacts[] | select(.runtime_path == $runtime_path) | .sha256' \
+    "$(workcell_control_plane_manifest_path)" | head -n 1
+}
+
+workcell_verify_control_plane_parent_paths() {
+  local runtime_path="$1"
+  local current_path="/"
+  local parent_path=""
+  local component=""
+  local -a path_components=()
+
+  parent_path="$(dirname "${runtime_path}")"
+  if [[ "${parent_path}" == "/" ]]; then
+    return 0
+  fi
+
+  IFS='/' read -r -a path_components <<<"${parent_path#/}"
+  for component in "${path_components[@]}"; do
+    [[ -n "${component}" ]] || continue
+    current_path="${current_path%/}/${component}"
+    if [[ -L "${current_path}" ]]; then
+      workcell_die "Workcell control-plane artifact parent must not be a symlink: ${current_path}"
+    fi
+  done
+}
+
+workcell_verify_control_plane_path() {
+  local runtime_path="$1"
+  local expected_sha=""
+  local actual_sha=""
+
+  expected_sha="$(workcell_control_plane_expected_sha "${runtime_path}")"
+  if [[ -z "${expected_sha}" ]] || [[ "${expected_sha}" == "null" ]]; then
+    workcell_die "Workcell control-plane manifest has no entry for ${runtime_path}"
+  fi
+  workcell_verify_control_plane_parent_paths "${runtime_path}"
+  if [[ -L "${runtime_path}" ]]; then
+    workcell_die "Workcell control-plane artifact must not be a symlink: ${runtime_path}"
+  fi
+  if [[ ! -f "${runtime_path}" ]]; then
+    workcell_die "Workcell control-plane artifact is missing: ${runtime_path}"
+  fi
+  actual_sha="$(sha256sum "${runtime_path}" | awk '{print $1}')"
+  if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+    workcell_die "Workcell control-plane manifest mismatch for ${runtime_path}: ${actual_sha} != ${expected_sha}"
+  fi
+}
+
+workcell_verify_control_plane_prefix() {
+  local runtime_prefix="$1"
+  local runtime_path=""
+  local matched=0
+
+  workcell_ensure_control_plane_manifest
+  while IFS= read -r runtime_path; do
+    [[ -n "${runtime_path}" ]] || continue
+    matched=1
+    workcell_verify_control_plane_path "${runtime_path}"
+  done < <(
+    jq -r --arg runtime_prefix "${runtime_prefix}" \
+      '.runtime_artifacts[] | select(.runtime_path | startswith($runtime_prefix)) | .runtime_path' \
+      "$(workcell_control_plane_manifest_path)"
+  )
+  if [[ "${matched}" -eq 0 ]]; then
+    workcell_die "Workcell control-plane manifest has no entries for prefix ${runtime_prefix}"
+  fi
 }
 
 workcell_ensure_manifest() {
@@ -699,7 +783,6 @@ workcell_render_claude_settings() {
   local target_path="${HOME}/.claude/settings.json"
   local api_key_source=""
   local helper_dir=""
-  local helper_secret=""
   local helper_script=""
 
   api_key_source="$(workcell_manifest_direct_mount_path '.credentials["claude_api_key"].mount_path // empty' || true)"
@@ -709,18 +792,14 @@ workcell_render_claude_settings() {
   fi
 
   helper_dir="${HOME}/.claude/workcell"
-  helper_secret="${helper_dir}/claude-api-key"
   helper_script="${helper_dir}/api-key-helper.sh"
 
   workcell_prepare_session_directory "${helper_dir}" "Claude helper directory"
   if [[ ! -f "${api_key_source}" ]]; then
     workcell_die "Workcell expected mounted credential file for claude_api_key: ${api_key_source}"
   fi
-  workcell_reset_session_target "${helper_secret}" "Claude helper secret"
-  cp "${api_key_source}" "${helper_secret}"
-  chmod 0600 "${helper_secret}"
   workcell_reset_session_target "${helper_script}" "Claude helper script"
-  printf '#!/bin/sh\nset -eu\ncat %s\n' "${helper_secret@Q}" >"${helper_script}"
+  printf '#!/bin/sh\nset -eu\ncat %s\n' "${api_key_source@Q}" >"${helper_script}"
   chmod 0700 "${helper_script}"
   workcell_reset_session_target "${target_path}" "Claude settings"
   jq --arg helper "${helper_script}" '.apiKeyHelper = $helper' "${baseline_path}" >"${target_path}"
@@ -959,6 +1038,7 @@ workcell_apply_manifest_ssh() {
 }
 
 seed_codex_home() {
+  workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/codex/"
   workcell_prepare_session_directory "${CODEX_HOME}" "Codex home"
   workcell_prepare_session_directory "${CODEX_HOME}/mcp" "Codex MCP directory"
   workcell_render_provider_doc "${ADAPTER_ROOT}/codex/.codex/AGENTS.md" "${CODEX_HOME}/AGENTS.md" codex
@@ -973,6 +1053,8 @@ seed_codex_home() {
 }
 
 seed_claude_home() {
+  workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/claude/"
+  workcell_verify_control_plane_path "/etc/claude-code/managed-settings.json"
   workcell_prepare_session_directory "${HOME}/.claude" "Claude home"
   workcell_render_claude_settings
   workcell_render_provider_doc "${ADAPTER_ROOT}/claude/CLAUDE.md" "${HOME}/.claude/CLAUDE.md" claude
@@ -987,6 +1069,7 @@ seed_gemini_home() {
   local workspace_root="${WORKSPACE:-/workspace}"
   local selected_auth_type=""
 
+  workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/gemini/"
   workcell_prepare_session_directory "${HOME}/.gemini" "Gemini home"
   rm -f "${HOME}/.gemini/settings.json"
   cp "${ADAPTER_ROOT}/gemini/.gemini/settings.json" "${HOME}/.gemini/settings.json"

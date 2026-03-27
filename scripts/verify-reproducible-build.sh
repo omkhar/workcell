@@ -11,6 +11,7 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     WORKCELL_REMOTE_BUILDKIT_SSL_CERTS="${WORKCELL_REMOTE_BUILDKIT_SSL_CERTS-}" \
     WORKCELL_DOCKER_HOST_HOME_ROOT="${WORKCELL_DOCKER_HOST_HOME_ROOT-}" \
     WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT-}" \
+    WORKCELL_REPRO_BUILD_MODE="${WORKCELL_REPRO_BUILD_MODE-}" \
     WORKCELL_REPRO_DOCKER_CONTEXT="${WORKCELL_REPRO_DOCKER_CONTEXT-}" \
     WORKCELL_REPRO_MANIFEST_PATH="${WORKCELL_REPRO_MANIFEST_PATH-}" \
     WORKCELL_REPRO_PLATFORMS="${WORKCELL_REPRO_PLATFORMS-}" \
@@ -24,6 +25,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 DOCKER_CONTEXT_NAME="${WORKCELL_REPRO_DOCKER_CONTEXT:-}"
 REPRO_PLATFORMS="${WORKCELL_REPRO_PLATFORMS:-linux/amd64,linux/arm64}"
+REPRO_BUILD_MODE="${WORKCELL_REPRO_BUILD_MODE:-serial}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 REPRO_MANIFEST_PATH="${WORKCELL_REPRO_MANIFEST_PATH:-}"
 OCI_EXPORT_ROOT=""
@@ -84,6 +86,35 @@ build_oci_layout() {
     --output "type=oci,dest=${dest},tar=false,oci-mediatypes=true,rewrite-timestamp=true" \
     -f "${ROOT_DIR}/runtime/container/Dockerfile" \
     "${ROOT_DIR}" >/dev/null
+}
+
+build_oci_layout_pair() {
+  local platforms="$1"
+  local dest_a="$2"
+  local dest_b="$3"
+  local pid_a=""
+  local pid_b=""
+  local status=0
+
+  case "${REPRO_BUILD_MODE}" in
+    parallel)
+      build_oci_layout "${platforms}" "${dest_a}" &
+      pid_a=$!
+      build_oci_layout "${platforms}" "${dest_b}" &
+      pid_b=$!
+      wait "${pid_a}" || status=1
+      wait "${pid_b}" || status=1
+      return "${status}"
+      ;;
+    serial)
+      build_oci_layout "${platforms}" "${dest_a}"
+      build_oci_layout "${platforms}" "${dest_b}"
+      ;;
+    *)
+      echo "Unsupported WORKCELL_REPRO_BUILD_MODE: ${REPRO_BUILD_MODE}" >&2
+      exit 2
+      ;;
+  esac
 }
 
 oci_subject_digest() {
@@ -241,8 +272,7 @@ IFS=',' read -r -a platform_list <<<"${REPRO_PLATFORMS}"
 
 OCI_EXPORT_A="${OCI_EXPORT_ROOT}/a"
 OCI_EXPORT_B="${OCI_EXPORT_ROOT}/b"
-build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}"
-build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_B}"
+build_oci_layout_pair "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}" "${OCI_EXPORT_B}"
 
 subject_digest_a="$(oci_subject_digest "${OCI_EXPORT_A}")"
 subject_digest_b="$(oci_subject_digest "${OCI_EXPORT_B}")"

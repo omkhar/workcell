@@ -60,6 +60,26 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: "docker"
+    directory: "/tools/remote-validator"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:50"
+      timezone: "America/Toronto"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "docker"
+    groups:
+      remote-validator-image:
+        patterns:
+          - "*"
+
   - package-ecosystem: "npm"
     directory: "/runtime/container/providers"
     schedule:
