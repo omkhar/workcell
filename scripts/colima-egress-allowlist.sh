@@ -280,11 +280,11 @@ EOF
   (
     cd / &&
       printf 'set -euo pipefail\n%s\n' "${script}" |
-        HOME="${REAL_HOME}" \
-          COLIMA_HOME="${colima_home}" \
-          LIMA_HOME="${colima_home}/_lima" \
-          LIMA_WORKDIR=/ \
-          "${LIMACTL_BIN}" shell "$(lima_instance)" -- bash -s --
+      HOME="${REAL_HOME}" \
+        COLIMA_HOME="${colima_home}" \
+        LIMA_HOME="${colima_home}/_lima" \
+        LIMA_WORKDIR=/ \
+        "${LIMACTL_BIN}" shell "$(lima_instance)" -- bash -s --
   )
 }
 
