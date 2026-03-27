@@ -109,12 +109,20 @@ PY
 run_clean_host_command() {
   local home="${REAL_HOME:-/}"
 
-  env -i \
-    PATH="${TRUSTED_HOST_PATH}" \
-    HOME="${home}" \
-    LC_ALL=C \
-    LANG=C \
-    "$@"
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${home}" ]]; then
+    home="/"
+  fi
+
+  (
+    cd "${home}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${home}" \
+        LC_ALL=C \
+        LANG=C \
+        "$@"
+  )
 }
 
 validate_endpoint() {
@@ -269,12 +277,15 @@ EOF
   fi
   initialize_vm_tools
   colima_home="${COLIMA_HOME:-${REAL_HOME}/.colima}"
-  printf 'set -euo pipefail\n%s\n' "${script}" |
-    HOME="${REAL_HOME}" \
-      COLIMA_HOME="${colima_home}" \
-      LIMA_HOME="${colima_home}/_lima" \
-      LIMA_WORKDIR=/ \
-      "${LIMACTL_BIN}" shell "$(lima_instance)" -- bash -s --
+  (
+    cd / &&
+      printf 'set -euo pipefail\n%s\n' "${script}" |
+      HOME="${REAL_HOME}" \
+        COLIMA_HOME="${colima_home}" \
+        LIMA_HOME="${colima_home}/_lima" \
+        LIMA_WORKDIR=/ \
+        "${LIMACTL_BIN}" shell "$(lima_instance)" -- bash -s --
+  )
 }
 
 clear_rules() {
