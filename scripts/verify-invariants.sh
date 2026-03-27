@@ -45,6 +45,11 @@ assert_output_contains() {
   fi
 }
 
+free_bytes_for_path() {
+  local target_path="$1"
+  /bin/df -Pk "${target_path}" | awk 'NR==2 {print $4 * 1024}'
+}
+
 readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
 
@@ -53,10 +58,12 @@ HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
+  "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
+  "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
@@ -1237,6 +1244,97 @@ if gemini_manifest["credentials"]["gemini_projects"]["mount_path"] != "/opt/work
     raise SystemExit("expected Gemini projects credential to use the managed credential mount path")
 PY
 
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/fragment-docs.toml"
+[documents]
+common = "common.md"
+EOF
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/fragment-credentials.toml"
+[credentials]
+codex_auth = "codex-auth.json"
+EOF
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/policy-with-includes.toml"
+version = 1
+includes = ["fragment-docs.toml", "fragment-credentials.toml"]
+
+[credentials.github_hosts]
+source = "gh-hosts.yml"
+providers = ["codex"]
+EOF
+
+python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy-with-includes.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes" >/dev/null
+
+python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+metadata = manifest["metadata"]
+
+if manifest["documents"]["common"] != "documents/common.md":
+    raise SystemExit("expected included policy fragment to contribute documents.common")
+if manifest["credentials"]["codex_auth"]["mount_path"] != "/opt/workcell/host-inputs/credentials/codex-auth.json":
+    raise SystemExit("expected included policy fragment to contribute credentials.codex_auth")
+if not metadata["policy_sha256"].startswith("sha256:"):
+    raise SystemExit("expected composite policy metadata to expose a sha256 digest")
+source_names = [pathlib.Path(entry["path"]).name for entry in metadata["policy_sources"]]
+if source_names != ["fragment-docs.toml", "fragment-credentials.toml", "policy-with-includes.toml"]:
+    raise SystemExit(f"unexpected included policy source order: {source_names!r}")
+if metadata["policy_entrypoint"] != "policy-with-includes.toml":
+    raise SystemExit(f"expected relative policy entrypoint, found {metadata['policy_entrypoint']!r}")
+for entry in metadata["policy_sources"]:
+    if entry["path"].startswith("/"):
+        raise SystemExit(f"policy source leaked an absolute host path: {entry['path']!r}")
+PY
+
+mkdir -p "${INJECTION_POLICY_FIXTURE_ROOT}/fragments"
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/fragments/common-fragment.md"
+fragment common
+EOF
+printf '{}\n' >"${INJECTION_POLICY_FIXTURE_ROOT}/fragments/fragment-auth.json"
+chmod 0600 "${INJECTION_POLICY_FIXTURE_ROOT}/fragments/fragment-auth.json"
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/fragments/fragment-relative.toml"
+[documents]
+common = "common-fragment.md"
+
+[credentials]
+codex_auth = "fragment-auth.json"
+EOF
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/policy-with-nested-includes.toml"
+version = 1
+includes = ["fragments/fragment-relative.toml"]
+EOF
+
+python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy-with-nested-includes.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes" >/dev/null
+
+python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/manifest.json" "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/documents/common.md" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+document = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+expected_auth = pathlib.Path(sys.argv[1]).parent.parent / "fragments" / "fragment-auth.json"
+
+if manifest["documents"]["common"] != "documents/common.md":
+    raise SystemExit("expected nested include fragment to contribute documents.common")
+if document != "fragment common\n":
+    raise SystemExit(f"expected nested include document content, found {document!r}")
+if manifest["credentials"]["codex_auth"]["source"] != str(expected_auth.resolve()):
+    raise SystemExit("expected nested include credential path to resolve relative to the fragment file")
+PY
+
 INJECTION_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
@@ -1258,6 +1356,40 @@ if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/c
   echo "Expected workcell --dry-run to mount validated credential sources directly into the runtime" >&2
   exit 1
 fi
+
+"${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
+
+python3 - "${ROOT_DIR}/runtime/container/control-plane-manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if manifest.get("schema_version") != 2:
+    raise SystemExit("expected control-plane manifest schema_version 2")
+runtime_artifacts = {entry["runtime_path"]: entry for entry in manifest.get("runtime_artifacts", [])}
+host_repo_paths = {entry["repo_path"] for entry in manifest.get("host_artifacts", [])}
+for required in (
+    "/opt/workcell/adapters/codex/.codex/config.toml",
+    "/opt/workcell/adapters/claude/.claude/settings.json",
+    "/opt/workcell/adapters/gemini/.gemini/settings.json",
+    "/usr/local/libexec/workcell/home-control-plane.sh",
+    "/usr/local/libexec/workcell/provider-wrapper.sh",
+    "/etc/claude-code/managed-settings.json",
+):
+    if required not in runtime_artifacts:
+        raise SystemExit(f"missing control-plane manifest runtime path: {required}")
+    if len(runtime_artifacts[required].get("sha256", "")) != 64:
+        raise SystemExit(f"expected sha256 for {required}")
+for required_repo_path in (
+    "scripts/lib/extract_direct_mounts.py",
+    "scripts/lib/trusted-docker-client.sh",
+    "scripts/workcell",
+    "scripts/lib/render_injection_bundle.py",
+):
+    if required_repo_path not in host_repo_paths:
+        raise SystemExit(f"missing host control-plane manifest repo path: {required_repo_path}")
+PY
 
 if [[ "${INJECTION_DRY_RUN_OUTPUT}" == *"${INJECTION_POLICY_FIXTURE_ROOT}/codex-auth.json"* ]]; then
   echo "Expected workcell --dry-run to redact host credential source paths" >&2
@@ -1406,6 +1538,288 @@ fi
 if ! grep -q 'unsupported TOML value' /tmp/workcell-injection-bad-value.out; then
   echo "Expected invalid-value rejection to explain the supported TOML subset" >&2
   cat /tmp/workcell-injection-bad-value.out >&2
+  exit 1
+fi
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/duplicate-fragment.toml"
+[credentials]
+codex_auth = "codex-auth.json"
+EOF
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/duplicate-fragment-root.toml"
+version = 1
+includes = ["duplicate-fragment.toml"]
+
+[credentials]
+codex_auth = "codex-auth.json"
+EOF
+
+if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/duplicate-fragment-root.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/duplicate-fragment-bundle" >/tmp/workcell-injection-duplicate-fragment.out 2>&1; then
+  echo "Expected injection policy renderer to reject duplicate settings across fragments" >&2
+  exit 1
+fi
+
+if ! grep -q 'credentials.codex_auth' /tmp/workcell-injection-duplicate-fragment.out; then
+  echo "Expected duplicate-fragment rejection to name the duplicated setting" >&2
+  cat /tmp/workcell-injection-duplicate-fragment.out >&2
+  exit 1
+fi
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/cycle-a.toml"
+version = 1
+includes = ["cycle-b.toml"]
+EOF
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/cycle-b.toml"
+includes = ["cycle-a.toml"]
+EOF
+
+if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/cycle-a.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/cycle-bundle" >/tmp/workcell-injection-cycle.out 2>&1; then
+  echo "Expected injection policy renderer to reject include cycles" >&2
+  exit 1
+fi
+
+if ! grep -q 'include cycle detected' /tmp/workcell-injection-cycle.out; then
+  echo "Expected include-cycle rejection to explain the cycle" >&2
+  cat /tmp/workcell-injection-cycle.out >&2
+  exit 1
+fi
+
+mkdir -p "${INJECTION_POLICY_FIXTURE_ROOT}/subdir"
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/outside.toml"
+[documents]
+common = "common.md"
+EOF
+
+cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/subdir/escape-root.toml"
+version = 1
+includes = ["../outside.toml"]
+EOF
+
+if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/subdir/escape-root.toml" \
+  --agent codex \
+  --mode strict \
+  --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/escape-root-bundle" >/tmp/workcell-injection-escape-root.out 2>&1; then
+  echo "Expected injection policy renderer to reject includes that escape the entrypoint root" >&2
+  exit 1
+fi
+
+if ! grep -q 'must stay within' /tmp/workcell-injection-escape-root.out; then
+  echo "Expected escaped-include rejection to explain the entrypoint root boundary" >&2
+  cat /tmp/workcell-injection-escape-root.out >&2
+  exit 1
+fi
+
+VALIDATION_SNAPSHOT_FIXTURE_ROOT="$(mktemp -d)"
+git -C "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" init -q
+git -C "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" config user.email "verify@example.com"
+git -C "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" config user.name "Workcell Verify"
+printf 'head\n' >"${VALIDATION_SNAPSHOT_FIXTURE_ROOT}/tracked.txt"
+cat <<'EOF' >"${VALIDATION_SNAPSHOT_FIXTURE_ROOT}/snapshot-probe.sh"
+#!/bin/bash
+set -euo pipefail
+printf 'tracked=%s\n' "$(cat tracked.txt)"
+if [[ -e untracked.txt ]]; then
+  printf 'untracked=%s\n' "$(cat untracked.txt)"
+fi
+EOF
+chmod 0700 "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}/snapshot-probe.sh"
+git -C "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" add tracked.txt
+git -C "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" add snapshot-probe.sh
+git -C "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" commit -qm "initial"
+printf 'index\n' >"${VALIDATION_SNAPSHOT_FIXTURE_ROOT}/tracked.txt"
+git -C "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" add tracked.txt
+printf 'worktree\n' >"${VALIDATION_SNAPSHOT_FIXTURE_ROOT}/tracked.txt"
+printf 'untracked\n' >"${VALIDATION_SNAPSHOT_FIXTURE_ROOT}/untracked.txt"
+
+SNAPSHOT_HEAD_OUTPUT="$("${ROOT_DIR}/scripts/with-validation-snapshot.sh" \
+  --repo "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" \
+  --mode head \
+  -- ./snapshot-probe.sh)"
+if [[ "${SNAPSHOT_HEAD_OUTPUT}" != *'tracked=head'* ]]; then
+  echo "Expected head validation snapshot to preserve committed tracked content" >&2
+  printf '%s\n' "${SNAPSHOT_HEAD_OUTPUT}" >&2
+  exit 1
+fi
+if [[ "${SNAPSHOT_HEAD_OUTPUT}" == *'untracked='* ]]; then
+  echo "Expected head validation snapshot to exclude untracked files" >&2
+  printf '%s\n' "${SNAPSHOT_HEAD_OUTPUT}" >&2
+  exit 1
+fi
+
+SNAPSHOT_INDEX_OUTPUT="$("${ROOT_DIR}/scripts/with-validation-snapshot.sh" \
+  --repo "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" \
+  --mode index \
+  -- ./snapshot-probe.sh)"
+if [[ "${SNAPSHOT_INDEX_OUTPUT}" != *'tracked=index'* ]]; then
+  echo "Expected index validation snapshot to preserve staged tracked content" >&2
+  printf '%s\n' "${SNAPSHOT_INDEX_OUTPUT}" >&2
+  exit 1
+fi
+if [[ "${SNAPSHOT_INDEX_OUTPUT}" == *'untracked='* ]]; then
+  echo "Expected index validation snapshot to exclude untracked files" >&2
+  printf '%s\n' "${SNAPSHOT_INDEX_OUTPUT}" >&2
+  exit 1
+fi
+
+VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT="$(mktemp -d)"
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}" init -q
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}" config user.email "verify@example.com"
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}" config user.name "Workcell Verify"
+cat <<'EOF' >"${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}/snapshot-kind-probe.sh"
+#!/bin/bash
+set -euo pipefail
+if [[ -d kind ]]; then
+  printf 'kind=dir\n'
+  printf 'payload=%s\n' "$(cat kind/payload.txt)"
+else
+  printf 'kind=file\n'
+  printf 'payload=%s\n' "$(cat kind)"
+fi
+EOF
+chmod 0700 "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}/snapshot-kind-probe.sh"
+printf 'file\n' >"${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}/kind"
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}" add kind snapshot-kind-probe.sh
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}" commit -qm "initial"
+rm -f "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}/kind"
+mkdir -p "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}/kind"
+printf 'staged-nested\n' >"${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}/kind/payload.txt"
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}" add -A kind
+
+SNAPSHOT_INDEX_FILE_TO_DIR_OUTPUT="$("${ROOT_DIR}/scripts/with-validation-snapshot.sh" \
+  --repo "${VALIDATION_INDEX_TYPE_CHANGE_FILE_TO_DIR_ROOT}" \
+  --mode index \
+  -- ./snapshot-kind-probe.sh)"
+if [[ "${SNAPSHOT_INDEX_FILE_TO_DIR_OUTPUT}" != *'kind=dir'* ]] || [[ "${SNAPSHOT_INDEX_FILE_TO_DIR_OUTPUT}" != *'payload=staged-nested'* ]]; then
+  echo "Expected index validation snapshot to preserve staged tracked file-to-directory type changes" >&2
+  printf '%s\n' "${SNAPSHOT_INDEX_FILE_TO_DIR_OUTPUT}" >&2
+  exit 1
+fi
+
+VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT="$(mktemp -d)"
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}" init -q
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}" config user.email "verify@example.com"
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}" config user.name "Workcell Verify"
+cat <<'EOF' >"${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}/snapshot-kind-probe.sh"
+#!/bin/bash
+set -euo pipefail
+if [[ -d kind ]]; then
+  printf 'kind=dir\n'
+  printf 'payload=%s\n' "$(cat kind/payload.txt)"
+else
+  printf 'kind=file\n'
+  printf 'payload=%s\n' "$(cat kind)"
+fi
+EOF
+chmod 0700 "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}/snapshot-kind-probe.sh"
+mkdir -p "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}/kind"
+printf 'nested\n' >"${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}/kind/payload.txt"
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}" add kind/payload.txt snapshot-kind-probe.sh
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}" commit -qm "initial"
+rm -rf "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}/kind"
+printf 'staged-flattened\n' >"${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}/kind"
+git -C "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}" add -A kind
+
+SNAPSHOT_INDEX_DIR_TO_FILE_OUTPUT="$("${ROOT_DIR}/scripts/with-validation-snapshot.sh" \
+  --repo "${VALIDATION_INDEX_TYPE_CHANGE_DIR_TO_FILE_ROOT}" \
+  --mode index \
+  -- ./snapshot-kind-probe.sh)"
+if [[ "${SNAPSHOT_INDEX_DIR_TO_FILE_OUTPUT}" != *'kind=file'* ]] || [[ "${SNAPSHOT_INDEX_DIR_TO_FILE_OUTPUT}" != *'payload=staged-flattened'* ]]; then
+  echo "Expected index validation snapshot to preserve staged tracked directory-to-file type changes" >&2
+  printf '%s\n' "${SNAPSHOT_INDEX_DIR_TO_FILE_OUTPUT}" >&2
+  exit 1
+fi
+
+SNAPSHOT_WORKTREE_OUTPUT="$("${ROOT_DIR}/scripts/with-validation-snapshot.sh" \
+  --repo "${VALIDATION_SNAPSHOT_FIXTURE_ROOT}" \
+  --mode worktree \
+  --include-untracked \
+  -- ./snapshot-probe.sh)"
+if [[ "${SNAPSHOT_WORKTREE_OUTPUT}" != *'tracked=worktree'* ]]; then
+  echo "Expected worktree validation snapshot to preserve live tracked content" >&2
+  printf '%s\n' "${SNAPSHOT_WORKTREE_OUTPUT}" >&2
+  exit 1
+fi
+if [[ "${SNAPSHOT_WORKTREE_OUTPUT}" != *'untracked=untracked'* ]]; then
+  echo "Expected worktree validation snapshot to include untracked files when requested" >&2
+  printf '%s\n' "${SNAPSHOT_WORKTREE_OUTPUT}" >&2
+  exit 1
+fi
+
+VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT="$(mktemp -d)"
+git -C "${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}" init -q
+git -C "${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}" config user.email "verify@example.com"
+git -C "${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}" config user.name "Workcell Verify"
+cat <<'EOF' >"${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}/snapshot-kind-probe.sh"
+#!/bin/bash
+set -euo pipefail
+if [[ -d kind ]]; then
+  printf 'kind=dir\n'
+  printf 'payload=%s\n' "$(cat kind/payload.txt)"
+else
+  printf 'kind=file\n'
+  printf 'payload=%s\n' "$(cat kind)"
+fi
+EOF
+chmod 0700 "${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}/snapshot-kind-probe.sh"
+printf 'file\n' >"${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}/kind"
+git -C "${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}" add kind snapshot-kind-probe.sh
+git -C "${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}" commit -qm "initial"
+rm -f "${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}/kind"
+mkdir -p "${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}/kind"
+printf 'nested\n' >"${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}/kind/payload.txt"
+
+SNAPSHOT_FILE_TO_DIR_OUTPUT="$("${ROOT_DIR}/scripts/with-validation-snapshot.sh" \
+  --repo "${VALIDATION_TYPE_CHANGE_FILE_TO_DIR_ROOT}" \
+  --mode worktree \
+  --include-untracked \
+  -- ./snapshot-kind-probe.sh)"
+if [[ "${SNAPSHOT_FILE_TO_DIR_OUTPUT}" != *'kind=dir'* ]] || [[ "${SNAPSHOT_FILE_TO_DIR_OUTPUT}" != *'payload=nested'* ]]; then
+  echo "Expected worktree validation snapshot to preserve tracked file-to-directory type changes" >&2
+  printf '%s\n' "${SNAPSHOT_FILE_TO_DIR_OUTPUT}" >&2
+  exit 1
+fi
+
+VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT="$(mktemp -d)"
+git -C "${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}" init -q
+git -C "${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}" config user.email "verify@example.com"
+git -C "${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}" config user.name "Workcell Verify"
+cat <<'EOF' >"${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}/snapshot-kind-probe.sh"
+#!/bin/bash
+set -euo pipefail
+if [[ -d kind ]]; then
+  printf 'kind=dir\n'
+  printf 'payload=%s\n' "$(cat kind/payload.txt)"
+else
+  printf 'kind=file\n'
+  printf 'payload=%s\n' "$(cat kind)"
+fi
+EOF
+chmod 0700 "${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}/snapshot-kind-probe.sh"
+mkdir -p "${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}/kind"
+printf 'nested\n' >"${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}/kind/payload.txt"
+git -C "${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}" add kind/payload.txt snapshot-kind-probe.sh
+git -C "${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}" commit -qm "initial"
+rm -rf "${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}/kind"
+printf 'flattened\n' >"${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}/kind"
+
+SNAPSHOT_DIR_TO_FILE_OUTPUT="$("${ROOT_DIR}/scripts/with-validation-snapshot.sh" \
+  --repo "${VALIDATION_TYPE_CHANGE_DIR_TO_FILE_ROOT}" \
+  --mode worktree \
+  --include-untracked \
+  -- ./snapshot-kind-probe.sh)"
+if [[ "${SNAPSHOT_DIR_TO_FILE_OUTPUT}" != *'kind=file'* ]] || [[ "${SNAPSHOT_DIR_TO_FILE_OUTPUT}" != *'payload=flattened'* ]]; then
+  echo "Expected worktree validation snapshot to preserve tracked directory-to-file type changes" >&2
+  printf '%s\n' "${SNAPSHOT_DIR_TO_FILE_OUTPUT}" >&2
   exit 1
 fi
 
@@ -3284,6 +3698,21 @@ PREMERGE_LOG="${PREMERGE_HARNESS_ROOT}/premerge.log"
 rm -rf "${PREMERGE_HARNESS_ROOT}"
 mkdir -p "${PREMERGE_HARNESS_ROOT}/scripts" "${PREMERGE_HARNESS_ROOT}/tools/validator" "${PREMERGE_FAKEBIN}"
 install -m 0755 "${ROOT_DIR}/scripts/pre-merge.sh" "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh"
+cat >"${PREMERGE_HARNESS_ROOT}/scripts/with-validation-snapshot.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'with-validation-snapshot.sh %s\n' "$*" >>"${PREMERGE_LOG}"
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--" ]]; then
+    shift
+    break
+  fi
+  shift
+done
+cd "${WORKCELL_FAKE_GIT_ROOT}"
+"$@"
+EOF
+chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/with-validation-snapshot.sh"
 cat >"${PREMERGE_HARNESS_ROOT}/tools/validator/Dockerfile" <<'EOF'
 FROM scratch
 EOF
@@ -3307,6 +3736,7 @@ done
 cat >"${PREMERGE_FAKEBIN}/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'git %s\n' "$*" >>"${PREMERGE_LOG}"
 if [[ "${1-}" == "-C" ]]; then
   shift 2
 fi
@@ -3316,6 +3746,35 @@ case "${1-}" in
     ;;
   log)
     printf '%s\n' "${WORKCELL_FAKE_GIT_EPOCH:-1700000000}"
+    ;;
+  archive)
+    tar -C "${WORKCELL_FAKE_GIT_ROOT}" -cf - scripts tools
+    ;;
+  checkout-index)
+    prefix=""
+    for arg in "$@"; do
+      case "${arg}" in
+        --prefix=*)
+          prefix="${arg#--prefix=}"
+          ;;
+      esac
+    done
+    [[ -n "${prefix}" ]] || {
+      echo "missing checkout-index prefix" >&2
+      exit 1
+    }
+    mkdir -p "${prefix}"
+    cp -R "${WORKCELL_FAKE_GIT_ROOT}/scripts" "${prefix}/scripts"
+    mkdir -p "${prefix}/tools"
+    cp -R "${WORKCELL_FAKE_GIT_ROOT}/tools/validator" "${prefix}/tools/validator"
+    ;;
+  ls-files)
+    (
+      cd "${WORKCELL_FAKE_GIT_ROOT}"
+      find scripts tools -type f -print0 | LC_ALL=C sort -z
+    )
+    ;;
+  init|config|add|commit)
     ;;
   *)
     echo "unexpected git invocation: $*" >&2
@@ -3337,6 +3796,7 @@ chmod 0755 "${PREMERGE_FAKEBIN}/docker"
 
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT='?? stray.txt' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" >/tmp/workcell-premerge-dirty.out 2>&1; then
   echo "Expected pre-merge to reject a dirty worktree by default" >&2
@@ -3344,9 +3804,35 @@ if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
 fi
 grep -q 'clean worktree, including untracked files' /tmp/workcell-premerge-dirty.out
 
+if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT='?? stray.txt' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --local-include-untracked >/tmp/workcell-premerge-local-include.out 2>&1; then
+  echo "Expected --local-include-untracked without --local-snapshot worktree to fail" >&2
+  exit 1
+fi
+grep -q -- '--local-include-untracked requires --local-snapshot worktree.' /tmp/workcell-premerge-local-include.out
+
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --local-snapshot head >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
+  echo "Expected --local-snapshot head pre-merge harness to succeed on a dirty worktree" >&2
+  cat /tmp/workcell-premerge-local-snapshot.out >&2
+  exit 1
+fi
+grep -q 'local validation will run from snapshot (head).' /tmp/workcell-premerge-local-snapshot.out
+grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
+
+: >"${PREMERGE_LOG}"
+if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --allow-dirty \
@@ -3361,6 +3847,7 @@ grep -q 'dev-remote-validate.sh --snapshot worktree --include-untracked --check 
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --allow-dirty \
@@ -3376,6 +3863,7 @@ grep -q 'dev-remote-validate.sh --snapshot index --check validate' "${PREMERGE_L
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --allow-dirty \
@@ -3390,6 +3878,7 @@ grep -q 'local validation sees untracked files, but remote worktree validation w
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --allow-dirty \
@@ -3399,6 +3888,34 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'dev-remote-validate.sh --snapshot worktree --include-untracked --check validate --allow-shared-daemon-heavy-checks --check smoke --check repro --check release-bundle' "${PREMERGE_LOG}"
+
+: >"${PREMERGE_LOG}"
+if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --local-snapshot worktree \
+  --local-include-untracked >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
+  echo "Expected local snapshot pre-merge harness to succeed" >&2
+  cat /tmp/workcell-premerge-local-snapshot.out >&2
+  exit 1
+fi
+grep -q 'local validation will run from snapshot (worktree).' /tmp/workcell-premerge-local-snapshot.out
+grep -q 'with-validation-snapshot.sh --repo ' "${PREMERGE_LOG}"
+grep -q -- '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --local-snapshot worktree --local-include-untracked' "${PREMERGE_LOG}"
+grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
+
+if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --local-snapshot head \
+  --local-include-untracked >/tmp/workcell-premerge-local-snapshot-invalid.out 2>&1; then
+  echo "Expected --local-include-untracked without worktree snapshot to fail" >&2
+  exit 1
+fi
+grep -q -- '--local-include-untracked requires --local-snapshot worktree.' /tmp/workcell-premerge-local-snapshot-invalid.out
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
@@ -3773,84 +4290,87 @@ done
 if [[ "$(uname -s)" == "Darwin" ]] &&
   host_tool_exists /opt/homebrew/bin/colima /usr/local/bin/colima &&
   host_tool_exists /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker; then
-  LIVE_DEBUG_PROFILE_NAME="workcell-live-debug-$$"
-  LIVE_DEBUG_LOG="${BARRIER_VERIFY_ROOT}/debug/live-debug.log"
-  if ! "${ROOT_DIR}/scripts/workcell" \
-    --agent codex \
-    --prepare \
-    --rebuild \
-    --workspace "${ROOT_DIR}" \
-    --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
-    --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
-    --debug-log "${LIVE_DEBUG_LOG}" \
-    --agent-arg --version >/tmp/workcell-audit-prepare.out 2>&1; then
-    echo "Expected audit verification prepare run to seed a managed image" >&2
-    cat /tmp/workcell-audit-prepare.out >&2
+  if [[ "$(free_bytes_for_path "${ROOT_DIR}")" -lt $((5 * 1024 * 1024 * 1024)) ]]; then
+    echo "Cannot run live-debug audit verification on Darwin: host filesystem has less than 5 GiB free." >&2
     exit 1
-  fi
-  grep -q 'starting colima' "${LIVE_DEBUG_LOG}"
-  grep -q 'runtime-builder' "${LIVE_DEBUG_LOG}"
-  if ! "${ROOT_DIR}/scripts/workcell" \
-    --logs debug \
-    --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >/tmp/workcell-live-logs-debug.out 2>&1; then
-    echo "Expected successful prepare run to persist the latest debug-log pointer" >&2
-    exit 1
-  fi
-  grep -q 'starting colima' /tmp/workcell-live-logs-debug.out
-  AUDIT_LOG="$(sed -n 's/.*audit_log=\([^ ]*\).*/\1/p' /tmp/workcell-audit-prepare.out | head -n1)"
-  if [[ -z "${AUDIT_LOG}" ]]; then
-    echo "Expected audit verification prepare run to report an audit log path" >&2
-    exit 1
-  fi
-  AUDIT_BASE_LINES=0
-  if [[ -f "${AUDIT_LOG}" ]]; then
-    AUDIT_BASE_LINES="$(wc -l <"${AUDIT_LOG}")"
-  fi
-  if ! "${ROOT_DIR}/scripts/workcell" \
-    --agent codex \
-    --mode build \
-    --workspace "${ROOT_DIR}" \
-    --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
-    --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    -- /bin/bash -lc 'sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update >/dev/null && sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y --no-install-recommends make >/dev/null'; then
-    echo "Expected package-mutation audit verification run to succeed" >&2
-    exit 1
-  fi
-  tail -n "+$((AUDIT_BASE_LINES + 1))" "${AUDIT_LOG}" >/tmp/workcell-audit-session.log
-  grep -q 'event=launch' /tmp/workcell-audit-session.log
-  grep -q 'record_digest=' /tmp/workcell-audit-session.log
-  grep -q 'execution_path=lower-assurance-debug-command' /tmp/workcell-audit-session.log
-  grep -q 'event=assurance-change' /tmp/workcell-audit-session.log
-  grep -q 'reason=package-mutation' /tmp/workcell-audit-session.log
-  grep -q 'session_assurance_final=lower-assurance-package-mutation' /tmp/workcell-audit-session.log
-  grep -q 'event=exit' /tmp/workcell-audit-session.log
-  grep -q 'package_mutation_downgraded=1' /tmp/workcell-audit-session.log
-  if ! "${ROOT_DIR}/scripts/workcell" \
-    --agent codex \
-    --mode build \
-    --workspace "${ROOT_DIR}" \
-    --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
-    --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    -- /bin/bash -lc 'test -f /opt/workcell/host-injections/manifest.json && grep -q "Workcell masks workspace control files inside the boundary." /workspace/AGENTS.md && test ! -d /workspace/AGENTS.md'; then
-    echo "Expected live launcher run to stage an injection manifest and mount /workspace/AGENTS.md as a file" >&2
-    exit 1
-  fi
-  if [[ -x /opt/homebrew/bin/colima ]]; then
-    /opt/homebrew/bin/colima delete --profile "${LIVE_DEBUG_PROFILE_NAME}" --force >/dev/null 2>&1 || true
   else
-    /usr/local/bin/colima delete --profile "${LIVE_DEBUG_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-  fi
-  rm -rf "${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${LIVE_DEBUG_PROFILE_NAME}"
-  AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
-  AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"
-  AUDIT_RESTORE_LOG="${AUDIT_RESTORE_DIR}/workcell.audit.log"
-  mkdir -p "${AUDIT_RESTORE_DIR}"
-  printf '%s\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_DIR}/workcell.managed"
-  cat >"${AUDIT_RESTORE_DIR}/colima.yaml" <<'EOF'
+    LIVE_DEBUG_PROFILE_NAME="workcell-live-debug-$$"
+    LIVE_DEBUG_LOG="${BARRIER_VERIFY_ROOT}/debug/live-debug.log"
+    if ! "${ROOT_DIR}/scripts/workcell" \
+      --agent codex \
+      --prepare-only \
+      --rebuild \
+      --workspace "${ROOT_DIR}" \
+      --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
+      --debug-log "${LIVE_DEBUG_LOG}" >/tmp/workcell-audit-prepare.out 2>&1; then
+      echo "Expected audit verification prepare run to seed a managed image" >&2
+      cat /tmp/workcell-audit-prepare.out >&2
+      exit 1
+    fi
+    grep -q 'starting colima' "${LIVE_DEBUG_LOG}"
+    grep -q 'runtime-builder' "${LIVE_DEBUG_LOG}"
+    if ! "${ROOT_DIR}/scripts/workcell" \
+      --logs debug \
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >/tmp/workcell-live-logs-debug.out 2>&1; then
+      echo "Expected successful prepare run to persist the latest debug-log pointer" >&2
+      exit 1
+    fi
+    grep -q 'starting colima' /tmp/workcell-live-logs-debug.out
+    AUDIT_LOG="$(sed -n 's/.*audit_log=\([^ ]*\).*/\1/p' /tmp/workcell-audit-prepare.out | head -n1)"
+    if [[ -z "${AUDIT_LOG}" ]]; then
+      echo "Expected audit verification prepare run to report an audit log path" >&2
+      exit 1
+    fi
+    AUDIT_BASE_LINES=0
+    if [[ -f "${AUDIT_LOG}" ]]; then
+      AUDIT_BASE_LINES="$(wc -l <"${AUDIT_LOG}")"
+    fi
+    if ! "${ROOT_DIR}/scripts/workcell" \
+      --agent codex \
+      --mode build \
+      --workspace "${ROOT_DIR}" \
+      --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      -- /bin/bash -lc 'sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update >/dev/null && sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y --no-install-recommends make >/dev/null'; then
+      echo "Expected package-mutation audit verification run to succeed" >&2
+      exit 1
+    fi
+    tail -n "+$((AUDIT_BASE_LINES + 1))" "${AUDIT_LOG}" >/tmp/workcell-audit-session.log
+    grep -q 'event=launch' /tmp/workcell-audit-session.log
+    grep -q 'record_digest=' /tmp/workcell-audit-session.log
+    grep -q 'execution_path=lower-assurance-debug-command' /tmp/workcell-audit-session.log
+    grep -q 'event=assurance-change' /tmp/workcell-audit-session.log
+    grep -q 'reason=package-mutation' /tmp/workcell-audit-session.log
+    grep -q 'session_assurance_final=lower-assurance-package-mutation' /tmp/workcell-audit-session.log
+    grep -q 'event=exit' /tmp/workcell-audit-session.log
+    grep -q 'package_mutation_downgraded=1' /tmp/workcell-audit-session.log
+    if ! "${ROOT_DIR}/scripts/workcell" \
+      --agent codex \
+      --mode build \
+      --workspace "${ROOT_DIR}" \
+      --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      -- /bin/bash -lc 'test -f /opt/workcell/host-injections/manifest.json && grep -q "Workcell masks workspace control files inside the boundary." /workspace/AGENTS.md && test ! -d /workspace/AGENTS.md'; then
+      echo "Expected live launcher run to stage an injection manifest and mount /workspace/AGENTS.md as a file" >&2
+      exit 1
+    fi
+    if [[ -x /opt/homebrew/bin/colima ]]; then
+      /opt/homebrew/bin/colima delete --profile "${LIVE_DEBUG_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+    else
+      /usr/local/bin/colima delete --profile "${LIVE_DEBUG_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+    fi
+    rm -rf "${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${LIVE_DEBUG_PROFILE_NAME}"
+    AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
+    AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"
+    AUDIT_RESTORE_LOG="${AUDIT_RESTORE_DIR}/workcell.audit.log"
+    mkdir -p "${AUDIT_RESTORE_DIR}"
+    printf '%s\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_DIR}/workcell.managed"
+    cat >"${AUDIT_RESTORE_DIR}/colima.yaml" <<'EOF'
 cpu: 4
 memory: 8
 disk: 60
@@ -3858,32 +4378,32 @@ runtime: docker
 vmType: vz
 mountType: virtiofs
 EOF
-  printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_LOG}"
-  if "${ROOT_DIR}/scripts/workcell" \
-    --test-fail-after-profile-refresh \
-    --agent codex \
-    --prepare \
-    --allow-nongit-workspace \
-    --workspace "${NONGIT_WORKSPACE}" \
-    --colima-profile "${AUDIT_RESTORE_PROFILE_NAME}" \
-    --agent-arg --version >/tmp/workcell-audit-restore.out 2>&1; then
-    echo "Expected managed-profile refresh test hook to fail after stashing the audit log" >&2
-    exit 1
-  fi
-  grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-audit-restore.out
-  grep -q 'timestamp=test event=launch' "${AUDIT_RESTORE_LOG}"
-  if [[ -x /opt/homebrew/bin/colima ]]; then
-    /opt/homebrew/bin/colima delete --profile "${AUDIT_RESTORE_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-  else
-    /usr/local/bin/colima delete --profile "${AUDIT_RESTORE_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-  fi
-  rm -rf "${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
+    printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_LOG}"
+    if "${ROOT_DIR}/scripts/workcell" \
+      --test-fail-after-profile-refresh \
+      --agent codex \
+      --prepare \
+      --allow-nongit-workspace \
+      --workspace "${NONGIT_WORKSPACE}" \
+      --colima-profile "${AUDIT_RESTORE_PROFILE_NAME}" \
+      --agent-arg --version >/tmp/workcell-audit-restore.out 2>&1; then
+      echo "Expected managed-profile refresh test hook to fail after stashing the audit log" >&2
+      exit 1
+    fi
+    grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-audit-restore.out
+    grep -q 'timestamp=test event=launch' "${AUDIT_RESTORE_LOG}"
+    if [[ -x /opt/homebrew/bin/colima ]]; then
+      /opt/homebrew/bin/colima delete --profile "${AUDIT_RESTORE_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+    else
+      /usr/local/bin/colima delete --profile "${AUDIT_RESTORE_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+    fi
+    rm -rf "${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
 
-  STRICT_REFRESH_PROFILE_NAME="workcell-strict-refresh-$$"
-  STRICT_REFRESH_DIR="${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}"
-  mkdir -p "${STRICT_REFRESH_DIR}"
-  printf '%s\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.managed"
-  cat >"${STRICT_REFRESH_DIR}/colima.yaml" <<'EOF'
+    STRICT_REFRESH_PROFILE_NAME="workcell-strict-refresh-$$"
+    STRICT_REFRESH_DIR="${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}"
+    mkdir -p "${STRICT_REFRESH_DIR}"
+    printf '%s\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.managed"
+    cat >"${STRICT_REFRESH_DIR}/colima.yaml" <<'EOF'
 cpu: 4
 memory: 7
 disk: 60
@@ -3891,64 +4411,65 @@ runtime: docker
 vmType: vz
 mountType: virtiofs
 EOF
-  printf 'image_id=stale-image\n' >"${STRICT_REFRESH_DIR}/workcell.image-ready"
-  printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.audit.log"
-  VERIFY_INVARIANTS_EXPECTED_FAILURE=1
-  set +e
-  "${ROOT_DIR}/scripts/workcell" \
-    --test-fail-after-profile-refresh \
-    --agent codex \
-    --allow-nongit-workspace \
-    --workspace "${NONGIT_WORKSPACE}" \
-    --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
-    --agent-arg --version >/tmp/workcell-strict-refresh-preflight.out 2>&1
-  strict_refresh_status=$?
-  set -e
-  VERIFY_INVARIANTS_EXPECTED_FAILURE=0
-  if [[ "${strict_refresh_status}" -ne 2 ]]; then
-    echo "Expected strict-mode refresh preflight to fail with exit 2 before the test hook, got ${strict_refresh_status}" >&2
-    cat /tmp/workcell-strict-refresh-preflight.out >&2
-    exit 1
+    printf 'image_id=stale-image\n' >"${STRICT_REFRESH_DIR}/workcell.image-ready"
+    printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.audit.log"
+    VERIFY_INVARIANTS_EXPECTED_FAILURE=1
+    set +e
+    "${ROOT_DIR}/scripts/workcell" \
+      --test-fail-after-profile-refresh \
+      --agent codex \
+      --allow-nongit-workspace \
+      --workspace "${NONGIT_WORKSPACE}" \
+      --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
+      --agent-arg --version >/tmp/workcell-strict-refresh-preflight.out 2>&1
+    strict_refresh_status=$?
+    set -e
+    VERIFY_INVARIANTS_EXPECTED_FAILURE=0
+    if [[ "${strict_refresh_status}" -ne 2 ]]; then
+      echo "Expected strict-mode refresh preflight to fail with exit 2 before the test hook, got ${strict_refresh_status}" >&2
+      cat /tmp/workcell-strict-refresh-preflight.out >&2
+      exit 1
+    fi
+    grep -q "Refreshing managed Colima profile ${STRICT_REFRESH_PROFILE_NAME} to apply the requested reviewed VM resources." /tmp/workcell-strict-refresh-preflight.out
+    grep -q "No prepared runtime image is recorded for strict mode on profile ${STRICT_REFRESH_PROFILE_NAME}." /tmp/workcell-strict-refresh-preflight.out
+    grep -q "No VM or container was started." /tmp/workcell-strict-refresh-preflight.out
+    assert_output_did_not_start_colima \
+      /tmp/workcell-strict-refresh-preflight.out \
+      "Strict-mode refresh preflight should fail before Colima startup when the prepared image marker is absent"
+    if grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-preflight.out; then
+      echo "Strict-mode refresh preflight should fail before the post-refresh test hook runs" >&2
+      exit 1
+    fi
+    VERIFY_INVARIANTS_EXPECTED_FAILURE=1
+    set +e
+    "${ROOT_DIR}/scripts/workcell" \
+      --test-fail-after-profile-refresh \
+      --agent codex \
+      --prepare \
+      --allow-nongit-workspace \
+      --workspace "${NONGIT_WORKSPACE}" \
+      --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
+      --agent-arg --version >/tmp/workcell-strict-refresh-prepare.out 2>&1
+    strict_refresh_prepare_status=$?
+    set -e
+    VERIFY_INVARIANTS_EXPECTED_FAILURE=0
+    if [[ "${strict_refresh_prepare_status}" -ne 88 ]]; then
+      echo "Expected follow-up strict prepare to reach the post-refresh hook instead of tripping unmanaged-profile preflight, got ${strict_refresh_prepare_status}" >&2
+      cat /tmp/workcell-strict-refresh-prepare.out >&2
+      exit 1
+    fi
+    grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-prepare.out
+    if grep -q 'Refusing to reuse unmanaged Colima profile' /tmp/workcell-strict-refresh-prepare.out; then
+      echo "Strict-mode refresh preflight should leave the profile recoverable by --prepare" >&2
+      exit 1
+    fi
+    if [[ -x /opt/homebrew/bin/colima ]]; then
+      /opt/homebrew/bin/colima delete --profile "${STRICT_REFRESH_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+    else
+      /usr/local/bin/colima delete --profile "${STRICT_REFRESH_PROFILE_NAME}" --force >/dev/null 2>&1 || true
+    fi
+    rm -rf "${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${STRICT_REFRESH_PROFILE_NAME}"
   fi
-  grep -q "Refreshing managed Colima profile ${STRICT_REFRESH_PROFILE_NAME} to apply the requested reviewed VM resources." /tmp/workcell-strict-refresh-preflight.out
-  grep -q "No prepared runtime image is recorded for strict mode on profile ${STRICT_REFRESH_PROFILE_NAME}." /tmp/workcell-strict-refresh-preflight.out
-  grep -q "No VM or container was started." /tmp/workcell-strict-refresh-preflight.out
-  assert_output_did_not_start_colima \
-    /tmp/workcell-strict-refresh-preflight.out \
-    "Strict-mode refresh preflight should fail before Colima startup when the prepared image marker is absent"
-  if grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-preflight.out; then
-    echo "Strict-mode refresh preflight should fail before the post-refresh test hook runs" >&2
-    exit 1
-  fi
-  VERIFY_INVARIANTS_EXPECTED_FAILURE=1
-  set +e
-  "${ROOT_DIR}/scripts/workcell" \
-    --test-fail-after-profile-refresh \
-    --agent codex \
-    --prepare \
-    --allow-nongit-workspace \
-    --workspace "${NONGIT_WORKSPACE}" \
-    --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
-    --agent-arg --version >/tmp/workcell-strict-refresh-prepare.out 2>&1
-  strict_refresh_prepare_status=$?
-  set -e
-  VERIFY_INVARIANTS_EXPECTED_FAILURE=0
-  if [[ "${strict_refresh_prepare_status}" -ne 88 ]]; then
-    echo "Expected follow-up strict prepare to reach the post-refresh hook instead of tripping unmanaged-profile preflight, got ${strict_refresh_prepare_status}" >&2
-    cat /tmp/workcell-strict-refresh-prepare.out >&2
-    exit 1
-  fi
-  grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-prepare.out
-  if grep -q 'Refusing to reuse unmanaged Colima profile' /tmp/workcell-strict-refresh-prepare.out; then
-    echo "Strict-mode refresh preflight should leave the profile recoverable by --prepare" >&2
-    exit 1
-  fi
-  if [[ -x /opt/homebrew/bin/colima ]]; then
-    /opt/homebrew/bin/colima delete --profile "${STRICT_REFRESH_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-  else
-    /usr/local/bin/colima delete --profile "${STRICT_REFRESH_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-  fi
-  rm -rf "${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${STRICT_REFRESH_PROFILE_NAME}"
 fi
 
 UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"

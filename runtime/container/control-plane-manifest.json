@@ -1,0 +1,197 @@
+{
+  "host_artifacts": [
+    {
+      "repo_path": "scripts/workcell",
+      "sha256": "3b71f6ce278568f92cc7bca664b6f5164bda4e53653f4b4254a84479372424df"
+    },
+    {
+      "repo_path": "scripts/lib/extract_direct_mounts.py",
+      "sha256": "66f9042444a3852a8155eb1d8c100fb026ac968b242573c62f34b536d2fab5fa"
+    },
+    {
+      "repo_path": "scripts/lib/render_injection_bundle.py",
+      "sha256": "848dbe2b708e6d2e4c59ba200ee57554366c63bf65bd253effb1a69befd908b5"
+    },
+    {
+      "repo_path": "scripts/lib/trusted-docker-client.sh",
+      "sha256": "66384bd55c487dc25fea52c6872ed4ddc5b190a97a47ff6a7b967a6e87244981"
+    }
+  ],
+  "runtime_artifacts": [
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/claude/.claude/settings.json",
+      "runtime_path": "/opt/workcell/adapters/claude/.claude/settings.json",
+      "sha256": "61d55ea87682dce016c3bd4ede120863b8718db65e7309db5c0c4a41deb88629"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/claude/CLAUDE.md",
+      "runtime_path": "/opt/workcell/adapters/claude/CLAUDE.md",
+      "sha256": "57ebc2c1f55c1e537f14db0a843f24e1273a016c184d4fae5e5ff5c6e673c8a5"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/claude/hooks/guard-bash.sh",
+      "runtime_path": "/opt/workcell/adapters/claude/hooks/guard-bash.sh",
+      "sha256": "d8f1528b8d4eac4d73c362e6743d736f390ef70dc9c129a26f89e84d65695b72"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/claude/managed-settings.json",
+      "runtime_path": "/opt/workcell/adapters/claude/managed-settings.json",
+      "sha256": "977745dc9b4071011de5966aac596f89fa225bebb17306a4917238e7eff427d8"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/claude/mcp-template.json",
+      "runtime_path": "/opt/workcell/adapters/claude/mcp-template.json",
+      "sha256": "d8e397af03b5b032f21d0aa967086f0c78b33c87b76f2e9898ae0a144df7de02"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/AGENTS.md",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/AGENTS.md",
+      "sha256": "1ac10f9a44e3b23bdc9726f23c8138f79000649617ea7833572a6e1215489b6e"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/agents/anthropic_claude_compat.md",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/agents/anthropic_claude_compat.md",
+      "sha256": "b685cd6881676ef12a87cf5e3cc3c1f2abda30b9e3bb2ffc51f5b0e4fad0f9b1"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/agents/apple_platform_boundary.md",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/agents/apple_platform_boundary.md",
+      "sha256": "19f6e07bc4c516a22284f5853152b3ffbabbe32241335686ba5b0a1bed8511d8"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/agents/distinguished_security.md",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/agents/distinguished_security.md",
+      "sha256": "e9c1ded048aea209491c7d5c7c792030b31be8582f424d25d8e6d80e1e740e49"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/agents/openai_codex_platform.md",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/agents/openai_codex_platform.md",
+      "sha256": "83962765347a28cec878697e3a4e44a5ecda3e30a5daa9ff721f7e1c426ac318"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/config.toml",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/config.toml",
+      "sha256": "26e5b940ea519689e594d83018760317eeb0108833bd69b4a1071171f95a3c96"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/rules/default.rules",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/rules/default.rules",
+      "sha256": "094b8fe94dccb3c98000cd35ae1905bf804c03aa5d0e1e37cf80b25aa3fec688"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/managed_config.toml",
+      "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
+      "sha256": "e281425eef791ce8fb1b6a7efcea68aa0cb2bf96e7c780b4f2c2af32658a0e3a"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/mcp/config.toml",
+      "runtime_path": "/opt/workcell/adapters/codex/mcp/config.toml",
+      "sha256": "28e70cdc32c22b7bcf51ed4b3ed5bec9686132ac9034500c3952bb3f6ac30856"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/requirements.toml",
+      "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
+      "sha256": "ff19c1f5942abd8479c0a740e9c38dd81c4ad483d4773aca4546a54a95a446cc"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/gemini/.gemini/settings.json",
+      "runtime_path": "/opt/workcell/adapters/gemini/.gemini/settings.json",
+      "sha256": "588a5edec5da4165d108f7da77ad268c7d3b4e2a66bd3b5044c30604d56911ec"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/gemini/GEMINI.md",
+      "runtime_path": "/opt/workcell/adapters/gemini/GEMINI.md",
+      "sha256": "a06f4999ace204e3a1f1236c98a777d18e9eba24df8fbe0ddd623bd0fccc8cb9"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/assurance.sh",
+      "runtime_path": "/usr/local/libexec/workcell/assurance.sh",
+      "sha256": "e4acc20f65d4b98ae1ccc8b04a6a2ba9eae7cbf6fba500f640ce2b1328bdafa0"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/bin/apt-helper.sh",
+      "runtime_path": "/usr/local/libexec/workcell/apt-helper.sh",
+      "sha256": "96237b87fd48a0eb723dfbc2be57403f69f1618c12b0d38f66c80c7d0e3a049b"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/bin/apt-wrapper.sh",
+      "runtime_path": "/usr/local/libexec/workcell/apt-wrapper.sh",
+      "sha256": "7f69b164e6440e6082fac91e6fca9d992bdba2053af4a6c113630b251d41dc4e"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/entrypoint.sh",
+      "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
+      "sha256": "e3df912ebe11f103fcf4cf11befa1729764b3a887aeea2bd32ce1369b984f906"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/bin/git",
+      "runtime_path": "/usr/local/libexec/workcell/git-wrapper.sh",
+      "sha256": "490e2c8be98ab5a2612fc7317ff3d7ddfe12ddbf503271cf0fa717c06372944d"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/home-control-plane.sh",
+      "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
+      "sha256": "ef7db5a46f7bf21cd5cc2f7a3896e63f1711626905df9293902f3270311ff77e"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/bin/node",
+      "runtime_path": "/usr/local/libexec/workcell/node-wrapper.sh",
+      "sha256": "e4c7691b547c777eda01f8475e0b6864278010ad561be9df5235079ec7a40d80"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/provider-policy.sh",
+      "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
+      "sha256": "4c927c38806712648da566fa56b092a07f2c1829d90ce0b9c3a6ae9dfcc91963"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/provider-wrapper.sh",
+      "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
+      "sha256": "1f12566c8b7d5c198f7658c7d375f45f6f490153aa4e94fa7c3626db1a6a4fd5"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/public-node-guard.mjs",
+      "runtime_path": "/usr/local/libexec/workcell/public-node-guard.mjs",
+      "sha256": "daab1332b6e21abe83ca92370db0714a3fb681b64100c6cf96ae9b9dba2ea659"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/runtime-user.sh",
+      "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
+      "sha256": "219a7defbabba9f312b3f331eebff1ab0bae7cbaa24fcbe424057e5c1f1a38e9"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "adapters/claude/managed-settings.json",
+      "runtime_path": "/etc/claude-code/managed-settings.json",
+      "sha256": "977745dc9b4071011de5966aac596f89fa225bebb17306a4917238e7eff427d8"
+    }
+  ],
+  "schema_version": 2
+}

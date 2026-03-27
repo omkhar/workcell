@@ -463,6 +463,10 @@ if "COPY runtime/container/rust /workcell-rust" not in runtime_dockerfile:
     raise SystemExit(
         "runtime/container/Dockerfile must vendor the reviewed Rust runtime sources into the builder stage"
     )
+if "COPY runtime/container/control-plane-manifest.json /usr/local/libexec/workcell/control-plane-manifest.json" not in runtime_dockerfile:
+    raise SystemExit(
+        "runtime/container/Dockerfile must copy the reviewed control-plane manifest into the runtime image"
+    )
 if "cargo build \\" not in runtime_dockerfile or "--locked \\" not in runtime_dockerfile or "--offline \\" not in runtime_dockerfile:
     raise SystemExit(
         "runtime/container/Dockerfile must build the shipped Rust launcher artifacts with cargo --locked --offline"
@@ -487,6 +491,10 @@ if "WORKCELL_BUILD_INPUT_ROOT: ${{ github.workspace }}/dist/release-source" not 
     raise SystemExit(
         ".github/workflows/release.yml must generate the signed build input manifest from the archived release source tree"
     )
+if "WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source" not in release_workflow:
+    raise SystemExit(
+        ".github/workflows/release.yml must generate the signed control-plane manifest from the archived release source tree"
+    )
 if "Verify published platform digests match preflight" not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must compare published per-platform image digests against the preflight manifest"
@@ -494,6 +502,10 @@ if "Verify published platform digests match preflight" not in release_workflow:
 if "Verify release bundle matches preflight" not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must compare the published source bundle against the preflight manifest"
+    )
+if "Verify control-plane manifest matches preflight" not in release_workflow:
+    raise SystemExit(
+        ".github/workflows/release.yml must compare the published control-plane manifest against the preflight manifest"
     )
 if "github/codeql-action/init@" not in release_workflow or "github/codeql-action/analyze@" not in release_workflow:
     raise SystemExit(
@@ -503,12 +515,21 @@ if "language: rust" not in (workflows_dir / "codeql.yml").read_text(encoding="ut
     raise SystemExit(".github/workflows/codeql.yml must analyze the shipped Rust boundary code")
 for required_release_asset in (
     'dist/${{ env.BUNDLE_NAME }}.sigstore.json',
+    'dist/workcell-control-plane.sigstore.json',
     'dist/workcell-source.spdx.sigstore.json',
     'dist/workcell-image.spdx.sigstore.json',
 ):
     if required_release_asset not in release_workflow:
         raise SystemExit(
             f".github/workflows/release.yml must publish direct signature bundles for release artifacts: missing {required_release_asset!r}"
+        )
+for required_release_manifest in (
+    "dist/workcell-control-plane-preflight.json",
+    "dist/workcell-control-plane.json",
+):
+    if required_release_manifest not in release_workflow:
+        raise SystemExit(
+            f".github/workflows/release.yml must keep the reviewed control-plane manifest flow: missing {required_release_manifest!r}"
         )
 if "steps.build.outputs.digest" in release_workflow:
     raise SystemExit(

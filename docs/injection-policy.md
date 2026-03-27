@@ -69,6 +69,16 @@ Selectors let you scope injected material to only some launches:
 - `providers = ["codex", "claude", "gemini"]`
 - `modes = ["strict", "build"]`
 
+For larger setups, policies can be composed from smaller operator-owned files:
+
+- `includes = ["shared-docs.toml", "provider-auth.toml"]`
+
+Includes are loaded relative to the current policy file, must stay within the
+entrypoint policy tree, are merged in the listed order, and fail closed on
+cycles or duplicate settings. `[[copies]]` entries append in include order;
+duplicate `documents.*`, `ssh.*`, or `credentials.*` settings are rejected so
+one fragment cannot silently override another.
+
 For `[credentials]`, simple `key = "/path/to/file"` entries still work for
 provider-native credentials. Shared GitHub CLI credentials should use scoped
 nested tables so you explicitly choose which provider sessions receive them.
@@ -132,8 +142,9 @@ modes = ["strict", "build"]
 - `credentials.codex_auth` mounts a host `auth.json` read-only and copies it into
   `~/.codex/auth.json` for session-local Codex auth reuse.
 - `credentials.claude_api_key` mounts a secret file read-only and generates a
-  session-local Claude `apiKeyHelper` so Claude can reuse an API key without
-  mutating the reviewed baseline settings.
+  session-local Claude `apiKeyHelper` that reads the reviewed direct-mounted
+  credential path, so Claude can reuse an API key without mutating the
+  reviewed baseline settings or creating an extra session-local secret copy.
 - `credentials.claude_auth` mounts persisted Claude CLI auth into
   `~/.config/claude-code/auth.json` when you already have reviewed host-side
   Claude login state.

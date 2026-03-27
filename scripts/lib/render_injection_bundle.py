@@ -111,6 +111,14 @@ GEMINI_SUPPORTED_ENV_KEYS = {
     *GEMINI_PROJECT_KEYS,
     *GEMINI_VERTEX_LOCATION_KEYS,
 }
+ALLOWED_ROOT_POLICY_KEYS = {
+    "version",
+    "includes",
+    "documents",
+    "ssh",
+    "copies",
+    "credentials",
+}
 
 
 def die(message: str) -> NoReturn:
@@ -266,16 +274,27 @@ def parse_simple_env_file(source: Path) -> dict[str, str]:
         if key in values:
             die(f"Gemini auth env file {source} configures {key} more than once.")
         value = strip_comment(value)
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        if value and value[0] in {"'", '"'}:
+            if len(value) < 2 or value[-1] != value[0]:
+                die(
+                    f"Malformed Gemini auth env file {source}: {key} has an unterminated quoted value."
+                )
             if value[0] == '"':
                 try:
                     parsed = ast.literal_eval(value)
-                except (SyntaxError, ValueError):
-                    parsed = value[1:-1]
+                except (SyntaxError, ValueError) as exc:
+                    die(
+                        f"Malformed Gemini auth env file {source}: {key} has an invalid double-quoted value "
+                        f"({exc})."
+                    )
                 value = parsed if isinstance(parsed, str) else str(parsed)
             else:
                 parsed = value[1:-1]
                 value = parsed if isinstance(parsed, str) else str(parsed)
+        elif value and value[-1] in {"'", '"'}:
+            die(
+                f"Malformed Gemini auth env file {source}: {key} has an unmatched trailing quote."
+            )
         values[key] = value
     return values
 
@@ -409,6 +428,15 @@ def validate_source_path(raw: object, label: str, base: Path) -> Path:
     return source
 
 
+def require_path_within(root: Path, candidate: Path, label: str) -> None:
+    resolved_root = root.resolve()
+    resolved_candidate = candidate.resolve()
+    try:
+        resolved_candidate.relative_to(resolved_root)
+    except ValueError:
+        die(f"{label} must stay within {resolved_root}: {resolved_candidate}")
+
+
 def require_no_symlink(path: Path, label: str) -> None:
     if path.is_symlink():
         die(f"{label} must not be a symlink: {path}")
@@ -502,17 +530,300 @@ def policy_sha256(policy_path: Path) -> str:
     return f"sha256:{hashlib.sha256(policy_path.read_bytes()).hexdigest()}"
 
 
-def load_policy(policy_path: Path) -> dict:
-    loaded = parse_toml_subset(policy_path.read_text(encoding="utf-8"), policy_path)
-    if not isinstance(loaded, dict):
-        die(f"injection policy must decode to a TOML table: {policy_path}")
-    validate_allowed_keys(
-        loaded, {"version", "documents", "ssh", "copies", "credentials"}, "root policy"
+def composite_policy_sha256(policy_sources: list[dict[str, str]]) -> str:
+    canonical = json.dumps(
+        policy_sources,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def path_material_sha256(path: Path) -> str:
+    if path.is_symlink():
+        target = os.readlink(path)
+        return hashlib.sha256(f"symlink:{target}".encode("utf-8")).hexdigest()
+    if path.is_file():
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    if path.is_dir():
+        digest = hashlib.sha256()
+        digest.update(b"dir\n")
+        for child in sorted(path.rglob("*"), key=lambda entry: entry.relative_to(path).as_posix()):
+            relative = child.relative_to(path).as_posix()
+            if child.is_symlink():
+                digest.update(f"symlink:{relative}:{os.readlink(child)}\n".encode("utf-8"))
+            elif child.is_dir():
+                digest.update(f"dir:{relative}\n".encode("utf-8"))
+            elif child.is_file():
+                digest.update(f"file:{relative}\n".encode("utf-8"))
+                digest.update(child.read_bytes())
+                digest.update(b"\n")
+            else:
+                die(f"unsupported path type while hashing {path}: {child}")
+        return digest.hexdigest()
+    die(f"unsupported path type while hashing {path}")
+
+
+def effective_policy_sha256(
+    policy_sources: list[dict[str, str]],
+    output_root: Path,
+    rendered_documents: dict[str, str],
+    rendered_copies: list[dict[str, object]],
+    rendered_credentials: dict[str, dict[str, str]],
+    rendered_ssh: dict[str, object],
+) -> str:
+    documents = {
+        key: path_material_sha256(output_root / relative_path)
+        for key, relative_path in sorted(rendered_documents.items())
+    }
+    copies: list[dict[str, object]] = []
+    for entry in rendered_copies:
+        rendered_source = entry["source"]
+        if isinstance(rendered_source, str):
+            source_path = output_root / rendered_source
+        elif isinstance(rendered_source, dict) and isinstance(rendered_source.get("source"), str):
+            source_path = Path(rendered_source["source"])
+        else:
+            die(f"unsupported rendered copy source while hashing effective policy: {rendered_source!r}")
+        copies.append(
+            {
+                "classification": entry["classification"],
+                "dir_mode": entry["dir_mode"],
+                "file_mode": entry["file_mode"],
+                "kind": entry["kind"],
+                "sha256": path_material_sha256(source_path),
+                "target": entry["target"],
+            }
+        )
+    credentials = {
+        key: {
+            "mount_path": value["mount_path"],
+            "sha256": path_material_sha256(Path(value["source"])),
+        }
+        for key, value in sorted(rendered_credentials.items())
+    }
+    ssh: dict[str, object] = {}
+    if rendered_ssh:
+        ssh["config_assurance"] = rendered_ssh.get("config_assurance", "off")
+        config = rendered_ssh.get("config")
+        if isinstance(config, dict) and isinstance(config.get("source"), str):
+            ssh["config"] = {
+                "mount_path": config["mount_path"],
+                "sha256": path_material_sha256(Path(config["source"])),
+            }
+        known_hosts = rendered_ssh.get("known_hosts")
+        if isinstance(known_hosts, dict) and isinstance(known_hosts.get("source"), str):
+            ssh["known_hosts"] = {
+                "mount_path": known_hosts["mount_path"],
+                "sha256": path_material_sha256(Path(known_hosts["source"])),
+            }
+        identities = rendered_ssh.get("identities")
+        if isinstance(identities, list):
+            ssh["identities"] = [
+                {
+                    "mount_path": entry["mount_path"],
+                    "sha256": path_material_sha256(Path(entry["source"])),
+                    "target_name": entry["target_name"],
+                }
+                for entry in identities
+            ]
+    canonical = json.dumps(
+        {
+            "credentials": credentials,
+            "copies": copies,
+            "documents": documents,
+            "policy_sources": policy_sources,
+            "ssh": ssh,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def logical_policy_path(policy_path: Path, entrypoint_root: Path) -> str:
+    relative_path = os.path.relpath(policy_path, entrypoint_root)
+    return relative_path.replace(os.sep, "/")
+
+
+def rebase_fragment_path(raw: object, fragment_dir: Path) -> object:
+    if not isinstance(raw, str) or not raw:
+        return raw
+    return str(expand_host_path(raw, fragment_dir))
+
+
+def rebase_policy_fragment(policy: dict[str, object], fragment_dir: Path) -> dict[str, object]:
+    rebased: dict[str, object] = {}
+    for key, value in policy.items():
+        if key == "documents" and isinstance(value, dict):
+            rebased[key] = {
+                document_key: rebase_fragment_path(document_value, fragment_dir)
+                for document_key, document_value in value.items()
+            }
+            continue
+        if key == "copies" and isinstance(value, list):
+            rebased_copies: list[object] = []
+            for entry in value:
+                if not isinstance(entry, dict):
+                    rebased_copies.append(entry)
+                    continue
+                rebased_entry = dict(entry)
+                if "source" in rebased_entry:
+                    rebased_entry["source"] = rebase_fragment_path(
+                        rebased_entry["source"], fragment_dir
+                    )
+                rebased_copies.append(rebased_entry)
+            rebased[key] = rebased_copies
+            continue
+        if key == "ssh" and isinstance(value, dict):
+            rebased_ssh = dict(value)
+            for ssh_key in ("config", "known_hosts"):
+                if ssh_key in rebased_ssh:
+                    rebased_ssh[ssh_key] = rebase_fragment_path(rebased_ssh[ssh_key], fragment_dir)
+            identities = rebased_ssh.get("identities")
+            if isinstance(identities, list):
+                rebased_ssh["identities"] = [
+                    rebase_fragment_path(identity, fragment_dir) for identity in identities
+                ]
+            rebased[key] = rebased_ssh
+            continue
+        if key == "credentials" and isinstance(value, dict):
+            rebased_credentials: dict[str, object] = {}
+            for credential_key, credential_value in value.items():
+                if isinstance(credential_value, dict):
+                    rebased_credential = dict(credential_value)
+                    if "source" in rebased_credential:
+                        rebased_credential["source"] = rebase_fragment_path(
+                            rebased_credential["source"], fragment_dir
+                        )
+                    rebased_credentials[credential_key] = rebased_credential
+                else:
+                    rebased_credentials[credential_key] = rebase_fragment_path(
+                        credential_value, fragment_dir
+                    )
+            rebased[key] = rebased_credentials
+            continue
+        rebased[key] = value
+    return rebased
+
+
+def validate_policy_include(raw: object, label: str, base: Path, entrypoint_root: Path) -> Path:
+    source = validate_source_path(raw, label, base)
+    if not source.is_file():
+        die(f"{label} must point at a file: {source}")
+    resolved_source = source.resolve()
+    require_path_within(entrypoint_root, resolved_source, label)
+    return resolved_source
+
+
+def merge_policy_fragment(base: dict[str, object], addition: dict[str, object], source_path: Path) -> None:
+    version = addition.get("version", 1)
+    if version != 1:
+        die(f"unsupported injection policy version: {version}")
+
+    for table_name in ("documents", "ssh", "credentials"):
+        table = addition.get(table_name)
+        if table is None:
+            continue
+        if not isinstance(table, dict):
+            die(f"injection policy fragment must keep {table_name} as a table: {source_path}")
+        destination = base.setdefault(table_name, {})
+        if not isinstance(destination, dict):
+            die(f"injection policy merge corrupted {table_name}: {source_path}")
+        for key, value in table.items():
+            if key in destination:
+                die(
+                    "injection policy fragments declare the same setting more than once: "
+                    f"{table_name}.{key} ({source_path})"
+                )
+            destination[key] = value
+
+    copies = addition.get("copies")
+    if copies is None:
+        return
+    if not isinstance(copies, list):
+        die(f"injection policy fragment must keep copies as an array of tables: {source_path}")
+    destination_copies = base.setdefault("copies", [])
+    if not isinstance(destination_copies, list):
+        die(f"injection policy merge corrupted copies: {source_path}")
+    destination_copies.extend(copies)
+
+
+def load_policy_bundle(
+    policy_path: Path,
+    *,
+    entrypoint_root: Path | None = None,
+    active_stack: tuple[Path, ...] | None = None,
+    loaded_paths: set[Path] | None = None,
+) -> tuple[dict, list[dict[str, str]]]:
+    resolved_policy_path = policy_path.expanduser().resolve()
+    entrypoint_root = (
+        entrypoint_root.resolve() if entrypoint_root is not None else resolved_policy_path.parent
     )
+    active_stack = active_stack or ()
+    loaded_paths = loaded_paths if loaded_paths is not None else set()
+
+    if resolved_policy_path in active_stack:
+        cycle = " -> ".join(str(path) for path in (*active_stack, resolved_policy_path))
+        die(f"injection policy include cycle detected: {cycle}")
+    if resolved_policy_path in loaded_paths:
+        die(f"injection policy includes the same file more than once: {resolved_policy_path}")
+    loaded_paths.add(resolved_policy_path)
+
+    loaded = parse_toml_subset(
+        resolved_policy_path.read_text(encoding="utf-8"),
+        resolved_policy_path,
+    )
+    if not isinstance(loaded, dict):
+        die(f"injection policy must decode to a TOML table: {resolved_policy_path}")
+    validate_allowed_keys(loaded, ALLOWED_ROOT_POLICY_KEYS, "root policy")
+
     version = loaded.get("version", 1)
     if version != 1:
         die(f"unsupported injection policy version: {version}")
-    return loaded
+
+    includes = loaded.get("includes", [])
+    if includes is None:
+        includes = []
+    if not isinstance(includes, list):
+        die("includes must be an array of strings when specified")
+
+    merged: dict[str, object] = {"version": 1}
+    policy_sources: list[dict[str, str]] = []
+    next_stack = (*active_stack, resolved_policy_path)
+    for index, include in enumerate(includes):
+        include_path = validate_policy_include(
+            include,
+            f"includes[{index}]",
+            resolved_policy_path.parent,
+            entrypoint_root,
+        )
+        included_policy, included_sources = load_policy_bundle(
+            include_path,
+            entrypoint_root=entrypoint_root,
+            active_stack=next_stack,
+            loaded_paths=loaded_paths,
+        )
+        merge_policy_fragment(merged, included_policy, include_path)
+        policy_sources.extend(included_sources)
+
+    current_policy = dict(loaded)
+    current_policy.pop("includes", None)
+    if active_stack:
+        current_policy = rebase_policy_fragment(current_policy, resolved_policy_path.parent)
+    merge_policy_fragment(merged, current_policy, resolved_policy_path)
+    policy_sources.append(
+        {
+            "path": logical_policy_path(resolved_policy_path, entrypoint_root),
+            "sha256": policy_sha256(resolved_policy_path),
+        }
+    )
+    return merged, policy_sources
+
+
+def load_policy(policy_path: Path) -> dict:
+    policy, _ = load_policy_bundle(policy_path)
+    return policy
 
 
 def strip_comment(line: str) -> str:
@@ -903,7 +1214,7 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     output_root.chmod(0o700)
 
-    policy = load_policy(policy_path)
+    policy, policy_sources = load_policy_bundle(policy_path)
     rendered_documents = render_documents(policy, output_root, policy_path.parent)
     rendered_copies = render_copies(
         policy, output_root, policy_path.parent, args.agent, args.mode
@@ -916,7 +1227,16 @@ def main() -> int:
     manifest = {
         "version": 1,
         "metadata": {
-            "policy_sha256": policy_sha256(policy_path),
+            "policy_entrypoint": logical_policy_path(policy_path.resolve(), policy_path.parent.resolve()),
+            "policy_sha256": effective_policy_sha256(
+                policy_sources,
+                output_root,
+                rendered_documents,
+                rendered_copies,
+                rendered_credentials,
+                rendered_ssh,
+            ),
+            "policy_sources": policy_sources,
             "credential_keys": sorted(rendered_credentials),
             "extra_endpoints": extra_endpoints,
             "secret_copy_targets": sorted(

@@ -85,6 +85,81 @@ class RenderInjectionHelperTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.module.validate_gemini_env_file(duplicate_env)
 
+    def test_parse_simple_env_file_supports_export_comments_and_quoted_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            env_file = root / "gemini.env"
+            env_file.write_text(
+                'export GEMINI_API_KEY="abc#123" # trailing comment\n'
+                "GOOGLE_CLOUD_LOCATION='us-central1'\n"
+                'GOOGLE_CLOUD_PROJECT="test-project"\n',
+                encoding="utf-8",
+            )
+
+            parsed = self.module.parse_simple_env_file(env_file)
+            self.assertEqual(parsed["GEMINI_API_KEY"], "abc#123")
+            self.assertEqual(parsed["GOOGLE_CLOUD_LOCATION"], "us-central1")
+            self.assertEqual(parsed["GOOGLE_CLOUD_PROJECT"], "test-project")
+
+    def test_parse_simple_env_file_rejects_malformed_quoted_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            env_file = root / "gemini.env"
+            env_file.write_text(
+                'GOOGLE_CLOUD_PROJECT="unterminated\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(SystemExit):
+                self.module.parse_simple_env_file(env_file)
+
+    def test_validate_gemini_env_file_rejects_conflicting_empty_and_unsupported_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            conflicting = root / "conflicting.env"
+            conflicting.write_text(
+                "GOOGLE_GENAI_USE_GCA=true\nGOOGLE_GENAI_USE_VERTEXAI=true\n",
+                encoding="utf-8",
+            )
+            missing_project = root / "missing-project.env"
+            missing_project.write_text(
+                "GOOGLE_GENAI_USE_VERTEXAI=true\nGOOGLE_CLOUD_LOCATION=us-central1\n",
+                encoding="utf-8",
+            )
+            google_without_vertex = root / "google-without-vertex.env"
+            google_without_vertex.write_text("GOOGLE_API_KEY=test\n", encoding="utf-8")
+            empty_value = root / "empty.env"
+            empty_value.write_text("GEMINI_API_KEY=\n", encoding="utf-8")
+            invalid_bool = root / "invalid-bool.env"
+            invalid_bool.write_text("GOOGLE_GENAI_USE_GCA=maybe\n", encoding="utf-8")
+            unsupported_key = root / "unsupported.env"
+            unsupported_key.write_text("UNSUPPORTED_KEY=value\n", encoding="utf-8")
+            malformed_quoted = root / "malformed-quoted.env"
+            malformed_quoted.write_text(
+                'GOOGLE_GENAI_USE_VERTEXAI=true\n'
+                'GOOGLE_CLOUD_PROJECT="unterminated\n'
+                "GOOGLE_CLOUD_LOCATION=us-central1\n",
+                encoding="utf-8",
+            )
+            api_key = root / "api-key.env"
+            api_key.write_text("GEMINI_API_KEY=secret\n", encoding="utf-8")
+
+            for candidate in (
+                conflicting,
+                missing_project,
+                google_without_vertex,
+                empty_value,
+                invalid_bool,
+                unsupported_key,
+                malformed_quoted,
+            ):
+                with self.assertRaises(SystemExit):
+                    self.module.validate_gemini_env_file(candidate)
+
+            metadata = self.module.validate_gemini_env_file(api_key)
+            self.assertEqual(metadata["selected_auth_type"], "gemini-api-key")
+            self.assertEqual(metadata["extra_endpoints"], [])
+
     def test_validate_json_helpers_reject_invalid_gemini_oauth_and_adc(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -109,11 +184,34 @@ class RenderInjectionHelperTests(unittest.TestCase):
                 valid_projects, "credentials.gemini_projects"
             )
 
+    def test_validation_helpers_reject_unsafe_paths_and_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            file_path = root / "file.txt"
+            file_path.write_text("content\n", encoding="utf-8")
+            file_path.chmod(0o600)
+            symlink = root / "link.txt"
+            symlink.symlink_to(file_path)
+            directory = root / "directory"
+            directory.mkdir()
+            known_hosts = root / "known_hosts"
+            known_hosts.write_text("github.com ssh-ed25519 AAAA\n", encoding="utf-8")
+            known_hosts.chmod(0o666)
+
+            self.module.require_path_within(root, file_path, "file")
+            with self.assertRaises(SystemExit):
+                self.module.require_no_symlink(symlink, "link")
+            with self.assertRaises(SystemExit):
+                self.module.validate_secret_tree(directory, "directory")
+            with self.assertRaises(SystemExit):
+                self.module.validate_known_hosts_file(known_hosts, "known_hosts")
+
     def test_parse_toml_subset_parses_supported_tables(self) -> None:
         policy = Path("/tmp/policy.toml")
         parsed = self.module.parse_toml_subset(
             """
             version = 1
+            includes = ["shared.toml"]
             [documents]
             common = "common.md"
             [credentials]
@@ -129,6 +227,7 @@ class RenderInjectionHelperTests(unittest.TestCase):
             policy,
         )
         self.assertEqual(parsed["version"], 1)
+        self.assertEqual(parsed["includes"], ["shared.toml"])
         self.assertEqual(parsed["documents"]["common"], "common.md")
         self.assertEqual(parsed["credentials"]["codex_auth"], "auth.json")
         self.assertTrue(parsed["ssh"]["enabled"])
@@ -284,22 +383,41 @@ class RenderInjectionHelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             policy_path = root / "policy.toml"
+            included_path = root / "shared.toml"
             source = root / "common.md"
+            codex_auth = root / "auth.json"
             source.write_text("common\n", encoding="utf-8")
+            codex_auth.write_text("{}\n", encoding="utf-8")
             source.chmod(0o600)
+            codex_auth.chmod(0o600)
             self.assertEqual(
                 self.module.expand_host_path(str(source), root),
                 Path(os.path.abspath(os.fspath(source))),
             )
+            included_path.write_text(
+                '[documents]\ncommon = "common.md"\n',
+                encoding="utf-8",
+            )
             policy_path.write_text(
-                'version = 1\n[documents]\ncommon = "common.md"\n',
+                'version = 1\nincludes = ["shared.toml"]\n[credentials]\ncodex_auth = "auth.json"\n',
                 encoding="utf-8",
             )
             loaded = self.module.load_policy(policy_path)
-            self.assertEqual(loaded["documents"]["common"], "common.md")
+            self.assertEqual(loaded["documents"]["common"], str(source.resolve()))
+            self.assertEqual(loaded["credentials"]["codex_auth"], "auth.json")
             self.assertEqual(
                 self.module.validate_source_path("common.md", "documents.common", root),
                 Path(os.path.abspath(os.fspath(source))),
+            )
+
+            loaded_bundle, policy_sources = self.module.load_policy_bundle(policy_path)
+            self.assertEqual(loaded_bundle["documents"]["common"], str(source.resolve()))
+            self.assertEqual(
+                [entry["path"] for entry in policy_sources],
+                ["shared.toml", "policy.toml"],
+            )
+            self.assertTrue(
+                self.module.composite_policy_sha256(policy_sources).startswith("sha256:")
             )
 
             policy_path.write_text('version = 2\n', encoding="utf-8")
@@ -309,6 +427,56 @@ class RenderInjectionHelperTests(unittest.TestCase):
                 self.module.validate_source_path("", "documents.common", root)
             with self.assertRaises(SystemExit):
                 self.module.validate_source_path("missing.md", "documents.common", root)
+
+    def test_load_policy_bundle_rejects_duplicate_fragment_settings_and_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "common.md").write_text("common\n", encoding="utf-8")
+            (root / "common.md").chmod(0o600)
+            (root / "a.toml").write_text(
+                'includes = ["b.toml"]\n[documents]\ncommon = "common.md"\n',
+                encoding="utf-8",
+            )
+            (root / "b.toml").write_text(
+                'includes = ["a.toml"]\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(SystemExit) as excinfo:
+                self.module.load_policy_bundle(root / "a.toml")
+            self.assertIn("include cycle detected", str(excinfo.exception))
+
+            (root / "shared.toml").write_text(
+                '[credentials]\ncodex_auth = "auth-a.json"\n',
+                encoding="utf-8",
+            )
+            (root / "root.toml").write_text(
+                'includes = ["shared.toml"]\n[credentials]\ncodex_auth = "auth-b.json"\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(SystemExit) as duplicate_excinfo:
+                self.module.load_policy_bundle(root / "root.toml")
+            self.assertIn(
+                "credentials.codex_auth",
+                str(duplicate_excinfo.exception),
+            )
+
+    def test_load_policy_bundle_rejects_includes_outside_entrypoint_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            outside = root / "outside.toml"
+            subdir = root / "subdir"
+            subdir.mkdir()
+            outside.write_text('[documents]\ncommon = "common.md"\n', encoding="utf-8")
+            (subdir / "policy.toml").write_text(
+                'version = 1\nincludes = ["../outside.toml"]\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(SystemExit) as excinfo:
+                self.module.load_policy_bundle(subdir / "policy.toml")
+            self.assertIn("must stay within", str(excinfo.exception))
 
     def test_render_documents_rejects_non_file_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -321,6 +489,34 @@ class RenderInjectionHelperTests(unittest.TestCase):
                     {"documents": {"common": "dir"}},
                     output,
                     root,
+                )
+
+    def test_render_ssh_rejects_invalid_table_and_option_types(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "bundle"
+            output.mkdir()
+            key = root / "id_ed25519"
+            key.write_text("secret\n", encoding="utf-8")
+            key.chmod(0o600)
+
+            with self.assertRaises(SystemExit):
+                self.module.render_ssh({"ssh": []}, output, root, "codex", "strict")
+            with self.assertRaises(SystemExit):
+                self.module.render_ssh(
+                    {"ssh": {"enabled": True, "allow_unsafe_config": "yes"}},
+                    output,
+                    root,
+                    "codex",
+                    "strict",
+                )
+            with self.assertRaises(SystemExit):
+                self.module.render_ssh(
+                    {"ssh": {"enabled": True, "identities": "id_ed25519"}},
+                    output,
+                    root,
+                    "codex",
+                    "strict",
                 )
 
     def test_optional_sections_accept_none(self) -> None:

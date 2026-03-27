@@ -95,7 +95,7 @@ COPY runtime/container/providers /opt/workcell/providers
 
 RUN cd /opt/workcell/providers \
   && install_provider_packages() { \
-       npm ci --omit=dev --ignore-scripts --no-audit --no-fund --no-update-notifier \
+       npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
        && return 0; \
      } \
   && for attempt in 1 2 3; do \
@@ -110,14 +110,10 @@ RUN cd /opt/workcell/providers \
        sleep "$((attempt * 5))"; \
      done \
   && npm cache clean --force \
-  && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
-    -cf /tmp/workcell-providers.tar -C /opt/workcell/providers . \
-  && cd / \
-  && rm -rf /opt/workcell/providers \
-  && mkdir -p /opt/workcell/providers \
-  && tar -xf /tmp/workcell-providers.tar -C /opt/workcell/providers \
-  && rm -f /tmp/workcell-providers.tar \
   && find /opt/workcell/providers -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}" \
+  && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+    -cf /opt/workcell/providers.tar -C /opt/workcell/providers . \
+  && rm -rf /opt/workcell/providers \
   && rm -rf /root/.npm /root/.cache
 
 FROM runtime-base AS runtime-builder
@@ -214,7 +210,8 @@ RUN cd /workcell-rust \
   && cp /opt/workcell/adapters/claude/managed-settings.json /etc/claude-code/managed-settings.json \
   && rm -rf /tmp/workcell-rust-target /workcell-rust \
   && printf '/usr/local/lib/libworkcell_exec_guard.so\n' > /etc/ld.so.preload \
-  && chmod 0444 /etc/claude-code/managed-settings.json \
+  && chmod 0444 \
+    /etc/claude-code/managed-settings.json \
   && chmod 0444 \
     /usr/local/libexec/workcell/assurance.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
@@ -244,14 +241,18 @@ FROM runtime-base AS runtime
 
 ARG SOURCE_DATE_EPOCH
 
-COPY --from=provider-builder /opt/workcell/providers /opt/workcell/providers
+COPY --from=provider-builder /opt/workcell/providers.tar /tmp/workcell-providers.tar
 COPY --from=runtime-builder /etc/claude-code/managed-settings.json /etc/claude-code/managed-settings.json
 COPY --from=runtime-builder /etc/ld.so.preload /etc/ld.so.preload
 COPY --from=runtime-builder /opt/workcell/adapters /opt/workcell/adapters
 COPY --from=runtime-builder /usr/local/lib/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so
 COPY --from=runtime-builder /usr/local/libexec/workcell /usr/local/libexec/workcell
+COPY runtime/container/control-plane-manifest.json /usr/local/libexec/workcell/control-plane-manifest.json
 
 RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
+  && mkdir -p /opt/workcell/providers \
+  && tar -xf /tmp/workcell-providers.tar -C /opt/workcell/providers \
+  && rm -f /tmp/workcell-providers.tar \
   && chmod 0644 /usr/local/libexec/workcell/real/git \
   && mv /usr/local/bin/node /usr/local/libexec/workcell/real/node \
   && chmod 0755 /usr/local/libexec/workcell/real/node \
@@ -268,7 +269,9 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/gemini \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/bin/git \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/bin/git \
-  && chmod 0444 /etc/claude-code/managed-settings.json \
+  && chmod 0444 \
+    /etc/claude-code/managed-settings.json \
+    /usr/local/libexec/workcell/control-plane-manifest.json \
   && chmod 0644 \
     /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js \
     /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
@@ -284,7 +287,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && rm -rf /tmp/* /var/tmp/* /root/.npm /root/.cache /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
   && rm -f /etc/ld.so.cache \
   && find \
-      /opt/workcell \
+      /opt/workcell/adapters \
       /etc/claude-code \
       /etc/ld.so.preload \
       /usr/local/bin \

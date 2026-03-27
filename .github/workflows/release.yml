@@ -68,6 +68,9 @@ jobs:
           WORKCELL_BUILD_INPUT_REF: ${{ github.sha }}
         run: ./scripts/verify-build-input-manifest.sh
 
+      - name: Verify control-plane manifest
+        run: ./scripts/verify-control-plane-manifest.sh
+
       - name: Generate preflight build input manifest
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
@@ -75,6 +78,11 @@ jobs:
         run: |
           mkdir -p dist
           ./scripts/generate-build-input-manifest.sh dist/workcell-build-inputs-preflight.json
+
+      - name: Generate preflight control-plane manifest
+        run: |
+          mkdir -p dist
+          ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane-preflight.json
 
       - name: Install actionlint
         env:
@@ -173,6 +181,7 @@ jobs:
           name: workcell-release-preflight
           path: |
             dist/workcell-build-inputs-preflight.json
+            dist/workcell-control-plane-preflight.json
             dist/workcell-release-bundle-preflight.json
             dist/workcell-runtime-preflight.json
           retention-days: 7
@@ -315,11 +324,22 @@ jobs:
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
         run: ./scripts/generate-build-input-manifest.sh dist/workcell-build-inputs.json
 
+      - name: Regenerate control-plane manifest from archived source tree
+        env:
+          WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source
+        run: ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane.json
+
       - name: Verify build input manifest matches preflight
         run: |
           cmp -s \
             dist/workcell-build-inputs.json \
             dist/preflight/workcell-build-inputs-preflight.json
+
+      - name: Verify control-plane manifest matches preflight
+        run: |
+          cmp -s \
+            dist/workcell-control-plane.json \
+            dist/preflight/workcell-control-plane-preflight.json
 
       - id: build_amd64
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
@@ -452,6 +472,7 @@ jobs:
             "dist/${BUNDLE_NAME}" \
             dist/workcell-image.digest \
             dist/workcell-build-inputs.json \
+            dist/workcell-control-plane.json \
             dist/workcell-builder-environment.json \
             dist/workcell-source.spdx.json \
             dist/workcell-image.spdx.json
@@ -486,6 +507,14 @@ jobs:
           cosign sign-blob \
             --bundle dist/workcell-build-inputs.sigstore.json \
             dist/workcell-build-inputs.json
+
+      - name: Sign control-plane manifest
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle dist/workcell-control-plane.sigstore.json \
+            dist/workcell-control-plane.json
 
       - name: Sign builder environment manifest
         env:
@@ -547,6 +576,8 @@ jobs:
             dist/workcell-image.digest
             dist/workcell-build-inputs.json
             dist/workcell-build-inputs.sigstore.json
+            dist/workcell-control-plane.json
+            dist/workcell-control-plane.sigstore.json
             dist/workcell-builder-environment.json
             dist/workcell-builder-environment.sigstore.json
             dist/SHA256SUMS
@@ -567,6 +598,8 @@ jobs:
             dist/workcell-image.digest \
             dist/workcell-build-inputs.json \
             dist/workcell-build-inputs.sigstore.json \
+            dist/workcell-control-plane.json \
+            dist/workcell-control-plane.sigstore.json \
             dist/workcell-builder-environment.json \
             dist/workcell-builder-environment.sigstore.json \
             dist/SHA256SUMS \

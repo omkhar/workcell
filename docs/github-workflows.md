@@ -47,19 +47,23 @@ under platform automation.
   runs only on `main` pushes and manual dispatches so untrusted pull request
   code never lands on a self-hosted runner
 - `release.yml`: multi-arch image publish, a directly signed build-input
-  manifest, a signed builder-environment manifest, direct signing for the
-  source bundle and both published SBOMs, SBOM generation, checksums,
+  manifest, a directly signed control-plane manifest, a signed
+  builder-environment manifest, direct signing for the source bundle and both
+  published SBOMs, SBOM generation, checksums,
   attestations on tagged releases, deterministic fixed-order multi-arch
   manifest assembly, preflight-to-publish digest binding for the source bundle
   and both per-platform image manifests, byte-for-byte preflight binding for
-  the build-input manifest, a conditional release-preflight CodeQL rerun when
-  repository settings enable private code scanning or the repository is public,
-  a protected `release` environment with a human approval gate before publish
+  the build-input manifest and control-plane manifest, including the
+  host-side launcher, Docker-context guard, direct-mount extractor, and
+  injection-policy renderer entries that stage the reviewed provider homes, a
+  conditional release-preflight CodeQL rerun when repository settings enable
+  private code scanning or the repository is public, a
+  protected `release` environment with a human approval gate before publish
   when the repository visibility and billing plan support required reviewers,
   an explicit release-asset allowlist, exact pinned BuildKit, Cosign, and Syft
   tooling, archived-source-tree image publication instead of live-worktree
-  publication, and pinned GitHub Release publication instead of an ambient `gh`
-  binary
+  publication, and pinned GitHub Release publication instead of an ambient
+  `gh` binary
 - `hosted-controls.yml`: live GitHub control-plane drift detection on `main`
   pushes, schedule, and manual dispatch, using the same hosted-controls policy
   that release preflight enforces before publish; on private repositories it
@@ -102,6 +106,12 @@ of the reviewed control plane:
   in [`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml)
 - explicit CODEOWNERS entries for high-risk paths such as
   `.github/workflows/`, `scripts/`, and the runtime boundary
+
+Tagged release preflight also regenerates the deterministic control-plane
+manifest, compares it against the committed copy and archived-source rebuild,
+then signs and publishes it. That manifest separates runtime-enforced
+`runtime_artifacts` from release-provenance-only `host_artifacts` so the
+workflow does not overstate what the runtime itself verifies.
 
 The repository includes [`scripts/verify-github-hosted-controls.sh`](../scripts/verify-github-hosted-controls.sh)
 to audit those hosted settings with the GitHub API.
@@ -175,6 +185,7 @@ Dependabot currently covers:
 - GitHub Actions
 - the runtime Dockerfile base image
 - the validator Dockerfile base image
+- the remote-validator Dockerfile base image
 - the pinned provider CLI lockfile in `runtime/container/providers`
 - the vendored Rust runtime crate in `runtime/container/rust`
 

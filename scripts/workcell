@@ -620,7 +620,10 @@ for profile_dir in root.iterdir():
             continue
         if stat_result.st_uid != uid or pointer_path.is_symlink():
             continue
-        lines = pointer_path.read_text(encoding="utf-8").splitlines()
+        try:
+            lines = pointer_path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            continue
         target_path = Path(lines[0]).expanduser() if lines else None
         if target_path is None or not target_path.exists():
             pointer_path.unlink(missing_ok=True)
