@@ -105,6 +105,7 @@ Initial adapters target:
 
 ```bash
 ./scripts/install.sh
+./scripts/uninstall.sh
 workcell --prepare --agent codex --workspace /path/to/repo
 workcell --prepare-only --agent codex --workspace /path/to/repo
 workcell --agent codex --workspace /path/to/repo
@@ -241,6 +242,10 @@ Common recovery paths:
 - Clean stale Workcell temp state:
   `workcell --gc`
   Alias: `workcell gc`
+- Reset all local Workcell install links, managed profiles, and Workcell-owned
+  host cache/temp state before testing a new build:
+  `./scripts/uninstall.sh`
+  Use `./scripts/uninstall.sh --dry-run` to preview removals.
 
 `--repair-profile` deletes only the conflicting derived Colima profile so
 Workcell can recreate it with reviewed mounts and policy. On `strict`, it also

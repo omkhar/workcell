@@ -1044,6 +1044,41 @@ if ! grep -q 'Provider to run (required)' /tmp/workcell-installed-help.out; then
   exit 1
 fi
 
+mkdir -p "${INSTALL_VERIFY_HOME}/.config/workcell"
+printf 'version = 1\n' >"${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
+mkdir -p \
+  "${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile" \
+  "${INSTALL_VERIFY_HOME}/.colima/_lima/colima-workcell-verify-profile" \
+  "${INSTALL_VERIFY_HOME}/.colima/locks/workcell-verify-profile.lock" \
+  "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-host-inputs" \
+  "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow"
+mkdir -p "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks"
+printf '#!/bin/sh\n' >"${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks/pre-commit"
+chmod 0555 "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks"
+chmod 0444 "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks/pre-commit"
+printf '%s\n' "${ROOT_DIR}" >"${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile/workcell.managed"
+printf 'image_tag=workcell:local\nimage_id=sha256:test\nsource_date_epoch=0\n' >"${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile/workcell.image-ready"
+printf 'tmp\n' >"/tmp/workcell-uninstall-verify.log.$$"
+mkdir -p "/tmp/workcell-docker.verify-uninstall.$$"
+
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall.out 2>&1; then
+  echo "Expected scripts/uninstall.sh to succeed in a clean temporary HOME" >&2
+  cat /tmp/workcell-uninstall.out >&2
+  exit 1
+fi
+
+test ! -e "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
+test ! -e "${INSTALL_VERIFY_HOME}/.local/share/man/man1/workcell.1"
+test ! -e "${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile"
+test ! -e "${INSTALL_VERIFY_HOME}/.colima/_lima/colima-workcell-verify-profile"
+test ! -e "${INSTALL_VERIFY_HOME}/.colima/locks/workcell-verify-profile.lock"
+test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-host-inputs"
+test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow"
+test -e "${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
+test ! -e "/tmp/workcell-uninstall-verify.log.$$"
+test ! -e "/tmp/workcell-docker.verify-uninstall.$$"
+grep -q 'Preserved ~/.config/workcell and any user-specified debug/transcript files.' /tmp/workcell-uninstall.out
+
 INJECTION_POLICY_FIXTURE_ROOT="${BARRIER_VERIFY_ROOT}/injection-policy"
 INJECTION_STATE_ROOT="${INJECTION_POLICY_FIXTURE_ROOT}/xdg-state"
 mkdir -p "${INJECTION_POLICY_FIXTURE_ROOT}" "${INJECTION_STATE_ROOT}/workcell/tmp"
