@@ -312,6 +312,12 @@ Installed launcher path used by
 Installed man page path used by
 .BR scripts/install.sh .
 .TP
+.I scripts/uninstall.sh
+Repository helper that removes Workcell-owned install links, managed Colima
+profiles, Workcell cache roots, and known Workcell temp artifacts without
+touching
+.IR ~/.config/workcell .
+.TP
 .I ~/.config/workcell/injection-policy.toml
 Default optional host-side injection policy. If present, Workcell mounts
 credential sources read-only from their original host paths and stages the rest
