@@ -194,12 +194,24 @@ Required with
 .B --allow-arbitrary-command
 to make lower-assurance boundary-debugging command passthrough explicit.
 .TP
+.B --ack-control-plane-vcs
+Required with
+.B --allow-control-plane-vcs
+to make the lower-assurance control-plane Git lane explicit.
+.TP
 .B --workspace PATH
 Select the workspace to mount inside the runtime. The default is the current
 directory.
 .TP
 .B --allow-nongit-workspace
 Allow a non-git workspace that contains an explicit agent marker file.
+.TP
+.B --allow-control-plane-vcs
+Allow read-only Git status, diff, and staging visibility for otherwise masked
+workspace control-plane paths. Workcell records this as
+.BR workspace_control_plane=readonly-vcs
+with
+.BR session_assurance_initial=lower-assurance-control-plane-vcs .
 .TP
 .B --allow-arbitrary-command
 Launch the runtime image with a direct container entrypoint after
@@ -381,6 +393,16 @@ first and then append
 or
 .BR GEMINI.md
 when present.
+When those control-plane files or directories are tracked in git, Workcell
+masks them with a read-only git-index snapshot so ordinary git status and
+staging flows are not polluted by placeholder diffs.
+If an operator intentionally needs to diff or stage live control-plane changes
+inside Workcell, they must opt into
+.B --allow-control-plane-vcs
+and
+.BR --ack-control-plane-vcs ,
+which exposes those workspace paths read-only and lowers the reported session
+assurance accordingly.
 By default, Codex rules stay linked to the immutable adapter baseline
 until prompt autonomy or package mutation has already downgraded the session.
 If you explicitly opt into

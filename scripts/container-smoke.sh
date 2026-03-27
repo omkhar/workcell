@@ -3279,6 +3279,30 @@ EOF
       exit 1
     }
   grep -q "BLOCKED:" /tmp/claude-hook-control-plane.out
+  printf "%s" "{\"tool_input\":{\"command\":\"git add AGENTS.md\"}}" \
+    | /opt/workcell/adapters/claude/hooks/guard-bash.sh >/tmp/claude-hook-control-plane-git-default.out 2>&1 && {
+      echo "expected Claude guard hook to reject control-plane git staging without explicit opt-in" >&2
+      exit 1
+    }
+  grep -q "BLOCKED:" /tmp/claude-hook-control-plane-git-default.out
+  printf "%s" "{\"tool_input\":{\"command\":\"git add AGENTS.md\"}}" \
+    | WORKCELL_ALLOW_CONTROL_PLANE_VCS=1 /opt/workcell/adapters/claude/hooks/guard-bash.sh >/tmp/claude-hook-control-plane-git-allowed.out 2>&1 || {
+      echo "expected Claude guard hook to allow acknowledged control-plane git staging" >&2
+      cat /tmp/claude-hook-control-plane-git-allowed.out >&2
+      exit 1
+    }
+  printf "%s" "{\"tool_input\":{\"command\":\"cat AGENTS.md\"}}" \
+    | WORKCELL_ALLOW_CONTROL_PLANE_VCS=1 /opt/workcell/adapters/claude/hooks/guard-bash.sh >/tmp/claude-hook-control-plane-read-still-blocked.out 2>&1 && {
+      echo "expected Claude guard hook to keep plain control-plane reads blocked even with Git opt-in" >&2
+      exit 1
+    }
+  grep -q "BLOCKED:" /tmp/claude-hook-control-plane-read-still-blocked.out
+  printf "%s" "{\"tool_input\":{\"command\":\"git add AGENTS.md && cat AGENTS.md\"}}" \
+    | WORKCELL_ALLOW_CONTROL_PLANE_VCS=1 /opt/workcell/adapters/claude/hooks/guard-bash.sh >/tmp/claude-hook-control-plane-compound.out 2>&1 && {
+      echo "expected Claude guard hook to reject compound control-plane commands" >&2
+      exit 1
+    }
+  grep -q "BLOCKED:" /tmp/claude-hook-control-plane-compound.out
   printf "%s" "{\"tool_input\":{\"command\":\"cat ~/.claude/settings.json\"}}" \
     | /opt/workcell/adapters/claude/hooks/guard-bash.sh >/tmp/claude-hook-home-control-plane.out 2>&1 && {
       echo "expected Claude guard hook to reject home control-plane access" >&2

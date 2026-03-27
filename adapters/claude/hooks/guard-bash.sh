@@ -23,6 +23,15 @@ grep_deescaped_command() {
   printf '%s\n' "${command_lower_deescaped}" | grep -Eq -- "${pattern}"
 }
 
+control_plane_vcs_git_command_allowed() {
+  [[ "${WORKCELL_ALLOW_CONTROL_PLANE_VCS:-0}" == "1" ]] || return 1
+  if [[ "${command}" == *";"* ]] || [[ "${command}" == *"&&"* ]] || [[ "${command}" == *"||"* ]] || [[ "${command}" == *"|"* ]]; then
+    return 1
+  fi
+  grep_command '(^|[^[:alnum:]_./-])(git|/usr/bin/git|/usr/local/libexec/workcell/git|/usr/local/libexec/workcell/core/git|/usr/local/libexec/workcell/real/git)([^[:alnum:]_./-]|$)' || return 1
+  grep_command '(^|[[:space:]'"'"'";])((status|diff|add|restore|reset|rm)([[:space:]'"'"'";]|$))' || return 1
+}
+
 token_is_assignment_word() {
   local token="$1"
   [[ "${token}" =~ ^[[:alpha:]_][[:alnum:]_]*=.*$ ]]
@@ -353,11 +362,13 @@ if grep_command 'git.*push.*(main|master)([[:space:]'"'"'";|&]|$)'; then
   fail "Use a feature branch, not a direct push to main or master."
 fi
 
-if grep_command '(^|[[:space:]'"'"'";|&])([^[:space:]'"'"'";|&]+/)?(agents\.md|claude\.md|gemini\.md|\.mcp\.json)([[:space:]'"'"'";|&]|$)'; then
+if grep_command '(^|[[:space:]'"'"'";|&])([^[:space:]'"'"'";|&]+/)?(agents\.md|claude\.md|gemini\.md|\.mcp\.json)([[:space:]'"'"'";|&]|$)' &&
+  ! control_plane_vcs_git_command_allowed; then
   fail "Do not read or modify workspace control files from Bash."
 fi
 
-if grep_command '(^|[[:space:]'"'"'";|&])([^[:space:]'"'"'";|&]+/)?(\.claude|\.codex|\.gemini|\.cursor|\.idea|\.vscode|\.zed)(/|[[:space:]'"'"'";|&]|$)'; then
+if grep_command '(^|[[:space:]'"'"'";|&])([^[:space:]'"'"'";|&]+/)?(\.claude|\.codex|\.gemini|\.cursor|\.idea|\.vscode|\.zed)(/|[[:space:]'"'"'";|&]|$)' &&
+  ! control_plane_vcs_git_command_allowed; then
   fail "Do not read or modify workspace control directories from Bash."
 fi
 
