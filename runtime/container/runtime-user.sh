@@ -144,7 +144,15 @@ workcell_append_passwd_entry() {
 workcell_append_shadow_entry() {
   local user_name="$1"
 
-  if [[ -f /etc/shadow ]] && ! grep -q "^${user_name}:" /etc/shadow; then
+  if [[ -f /etc/shadow ]] && ! awk -F: -v wanted="${user_name}" '
+    $1 == wanted {
+      found = 1
+      exit
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' /etc/shadow; then
     printf '%s::20000:0:99999:7:::\n' "${user_name}" >>/etc/shadow
   fi
 }

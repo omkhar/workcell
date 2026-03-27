@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import errno
 import os
 import pty
 import sys
@@ -16,6 +17,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log", required=True)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser.parse_args()
+
+
+def exit_code_from_wait_status(status: int) -> int:
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status)
+    if os.WIFSIGNALED(status):
+        return 128 + os.WTERMSIG(status)
+    return 1
+
+
+def exit_code_from_spawn_error(error: OSError) -> int:
+    if error.errno == errno.ENOENT:
+        return 127
+    return 126
+
+
+def render_footer(
+    *,
+    finished_at: str,
+    exit_code: int,
+    wait_status: int | None,
+    spawn_errno: int | None,
+) -> bytes:
+    status_field = (
+        f"wait_status={wait_status}"
+        if wait_status is not None
+        else "wait_status=spawn-error"
+    )
+    errno_field = f" spawn_errno={spawn_errno}" if spawn_errno is not None else ""
+    return (
+        f"\n# workcell-transcript-v1 end={finished_at} "
+        f"{status_field}{errno_field} exit_code={exit_code}\n"
+    ).encode("utf-8")
 
 
 def main() -> int:
@@ -51,17 +85,28 @@ def main() -> int:
                 handle.flush()
             return data
 
-        status = pty.spawn(command, master_read=master_read, stdin_read=stdin_read)
-        exit_code = 1
-        if os.WIFEXITED(status):
-            exit_code = os.WEXITSTATUS(status)
-        elif os.WIFSIGNALED(status):
-            exit_code = 128 + os.WTERMSIG(status)
+        wait_status: int | None = None
+        spawn_errno: int | None = None
+        try:
+            wait_status = pty.spawn(
+                command, master_read=master_read, stdin_read=stdin_read
+            )
+            exit_code = exit_code_from_wait_status(wait_status)
+        except OSError as error:
+            spawn_errno = error.errno
+            exit_code = exit_code_from_spawn_error(error)
+            print(
+                f"pty_transcript.py failed to exec {command[0]}: "
+                f"{error.strerror or error}",
+                file=sys.stderr,
+            )
         finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
-        footer = (
-            f"\n# workcell-transcript-v1 end={finished_at} "
-            f"wait_status={status} exit_code={exit_code}\n"
-        ).encode("utf-8")
+        footer = render_footer(
+            finished_at=finished_at,
+            exit_code=exit_code,
+            wait_status=wait_status,
+            spawn_errno=spawn_errno,
+        )
         handle.write(footer)
         handle.flush()
 

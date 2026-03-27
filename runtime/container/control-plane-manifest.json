@@ -160,13 +160,13 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/node",
       "runtime_path": "/usr/local/libexec/workcell/node-wrapper.sh",
-      "sha256": "e4c7691b547c777eda01f8475e0b6864278010ad561be9df5235079ec7a40d80"
+      "sha256": "df0e6f4dd3fd75cd582cffff9b95d94b5ce3e4635d9d9a4f27c2debe73777a17"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-policy.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "4c927c38806712648da566fa56b092a07f2c1829d90ce0b9c3a6ae9dfcc91963"
+      "sha256": "753d6af60025f2cfb14bec7a886a7c2eb42f9d7666b07c6166f98dbc87d97195"
     },
     {
       "kind": "runtime-control-plane",
@@ -178,13 +178,13 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/public-node-guard.mjs",
       "runtime_path": "/usr/local/libexec/workcell/public-node-guard.mjs",
-      "sha256": "daab1332b6e21abe83ca92370db0714a3fb681b64100c6cf96ae9b9dba2ea659"
+      "sha256": "11ed76b0b3e58bab28e12b46825f42357754209e0910c592bc96dc93c5bf96d2"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/runtime-user.sh",
       "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
-      "sha256": "219a7defbabba9f312b3f331eebff1ab0bae7cbaa24fcbe424057e5c1f1a38e9"
+      "sha256": "4e76f9c782dda7e208d7d4fa0cb1f9d3042a5e98fcc24102726bd78df730d072"
     },
     {
       "kind": "runtime-control-plane",
