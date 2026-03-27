@@ -140,6 +140,12 @@ values are still treated as ordinary user-supplied provider argv and go
 through the same in-container denylist as raw `-- ...` arguments.
 `--prepare-only` is the prewarm path when you want to seed or refresh the
 reviewed runtime image without launching an agent session yet.
+`--allow-control-plane-vcs` is the narrow, explicitly acknowledged escape hatch
+for Workcell-maintainer workflows that need Git status, diff, or staging
+visibility on otherwise masked repo control-plane paths. It requires
+`--ack-control-plane-vcs`, keeps those paths mounted read-only, and surfaces
+the session as `workspace_control_plane=readonly-vcs` with
+`session_assurance_initial=lower-assurance-control-plane-vcs`.
 `--cache-profile off` is the default. `--cache-profile standard` opt-ins to a
 host-persisted non-secret cache plane for package/build tooling such as npm,
 pnpm, pip, uv, Poetry, Cargo registry/git, Go module/build cache, `ccache`,
@@ -276,6 +282,13 @@ instead. Claude and Gemini import repo-local `AGENTS.md` as the shared
 workspace layer and then append `CLAUDE.md` or `GEMINI.md` when present. When
 a workspace only ships `AGENTS.md`, Claude and Gemini still fall back to that
 imported file rather than silently dropping shared instructions.
+When those control-plane files or directories are tracked in git, the safe path
+masks them with a read-only snapshot from the git index so ordinary `git status`
+and `git add -A` flows do not get polluted by synthetic placeholder diffs.
+If you intentionally need to stage or diff real control-plane changes from
+inside Workcell, use `--allow-control-plane-vcs --ack-control-plane-vcs`; that
+switches the workspace posture to a visibly lower-assurance, read-only VCS lane
+rather than silently exposing the live control plane on the default path.
 By default, Codex rules stay linked to the immutable adapter baseline
 until the session is already downgraded by package mutation or the operator has
 selected `--agent-autonomy prompt`. If you explicitly opt into

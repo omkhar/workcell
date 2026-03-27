@@ -2894,6 +2894,12 @@ fi
 grep -q "Option --agent-arg requires a value." /tmp/workcell-missing-agent-arg.out
 grep -q '^Usage: workcell' /tmp/workcell-missing-agent-arg.out
 
+if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-control-plane-vcs --dry-run >/tmp/workcell-missing-control-plane-vcs-ack.out 2>&1; then
+  echo "Expected --allow-control-plane-vcs without acknowledgement to fail cleanly" >&2
+  exit 1
+fi
+grep -q "control-plane VCS mode requires --ack-control-plane-vcs." /tmp/workcell-missing-control-plane-vcs-ack.out
+
 if "${ROOT_DIR}/scripts/workcell" --dry-run >/tmp/workcell-missing-agent.out 2>&1; then
   echo "Expected workcell without --agent to fail cleanly" >&2
   exit 1
@@ -4185,6 +4191,63 @@ if echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "/workspace/nested/AGENTS.md:ro"; 
   exit 1
 fi
 
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --mode strict \
+  --workspace "${MASK_VERIFY_WORKSPACE}" \
+  --allow-control-plane-vcs \
+  --ack-control-plane-vcs \
+  --dry-run >/tmp/workcell-control-plane-vcs.stdout 2>/tmp/workcell-control-plane-vcs.stderr; then
+  echo "Expected acknowledged control-plane VCS dry-run to succeed" >&2
+  cat /tmp/workcell-control-plane-vcs.stderr >&2
+  exit 1
+fi
+grep -q 'session_assurance_initial=lower-assurance-control-plane-vcs' /tmp/workcell-control-plane-vcs.stderr
+grep -q 'workspace_control_plane=readonly-vcs' /tmp/workcell-control-plane-vcs.stderr
+grep -q 'execution_path=lower-assurance-control-plane-vcs' /tmp/workcell-control-plane-vcs.stderr
+grep -q 'WORKCELL_ALLOW_CONTROL_PLANE_VCS=1' /tmp/workcell-control-plane-vcs.stdout
+grep -q -- "${MASK_VERIFY_WORKSPACE}/AGENTS.md:/workspace/AGENTS.md:ro" /tmp/workcell-control-plane-vcs.stdout
+
+MASK_SNAPSHOT_WORKSPACE="${BARRIER_VERIFY_ROOT}/mask-snapshot-workspace"
+mkdir -p "${MASK_SNAPSHOT_WORKSPACE}/.claude"
+git init -q "${MASK_SNAPSHOT_WORKSPACE}"
+git -C "${MASK_SNAPSHOT_WORKSPACE}" config user.name "Workcell Verify"
+git -C "${MASK_SNAPSHOT_WORKSPACE}" config user.email "workcell-verify@example.com"
+cat <<'EOF' >"${MASK_SNAPSHOT_WORKSPACE}/AGENTS.md"
+# committed instructions
+EOF
+cat <<'EOF' >"${MASK_SNAPSHOT_WORKSPACE}/.claude/settings.json"
+{"tracked": true}
+EOF
+git -C "${MASK_SNAPSHOT_WORKSPACE}" add AGENTS.md .claude/settings.json
+git -C "${MASK_SNAPSHOT_WORKSPACE}" commit -q -m init
+cat <<'EOF' >"${MASK_SNAPSHOT_WORKSPACE}/AGENTS.md"
+# modified instructions
+EOF
+rm -f "${MASK_SNAPSHOT_WORKSPACE}/.claude/settings.json"
+MASK_SNAPSHOT_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
+  --self-staging-probe \
+  codex \
+  "${MASK_SNAPSHOT_WORKSPACE}" \
+  "${AUTH_STATUS_ROOT}/policy.toml" \
+  strict \
+  0 \
+  1)"
+MASK_SNAPSHOT_ROOT="$(printf '%s\n' "${MASK_SNAPSHOT_OUTPUT}" | sed -n 's/^shadow_root=//p' | head -n1)"
+if [[ -z "${MASK_SNAPSHOT_ROOT}" ]] || [[ ! -d "${MASK_SNAPSHOT_ROOT}" ]]; then
+  echo "Expected staging probe to expose a shadow root for tracked control-plane snapshots" >&2
+  printf '%s\n' "${MASK_SNAPSHOT_OUTPUT}" >&2
+  exit 1
+fi
+grep -q '^# committed instructions$' "${MASK_SNAPSHOT_ROOT}/files/AGENTS.md"
+if grep -q '^# modified instructions$' "${MASK_SNAPSHOT_ROOT}/files/AGENTS.md"; then
+  echo "Expected masked root control files to reflect the git index snapshot, not modified workspace contents" >&2
+  exit 1
+fi
+grep -q '"tracked": true' "${MASK_SNAPSHOT_ROOT}/dirs/.claude/settings.json"
+chmod -R u+w "${MASK_SNAPSHOT_ROOT}" 2>/dev/null || true
+rm -rf "${MASK_SNAPSHOT_ROOT}"
+
 mkdir -p "${MASK_VERIFY_WORKSPACE}/symlinked"
 ln -s "${REAL_HOME}/.ssh/config" "${MASK_VERIFY_WORKSPACE}/symlinked/GEMINI.md"
 if "${ROOT_DIR}/scripts/workcell" --agent gemini --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run >/tmp/workcell-symlinked-doc.out 2>&1; then
@@ -4462,8 +4525,8 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
       --ack-arbitrary-command \
-      -- /bin/bash -lc 'test -f /opt/workcell/host-injections/manifest.json && grep -q "Workcell masks workspace control files inside the boundary." /workspace/AGENTS.md && test ! -d /workspace/AGENTS.md'; then
-      echo "Expected live launcher run to stage an injection manifest and mount /workspace/AGENTS.md as a file" >&2
+      -- /bin/bash -lc 'test -f /opt/workcell/host-injections/manifest.json && grep -q "Repository Working Agreement" /workspace/AGENTS.md && test ! -d /workspace/AGENTS.md'; then
+      echo "Expected live launcher run to stage an injection manifest and mount the tracked workspace AGENTS.md snapshot as a file" >&2
       exit 1
     fi
     if [[ -x /opt/homebrew/bin/colima ]]; then

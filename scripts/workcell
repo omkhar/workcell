@@ -133,6 +133,7 @@ Options:
   --ack-arbitrary-command       Required with --allow-arbitrary-command
   --workspace PATH              Workspace to mount (default: current directory)
   --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
+  --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
   --allow-arbitrary-command     Launch the runtime image with a direct container entrypoint after --
   --colima-profile NAME         Override derived Colima profile name
   --vm-cpu COUNT                Colima VM CPU count (default: profile value)
@@ -141,6 +142,7 @@ Options:
   --rebuild                     Rebuild the runtime image before launch
   --dry-run                     Print the selected runtime command and exit
   -h, --help                    Show this help text
+  --ack-control-plane-vcs       Required with --allow-control-plane-vcs
 
 Workflows:
   First run:
@@ -931,11 +933,27 @@ codex_rules_effective_assurance_with_session_assurance() {
 }
 
 session_assurance_initial() {
+  if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+    printf 'lower-assurance-control-plane-vcs\n'
+    return 0
+  fi
   if [[ "${CACHE_PROFILE}" == "standard" ]]; then
     printf 'lower-assurance-persistent-cache\n'
     return 0
   fi
   container_assurance
+}
+
+workspace_control_plane_state() {
+  if [[ "${MODE}" == "breakglass" ]]; then
+    printf 'unmasked\n'
+    return 0
+  fi
+  if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+    printf 'readonly-vcs\n'
+    return 0
+  fi
+  printf 'masked\n'
 }
 
 session_assurance_final() {
@@ -996,6 +1014,7 @@ append_launch_audit_record() {
     "network_policy=${NETWORK_POLICY}" \
     "execution_path=${execution_path}" \
     "workspace=${WORKSPACE}" \
+    "workspace_control_plane=$(workspace_control_plane_state)" \
     "endpoints=${ALLOW_ENDPOINTS}" \
     "bootstrap_applied=${BOOTSTRAP_APPLIED}" \
     "bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" \
@@ -1033,6 +1052,7 @@ append_exit_audit_record() {
     "agent=${AGENT}" \
     "workspace=${WORKSPACE}" \
     "execution_path=${execution_path}" \
+    "workspace_control_plane=$(workspace_control_plane_state)" \
     "exit_status=${exit_status}" \
     "cache_profile=${CACHE_PROFILE}" \
     "cache_assurance=$(cache_assurance)" \
@@ -1531,6 +1551,9 @@ build_recommended_command() {
   fi
   cmd+=(--workspace "${WORKSPACE}")
   [[ "${ALLOW_NONGIT_WORKSPACE}" -eq 1 ]] && cmd+=(--allow-nongit-workspace)
+  if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+    cmd+=(--allow-control-plane-vcs --ack-control-plane-vcs)
+  fi
   [[ "${COLIMA_PROFILE_EXPLICIT:-0}" -eq 1 ]] && [[ -n "${COLIMA_PROFILE}" ]] && cmd+=(--colima-profile "${COLIMA_PROFILE}")
   [[ -n "${VM_CPU_OVERRIDE}" ]] && cmd+=(--vm-cpu "${VM_CPU_OVERRIDE}")
   [[ -n "${VM_MEMORY_OVERRIDE}" ]] && cmd+=(--vm-memory "${VM_MEMORY_OVERRIDE}")
@@ -2013,8 +2036,10 @@ validate_mode_requirements() {
   local ack_breakglass="$2"
   local allow_arbitrary_command="$3"
   local ack_arbitrary_command="$4"
-  local rebuild="$5"
-  local prepare="$6"
+  local allow_control_plane_vcs="$5"
+  local ack_control_plane_vcs="$6"
+  local rebuild="$7"
+  local prepare="$8"
 
   if [[ "${mode}" == "breakglass" ]] && [[ "${ack_breakglass}" -eq 0 ]]; then
     echo "breakglass mode requires --ack-breakglass." >&2
@@ -2025,6 +2050,17 @@ validate_mode_requirements() {
   if [[ "${allow_arbitrary_command}" -eq 1 ]] && [[ "${ack_arbitrary_command}" -eq 0 ]]; then
     echo "arbitrary command mode requires --ack-arbitrary-command." >&2
     echo "Use it only for lower-assurance boundary debugging when you intentionally want to bypass provider command mediation." >&2
+    exit 2
+  fi
+
+  if [[ "${allow_control_plane_vcs}" -eq 1 ]] && [[ "${ack_control_plane_vcs}" -eq 0 ]]; then
+    echo "control-plane VCS mode requires --ack-control-plane-vcs." >&2
+    echo "Use it only when you intentionally want readonly Git visibility for masked workspace control-plane paths." >&2
+    exit 2
+  fi
+
+  if [[ "${mode}" == "breakglass" ]] && [[ "${allow_control_plane_vcs}" -eq 1 ]]; then
+    echo "--allow-control-plane-vcs is redundant in breakglass mode." >&2
     exit 2
   fi
 
@@ -2956,25 +2992,178 @@ register_workspace_import_root_mount() {
 }
 
 add_shadow_file_mount() {
-  local relative_path="$1"
+  local workspace="$1"
+  local relative_path="$2"
   local source="${CONTROL_PLANE_SHADOW_ROOT}/files/${relative_path}"
   local destination="/workspace/${relative_path}"
   local placeholder_message="# Workcell masks workspace control files inside the boundary."
 
   mkdir -p "$(dirname "${source}")"
-  printf '%s\n' "${placeholder_message}" >"${source}"
+  rm -f "${source}"
+  if git_index_has_path "${workspace}" "${relative_path}"; then
+    checkout_git_index_paths_to_prefix "${workspace}" "${CONTROL_PLANE_SHADOW_ROOT}/files/" "${relative_path}"
+  fi
+  if [[ -L "${source}" ]] || [[ ! -f "${source}" ]]; then
+    rm -f "${source}"
+    printf '%s\n' "${placeholder_message}" >"${source}"
+  fi
   chmod 0444 "${source}"
   register_shadow_mount "${source}" "${destination}"
 }
 
 add_shadow_dir_mount() {
-  local relative_path="$1"
+  local workspace="$1"
+  local relative_path="$2"
   local source="${CONTROL_PLANE_SHADOW_ROOT}/dirs/${relative_path}"
   local destination="/workspace/${relative_path}"
 
+  chmod -R u+w "${source}" 2>/dev/null || true
+  rm -rf "${source}"
   mkdir -p "${source}"
+  if git_index_populate_shadow_dir "${workspace}" "${relative_path}" "${source}"; then
+    replace_shadow_symlinks_with_placeholder "${source}"
+  fi
   chmod 0555 "${source}"
   register_shadow_mount "${source}" "${destination}"
+}
+
+workspace_is_git_worktree() {
+  local workspace="$1"
+
+  run_clean_host_command git -C "${workspace}" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+git_index_has_path() {
+  local workspace="$1"
+  local relative_path="$2"
+
+  workspace_is_git_worktree "${workspace}" || return 1
+  run_clean_host_command git -C "${workspace}" ls-files --error-unmatch -- "${relative_path}" >/dev/null 2>&1
+}
+
+checkout_git_index_paths_to_prefix() {
+  local workspace="$1"
+  local prefix="$2"
+  shift 2 || true
+
+  [[ "$#" -gt 0 ]] || return 1
+  workspace_is_git_worktree "${workspace}" || return 1
+  run_clean_host_command git -C "${workspace}" checkout-index --prefix="${prefix}" -- "$@"
+}
+
+git_index_populate_shadow_dir() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source_root="$3"
+  local tracked_paths_file=""
+
+  workspace_is_git_worktree "${workspace}" || return 1
+  tracked_paths_file="$(mktemp "${CONTROL_PLANE_SHADOW_ROOT}/index-paths.XXXXXX")"
+  run_clean_host_command git -C "${workspace}" ls-files -z --cached -- "${relative_path}" >"${tracked_paths_file}"
+  if [[ ! -s "${tracked_paths_file}" ]]; then
+    rm -f "${tracked_paths_file}"
+    return 1
+  fi
+  run_clean_host_command git -C "${workspace}" checkout-index --stdin -z --prefix="${CONTROL_PLANE_SHADOW_ROOT}/dirs/" <"${tracked_paths_file}"
+  rm -f "${tracked_paths_file}"
+  [[ -d "${source_root}" ]]
+}
+
+replace_shadow_symlinks_with_placeholder() {
+  local source_root="$1"
+  local path=""
+  local placeholder_message="# Workcell masks workspace control files inside the boundary."
+
+  [[ -d "${source_root}" ]] || return 0
+  while IFS= read -r -d '' path; do
+    rm -f "${path}"
+    printf '%s\n' "${placeholder_message}" >"${path}"
+    chmod 0444 "${path}"
+  done < <(find "${source_root}" -type l -print0)
+  lock_tree_readonly "${source_root}"
+}
+
+git_index_control_plane_dir_roots() {
+  local workspace="$1"
+  local path=""
+
+  workspace_is_git_worktree "${workspace}" || return 0
+  while IFS= read -r -d '' path; do
+    case "${path}" in
+      .codex/*)
+        printf '%s\0' ".codex"
+        ;;
+      .claude/*)
+        printf '%s\0' ".claude"
+        ;;
+      .gemini/*)
+        printf '%s\0' ".gemini"
+        ;;
+      .vscode/*)
+        printf '%s\0' ".vscode"
+        ;;
+      .idea/*)
+        printf '%s\0' ".idea"
+        ;;
+      .cursor/*)
+        printf '%s\0' ".cursor"
+        ;;
+      .zed/*)
+        printf '%s\0' ".zed"
+        ;;
+      */.codex/*)
+        printf '%s\0' "${path%%/.codex/*}/.codex"
+        ;;
+      */.claude/*)
+        printf '%s\0' "${path%%/.claude/*}/.claude"
+        ;;
+      */.gemini/*)
+        printf '%s\0' "${path%%/.gemini/*}/.gemini"
+        ;;
+      */.vscode/*)
+        printf '%s\0' "${path%%/.vscode/*}/.vscode"
+        ;;
+      */.idea/*)
+        printf '%s\0' "${path%%/.idea/*}/.idea"
+        ;;
+      */.cursor/*)
+        printf '%s\0' "${path%%/.cursor/*}/.cursor"
+        ;;
+      */.zed/*)
+        printf '%s\0' "${path%%/.zed/*}/.zed"
+        ;;
+    esac
+  done < <(run_clean_host_command git -C "${workspace}" ls-files -z --cached)
+}
+
+register_workspace_control_plane_file_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source_path="${workspace}/${relative_path}"
+  local destination="/workspace/${relative_path}"
+
+  [[ -e "${source_path}" ]] || return 0
+  if [[ -L "${source_path}" ]]; then
+    echo "Workcell refuses symlinked workspace control files even with --allow-control-plane-vcs: ${source_path}" >&2
+    exit 2
+  fi
+  [[ -f "${source_path}" ]] || return 0
+  register_shadow_mount "${source_path}" "${destination}"
+}
+
+register_workspace_control_plane_dir_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source_path="${workspace}/${relative_path}"
+  local destination="/workspace/${relative_path}"
+
+  [[ -e "${source_path}" ]] || return 0
+  if [[ -L "${source_path}" ]]; then
+    echo "Workcell refuses symlinked workspace control directories even with --allow-control-plane-vcs: ${source_path}" >&2
+    exit 2
+  fi
+  [[ -d "${source_path}" ]] || return 0
+  register_shadow_mount "${source_path}" "${destination}"
 }
 
 copy_tree_without_symlinks() {
@@ -3095,7 +3284,7 @@ prepare_workspace_control_plane_shadow() {
       add_shadow_git_path_if_present "${workspace}" "${rel}"
     done
     if [[ -e "${workspace}/${git_rel}/worktrees" ]]; then
-      add_shadow_dir_mount "${git_rel}/worktrees"
+      add_shadow_dir_mount "${workspace}" "${git_rel}/worktrees"
     fi
     if [[ -d "${workspace}/${git_rel}/modules" ]]; then
       while IFS= read -r -d '' path; do
@@ -3111,7 +3300,7 @@ prepare_workspace_control_plane_shadow() {
       )
       while IFS= read -r -d '' path; do
         rel="${path#"${workspace}/"}"
-        add_shadow_dir_mount "${rel}"
+        add_shadow_dir_mount "${workspace}" "${rel}"
       done < <(
         find "${workspace}/${git_rel}/modules" \
           \( \( -type d -o -type l \) -name worktrees \) -print0
@@ -3121,20 +3310,38 @@ prepare_workspace_control_plane_shadow() {
     find "${workspace}" -type d -name .git -prune -print0
   )
 
-  while IFS= read -r -d '' path; do
-    rel="${path#"${workspace}/"}"
-    add_shadow_dir_mount "${rel}"
-  done < <(
-    find "${workspace}" \
-      \( -name .git -type d -prune \) -o \
-      \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
-  )
+  if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+    while IFS= read -r -d '' path; do
+      rel="${path#"${workspace}/"}"
+      register_workspace_control_plane_dir_mount "${workspace}" "${rel}"
+    done < <(
+      find "${workspace}" \
+        \( -name .git -type d -prune \) -o \
+        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+    )
 
-  for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json; do
-    if [[ -f "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]]; then
-      add_shadow_file_mount "${rel}"
-    fi
-  done
+    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json; do
+      register_workspace_control_plane_file_mount "${workspace}" "${rel}"
+    done
+  else
+    while IFS= read -r -d '' path; do
+      rel="${path#"${workspace}/"}"
+      add_shadow_dir_mount "${workspace}" "${rel}"
+    done < <(
+      find "${workspace}" \
+        \( -name .git -type d -prune \) -o \
+        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+    )
+    while IFS= read -r -d '' rel; do
+      add_shadow_dir_mount "${workspace}" "${rel}"
+    done < <(git_index_control_plane_dir_roots "${workspace}" | LC_ALL=C sort -zu)
+
+    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json; do
+      if [[ -f "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
+        add_shadow_file_mount "${workspace}" "${rel}"
+      fi
+    done
+  fi
 
   add_workspace_import_file "${workspace}" "AGENTS.md"
   add_workspace_import_file "${workspace}" "CLAUDE.md"
@@ -3177,8 +3384,10 @@ GC=0
 AUTH_STATUS=0
 LOGS_KIND=""
 ALLOW_NONGIT_WORKSPACE=0
+ALLOW_CONTROL_PLANE_VCS=0
 ALLOW_ARBITRARY_COMMAND=0
 ACK_BREAKGLASS=0
+ACK_CONTROL_PLANE_VCS=0
 ACK_ARBITRARY_COMMAND=0
 TEST_FAIL_AFTER_PROFILE_REFRESH=0
 declare -a AGENT_ARGS=()
@@ -3190,6 +3399,8 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
   WORKSPACE="${2:-}"
   INJECTION_POLICY="${3:-}"
   MODE="${4:-strict}"
+  ALLOW_CONTROL_PLANE_VCS="${5:-0}"
+  PRESERVE_STAGING_PROBE_ARTIFACTS="${6:-0}"
 
   [[ -n "${AGENT}" ]] || {
     echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
@@ -3224,6 +3435,9 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
   for ((i = 1; i < ${#WORKSPACE_IMPORT_MOUNTS[@]}; i += 2)); do
     printf 'workspace_import_mount=%s\n' "${WORKSPACE_IMPORT_MOUNTS[i]}"
   done
+  if [[ "${PRESERVE_STAGING_PROBE_ARTIFACTS}" == "1" ]]; then
+    trap - EXIT
+  fi
   exit 0
 fi
 
@@ -3356,12 +3570,20 @@ while [[ $# -gt 0 ]]; do
       ALLOW_NONGIT_WORKSPACE=1
       shift
       ;;
+    --allow-control-plane-vcs)
+      ALLOW_CONTROL_PLANE_VCS=1
+      shift
+      ;;
     --allow-arbitrary-command)
       ALLOW_ARBITRARY_COMMAND=1
       shift
       ;;
     --ack-breakglass)
       ACK_BREAKGLASS=1
+      shift
+      ;;
+    --ack-control-plane-vcs)
+      ACK_CONTROL_PLANE_VCS=1
       shift
       ;;
     --ack-arbitrary-command)
@@ -3531,7 +3753,7 @@ if [[ -n "${LOGS_KIND}" ]]; then
   show_requested_logs
   exit 0
 fi
-validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${REBUILD}" "${PREPARE}"
+validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${ALLOW_CONTROL_PLANE_VCS}" "${ACK_CONTROL_PLANE_VCS}" "${REBUILD}" "${PREPARE}"
 cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
 prepare_injection_bundle "${AGENT}" "${MODE}"
 
@@ -3695,6 +3917,9 @@ DOCKER_RUN_BASE=(
   -e WORKCELL_CODEX_RULES_MUTABILITY="${CODEX_RULES_MUTABILITY}"
   -e WORKCELL_CACHE_PROFILE="${CACHE_PROFILE}"
   -e WORKCELL_CONTAINER_MUTABILITY="${CONTAINER_MUTABILITY}"
+  -e WORKCELL_SESSION_ASSURANCE_INITIAL="$(session_assurance_initial)"
+  -e WORKCELL_ALLOW_CONTROL_PLANE_VCS="${ALLOW_CONTROL_PLANE_VCS}"
+  -e WORKCELL_WORKSPACE_CONTROL_PLANE_STATE="$(workspace_control_plane_state)"
   -e AGENT_UI="${UI}"
   -e CODEX_PROFILE="${MODE}"
   -e WORKCELL_MODE="${MODE}"
@@ -3753,6 +3978,8 @@ fi
 EXECUTION_PATH="managed-tier1"
 if [[ "${MODE}" == "breakglass" ]]; then
   EXECUTION_PATH="lower-assurance-breakglass"
+elif [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+  EXECUTION_PATH="lower-assurance-control-plane-vcs"
 fi
 
 if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
@@ -3806,7 +4033,7 @@ if [[ -n "${INJECTION_POLICY_SHA256}" ]]; then
   printf 'injection_policy_sha256=%s credential_keys=%s ssh_injected=%s\n' \
     "${INJECTION_POLICY_SHA256}" "${INJECTION_CREDENTIAL_KEYS:-none}" "${INJECTION_SSH_ENABLED}" >&2
 fi
-printf 'workspace_control_plane=%s\n' "$([[ "${MODE}" == "breakglass" ]] && printf 'unmasked' || printf 'masked')" >&2
+printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
 printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
 printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
 

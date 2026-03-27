@@ -219,12 +219,18 @@ workcell_write_runtime_state() {
   local profile=""
   local autonomy=""
   local session_assurance=""
+  local session_assurance_override=""
 
   mutability="$(workcell_runtime_mutability)"
   mode="${WORKCELL_MODE:-${CODEX_PROFILE:-strict}}"
   profile="${CODEX_PROFILE:-${mode}}"
   autonomy="${WORKCELL_AGENT_AUTONOMY:-yolo}"
-  session_assurance="$(workcell_container_assurance "${mutability}")"
+  session_assurance_override="${WORKCELL_SESSION_ASSURANCE_INITIAL:-}"
+  if [[ -n "${session_assurance_override}" ]]; then
+    session_assurance="${session_assurance_override}"
+  else
+    session_assurance="$(workcell_container_assurance "${mutability}")"
+  fi
   mkdir -p "${WORKCELL_RUNTIME_STATE_DIR}"
   chmod 0755 "${WORKCELL_RUNTIME_STATE_DIR}"
   workcell_write_readonly_state_file "${WORKCELL_RUNTIME_MUTABILITY_FILE}" "${mutability}"

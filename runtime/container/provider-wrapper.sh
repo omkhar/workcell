@@ -60,6 +60,10 @@ emit_session_assurance_notice() {
 
   assurance="$(workcell_runtime_state_value WORKCELL_SESSION_ASSURANCE || true)"
   case "${assurance}" in
+    lower-assurance-control-plane-vcs)
+      echo "Workcell warning: this session intentionally exposed readonly workspace control-plane paths for Git VCS operations. Treat workspace control-plane contents as lower-assurance until container exit." >&2
+      export WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED=1
+      ;;
     lower-assurance-package-mutation)
       echo "Workcell warning: this session previously ran package-manager mutations as root. In-container control-plane integrity is now lower-assurance until container exit." >&2
       export WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED=1

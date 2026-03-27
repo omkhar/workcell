@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "355dbb40d5ee57c8d0081481035aa6ade5d4362942a3c07a210411fdb80ab2b7"
+      "sha256": "f6235de1aac1b658b5c6f606906e698060ae9c0561a768ddb87e1f22c1c0be06"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts.py",
@@ -34,7 +34,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/claude/hooks/guard-bash.sh",
       "runtime_path": "/opt/workcell/adapters/claude/hooks/guard-bash.sh",
-      "sha256": "d8f1528b8d4eac4d73c362e6743d736f390ef70dc9c129a26f89e84d65695b72"
+      "sha256": "f5a6bc9d318fe59bef0024ad36c6c043fc782f93ca28b137dc1ae614741a0660"
     },
     {
       "kind": "adapter-baseline",
@@ -142,7 +142,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "e3df912ebe11f103fcf4cf11befa1729764b3a887aeea2bd32ce1369b984f906"
+      "sha256": "733f2b5cebdf982eb82d4b00cc559fb235abbd6fb7396fe46f9e44041293f9f1"
     },
     {
       "kind": "runtime-control-plane",
@@ -172,7 +172,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "1f12566c8b7d5c198f7658c7d375f45f6f490153aa4e94fa7c3626db1a6a4fd5"
+      "sha256": "5e48502930e49a4317e98d126f2f044c46cb304f4c6289a78c767946a5bddf8f"
     },
     {
       "kind": "runtime-control-plane",
@@ -184,7 +184,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/runtime-user.sh",
       "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
-      "sha256": "4e76f9c782dda7e208d7d4fa0cb1f9d3042a5e98fcc24102726bd78df730d072"
+      "sha256": "f7dbd0bfcb13ac35353594aefe216f029e12084bf740ca20b6d16f784e343289"
     },
     {
       "kind": "runtime-control-plane",
