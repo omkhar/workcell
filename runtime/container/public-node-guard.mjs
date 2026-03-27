@@ -79,6 +79,10 @@ const PROTECTED_ENTRYPOINT_TEXT_MARKERS = new Map([
   ],
 ]);
 
+function evidenceCacheKey(rootPath, recursive) {
+  return `${recursive ? 'recursive' : 'shallow'}:${rootPath}`;
+}
+
 function canonicalizeFilePath(candidate) {
   try {
     return fs.realpathSync.native(candidate);
@@ -253,18 +257,19 @@ function protectedPackageJsonSignature(packageName) {
   return digest;
 }
 
-function packageScriptTokens(packageRoot) {
-  if (packageRoot === null) {
+function packageScriptTokens(rootDir, recursive = true) {
+  if (rootDir === null) {
     return null;
   }
 
-  const cached = packageScriptTokenCache.get(packageRoot);
+  const cacheKey = evidenceCacheKey(rootDir, recursive);
+  const cached = packageScriptTokenCache.get(cacheKey);
   if (cached !== undefined) {
     return cached;
   }
 
   const tokens = new Set();
-  for (const filePath of collectFileEntries(packageRoot)) {
+  for (const filePath of collectFileEntries(rootDir, recursive)) {
     if (!/\.(?:[cm]?js|mjs)$/i.test(filePath)) {
       continue;
     }
@@ -279,7 +284,7 @@ function packageScriptTokens(packageRoot) {
     }
   }
 
-  packageScriptTokenCache.set(packageRoot, tokens);
+  packageScriptTokenCache.set(cacheKey, tokens);
   return tokens;
 }
 
@@ -297,9 +302,9 @@ function protectedPackageTokens(packageName) {
   return tokens;
 }
 
-function packageTokenOverlap(packageRoot, packageName) {
+function packageTokenOverlap(rootDir, packageName, recursive = true) {
   const protectedTokens = protectedPackageTokens(packageName);
-  const candidateTokens = packageScriptTokens(packageRoot);
+  const candidateTokens = packageScriptTokens(rootDir, recursive);
   if (
     protectedTokens === null ||
     protectedTokens.size === 0 ||
@@ -391,7 +396,7 @@ function providerEvidenceRoot(filePath) {
   return null;
 }
 
-function collectFileEntries(rootDir) {
+function collectFileEntries(rootDir, recursive = true) {
   const entries = [];
   const pending = [rootDir];
 
@@ -413,7 +418,9 @@ function collectFileEntries(rootDir) {
         continue;
       }
       if (entry.isDirectory()) {
-        pending.push(entryPath);
+        if (recursive) {
+          pending.push(entryPath);
+        }
         continue;
       }
       if (!entry.isFile()) {
@@ -437,13 +444,18 @@ function symlinkTargetPath(linkPath) {
   }
 }
 
-function containsProtectedSymlink(packageRoot) {
-  const cached = packageProtectedSymlinkCache.get(packageRoot);
+function containsProtectedSymlink(rootDir, recursive = true) {
+  if (!recursive) {
+    return false;
+  }
+
+  const cacheKey = evidenceCacheKey(rootDir, recursive);
+  const cached = packageProtectedSymlinkCache.get(cacheKey);
   if (cached !== undefined) {
     return cached;
   }
 
-  const pending = [packageRoot];
+  const pending = [rootDir];
   while (pending.length > 0) {
     const currentDir = pending.pop();
     let dirEntries = [];
@@ -463,7 +475,7 @@ function containsProtectedSymlink(packageRoot) {
         if (targetPath !== null) {
           for (const protectedRoot of PROTECTED_PACKAGE_ROOTS.values()) {
             if (isWithinTree(targetPath, protectedRoot)) {
-              packageProtectedSymlinkCache.set(packageRoot, true);
+              packageProtectedSymlinkCache.set(cacheKey, true);
               return true;
             }
           }
@@ -477,7 +489,7 @@ function containsProtectedSymlink(packageRoot) {
     }
   }
 
-  packageProtectedSymlinkCache.set(packageRoot, false);
+  packageProtectedSymlinkCache.set(cacheKey, false);
   return false;
 }
 
@@ -509,18 +521,19 @@ function protectedPackageManifest(packageName) {
   return manifest;
 }
 
-function looksLikeProtectedProviderCopy(packageRoot) {
-  const cached = packageMarkerCache.get(packageRoot);
+function looksLikeProtectedProviderCopy(rootDir, recursive = true) {
+  const cacheKey = evidenceCacheKey(rootDir, recursive);
+  const cached = packageMarkerCache.get(cacheKey);
   if (cached !== undefined) {
     return cached;
   }
 
-  if (containsProtectedSymlink(packageRoot)) {
-    packageMarkerCache.set(packageRoot, true);
+  if (containsProtectedSymlink(rootDir, recursive)) {
+    packageMarkerCache.set(cacheKey, true);
     return true;
   }
 
-  const candidatePackageJsonSignature = packageJsonSignatureForRoot(packageRoot);
+  const candidatePackageJsonSignature = packageJsonSignatureForRoot(rootDir);
 
   for (const packageName of PROTECTED_PACKAGE_MARKERS.keys()) {
     const protectedPackageSignature = protectedPackageJsonSignature(packageName);
@@ -529,15 +542,15 @@ function looksLikeProtectedProviderCopy(packageRoot) {
       protectedPackageSignature !== null &&
       candidatePackageJsonSignature === protectedPackageSignature
     ) {
-      packageMarkerCache.set(packageRoot, true);
+      packageMarkerCache.set(cacheKey, true);
       return true;
     }
 
     if (
-      packageTokenOverlap(packageRoot, packageName) >=
+      packageTokenOverlap(rootDir, packageName, recursive) >=
       PROTECTED_PACKAGE_TOKEN_MATCH_THRESHOLD
     ) {
-      packageMarkerCache.set(packageRoot, true);
+      packageMarkerCache.set(cacheKey, true);
       return true;
     }
 
@@ -548,8 +561,8 @@ function looksLikeProtectedProviderCopy(packageRoot) {
       continue;
     }
 
-    for (const filePath of collectFileEntries(packageRoot)) {
-      const relativePath = path.relative(packageRoot, filePath);
+    for (const filePath of collectFileEntries(rootDir, recursive)) {
+      const relativePath = path.relative(rootDir, filePath);
       const protectedDigest = protectedManifest.get(relativePath);
 
       if (protectedDigest === undefined) {
@@ -561,13 +574,13 @@ function looksLikeProtectedProviderCopy(packageRoot) {
       }
 
       if (matchedSignatures >= PROTECTED_PACKAGE_COPY_MATCH_THRESHOLD) {
-        packageMarkerCache.set(packageRoot, true);
+        packageMarkerCache.set(cacheKey, true);
         return true;
       }
     }
   }
 
-  packageMarkerCache.set(packageRoot, false);
+  packageMarkerCache.set(cacheKey, false);
   return false;
 }
 
@@ -635,8 +648,10 @@ function isProtectedProviderFile(filePath) {
     return true;
   }
 
-  const packageRoot = providerEvidenceRoot(filePath);
-  if (packageRoot === null) {
+  const packageRoot = nearestPackageRoot(filePath);
+  const evidenceRoot =
+    packageRoot ?? (isWithinWorkspace(filePath) ? path.dirname(filePath) : null);
+  if (evidenceRoot === null) {
     return false;
   }
 
@@ -645,7 +660,7 @@ function isProtectedProviderFile(filePath) {
     return true;
   }
 
-  return looksLikeProtectedProviderCopy(packageRoot);
+  return looksLikeProtectedProviderCopy(evidenceRoot, packageRoot !== null);
 }
 
 function maybeBlock(filePath) {

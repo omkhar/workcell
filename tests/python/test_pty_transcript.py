@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import errno
+import io
 import os
 import runpy
 import signal
@@ -99,6 +101,29 @@ class PtyTranscriptTests(unittest.TestCase):
             transcript = log_path.read_text(encoding="utf-8")
             self.assertIn("# workcell-transcript-v1 start=", transcript)
             self.assertIn("# workcell-transcript-v1 end=", transcript)
+
+    def test_main_handles_spawn_exec_errors_without_tracebacks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "transcript.log"
+            argv = ["pty_transcript.py", "--log", str(log_path), "--", "missing-agent"]
+            stderr = io.StringIO()
+
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                sys.stdin, "isatty", return_value=True
+            ), mock.patch.object(sys.stdout, "isatty", return_value=True), mock.patch.object(
+                self.module.pty,
+                "spawn",
+                side_effect=FileNotFoundError(
+                    errno.ENOENT, "No such file or directory", "missing-agent"
+                ),
+            ), mock.patch("sys.stderr", stderr):
+                self.assertEqual(self.module.main(), 127)
+
+            transcript = log_path.read_text(encoding="utf-8")
+            self.assertIn("wait_status=spawn-error", transcript)
+            self.assertIn("spawn_errno=2", transcript)
+            self.assertIn("exit_code=127", transcript)
+            self.assertIn("failed to exec missing-agent", stderr.getvalue())
 
     def test_module_main_entrypoint_raises_system_exit_with_return_code(self) -> None:
         script_path = Path(__file__).resolve().parents[2] / "scripts/lib/pty_transcript.py"

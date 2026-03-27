@@ -9,7 +9,7 @@ The following tools must be installed before working on this repository:
 | `shellcheck` | `dev-quick-check.sh`, `pre-merge.sh` |
 | `shfmt` | `dev-quick-check.sh` |
 | `python3` | `dev-quick-check.sh` (compile + unittest) |
-| `cargo` + `rustfmt` | `dev-quick-check.sh` (Rust launcher) |
+| `cargo` + `rustfmt` + Clippy | `dev-quick-check.sh` (Rust launcher) |
 | `docker` | `pre-merge.sh` (validator image, smoke, repro) |
 | `git` | `pre-merge.sh` |
 | `actionlint` | `scripts/check-workflows.sh` (called by `pre-merge.sh`) |
@@ -21,7 +21,7 @@ On macOS, install Colima for the VM boundary:
 
 ```bash
 brew install colima docker shellcheck shfmt python3 rustup actionlint zizmor jq
-rustup-init  # then: rustup component add rustfmt
+rustup-init  # then: rustup component add rustfmt clippy
 ```
 
 ## Quick start for contributors
@@ -53,7 +53,7 @@ What it checks:
 - `shellcheck` on all first-party shell scripts (entrypoints, container helpers, runtime scripts)
 - `shfmt` format check on those same scripts (2-space indent, `bash` dialect, `case` indentation)
 - Python syntax compilation (`py_compile`) and `unittest` discovery for `scripts/lib/` and `tests/python/`
-- `cargo fmt --check` and `cargo test --locked --offline` for the Rust launcher under `runtime/container/rust/`
+- `cargo fmt --check`, `cargo clippy --all-targets --locked --offline -- -D warnings`, and `cargo test --locked --offline` for the Rust launcher under `runtime/container/rust/`
 
 When to run: before every commit and as a git pre-commit hook if desired.
 
@@ -187,4 +187,4 @@ Python files under `scripts/lib/` and `tests/python/` must compile with `python3
 
 ### Rust
 
-The Rust launcher under `runtime/container/rust/` must pass `cargo fmt --all --check` and `cargo test --locked --offline`. Run both via `./scripts/dev-quick-check.sh`.
+The Rust launcher under `runtime/container/rust/` must pass `cargo fmt --all --check`, `cargo clippy --all-targets --locked --offline -- -D warnings`, and `cargo test --locked --offline`. Run all three via `./scripts/dev-quick-check.sh`.

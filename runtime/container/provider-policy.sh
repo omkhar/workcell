@@ -78,7 +78,7 @@ reject_unsafe_codex_args() {
     fi
 
     case "${arg}" in
-      --dangerously-bypass-approvals-and-sandbox | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval)
+      --dangerously-bypass-approvals-and-sandbox | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       -p | --profile)
@@ -90,7 +90,7 @@ reject_unsafe_codex_args() {
       --ask-for-approval=*)
         workcell_die "Workcell blocked unsafe Codex override: --ask-for-approval"
         ;;
-      --add-dir=* | --remote=*)
+      --add-dir=* | --remote=* | --enable=* | --disable=*)
         workcell_die "Workcell blocked unsafe Codex override: ${arg%%=*}"
         ;;
       --cd=*)

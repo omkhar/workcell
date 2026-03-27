@@ -34,7 +34,7 @@ under platform automation.
   gate
 - `security.yml`: GitHub Actions linting, dependency review on pull requests,
   and `zizmor`
-- `codeql.yml`: code scanning for the shipped Rust and JavaScript surfaces on
+- `codeql.yml`: code scanning for the shipped Rust, JavaScript, and Python surfaces on
   public repositories by default, or on private repositories when
   `WORKCELL_ENABLE_PRIVATE_CODE_SCANNING=true`
 - `scorecard.yml`: weekly and default-branch OpenSSF Scorecard analysis

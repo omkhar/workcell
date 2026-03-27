@@ -1531,6 +1531,18 @@ if run_entrypoint codex codex --add-dir=/tmp --version >/tmp/workcell-entrypoint
 fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-add-dir.out
 
+if run_entrypoint codex codex --enable danger-mode --version >/tmp/workcell-entrypoint-codex-enable.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Codex feature enables" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-enable.out
+
+if run_entrypoint codex codex --disable safe-guards --version >/tmp/workcell-entrypoint-codex-disable.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Codex feature disables" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-disable.out
+
 if run_entrypoint codex codex --remote=ssh://example.invalid/workcell --version >/tmp/workcell-entrypoint-codex-remote.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex remote overrides" >&2
   exit 1
@@ -1704,6 +1716,14 @@ if run_container_with_mutability codex readonly bash -lc '
 fi
 grep -q 'Workcell blocked apt-get: readonly container mutability is active.' /tmp/workcell-readonly-mutability.out
 grep -q 'Relaunch with --container-mutability ephemeral to allow ephemeral package-manager writes.' /tmp/workcell-readonly-mutability.out
+
+run_container codex bash -s <<'SCRIPT'
+set -euo pipefail
+source /usr/local/libexec/workcell/runtime-user.sh
+printf "regexXuser::20000:0:99999:7:::\n" >>/etc/shadow
+workcell_append_shadow_entry "regex.user"
+test "$(grep -c "^regex\\.user:" /etc/shadow)" = "1"
+SCRIPT
 
 if run_entrypoint claude claude --dangerously-skip-permissions >/tmp/workcell-entrypoint-claude-danger.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude dangerous override outside breakglass" >&2
@@ -1964,6 +1984,16 @@ run_container codex bash -lc '
       exit 1
     fi
     grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-full-auto.out
+    if codex --enable danger-mode --version >/tmp/codex-nested-enable.out 2>&1; then
+      echo "expected nested Codex invocation to reject feature enables" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-enable.out
+    if codex --disable safe-guards --version >/tmp/codex-nested-disable.out 2>&1; then
+      echo "expected nested Codex invocation to reject feature disables" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe Codex override" /tmp/codex-nested-disable.out
     if codex app-server >/tmp/codex-nested-app-server.out 2>&1; then
       echo "expected nested Codex invocation to reject GUI subcommands on the CLI surface" >&2
       exit 1
@@ -2645,6 +2675,33 @@ EOF
     exit 1
   fi
   test ! -e /tmp/workcell-node-public-preload-ran
+  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/workcell-node-env-check.js"
+console.log(JSON.stringify({
+  nodeExtra: process.env.NODE_EXTRA_CA_CERTS ?? "",
+  sslFile: process.env.SSL_CERT_FILE ?? "",
+  sslDir: process.env.SSL_CERT_DIR ?? "",
+}));
+EOF
+  NODE_EXTRA_CA_CERTS=/workspace/does-not-exist.pem \
+    SSL_CERT_FILE=/workspace/does-not-exist.pem \
+    SSL_CERT_DIR=/workspace/does-not-exist.d \
+    node "${workspace_exec_scratch}/workcell-node-env-check.js" >/tmp/node-public-env-check.out 2>&1
+  grep -Fq "{\"nodeExtra\":\"\",\"sslFile\":\"\",\"sslDir\":\"\"}" /tmp/node-public-env-check.out
+  if node --env-file-if-exists=/workspace/does-not-exist.env --version >/tmp/node-public-env-file-if-exists.out 2>&1; then
+    echo "expected public node wrapper to reject --env-file-if-exists" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked dynamic Node code-loading option outside provider wrappers." /tmp/node-public-env-file-if-exists.out
+  if node --experimental-config-file=/workspace/does-not-exist.json --version >/tmp/node-public-config-file.out 2>&1; then
+    echo "expected public node wrapper to reject --experimental-config-file" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked dynamic Node code-loading option outside provider wrappers." /tmp/node-public-config-file.out
+  if node --experimental-default-config-file=/workspace/does-not-exist.json --version >/tmp/node-public-default-config-file.out 2>&1; then
+    echo "expected public node wrapper to reject --experimental-default-config-file" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked dynamic Node code-loading option outside provider wrappers." /tmp/node-public-default-config-file.out
   cat <<'\''EOF'\'' >"${workspace_exec_scratch}/git"
 #!/bin/sh
 printf '\''path-bypass-git\n'\''

@@ -11,10 +11,13 @@ sanitize_node_env() {
   unset ENV
   unset NODE_OPTIONS
   unset NODE_PATH
+  unset NODE_EXTRA_CA_CERTS
   unset npm_config_userconfig
   unset NPM_CONFIG_USERCONFIG
   unset LD_AUDIT
   unset LD_LIBRARY_PATH
+  unset SSL_CERT_FILE
+  unset SSL_CERT_DIR
   export WORKSPACE=/workspace
   export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
   export PATH="${TRUSTED_PATH}"
@@ -92,10 +95,10 @@ for arg in "$@"; do
       SCRIPT_PATH="${1:-}"
       break
       ;;
-    -e | --eval | -p | --print | -r | --require | --import | --loader | --experimental-loader | --env-file)
+    -e | --eval | -p | --print | -r | --require | --import | --loader | --experimental-loader | --env-file | --env-file-if-exists | --experimental-config-file | --experimental-default-config-file)
       reject_dynamic_node_option
       ;;
-    --eval=* | --print=* | --require=* | --import=* | --loader=* | --experimental-loader=* | --env-file=*)
+    --eval=* | --print=* | --require=* | --import=* | --loader=* | --experimental-loader=* | --env-file=* | --env-file-if-exists=* | --experimental-config-file=* | --experimental-default-config-file=*)
       reject_dynamic_node_option
       ;;
     -*)

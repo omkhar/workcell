@@ -10,11 +10,19 @@ require_tool() {
   }
 }
 
+require_cargo_subcommand() {
+  cargo "$1" --version >/dev/null 2>&1 || {
+    echo "Missing required cargo subcommand: cargo $1" >&2
+    exit 1
+  }
+}
+
 require_tool shellcheck
 require_tool shfmt
 require_tool python3
 require_tool cargo
 require_tool rustfmt
+require_cargo_subcommand clippy
 
 shell_files=(
   "${ROOT_DIR}/scripts/dev-quick-check.sh"
@@ -40,6 +48,7 @@ python3 -m unittest discover -s "${ROOT_DIR}/tests/python" -p 'test_*.py'
 (
   cd "${ROOT_DIR}/runtime/container/rust"
   cargo fmt --all --check
+  cargo clippy --all-targets --locked --offline -- -D warnings
   cargo test --locked --offline
 )
 

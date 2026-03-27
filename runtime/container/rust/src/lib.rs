@@ -323,9 +323,7 @@ fn file_descriptor_is_mutable_native_exec(fd: c_int) -> bool {
 
 fn next_shebang_token(cursor: &mut &str) -> Option<String> {
     *cursor = cursor.trim_start_matches([' ', '\t']);
-    let end = cursor
-        .find(|character: char| matches!(character, ' ' | '\t' | '\r' | '\n'))
-        .unwrap_or(cursor.len());
+    let end = cursor.find([' ', '\t', '\r', '\n']).unwrap_or(cursor.len());
     if end == 0 {
         return None;
     }
@@ -566,13 +564,52 @@ fn compare_open_files(left: &mut File, right: &mut File) -> bool {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn file_type_bits() -> u32 {
+    u32::from(libc::S_IFMT)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn file_type_bits() -> u32 {
+    libc::S_IFMT
+}
+
+#[cfg(target_os = "macos")]
+fn regular_file_mode() -> u32 {
+    u32::from(libc::S_IFREG)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn regular_file_mode() -> u32 {
+    libc::S_IFREG
+}
+
 fn metadata_signature_from_metadata(metadata: &fs::Metadata) -> StatSignature {
     StatSignature {
-        dev: metadata.dev() as u64,
-        ino: metadata.ino() as u64,
+        dev: metadata.dev(),
+        ino: metadata.ino(),
         size: metadata.size() as i64,
-        mode: metadata.mode() as u32,
+        mode: metadata.mode(),
     }
+}
+
+fn stat_signature_from_stat(stat_buf: &libc::stat) -> Option<StatSignature> {
+    #[cfg(target_os = "macos")]
+    let dev = u64::try_from(stat_buf.st_dev).ok()?;
+    #[cfg(not(target_os = "macos"))]
+    let dev = stat_buf.st_dev;
+
+    #[cfg(target_os = "macos")]
+    let mode = u32::from(stat_buf.st_mode);
+    #[cfg(not(target_os = "macos"))]
+    let mode = stat_buf.st_mode;
+
+    Some(StatSignature {
+        dev,
+        ino: stat_buf.st_ino,
+        size: stat_buf.st_size,
+        mode,
+    })
 }
 
 fn protected_runtime_signatures() -> Vec<(ProtectedRuntime, StatSignature)> {
@@ -611,7 +648,7 @@ fn stat_matches_protected_runtime(candidate: &StatSignature) -> ProtectedRuntime
 }
 
 fn candidate_size_matches_protected_runtime(candidate: &StatSignature) -> bool {
-    (candidate.mode & (libc::S_IFMT as u32)) == (libc::S_IFREG as u32)
+    (candidate.mode & file_type_bits()) == regular_file_mode()
         && protected_runtime_signatures()
             .into_iter()
             .any(|(_, protected)| protected.size == candidate.size)
@@ -621,7 +658,7 @@ fn file_matches_protected_runtime_by_contents(
     candidate: &mut File,
     candidate_signature: &StatSignature,
 ) -> ProtectedRuntime {
-    if (candidate_signature.mode & (libc::S_IFMT as u32)) != (libc::S_IFREG as u32) {
+    if (candidate_signature.mode & file_type_bits()) != regular_file_mode() {
         return ProtectedRuntime::None;
     }
 
@@ -1048,12 +1085,11 @@ fn is_git_execveat_target(dirfd: c_int, pathname: &str, flags: c_int) -> bool {
         return false;
     }
 
-    stat_matches_protected_git(&StatSignature {
-        dev: stat_buf.st_dev as u64,
-        ino: stat_buf.st_ino as u64,
-        size: stat_buf.st_size,
-        mode: stat_buf.st_mode as u32,
-    })
+    let Some(signature) = stat_signature_from_stat(&stat_buf) else {
+        return false;
+    };
+
+    stat_matches_protected_git(&signature)
 }
 
 #[unsafe(no_mangle)]
@@ -1237,12 +1273,9 @@ pub unsafe extern "C" fn execveat(
             if let Ok(c_path) = CString::new(pathname_string.as_bytes()) {
                 let mut stat_buf = mem::zeroed::<libc::stat>();
                 if libc::fstatat(dirfd, c_path.as_ptr(), &mut stat_buf, 0) == 0 {
-                    protected_target = stat_matches_protected_runtime(&StatSignature {
-                        dev: stat_buf.st_dev as u64,
-                        ino: stat_buf.st_ino as u64,
-                        size: stat_buf.st_size,
-                        mode: stat_buf.st_mode as u32,
-                    });
+                    if let Some(signature) = stat_signature_from_stat(&stat_buf) {
+                        protected_target = stat_matches_protected_runtime(&signature);
+                    }
                 }
 
                 let candidate_fd =

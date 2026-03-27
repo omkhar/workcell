@@ -25,6 +25,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
          python3 \
          python3-coverage \
          rustc \
+         rust-clippy \
          rustfmt \
          shellcheck \
          shfmt \

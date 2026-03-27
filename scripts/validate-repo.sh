@@ -10,6 +10,13 @@ require_tool() {
   }
 }
 
+require_cargo_subcommand() {
+  cargo "$1" --version >/dev/null 2>&1 || {
+    echo "Missing required cargo subcommand: cargo $1" >&2
+    exit 1
+  }
+}
+
 require_tool shellcheck
 require_tool shfmt
 require_tool python3
@@ -17,6 +24,7 @@ require_tool yamllint
 require_tool cargo
 require_tool rustfmt
 require_tool git
+require_cargo_subcommand clippy
 
 mapfile -t python_files < <(
   find "${ROOT_DIR}/scripts/lib" "${ROOT_DIR}/tests/python" "${ROOT_DIR}/tests/mutation" \
@@ -181,6 +189,7 @@ fi
 (
   cd "${ROOT_DIR}/runtime/container/rust"
   cargo fmt --all --check
+  cargo clippy --all-targets --locked --offline -- -D warnings
   cargo check --locked --offline
   cargo test --locked --offline
 )
