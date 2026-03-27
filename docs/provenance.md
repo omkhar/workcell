@@ -61,10 +61,11 @@ The release workflow uses:
   signed and also covered by the signed checksum set
 - a deterministic control-plane manifest that records the reviewed adapter
   baselines, runtime control-plane scripts that seed provider-facing homes,
-  and the host-side launcher and injection-policy renderer that stage those
-  homes, is copied into the runtime image, drives runtime hash checks for the
-  adapter baselines and selected seeding inputs, is directly signed at release
-  time, and is also bound into the signed checksum set
+  and the host-side launcher, Docker-context guard, direct-mount extractor,
+  and injection-policy renderer that stage those homes, is copied into the
+  runtime image, drives runtime hash checks for the adapter baselines and
+  selected seeding inputs, is directly signed at release time, and is also
+  bound into the signed checksum set
 - host-side pin-hygiene checks that run before rebuilding the validator image
   in CI and release preflight, including exact package-set checks for both the
   runtime and validator Dockerfiles, pinned workflow-side BuildKit and signing
@@ -155,9 +156,9 @@ artifact:
 
 - `runtime_artifacts`: reviewed files baked into the runtime image; current
   runtime hash checks cover the adapter baselines and selected seeding inputs
-- `host_artifacts`: reviewed host-side launcher and injection-renderer inputs
-  that are signed and published for release provenance, but not verified inside
-  the runtime
+- `host_artifacts`: reviewed host-side launcher, Docker-context guard,
+  direct-mount extractor, and injection-renderer inputs that are signed and
+  published for release provenance, but not verified inside the runtime
 
 ```bash
 cosign verify-blob SHA256SUMS \

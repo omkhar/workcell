@@ -86,10 +86,15 @@ if not isinstance(runtime_artifacts, list) or not runtime_artifacts:
     raise SystemExit("control-plane manifest must include non-empty runtime_artifacts")
 
 seen_runtime_paths: set[str] = set()
+seen_host_paths: set[str] = set()
 for entry in host_artifacts:
     if sorted(entry.keys()) != ["repo_path", "sha256"]:
         raise SystemExit(f"unexpected host artifact shape: {entry!r}")
-    if len(entry["sha256"]) != 64:
+    repo_path = entry["repo_path"]
+    if not isinstance(repo_path, str) or repo_path in seen_host_paths:
+        raise SystemExit(f"duplicate or invalid host artifact path: {entry!r}")
+    seen_host_paths.add(repo_path)
+    if len(entry["sha256"]) != 64 or any(ch not in "0123456789abcdef" for ch in entry["sha256"]):
         raise SystemExit(f"invalid host artifact digest: {entry!r}")
 
 for entry in runtime_artifacts:
@@ -102,7 +107,7 @@ for entry in runtime_artifacts:
     if runtime_path in seen_runtime_paths:
         raise SystemExit(f"duplicate runtime artifact path: {runtime_path}")
     seen_runtime_paths.add(runtime_path)
-    if len(entry["sha256"]) != 64:
+    if len(entry["sha256"]) != 64 or any(ch not in "0123456789abcdef" for ch in entry["sha256"]):
         raise SystemExit(f"invalid runtime artifact digest: {entry!r}")
 PY
 
@@ -128,6 +133,21 @@ if git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   if [[ "${digest_archive_outside}" != "${digest_archive_nested}" ]]; then
     echo "Nested archived-source control-plane manifest diverged from standalone archived-source manifest: ${digest_archive_nested} != ${digest_archive_outside}" >&2
     diff -u "${TMP_ROOT}/archive-outside.json" "${TMP_ROOT}/archive-nested.json" || true
+    exit 1
+  fi
+
+  cp -R "${ARCHIVE_ROOT}" "${TMP_ROOT}/symlink-artifact"
+  ln -sf "${TMP_ROOT}/a.json" "${TMP_ROOT}/symlink-artifact/scripts/workcell"
+  SYMLINK_LOG="${TMP_ROOT}/symlink-out.log"
+  if WORKCELL_CONTROL_PLANE_ROOT="${TMP_ROOT}/symlink-artifact" \
+    "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh" "${TMP_ROOT}/symlink-out.json" \
+    >"${SYMLINK_LOG}" 2>&1; then
+    echo "Expected control-plane manifest generation to reject symlinked tracked artifacts" >&2
+    exit 1
+  fi
+  if ! grep -q "must not be a symlink" "${SYMLINK_LOG}"; then
+    echo "Expected symlinked tracked artifacts to fail with an explicit manifest error" >&2
+    cat "${SYMLINK_LOG}" >&2
     exit 1
   fi
 fi

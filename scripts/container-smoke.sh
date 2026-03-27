@@ -1070,7 +1070,8 @@ grep -q "smoke.example" "$HOME/.ssh/config"
 test "$(stat -c "%a" "$HOME/.ssh")" = "700"
 test "$(stat -c "%a" "$HOME/.ssh/id_smoke")" = "600"
 test -L "$CODEX_HOME/rules"
-if (printf "\n# session-marker\n" >>"$CODEX_HOME/rules/default.rules") 2>/tmp/workcell-codex-rules-write.err; then
+if bash -c 'printf "\n# session-marker\n" >>"$1"' bash "$CODEX_HOME/rules/default.rules" \
+  2>/tmp/workcell-codex-rules-write.err; then
   echo "expected default Codex execpolicy rules to stay immutable on the managed path" >&2
   exit 1
 fi

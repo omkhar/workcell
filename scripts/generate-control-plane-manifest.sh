@@ -46,7 +46,9 @@ output_path = pathlib.Path(sys.argv[2])
 
 host_artifacts = [
     "scripts/workcell",
+    "scripts/lib/extract_direct_mounts.py",
     "scripts/lib/render_injection_bundle.py",
+    "scripts/lib/trusted-docker-client.sh",
 ]
 
 runtime_artifacts = [
@@ -82,33 +84,43 @@ runtime_artifacts = [
 ]
 
 
-def digest(path: pathlib.Path) -> str:
+def require_tracked_regular_file(path: pathlib.Path, repo_path: str) -> None:
+    relative_parts = path.relative_to(root_dir).parts
+    current = root_dir
+    for part in relative_parts:
+        current = current / part
+        if current.is_symlink():
+            raise SystemExit(f"Control-plane artifact must not be a symlink: {repo_path}")
+    if not path.exists():
+        raise SystemExit(f"Missing control-plane artifact: {repo_path}")
+    if not path.is_file():
+        raise SystemExit(f"Control-plane artifact must be a regular file: {repo_path}")
+
+
+def digest(path: pathlib.Path, repo_path: str) -> str:
+    require_tracked_regular_file(path, repo_path)
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 rendered_host = []
 for repo_path in host_artifacts:
     source_path = root_dir / repo_path
-    if not source_path.is_file():
-        raise SystemExit(f"Missing control-plane artifact: {repo_path}")
     rendered_host.append(
         {
             "repo_path": repo_path,
-            "sha256": digest(source_path),
+            "sha256": digest(source_path, repo_path),
         }
     )
 
 rendered_runtime = []
 for kind, repo_path, runtime_path in runtime_artifacts:
     source_path = root_dir / repo_path
-    if not source_path.is_file():
-        raise SystemExit(f"Missing control-plane artifact: {repo_path}")
     rendered_runtime.append(
         {
             "kind": kind,
             "repo_path": repo_path,
             "runtime_path": runtime_path,
-            "sha256": digest(source_path),
+            "sha256": digest(source_path, repo_path),
         }
     )
 

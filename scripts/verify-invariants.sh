@@ -1382,6 +1382,8 @@ for required in (
     if len(runtime_artifacts[required].get("sha256", "")) != 64:
         raise SystemExit(f"expected sha256 for {required}")
 for required_repo_path in (
+    "scripts/lib/extract_direct_mounts.py",
+    "scripts/lib/trusted-docker-client.sh",
     "scripts/workcell",
     "scripts/lib/render_injection_bundle.py",
 ):

@@ -5,8 +5,16 @@
       "sha256": "3b71f6ce278568f92cc7bca664b6f5164bda4e53653f4b4254a84479372424df"
     },
     {
+      "repo_path": "scripts/lib/extract_direct_mounts.py",
+      "sha256": "66f9042444a3852a8155eb1d8c100fb026ac968b242573c62f34b536d2fab5fa"
+    },
+    {
       "repo_path": "scripts/lib/render_injection_bundle.py",
       "sha256": "848dbe2b708e6d2e4c59ba200ee57554366c63bf65bd253effb1a69befd908b5"
+    },
+    {
+      "repo_path": "scripts/lib/trusted-docker-client.sh",
+      "sha256": "66384bd55c487dc25fea52c6872ed4ddc5b190a97a47ff6a7b967a6e87244981"
     }
   ],
   "runtime_artifacts": [

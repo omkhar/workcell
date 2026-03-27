@@ -26,11 +26,13 @@ verifies the relevant adapter baseline hashes against the `runtime_artifacts`
 section of the committed `runtime/container/control-plane-manifest.json` that
 is baked into the image. The same published manifest also carries a separate
 `host_artifacts` section for reviewed host-side launcher inputs such as
-`scripts/workcell` and `scripts/lib/render_injection_bundle.py`, but those
-entries are release-provenance only and are not runtime-hash-checked inside the
-container. Release publication signs and publishes the full manifest so
-consumers can audit the reviewed control-plane inputs separately from the
-broader build-input manifest.
+`scripts/workcell`, `scripts/lib/trusted-docker-client.sh`,
+`scripts/lib/extract_direct_mounts.py`, and
+`scripts/lib/render_injection_bundle.py`, but those entries are
+release-provenance only and are not runtime-hash-checked inside the container.
+Release publication signs and publishes the full manifest so consumers can
+audit the reviewed control-plane inputs separately from the broader
+build-input manifest.
 
 ---
 

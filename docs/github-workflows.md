@@ -53,10 +53,11 @@ under platform automation.
   attestations on tagged releases, deterministic fixed-order multi-arch
   manifest assembly, preflight-to-publish digest binding for the source bundle
   and both per-platform image manifests, byte-for-byte preflight binding for
-  the build-input manifest and control-plane manifest, including the host-side
-  launcher and injection-policy renderer entries that stage the reviewed
-  provider homes, a conditional release-preflight CodeQL rerun when repository
-  settings enable private code scanning or the repository is public, a
+  the build-input manifest and control-plane manifest, including the
+  host-side launcher, Docker-context guard, direct-mount extractor, and
+  injection-policy renderer entries that stage the reviewed provider homes, a
+  conditional release-preflight CodeQL rerun when repository settings enable
+  private code scanning or the repository is public, a
   protected `release` environment with a human approval gate before publish
   when the repository visibility and billing plan support required reviewers,
   an explicit release-asset allowlist, exact pinned BuildKit, Cosign, and Syft
