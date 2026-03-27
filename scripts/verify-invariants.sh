@@ -2454,6 +2454,78 @@ DOCKER_CONTEXT_SELECTOR_FAKEBIN="${DOCKER_CONTEXT_SELECTOR_FAKEBIN}" \
   PATH="${DOCKER_CONTEXT_SELECTOR_PATH}" ROOT_DIR="${ROOT_DIR}" BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
   /bin/bash "${DOCKER_CONTEXT_SELECTOR_HARNESS}"
 
+DOCKER_BUILDX_REF_SANITIZE_HARNESS="${BARRIER_VERIFY_ROOT}/docker-buildx-ref-sanitize.sh"
+cat >"${DOCKER_BUILDX_REF_SANITIZE_HARNESS}" <<'EOF'
+set -euo pipefail
+
+buildx_root="${BARRIER_VERIFY_ROOT}/docker-buildx-ref-sanitize"
+mkdir -p "${buildx_root}/refs/default/default"
+printf '{"LocalPath":"/tmp/stale","DockerfilePath":"/tmp/stale/Dockerfile"}\n' >"${buildx_root}/refs/default/default/ref.json"
+printf '{"Key":"default","Name":"","Global":false}\n' >"${buildx_root}/current"
+
+ROOT_DIR="${ROOT_DIR}" BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" /bin/bash -lc '
+  set -euo pipefail
+  source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+  sanitize_workcell_docker_buildx_state "'"${buildx_root}"'"
+'
+
+if [[ -e "${buildx_root}/refs/default/default/ref.json" ]]; then
+  echo "Expected trusted Docker setup to drop stale buildx refs" >&2
+  exit 1
+fi
+if [[ ! -f "${buildx_root}/current" ]]; then
+  echo "Expected trusted Docker buildx sanitization to preserve current builder selection" >&2
+  exit 1
+fi
+EOF
+chmod 0755 "${DOCKER_BUILDX_REF_SANITIZE_HARNESS}"
+ROOT_DIR="${ROOT_DIR}" BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" /bin/bash "${DOCKER_BUILDX_REF_SANITIZE_HARNESS}"
+
+DOCKER_CLIENT_CWD_HARNESS="${BARRIER_VERIFY_ROOT}/docker-client-cwd.sh"
+cat >"${DOCKER_CLIENT_CWD_HARNESS}" <<'EOF'
+set -euo pipefail
+
+FAKE_DOCKER_BIN="${BARRIER_VERIFY_ROOT}/docker-client-cwd-bin"
+WORKTREE_CWD="${BARRIER_VERIFY_ROOT}/missing-cwd"
+mkdir -p "${FAKE_DOCKER_BIN}"
+rm -rf "${WORKTREE_CWD}"
+
+cat >"${FAKE_DOCKER_BIN}/docker" <<'EOS'
+#!/bin/sh
+printf '%s\n' "$PWD"
+EOS
+chmod 0755 "${FAKE_DOCKER_BIN}/docker"
+
+ROOT_DIR="${ROOT_DIR}" PATH="${FAKE_DOCKER_BIN}:${PATH}" /bin/bash -lc '
+  set -euo pipefail
+  source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+  export HOME="${BARRIER_VERIFY_ROOT}/docker-client-home"
+  mkdir -p "${HOME}"
+  export WORKCELL_DOCKER_CLIENT_CWD="${HOME}"
+  cd "'"${WORKTREE_CWD}"'" 2>/dev/null || true
+  output="$(run_workcell_docker_client_command docker context inspect default)"
+  if [[ "${output}" != "${HOME}" ]]; then
+    echo "Expected Docker client commands to run from the configured safe cwd, got: ${output}" >&2
+    exit 1
+  fi
+'
+EOF
+chmod 0755 "${DOCKER_CLIENT_CWD_HARNESS}"
+ROOT_DIR="${ROOT_DIR}" BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" /bin/bash "${DOCKER_CLIENT_CWD_HARNESS}"
+
+DOCKER_CLIENT_EMPTY_ARGV_HARNESS="${BARRIER_VERIFY_ROOT}/docker-client-empty-argv.sh"
+cat >"${DOCKER_CLIENT_EMPTY_ARGV_HARNESS}" <<'EOF'
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR}" /bin/bash -lc '
+  set -euo pipefail
+  source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+  run_workcell_docker_client_command
+'
+EOF
+chmod 0755 "${DOCKER_CLIENT_EMPTY_ARGV_HARNESS}"
+ROOT_DIR="${ROOT_DIR}" /bin/bash "${DOCKER_CLIENT_EMPTY_ARGV_HARNESS}"
+
 CONTAINER_SMOKE_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/container-smoke-path-override-bin"
 CONTAINER_SMOKE_PATH_MARKER="${BARRIER_VERIFY_ROOT}/container-smoke-path-ran"
 mkdir -p "${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}"
@@ -5390,5 +5462,47 @@ if ! rg -q 'trustedFolders\.json' "${ROOT_DIR}/runtime/container/home-control-pl
   echo "Expected Gemini home seeding to provision trustedFolders.json" >&2
   exit 1
 fi
+
+python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+needle = 'acquire_profile_lock "${COLIMA_PROFILE}"\n  # Another launch may have created or repaired the profile while we waited.\n  refresh_profile_state "${COLIMA_PROFILE}"'
+if needle not in text:
+    raise SystemExit("Expected workcell to refresh profile state immediately after taking the profile lock")
+PY
+
+python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = [
+    'workspace_runtime_probe_path()',
+    'validate_colima_runtime_workspace_view()',
+    'validate_colima_runtime_workspace_view "${profile}" "${workspace}"',
+    'Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents.',
+    'Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view.',
+]
+for needle in required:
+    if needle not in text:
+        raise SystemExit(f"Expected workcell mount-view validation snippet missing: {needle}")
+PY
+
+python3 - "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" <<'PY'
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = [
+    'cd "${home}" &&',
+    'cd / &&',
+    'LIMA_WORKDIR=/',
+]
+for needle in required:
+    if needle not in text:
+        raise SystemExit(f"Expected egress helper safe-cwd snippet missing: {needle}")
+PY
 
 echo "Workcell invariant verification passed."

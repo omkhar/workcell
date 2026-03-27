@@ -303,10 +303,19 @@ profile_lima_dir() {
 }
 
 run_host_colima() {
+  local safe_cwd="${WORKCELL_HOST_COMMAND_CWD:-${REAL_HOME:-/}}"
+
+  [[ "$#" -gt 0 ]] || return 0
   if [[ -z "${HOST_COLIMA_BIN}" ]]; then
     HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
   fi
-  HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+  if [[ ! -d "${safe_cwd}" ]]; then
+    safe_cwd="/"
+  fi
+  (
+    cd "${safe_cwd}" &&
+      HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+  )
 }
 
 colima_profile_status() {
@@ -434,6 +443,19 @@ maybe_reap_stale_profile_processes() {
   fi
 }
 
+refresh_managed_profile() {
+  local message="$1"
+
+  echo "${message}" >&2
+  stash_profile_audit_log "${COLIMA_PROFILE}"
+  run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
+  rm -rf "${PROFILE_DIR}"
+  PROFILE_WAS_REFRESHED=1
+  PROFILE_PREEXISTED=0
+  PROFILE_MARKER_WORKSPACE=""
+  PROFILE_RUNNING=0
+}
+
 sanitize_host_docker_env() {
   unset DOCKER_CONTEXT
   unset DOCKER_HOST
@@ -494,7 +516,7 @@ cleanup() {
   fi
 
   if [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
-    "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   fi
 
   if [[ -n "${PROFILE_LOCK_DIR}" ]] && [[ -d "${PROFILE_LOCK_DIR}" ]]; then
@@ -531,6 +553,21 @@ profile_image_marker_path() {
 
   validate_colima_profile_name "${profile}"
   printf '%s/workcell.image-ready\n' "$(profile_dir "${profile}")"
+}
+
+refresh_profile_state() {
+  local profile="$1"
+
+  PROFILE_PREEXISTED=0
+  PROFILE_MARKER_WORKSPACE=""
+
+  if [[ -d "$(profile_dir "${profile}")" ]]; then
+    PROFILE_PREEXISTED=1
+  fi
+
+  if [[ -f "$(profile_marker_path "${profile}")" ]]; then
+    PROFILE_MARKER_WORKSPACE="$(read_profile_marker_workspace "${profile}" || true)"
+  fi
 }
 
 profile_image_marker_value() {
@@ -1050,8 +1087,8 @@ capture_session_audit_state() {
     return 0
   fi
   mkdir -p "$(dirname "${SESSION_AUDIT_STATE_FILE}")"
-  if ! "${HOST_DOCKER_BIN}" cp "${container_name}:${SESSION_AUDIT_CONTAINER_FILE}" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
-    if ! "${HOST_DOCKER_BIN}" cp "${container_name}:/run/workcell/session-assurance" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
+  if ! run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:${SESSION_AUDIT_CONTAINER_FILE}" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
+    if ! run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:/run/workcell/session-assurance" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
       :
     fi
   fi
@@ -1087,7 +1124,7 @@ write_profile_image_marker() {
 }
 
 current_image_id() {
-  "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
 }
 
 current_profile_image_id() {
@@ -1096,7 +1133,7 @@ current_profile_image_id() {
 
   socket_path="${COLIMA_STATE_ROOT}/${profile}/docker.sock"
   [[ -S "${socket_path}" ]] || return 0
-  DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
+  run_workcell_docker_client_command env DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
 }
 
 emit_command() {
@@ -1955,12 +1992,20 @@ validate_workspace() {
 run_clean_host_command() {
   local home="${REAL_HOME:-/}"
 
-  env -i \
-    PATH="${TRUSTED_HOST_PATH}" \
-    HOME="${home}" \
-    LC_ALL=C \
-    LANG=C \
-    "$@"
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${home}" ]]; then
+    home="/"
+  fi
+
+  (
+    cd "${home}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${home}" \
+        LC_ALL=C \
+        LANG=C \
+        "$@"
+  )
 }
 
 validate_mode_requirements() {
@@ -2365,6 +2410,39 @@ validate_colima_runtime_mounts() {
   ' "${lima_path}" "${workspace}" "${profile}"
 }
 
+workspace_runtime_probe_path() {
+  local workspace="$1"
+  local marker=""
+
+  if [[ -e "${workspace}/.git" ]]; then
+    printf '%s/.git\n' "${workspace}"
+    return 0
+  fi
+
+  for marker in AGENTS.md CLAUDE.md GEMINI.md; do
+    if [[ -e "${workspace}/${marker}" ]]; then
+      printf '%s/%s\n' "${workspace}" "${marker}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+validate_colima_runtime_workspace_view() {
+  local profile="$1"
+  local workspace="$2"
+  local probe_path=""
+
+  probe_path="$(workspace_runtime_probe_path "${workspace}" || true)"
+  [[ -n "${probe_path}" ]] || return 0
+
+  if ! run_host_colima ssh --profile "${profile}" -- test -e "${probe_path}" >/dev/null 2>&1; then
+    echo "Managed Colima profile ${profile} does not expose expected workspace content inside the VM: ${probe_path}" >&2
+    return 1
+  fi
+}
+
 validate_colima_profile_config() {
   local profile="$1"
   local workspace="$2"
@@ -2426,25 +2504,45 @@ validate_colima_profile() {
   status="$(run_host_colima status --profile "${profile}" 2>&1)"
   echo "${status}" | grep -q "Virtualization.Framework" || {
     echo "Colima profile ${profile} is not using Virtualization.Framework." >&2
-    exit 2
+    return 1
   }
   echo "${status}" | grep -q "mountType: virtiofs" || {
     echo "Colima profile ${profile} is not using virtiofs." >&2
-    exit 2
+    return 1
   }
   echo "${status}" | grep -q "runtime: docker" || {
     echo "Colima profile ${profile} is not using Docker runtime." >&2
-    exit 2
+    return 1
   }
 
-  validate_colima_profile_config "${profile}" "${workspace}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"
-  validate_colima_runtime_mounts "${profile}" "${workspace}"
+  if ! validate_colima_profile_config "${profile}" "${workspace}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
+    return 1
+  fi
+  if ! validate_colima_runtime_mounts "${profile}" "${workspace}"; then
+    return 1
+  fi
+  validate_colima_runtime_workspace_view "${profile}" "${workspace}"
+}
+
+start_managed_profile() {
+  maybe_reap_stale_profile_processes "${COLIMA_PROFILE}"
+  run_command_with_debug_log colima-start \
+    run_host_colima start \
+    --profile "${COLIMA_PROFILE}" \
+    --vm-type vz \
+    --mount "${WORKSPACE}:w" \
+    --mount-type virtiofs \
+    --runtime docker \
+    --cpu "${COLIMA_CPU}" \
+    --memory "${COLIMA_MEMORY}" \
+    --disk "${COLIMA_DISK}"
+  PROFILE_RUNNING=1
 }
 
 validate_runtime_security_posture() {
   local security_options_json=""
 
-  security_options_json="$("${HOST_DOCKER_BIN}" info --format '{{json .SecurityOptions}}' 2>/dev/null || true)"
+  security_options_json="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" info --format '{{json .SecurityOptions}}' 2>/dev/null || true)"
   [[ -n "${security_options_json}" ]] || {
     echo "Workcell could not inspect Docker security options for the managed runtime." >&2
     exit 2
@@ -3456,13 +3554,7 @@ if [[ -n "${WORKCELL_EGRESS_HELPER:-}" ]]; then
   exit 2
 fi
 
-if [[ -d "${PROFILE_DIR}" ]]; then
-  PROFILE_PREEXISTED=1
-fi
-
-if [[ -f "${PROFILE_MARKER}" ]]; then
-  PROFILE_MARKER_WORKSPACE="$(read_profile_marker_workspace "${COLIMA_PROFILE}" || true)"
-fi
+refresh_profile_state "${COLIMA_PROFILE}"
 
 if [[ "${AUTH_STATUS}" -eq 1 ]]; then
   print_injection_status
@@ -3526,6 +3618,8 @@ fail_fast_for_missing_gemini_auth "$@"
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   export COLIMA_HOME="${COLIMA_STATE_ROOT}"
   acquire_profile_lock "${COLIMA_PROFILE}"
+  # Another launch may have created or repaired the profile while we waited.
+  refresh_profile_state "${COLIMA_PROFILE}"
 fi
 
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
@@ -3728,22 +3822,19 @@ fi
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
   profile_config_path="${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/colima.yaml"
   lima_config_path="${COLIMA_STATE_ROOT}/_lima/colima-${COLIMA_PROFILE}/lima.yaml"
+  profile_status=""
   if [[ ! -f "${profile_config_path}" ]] ||
     ! validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
-    echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources." >&2
-    stash_profile_audit_log "${COLIMA_PROFILE}"
-    run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
-    rm -rf "${PROFILE_DIR}"
-    PROFILE_WAS_REFRESHED=1
-    PROFILE_PREEXISTED=0
+    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources."
   elif [[ ! -f "${lima_config_path}" ]] ||
     ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"; then
-    echo "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts." >&2
-    stash_profile_audit_log "${COLIMA_PROFILE}"
-    run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
-    rm -rf "${PROFILE_DIR}"
-    PROFILE_WAS_REFRESHED=1
-    PROFILE_PREEXISTED=0
+    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts."
+  else
+    profile_status="$(colima_profile_status "${COLIMA_PROFILE}" || true)"
+    if [[ "${profile_status}" == "Running" ]] &&
+      ! validate_colima_runtime_workspace_view "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents."
+    fi
   fi
 fi
 
@@ -3753,20 +3844,16 @@ fi
 
 maybe_fail_after_profile_refresh_for_tests
 
-maybe_reap_stale_profile_processes "${COLIMA_PROFILE}"
-run_command_with_debug_log colima-start \
-  run_host_colima start \
-  --profile "${COLIMA_PROFILE}" \
-  --vm-type vz \
-  --mount "${WORKSPACE}:w" \
-  --mount-type virtiofs \
-  --runtime docker \
-  --cpu "${COLIMA_CPU}" \
-  --memory "${COLIMA_MEMORY}" \
-  --disk "${COLIMA_DISK}"
-PROFILE_RUNNING=1
-
-validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}"
+start_managed_profile
+if ! validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+  if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ "${PROFILE_WAS_REFRESHED}" -eq 0 ]]; then
+    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view."
+    start_managed_profile
+    validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}" || exit 2
+  else
+    exit 2
+  fi
+fi
 mkdir -p "${PROFILE_DIR}"
 restore_profile_audit_log "${COLIMA_PROFILE}"
 ensure_session_audit_state
@@ -3850,7 +3937,7 @@ fi
 append_launch_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 
 DOCKER_STATUS=0
-"${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
   if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
     echo "Full transcript capture requires an interactive terminal." >&2
@@ -3863,7 +3950,7 @@ else
 fi
 capture_session_audit_state "${CONTAINER_NAME}"
 finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${DOCKER_STATUS}"
-"${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 if [[ "${FINAL_SESSION_ASSURANCE:-}" == "lower-assurance-package-mutation" ]]; then
   echo "Workcell warning: this session ended lower-assurance because package-manager mutations ran as root inside the container." >&2
 fi

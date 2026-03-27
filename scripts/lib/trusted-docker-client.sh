@@ -28,6 +28,30 @@ copy_workcell_docker_state_tree() {
   cp -R "${source_dir}/." "${destination_dir}/"
 }
 
+sanitize_workcell_docker_buildx_state() {
+  local buildx_dir="$1"
+
+  [[ -d "${buildx_dir}" ]] || return 0
+  # Buildx refs cache prior local build roots and Dockerfile paths. Reusing
+  # them inside a remapped Docker/Colima context can emit stale host-path cd
+  # failures before the real build starts.
+  rm -rf "${buildx_dir}/refs"
+}
+
+run_workcell_docker_client_command() {
+  local safe_cwd="${WORKCELL_DOCKER_CLIENT_CWD:-${HOME:-/}}"
+
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${safe_cwd}" ]]; then
+    safe_cwd="/"
+  fi
+
+  (
+    cd "${safe_cwd}" &&
+      "$@"
+  )
+}
+
 select_workcell_trusted_buildx() {
   local candidate
 
@@ -58,6 +82,7 @@ setup_workcell_trusted_docker_client() {
 
   copy_workcell_docker_state_tree "${real_home}/.docker/contexts" "${WORKCELL_DOCKER_CONFIG}/contexts"
   copy_workcell_docker_state_tree "${real_home}/.docker/buildx" "${WORKCELL_DOCKER_CONFIG}/buildx"
+  sanitize_workcell_docker_buildx_state "${WORKCELL_DOCKER_CONFIG}/buildx"
   rm -rf "${WORKCELL_DOCKER_CONFIG}/cli-plugins"
 
   export HOME="${WORKCELL_DOCKER_HOME}"
@@ -84,12 +109,12 @@ ensure_workcell_trusted_buildx() {
 
 docker_context_exists() {
   local context_name="$1"
-  docker context inspect "${context_name}" >/dev/null 2>&1
+  run_workcell_docker_client_command docker context inspect "${context_name}" >/dev/null 2>&1
 }
 
 docker_context_is_healthy() {
   local context_name="$1"
-  docker --context "${context_name}" info >/dev/null 2>&1
+  run_workcell_docker_client_command docker --context "${context_name}" info >/dev/null 2>&1
 }
 
 select_workcell_docker_context() {
@@ -132,9 +157,9 @@ select_workcell_docker_context() {
 buildx_cmd() {
   ensure_workcell_trusted_buildx
   if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
-    DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}" "${WORKCELL_TRUSTED_BUILDX_BIN}" "$@"
+    run_workcell_docker_client_command env DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}" "${WORKCELL_TRUSTED_BUILDX_BIN}" "$@"
   else
-    "${WORKCELL_TRUSTED_BUILDX_BIN}" "$@"
+    run_workcell_docker_client_command "${WORKCELL_TRUSTED_BUILDX_BIN}" "$@"
   fi
 }
 
