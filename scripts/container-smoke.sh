@@ -668,7 +668,9 @@ run_container_with_injection_bundle_stdin() {
 if [[ "${1:-}" == "--self-docker-probe" ]]; then
   require_tool docker
   setup_workcell_trusted_docker_client
-  select_docker_context
+  if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
+    select_docker_context
+  fi
   buildx_cmd version >/dev/null
   echo "container-smoke-docker-probe-ok"
   exit 0
@@ -1114,12 +1116,16 @@ test -x "$helper_path"
 grep -q "/opt/workcell/host-inputs/credentials/claude-api-key.txt" "$helper_path"
 test ! -e "$HOME/.claude/workcell/claude-api-key"
 test "$("$helper_path")" = "claude-smoke-key"
+grep -q "\"token\": \"claude-auth\"" "$HOME/.claude/.claude.json"
+test ! -L "$HOME/.claude/.claude.json"
+grep -q "\"token\": \"claude-auth\"" "$HOME/.claude.json"
+test ! -L "$HOME/.claude.json"
 grep -q "\"token\": \"claude-auth\"" "$HOME/.claude/.credentials.json"
 test ! -L "$HOME/.claude/.credentials.json"
 test ! -L "$HOME/.mcp.json"
 grep -q "\"stub\"" "$HOME/.mcp.json"
 grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
-rm -f "$HOME/.claude/settings.json" "$HOME/.claude/.credentials.json" "$HOME/.mcp.json"
+rm -f "$HOME/.claude/settings.json" "$HOME/.claude/.claude.json" "$HOME/.claude.json" "$HOME/.claude/.credentials.json" "$HOME/.mcp.json"
 claude --version >/dev/null
 grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
 helper_path="$(jq -r '.apiKeyHelper' "$HOME/.claude/settings.json")"
@@ -1127,6 +1133,8 @@ test -x "$helper_path"
 grep -q "/opt/workcell/host-inputs/credentials/claude-api-key.txt" "$helper_path"
 test ! -e "$HOME/.claude/workcell/claude-api-key"
 test "$("$helper_path")" = "claude-smoke-key"
+grep -q "\"token\": \"claude-auth\"" "$HOME/.claude/.claude.json"
+grep -q "\"token\": \"claude-auth\"" "$HOME/.claude.json"
 grep -q "\"token\": \"claude-auth\"" "$HOME/.claude/.credentials.json"
 grep -q "\"stub\"" "$HOME/.mcp.json"
 INNER

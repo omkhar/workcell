@@ -59,6 +59,55 @@ PERSISTABLE_KEYS: dict[str, dict[str, str]] = {
 
 PROBEABLE_KEYS: dict[str, dict[str, str]] = dict(PERSISTABLE_KEYS)
 
+CLAUDE_GLOBAL_CONFIG_MARKERS = frozenset(
+    {
+        "oauthAccount",
+        "projects",
+        "installMethod",
+        "numStartups",
+        "tipsHistory",
+        "cachedGrowthBookFeatures",
+    }
+)
+
+CLAUDE_GLOBAL_CONFIG_VOLATILE_TOP_LEVEL_KEYS = frozenset(
+    {
+        "additionalModelOptionsCache",
+        "btwUseCount",
+        "cachedChromeExtensionInstalled",
+        "cachedExtraUsageDisabledReason",
+        "cachedGrowthBookFeatures",
+        "changelogLastFetched",
+        "clientDataCache",
+        "githubRepoPaths",
+        "groveConfigCache",
+        "hasShownOpus46Notice",
+        "lastReleaseNotesSeen",
+        "numStartups",
+        "projects",
+        "promptQueueUseCount",
+        "skillUsage",
+        "tipsHistory",
+        "voiceNoticeSeenCount",
+    }
+)
+
+CLAUDE_LEGACY_AUTH_MARKERS = frozenset(
+    {
+        "access_token",
+        "account_id",
+        "refresh_token",
+    }
+)
+
+CLAUDE_GLOBAL_AUTH_IDENTITY_MARKERS = frozenset(
+    {
+        "accountUuid",
+        "emailAddress",
+        "organizationUuid",
+    }
+)
+
 
 def die(message: str) -> NoReturn:
     raise SystemExit(message)
@@ -99,6 +148,21 @@ def require_regular_file(path: Path, label: str) -> None:
         die(f"{label} must point at a file: {path}")
 
 
+def validate_claude_auth_value(source: Path) -> dict[str, object]:
+    value = RENDER_HELPERS.validate_json_object_file(source, PROBEABLE_KEYS["claude_auth"]["label"])
+    if any(marker in value for marker in CLAUDE_LEGACY_AUTH_MARKERS):
+        return value
+
+    oauth_account = value.get("oauthAccount")
+    if isinstance(oauth_account, dict) and bool(CLAUDE_GLOBAL_AUTH_IDENTITY_MARKERS & set(oauth_account)):
+        return value
+
+    die(
+        "credentials.claude_auth must contain an authenticated Claude session payload "
+        f"or Claude global config with oauthAccount identity metadata: {source}"
+    )
+
+
 def validate_saved_credential(key: str, source: Path) -> dict[str, object]:
     label = PROBEABLE_KEYS[key]["label"]
     require_regular_file(source, label)
@@ -113,7 +177,7 @@ def validate_saved_credential(key: str, source: Path) -> dict[str, object]:
     if key == "codex_auth":
         RENDER_HELPERS.validate_json_object_file(source, "credentials.codex_auth")
     elif key == "claude_auth":
-        RENDER_HELPERS.validate_json_object_file(source, "credentials.claude_auth")
+        validate_claude_auth_value(source)
     elif key == "claude_api_key":
         if not source.read_text(encoding="utf-8").strip():
             die(f"credentials.claude_api_key must not be empty: {source}")
@@ -157,10 +221,27 @@ def normalized_gemini_env_values(source: Path) -> dict[str, object]:
     return normalized
 
 
+def looks_like_claude_global_config(value: object) -> bool:
+    return isinstance(value, dict) and bool(CLAUDE_GLOBAL_CONFIG_MARKERS & set(value))
+
+
+def normalized_claude_auth_value(source: Path) -> object:
+    value = validate_claude_auth_value(source)
+    if not looks_like_claude_global_config(value):
+        return value
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in CLAUDE_GLOBAL_CONFIG_VOLATILE_TOP_LEVEL_KEYS
+    }
+
+
 def normalized_credential_value(key: str, source: Path) -> object:
     validate_saved_credential(key, source)
 
-    if key in {"codex_auth", "claude_auth", "gemini_oauth", "gcloud_adc"}:
+    if key == "claude_auth":
+        return normalized_claude_auth_value(source)
+    if key in {"codex_auth", "gemini_oauth", "gcloud_adc"}:
         return RENDER_HELPERS.validate_json_object_file(source, PROBEABLE_KEYS[key]["label"])
     if key == "claude_api_key":
         return source.read_text(encoding="utf-8").strip()

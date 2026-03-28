@@ -2261,7 +2261,11 @@ provider_candidate_container_paths() {
     claude)
       # Workcell never extracts plaintext API keys from the live session.
       # Claude recovery is promoted through provider-written auth files only.
-      # The wrapper points Claude at ~/.claude first, so prefer that file.
+      # Current Claude releases persist auth/config in ~/.claude/.claude.json
+      # when CLAUDE_CONFIG_DIR points at ~/.claude. Keep host/root and legacy
+      # paths for compatibility with older builds and imported host state.
+      printf 'claude_auth\t/state/agent-home/.claude/.claude.json\n'
+      printf 'claude_auth\t/state/agent-home/.claude.json\n'
       printf 'claude_auth\t/state/agent-home/.claude/.credentials.json\n'
       printf 'claude_auth\t/state/agent-home/.config/claude-code/auth.json\n'
       ;;

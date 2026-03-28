@@ -435,6 +435,8 @@ class RenderInjectionBundleTests(unittest.TestCase):
             "~/.mcp.json",
             "~/.gemini/projects.json",
             "~/.gemini/trustedFolders.json",
+            "~/.claude/.claude.json",
+            "~/.claude.json",
             "~/.claude/.credentials.json",
         ):
             with self.assertRaises(SystemExit):
