@@ -1361,7 +1361,6 @@ run_publish_host_command_in_dir() {
         "$@"
   )
 }
-
 validate_publish_snapshot_name() {
   case "$1" in
     index | worktree) ;;
@@ -1402,7 +1401,6 @@ validate_publish_base_name() {
     exit 2
   fi
 }
-
 publish_pr_load_text_arg() {
   local inline_value="$1"
   local file_value="$2"
@@ -1458,7 +1456,6 @@ publish_pr_has_worktree_changes() {
 
   [[ -n "$(run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" status --short --untracked-files=all)" ]]
 }
-
 publish_pr_has_staged_changes() {
   local workspace="$1"
 
@@ -1595,7 +1592,6 @@ publish_pr_main() {
     echo "publish-pr found no staged changes to publish in ${resolved_workspace}." >&2
     exit 2
   fi
-
   if [[ -n "${commit_message_file}" ]]; then
     resolved_commit_message_file="$(resolve_existing_file_or_die "${commit_message_file}" "commit-message")"
   else
