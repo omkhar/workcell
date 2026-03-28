@@ -1,0 +1,55 @@
+{
+  "general": {
+    "disableAutoUpdate": true,
+    "disableUpdateNag": true,
+    "checkpointing": {
+      "enabled": false
+    }
+  },
+  "privacy": {
+    "usageStatisticsEnabled": false
+  },
+  "ide": {
+    "enabled": false
+  },
+  "context": {
+    "fileName": [],
+    "loadFromIncludeDirectories": false,
+    "fileFiltering": {
+      "respectGitIgnore": true,
+      "respectGeminiIgnore": true,
+      "enableRecursiveFileSearch": true
+    }
+  },
+  "tools": {
+    "sandbox": false,
+    "shell": {
+      "enableInteractiveShell": false
+    },
+    "allowed": []
+  },
+  "mcp": {
+    "allowed": []
+  },
+  "security": {
+    "folderTrust": {
+      "enabled": false
+    }
+  },
+  "advanced": {
+    "excludedEnvVars": [
+      "SSH_AUTH_SOCK",
+      "SSH_AGENT_PID",
+      "DOCKER_HOST",
+      "DOCKER_CERT_PATH",
+      "DOCKER_TLS_VERIFY",
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "GOOGLE_API_KEY",
+      "GEMINI_API_KEY",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN"
+    ]
+  }
+}
