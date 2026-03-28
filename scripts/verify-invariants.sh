@@ -5719,4 +5719,72 @@ for needle in required:
         raise SystemExit(f"Expected egress helper safe-cwd snippet missing: {needle}")
 PY
 
+python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = ["--inspect", "print_inspect_state", "codex", "claude", "gemini"]
+for token in required:
+    if token not in text:
+        raise SystemExit(f"Expected workcell to contain --inspect contract token: {token}")
+PY
+
+python3 - "${ROOT_DIR}/scripts/workcell" "${ROOT_DIR}/runtime/container/assurance.sh" <<'PY'
+import sys
+from pathlib import Path
+
+content = "".join(Path(p).read_text(encoding="utf-8") for p in sys.argv[1:])
+required = ["workspace", "network_policy", "session_assurance_initial", "codex", "claude", "gemini"]
+for field in required:
+    if field not in content:
+        raise SystemExit(f"Expected audit log field referenced in control scripts: {field}")
+PY
+
+if [[ ! -d "${ROOT_DIR}/docs/examples" ]]; then
+  echo "docs/examples/ must exist" >&2
+  exit 1
+fi
+
+if [[ ! -f "${ROOT_DIR}/tests/scenarios/manifest.json" ]]; then
+  echo "tests/scenarios/manifest.json must exist" >&2
+  exit 1
+fi
+
+for scenario_script in \
+  "${ROOT_DIR}/scripts/run-scenario-tests.sh" \
+  "${ROOT_DIR}/scripts/verify-scenario-coverage.sh" \
+  "${ROOT_DIR}/scripts/verify-control-plane-parity.sh"; do
+  if [[ ! -x "${scenario_script}" ]]; then
+    echo "Expected executable scenario script: ${scenario_script}" >&2
+    exit 1
+  fi
+done
+
+if ! python3 - "${ROOT_DIR}/adapters/claude/managed-settings.json" <<'PY'; then
+import json, pathlib, sys
+settings = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+hooks = settings.get("hooks", {})
+pre_tool = hooks.get("PreToolUse", [])
+has_bash_guard = any(
+    h.get("hooks", [{}])[0].get("command", "").endswith("guard-bash.sh")
+    for h in pre_tool
+    if h.get("hooks")
+)
+if not has_bash_guard:
+    raise SystemExit("guard-bash.sh hook must be registered in managed-settings.json PreToolUse")
+PY
+  exit 1
+fi
+
+for scenario_script_basename in \
+  "run-scenario-tests.sh" \
+  "verify-scenario-coverage.sh" \
+  "verify-control-plane-parity.sh"; do
+  if ! grep -Fq "${scenario_script_basename}" "${ROOT_DIR}/scripts/validate-repo.sh"; then
+    echo "validate-repo.sh must reference ${scenario_script_basename}" >&2
+    exit 1
+  fi
+done
+
 echo "Workcell invariant verification passed."
