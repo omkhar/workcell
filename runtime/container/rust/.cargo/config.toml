@@ -1,0 +1,16 @@
+[target.'cfg(target_os = "linux")']
+rustflags = [
+  "-C",
+  "debuginfo=0",
+  "-C",
+  "link-arg=-Wl,--build-id=none",
+  "--remap-path-prefix=/workspace=.",
+  "--remap-path-prefix=/tmp=.",
+  "--remap-path-prefix=/workcell-rust=.",
+]
+
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

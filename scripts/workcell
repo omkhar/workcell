@@ -1,0 +1,5135 @@
+#!/usr/bin/env -S -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash
+# shellcheck shell=bash
+set -euo pipefail
+
+readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+export PATH="${TRUSTED_HOST_PATH}"
+scrub_host_process_env() {
+  local env_name
+
+  unset BASH_ENV ENV
+  unset WORKCELL_TEST_FAIL_AFTER_PROFILE_REFRESH
+  unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH PYTHONSTARTUP
+  unset RUBYOPT RUBYLIB GEM_HOME GEM_PATH
+  unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT
+  unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT LD_DEBUG LD_DEBUG_OUTPUT LD_BIND_NOW LD_ASSUME_KERNEL
+
+  for env_name in $(compgen -v); do
+    case "${env_name}" in
+      DYLD_*)
+        unset "${env_name}"
+        ;;
+    esac
+  done
+}
+
+scrub_host_process_env
+
+resolve_self_path() {
+  local source_path="${BASH_SOURCE[0]}"
+  local source_dir=""
+  local link_target=""
+
+  if [[ "${source_path}" != */* ]]; then
+    source_path="$(command -v -- "${source_path}")"
+  fi
+
+  while [[ -L "${source_path}" ]]; do
+    source_dir="$(cd -P "$(dirname "${source_path}")" && pwd)"
+    link_target="$(readlink "${source_path}")"
+    if [[ "${link_target}" == /* ]]; then
+      source_path="${link_target}"
+    else
+      source_path="${source_dir}/${link_target}"
+    fi
+  done
+
+  printf '%s\n' "${source_path}"
+}
+
+ROOT_DIR="$(cd -P "$(dirname "$(resolve_self_path)")/.." && pwd)"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/runtime/container/assurance.sh"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+resolve_fixed_host_tool() {
+  local name="$1"
+  shift
+  local candidate
+
+  for candidate in "$@"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Missing trusted host tool: ${name}" >&2
+  exit 1
+}
+
+HOST_PYTHON3_BIN="$(resolve_fixed_host_tool python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3)"
+REAL_HOME="$(
+  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - <<'PY'
+import os
+import pwd
+print(pwd.getpwuid(os.getuid()).pw_dir)
+PY
+)"
+HOST_GIT_BIN=""
+HOST_COLIMA_BIN=""
+HOST_DOCKER_BIN=""
+HOST_RUBY_BIN=""
+COLIMA_STATE_ROOT="${REAL_HOME}/.colima"
+PROFILE_PREEXISTED=0
+PROFILE_RUNNING=0
+PROFILE_VALIDATED=0
+COLIMA_PROFILE=""
+BOOTSTRAP_APPLIED=0
+SESSION_AUDIT_DIR=""
+SESSION_AUDIT_STATE_FILE=""
+SESSION_AUDIT_CONTAINER_FILE=""
+FINAL_SESSION_ASSURANCE=""
+INJECTION_POLICY_SHA256=""
+INJECTION_CREDENTIAL_KEYS=""
+INJECTION_EXTRA_ENDPOINTS=""
+INJECTION_SSH_ENABLED=0
+INJECTION_SECRET_COPY_TARGETS=""
+PROFILE_LOCK_DIR=""
+CREDENTIAL_PROMOTION_TMP_ROOT=""
+
+usage() {
+  cat <<'EOF'
+Usage: workcell [options] [-- provider-args...]
+       workcell publish-pr [options]
+
+Options:
+  --agent codex|claude|gemini   Provider to run (required)
+  --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
+  --agent-arg VALUE             Additional provider argv to append (repeatable)
+  --cache-profile off|standard  Opt-in persistent non-secret cache plane (default: off)
+  --codex-rules-mutability readonly|session
+                                Codex execpolicy session mutability (default: readonly)
+  --container-mutability ephemeral|readonly
+                                Runtime rootfs posture (default: ephemeral on strict/build/breakglass)
+  --container-cpu COUNT         Inner container CPU limit (default: unmanaged)
+  --container-memory SIZE       Inner container memory limit (default: profile value)
+  --injection-policy PATH       Host-side injection policy to stage into each session
+  --no-default-injection-policy Ignore ~/.config/workcell/injection-policy.toml for this launch
+  --log-level normal|debug      Launcher/build verbosity (default: normal)
+  --debug-log PATH              Persist full launcher and container stdout/stderr to PATH
+  --audit-transcript PATH       Persist full interactive terminal transcript to PATH
+  --ui cli|gui                  Surface to launch (default: cli)
+  --mode strict|build|breakglass
+                                Runtime profile (default: strict)
+  --doctor                      Validate host/workspace/profile state and print remediation
+  --inspect                     Print derived profile and launch state, then exit
+  --logs audit|debug|transcript Print the latest retained log of the selected type
+  --auth-status                 Print selected injection/auth posture and exit
+  --gc                          Clean stale Workcell temp state and exit
+  --prepare                     Seed or refresh the prepared runtime image before launch
+  --prepare-only                Seed or refresh the prepared runtime image, then exit without launching
+  --repair-profile              Delete a conflicting unmanaged Colima profile before launch
+                                (implies --prepare on strict)
+  --ack-breakglass              Required with --mode breakglass
+  --ack-arbitrary-command       Required with --allow-arbitrary-command
+  --workspace PATH              Workspace to mount (default: current directory)
+  --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
+  --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
+  --allow-arbitrary-command     Launch the runtime image with a direct container entrypoint after --
+  --colima-profile NAME         Override derived Colima profile name
+  --vm-cpu COUNT                Colima VM CPU count (default: profile value)
+  --vm-memory GIB               Colima VM memory in GiB (default: profile value)
+  --vm-disk GIB                 Colima VM disk in GiB (default: profile value)
+  --rebuild                     Rebuild the runtime image before launch
+  --dry-run                     Print the selected runtime command and exit
+  -h, --help                    Show this help text
+  --ack-control-plane-vcs       Required with --allow-control-plane-vcs
+
+Workflows:
+  First run:
+    workcell --prepare --agent codex --workspace /path/to/repo
+    workcell --prepare --agent claude --workspace /path/to/repo
+    workcell --prepare --agent gemini --workspace /path/to/repo
+  Prewarm only:
+    workcell --prepare-only --agent codex --workspace /path/to/repo
+  Normal run:
+    workcell --agent codex --workspace /path/to/repo
+    workcell --agent claude --workspace /path/to/repo
+    workcell --agent gemini --workspace /path/to/repo
+  Repair a conflicting unmanaged profile:
+    workcell --repair-profile --agent codex --workspace /path/to/repo
+    workcell --repair-profile --agent claude --workspace /path/to/repo
+    workcell --repair-profile --agent gemini --workspace /path/to/repo
+  Operator actions:
+    workcell inspect --agent codex --workspace /path/to/repo
+    workcell doctor --agent codex --workspace /path/to/repo
+    workcell logs debug --colima-profile workcell-...
+    workcell auth-status --agent codex --workspace /path/to/repo
+    workcell publish-pr --workspace /path/to/repo --branch feature/name \
+      --title-file /path/to/pr-title.txt --body-file /path/to/pr-body.md \
+      --commit-message-file /path/to/commit-message.txt
+    workcell gc
+
+Workcell launches the selected provider directly inside the bounded runtime.
+There is no separate container attach/connect step after launch.
+Host-persisted debug logs and full transcripts are explicit lower-assurance
+operator choices and remain off by default.
+EOF
+}
+
+slugify() {
+  echo "$1" |
+    tr '[:upper:]' '[:lower:]' |
+    tr -cs 'a-z0-9' '-' |
+    sed -E 's/^-+//; s/-+$//; s/-+/-/g'
+}
+
+generate_session_suffix() {
+  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - <<'PY'
+import secrets
+
+print(secrets.token_hex(4))
+PY
+}
+
+lower_ascii() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+option_value_or_die() {
+  local option_name="$1"
+  local option_value="${2-}"
+
+  if [[ -z "${option_value}" ]] || [[ "${option_value}" == --* ]]; then
+    echo "Option ${option_name} requires a value." >&2
+    usage >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
+raw_option_value_or_die() {
+  local option_name="$1"
+  local option_value="${2-}"
+
+  if [[ -z "${option_value}" ]]; then
+    echo "Option ${option_name} requires a value." >&2
+    usage >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
+validate_agent_autonomy_name() {
+  case "$1" in
+    yolo | prompt) ;;
+    *)
+      echo "Unsupported agent autonomy mode: $1" >&2
+      echo "Use --agent-autonomy yolo or --agent-autonomy prompt." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_cache_profile_name() {
+  case "$1" in
+    off | standard) ;;
+    *)
+      echo "Unsupported cache profile: $1" >&2
+      echo "Use --cache-profile off or --cache-profile standard." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_codex_rules_mutability_name() {
+  case "$1" in
+    readonly | session) ;;
+    *)
+      echo "Unsupported Codex rules mutability: $1" >&2
+      echo "Use --codex-rules-mutability readonly or --codex-rules-mutability session." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_log_level_name() {
+  case "$1" in
+    normal | debug) ;;
+    *)
+      echo "Unsupported log level: $1" >&2
+      echo "Use --log-level normal or --log-level debug." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_logs_kind_name() {
+  case "$1" in
+    audit | debug | transcript) ;;
+    *)
+      echo "Unsupported log kind: $1" >&2
+      echo "Use --logs audit, --logs debug, or --logs transcript." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_colima_profile_name() {
+  local profile="$1"
+
+  if [[ ! "${profile}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+    echo "Invalid Colima profile name: ${profile}" >&2
+    echo "Use only letters, numbers, '.', '_', or '-' and do not include path separators." >&2
+    exit 2
+  fi
+
+  case "${profile}" in
+    . | ..)
+      echo "Invalid Colima profile name: ${profile}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+profile_dir() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
+}
+
+profile_lima_dir() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/_lima/colima-%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
+}
+
+run_host_colima() {
+  local safe_cwd="${WORKCELL_HOST_COMMAND_CWD:-${REAL_HOME:-/}}"
+
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ -z "${HOST_COLIMA_BIN}" ]]; then
+    HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
+  fi
+  if [[ ! -d "${safe_cwd}" ]]; then
+    safe_cwd="/"
+  fi
+  (
+    cd "${safe_cwd}" &&
+      HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+  )
+}
+
+colima_profile_status() {
+  local profile="$1"
+  local list_output=""
+
+  if ! list_output="$(run_host_colima list --json 2>/dev/null)"; then
+    return 1
+  fi
+  [[ -n "${list_output}" ]] || return 3
+
+  env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    PROFILE_NAME="${profile}" \
+    COLIMA_LIST_JSON="${list_output}" \
+    "${HOST_PYTHON3_BIN}" - <<'PY'
+import json
+import os
+import sys
+
+profile_name = os.environ.get("PROFILE_NAME", "")
+for line in os.environ.get("COLIMA_LIST_JSON", "").splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        sys.exit(1)
+    if record.get("name") != profile_name:
+        continue
+    status = record.get("status")
+    if isinstance(status, str) and status:
+        print(status)
+        sys.exit(0)
+    sys.exit(1)
+
+sys.exit(3)
+PY
+}
+
+profile_process_pids() {
+  local profile="$1"
+  local instance_name
+  local pid=""
+  local command=""
+
+  instance_name="colima-${profile}"
+  pgrep -f "${instance_name}" 2>/dev/null | while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    case "${command}" in
+      */limactl\ hostagent*"${instance_name}")
+        printf '%s\n' "${pid}"
+        ;;
+      ssh:\ *"${instance_name}"/ssh.sock\ \[mux\])
+        printf '%s\n' "${pid}"
+        ;;
+    esac
+  done | sort -u
+}
+
+reap_stale_profile_processes() {
+  local profile="$1"
+  local -a pids=()
+  local -a remaining=()
+  local pid=""
+  local deadline=0
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] && pids+=("${pid}")
+  done < <(profile_process_pids "${profile}")
+
+  if ((${#pids[@]} == 0)); then
+    return 0
+  fi
+
+  echo "Stopping stale Lima processes for profile ${profile}." >&2
+  kill "${pids[@]}" >/dev/null 2>&1 || true
+  deadline=$((SECONDS + 5))
+
+  while :; do
+    remaining=()
+    for pid in "${pids[@]}"; do
+      if kill -0 "${pid}" >/dev/null 2>&1; then
+        remaining+=("${pid}")
+      fi
+    done
+    if ((${#remaining[@]} == 0)); then
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      break
+    fi
+    sleep 1
+    pids=("${remaining[@]}")
+  done
+
+  kill -9 "${remaining[@]}" >/dev/null 2>&1 || true
+}
+
+maybe_reap_stale_profile_processes() {
+  local profile="$1"
+  local status=""
+  local status_rc=0
+
+  if status="$(colima_profile_status "${profile}")"; then
+    status_rc=0
+  else
+    status_rc=$?
+  fi
+
+  case "${status}" in
+    Running)
+      return 0
+      ;;
+    Stopped)
+      reap_stale_profile_processes "${profile}"
+      return 0
+      ;;
+  esac
+
+  if ((status_rc == 3)) && profile_process_pids "${profile}" | grep -q .; then
+    reap_stale_profile_processes "${profile}"
+  fi
+}
+
+refresh_managed_profile() {
+  local message="$1"
+
+  echo "${message}" >&2
+  stash_profile_audit_log "${COLIMA_PROFILE}"
+  run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
+  rm -rf "${PROFILE_DIR}"
+  PROFILE_WAS_REFRESHED=1
+  PROFILE_PREEXISTED=0
+  PROFILE_MARKER_WORKSPACE=""
+  PROFILE_RUNNING=0
+}
+
+sanitize_host_docker_env() {
+  unset DOCKER_CONTEXT
+  unset DOCKER_HOST
+  unset DOCKER_TLS
+  unset DOCKER_TLS_VERIFY
+  unset DOCKER_CERT_PATH
+  unset DOCKER_CLI_PLUGIN_EXTRA_DIRS
+  unset BUILDKIT_HOST
+  unset DOCKER_CONFIG
+  setup_workcell_trusted_docker_client
+}
+
+CONTROL_PLANE_SHADOW_ROOT=""
+INJECTION_BUNDLE_ROOT=""
+DIRECT_MOUNT_SPEC_PATH=""
+PROFILE_AUDIT_LOG_STASH=""
+PROFILE_WAS_REFRESHED=0
+PRESERVE_FAILED_PROFILE_STATE=0
+declare -a SHADOW_MOUNTS=()
+declare -a SHADOW_DEST_PATHS=()
+declare -a DIRECT_SOURCE_MOUNTS=()
+declare -a WORKSPACE_IMPORT_MOUNTS=()
+declare -a CACHE_MOUNTS=()
+declare -a RUNTIME_NETWORK_ARGS=()
+
+# shellcheck disable=SC2317,SC2329
+cleanup() {
+  if [[ -n "${CONTROL_PLANE_SHADOW_ROOT}" ]] && [[ -e "${CONTROL_PLANE_SHADOW_ROOT}" ]]; then
+    chmod -R u+w "${CONTROL_PLANE_SHADOW_ROOT}" 2>/dev/null || true
+    rm -rf "${CONTROL_PLANE_SHADOW_ROOT}"
+  fi
+
+  if [[ -n "${INJECTION_BUNDLE_ROOT}" ]] && [[ -e "${INJECTION_BUNDLE_ROOT}" ]]; then
+    chmod -R u+w "${INJECTION_BUNDLE_ROOT}" 2>/dev/null || true
+    rm -rf "${INJECTION_BUNDLE_ROOT}"
+  fi
+
+  if [[ -n "${DIRECT_MOUNT_SPEC_PATH}" ]] && [[ -e "${DIRECT_MOUNT_SPEC_PATH}" ]]; then
+    chmod u+w "${DIRECT_MOUNT_SPEC_PATH}" 2>/dev/null || true
+    rm -f "${DIRECT_MOUNT_SPEC_PATH}"
+  fi
+
+  if [[ -n "${PROFILE_AUDIT_LOG_STASH}" ]] && [[ -e "${PROFILE_AUDIT_LOG_STASH}" ]]; then
+    if [[ -n "${COLIMA_PROFILE:-}" ]]; then
+      restore_profile_audit_log "${COLIMA_PROFILE}" || true
+      PRESERVE_FAILED_PROFILE_STATE=1
+    fi
+  fi
+
+  if [[ -n "${PROFILE_AUDIT_LOG_STASH}" ]] && [[ -e "${PROFILE_AUDIT_LOG_STASH}" ]]; then
+    chmod u+w "${PROFILE_AUDIT_LOG_STASH}" 2>/dev/null || true
+    rm -f "${PROFILE_AUDIT_LOG_STASH}"
+  fi
+
+  if [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -e "${SESSION_AUDIT_DIR}" ]]; then
+    chmod -R u+w "${SESSION_AUDIT_DIR}" 2>/dev/null || true
+    rm -rf "${SESSION_AUDIT_DIR}"
+  fi
+
+  if [[ -n "${CREDENTIAL_PROMOTION_TMP_ROOT}" ]] && [[ -e "${CREDENTIAL_PROMOTION_TMP_ROOT}" ]]; then
+    chmod -R u+w "${CREDENTIAL_PROMOTION_TMP_ROOT}" 2>/dev/null || true
+    rm -rf "${CREDENTIAL_PROMOTION_TMP_ROOT}"
+  fi
+
+  if [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${PROFILE_LOCK_DIR}" ]] && [[ -d "${PROFILE_LOCK_DIR}" ]]; then
+    rm -rf "${PROFILE_LOCK_DIR}"
+  fi
+
+  cleanup_workcell_trusted_docker_client
+  if [[ "${PROFILE_RUNNING}" -eq 1 ]] &&
+    [[ -n "${COLIMA_PROFILE}" ]] &&
+    [[ -n "${HOST_COLIMA_BIN}" ]]; then
+    if [[ "${PROFILE_VALIDATED}" -eq 0 ]] && [[ "${PROFILE_PREEXISTED}" -eq 0 ]]; then
+      if [[ "${PRESERVE_FAILED_PROFILE_STATE}" -eq 1 ]]; then
+        run_host_colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
+      else
+        run_host_colima delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
+      fi
+    else
+      run_host_colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+trap cleanup EXIT
+
+profile_marker_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/workcell.managed\n' "$(profile_dir "${profile}")"
+}
+
+profile_image_marker_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/workcell.image-ready\n' "$(profile_dir "${profile}")"
+}
+
+refresh_profile_state() {
+  local profile="$1"
+
+  PROFILE_PREEXISTED=0
+  PROFILE_MARKER_WORKSPACE=""
+
+  if [[ -d "$(profile_dir "${profile}")" ]]; then
+    PROFILE_PREEXISTED=1
+  fi
+
+  if [[ -f "$(profile_marker_path "${profile}")" ]]; then
+    PROFILE_MARKER_WORKSPACE="$(read_profile_marker_workspace "${profile}" || true)"
+  fi
+}
+
+profile_image_marker_value() {
+  local profile="$1"
+  local key="$2"
+  local marker_path=""
+
+  marker_path="$(profile_image_marker_path "${profile}")"
+  [[ -f "${marker_path}" ]] || return 1
+  sed -n "s/^${key}=//p" "${marker_path}" | head -n1
+}
+
+profile_audit_log_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/workcell.audit.log\n' "$(profile_dir "${profile}")"
+}
+
+profile_lock_dir_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/locks/%s.lock\n' "${COLIMA_STATE_ROOT}" "${profile}"
+}
+
+profile_latest_log_pointer_path() {
+  local profile="$1"
+  local kind="$2"
+
+  validate_colima_profile_name "${profile}"
+  case "${kind}" in
+    debug | transcript) ;;
+    *)
+      echo "Unsupported latest log pointer kind: ${kind}" >&2
+      exit 2
+      ;;
+  esac
+  printf '%s/workcell.latest-%s-log\n' "$(profile_dir "${profile}")" "${kind}"
+}
+
+write_latest_log_pointer() {
+  local profile="$1"
+  local kind="$2"
+  local path="$3"
+  local pointer_path=""
+
+  [[ -n "${path}" ]] || return 0
+  pointer_path="$(profile_latest_log_pointer_path "${profile}" "${kind}")"
+  mkdir -p "$(dirname "${pointer_path}")"
+  umask 077
+  printf '%s\n' "${path}" >"${pointer_path}"
+  chmod 0600 "${pointer_path}" 2>/dev/null || true
+}
+
+read_latest_log_pointer() {
+  local profile="$1"
+  local kind="$2"
+  local pointer_path=""
+
+  pointer_path="$(profile_latest_log_pointer_path "${profile}" "${kind}")"
+  [[ -f "${pointer_path}" ]] || return 1
+  head -n1 "${pointer_path}"
+}
+
+cleanup_stale_latest_log_pointers() {
+  local colima_root="$1"
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${colima_root}" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).expanduser()
+if not root.exists():
+    raise SystemExit(0)
+
+uid = os.getuid()
+for profile_dir in root.iterdir():
+    if not profile_dir.is_dir() or profile_dir.is_symlink():
+        continue
+    for pointer_name in ("workcell.latest-debug-log", "workcell.latest-transcript-log"):
+        pointer_path = profile_dir / pointer_name
+        try:
+            stat_result = pointer_path.lstat()
+        except FileNotFoundError:
+            continue
+        if stat_result.st_uid != uid or pointer_path.is_symlink():
+            continue
+        try:
+            lines = pointer_path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            continue
+        target_path = Path(lines[0]).expanduser() if lines else None
+        if target_path is None or not target_path.exists():
+            pointer_path.unlink(missing_ok=True)
+PY
+}
+
+profile_lock_is_stale() {
+  local lock_dir="$1"
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${lock_dir}" <<'PY'
+import json
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+lock_dir = Path(sys.argv[1])
+owner_path = lock_dir / "owner.json"
+if not owner_path.is_file():
+    print("1")
+    raise SystemExit(0)
+
+try:
+    owner = json.loads(owner_path.read_text(encoding="utf-8"))
+    pid = int(owner["pid"])
+    started = str(owner["started"])
+except Exception:
+    print("1")
+    raise SystemExit(0)
+
+try:
+    os.kill(pid, 0)
+except OSError:
+    print("1")
+    raise SystemExit(0)
+
+observed = subprocess.check_output(
+    ["ps", "-o", "lstart=", "-p", str(pid)],
+    text=True,
+    stderr=subprocess.DEVNULL,
+).strip()
+print("0" if observed == started else "1")
+PY
+}
+
+acquire_profile_lock() {
+  local profile="$1"
+  local lock_dir=""
+  local lock_parent=""
+  local attempts=0
+
+  lock_dir="$(profile_lock_dir_path "${profile}")"
+  lock_parent="$(dirname "${lock_dir}")"
+  mkdir -p "${lock_parent}"
+
+  while ! mkdir "${lock_dir}" 2>/dev/null; do
+    if [[ "$(profile_lock_is_stale "${lock_dir}")" == "1" ]]; then
+      rm -rf "${lock_dir}"
+      continue
+    fi
+    attempts=$((attempts + 1))
+    if [[ "${attempts}" -eq 1 ]]; then
+      echo "Waiting for the active Workcell session on profile ${profile} to release the managed runtime lock." >&2
+    fi
+    sleep 1
+  done
+
+  PROFILE_LOCK_DIR="${lock_dir}"
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${lock_dir}/owner.json" "$$" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+started = subprocess.check_output(
+    ["ps", "-o", "lstart=", "-p", sys.argv[2]],
+    text=True,
+    stderr=subprocess.DEVNULL,
+).strip()
+Path(sys.argv[1]).write_text(
+    json.dumps({"pid": int(sys.argv[2]), "started": started}, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+  chmod 0600 "${lock_dir}/owner.json" 2>/dev/null || true
+}
+
+cleanup_stale_session_audit_dirs() {
+  local colima_root="$1"
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${colima_root}" <<'PY'
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+root = Path(sys.argv[1]).expanduser()
+if not root.exists():
+    raise SystemExit(0)
+
+cutoff = time.time() - (12 * 60 * 60)
+uid = os.getuid()
+
+for profile_dir in root.iterdir():
+    if not profile_dir.is_dir() or profile_dir.is_symlink():
+        continue
+    for candidate in profile_dir.glob("session-audit.*"):
+        try:
+            stat_result = candidate.lstat()
+        except FileNotFoundError:
+            continue
+        if stat_result.st_uid != uid:
+            continue
+        if candidate.is_dir():
+            if stat_result.st_mtime > cutoff:
+                continue
+            shutil.rmtree(candidate, ignore_errors=False)
+PY
+}
+
+audit_record_digest() {
+  local prev_digest="$1"
+  local timestamp="$2"
+  shift 2
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${prev_digest}" "${timestamp}" "$@" <<'PY'
+import hashlib
+import sys
+
+payload = "\0".join(sys.argv[1:])
+print(hashlib.sha256(payload.encode("utf-8")).hexdigest())
+PY
+}
+
+stash_profile_audit_log() {
+  local profile="$1"
+  local audit_log=""
+
+  audit_log="$(profile_audit_log_path "${profile}")"
+  [[ -f "${audit_log}" ]] || return 0
+
+  PROFILE_AUDIT_LOG_STASH="$(mktemp "${TMPDIR:-/tmp}/workcell-audit-log.XXXXXX")"
+  cp "${audit_log}" "${PROFILE_AUDIT_LOG_STASH}"
+  chmod 0600 "${PROFILE_AUDIT_LOG_STASH}" 2>/dev/null || true
+}
+
+restore_profile_audit_log() {
+  local profile="$1"
+  local audit_log=""
+  local merged_log=""
+
+  [[ -n "${PROFILE_AUDIT_LOG_STASH}" ]] || return 0
+  [[ -f "${PROFILE_AUDIT_LOG_STASH}" ]] || {
+    PROFILE_AUDIT_LOG_STASH=""
+    return 0
+  }
+
+  audit_log="$(profile_audit_log_path "${profile}")"
+  mkdir -p "$(dirname "${audit_log}")"
+  if [[ -f "${audit_log}" ]] && [[ -s "${audit_log}" ]]; then
+    merged_log="$(mktemp "${TMPDIR:-/tmp}/workcell-audit-merged.XXXXXX")"
+    cat "${PROFILE_AUDIT_LOG_STASH}" "${audit_log}" >"${merged_log}"
+    chmod 0600 "${merged_log}" 2>/dev/null || true
+    mv "${merged_log}" "${audit_log}"
+  else
+    cp "${PROFILE_AUDIT_LOG_STASH}" "${audit_log}"
+  fi
+  chmod 0600 "${audit_log}" 2>/dev/null || true
+  rm -f "${PROFILE_AUDIT_LOG_STASH}"
+  PROFILE_AUDIT_LOG_STASH=""
+}
+
+read_profile_marker_workspace() {
+  local marker_path
+  marker_path="$(profile_marker_path "$1")"
+  [[ -f "${marker_path}" ]] || return 1
+  tr -d '\n' <"${marker_path}"
+}
+
+append_audit_record() {
+  local profile="$1"
+  shift
+  local audit_path
+  local timestamp
+  local prev_digest=""
+  local record_digest=""
+
+  audit_path="$(profile_audit_log_path "${profile}")"
+  mkdir -p "$(dirname "${audit_path}")"
+  umask 077
+  touch "${audit_path}"
+  chmod 0600 "${audit_path}" 2>/dev/null || true
+  timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  if [[ -s "${audit_path}" ]]; then
+    prev_digest="$(sed -n 's/.*record_digest=\([^ ]*\).*/\1/p' "${audit_path}" | tail -n1)"
+  fi
+  record_digest="$(audit_record_digest "${prev_digest}" "${timestamp}" "$@")"
+  {
+    printf 'timestamp=%q ' "${timestamp}"
+    printf '%q ' "$@"
+    [[ -n "${prev_digest}" ]] && printf 'prev_digest=%q ' "${prev_digest}"
+    printf 'record_digest=%q ' "${record_digest}"
+    printf '\n'
+  } >>"${audit_path}"
+}
+
+maybe_fail_after_profile_refresh_for_tests() {
+  if [[ "${TEST_FAIL_AFTER_PROFILE_REFRESH:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ -z "${PROFILE_AUDIT_LOG_STASH}" ]]; then
+    return 0
+  fi
+  echo "Workcell test hook: forcing failure after managed profile refresh." >&2
+  exit 88
+}
+
+fail_missing_strict_prepared_image_prelaunch() {
+  if [[ "${PROFILE_WAS_REFRESHED:-0}" -eq 1 ]]; then
+    mkdir -p "${PROFILE_DIR}"
+    printf '%s\n' "${WORKSPACE}" >"${PROFILE_MARKER}"
+  fi
+  echo "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." >&2
+  echo "This is expected on the first launch for a workspace or after profile cleanup." >&2
+  echo "Next step:" >&2
+  build_recommended_command 1 0 "${MODE}"
+  echo "That command seeds the prepared runtime image inside the isolated VM and then launches ${AGENT} in strict mode." >&2
+  echo "No VM or container was started." >&2
+  exit 2
+}
+
+container_assurance() {
+  workcell_container_assurance "${CONTAINER_MUTABILITY}"
+}
+
+autonomy_assurance() {
+  workcell_autonomy_assurance "${AGENT_AUTONOMY}"
+}
+
+codex_rules_assurance() {
+  if [[ "${AGENT}" != "codex" ]]; then
+    printf 'not-applicable\n'
+    return 0
+  fi
+  workcell_codex_rules_assurance "${CODEX_RULES_MUTABILITY}"
+}
+
+codex_rules_effective_mutability_with_session_assurance() {
+  local session_assurance="$1"
+
+  if [[ "${AGENT}" != "codex" ]]; then
+    printf 'not-applicable\n'
+    return 0
+  fi
+  workcell_effective_codex_rules_mutability "${CODEX_RULES_MUTABILITY}" "${AGENT_AUTONOMY}" "${session_assurance}"
+}
+
+codex_rules_effective_assurance_with_session_assurance() {
+  local session_assurance="$1"
+
+  if [[ "${AGENT}" != "codex" ]]; then
+    printf 'not-applicable\n'
+    return 0
+  fi
+  workcell_effective_codex_rules_assurance "${CODEX_RULES_MUTABILITY}" "${AGENT_AUTONOMY}" "${session_assurance}"
+}
+
+session_assurance_initial() {
+  if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+    printf 'lower-assurance-control-plane-vcs\n'
+    return 0
+  fi
+  if [[ "${CACHE_PROFILE}" == "standard" ]]; then
+    printf 'lower-assurance-persistent-cache\n'
+    return 0
+  fi
+  container_assurance
+}
+
+workspace_control_plane_state() {
+  if [[ "${MODE}" == "breakglass" ]]; then
+    printf 'unmasked\n'
+    return 0
+  fi
+  if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+    printf 'readonly-vcs\n'
+    return 0
+  fi
+  printf 'masked\n'
+}
+
+session_assurance_final() {
+  local initial_assurance
+  local final_assurance
+
+  initial_assurance="$(session_assurance_initial)"
+  final_assurance="${initial_assurance}"
+  if [[ -n "${SESSION_AUDIT_STATE_FILE}" ]] && [[ -r "${SESSION_AUDIT_STATE_FILE}" ]]; then
+    case "$(head -n1 "${SESSION_AUDIT_STATE_FILE}")" in
+      lower-assurance-package-mutation)
+        final_assurance="lower-assurance-package-mutation"
+        ;;
+    esac
+  fi
+  printf '%s\n' "${final_assurance}"
+}
+
+codex_rules_effective_mutability_initial() {
+  codex_rules_effective_mutability_with_session_assurance "$(session_assurance_initial)"
+}
+
+codex_rules_effective_assurance_initial() {
+  codex_rules_effective_assurance_with_session_assurance "$(session_assurance_initial)"
+}
+
+append_launch_audit_record() {
+  local profile="$1"
+  local execution_path="$2"
+
+  append_audit_record "${profile}" \
+    "event=launch" \
+    "profile=${profile}" \
+    "mode=${MODE}" \
+    "agent=${AGENT}" \
+    "agent_autonomy=${AGENT_AUTONOMY}" \
+    "autonomy_assurance=$(autonomy_assurance)" \
+    "cache_profile=${CACHE_PROFILE}" \
+    "cache_assurance=$(cache_assurance)" \
+    "codex_rules_mutability_configured=${CODEX_RULES_MUTABILITY}" \
+    "codex_rules_assurance_configured=$(codex_rules_assurance)" \
+    "codex_rules_mutability_effective_initial=$(codex_rules_effective_mutability_initial)" \
+    "codex_rules_assurance_effective_initial=$(codex_rules_effective_assurance_initial)" \
+    "observability_assurance=$(observability_assurance)" \
+    "log_level=${LOG_LEVEL}" \
+    "debug_log_enabled=$([[ -n "${DEBUG_LOG_PATH}" ]] && printf '1' || printf '0')" \
+    "transcript_logging=$([[ -n "${AUDIT_TRANSCRIPT_PATH}" ]] && printf 'full' || printf 'off')" \
+    "injection_policy_sha256=${INJECTION_POLICY_SHA256}" \
+    "injection_credential_keys=${INJECTION_CREDENTIAL_KEYS}" \
+    "provider_auth_mode=$(selected_provider_auth_mode)" \
+    "provider_auth_modes=$(provider_auth_modes)" \
+    "shared_auth_modes=$(shared_auth_modes)" \
+    "github_auth_present=$(github_auth_present)" \
+    "injection_ssh_enabled=${INJECTION_SSH_ENABLED}" \
+    "ssh_config_assurance=${INJECTION_SSH_CONFIG_ASSURANCE:-off}" \
+    "injection_secret_copy_targets=${INJECTION_SECRET_COPY_TARGETS}" \
+    "ui=${UI}" \
+    "network_policy=${NETWORK_POLICY}" \
+    "execution_path=${execution_path}" \
+    "workspace=${WORKSPACE}" \
+    "workspace_control_plane=$(workspace_control_plane_state)" \
+    "endpoints=${ALLOW_ENDPOINTS}" \
+    "bootstrap_applied=${BOOTSTRAP_APPLIED}" \
+    "bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" \
+    "container_assurance=$(container_assurance)" \
+    "session_assurance_initial=$(session_assurance_initial)"
+}
+
+append_assurance_change_audit_record() {
+  local profile="$1"
+  local final_assurance="$2"
+
+  append_audit_record "${profile}" \
+    "event=assurance-change" \
+    "profile=${profile}" \
+    "mode=${MODE}" \
+    "agent=${AGENT}" \
+    "workspace=${WORKSPACE}" \
+    "reason=package-mutation" \
+    "codex_rules_mutability_effective_final=$(codex_rules_effective_mutability_with_session_assurance "${final_assurance}")" \
+    "codex_rules_assurance_effective_final=$(codex_rules_effective_assurance_with_session_assurance "${final_assurance}")" \
+    "session_assurance_final=${final_assurance}"
+}
+
+append_exit_audit_record() {
+  local profile="$1"
+  local execution_path="$2"
+  local exit_status="$3"
+  local final_assurance="$4"
+  local downgraded="$5"
+
+  append_audit_record "${profile}" \
+    "event=exit" \
+    "profile=${profile}" \
+    "mode=${MODE}" \
+    "agent=${AGENT}" \
+    "workspace=${WORKSPACE}" \
+    "execution_path=${execution_path}" \
+    "workspace_control_plane=$(workspace_control_plane_state)" \
+    "exit_status=${exit_status}" \
+    "cache_profile=${CACHE_PROFILE}" \
+    "cache_assurance=$(cache_assurance)" \
+    "container_assurance=$(container_assurance)" \
+    "autonomy_assurance=$(autonomy_assurance)" \
+    "observability_assurance=$(observability_assurance)" \
+    "log_level=${LOG_LEVEL}" \
+    "debug_log_enabled=$([[ -n "${DEBUG_LOG_PATH}" ]] && printf '1' || printf '0')" \
+    "transcript_logging=$([[ -n "${AUDIT_TRANSCRIPT_PATH}" ]] && printf 'full' || printf 'off')" \
+    "injection_policy_sha256=${INJECTION_POLICY_SHA256}" \
+    "injection_credential_keys=${INJECTION_CREDENTIAL_KEYS}" \
+    "provider_auth_mode=$(selected_provider_auth_mode)" \
+    "provider_auth_modes=$(provider_auth_modes)" \
+    "shared_auth_modes=$(shared_auth_modes)" \
+    "github_auth_present=$(github_auth_present)" \
+    "injection_ssh_enabled=${INJECTION_SSH_ENABLED}" \
+    "ssh_config_assurance=${INJECTION_SSH_CONFIG_ASSURANCE:-off}" \
+    "codex_rules_mutability_configured=${CODEX_RULES_MUTABILITY}" \
+    "codex_rules_assurance_configured=$(codex_rules_assurance)" \
+    "codex_rules_mutability_effective_final=$(codex_rules_effective_mutability_with_session_assurance "${final_assurance}")" \
+    "codex_rules_assurance_effective_final=$(codex_rules_effective_assurance_with_session_assurance "${final_assurance}")" \
+    "session_assurance_initial=$(session_assurance_initial)" \
+    "session_assurance_final=${final_assurance}" \
+    "package_mutation_downgraded=${downgraded}"
+}
+
+append_credential_persist_audit_record() {
+  local profile="$1"
+  local action="$2"
+  local key="$3"
+  local reason="$4"
+  local root_policy="$5"
+  local fragment_path="$6"
+  local credential_path="$7"
+
+  append_audit_record "${profile}" \
+    "event=credential-persist" \
+    "profile=${profile}" \
+    "mode=${MODE}" \
+    "agent=${AGENT}" \
+    "workspace=${WORKSPACE}" \
+    "action=${action}" \
+    "credential_key=${key}" \
+    "reason=${reason}" \
+    "root_policy=${root_policy}" \
+    "fragment_path=${fragment_path}" \
+    "credential_path=${credential_path}" \
+    "injection_policy_sha256=${INJECTION_POLICY_SHA256}" \
+    "session_assurance_final=$(session_assurance_final)"
+}
+
+prepare_session_audit_state() {
+  local profile="$1"
+
+  mkdir -p "$(profile_dir "${profile}")"
+  SESSION_AUDIT_DIR="$(mktemp -d "$(profile_dir "${profile}")/session-audit.XXXXXX")"
+  chmod 0700 "${SESSION_AUDIT_DIR}" 2>/dev/null || true
+  SESSION_AUDIT_STATE_FILE="${SESSION_AUDIT_DIR}/session-assurance"
+  SESSION_AUDIT_CONTAINER_FILE="/opt/workcell/session-assurance"
+  rm -f "${SESSION_AUDIT_STATE_FILE}"
+}
+
+ensure_session_audit_state() {
+  [[ -n "${SESSION_AUDIT_DIR}" ]] || return 0
+  mkdir -p "${SESSION_AUDIT_DIR}"
+  chmod 0700 "${SESSION_AUDIT_DIR}" 2>/dev/null || true
+  SESSION_AUDIT_STATE_FILE="${SESSION_AUDIT_DIR}/session-assurance"
+  rm -f "${SESSION_AUDIT_STATE_FILE}"
+}
+
+capture_session_audit_state() {
+  local container_name="$1"
+
+  [[ -n "${SESSION_AUDIT_STATE_FILE}" ]] || return 0
+  if [[ -r "${SESSION_AUDIT_STATE_FILE}" ]]; then
+    chmod 0600 "${SESSION_AUDIT_STATE_FILE}" 2>/dev/null || true
+    return 0
+  fi
+  mkdir -p "$(dirname "${SESSION_AUDIT_STATE_FILE}")"
+  if ! run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:${SESSION_AUDIT_CONTAINER_FILE}" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
+    if ! run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:/run/workcell/session-assurance" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
+      :
+    fi
+  fi
+  chmod 0600 "${SESSION_AUDIT_STATE_FILE}" 2>/dev/null || true
+}
+
+finalize_session_audit() {
+  local profile="$1"
+  local execution_path="$2"
+  local exit_status="$3"
+  local final_assurance
+  local downgraded=0
+
+  final_assurance="$(session_assurance_final)"
+  if [[ "${final_assurance}" == "lower-assurance-package-mutation" ]]; then
+    downgraded=1
+    append_assurance_change_audit_record "${profile}" "${final_assurance}"
+  fi
+  append_exit_audit_record "${profile}" "${execution_path}" "${exit_status}" "${final_assurance}" "${downgraded}"
+  FINAL_SESSION_ASSURANCE="${final_assurance}"
+}
+
+write_profile_image_marker() {
+  local profile="$1"
+  local image_id="$2"
+  local marker_path
+
+  marker_path="$(profile_image_marker_path "${profile}")"
+  mkdir -p "$(dirname "${marker_path}")"
+  umask 077
+  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\n' "workcell:local" "${image_id}" "${SOURCE_DATE_EPOCH}" >"${marker_path}"
+  chmod 0600 "${marker_path}" 2>/dev/null || true
+}
+
+current_image_id() {
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
+}
+
+current_profile_image_id() {
+  local profile="$1"
+  local socket_path=""
+
+  socket_path="${COLIMA_STATE_ROOT}/${profile}/docker.sock"
+  [[ -S "${socket_path}" ]] || return 0
+  run_workcell_docker_client_command env DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
+}
+
+emit_command() {
+  local -a cmd=("$@")
+
+  printf '  '
+  printf '%q ' "${cmd[@]}"
+  printf '\n'
+}
+
+emit_redacted_command() {
+  local token=""
+  local redacted=""
+
+  for token in "$@"; do
+    case "${token}" in
+      *:/opt/workcell/host-inputs/* | *:/opt/workcell/host-injections:ro)
+        redacted="<redacted-host-path>:${token#*:}"
+        ;;
+      *)
+        redacted="${token}"
+        ;;
+    esac
+    printf '%q ' "${redacted}"
+  done
+  printf '\n'
+}
+
+resolve_host_path() {
+  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - "$1" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(os.path.expanduser(sys.argv[1])))
+PY
+}
+
+resolve_host_output_candidate() {
+  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - "$1" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+target = Path(os.path.abspath(os.path.expanduser(sys.argv[1])))
+allowed_symlink_roots = {Path("/var"), Path("/tmp")} if sys.platform == "darwin" else set()
+
+current = target
+while True:
+    try:
+        path_stat = current.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        if stat.S_ISLNK(path_stat.st_mode):
+            if current in allowed_symlink_roots:
+                if current == current.parent:
+                    break
+                current = current.parent
+                continue
+            raise SystemExit(f"Refusing symlinked host output path component: {current}")
+    if current == current.parent:
+        break
+    current = current.parent
+
+if target.exists() and not target.is_file():
+    raise SystemExit(f"Host output path must be a regular file or a new file path: {target}")
+
+print(target)
+PY
+}
+
+resolve_existing_directory_or_die() {
+  local raw_path="$1"
+  local resolved_path=""
+
+  resolved_path="$(resolve_host_path "${raw_path}")"
+  if [[ ! -e "${resolved_path}" ]]; then
+    echo "Workspace path does not exist: ${raw_path}" >&2
+    echo "Resolve it to an existing directory, then rerun with --workspace ${resolved_path}" >&2
+    exit 2
+  fi
+  if [[ ! -d "${resolved_path}" ]]; then
+    echo "Workspace path is not a directory: ${resolved_path}" >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${resolved_path}"
+}
+
+publish_pr_usage() {
+  cat <<'EOF'
+Usage: workcell publish-pr [options]
+
+Options:
+  --workspace PATH              Workspace to publish (default: current directory)
+  --branch NAME                 Feature branch to create or switch to (required)
+  --base NAME                   Base branch for the PR (default: main)
+  --snapshot index|worktree     Publish the current index or stage the worktree (default: worktree)
+  --title TEXT                  PR title
+  --title-file PATH             Read the PR title from PATH
+  --body TEXT                   PR body (default: empty)
+  --body-file PATH              Read the PR body from PATH
+  --commit-message TEXT         Commit message to sign and publish
+  --commit-message-file PATH    Read the commit message from PATH
+  --ready                       Create a ready PR instead of a draft PR
+  --dry-run                     Print the planned host commands and exit
+  -h, --help                    Show this help text
+
+Notes:
+  - publish-pr runs on the host, not inside the Workcell container.
+  - It uses the host Git and GitHub CLI configuration so maintainer signing
+    and publication stay outside the Tier 1 container boundary.
+  - The default snapshot is worktree, which stages the current tracked and
+    untracked workspace changes with `git add -A` before committing.
+EOF
+}
+
+resolve_existing_file_or_die() {
+  local raw_path="$1"
+  local label="$2"
+  local resolved_path=""
+
+  resolved_path="$(resolve_host_path "${raw_path}")"
+  if [[ ! -f "${resolved_path}" ]]; then
+    echo "${label} file does not exist: ${raw_path}" >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${resolved_path}"
+}
+
+run_clean_host_command_in_dir() {
+  local dir="$1"
+  local home="${REAL_HOME:-/}"
+
+  shift
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${dir}" ]]; then
+    echo "Missing host working directory: ${dir}" >&2
+    exit 2
+  fi
+  if [[ ! -d "${home}" ]]; then
+    home="/"
+  fi
+
+  (
+    cd "${dir}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${home}" \
+        LC_ALL=C \
+        LANG=C \
+        "$@"
+  )
+}
+
+run_publish_host_command_in_dir() {
+  local dir="$1"
+  local home="${REAL_HOME:-/}"
+  local -a env_args=()
+
+  shift
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${dir}" ]]; then
+    echo "Missing host working directory: ${dir}" >&2
+    exit 2
+  fi
+  if [[ ! -d "${home}" ]]; then
+    home="/"
+  fi
+
+  env_args=(
+    PATH="${TRUSTED_HOST_PATH}"
+    HOME="${home}"
+    LC_ALL=C
+    LANG=C
+  )
+
+  [[ -n "${TERM:-}" ]] && env_args+=("TERM=${TERM}")
+  [[ -n "${GPG_TTY:-}" ]] && env_args+=("GPG_TTY=${GPG_TTY}")
+  [[ -n "${GNUPGHOME:-}" ]] && env_args+=("GNUPGHOME=${GNUPGHOME}")
+  [[ -n "${SSH_AUTH_SOCK:-}" ]] && env_args+=("SSH_AUTH_SOCK=${SSH_AUTH_SOCK}")
+  [[ -n "${SSH_AGENT_PID:-}" ]] && env_args+=("SSH_AGENT_PID=${SSH_AGENT_PID}")
+  [[ -n "${SSH_ASKPASS:-}" ]] && env_args+=("SSH_ASKPASS=${SSH_ASKPASS}")
+  [[ -n "${GIT_ASKPASS:-}" ]] && env_args+=("GIT_ASKPASS=${GIT_ASKPASS}")
+  [[ -n "${XDG_CONFIG_HOME:-}" ]] && env_args+=("XDG_CONFIG_HOME=${XDG_CONFIG_HOME}")
+  [[ -n "${XDG_STATE_HOME:-}" ]] && env_args+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
+  [[ -n "${XDG_CACHE_HOME:-}" ]] && env_args+=("XDG_CACHE_HOME=${XDG_CACHE_HOME}")
+  [[ -n "${XDG_DATA_HOME:-}" ]] && env_args+=("XDG_DATA_HOME=${XDG_DATA_HOME}")
+  [[ -n "${XDG_RUNTIME_DIR:-}" ]] && env_args+=("XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}")
+  [[ -n "${GH_TOKEN:-}" ]] && env_args+=("GH_TOKEN=${GH_TOKEN}")
+  [[ -n "${GITHUB_TOKEN:-}" ]] && env_args+=("GITHUB_TOKEN=${GITHUB_TOKEN}")
+  [[ -n "${GH_HOST:-}" ]] && env_args+=("GH_HOST=${GH_HOST}")
+  [[ -n "${GH_CONFIG_DIR:-}" ]] && env_args+=("GH_CONFIG_DIR=${GH_CONFIG_DIR}")
+
+  (
+    cd "${dir}" &&
+      env -i \
+        "${env_args[@]}" \
+        "$@"
+  )
+}
+validate_publish_snapshot_name() {
+  case "$1" in
+    index | worktree) ;;
+    *)
+      echo "Unsupported publish snapshot: $1" >&2
+      echo "Use --snapshot index or --snapshot worktree." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_publish_branch_name() {
+  local branch="$1"
+
+  if [[ -z "${branch}" ]]; then
+    echo "publish-pr requires --branch." >&2
+    exit 2
+  fi
+  if [[ "${branch}" == "main" ]] || [[ "${branch}" == "master" ]]; then
+    echo "publish-pr refuses the default branch. Use a feature branch instead." >&2
+    exit 2
+  fi
+  if ! "${HOST_GIT_BIN}" check-ref-format --branch "${branch}" >/dev/null 2>&1; then
+    echo "Invalid publish branch name: ${branch}" >&2
+    exit 2
+  fi
+}
+
+validate_publish_base_name() {
+  local base="$1"
+
+  if [[ -z "${base}" ]]; then
+    echo "publish-pr requires --base." >&2
+    exit 2
+  fi
+  if ! "${HOST_GIT_BIN}" check-ref-format --branch "${base}" >/dev/null 2>&1; then
+    echo "Invalid publish base branch name: ${base}" >&2
+    exit 2
+  fi
+}
+publish_pr_load_text_arg() {
+  local inline_value="$1"
+  local file_value="$2"
+  local label="$3"
+  local required="$4"
+  local resolved_file=""
+
+  if [[ -n "${inline_value}" ]] && [[ -n "${file_value}" ]]; then
+    echo "Use only one of --${label} or --${label}-file." >&2
+    exit 2
+  fi
+
+  if [[ -n "${file_value}" ]]; then
+    resolved_file="$(resolve_existing_file_or_die "${file_value}" "${label}")"
+    cat "${resolved_file}"
+    return 0
+  fi
+
+  if [[ -n "${inline_value}" ]]; then
+    printf '%s' "${inline_value}"
+    return 0
+  fi
+
+  if [[ "${required}" == "1" ]]; then
+    echo "publish-pr requires --${label} or --${label}-file." >&2
+    exit 2
+  fi
+
+  printf ''
+}
+
+publish_pr_branch_exists() {
+  local workspace="$1"
+  local branch="$2"
+
+  run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" show-ref --verify --quiet "refs/heads/${branch}"
+}
+
+publish_pr_current_branch() {
+  local workspace="$1"
+
+  run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" branch --show-current
+}
+
+publish_pr_has_remote_origin() {
+  local workspace="$1"
+
+  run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" remote get-url origin >/dev/null 2>&1
+}
+
+publish_pr_has_worktree_changes() {
+  local workspace="$1"
+
+  [[ -n "$(run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" status --short --untracked-files=all)" ]]
+}
+publish_pr_has_staged_changes() {
+  local workspace="$1"
+
+  ! run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" diff --cached --quiet --exit-code
+}
+
+publish_pr_main() {
+  local workspace="${PWD}"
+  local branch=""
+  local base="main"
+  local snapshot="worktree"
+  local title=""
+  local title_file=""
+  local body=""
+  local body_file=""
+  local commit_message=""
+  local commit_message_file=""
+  local ready=0
+  local dry_run=0
+  local resolved_workspace=""
+  local current_branch=""
+  local title_text=""
+  local body_text=""
+  local commit_message_text=""
+  local resolved_commit_message_file=""
+  local pr_url=""
+  local -a cleanup_files=()
+  local -a branch_cmd=()
+  local -a commit_cmd=()
+  local -a push_cmd=()
+  local -a pr_cmd=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --workspace)
+        workspace="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --branch)
+        branch="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --base)
+        base="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --snapshot)
+        snapshot="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --title)
+        title="$(raw_option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --title-file)
+        title_file="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --body)
+        body="$(raw_option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --body-file)
+        body_file="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --commit-message)
+        commit_message="$(raw_option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --commit-message-file)
+        commit_message_file="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --ready)
+        ready=1
+        shift
+        ;;
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
+      -h | --help)
+        publish_pr_usage
+        exit 0
+        ;;
+      *)
+        echo "Unsupported publish-pr option: $1" >&2
+        publish_pr_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  resolved_workspace="$(resolve_existing_directory_or_die "${workspace}")"
+  HOST_GIT_BIN="${HOST_GIT_BIN:-$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)}"
+  validate_publish_snapshot_name "${snapshot}"
+  validate_publish_branch_name "${branch}"
+  validate_publish_base_name "${base}"
+  if [[ "${dry_run}" -eq 1 ]]; then
+    HOST_GH_BIN="${HOST_GH_BIN:-$(resolve_host_tool_optional gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh || true)}"
+    [[ -n "${HOST_GH_BIN}" ]] || HOST_GH_BIN="gh"
+  else
+    HOST_GH_BIN="${HOST_GH_BIN:-$(resolve_host_tool gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh)}"
+  fi
+
+  if ! workspace_has_markers "${resolved_workspace}"; then
+    echo "publish-pr requires a git worktree: ${resolved_workspace}" >&2
+    exit 2
+  fi
+  if ! publish_pr_has_remote_origin "${resolved_workspace}"; then
+    echo "publish-pr requires an origin remote in ${resolved_workspace}." >&2
+    exit 2
+  fi
+
+  title_text="$(publish_pr_load_text_arg "${title}" "${title_file}" "title" 1)"
+  body_text="$(publish_pr_load_text_arg "${body}" "${body_file}" "body" 0)"
+  commit_message_text="$(publish_pr_load_text_arg "${commit_message}" "${commit_message_file}" "commit-message" 1)"
+  if [[ -z "${title_text}" ]]; then
+    echo "publish-pr requires a non-empty PR title." >&2
+    exit 2
+  fi
+  if [[ -z "${commit_message_text}" ]]; then
+    echo "publish-pr requires a non-empty commit message." >&2
+    exit 2
+  fi
+
+  if [[ "${snapshot}" == "worktree" ]]; then
+    if ! publish_pr_has_worktree_changes "${resolved_workspace}"; then
+      echo "publish-pr found no workspace changes to publish in ${resolved_workspace}." >&2
+      exit 2
+    fi
+  elif ! publish_pr_has_staged_changes "${resolved_workspace}"; then
+    echo "publish-pr found no staged changes to publish in ${resolved_workspace}." >&2
+    exit 2
+  fi
+  if [[ -n "${commit_message_file}" ]]; then
+    resolved_commit_message_file="$(resolve_existing_file_or_die "${commit_message_file}" "commit-message")"
+  else
+    resolved_commit_message_file="$(mktemp "${TMPDIR:-/tmp}/workcell-publish-commit.XXXXXX")"
+    cleanup_files+=("${resolved_commit_message_file}")
+    printf '%s' "${commit_message_text}" >"${resolved_commit_message_file}"
+    chmod 0600 "${resolved_commit_message_file}" 2>/dev/null || true
+  fi
+  trap 'if ((${#cleanup_files[@]} > 0)); then rm -f "${cleanup_files[@]}"; fi' RETURN
+
+  current_branch="$(publish_pr_current_branch "${resolved_workspace}")"
+  if [[ "${current_branch}" == "${branch}" ]]; then
+    branch_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" switch "${branch}")
+  elif publish_pr_branch_exists "${resolved_workspace}" "${branch}"; then
+    branch_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" switch "${branch}")
+  else
+    branch_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" switch -c "${branch}")
+  fi
+
+  commit_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" commit -S -F "${resolved_commit_message_file}")
+  push_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" push -u origin "${branch}")
+  pr_cmd=("${HOST_GH_BIN}" pr create --base "${base}" --head "${branch}" --title "${title_text}")
+  if [[ "${ready}" -eq 0 ]]; then
+    pr_cmd+=(--draft)
+  fi
+  if [[ -n "${body_file}" ]]; then
+    pr_cmd+=(--body-file "$(resolve_existing_file_or_die "${body_file}" "body")")
+  else
+    pr_cmd+=(--body "${body_text}")
+  fi
+
+  if [[ "${dry_run}" -eq 1 ]]; then
+    printf 'publish_workspace=%s\n' "${resolved_workspace}"
+    printf 'publish_snapshot=%s\n' "${snapshot}"
+    printf 'publish_branch=%s\n' "${branch}"
+    printf 'publish_base=%s\n' "${base}"
+    printf 'publish_draft=%s\n' "$([[ "${ready}" -eq 0 ]] && printf '1' || printf '0')"
+    emit_command "${branch_cmd[@]}"
+    if [[ "${snapshot}" == "worktree" ]]; then
+      emit_command "${HOST_GIT_BIN}" -C "${resolved_workspace}" add -A
+    fi
+    emit_command "${commit_cmd[@]}"
+    emit_command "${push_cmd[@]}"
+    emit_command "${pr_cmd[@]}"
+    exit 0
+  fi
+
+  run_publish_host_command_in_dir "${resolved_workspace}" "${branch_cmd[@]}"
+  if [[ "${snapshot}" == "worktree" ]]; then
+    run_publish_host_command_in_dir "${resolved_workspace}" "${HOST_GIT_BIN}" -C "${resolved_workspace}" add -A
+  fi
+  if ! publish_pr_has_staged_changes "${resolved_workspace}"; then
+    echo "publish-pr found no staged changes to commit in ${resolved_workspace}." >&2
+    exit 2
+  fi
+  run_publish_host_command_in_dir "${resolved_workspace}" "${commit_cmd[@]}"
+  run_publish_host_command_in_dir "${resolved_workspace}" "${push_cmd[@]}"
+  pr_url="$(run_publish_host_command_in_dir "${resolved_workspace}" "${pr_cmd[@]}")"
+  printf 'publish_branch=%s\n' "${branch}"
+  printf 'publish_base=%s\n' "${base}"
+  printf 'publish_pr_url=%s\n' "${pr_url}"
+  printf 'publish_snapshot=%s\n' "${snapshot}"
+  exit 0
+}
+
+default_injection_policy_path() {
+  printf '%s/.config/workcell/injection-policy.toml\n' "${REAL_HOME}"
+}
+
+default_injection_bundle_parent() {
+  resolve_host_path "${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
+}
+
+cleanup_stale_injection_bundles() {
+  local bundle_parent="$1"
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${bundle_parent}" <<'PY'
+import os
+import json
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+root = Path(sys.argv[1]).expanduser()
+if not root.exists():
+    raise SystemExit(0)
+
+cutoff = time.time() - (12 * 60 * 60)
+uid = os.getuid()
+
+def process_start(pid):
+    try:
+        return subprocess.check_output(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip() or None
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+def sidecar_path(bundle_dir: Path) -> Path:
+    return bundle_dir.parent / f"{bundle_dir.name}.mounts.json"
+
+for candidate in root.iterdir():
+    if not candidate.name.startswith("workcell-injections."):
+        continue
+    try:
+        stat = candidate.lstat()
+    except FileNotFoundError:
+        continue
+    if stat.st_uid != uid:
+        continue
+    if not candidate.is_dir() or candidate.is_symlink():
+        continue
+    owner_meta_path = candidate / "owner.json"
+    owner_pid = None
+    owner_started = None
+    if owner_meta_path.is_file():
+        try:
+            owner_meta = json.loads(owner_meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            owner_meta = {}
+        owner_pid = owner_meta.get("pid")
+        owner_started = owner_meta.get("started")
+    if isinstance(owner_pid, int):
+        current_start = process_start(owner_pid)
+        if current_start is not None and current_start == owner_started:
+            continue
+    elif stat.st_mtime > cutoff:
+        continue
+    try:
+        shutil.rmtree(candidate, ignore_errors=False)
+    except FileNotFoundError:
+        continue
+    try:
+        sidecar = sidecar_path(candidate)
+        if sidecar.is_file():
+            sidecar.unlink()
+    except FileNotFoundError:
+        pass
+
+for candidate in root.iterdir():
+    if not candidate.name.startswith("workcell-injections.") or not candidate.name.endswith(".mounts.json"):
+        continue
+    try:
+        stat = candidate.lstat()
+    except FileNotFoundError:
+        continue
+    if stat.st_uid != uid or not candidate.is_file() or candidate.is_symlink():
+        continue
+    if (root / candidate.name.removesuffix(".mounts.json")).exists():
+        continue
+    candidate.unlink()
+PY
+}
+
+prepare_injection_direct_mounts() {
+  local mount_spec_path="$1"
+  local host_source=""
+  local mount_path=""
+  local staged_root=""
+  local staged_source=""
+  local entry_hash=""
+
+  DIRECT_SOURCE_MOUNTS=()
+  [[ -f "${mount_spec_path}" ]] || return 0
+  [[ -n "${INJECTION_BUNDLE_ROOT}" ]] || {
+    echo "Direct input staging requires an injection bundle root." >&2
+    exit 2
+  }
+  staged_root="${INJECTION_BUNDLE_ROOT}/direct-mounts"
+  mkdir -p "${staged_root}"
+
+  while IFS=$'\t' read -r host_source mount_path; do
+    [[ -n "${host_source}" ]] || continue
+
+    if [[ "${host_source}" != /* ]] || [[ ! -e "${host_source}" ]] ||
+      { [[ ! -f "${host_source}" ]] && [[ ! -d "${host_source}" ]]; }; then
+      echo "Direct input source is missing, not absolute, or not a regular file/directory: ${host_source}" >&2
+      exit 2
+    fi
+
+    case "${mount_path}" in
+      /opt/workcell/host-inputs/*) ;;
+      *)
+        echo "Direct input mount path is outside the managed host-input root: ${mount_path}" >&2
+        exit 2
+        ;;
+    esac
+
+    entry_hash="$(
+      run_clean_host_command "${HOST_PYTHON3_BIN}" - "${host_source}" "${mount_path}" <<'PY'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+for value in sys.argv[1:]:
+    digest.update(value.encode("utf-8"))
+    digest.update(b"\0")
+print(digest.hexdigest()[:16])
+PY
+    )"
+    staged_source="${staged_root}/${entry_hash}"
+    rm -rf "${staged_source}"
+    if [[ -d "${host_source}" ]]; then
+      mkdir -p "${staged_source}"
+      cp -R "${host_source}/." "${staged_source}"
+    else
+      mkdir -p "$(dirname "${staged_source}")"
+      cp -f "${host_source}" "${staged_source}"
+    fi
+    chmod -R go-rwx "${staged_source}" 2>/dev/null || true
+
+    DIRECT_SOURCE_MOUNTS+=(-v "${staged_source}:${mount_path}:ro")
+  done < <(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${mount_spec_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+entries = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for entry in entries:
+    source = entry["source"]
+    mount_path = entry["mount_path"]
+    print(f"{source}\t{mount_path}")
+PY
+  )
+}
+
+prepare_injection_bundle() {
+  local agent="$1"
+  local mode="$2"
+  local policy_path="${INJECTION_POLICY}"
+  local bundle_parent=""
+  local default_policy_path=""
+  local manifest_path=""
+  local metadata=""
+
+  if [[ -z "${policy_path}" ]] && [[ "${USE_DEFAULT_INJECTION_POLICY}" -eq 1 ]]; then
+    default_policy_path="$(default_injection_policy_path)"
+    if [[ -f "${default_policy_path}" ]]; then
+      policy_path="${default_policy_path}"
+    fi
+  fi
+
+  if [[ -z "${policy_path}" ]]; then
+    INJECTION_POLICY_SHA256=""
+    INJECTION_CREDENTIAL_KEYS=""
+    INJECTION_EXTRA_ENDPOINTS=""
+    INJECTION_SSH_ENABLED=0
+    INJECTION_SSH_CONFIG_ASSURANCE="off"
+    INJECTION_SECRET_COPY_TARGETS=""
+    return 0
+  fi
+
+  policy_path="$(resolve_host_path "${policy_path}")"
+  if [[ ! -f "${policy_path}" ]]; then
+    echo "Injection policy file does not exist: ${policy_path}" >&2
+    exit 2
+  fi
+
+  bundle_parent="$(default_injection_bundle_parent)"
+  mkdir -p "${bundle_parent}"
+  chmod 0700 "${bundle_parent}" 2>/dev/null || true
+  cleanup_stale_injection_bundles "${bundle_parent}"
+  INJECTION_BUNDLE_ROOT="$(mktemp -d "${bundle_parent%/}/workcell-injections.XXXXXX")"
+  INJECTION_BUNDLE_ROOT="$(resolve_host_path "${INJECTION_BUNDLE_ROOT}")"
+  chmod 0700 "${INJECTION_BUNDLE_ROOT}"
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${INJECTION_BUNDLE_ROOT}/owner.json" "$$" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+started = subprocess.check_output(
+    ["ps", "-o", "lstart=", "-p", sys.argv[2]],
+    text=True,
+    stderr=subprocess.DEVNULL,
+).strip()
+owner_path = Path(sys.argv[1])
+owner_path.write_text(
+    json.dumps({"pid": int(sys.argv[2]), "started": started}, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+owner_path.chmod(0o600)
+PY
+
+  manifest_path="$(run_clean_host_command \
+    "${HOST_PYTHON3_BIN}" \
+    "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+    --policy "${policy_path}" \
+    --agent "${agent}" \
+    --mode "${mode}" \
+    --output-root "${INJECTION_BUNDLE_ROOT}")"
+  manifest_path="${manifest_path//$'\n'/}"
+
+  if [[ "${manifest_path}" != "${INJECTION_BUNDLE_ROOT}/manifest.json" ]]; then
+    echo "Unexpected injection manifest path from renderer: ${manifest_path}" >&2
+    exit 2
+  fi
+
+  if [[ ! -f "${manifest_path}" ]]; then
+    echo "Injection manifest was not rendered: ${manifest_path}" >&2
+    exit 2
+  fi
+
+  DIRECT_MOUNT_SPEC_PATH="${INJECTION_BUNDLE_ROOT}.mounts.json"
+  DIRECT_MOUNT_SPEC_PATH="$(resolve_host_path "${DIRECT_MOUNT_SPEC_PATH}")"
+  run_clean_host_command \
+    "${HOST_PYTHON3_BIN}" \
+    "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
+    --manifest "${manifest_path}" \
+    --mount-spec "${DIRECT_MOUNT_SPEC_PATH}" >/dev/null
+  prepare_injection_direct_mounts "${DIRECT_MOUNT_SPEC_PATH}"
+  metadata="$(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${manifest_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+metadata = manifest.get("metadata", {})
+print(metadata.get("policy_sha256", ""))
+print(",".join(metadata.get("credential_keys", [])))
+print(" ".join(metadata.get("extra_endpoints", [])))
+print("1" if metadata.get("ssh_enabled") else "0")
+print(metadata.get("ssh_config_assurance", "off"))
+print(",".join(metadata.get("secret_copy_targets", [])))
+PY
+  )"
+  INJECTION_POLICY_SHA256="$(printf '%s\n' "${metadata}" | sed -n '1p')"
+  INJECTION_CREDENTIAL_KEYS="$(printf '%s\n' "${metadata}" | sed -n '2p')"
+  INJECTION_EXTRA_ENDPOINTS="$(printf '%s\n' "${metadata}" | sed -n '3p')"
+  INJECTION_SSH_ENABLED="$(printf '%s\n' "${metadata}" | sed -n '4p')"
+  INJECTION_SSH_CONFIG_ASSURANCE="$(printf '%s\n' "${metadata}" | sed -n '5p')"
+  INJECTION_SECRET_COPY_TARGETS="$(printf '%s\n' "${metadata}" | sed -n '6p')"
+}
+
+build_recommended_command() {
+  local include_prepare="$1"
+  local include_repair="$2"
+  local target_mode="${3}"
+  local -a cmd=("workcell")
+  local target_mutability=""
+
+  if [[ "${include_repair}" -eq 1 ]] && [[ "${target_mode}" == "strict" ]]; then
+    include_prepare=0
+  fi
+  target_mutability="${CONTAINER_MUTABILITY:-$(default_container_mutability_for_mode "${target_mode}")}"
+  [[ "${include_prepare}" -eq 1 ]] && cmd+=(--prepare)
+  [[ "${include_repair}" -eq 1 ]] && cmd+=(--repair-profile)
+  cmd+=(--agent "${AGENT}")
+  [[ "${AGENT_AUTONOMY}" != "yolo" ]] && cmd+=(--agent-autonomy "${AGENT_AUTONOMY}")
+  [[ "${CACHE_PROFILE}" != "off" ]] && cmd+=(--cache-profile "${CACHE_PROFILE}")
+  if ! container_mutability_is_default_for_mode "${target_mutability}" "${target_mode}"; then
+    cmd+=(--container-mutability "${target_mutability}")
+  fi
+  [[ -n "${CONTAINER_CPU_OVERRIDE}" ]] && cmd+=(--container-cpu "${CONTAINER_CPU_OVERRIDE}")
+  [[ -n "${CONTAINER_MEMORY_OVERRIDE}" ]] && cmd+=(--container-memory "${CONTAINER_MEMORY_OVERRIDE}")
+  [[ "${USE_DEFAULT_INJECTION_POLICY}" -eq 0 ]] && cmd+=(--no-default-injection-policy)
+  [[ -n "${INJECTION_POLICY}" ]] && cmd+=(--injection-policy "${INJECTION_POLICY}")
+  [[ "${LOG_LEVEL}" != "normal" ]] && cmd+=(--log-level "${LOG_LEVEL}")
+  [[ -n "${DEBUG_LOG_PATH}" ]] && cmd+=(--debug-log "${DEBUG_LOG_PATH}")
+  [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]] && cmd+=(--audit-transcript "${AUDIT_TRANSCRIPT_PATH}")
+  [[ "${UI}" != "cli" ]] && cmd+=(--ui "${UI}")
+  if [[ "${target_mode}" != "strict" ]]; then
+    cmd+=(--mode "${target_mode}")
+  fi
+  cmd+=(--workspace "${WORKSPACE}")
+  [[ "${ALLOW_NONGIT_WORKSPACE}" -eq 1 ]] && cmd+=(--allow-nongit-workspace)
+  if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+    cmd+=(--allow-control-plane-vcs --ack-control-plane-vcs)
+  fi
+  [[ "${COLIMA_PROFILE_EXPLICIT:-0}" -eq 1 ]] && [[ -n "${COLIMA_PROFILE}" ]] && cmd+=(--colima-profile "${COLIMA_PROFILE}")
+  [[ -n "${VM_CPU_OVERRIDE}" ]] && cmd+=(--vm-cpu "${VM_CPU_OVERRIDE}")
+  [[ -n "${VM_MEMORY_OVERRIDE}" ]] && cmd+=(--vm-memory "${VM_MEMORY_OVERRIDE}")
+  [[ -n "${VM_DISK_OVERRIDE}" ]] && cmd+=(--vm-disk "${VM_DISK_OVERRIDE}")
+  if ((${#AGENT_ARGS[@]} > 0)); then
+    local agent_arg
+    for agent_arg in "${AGENT_ARGS[@]}"; do
+      cmd+=(--agent-arg "${agent_arg}")
+    done
+  fi
+  if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
+    cmd+=(--allow-arbitrary-command --ack-arbitrary-command)
+  fi
+  if [[ "${ACK_BREAKGLASS}" -eq 1 ]]; then
+    cmd+=(--ack-breakglass)
+  fi
+  if [[ "${REBUILD}" -eq 1 ]]; then
+    cmd+=(--rebuild)
+  fi
+  if ((${#PROVIDER_ARGS[@]} > 0)); then
+    cmd+=(-- "${PROVIDER_ARGS[@]}")
+  fi
+
+  emit_command "${cmd[@]}"
+}
+
+observability_assurance() {
+  if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
+    printf 'lower-assurance-host-transcript\n'
+    return 0
+  fi
+  if [[ -n "${DEBUG_LOG_PATH}" ]]; then
+    printf 'lower-assurance-host-debug-log\n'
+    return 0
+  fi
+  printf 'managed-metadata-only\n'
+}
+
+cache_assurance() {
+  case "${CACHE_PROFILE}" in
+    off)
+      printf 'managed-no-persistent-cache\n'
+      ;;
+    standard)
+      printf 'lower-assurance-persistent-cache\n'
+      ;;
+    *)
+      printf 'unknown-cache-profile\n'
+      ;;
+  esac
+}
+
+prepare_host_output_path() {
+  local raw_path="$1"
+  local resolved_path=""
+  local parent_dir=""
+
+  if ! resolved_path="$(resolve_host_output_candidate "${raw_path}")"; then
+    exit 2
+  fi
+  parent_dir="$(dirname "${resolved_path}")"
+  mkdir -p "${parent_dir}"
+  if ! resolved_path="$(resolve_host_output_candidate "${resolved_path}")"; then
+    exit 2
+  fi
+  chmod 0700 "${parent_dir}" 2>/dev/null || true
+  : >"${resolved_path}"
+  chmod 0600 "${resolved_path}" 2>/dev/null || true
+  printf '%s\n' "${resolved_path}"
+}
+
+saved_credential_helper_path() {
+  printf '%s/scripts/lib/manage_saved_credentials.py\n' "${ROOT_DIR}"
+}
+
+default_saved_credentials_config_root() {
+  dirname "$(default_injection_policy_path)"
+}
+
+default_saved_credentials_fragment_path() {
+  printf '%s/injection-policy.d/saved-credentials.toml\n' "$(default_saved_credentials_config_root)"
+}
+
+default_saved_credentials_root() {
+  printf '%s/credentials\n' "$(default_saved_credentials_config_root)"
+}
+
+credential_display_name() {
+  case "$1" in
+    codex_auth)
+      printf 'Codex credential\n'
+      ;;
+    claude_api_key)
+      printf 'Claude API key\n'
+      ;;
+    claude_auth)
+      printf 'Claude credential\n'
+      ;;
+    gemini_env)
+      printf 'Gemini env credential\n'
+      ;;
+    gemini_oauth)
+      printf 'Gemini OAuth credential\n'
+      ;;
+    gcloud_adc)
+      printf 'Google ADC credential\n'
+      ;;
+    *)
+      printf '%s\n' "$1"
+      ;;
+  esac
+}
+
+describe_credential_source() {
+  local key="$1"
+  local source="$2"
+
+  run_clean_host_command \
+    "${HOST_PYTHON3_BIN}" \
+    "$(saved_credential_helper_path)" \
+    describe \
+    --key "${key}" \
+    --source "${source}"
+}
+
+provider_auth_recovery_allowed() {
+  if [[ "${AGENT}" != "gemini" ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 1
+  fi
+  if [[ "${UI}" != "cli" ]] || [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
+    return 1
+  fi
+  if ((${#AGENT_ARGS[@]} > 0)) || ((${#PROVIDER_ARGS[@]} > 0)); then
+    return 1
+  fi
+  return 0
+}
+
+provider_auth_recovery_extra_endpoints() {
+  if [[ "${AGENT}" != "gemini" ]]; then
+    return 0
+  fi
+  if ! provider_auth_recovery_allowed; then
+    return 0
+  fi
+  if [[ "$(selected_provider_auth_mode)" != "none" ]]; then
+    return 0
+  fi
+  echo "accounts.google.com:443 oauth2.googleapis.com:443 sts.googleapis.com:443"
+}
+
+injection_manifest_credential_source() {
+  local key="$1"
+  local manifest_path=""
+
+  manifest_path="${INJECTION_BUNDLE_ROOT}/manifest.json"
+  [[ -f "${manifest_path}" ]] || return 1
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${manifest_path}" "${key}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+entry = manifest.get("credentials", {}).get(sys.argv[2])
+if isinstance(entry, dict):
+    source = entry.get("source", "")
+    if source:
+        print(source)
+PY
+}
+
+provider_candidate_container_paths() {
+  case "${AGENT}" in
+    codex)
+      printf 'codex_auth\t/state/agent-home/.codex/auth.json\n'
+      ;;
+    claude)
+      # Workcell never extracts plaintext API keys from the live session.
+      # Claude recovery is promoted through provider-written auth files only.
+      printf 'claude_auth\t/state/agent-home/.config/claude-code/auth.json\n'
+      printf 'claude_auth\t/state/agent-home/.claude/.credentials.json\n'
+      ;;
+    gemini)
+      printf 'gemini_env\t/state/agent-home/.gemini/.env\n'
+      printf 'gemini_oauth\t/state/agent-home/.gemini/oauth_creds.json\n'
+      printf 'gcloud_adc\t/state/agent-home/.config/gcloud/application_default_credentials.json\n'
+      ;;
+  esac
+}
+
+extract_promotable_container_credentials() {
+  local container_name="$1"
+  local output_root="$2"
+  local key=""
+  local container_path=""
+  local host_path=""
+  local index=0
+
+  mkdir -p "${output_root}"
+  while IFS=$'\t' read -r key container_path; do
+    [[ -n "${key}" ]] || continue
+    host_path="${output_root}/${key}.${index}"
+    index=$((index + 1))
+    if run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:${container_path}" "${host_path}" >/dev/null 2>&1; then
+      if describe_credential_source "${key}" "${host_path}" >/dev/null 2>&1; then
+        printf '%s\t%s\n' "${key}" "${host_path}"
+      else
+        rm -f "${host_path}"
+      fi
+    fi
+  done < <(provider_candidate_container_paths)
+}
+
+credential_source_differs_from_injected_source() {
+  local key="$1"
+  local candidate_source="$2"
+  local injected_source=""
+
+  injected_source="$(injection_manifest_credential_source "${key}" || true)"
+  if [[ -z "${injected_source}" ]]; then
+    return 0
+  fi
+  if ! describe_credential_source "${key}" "${injected_source}" >/dev/null 2>&1; then
+    return 0
+  fi
+  if cmp -s "${candidate_source}" "${injected_source}" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+find_extracted_credential_source() {
+  local extracted_specs="$1"
+  local expected_key="$2"
+  local key=""
+  local source=""
+
+  [[ -f "${extracted_specs}" ]] || return 1
+  while IFS=$'\t' read -r key source; do
+    [[ "${key}" == "${expected_key}" ]] || continue
+    printf '%s\n' "${source}"
+    return 0
+  done <"${extracted_specs}"
+  return 1
+}
+
+gemini_env_requires_gcloud_adc() {
+  local env_source="$1"
+  local description_json=""
+  local requires=""
+
+  description_json="$(describe_credential_source gemini_env "${env_source}")" || return 1
+  requires="$(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${description_json}" <<'PY'
+import json
+import sys
+
+print("1" if json.loads(sys.argv[1]).get("requires_gcloud_adc") else "0")
+PY
+  )" || return 1
+  [[ "${requires}" == "1" ]]
+}
+
+gcloud_adc_available_for_future_launches() {
+  local candidate_source="${1:-}"
+  local injected_source=""
+
+  if [[ -n "${candidate_source}" ]] && describe_credential_source gcloud_adc "${candidate_source}" >/dev/null 2>&1; then
+    return 0
+  fi
+  injected_source="$(injection_manifest_credential_source gcloud_adc || true)"
+  if [[ -z "${injected_source}" ]]; then
+    return 1
+  fi
+  describe_credential_source gcloud_adc "${injected_source}" >/dev/null 2>&1
+}
+
+emit_credential_bundle_spec() {
+  local first=1
+
+  while [[ "$#" -gt 0 ]]; do
+    [[ "$#" -ge 2 ]] || return 1
+    if [[ "${first}" -eq 1 ]]; then
+      printf '%s\t%s' "$1" "$2"
+      first=0
+    else
+      printf '\t%s\t%s' "$1" "$2"
+    fi
+    shift 2
+  done
+  printf '\n'
+}
+
+credential_bundle_keys_csv() {
+  local first=1
+
+  while [[ "$#" -gt 0 ]]; do
+    [[ "$#" -ge 2 ]] || break
+    if [[ "${first}" -eq 1 ]]; then
+      printf '%s' "$1"
+      first=0
+    else
+      printf ',%s' "$1"
+    fi
+    shift 2
+  done
+  printf '\n'
+}
+
+credential_bundle_display_names() {
+  local key=""
+  local first=1
+
+  while [[ "$#" -gt 0 ]]; do
+    [[ "$#" -ge 2 ]] || break
+    key="$1"
+    if [[ "${first}" -eq 1 ]]; then
+      credential_display_name "${key}" | tr -d '\n'
+      first=0
+    else
+      printf ', '
+      credential_display_name "${key}" | tr -d '\n'
+    fi
+    shift 2
+  done
+  printf '\n'
+}
+
+promotable_saved_credential_bundles() {
+  local container_name="$1"
+  local output_root="$2"
+  local extracted_specs="${output_root}/extracted.tsv"
+  local codex_source=""
+  local claude_source=""
+  local gemini_env_source=""
+  local injected_gemini_env_source=""
+  local gemini_oauth_source=""
+  local gcloud_adc_source=""
+  local env_source_for_adc=""
+  local env_bundle_emitted=0
+  local -a bundle=()
+
+  mkdir -p "${output_root}"
+  extract_promotable_container_credentials "${container_name}" "${output_root}/candidates" >"${extracted_specs}"
+
+  case "${AGENT}" in
+    codex)
+      codex_source="$(find_extracted_credential_source "${extracted_specs}" codex_auth || true)"
+      if [[ -n "${codex_source}" ]] && credential_source_differs_from_injected_source codex_auth "${codex_source}"; then
+        emit_credential_bundle_spec codex_auth "${codex_source}"
+      fi
+      ;;
+    claude)
+      claude_source="$(find_extracted_credential_source "${extracted_specs}" claude_auth || true)"
+      if [[ -n "${claude_source}" ]] && credential_source_differs_from_injected_source claude_auth "${claude_source}"; then
+        emit_credential_bundle_spec claude_auth "${claude_source}"
+      fi
+      ;;
+    gemini)
+      gemini_env_source="$(find_extracted_credential_source "${extracted_specs}" gemini_env || true)"
+      injected_gemini_env_source="$(injection_manifest_credential_source gemini_env || true)"
+      gemini_oauth_source="$(find_extracted_credential_source "${extracted_specs}" gemini_oauth || true)"
+      gcloud_adc_source="$(find_extracted_credential_source "${extracted_specs}" gcloud_adc || true)"
+      env_source_for_adc="${gemini_env_source:-${injected_gemini_env_source}}"
+      env_bundle_emitted=0
+
+      if [[ -n "${gemini_env_source}" ]] && credential_source_differs_from_injected_source gemini_env "${gemini_env_source}"; then
+        bundle=(gemini_env "${gemini_env_source}")
+        if gemini_env_requires_gcloud_adc "${gemini_env_source}"; then
+          if ! gcloud_adc_available_for_future_launches "${gcloud_adc_source}"; then
+            bundle=()
+          elif [[ -n "${gcloud_adc_source}" ]] && credential_source_differs_from_injected_source gcloud_adc "${gcloud_adc_source}"; then
+            bundle+=(gcloud_adc "${gcloud_adc_source}")
+          fi
+        fi
+        if ((${#bundle[@]} > 0)); then
+          emit_credential_bundle_spec "${bundle[@]}"
+          env_bundle_emitted=1
+        fi
+      fi
+
+      if [[ -n "${gcloud_adc_source}" ]] &&
+        credential_source_differs_from_injected_source gcloud_adc "${gcloud_adc_source}" &&
+        [[ "${env_bundle_emitted}" -eq 0 ]] &&
+        [[ -n "${env_source_for_adc}" ]] &&
+        gemini_env_requires_gcloud_adc "${env_source_for_adc}"; then
+        emit_credential_bundle_spec gcloud_adc "${gcloud_adc_source}"
+      fi
+
+      if [[ -n "${gemini_oauth_source}" ]] && credential_source_differs_from_injected_source gemini_oauth "${gemini_oauth_source}"; then
+        emit_credential_bundle_spec gemini_oauth "${gemini_oauth_source}"
+      fi
+      ;;
+  esac
+}
+
+prompt_to_save_credential() {
+  local response="${WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE:-}"
+  local entry_count=0
+  local default_root_policy=""
+  local default_fragment=""
+  local description_json=""
+  local filename=""
+  local default_credential_path=""
+  local key=""
+  local source=""
+  local reply=""
+  local -a entry_args=("$@")
+  local index=0
+
+  if [[ "${#entry_args[@]}" -eq 0 ]] || ((${#entry_args[@]} % 2 != 0)); then
+    return 1
+  fi
+  entry_count=$((${#entry_args[@]} / 2))
+
+  if [[ -z "${response}" ]] && { [[ ! -t 0 ]] || [[ ! -t 1 ]]; }; then
+    return 1
+  fi
+
+  default_root_policy="$(default_injection_policy_path)"
+  default_fragment="$(default_saved_credentials_fragment_path)"
+
+  if [[ -z "${response}" ]]; then
+    if [[ "${entry_count}" -eq 1 ]]; then
+      printf 'Save this working credential for future Workcell launches?\n' >/dev/tty
+    else
+      printf 'Save these working credentials for future Workcell launches?\n' >/dev/tty
+    fi
+    printf '  Agent: %s\n' "${AGENT}" >/dev/tty
+    printf '  Root policy: %s\n' "${default_root_policy}" >/dev/tty
+    printf '  Managed include: %s\n' "${default_fragment}" >/dev/tty
+    while [[ "${index}" -lt "${#entry_args[@]}" ]]; do
+      key="${entry_args[${index}]}"
+      source="${entry_args[$((index + 1))]}"
+      description_json="$(describe_credential_source "${key}" "${source}")" || return 1
+      filename="$(
+        run_clean_host_command "${HOST_PYTHON3_BIN}" - "${description_json}" <<'PY'
+import json
+import sys
+
+print(json.loads(sys.argv[1])["filename"])
+PY
+      )" || return 1
+      default_credential_path="$(default_saved_credentials_root)/${filename}"
+      printf '  Credential: %s\n' "$(credential_display_name "${key}")" >/dev/tty
+      printf '  Secret file: %s\n' "${default_credential_path}" >/dev/tty
+      index=$((index + 2))
+    done
+    printf 'This writes a host-side secret file and updates the main Workcell injection policy. [y/N] ' >/dev/tty
+    read -r reply </dev/tty || return 1
+  else
+    reply="${response}"
+  fi
+
+  case "${reply}" in
+    y | Y | yes | YES | Yes | accept | ACCEPT)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+enable_debug_log_capture() {
+  [[ -n "${DEBUG_LOG_PATH}" ]] || return 0
+  exec > >(tee -a "${DEBUG_LOG_PATH}") 2>&1
+}
+
+csv_contains_value() {
+  local csv="${1:-}"
+  local needle="$2"
+  local item=""
+  local IFS=','
+
+  [[ -n "${csv}" ]] || return 1
+  for item in ${csv}; do
+    [[ -n "${item}" ]] || continue
+    if [[ "${item}" == "${needle}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+provider_auth_modes() {
+  local credential_keys="${INJECTION_CREDENTIAL_KEYS:-}"
+  local -a modes=()
+  local IFS=','
+
+  case "${AGENT:-}" in
+    codex)
+      if csv_contains_value "${credential_keys}" "codex_auth"; then
+        modes+=(codex_auth)
+      fi
+      ;;
+    claude)
+      if csv_contains_value "${credential_keys}" "claude_api_key"; then
+        modes+=(claude_api_key)
+      fi
+      if csv_contains_value "${credential_keys}" "claude_auth"; then
+        modes+=(claude_auth)
+      fi
+      ;;
+    gemini)
+      if csv_contains_value "${credential_keys}" "gemini_env"; then
+        modes+=(gemini_env)
+      fi
+      if csv_contains_value "${credential_keys}" "gemini_oauth"; then
+        modes+=(gemini_oauth)
+      fi
+      ;;
+  esac
+
+  if ((${#modes[@]} == 0)); then
+    printf 'none\n'
+    return 0
+  fi
+  printf '%s\n' "${modes[*]}"
+}
+
+shared_auth_modes() {
+  local credential_keys="${INJECTION_CREDENTIAL_KEYS:-}"
+  local -a modes=()
+  local IFS=','
+
+  if csv_contains_value "${credential_keys}" "github_hosts"; then
+    modes+=(github_hosts)
+  fi
+  if csv_contains_value "${credential_keys}" "github_config"; then
+    modes+=(github_config)
+  fi
+
+  if ((${#modes[@]} == 0)); then
+    printf 'none\n'
+    return 0
+  fi
+  printf '%s\n' "${modes[*]}"
+}
+
+github_auth_present() {
+  if [[ "$(shared_auth_modes)" == "none" ]]; then
+    printf '0\n'
+  else
+    printf '1\n'
+  fi
+}
+
+maybe_offer_saved_credential_persistence() {
+  local container_name="$1"
+  local exit_status="$2"
+  local final_assurance=""
+  local bundle_keys=""
+  local bundle_names=""
+  local persist_output=""
+  local root_policy=""
+  local fragment_path=""
+  local credential_paths=""
+  local persist_summary=""
+  local -a bundle_fields=()
+  local -a persist_args=()
+  local index=0
+
+  if [[ "${exit_status}" -ne 0 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ "${UI}" != "cli" ]] || [[ "${MODE}" == "breakglass" ]]; then
+    return 0
+  fi
+  if [[ -z "${WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE:-}" ]] && { [[ ! -t 0 ]] || [[ ! -t 1 ]]; }; then
+    return 0
+  fi
+
+  final_assurance="$(session_assurance_final)"
+  case "${final_assurance}" in
+    lower-assurance-package-mutation | lower-assurance-control-plane-vcs)
+      return 0
+      ;;
+  esac
+
+  CREDENTIAL_PROMOTION_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-credential-promotion.XXXXXX")"
+  while IFS=$'\t' read -r -a bundle_fields; do
+    [[ "${#bundle_fields[@]}" -gt 0 ]] || continue
+    if ((${#bundle_fields[@]} % 2 != 0)); then
+      continue
+    fi
+
+    bundle_keys="$(credential_bundle_keys_csv "${bundle_fields[@]}")"
+    bundle_names="$(credential_bundle_display_names "${bundle_fields[@]}")"
+
+    append_credential_persist_audit_record "${COLIMA_PROFILE}" offered "${bundle_keys}" available "" "" ""
+    if ! prompt_to_save_credential "${bundle_fields[@]}"; then
+      append_credential_persist_audit_record "${COLIMA_PROFILE}" declined "${bundle_keys}" user-declined "" "" ""
+      echo "This session stayed authenticated, but future launches will ask again." >&2
+      continue
+    fi
+
+    persist_args=(
+      "${HOST_PYTHON3_BIN}"
+      "$(saved_credential_helper_path)"
+      persist
+      --root-policy "$(default_injection_policy_path)"
+      --fragment "$(default_saved_credentials_fragment_path)"
+      --credentials-root "$(default_saved_credentials_root)"
+    )
+    index=0
+    while [[ "${index}" -lt "${#bundle_fields[@]}" ]]; do
+      persist_args+=(--entry "${bundle_fields[${index}]}=${bundle_fields[$((index + 1))]}")
+      index=$((index + 2))
+    done
+
+    if ! persist_output="$(run_clean_host_command "${persist_args[@]}")"; then
+      append_credential_persist_audit_record "${COLIMA_PROFILE}" failed "${bundle_keys}" persist-error "" "" ""
+      echo "Workcell authenticated successfully, but saving the credential failed. Future launches will still need auth." >&2
+      continue
+    fi
+
+    persist_summary="$(
+      run_clean_host_command "${HOST_PYTHON3_BIN}" - "${persist_output}" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+paths = payload.get("credential_paths", {})
+if not isinstance(paths, dict):
+    raise SystemExit("persist result is missing credential_paths")
+path_values = [paths[key] for key in sorted(paths)]
+print("\t".join([payload["root_policy"], payload["fragment"], ",".join(path_values)]))
+PY
+    )" || {
+      append_credential_persist_audit_record "${COLIMA_PROFILE}" failed "${bundle_keys}" persist-summary-error "" "" ""
+      echo "Workcell saved credential files, but recording the save summary failed." >&2
+      continue
+    }
+    IFS=$'\t' read -r root_policy fragment_path credential_paths <<EOF
+${persist_summary}
+EOF
+
+    append_credential_persist_audit_record "${COLIMA_PROFILE}" accepted "${bundle_keys}" saved "${root_policy}" "${fragment_path}" "${credential_paths}"
+    echo "Saved ${bundle_names} for future Workcell launches." >&2
+  done < <(promotable_saved_credential_bundles "${container_name}" "${CREDENTIAL_PROMOTION_TMP_ROOT}/candidates")
+}
+
+selected_provider_auth_mode() {
+  local auth_modes=""
+  local credential_keys="${INJECTION_CREDENTIAL_KEYS:-}"
+
+  if [[ "${AGENT:-}" == "gemini" ]]; then
+    if csv_contains_value "${credential_keys}" "gemini_env"; then
+      printf 'gemini_env\n'
+      return 0
+    fi
+    if csv_contains_value "${credential_keys}" "gemini_oauth"; then
+      printf 'gemini_oauth\n'
+      return 0
+    fi
+    printf 'none\n'
+    return 0
+  fi
+
+  auth_modes="$(provider_auth_modes)"
+  if [[ "${auth_modes}" == "none" ]]; then
+    printf 'none\n'
+  else
+    printf '%s\n' "${auth_modes%%,*}"
+  fi
+}
+
+fail_fast_for_missing_gemini_auth() {
+  if [[ "${AGENT}" != "gemini" ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ "$#" -eq 2 ]] && [[ "$1" == "gemini" ]] && [[ "$2" == "--version" ]]; then
+    return 0
+  fi
+
+  if [[ "$(selected_provider_auth_mode)" != "none" ]]; then
+    return 0
+  fi
+
+  if provider_auth_recovery_allowed; then
+    echo "Gemini auth is not configured for this session. Launching Gemini so you can authenticate interactively." >&2
+    echo "If Gemini auth succeeds, Workcell can offer to save it to the main Workcell config after exit." >&2
+    return 0
+  fi
+
+  echo "Gemini auth is not configured for this session." >&2
+  if [[ -n "${INJECTION_POLICY}" ]]; then
+    echo "Update ${INJECTION_POLICY} to include credentials.gemini_env or credentials.gemini_oauth." >&2
+    echo "credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env." >&2
+  else
+    echo "Create $(default_injection_policy_path) or pass --injection-policy PATH with credentials.gemini_env or credentials.gemini_oauth." >&2
+    echo "credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env." >&2
+  fi
+  printf 'Next step: workcell --auth-status --agent gemini --workspace %q\n' "${WORKSPACE}" >&2
+  exit 2
+}
+
+print_injection_status() {
+  if [[ -z "${INJECTION_POLICY_SHA256}" ]]; then
+    printf 'injection_policy=none\n'
+    printf 'default_injection_policy_path=%s\n' "$(default_injection_policy_path)"
+    printf 'supported_credential_keys=codex_auth,claude_api_key,claude_auth,claude_mcp,gemini_env,gemini_oauth,gemini_projects,gcloud_adc,github_config,github_hosts\n'
+    return 0
+  fi
+  printf 'injection_policy_sha256=%s\n' "${INJECTION_POLICY_SHA256}"
+  printf 'credential_keys=%s\n' "${INJECTION_CREDENTIAL_KEYS:-none}"
+  printf 'provider_auth_mode=%s\n' "$(selected_provider_auth_mode)"
+  printf 'provider_auth_modes=%s\n' "$(provider_auth_modes)"
+  printf 'shared_auth_modes=%s\n' "$(shared_auth_modes)"
+  printf 'github_auth_present=%s\n' "$(github_auth_present)"
+  printf 'ssh_injected=%s\n' "${INJECTION_SSH_ENABLED}"
+  printf 'ssh_config_assurance=%s\n' "${INJECTION_SSH_CONFIG_ASSURANCE:-off}"
+  printf 'secret_copy_targets=%s\n' "${INJECTION_SECRET_COPY_TARGETS:-none}"
+}
+
+print_inspect_state() {
+  local recorded_image_id="$1"
+  local current_image_id="$2"
+  local latest_debug_log=""
+  local latest_transcript_log=""
+
+  latest_debug_log="$(read_latest_log_pointer "${COLIMA_PROFILE}" debug || true)"
+  latest_transcript_log="$(read_latest_log_pointer "${COLIMA_PROFILE}" transcript || true)"
+  printf 'profile=%s\n' "${COLIMA_PROFILE}"
+  printf 'workspace=%s\n' "${WORKSPACE}"
+  printf 'workspace_status=%s\n' "$(workspace_status "${WORKSPACE}")"
+  printf 'agent=%s\n' "${AGENT:-none}"
+  printf 'mode=%s\n' "${MODE}"
+  printf 'ui=%s\n' "${UI}"
+  printf 'agent_autonomy=%s\n' "${AGENT_AUTONOMY}"
+  printf 'cache_profile=%s\n' "${CACHE_PROFILE}"
+  printf 'cache_assurance=%s\n' "$(cache_assurance)"
+  printf 'container_mutability=%s\n' "${CONTAINER_MUTABILITY}"
+  printf 'container_assurance=%s\n' "$(container_assurance)"
+  printf 'autonomy_assurance=%s\n' "$(autonomy_assurance)"
+  printf 'observability_assurance=%s\n' "$(observability_assurance)"
+  printf 'log_level=%s\n' "${LOG_LEVEL}"
+  printf 'profile_dir=%s\n' "$(profile_dir "${COLIMA_PROFILE}")"
+  printf 'profile_marker=%s\n' "$(profile_marker_path "${COLIMA_PROFILE}")"
+  printf 'image_marker=%s\n' "$(profile_image_marker_path "${COLIMA_PROFILE}")"
+  printf 'audit_log=%s\n' "$(profile_audit_log_path "${COLIMA_PROFILE}")"
+  printf 'latest_debug_log=%s\n' "${latest_debug_log:-none}"
+  printf 'latest_transcript_log=%s\n' "${latest_transcript_log:-none}"
+  printf 'recorded_image_id=%s\n' "${recorded_image_id:-none}"
+  printf 'current_image_id=%s\n' "${current_image_id:-none}"
+  print_injection_status
+}
+
+show_requested_logs() {
+  local log_path=""
+
+  case "${LOGS_KIND}" in
+    audit)
+      log_path="$(profile_audit_log_path "${COLIMA_PROFILE}")"
+      ;;
+    debug | transcript)
+      log_path="$(read_latest_log_pointer "${COLIMA_PROFILE}" "${LOGS_KIND}" || true)"
+      ;;
+  esac
+
+  if [[ -z "${log_path}" ]] || [[ ! -f "${log_path}" ]]; then
+    echo "No ${LOGS_KIND} log is recorded for profile ${COLIMA_PROFILE}." >&2
+    exit 2
+  fi
+  cat "${log_path}"
+}
+
+delete_unmanaged_profile() {
+  local profile="$1"
+  local state_dir
+  local lima_dir
+
+  state_dir="$(profile_dir "${profile}")"
+  lima_dir="$(profile_lima_dir "${profile}")"
+
+  echo "Repairing conflicting unmanaged Colima profile: ${profile}" >&2
+  echo "Workcell will delete the profile state and recreate it with reviewed mounts and policy." >&2
+
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    printf 'repair_action=delete_unmanaged_profile profile=%s dry_run=1\n' "${profile}" >&2
+    return 0
+  fi
+
+  HOST_COLIMA_BIN="${HOST_COLIMA_BIN:-$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)}"
+  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+  maybe_reap_stale_profile_processes "${profile}"
+  run_host_colima delete --profile "${profile}" --force >/dev/null 2>&1 || true
+  rm -rf "${state_dir}" "${lima_dir}"
+
+  if [[ -e "${state_dir}" ]] || [[ -e "${lima_dir}" ]]; then
+    echo "Failed to remove conflicting Colima profile state for ${profile}." >&2
+    exit 2
+  fi
+}
+
+workspace_has_markers() {
+  local path="$1"
+  [[ -n "${HOST_GIT_BIN}" ]] || return 1
+  "${HOST_GIT_BIN}" -C "${path}" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+workspace_has_agent_markers() {
+  local path="$1"
+  [[ -f "${path}/AGENTS.md" ]] ||
+    [[ -f "${path}/CLAUDE.md" ]] ||
+    [[ -f "${path}/GEMINI.md" ]]
+}
+
+workspace_status() {
+  local path="$1"
+
+  if [[ ! -e "${path}" ]]; then
+    printf 'missing\n'
+    return 0
+  fi
+  if [[ ! -d "${path}" ]]; then
+    printf 'not-directory\n'
+    return 0
+  fi
+  if workspace_has_markers "${path}"; then
+    if workspace_gitdir_is_self_contained "${path}"; then
+      printf 'git-self-contained\n'
+    else
+      printf 'git-external-admin\n'
+    fi
+    return 0
+  fi
+  if workspace_has_agent_markers "${path}"; then
+    printf 'marker-only\n'
+    return 0
+  fi
+  printf 'nongit-unmarked\n'
+}
+
+workspace_gitdir_is_self_contained() {
+  local path="$1"
+  local git_dir
+  local git_top_level
+
+  [[ -n "${HOST_GIT_BIN}" ]] || return 1
+  git_dir="$("${HOST_GIT_BIN}" -C "${path}" rev-parse --absolute-git-dir 2>/dev/null || true)"
+  [[ -n "${git_dir}" ]] || return 1
+  git_top_level="$("${HOST_GIT_BIN}" -C "${path}" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ "${git_top_level}" == "${path}" ]] || return 1
+
+  case "${git_dir}" in
+    "${path}/.git" | "${path}/.git/"*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+workspace_is_sensitive() {
+  local path="$1"
+  local path_lower
+  local real_home_lower
+  local pattern
+  local sensitive_roots=(
+    "${REAL_HOME}/.ssh"
+    "${REAL_HOME}/.aws"
+    "${REAL_HOME}/.azure"
+    "${REAL_HOME}/.config"
+    "${REAL_HOME}/.docker"
+    "${REAL_HOME}/.npm"
+    "${REAL_HOME}/.gem"
+    "${REAL_HOME}/.gnupg"
+    "${REAL_HOME}/.kube"
+    "${REAL_HOME}/.config/gh"
+    "${REAL_HOME}/Library/Keychains"
+    "${REAL_HOME}/Library/Application Support"
+    "${REAL_HOME}/Library/Containers"
+    "${REAL_HOME}/Library/Group Containers"
+  )
+  real_home_lower="$(lower_ascii "${REAL_HOME}")"
+  local sensitive_patterns=(
+    "${real_home_lower}/library/application support/google/chrome*"
+    "${real_home_lower}/library/application support/google/chrome beta*"
+    "${real_home_lower}/library/application support/chromium*"
+    "${real_home_lower}/library/application support/bravesoftware/brave-browser*"
+    "${real_home_lower}/library/application support/microsoft edge*"
+    "${real_home_lower}/library/application support/firefox*"
+    "${real_home_lower}/library/application support/arc/user data*"
+    "${real_home_lower}/library/application support/com.operasoftware.opera*"
+    "${real_home_lower}/library/safari*"
+    "${real_home_lower}/library/containers/com.apple.safari*"
+    "${real_home_lower}/library/application support/*metamask*"
+    "${real_home_lower}/library/application support/*phantom*"
+    "${real_home_lower}/library/application support/*solflare*"
+    "${real_home_lower}/library/application support/*electrum*"
+    "${real_home_lower}/library/application support/*exodus*"
+  )
+  local root
+
+  path_lower="$(lower_ascii "${path}")"
+
+  for root in "${sensitive_roots[@]}"; do
+    if [[ "${path}" == "${root}" ]] || [[ "${path}" == "${root}/"* ]]; then
+      return 0
+    fi
+  done
+
+  for pattern in "${sensitive_patterns[@]}"; do
+    # shellcheck disable=SC2053
+    if [[ "${path_lower}" == ${pattern} ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+validate_workspace() {
+  local path="$1"
+  local allow_nongit="$2"
+
+  if [[ "${path}" == "/" ]] || [[ "${path}" == "${REAL_HOME}" ]]; then
+    echo "Refusing broad workspace mount: ${path}" >&2
+    exit 2
+  fi
+
+  if workspace_is_sensitive "${path}"; then
+    echo "Refusing sensitive workspace mount: ${path}" >&2
+    exit 2
+  fi
+
+  if workspace_has_markers "${path}"; then
+    if ! workspace_gitdir_is_self_contained "${path}"; then
+      echo "Refusing git workspace with admin state outside the mounted workspace: ${path}" >&2
+      echo "Use a standard checkout on the safe path; linked worktrees require breakglass or a different clone." >&2
+      exit 2
+    fi
+    return
+  fi
+
+  if [[ "${allow_nongit}" -eq 1 ]] && workspace_has_agent_markers "${path}"; then
+    return
+  fi
+
+  if [[ "${allow_nongit}" -eq 0 ]]; then
+    echo "Workspace is not a git worktree: ${path}" >&2
+    echo "Use --allow-nongit-workspace only when you intentionally want a marker-based workspace." >&2
+  else
+    echo "Non-git workspace lacks an explicit agent marker file: ${path}" >&2
+    echo "Create AGENTS.md, CLAUDE.md, or GEMINI.md before using --allow-nongit-workspace." >&2
+  fi
+  exit 2
+}
+
+run_clean_host_command() {
+  local home="${REAL_HOME:-/}"
+
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${home}" ]]; then
+    home="/"
+  fi
+
+  (
+    cd "${home}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${home}" \
+        LC_ALL=C \
+        LANG=C \
+        "$@"
+  )
+}
+
+validate_mode_requirements() {
+  local mode="$1"
+  local ack_breakglass="$2"
+  local allow_arbitrary_command="$3"
+  local ack_arbitrary_command="$4"
+  local allow_control_plane_vcs="$5"
+  local ack_control_plane_vcs="$6"
+  local rebuild="$7"
+  local prepare="$8"
+
+  if [[ "${mode}" == "breakglass" ]] && [[ "${ack_breakglass}" -eq 0 ]]; then
+    echo "breakglass mode requires --ack-breakglass." >&2
+    echo "Use it only when you intentionally want to disable the normal Workcell policy boundary." >&2
+    exit 2
+  fi
+
+  if [[ "${allow_arbitrary_command}" -eq 1 ]] && [[ "${ack_arbitrary_command}" -eq 0 ]]; then
+    echo "arbitrary command mode requires --ack-arbitrary-command." >&2
+    echo "Use it only for lower-assurance boundary debugging when you intentionally want to bypass provider command mediation." >&2
+    exit 2
+  fi
+
+  if [[ "${allow_control_plane_vcs}" -eq 1 ]] && [[ "${ack_control_plane_vcs}" -eq 0 ]]; then
+    echo "control-plane VCS mode requires --ack-control-plane-vcs." >&2
+    echo "Use it only when you intentionally want readonly Git visibility for masked workspace control-plane paths." >&2
+    exit 2
+  fi
+
+  if [[ "${mode}" == "breakglass" ]] && [[ "${allow_control_plane_vcs}" -eq 1 ]]; then
+    echo "--allow-control-plane-vcs is redundant in breakglass mode." >&2
+    exit 2
+  fi
+
+  if [[ "${mode}" == "strict" ]] && [[ "${rebuild}" -eq 1 ]] && [[ "${prepare}" -eq 0 ]]; then
+    echo "strict mode does not rebuild or cold-bootstrap the runtime image." >&2
+    echo "Rerun with --prepare when you intentionally want Workcell to seed the prepared image before strict launch." >&2
+    exit 2
+  fi
+}
+
+validate_mode_name() {
+  case "$1" in
+    strict | build | breakglass) ;;
+    *)
+      echo "Unsupported mode: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_container_mutability() {
+  case "$1" in
+    "" | ephemeral | readonly) ;;
+    *)
+      echo "Unsupported container mutability: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+default_container_mutability_for_mode() {
+  case "$1" in
+    strict)
+      printf 'ephemeral\n'
+      ;;
+    build | breakglass)
+      printf 'ephemeral\n'
+      ;;
+    *)
+      echo "Unsupported mode for container mutability defaults: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+container_mutability_is_default_for_mode() {
+  local mutability="$1"
+  local mode="$2"
+
+  [[ "${mutability}" == "$(default_container_mutability_for_mode "${mode}")" ]]
+}
+
+normalize_cli_aliases() {
+  NORMALIZED_ARGS=("$@")
+
+  case "${NORMALIZED_ARGS[0]-}" in
+    doctor)
+      NORMALIZED_ARGS=(--doctor "${NORMALIZED_ARGS[@]:1}")
+      ;;
+    inspect)
+      NORMALIZED_ARGS=(--inspect "${NORMALIZED_ARGS[@]:1}")
+      ;;
+    auth-status)
+      NORMALIZED_ARGS=(--auth-status "${NORMALIZED_ARGS[@]:1}")
+      ;;
+    gc)
+      NORMALIZED_ARGS=(--gc "${NORMALIZED_ARGS[@]:1}")
+      ;;
+    logs)
+      if [[ ${#NORMALIZED_ARGS[@]} -eq 2 ]] && [[ "${NORMALIZED_ARGS[1]}" == "--help" ]]; then
+        usage
+        exit 0
+      fi
+      if [[ ${#NORMALIZED_ARGS[@]} -lt 2 ]]; then
+        echo "workcell logs requires a log kind: audit, debug, or transcript." >&2
+        usage >&2
+        exit 2
+      fi
+      NORMALIZED_ARGS=(--logs "${NORMALIZED_ARGS[1]}" "${NORMALIZED_ARGS[@]:2}")
+      ;;
+  esac
+}
+
+prepare_cache_mounts() {
+  local agent="$1"
+  local cache_profile="$2"
+  local workspace="$3"
+  local cache_root=""
+  local workspace_cache_key=""
+
+  CACHE_MOUNTS=()
+  case "${cache_profile}" in
+    off)
+      return 0
+      ;;
+    standard) ;;
+    *)
+      echo "Unsupported cache profile: ${cache_profile}" >&2
+      exit 2
+      ;;
+  esac
+
+  workspace_cache_key="$(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${workspace}" <<'PY'
+import hashlib
+import os
+import pathlib
+import sys
+
+workspace = pathlib.Path(os.path.realpath(os.path.expanduser(sys.argv[1])))
+print(hashlib.sha256(os.fspath(workspace).encode("utf-8")).hexdigest()[:16])
+PY
+  )"
+  cache_root="$(resolve_host_path "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/cache/${agent}/${workspace_cache_key}")"
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    mkdir -p \
+      "${cache_root}/npm" \
+      "${cache_root}/pnpm" \
+      "${cache_root}/pip" \
+      "${cache_root}/uv" \
+      "${cache_root}/poetry" \
+      "${cache_root}/cargo-registry" \
+      "${cache_root}/cargo-git" \
+      "${cache_root}/go-mod" \
+      "${cache_root}/go-build" \
+      "${cache_root}/ccache" \
+      "${cache_root}/bun" \
+      "${cache_root}/xdg"
+    chmod 0700 "${cache_root}" 2>/dev/null || true
+  fi
+  CACHE_MOUNTS=(
+    -e npm_config_cache=/state/cache/npm
+    -e PNPM_STORE_DIR=/state/cache/pnpm
+    -e PIP_CACHE_DIR=/state/cache/pip
+    -e UV_CACHE_DIR=/state/cache/uv
+    -e POETRY_CACHE_DIR=/state/cache/poetry
+    -e CARGO_HOME=/state/cache/cargo-home
+    -e GOMODCACHE=/state/cache/go-mod
+    -e GOCACHE=/state/cache/go-build
+    -e CCACHE_DIR=/state/cache/ccache
+    -e BUN_INSTALL_CACHE_DIR=/state/cache/bun
+    -e XDG_CACHE_HOME=/state/cache/xdg
+    -v "${cache_root}/npm:/state/cache/npm"
+    -v "${cache_root}/pnpm:/state/cache/pnpm"
+    -v "${cache_root}/pip:/state/cache/pip"
+    -v "${cache_root}/uv:/state/cache/uv"
+    -v "${cache_root}/poetry:/state/cache/poetry"
+    -v "${cache_root}/cargo-registry:/state/cache/cargo-home/registry"
+    -v "${cache_root}/cargo-git:/state/cache/cargo-home/git"
+    -v "${cache_root}/go-mod:/state/cache/go-mod"
+    -v "${cache_root}/go-build:/state/cache/go-build"
+    -v "${cache_root}/ccache:/state/cache/ccache"
+    -v "${cache_root}/bun:/state/cache/bun"
+    -v "${cache_root}/xdg:/state/cache/xdg"
+  )
+}
+
+run_command_with_debug_log() {
+  local label="$1"
+  shift
+  local -a debug_pipe_status=()
+  local log_path=""
+  local heartbeat_pid=""
+  local start_seconds=0
+  local pid=""
+  local status=0
+
+  format_elapsed_compact() {
+    local total_seconds="$1"
+    local minutes=$((total_seconds / 60))
+    local seconds=$((total_seconds % 60))
+
+    if ((minutes > 0)); then
+      printf '%dm%02ds' "${minutes}" "${seconds}"
+    else
+      printf '%ds' "${seconds}"
+    fi
+  }
+
+  maybe_print_progress_update() {
+    local phase="$1"
+    local elapsed="$2"
+
+    case "${label}" in
+      colima-start)
+        case "${phase}" in
+          start)
+            echo "Starting managed Colima profile ${COLIMA_PROFILE}. This can take a moment, especially on first use." >&2
+            ;;
+          heartbeat)
+            echo "Workcell is still starting Colima for profile ${COLIMA_PROFILE} (${elapsed} elapsed)." >&2
+            ;;
+          success)
+            echo "Managed Colima profile ${COLIMA_PROFILE} is ready (${elapsed})." >&2
+            ;;
+        esac
+        ;;
+      runtime-build)
+        case "${phase}" in
+          start)
+            echo "Preparing the runtime image for profile ${COLIMA_PROFILE}. First-time prepares can take several minutes; reruns are usually faster." >&2
+            if [[ "${LOG_LEVEL}" != "debug" ]]; then
+              echo "Use --log-level debug for live Docker build output." >&2
+            fi
+            ;;
+          heartbeat)
+            echo "Workcell is still preparing the runtime image for profile ${COLIMA_PROFILE} (${elapsed} elapsed)." >&2
+            ;;
+          success)
+            if [[ "${PREPARE_ONLY}" -eq 1 ]]; then
+              echo "Prepared runtime image is ready for profile ${COLIMA_PROFILE} (${elapsed})." >&2
+            else
+              echo "Prepared runtime image is ready for profile ${COLIMA_PROFILE} (${elapsed}). Launching ${AGENT}." >&2
+            fi
+            ;;
+        esac
+        ;;
+    esac
+  }
+
+  log_path="$(mktemp "${TMPDIR:-/tmp}/workcell-${label}.log.XXXXXX")"
+  start_seconds="${SECONDS}"
+  maybe_print_progress_update start "0s"
+  if [[ "${LOG_LEVEL}" == "debug" ]]; then
+    set +e
+    "$@" 2>&1 | tee "${log_path}" >&2
+    debug_pipe_status=("${PIPESTATUS[@]}")
+    set -e
+    if [[ "${debug_pipe_status[0]}" -ne 0 ]]; then
+      status="${debug_pipe_status[0]}"
+    elif [[ "${debug_pipe_status[1]}" -ne 0 ]]; then
+      status="${debug_pipe_status[1]}"
+    fi
+  else
+    "$@" >"${log_path}" 2>&1 &
+    pid=$!
+    (
+      while kill -0 "${pid}" >/dev/null 2>&1; do
+        sleep 30
+        if ! kill -0 "${pid}" >/dev/null 2>&1; then
+          break
+        fi
+        maybe_print_progress_update heartbeat "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
+      done
+    ) &
+    heartbeat_pid=$!
+    if wait "${pid}"; then
+      :
+    else
+      status=$?
+    fi
+    if [[ -n "${heartbeat_pid}" ]]; then
+      kill "${heartbeat_pid}" >/dev/null 2>&1 || true
+      wait "${heartbeat_pid}" 2>/dev/null || true
+    fi
+    if [[ "${status}" -eq 0 ]] && [[ -n "${DEBUG_LOG_PATH}" ]]; then
+      cat "${log_path}" >>"${DEBUG_LOG_PATH}"
+    fi
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    maybe_print_progress_update success "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
+  else
+    echo "Workcell ${label} failed." >&2
+    if [[ "${LOG_LEVEL}" != "debug" ]]; then
+      cat "${log_path}" >&2
+    fi
+  fi
+  rm -f "${log_path}"
+  return "${status}"
+}
+
+validate_positive_integer() {
+  local label="$1"
+  local value="$2"
+
+  [[ "${value}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Unsupported ${label}: ${value}" >&2
+    exit 2
+  }
+}
+
+validate_positive_decimal() {
+  local label="$1"
+  local value="$2"
+
+  [[ "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+    echo "Unsupported ${label}: ${value}" >&2
+    exit 2
+  }
+}
+
+validate_container_memory_value() {
+  local value="$1"
+
+  [[ "${value}" =~ ^[0-9]+([kKmMgGtTpP][iI]?[bB]?)?$ ]] || {
+    echo "Unsupported container memory limit: ${value}" >&2
+    exit 2
+  }
+}
+
+profile_env_path() {
+  case "$1" in
+    strict)
+      printf '%s/runtime/profiles/strict.env\n' "${ROOT_DIR}"
+      ;;
+    build)
+      printf '%s/runtime/profiles/build.env\n' "${ROOT_DIR}"
+      ;;
+    breakglass)
+      printf '%s/runtime/profiles/breakglass.env\n' "${ROOT_DIR}"
+      ;;
+    *)
+      echo "Unsupported mode: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+derive_profile_name() {
+  local workspace="$1"
+  local slug hash
+  slug="$(slugify "$(basename "${workspace}")" | cut -c1-10)"
+  [[ -n "${slug}" ]] || slug="workspace"
+  hash="$(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${workspace}" <<'PY'
+import hashlib
+import sys
+
+print(hashlib.sha256(sys.argv[1].encode("utf-8")).hexdigest()[:8])
+PY
+  )"
+  printf 'workcell-%s-%s\n' "${slug}" "${hash}"
+}
+
+validate_colima_runtime_mounts() {
+  local profile="$1"
+  local workspace="$2"
+  local lima_path="${COLIMA_STATE_ROOT}/_lima/colima-${profile}/lima.yaml"
+
+  [[ -f "${lima_path}" ]] || {
+    echo "Missing Lima config for profile ${profile}: ${lima_path}" >&2
+    exit 2
+  }
+
+  run_clean_host_command "${HOST_RUBY_BIN}" -rpsych -rpathname -e '
+    lima = Psych.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
+    expected = ARGV[1].sub(%r{/$}, "")
+    profile = ARGV[2]
+    home = File.expand_path(ENV.fetch("HOME"))
+
+    def canonicalize(path)
+      expanded = File.expand_path(path)
+      Pathname.new(expanded).exist? ? Pathname.new(expanded).realpath.to_s : Pathname.new(expanded).cleanpath.to_s
+    end
+
+    expected = canonicalize(expected)
+    cache_roots = [canonicalize(File.join(home, "Library", "Caches", "colima"))]
+    lima_mounts = lima["mounts"] || []
+    writable_mounts = lima_mounts.select { |mount| mount["writable"] == true }
+
+    unless writable_mounts.length == 1 && canonicalize(writable_mounts.first["location"].sub(%r{/$}, "")) == expected
+      warn "Colima profile #{profile} must mount only #{expected} as writable."
+      exit 2
+    end
+
+    bad_mount = lima_mounts.find do |mount|
+      location = canonicalize(mount["location"].sub(%r{/$}, ""))
+      mount_point = mount["mountPoint"] || mount["mount_point"]
+      writable = mount["writable"] == true
+      if mount_point
+        mount_point = canonicalize(mount_point.sub(%r{/$}, ""))
+        next true unless mount_point == location
+      end
+      next false if !writable && cache_roots.any? { |root| location == root || location.start_with?(root + "/") }
+
+      location == "~" || location == home || (writable && location != expected) || (!writable && location != expected)
+    end
+
+    if bad_mount
+      warn "Colima profile #{profile} has an unexpected host mount: #{bad_mount["location"]}"
+      exit 2
+    end
+  ' "${lima_path}" "${workspace}" "${profile}"
+}
+
+workspace_runtime_probe_path() {
+  local workspace="$1"
+  local marker=""
+
+  if [[ -e "${workspace}/.git" ]]; then
+    printf '%s/.git\n' "${workspace}"
+    return 0
+  fi
+
+  for marker in AGENTS.md CLAUDE.md GEMINI.md; do
+    if [[ -e "${workspace}/${marker}" ]]; then
+      printf '%s/%s\n' "${workspace}" "${marker}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+validate_colima_runtime_workspace_view() {
+  local profile="$1"
+  local workspace="$2"
+  local probe_path=""
+
+  probe_path="$(workspace_runtime_probe_path "${workspace}" || true)"
+  [[ -n "${probe_path}" ]] || return 0
+
+  if ! run_host_colima ssh --profile "${profile}" -- test -e "${probe_path}" >/dev/null 2>&1; then
+    echo "Managed Colima profile ${profile} does not expose expected workspace content inside the VM: ${probe_path}" >&2
+    return 1
+  fi
+}
+
+validate_colima_profile_config() {
+  local profile="$1"
+  local workspace="$2"
+  local expected_cpu="$3"
+  local expected_memory="$4"
+  local expected_disk="$5"
+  local config_path="${COLIMA_STATE_ROOT}/${profile}/colima.yaml"
+
+  [[ -f "${config_path}" ]] || {
+    echo "Missing Colima config for profile ${profile}: ${config_path}" >&2
+    exit 2
+  }
+
+  run_clean_host_command "${HOST_RUBY_BIN}" -rpsych -e '
+    config = Psych.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
+    vm_type = config["vmType"] || config[:vmType] || config["vm_type"] || config[:vm_type]
+    mount_type = config["mountType"] || config[:mountType] || config["mount_type"] || config[:mount_type]
+    runtime = config["runtime"] || config[:runtime]
+    expected = ARGV[1].sub(%r{/$}, "")
+    expected_cpu = ARGV[2]
+    expected_memory = ARGV[3]
+    expected_disk = ARGV[4]
+    cpu = config["cpu"] || config[:cpu]
+    memory = config["memory"] || config[:memory]
+    disk = config["disk"] || config[:disk]
+    mounts = config["mounts"] || config[:mounts] || []
+    runtime_name =
+      case runtime
+      when Hash
+        runtime["name"] || runtime[:name]
+      else
+        runtime
+      end
+
+    expected = File.expand_path(expected)
+
+    abort("Colima profile must not forward the SSH agent.") if config["forwardAgent"] == true || config[:forwardAgent] == true
+    abort("Unexpected configured Colima mounts: #{mounts.inspect}") unless mounts.length == 1
+
+    mount = mounts.first || {}
+    location = File.expand_path((mount["location"] || mount[:location] || "").sub(%r{/$}, ""))
+    writable = mount["writable"] == true || mount[:writable] == true
+    abort("Colima profile must mount only #{expected} as writable in colima.yaml.") unless writable && location == expected
+
+    abort("Unexpected Colima vmType for managed profile: #{vm_type.inspect}") unless vm_type == "vz"
+    abort("Unexpected Colima mountType for managed profile: #{mount_type.inspect}") unless mount_type == "virtiofs"
+    abort("Unexpected Colima runtime for managed profile: #{runtime_name.inspect}") unless runtime_name == "docker"
+    abort("Unexpected Colima CPU count for managed profile: #{cpu.inspect}") unless cpu.to_s == expected_cpu
+    abort("Unexpected Colima memory size for managed profile: #{memory.inspect}") unless memory.to_s == expected_memory
+    abort("Unexpected Colima disk size for managed profile: #{disk.inspect}") unless disk.to_s == expected_disk
+  ' "${config_path}" "${workspace}" "${expected_cpu}" "${expected_memory}" "${expected_disk}"
+}
+
+validate_colima_profile() {
+  local profile="$1"
+  local workspace="$2"
+  local status
+
+  status="$(run_host_colima status --profile "${profile}" 2>&1)"
+  echo "${status}" | grep -q "Virtualization.Framework" || {
+    echo "Colima profile ${profile} is not using Virtualization.Framework." >&2
+    return 1
+  }
+  echo "${status}" | grep -q "mountType: virtiofs" || {
+    echo "Colima profile ${profile} is not using virtiofs." >&2
+    return 1
+  }
+  echo "${status}" | grep -q "runtime: docker" || {
+    echo "Colima profile ${profile} is not using Docker runtime." >&2
+    return 1
+  }
+
+  if ! validate_colima_profile_config "${profile}" "${workspace}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
+    return 1
+  fi
+  if ! validate_colima_runtime_mounts "${profile}" "${workspace}"; then
+    return 1
+  fi
+  validate_colima_runtime_workspace_view "${profile}" "${workspace}"
+}
+
+start_managed_profile() {
+  maybe_reap_stale_profile_processes "${COLIMA_PROFILE}"
+  run_command_with_debug_log colima-start \
+    run_host_colima start \
+    --profile "${COLIMA_PROFILE}" \
+    --vm-type vz \
+    --mount "${WORKSPACE}:w" \
+    --mount-type virtiofs \
+    --runtime docker \
+    --cpu "${COLIMA_CPU}" \
+    --memory "${COLIMA_MEMORY}" \
+    --disk "${COLIMA_DISK}"
+  PROFILE_RUNNING=1
+}
+
+validate_runtime_security_posture() {
+  local security_options_json=""
+
+  security_options_json="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" info --format '{{json .SecurityOptions}}' 2>/dev/null || true)"
+  [[ -n "${security_options_json}" ]] || {
+    echo "Workcell could not inspect Docker security options for the managed runtime." >&2
+    exit 2
+  }
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${security_options_json}" <<'PY'
+import json
+import sys
+
+options = json.loads(sys.argv[1])
+if not isinstance(options, list):
+    raise SystemExit("Unexpected Docker security options payload")
+if not any(isinstance(entry, str) and entry.startswith("name=seccomp") for entry in options):
+    raise SystemExit("Managed runtime requires Docker seccomp support to stay active.")
+PY
+}
+
+is_trusted_host_tool_path() {
+  local candidate="$1"
+  local trusted_prefixes=(
+    /usr/bin
+    /bin
+    /usr/sbin
+    /sbin
+    /usr/local/bin
+    /usr/local/Cellar
+    /opt/homebrew/bin
+    /opt/homebrew/Cellar
+    /Applications/Docker.app/Contents/Resources/bin
+  )
+  local prefix
+
+  [[ "${candidate}" = /* ]] || return 1
+
+  case "${candidate}" in
+    "${ROOT_DIR}"/* | "${WORKSPACE}"/*)
+      return 1
+      ;;
+  esac
+
+  for prefix in "${trusted_prefixes[@]}"; do
+    case "${candidate}" in
+      "${prefix}" | "${prefix}"/*)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+canonicalize_host_tool_path() {
+  local candidate="$1"
+  if [[ -z "${HOST_PYTHON3_BIN}" ]]; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${candidate}" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(sys.argv[1]))
+PY
+}
+
+resolve_host_tool() {
+  local name="$1"
+  shift
+  local candidate
+  local canonical_candidate
+
+  for candidate in "$@"; do
+    canonical_candidate="$(canonicalize_host_tool_path "${candidate}")"
+    if [[ -x "${candidate}" ]] &&
+      is_trusted_host_tool_path "${candidate}" &&
+      is_trusted_host_tool_path "${canonical_candidate}"; then
+      printf '%s\n' "${canonical_candidate}"
+      return 0
+    fi
+  done
+
+  candidate="$(type -P "${name}" || true)"
+  canonical_candidate="$(canonicalize_host_tool_path "${candidate}")"
+  if [[ -n "${candidate}" ]] &&
+    is_trusted_host_tool_path "${candidate}" &&
+    is_trusted_host_tool_path "${canonical_candidate}"; then
+    printf '%s\n' "${canonical_candidate}"
+    return 0
+  fi
+
+  echo "Missing trusted host tool: ${name}" >&2
+  exit 1
+}
+
+resolve_host_tool_optional() {
+  local name="$1"
+  shift
+  local candidate=""
+  local canonical_candidate=""
+
+  for candidate in "$@"; do
+    canonical_candidate="$(canonicalize_host_tool_path "${candidate}")"
+    if [[ -x "${candidate}" ]] &&
+      is_trusted_host_tool_path "${candidate}" &&
+      is_trusted_host_tool_path "${canonical_candidate}"; then
+      printf '%s\n' "${canonical_candidate}"
+      return 0
+    fi
+  done
+
+  candidate="$(type -P "${name}" || true)"
+  canonical_candidate="$(canonicalize_host_tool_path "${candidate}")"
+  if [[ -n "${candidate}" ]] &&
+    is_trusted_host_tool_path "${candidate}" &&
+    is_trusted_host_tool_path "${canonical_candidate}"; then
+    printf '%s\n' "${canonical_candidate}"
+    return 0
+  fi
+
+  return 1
+}
+
+missing_launch_host_tools_csv() {
+  local -a missing=()
+
+  resolve_host_tool_optional colima /opt/homebrew/bin/colima /usr/local/bin/colima >/dev/null || missing+=(colima)
+  resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker >/dev/null || missing+=(docker)
+  resolve_host_tool_optional ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby >/dev/null || missing+=(ruby)
+
+  if ((${#missing[@]} == 0)); then
+    printf 'none\n'
+    return 0
+  fi
+
+  local IFS=','
+  printf '%s\n' "${missing[*]}"
+}
+
+if [[ "${1:-}" == "--self-docker-probe" ]]; then
+  sanitize_host_docker_env
+  buildx_cmd version >/dev/null
+  echo "workcell-docker-probe-ok"
+  exit 0
+fi
+
+provider_endpoints() {
+  case "$1" in
+    codex)
+      echo "api.openai.com:443 auth.openai.com:443 chatgpt.com:443"
+      ;;
+    claude)
+      echo "api.anthropic.com:443 claude.ai:443 console.anthropic.com:443"
+      ;;
+    gemini)
+      echo "generativelanguage.googleapis.com:443 ai.google.dev:443"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+credential_extra_endpoints() {
+  local credential_keys="${INJECTION_CREDENTIAL_KEYS:-}"
+  local -a endpoints=()
+
+  if csv_contains_value "${credential_keys}" "github_hosts" || csv_contains_value "${credential_keys}" "github_config"; then
+    endpoints+=(
+      github.com:443
+      api.github.com:443
+      objects.githubusercontent.com:443
+      raw.githubusercontent.com:443
+    )
+  fi
+
+  if [[ "${AGENT}" == "gemini" ]]; then
+    if csv_contains_value "${credential_keys}" "gemini_oauth" || csv_contains_value "${credential_keys}" "gcloud_adc"; then
+      endpoints+=(
+        accounts.google.com:443
+        oauth2.googleapis.com:443
+        sts.googleapis.com:443
+        aiplatform.googleapis.com:443
+      )
+    fi
+  fi
+
+  if ((${#endpoints[@]} == 0)); then
+    return 0
+  fi
+
+  printf '%s\n' "${endpoints[*]}"
+}
+
+dedupe_endpoint_list() {
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "$1" <<'PY'
+import sys
+
+seen = set()
+ordered = []
+for entry in sys.argv[1].split():
+    if entry and entry not in seen:
+        seen.add(entry)
+        ordered.append(entry)
+print(" ".join(ordered))
+PY
+}
+
+build_runtime_host_aliases() {
+  local endpoint_list="$1"
+  local host=""
+  local ip=""
+
+  RUNTIME_NETWORK_ARGS=()
+  [[ "${NETWORK_POLICY}" == "allowlist" ]] || return 0
+
+  while IFS=$'\t' read -r host ip; do
+    [[ -n "${host}" ]] || continue
+    if [[ "${ip}" == *:* ]]; then
+      RUNTIME_NETWORK_ARGS+=(--add-host "${host}:[${ip}]")
+    else
+      RUNTIME_NETWORK_ARGS+=(--add-host "${host}:${ip}")
+    fi
+  done < <(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${endpoint_list}" <<'PY'
+import socket
+import sys
+
+for endpoint in sys.argv[1].split():
+    host, _, _port = endpoint.rpartition(":")
+    if host.startswith("[") and host.endswith("]"):
+        continue
+    if host.replace(".", "").isdigit():
+        continue
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        continue
+    seen = set()
+    ipv4_addrs = []
+    ipv6_addrs = []
+    for family, _socktype, _proto, _canonname, sockaddr in infos:
+        ip = sockaddr[0]
+        key = (host, ip)
+        if key in seen:
+            continue
+        seen.add(key)
+        if family == socket.AF_INET6:
+            ipv6_addrs.append(ip)
+        else:
+            ipv4_addrs.append(ip)
+    for ip in ipv4_addrs + ipv6_addrs:
+        print(f"{host}\t{ip}")
+PY
+  )
+
+}
+
+git_alias_value_is_blocked() {
+  local alias_body="$1"
+  local alias_body_lower normalized token saw_commit
+
+  alias_body_lower="$(lower_ascii "${alias_body}")"
+  normalized="$(printf '%s' "${alias_body_lower}" | tr "\t\r\n'\"" '     ')"
+
+  if [[ "${alias_body_lower}" == '!'* ]]; then
+    return 0
+  fi
+
+  if [[ "${alias_body_lower}" == *"--no-verify"* ]] ||
+    [[ "${alias_body_lower}" == *"--exec-path"* ]] ||
+    [[ "${alias_body_lower}" == *"--git-dir"* ]] ||
+    [[ "${alias_body_lower}" == *"--work-tree"* ]] ||
+    [[ "${alias_body_lower}" == *"git_exec_path="* ]] ||
+    [[ "${alias_body_lower}" == *"git_dir="* ]] ||
+    [[ "${alias_body_lower}" == *"git_work_tree="* ]] ||
+    [[ "${alias_body_lower}" == *"git_common_dir="* ]] ||
+    [[ "${alias_body_lower}" == *"core.hookspath"* ]] ||
+    [[ "${alias_body_lower}" == *"include.path"* ]] ||
+    [[ "${alias_body_lower}" == *"includeif."* ]]; then
+    return 0
+  fi
+
+  saw_commit=0
+  for token in ${normalized}; do
+    if [[ "${token}" == "commit" ]]; then
+      saw_commit=1
+      continue
+    fi
+    if [[ "${saw_commit}" -eq 1 ]] && git_commit_short_arg_is_no_verify "${token}"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+git_commit_short_arg_is_no_verify() {
+  local arg="$1"
+  local bundle char i
+
+  [[ "${arg}" == -?* ]] || return 1
+  [[ "${arg}" == --* ]] && return 1
+
+  bundle="${arg#-}"
+  for ((i = 0; i < ${#bundle}; i++)); do
+    char="${bundle:i:1}"
+    case "${char}" in
+      n)
+        return 0
+        ;;
+      m | F | C | c | t | u | S)
+        return 1
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+sanitize_shadowed_git_config() {
+  local config_path="$1"
+  local key value
+
+  [[ -f "${config_path}" ]] || return 0
+
+  while IFS= read -r key; do
+    case "$(lower_ascii "${key}")" in
+      core.hookspath | core.worktree | include.path | includeif.*.path)
+        "${HOST_GIT_BIN}" config --file "${config_path}" --unset-all "${key}" >/dev/null 2>&1 || true
+        ;;
+      alias.*)
+        while IFS= read -r value; do
+          if git_alias_value_is_blocked "${value}"; then
+            "${HOST_GIT_BIN}" config --file "${config_path}" --unset-all "${key}" >/dev/null 2>&1 || true
+            break
+          fi
+        done < <("${HOST_GIT_BIN}" config --file "${config_path}" --get-all "${key}" 2>/dev/null || true)
+        ;;
+    esac
+  done < <("${HOST_GIT_BIN}" config --file "${config_path}" --name-only --get-regexp '.*' 2>/dev/null || true)
+}
+
+lock_tree_readonly() {
+  local path="$1"
+
+  [[ -d "${path}" ]] || return 0
+
+  find "${path}" -type d -exec chmod 0555 {} +
+  find "${path}" -type f -exec chmod 0444 {} +
+}
+
+shadow_dest_is_registered() {
+  local destination="$1"
+  local existing
+
+  if ((${#SHADOW_DEST_PATHS[@]} == 0)); then
+    return 1
+  fi
+
+  for existing in "${SHADOW_DEST_PATHS[@]}"; do
+    [[ "${existing}" == "${destination}" ]] && return 0
+  done
+  return 1
+}
+
+shadow_dest_has_ancestor() {
+  local destination="$1"
+  local existing
+
+  if ((${#SHADOW_DEST_PATHS[@]} == 0)); then
+    return 1
+  fi
+
+  for existing in "${SHADOW_DEST_PATHS[@]}"; do
+    case "${destination}" in
+      "${existing}" | "${existing}"/*)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+register_shadow_mount() {
+  local source="$1"
+  local destination="$2"
+
+  if shadow_dest_is_registered "${destination}"; then
+    return 0
+  fi
+  if shadow_dest_has_ancestor "${destination}"; then
+    return 0
+  fi
+
+  SHADOW_MOUNTS+=(-v "${source}:${destination}:ro")
+  SHADOW_DEST_PATHS+=("${destination}")
+}
+
+register_workspace_import_root_mount() {
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/imports"
+  local destination="/opt/workcell/workspace-control-plane"
+
+  [[ -d "${source}" ]] || return 0
+  if ! find "${source}" -type f -print -quit | grep -q .; then
+    return 0
+  fi
+
+  WORKSPACE_IMPORT_MOUNTS+=(-v "${source}:${destination}:ro")
+}
+
+add_shadow_file_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/files/${relative_path}"
+  local destination="/workspace/${relative_path}"
+  local placeholder_message="# Workcell masks workspace control files inside the boundary."
+
+  mkdir -p "$(dirname "${source}")"
+  rm -f "${source}"
+  if git_index_has_path "${workspace}" "${relative_path}"; then
+    checkout_git_index_paths_to_prefix "${workspace}" "${CONTROL_PLANE_SHADOW_ROOT}/files/" "${relative_path}"
+  fi
+  if [[ -L "${source}" ]] || [[ ! -f "${source}" ]]; then
+    rm -f "${source}"
+    printf '%s\n' "${placeholder_message}" >"${source}"
+  fi
+  chmod 0444 "${source}"
+  register_shadow_mount "${source}" "${destination}"
+}
+
+add_shadow_dir_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/dirs/${relative_path}"
+  local destination="/workspace/${relative_path}"
+
+  chmod -R u+w "${source}" 2>/dev/null || true
+  rm -rf "${source}"
+  mkdir -p "${source}"
+  if git_index_populate_shadow_dir "${workspace}" "${relative_path}" "${source}"; then
+    replace_shadow_symlinks_with_placeholder "${source}"
+  fi
+  chmod 0555 "${source}"
+  register_shadow_mount "${source}" "${destination}"
+}
+
+workspace_is_git_worktree() {
+  local workspace="$1"
+
+  run_clean_host_command git -C "${workspace}" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+git_index_has_path() {
+  local workspace="$1"
+  local relative_path="$2"
+
+  workspace_is_git_worktree "${workspace}" || return 1
+  run_clean_host_command git -C "${workspace}" ls-files --error-unmatch -- "${relative_path}" >/dev/null 2>&1
+}
+
+checkout_git_index_paths_to_prefix() {
+  local workspace="$1"
+  local prefix="$2"
+  shift 2 || true
+
+  [[ "$#" -gt 0 ]] || return 1
+  workspace_is_git_worktree "${workspace}" || return 1
+  run_clean_host_command git -C "${workspace}" checkout-index --prefix="${prefix}" -- "$@"
+}
+
+git_index_populate_shadow_dir() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source_root="$3"
+  local tracked_paths_file=""
+
+  workspace_is_git_worktree "${workspace}" || return 1
+  tracked_paths_file="$(mktemp "${CONTROL_PLANE_SHADOW_ROOT}/index-paths.XXXXXX")"
+  run_clean_host_command git -C "${workspace}" ls-files -z --cached -- "${relative_path}" >"${tracked_paths_file}"
+  if [[ ! -s "${tracked_paths_file}" ]]; then
+    rm -f "${tracked_paths_file}"
+    return 1
+  fi
+  run_clean_host_command git -C "${workspace}" checkout-index --stdin -z --prefix="${CONTROL_PLANE_SHADOW_ROOT}/dirs/" <"${tracked_paths_file}"
+  rm -f "${tracked_paths_file}"
+  [[ -d "${source_root}" ]]
+}
+
+replace_shadow_symlinks_with_placeholder() {
+  local source_root="$1"
+  local path=""
+  local placeholder_message="# Workcell masks workspace control files inside the boundary."
+
+  [[ -d "${source_root}" ]] || return 0
+  while IFS= read -r -d '' path; do
+    rm -f "${path}"
+    printf '%s\n' "${placeholder_message}" >"${path}"
+    chmod 0444 "${path}"
+  done < <(find "${source_root}" -type l -print0)
+  lock_tree_readonly "${source_root}"
+}
+
+git_index_control_plane_dir_roots() {
+  local workspace="$1"
+  local path=""
+
+  workspace_is_git_worktree "${workspace}" || return 0
+  while IFS= read -r -d '' path; do
+    case "${path}" in
+      .codex/*)
+        printf '%s\0' ".codex"
+        ;;
+      .claude/*)
+        printf '%s\0' ".claude"
+        ;;
+      .gemini/*)
+        printf '%s\0' ".gemini"
+        ;;
+      .vscode/*)
+        printf '%s\0' ".vscode"
+        ;;
+      .idea/*)
+        printf '%s\0' ".idea"
+        ;;
+      .cursor/*)
+        printf '%s\0' ".cursor"
+        ;;
+      .zed/*)
+        printf '%s\0' ".zed"
+        ;;
+      */.codex/*)
+        printf '%s\0' "${path%%/.codex/*}/.codex"
+        ;;
+      */.claude/*)
+        printf '%s\0' "${path%%/.claude/*}/.claude"
+        ;;
+      */.gemini/*)
+        printf '%s\0' "${path%%/.gemini/*}/.gemini"
+        ;;
+      */.vscode/*)
+        printf '%s\0' "${path%%/.vscode/*}/.vscode"
+        ;;
+      */.idea/*)
+        printf '%s\0' "${path%%/.idea/*}/.idea"
+        ;;
+      */.cursor/*)
+        printf '%s\0' "${path%%/.cursor/*}/.cursor"
+        ;;
+      */.zed/*)
+        printf '%s\0' "${path%%/.zed/*}/.zed"
+        ;;
+    esac
+  done < <(run_clean_host_command git -C "${workspace}" ls-files -z --cached)
+}
+
+register_workspace_control_plane_file_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source_path="${workspace}/${relative_path}"
+  local destination="/workspace/${relative_path}"
+
+  [[ -e "${source_path}" ]] || return 0
+  if [[ -L "${source_path}" ]]; then
+    echo "Workcell refuses symlinked workspace control files even with --allow-control-plane-vcs: ${source_path}" >&2
+    exit 2
+  fi
+  [[ -f "${source_path}" ]] || return 0
+  register_shadow_mount "${source_path}" "${destination}"
+}
+
+register_workspace_control_plane_dir_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source_path="${workspace}/${relative_path}"
+  local destination="/workspace/${relative_path}"
+
+  [[ -e "${source_path}" ]] || return 0
+  if [[ -L "${source_path}" ]]; then
+    echo "Workcell refuses symlinked workspace control directories even with --allow-control-plane-vcs: ${source_path}" >&2
+    exit 2
+  fi
+  [[ -d "${source_path}" ]] || return 0
+  register_shadow_mount "${source_path}" "${destination}"
+}
+
+copy_tree_without_symlinks() {
+  local source_root="$1"
+  local destination_root="$2"
+  local path=""
+  local relative_path=""
+  local destination_path=""
+
+  [[ -d "${source_root}" ]] || return 0
+
+  while IFS= read -r -d '' path; do
+    relative_path="${path#"${source_root}/"}"
+    destination_path="${destination_root}/${relative_path}"
+    if [[ -d "${path}" ]]; then
+      mkdir -p "${destination_path}"
+    else
+      mkdir -p "$(dirname "${destination_path}")"
+      cp -p "${path}" "${destination_path}"
+    fi
+  done < <(
+    find "${source_root}" -mindepth 1 \
+      \( -type d -o -type f \) -print0 | LC_ALL=C sort -z
+  )
+}
+
+add_workspace_import_file() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/imports/${relative_path}"
+  local doc_path=""
+
+  while IFS= read -r -d '' doc_path; do
+    echo "Workcell refuses symlinked workspace control files: ${doc_path}" >&2
+    echo "Replace the symlink with a regular file under the workspace root." >&2
+    exit 2
+  done < <(
+    find "${workspace}" \
+      \( -name .git -type d -prune \) -o \
+      \( -type l -name "${relative_path}" \) -print0 | LC_ALL=C sort -z
+  )
+
+  doc_path="${workspace}/${relative_path}"
+  [[ -f "${doc_path}" ]] || return 0
+
+  mkdir -p "$(dirname "${source}")"
+  {
+    printf '<!-- Workcell imported workspace %s -->\n\n' "${relative_path}"
+    cat "${doc_path}"
+    printf '\n'
+  } >"${source}"
+  chmod 0444 "${source}"
+}
+
+add_shadow_git_hooks_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/git/${relative_path}"
+  local destination="/workspace/${relative_path}"
+  local source_path="${workspace}/${relative_path}"
+
+  mkdir -p "${source}"
+  if [[ -d "${source_path}" && ! -L "${source_path}" ]]; then
+    copy_tree_without_symlinks "${source_path}" "${source}"
+  fi
+  lock_tree_readonly "${source}"
+  register_shadow_mount "${source}" "${destination}"
+}
+
+add_shadow_git_config_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/git/${relative_path}"
+  local destination="/workspace/${relative_path}"
+  local source_path="${workspace}/${relative_path}"
+
+  mkdir -p "$(dirname "${source}")"
+  if [[ -f "${source_path}" && ! -L "${source_path}" ]]; then
+    cp "${source_path}" "${source}"
+    sanitize_shadowed_git_config "${source}"
+  else
+    : >"${source}"
+  fi
+  chmod 0444 "${source}"
+  register_shadow_mount "${source}" "${destination}"
+}
+
+add_shadow_git_path_if_present() {
+  local workspace="$1"
+  local relative_path="$2"
+  local path="${workspace}/${relative_path}"
+
+  [[ -e "${path}" ]] || return 0
+  if [[ -d "${path}" ]]; then
+    add_shadow_git_hooks_mount "${workspace}" "${relative_path}"
+  else
+    add_shadow_git_config_mount "${workspace}" "${relative_path}"
+  fi
+}
+
+prepare_workspace_control_plane_shadow() {
+  local workspace="$1"
+  local mode="$2"
+  local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
+  local rel path git_dir git_rel
+
+  SHADOW_MOUNTS=()
+  SHADOW_DEST_PATHS=()
+  WORKSPACE_IMPORT_MOUNTS=()
+  [[ "${mode}" == "breakglass" ]] && return 0
+
+  mkdir -p "${shadow_parent}"
+  CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
+
+  while IFS= read -r -d '' git_dir; do
+    git_rel="${git_dir#"${workspace}/"}"
+    for rel in "${git_rel}/hooks" "${git_rel}/config" "${git_rel}/config.worktree"; do
+      add_shadow_git_path_if_present "${workspace}" "${rel}"
+    done
+    if [[ -e "${workspace}/${git_rel}/worktrees" ]]; then
+      add_shadow_dir_mount "${workspace}" "${git_rel}/worktrees"
+    fi
+    if [[ -d "${workspace}/${git_rel}/modules" ]]; then
+      while IFS= read -r -d '' path; do
+        rel="${path#"${workspace}/"}"
+        add_shadow_git_path_if_present "${workspace}" "${rel}"
+      done < <(
+        find "${workspace}/${git_rel}/modules" \
+          \( \
+          \( \( -type d -o -type l \) -name hooks \) -o \
+          \( \( -type f -o -type l \) \( -name config -o -name config.worktree \) \) \
+          \) \
+          -print0
+      )
+      while IFS= read -r -d '' path; do
+        rel="${path#"${workspace}/"}"
+        add_shadow_dir_mount "${workspace}" "${rel}"
+      done < <(
+        find "${workspace}/${git_rel}/modules" \
+          \( \( -type d -o -type l \) -name worktrees \) -print0
+      )
+    fi
+  done < <(
+    find "${workspace}" -type d -name .git -prune -print0
+  )
+
+  if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+    while IFS= read -r -d '' path; do
+      rel="${path#"${workspace}/"}"
+      register_workspace_control_plane_dir_mount "${workspace}" "${rel}"
+    done < <(
+      find "${workspace}" \
+        \( -name .git -type d -prune \) -o \
+        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+    )
+
+    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json; do
+      register_workspace_control_plane_file_mount "${workspace}" "${rel}"
+    done
+  else
+    while IFS= read -r -d '' path; do
+      rel="${path#"${workspace}/"}"
+      add_shadow_dir_mount "${workspace}" "${rel}"
+    done < <(
+      find "${workspace}" \
+        \( -name .git -type d -prune \) -o \
+        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+    )
+    while IFS= read -r -d '' rel; do
+      add_shadow_dir_mount "${workspace}" "${rel}"
+    done < <(git_index_control_plane_dir_roots "${workspace}" | LC_ALL=C sort -zu)
+
+    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json; do
+      if [[ -f "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
+        add_shadow_file_mount "${workspace}" "${rel}"
+      fi
+    done
+  fi
+
+  add_workspace_import_file "${workspace}" "AGENTS.md"
+  add_workspace_import_file "${workspace}" "CLAUDE.md"
+  add_workspace_import_file "${workspace}" "GEMINI.md"
+  register_workspace_import_root_mount
+}
+
+bootstrap_endpoints() {
+  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 storage.googleapis.com:443 snapshot.debian.org:80"
+}
+
+AGENT=""
+AGENT_AUTONOMY="yolo"
+CACHE_PROFILE="off"
+CODEX_RULES_MUTABILITY="readonly"
+CONTAINER_MUTABILITY=""
+CONTAINER_CPU_OVERRIDE=""
+CONTAINER_MEMORY_OVERRIDE=""
+UI="cli"
+MODE="strict"
+LOG_LEVEL="normal"
+DEBUG_LOG_PATH=""
+AUDIT_TRANSCRIPT_PATH=""
+WORKSPACE="$(pwd -P)"
+COLIMA_PROFILE=""
+COLIMA_PROFILE_EXPLICIT=0
+INJECTION_POLICY=""
+USE_DEFAULT_INJECTION_POLICY=1
+VM_CPU_OVERRIDE=""
+VM_MEMORY_OVERRIDE=""
+VM_DISK_OVERRIDE=""
+REBUILD=0
+DRY_RUN=0
+PREPARE=0
+PREPARE_ONLY=0
+REPAIR_PROFILE=0
+DOCTOR=0
+INSPECT=0
+GC=0
+AUTH_STATUS=0
+LOGS_KIND=""
+ALLOW_NONGIT_WORKSPACE=0
+ALLOW_CONTROL_PLANE_VCS=0
+ALLOW_ARBITRARY_COMMAND=0
+ACK_BREAKGLASS=0
+ACK_CONTROL_PLANE_VCS=0
+ACK_ARBITRARY_COMMAND=0
+TEST_FAIL_AFTER_PROFILE_REFRESH=0
+declare -a AGENT_ARGS=()
+declare -a NORMALIZED_ARGS=()
+
+if [[ "${1:-}" == "--self-staging-probe" ]]; then
+  shift
+  AGENT="${1:-}"
+  WORKSPACE="${2:-}"
+  INJECTION_POLICY="${3:-}"
+  MODE="${4:-strict}"
+  ALLOW_CONTROL_PLANE_VCS="${5:-0}"
+  PRESERVE_STAGING_PROBE_ARTIFACTS="${6:-0}"
+
+  [[ -n "${AGENT}" ]] || {
+    echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
+    exit 2
+  }
+  [[ -n "${WORKSPACE}" ]] || {
+    echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
+    exit 2
+  }
+  [[ -n "${INJECTION_POLICY}" ]] || {
+    echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
+    exit 2
+  }
+
+  sanitize_host_docker_env
+  WORKSPACE="$(resolve_existing_directory_or_die "${WORKSPACE}")"
+  INJECTION_POLICY="$(resolve_host_path "${INJECTION_POLICY}")"
+  USE_DEFAULT_INJECTION_POLICY=0
+  prepare_injection_bundle "${AGENT}" "${MODE}"
+  prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
+
+  printf 'workcell_docker_home=%s\n' "${WORKCELL_DOCKER_HOME:-}"
+  printf 'injection_bundle_root=%s\n' "${INJECTION_BUNDLE_ROOT}"
+  printf 'shadow_root=%s\n' "${CONTROL_PLANE_SHADOW_ROOT}"
+  printf 'workspace=%s\n' "${WORKSPACE}"
+  for ((i = 1; i < ${#DIRECT_SOURCE_MOUNTS[@]}; i += 2)); do
+    printf 'direct_mount=%s\n' "${DIRECT_SOURCE_MOUNTS[i]}"
+  done
+  for ((i = 1; i < ${#SHADOW_MOUNTS[@]}; i += 2)); do
+    printf 'shadow_mount=%s\n' "${SHADOW_MOUNTS[i]}"
+  done
+  for ((i = 1; i < ${#WORKSPACE_IMPORT_MOUNTS[@]}; i += 2)); do
+    printf 'workspace_import_mount=%s\n' "${WORKSPACE_IMPORT_MOUNTS[i]}"
+  done
+  if [[ "${PRESERVE_STAGING_PROBE_ARTIFACTS}" == "1" ]]; then
+    trap - EXIT
+  fi
+  exit 0
+fi
+
+if [[ "${1:-}" == "publish-pr" ]]; then
+  shift
+  publish_pr_main "$@"
+fi
+
+if [[ $# -gt 0 ]]; then
+  normalize_cli_aliases "$@"
+  set -- "${NORMALIZED_ARGS[@]}"
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent)
+      AGENT="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --agent-autonomy)
+      AGENT_AUTONOMY="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --cache-profile)
+      CACHE_PROFILE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --agent-arg)
+      AGENT_ARGS+=("$(raw_option_value_or_die "$1" "${2-}")")
+      shift 2
+      ;;
+    --codex-rules-mutability)
+      CODEX_RULES_MUTABILITY="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --container-mutability)
+      CONTAINER_MUTABILITY="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --container-cpu)
+      CONTAINER_CPU_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --container-memory)
+      CONTAINER_MEMORY_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --injection-policy)
+      INJECTION_POLICY="$(raw_option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --no-default-injection-policy)
+      USE_DEFAULT_INJECTION_POLICY=0
+      shift
+      ;;
+    --log-level)
+      LOG_LEVEL="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --debug-log)
+      DEBUG_LOG_PATH="$(raw_option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --audit-transcript)
+      AUDIT_TRANSCRIPT_PATH="$(raw_option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --ui)
+      UI="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --mode)
+      MODE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --workspace)
+      WORKSPACE="$(resolve_host_path "$(option_value_or_die "$1" "${2-}")")"
+      shift 2
+      ;;
+    --colima-profile)
+      COLIMA_PROFILE="$(option_value_or_die "$1" "${2-}")"
+      COLIMA_PROFILE_EXPLICIT=1
+      shift 2
+      ;;
+    --vm-cpu)
+      VM_CPU_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --vm-memory)
+      VM_MEMORY_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --vm-disk)
+      VM_DISK_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --prepare)
+      PREPARE=1
+      shift
+      ;;
+    --prepare-only)
+      PREPARE=1
+      PREPARE_ONLY=1
+      shift
+      ;;
+    --repair-profile)
+      REPAIR_PROFILE=1
+      shift
+      ;;
+    --doctor)
+      DOCTOR=1
+      shift
+      ;;
+    --inspect)
+      INSPECT=1
+      shift
+      ;;
+    --logs)
+      LOGS_KIND="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --auth-status)
+      AUTH_STATUS=1
+      shift
+      ;;
+    --gc)
+      GC=1
+      shift
+      ;;
+    --test-fail-after-profile-refresh)
+      TEST_FAIL_AFTER_PROFILE_REFRESH=1
+      shift
+      ;;
+    --allow-nongit-workspace)
+      ALLOW_NONGIT_WORKSPACE=1
+      shift
+      ;;
+    --allow-control-plane-vcs)
+      ALLOW_CONTROL_PLANE_VCS=1
+      shift
+      ;;
+    --allow-arbitrary-command)
+      ALLOW_ARBITRARY_COMMAND=1
+      shift
+      ;;
+    --ack-breakglass)
+      ACK_BREAKGLASS=1
+      shift
+      ;;
+    --ack-control-plane-vcs)
+      ACK_CONTROL_PLANE_VCS=1
+      shift
+      ;;
+    --ack-arbitrary-command)
+      ACK_ARBITRARY_COMMAND=1
+      shift
+      ;;
+    --rebuild)
+      REBUILD=1
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+validate_agent_autonomy_name "${AGENT_AUTONOMY}"
+validate_cache_profile_name "${CACHE_PROFILE}"
+validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
+validate_log_level_name "${LOG_LEVEL}"
+if [[ -n "${LOGS_KIND}" ]]; then
+  validate_logs_kind_name "${LOGS_KIND}"
+fi
+if [[ "${DOCTOR}" -eq 1 ]] && [[ "${INSPECT}" -eq 1 ]]; then
+  echo "Use only one of --doctor or --inspect." >&2
+  exit 2
+fi
+if [[ "${GC}" -eq 1 ]] && { [[ "${DOCTOR}" -eq 1 ]] || [[ "${INSPECT}" -eq 1 ]] || [[ "${AUTH_STATUS}" -eq 1 ]] || [[ -n "${LOGS_KIND}" ]]; }; then
+  echo "--gc may not be combined with other non-launch actions." >&2
+  exit 2
+fi
+if [[ -n "${LOGS_KIND}" ]] && { [[ "${DOCTOR}" -eq 1 ]] || [[ "${INSPECT}" -eq 1 ]] || [[ "${AUTH_STATUS}" -eq 1 ]]; }; then
+  echo "--logs may not be combined with --doctor, --inspect, or --auth-status." >&2
+  exit 2
+fi
+if { [[ "${GC}" -eq 1 ]] || [[ "${DOCTOR}" -eq 1 ]] || [[ "${INSPECT}" -eq 1 ]] || [[ "${AUTH_STATUS}" -eq 1 ]] || [[ -n "${LOGS_KIND}" ]]; } &&
+  { [[ -n "${DEBUG_LOG_PATH}" ]] || [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; }; then
+  echo "--debug-log and --audit-transcript apply only to launched sessions." >&2
+  exit 2
+fi
+if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]] && [[ -n "${DEBUG_LOG_PATH}" ]] && [[ "${AUDIT_TRANSCRIPT_PATH}" == "${DEBUG_LOG_PATH}" ]]; then
+  echo "--audit-transcript and --debug-log must use different paths." >&2
+  exit 2
+fi
+if [[ -n "${DEBUG_LOG_PATH}" ]]; then
+  DEBUG_LOG_PATH="$(prepare_host_output_path "${DEBUG_LOG_PATH}")"
+  enable_debug_log_capture
+  echo "Workcell warning: full host-persisted debug log capture is enabled for this session: ${DEBUG_LOG_PATH}" >&2
+fi
+if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
+  AUDIT_TRANSCRIPT_PATH="$(prepare_host_output_path "${AUDIT_TRANSCRIPT_PATH}")"
+fi
+if [[ "${GC}" -eq 1 ]]; then
+  cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
+  cleanup_stale_session_audit_dirs "${COLIMA_STATE_ROOT}"
+  cleanup_stale_latest_log_pointers "${COLIMA_STATE_ROOT}"
+  echo "Cleaned stale Workcell injection, session-audit, and broken latest-log pointer state."
+  exit 0
+fi
+declare -a PROVIDER_ARGS=()
+if ((${#AGENT_ARGS[@]} > 0)); then
+  PROVIDER_ARGS=("${AGENT_ARGS[@]}")
+fi
+if [[ $# -gt 0 ]]; then
+  PROVIDER_ARGS+=("$@")
+fi
+if ((${#PROVIDER_ARGS[@]} > 0)); then
+  set -- "${PROVIDER_ARGS[@]}"
+else
+  set --
+fi
+
+if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 0 ]] && [[ $# -gt 0 ]] && [[ -n "${AGENT}" ]] && [[ "$1" != "${AGENT}" ]]; then
+  set -- "${AGENT}" "$@"
+fi
+
+if [[ -z "${AGENT}" ]] && { [[ "${DOCTOR}" -eq 1 ]] || [[ "${INSPECT}" -eq 1 ]] || [[ "${AUTH_STATUS}" -eq 1 ]]; }; then
+  echo "Option --agent is required." >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ -n "${AGENT}" ]]; then
+  case "${AGENT}" in
+    codex | claude | gemini) ;;
+    *)
+      echo "Unsupported agent: ${AGENT}" >&2
+      exit 2
+      ;;
+  esac
+fi
+
+if [[ -z "${AGENT}" ]] && [[ -z "${LOGS_KIND}" ]]; then
+  echo "Option --agent is required." >&2
+  usage >&2
+  exit 2
+fi
+
+case "${UI}" in
+  cli) ;;
+  gui)
+    echo "GUI mode is not implemented yet as a preserved-boundary path." >&2
+    exit 2
+    ;;
+  *)
+    echo "Unsupported UI mode: ${UI}" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "${REPAIR_PROFILE}" -eq 1 ]] && [[ "${MODE}" == "strict" ]]; then
+  PREPARE=1
+fi
+
+validate_mode_name "${MODE}"
+if [[ -z "${CONTAINER_MUTABILITY}" ]]; then
+  CONTAINER_MUTABILITY="$(default_container_mutability_for_mode "${MODE}")"
+fi
+validate_container_mutability "${CONTAINER_MUTABILITY}"
+PROFILE_ENV="$(profile_env_path "${MODE}")"
+[[ -f "${PROFILE_ENV}" ]] || {
+  echo "Missing runtime profile: ${PROFILE_ENV}" >&2
+  exit 1
+}
+
+# shellcheck source=/dev/null
+source "${PROFILE_ENV}"
+if [[ -n "${VM_CPU_OVERRIDE}" ]]; then
+  COLIMA_CPU="${VM_CPU_OVERRIDE}"
+fi
+if [[ -n "${VM_MEMORY_OVERRIDE}" ]]; then
+  COLIMA_MEMORY="${VM_MEMORY_OVERRIDE}"
+fi
+if [[ -n "${VM_DISK_OVERRIDE}" ]]; then
+  COLIMA_DISK="${VM_DISK_OVERRIDE}"
+fi
+if [[ -n "${CONTAINER_MEMORY_OVERRIDE}" ]]; then
+  CONTAINER_MEMORY="${CONTAINER_MEMORY_OVERRIDE}"
+fi
+validate_positive_integer "VM CPU count" "${COLIMA_CPU}"
+validate_positive_integer "VM memory size (GiB)" "${COLIMA_MEMORY}"
+validate_positive_integer "VM disk size (GiB)" "${COLIMA_DISK}"
+validate_container_memory_value "${CONTAINER_MEMORY}"
+if [[ -n "${CONTAINER_CPU_OVERRIDE}" ]]; then
+  validate_positive_decimal "container CPU limit" "${CONTAINER_CPU_OVERRIDE}"
+fi
+HOST_TOOL_MISSING_CSV="$(missing_launch_host_tools_csv)"
+HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
+HOST_DOCKER_BIN="docker"
+if [[ -z "${COLIMA_PROFILE}" ]]; then
+  COLIMA_PROFILE="$(derive_profile_name "${WORKSPACE}")"
+fi
+validate_colima_profile_name "${COLIMA_PROFILE}"
+if [[ -n "${LOGS_KIND}" ]]; then
+  show_requested_logs
+  exit 0
+fi
+validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${ALLOW_CONTROL_PLANE_VCS}" "${ACK_CONTROL_PLANE_VCS}" "${REBUILD}" "${PREPARE}"
+cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
+prepare_injection_bundle "${AGENT}" "${MODE}"
+
+IMAGE_TAG="workcell:local"
+PROFILE_DIR="$(profile_dir "${COLIMA_PROFILE}")"
+PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
+PROFILE_IMAGE_MARKER="$(profile_image_marker_path "${COLIMA_PROFILE}")"
+PROFILE_PREEXISTED=0
+PROFILE_MARKER_WORKSPACE=""
+BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
+EGRESS_HELPER="${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+HOST_USER="$(id -un 2>/dev/null || printf 'agent')"
+SOURCE_DATE_EPOCH="$("${HOST_GIT_BIN}" -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')"
+NEEDS_REBUILD=0
+
+if [[ -n "${WORKCELL_EGRESS_HELPER:-}" ]]; then
+  echo "WORKCELL_EGRESS_HELPER is reserved for the Workcell test harness." >&2
+  exit 2
+fi
+
+refresh_profile_state "${COLIMA_PROFILE}"
+
+if [[ "${AUTH_STATUS}" -eq 1 ]]; then
+  print_injection_status
+  exit 0
+fi
+
+if [[ "${DOCTOR}" -eq 0 ]] && [[ "${INSPECT}" -eq 0 ]] && [[ -z "${LOGS_KIND}" ]] &&
+  [[ "${AUTH_STATUS}" -eq 0 ]] && [[ "${GC}" -eq 0 ]]; then
+  WORKSPACE="$(resolve_existing_directory_or_die "${WORKSPACE}")"
+  validate_workspace "${WORKSPACE}" "${ALLOW_NONGIT_WORKSPACE}"
+fi
+
+if [[ "${INSPECT}" -eq 1 ]]; then
+  print_inspect_state \
+    "$(profile_image_marker_value "${COLIMA_PROFILE}" image_id || true)" \
+    "$(current_profile_image_id "${COLIMA_PROFILE}")"
+  exit 0
+fi
+
+if [[ "${DOCTOR}" -eq 1 ]]; then
+  local_current_image_id="$(current_profile_image_id "${COLIMA_PROFILE}")"
+  workspace_state="$(workspace_status "${WORKSPACE}")"
+  profile_state="absent"
+  if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
+    profile_state="unmanaged"
+  elif [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
+    profile_state="managed"
+  fi
+  recorded_image_id="$(profile_image_marker_value "${COLIMA_PROFILE}" image_id || true)"
+  prepared_image=0
+  if [[ -n "${recorded_image_id}" ]] && [[ -n "${local_current_image_id}" ]] && [[ "${recorded_image_id}" == "${local_current_image_id}" ]]; then
+    prepared_image=1
+  fi
+  print_inspect_state "${recorded_image_id}" "${local_current_image_id}"
+  printf 'doctor_missing_host_tools=%s\n' "${HOST_TOOL_MISSING_CSV}"
+  printf 'doctor_profile_state=%s\n' "${profile_state}"
+  printf 'doctor_workspace_binding=%s\n' "${PROFILE_MARKER_WORKSPACE:-none}"
+  printf 'doctor_prepared_image=%s\n' "${prepared_image}"
+  if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
+    printf 'doctor_recommended_next=install-host-tools\n'
+  elif [[ "${workspace_state}" == "missing" ]] || [[ "${workspace_state}" == "not-directory" ]]; then
+    printf 'doctor_recommended_next=fix-workspace\n'
+  elif [[ "${profile_state}" == "unmanaged" ]]; then
+    printf 'doctor_recommended_next='
+    if [[ "${MODE}" == "strict" ]]; then
+      build_recommended_command 1 1 "${MODE}"
+    else
+      build_recommended_command 0 1 "${MODE}"
+    fi
+  elif [[ "${MODE}" == "strict" ]] && [[ "${prepared_image}" -eq 0 ]]; then
+    printf 'doctor_recommended_next='
+    build_recommended_command 1 0 "${MODE}"
+  else
+    printf 'doctor_recommended_next=none\n'
+  fi
+  exit 0
+fi
+
+fail_fast_for_missing_gemini_auth "$@"
+
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+  acquire_profile_lock "${COLIMA_PROFILE}"
+  # Another launch may have created or repaired the profile while we waited.
+  refresh_profile_state "${COLIMA_PROFILE}"
+fi
+
+if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
+  if [[ "${REPAIR_PROFILE}" -eq 1 ]]; then
+    delete_unmanaged_profile "${COLIMA_PROFILE}"
+    PROFILE_PREEXISTED=0
+  else
+    echo "Refusing to reuse unmanaged Colima profile: ${COLIMA_PROFILE}" >&2
+    echo "Workcell found a profile with the right name but without Workcell ownership metadata." >&2
+    echo "That profile might carry broader mounts, credentials, or network state than the reviewed path allows." >&2
+    echo "Next step:" >&2
+    if [[ "${MODE}" == "strict" ]]; then
+      build_recommended_command 1 1 "${MODE}"
+    else
+      build_recommended_command 0 1 "${MODE}"
+    fi
+    echo "Manual cleanup, if you prefer to inspect and delete it yourself:" >&2
+    printf '  colima delete --profile %q --force\n' "${COLIMA_PROFILE}" >&2
+    printf '  rm -rf %q %q\n' "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")" >&2
+    exit 2
+  fi
+fi
+
+if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ -z "${PROFILE_MARKER_WORKSPACE}" ]]; then
+  echo "Refusing to reuse managed Colima profile without a recorded workspace binding: ${COLIMA_PROFILE}" >&2
+  exit 2
+fi
+
+if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" != "${WORKSPACE}" ]]; then
+  echo "Refusing to reuse Colima profile ${COLIMA_PROFILE} for a different workspace." >&2
+  echo "Recorded workspace: ${PROFILE_MARKER_WORKSPACE}" >&2
+  echo "Requested workspace: ${WORKSPACE}" >&2
+  exit 2
+fi
+
+if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
+  fail_missing_strict_prepared_image_prelaunch
+fi
+
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  HOST_RUBY_BIN="$(resolve_host_tool ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby)"
+  sanitize_host_docker_env
+fi
+
+ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(credential_extra_endpoints) $(provider_auth_recovery_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS:-}")"
+if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
+  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:80")"
+fi
+prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
+prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
+build_runtime_host_aliases "${ALLOW_ENDPOINTS}"
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  prepare_session_audit_state "${COLIMA_PROFILE}"
+fi
+
+CONTAINER_NAME="workcell-$(slugify "${AGENT}-${MODE}-$(basename "${WORKSPACE}")")-$(generate_session_suffix)"
+DOCKER_RUN_BASE=(
+  "${HOST_DOCKER_BIN}"
+  run
+  --init
+  --name "${CONTAINER_NAME}"
+  --security-opt no-new-privileges:true
+  --cap-drop ALL
+  --pids-limit 1024
+  --memory "${CONTAINER_MEMORY}"
+  --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777"
+  --tmpfs "/run:nosuid,nodev,size=64m,mode=755"
+  --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777"
+  --workdir /workspace
+  -e AGENT_NAME="${AGENT}"
+  -e WORKCELL_AGENT_AUTONOMY="${AGENT_AUTONOMY}"
+  -e WORKCELL_CODEX_RULES_MUTABILITY="${CODEX_RULES_MUTABILITY}"
+  -e WORKCELL_CACHE_PROFILE="${CACHE_PROFILE}"
+  -e WORKCELL_CONTAINER_MUTABILITY="${CONTAINER_MUTABILITY}"
+  -e WORKCELL_SESSION_ASSURANCE_INITIAL="$(session_assurance_initial)"
+  -e WORKCELL_ALLOW_CONTROL_PLANE_VCS="${ALLOW_CONTROL_PLANE_VCS}"
+  -e WORKCELL_WORKSPACE_CONTROL_PLANE_STATE="$(workspace_control_plane_state)"
+  -e AGENT_UI="${UI}"
+  -e CODEX_PROFILE="${MODE}"
+  -e WORKCELL_MODE="${MODE}"
+  -e HOME=/state/agent-home
+  -e CODEX_HOME=/state/agent-home/.codex
+  -e WORKCELL_RUNTIME=1
+  -e TMPDIR=/state/tmp
+  -e WORKSPACE=/workspace
+  -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane
+  -v "${WORKSPACE}:/workspace"
+)
+if [[ "${CONTAINER_MUTABILITY}" == "readonly" ]]; then
+  DOCKER_RUN_BASE+=(
+    --read-only
+    --user "${HOST_UID}:${HOST_GID}"
+    -e USER=agent
+    -e LOGNAME=agent
+  )
+else
+  DOCKER_RUN_BASE+=(
+    # Mutable sessions still drop the default capability set, but need the
+    # minimal handoff capabilities required to re-exec as the mapped runtime
+    # user.
+    --cap-add SETUID
+    --cap-add SETGID
+    --user 0:0
+    -e WORKCELL_HOST_UID="${HOST_UID}"
+    -e WORKCELL_HOST_GID="${HOST_GID}"
+    -e WORKCELL_HOST_USER="${HOST_USER}"
+  )
+fi
+if [[ -n "${CONTAINER_CPU_OVERRIDE}" ]]; then
+  DOCKER_RUN_BASE+=(--cpus "${CONTAINER_CPU_OVERRIDE}")
+fi
+if ((${#SHADOW_MOUNTS[@]} > 0)); then
+  DOCKER_RUN_BASE+=("${SHADOW_MOUNTS[@]}")
+fi
+if ((${#WORKSPACE_IMPORT_MOUNTS[@]} > 0)); then
+  DOCKER_RUN_BASE+=("${WORKSPACE_IMPORT_MOUNTS[@]}")
+fi
+if ((${#RUNTIME_NETWORK_ARGS[@]} > 0)); then
+  DOCKER_RUN_BASE+=("${RUNTIME_NETWORK_ARGS[@]}")
+fi
+if ((${#DIRECT_SOURCE_MOUNTS[@]} > 0)); then
+  DOCKER_RUN_BASE+=("${DIRECT_SOURCE_MOUNTS[@]}")
+fi
+if ((${#CACHE_MOUNTS[@]} > 0)); then
+  DOCKER_RUN_BASE+=("${CACHE_MOUNTS[@]}")
+fi
+if [[ -n "${INJECTION_BUNDLE_ROOT}" ]]; then
+  DOCKER_RUN_BASE+=(
+    -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json
+    -v "${INJECTION_BUNDLE_ROOT}:/opt/workcell/host-injections:ro"
+  )
+fi
+EXECUTION_PATH="managed-tier1"
+if [[ "${MODE}" == "breakglass" ]]; then
+  EXECUTION_PATH="lower-assurance-breakglass"
+elif [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
+  EXECUTION_PATH="lower-assurance-control-plane-vcs"
+fi
+
+if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
+  if [[ $# -eq 0 ]]; then
+    echo "arbitrary command mode requires a command after --." >&2
+    exit 2
+  fi
+  EXECUTION_PATH="lower-assurance-debug-command"
+  DOCKER_RUN=(
+    "${DOCKER_RUN_BASE[@]}"
+    --entrypoint "$1"
+    "${IMAGE_TAG}"
+  )
+  shift
+  if [[ $# -gt 0 ]]; then
+    DOCKER_RUN+=("$@")
+  fi
+else
+  DOCKER_RUN=(
+    "${DOCKER_RUN_BASE[@]}"
+    "${IMAGE_TAG}"
+  )
+  if [[ $# -gt 0 ]]; then
+    DOCKER_RUN+=("$@")
+  fi
+fi
+
+if [[ -t 0 ]] && [[ -t 1 ]]; then
+  DOCKER_RUN=("${HOST_DOCKER_BIN}" run --init -it "${DOCKER_RUN[@]:3}")
+fi
+
+printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
+  "${COLIMA_PROFILE}" "${MODE}" "${AGENT}" "${UI}" "${WORKSPACE}" >&2
+printf 'agent_autonomy=%s\n' "${AGENT_AUTONOMY}" >&2
+printf 'vm_resources=cpu=%s memory_gib=%s disk_gib=%s\n' "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}" >&2
+printf 'container_resources=mutability=%s cpu=%s memory=%s\n' \
+  "${CONTAINER_MUTABILITY}" "${CONTAINER_CPU_OVERRIDE:-unmanaged}" "${CONTAINER_MEMORY}" >&2
+printf 'cache_profile=%s\n' "${CACHE_PROFILE}" >&2
+printf 'cache_assurance=%s\n' "$(cache_assurance)" >&2
+printf 'container_assurance=%s\n' "$(container_assurance)" >&2
+printf 'autonomy_assurance=%s\n' "$(autonomy_assurance)" >&2
+printf 'observability_assurance=%s\n' "$(observability_assurance)" >&2
+printf 'log_level=%s debug_log=%s audit_transcript=%s\n' \
+  "${LOG_LEVEL}" "${DEBUG_LOG_PATH:-off}" "$([[ -n "${AUDIT_TRANSCRIPT_PATH}" ]] && printf 'full' || printf 'off')" >&2
+printf 'codex_rules_mutability_configured=%s\n' "${CODEX_RULES_MUTABILITY}" >&2
+printf 'codex_rules_assurance_configured=%s\n' "$(codex_rules_assurance)" >&2
+printf 'codex_rules_mutability_effective_initial=%s\n' "$(codex_rules_effective_mutability_initial)" >&2
+printf 'codex_rules_assurance_effective_initial=%s\n' "$(codex_rules_effective_assurance_initial)" >&2
+printf 'session_assurance_initial=%s\n' "$(session_assurance_initial)" >&2
+if [[ -n "${INJECTION_POLICY_SHA256}" ]]; then
+  printf 'injection_policy_sha256=%s credential_keys=%s ssh_injected=%s\n' \
+    "${INJECTION_POLICY_SHA256}" "${INJECTION_CREDENTIAL_KEYS:-none}" "${INJECTION_SSH_ENABLED}" >&2
+fi
+printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
+printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
+printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
+
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  if [[ "${PREPARE_ONLY}" -eq 1 ]]; then
+    printf 'prepare_only=1 no_session_launch=1\n'
+    exit 0
+  fi
+  emit_redacted_command "${DOCKER_RUN[@]}"
+  exit 0
+fi
+
+if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
+  profile_config_path="${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/colima.yaml"
+  lima_config_path="${COLIMA_STATE_ROOT}/_lima/colima-${COLIMA_PROFILE}/lima.yaml"
+  profile_status=""
+  if [[ ! -f "${profile_config_path}" ]] ||
+    ! validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
+    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources."
+  elif [[ ! -f "${lima_config_path}" ]] ||
+    ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts."
+  else
+    profile_status="$(colima_profile_status "${COLIMA_PROFILE}" || true)"
+    if [[ "${profile_status}" == "Running" ]] &&
+      ! validate_colima_runtime_workspace_view "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents."
+    fi
+  fi
+fi
+
+if [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
+  fail_missing_strict_prepared_image_prelaunch
+fi
+
+maybe_fail_after_profile_refresh_for_tests
+
+start_managed_profile
+if ! validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+  if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ "${PROFILE_WAS_REFRESHED}" -eq 0 ]]; then
+    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view."
+    start_managed_profile
+    validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}" || exit 2
+  else
+    exit 2
+  fi
+fi
+mkdir -p "${PROFILE_DIR}"
+restore_profile_audit_log "${COLIMA_PROFILE}"
+ensure_session_audit_state
+printf '%s\n' "${WORKSPACE}" >"${PROFILE_MARKER}"
+PROFILE_VALIDATED=1
+write_latest_log_pointer "${COLIMA_PROFILE}" debug "${DEBUG_LOG_PATH}"
+write_latest_log_pointer "${COLIMA_PROFILE}" transcript "${AUDIT_TRANSCRIPT_PATH}"
+
+export DOCKER_HOST="unix://${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/docker.sock"
+validate_runtime_security_posture
+
+restore_runtime_egress() {
+  if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+    "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
+  else
+    "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
+  fi
+}
+
+RECORDED_IMAGE_ID="$(profile_image_marker_value "${COLIMA_PROFILE}" image_id || true)"
+CURRENT_IMAGE_ID=""
+if [[ "${REBUILD}" -eq 1 ]]; then
+  NEEDS_REBUILD=1
+else
+  CURRENT_IMAGE_ID="$(current_image_id)"
+  if [[ -z "${CURRENT_IMAGE_ID}" ]] || [[ -z "${RECORDED_IMAGE_ID}" ]] || [[ "${CURRENT_IMAGE_ID}" != "${RECORDED_IMAGE_ID}" ]]; then
+    NEEDS_REBUILD=1
+  fi
+fi
+
+if [[ "${MODE}" == "strict" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]] && [[ "${PREPARE}" -eq 0 ]]; then
+  restore_runtime_egress
+  echo "Strict mode needs a prepared runtime image for profile ${COLIMA_PROFILE}." >&2
+  echo "The profile started successfully, but the runtime image is missing or stale." >&2
+  echo "Next step:" >&2
+  build_recommended_command 1 0 "${MODE}"
+  exit 2
+fi
+
+if [[ "${NETWORK_POLICY}" == "allowlist" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
+  if [[ "${PREPARE}" -eq 1 ]]; then
+    echo "prepare=1 seeding the prepared runtime image before launch." >&2
+  fi
+  BOOTSTRAP_APPLIED=1
+  printf 'bootstrap_policy=allowlist endpoints=%s\n' "${BOOTSTRAP_ENDPOINTS}" >&2
+  "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
+elif [[ "${NETWORK_POLICY}" != "allowlist" ]]; then
+  "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
+fi
+
+if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
+  BUILD_SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
+  BUILD_STATUS=0
+  SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" run_command_with_debug_log runtime-build \
+    buildx_cmd build \
+    --build-arg "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH}" \
+    --provenance=false \
+    --sbom=false \
+    --load \
+    -t "${IMAGE_TAG}" \
+    -f "${ROOT_DIR}/runtime/container/Dockerfile" \
+    "${ROOT_DIR}" || BUILD_STATUS=$?
+  if [[ "${BUILD_STATUS}" -ne 0 ]]; then
+    restore_runtime_egress
+    exit "${BUILD_STATUS}"
+  fi
+  CURRENT_IMAGE_ID="$(current_image_id)"
+  if [[ -z "${CURRENT_IMAGE_ID}" ]]; then
+    restore_runtime_egress
+    echo "Workcell failed to record the prepared runtime image ID for ${IMAGE_TAG}." >&2
+    exit 2
+  fi
+  write_profile_image_marker "${COLIMA_PROFILE}" "${CURRENT_IMAGE_ID}"
+fi
+
+restore_runtime_egress
+if [[ "${PREPARE_ONLY}" -eq 1 ]]; then
+  echo "Prepared runtime image recorded for profile ${COLIMA_PROFILE}. No session launched because --prepare-only was requested." >&2
+  exit 0
+fi
+append_launch_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
+
+DOCKER_STATUS=0
+run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
+  if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
+    echo "Full transcript capture requires an interactive terminal." >&2
+    exit 2
+  fi
+  echo "Workcell warning: full host-persisted terminal transcript capture is enabled for this session: ${AUDIT_TRANSCRIPT_PATH}" >&2
+  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/pty_transcript.py" --log "${AUDIT_TRANSCRIPT_PATH}" -- "${DOCKER_RUN[@]}" || DOCKER_STATUS=$?
+else
+  "${DOCKER_RUN[@]}" || DOCKER_STATUS=$?
+fi
+capture_session_audit_state "${CONTAINER_NAME}"
+maybe_offer_saved_credential_persistence "${CONTAINER_NAME}" "${DOCKER_STATUS}"
+finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${DOCKER_STATUS}"
+run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+if [[ "${FINAL_SESSION_ASSURANCE:-}" == "lower-assurance-package-mutation" ]]; then
+  echo "Workcell warning: this session ended lower-assurance because package-manager mutations ran as root inside the container." >&2
+fi
+if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
+  if [[ "${CACHE_PROFILE}" == "standard" ]]; then
+    echo "Workcell ephemeral runtime ended. Changes not persisted to /workspace or provided from the host control plane were discarded, but the opt-in persistent cache plane was retained." >&2
+  else
+    echo "Workcell ephemeral runtime ended. Changes not persisted to /workspace or provided from the host control plane were discarded." >&2
+  fi
+fi
+exit "${DOCKER_STATUS}"

@@ -1,0 +1,36 @@
+# GitHub-hosted repository controls that live outside the git tree but remain
+# part of the reviewed Workcell control plane.
+
+[branch_integrity]
+# These integrity controls stay enabled regardless of repository size:
+# - require signed commits on the default branch
+# - block force-pushes on the default branch
+# - block deletion of the default branch
+require_signed_commits = true
+block_force_pushes = true
+block_deletions = true
+
+[branch_review]
+# Valid modes:
+# - "review-gated": require pull requests, at least one approving review,
+#   code owner review, and resolved review threads
+# - "single-owner-private-pr": require pull requests on a private user-owned
+#   single-owner repository, but allow zero required approvals and no code
+#   owner/thread gate so merges remain workable without an admin bypass
+mode = "single-owner-private-pr"
+
+[release_environment]
+# Valid modes:
+# - "review-gated": require at least one human reviewer and no admin bypass
+# - "single-owner-private": allow a private single-owner repo to use the
+#   release environment without a reviewer gate
+mode = "single-owner-private"
+
+[required_status_checks]
+contexts = [
+  "Validate repository",
+  "Container smoke",
+  "Reproducible build",
+  "GitHub Actions lint",
+  "GitHub Actions security analysis",
+]
