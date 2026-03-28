@@ -1,0 +1,123 @@
+#!/usr/bin/env -S BASH_ENV= ENV= bash
+set -euo pipefail
+
+REAL_NODE="/usr/local/libexec/workcell/real/node"
+NODE_GUARD="/usr/local/libexec/workcell/public-node-guard.mjs"
+TRUSTED_PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+SCRIPT_PATH=""
+
+sanitize_node_env() {
+  unset BASH_ENV
+  unset ENV
+  unset NODE_OPTIONS
+  unset NODE_PATH
+  unset NODE_EXTRA_CA_CERTS
+  unset npm_config_userconfig
+  unset NPM_CONFIG_USERCONFIG
+  unset LD_AUDIT
+  unset LD_LIBRARY_PATH
+  unset SSL_CERT_FILE
+  unset SSL_CERT_DIR
+  export WORKSPACE=/workspace
+  export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
+  export PATH="${TRUSTED_PATH}"
+}
+
+canonicalize_existing_path() {
+  local candidate="${1:-}"
+
+  [[ -n "${candidate}" ]] || return 1
+
+  if [[ -e "${candidate}" ]]; then
+    realpath "${candidate}"
+    return
+  fi
+
+  return 1
+}
+
+is_protected_provider_script() {
+  local candidate="${1:-}"
+  local canonical_candidate=""
+
+  canonical_candidate="$(canonicalize_existing_path "${candidate}" 2>/dev/null || true)"
+  case "${canonical_candidate:-${candidate}}" in
+    /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+reject_if_protected_provider_path() {
+  if is_protected_provider_script "${1:-}"; then
+    echo "Workcell blocked direct provider script execution via node." >&2
+    exit 2
+  fi
+}
+
+reject_dynamic_node_option() {
+  echo "Workcell blocked dynamic Node code-loading option outside provider wrappers." >&2
+  exit 2
+}
+
+no_script_invocation_is_safe() {
+  local arg
+
+  [[ $# -gt 0 ]] || return 1
+
+  for arg in "$@"; do
+    case "${arg}" in
+      -v | --version | -h | --help) ;;
+      *)
+        return 1
+        ;;
+    esac
+  done
+
+  return 0
+}
+
+for arg in "$@"; do
+  case "${arg}" in
+    *"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"*)
+      echo "Workcell blocked direct provider script execution via node." >&2
+      exit 2
+      ;;
+  esac
+
+  case "${arg}" in
+    --)
+      shift
+      SCRIPT_PATH="${1:-}"
+      break
+      ;;
+    -e | --eval | -p | --print | -r | --require | --import | --loader | --experimental-loader | --env-file | --env-file-if-exists | --experimental-config-file | --experimental-default-config-file)
+      reject_dynamic_node_option
+      ;;
+    --eval=* | --print=* | --require=* | --import=* | --loader=* | --experimental-loader=* | --env-file=* | --env-file-if-exists=* | --experimental-config-file=* | --experimental-default-config-file=*)
+      reject_dynamic_node_option
+      ;;
+    -*)
+      continue
+      ;;
+    *)
+      SCRIPT_PATH="${arg}"
+      break
+      ;;
+  esac
+done
+
+if [[ -n "${SCRIPT_PATH}" ]] && is_protected_provider_script "${SCRIPT_PATH}"; then
+  echo "Workcell blocked direct provider script execution via node." >&2
+  exit 2
+fi
+
+if [[ -z "${SCRIPT_PATH}" ]] && ! no_script_invocation_is_safe "$@"; then
+  echo "Workcell blocked stdin-driven Node execution outside provider wrappers." >&2
+  exit 2
+fi
+
+sanitize_node_env
+exec "${REAL_NODE}" --import "${NODE_GUARD}" "$@"
