@@ -466,15 +466,6 @@ def persist_saved_credentials(
         die("saved credentials fragment credentials must be a table")
 
     fragment_backup = backup_existing_file(fragment_path, 0o600)
-    root_policy_included_fragment = False
-    if root_policy.exists():
-        parsed_root = parse_toml_document(root_policy.read_text(encoding="utf-8"), root_policy)
-        includes = parsed_root.get("includes", [])
-        if isinstance(includes, list):
-            include_relative = os.path.relpath(fragment_path, root_policy.parent).replace(
-                os.sep, "/"
-            )
-            root_policy_included_fragment = include_relative in includes
 
     saved_paths: dict[str, str] = {}
     credential_backups: list[tuple[Path, Path | None]] = []
@@ -491,15 +482,10 @@ def persist_saved_credentials(
         atomic_write_text(fragment_path, render_managed_fragment(fragment), 0o600)
         update_root_policy(root_policy, fragment_path)
     except BaseException:
-        if not root_policy_included_fragment:
-            restore_or_remove(fragment_path, fragment_backup, 0o600)
-            for path, backup_path in credential_backups:
-                restore_or_remove(path, backup_path, 0o600)
-                cleanup_backup(backup_path)
-        else:
-            cleanup_backup(fragment_backup)
-            for _path, backup_path in credential_backups:
-                cleanup_backup(backup_path)
+        restore_or_remove(fragment_path, fragment_backup, 0o600)
+        for path, backup_path in credential_backups:
+            restore_or_remove(path, backup_path, 0o600)
+            cleanup_backup(backup_path)
         raise
 
     cleanup_backup(fragment_backup)

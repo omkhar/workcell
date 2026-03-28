@@ -420,6 +420,45 @@ class ManageSavedCredentialsTests(unittest.TestCase):
             self.assertFalse(fragment.exists())
             self.assertFalse((credentials_root / "codex-auth.json").exists())
 
+    def test_persist_saved_credentials_rolls_back_bundle_when_fragment_already_included(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            codex_source = root / "auth.json"
+            codex_source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            adc_source = root / "adc.json"
+            adc_source.write_text('{"type":"authorized_user"}\n', encoding="utf-8")
+            root_policy = root / "injection-policy.toml"
+            root_policy.write_text('version = 1\nincludes = ["saved-credentials.toml"]\n', encoding="utf-8")
+            fragment = root / "saved-credentials.toml"
+            fragment.write_text("version = 1\n\n[credentials]\n", encoding="utf-8")
+            credentials_root = root / "credentials"
+
+            original_copy = self.module.copy_saved_credential
+            calls = 0
+
+            def flaky_copy(source: Path, destination: Path) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise SystemExit("boom")
+                original_copy(source, destination)
+
+            with mock.patch.object(self.module, "copy_saved_credential", side_effect=flaky_copy):
+                with self.assertRaises(SystemExit):
+                    self.module.persist_saved_credentials(
+                        [("codex_auth", codex_source), ("gcloud_adc", adc_source)],
+                        root_policy,
+                        fragment,
+                        credentials_root,
+                    )
+
+            self.assertEqual(
+                fragment.read_text(encoding="utf-8"),
+                "version = 1\n\n[credentials]\n",
+            )
+            self.assertFalse((credentials_root / "codex-auth.json").exists())
+            self.assertFalse((credentials_root / "gcloud-adc.json").exists())
+
     def test_persist_saved_credentials_rejects_symlinked_root_policy_before_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
