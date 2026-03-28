@@ -3614,6 +3614,8 @@ EXTRACTED_CREDENTIAL_MODE_HARNESS="$(mktemp)"
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" describe_credential_source
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" claude_onboarding_config_detected
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" provider_candidate_container_paths
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" extract_promotable_container_credentials
@@ -4083,6 +4085,28 @@ for managed_dir in \
     exit 1
   fi
 done
+
+>"${AUDIT_CAPTURE}"
+>"${STDERR_CAPTURE}"
+rm -rf "${TMP_ROOT}/config"
+AGENT=claude
+INJECTION_CREDENTIAL_KEYS=
+WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=accept
+
+promotable_saved_credential_bundles() {
+  : > "${CLAUDE_ONBOARDING_CONFIG_MARKER:?}"
+  return 0
+}
+
+if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
+  echo "Expected saved credential promotion harness Claude onboarding-stub path to succeed" >&2
+  exit 1
+fi
+grep -q 'Claude only wrote first-run onboarding config' "${STDERR_CAPTURE}"
+if [[ -e "${TMP_ROOT}/config/injection-policy.toml" ]]; then
+  echo "Expected Claude onboarding-stub path to avoid writing saved credentials" >&2
+  exit 1
+fi
 EOF
 } >"${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
 /bin/bash "${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
