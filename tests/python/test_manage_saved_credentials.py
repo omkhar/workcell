@@ -18,11 +18,16 @@ class ManageSavedCredentialsTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.module = load_module("scripts/lib/manage_saved_credentials.py")
 
+    def write_secret_file(self, path: Path, contents: str) -> Path:
+        path.write_text(contents, encoding="utf-8")
+        path.chmod(0o600)
+        return path
+
     def test_describe_codex_auth_returns_expected_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
 
             metadata = self.module.validate_saved_credential("codex_auth", source)
 
@@ -34,7 +39,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "gemini.env"
-            source.write_text("GOOGLE_GENAI_USE_GCA=true\n", encoding="utf-8")
+            self.write_secret_file(source, "GOOGLE_GENAI_USE_GCA=true\n")
 
             metadata = self.module.validate_saved_credential("gemini_env", source)
 
@@ -48,7 +53,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
             root_policy = root / "injection-policy.toml"
             fragment = root / "injection-policy.d" / "saved-credentials.toml"
             credentials_root = root / "credentials"
@@ -80,7 +85,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
             root_policy = root / "injection-policy.toml"
             root_policy.write_text(
                 'version = 1\n\n[documents]\ncommon = "/tmp/common.md"\n',
@@ -105,9 +110,9 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             codex_source = root / "codex-auth.json"
-            codex_source.write_text('{"token":"codex"}\n', encoding="utf-8")
+            self.write_secret_file(codex_source, '{"token":"codex"}\n')
             claude_source = root / "claude-auth.json"
-            claude_source.write_text('{"token":"claude"}\n', encoding="utf-8")
+            self.write_secret_file(claude_source, '{"token":"claude"}\n')
             root_policy = root / "injection-policy.toml"
             root_policy.write_text(
                 'version = 1\nincludes = ["shared.toml"]\n',
@@ -159,9 +164,9 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             env_source = root / "gemini.env"
-            env_source.write_text("GOOGLE_GENAI_USE_GCA=true\n", encoding="utf-8")
+            self.write_secret_file(env_source, "GOOGLE_GENAI_USE_GCA=true\n")
             adc_source = root / "gcloud-adc.json"
-            adc_source.write_text('{"type":"authorized_user"}\n', encoding="utf-8")
+            self.write_secret_file(adc_source, '{"type":"authorized_user"}\n')
             root_policy = root / "injection-policy.toml"
             fragment = root / "injection-policy.d" / "saved-credentials.toml"
             credentials_root = root / "credentials"
@@ -201,7 +206,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
             root_policy = root / "injection-policy.toml"
             root_policy.write_text(
                 'version = 1\n# keep me\nincludes = [\n  "shared.toml",\n]\n\n[documents]\ncommon = "/tmp/common.md"\n',
@@ -238,7 +243,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "claude-api-key.txt"
-            source.write_text("\n", encoding="utf-8")
+            self.write_secret_file(source, "\n")
 
             with self.assertRaises(SystemExit):
                 self.module.validate_saved_credential("claude_api_key", source)
@@ -247,15 +252,41 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             oauth_source = root / "oauth.json"
-            oauth_source.write_text('{"refresh_token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(oauth_source, '{"refresh_token":"abc"}\n')
             adc_source = root / "adc.json"
-            adc_source.write_text('{"type":"authorized_user"}\n', encoding="utf-8")
+            self.write_secret_file(adc_source, '{"type":"authorized_user"}\n')
 
             oauth_metadata = self.module.validate_saved_credential("gemini_oauth", oauth_source)
             adc_metadata = self.module.validate_saved_credential("gcloud_adc", adc_source)
 
             self.assertIn("aiplatform.googleapis.com:443", oauth_metadata["extra_endpoints"])
             self.assertIn("oauth2.googleapis.com:443", adc_metadata["extra_endpoints"])
+
+    def test_describe_rejects_group_world_accessible_secret_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "auth.json"
+            self.write_secret_file(source, '{"token":"abc"}\n')
+            source.chmod(0o644)
+
+            with self.assertRaises(SystemExit):
+                self.module.validate_saved_credential("codex_auth", source)
+
+    def test_persist_rejects_group_world_accessible_secret_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "claude-api-key.txt"
+            self.write_secret_file(source, "sk-ant-123\n")
+            source.chmod(0o644)
+
+            with self.assertRaises(SystemExit):
+                self.module.persist_saved_credential(
+                    "claude_api_key",
+                    source,
+                    root / "policy.toml",
+                    root / "saved-credentials.toml",
+                    root / "credentials",
+                )
 
     def test_parse_toml_document_rejects_invalid_toml(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -400,7 +431,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             target = root / "auth.json"
-            target.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(target, '{"token":"abc"}\n')
             source = root / "auth-link.json"
             source.symlink_to(target)
 
@@ -424,7 +455,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
             root_policy = root / "injection-policy.toml"
             fragment = root / "saved-credentials.toml"
             credentials_root = root / "credentials"
@@ -445,9 +476,9 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             codex_source = root / "auth.json"
-            codex_source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(codex_source, '{"token":"abc"}\n')
             adc_source = root / "adc.json"
-            adc_source.write_text('{"type":"authorized_user"}\n', encoding="utf-8")
+            self.write_secret_file(adc_source, '{"type":"authorized_user"}\n')
             root_policy = root / "injection-policy.toml"
             root_policy.write_text('version = 1\nincludes = ["saved-credentials.toml"]\n', encoding="utf-8")
             fragment = root / "saved-credentials.toml"
@@ -484,7 +515,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
             real_root_policy = root / "real-policy.toml"
             real_root_policy.write_text('version = 1\nincludes = ["saved-credentials.toml"]\n', encoding="utf-8")
             root_policy = root / "policy-link.toml"
@@ -507,7 +538,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
             real_config_dir = root / "real-config"
             real_config_dir.mkdir()
             config_dir = root / "config-link"
@@ -531,7 +562,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
             real_fragment_dir = root / "real-fragments"
             real_fragment_dir.mkdir()
             fragment_dir = root / "fragment-link"
@@ -554,7 +585,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
 
             with mock.patch.object(
                 self.module,
@@ -600,7 +631,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "auth.json"
-            source.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(source, '{"token":"abc"}\n')
             root_policy = root / "injection-policy.toml"
             fragment = root / "saved-credentials.toml"
             credentials_root = root / "credentials"
@@ -649,7 +680,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             target = root / "auth.json"
-            target.write_text('{"token":"abc"}\n', encoding="utf-8")
+            self.write_secret_file(target, '{"token":"abc"}\n')
             source = root / "auth-link.json"
             source.symlink_to(target)
 

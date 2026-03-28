@@ -3614,6 +3614,8 @@ SAVED_CREDENTIAL_SELECTION_HARNESS="$(mktemp)"
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source_prefer_changed
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" gemini_env_requires_gcloud_adc
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" gcloud_adc_available_for_future_launches
@@ -3644,6 +3646,22 @@ run_clean_host_command() {
   "$@"
 }
 
+render_sanitized_bundle() {
+  local agent="$1"
+  local policy_path="$2"
+
+  rm -rf "${INJECTION_BUNDLE_ROOT}"
+  mkdir -p "${INJECTION_BUNDLE_ROOT}"
+  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+    --policy "${policy_path}" \
+    --agent "${agent}" \
+    --mode strict \
+    --output-root "${INJECTION_BUNDLE_ROOT}" >/dev/null
+  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
+    --manifest "${INJECTION_BUNDLE_ROOT}/manifest.json" \
+    --mount-spec "${INJECTION_BUNDLE_ROOT}.mounts.json" >/dev/null
+}
+
 extract_promotable_container_credentials() {
   case "${WORKCELL_TEST_SELECTION_CASE}" in
     env-bundle)
@@ -3654,21 +3672,33 @@ extract_promotable_container_credentials() {
       printf 'gemini_env\t%s\n' "${TMP_ROOT}/unchanged.env"
       printf 'gcloud_adc\t%s\n' "${TMP_ROOT}/refreshed-adc.json"
       ;;
+    claude-refresh)
+      printf 'claude_auth\t%s\n' "${TMP_ROOT}/stale-claude-auth.json"
+      printf 'claude_auth\t%s\n' "${TMP_ROOT}/refreshed-claude-auth.json"
+      ;;
   esac
 }
 
 cat >"${TMP_ROOT}/initial.env" <<'ENV'
 GEMINI_API_KEY=old-token
 ENV
+chmod 0600 "${TMP_ROOT}/initial.env"
 cat >"${TMP_ROOT}/candidate.env" <<'ENV'
 GOOGLE_GENAI_USE_GCA=true
 ENV
+chmod 0600 "${TMP_ROOT}/candidate.env"
 cat >"${TMP_ROOT}/candidate-adc.json" <<'JSON'
 {"type":"authorized_user"}
 JSON
-cat >"${INJECTION_BUNDLE_ROOT}/manifest.json" <<JSON
-{"credentials":{"gemini_env":{"source":"${TMP_ROOT}/initial.env"}}}
-JSON
+chmod 0600 "${TMP_ROOT}/candidate-adc.json"
+cat >"${TMP_ROOT}/gemini-policy.toml" <<EOF2
+version = 1
+
+[credentials]
+gemini_env = "${TMP_ROOT}/initial.env"
+EOF2
+chmod 0600 "${TMP_ROOT}/gemini-policy.toml"
+render_sanitized_bundle gemini "${TMP_ROOT}/gemini-policy.toml"
 
 WORKCELL_TEST_SELECTION_CASE=env-bundle
 bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out" | tr -d '\n')"
@@ -3681,18 +3711,55 @@ fi
 cat >"${TMP_ROOT}/unchanged.env" <<'ENV'
 GOOGLE_GENAI_USE_GCA=true
 ENV
+chmod 0600 "${TMP_ROOT}/unchanged.env"
 cat >"${TMP_ROOT}/refreshed-adc.json" <<'JSON'
 {"type":"authorized_user","refresh_token":"new"}
 JSON
-cat >"${INJECTION_BUNDLE_ROOT}/manifest.json" <<JSON
-{"credentials":{"gemini_env":{"source":"${TMP_ROOT}/unchanged.env"}}}
-JSON
+chmod 0600 "${TMP_ROOT}/refreshed-adc.json"
+cat >"${TMP_ROOT}/gemini-policy.toml" <<EOF2
+version = 1
+
+[credentials]
+gemini_env = "${TMP_ROOT}/unchanged.env"
+EOF2
+chmod 0600 "${TMP_ROOT}/gemini-policy.toml"
+render_sanitized_bundle gemini "${TMP_ROOT}/gemini-policy.toml"
 
 WORKCELL_TEST_SELECTION_CASE=adc-only
 bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-adc-only" | tr -d '\n')"
 expected=$'gcloud_adc\t'"${TMP_ROOT}"$'/refreshed-adc.json'
 if [[ "${bundle}" != "${expected}" ]]; then
   echo "Expected Gemini ADC-only bundle selection to include only refreshed gcloud_adc, got: ${bundle}" >&2
+  exit 1
+fi
+
+AGENT=claude
+cat >"${TMP_ROOT}/seed-claude-auth.json" <<'JSON'
+{"refresh_token":"seed"}
+JSON
+chmod 0600 "${TMP_ROOT}/seed-claude-auth.json"
+cat >"${TMP_ROOT}/stale-claude-auth.json" <<'JSON'
+{"refresh_token":"seed"}
+JSON
+chmod 0600 "${TMP_ROOT}/stale-claude-auth.json"
+cat >"${TMP_ROOT}/refreshed-claude-auth.json" <<'JSON'
+{"refresh_token":"refreshed"}
+JSON
+chmod 0600 "${TMP_ROOT}/refreshed-claude-auth.json"
+cat >"${TMP_ROOT}/claude-policy.toml" <<EOF2
+version = 1
+
+[credentials]
+claude_auth = "${TMP_ROOT}/seed-claude-auth.json"
+EOF2
+chmod 0600 "${TMP_ROOT}/claude-policy.toml"
+render_sanitized_bundle claude "${TMP_ROOT}/claude-policy.toml"
+
+WORKCELL_TEST_SELECTION_CASE=claude-refresh
+bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-claude" | tr -d '\n')"
+expected=$'claude_auth\t'"${TMP_ROOT}"$'/refreshed-claude-auth.json'
+if [[ "${bundle}" != "${expected}" ]]; then
+  echo "Expected Claude bundle selection to prefer the changed auth file, got: ${bundle}" >&2
   exit 1
 fi
 EOF
@@ -3710,6 +3777,10 @@ SAVED_CREDENTIAL_PROMOTION_HARNESS="$(mktemp)"
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_fragment_path
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_root
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" sanitize_saved_credential_audit_path
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" sanitize_saved_credential_audit_paths_csv
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_display_name
   printf '\n'
@@ -3767,6 +3838,7 @@ promotable_saved_credential_bundles() {
 }
 
 printf '{"token":"abc"}\n' >"${TMP_ROOT}/candidate-auth.json"
+chmod 0600 "${TMP_ROOT}/candidate-auth.json"
 
 if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
   echo "Expected saved credential promotion harness accept path to succeed" >&2
@@ -3775,6 +3847,13 @@ fi
 grep -q 'action=offered' "${AUDIT_CAPTURE}"
 grep -q 'action=accepted' "${AUDIT_CAPTURE}"
 grep -q 'credential_key=codex_auth' "${AUDIT_CAPTURE}"
+grep -q 'root_policy=injection-policy.toml' "${AUDIT_CAPTURE}"
+grep -q 'fragment_path=injection-policy.d/saved-credentials.toml' "${AUDIT_CAPTURE}"
+grep -q 'credential_path=credentials/codex-auth.json' "${AUDIT_CAPTURE}"
+if grep -Fq "${TMP_ROOT}" "${AUDIT_CAPTURE}"; then
+  echo "Expected credential-persist audit records to redact managed host paths" >&2
+  exit 1
+fi
 grep -q 'Saved Codex credential for future Workcell launches.' "${STDERR_CAPTURE}"
 [[ -f "${TMP_ROOT}/config/injection-policy.toml" ]]
 [[ -f "${TMP_ROOT}/config/injection-policy.d/saved-credentials.toml" ]]
@@ -3808,6 +3887,7 @@ promotable_saved_credential_bundles() {
 }
 
 printf '{"refresh_token":"claude"}\n' >"${TMP_ROOT}/candidate-claude-auth.json"
+chmod 0600 "${TMP_ROOT}/candidate-claude-auth.json"
 
 if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
   echo "Expected saved credential promotion harness Claude path to succeed" >&2
