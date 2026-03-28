@@ -1097,6 +1097,13 @@ append_credential_persist_audit_record() {
   local root_policy="$5"
   local fragment_path="$6"
   local credential_path="$7"
+  local sanitized_root_policy=""
+  local sanitized_fragment_path=""
+  local sanitized_credential_path=""
+
+  sanitized_root_policy="$(sanitize_saved_credential_audit_path "${root_policy}")"
+  sanitized_fragment_path="$(sanitize_saved_credential_audit_path "${fragment_path}")"
+  sanitized_credential_path="$(sanitize_saved_credential_audit_paths_csv "${credential_path}")"
 
   append_audit_record "${profile}" \
     "event=credential-persist" \
@@ -1107,9 +1114,9 @@ append_credential_persist_audit_record() {
     "action=${action}" \
     "credential_key=${key}" \
     "reason=${reason}" \
-    "root_policy=${root_policy}" \
-    "fragment_path=${fragment_path}" \
-    "credential_path=${credential_path}" \
+    "root_policy=${sanitized_root_policy}" \
+    "fragment_path=${sanitized_fragment_path}" \
+    "credential_path=${sanitized_credential_path}" \
     "injection_policy_sha256=${INJECTION_POLICY_SHA256}" \
     "session_assurance_final=$(session_assurance_final)"
 }
@@ -2085,6 +2092,46 @@ default_saved_credentials_root() {
   printf '%s/credentials\n' "$(default_saved_credentials_config_root)"
 }
 
+sanitize_saved_credential_audit_path() {
+  local raw_path="${1:-}"
+  local config_root=""
+
+  [[ -n "${raw_path}" ]] || return 0
+  config_root="$(default_saved_credentials_config_root)"
+  case "${raw_path}" in
+    "${config_root}")
+      printf '.\n'
+      ;;
+    "${config_root}/"*)
+      printf '%s\n' "${raw_path#"${config_root}"/}"
+      ;;
+    *)
+      printf 'external\n'
+      ;;
+  esac
+}
+
+sanitize_saved_credential_audit_paths_csv() {
+  local raw_paths="${1:-}"
+  local item=""
+  local first=1
+  local sanitized=""
+  local IFS=','
+
+  [[ -n "${raw_paths}" ]] || return 0
+  for item in ${raw_paths}; do
+    [[ -n "${item}" ]] || continue
+    sanitized="$(sanitize_saved_credential_audit_path "${item}")"
+    if [[ "${first}" -eq 1 ]]; then
+      printf '%s' "${sanitized}"
+      first=0
+    else
+      printf ',%s' "${sanitized}"
+    fi
+  done
+  printf '\n'
+}
+
 credential_display_name() {
   case "$1" in
     codex_auth)
@@ -2152,20 +2199,39 @@ provider_auth_recovery_extra_endpoints() {
 injection_manifest_credential_source() {
   local key="$1"
   local manifest_path=""
+  local direct_mount_spec_path=""
 
   manifest_path="${INJECTION_BUNDLE_ROOT}/manifest.json"
+  direct_mount_spec_path="${INJECTION_BUNDLE_ROOT}.mounts.json"
   [[ -f "${manifest_path}" ]] || return 1
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${manifest_path}" "${key}" <<'PY'
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${manifest_path}" "${key}" "${direct_mount_spec_path}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+mount_specs = []
+mount_spec_path = Path(sys.argv[3])
+if mount_spec_path.is_file():
+    mount_specs = json.loads(mount_spec_path.read_text(encoding="utf-8"))
+
 entry = manifest.get("credentials", {}).get(sys.argv[2])
 if isinstance(entry, dict):
     source = entry.get("source", "")
     if source:
         print(source)
+        raise SystemExit(0)
+    mount_path = entry.get("mount_path", "")
+    if mount_path and isinstance(mount_specs, list):
+        for item in mount_specs:
+            if not isinstance(item, dict):
+                continue
+            if item.get("mount_path") != mount_path:
+                continue
+            source = item.get("source", "")
+            if source:
+                print(source)
+                raise SystemExit(0)
 PY
 }
 
@@ -2242,6 +2308,35 @@ find_extracted_credential_source() {
     return 0
   done <"${extracted_specs}"
   return 1
+}
+
+find_extracted_credential_source_prefer_changed() {
+  local extracted_specs="$1"
+  local expected_key="$2"
+  local injected_source=""
+  local first_source=""
+  local key=""
+  local source=""
+
+  injected_source="$(injection_manifest_credential_source "${expected_key}" || true)"
+  if [[ -n "${injected_source}" ]] &&
+    ! describe_credential_source "${expected_key}" "${injected_source}" >/dev/null 2>&1; then
+    injected_source=""
+  fi
+
+  [[ -f "${extracted_specs}" ]] || return 1
+  while IFS=$'\t' read -r key source; do
+    [[ "${key}" == "${expected_key}" ]] || continue
+    [[ -n "${first_source}" ]] || first_source="${source}"
+    if [[ -n "${injected_source}" ]] && cmp -s "${source}" "${injected_source}" >/dev/null 2>&1; then
+      continue
+    fi
+    printf '%s\n' "${source}"
+    return 0
+  done <"${extracted_specs}"
+
+  [[ -n "${first_source}" ]] || return 1
+  printf '%s\n' "${first_source}"
 }
 
 gemini_env_requires_gcloud_adc() {
@@ -2351,7 +2446,7 @@ promotable_saved_credential_bundles() {
       fi
       ;;
     claude)
-      claude_source="$(find_extracted_credential_source "${extracted_specs}" claude_auth || true)"
+      claude_source="$(find_extracted_credential_source_prefer_changed "${extracted_specs}" claude_auth || true)"
       if [[ -n "${claude_source}" ]] && credential_source_differs_from_injected_source claude_auth "${claude_source}"; then
         emit_credential_bundle_spec claude_auth "${claude_source}"
       fi
