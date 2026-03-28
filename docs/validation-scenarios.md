@@ -17,6 +17,7 @@ broader pre-merge path when you need full local coverage.
 Recommended commands:
 
 - `./scripts/validate-repo.sh`
+- `./scripts/run-scenario-tests.sh --secretless-only`
 - `./scripts/verify-invariants.sh`
 - `./scripts/container-smoke.sh`
 - `./scripts/pre-merge.sh`
@@ -29,6 +30,11 @@ snapshot instead of the live worktree, use the reviewed pre-merge flags:
 
 The snapshot mode is intentionally scoped to `pre-merge.sh` today. Provider
 authenticated smoke remains an explicit live-worktree lane.
+
+Scenario metadata lives in `tests/scenarios/manifest.json`. Each entry can
+declare a `lane`, `platform`, and `manual` flag so the local runner can skip
+non-secretless, platform-specific, or operator-only scenarios with an explicit
+reason instead of pretending they belong in the default lane.
 
 ## Local Provider Authenticated Smoke
 

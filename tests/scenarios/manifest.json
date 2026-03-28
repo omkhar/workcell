@@ -2,8 +2,33 @@
   "version": 1,
   "scenarios": [
     {
+      "id": "shared/auth-status",
+      "description": "Shared auth-status reports provider and shared credential posture across adapters",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-auth-status.sh",
+      "requires_credentials": false
+    },
+    {
+      "id": "shared/publish-pr",
+      "description": "Host-side publish-pr dry-run renders signed commit and draft PR commands",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "devrel",
+      "test_file": "shared/test-publish-pr-dry-run.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "claude-swe/hook-parametric",
       "description": "Claude guard-bash.sh blocks all commands in the fixture file",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
       "providers": ["claude"],
       "persona": "swe",
       "test_file": "claude-swe/test-hook-parametric.sh",
