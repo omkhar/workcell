@@ -78,10 +78,10 @@ The design explicitly avoids common boundary punctures:
   `/workspace` and `/state` paths is blocked, and mutable shebang scripts
   cannot point straight at protected real runtimes or loaders that target them
 - nested coding-agent CLI launches are blocked or mediated on the safe path,
-  and the public `node` surface blocks direct execution of the shipped provider
-  entrypoints, repackaged workspace copies of the shipped provider package
-  trees, and native addon loading instead of treating them as ordinary
-  workspace code
+  and the public `node` surface blocks direct execution of the shipped npm
+  provider entrypoints, repackaged workspace copies of the shipped npm
+  provider package trees, and native addon loading instead of treating them as
+  ordinary workspace code
 
 ## Scope
 
@@ -211,6 +211,12 @@ exists only for lower-assurance boundary debugging with
 is recorded in the host audit log as a downgraded path.
 The safe path requires self-contained git admin state inside the mounted
 workspace; linked worktrees with external gitdirs are rejected.
+The mounted workspace remains the durable source of truth across container
+exit, so agent-authored code already survives locally on the host. Final
+branch publication stays host-side: use `workcell publish-pr` to create or
+switch a feature branch, make a signed commit, push it, and open a draft PR
+with agent-prepared metadata instead of attempting final GitHub publication
+from inside the Tier 1 session.
 
 Common recovery paths:
 
@@ -219,6 +225,8 @@ Common recovery paths:
   Replace `codex` with `claude` or `gemini` for the corresponding provider.
 - Prewarm the runtime image without launching:
   `workcell --prepare-only --agent codex --workspace /path/to/repo`
+- Publish the current workspace snapshot to a draft PR on a feature branch:
+  `workcell publish-pr --workspace /path/to/repo --branch feature/name --title-file /tmp/pr-title.txt --body-file /tmp/pr-body.md --commit-message-file /tmp/commit-message.txt`
 - First launch with provider prompts enabled:
   `workcell --prepare --agent claude --agent-autonomy prompt --workspace /path/to/repo`
 - One-off provider flags without repeating the provider command:
@@ -309,7 +317,7 @@ claude = "/Users/example/.config/workcell/claude-extra.md"
 
 [credentials]
 codex_auth = "/Users/example/.codex/auth.json"
-claude_auth = "/Users/example/.config/claude-code/auth.json"
+claude_auth = "/Users/example/.claude/.credentials.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
 claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
 gemini_env = "/Users/example/.config/workcell/gemini.env"
@@ -410,6 +418,8 @@ Intentional non-goals for the safe path:
   lockfile graph
 - `scripts/verify-upstream-codex-release.sh`: re-verifies the pinned Codex
   release assets against OpenAI's published Sigstore bundle
+- `scripts/verify-upstream-claude-release.sh`: re-verifies the pinned Claude
+  native release assets against Anthropic's published release manifest
 - `scripts/verify-build-input-manifest.sh`: deterministic local verification
   for the release build-input manifest generator
 - `scripts/verify-coverage.sh`: `>=90%` numeric coverage for first-party Python

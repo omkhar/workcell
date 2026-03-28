@@ -4225,6 +4225,107 @@ grep -q 'execution_path=lower-assurance-control-plane-vcs' /tmp/workcell-control
 grep -q 'WORKCELL_ALLOW_CONTROL_PLANE_VCS=1' /tmp/workcell-control-plane-vcs.stdout
 grep -q -- "${MASK_VERIFY_WORKSPACE}/AGENTS.md:/workspace/AGENTS.md:ro" /tmp/workcell-control-plane-vcs.stdout
 
+PUBLISH_PR_FIXTURE="${BARRIER_VERIFY_ROOT}/publish-pr-fixture"
+mkdir -p "${PUBLISH_PR_FIXTURE}"
+git init -q "${PUBLISH_PR_FIXTURE}"
+git -C "${PUBLISH_PR_FIXTURE}" config user.name "Workcell Verify"
+git -C "${PUBLISH_PR_FIXTURE}" config user.email "workcell-verify@example.com"
+git -C "${PUBLISH_PR_FIXTURE}" remote add origin https://github.com/example/workcell-publish-fixture.git
+printf 'base\n' >"${PUBLISH_PR_FIXTURE}/tracked.txt"
+git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
+git -C "${PUBLISH_PR_FIXTURE}" commit -q -m init
+printf 'worktree\n' >"${PUBLISH_PR_FIXTURE}/tracked.txt"
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/pr-title.txt"
+Verify PR title
+EOF
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/pr-body.md"
+Verify PR body
+EOF
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/commit-message.txt"
+Verify publish-pr commit
+
+- include staged workspace changes
+EOF
+PUBLISH_PR_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-fixture \
+  --title-file "${PUBLISH_PR_FIXTURE}/pr-title.txt" \
+  --body-file "${PUBLISH_PR_FIXTURE}/pr-body.md" \
+  --commit-message-file "${PUBLISH_PR_FIXTURE}/commit-message.txt" \
+  --snapshot worktree \
+  --dry-run)"
+grep -q '^publish_snapshot=worktree$' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q '^publish_branch=feature/publish-fixture$' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'switch -c feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' add -A ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' push -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'gh pr create --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
+
+git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
+PUBLISH_PR_INDEX_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-index \
+  --title "Index publish title" \
+  --commit-message "Index publish commit" \
+  --snapshot index \
+  --dry-run)"
+grep -q '^publish_snapshot=index$' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+if grep -q -- ' add -A ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"; then
+  echo "publish-pr index snapshot should not auto-stage the worktree" >&2
+  exit 1
+fi
+grep -q -- 'switch -c feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch main \
+  --title "Bad branch" \
+  --commit-message "Bad branch commit" \
+  --dry-run >/tmp/workcell-publish-pr-main.out 2>&1; then
+  echo "Expected publish-pr to reject the default branch" >&2
+  exit 1
+fi
+grep -q 'publish-pr refuses the default branch' /tmp/workcell-publish-pr-main.out
+
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch topic.lock \
+  --title "Bad branch format" \
+  --commit-message "Bad branch format commit" \
+  --dry-run >/tmp/workcell-publish-pr-invalid-branch.out 2>&1; then
+  echo "Expected publish-pr to reject an invalid branch name" >&2
+  exit 1
+fi
+grep -q 'Invalid publish branch name: topic.lock' /tmp/workcell-publish-pr-invalid-branch.out
+
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-invalid-base \
+  --base topic.lock \
+  --title "Bad base branch format" \
+  --commit-message "Bad base branch format commit" \
+  --dry-run >/tmp/workcell-publish-pr-invalid-base.out 2>&1; then
+  echo "Expected publish-pr to reject an invalid base branch name" >&2
+  exit 1
+fi
+grep -q 'Invalid publish base branch name: topic.lock' /tmp/workcell-publish-pr-invalid-base.out
+
+git -C "${PUBLISH_PR_FIXTURE}" reset -q --hard HEAD
+git -C "${PUBLISH_PR_FIXTURE}" clean -fdq
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-noop \
+  --title "No changes" \
+  --commit-message "No changes commit" \
+  --snapshot worktree \
+  --dry-run >/tmp/workcell-publish-pr-noop.out 2>&1; then
+  echo "Expected publish-pr to reject an empty worktree snapshot" >&2
+  exit 1
+fi
+grep -q 'publish-pr found no workspace changes to publish' /tmp/workcell-publish-pr-noop.out
+
 MASK_SNAPSHOT_WORKSPACE="${BARRIER_VERIFY_ROOT}/mask-snapshot-workspace"
 mkdir -p "${MASK_SNAPSHOT_WORKSPACE}/.claude"
 git init -q "${MASK_SNAPSHOT_WORKSPACE}"

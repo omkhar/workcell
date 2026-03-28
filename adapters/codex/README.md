@@ -13,6 +13,10 @@ Workcell re-seeds these controls into the session-local Codex home on each
 launch. Use the host `workcell` launcher to select the runtime profile,
 autonomy mode, and injection policy; provider-native overrides that widen trust
 are blocked inside the container rather than delegated to repo-local state.
+Final branch publication remains a host-side flow: the in-container Codex
+session should prepare branch, commit, and PR metadata, then the operator uses
+`workcell publish-pr` on the host to perform the signed commit, push, and PR
+creation.
 
 For first-run and operator flows, start with the top-level `README.md` quick
 start. For the full control-plane mapping, see
