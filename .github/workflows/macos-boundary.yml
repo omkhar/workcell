@@ -1,0 +1,75 @@
+name: macOS Boundary
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boundary:
+    name: Self-hosted boundary check
+    if: ${{ vars.WORKCELL_ENABLE_SELF_HOSTED_MACOS == 'true' }}
+    runs-on:
+      - self-hosted
+      - macOS
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Derive managed Colima profile
+        run: |
+          echo "WORKCELL_MACOS_PROFILE=workcell-gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_ENV}"
+
+      - name: Verify host launcher invariants
+        run: ./scripts/verify-invariants.sh
+
+      - name: Seed reviewed runtime image
+        run: |
+          set -euo pipefail
+          plugin_root="${RUNNER_TEMP}/workcell-docker-plugin"
+          plugin_marker="${RUNNER_TEMP}/workcell-docker-plugin-ran"
+          rm -rf "${plugin_root}" "${plugin_marker}"
+          mkdir -p "${plugin_root}/cli-plugins"
+          cat >"${plugin_root}/cli-plugins/docker-buildx" <<'EOF'
+          #!/bin/sh
+          touch "${WORKCELL_DOCKER_PLUGIN_MARKER:?}"
+          exit 97
+          EOF
+          chmod 0755 "${plugin_root}/cli-plugins/docker-buildx"
+          DOCKER_CONFIG="${plugin_root}" \
+          WORKCELL_DOCKER_PLUGIN_MARKER="${plugin_marker}" \
+          ./scripts/workcell \
+            --agent codex \
+            --mode build \
+            --colima-profile "${WORKCELL_MACOS_PROFILE}" \
+            --rebuild \
+            -- \
+            codex --version
+          test ! -e "${plugin_marker}"
+
+      - name: Launch strict managed runtime
+        run: |
+          set -euo pipefail
+          ./scripts/workcell \
+            --agent codex \
+            --mode strict \
+            --colima-profile "${WORKCELL_MACOS_PROFILE}" \
+            -- \
+            codex --version
+
+      - name: Clean up managed Colima profile
+        if: always()
+        run: |
+          if command -v colima >/dev/null 2>&1; then
+            COLIMA_HOME="${HOME}/.colima" colima delete --profile "${WORKCELL_MACOS_PROFILE}" --force >/dev/null 2>&1 || true
+          fi

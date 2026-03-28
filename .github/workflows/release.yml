@@ -1,0 +1,613 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:37539dd4d60fc70968d164d3850d903a2c56f6402214a1953fbf9fcb81ada731
+  WORKCELL_BUILDX_VERSION: v0.32.1
+  WORKCELL_COSIGN_VERSION: v3.0.5
+  WORKCELL_QEMU_IMAGE: tonistiigi/binfmt:qemu-v10.0.4-56@sha256:30cc9a4d03765acac9be2ed0afc23af1ad018aed2c28ea4be8c2eb9afe03fbd1
+  WORKCELL_SYFT_VERSION: v1.41.2
+
+jobs:
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    environment:
+      name: hosted-controls-audit
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: source_date
+        name: Compute source date epoch
+        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+
+      - name: Require tag commit on main
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          auth_header="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${auth_header}" \
+            fetch "https://github.com/${GITHUB_REPOSITORY}.git" main --depth=1
+          git merge-base --is-ancestor "${GITHUB_SHA}" FETCH_HEAD
+
+      - name: Validate release tag name
+        run: |
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+
+      - name: Verify GitHub-hosted controls
+        env:
+          WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
+          WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
+        run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
+
+      - name: Check pinned input policy
+        run: ./scripts/check-pinned-inputs.sh
+
+      - name: Verify build input manifest
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+          WORKCELL_BUILD_INPUT_REF: ${{ github.sha }}
+        run: ./scripts/verify-build-input-manifest.sh
+
+      - name: Verify control-plane manifest
+        run: ./scripts/verify-control-plane-manifest.sh
+
+      - name: Generate preflight build input manifest
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+          WORKCELL_BUILD_INPUT_REF: ${{ github.sha }}
+        run: |
+          mkdir -p dist
+          ./scripts/generate-build-input-manifest.sh dist/workcell-build-inputs-preflight.json
+
+      - name: Generate preflight control-plane manifest
+        run: |
+          mkdir -p dist
+          ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane-preflight.json
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_SHA256: 900919a84f2229bac68ca9cd4103ea297abc35e9689ebb842c6e34a3d1b01b0a
+          ACTIONLINT_VERSION: 1.7.11
+        run: |
+          curl -fsSL \
+            -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/bin"
+          tar -xzf actionlint.tar.gz actionlint
+          install -m 0755 actionlint "${RUNNER_TEMP}/bin/actionlint"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+
+      - name: Expose cosign in trusted system path
+        run: |
+          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
+
+      - name: Verify upstream Codex release
+        run: ./scripts/verify-upstream-codex-release.sh
+
+      - name: Verify upstream Claude release
+        run: ./scripts/verify-upstream-claude-release.sh
+
+      - name: Build validation tool image
+        run: |
+          docker build \
+            -f tools/validator/Dockerfile \
+            -t workcell-validator:${{ github.sha }} \
+            .
+
+      - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        with:
+          cache-image: false
+          image: ${{ env.WORKCELL_QEMU_IMAGE }}
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        with:
+          cache-binary: false
+          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
+          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+
+      - name: Validate repository
+        run: |
+          docker run --rm \
+            -v "${PWD}:/workspace" \
+            -w /workspace \
+            workcell-validator:${{ github.sha }} \
+            ./scripts/validate-repo.sh
+
+      - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
+        uses: github/codeql-action/init@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+        with:
+          languages: rust,javascript-typescript,python
+          build-mode: none
+
+      - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
+        uses: github/codeql-action/analyze@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+
+      - name: Verify host launcher invariants
+        run: ./scripts/verify-invariants.sh
+
+      - name: Verify release bundle reproducibility
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+          WORKCELL_RELEASE_BUNDLE_MANIFEST_PATH: dist/workcell-release-bundle-preflight.json
+          WORKCELL_RELEASE_BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz
+          WORKCELL_RELEASE_BUNDLE_PREFIX: workcell-${{ github.ref_name }}
+          WORKCELL_RELEASE_BUNDLE_REF: ${{ github.sha }}
+          WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
+        run: ./scripts/verify-release-bundle.sh
+
+      - name: Run actionlint
+        run: actionlint
+
+      - uses: zizmorcore/zizmor-action@71321a20a9ded102f6e9ce5718a2fcec2c4f70d8 # v0.5.2
+        with:
+          advanced-security: false
+          inputs: .github/workflows
+          version: 1.23.1
+
+      - name: Run container smoke
+        run: ./scripts/container-smoke.sh
+
+      - name: Verify reproducible runtime image
+        env:
+          WORKCELL_REPRO_MANIFEST_PATH: dist/workcell-runtime-preflight.json
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        run: ./scripts/verify-reproducible-build.sh
+
+      - name: Upload preflight binding manifests
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: workcell-release-preflight
+          path: |
+            dist/workcell-build-inputs-preflight.json
+            dist/workcell-control-plane-preflight.json
+            dist/workcell-release-bundle-preflight.json
+            dist/workcell-runtime-preflight.json
+          retention-days: 7
+
+  release:
+    name: Publish release artifacts
+    runs-on: ubuntu-latest
+    needs:
+      - preflight
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download preflight binding manifests
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: workcell-release-preflight
+          path: dist/preflight
+
+      - name: Validate release tag name
+        run: |
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+
+      - id: source_date
+        name: Compute source date epoch
+        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+
+      - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        with:
+          cache-image: false
+          image: ${{ env.WORKCELL_QEMU_IMAGE }}
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        with:
+          cache-binary: false
+          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
+          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+
+      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: ${{ env.WORKCELL_SYFT_VERSION }}
+
+      - name: Expose signing and SBOM tools in trusted system path
+        run: |
+          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
+          sudo install -m 0755 "$(command -v syft)" /usr/local/bin/syft
+
+      - uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build validation tool image
+        run: |
+          docker build \
+            -f tools/validator/Dockerfile \
+            -t workcell-validator:${{ github.sha }} \
+            .
+
+      - name: Prepare release bundle
+        env:
+          WORKCELL_BUILDKIT_IMAGE: ${{ env.WORKCELL_BUILDKIT_IMAGE }}
+          WORKCELL_BUILDX_VERSION: ${{ env.WORKCELL_BUILDX_VERSION }}
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+          WORKCELL_BUILD_INPUT_REF: ${{ github.sha }}
+          WORKCELL_COSIGN_VERSION: ${{ env.WORKCELL_COSIGN_VERSION }}
+          WORKCELL_QEMU_IMAGE: ${{ env.WORKCELL_QEMU_IMAGE }}
+          WORKCELL_SYFT_VERSION: ${{ env.WORKCELL_SYFT_VERSION }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          bundle="workcell-${GITHUB_REF_NAME}.tar.gz"
+          echo "BUNDLE_NAME=${bundle}" >> "${GITHUB_ENV}"
+          docker run --rm \
+            --entrypoint /bin/bash \
+            -v "${PWD}:/workspace" \
+            -v "${PWD}/dist:/dist" \
+            -w /workspace \
+            -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+            -e ARCHIVE_REF="${GITHUB_SHA}" \
+            -e BUNDLE_NAME="${bundle}" \
+            -e BUNDLE_PREFIX="workcell-${GITHUB_REF_NAME}/" \
+            workcell-validator:${{ github.sha }} \
+            -lc '
+              set -euo pipefail
+              bundle_tar="/dist/${BUNDLE_NAME%.tar.gz}.tar"
+              git archive \
+                --format=tar \
+                --mtime="@${SOURCE_DATE_EPOCH}" \
+                --prefix="${BUNDLE_PREFIX}" \
+                -o "${bundle_tar}" \
+                "${ARCHIVE_REF}"
+              gzip -n -9 < "${bundle_tar}" > "/dist/${BUNDLE_NAME}"
+              rm -f "${bundle_tar}"
+            '
+          mkdir -p dist/source-tree
+          tar -xzf "dist/${bundle}" -C dist/source-tree
+          ln -sfn "source-tree/workcell-${GITHUB_REF_NAME}" dist/release-source
+          echo "RELEASE_SOURCE_ROOT=dist/release-source" >> "${GITHUB_ENV}"
+          ./scripts/generate-build-input-manifest.sh dist/workcell-build-inputs.json
+          ./scripts/generate-builder-environment-manifest.sh dist/workcell-builder-environment.json
+
+      - name: Verify release bundle matches preflight
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+
+          root = pathlib.Path("dist")
+          manifest = json.loads((root / "preflight" / "workcell-release-bundle-preflight.json").read_text(encoding="utf-8"))
+          bundle_path = root / manifest["bundle_name"]
+          digest = hashlib.sha256(bundle_path.read_bytes()).hexdigest()
+          if digest != manifest["bundle_sha256"]:
+              raise SystemExit(
+                  f"Release bundle digest mismatch: {digest} != {manifest['bundle_sha256']}"
+              )
+          PY
+
+      - name: Regenerate build input manifest from archived source tree
+        env:
+          WORKCELL_BUILD_INPUT_ROOT: ${{ github.workspace }}/dist/release-source
+          WORKCELL_BUILD_INPUT_REF: ${{ github.sha }}
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        run: ./scripts/generate-build-input-manifest.sh dist/workcell-build-inputs.json
+
+      - name: Regenerate control-plane manifest from archived source tree
+        env:
+          WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source
+        run: ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane.json
+
+      - name: Verify build input manifest matches preflight
+        run: |
+          cmp -s \
+            dist/workcell-build-inputs.json \
+            dist/preflight/workcell-build-inputs-preflight.json
+
+      - name: Verify control-plane manifest matches preflight
+        run: |
+          cmp -s \
+            dist/workcell-control-plane.json \
+            dist/preflight/workcell-control-plane-preflight.json
+
+      - id: build_amd64
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        with:
+          build-args: |
+            BUILDKIT_MULTI_PLATFORM=1
+            SOURCE_DATE_EPOCH=${{ steps.source_date.outputs.epoch }}
+          context: dist/release-source
+          file: dist/release-source/runtime/container/Dockerfile
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true,rewrite-timestamp=true
+          platforms: linux/amd64
+          provenance: mode=max
+          sbom: true
+          tags: ${{ env.IMAGE_NAME }}
+
+      - id: build_arm64
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        with:
+          build-args: |
+            BUILDKIT_MULTI_PLATFORM=1
+            SOURCE_DATE_EPOCH=${{ steps.source_date.outputs.epoch }}
+          context: dist/release-source
+          file: dist/release-source/runtime/container/Dockerfile
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true,rewrite-timestamp=true
+          platforms: linux/arm64
+          provenance: mode=max
+          sbom: true
+          tags: ${{ env.IMAGE_NAME }}
+
+      - name: Verify published platform digests match preflight
+        env:
+          AMD64_DIGEST: ${{ steps.build_amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ steps.build_arm64.outputs.digest }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          manifest = json.loads(
+              pathlib.Path("dist/preflight/workcell-runtime-preflight.json").read_text(encoding="utf-8")
+          )
+          expected = {
+              "linux/amd64": manifest["platforms"]["linux/amd64"]["image_manifest_digest"],
+              "linux/arm64": manifest["platforms"]["linux/arm64"]["image_manifest_digest"],
+          }
+          actual = {
+              "linux/amd64": os.environ["AMD64_DIGEST"],
+              "linux/arm64": os.environ["ARM64_DIGEST"],
+          }
+          if actual != expected:
+              raise SystemExit(f"Published platform digests differ from preflight: {actual!r} != {expected!r}")
+          PY
+
+      - id: publish_manifest
+        name: Publish deterministic multi-arch manifest
+        env:
+          AMD64_DIGEST: ${{ steps.build_amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ steps.build_arm64.outputs.digest }}
+        run: |
+          refs=(
+            "${IMAGE_NAME}@${AMD64_DIGEST}"
+            "${IMAGE_NAME}@${ARM64_DIGEST}"
+          )
+          docker buildx imagetools create \
+            -t "${IMAGE_NAME}:${GITHUB_REF_NAME}" \
+            -t "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
+            "${refs[@]}"
+          manifest_json="$(docker buildx imagetools inspect "${IMAGE_NAME}:${GITHUB_REF_NAME}" --format '{{json .manifest}}')"
+          MANIFEST_JSON="${manifest_json}" python3 - "${GITHUB_OUTPUT}" "dist/workcell-image.digest" "${IMAGE_NAME}" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          output_path = pathlib.Path(sys.argv[1])
+          digest_path = pathlib.Path(sys.argv[2])
+          image_name = sys.argv[3]
+          manifest = json.loads(os.environ["MANIFEST_JSON"])
+
+          platform_arches = [
+              entry.get("platform", {}).get("architecture")
+              for entry in manifest.get("manifests", [])
+          ]
+          if platform_arches != ["amd64", "arm64"]:
+              raise SystemExit(
+                  "Deterministic multi-arch manifest must contain exactly amd64 then arm64, "
+                  f"found {platform_arches!r}"
+              )
+
+          digest = manifest.get("digest")
+          if not isinstance(digest, str) or not digest.startswith("sha256:"):
+              raise SystemExit(
+                  f"Unable to determine published manifest digest from imagetools inspect: {digest!r}"
+              )
+
+          with output_path.open("a", encoding="utf-8") as handle:
+              handle.write(f"digest={digest}\n")
+
+          digest_path.write_text(f"{image_name}@{digest}\n", encoding="utf-8")
+          PY
+
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          artifact-name: workcell-source.spdx.json
+          format: spdx-json
+          output-file: dist/workcell-source.spdx.json
+          path: dist/release-source
+          syft-version: ${{ env.WORKCELL_SYFT_VERSION }}
+          upload-artifact: false
+          upload-release-assets: false
+
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          artifact-name: workcell-image.spdx.json
+          format: spdx-json
+          image: ${{ env.IMAGE_NAME }}@${{ steps.publish_manifest.outputs.digest }}
+          output-file: dist/workcell-image.spdx.json
+          syft-version: ${{ env.WORKCELL_SYFT_VERSION }}
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate release checksums
+        run: |
+          ./scripts/generate-release-checksums.sh dist/SHA256SUMS \
+            "dist/${BUNDLE_NAME}" \
+            dist/workcell-image.digest \
+            dist/workcell-build-inputs.json \
+            dist/workcell-control-plane.json \
+            dist/workcell-builder-environment.json \
+            dist/workcell-source.spdx.json \
+            dist/workcell-image.spdx.json
+
+      - name: Sign release image
+        env:
+          COSIGN_YES: "true"
+          IMAGE_DIGEST: ${{ steps.publish_manifest.outputs.digest }}
+        run: |
+          cosign sign "${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+      - name: Sign published source bundle
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle "dist/${BUNDLE_NAME}.sigstore.json" \
+            "dist/${BUNDLE_NAME}"
+
+      - name: Sign release checksums
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle dist/SHA256SUMS.sigstore.json \
+            dist/SHA256SUMS
+
+      - name: Sign build input manifest
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle dist/workcell-build-inputs.sigstore.json \
+            dist/workcell-build-inputs.json
+
+      - name: Sign control-plane manifest
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle dist/workcell-control-plane.sigstore.json \
+            dist/workcell-control-plane.json
+
+      - name: Sign builder environment manifest
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle dist/workcell-builder-environment.sigstore.json \
+            dist/workcell-builder-environment.json
+
+      - name: Sign published source SBOM
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle dist/workcell-source.spdx.sigstore.json \
+            dist/workcell-source.spdx.json
+
+      - name: Sign published image SBOM
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle dist/workcell-image.spdx.sigstore.json \
+            dist/workcell-image.spdx.json
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish_manifest.outputs.digest }}
+          push-to-registry: true
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        with:
+          sbom-path: dist/workcell-image.spdx.json
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish_manifest.outputs.digest }}
+          push-to-registry: true
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        with:
+          subject-path: dist/${{ env.BUNDLE_NAME }}
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        with:
+          sbom-path: dist/workcell-source.spdx.json
+          subject-path: dist/${{ env.BUNDLE_NAME }}
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: workcell-release-artifacts
+          path: |
+            dist/${{ env.BUNDLE_NAME }}
+            dist/${{ env.BUNDLE_NAME }}.sigstore.json
+            dist/workcell-image.digest
+            dist/workcell-build-inputs.json
+            dist/workcell-build-inputs.sigstore.json
+            dist/workcell-control-plane.json
+            dist/workcell-control-plane.sigstore.json
+            dist/workcell-builder-environment.json
+            dist/workcell-builder-environment.sigstore.json
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sigstore.json
+            dist/workcell-source.spdx.json
+            dist/workcell-source.spdx.sigstore.json
+            dist/workcell-image.spdx.json
+            dist/workcell-image.spdx.sigstore.json
+          retention-days: 7
+
+      - name: Publish GitHub release assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./scripts/publish-github-release.sh "${GITHUB_REF_NAME}" \
+            "dist/${BUNDLE_NAME}" \
+            "dist/${BUNDLE_NAME}.sigstore.json" \
+            dist/workcell-image.digest \
+            dist/workcell-build-inputs.json \
+            dist/workcell-build-inputs.sigstore.json \
+            dist/workcell-control-plane.json \
+            dist/workcell-control-plane.sigstore.json \
+            dist/workcell-builder-environment.json \
+            dist/workcell-builder-environment.sigstore.json \
+            dist/SHA256SUMS \
+            dist/SHA256SUMS.sigstore.json \
+            dist/workcell-source.spdx.json \
+            dist/workcell-source.spdx.sigstore.json \
+            dist/workcell-image.spdx.json \
+            dist/workcell-image.spdx.sigstore.json
