@@ -1,0 +1,10 @@
+git commit --no-verify
+git commit -n
+git -c core.hooksPath=/dev/null commit -m test
+git commit -c core.hooksPath=/dev/null -m test
+git push --force origin main
+git push --force-with-lease origin main
+git push origin main
+git push origin master
+git rebase --no-verify
+git merge --no-verify
