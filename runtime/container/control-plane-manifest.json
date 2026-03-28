@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "f6235de1aac1b658b5c6f606906e698060ae9c0561a768ddb87e1f22c1c0be06"
+      "sha256": "81c80ba12f8d5ba5a40f0b05a87693a050fb95b1d0b8910af24324fe41f77f8a"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts.py",
@@ -10,7 +10,7 @@
     },
     {
       "repo_path": "scripts/lib/render_injection_bundle.py",
-      "sha256": "848dbe2b708e6d2e4c59ba200ee57554366c63bf65bd253effb1a69befd908b5"
+      "sha256": "a37c6893912d0a076c9a4f9856a341df323bb40946c7afe558462f82010878c8"
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
@@ -154,7 +154,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "2e620ae880e20e455668d0ebf784c5c6a5a805bee67f850a4cf75043e1ea54a7"
+      "sha256": "862a5144d8f01f49811db6936c3569994315da3177f91b1f2c49fcc8e06bc9c4"
     },
     {
       "kind": "runtime-control-plane",

@@ -3538,6 +3538,8 @@ GEMINI_AUTH_FAILURE_HARNESS="$(mktemp)"
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" selected_provider_auth_mode
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" provider_auth_recovery_allowed
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" fail_fast_for_missing_gemini_auth
   cat <<'EOF'
 AGENT=gemini
@@ -3547,6 +3549,9 @@ DRY_RUN=0
 INJECTION_POLICY=/tmp/no-gemini-policy.toml
 WORKSPACE=/tmp/workcell-gemini-workspace
 INJECTION_CREDENTIAL_KEYS=github_hosts
+UI=cli
+AGENT_ARGS=()
+PROVIDER_ARGS=()
 
 status=0
 set -- gemini
@@ -3603,6 +3608,218 @@ EOF
 } >"${GEMINI_AUTH_FAILURE_HARNESS}"
 /bin/bash "${GEMINI_AUTH_FAILURE_HARNESS}"
 rm -f "${GEMINI_AUTH_FAILURE_HARNESS}"
+SAVED_CREDENTIAL_SELECTION_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" injection_manifest_credential_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" gemini_env_requires_gcloud_adc
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" gcloud_adc_available_for_future_launches
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" emit_credential_bundle_spec
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_source_differs_from_injected_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" promotable_saved_credential_bundles
+  printf '\n'
+  printf 'ROOT_DIR=%q\n' "${ROOT_DIR}"
+  cat <<'EOF'
+set -euo pipefail
+
+HOST_PYTHON3_BIN="$(command -v python3)"
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "${TMP_ROOT}"' EXIT
+AGENT=gemini
+INJECTION_BUNDLE_ROOT="${TMP_ROOT}/bundle"
+mkdir -p "${INJECTION_BUNDLE_ROOT}"
+
+describe_credential_source() {
+  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/manage_saved_credentials.py" \
+    describe --key "$1" --source "$2"
+}
+
+run_clean_host_command() {
+  "$@"
+}
+
+extract_promotable_container_credentials() {
+  case "${WORKCELL_TEST_SELECTION_CASE}" in
+    env-bundle)
+      printf 'gemini_env\t%s\n' "${TMP_ROOT}/candidate.env"
+      printf 'gcloud_adc\t%s\n' "${TMP_ROOT}/candidate-adc.json"
+      ;;
+    adc-only)
+      printf 'gemini_env\t%s\n' "${TMP_ROOT}/unchanged.env"
+      printf 'gcloud_adc\t%s\n' "${TMP_ROOT}/refreshed-adc.json"
+      ;;
+  esac
+}
+
+cat >"${TMP_ROOT}/initial.env" <<'ENV'
+GEMINI_API_KEY=old-token
+ENV
+cat >"${TMP_ROOT}/candidate.env" <<'ENV'
+GOOGLE_GENAI_USE_GCA=true
+ENV
+cat >"${TMP_ROOT}/candidate-adc.json" <<'JSON'
+{"type":"authorized_user"}
+JSON
+cat >"${INJECTION_BUNDLE_ROOT}/manifest.json" <<JSON
+{"credentials":{"gemini_env":{"source":"${TMP_ROOT}/initial.env"}}}
+JSON
+
+WORKCELL_TEST_SELECTION_CASE=env-bundle
+bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out" | tr -d '\n')"
+expected=$'gemini_env\t'"${TMP_ROOT}"$'/candidate.env\tgcloud_adc\t'"${TMP_ROOT}"$'/candidate-adc.json'
+if [[ "${bundle}" != "${expected}" ]]; then
+  echo "Expected Gemini bundle selection to include gemini_env plus gcloud_adc, got: ${bundle}" >&2
+  exit 1
+fi
+
+cat >"${TMP_ROOT}/unchanged.env" <<'ENV'
+GOOGLE_GENAI_USE_GCA=true
+ENV
+cat >"${TMP_ROOT}/refreshed-adc.json" <<'JSON'
+{"type":"authorized_user","refresh_token":"new"}
+JSON
+cat >"${INJECTION_BUNDLE_ROOT}/manifest.json" <<JSON
+{"credentials":{"gemini_env":{"source":"${TMP_ROOT}/unchanged.env"}}}
+JSON
+
+WORKCELL_TEST_SELECTION_CASE=adc-only
+bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-adc-only" | tr -d '\n')"
+expected=$'gcloud_adc\t'"${TMP_ROOT}"$'/refreshed-adc.json'
+if [[ "${bundle}" != "${expected}" ]]; then
+  echo "Expected Gemini ADC-only bundle selection to include only refreshed gcloud_adc, got: ${bundle}" >&2
+  exit 1
+fi
+EOF
+} >"${SAVED_CREDENTIAL_SELECTION_HARNESS}"
+/bin/bash "${SAVED_CREDENTIAL_SELECTION_HARNESS}"
+rm -f "${SAVED_CREDENTIAL_SELECTION_HARNESS}"
+SAVED_CREDENTIAL_PROMOTION_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" append_credential_persist_audit_record
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" saved_credential_helper_path
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_config_root
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_fragment_path
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_root
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_display_name
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" describe_credential_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_bundle_keys_csv
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_bundle_display_names
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prompt_to_save_credential
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" maybe_offer_saved_credential_persistence
+  printf '\n'
+  printf 'ROOT_DIR=%q\n' "${ROOT_DIR}"
+  cat <<'EOF'
+set -euo pipefail
+
+AUDIT_CAPTURE="$(mktemp)"
+STDERR_CAPTURE="$(mktemp)"
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "${TMP_ROOT}" "${AUDIT_CAPTURE}" "${STDERR_CAPTURE}"' EXIT
+COLIMA_PROFILE=workcell-test
+MODE=strict
+AGENT=codex
+WORKSPACE=/tmp/workcell-credential-workspace
+UI=cli
+ALLOW_ARBITRARY_COMMAND=0
+PREPARE_ONLY=0
+DRY_RUN=0
+INJECTION_POLICY_SHA256=test-policy
+HOST_PYTHON3_BIN="$(command -v python3)"
+CREDENTIAL_PROMOTION_TMP_ROOT=""
+WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=accept
+
+append_audit_record() {
+  local profile="$1"
+  shift
+  printf '%s|%s\n' "${profile}" "$*" >>"${AUDIT_CAPTURE}"
+}
+
+session_assurance_final() {
+  printf 'managed-mutable\n'
+}
+
+run_clean_host_command() {
+  "$@"
+}
+
+default_injection_policy_path() {
+  printf '%s/injection-policy.toml\n' "${TMP_ROOT}/config"
+}
+
+promotable_saved_credential_bundles() {
+  printf 'codex_auth\t%s\n' "${TMP_ROOT}/candidate-auth.json"
+}
+
+printf '{"token":"abc"}\n' >"${TMP_ROOT}/candidate-auth.json"
+
+if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
+  echo "Expected saved credential promotion harness accept path to succeed" >&2
+  exit 1
+fi
+grep -q 'action=offered' "${AUDIT_CAPTURE}"
+grep -q 'action=accepted' "${AUDIT_CAPTURE}"
+grep -q 'credential_key=codex_auth' "${AUDIT_CAPTURE}"
+grep -q 'Saved Codex credential for future Workcell launches.' "${STDERR_CAPTURE}"
+[[ -f "${TMP_ROOT}/config/injection-policy.toml" ]]
+[[ -f "${TMP_ROOT}/config/injection-policy.d/saved-credentials.toml" ]]
+[[ -f "${TMP_ROOT}/config/credentials/codex-auth.json" ]]
+
+>"${AUDIT_CAPTURE}"
+>"${STDERR_CAPTURE}"
+rm -rf "${TMP_ROOT}/config"
+WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=decline
+
+if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
+  echo "Expected saved credential promotion harness decline path to succeed" >&2
+  exit 1
+fi
+grep -q 'action=offered' "${AUDIT_CAPTURE}"
+grep -q 'action=declined' "${AUDIT_CAPTURE}"
+grep -q 'future launches will ask again' "${STDERR_CAPTURE}"
+if [[ -e "${TMP_ROOT}/config/injection-policy.toml" ]]; then
+  echo "Expected decline path to avoid writing default config" >&2
+  exit 1
+fi
+
+>"${AUDIT_CAPTURE}"
+>"${STDERR_CAPTURE}"
+AGENT=claude
+INJECTION_CREDENTIAL_KEYS=claude_api_key
+WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=accept
+
+promotable_saved_credential_bundles() {
+  printf 'claude_auth\t%s\n' "${TMP_ROOT}/candidate-claude-auth.json"
+}
+
+printf '{"refresh_token":"claude"}\n' >"${TMP_ROOT}/candidate-claude-auth.json"
+
+if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
+  echo "Expected saved credential promotion harness Claude path to succeed" >&2
+  exit 1
+fi
+grep -q 'credential_key=claude_auth' "${AUDIT_CAPTURE}"
+grep -q 'Saved Claude credential for future Workcell launches.' "${STDERR_CAPTURE}"
+[[ -f "${TMP_ROOT}/config/credentials/claude-auth.json" ]]
+EOF
+} >"${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
+/bin/bash "${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
+rm -f "${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
 PROFILE_PROCESS_MATCH_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" profile_process_pids

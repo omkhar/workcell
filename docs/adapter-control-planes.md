@@ -21,6 +21,13 @@ home and is never written back to the adapter baseline. On each new provider
 launch within the same container session, the home is re-seeded from the same
 immutable sources.
 
+When an interactive login succeeds and Workcell offers to save it for future
+launches, that promotion happens on the host after the session exits. The
+launcher copies only the supported credential artifact(s) needed to reproduce
+that auth state into Workcell-owned host secret file(s) and updates the default
+injection-policy include; the live provider session does not mutate the host
+control plane directly.
+
 Before seeding adapter-managed files, `runtime/container/home-control-plane.sh`
 verifies the relevant adapter baseline hashes against the `runtime_artifacts`
 section of the committed `runtime/container/control-plane-manifest.json` that
@@ -54,8 +61,9 @@ The following table covers all files seeded by `seed_codex_home()`,
 | `~/.codex/auth.json` | Codex | Copied from injection credential `codex_auth` if present | Same | Session-local Codex auth; not present if `credentials.codex_auth` is not configured |
 | `~/.claude/settings.json` | Claude | Symlink → immutable baseline, or session-local copy with `apiKeyHelper` if `claude_api_key` is injected | Same | Linked to `adapters/claude/managed-settings.json`; contains deny-list permissions and the `PreToolUse` Bash hook. When `claude_api_key` is present, the helper reads the reviewed direct-mounted credential path instead of creating a second session-local key copy. |
 | `~/.claude/CLAUDE.md` | Claude | Rendered (baseline + workspace + injection layers) | Same | Provider instruction doc; workspace `AGENTS.md` and `CLAUDE.md` are imported as layers |
+| `~/.claude/.credentials.json` | Claude | Copied from injection credential `claude_auth` if present | Same | Session-local Claude auth cache for Claude builds that still consult the legacy home-local credential file |
 | `~/.claude/workcell/` | Claude | Created only when `claude_api_key` credential is injected | Same | Holds the session-local `api-key-helper.sh` script. The helper reads the mounted key file directly, so Workcell no longer drops a second plaintext copy under this directory. |
-| `~/.config/claude-code/auth.json` | Claude | Copied from injection credential `claude_auth` if present | Same | Session-local Claude CLI auth; not present if `credentials.claude_auth` is not configured |
+| `~/.config/claude-code/auth.json` | Claude | Copied from injection credential `claude_auth` if present | Same | Session-local Claude CLI auth; Workcell also mirrors the same reviewed artifact into `~/.claude/.credentials.json` for Claude builds that still consult the legacy path |
 | `~/.mcp.json` | Claude | Symlink → immutable `mcp-template.json` (empty), or copied from `claude_mcp` credential if injected | Same | MCP server registry; ships empty by default |
 | `~/.gemini/settings.json` | Gemini | Copied (not symlinked) from immutable baseline; mode `0600` | Same, but `breakglass` re-enables Gemini folder trust before launch | Copied from `adapters/gemini/.gemini/settings.json` |
 | `~/.gemini/trustedFolders.json` | Gemini | Seeded session-local with `/workspace` trusted; mode `0600` | Same for strict/build; omitted in `breakglass` | Prevents Gemini's restart-only trust prompt inside masked ephemeral sessions while preserving Gemini's own prompt on `breakglass` |

@@ -25,6 +25,10 @@ environment. Provider credentials injected through the dedicated
 `[credentials]` path must not be re-staged into a second plaintext host-side
 bundle before launch; they are validated on the host, mounted read-only for the
 current session, and then copied into the ephemeral agent home.
+If Workcell later offers to save a credential set that succeeded interactively,
+that promotion must remain a separate host-side action after verified auth
+success; the live provider session must not write back into the host control
+plane directly.
 Secret-bearing sources used by the injection policy must be explicit files or
 directories owned by the invoking UID, must not be symlinks, and must not be
 group- or world-readable by default. Credential entries may also be scoped to

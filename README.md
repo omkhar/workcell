@@ -166,6 +166,11 @@ org-wide instructions, persistent provider credentials, SSH material, and
 read-only config files without passing through host homes or sockets. If
 `~/.config/workcell/injection-policy.toml` exists, Workcell uses it by
 default; `--no-default-injection-policy` disables that for a specific launch.
+If a supported provider login succeeds interactively because auth was missing
+or stale, Workcell can offer after exit to save that working credential set
+into the default host Workcell config. That promotion step is explicit,
+host-owned, default-no, and writes only reviewed secret file(s) plus a managed
+policy include under `~/.config/workcell/`.
 `--vm-cpu`, `--vm-memory`, and `--vm-disk` tune the dedicated Colima VM;
 `--container-cpu` and `--container-memory` tune the inner runtime container
 without changing the reviewed profile defaults for other launches.

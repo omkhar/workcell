@@ -121,6 +121,12 @@ modes = ["strict", "build"]
 - Use `[credentials]` for provider and GitHub auth material that should land in
   Workcell-managed session paths without a fresh login every time. This is the
   safest way to persist reusable provider auth on the host.
+- When Workcell offers to save a credential that succeeded interactively,
+  accept only if you want that credential set added to the default host
+  Workcell config for future launches. Workcell writes host-owned secret
+  file(s) under `~/.config/workcell/credentials/` and updates a managed include
+  fragment under `~/.config/workcell/injection-policy.d/`; it does not write
+  secrets back into the workspace, adapter baseline, or the live session home.
 - Keep secret sources owner-only (`0600` for files, `0700` for directories) and
   avoid symlinks. Workcell rejects looser permissions on secret-bearing inputs.
   `ssh.known_hosts` is the exception: standard world-readable files are
@@ -146,8 +152,9 @@ modes = ["strict", "build"]
   credential path, so Claude can reuse an API key without mutating the
   reviewed baseline settings or creating an extra session-local secret copy.
 - `credentials.claude_auth` mounts persisted Claude CLI auth into
-  `~/.config/claude-code/auth.json` when you already have reviewed host-side
-  Claude login state.
+  `~/.config/claude-code/auth.json` and mirrors the same reviewed artifact into
+  `~/.claude/.credentials.json` when you already have reviewed host-side Claude
+  login state.
 - `credentials.claude_mcp` mounts an approved Claude `.mcp.json` into the
   session without widening trust to the whole workspace copy.
 - `credentials.gemini_env` mounts a provider-native `~/.gemini/.env`.
