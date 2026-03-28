@@ -55,8 +55,12 @@ resulting session file:
 version = 1
 
 [credentials]
-claude_auth = "/Users/example/.config/claude-code/auth.json"
+claude_auth = "/Users/example/.claude/.credentials.json"
 ```
+
+If your current Claude install still writes `~/.config/claude-code/auth.json`,
+you can point `claude_auth` there instead. Workcell seeds both session-local
+paths for compatibility.
 
 Only one of `claude_api_key` or `claude_auth` is needed for most workflows.
 

@@ -3608,6 +3608,104 @@ EOF
 } >"${GEMINI_AUTH_FAILURE_HARNESS}"
 /bin/bash "${GEMINI_AUTH_FAILURE_HARNESS}"
 rm -f "${GEMINI_AUTH_FAILURE_HARNESS}"
+EXTRACTED_CREDENTIAL_MODE_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" saved_credential_helper_path
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" describe_credential_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" provider_candidate_container_paths
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" extract_promotable_container_credentials
+  printf '\n'
+  printf 'ROOT_DIR=%q\n' "${ROOT_DIR}"
+  cat <<'EOF'
+set -euo pipefail
+
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "${TMP_ROOT}"' EXIT
+HOST_PYTHON3_BIN="$(command -v python3)"
+HOST_DOCKER_BIN=docker
+AGENT=claude
+
+run_clean_host_command() {
+  "$@"
+}
+
+run_workcell_docker_client_command() {
+  local _docker_bin="$1"
+  shift
+
+  [[ "${1:-}" == "cp" ]] || return 1
+  case "${2:-}" in
+    fake-container:/state/agent-home/.config/claude-code/auth.json)
+      cp "${TMP_ROOT}/container-claude-auth.json" "${3}"
+      chmod 0644 "${3}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+printf '{"refresh_token":"claude"}\n' >"${TMP_ROOT}/container-claude-auth.json"
+chmod 0600 "${TMP_ROOT}/container-claude-auth.json"
+printf '{"refresh_token":"legacy"}\n' >"${TMP_ROOT}/container-legacy-claude-auth.json"
+chmod 0600 "${TMP_ROOT}/container-legacy-claude-auth.json"
+
+output="$(extract_promotable_container_credentials fake-container "${TMP_ROOT}/extracted" | tr -d '\n')"
+expected=$'claude_auth\t'"${TMP_ROOT}"$'/extracted/claude_auth.1'
+if [[ "${output}" != "${expected}" ]]; then
+  echo "Expected extracted Claude credential candidate despite permissive copied mode, got: ${output}" >&2
+  exit 1
+fi
+
+if stat -f '%Lp' "${TMP_ROOT}/extracted/claude_auth.1" >/dev/null 2>&1; then
+  copied_mode="$(stat -f '%Lp' "${TMP_ROOT}/extracted/claude_auth.1")"
+else
+  copied_mode="$(stat -c '%a' "${TMP_ROOT}/extracted/claude_auth.1")"
+fi
+if [[ "${copied_mode}" != "600" ]]; then
+  echo "Expected extracted Claude credential candidate to be normalized to 0600, got ${copied_mode}" >&2
+  exit 1
+fi
+
+run_workcell_docker_client_command() {
+  local _docker_bin="$1"
+  shift
+
+  [[ "${1:-}" == "cp" ]] || return 1
+  case "${2:-}" in
+    fake-container:/state/agent-home/.claude/.credentials.json)
+      cp "${TMP_ROOT}/container-legacy-claude-auth.json" "${3}"
+      chmod 0644 "${3}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+output="$(extract_promotable_container_credentials fake-container "${TMP_ROOT}/legacy-extracted" | tr -d '\n')"
+expected=$'claude_auth\t'"${TMP_ROOT}"$'/legacy-extracted/claude_auth.0'
+if [[ "${output}" != "${expected}" ]]; then
+  echo "Expected extracted legacy Claude credential candidate despite permissive copied mode, got: ${output}" >&2
+  exit 1
+fi
+
+if stat -f '%Lp' "${TMP_ROOT}/legacy-extracted/claude_auth.0" >/dev/null 2>&1; then
+  copied_mode="$(stat -f '%Lp' "${TMP_ROOT}/legacy-extracted/claude_auth.0")"
+else
+  copied_mode="$(stat -c '%a' "${TMP_ROOT}/legacy-extracted/claude_auth.0")"
+fi
+if [[ "${copied_mode}" != "600" ]]; then
+  echo "Expected extracted legacy Claude credential candidate to be normalized to 0600, got ${copied_mode}" >&2
+  exit 1
+fi
+EOF
+} >"${EXTRACTED_CREDENTIAL_MODE_HARNESS}"
+/bin/bash "${EXTRACTED_CREDENTIAL_MODE_HARNESS}"
+rm -f "${EXTRACTED_CREDENTIAL_MODE_HARNESS}"
 SAVED_CREDENTIAL_SELECTION_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" injection_manifest_credential_source
@@ -3671,6 +3769,10 @@ extract_promotable_container_credentials() {
     adc-only)
       printf 'gemini_env\t%s\n' "${TMP_ROOT}/unchanged.env"
       printf 'gcloud_adc\t%s\n' "${TMP_ROOT}/refreshed-adc.json"
+      ;;
+    claude-fresh-divergent)
+      printf 'claude_auth\t%s\n' "${TMP_ROOT}/fresh-claude-credentials.json"
+      printf 'claude_auth\t%s\n' "${TMP_ROOT}/fresh-claude-auth.json"
       ;;
     claude-refresh)
       printf 'claude_auth\t%s\n' "${TMP_ROOT}/stale-claude-auth.json"
@@ -3746,6 +3848,14 @@ cat >"${TMP_ROOT}/refreshed-claude-auth.json" <<'JSON'
 {"refresh_token":"refreshed"}
 JSON
 chmod 0600 "${TMP_ROOT}/refreshed-claude-auth.json"
+cat >"${TMP_ROOT}/fresh-claude-credentials.json" <<'JSON'
+{"refresh_token":"preferred"}
+JSON
+chmod 0600 "${TMP_ROOT}/fresh-claude-credentials.json"
+cat >"${TMP_ROOT}/fresh-claude-auth.json" <<'JSON'
+{"refresh_token":"compatibility"}
+JSON
+chmod 0600 "${TMP_ROOT}/fresh-claude-auth.json"
 cat >"${TMP_ROOT}/claude-policy.toml" <<EOF2
 version = 1
 
@@ -3760,6 +3870,15 @@ bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-cl
 expected=$'claude_auth\t'"${TMP_ROOT}"$'/refreshed-claude-auth.json'
 if [[ "${bundle}" != "${expected}" ]]; then
   echo "Expected Claude bundle selection to prefer the changed auth file, got: ${bundle}" >&2
+  exit 1
+fi
+
+rm -rf "${INJECTION_BUNDLE_ROOT}"
+WORKCELL_TEST_SELECTION_CASE=claude-fresh-divergent
+bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-claude-fresh" | tr -d '\n')"
+expected=$'claude_auth\t'"${TMP_ROOT}"$'/fresh-claude-credentials.json'
+if [[ "${bundle}" != "${expected}" ]]; then
+  echo "Expected fresh Claude bundle selection to prefer ~/.claude/.credentials.json, got: ${bundle}" >&2
   exit 1
 fi
 EOF
@@ -3896,6 +4015,33 @@ fi
 grep -q 'credential_key=claude_auth' "${AUDIT_CAPTURE}"
 grep -q 'Saved Claude credential for future Workcell launches.' "${STDERR_CAPTURE}"
 [[ -f "${TMP_ROOT}/config/credentials/claude-auth.json" ]]
+for managed_path in \
+  "${TMP_ROOT}/config/injection-policy.toml" \
+  "${TMP_ROOT}/config/injection-policy.d/saved-credentials.toml" \
+  "${TMP_ROOT}/config/credentials/claude-auth.json"; do
+  if stat -f '%Lp' "${managed_path}" >/dev/null 2>&1; then
+    managed_mode="$(stat -f '%Lp' "${managed_path}")"
+  else
+    managed_mode="$(stat -c '%a' "${managed_path}")"
+  fi
+  if [[ "${managed_mode}" != "600" ]]; then
+    echo "Expected managed Claude credential artifact ${managed_path} to be 0600, got ${managed_mode}" >&2
+    exit 1
+  fi
+done
+for managed_dir in \
+  "${TMP_ROOT}/config/credentials" \
+  "${TMP_ROOT}/config/injection-policy.d"; do
+  if stat -f '%Lp' "${managed_dir}" >/dev/null 2>&1; then
+    managed_mode="$(stat -f '%Lp' "${managed_dir}")"
+  else
+    managed_mode="$(stat -c '%a' "${managed_dir}")"
+  fi
+  if [[ "${managed_mode}" != "700" ]]; then
+    echo "Expected managed Claude credential directory ${managed_dir} to be 0700, got ${managed_mode}" >&2
+    exit 1
+  fi
+done
 EOF
 } >"${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
 /bin/bash "${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
@@ -5965,6 +6111,10 @@ if workcell_target_is_allowed '/state/agent-home/.claude/settings.json'; then
 fi
 if workcell_target_is_allowed '/state/agent-home/.claude/.credentials.json'; then
   echo "Expected runtime manifest guard to reserve injected Claude credentials" >&2
+  exit 1
+fi
+if workcell_target_is_allowed '/state/agent-home/.config/claude-code/auth.json'; then
+  echo "Expected runtime manifest guard to reserve injected Claude auth.json" >&2
   exit 1
 fi
 if workcell_target_is_allowed '/state/agent-home/.gemini/settings.json'; then

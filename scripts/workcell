@@ -2243,8 +2243,9 @@ provider_candidate_container_paths() {
     claude)
       # Workcell never extracts plaintext API keys from the live session.
       # Claude recovery is promoted through provider-written auth files only.
-      printf 'claude_auth\t/state/agent-home/.config/claude-code/auth.json\n'
+      # The wrapper points Claude at ~/.claude first, so prefer that file.
       printf 'claude_auth\t/state/agent-home/.claude/.credentials.json\n'
+      printf 'claude_auth\t/state/agent-home/.config/claude-code/auth.json\n'
       ;;
     gemini)
       printf 'gemini_env\t/state/agent-home/.gemini/.env\n'
@@ -2263,11 +2264,16 @@ extract_promotable_container_credentials() {
   local index=0
 
   mkdir -p "${output_root}"
+  chmod 0700 "${output_root}" 2>/dev/null || true
   while IFS=$'\t' read -r key container_path; do
     [[ -n "${key}" ]] || continue
     host_path="${output_root}/${key}.${index}"
     index=$((index + 1))
     if run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:${container_path}" "${host_path}" >/dev/null 2>&1; then
+      if ! chmod 0600 "${host_path}" 2>/dev/null; then
+        rm -f "${host_path}"
+        continue
+      fi
       if describe_credential_source "${key}" "${host_path}" >/dev/null 2>&1; then
         printf '%s\t%s\n' "${key}" "${host_path}"
       else
