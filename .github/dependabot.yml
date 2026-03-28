@@ -1,0 +1,121 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "America/Toronto"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    directory: "/runtime/container"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:30"
+      timezone: "America/Toronto"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "docker"
+    groups:
+      runtime-image:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    directory: "/tools/validator"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:45"
+      timezone: "America/Toronto"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "docker"
+    groups:
+      validator-image:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    directory: "/tools/remote-validator"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:50"
+      timezone: "America/Toronto"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "docker"
+    groups:
+      remote-validator-image:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/runtime/container/providers"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:00"
+      timezone: "America/Toronto"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "npm"
+    groups:
+      provider-clis:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/runtime/container/rust"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:15"
+      timezone: "America/Toronto"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "rust"
+    groups:
+      runtime-rust:
+        patterns:
+          - "*"
