@@ -2170,6 +2170,24 @@ describe_credential_source() {
     --source "${source}"
 }
 
+credential_sources_semantically_match() {
+  local key="$1"
+  local left="$2"
+  local right="$3"
+  local result=""
+
+  result="$(
+    run_clean_host_command \
+      "${HOST_PYTHON3_BIN}" \
+      "$(saved_credential_helper_path)" \
+      equivalent \
+      --key "${key}" \
+      --left "${left}" \
+      --right "${right}"
+  )" || return 1
+  [[ "${result//$'\n'/}" == "1" ]]
+}
+
 provider_auth_recovery_allowed() {
   if [[ "${AGENT}" != "gemini" ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
     return 1
@@ -2243,8 +2261,9 @@ provider_candidate_container_paths() {
     claude)
       # Workcell never extracts plaintext API keys from the live session.
       # Claude recovery is promoted through provider-written auth files only.
-      printf 'claude_auth\t/state/agent-home/.config/claude-code/auth.json\n'
+      # The wrapper points Claude at ~/.claude first, so prefer that file.
       printf 'claude_auth\t/state/agent-home/.claude/.credentials.json\n'
+      printf 'claude_auth\t/state/agent-home/.config/claude-code/auth.json\n'
       ;;
     gemini)
       printf 'gemini_env\t/state/agent-home/.gemini/.env\n'
@@ -2263,11 +2282,16 @@ extract_promotable_container_credentials() {
   local index=0
 
   mkdir -p "${output_root}"
+  chmod 0700 "${output_root}" 2>/dev/null || true
   while IFS=$'\t' read -r key container_path; do
     [[ -n "${key}" ]] || continue
     host_path="${output_root}/${key}.${index}"
     index=$((index + 1))
     if run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:${container_path}" "${host_path}" >/dev/null 2>&1; then
+      if ! chmod 0600 "${host_path}" 2>/dev/null; then
+        rm -f "${host_path}"
+        continue
+      fi
       if describe_credential_source "${key}" "${host_path}" >/dev/null 2>&1; then
         printf '%s\t%s\n' "${key}" "${host_path}"
       else
@@ -2289,7 +2313,7 @@ credential_source_differs_from_injected_source() {
   if ! describe_credential_source "${key}" "${injected_source}" >/dev/null 2>&1; then
     return 0
   fi
-  if cmp -s "${candidate_source}" "${injected_source}" >/dev/null 2>&1; then
+  if credential_sources_semantically_match "${key}" "${candidate_source}" "${injected_source}"; then
     return 1
   fi
   return 0
@@ -2328,7 +2352,8 @@ find_extracted_credential_source_prefer_changed() {
   while IFS=$'\t' read -r key source; do
     [[ "${key}" == "${expected_key}" ]] || continue
     [[ -n "${first_source}" ]] || first_source="${source}"
-    if [[ -n "${injected_source}" ]] && cmp -s "${source}" "${injected_source}" >/dev/null 2>&1; then
+    if [[ -n "${injected_source}" ]] &&
+      credential_sources_semantically_match "${expected_key}" "${source}" "${injected_source}"; then
       continue
     fi
     printf '%s\n' "${source}"
