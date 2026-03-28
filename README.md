@@ -216,6 +216,12 @@ exists only for lower-assurance boundary debugging with
 is recorded in the host audit log as a downgraded path.
 The safe path requires self-contained git admin state inside the mounted
 workspace; linked worktrees with external gitdirs are rejected.
+The mounted workspace remains the durable source of truth across container
+exit, so agent-authored code already survives locally on the host. Final
+branch publication stays host-side: use `workcell publish-pr` to create or
+switch a feature branch, make a signed commit, push it, and open a draft PR
+with agent-prepared metadata instead of attempting final GitHub publication
+from inside the Tier 1 session.
 
 Common recovery paths:
 
@@ -224,6 +230,8 @@ Common recovery paths:
   Replace `codex` with `claude` or `gemini` for the corresponding provider.
 - Prewarm the runtime image without launching:
   `workcell --prepare-only --agent codex --workspace /path/to/repo`
+- Publish the current workspace snapshot to a draft PR on a feature branch:
+  `workcell publish-pr --workspace /path/to/repo --branch feature/name --title-file /tmp/pr-title.txt --body-file /tmp/pr-body.md --commit-message-file /tmp/commit-message.txt`
 - First launch with provider prompts enabled:
   `workcell --prepare --agent claude --agent-autonomy prompt --workspace /path/to/repo`
 - One-off provider flags without repeating the provider command:

@@ -4442,6 +4442,81 @@ grep -q 'execution_path=lower-assurance-control-plane-vcs' /tmp/workcell-control
 grep -q 'WORKCELL_ALLOW_CONTROL_PLANE_VCS=1' /tmp/workcell-control-plane-vcs.stdout
 grep -q -- "${MASK_VERIFY_WORKSPACE}/AGENTS.md:/workspace/AGENTS.md:ro" /tmp/workcell-control-plane-vcs.stdout
 
+PUBLISH_PR_FIXTURE="${BARRIER_VERIFY_ROOT}/publish-pr-fixture"
+mkdir -p "${PUBLISH_PR_FIXTURE}"
+git init -q "${PUBLISH_PR_FIXTURE}"
+git -C "${PUBLISH_PR_FIXTURE}" config user.name "Workcell Verify"
+git -C "${PUBLISH_PR_FIXTURE}" config user.email "workcell-verify@example.com"
+git -C "${PUBLISH_PR_FIXTURE}" remote add origin https://github.com/example/workcell-publish-fixture.git
+printf 'base\n' >"${PUBLISH_PR_FIXTURE}/tracked.txt"
+git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
+git -C "${PUBLISH_PR_FIXTURE}" commit -q -m init
+printf 'worktree\n' >"${PUBLISH_PR_FIXTURE}/tracked.txt"
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/pr-title.txt"
+Verify PR title
+EOF
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/pr-body.md"
+Verify PR body
+EOF
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/commit-message.txt"
+Verify publish-pr commit
+
+- include staged workspace changes
+EOF
+PUBLISH_PR_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-fixture \
+  --title-file "${PUBLISH_PR_FIXTURE}/pr-title.txt" \
+  --body-file "${PUBLISH_PR_FIXTURE}/pr-body.md" \
+  --commit-message-file "${PUBLISH_PR_FIXTURE}/commit-message.txt" \
+  --snapshot worktree \
+  --dry-run)"
+grep -q '^publish_snapshot=worktree$' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q '^publish_branch=feature/publish-fixture$' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'switch -c feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' add -A ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' push -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'gh pr create --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
+
+git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
+PUBLISH_PR_INDEX_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-index \
+  --title "Index publish title" \
+  --commit-message "Index publish commit" \
+  --snapshot index \
+  --dry-run)"
+grep -q '^publish_snapshot=index$' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+if grep -q -- ' add -A ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"; then
+  echo "publish-pr index snapshot should not auto-stage the worktree" >&2
+  exit 1
+fi
+grep -q -- 'switch -c feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch main \
+  --title "Bad branch" \
+  --commit-message "Bad branch commit" \
+  --dry-run >/tmp/workcell-publish-pr-main.out 2>&1; then
+  echo "Expected publish-pr to reject the default branch" >&2
+  exit 1
+fi
+grep -q 'publish-pr refuses the default branch' /tmp/workcell-publish-pr-main.out
+
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch 'feature//bad' \
+  --title "Bad ref" \
+  --commit-message "Bad ref commit" \
+  --dry-run >/tmp/workcell-publish-pr-invalid.out 2>&1; then
+  echo "Expected publish-pr to reject an invalid branch name" >&2
+  exit 1
+fi
+grep -q 'Invalid publish branch name' /tmp/workcell-publish-pr-invalid.out
+
 MASK_SNAPSHOT_WORKSPACE="${BARRIER_VERIFY_ROOT}/mask-snapshot-workspace"
 mkdir -p "${MASK_SNAPSHOT_WORKSPACE}/.claude"
 git init -q "${MASK_SNAPSHOT_WORKSPACE}"
@@ -5860,5 +5935,73 @@ for needle in required:
     if needle not in text:
         raise SystemExit(f"Expected egress helper safe-cwd snippet missing: {needle}")
 PY
+
+python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = ["--inspect", "print_inspect_state", "codex", "claude", "gemini"]
+for token in required:
+    if token not in text:
+        raise SystemExit(f"Expected workcell to contain --inspect contract token: {token}")
+PY
+
+python3 - "${ROOT_DIR}/scripts/workcell" "${ROOT_DIR}/runtime/container/assurance.sh" <<'PY'
+import sys
+from pathlib import Path
+
+content = "".join(Path(p).read_text(encoding="utf-8") for p in sys.argv[1:])
+required = ["workspace", "network_policy", "session_assurance_initial", "codex", "claude", "gemini"]
+for field in required:
+    if field not in content:
+        raise SystemExit(f"Expected audit log field referenced in control scripts: {field}")
+PY
+
+if [[ ! -d "${ROOT_DIR}/docs/examples" ]]; then
+  echo "docs/examples/ must exist" >&2
+  exit 1
+fi
+
+if [[ ! -f "${ROOT_DIR}/tests/scenarios/manifest.json" ]]; then
+  echo "tests/scenarios/manifest.json must exist" >&2
+  exit 1
+fi
+
+for scenario_script in \
+  "${ROOT_DIR}/scripts/run-scenario-tests.sh" \
+  "${ROOT_DIR}/scripts/verify-scenario-coverage.sh" \
+  "${ROOT_DIR}/scripts/verify-control-plane-parity.sh"; do
+  if [[ ! -x "${scenario_script}" ]]; then
+    echo "Expected executable scenario script: ${scenario_script}" >&2
+    exit 1
+  fi
+done
+
+if ! python3 - "${ROOT_DIR}/adapters/claude/managed-settings.json" <<'PY'; then
+import json, pathlib, sys
+settings = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+hooks = settings.get("hooks", {})
+pre_tool = hooks.get("PreToolUse", [])
+has_bash_guard = any(
+    h.get("hooks", [{}])[0].get("command", "").endswith("guard-bash.sh")
+    for h in pre_tool
+    if h.get("hooks")
+)
+if not has_bash_guard:
+    raise SystemExit("guard-bash.sh hook must be registered in managed-settings.json PreToolUse")
+PY
+  exit 1
+fi
+
+for scenario_script_basename in \
+  "run-scenario-tests.sh" \
+  "verify-scenario-coverage.sh" \
+  "verify-control-plane-parity.sh"; do
+  if ! grep -Fq "${scenario_script_basename}" "${ROOT_DIR}/scripts/validate-repo.sh"; then
+    echo "validate-repo.sh must reference ${scenario_script_basename}" >&2
+    exit 1
+  fi
+done
 
 echo "Workcell invariant verification passed."

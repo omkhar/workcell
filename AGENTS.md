@@ -19,6 +19,10 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 
 - Sign every commit. Do not create or rewrite commits in this repository
   without a verified signature from the maintainer identity.
+- Treat final GitHub publication as a host-side action. Prepare branch,
+  signed commit message, and PR metadata inside Workcell, then use
+  `workcell publish-pr` on the host rather than publishing directly from the
+  Tier 1 in-container session.
 - Do not treat provider config, prompt files, or rules as the sole security
   boundary.
 - Preserve the dedicated VM plus container boundary as the Tier 1 design for
