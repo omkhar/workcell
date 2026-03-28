@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "cleanupPeriodDays": 30,
+  "env": {
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
+  },
+  "enableAllProjectMcpServers": false,
+  "alwaysThinkingEnabled": true,
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(rm -fr *)",
+      "Bash(sudo *)",
+      "Bash(mkfs *)",
+      "Bash(dd *)",
+      "Bash(git push --force*)",
+      "Bash(git push *--force*)",
+      "Bash(git reset --hard*)",
+      "Edit(~/.bashrc)",
+      "Edit(~/.zshrc)",
+      "Edit(~/.ssh/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.git-credentials)",
+      "Read(~/.docker/config.json)",
+      "Read(~/.kube/**)",
+      "Read(~/Library/Keychains/**)",
+      "Read(./AGENTS.md)",
+      "Read(./**/AGENTS.md)",
+      "Edit(./AGENTS.md)",
+      "Edit(./**/AGENTS.md)",
+      "Read(./CLAUDE.md)",
+      "Read(./**/CLAUDE.md)",
+      "Edit(./CLAUDE.md)",
+      "Edit(./**/CLAUDE.md)",
+      "Read(./GEMINI.md)",
+      "Read(./**/GEMINI.md)",
+      "Edit(./GEMINI.md)",
+      "Edit(./**/GEMINI.md)",
+      "Read(./.mcp.json)",
+      "Read(./**/.mcp.json)",
+      "Edit(./.mcp.json)",
+      "Edit(./**/.mcp.json)",
+      "Read(./.claude/**)",
+      "Read(./**/.claude/**)",
+      "Edit(./.claude/**)",
+      "Edit(./**/.claude/**)",
+      "Read(./.codex/**)",
+      "Read(./**/.codex/**)",
+      "Edit(./.codex/**)",
+      "Edit(./**/.codex/**)",
+      "Read(./.gemini/**)",
+      "Read(./**/.gemini/**)",
+      "Edit(./.gemini/**)",
+      "Edit(./**/.gemini/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/workcell/adapters/claude/hooks/guard-bash.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

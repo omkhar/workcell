@@ -1,0 +1,5 @@
+# Codex MCP defaults for the Workcell runtime.
+#
+# Workcell intentionally ships no registry-backed MCP defaults. Add only
+# provider commands that are pinned, reviewable, and reproducible within the
+# trust boundary.

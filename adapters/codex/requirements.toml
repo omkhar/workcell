@@ -1,0 +1,69 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Hard requirements for the Workcell Codex adapter. These values are restrictive
+# by design and are intended to be copied into an admin-enforced deployment.
+
+allowed_approval_policies = ["on-request", "never"]
+allowed_sandbox_modes = ["workspace-write", "danger-full-access"]
+allowed_web_search_modes = ["disabled"]
+
+[features]
+unified_exec = true
+
+# No MCP identities are seeded in the managed baseline. Enable only pinned,
+# repo-reviewed local commands or immutable container/image references.
+
+[[rules.prefix_rules]]
+pattern = [{ token = "rm" }, { any_of = ["-rf", "-fr"] }]
+decision = "forbidden"
+justification = "Use `trash` or a targeted delete instead of recursive forced removal."
+
+[[rules.prefix_rules]]
+pattern = [{ token = "sudo" }]
+decision = "forbidden"
+justification = "Do not mutate the host with sudo; keep changes inside the container or VM."
+
+[[rules.prefix_rules]]
+pattern = [{ token = "mkfs" }]
+decision = "forbidden"
+justification = "Filesystem creation is destructive and must stay outside Codex."
+
+[[rules.prefix_rules]]
+pattern = [{ token = "dd" }]
+decision = "forbidden"
+justification = "Raw block writes are too destructive for an autonomous agent."
+
+[[rules.prefix_rules]]
+pattern = [{ token = "git" }, { token = "reset" }, { token = "--hard" }]
+decision = "forbidden"
+justification = "Use `git restore` or a new worktree instead of rewriting local history."
+
+[[rules.prefix_rules]]
+pattern = [{ token = "git" }, { token = "push" }, { any_of = ["--force", "-f", "--force-with-lease"] }]
+decision = "forbidden"
+justification = "Do not rewrite shared remote history from Codex."
+
+[[rules.prefix_rules]]
+pattern = [{ token = "git" }, { token = "push" }]
+decision = "prompt"
+justification = "Confirm the target branch and remote before pushing."
+
+[[rules.prefix_rules]]
+pattern = [{ any_of = ["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"] }, { token = "commit" }, { any_of = ["--no-verify", "-n"] }]
+decision = "forbidden"
+justification = "Do not bypass git hooks with --no-verify or git commit -n from Workcell."
+
+[[rules.prefix_rules]]
+pattern = [{ any_of = ["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"] }, { any_of = ["push", "merge", "rebase", "am"] }, { token = "--no-verify" }]
+decision = "forbidden"
+justification = "Do not bypass git hooks with --no-verify from Workcell."
+
+[[rules.prefix_rules]]
+pattern = [{ any_of = ["codex", "claude", "gemini", "/usr/local/libexec/workcell/core/codex", "/usr/local/libexec/workcell/core/claude", "/usr/local/libexec/workcell/core/gemini", "/usr/local/libexec/workcell/real/codex", "/usr/local/libexec/workcell/real/claude", "/opt/workcell/providers/node_modules/.bin/gemini"] }]
+decision = "forbidden"
+justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."
+
+[[rules.prefix_rules]]
+pattern = [{ token = "node" }, { any_of = ["/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"] }]
+decision = "forbidden"
+justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."

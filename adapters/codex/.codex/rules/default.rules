@@ -1,0 +1,158 @@
+prefix_rule(
+    pattern = ["rm", "-rf"],
+    decision = "forbidden",
+    justification = "Use `trash` or a targeted delete instead of recursive forced removal.",
+    match = [
+        "rm -rf build",
+    ],
+    not_match = [
+        "rm file.txt",
+        "rmdir build",
+    ],
+)
+
+prefix_rule(
+    pattern = ["rm", "-fr"],
+    decision = "forbidden",
+    justification = "Use `trash` or a targeted delete instead of recursive forced removal.",
+    match = [
+        "rm -fr node_modules",
+    ],
+)
+
+prefix_rule(
+    pattern = ["rm", "-r", "-f"],
+    decision = "forbidden",
+    justification = "Use `trash` or a targeted delete instead of recursive forced removal.",
+    match = [
+        "rm -r -f build",
+    ],
+)
+
+prefix_rule(
+    pattern = ["rm", "-f", "-r"],
+    decision = "forbidden",
+    justification = "Use `trash` or a targeted delete instead of recursive forced removal.",
+    match = [
+        "rm -f -r build",
+    ],
+)
+
+prefix_rule(
+    pattern = ["sudo"],
+    decision = "forbidden",
+    justification = "Do not mutate the host with sudo; keep changes inside the container or VM.",
+    match = [
+        "sudo apt-get install ripgrep",
+    ],
+)
+
+prefix_rule(
+    pattern = [["mkfs", "mkfs.ext4", "mkfs.xfs", "mkfs.btrfs"]],
+    decision = "forbidden",
+    justification = "Filesystem creation is destructive and must stay outside Codex.",
+    match = [
+        "mkfs.ext4 /dev/sda",
+        "mkfs.xfs /dev/sdb",
+    ],
+)
+
+prefix_rule(
+    pattern = ["dd"],
+    decision = "forbidden",
+    justification = "Raw block writes are too destructive for an autonomous agent.",
+    match = [
+        "dd if=/dev/zero of=/dev/disk2",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "reset", "--hard"],
+    decision = "forbidden",
+    justification = "Use `git restore` or a new worktree instead of rewriting local history.",
+    match = [
+        "git reset --hard HEAD~1",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push", ["--force", "-f", "--force-with-lease"]],
+    decision = "forbidden",
+    justification = "Do not rewrite shared remote history from Codex.",
+    match = [
+        "git push --force origin main",
+        "git push -f origin feature",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push", "origin", ["main", "master", "develop", "feature"], ["--force", "-f", "--force-with-lease"]],
+    decision = "forbidden",
+    justification = "Do not rewrite shared remote history from Codex.",
+    match = [
+        "git push origin main --force",
+        "git push origin feature -f",
+    ],
+    not_match = [
+        "git push origin feature",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "Confirm the target branch and remote before pushing.",
+    match = [
+        "git push origin feature",
+    ],
+)
+
+prefix_rule(
+    pattern = [["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"], "commit", ["--no-verify", "-n"]],
+    decision = "forbidden",
+    justification = "Do not bypass git hooks with --no-verify or git commit -n from Workcell.",
+    match = [
+        "git commit --no-verify -m test",
+        "git commit -n -m test",
+        "/usr/bin/git commit --no-verify -m test",
+        "/usr/local/libexec/workcell/core/git commit --no-verify -m test",
+        "/usr/local/libexec/workcell/real/git commit --no-verify -m test",
+    ],
+)
+
+prefix_rule(
+    pattern = [["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"], ["push", "merge", "rebase", "am"], "--no-verify"],
+    decision = "forbidden",
+    justification = "Do not bypass git hooks with --no-verify from Workcell.",
+    match = [
+        "git push --no-verify origin feature",
+        "git merge --no-verify feature",
+        "git rebase --no-verify main",
+        "/usr/bin/git push --no-verify origin feature",
+        "/usr/local/libexec/workcell/core/git push --no-verify origin feature",
+        "/usr/local/libexec/workcell/real/git push --no-verify origin feature",
+    ],
+)
+
+prefix_rule(
+    pattern = [["codex", "claude", "gemini", "/usr/local/libexec/workcell/core/codex", "/usr/local/libexec/workcell/core/claude", "/usr/local/libexec/workcell/core/gemini", "/usr/local/libexec/workcell/real/codex", "/usr/local/libexec/workcell/real/claude", "/opt/workcell/providers/node_modules/.bin/gemini"]],
+    decision = "forbidden",
+    justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex.",
+    match = [
+        "codex --search",
+        "claude --dangerously-skip-permissions",
+        "/usr/local/libexec/workcell/core/codex --search",
+        "/usr/local/libexec/workcell/core/claude --dangerously-skip-permissions",
+        "/usr/local/libexec/workcell/real/codex --dangerously-bypass-approvals-and-sandbox",
+        "/usr/local/libexec/workcell/real/claude --dangerously-skip-permissions",
+    ],
+)
+
+prefix_rule(
+    pattern = ["node", ["/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"]],
+    decision = "forbidden",
+    justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex.",
+    match = [
+        "node /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --yolo",
+    ],
+)
