@@ -95,7 +95,9 @@ def require_regular_file(path: Path, label: str) -> None:
 
 
 def validate_saved_credential(key: str, source: Path) -> dict[str, object]:
-    require_regular_file(source, PROBEABLE_KEYS[key]["label"])
+    label = PROBEABLE_KEYS[key]["label"]
+    require_regular_file(source, label)
+    RENDER_HELPERS.require_secret_owner_only(source, label)
     metadata: dict[str, object] = {
         "key": key,
         "filename": PROBEABLE_KEYS[key]["filename"],
