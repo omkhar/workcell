@@ -50,15 +50,18 @@ The release workflow uses:
   guard artifacts, rebuilt inside the runtime image with a fixed
   `SOURCE_DATE_EPOCH`
 - a committed provider CLI lockfile with integrity-pinned transitive npm inputs
-  installed with `npm ci --ignore-scripts` and validated in CI for source,
-  version, and integrity coverage
+  for the shipped Gemini CLI, installed with `npm ci --ignore-scripts` and
+  validated in CI for source, version, and integrity coverage
+- a pinned native Claude Linux release with explicit version and per-arch
+  SHA256 checksums, re-verified in CI against Anthropic's published release
+  manifest
 - a deterministic build input manifest that records the pinned runtime base
   image, full runtime Dockerfile digest, Debian snapshot, Codex release assets,
-  provider lockfile digests, the actual runtime build-context inputs consumed by
-  the Dockerfile including `.dockerignore`, adapters, vendored Rust runtime
-  sources, and runtime enforcement code, plus the rest of the tracked
-  repository inputs that control release publication, and is itself directly
-  signed and also covered by the signed checksum set
+  Claude release assets, Gemini provider lockfile digests, the actual runtime
+  build-context inputs consumed by the Dockerfile including `.dockerignore`,
+  adapters, vendored Rust runtime sources, and runtime enforcement code, plus
+  the rest of the tracked repository inputs that control release publication,
+  and is itself directly signed and also covered by the signed checksum set
 - a deterministic control-plane manifest that records the reviewed adapter
   baselines, runtime control-plane scripts that seed provider-facing homes,
   and the host-side launcher, Docker-context guard, direct-mount extractor,
@@ -71,9 +74,10 @@ The release workflow uses:
   runtime and validator Dockerfiles, pinned workflow-side BuildKit and signing
   tool releases, and rejection of ambient `gh release` publication paths
 - release-preflight verification of the pinned Codex Linux assets against
-  OpenAI's published Sigstore bundle
-- scheduled freshness checks for pinned non-Dependabot inputs such as the
-  Debian snapshot and pinned Codex release version
+  OpenAI's published Sigstore bundle and the pinned Claude Linux assets against
+  Anthropic's published release manifest
+- scheduled re-verification of pinned non-Dependabot inputs such as the
+  Debian snapshot policy and the pinned Codex and Claude release artifacts
 - a fixed source bundle mtime plus `gzip -n` for reproducible source archives
 - fixed-order multi-architecture publication, where the final manifest list is
   assembled from independently published `linux/amd64` and `linux/arm64`

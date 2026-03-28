@@ -42,8 +42,7 @@ is_protected_provider_script() {
 
   canonical_candidate="$(canonicalize_existing_path "${candidate}" 2>/dev/null || true)"
   case "${canonical_candidate:-${candidate}}" in
-    /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js | \
-      /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js)
+    /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js)
       return 0
       ;;
   esac
@@ -82,8 +81,7 @@ no_script_invocation_is_safe() {
 
 for arg in "$@"; do
   case "${arg}" in
-    *"/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js"* | \
-      *"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"*)
+    *"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"*)
       echo "Workcell blocked direct provider script execution via node." >&2
       exit 2
       ;;

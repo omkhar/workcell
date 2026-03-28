@@ -34,3 +34,6 @@ jobs:
 
       - name: Verify upstream Codex release
         run: ./scripts/verify-upstream-codex-release.sh
+
+      - name: Verify upstream Claude release
+        run: ./scripts/verify-upstream-claude-release.sh

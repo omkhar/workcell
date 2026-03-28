@@ -17,7 +17,7 @@ same runtime, not host-native executors.
 |---|---|---|---|---|
 | Codex | CLI | `~/.codex/config.toml`, `AGENTS.md`, `.rules`, MCP config | Clean | Best fit for runtime-plus-adapter design |
 | Codex | App / GUI | app plus `app-server` | Partial | Tier 2 only when execution stays in the bounded runtime |
-| Claude | Claude Code CLI | `~/.claude/settings.json`, imported shared `AGENTS.md` plus `CLAUDE.md` overlay when present, `.mcp.json`, hooks | Partial | Hooks are guardrails, not the boundary; reviewed `.mcp.json` and auth can be injected explicitly |
+| Claude | Claude Code CLI | `~/.claude/settings.json`, `/etc/claude-code/managed-settings.json`, `~/.claude/.credentials.json`, imported shared `AGENTS.md` plus `CLAUDE.md` overlay when present, `.mcp.json`, hooks | Partial | Hooks are guardrails, not the boundary; reviewed `managed-settings.json`, `.mcp.json`, and auth can be injected explicitly |
 | Claude | IDE / GUI workflows | IDE and host integrations | Partial | Lower assurance unless attached to the same bounded workspace/runtime |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, imported shared `AGENTS.md` plus `GEMINI.md` overlay when present, injected `projects.json` | Partial | Internal sandbox is not the primary boundary here; repo `.gemini/` stays masked on the safe path |
 | Gemini | IDE / GUI workflows | IDE integration and host UI surfaces | Partial | Tier 2 only if execution is still fully remote/containerized |

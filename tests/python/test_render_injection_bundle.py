@@ -435,7 +435,7 @@ class RenderInjectionBundleTests(unittest.TestCase):
             "~/.mcp.json",
             "~/.gemini/projects.json",
             "~/.gemini/trustedFolders.json",
-            "~/.config/claude-code/auth.json",
+            "~/.claude/.credentials.json",
         ):
             with self.assertRaises(SystemExit):
                 candidate = self.module.normalize_container_target(target)

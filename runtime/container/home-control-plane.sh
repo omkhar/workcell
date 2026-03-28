@@ -826,7 +826,7 @@ workcell_target_is_allowed() {
       /state/agent-home/.claude/CLAUDE.md | \
       /state/agent-home/.claude/workcell | \
       /state/agent-home/.claude/workcell/* | \
-      /state/agent-home/.config/claude-code/auth.json | \
+      /state/agent-home/.claude/.credentials.json | \
       /state/agent-home/.mcp.json | \
       /state/agent-home/.gemini/settings.json | \
       /state/agent-home/.gemini/GEMINI.md | \
@@ -1058,8 +1058,7 @@ seed_claude_home() {
   workcell_prepare_session_directory "${HOME}/.claude" "Claude home"
   workcell_render_claude_settings
   workcell_render_provider_doc "${ADAPTER_ROOT}/claude/CLAUDE.md" "${HOME}/.claude/CLAUDE.md" claude
-  workcell_prepare_session_directory "${HOME}/.config/claude-code" "Claude auth directory"
-  workcell_copy_manifest_credential_file claude_auth "${HOME}/.config/claude-code/auth.json" || true
+  workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude/.credentials.json" || true
   if ! workcell_copy_manifest_credential_file claude_mcp "${HOME}/.mcp.json"; then
     workcell_link_control_plane_path "${ADAPTER_ROOT}/claude/mcp-template.json" "${HOME}/.mcp.json"
   fi
