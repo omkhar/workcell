@@ -1352,7 +1352,10 @@ EOF
   align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp/workcell-codex-env-check.sh" 0755 0755
 
   CODEX_SECRET_ENV="$(
-    run_entrypoint_with_autonomy_and_bind \
+    AWS_SECRET_ACCESS_KEY='verify-aws-secret' \
+      GITHUB_TOKEN='verify-gh-token' \
+      SSH_AUTH_SOCK='/tmp/workcell-secret-sock' \
+      run_entrypoint_with_autonomy_and_bind \
       codex \
       yolo \
       "${ROOT_DIR}/tmp/workcell-codex-env-check.sh" \

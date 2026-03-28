@@ -166,7 +166,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-policy.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "1009fad1240009b44a434cb7b7aed6fa6b931cbaa53b04794dcf7e7d08562b45"
+      "sha256": "f287aaa2cf9a0eb75c7e5efdc2bed71441ebb91c2607161851be338bd11b5447"
     },
     {
       "kind": "runtime-control-plane",
