@@ -1,0 +1,524 @@
+.TH WORKCELL 1 "2026-03-28" "Workcell" "User Commands"
+.SH NAME
+workcell \- bounded runtime launcher for coding agents
+.SH SYNOPSIS
+.B workcell
+[\fIoptions\fR] [\fB--\fR \fIprovider-args\fR ...]
+.br
+.B workcell publish-pr
+[\fIoptions\fR]
+.SH DESCRIPTION
+.B workcell
+starts the selected coding agent inside a bounded local runtime with explicit
+isolation and policy controls.
+.B workcell
+launches the selected provider directly inside that runtime; there is no
+separate attach or connect step after launch.
+The Tier 1 path is a dedicated Colima virtual machine profile on macOS plus a
+hardened container inside that VM.
+The managed runtime mounts
+.I /tmp
+as
+.B noexec
+and uses
+.I /state/tmp
+as the exec-capable temporary directory via
+.BR TMPDIR .
+.SH OPTIONS
+.TP
+.B --agent codex|claude|gemini
+Select the provider to run. This option is required.
+.TP
+.B --agent-autonomy yolo|prompt
+Select the provider approval posture. The default is
+.BR yolo ,
+which means Workcell injects the provider's no-prompt mode. Use
+.BR prompt
+to opt back into the provider's normal approval flow.
+Prompt autonomy is a lower-assurance choice because provider-native approval
+state or session-local policy can change during the live session.
+.TP
+.B --agent-arg VALUE
+Append provider-native argv at launch. This option is repeatable and does not
+require repeating
+.BR codex ,
+.BR claude ,
+or
+.BR gemini
+in the provider argv. These values are still validated as ordinary user-supplied
+provider arguments inside the managed runtime.
+.TP
+.B --codex-rules-mutability readonly|session
+Select Codex execpolicy mutability. The default is
+.BR readonly ,
+which keeps Codex rules linked to the immutable adapter baseline on the managed
+path until the session is already downgraded by package mutation or prompt
+autonomy. Use
+.BR session
+only when you explicitly want session-local Codex execpolicy amendments to
+persist across nested Codex launches until container exit. That is surfaced as
+.BR codex_rules_assurance_effective_initial=lower-assurance-session-rules .
+.TP
+.B --container-mutability ephemeral|readonly
+Select whether the inner runtime root filesystem is writable but session-local
+.RB ( ephemeral )
+or read-only
+.RB ( readonly ).
+The default is
+.BR ephemeral .
+When
+.B ephemeral
+is selected, Workcell also allows
+.BR apt
+and
+.BR apt-get
+to reach the pinned Debian snapshot endpoints so transient build tooling can be
+installed without widening to arbitrary distro mirrors.
+Successful package mutations are treated as a lower-assurance in-session
+downgrade because maintainer scripts run as root inside the mutable container;
+Workcell warns when that happens and keeps the downgrade visible until the
+container exits.
+This lane adds only the minimal Linux capabilities required for the
+root-to-runtime-user handoff inside the container:
+.BR SETUID
+and
+.BR SETGID .
+.RS
+.TP
+.B strict + ephemeral
+Default developer path with
+.BR container_assurance=managed-mutable .
+This allows transient package installs, but a successful package mutation
+downgrades the live session to
+.BR lower-assurance-package-mutation
+until exit.
+.TP
+.B strict + readonly
+Strongest managed path with
+.BR container_assurance=managed-readonly .
+Package-manager writes stay blocked, so the in-session control-plane posture
+does not downgrade.
+.TP
+.B --agent-autonomy prompt
+Keeps the provider's approval flow, but Workcell surfaces that separately as
+.BR autonomy_assurance=lower-assurance-prompt-autonomy .
+.RE
+.TP
+.B --container-cpu COUNT
+Set an explicit CPU limit for the inner runtime container.
+.TP
+.B --container-memory SIZE
+Set an explicit memory limit for the inner runtime container, for example
+.BR 4g .
+.TP
+.B --cache-profile off|standard
+Select whether Workcell mounts an opt-in host-persisted non-secret cache plane
+into the runtime. The default is
+.BR off .
+Using
+.BR standard
+persists package-index and compiler caches such as npm, pip, Cargo, Go, and
+.BR ccache ,
+scoped to the current workspace by default, but it is still a lower-assurance
+path and is not treated as part of the clean
+.B strict
+session boundary.
+.TP
+.B --injection-policy PATH
+Use an explicit host-side injection policy for this launch. Workcell mounts
+credential sources read-only from their original host paths and stages the
+selected docs, copied files, and SSH material into per-session runtime state
+instead of passing through host homes or sockets directly.
+.TP
+.B --log-level normal|debug
+Select launch-time logging verbosity. The default is
+.BR normal .
+Use
+.BR debug
+to surface successful Colima and runtime-build output in addition to the normal
+high-signal launcher messages.
+.TP
+.B --debug-log PATH
+Persist the full launcher plus container stdout/stderr stream to
+.IR PATH .
+This is an explicit lower-assurance host logging path because provider output
+may be retained outside the ephemeral runtime, and Workcell prints an explicit
+warning banner when it is enabled. This flag is only valid for real launched
+sessions.
+.TP
+.B --audit-transcript PATH
+Persist a full interactive terminal transcript, including typed input and child
+output, to
+.IR PATH .
+The retained transcript also includes session start and end timestamps plus the
+final exit code.
+This requires an interactive terminal and is an explicit lower-assurance host
+logging path. Workcell prints an explicit warning banner when it is enabled.
+This flag is only valid for real launched sessions.
+.TP
+.B --no-default-injection-policy
+Ignore
+.I ~/.config/workcell/injection-policy.toml
+for this launch even if it exists.
+.TP
+.B --ui cli|gui
+Select the surface to launch. Only
+.BR cli
+is currently implemented as a preserved-boundary path.
+.TP
+.B --mode strict|build|breakglass
+Select the runtime profile. The default is
+.BR strict .
+.TP
+.B --prepare
+Seed or refresh the prepared runtime image before continuing with the requested
+launch. This is the recommended first-run path.
+.TP
+.B --prepare-only
+Seed or refresh the prepared runtime image and then exit without launching a
+session. This is the recommended prewarm path when you want to remove the cold
+build cost ahead of time.
+.TP
+.B --repair-profile
+Delete a conflicting unmanaged Colima profile before launch so Workcell can
+recreate it with reviewed mounts and policy. On
+.BR strict ,
+this also implies
+.B --prepare
+because the recreated profile starts empty.
+.TP
+.B --ack-breakglass
+Required with
+.B --mode breakglass
+to make the higher-trust path explicit.
+.TP
+.B --ack-arbitrary-command
+Required with
+.B --allow-arbitrary-command
+to make lower-assurance boundary-debugging command passthrough explicit.
+.TP
+.B --ack-control-plane-vcs
+Required with
+.B --allow-control-plane-vcs
+to make the lower-assurance control-plane Git lane explicit.
+.TP
+.B --workspace PATH
+Select the workspace to mount inside the runtime. The default is the current
+directory.
+.TP
+.B --allow-nongit-workspace
+Allow a non-git workspace that contains an explicit agent marker file.
+.TP
+.B --allow-control-plane-vcs
+Allow read-only Git status, diff, and staging visibility for otherwise masked
+workspace control-plane paths. Workcell records this as
+.BR workspace_control_plane=readonly-vcs
+with
+.BR session_assurance_initial=lower-assurance-control-plane-vcs .
+.TP
+.B --allow-arbitrary-command
+Launch the runtime image with a direct container entrypoint after
+.BR -- .
+This is intended only for lower-assurance boundary debugging and is recorded in
+the host audit log as a downgraded path.
+.TP
+.B --colima-profile NAME
+Override the derived Colima profile name.
+.TP
+.B --vm-cpu COUNT
+Set an explicit CPU count for the dedicated Colima VM.
+.TP
+.B --vm-memory GIB
+Set an explicit memory size in GiB for the dedicated Colima VM.
+.TP
+.B --vm-disk GIB
+Set an explicit disk size in GiB for the dedicated Colima VM.
+.TP
+.B --rebuild
+Rebuild the runtime image before launch.
+This is rejected on
+.BR strict
+unless
+.B --prepare
+is also set.
+.TP
+.B --dry-run
+Print the selected runtime command and exit.
+.TP
+.B --doctor
+Print derived profile and workspace state, identify whether the managed profile
+or prepared image is missing, and emit the recommended next command without
+launching the runtime. Also available as
+.BR "workcell doctor" .
+When the workspace path is missing or invalid, this reports that first instead
+of recommending
+.BR --prepare .
+.TP
+.B --inspect
+Print the derived launch configuration, active assurance labels, injection
+metadata, and latest retained host-log pointers without launching the runtime.
+Also available as
+.BR "workcell inspect" .
+.TP
+.B --logs audit|debug|transcript
+Print the latest retained log of the selected type for the derived or explicit
+Colima profile and exit. Also available as
+.BR "workcell logs audit|debug|transcript" .
+.TP
+.B --auth-status
+Print the selected injection or credential posture derived from the rendered
+injection manifest, including the primary provider auth mode, the ordered
+provider auth mode set, and SSH config assurance, and exit. Also available as
+.BR "workcell auth-status" .
+.TP
+.B --gc
+Remove stale host-side session audit and injection-bundle directories plus
+broken latest-log pointers from managed profile state and exit. Also available
+as
+.BR "workcell gc" .
+.TP
+.B publish-pr
+Prepare a host-side publication flow for the mounted workspace: switch to or
+create a feature branch, optionally stage the worktree, create a signed commit,
+push it, and open a GitHub pull request using host Git and GitHub CLI state.
+Use
+.BR "workcell publish-pr --help"
+for the full option set.
+.TP
+.B -h, --help
+Show usage information.
+.SH PROFILES
+.TP
+.B strict
+Allowlisted network access only, no host credential or control socket
+passthrough, and provider-native bounded or constrained mode only where the
+selected provider actually offers one. On this profile, direct native ELF
+execution from mutable
+.I /workspace
+and
+.I /state
+paths is blocked, and mutable shebang scripts cannot target protected real
+runtimes directly.
+This profile requires a prebuilt prepared runtime image and does not perform
+cold builds or rebuilds unless
+.B --prepare
+explicitly tells Workcell to seed the image before continuing.
+.TP
+.B build
+The same mount and secret restrictions as
+.BR strict ,
+with broader network access for dependency and build traffic.
+Prepared runtime-image creation and rebuilds happen here.
+.TP
+.B breakglass
+Still inside the Workcell VM plus container boundary, but with unrestricted
+network access. The managed entrypoint does not auto-inject unsafe provider
+flags; any adapter-specific high-trust launch is a lower-assurance direct
+provider path. This profile requires
+.BR --ack-breakglass .
+.SH NODE SURFACE
+The public
+.B node
+surface exposed by the managed runtime is intended for workspace JavaScript, not
+for launching provider entrypoints, repackaged workspace copies of the shipped
+provider package trees, or loading native addons. Workcell blocks those paths
+on the safe profiles so public
+.B node
+execution cannot retake unmediated native code execution.
+.SH FILES
+.TP
+.I ~/.local/bin/workcell
+Installed launcher path used by
+.BR scripts/install.sh .
+.TP
+.I ~/.local/share/man/man1/workcell.1
+Installed man page path used by
+.BR scripts/install.sh .
+.TP
+.I scripts/uninstall.sh
+Repository helper that removes Workcell-owned install links, managed Colima
+profiles, Workcell cache roots, and known Workcell temp artifacts without
+touching
+.IR ~/.config/workcell .
+.TP
+.I ~/.config/workcell/injection-policy.toml
+Default optional host-side injection policy. If present, Workcell mounts
+credential sources read-only from their original host paths and stages the rest
+of its contents into per-session runtime state unless
+.B --no-default-injection-policy
+is set.
+.TP
+.I ~/.colima/PROFILE/workcell.audit.log
+Durable host-side metadata audit log written by the managed launcher for real
+runs.
+.SH SESSION INJECTIONS
+The safe path does not allow ambient host passthrough for secrets, SSH agents,
+or provider state. The supported way to place consistent material into every
+session is a host-side injection policy.
+.PP
+Workcell treats injected content as three classes:
+.IP \(bu 2
+Non-secret common or provider-specific instructions rendered into provider home
+docs such as
+.BR AGENTS.md ,
+.BR CLAUDE.md ,
+and
+.BR GEMINI.md .
+.IP \(bu 2
+Provider-native credentials mounted read-only from their original host paths
+and copied into the ephemeral session home.
+.IP \(bu 2
+Copied files or directories staged into
+.I /state/injected
+or a non-reserved path under the ephemeral session home.
+.IP \(bu 2
+SSH material copied into the ephemeral in-container
+.I ~/.ssh
+with strict permissions.
+.PP
+Secret-bearing injection sources must be owner-only host files or directories
+and must not be symlinks. Standard world-readable
+.I ssh known_hosts
+files are accepted, but they must not be symlinks or group/world-writable.
+Credential entries may be scoped to selected
+providers or runtime modes, and unsafe raw
+.I ssh_config
+directives such as
+.BR ProxyCommand
+or
+.BR Match\ exec
+are rejected unless the operator explicitly opts into them.
+.PP
+The immutable adapter baselines under
+.I adapters/
+are never mutated in place. Repo-local
+.BR AGENTS.md ,
+.BR CLAUDE.md ,
+and
+.BR GEMINI.md
+are masked inside the workspace and imported into the provider home docs
+instead. Claude and Gemini import shared
+.BR AGENTS.md
+first and then append
+.BR CLAUDE.md
+or
+.BR GEMINI.md
+when present.
+When those control-plane files or directories are tracked in git, Workcell
+masks them with a read-only git-index snapshot so ordinary git status and
+staging flows are not polluted by placeholder diffs.
+If an operator intentionally needs to diff or stage live control-plane changes
+inside Workcell, they must opt into
+.B --allow-control-plane-vcs
+and
+.BR --ack-control-plane-vcs ,
+which exposes those workspace paths read-only and lowers the reported session
+assurance accordingly.
+By default, Codex rules stay linked to the immutable adapter baseline
+until prompt autonomy or package mutation has already downgraded the session.
+If you explicitly opt into
+.B --codex-rules-mutability session
+Workcell seeds a session-local writable copy of the Codex rules tree so
+provider-approved session amendments can persist across nested Codex launches
+until the container exits, while the immutable adapter baseline under
+.I adapters/
+remains unchanged.
+Reusable provider and GitHub auth should go through
+.BR [credentials]
+in the injection policy rather than generic copied files.
+.SH FIRST RUN AND RECOVERY
+Recommended first launch:
+.IP
+.EX
+workcell --prepare --agent codex --workspace /path/to/repo
+.EE
+.PP
+Prewarm the prepared runtime image without launching:
+.IP
+.EX
+workcell --prepare-only --agent codex --workspace /path/to/repo
+.EE
+.PP
+Replace
+.B codex
+with
+.B claude
+or
+.B gemini
+for the corresponding provider.
+.PP
+Normal launch after the prepared image already exists:
+.IP
+.EX
+workcell --agent codex --workspace /path/to/repo
+.EE
+.PP
+Inspecting or diagnosing state without launching:
+.IP
+.EX
+workcell --agent codex --inspect --workspace /path/to/repo
+workcell --agent codex --doctor --workspace /path/to/repo
+.EE
+.PP
+Capturing lower-assurance host logs explicitly:
+.IP
+.EX
+workcell --agent codex --workspace /path/to/repo \\
+  --log-level debug --debug-log ~/logs/workcell-debug.log
+workcell --agent codex --workspace /path/to/repo \\
+  --audit-transcript ~/logs/workcell-transcript.log
+.EE
+.PP
+Viewing the latest retained host logs for a profile:
+.IP
+.EX
+workcell --agent codex --workspace /path/to/repo --logs audit
+workcell --agent codex --workspace /path/to/repo --logs debug
+.EE
+.PP
+Prompted launch for a selected provider:
+.IP
+.EX
+workcell --agent claude --agent-autonomy prompt --workspace /path/to/repo
+.EE
+.PP
+Passing provider flags without repeating the provider command:
+.IP
+.EX
+workcell --agent gemini --agent-arg --version --workspace /path/to/repo
+.EE
+.PP
+Publishing a prepared workspace snapshot from the host side:
+.IP
+.EX
+workcell publish-pr --workspace /path/to/repo --branch feature/name \\
+  --title-file /tmp/pr-title.txt --body-file /tmp/pr-body.md \\
+  --commit-message-file /tmp/commit-message.txt
+.EE
+.PP
+Using an explicit injection policy:
+.IP
+.EX
+workcell --prepare --agent codex --workspace /path/to/repo \\
+  --injection-policy ~/.config/workcell/injection-policy.toml
+.EE
+.PP
+If Workcell reports an unmanaged Colima profile, rerun with:
+.IP
+.EX
+workcell --repair-profile --agent codex --workspace /path/to/repo
+.EE
+.PP
+Replace
+.B codex
+with
+.B claude
+or
+.B gemini
+for the corresponding provider.
+.SH EXIT STATUS
+The command exits non-zero on validation failures, unsupported modes, missing
+dependencies, or runtime launch errors.
+.SH SEE ALSO
+.BR colima (1),
+.BR docker (1)
