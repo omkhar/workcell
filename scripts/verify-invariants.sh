@@ -5597,7 +5597,7 @@ if ! rg -q 'trustedFolders\.json' "${ROOT_DIR}/runtime/container/home-control-pl
   echo "Expected Gemini home seeding to provision trustedFolders.json" >&2
   exit 1
 fi
-if ! rg -Fq 'workcell_reset_session_target "${HOME}/.gemini/settings.json" "Gemini settings"' "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
+if ! grep -Fq 'workcell_reset_session_target "${HOME}/.gemini/settings.json" "Gemini settings"' "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
   echo "Expected Gemini home seeding to reset settings.json through workcell_reset_session_target" >&2
   exit 1
 fi
