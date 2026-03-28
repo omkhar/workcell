@@ -806,6 +806,45 @@ class RenderInjectionHelperTests(unittest.TestCase):
                 "credentials.codex_auth",
             )
 
+    def test_validate_gemini_env_api_key_selected_auth_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            api_key_env = root / "fixture-api-key.env"
+            api_key_env.write_text(
+                "GEMINI_API_KEY=FIXTURE_FAKE_KEY_DO_NOT_USE\n",
+                encoding="utf-8",
+            )
+            result = self.module.validate_gemini_env_file(api_key_env)
+            self.assertEqual(result["selected_auth_type"], "gemini-api-key")
+
+    def test_validate_gemini_env_vertex_extra_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            vertex_env = root / "fixture-vertex.env"
+            vertex_env.write_text(
+                "GOOGLE_GENAI_USE_VERTEXAI=true\n"
+                "GOOGLE_CLOUD_PROJECT=fixture-fake-project\n"
+                "GOOGLE_CLOUD_LOCATION=us-central1\n",
+                encoding="utf-8",
+            )
+            result = self.module.validate_gemini_env_file(vertex_env)
+            self.assertIn("aiplatform.googleapis.com:443", result["extra_endpoints"])
+            self.assertIn(
+                "us-central1-aiplatform.googleapis.com:443",
+                result["extra_endpoints"],
+            )
+
+    def test_validate_gemini_env_gca_selected_auth_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            gca_env = root / "fixture-gca.env"
+            gca_env.write_text(
+                "GOOGLE_GENAI_USE_GCA=true\n",
+                encoding="utf-8",
+            )
+            result = self.module.validate_gemini_env_file(gca_env)
+            self.assertEqual(result["selected_auth_type"], "oauth-personal")
+
 
 if __name__ == "__main__":
     unittest.main()
