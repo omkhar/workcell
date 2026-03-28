@@ -58,8 +58,9 @@ the audit log schema for autonomy mode.
 
 **Path to add:** Add a scenario under `tests/scenarios/claude-audit/` that
 checks the audit log entry fields after a minimal prompt-autonomy session.
-Can share the audit-log-schema test infrastructure already declared in the
-manifest.
+Can reuse the existing audit-field contract checks in
+`scripts/verify-invariants.sh` as a baseline, then graduate them into a
+dedicated runnable scenario for prompt autonomy.
 
 ### claude MCP injection replaces empty template
 

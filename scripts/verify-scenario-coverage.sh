@@ -18,7 +18,8 @@ while IFS= read -r test_file; do
     echo "Missing test file: tests/scenarios/${test_file}" >&2
     missing=$((missing + 1))
   fi
-done < <(python3 - "${MANIFEST}" <<'PY'
+done < <(
+  python3 - "${MANIFEST}" <<'PY'
 import json, pathlib, sys
 m = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 for s in m["scenarios"]:

@@ -5761,7 +5761,7 @@ for scenario_script in \
   fi
 done
 
-if ! python3 - "${ROOT_DIR}/adapters/claude/managed-settings.json" <<'PY'
+if ! python3 - "${ROOT_DIR}/adapters/claude/managed-settings.json" <<'PY'; then
 import json, pathlib, sys
 settings = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 hooks = settings.get("hooks", {})
@@ -5774,7 +5774,6 @@ has_bash_guard = any(
 if not has_bash_guard:
     raise SystemExit("guard-bash.sh hook must be registered in managed-settings.json PreToolUse")
 PY
-then
   exit 1
 fi
 

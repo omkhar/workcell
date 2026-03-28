@@ -5,19 +5,23 @@ coverage status.
 
 Test status values:
 
-- `tested` — a scenario test file exists and runs in CI or the local
-  secretless lane
+- `tested` — automated coverage exists (scenario test, unit test, or
+  invariant check)
 - `doc-only` — documented and manually verified, but no automated scenario
   test yet
 - `aspirational` — identified as a target scenario, not yet tested or
   documented in detail
 
+Some `tested` rows are static contract checks rather than end-to-end runtime
+scenarios. The `Coverage Source` column shows where the current automated
+coverage lives.
+
 ## Matrix
 
-| Provider | Persona | Use Case | Test Status | Test File |
+| Provider | Persona | Use Case | Test Status | Coverage Source |
 |---|---|---|---|---|
-| Codex | SWE | inspect output schema contains required keys | tested | `tests/scenarios/cross-provider/test-inspect-parity.sh` |
-| Codex | SWE | audit log entries contain required fields | tested | `tests/scenarios/cross-provider/test-audit-log-schema.sh` |
+| Codex | SWE | `--inspect` contract retains required keys | tested | `scripts/verify-invariants.sh` |
+| Codex | SWE | audit record contract retains required fields | tested | `scripts/verify-invariants.sh` |
 | Codex | SWE | launch with codex_auth injection policy credential | doc-only | — |
 | Codex | SWE | session-local Codex rules mutability does not affect adapter baseline | doc-only | — |
 | Codex | Developer | first-run --prepare flow seeds runtime image | doc-only | — |
@@ -32,8 +36,8 @@ Test status values:
 | Codex | NaiveCoder | direct push to main blocked | doc-only | — |
 | Codex | NaiveCoder | host home not reachable from inside session | doc-only | — |
 | Claude | SWE | guard-bash.sh blocks unsafe git commands | tested | `tests/scenarios/claude-swe/test-hook-parametric.sh` |
-| Claude | SWE | inspect output schema contains required keys | tested | `tests/scenarios/cross-provider/test-inspect-parity.sh` |
-| Claude | SWE | audit log entries contain required fields | tested | `tests/scenarios/cross-provider/test-audit-log-schema.sh` |
+| Claude | SWE | `--inspect` contract retains required keys | tested | `scripts/verify-invariants.sh` |
+| Claude | SWE | audit record contract retains required fields | tested | `scripts/verify-invariants.sh` |
 | Claude | SWE | managed-settings.json is not replaceable by workspace files | doc-only | — |
 | Claude | Developer | claude_api_key generates apiKeyHelper without second plaintext copy | doc-only | — |
 | Claude | Developer | claude_mcp injects reviewed MCP config replacing empty template | doc-only | — |
@@ -46,9 +50,9 @@ Test status values:
 | Claude | NaiveCoder | rm -rf blocked by guard-bash.sh | tested | `tests/scenarios/claude-swe/test-hook-parametric.sh` |
 | Claude | NaiveCoder | shell expansion syntax blocked by guard-bash.sh | tested | `tests/scenarios/claude-swe/test-hook-parametric.sh` |
 | Claude | NaiveCoder | workspace control file reads blocked by guard-bash.sh | tested | `tests/scenarios/claude-swe/test-hook-parametric.sh` |
-| Gemini | SWE | auth modes correctly parsed from gemini_env injection | tested | `tests/scenarios/gemini-auth-modes/test-auth-modes.py` |
-| Gemini | SWE | inspect output schema contains required keys | tested | `tests/scenarios/cross-provider/test-inspect-parity.sh` |
-| Gemini | SWE | audit log entries contain required fields | tested | `tests/scenarios/cross-provider/test-audit-log-schema.sh` |
+| Gemini | SWE | auth modes correctly parsed from `gemini_env` injection | tested | `tests/python/test_injection_helpers.py` |
+| Gemini | SWE | `--inspect` contract retains required keys | tested | `scripts/verify-invariants.sh` |
+| Gemini | SWE | audit record contract retains required fields | tested | `scripts/verify-invariants.sh` |
 | Gemini | SWE | trustedFolders.json seeded with /workspace before launch | doc-only | — |
 | Gemini | Developer | Vertex env derives regional aiplatform allowlist entry | doc-only | — |
 | Gemini | Developer | gcloud_adc supplemental only, not standalone Gemini auth | doc-only | — |
@@ -62,11 +66,11 @@ Test status values:
 | Gemini | NaiveCoder | breakglass restores Gemini folder-trust prompt, omits trustedFolders seed | doc-only | — |
 | Gemini | NaiveCoder | host home not reachable from inside session | doc-only | — |
 
-## Notes on test file paths
+## Notes on coverage sources
 
-The scenario test files listed above are declared in
-`tests/scenarios/manifest.json`. The test scripts themselves live under
-`tests/scenarios/<scenario-id>/`. The manifest is the authoritative source of
-truth for which scenarios are tracked.
+Scenario tests are declared in `tests/scenarios/manifest.json` and their
+scripts live under `tests/scenarios/<scenario-id>/`. Static invariant checks
+live in `scripts/verify-invariants.sh`, and unit tests live under
+`tests/python/`.
 
 For gaps and aspirational scenarios, see `docs/scenario-gaps.md`.

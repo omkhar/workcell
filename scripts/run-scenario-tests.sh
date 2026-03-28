@@ -60,7 +60,8 @@ run_scenario() {
 
 while IFS=$'\t' read -r scenario_id test_file requires_creds; do
   run_scenario "${scenario_id}" "${test_file}" "${requires_creds}"
-done < <(python3 - "${MANIFEST}" <<'PY'
+done < <(
+  python3 - "${MANIFEST}" <<'PY'
 import json, pathlib, sys
 m = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 for s in m["scenarios"]:
