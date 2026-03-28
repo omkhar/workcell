@@ -105,6 +105,10 @@ shell_files=(
   "${ROOT_DIR}/runtime/container/provider-policy.sh"
   "${ROOT_DIR}/runtime/container/provider-wrapper.sh"
   "${ROOT_DIR}/runtime/container/runtime-user.sh"
+  "${ROOT_DIR}/scripts/run-scenario-tests.sh"
+  "${ROOT_DIR}/scripts/verify-scenario-coverage.sh"
+  "${ROOT_DIR}/scripts/verify-control-plane-parity.sh"
+  "${ROOT_DIR}/tests/scenarios/claude-swe/test-hook-parametric.sh"
 )
 
 shellcheck -x "${shell_files[@]}"
@@ -131,7 +135,7 @@ python3 -m unittest discover -s "${ROOT_DIR}/tests/python" -p 'test_*.py'
 
 while IFS= read -r file; do
   python3 -m json.tool "${file}" >/dev/null
-done < <(find "${ROOT_DIR}/adapters" "${ROOT_DIR}/.github" "${ROOT_DIR}/runtime/container/providers" \
+done < <(find "${ROOT_DIR}/adapters" "${ROOT_DIR}/.github" "${ROOT_DIR}/runtime/container/providers" "${ROOT_DIR}/tests/scenarios" \
   -path '*/node_modules' -prune -o \
   -type f -name '*.json' -print | sort)
 
@@ -178,6 +182,49 @@ fi
 
 validate_manpage
 
+# Check A: docs/examples/ must exist and be non-empty
+if [[ ! -d "${ROOT_DIR}/docs/examples" ]] || ! find "${ROOT_DIR}/docs/examples" -type f -print -quit | grep -q .; then
+  echo "docs/examples/ must exist and be non-empty" >&2
+  exit 1
+fi
+
+# Check B: TOML validation for docs/examples/ is already covered by the
+# root.rglob("*.toml") loop above, which scans all subdirectories.
+
+# Check C: Credential pattern scan in tests/ and docs/examples/
+python3 - "${ROOT_DIR}" <<'PY'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+patterns = [
+    re.compile(r'sk-[A-Za-z0-9]{40,}'),
+    re.compile(r'AIza[A-Za-z0-9\-_]{35}'),
+    re.compile(r'ya29\.[A-Za-z0-9\-_]+'),
+]
+scan_dirs = [root / "tests", root / "docs" / "examples"]
+found = 0
+for scan_dir in scan_dirs:
+    if not scan_dir.exists():
+        continue
+    for path in sorted(scan_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        if ".git" in path.parts:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for pattern in patterns:
+            if pattern.search(text):
+                print(f"Possible credential in {path}", file=__import__("sys").stderr)
+                found += 1
+if found:
+    raise SystemExit(f"Found {found} possible credential(s) in tests/ or docs/examples/")
+PY
+
 if branding_scan; then
   echo "Found stale pre-rename branding." >&2
   exit 1
@@ -198,5 +245,9 @@ fi
 
 "${ROOT_DIR}/scripts/run-mutation-tests.sh"
 "${ROOT_DIR}/scripts/verify-coverage.sh"
+
+# Check E: Scenario coverage and control-plane parity
+"${ROOT_DIR}/scripts/verify-scenario-coverage.sh"
+"${ROOT_DIR}/scripts/verify-control-plane-parity.sh"
 
 echo "Workcell repository validation passed."

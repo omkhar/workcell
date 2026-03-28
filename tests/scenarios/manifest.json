@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "claude-swe/hook-parametric",
+      "description": "Claude guard-bash.sh blocks all commands in the fixture file",
+      "providers": ["claude"],
+      "persona": "swe",
+      "test_file": "claude-swe/test-hook-parametric.sh",
+      "requires_credentials": false
+    }
+  ]
+}
