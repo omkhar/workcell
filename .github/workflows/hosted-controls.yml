@@ -1,0 +1,34 @@
+name: Hosted controls
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-hosted-controls:
+    name: Hosted controls verification
+    runs-on: ubuntu-latest
+    environment:
+      name: hosted-controls-audit
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Verify GitHub-hosted controls
+        env:
+          WORKCELL_HOSTED_CONTROLS_REQUIRED: "0"
+          WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
+        run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
