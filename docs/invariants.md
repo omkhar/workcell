@@ -162,9 +162,16 @@ Assurance mapping within `strict`:
   the mapped runtime user inside the container: `SETUID`, `SETGID`
 - `readonly`: strongest managed lane for `strict`,
   `container_assurance=managed-readonly`
+- default managed autonomy: `autonomy_assurance=managed-yolo`
 - prompt autonomy: separate lower-assurance flag,
   `autonomy_assurance=lower-assurance-prompt-autonomy`
+- default configured Codex rules posture:
+  `codex_rules_assurance_configured=managed-immutable-rules`
+- default effective Codex rules posture:
+  `codex_rules_assurance_effective_initial=managed-immutable-rules`
 - session Codex rules mutability: explicit lower-assurance flag,
+  `codex_rules_assurance_configured=lower-assurance-session-rules`
+- prompt autonomy can also force the initial effective Codex rules posture to
   `codex_rules_assurance_effective_initial=lower-assurance-session-rules`
 - package mutation can also force this session-local copy for the remainder of
   an already-downgraded container

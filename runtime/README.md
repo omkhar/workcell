@@ -43,3 +43,7 @@ the GUI is wired as a client to the same bounded runtime.
 - `scripts/colima-egress-allowlist.sh`: apply or clear VM-level egress rules
 - `scripts/verify-invariants.sh`: run basic regression checks against the
   current runtime assumptions
+- `scripts/container-smoke.sh`: exercise generic container-local runtime and
+  provider-wrapper behavior under Docker
+- `scripts/validate-repo.sh`: run the local repository validation suite,
+  including shell, Python, Rust, manifest, mutation, and invariant checks

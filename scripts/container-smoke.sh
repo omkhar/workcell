@@ -1342,6 +1342,28 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
     exit 1
   fi
 
+  cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-codex-env-check.sh"
+#!/bin/sh
+printf '{"aws":"%s","gh":"%s","ssh":"%s"}\n' \
+  "${AWS_SECRET_ACCESS_KEY-}" \
+  "${GITHUB_TOKEN-}" \
+  "${SSH_AUTH_SOCK-}"
+EOF
+  align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp/workcell-codex-env-check.sh" 0755 0755
+
+  CODEX_SECRET_ENV="$(
+    run_entrypoint_with_autonomy_and_bind \
+      codex \
+      yolo \
+      "${ROOT_DIR}/tmp/workcell-codex-env-check.sh" \
+      /usr/local/libexec/workcell/real/codex \
+      codex --version
+  )"
+  if [[ "${CODEX_SECRET_ENV}" != '{"aws":"","gh":"","ssh":""}' ]]; then
+    echo "unexpected Codex provider environment exposure: ${CODEX_SECRET_ENV}" >&2
+    exit 1
+  fi
+
   CODEX_PROMPT_ARGS="$(
     run_entrypoint_with_autonomy_and_bind \
       codex \
@@ -1754,6 +1776,18 @@ if run_entrypoint gemini gemini --approval-mode default --version >/tmp/workcell
   exit 1
 fi
 grep -q "Workcell blocked Gemini autonomy override" /tmp/workcell-entrypoint-gemini-approval-mode.out
+
+if run_entrypoint gemini gemini --bypassPermissions --version >/tmp/workcell-entrypoint-gemini-bypass-camel.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Gemini bypassPermissions-style overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Gemini override" /tmp/workcell-entrypoint-gemini-bypass-camel.out
+
+if run_entrypoint gemini gemini --bypass-permissions --version >/tmp/workcell-entrypoint-gemini-bypass-kebab.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Gemini bypass-permissions-style overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Gemini override" /tmp/workcell-entrypoint-gemini-bypass-kebab.out
 
 if run_entrypoint gemini gemini -y --version >/tmp/workcell-entrypoint-gemini-yolo-short.out 2>&1; then
   echo "expected Workcell entrypoint to reject Gemini short yolo overrides outside host policy" >&2
@@ -3341,6 +3375,16 @@ run_container gemini bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-yolo-short.out
+  if gemini --bypassPermissions --version >/tmp/gemini-nested-bypass-camel.out 2>&1; then
+    echo "expected nested Gemini invocation to reject bypassPermissions-style overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-bypass-camel.out
+  if gemini --bypass-permissions --version >/tmp/gemini-nested-bypass-dashed.out 2>&1; then
+    echo "expected nested Gemini invocation to reject bypass-permissions-style overrides" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-bypass-dashed.out
   if gemini --add-dir=/state --version >/tmp/gemini-nested-add-dir.out 2>&1; then
     echo "expected nested Gemini invocation to reject add-dir overrides" >&2
     exit 1

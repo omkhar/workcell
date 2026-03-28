@@ -5,6 +5,9 @@ workcell_die() {
   exit 2
 }
 
+# Only the PID 1 entrypoint path may honor breakglass-style provider flags.
+# provider-wrapper.sh always exports WORKCELL_WRAPPER_CONTEXT=1 so nested
+# launches cannot re-enable those overrides after the entrypoint policy check.
 provider_policy_allows_breakglass() {
   [[ "${WORKCELL_WRAPPER_CONTEXT:-0}" != "1" ]] &&
     [[ "$$" -eq 1 ]] &&
@@ -141,6 +144,7 @@ reject_unsafe_claude_args() {
 reject_unsafe_gemini_args() {
   local expect_value=""
   local arg
+  local arg_lower=""
 
   provider_policy_allows_breakglass && return 0
 
@@ -155,8 +159,9 @@ reject_unsafe_gemini_args() {
       continue
     fi
 
-    case "${arg}" in
-      *dangerously* | *bypass*permission* | --sandbox | --sandbox=* | --add-dir | --add-dir=* | -y | --yolo)
+    arg_lower="${arg,,}"
+    case "${arg_lower}" in
+      --*dangerously* | --*bypass*permission* | --sandbox | --sandbox=* | --add-dir | --add-dir=* | -y | --yolo)
         workcell_die "Workcell blocked unsafe Gemini override: ${arg}"
         ;;
       --approval-mode)
@@ -169,6 +174,9 @@ reject_unsafe_gemini_args() {
   done
 }
 
+# entrypoint.sh validates the full provider command before launch. After that,
+# provider-wrapper.sh calls the per-provider reject helpers directly because it
+# has already fixed the launch target and only needs to re-check user argv.
 validate_command_args() {
   local expected_command="$1"
 

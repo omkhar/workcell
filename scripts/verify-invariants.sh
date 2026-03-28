@@ -4157,10 +4157,27 @@ printf '# nested agent marker\n' >"${MASK_VERIFY_WORKSPACE}/nested/AGENTS.md"
 printf '{\n  "masked": true\n}\n' >"${MASK_VERIFY_WORKSPACE}/nested/.claude/settings.json"
 git init -q "${MASK_VERIFY_WORKSPACE}/.alt"
 MASK_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run 2>/dev/null)"
+SECRET_DRY_RUN_OUTPUT="$(
+  AWS_SECRET_ACCESS_KEY='verify-aws-secret' \
+    GITHUB_TOKEN='verify-gh-token' \
+    SSH_AUTH_SOCK='/tmp/workcell-secret-sock' \
+    "${ROOT_DIR}/scripts/workcell" \
+    --agent codex \
+    --mode strict \
+    --workspace "${MASK_VERIFY_WORKSPACE}" \
+    --dry-run 2>/dev/null
+)"
 
 for forbidden in "docker.sock" "SSH_AUTH_SOCK" "/.ssh" "/.aws" "Library/Keychains" ".gnupg"; do
   if echo "${DRY_RUN_OUTPUT}" | grep -q "${forbidden}"; then
     echo "Unexpected host exposure in dry-run output: ${forbidden}" >&2
+    exit 1
+  fi
+done
+
+for forbidden in "verify-aws-secret" "verify-gh-token" "/tmp/workcell-secret-sock"; do
+  if echo "${SECRET_DRY_RUN_OUTPUT}" | grep -Fq -- "${forbidden}"; then
+    echo "Unexpected host secret forwarding in dry-run output: ${forbidden}" >&2
     exit 1
   fi
 done
@@ -5544,6 +5561,26 @@ if workcell_target_is_allowed '/state/agent-home/.gemini/trustedFolders.json'; t
   echo "Expected runtime manifest guard to reserve Gemini trustedFolders.json" >&2
   exit 1
 fi
+if workcell_target_is_allowed '/state/agent-home/.gemini/settings.json'; then
+  echo "Expected runtime manifest guard to reserve Gemini settings.json" >&2
+  exit 1
+fi
+if workcell_target_is_allowed '/state/agent-home/.ssh/config'; then
+  echo "Expected runtime manifest guard to reserve seeded SSH config paths" >&2
+  exit 1
+fi
+if ! workcell_target_is_allowed '/state/agent-home/workcell-benign-note.txt'; then
+  echo "Expected runtime manifest guard to allow benign session-local targets under /state/agent-home" >&2
+  exit 1
+fi
+if ! workcell_target_is_allowed '/state/injected/documents/org-policy.md'; then
+  echo "Expected runtime manifest guard to allow staged injected documents under /state/injected" >&2
+  exit 1
+fi
+if workcell_target_is_allowed '/workspace/not-allowed.txt'; then
+  echo "Expected runtime manifest guard to reject targets outside managed session roots" >&2
+  exit 1
+fi
 EOF
 } >"${GEMINI_AUTH_SELECTION_HARNESS}"
 /bin/bash "${GEMINI_AUTH_SELECTION_HARNESS}" >"${GEMINI_AUTH_SELECTION_STDOUT}" 2>"${GEMINI_AUTH_SELECTION_STDERR}" || {
@@ -5558,6 +5595,10 @@ rm -f "${GEMINI_AUTH_SELECTION_STDOUT}" "${GEMINI_AUTH_SELECTION_STDERR}"
 
 if ! rg -q 'trustedFolders\.json' "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
   echo "Expected Gemini home seeding to provision trustedFolders.json" >&2
+  exit 1
+fi
+if ! rg -Fq 'workcell_reset_session_target "${HOME}/.gemini/settings.json" "Gemini settings"' "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
+  echo "Expected Gemini home seeding to reset settings.json through workcell_reset_session_target" >&2
   exit 1
 fi
 

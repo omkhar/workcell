@@ -1071,7 +1071,7 @@ seed_gemini_home() {
 
   workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/gemini/"
   workcell_prepare_session_directory "${HOME}/.gemini" "Gemini home"
-  rm -f "${HOME}/.gemini/settings.json"
+  workcell_reset_session_target "${HOME}/.gemini/settings.json" "Gemini settings"
   cp "${ADAPTER_ROOT}/gemini/.gemini/settings.json" "${HOME}/.gemini/settings.json"
   chmod 0600 "${HOME}/.gemini/settings.json"
   if [[ "${WORKCELL_MODE:-strict}" == "breakglass" ]]; then
