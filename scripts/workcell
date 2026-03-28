@@ -100,6 +100,7 @@ PROFILE_LOCK_DIR=""
 usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
+       workcell publish-pr [options]
 
 Options:
   --agent codex|claude|gemini   Provider to run (required)
@@ -164,6 +165,9 @@ Workflows:
     workcell doctor --agent codex --workspace /path/to/repo
     workcell logs debug --colima-profile workcell-...
     workcell auth-status --agent codex --workspace /path/to/repo
+    workcell publish-pr --workspace /path/to/repo --branch feature/name \
+      --title-file /path/to/pr-title.txt --body-file /path/to/pr-body.md \
+      --commit-message-file /path/to/commit-message.txt
     workcell gc
 
 Workcell launches the selected provider directly inside the bounded runtime.
@@ -1242,6 +1246,342 @@ resolve_existing_directory_or_die() {
   fi
 
   printf '%s\n' "${resolved_path}"
+}
+
+publish_pr_usage() {
+  cat <<'EOF'
+Usage: workcell publish-pr [options]
+
+Options:
+  --workspace PATH              Workspace to publish (default: current directory)
+  --branch NAME                 Feature branch to create or switch to (required)
+  --base NAME                   Base branch for the PR (default: main)
+  --snapshot index|worktree     Publish the current index or stage the worktree (default: worktree)
+  --title TEXT                  PR title
+  --title-file PATH             Read the PR title from PATH
+  --body TEXT                   PR body (default: empty)
+  --body-file PATH              Read the PR body from PATH
+  --commit-message TEXT         Commit message to sign and publish
+  --commit-message-file PATH    Read the commit message from PATH
+  --ready                       Create a ready PR instead of a draft PR
+  --dry-run                     Print the planned host commands and exit
+  -h, --help                    Show this help text
+
+Notes:
+  - publish-pr runs on the host, not inside the Workcell container.
+  - It uses the host Git and GitHub CLI configuration so maintainer signing
+    and publication stay outside the Tier 1 container boundary.
+  - The default snapshot is worktree, which stages the current tracked and
+    untracked workspace changes with `git add -A` before committing.
+EOF
+}
+
+resolve_existing_file_or_die() {
+  local raw_path="$1"
+  local label="$2"
+  local resolved_path=""
+
+  resolved_path="$(resolve_host_path "${raw_path}")"
+  if [[ ! -f "${resolved_path}" ]]; then
+    echo "${label} file does not exist: ${raw_path}" >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${resolved_path}"
+}
+
+run_clean_host_command_in_dir() {
+  local dir="$1"
+  local home="${REAL_HOME:-/}"
+
+  shift
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${dir}" ]]; then
+    echo "Missing host working directory: ${dir}" >&2
+    exit 2
+  fi
+  if [[ ! -d "${home}" ]]; then
+    home="/"
+  fi
+
+  (
+    cd "${dir}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${home}" \
+        LC_ALL=C \
+        LANG=C \
+        "$@"
+  )
+}
+
+validate_publish_snapshot_name() {
+  case "$1" in
+    index | worktree) ;;
+    *)
+      echo "Unsupported publish snapshot: $1" >&2
+      echo "Use --snapshot index or --snapshot worktree." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_publish_branch_name() {
+  local branch="$1"
+
+  if [[ -z "${branch}" ]]; then
+    echo "publish-pr requires --branch." >&2
+    exit 2
+  fi
+  if [[ "${branch}" == "main" ]] || [[ "${branch}" == "master" ]]; then
+    echo "publish-pr refuses the default branch. Use a feature branch instead." >&2
+    exit 2
+  fi
+  if ! "${HOST_GIT_BIN}" check-ref-format --branch "${branch}" >/dev/null 2>&1; then
+    echo "Invalid publish branch name: ${branch}" >&2
+    exit 2
+  fi
+}
+
+publish_pr_load_text_arg() {
+  local inline_value="$1"
+  local file_value="$2"
+  local label="$3"
+  local required="$4"
+  local resolved_file=""
+
+  if [[ -n "${inline_value}" ]] && [[ -n "${file_value}" ]]; then
+    echo "Use only one of --${label} or --${label}-file." >&2
+    exit 2
+  fi
+
+  if [[ -n "${file_value}" ]]; then
+    resolved_file="$(resolve_existing_file_or_die "${file_value}" "${label}")"
+    cat "${resolved_file}"
+    return 0
+  fi
+
+  if [[ -n "${inline_value}" ]]; then
+    printf '%s' "${inline_value}"
+    return 0
+  fi
+
+  if [[ "${required}" == "1" ]]; then
+    echo "publish-pr requires --${label} or --${label}-file." >&2
+    exit 2
+  fi
+
+  printf ''
+}
+
+publish_pr_branch_exists() {
+  local workspace="$1"
+  local branch="$2"
+
+  run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" show-ref --verify --quiet "refs/heads/${branch}"
+}
+
+publish_pr_current_branch() {
+  local workspace="$1"
+
+  run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" branch --show-current
+}
+
+publish_pr_has_remote_origin() {
+  local workspace="$1"
+
+  run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" remote get-url origin >/dev/null 2>&1
+}
+
+publish_pr_has_staged_changes() {
+  local workspace="$1"
+
+  ! run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" diff --cached --quiet --exit-code
+}
+
+publish_pr_main() {
+  local workspace="${PWD}"
+  local branch=""
+  local base="main"
+  local snapshot="worktree"
+  local title=""
+  local title_file=""
+  local body=""
+  local body_file=""
+  local commit_message=""
+  local commit_message_file=""
+  local ready=0
+  local dry_run=0
+  local resolved_workspace=""
+  local current_branch=""
+  local title_text=""
+  local body_text=""
+  local commit_message_text=""
+  local resolved_commit_message_file=""
+  local pr_url=""
+  local -a cleanup_files=()
+  local -a branch_cmd=()
+  local -a commit_cmd=()
+  local -a push_cmd=()
+  local -a pr_cmd=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --workspace)
+        workspace="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --branch)
+        branch="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --base)
+        base="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --snapshot)
+        snapshot="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --title)
+        title="$(raw_option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --title-file)
+        title_file="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --body)
+        body="$(raw_option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --body-file)
+        body_file="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --commit-message)
+        commit_message="$(raw_option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --commit-message-file)
+        commit_message_file="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --ready)
+        ready=1
+        shift
+        ;;
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
+      -h | --help)
+        publish_pr_usage
+        exit 0
+        ;;
+      *)
+        echo "Unsupported publish-pr option: $1" >&2
+        publish_pr_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  resolved_workspace="$(resolve_existing_directory_or_die "${workspace}")"
+  validate_publish_snapshot_name "${snapshot}"
+  HOST_GIT_BIN="${HOST_GIT_BIN:-$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)}"
+  validate_publish_branch_name "${branch}"
+  if [[ "${dry_run}" -eq 1 ]]; then
+    HOST_GH_BIN="${HOST_GH_BIN:-$(resolve_host_tool_optional gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh || true)}"
+    [[ -n "${HOST_GH_BIN}" ]] || HOST_GH_BIN="gh"
+  else
+    HOST_GH_BIN="${HOST_GH_BIN:-$(resolve_host_tool gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh)}"
+  fi
+
+  if ! workspace_has_markers "${resolved_workspace}"; then
+    echo "publish-pr requires a git worktree: ${resolved_workspace}" >&2
+    exit 2
+  fi
+  if ! publish_pr_has_remote_origin "${resolved_workspace}"; then
+    echo "publish-pr requires an origin remote in ${resolved_workspace}." >&2
+    exit 2
+  fi
+
+  title_text="$(publish_pr_load_text_arg "${title}" "${title_file}" "title" 1)"
+  body_text="$(publish_pr_load_text_arg "${body}" "${body_file}" "body" 0)"
+  commit_message_text="$(publish_pr_load_text_arg "${commit_message}" "${commit_message_file}" "commit-message" 1)"
+  if [[ -z "${title_text}" ]]; then
+    echo "publish-pr requires a non-empty PR title." >&2
+    exit 2
+  fi
+  if [[ -z "${commit_message_text}" ]]; then
+    echo "publish-pr requires a non-empty commit message." >&2
+    exit 2
+  fi
+
+  if [[ -n "${commit_message_file}" ]]; then
+    resolved_commit_message_file="$(resolve_existing_file_or_die "${commit_message_file}" "commit-message")"
+  else
+    resolved_commit_message_file="$(mktemp "${TMPDIR:-/tmp}/workcell-publish-commit.XXXXXX")"
+    cleanup_files+=("${resolved_commit_message_file}")
+    printf '%s' "${commit_message_text}" >"${resolved_commit_message_file}"
+    chmod 0600 "${resolved_commit_message_file}" 2>/dev/null || true
+  fi
+  trap 'if ((${#cleanup_files[@]} > 0)); then rm -f "${cleanup_files[@]}"; fi' RETURN
+
+  current_branch="$(publish_pr_current_branch "${resolved_workspace}")"
+  if [[ "${current_branch}" == "${branch}" ]]; then
+    branch_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" switch "${branch}")
+  elif publish_pr_branch_exists "${resolved_workspace}" "${branch}"; then
+    branch_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" switch "${branch}")
+  else
+    branch_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" switch -c "${branch}")
+  fi
+
+  commit_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" commit -S -F "${resolved_commit_message_file}")
+  push_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" push -u origin "${branch}")
+  pr_cmd=("${HOST_GH_BIN}" pr create --base "${base}" --head "${branch}" --title "${title_text}")
+  if [[ "${ready}" -eq 0 ]]; then
+    pr_cmd+=(--draft)
+  fi
+  if [[ -n "${body_file}" ]]; then
+    pr_cmd+=(--body-file "$(resolve_existing_file_or_die "${body_file}" "body")")
+  else
+    pr_cmd+=(--body "${body_text}")
+  fi
+
+  if [[ "${dry_run}" -eq 1 ]]; then
+    printf 'publish_workspace=%s\n' "${resolved_workspace}"
+    printf 'publish_snapshot=%s\n' "${snapshot}"
+    printf 'publish_branch=%s\n' "${branch}"
+    printf 'publish_base=%s\n' "${base}"
+    printf 'publish_draft=%s\n' "$([[ "${ready}" -eq 0 ]] && printf '1' || printf '0')"
+    emit_command "${branch_cmd[@]}"
+    if [[ "${snapshot}" == "worktree" ]]; then
+      emit_command "${HOST_GIT_BIN}" -C "${resolved_workspace}" add -A
+    fi
+    emit_command "${commit_cmd[@]}"
+    emit_command "${push_cmd[@]}"
+    emit_command "${pr_cmd[@]}"
+    exit 0
+  fi
+
+  run_clean_host_command_in_dir "${resolved_workspace}" "${branch_cmd[@]}"
+  if [[ "${snapshot}" == "worktree" ]]; then
+    run_clean_host_command_in_dir "${resolved_workspace}" "${HOST_GIT_BIN}" -C "${resolved_workspace}" add -A
+  fi
+  if ! publish_pr_has_staged_changes "${resolved_workspace}"; then
+    echo "publish-pr found no staged changes to commit in ${resolved_workspace}." >&2
+    exit 2
+  fi
+  run_clean_host_command_in_dir "${resolved_workspace}" "${commit_cmd[@]}"
+  run_clean_host_command_in_dir "${resolved_workspace}" "${push_cmd[@]}"
+  pr_url="$(run_clean_host_command_in_dir "${resolved_workspace}" "${pr_cmd[@]}")"
+  printf 'publish_branch=%s\n' "${branch}"
+  printf 'publish_base=%s\n' "${base}"
+  printf 'publish_pr_url=%s\n' "${pr_url}"
+  printf 'publish_snapshot=%s\n' "${snapshot}"
+  exit 0
 }
 
 default_injection_policy_path() {
@@ -3439,6 +3779,11 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
     trap - EXIT
   fi
   exit 0
+fi
+
+if [[ "${1:-}" == "publish-pr" ]]; then
+  shift
+  publish_pr_main "$@"
 fi
 
 if [[ $# -gt 0 ]]; then
