@@ -3708,9 +3708,13 @@ EOF
 rm -f "${EXTRACTED_CREDENTIAL_MODE_HARNESS}"
 SAVED_CREDENTIAL_SELECTION_HARNESS="$(mktemp)"
 {
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" saved_credential_helper_path
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" injection_manifest_credential_source
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_sources_semantically_match
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source_prefer_changed
   printf '\n'
@@ -3731,7 +3735,7 @@ set -euo pipefail
 HOST_PYTHON3_BIN="$(command -v python3)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TMP_ROOT}"' EXIT
-AGENT=gemini
+AGENT=codex
 INJECTION_BUNDLE_ROOT="${TMP_ROOT}/bundle"
 mkdir -p "${INJECTION_BUNDLE_ROOT}"
 
@@ -3762,6 +3766,9 @@ render_sanitized_bundle() {
 
 extract_promotable_container_credentials() {
   case "${WORKCELL_TEST_SELECTION_CASE}" in
+    codex-semantic-equal)
+      printf 'codex_auth\t%s\n' "${TMP_ROOT}/candidate-codex-auth.json"
+      ;;
     env-bundle)
       printf 'gemini_env\t%s\n' "${TMP_ROOT}/candidate.env"
       printf 'gcloud_adc\t%s\n' "${TMP_ROOT}/candidate-adc.json"
@@ -3780,6 +3787,35 @@ extract_promotable_container_credentials() {
       ;;
   esac
 }
+
+cat >"${TMP_ROOT}/seed-codex-auth.json" <<'JSON'
+{"token":"abc","refresh":"def"}
+JSON
+chmod 0600 "${TMP_ROOT}/seed-codex-auth.json"
+cat >"${TMP_ROOT}/candidate-codex-auth.json" <<'JSON'
+{
+  "refresh": "def",
+  "token": "abc"
+}
+JSON
+chmod 0600 "${TMP_ROOT}/candidate-codex-auth.json"
+cat >"${TMP_ROOT}/codex-policy.toml" <<EOF2
+version = 1
+
+[credentials]
+codex_auth = "${TMP_ROOT}/seed-codex-auth.json"
+EOF2
+chmod 0600 "${TMP_ROOT}/codex-policy.toml"
+render_sanitized_bundle codex "${TMP_ROOT}/codex-policy.toml"
+
+WORKCELL_TEST_SELECTION_CASE=codex-semantic-equal
+bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-codex" | tr -d '\n')"
+if [[ -n "${bundle}" ]]; then
+  echo "Expected semantically unchanged Codex auth not to be promoted, got: ${bundle}" >&2
+  exit 1
+fi
+
+AGENT=gemini
 
 cat >"${TMP_ROOT}/initial.env" <<'ENV'
 GEMINI_API_KEY=old-token
@@ -3811,7 +3847,7 @@ if [[ "${bundle}" != "${expected}" ]]; then
 fi
 
 cat >"${TMP_ROOT}/unchanged.env" <<'ENV'
-GOOGLE_GENAI_USE_GCA=true
+export GOOGLE_GENAI_USE_GCA=true # same auth, different formatting
 ENV
 chmod 0600 "${TMP_ROOT}/unchanged.env"
 cat >"${TMP_ROOT}/refreshed-adc.json" <<'JSON'

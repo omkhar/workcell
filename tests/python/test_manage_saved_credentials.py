@@ -49,6 +49,42 @@ class ManageSavedCredentialsTests(unittest.TestCase):
             self.assertEqual(metadata["selected_auth_type"], "oauth-personal")
             self.assertTrue(metadata["requires_gcloud_adc"])
 
+    def test_equivalent_saved_credentials_ignores_json_key_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            left = root / "left.json"
+            right = root / "right.json"
+            self.write_secret_file(left, '{"token":"abc","refresh":"def"}\n')
+            self.write_secret_file(right, '{\n  "refresh": "def",\n  "token": "abc"\n}\n')
+
+            self.assertTrue(self.module.equivalent_saved_credentials("codex_auth", left, right))
+
+    def test_equivalent_saved_credentials_ignores_env_order_comments_and_export(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            left = root / "left.env"
+            right = root / "right.env"
+            self.write_secret_file(
+                left,
+                "# comment\nGOOGLE_CLOUD_PROJECT=my-proj\nGOOGLE_GENAI_USE_VERTEXAI=true\nGOOGLE_CLOUD_LOCATION=us-central1\n",
+            )
+            self.write_secret_file(
+                right,
+                'export GOOGLE_CLOUD_LOCATION="us-central1"\nGOOGLE_GENAI_USE_VERTEXAI=true\nGOOGLE_CLOUD_PROJECT=my-proj # trailing comment\n',
+            )
+
+            self.assertTrue(self.module.equivalent_saved_credentials("gemini_env", left, right))
+
+    def test_equivalent_saved_credentials_treats_claude_api_key_trailing_newline_as_equal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            left = root / "left.txt"
+            right = root / "right.txt"
+            self.write_secret_file(left, "sk-ant-123\n")
+            self.write_secret_file(right, "sk-ant-123")
+
+            self.assertTrue(self.module.equivalent_saved_credentials("claude_api_key", left, right))
+
     def test_persist_creates_root_fragment_and_saved_credential(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -612,6 +648,25 @@ class ManageSavedCredentialsTests(unittest.TestCase):
             "argv",
             [
                 "manage_saved_credentials.py",
+                "equivalent",
+                "--key",
+                "codex_auth",
+                "--left",
+                "/tmp/left.json",
+                "--right",
+                "/tmp/right.json",
+            ],
+        ):
+            args = self.module.parse_args()
+        self.assertEqual(args.command, "equivalent")
+        self.assertEqual(args.left, "/tmp/left.json")
+        self.assertEqual(args.right, "/tmp/right.json")
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "manage_saved_credentials.py",
                 "persist",
                 "--entry",
                 "codex_auth=/tmp/auth.json",
@@ -632,6 +687,8 @@ class ManageSavedCredentialsTests(unittest.TestCase):
             root = Path(tmpdir)
             source = root / "auth.json"
             self.write_secret_file(source, '{"token":"abc"}\n')
+            reordered_source = root / "auth-reordered.json"
+            self.write_secret_file(reordered_source, '{\n  "token": "abc"\n}\n')
             root_policy = root / "injection-policy.toml"
             fragment = root / "saved-credentials.toml"
             credentials_root = root / "credentials"
@@ -653,6 +710,25 @@ class ManageSavedCredentialsTests(unittest.TestCase):
                     self.assertEqual(self.module.main(), 0)
                 payload = json.loads(stdout.getvalue())
                 self.assertEqual(payload["key"], "codex_auth")
+
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "manage_saved_credentials.py",
+                    "equivalent",
+                    "--key",
+                    "codex_auth",
+                    "--left",
+                    str(source),
+                    "--right",
+                    str(reordered_source),
+                ],
+            ):
+                stdout = io.StringIO()
+                with mock.patch("sys.stdout", stdout):
+                    self.assertEqual(self.module.main(), 0)
+                self.assertEqual(stdout.getvalue().strip(), "1")
 
             with mock.patch.object(
                 sys,
