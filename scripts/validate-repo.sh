@@ -87,6 +87,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
   "${ROOT_DIR}/scripts/validate-repo.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
   "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-invariants.sh"

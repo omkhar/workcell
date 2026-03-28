@@ -5,15 +5,10 @@ import { registerHooks } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const PROTECTED_PACKAGES = new Set([
-  '@anthropic-ai/claude-code',
   '@google/gemini-cli',
 ]);
 
 const PROTECTED_PACKAGE_ROOTS = new Map([
-  [
-    '@anthropic-ai/claude-code',
-    '/opt/workcell/providers/node_modules/@anthropic-ai/claude-code',
-  ],
   [
     '@google/gemini-cli',
     '/opt/workcell/providers/node_modules/@google/gemini-cli',
@@ -22,16 +17,11 @@ const PROTECTED_PACKAGE_ROOTS = new Map([
 
 const PROTECTED_PACKAGE_MARKERS = new Map([
   [
-    '@anthropic-ai/claude-code',
-    ['LICENSE.md', 'README.md', 'resvg.wasm', 'sdk-tools.d.ts'],
-  ],
-  [
     '@google/gemini-cli',
     ['LICENSE', 'README.md', 'dist/index.js.map', 'dist/src/gemini.js'],
   ],
 ]);
 const PROTECTED_ENTRYPOINT_PATHS = new Map([
-  ['@anthropic-ai/claude-code', 'cli.js'],
   ['@google/gemini-cli', 'dist/index.js'],
 ]);
 const PROTECTED_PACKAGE_COPY_MATCH_THRESHOLD = 6;
@@ -39,7 +29,6 @@ const PROTECTED_PACKAGE_TOKEN_MATCH_THRESHOLD = 24;
 const PROTECTED_ENTRYPOINT_TOKEN_MATCH_THRESHOLD = 12;
 
 const PROTECTED_ENTRYPOINT_SHA256 = new Set([
-  '66d05774a73a5abea90ee27cc42f1f9c0f28302bd59c90b5bbb352cd7dff0a4e',
   '766e778d6466285e1d7620b6d50f500d12f2e9c3229d199209d2461552ca2019',
 ]);
 
@@ -59,15 +48,6 @@ const entrypointMarkerCache = new Map();
 const SELF_GUARD_PATH = canonicalizeFilePath(fileURLToPath(import.meta.url));
 const WORKSPACE_ROOT = '/workspace';
 const PROTECTED_ENTRYPOINT_TEXT_MARKERS = new Map([
-  [
-    '@anthropic-ai/claude-code',
-    [
-      'Anthropic PBC. All rights reserved.',
-      'https://code.claude.com/docs/en/legal-and-compliance.',
-      "Want to see the unminified source? We're hiring!",
-      'dangerously-skip-permissions',
-    ],
-  ],
   [
     '@google/gemini-cli',
     [

@@ -146,8 +146,10 @@ modes = ["strict", "build"]
   credential path, so Claude can reuse an API key without mutating the
   reviewed baseline settings or creating an extra session-local secret copy.
 - `credentials.claude_auth` mounts persisted Claude CLI auth into
-  `~/.config/claude-code/auth.json` when you already have reviewed host-side
-  Claude login state.
+  `~/.claude/.credentials.json` when you already have reviewed host-side
+  native Claude login state on Linux. If your host uses `CLAUDE_CONFIG_DIR`,
+  point the injection policy at that alternate `.credentials.json` path
+  explicitly.
 - `credentials.claude_mcp` mounts an approved Claude `.mcp.json` into the
   session without widening trust to the whole workspace copy.
 - `credentials.gemini_env` mounts a provider-native `~/.gemini/.env`.

@@ -55,7 +55,7 @@ The following table covers all files seeded by `seed_codex_home()`,
 | `~/.claude/settings.json` | Claude | Symlink → immutable baseline, or session-local copy with `apiKeyHelper` if `claude_api_key` is injected | Same | Linked to `adapters/claude/managed-settings.json`; contains deny-list permissions and the `PreToolUse` Bash hook. When `claude_api_key` is present, the helper reads the reviewed direct-mounted credential path instead of creating a second session-local key copy. |
 | `~/.claude/CLAUDE.md` | Claude | Rendered (baseline + workspace + injection layers) | Same | Provider instruction doc; workspace `AGENTS.md` and `CLAUDE.md` are imported as layers |
 | `~/.claude/workcell/` | Claude | Created only when `claude_api_key` credential is injected | Same | Holds the session-local `api-key-helper.sh` script. The helper reads the mounted key file directly, so Workcell no longer drops a second plaintext copy under this directory. |
-| `~/.config/claude-code/auth.json` | Claude | Copied from injection credential `claude_auth` if present | Same | Session-local Claude CLI auth; not present if `credentials.claude_auth` is not configured |
+| `~/.claude/.credentials.json` | Claude | Copied from injection credential `claude_auth` if present | Same | Session-local native Claude auth on Linux; not present if `credentials.claude_auth` is not configured |
 | `~/.mcp.json` | Claude | Symlink → immutable `mcp-template.json` (empty), or copied from `claude_mcp` credential if injected | Same | MCP server registry; ships empty by default |
 | `~/.gemini/settings.json` | Gemini | Copied (not symlinked) from immutable baseline; mode `0600` | Same, but `breakglass` re-enables Gemini folder trust before launch | Copied from `adapters/gemini/.gemini/settings.json` |
 | `~/.gemini/trustedFolders.json` | Gemini | Seeded session-local with `/workspace` trusted; mode `0600` | Same for strict/build; omitted in `breakglass` | Prevents Gemini's restart-only trust prompt inside masked ephemeral sessions while preserving Gemini's own prompt on `breakglass` |
@@ -89,7 +89,9 @@ unchanged. The session-local copy persists only until container exit.
 ## How Workcell flags map to provider behavior
 
 The mapping is applied by `runtime/container/provider-wrapper.sh` before
-`exec`-ing the real provider binary.
+`exec`-ing the pinned provider runtime: the native provider binary for Codex
+and Claude, and the real Node runtime plus the pinned Gemini entrypoint script
+for Gemini.
 
 ### `--agent-autonomy` flag
 

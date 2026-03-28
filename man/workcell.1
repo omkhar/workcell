@@ -1,9 +1,12 @@
-.TH WORKCELL 1 "2026-03-24" "Workcell" "User Commands"
+.TH WORKCELL 1 "2026-03-28" "Workcell" "User Commands"
 .SH NAME
 workcell \- bounded runtime launcher for coding agents
 .SH SYNOPSIS
 .B workcell
 [\fIoptions\fR] [\fB--\fR \fIprovider-args\fR ...]
+.br
+.B workcell publish-pr
+[\fIoptions\fR]
 .SH DESCRIPTION
 .B workcell
 starts the selected coding agent inside a bounded local runtime with explicit
@@ -274,6 +277,14 @@ broken latest-log pointers from managed profile state and exit. Also available
 as
 .BR "workcell gc" .
 .TP
+.B publish-pr
+Prepare a host-side publication flow for the mounted workspace: switch to or
+create a feature branch, optionally stage the worktree, create a signed commit,
+push it, and open a GitHub pull request using host Git and GitHub CLI state.
+Use
+.BR "workcell publish-pr --help"
+for the full option set.
+.TP
 .B -h, --help
 Show usage information.
 .SH PROFILES
@@ -475,6 +486,14 @@ Passing provider flags without repeating the provider command:
 .IP
 .EX
 workcell --agent gemini --agent-arg --version --workspace /path/to/repo
+.EE
+.PP
+Publishing a prepared workspace snapshot from the host side:
+.IP
+.EX
+workcell publish-pr --workspace /path/to/repo --branch feature/name \\
+  --title-file /tmp/pr-title.txt --body-file /tmp/pr-body.md \\
+  --commit-message-file /tmp/commit-message.txt
 .EE
 .PP
 Using an explicit injection policy:

@@ -37,6 +37,8 @@ pin_runtime_env() {
 sanitize_provider_env() {
   unset BASH_ENV
   unset ENV
+  unset CLAUDE_CONFIG_DIR
+  unset DISABLE_AUTOUPDATER
   unset NODE_OPTIONS
   unset NODE_PATH
   unset NODE_EXTRA_CA_CERTS
@@ -184,8 +186,7 @@ case "${AGENT_NAME}" in
     ;;
   claude)
     reject_unsafe_claude_args "$@"
-    exec /usr/local/libexec/workcell/real/node \
-      /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js \
+    DISABLE_AUTOUPDATER=1 CLAUDE_CONFIG_DIR="${HOME}/.claude" exec /usr/local/libexec/workcell/real/claude \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"
     ;;

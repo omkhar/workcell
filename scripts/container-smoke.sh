@@ -1114,12 +1114,12 @@ test -x "$helper_path"
 grep -q "/opt/workcell/host-inputs/credentials/claude-api-key.txt" "$helper_path"
 test ! -e "$HOME/.claude/workcell/claude-api-key"
 test "$("$helper_path")" = "claude-smoke-key"
-grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
-test ! -L "$HOME/.config/claude-code/auth.json"
+grep -q "\"token\": \"claude-auth\"" "$HOME/.claude/.credentials.json"
+test ! -L "$HOME/.claude/.credentials.json"
 test ! -L "$HOME/.mcp.json"
 grep -q "\"stub\"" "$HOME/.mcp.json"
 grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
-rm -f "$HOME/.claude/settings.json" "$HOME/.config/claude-code/auth.json" "$HOME/.mcp.json"
+rm -f "$HOME/.claude/settings.json" "$HOME/.claude/.credentials.json" "$HOME/.mcp.json"
 claude --version >/dev/null
 grep -q "\"apiKeyHelper\"" "$HOME/.claude/settings.json"
 helper_path="$(jq -r '.apiKeyHelper' "$HOME/.claude/settings.json")"
@@ -1127,7 +1127,7 @@ test -x "$helper_path"
 grep -q "/opt/workcell/host-inputs/credentials/claude-api-key.txt" "$helper_path"
 test ! -e "$HOME/.claude/workcell/claude-api-key"
 test "$("$helper_path")" = "claude-smoke-key"
-grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
+grep -q "\"token\": \"claude-auth\"" "$HOME/.claude/.credentials.json"
 grep -q "\"stub\"" "$HOME/.mcp.json"
 INNER
 SCRIPT
@@ -1344,7 +1344,8 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
 
   cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-codex-env-check.sh"
 #!/bin/sh
-printf '{"aws":"%s","gh":"%s","ssh":"%s"}\n' \
+printf '{"claude_config":"%s","aws":"%s","gh":"%s","ssh":"%s"}\n' \
+  "${CLAUDE_CONFIG_DIR-}" \
   "${AWS_SECRET_ACCESS_KEY-}" \
   "${GITHUB_TOKEN-}" \
   "${SSH_AUTH_SOCK-}"
@@ -1362,7 +1363,7 @@ EOF
       /usr/local/libexec/workcell/real/codex \
       codex --version
   )"
-  if [[ "${CODEX_SECRET_ENV}" != '{"aws":"","gh":"","ssh":""}' ]]; then
+  if [[ "${CODEX_SECRET_ENV}" != '{"claude_config":"","aws":"","gh":"","ssh":""}' ]]; then
     echo "unexpected Codex provider environment exposure: ${CODEX_SECRET_ENV}" >&2
     exit 1
   fi
@@ -1380,16 +1381,44 @@ EOF
     exit 1
   fi
 
-  CLAUDE_YOLO_ARGS="$(
+  cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-claude-runtime-check.sh"
+#!/bin/sh
+printf '{"config":"%s","autoupdater":"%s","aws":"%s","gh":"%s","ssh":"%s","args":"%s"}\n' \
+  "${CLAUDE_CONFIG_DIR-}" \
+  "${DISABLE_AUTOUPDATER-}" \
+  "${AWS_SECRET_ACCESS_KEY-}" \
+  "${GITHUB_TOKEN-}" \
+  "${SSH_AUTH_SOCK-}" \
+  "$*"
+EOF
+  align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp/workcell-claude-runtime-check.sh" 0755 0755
+
+  CLAUDE_YOLO_RUNTIME="$(
+    AWS_SECRET_ACCESS_KEY='verify-aws-secret' \
+      GITHUB_TOKEN='verify-gh-token' \
+      SSH_AUTH_SOCK='/tmp/workcell-secret-sock' \
+      run_entrypoint_with_autonomy_and_bind \
+      claude \
+      yolo \
+      "${ROOT_DIR}/tmp/workcell-claude-runtime-check.sh" \
+      /usr/local/libexec/workcell/real/claude \
+      claude --version
+  )"
+  if [[ "${CLAUDE_YOLO_RUNTIME}" != '{"config":"/state/agent-home/.claude","autoupdater":"1","aws":"","gh":"","ssh":"","args":"--permission-mode bypassPermissions --version"}' ]]; then
+    echo "unexpected Claude yolo env/argv: ${CLAUDE_YOLO_RUNTIME}" >&2
+    exit 1
+  fi
+
+  CLAUDE_AUTH_STATUS_ARGS="$(
     run_entrypoint_with_autonomy_and_bind \
       claude \
       yolo \
       /bin/echo \
-      /usr/local/libexec/workcell/real/node \
-      claude --version
+      /usr/local/libexec/workcell/real/claude \
+      claude auth status --text
   )"
-  if [[ "${CLAUDE_YOLO_ARGS}" != "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --permission-mode bypassPermissions --version" ]]; then
-    echo "unexpected Claude yolo argv: ${CLAUDE_YOLO_ARGS}" >&2
+  if [[ "${CLAUDE_AUTH_STATUS_ARGS}" != "--permission-mode bypassPermissions auth status --text" ]]; then
+    echo "unexpected Claude auth-status argv: ${CLAUDE_AUTH_STATUS_ARGS}" >&2
     exit 1
   fi
 
@@ -1398,10 +1427,10 @@ EOF
       claude \
       prompt \
       /bin/echo \
-      /usr/local/libexec/workcell/real/node \
+      /usr/local/libexec/workcell/real/claude \
       claude --version
   )"
-  if [[ "${CLAUDE_PROMPT_ARGS}" != "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --permission-mode default --version" ]]; then
+  if [[ "${CLAUDE_PROMPT_ARGS}" != "--permission-mode default --version" ]]; then
     echo "unexpected Claude prompt argv: ${CLAUDE_PROMPT_ARGS}" >&2
     exit 1
   fi
@@ -1421,20 +1450,28 @@ EOF
 
   cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-gemini-node-env.sh"
 #!/bin/sh
-printf 'GEMINI_CLI_NO_RELAUNCH=%s\n' "${GEMINI_CLI_NO_RELAUNCH-}"
-printf '%s\n' "$*"
+printf '{"claude_config":"%s","relaunch":"%s","aws":"%s","gh":"%s","ssh":"%s","args":"%s"}\n' \
+  "${CLAUDE_CONFIG_DIR-}" \
+  "${GEMINI_CLI_NO_RELAUNCH-}" \
+  "${AWS_SECRET_ACCESS_KEY-}" \
+  "${GITHUB_TOKEN-}" \
+  "${SSH_AUTH_SOCK-}" \
+  "$*"
 EOF
   align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp/workcell-gemini-node-env.sh" 0755 0755
 
   GEMINI_NO_RELAUNCH_ENV="$(
-    run_entrypoint_with_autonomy_and_bind \
+    AWS_SECRET_ACCESS_KEY='verify-aws-secret' \
+      GITHUB_TOKEN='verify-gh-token' \
+      SSH_AUTH_SOCK='/tmp/workcell-secret-sock' \
+      run_entrypoint_with_autonomy_and_bind \
       gemini \
       yolo \
       "${ROOT_DIR}/tmp/workcell-gemini-node-env.sh" \
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
-  if [[ "${GEMINI_NO_RELAUNCH_ENV}" != $'GEMINI_CLI_NO_RELAUNCH=1\n/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode yolo --version' ]]; then
+  if [[ "${GEMINI_NO_RELAUNCH_ENV}" != '{"claude_config":"","relaunch":"1","aws":"","gh":"","ssh":"","args":"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode yolo --version"}' ]]; then
     echo "unexpected Gemini relaunch env/argv: ${GEMINI_NO_RELAUNCH_ENV}" >&2
     exit 1
   fi
@@ -1774,6 +1811,18 @@ if run_entrypoint claude claude --permission-mode default --version >/tmp/workce
 fi
 grep -q "Workcell blocked Claude autonomy override" /tmp/workcell-entrypoint-claude-permission-mode.out
 
+if run_entrypoint claude claude update >/tmp/workcell-entrypoint-claude-update.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude update outside the pinned-image model" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Claude lifecycle command: update" /tmp/workcell-entrypoint-claude-update.out
+
+if run_entrypoint claude claude install >/tmp/workcell-entrypoint-claude-install.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude install outside the pinned-image model" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Claude lifecycle command: install" /tmp/workcell-entrypoint-claude-install.out
+
 if run_entrypoint gemini gemini --approval-mode default --version >/tmp/workcell-entrypoint-gemini-approval-mode.out 2>&1; then
   echo "expected Workcell entrypoint to reject Gemini autonomy overrides outside host policy" >&2
   exit 1
@@ -2057,6 +2106,10 @@ run_container codex bash -lc '
     echo "expected direct real Codex payload execution to fail" >&2
     exit 1
   fi
+  if /usr/local/libexec/workcell/real/claude --version >/tmp/claude-real-path.out 2>&1; then
+    echo "expected direct real Claude payload execution to fail" >&2
+    exit 1
+  fi
   EXEC_TMP="/state/workcell-exec"
   mkdir -p "$EXEC_TMP"
   chmod 0777 "$EXEC_TMP"
@@ -2072,7 +2125,7 @@ run_container codex bash -lc '
     | jq -e ".decision == \"forbidden\"" >/dev/null
   codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/local/libexec/workcell/core/claude --dangerously-skip-permissions \
     | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --dangerously-skip-permissions \
+  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/local/libexec/workcell/real/claude --dangerously-skip-permissions \
     | jq -e ".decision == \"forbidden\"" >/dev/null
   grep -q "Do not bypass git hooks with --no-verify or git commit -n from Workcell." \
     /opt/workcell/adapters/codex/.codex/rules/default.rules
@@ -2126,6 +2179,11 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/codex-loader-real.out
+  if env -u LD_PRELOAD "$LOADER" /usr/local/libexec/workcell/real/claude --version >/tmp/claude-loader-real.out 2>&1; then
+    echo "expected direct loader invocation of the real Claude payload to fail" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/claude-loader-real.out
   cp /bin/true "$EXEC_TMP/workcell-state-native"
   chmod 0700 "$EXEC_TMP/workcell-state-native"
   if "$EXEC_TMP/workcell-state-native" >/tmp/state-native.out 2>&1; then
@@ -2449,55 +2507,36 @@ EOF
   rm -f "${workspace_exec_scratch}/shebang-bypass" "${workspace_exec_scratch}/workcell-child-envp-bypass.js"
   rm -f "${workspace_exec_scratch}/node"
   rm -f "${workspace_exec_scratch}/.workcell-native-helper"
-  cp /usr/local/libexec/workcell/real/node "$EXEC_TMP/workcell-node-real-copy"
-  chmod 0700 "$EXEC_TMP/workcell-node-real-copy"
-  if "$EXEC_TMP/workcell-node-real-copy" --version >/tmp/node-real-copy.out 2>&1; then
-    echo "expected renamed copy of the real Node payload to fail" >&2
-    exit 1
+	cp /usr/local/libexec/workcell/real/node "$EXEC_TMP/workcell-node-real-copy"
+	chmod 0700 "$EXEC_TMP/workcell-node-real-copy"
+	if "$EXEC_TMP/workcell-node-real-copy" --version >/tmp/node-real-copy.out 2>&1; then
+		echo "expected renamed copy of the real Node payload to fail" >&2
+		exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/node-real-copy.out
-  if env -u LD_PRELOAD "$LOADER" "$EXEC_TMP/workcell-node-real-copy" --version >/tmp/node-loader-copy.out 2>&1; then
-    echo "expected loader invocation of a renamed real Node copy to fail" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/node-loader-copy.out
-  if node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --dangerously-skip-permissions >/tmp/node-provider-claude.out 2>&1; then
-    echo "expected Workcell node wrapper to reject direct Claude provider script execution" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked direct provider script execution via node." /tmp/node-provider-claude.out
-  if node /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --yolo >/tmp/node-provider-gemini.out 2>&1; then
-    echo "expected Workcell node wrapper to reject direct Gemini provider script execution" >&2
-    exit 1
-  fi
+	if env -u LD_PRELOAD "$LOADER" "$EXEC_TMP/workcell-node-real-copy" --version >/tmp/node-loader-copy.out 2>&1; then
+		echo "expected loader invocation of a renamed real Node copy to fail" >&2
+		exit 1
+	fi
+	grep -q "Workcell blocked direct protected runtime execution" /tmp/node-loader-copy.out
+	cp /usr/local/libexec/workcell/real/claude "$EXEC_TMP/workcell-claude-real-copy"
+	chmod 0700 "$EXEC_TMP/workcell-claude-real-copy"
+	if "$EXEC_TMP/workcell-claude-real-copy" --version >/tmp/claude-real-copy.out 2>&1; then
+		echo "expected renamed copy of the real Claude payload to fail" >&2
+		exit 1
+	fi
+	grep -q "Workcell blocked direct protected runtime execution" /tmp/claude-real-copy.out
+	if env -u LD_PRELOAD "$LOADER" "$EXEC_TMP/workcell-claude-real-copy" --version >/tmp/claude-loader-copy.out 2>&1; then
+		echo "expected loader invocation of a renamed real Claude copy to fail" >&2
+		exit 1
+	fi
+	grep -q "Workcell blocked direct protected runtime execution" /tmp/claude-loader-copy.out
+	if node /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --yolo >/tmp/node-provider-gemini.out 2>&1; then
+		echo "expected Workcell node wrapper to reject direct Gemini provider script execution" >&2
+		exit 1
+	fi
   grep -q "Workcell blocked direct provider script execution via node." /tmp/node-provider-gemini.out
-  if node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code//cli.js --dangerously-skip-permissions >/tmp/node-provider-claude-alias.out 2>&1; then
-    echo "expected Workcell node wrapper to reject canonicalized Claude provider path aliases" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked direct provider script execution via node." /tmp/node-provider-claude-alias.out
-  ln -sf /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js /tmp/workcell-claude-provider-link.js
-  if node /tmp/workcell-claude-provider-link.js --dangerously-skip-permissions >/tmp/node-provider-claude-symlink.out 2>&1; then
-    echo "expected Workcell node wrapper to reject symlinked Claude provider entrypoints" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked direct provider script execution via node." /tmp/node-provider-claude-symlink.out
-  if node --import /tmp/workcell-claude-provider-link.js -e "" >/tmp/node-provider-claude-import.out 2>&1; then
-    echo "expected Workcell node wrapper to reject symlinked provider imports" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked dynamic Node code-loading option outside provider wrappers." /tmp/node-provider-claude-import.out
-  if node -e '\''require("/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js")'\'' >/tmp/node-provider-eval.out 2>&1; then
-    echo "expected Workcell node wrapper to reject provider requires via node -e" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked dynamic Node code-loading option outside provider wrappers." /tmp/node-provider-eval.out
-  if node --require /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js -e "" >/tmp/node-provider-require.out 2>&1; then
-    echo "expected Workcell node wrapper to reject provider requires via node --require" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked dynamic Node code-loading option outside provider wrappers." /tmp/node-provider-require.out
-  if WORKCELL_ALLOW_PROVIDER_NODE=1 node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --dangerously-skip-permissions >/tmp/node-provider-env.out 2>&1; then
+  if WORKCELL_ALLOW_PROVIDER_NODE=1 node /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --yolo >/tmp/node-provider-env.out 2>&1; then
     echo "expected Workcell node wrapper to ignore caller-supplied provider bypass env" >&2
     exit 1
   fi
@@ -2520,185 +2559,19 @@ EOF
   WORKCELL_EXEC_SCRATCH="${workspace_exec_scratch}" node "${workspace_exec_scratch}/workcell-native-addon-require.js" >/tmp/node-native-addon.out 2>&1
   grep -q "native-addon-load-blocked" /tmp/node-native-addon.out
   cp -R /opt/workcell/providers /tmp/workcell-provider-copy
-  if node /tmp/workcell-provider-copy/node_modules/@anthropic-ai/claude-code/cli.js --version >/tmp/node-provider-copy-claude.out 2>&1; then
-    echo "expected copied Claude provider package execution via public node to fail" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-claude.out
   if node /tmp/workcell-provider-copy/node_modules/@google/gemini-cli/dist/index.js --version >/tmp/node-provider-copy-gemini.out 2>&1; then
     echo "expected copied Gemini provider package execution via public node to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-gemini.out
   cat <<'\''EOF'\'' >/tmp/workcell-provider-import.mjs
-await import("/tmp/workcell-provider-copy/node_modules/@anthropic-ai/claude-code/cli.js");
+await import("/tmp/workcell-provider-copy/node_modules/@google/gemini-cli/dist/index.js");
 EOF
   if node /tmp/workcell-provider-import.mjs >/tmp/node-provider-copy-import.out 2>&1; then
     echo "expected imported copied provider package execution via public node to fail" >&2
     exit 1
   fi
   grep -Eq "Workcell blocked provider package execution via public node.|Workcell blocked public node execution outside the mounted workspace." /tmp/node-provider-copy-import.out
-  cp -R /opt/workcell/providers/node_modules/@anthropic-ai/claude-code /tmp/workcell-provider-copy-tampered
-  jq ".name = \"@workcell/not-claude\"" /tmp/workcell-provider-copy-tampered/package.json >/tmp/workcell-provider-copy-tampered/package.json.new
-  mv /tmp/workcell-provider-copy-tampered/package.json.new /tmp/workcell-provider-copy-tampered/package.json
-  printf "\n// tampered copy\n" >>/tmp/workcell-provider-copy-tampered/cli.js
-  if node /tmp/workcell-provider-copy-tampered/cli.js --version >/tmp/node-provider-copy-tampered.out 2>&1; then
-    echo "expected tampered copied Claude provider package execution via public node to fail" >&2
-    exit 1
-  fi
-  grep -Eq "Workcell blocked provider package execution via public node.|Workcell blocked public node execution outside the mounted workspace." /tmp/node-provider-copy-tampered.out
-  rm -rf "${workspace_provider_tampered}"
-  cp -R /opt/workcell/providers/node_modules/@anthropic-ai/claude-code "${workspace_provider_tampered}"
-  jq ".name = \"@workcell/not-claude-workspace\"" "${workspace_provider_tampered}/package.json" >"${workspace_provider_tampered}/package.json.new"
-  mv "${workspace_provider_tampered}/package.json.new" "${workspace_provider_tampered}/package.json"
-  printf "\n// tampered workspace copy\n" >>"${workspace_provider_tampered}/cli.js"
-  if node "${workspace_provider_tampered}/cli.js" --version >/tmp/node-provider-copy-workspace.out 2>&1; then
-    echo "expected tampered workspace Claude provider copy execution via public node to fail" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-workspace.out
-  rm -rf "${workspace_provider_tampered}"
-  rm -rf "${workspace_provider_aggressive}"
-  cp -R /opt/workcell/providers/node_modules/@anthropic-ai/claude-code "${workspace_provider_aggressive}"
-  sanitize_workspace_claude_entrypoint() {
-    local entrypoint_path="$1"
-    perl -0pi \
-      -e "s/Anthropic PBC\\. All rights reserved\\./Workcell scrubbed marker/g;" \
-      -e "s|https://code\\.claude\\.com/docs/en/legal-and-compliance\\.|https://example.invalid/workcell|g;" \
-      -e "s/Want to see the unminified source\\? We\\x27re hiring!/Workcell scrubbed hiring marker/g;" \
-      -e "s/dangerously-skip-permissions/scrubbed-danger-flag/g;" \
-      "${entrypoint_path}"
-  }
-  write_provider_token_parts() {
-    local target_root="$1"
-    local _source_entrypoint="$2"
-    local -a provider_tokens=(
-      "/usr/bin/env"
-      "https://code.claude.com/docs/en/legal-and-compliance."
-      "https://job-boards.greenhouse.io/anthropic/jobs/4816199008"
-      "createRequire"
-      "Object.create"
-      "getPrototypeOf:Xlq"
-      "defineProperty:Hy6"
-      "getOwnPropertyNames:_AA"
-      "getOwnPropertyDescriptor:Dlq"
-      "Object.prototype.hasOwnProperty"
-      "A.__esModule"
-      "get:zAA.bind"
-      "K.enumerable"
-      "configurable:"
-      "set:Zlq.bind"
-      "import.meta.url"
-      "Symbol.dispose"
-      "Symbol.asyncDispose"
-      "SuppressedError"
-      "SuppressedError:function"
-      "H.suppressed"
-      "Promise.resolve"
-      "global.Object"
-      "Object.prototype"
-    )
-    local -a part_names=(a b c)
-    local chunk=""
-    local chunk_json=""
-    local index=0
-
-    : "${_source_entrypoint:?}"
-
-    cat >"${target_root}/main.js" <<'\''EOF'\''
-import "./part-a.js";
-import "./part-b.js";
-import "./part-c.js";
-console.log("workcell split provider smoke");
-EOF
-
-    for index in 0 1 2; do
-      chunk="$(printf "%s " "${provider_tokens[@]:$((index * 8)):8}")"
-      chunk="${chunk% }"
-      chunk_json="$(jq -Rn --arg s "${chunk}" "\$s")"
-      printf "export const tokenChunk%s = %s;\n" "${index}" "${chunk_json}" >"${target_root}/part-${part_names[index]}.js"
-    done
-  }
-  jq ".name = \"@workcell/not-claude-workspace-aggressive\"" "${workspace_provider_aggressive}/package.json" >"${workspace_provider_aggressive}/package.json.new"
-  mv "${workspace_provider_aggressive}/package.json.new" "${workspace_provider_aggressive}/package.json"
-  rm -f \
-    "${workspace_provider_aggressive}/README.md" \
-    "${workspace_provider_aggressive}/LICENSE.md" \
-    "${workspace_provider_aggressive}/sdk-tools.d.ts" \
-    "${workspace_provider_aggressive}/resvg.wasm"
-  sanitize_workspace_claude_entrypoint "${workspace_provider_aggressive}/cli.js"
-  if node "${workspace_provider_aggressive}/cli.js" --version >/tmp/node-provider-copy-aggressive.out 2>&1; then
-    echo "expected aggressively scrubbed workspace Claude provider copy execution via public node to fail" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-aggressive.out
-  rm -rf "${workspace_provider_aggressive}"
-  rm -rf "${workspace_provider_minimal}"
-  mkdir -p "${workspace_provider_minimal}"
-  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js "${workspace_provider_minimal}/main.js"
-  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/package.json "${workspace_provider_minimal}/"
-  jq ".name = \"@workcell/not-claude-workspace-minimal\" | .workcellTampered = true" "${workspace_provider_minimal}/package.json" >"${workspace_provider_minimal}/package.json.new"
-  mv "${workspace_provider_minimal}/package.json.new" "${workspace_provider_minimal}/package.json"
-  sanitize_workspace_claude_entrypoint "${workspace_provider_minimal}/main.js"
-  if node "${workspace_provider_minimal}/main.js" --version >/tmp/node-provider-copy-minimal.out 2>&1; then
-    echo "expected minimized scrubbed renamed workspace Claude provider subset execution via public node to fail" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-minimal.out
-  rm -rf "${workspace_provider_minimal}"
-  rm -rf "${workspace_provider_split}"
-  mkdir -p "${workspace_provider_split}"
-  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/package.json "${workspace_provider_split}/"
-  jq ".name = \"@workcell/not-claude-workspace-split\" | .workcellTampered = true" "${workspace_provider_split}/package.json" >"${workspace_provider_split}/package.json.new"
-  mv "${workspace_provider_split}/package.json.new" "${workspace_provider_split}/package.json"
-  write_provider_token_parts "${workspace_provider_split}" "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js"
-  if node "${workspace_provider_split}/main.js" >/tmp/node-provider-copy-split.out 2>&1; then
-    echo "expected split workspace Claude provider subset execution via public node to fail" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-split.out
-  rm -rf "${workspace_provider_split}"
-  cp /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js "${workspace_provider_no_package}"
-  sanitize_workspace_claude_entrypoint "${workspace_provider_no_package}"
-  if node "${workspace_provider_no_package}" --version >/tmp/node-provider-copy-no-package.out 2>&1; then
-    echo "expected package-less scrubbed Claude provider copy execution via public node to fail" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-no-package.out
-  rm -f "${workspace_provider_no_package}"
-  rm -rf "${workspace_provider_no_package_split}"
-  mkdir -p "${workspace_provider_no_package_split}"
-  write_provider_token_parts "${workspace_provider_no_package_split}" "/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js"
-  if node "${workspace_provider_no_package_split}/main.js" >/tmp/node-provider-copy-no-package-split.out 2>&1; then
-    echo "expected split package-less Claude provider subset execution via public node to fail" >&2
-    exit 1
-  fi
-  grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-no-package-split.out
-  rm -rf "${workspace_provider_no_package_split}"
-  rm -rf "${workspace_provider_benign_marker}"
-  mkdir -p "${workspace_provider_benign_marker}"
-  cat <<'\''EOF'\'' >"${workspace_provider_benign_marker}/package.json"
-{
-  "name": "@workcell/benign-marker-package",
-  "version": "1.0.0",
-  "type": "module"
-}
-EOF
-  cat <<'\''EOF'\'' >"${workspace_provider_benign_marker}/script.js"
-console.log("dangerously-skip-permissions");
-EOF
-  if ! node "${workspace_provider_benign_marker}/script.js" >/tmp/node-provider-marker-benign.out 2>&1; then
-    cat /tmp/node-provider-marker-benign.out >&2
-    echo "expected benign workspace package file containing a single provider marker to remain executable" >&2
-    exit 1
-  fi
-  grep -q "dangerously-skip-permissions" /tmp/node-provider-marker-benign.out
-  rm -rf "${workspace_provider_benign_marker}"
-  rm -f "${workspace_exec_scratch}/workcell-provider-copy-scrub.js"
-  rm -f "${workspace_exec_scratch}/workcell-provider-copy-minimalize.js"
-  rm -f "${workspace_exec_scratch}/workcell-provider-copy-split.js"
-  rm -f "${workspace_exec_scratch}/workcell-provider-copy-no-package.js"
-  rm -f "${workspace_exec_scratch}/workcell-provider-copy-no-package-split.js"
   rm -f "${workspace_exec_scratch}/not-an-addon.node" "${workspace_exec_scratch}/workcell-native-addon-require.js"
   cat <<'\''EOF'\'' >/tmp/workcell-node-public-preload.js
 require("fs").writeFileSync("/tmp/workcell-node-public-preload-ran", "1")
@@ -3188,10 +3061,6 @@ run_container claude bash -lc '
     jq -r ".disableBypassPermissionsMode" /etc/claude-code/managed-settings.json | grep -q "^allow$"
     jq -r ".hooks.PreToolUse[0].hooks[0].command" "$HOME/.claude/settings.json" | grep -q "guard-bash.sh"
   '"'"'
-  if /usr/local/libexec/workcell/real/node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --version >/tmp/node-real-payload.out 2>&1; then
-    echo "expected direct real node payload execution to fail" >&2
-    exit 1
-  fi
   if claude --dangerously-skip-permissions >/tmp/claude-nested-danger.out 2>&1; then
     echo "expected nested Claude invocation to reject unsafe overrides" >&2
     exit 1
@@ -3207,6 +3076,16 @@ run_container claude bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked Claude autonomy override" /tmp/claude-nested-permission-mode.out
+  if claude update >/tmp/claude-nested-update.out 2>&1; then
+    echo "expected nested Claude invocation to reject lifecycle updates" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked Claude lifecycle command: update" /tmp/claude-nested-update.out
+  if claude install >/tmp/claude-nested-install.out 2>&1; then
+    echo "expected nested Claude invocation to reject lifecycle installs" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked Claude lifecycle command: install" /tmp/claude-nested-install.out
   if WORKCELL_MODE=breakglass claude --dangerously-skip-permissions >/tmp/claude-nested-breakglass.out 2>&1; then
     echo "expected nested Claude invocation to ignore caller-supplied breakglass env" >&2
     exit 1
@@ -3246,9 +3125,9 @@ EOF
       exit 1
     }
   grep -q "BLOCKED:" /tmp/claude-hook-provider-path.out
-  printf "%s" "{\"tool_input\":{\"command\":\"node /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js --dangerously-skip-permissions\"}}" \
+  printf "%s" "{\"tool_input\":{\"command\":\"/usr/local/libexec/workcell/real/claude --dangerously-skip-permissions\"}}" \
     | /opt/workcell/adapters/claude/hooks/guard-bash.sh >/tmp/claude-hook-provider-script-path.out 2>&1 && {
-      echo "expected Claude guard hook to reject nested provider script launches" >&2
+      echo "expected Claude guard hook to reject direct native Claude launches" >&2
       exit 1
     }
   grep -q "BLOCKED:" /tmp/claude-hook-provider-script-path.out
