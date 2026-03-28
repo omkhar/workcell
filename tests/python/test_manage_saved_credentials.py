@@ -59,6 +59,19 @@ class ManageSavedCredentialsTests(unittest.TestCase):
 
             self.assertTrue(self.module.equivalent_saved_credentials("codex_auth", left, right))
 
+    def test_equivalent_saved_credentials_ignores_json_key_order_for_claude_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            left = root / "left.json"
+            right = root / "right.json"
+            self.write_secret_file(left, '{"refresh_token":"abc","account_id":"def"}\n')
+            self.write_secret_file(
+                right,
+                '{\n  "account_id": "def",\n  "refresh_token": "abc"\n}\n',
+            )
+
+            self.assertTrue(self.module.equivalent_saved_credentials("claude_auth", left, right))
+
     def test_equivalent_saved_credentials_ignores_env_order_comments_and_export(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -72,6 +85,16 @@ class ManageSavedCredentialsTests(unittest.TestCase):
                 right,
                 'export GOOGLE_CLOUD_LOCATION="us-central1"\nGOOGLE_GENAI_USE_VERTEXAI=true\nGOOGLE_CLOUD_PROJECT=my-proj # trailing comment\n',
             )
+
+            self.assertTrue(self.module.equivalent_saved_credentials("gemini_env", left, right))
+
+    def test_equivalent_saved_credentials_normalizes_gemini_boolean_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            left = root / "left.env"
+            right = root / "right.env"
+            self.write_secret_file(left, "GOOGLE_GENAI_USE_GCA=true\n")
+            self.write_secret_file(right, "export GOOGLE_GENAI_USE_GCA=TRUE\n")
 
             self.assertTrue(self.module.equivalent_saved_credentials("gemini_env", left, right))
 

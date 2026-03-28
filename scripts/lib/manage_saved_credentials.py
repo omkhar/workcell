@@ -141,6 +141,22 @@ def validate_saved_credential(key: str, source: Path) -> dict[str, object]:
     return metadata
 
 
+def normalized_gemini_env_values(source: Path) -> dict[str, object]:
+    values = RENDER_HELPERS.parse_simple_env_file(source)
+    normalized: dict[str, object] = {}
+
+    for key, value in values.items():
+        if key in {"GOOGLE_GENAI_USE_GCA", "GOOGLE_GENAI_USE_VERTEXAI"}:
+            normalized[key] = RENDER_HELPERS.parse_env_boolean_value(values, source, key)
+            continue
+        if key in RENDER_HELPERS.GEMINI_VERTEX_LOCATION_KEYS:
+            normalized_value = RENDER_HELPERS.normalize_vertex_location(value)
+            normalized[key] = value if normalized_value is None else normalized_value
+            continue
+        normalized[key] = value
+    return normalized
+
+
 def normalized_credential_value(key: str, source: Path) -> object:
     validate_saved_credential(key, source)
 
@@ -149,7 +165,7 @@ def normalized_credential_value(key: str, source: Path) -> object:
     if key == "claude_api_key":
         return source.read_text(encoding="utf-8").strip()
     if key == "gemini_env":
-        return RENDER_HELPERS.parse_simple_env_file(source)
+        return normalized_gemini_env_values(source)
     die(f"unsupported credential key: {key}")
 
 

@@ -3847,7 +3847,7 @@ if [[ "${bundle}" != "${expected}" ]]; then
 fi
 
 cat >"${TMP_ROOT}/unchanged.env" <<'ENV'
-export GOOGLE_GENAI_USE_GCA=true # same auth, different formatting
+export GOOGLE_GENAI_USE_GCA=TRUE # same auth, different formatting
 ENV
 chmod 0600 "${TMP_ROOT}/unchanged.env"
 cat >"${TMP_ROOT}/refreshed-adc.json" <<'JSON'
@@ -4082,6 +4082,138 @@ EOF
 } >"${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
 /bin/bash "${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
 rm -f "${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
+CLAUDE_RELAUNCH_PERSISTENCE_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" append_credential_persist_audit_record
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" saved_credential_helper_path
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_config_root
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_fragment_path
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_root
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" sanitize_saved_credential_audit_path
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" sanitize_saved_credential_audit_paths_csv
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_display_name
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" describe_credential_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_bundle_keys_csv
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_bundle_display_names
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prompt_to_save_credential
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" maybe_offer_saved_credential_persistence
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" injection_manifest_credential_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_sources_semantically_match
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source_prefer_changed
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" emit_credential_bundle_spec
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_source_differs_from_injected_source
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" promotable_saved_credential_bundles
+  printf '\n'
+  printf 'ROOT_DIR=%q\n' "${ROOT_DIR}"
+  cat <<'EOF'
+set -euo pipefail
+
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "${TMP_ROOT}"' EXIT
+COLIMA_PROFILE=workcell-test
+MODE=strict
+AGENT=claude
+WORKSPACE=/tmp/workcell-claude-relaunch
+UI=cli
+ALLOW_ARBITRARY_COMMAND=0
+PREPARE_ONLY=0
+DRY_RUN=0
+INJECTION_POLICY_SHA256=test-policy
+HOST_PYTHON3_BIN="$(command -v python3)"
+INJECTION_BUNDLE_ROOT="${TMP_ROOT}/bundle"
+WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=accept
+WORKCELL_TEST_SELECTION_CASE=first-launch
+
+append_audit_record() {
+  :
+}
+
+session_assurance_final() {
+  printf 'managed-mutable\n'
+}
+
+run_clean_host_command() {
+  "$@"
+}
+
+default_injection_policy_path() {
+  printf '%s/injection-policy.toml\n' "${TMP_ROOT}/config"
+}
+
+render_sanitized_bundle() {
+  local agent="$1"
+  local policy_path="$2"
+
+  rm -rf "${INJECTION_BUNDLE_ROOT}"
+  mkdir -p "${INJECTION_BUNDLE_ROOT}"
+  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+    --policy "${policy_path}" \
+    --agent "${agent}" \
+    --mode strict \
+    --output-root "${INJECTION_BUNDLE_ROOT}" >/dev/null
+  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
+    --manifest "${INJECTION_BUNDLE_ROOT}/manifest.json" \
+    --mount-spec "${INJECTION_BUNDLE_ROOT}.mounts.json" >/dev/null
+}
+
+extract_promotable_container_credentials() {
+  case "${WORKCELL_TEST_SELECTION_CASE}" in
+    first-launch)
+      printf 'claude_auth\t%s\n' "${TMP_ROOT}/first-launch-claude-auth.json"
+      ;;
+    relaunch)
+      printf 'claude_auth\t%s\n' "${TMP_ROOT}/relaunch-claude-auth.json"
+      ;;
+  esac
+}
+
+printf '{"refresh_token":"claude"}\n' >"${TMP_ROOT}/first-launch-claude-auth.json"
+chmod 0600 "${TMP_ROOT}/first-launch-claude-auth.json"
+printf '{\n  "refresh_token": "claude"\n}\n' >"${TMP_ROOT}/relaunch-claude-auth.json"
+chmod 0600 "${TMP_ROOT}/relaunch-claude-auth.json"
+
+if ! maybe_offer_saved_credential_persistence workcell-test-container 0 >/dev/null 2>&1; then
+  echo "Expected first-launch Claude persistence harness to succeed" >&2
+  exit 1
+fi
+
+render_sanitized_bundle claude "${TMP_ROOT}/config/injection-policy.toml"
+saved_source="$(injection_manifest_credential_source claude_auth || true)"
+if [[ "${saved_source}" != "${TMP_ROOT}/config/credentials/claude-auth.json" ]]; then
+  echo "Expected relaunch bundle to source the saved Claude credential, got ${saved_source}" >&2
+  exit 1
+fi
+
+WORKCELL_TEST_SELECTION_CASE=relaunch
+bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/relaunch-out" | tr -d '\n')"
+if [[ -n "${bundle}" ]]; then
+  echo "Expected relaunch Claude flow with unchanged auth to avoid a second save prompt, got: ${bundle}" >&2
+  exit 1
+fi
+EOF
+} >"${CLAUDE_RELAUNCH_PERSISTENCE_HARNESS}"
+/bin/bash "${CLAUDE_RELAUNCH_PERSISTENCE_HARNESS}"
+rm -f "${CLAUDE_RELAUNCH_PERSISTENCE_HARNESS}"
 PROFILE_PROCESS_MATCH_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" profile_process_pids
