@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "f6235de1aac1b658b5c6f606906e698060ae9c0561a768ddb87e1f22c1c0be06"
+      "sha256": "fa298c86ce9b39fa3358e41835e2504b0c09b534a2e3e02a1c6fcbd801be4c39"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts.py",
@@ -10,7 +10,7 @@
     },
     {
       "repo_path": "scripts/lib/render_injection_bundle.py",
-      "sha256": "848dbe2b708e6d2e4c59ba200ee57554366c63bf65bd253effb1a69befd908b5"
+      "sha256": "7c63940196afd494a0aa767ad99e358079a246c6cd8a67e3f2d236cce87893d7"
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
@@ -34,7 +34,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/claude/hooks/guard-bash.sh",
       "runtime_path": "/opt/workcell/adapters/claude/hooks/guard-bash.sh",
-      "sha256": "f5a6bc9d318fe59bef0024ad36c6c043fc782f93ca28b137dc1ae614741a0660"
+      "sha256": "d40e2b13f22fa9f1a92cf3033df6f465f6195d6f9bf256bbcdec328e61803804"
     },
     {
       "kind": "adapter-baseline",
@@ -88,13 +88,13 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/rules/default.rules",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/rules/default.rules",
-      "sha256": "094b8fe94dccb3c98000cd35ae1905bf804c03aa5d0e1e37cf80b25aa3fec688"
+      "sha256": "f935a387b1d33424dc90260006f20fd8e2a3c7736edeb6cad05d5172c065ee2d"
     },
     {
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "e281425eef791ce8fb1b6a7efcea68aa0cb2bf96e7c780b4f2c2af32658a0e3a"
+      "sha256": "bf70e93418a1ba3f9e95a75ecf9147e91efefa7cfafce53b0d9c51f357001655"
     },
     {
       "kind": "adapter-baseline",
@@ -106,7 +106,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "ff19c1f5942abd8479c0a740e9c38dd81c4ad483d4773aca4546a54a95a446cc"
+      "sha256": "d01dd05b5a1ffc13fb9c50dedb31d0401a31c45673a91a8e1f17f084f670a5f1"
     },
     {
       "kind": "adapter-baseline",
@@ -154,31 +154,31 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "2e620ae880e20e455668d0ebf784c5c6a5a805bee67f850a4cf75043e1ea54a7"
+      "sha256": "ed7b3ca24b879a394c5a3afface15a1f644e6ab1112ad2b27654126ea16567ee"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/node",
       "runtime_path": "/usr/local/libexec/workcell/node-wrapper.sh",
-      "sha256": "df0e6f4dd3fd75cd582cffff9b95d94b5ce3e4635d9d9a4f27c2debe73777a17"
+      "sha256": "8bcf1332b1fe1b8f0d2ed87e03a146086c59038e050fdb1d6ec46a6b6d66b018"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-policy.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "f287aaa2cf9a0eb75c7e5efdc2bed71441ebb91c2607161851be338bd11b5447"
+      "sha256": "ac94fce402c4d8e3a09d2ae156117a7745e11e217f2451b9c82c7da00150f81a"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "5e48502930e49a4317e98d126f2f044c46cb304f4c6289a78c767946a5bddf8f"
+      "sha256": "e0461edeb02105a26cecf3ce28366cbbfc7a63b299508767fa68480946b0c9c3"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/public-node-guard.mjs",
       "runtime_path": "/usr/local/libexec/workcell/public-node-guard.mjs",
-      "sha256": "11ed76b0b3e58bab28e12b46825f42357754209e0910c592bc96dc93c5bf96d2"
+      "sha256": "75d67644bf5622f83dcc03020e1cc35e31344790e70a6315f37c2ed55afa5bd8"
     },
     {
       "kind": "runtime-control-plane",

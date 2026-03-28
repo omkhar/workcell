@@ -120,10 +120,21 @@ reject_unsafe_codex_args() {
 
 reject_unsafe_claude_args() {
   local arg
+  local saw_command=0
 
   provider_policy_allows_breakglass && return 0
 
   for arg in "$@"; do
+    if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
+      saw_command=1
+      case "${arg}" in
+        install | update)
+          workcell_die "Workcell blocked Claude lifecycle command: ${arg}"
+          ;;
+      esac
+      continue
+    fi
+
     case "${arg}" in
       --dangerously-skip-permissions | --allow-dangerously-skip-permissions | --add-dir | --allowedTools | --mcp-config | --plugin-dir | --settings | --setting-sources | --system-prompt | --append-system-prompt)
         workcell_die "Workcell blocked unsafe Claude override: ${arg}"

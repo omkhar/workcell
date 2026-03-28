@@ -60,7 +60,7 @@ import sys
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 target_arch = sys.argv[2]
 pattern = re.compile(
-    rf'{re.escape(target_arch)}\)\s+\\\s*CODEX_ARCH="[^"]+";\s+\\\s*CODEX_SHA256="([0-9a-f]{{64}})";',
+    rf'{re.escape(target_arch)}\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="[^"]+";\s+\\\s*CODEX_SHA256="([0-9a-f]{{64}})";',
     re.MULTILINE,
 )
 match = pattern.search(text)

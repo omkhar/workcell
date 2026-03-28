@@ -4225,6 +4225,107 @@ grep -q 'execution_path=lower-assurance-control-plane-vcs' /tmp/workcell-control
 grep -q 'WORKCELL_ALLOW_CONTROL_PLANE_VCS=1' /tmp/workcell-control-plane-vcs.stdout
 grep -q -- "${MASK_VERIFY_WORKSPACE}/AGENTS.md:/workspace/AGENTS.md:ro" /tmp/workcell-control-plane-vcs.stdout
 
+PUBLISH_PR_FIXTURE="${BARRIER_VERIFY_ROOT}/publish-pr-fixture"
+mkdir -p "${PUBLISH_PR_FIXTURE}"
+git init -q "${PUBLISH_PR_FIXTURE}"
+git -C "${PUBLISH_PR_FIXTURE}" config user.name "Workcell Verify"
+git -C "${PUBLISH_PR_FIXTURE}" config user.email "workcell-verify@example.com"
+git -C "${PUBLISH_PR_FIXTURE}" remote add origin https://github.com/example/workcell-publish-fixture.git
+printf 'base\n' >"${PUBLISH_PR_FIXTURE}/tracked.txt"
+git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
+git -C "${PUBLISH_PR_FIXTURE}" commit -q -m init
+printf 'worktree\n' >"${PUBLISH_PR_FIXTURE}/tracked.txt"
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/pr-title.txt"
+Verify PR title
+EOF
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/pr-body.md"
+Verify PR body
+EOF
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/commit-message.txt"
+Verify publish-pr commit
+
+- include staged workspace changes
+EOF
+PUBLISH_PR_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-fixture \
+  --title-file "${PUBLISH_PR_FIXTURE}/pr-title.txt" \
+  --body-file "${PUBLISH_PR_FIXTURE}/pr-body.md" \
+  --commit-message-file "${PUBLISH_PR_FIXTURE}/commit-message.txt" \
+  --snapshot worktree \
+  --dry-run)"
+grep -q '^publish_snapshot=worktree$' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q '^publish_branch=feature/publish-fixture$' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'switch -c feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' add -A ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' push -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'gh pr create --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
+
+git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
+PUBLISH_PR_INDEX_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-index \
+  --title "Index publish title" \
+  --commit-message "Index publish commit" \
+  --snapshot index \
+  --dry-run)"
+grep -q '^publish_snapshot=index$' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+if grep -q -- ' add -A ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"; then
+  echo "publish-pr index snapshot should not auto-stage the worktree" >&2
+  exit 1
+fi
+grep -q -- 'switch -c feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch main \
+  --title "Bad branch" \
+  --commit-message "Bad branch commit" \
+  --dry-run >/tmp/workcell-publish-pr-main.out 2>&1; then
+  echo "Expected publish-pr to reject the default branch" >&2
+  exit 1
+fi
+grep -q 'publish-pr refuses the default branch' /tmp/workcell-publish-pr-main.out
+
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch topic.lock \
+  --title "Bad branch format" \
+  --commit-message "Bad branch format commit" \
+  --dry-run >/tmp/workcell-publish-pr-invalid-branch.out 2>&1; then
+  echo "Expected publish-pr to reject an invalid branch name" >&2
+  exit 1
+fi
+grep -q 'Invalid publish branch name: topic.lock' /tmp/workcell-publish-pr-invalid-branch.out
+
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-invalid-base \
+  --base topic.lock \
+  --title "Bad base branch format" \
+  --commit-message "Bad base branch format commit" \
+  --dry-run >/tmp/workcell-publish-pr-invalid-base.out 2>&1; then
+  echo "Expected publish-pr to reject an invalid base branch name" >&2
+  exit 1
+fi
+grep -q 'Invalid publish base branch name: topic.lock' /tmp/workcell-publish-pr-invalid-base.out
+
+git -C "${PUBLISH_PR_FIXTURE}" reset -q --hard HEAD
+git -C "${PUBLISH_PR_FIXTURE}" clean -fdq
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-noop \
+  --title "No changes" \
+  --commit-message "No changes commit" \
+  --snapshot worktree \
+  --dry-run >/tmp/workcell-publish-pr-noop.out 2>&1; then
+  echo "Expected publish-pr to reject an empty worktree snapshot" >&2
+  exit 1
+fi
+grep -q 'publish-pr found no workspace changes to publish' /tmp/workcell-publish-pr-noop.out
+
 MASK_SNAPSHOT_WORKSPACE="${BARRIER_VERIFY_ROOT}/mask-snapshot-workspace"
 mkdir -p "${MASK_SNAPSHOT_WORKSPACE}/.claude"
 git init -q "${MASK_SNAPSHOT_WORKSPACE}"
@@ -5561,6 +5662,14 @@ if workcell_target_is_allowed '/state/agent-home/.gemini/trustedFolders.json'; t
   echo "Expected runtime manifest guard to reserve Gemini trustedFolders.json" >&2
   exit 1
 fi
+if workcell_target_is_allowed '/state/agent-home/.claude/settings.json'; then
+  echo "Expected runtime manifest guard to reserve Claude settings.json" >&2
+  exit 1
+fi
+if workcell_target_is_allowed '/state/agent-home/.claude/.credentials.json'; then
+  echo "Expected runtime manifest guard to reserve injected Claude credentials" >&2
+  exit 1
+fi
 if workcell_target_is_allowed '/state/agent-home/.gemini/settings.json'; then
   echo "Expected runtime manifest guard to reserve Gemini settings.json" >&2
   exit 1
@@ -5601,14 +5710,59 @@ if ! grep -Fq "workcell_reset_session_target \"\${HOME}/.gemini/settings.json\" 
   echo "Expected Gemini home seeding to reset settings.json through workcell_reset_session_target" >&2
   exit 1
 fi
+if ! grep -Fq "workcell_copy_manifest_credential_file claude_auth \"\${HOME}/.claude/.credentials.json\" || true" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
+  echo "Expected Claude home seeding to copy auth into .claude/.credentials.json" >&2
+  exit 1
+fi
+if ! grep -Fq 'unset CLAUDE_CONFIG_DIR' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to discard caller-supplied CLAUDE_CONFIG_DIR" >&2
+  exit 1
+fi
+if grep -Fq 'export HOME CODEX_HOME CLAUDE_CONFIG_DIR TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Provider wrapper should not export CLAUDE_CONFIG_DIR for non-Claude launches" >&2
+  exit 1
+fi
+if ! grep -Fq 'unset DISABLE_AUTOUPDATER' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to discard caller-supplied DISABLE_AUTOUPDATER" >&2
+  exit 1
+fi
+if ! grep -Fq "DISABLE_AUTOUPDATER=1 CLAUDE_CONFIG_DIR=\"\${HOME}/.claude\" exec /usr/local/libexec/workcell/real/claude \\" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to launch the pinned native Claude binary with managed env" >&2
+  exit 1
+fi
+if ! grep -Fq "Workcell blocked Claude lifecycle command: \${arg}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
+  echo "Expected provider policy to reject native Claude lifecycle commands that bypass the pinned image" >&2
+  exit 1
+fi
+if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
+  echo "Expected Codex managed rules to block the native Claude binary path" >&2
+  exit 1
+fi
+if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
+  echo "Codex managed rules should not reference the removed Claude npm entrypoint" >&2
+  exit 1
+fi
+if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
+  echo "Expected Claude Bash guard to block direct native Claude binary launches" >&2
+  exit 1
+fi
+if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
+  echo "Claude Bash guard should not reference the removed Claude npm entrypoint" >&2
+  exit 1
+fi
 
 python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
+import re
 import sys
 from pathlib import Path
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-needle = 'acquire_profile_lock "${COLIMA_PROFILE}"\n  # Another launch may have created or repaired the profile while we waited.\n  refresh_profile_state "${COLIMA_PROFILE}"'
-if needle not in text:
+pattern = re.compile(
+    r'acquire_profile_lock "\$\{COLIMA_PROFILE\}"\n'
+    r'[ \t]*# Another launch may have created or repaired the profile while we waited\.\n'
+    r'[ \t]*refresh_profile_state "\$\{COLIMA_PROFILE\}"'
+)
+if not pattern.search(text):
     raise SystemExit("Expected workcell to refresh profile state immediately after taking the profile lock")
 PY
 

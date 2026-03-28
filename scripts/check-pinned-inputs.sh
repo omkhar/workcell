@@ -187,6 +187,7 @@ remote_validator_snapshot = require_arg(
     "tools/remote-validator/Dockerfile",
 )
 codex_version = require_arg(runtime_dockerfile, "CODEX_VERSION", "runtime/container/Dockerfile")
+claude_version = require_arg(runtime_dockerfile, "CLAUDE_VERSION", "runtime/container/Dockerfile")
 runtime_install_blocks = extract_install_blocks(runtime_dockerfile, "runtime/container/Dockerfile")
 validator_install_blocks = extract_install_blocks(validator_dockerfile, "tools/validator/Dockerfile")
 remote_validator_install_blocks = extract_install_blocks(
@@ -208,24 +209,54 @@ require_no_registry_bootstrap_mcp(codex_requirements, "adapters/codex/requiremen
 require_no_registry_bootstrap_mcp(codex_mcp_config, "adapters/codex/mcp/config.toml")
 require_regex(
     runtime_dockerfile,
+    r'curl -fsSL "https://storage\.googleapis\.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/\$\{CLAUDE_VERSION\}/\$\{CLAUDE_PLATFORM\}/claude"',
+    "Claude native release download URL",
+    "runtime/container/Dockerfile",
+)
+if require_regex(
+    runtime_dockerfile,
+    r'arm64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";',
+    "arm64 Claude mapping",
+    "runtime/container/Dockerfile",
+).group(1) != "linux-arm64":
+    raise SystemExit("arm64 Claude mapping in runtime/container/Dockerfile must use linux-arm64")
+if require_regex(
+    runtime_dockerfile,
+    r'amd64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";',
+    "amd64 Claude mapping",
+    "runtime/container/Dockerfile",
+).group(1) != "linux-x64":
+    raise SystemExit("amd64 Claude mapping in runtime/container/Dockerfile must use linux-x64")
+if not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$", claude_version):
+    raise SystemExit(
+        "runtime/container/Dockerfile CLAUDE_VERSION must stay pinned to an "
+        f"explicit release, found {claude_version!r}"
+    )
+require_regex(
+    runtime_dockerfile,
     r'curl -fsSL "https://github\.com/openai/codex/releases/download/rust-v\$\{CODEX_VERSION\}/codex-\$\{CODEX_ARCH\}\.tar\.gz"',
     "Codex release download URL",
     "runtime/container/Dockerfile",
 )
 if require_regex(
     runtime_dockerfile,
-    r'arm64\)\s+\\\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";',
+    r'arm64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";',
     "arm64 Codex mapping",
     "runtime/container/Dockerfile",
 ).group(1) != "aarch64-unknown-linux-gnu":
     raise SystemExit("arm64 Codex mapping in runtime/container/Dockerfile must use aarch64-unknown-linux-gnu")
 if require_regex(
     runtime_dockerfile,
-    r'amd64\)\s+\\\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";',
+    r'amd64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";',
     "amd64 Codex mapping",
     "runtime/container/Dockerfile",
 ).group(1) != "x86_64-unknown-linux-gnu":
     raise SystemExit("amd64 Codex mapping in runtime/container/Dockerfile must use x86_64-unknown-linux-gnu")
+if not re.match(r"^0\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$", codex_version):
+    raise SystemExit(
+        "runtime/container/Dockerfile CODEX_VERSION must stay pinned to an "
+        f"explicit release, found {codex_version!r}"
+    )
 if len(runtime_install_blocks) != 2:
     raise SystemExit(
         "runtime/container/Dockerfile must contain exactly two apt install blocks "
@@ -558,6 +589,7 @@ require_contains(
     ".github/workflows/release.yml",
 )
 hosted_controls_workflow = (workflows_dir / "hosted-controls.yml").read_text(encoding="utf-8")
+pin_hygiene_workflow = (workflows_dir / "pin-hygiene.yml").read_text(encoding="utf-8")
 require_contains(
     hosted_controls_workflow,
     'run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"',
@@ -575,6 +607,18 @@ require_contains(
     'WORKCELL_HOSTED_CONTROLS_REQUIRED: "0"',
     "a non-blocking hosted-controls audit mode for continuous drift detection",
     ".github/workflows/hosted-controls.yml",
+)
+require_contains(
+    pin_hygiene_workflow,
+    "./scripts/verify-upstream-codex-release.sh",
+    "scheduled Codex release re-verification",
+    ".github/workflows/pin-hygiene.yml",
+)
+require_contains(
+    pin_hygiene_workflow,
+    "./scripts/verify-upstream-claude-release.sh",
+    "scheduled Claude release re-verification",
+    ".github/workflows/pin-hygiene.yml",
 )
 require_contains(
     release_workflow,

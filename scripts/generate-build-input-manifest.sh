@@ -67,14 +67,39 @@ package_lock = json.loads(package_lock_path.read_text(encoding="utf-8"))
 
 node_base_image_match = re.search(r"^ARG NODE_BASE_IMAGE=(.+)$", dockerfile, re.MULTILINE)
 debian_snapshot_match = re.search(r"^ARG DEBIAN_SNAPSHOT=(\d{8}T\d{6}Z)$", dockerfile, re.MULTILINE)
+claude_version_match = re.search(r"^ARG CLAUDE_VERSION=(.+)$", dockerfile, re.MULTILINE)
 codex_version_match = re.search(r"^ARG CODEX_VERSION=(.+)$", dockerfile, re.MULTILINE)
 
 if not node_base_image_match:
     raise SystemExit("Unable to extract NODE_BASE_IMAGE from Dockerfile")
 if not debian_snapshot_match:
     raise SystemExit("Unable to extract DEBIAN_SNAPSHOT from Dockerfile")
+if not claude_version_match:
+    raise SystemExit("Unable to extract CLAUDE_VERSION from Dockerfile")
 if not codex_version_match:
     raise SystemExit("Unable to extract CODEX_VERSION from Dockerfile")
+
+claude_assets = {}
+for target_arch, claude_platform in (
+    ("arm64", "linux-arm64"),
+    ("amd64", "linux-x64"),
+):
+    pattern = re.compile(
+        rf"{re.escape(target_arch)}\)\s+\\\s*CLAUDE_PLATFORM=\"{re.escape(claude_platform)}\";\s+\\\s*CLAUDE_SHA256=\"([0-9a-f]{{64}})\";",
+        re.MULTILINE,
+    )
+    match = pattern.search(dockerfile)
+    if not match:
+        raise SystemExit(f"Unable to extract CLAUDE_SHA256 for {target_arch}")
+    claude_assets[target_arch] = {
+        "platform": claude_platform,
+        "sha256": match.group(1),
+        "url": (
+            "https://storage.googleapis.com/"
+            "claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/"
+            f"claude-code-releases/{claude_version_match.group(1).strip()}/{claude_platform}/claude"
+        ),
+    }
 
 codex_assets = {}
 for target_arch, codex_arch in (
@@ -82,7 +107,7 @@ for target_arch, codex_arch in (
     ("amd64", "x86_64-unknown-linux-gnu"),
 ):
     pattern = re.compile(
-        rf"{re.escape(target_arch)}\)\s+\\\s*CODEX_ARCH=\"{re.escape(codex_arch)}\";\s+\\\s*CODEX_SHA256=\"([0-9a-f]{{64}})\";",
+        rf"{re.escape(target_arch)}\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+=\"[^\"]+\";\s+\\)*\s*CODEX_ARCH=\"{re.escape(codex_arch)}\";\s+\\\s*CODEX_SHA256=\"([0-9a-f]{{64}})\";",
         re.MULTILINE,
     )
     match = pattern.search(dockerfile)
@@ -277,6 +302,10 @@ manifest = {
         "dockerfile_sha256": hashlib.sha256(dockerfile_path.read_bytes()).hexdigest(),
         "node_base_image": node_base_image_match.group(1).strip(),
         "debian_snapshot": debian_snapshot_match.group(1),
+        "claude": {
+            "version": claude_version_match.group(1).strip(),
+            "assets": claude_assets,
+        },
         "codex": {
             "version": codex_version_match.group(1).strip(),
             "assets": codex_assets,

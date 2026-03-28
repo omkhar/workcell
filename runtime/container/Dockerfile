@@ -118,6 +118,12 @@ RUN cd /opt/workcell/providers \
 
 FROM runtime-base AS runtime-builder
 
+# Anthropic Claude Code native binary version and SHA256 checksums for each
+# Linux architecture. To update: read the latest version from
+# https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest,
+# verify the per-platform checksums in the corresponding manifest.json, update
+# CLAUDE_VERSION, and refresh the CLAUDE_SHA256 values below.
+ARG CLAUDE_VERSION=2.1.86
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # To update: find the new release at https://github.com/openai/codex/releases,
 # update CODEX_VERSION, download both architecture tarballs, compute sha256sum,
@@ -160,10 +166,14 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
      fi \
   && case "${TARGET_ARCH}" in \
     arm64) \
+      CLAUDE_PLATFORM="linux-arm64"; \
+      CLAUDE_SHA256="c04aebe3de140679b4cce158812d6f011b7e9c483496ccb0472cf38cc1714afe"; \
       CODEX_ARCH="aarch64-unknown-linux-gnu"; \
       CODEX_SHA256="120b8bd6ececc125198de3fbce896da98a4795b449a4c78d516534e08a63ab14"; \
       ;; \
     amd64) \
+      CLAUDE_PLATFORM="linux-x64"; \
+      CLAUDE_SHA256="adce02c5f94a85b6ca231c8aeef533707597cd387e8934776455b87d10a3051b"; \
       CODEX_ARCH="x86_64-unknown-linux-gnu"; \
       CODEX_SHA256="1d65d8aa80847ac771487d74cb2a63c86ef23479636aa1c1b3d051c9931d314b"; \
       ;; \
@@ -172,6 +182,12 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
       exit 1; \
       ;; \
   esac \
+  && curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" \
+    -o /tmp/claude \
+  && echo "${CLAUDE_SHA256}  /tmp/claude" | sha256sum -c - \
+  && install -m 0755 /tmp/claude /usr/local/libexec/workcell/real/claude \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/claude \
+  && rm -f /tmp/claude \
   && curl -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${CODEX_ARCH}.tar.gz" \
     -o /tmp/codex.tar.gz \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
@@ -273,7 +289,6 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
     /etc/claude-code/managed-settings.json \
     /usr/local/libexec/workcell/control-plane-manifest.json \
   && chmod 0644 \
-    /opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js \
     /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
   && rm -f /usr/bin/perlbug /usr/bin/perldoc /usr/bin/perlthanks \
   && chmod +x \
