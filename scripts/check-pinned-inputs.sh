@@ -609,6 +609,18 @@ require_contains(
     ".github/workflows/hosted-controls.yml",
 )
 require_contains(
+    ci_workflow,
+    "./scripts/verify-upstream-claude-release.sh",
+    "Claude upstream release verification in CI",
+    ".github/workflows/ci.yml",
+)
+require_contains(
+    release_workflow,
+    "./scripts/verify-upstream-claude-release.sh",
+    "Claude upstream release verification in release preflight",
+    ".github/workflows/release.yml",
+)
+require_contains(
     pin_hygiene_workflow,
     "./scripts/verify-upstream-codex-release.sh",
     "scheduled Codex release re-verification",

@@ -19,7 +19,8 @@ under platform automation.
   as the Debian snapshot, immutable base-image digests, and exact runtime and
   validator package sets
 - `ci.yml`: also verifies the pinned upstream Codex Linux assets against
-  OpenAI's published Sigstore bundle
+  OpenAI's published Sigstore bundle and the pinned upstream Claude Linux
+  assets against Anthropic's published release manifest
 - `ci.yml`: also verifies the determinism of the release build-input manifest
 - `ci.yml`: first runs host-side pin-hygiene checks for the runtime and
   validator Dockerfiles, then runs repo validation inside a pinned validator
@@ -39,7 +40,7 @@ under platform automation.
   `WORKCELL_ENABLE_PRIVATE_CODE_SCANNING=true`
 - `scorecard.yml`: weekly and default-branch OpenSSF Scorecard analysis
 - `pin-hygiene.yml`: weekly re-validation of pinned non-ecosystem inputs and
-  re-verification of the pinned upstream Codex release
+  re-verification of the pinned upstream Codex and Claude releases
 - `macos-boundary.yml`: optional self-hosted macOS launch verification for the
   real Colima plus Virtualization.Framework path when
   `WORKCELL_ENABLE_SELF_HOSTED_MACOS=true`; it first seeds the reviewed runtime
@@ -71,8 +72,9 @@ under platform automation.
   default workflow token cannot read rulesets/collaborator/environment
   metadata for this audit
 - `.github/dependabot.yml`: grouped weekly updates for GitHub Actions and the
-  runtime base image, validator base image, pinned provider CLI dependency
-  graph, and shipped Rust runtime crate, with cooldowns
+  runtime base image, validator base image, remote-validator base image,
+  pinned Gemini CLI dependency graph, and shipped Rust runtime crate, with
+  cooldowns
 
 ## Source influence
 
@@ -186,11 +188,11 @@ Dependabot currently covers:
 - the runtime Dockerfile base image
 - the validator Dockerfile base image
 - the remote-validator Dockerfile base image
-- the pinned provider CLI lockfile in `runtime/container/providers`
+- the pinned Gemini CLI lockfile in `runtime/container/providers`
 - the vendored Rust runtime crate in `runtime/container/rust`
 
-Non-ecosystem pinned inputs such as the Codex release bundle and Debian
-snapshot are checked by CI, release preflight, and the scheduled
+Non-ecosystem pinned inputs such as the Codex and Claude release bundles and
+the Debian snapshot are checked by CI, release preflight, and the scheduled
 `pin-hygiene.yml` workflow rather than Dependabot.
 
 Dependency diffs on pull requests are additionally screened with
