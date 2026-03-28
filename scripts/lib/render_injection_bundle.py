@@ -56,7 +56,7 @@ RESERVED_TARGETS = (
     "/state/agent-home/.claude/CLAUDE.md",
     "/state/agent-home/.claude/.credentials.json",
     "/state/agent-home/.claude/workcell",
-    "/state/agent-home/.config/claude-code/auth.json",
+    "/state/agent-home/.claude/.credentials.json",
     "/state/agent-home/.mcp.json",
     "/state/agent-home/.gemini/settings.json",
     "/state/agent-home/.gemini/GEMINI.md",

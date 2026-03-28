@@ -59,9 +59,9 @@ The following table covers all files seeded by `seed_codex_home()`,
 | `~/.codex/rules/` | Codex | Symlink → immutable baseline (readonly) or session-local writable copy (session) | Same | Execpolicy rules; see rules mutability section below |
 | `~/.codex/mcp/config.toml` | Codex | Symlink → immutable baseline | Same | Linked to `adapters/codex/mcp/config.toml`; ships no live MCP defaults |
 | `~/.codex/auth.json` | Codex | Copied from injection credential `codex_auth` if present | Same | Session-local Codex auth; not present if `credentials.codex_auth` is not configured |
-| `~/.claude/settings.json` | Claude | Symlink → immutable baseline, or session-local copy with `apiKeyHelper` if `claude_api_key` is injected | Same | Linked to `adapters/claude/managed-settings.json`; contains deny-list permissions and the `PreToolUse` Bash hook. When `claude_api_key` is present, the helper reads the reviewed direct-mounted credential path instead of creating a second session-local key copy. |
+| `~/.claude/settings.json` | Claude | Symlink → immutable baseline, or session-local copy with `apiKeyHelper` if `claude_api_key` is injected | Same | Linked to `adapters/claude/.claude/settings.json`; carries the adapter defaults, deny-list permissions, and the `PreToolUse` Bash hook. When `claude_api_key` is present, the helper reads the reviewed direct-mounted credential path instead of creating a second session-local key copy. Native Claude also loads the separately managed `/etc/claude-code/managed-settings.json` overlay. |
 | `~/.claude/CLAUDE.md` | Claude | Rendered (baseline + workspace + injection layers) | Same | Provider instruction doc; workspace `AGENTS.md` and `CLAUDE.md` are imported as layers |
-| `~/.claude/.credentials.json` | Claude | Copied from injection credential `claude_auth` if present | Same | Session-local Claude auth cache for Claude builds that still consult the legacy home-local credential file |
+| `~/.claude/.credentials.json` | Claude | Copied from injection credential `claude_auth` if present | Same | Session-local native Claude auth on Linux. Workcell also mirrors the same reviewed artifact here for Claude builds that still consult the legacy home-local credential path. |
 | `~/.claude/workcell/` | Claude | Created only when `claude_api_key` credential is injected | Same | Holds the session-local `api-key-helper.sh` script. The helper reads the mounted key file directly, so Workcell no longer drops a second plaintext copy under this directory. |
 | `~/.config/claude-code/auth.json` | Claude | Copied from injection credential `claude_auth` if present | Same | Session-local Claude CLI auth; Workcell also mirrors the same reviewed artifact into `~/.claude/.credentials.json` for Claude builds that still consult the legacy path |
 | `~/.mcp.json` | Claude | Symlink → immutable `mcp-template.json` (empty), or copied from `claude_mcp` credential if injected | Same | MCP server registry; ships empty by default |
@@ -97,7 +97,9 @@ unchanged. The session-local copy persists only until container exit.
 ## How Workcell flags map to provider behavior
 
 The mapping is applied by `runtime/container/provider-wrapper.sh` before
-`exec`-ing the real provider binary.
+`exec`-ing the pinned provider runtime: the native provider binary for Codex
+and Claude, and the real Node runtime plus the pinned Gemini entrypoint script
+for Gemini.
 
 ### `--agent-autonomy` flag
 
@@ -140,7 +142,8 @@ Workcell ships intentionally empty MCP templates for all providers:
 ## Hook coverage
 
 The Claude adapter installs a `PreToolUse` hook for the `Bash` tool via
-`adapters/claude/managed-settings.json`. The hook script is
+the seeded `~/.claude/settings.json` baseline (`adapters/claude/.claude/settings.json`).
+The hook script is
 `adapters/claude/hooks/guard-bash.sh`.
 
 ### What the hook covers
@@ -162,7 +165,7 @@ The `guard-bash.sh` hook intercepts Bash tool invocations and blocks:
 ### What the hook does NOT cover
 
 - **Non-Bash tool use**: the hook is a `PreToolUse` matcher scoped to `Bash`. It does not intercept `Read`, `Edit`, `Write`, `Glob`, `Grep`, or any other Claude tool.
-- **Read/Edit/Write tool path restrictions**: those are handled by the `permissions.deny` list in `managed-settings.json`, not by the hook.
+- **Read/Edit/Write tool path restrictions**: those are handled by the `permissions.deny` list in Claude's reviewed settings overlays, not by the hook.
 - **Codex**: Codex uses its own execpolicy rules (`.codex/rules/`) rather than hooks. There is no equivalent Bash hook for Codex.
 - **Gemini**: Gemini CLI does not expose a hook interface equivalent to Claude's `PreToolUse`. Workcell relies on the shared runtime boundary and Gemini's native approval mode.
 - **Multi-step or indirect execution**: the hook inspects the literal Bash command string. Sufficiently indirect invocations may not be caught by static pattern matching. The hook is defense in depth, not the primary boundary.

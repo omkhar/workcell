@@ -58,11 +58,11 @@ sanitize hostile loader environment variables before shell or provider wrapper
 logic starts. This claim applies to the public launcher surface under
 `/usr/local/bin`, not
 to internal support scripts under `/usr/local/libexec/workcell/*.sh`. For
-node-based adapters, Workcell blocks the shipped provider entrypoints and
-repackaged workspace copies of the shipped provider package trees on the public
-`node` surface, and the public `node` surface also blocks native addon loading
-so workspace JS cannot retake native code execution. Workcell still does not
-claim to classify arbitrarily rewritten workspace JavaScript as vendor code.
+Gemini's shipped npm entrypoint and repackaged workspace copies of Gemini's
+shipped package tree are blocked on the public `node` surface, and the public
+`node` surface also blocks native addon loading so workspace JS cannot retake
+native code execution. Workcell still does not claim to classify arbitrarily
+rewritten workspace JavaScript as vendor code.
 
 ## Invariant 4: Network egress is explicit
 

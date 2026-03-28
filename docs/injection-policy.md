@@ -154,7 +154,8 @@ modes = ["strict", "build"]
 - `credentials.claude_auth` mounts persisted Claude CLI auth into
   `~/.config/claude-code/auth.json` and mirrors the same reviewed artifact into
   `~/.claude/.credentials.json` when you already have reviewed host-side Claude
-  login state.
+  login state. If your host uses `CLAUDE_CONFIG_DIR`, point the injection
+  policy at that alternate `.credentials.json` path explicitly.
 - `credentials.claude_mcp` mounts an approved Claude `.mcp.json` into the
   session without widening trust to the whole workspace copy.
 - `credentials.gemini_env` mounts a provider-native `~/.gemini/.env`.

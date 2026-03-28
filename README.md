@@ -78,9 +78,9 @@ The design explicitly avoids common boundary punctures:
   `/workspace` and `/state` paths is blocked, and mutable shebang scripts
   cannot point straight at protected real runtimes or loaders that target them
 - nested coding-agent CLI launches are blocked or mediated on the safe path,
-  and the public `node` surface blocks direct execution of the shipped provider
-  entrypoints, repackaged workspace copies of the shipped provider package
-  trees, and native addon loading instead of treating them as ordinary
+  and the public `node` surface blocks direct execution of Gemini's shipped
+  npm entrypoint, repackaged workspace copies of Gemini's shipped npm package
+  tree, and native addon loading instead of treating them as ordinary
   workspace code
 
 ## Scope
@@ -322,7 +322,7 @@ claude = "/Users/example/.config/workcell/claude-extra.md"
 
 [credentials]
 codex_auth = "/Users/example/.codex/auth.json"
-claude_auth = "/Users/example/.config/claude-code/auth.json"
+claude_auth = "/Users/example/.claude/.credentials.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
 claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
 gemini_env = "/Users/example/.config/workcell/gemini.env"
@@ -423,6 +423,8 @@ Intentional non-goals for the safe path:
   lockfile graph
 - `scripts/verify-upstream-codex-release.sh`: re-verifies the pinned Codex
   release assets against OpenAI's published Sigstore bundle
+- `scripts/verify-upstream-claude-release.sh`: re-verifies the pinned Claude
+  native release assets against Anthropic's published release manifest
 - `scripts/verify-build-input-manifest.sh`: deterministic local verification
   for the release build-input manifest generator
 - `scripts/verify-coverage.sh`: `>=90%` numeric coverage for first-party Python

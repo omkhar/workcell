@@ -83,7 +83,7 @@ home directories, git config, or socket passthrough paths.
 Recommended local credential files:
 
 - Codex: `credentials.codex_auth = "~/.codex/auth.json"`
-- Claude: `credentials.claude_auth = "~/.config/claude-code/auth.json"` or
+- Claude: `credentials.claude_auth = "~/.claude/.credentials.json"` or
   `credentials.claude_api_key = "~/.config/workcell/claude-api-key.txt"`
 - Gemini: `credentials.gemini_env = "~/.config/workcell/gemini.env"` or
   `credentials.gemini_oauth = "~/.config/workcell/gemini-oauth.json"`

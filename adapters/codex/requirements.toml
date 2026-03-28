@@ -59,11 +59,11 @@ decision = "forbidden"
 justification = "Do not bypass git hooks with --no-verify from Workcell."
 
 [[rules.prefix_rules]]
-pattern = [{ any_of = ["codex", "claude", "gemini", "/usr/local/libexec/workcell/core/codex", "/usr/local/libexec/workcell/core/claude", "/usr/local/libexec/workcell/core/gemini", "/usr/local/libexec/workcell/real/codex", "/opt/workcell/providers/node_modules/.bin/claude", "/opt/workcell/providers/node_modules/.bin/gemini"] }]
+pattern = [{ any_of = ["codex", "claude", "gemini", "/usr/local/libexec/workcell/core/codex", "/usr/local/libexec/workcell/core/claude", "/usr/local/libexec/workcell/core/gemini", "/usr/local/libexec/workcell/real/codex", "/usr/local/libexec/workcell/real/claude", "/opt/workcell/providers/node_modules/.bin/gemini"] }]
 decision = "forbidden"
 justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."
 
 [[rules.prefix_rules]]
-pattern = [{ token = "node" }, { any_of = ["/opt/workcell/providers/node_modules/@anthropic-ai/claude-code/cli.js", "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"] }]
+pattern = [{ token = "node" }, { any_of = ["/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"] }]
 decision = "forbidden"
 justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."

@@ -47,6 +47,7 @@ enum ProtectedRuntime {
     Git,
     Node,
     Codex,
+    Claude,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,6 +76,10 @@ const PROTECTED_RUNTIME_PATHS: &[(ProtectedRuntime, &str)] = &[
     (
         ProtectedRuntime::Codex,
         "/usr/local/libexec/workcell/real/codex",
+    ),
+    (
+        ProtectedRuntime::Claude,
+        "/usr/local/libexec/workcell/real/claude",
     ),
 ];
 
