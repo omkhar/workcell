@@ -265,6 +265,27 @@ class ManageSavedCredentialsTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.module.parse_toml_document('version = "unterminated', path)
 
+    def test_parse_toml_document_handles_decode_errors_without_lineno(self) -> None:
+        class CompatDecodeError(Exception):
+            def __init__(self, message: str) -> None:
+                super().__init__(message)
+                self.msg = message
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            path = root / "policy.toml"
+
+            with mock.patch.object(self.module.tomllib, "TOMLDecodeError", CompatDecodeError):
+                with mock.patch.object(
+                    self.module.tomllib,
+                    "loads",
+                    side_effect=CompatDecodeError("bad toml"),
+                ):
+                    with self.assertRaises(SystemExit) as exc:
+                        self.module.parse_toml_document("version = 1", path)
+
+        self.assertEqual(str(exc.exception), f"{path}: bad toml")
+
     def test_strip_inline_comment_and_assignment_helpers_handle_quotes(self) -> None:
         line = 'includes = ["shared.toml", "#literal"] # comment\n'
         stripped = self.module.strip_inline_comment(line)

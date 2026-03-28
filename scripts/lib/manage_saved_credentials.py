@@ -173,7 +173,11 @@ def parse_toml_document(content: str, path: Path) -> dict[str, object]:
     try:
         parsed = tomllib.loads(content)
     except tomllib.TOMLDecodeError as exc:
-        die(f"{path}:{exc.lineno}: {exc.msg}")
+        message = getattr(exc, "msg", str(exc))
+        line_number = getattr(exc, "lineno", None)
+        if isinstance(line_number, int):
+            die(f"{path}:{line_number}: {message}")
+        die(f"{path}: {message}")
     if not isinstance(parsed, dict):
         die(f"TOML document must be a table: {path}")
     return parsed
