@@ -1042,6 +1042,26 @@ workcell_set_gemini_folder_trust_enabled() {
   chmod 0600 "${settings_path}"
 }
 
+workcell_set_gemini_tool_sandbox() {
+  local settings_path="$1"
+  local enabled="$2"
+  local settings_dir=""
+  local settings_name=""
+  local rendered_path=""
+
+  settings_dir="$(dirname "${settings_path}")"
+  settings_name="$(basename "${settings_path}")"
+  rendered_path="$(mktemp "${settings_dir}/${settings_name}.tmp.XXXXXX")"
+  jq --argjson enabled "${enabled}" \
+    '.tools.sandbox = $enabled' \
+    "${settings_path}" >"${rendered_path}" || {
+    rm -f "${rendered_path}"
+    return 1
+  }
+  mv "${rendered_path}" "${settings_path}"
+  chmod 0600 "${settings_path}"
+}
+
 workcell_workspace_import_path() {
   local relative_path="$1"
   local import_path="${WORKCELL_WORKSPACE_IMPORT_ROOT}/${relative_path}"
@@ -1357,6 +1377,9 @@ seed_gemini_home() {
   workcell_reset_session_target "${HOME}/.gemini/settings.json" "Gemini settings"
   cp "${ADAPTER_ROOT}/gemini/.gemini/settings.json" "${HOME}/.gemini/settings.json"
   chmod 0600 "${HOME}/.gemini/settings.json"
+  # Keep Gemini's nested sandbox explicitly off until Workcell validates a
+  # stronger managed posture for it inside the existing runtime boundary.
+  workcell_set_gemini_tool_sandbox "${HOME}/.gemini/settings.json" false
   if [[ "${WORKCELL_MODE:-strict}" == "breakglass" ]]; then
     workcell_set_gemini_folder_trust_enabled "${HOME}/.gemini/settings.json" true
     workcell_reset_session_target "${HOME}/.gemini/trustedFolders.json" "Gemini trusted folders"

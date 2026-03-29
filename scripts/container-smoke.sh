@@ -1189,6 +1189,7 @@ run_container_with_injection_bundle_stdin gemini "${INJECTION_BUNDLE_ROOT}/gemin
     grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
     jq -r ".security.auth.selectedType" "$HOME/.gemini/settings.json" | grep -q "^gemini-api-key$"
     jq -r ".security.folderTrust.enabled" "$HOME/.gemini/settings.json" | grep -q "^false$"
+    jq -r ".tools.sandbox" "$HOME/.gemini/settings.json" | grep -q "^false$"
     jq -e --arg workspace "/workspace" ". == {(\$workspace): \"TRUST_FOLDER\"}" "$HOME/.gemini/trustedFolders.json" >/dev/null
     grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
     grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
@@ -1479,11 +1480,18 @@ EOF
     exit 1
   fi
 
-  cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-gemini-node-env.sh"
+cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-gemini-node-env.sh"
 #!/bin/sh
-printf '{"claude_config":"%s","relaunch":"%s","aws":"%s","gh":"%s","ssh":"%s","args":"%s"}\n' \
+printf '{"claude_config":"%s","relaunch":"%s","gemini_sandbox":"%s","sandbox":"%s","sandbox_flags":"%s","sandbox_set_uid_gid":"%s","seatbelt":"%s","sandbox_mounts":"%s","sandbox_env":"%s","aws":"%s","gh":"%s","ssh":"%s","args":"%s"}\n' \
   "${CLAUDE_CONFIG_DIR-}" \
   "${GEMINI_CLI_NO_RELAUNCH-}" \
+  "${GEMINI_SANDBOX-}" \
+  "${SANDBOX-}" \
+  "${SANDBOX_FLAGS-}" \
+  "${SANDBOX_SET_UID_GID-}" \
+  "${SEATBELT_PROFILE-}" \
+  "${SANDBOX_MOUNTS-}" \
+  "${SANDBOX_ENV-}" \
   "${AWS_SECRET_ACCESS_KEY-}" \
   "${GITHUB_TOKEN-}" \
   "${SSH_AUTH_SOCK-}" \
@@ -1492,7 +1500,14 @@ EOF
   align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp/workcell-gemini-node-env.sh" 0755 0755
 
   GEMINI_NO_RELAUNCH_ENV="$(
-    AWS_SECRET_ACCESS_KEY='verify-aws-secret' \
+    GEMINI_SANDBOX='docker' \
+      SANDBOX='host-sandbox' \
+      SANDBOX_FLAGS='--privileged' \
+      SANDBOX_SET_UID_GID='1' \
+      SEATBELT_PROFILE='permissive-open' \
+      SANDBOX_MOUNTS='/tmp:/sandbox:rw' \
+      SANDBOX_ENV='FOO=bar' \
+      AWS_SECRET_ACCESS_KEY='verify-aws-secret' \
       GITHUB_TOKEN='verify-gh-token' \
       SSH_AUTH_SOCK='/tmp/workcell-secret-sock' \
       run_entrypoint_with_autonomy_and_bind \
@@ -1502,7 +1517,7 @@ EOF
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
-  if [[ "${GEMINI_NO_RELAUNCH_ENV}" != '{"claude_config":"","relaunch":"1","aws":"","gh":"","ssh":"","args":"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode yolo --version"}' ]]; then
+  if [[ "${GEMINI_NO_RELAUNCH_ENV}" != '{"claude_config":"","relaunch":"1","gemini_sandbox":"false","sandbox":"","sandbox_flags":"","sandbox_set_uid_gid":"","seatbelt":"","sandbox_mounts":"","sandbox_env":"","aws":"","gh":"","ssh":"","args":"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode yolo --version"}' ]]; then
     echo "unexpected Gemini relaunch env/argv: ${GEMINI_NO_RELAUNCH_ENV}" >&2
     exit 1
   fi
@@ -1517,6 +1532,26 @@ EOF
   )"
   if [[ "${GEMINI_PROMPT_ARGS}" != "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode default --version" ]]; then
     echo "unexpected Gemini prompt argv: ${GEMINI_PROMPT_ARGS}" >&2
+    exit 1
+  fi
+
+  GEMINI_PROMPT_ENV="$(
+    GEMINI_SANDBOX='docker' \
+      SANDBOX='host-sandbox' \
+      SANDBOX_FLAGS='--privileged' \
+      SANDBOX_SET_UID_GID='1' \
+      SEATBELT_PROFILE='permissive-open' \
+      SANDBOX_MOUNTS='/tmp:/sandbox:rw' \
+      SANDBOX_ENV='FOO=bar' \
+      run_entrypoint_with_autonomy_and_bind \
+      gemini \
+      prompt \
+      "${ROOT_DIR}/tmp/workcell-gemini-node-env.sh" \
+      /usr/local/libexec/workcell/real/node \
+      gemini --version
+  )"
+  if [[ "${GEMINI_PROMPT_ENV}" != '{"claude_config":"","relaunch":"1","gemini_sandbox":"false","sandbox":"","sandbox_flags":"","sandbox_set_uid_gid":"","seatbelt":"","sandbox_mounts":"","sandbox_env":"","aws":"","gh":"","ssh":"","args":"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode default --version"}' ]]; then
+    echo "unexpected Gemini prompt env/argv: ${GEMINI_PROMPT_ENV}" >&2
     exit 1
   fi
 fi

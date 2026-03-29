@@ -1125,6 +1125,77 @@ codex_rules_effective_assurance_initial() {
   codex_rules_effective_assurance_with_session_assurance "$(session_assurance_initial)"
 }
 
+provider_native_sandbox_configured() {
+  case "${AGENT:-}" in
+    codex)
+      case "${MODE}" in
+        strict | build)
+          printf 'workspace-write\n'
+          ;;
+        breakglass)
+          printf 'danger-full-access\n'
+          ;;
+        *)
+          printf 'disabled\n'
+          ;;
+      esac
+      ;;
+    claude)
+      printf 'deferred\n'
+      ;;
+    gemini)
+      printf 'disabled\n'
+      ;;
+    *)
+      printf 'not-applicable\n'
+      ;;
+  esac
+}
+
+provider_native_sandbox_effective() {
+  case "${AGENT:-}" in
+    codex)
+      provider_native_sandbox_configured
+      ;;
+    claude | gemini)
+      printf 'disabled\n'
+      ;;
+    *)
+      printf 'not-applicable\n'
+      ;;
+  esac
+}
+
+provider_native_sandbox_reason() {
+  case "${AGENT:-}" in
+    codex)
+      case "${MODE}" in
+        strict)
+          printf 'managed-profile-strict\n'
+          ;;
+        build)
+          printf 'managed-profile-build\n'
+          ;;
+        breakglass)
+          printf 'managed-profile-breakglass\n'
+          ;;
+        *)
+          printf 'unmanaged-mode\n'
+          ;;
+      esac
+      ;;
+    claude)
+      printf 'deferred-until-runtime-prereqs-and-validation\n'
+      ;;
+    gemini)
+      printf 'workcell-pinned-off-until-validated\n'
+      ;;
+    *)
+      printf 'not-applicable\n'
+      ;;
+  esac
+}
+
 append_launch_audit_record() {
   local profile="$1"
   local execution_path="$2"
@@ -1142,6 +1213,9 @@ append_launch_audit_record() {
     "codex_rules_assurance_configured=$(codex_rules_assurance)" \
     "codex_rules_mutability_effective_initial=$(codex_rules_effective_mutability_initial)" \
     "codex_rules_assurance_effective_initial=$(codex_rules_effective_assurance_initial)" \
+    "provider_native_sandbox_configured=$(provider_native_sandbox_configured)" \
+    "provider_native_sandbox_effective=$(provider_native_sandbox_effective)" \
+    "provider_native_sandbox_reason=$(provider_native_sandbox_reason)" \
     "observability_assurance=$(observability_assurance)" \
     "log_level=${LOG_LEVEL}" \
     "debug_log_enabled=$([[ -n "${DEBUG_LOG_PATH}" ]] && printf '1' || printf '0')" \
@@ -1219,6 +1293,9 @@ append_exit_audit_record() {
     "codex_rules_assurance_configured=$(codex_rules_assurance)" \
     "codex_rules_mutability_effective_final=$(codex_rules_effective_mutability_with_session_assurance "${final_assurance}")" \
     "codex_rules_assurance_effective_final=$(codex_rules_effective_assurance_with_session_assurance "${final_assurance}")" \
+    "provider_native_sandbox_configured=$(provider_native_sandbox_configured)" \
+    "provider_native_sandbox_effective=$(provider_native_sandbox_effective)" \
+    "provider_native_sandbox_reason=$(provider_native_sandbox_reason)" \
     "session_assurance_initial=$(session_assurance_initial)" \
     "session_assurance_final=${final_assurance}" \
     "package_mutation_downgraded=${downgraded}"
@@ -2408,6 +2485,9 @@ print_inspect_state() {
   printf 'container_assurance=%s\n' "$(container_assurance)"
   printf 'autonomy_assurance=%s\n' "$(autonomy_assurance)"
   printf 'observability_assurance=%s\n' "$(observability_assurance)"
+  printf 'provider_native_sandbox_configured=%s\n' "$(provider_native_sandbox_configured)"
+  printf 'provider_native_sandbox_effective=%s\n' "$(provider_native_sandbox_effective)"
+  printf 'provider_native_sandbox_reason=%s\n' "$(provider_native_sandbox_reason)"
   printf 'log_level=%s\n' "${LOG_LEVEL}"
   printf 'profile_dir=%s\n' "$(profile_dir "${COLIMA_PROFILE}")"
   printf 'profile_marker=%s\n' "$(profile_marker_path "${COLIMA_PROFILE}")"
@@ -4869,6 +4949,10 @@ printf 'codex_rules_mutability_configured=%s\n' "${CODEX_RULES_MUTABILITY}" >&2
 printf 'codex_rules_assurance_configured=%s\n' "$(codex_rules_assurance)" >&2
 printf 'codex_rules_mutability_effective_initial=%s\n' "$(codex_rules_effective_mutability_initial)" >&2
 printf 'codex_rules_assurance_effective_initial=%s\n' "$(codex_rules_effective_assurance_initial)" >&2
+printf 'provider_native_sandbox_configured=%s effective=%s reason=%s\n' \
+  "$(provider_native_sandbox_configured)" \
+  "$(provider_native_sandbox_effective)" \
+  "$(provider_native_sandbox_reason)" >&2
 printf 'session_assurance_initial=%s\n' "$(session_assurance_initial)" >&2
 if [[ -n "${INJECTION_POLICY_SHA256}" ]]; then
   printf 'injection_policy_sha256=%s credential_keys=%s ssh_injected=%s\n' \

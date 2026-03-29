@@ -142,6 +142,21 @@ codex_args_include_profile() {
   return 1
 }
 
+sanitize_gemini_sandbox_env() {
+  unset GEMINI_SANDBOX
+  unset GEMINI_SANDBOX_IMAGE
+  unset GEMINI_SANDBOX_IMAGE_DEFAULT
+  unset GEMINI_SANDBOX_PROXY_COMMAND
+  unset BUILD_SANDBOX
+  unset SANDBOX
+  unset SANDBOX_FLAGS
+  unset SANDBOX_MOUNTS
+  unset SANDBOX_ENV
+  unset SANDBOX_PORTS
+  unset SANDBOX_SET_UID_GID
+  unset SEATBELT_PROFILE
+}
+
 case "${WORKCELL_AGENT_AUTONOMY}" in
   yolo | prompt) ;;
   *)
@@ -191,9 +206,10 @@ case "${AGENT_NAME}" in
       "$@"
     ;;
   gemini)
+    sanitize_gemini_sandbox_env
     reject_unsafe_gemini_args "$@"
     # Gemini CLI self-relaunch conflicts with Workcell's protected exec boundary.
-    GEMINI_CLI_NO_RELAUNCH=1 exec /usr/local/libexec/workcell/real/node \
+    GEMINI_CLI_NO_RELAUNCH=1 GEMINI_SANDBOX=false exec /usr/local/libexec/workcell/real/node \
       /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"
