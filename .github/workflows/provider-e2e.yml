@@ -45,7 +45,7 @@ jobs:
   provider-e2e:
     name: Provider Authenticated Smoke (${{ inputs.provider }})
     needs: provider-e2e-guard
-    runs-on:
+    runs-on: # zizmor: ignore[self-hosted-runner] requires reviewed macOS+Colima authenticated boundary coverage
       - self-hosted
       - macOS
     environment:

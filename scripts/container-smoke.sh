@@ -301,6 +301,41 @@ run_container() {
     "${IMAGE_TAG}" "${@:2}"
 }
 
+run_container_stdin() {
+  local agent="$1"
+  local docker_workspace=""
+  shift
+
+  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
+  populate_workspace_import_mounts
+  populate_runtime_security_args ephemeral
+
+  docker_cmd run --rm -i \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
+    --user 0:0 \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+    -e AGENT_NAME="${agent}" \
+    -e AGENT_UI=cli \
+    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_HOST_UID="${HOST_UID}" \
+    -e WORKCELL_HOST_GID="${HOST_GID}" \
+    -e WORKCELL_HOST_USER="${HOST_USER}" \
+    -e CODEX_PROFILE=strict \
+    -e HOME=/state/agent-home \
+    -e CODEX_HOME=/state/agent-home/.codex \
+    -e TMPDIR=/state/tmp \
+    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
+    -e WORKCELL_RUNTIME=1 \
+    -e WORKSPACE=/workspace \
+    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    -v "${docker_workspace}:/workspace" \
+    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
+    --entrypoint "$1" \
+    "${IMAGE_TAG}" "${@:2}"
+}
+
 run_container_with_mutability() {
   local agent="$1"
   local mutability="$2"
@@ -1122,6 +1157,8 @@ grep -q "\"token\": \"claude-auth\"" "$HOME/.claude.json"
 test ! -L "$HOME/.claude.json"
 grep -q "\"token\": \"claude-auth\"" "$HOME/.claude/.credentials.json"
 test ! -L "$HOME/.claude/.credentials.json"
+grep -q "\"token\": \"claude-auth\"" "$HOME/.config/claude-code/auth.json"
+test ! -L "$HOME/.config/claude-code/auth.json"
 test ! -L "$HOME/.mcp.json"
 grep -q "\"stub\"" "$HOME/.mcp.json"
 grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
@@ -1140,57 +1177,55 @@ grep -q "\"stub\"" "$HOME/.mcp.json"
 INNER
 SCRIPT
 
-# shellcheck disable=SC2016
-run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini" bash -lc '
+run_container_with_injection_bundle_stdin gemini "${INJECTION_BUNDLE_ROOT}/gemini" bash -s <<'SCRIPT'
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
-    setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
-      set -euo pipefail
-      grep -q "Common Smoke Instructions" "$HOME/.gemini/GEMINI.md"
-      grep -q "Gemini Smoke Instructions" "$HOME/.gemini/GEMINI.md"
-      grep -q "Workspace AGENTS Instructions" "$HOME/.gemini/GEMINI.md"
-      grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
-      grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
-      jq -r ".security.auth.selectedType" "$HOME/.gemini/settings.json" | grep -q "^gemini-api-key$"
-      jq -r ".security.folderTrust.enabled" "$HOME/.gemini/settings.json" | grep -q "^false$"
-      jq -e --arg workspace "/workspace" ". == {(\$workspace): \"TRUST_FOLDER\"}" "$HOME/.gemini/trustedFolders.json" >/dev/null
-      grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
-      grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
-      mkdir -p /workspace/exfil
-      rm -f "$HOME/.gemini/settings.json.tmp" "$HOME/.gemini/trustedFolders.json.tmp"
-      ln -s /workspace/exfil/settings-clobber "$HOME/.gemini/settings.json.tmp"
-      ln -s /workspace/exfil/trusted-clobber "$HOME/.gemini/trustedFolders.json.tmp"
-      gemini --version >/dev/null 2>&1
-      test ! -e /workspace/exfil/settings-clobber
-      test ! -e /workspace/exfil/trusted-clobber
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
+    set -euo pipefail
+    grep -q "Common Smoke Instructions" "$HOME/.gemini/GEMINI.md"
+    grep -q "Gemini Smoke Instructions" "$HOME/.gemini/GEMINI.md"
+    grep -q "Workspace AGENTS Instructions" "$HOME/.gemini/GEMINI.md"
+    grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
+    grep -q "GEMINI_API_KEY=smoke-gemini-key" "$HOME/.gemini/.env"
+    jq -r ".security.auth.selectedType" "$HOME/.gemini/settings.json" | grep -q "^gemini-api-key$"
+    jq -r ".security.folderTrust.enabled" "$HOME/.gemini/settings.json" | grep -q "^false$"
+    jq -e --arg workspace "/workspace" ". == {(\$workspace): \"TRUST_FOLDER\"}" "$HOME/.gemini/trustedFolders.json" >/dev/null
+    grep -q "\"smoke\"" "$HOME/.gemini/projects.json"
+    grep -q "github.com:" "$HOME/.config/gh/hosts.yml"
+    mkdir -p /workspace/exfil
+    rm -f "$HOME/.gemini/settings.json.tmp" "$HOME/.gemini/trustedFolders.json.tmp"
+    ln -s /workspace/exfil/settings-clobber "$HOME/.gemini/settings.json.tmp"
+    ln -s /workspace/exfil/trusted-clobber "$HOME/.gemini/trustedFolders.json.tmp"
+    gemini --version >/dev/null 2>&1
+    test ! -e /workspace/exfil/settings-clobber
+    test ! -e /workspace/exfil/trusted-clobber
+    interactive_status=0
+    if timeout 20 script -qefc "gemini" /tmp/workcell-gemini-interactive.typescript </dev/null >/dev/null 2>&1; then
       interactive_status=0
-      if timeout 20 script -qefc "gemini" /tmp/workcell-gemini-interactive.typescript </dev/null >/dev/null 2>&1; then
-        interactive_status=0
-      else
-        interactive_status=$?
-      fi
-      if [[ "${interactive_status}" != "0" ]] && [[ "${interactive_status}" != "124" ]]; then
-        echo "Gemini interactive startup probe failed; transcript follows:" >&2
-        tail -n 80 /tmp/workcell-gemini-interactive.typescript >&2 || true
-        exit 1
-      fi
-      grep -q "Gemini CLI v" /tmp/workcell-gemini-interactive.typescript
-      if grep -q "Do you trust the files in this folder\\?" /tmp/workcell-gemini-interactive.typescript; then
-        echo "expected seeded Gemini trustedFolders.json to suppress the trust prompt" >&2
-        exit 1
-      fi
-      if grep -q "Gemini CLI is restarting to apply the trust changes" /tmp/workcell-gemini-interactive.typescript; then
-        echo "expected Gemini startup not to restart when the workspace is already trusted" >&2
-        exit 1
-      fi
-      if grep -q "Failed to relaunch the CLI process" /tmp/workcell-gemini-interactive.typescript; then
-        echo "expected Gemini startup not to hit the relaunch failure path" >&2
-        exit 1
-      fi
-  '"'"'
-'
+    else
+      interactive_status=$?
+    fi
+    if [[ "${interactive_status}" != "0" ]] && [[ "${interactive_status}" != "124" ]]; then
+      echo "Gemini interactive startup probe failed; transcript follows:" >&2
+      tail -n 80 /tmp/workcell-gemini-interactive.typescript >&2 || true
+      exit 1
+    fi
+    grep -q "Gemini CLI v" /tmp/workcell-gemini-interactive.typescript
+    if grep -q "Do you trust the files in this folder\\?" /tmp/workcell-gemini-interactive.typescript; then
+      echo "expected seeded Gemini trustedFolders.json to suppress the trust prompt" >&2
+      exit 1
+    fi
+    if grep -q "Gemini CLI is restarting to apply the trust changes" /tmp/workcell-gemini-interactive.typescript; then
+      echo "expected Gemini startup not to restart when the workspace is already trusted" >&2
+      exit 1
+    fi
+    if grep -q "Failed to relaunch the CLI process" /tmp/workcell-gemini-interactive.typescript; then
+      echo "expected Gemini startup not to hit the relaunch failure path" >&2
+      exit 1
+    fi
+  '
+SCRIPT
 
-# shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-invalid-bool" bash -lc '
   set -euo pipefail
   if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-invalid-bool.out 2>&1; then
@@ -1200,7 +1235,6 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-inva
   grep -q "Invalid boolean in Gemini auth env file" /tmp/gemini-invalid-bool.out
 '
 
-# shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-conflicting" bash -lc '
   set -euo pipefail
   if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-conflicting.out 2>&1; then
@@ -1210,7 +1244,6 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-conf
   grep -q "enables both GOOGLE_GENAI_USE_GCA and GOOGLE_GENAI_USE_VERTEXAI" /tmp/gemini-conflicting.out
 '
 
-# shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-partial-vertex" bash -lc '
   set -euo pipefail
   if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-partial-vertex.out 2>&1; then
@@ -1220,7 +1253,6 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-part
   grep -q "does not configure a supported Gemini auth mode" /tmp/gemini-partial-vertex.out
 '
 
-# shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-google-api-key-only-oauth" bash -lc '
   set -euo pipefail
   if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-google-api-key-only-oauth.out 2>&1; then
@@ -1230,7 +1262,6 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-goog
   grep -q "sets GOOGLE_API_KEY without GOOGLE_GENAI_USE_VERTEXAI=true" /tmp/gemini-google-api-key-only-oauth.out
 '
 
-# shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-project-only-oauth" bash -lc '
   set -euo pipefail
   if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-project-only-oauth.out 2>&1; then
@@ -1240,7 +1271,6 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-proj
   grep -q "does not configure a supported Gemini auth mode" /tmp/gemini-project-only-oauth.out
 '
 
-# shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-malformed" bash -lc '
   set -euo pipefail
   if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-malformed.out 2>&1; then
@@ -1250,19 +1280,17 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-malf
   grep -q "Malformed Gemini auth env file" /tmp/gemini-malformed.out
 '
 
-# shellcheck disable=SC2016
-run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-gcloud-adc" bash -lc '
+run_container_with_injection_bundle_stdin gemini "${INJECTION_BUNDLE_ROOT}/gemini-gcloud-adc" bash -s <<'SCRIPT'
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     jq -r ".security.auth.selectedType" "$HOME/.gemini/settings.json" | grep -q "^vertex-ai$"
     grep -q "GOOGLE_CLOUD_PROJECT=smoke-project" "$HOME/.gemini/.env"
     grep -q "\"authorized_user\"" "$HOME/.config/gcloud/application_default_credentials.json"
-  '"'"'
-'
+  '
+SCRIPT
 
-# shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-invalid-oauth" bash -lc '
   set -euo pipefail
   if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-invalid-oauth.out 2>&1; then
@@ -1272,7 +1300,6 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-inva
   grep -q "Gemini OAuth config must contain a JSON object" /tmp/gemini-invalid-oauth.out
 '
 
-# shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-invalid-adc" bash -lc '
   set -euo pipefail
   if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-invalid-adc.out 2>&1; then
@@ -1282,7 +1309,6 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-inva
   grep -q "Google ADC config must contain a JSON object with a non-empty string type" /tmp/gemini-invalid-adc.out
 '
 
-# shellcheck disable=SC2016
 run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-invalid-projects" bash -lc '
   set -euo pipefail
   if /usr/local/bin/workcell-entrypoint gemini --version >/tmp/gemini-invalid-projects.out 2>&1; then
@@ -1292,17 +1318,16 @@ run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-inva
   grep -q "Gemini projects config must contain a JSON object with an object-valued projects field" /tmp/gemini-invalid-projects.out
 '
 
-# shellcheck disable=SC2016
-run_container_with_injection_bundle gemini "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express" bash -lc '
+run_container_with_injection_bundle_stdin gemini "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express" bash -s <<'SCRIPT'
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     jq -r ".security.auth.selectedType" "$HOME/.gemini/settings.json" | grep -q "^vertex-ai$"
     grep -q "GOOGLE_GENAI_USE_VERTEXAI=true" "$HOME/.gemini/.env"
     grep -q "GOOGLE_API_KEY=smoke-google-key" "$HOME/.gemini/.env"
-  '"'"'
-'
+  '
+SCRIPT
 
 WORKSPACE_IMPORT_ROOT_FALLBACK="$(mktemp -d "${ROOT_DIR}/tmp/workcell-import-fallback.XXXXXX")"
 cat <<'EOF' >"${WORKSPACE_IMPORT_ROOT_FALLBACK}/AGENTS.md"
@@ -1314,25 +1339,23 @@ align_path_for_mapped_runtime_user "${WORKSPACE_IMPORT_ROOT_FALLBACK}" 0644 0755
 ORIGINAL_WORKSPACE_IMPORT_ROOT="${WORKSPACE_IMPORT_ROOT}"
 WORKSPACE_IMPORT_ROOT="${WORKSPACE_IMPORT_ROOT_FALLBACK}"
 
-# shellcheck disable=SC2016
-run_container claude bash -lc '
+run_container_stdin claude bash -s <<'SCRIPT'
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint claude --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     grep -q "Workspace AGENTS Instructions" "$HOME/.claude/CLAUDE.md"
-  '"'"'
-'
+  '
+SCRIPT
 
-# shellcheck disable=SC2016
-run_container gemini bash -lc '
+run_container_stdin gemini bash -s <<'SCRIPT'
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     grep -q "Workspace AGENTS Instructions" "$HOME/.gemini/GEMINI.md"
-  '"'"'
-'
+  '
+SCRIPT
 
 WORKSPACE_IMPORT_ROOT="${ORIGINAL_WORKSPACE_IMPORT_ROOT}"
 
@@ -1623,12 +1646,11 @@ run_entrypoint claude claude --version >/dev/null
 run_entrypoint_with_init_profile codex build codex --version >/dev/null
 run_entrypoint gemini gemini --version >/dev/null
 
-# shellcheck disable=SC2016
-run_container codex bash -lc '
+run_container_stdin codex bash -s <<'SCRIPT'
   set -euo pipefail
   CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
   /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
     grep -q "Workspace AGENTS Instructions" "$CODEX_HOME/AGENTS.md"
@@ -1637,14 +1659,13 @@ run_container codex bash -lc '
       exit 1
     fi
     grep -q "Nested Workspace AGENTS Instructions" /workspace/nested/AGENTS.md
-  '"'"'
-'
+  '
+SCRIPT
 
-# shellcheck disable=SC2016
-run_container claude bash -lc '
+run_container_stdin claude bash -s <<'SCRIPT'
   set -euo pipefail
   AGENT_NAME=claude /usr/local/bin/workcell-entrypoint claude --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     grep -q "Workspace AGENTS Instructions" "$HOME/.claude/CLAUDE.md"
     grep -q "Workspace Claude Instructions" "$HOME/.claude/CLAUDE.md"
@@ -1657,14 +1678,13 @@ run_container claude bash -lc '
       exit 1
     fi
     grep -q "Nested Workspace Claude Instructions" /workspace/nested/CLAUDE.md
-  '"'"'
-'
+  '
+SCRIPT
 
-# shellcheck disable=SC2016
-run_container gemini bash -lc '
+run_container_stdin gemini bash -s <<'SCRIPT'
   set -euo pipefail
   AGENT_NAME=gemini /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     grep -q "Workspace AGENTS Instructions" "$HOME/.gemini/GEMINI.md"
     grep -q "Workspace Gemini Instructions" "$HOME/.gemini/GEMINI.md"
@@ -1677,48 +1697,43 @@ run_container gemini bash -lc '
       exit 1
     fi
     grep -q "Nested Workspace Gemini Instructions" /workspace/nested/GEMINI.md
-  '"'"'
-'
+  '
+SCRIPT
 
-# shellcheck disable=SC2016
-run_container codex bash -lc '
+run_container_stdin codex bash -s <<'SCRIPT'
   set -euo pipefail
   CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
   AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=yolo WORKCELL_CODEX_RULES_MUTABILITY=session /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
     test ! -L "$CODEX_HOME/rules"
     printf "\n# yolo-session-marker\n" >>"$CODEX_HOME/rules/default.rules"
     AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=yolo WORKCELL_CODEX_RULES_MUTABILITY=session /usr/local/bin/workcell-entrypoint codex --version >/dev/null
     grep -q "^# yolo-session-marker$" "$CODEX_HOME/rules/default.rules"
-  '"'"'
-'
+  '
+SCRIPT
 
-# shellcheck disable=SC2016
-run_container codex bash -lc '
+run_container_stdin codex bash -s <<'SCRIPT'
   set -euo pipefail
   CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
   AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=prompt /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
     test ! -L "$CODEX_HOME/rules"
     printf "\n# prompt-session-marker\n" >>"$CODEX_HOME/rules/default.rules"
     AGENT_NAME=codex WORKCELL_AGENT_AUTONOMY=prompt /usr/local/bin/workcell-entrypoint codex --version >/dev/null
     grep -q "^# prompt-session-marker$" "$CODEX_HOME/rules/default.rules"
-  '"'"'
-'
+  '
+SCRIPT
 
-HOST_UID_LITERAL="${HOST_UID}"
-HOST_GID_LITERAL="${HOST_GID}"
-# shellcheck disable=SC2016
-run_container codex bash -lc '
+run_container_stdin codex bash -s <<'SCRIPT'
   set -euo pipefail
   cat <<EOF >/tmp/workcell-mutable-runtime-check.sh
 set -euo pipefail
-test "\$(id -u)" = "'"${HOST_UID_LITERAL}"'"
-test "\$(id -g)" = "'"${HOST_GID_LITERAL}"'"
+test "\$(id -u)" = "${WORKCELL_HOST_UID}"
+test "\$(id -g)" = "${WORKCELL_HOST_GID}"
 if sudo -n true >/tmp/workcell-mutable-sudo.out 2>&1; then
   echo "expected mutable runtime user to keep unrestricted sudo blocked" >&2
   exit 1
@@ -1745,7 +1760,7 @@ EOF
     exit 1
   fi
   workcell_reexec_as_runtime_user /tmp/workcell-mutable-runtime-check.sh
-'
+SCRIPT
 
 if run_container codex bash -lc '
   set -euo pipefail
@@ -1909,8 +1924,7 @@ else
   exit 1
 fi
 
-# shellcheck disable=SC2016
-run_container codex bash -lc '
+run_container_stdin codex bash -s <<'SCRIPT'
   set -euo pipefail
   test -f /usr/local/libexec/workcell/control-plane-manifest.json
   jq -e ".schema_version == 2" /usr/local/libexec/workcell/control-plane-manifest.json >/dev/null
@@ -1920,9 +1934,8 @@ run_container codex bash -lc '
     exit 1
   fi
   grep -q "Workcell control-plane manifest mismatch for /opt/workcell/adapters/codex/.codex/config.toml" /tmp/workcell-control-plane-tamper.out
-'
+SCRIPT
 
-# shellcheck disable=SC2016
 run_container claude bash -lc '
   set -euo pipefail
   if (printf "\n# tampered during smoke\n" >>/etc/claude-code/managed-settings.json) \
@@ -1938,8 +1951,7 @@ run_container claude bash -lc '
   fi
 '
 
-# shellcheck disable=SC2016
-run_container claude bash -lc '
+run_container_stdin claude bash -s <<'SCRIPT'
   set -euo pipefail
   rm -f /etc/claude-code/managed-settings.json
   ln -s /opt/workcell/adapters/claude/managed-settings.json /etc/claude-code/managed-settings.json
@@ -1949,9 +1961,8 @@ run_container claude bash -lc '
   fi
   grep -q "Workcell control-plane artifact must not be a symlink: /etc/claude-code/managed-settings.json" \
     /tmp/workcell-control-plane-claude-symlink.out
-'
+SCRIPT
 
-# shellcheck disable=SC2016
 run_container codex bash -lc '
   set -euo pipefail
   mkdir -p /tmp/workcell-control-plane-codex-parent
@@ -1966,7 +1977,6 @@ run_container codex bash -lc '
     /tmp/workcell-control-plane-codex-parent-symlink.out
 '
 
-# shellcheck disable=SC2016
 run_container gemini bash -lc '
   set -euo pipefail
   printf "\n# tampered during smoke\n" >>/opt/workcell/adapters/gemini/.gemini/settings.json
@@ -1977,11 +1987,11 @@ run_container gemini bash -lc '
   grep -q "Workcell control-plane manifest mismatch for /opt/workcell/adapters/gemini/.gemini/settings.json" /tmp/workcell-control-plane-gemini-tamper.out
 '
 
-# shellcheck disable=SC2016
-run_container codex bash -lc '
+run_container codex bash -lc "$(
+  cat <<'SCRIPT'
   set -euo pipefail
   /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
     test "$(id -u)" != 0
@@ -2109,7 +2119,7 @@ run_container codex bash -lc '
     codex features enable unified_exec >/tmp/codex-features-enable.out 2>/tmp/codex-features-enable.err
     assert_codex_stderr_clean /tmp/codex-features-enable.err
     assert_codex_feature_value true
-  '"'"'
+  '
   if /usr/local/libexec/workcell/real/codex --version >/tmp/codex-real-path.out 2>&1; then
     echo "expected direct real Codex payload execution to fail" >&2
     exit 1
@@ -2141,13 +2151,13 @@ run_container codex bash -lc '
     /opt/workcell/adapters/codex/.codex/rules/default.rules
   grep -q "git commit -n -m test" \
     /opt/workcell/adapters/codex/.codex/rules/default.rules
-  cat <<'\''EOF'\'' >/tmp/workcell-bashenv.sh
+  cat <<'EOF' >/tmp/workcell-bashenv.sh
 touch /tmp/workcell-bashenv-ran
 EOF
   rm -f /tmp/workcell-bashenv-ran
   BASH_ENV=/tmp/workcell-bashenv.sh node --version >/tmp/node-bashenv.out 2>&1
   test ! -e /tmp/workcell-bashenv-ran
-  cat <<'\''EOF'\'' >/tmp/workcell-wrapper-bashenv.sh
+  cat <<'EOF' >/tmp/workcell-wrapper-bashenv.sh
 exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/codex --version
 EOF
   if BASH_ENV=/tmp/workcell-wrapper-bashenv.sh bash /usr/local/libexec/workcell/provider-wrapper.sh >/tmp/provider-wrapper-bashenv.out 2>&1; then
@@ -2155,7 +2165,7 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/provider-wrapper-bashenv.out
-  cat <<'\''EOF'\'' >/tmp/workcell-node-wrapper-bashenv.sh
+  cat <<'EOF' >/tmp/workcell-node-wrapper-bashenv.sh
 exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/node --version
 EOF
   if BASH_ENV=/tmp/workcell-node-wrapper-bashenv.sh bash /usr/local/libexec/workcell/node-wrapper.sh --version >/tmp/node-wrapper-bashenv.out 2>&1; then
@@ -2462,7 +2472,7 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/env-path-node.out
-  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/workcell-child-envp-bypass.js"
+  cat <<'EOF' >"${workspace_exec_scratch}/workcell-child-envp-bypass.js"
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const scratch = process.env.WORKCELL_EXEC_SCRATCH;
@@ -2550,7 +2560,7 @@ EOF
   fi
   grep -q "Workcell blocked direct provider script execution via node." /tmp/node-provider-env.out
   cp /bin/true "${workspace_exec_scratch}/not-an-addon.node"
-  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/workcell-native-addon-require.js"
+  cat <<'EOF' >"${workspace_exec_scratch}/workcell-native-addon-require.js"
 const scratch = process.env.WORKCELL_EXEC_SCRATCH;
 
 try {
@@ -2572,7 +2582,7 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-gemini.out
-  cat <<'\''EOF'\'' >/tmp/workcell-provider-import.mjs
+  cat <<'EOF' >/tmp/workcell-provider-import.mjs
 await import("/tmp/workcell-provider-copy/node_modules/@google/gemini-cli/dist/index.js");
 EOF
   if node /tmp/workcell-provider-import.mjs >/tmp/node-provider-copy-import.out 2>&1; then
@@ -2581,7 +2591,7 @@ EOF
   fi
   grep -Eq "Workcell blocked provider package execution via public node.|Workcell blocked public node execution outside the mounted workspace." /tmp/node-provider-copy-import.out
   rm -f "${workspace_exec_scratch}/not-an-addon.node" "${workspace_exec_scratch}/workcell-native-addon-require.js"
-  cat <<'\''EOF'\'' >/tmp/workcell-node-public-preload.js
+  cat <<'EOF' >/tmp/workcell-node-public-preload.js
 require("fs").writeFileSync("/tmp/workcell-node-public-preload-ran", "1")
 process.exit(99)
 EOF
@@ -2593,7 +2603,7 @@ EOF
     exit 1
   fi
   test ! -e /tmp/workcell-node-public-preload-ran
-  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/workcell-node-env-check.js"
+  cat <<'EOF' >"${workspace_exec_scratch}/workcell-node-env-check.js"
 console.log(JSON.stringify({
   nodeExtra: process.env.NODE_EXTRA_CA_CERTS ?? "",
   sslFile: process.env.SSL_CERT_FILE ?? "",
@@ -2620,16 +2630,16 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked dynamic Node code-loading option outside provider wrappers." /tmp/node-public-default-config-file.out
-  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/git"
+  cat <<'EOF' >"${workspace_exec_scratch}/git"
 #!/bin/sh
-printf '\''path-bypass-git\n'\''
+printf 'path-bypass-git\n'
 EOF
-  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/node"
+  cat <<'EOF' >"${workspace_exec_scratch}/node"
 #!/bin/sh
-printf '\''path-bypass-node\n'\''
+printf 'path-bypass-node\n'
 EOF
   chmod 0700 "${workspace_exec_scratch}/git" "${workspace_exec_scratch}/node"
-  cat <<'\''EOF'\'' >"${workspace_exec_scratch}/workcell-path-sanitize.js"
+  cat <<'EOF' >"${workspace_exec_scratch}/workcell-path-sanitize.js"
 const { spawnSync } = require("node:child_process");
 
 const git = spawnSync("git", ["--version"], { encoding: "utf8" });
@@ -2661,7 +2671,7 @@ EOF
   else
     echo "Skipping nested workspace mutable-exec smoke checks for the remote validator bind-mount path." >&2
   fi
-  if printf '\''console.log("workcell")\n'\'' | node >/tmp/node-stdin.out 2>&1; then
+  if printf 'console.log("workcell")\n' | node >/tmp/node-stdin.out 2>&1; then
     echo "expected public node wrapper to reject stdin-driven execution" >&2
     exit 1
   fi
@@ -2671,7 +2681,7 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked public node execution outside the mounted workspace.|Workcell blocked provider package execution via public node." /tmp/node-workspace-env.out
-  cat <<'\''EOF'\'' >/tmp/workcell-node-preload.js
+  cat <<'EOF' >/tmp/workcell-node-preload.js
 require("fs").writeFileSync("/tmp/workcell-node-preload-ran", "1")
 process.exit(99)
 EOF
@@ -3028,7 +3038,7 @@ EOF
   git config user.name "Workcell Smoke"
   git config user.email "workcell-smoke@example.com"
   mkdir -p .git/hooks
-  cat >.git/hooks/pre-commit <<'"'"'EOF'"'"'
+  cat >.git/hooks/pre-commit <<'EOF'
 #!/usr/bin/env sh
 echo "hook ran" >&2
 exit 1
@@ -3052,12 +3062,13 @@ EOF
     exit 1
   fi
   grep -Eq "hook ran|pre-commit" /tmp/git-guard-xdg-config.out
-'
+SCRIPT
+)"
 
-# shellcheck disable=SC2016
-run_container claude bash -lc '
+run_container claude bash -lc "$(
+  cat <<'SCRIPT'
   /usr/local/bin/workcell-entrypoint claude --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     claude --version 2>&1 | grep -q "Claude Code"
     test -f "$HOME/.claude/settings.json"
@@ -3068,7 +3079,7 @@ run_container claude bash -lc '
     test -f /etc/claude-code/managed-settings.json
     jq -r ".disableBypassPermissionsMode" /etc/claude-code/managed-settings.json | grep -q "^allow$"
     jq -r ".hooks.PreToolUse[0].hooks[0].command" "$HOME/.claude/settings.json" | grep -q "guard-bash.sh"
-  '"'"'
+  '
   if claude --dangerously-skip-permissions >/tmp/claude-nested-danger.out 2>&1; then
     echo "expected nested Claude invocation to reject unsafe overrides" >&2
     exit 1
@@ -3099,7 +3110,7 @@ run_container claude bash -lc '
     exit 1
   fi
   grep -q "Workcell blocked unsafe Claude override" /tmp/claude-nested-breakglass.out
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     if (
       cat <<'\''EOF'\'' >"$HOME/.claude/settings.json"
@@ -3114,8 +3125,8 @@ EOF
     claude --version >/dev/null 2>&1
     test -L "$HOME/.claude/settings.json"
     test "$(readlink "$HOME/.claude/settings.json")" = "/opt/workcell/adapters/claude/.claude/settings.json"
-  '"'"'
-  printf "%s" "{\"tool_input\":{\"command\":\"bash -lc '\''git commit -n -m smoke'\''\"}}" \
+  '
+  jq -n --arg cmd "bash -lc 'git commit -n -m smoke'" "{\"tool_input\":{\"command\":\$cmd}}" \
     | /opt/workcell/adapters/claude/hooks/guard-bash.sh >/tmp/claude-hook-git.out 2>&1 && {
       echo "expected Claude guard hook to reject nested-shell git bypass" >&2
       exit 1
@@ -3165,7 +3176,7 @@ EOF
     }
   grep -q "BLOCKED:" /tmp/claude-hook-glob.out
   rm -f ./claude
-  cat >/tmp/claude-hook-positional.json <<'"'"'EOF'"'"'
+  cat >/tmp/claude-hook-positional.json <<'EOF'
 {"tool_input":{"command":"set -- cl aude; \"$1$2\" --dangerously-skip-permissions"}}
 EOF
   /opt/workcell/adapters/claude/hooks/guard-bash.sh </tmp/claude-hook-positional.json >/tmp/claude-hook-positional.out 2>&1 && {
@@ -3233,12 +3244,13 @@ EOF
       exit 1
     }
   grep -q "BLOCKED:" /tmp/claude-hook-home-control-plane.out
-'
+SCRIPT
+)"
 
-# shellcheck disable=SC2016
-run_container gemini bash -lc '
+run_container gemini bash -lc "$(
+  cat <<'SCRIPT'
   /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     out="$(gemini --version 2>&1)"
     echo "$out"
@@ -3254,7 +3266,7 @@ run_container gemini bash -lc '
     test -f "$HOME/.gemini/settings.json"
     test -f "$HOME/.gemini/GEMINI.md"
     test -f "$HOME/.gemini/projects.json"
-  '"'"'
+  '
   if gemini --yolo >/tmp/gemini-nested-yolo.out 2>&1; then
     echo "expected nested Gemini invocation to reject unsafe overrides" >&2
     exit 1
@@ -3300,14 +3312,15 @@ run_container gemini bash -lc '
   HOME=/workspace gemini --version >/dev/null 2>&1
   test ! -e /workspace/.gemini/settings.json
   test ! -e /workspace/.gemini/projects.json
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '"'"'
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     jq -r ".general.enableAutoUpdate" "$HOME/.gemini/settings.json" | grep -q "^false$"
     jq -r ".general.enableAutoUpdateNotification" "$HOME/.gemini/settings.json" | grep -q "^false$"
     gemini --version >/dev/null 2>&1
     jq -r ".general.enableAutoUpdate" "$HOME/.gemini/settings.json" | grep -q "^false$"
     jq -r ".general.enableAutoUpdateNotification" "$HOME/.gemini/settings.json" | grep -q "^false$"
-  '"'"'
-'
+  '
+SCRIPT
+)"
 
 echo "Workcell container smoke passed."

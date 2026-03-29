@@ -27,9 +27,9 @@ jobs:
     environment:
       name: hosted-controls-audit
     permissions:
-      actions: read
+      actions: read # Read workflow metadata needed by artifact and code-scanning actions.
       contents: read
-      security-events: write
+      security-events: write # Upload SARIF results produced during release preflight scans.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
@@ -116,7 +116,7 @@ jobs:
         run: |
           docker build \
             -f tools/validator/Dockerfile \
-            -t workcell-validator:${{ github.sha }} \
+            -t "workcell-validator:${GITHUB_SHA}" \
             .
 
       - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -135,7 +135,7 @@ jobs:
           docker run --rm \
             -v "${PWD}:/workspace" \
             -w /workspace \
-            workcell-validator:${{ github.sha }} \
+            "workcell-validator:${GITHUB_SHA}" \
             ./scripts/validate-repo.sh
 
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
@@ -167,6 +167,7 @@ jobs:
         with:
           advanced-security: false
           inputs: .github/workflows
+          persona: auditor
           version: 1.23.1
 
       - name: Run container smoke
@@ -198,12 +199,12 @@ jobs:
       name: release
       url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
     permissions:
-      actions: read
-      artifact-metadata: write
-      attestations: write
-      contents: write
-      id-token: write
-      packages: write
+      actions: read # Read preflight artifacts from the Actions API.
+      artifact-metadata: write # Publish artifact metadata alongside release assets.
+      attestations: write # Generate GitHub attestations for released artifacts.
+      contents: write # Create the GitHub release and upload release assets.
+      id-token: write # Mint OIDC tokens for signing and attestation workflows.
+      packages: write # Push the container image to GitHub Container Registry.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -257,7 +258,7 @@ jobs:
         run: |
           docker build \
             -f tools/validator/Dockerfile \
-            -t workcell-validator:${{ github.sha }} \
+            -t "workcell-validator:${GITHUB_SHA}" \
             .
 
       - name: Prepare release bundle
@@ -283,7 +284,7 @@ jobs:
             -e ARCHIVE_REF="${GITHUB_SHA}" \
             -e BUNDLE_NAME="${bundle}" \
             -e BUNDLE_PREFIX="workcell-${GITHUB_REF_NAME}/" \
-            workcell-validator:${{ github.sha }} \
+            "workcell-validator:${GITHUB_SHA}" \
             -lc '
               set -euo pipefail
               bundle_tar="/dist/${BUNDLE_NAME%.tar.gz}.tar"

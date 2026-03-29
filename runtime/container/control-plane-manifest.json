@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "b3e68329056e71dd0b221343653685d4ce31024bcc418aa312494ae00e0148fa"
+      "sha256": "d268e5e21f22ce907fdd3442290d4baa4de44901a847032d1fa151d0c978b106"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts.py",
@@ -14,7 +14,7 @@
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
-      "sha256": "d18de3e1aebf4ed4d087f230f259e3bd6548be173441bf331b451eda855b290b"
+      "sha256": "e698ad42b4df7af53743a27c4f70e234247cbbcb407888f356e1e3ffa363e977"
     }
   ],
   "runtime_artifacts": [
@@ -130,7 +130,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/apt-helper.sh",
       "runtime_path": "/usr/local/libexec/workcell/apt-helper.sh",
-      "sha256": "96237b87fd48a0eb723dfbc2be57403f69f1618c12b0d38f66c80c7d0e3a049b"
+      "sha256": "5b4dc938607e77ab7d19ad9f6b5c7c8677c32bf729d18c95090ba20ed19192b2"
     },
     {
       "kind": "runtime-control-plane",
@@ -142,7 +142,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "733f2b5cebdf982eb82d4b00cc559fb235abbd6fb7396fe46f9e44041293f9f1"
+      "sha256": "bede7aa5a32d3b0dbb491368abfe919c84c8e8a0640e6fafbf49d7dc53716b93"
     },
     {
       "kind": "runtime-control-plane",
@@ -154,7 +154,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "24b8e3d5d2b0388fe237b5c1742309bb7125d500960eea0a49a56f76a743067c"
+      "sha256": "93d571891e67ff872e419729d40a07f2900c7c2d37bc934216380d3e21111298"
     },
     {
       "kind": "runtime-control-plane",

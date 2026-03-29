@@ -128,8 +128,8 @@ select_workcell_docker_context() {
 
   local candidate=""
   local attempted=""
-  local discovered_context=""
-  local discovered_attempted=""
+  local attempted_candidate=""
+  local already_attempted=0
 
   if [[ "$#" -eq 0 ]]; then
     set -- colima default
@@ -156,26 +156,27 @@ select_workcell_docker_context() {
     fi
   done
 
-  while IFS= read -r discovered_context; do
-    [[ -n "${discovered_context}" ]] || continue
-    case ",${attempted}," in
-      *,"${discovered_context}",*)
-        continue
-        ;;
-    esac
-    if [[ -n "${discovered_attempted}" ]]; then
-      discovered_attempted+=", "
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    already_attempted=0
+    for attempted_candidate in "$@"; do
+      if [[ "${attempted_candidate}" == "${candidate}" ]]; then
+        already_attempted=1
+        break
+      fi
+    done
+    if [[ "${already_attempted}" -eq 1 ]]; then
+      continue
     fi
-    discovered_attempted+="${discovered_context}"
-    if docker_context_is_healthy "${discovered_context}"; then
-      DOCKER_CONTEXT_NAME="${discovered_context}"
+    if [[ -n "${attempted}" ]]; then
+      attempted+=", "
+    fi
+    attempted+="${candidate}"
+    if docker_context_exists "${candidate}" && docker_context_is_healthy "${candidate}"; then
+      DOCKER_CONTEXT_NAME="${candidate}"
       return 0
     fi
   done < <(docker_context_names)
-
-  if [[ -n "${discovered_attempted}" ]]; then
-    attempted+=", ${discovered_attempted}"
-  fi
 
   echo "${missing_error_prefix} (tried: ${attempted})" >&2
   exit 1
@@ -188,6 +189,24 @@ buildx_cmd() {
   else
     run_workcell_docker_client_command "${WORKCELL_TRUSTED_BUILDX_BIN}" "$@"
   fi
+}
+
+buildx_builder_matches_context() {
+  local inspect_output_path="$1"
+  local expected_endpoint="${2:-}"
+
+  [[ -n "${expected_endpoint}" ]] || return 0
+  awk -F': *' -v expected="${expected_endpoint}" '
+    $1 == "Endpoint" {
+      saw_endpoint = 1
+      if ($2 == expected) {
+        matched = 1
+      }
+    }
+    END {
+      exit((saw_endpoint && matched) ? 0 : 1)
+    }
+  ' "${inspect_output_path}"
 }
 
 prepare_workcell_buildkitd_config() {
@@ -255,11 +274,26 @@ prepare_workcell_buildkitd_config() {
 ensure_workcell_selected_builder() {
   local builder_name="${BUILDX_BUILDER:-}"
   local buildkitd_config=""
+  local expected_endpoint="${DOCKER_CONTEXT_NAME:-${DOCKER_HOST:-}}"
+  local inspect_output=""
+  local recreate_builder=0
 
   [[ -n "${builder_name}" ]] || return 0
-  if buildx_cmd inspect "${builder_name}" >/dev/null 2>&1; then
-    :
-  else
+  inspect_output="$(mktemp "${TMPDIR:-/tmp}/workcell-buildx-inspect.XXXXXX")"
+  if buildx_cmd inspect "${builder_name}" >"${inspect_output}" 2>&1; then
+    if ! buildx_builder_matches_context "${inspect_output}" "${expected_endpoint}"; then
+      recreate_builder=1
+    fi
+  elif grep -Eq '^Name:|^Nodes:' "${inspect_output}"; then
+    recreate_builder=1
+  fi
+  rm -f "${inspect_output}"
+
+  if [[ "${recreate_builder}" -eq 1 ]]; then
+    buildx_cmd rm --force "${builder_name}" >/dev/null 2>&1 || true
+  fi
+
+  if [[ "${recreate_builder}" -eq 1 ]] || ! buildx_cmd inspect "${builder_name}" >/dev/null 2>&1; then
     buildkitd_config="$(prepare_workcell_buildkitd_config || true)"
     if [[ -n "${buildkitd_config}" ]]; then
       buildx_cmd create \

@@ -261,6 +261,10 @@ require_tool python3
 require_tool shasum
 setup_workcell_trusted_docker_client
 select_docker_context
+if [[ -z "${BUILDX_BUILDER:-}" ]]; then
+  safe_builder_context="${DOCKER_CONTEXT_NAME//[^[:alnum:]_.-]/-}"
+  BUILDX_BUILDER="workcell-repro-${safe_builder_context}"
+fi
 ensure_workcell_selected_builder
 buildx_cmd inspect --bootstrap >/dev/null
 

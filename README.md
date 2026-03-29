@@ -166,22 +166,19 @@ org-wide instructions, persistent provider credentials, SSH material, and
 read-only config files without passing through host homes or sockets. If
 `~/.config/workcell/injection-policy.toml` exists, Workcell uses it by
 default; `--no-default-injection-policy` disables that for a specific launch.
-If a supported provider login succeeds interactively because auth was missing
-or stale, Workcell can offer after exit to save that working credential set
-into the default host Workcell config. That promotion step is explicit,
-host-owned, default-no, and writes only reviewed secret file(s) plus a managed
-policy include under `~/.config/workcell/`.
 `--vm-cpu`, `--vm-memory`, and `--vm-disk` tune the dedicated Colima VM;
 `--container-cpu` and `--container-memory` tune the inner runtime container
 without changing the reviewed profile defaults for other launches.
 `--log-level debug` surfaces the previously-suppressed Colima/image-build
-output during startup. `--debug-log /path/to/file` persistently captures full
-launcher plus container stdout/stderr, and `--audit-transcript /path/to/file`
+output during startup. `--debug-log /path/to/file` persistently captures
+launcher stderr plus any build/output streams that Workcell explicitly forwards
+through the launcher, `--file-trace-log /path/to/file` retains a session-home
+file transaction trace on the host, and `--audit-transcript /path/to/file`
 captures the full interactive terminal transcript including prompts and typed
-responses plus session timestamps and exit status. Both persistent host-side
-capture knobs are explicit lower-assurance choices, emit an explicit warning
-banner when enabled, apply only to real launched sessions, and stay off by
-default.
+responses plus session timestamps and exit status. All three persistent
+host-side capture knobs are explicit lower-assurance choices, emit an explicit
+warning banner when enabled, apply only to real launched sessions, and stay
+off by default.
 With `--container-mutability ephemeral`, Workcell also allows `apt` and
 `apt-get` to reach the pinned Debian snapshot endpoints so transient build
 tooling can be installed without opening the session to arbitrary distro
@@ -252,6 +249,9 @@ Common recovery paths:
 - Print the last retained audit/debug/transcript log for a profile:
   `workcell --logs audit --colima-profile workcell-...`
   Alias: `workcell logs audit --colima-profile workcell-...`
+- Print the last retained file transaction trace for a profile:
+  `workcell --logs file-trace --colima-profile workcell-...`
+  Alias: `workcell logs file-trace --colima-profile workcell-...`
 - Print the effective auth posture without launching:
   `workcell auth-status --agent codex --workspace /path/to/repo`
   This includes the primary provider auth mode, the ordered auth mode set, and
@@ -322,7 +322,7 @@ claude = "/Users/example/.config/workcell/claude-extra.md"
 
 [credentials]
 codex_auth = "/Users/example/.codex/auth.json"
-claude_auth = "/Users/example/.claude/.credentials.json"
+claude_auth = "/Users/example/.claude.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
 claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
 gemini_env = "/Users/example/.config/workcell/gemini.env"
@@ -406,8 +406,11 @@ Intentional non-goals for the safe path:
 - `scripts/pre-merge.sh`: one-command local pre-merge path that builds the
   validator image, runs workflow lint, validates the repo inside the validator
   container, then runs invariants, container smoke, release-bundle
-  reproducibility, runtime reproducibility, and optionally the remote
-  linux/amd64 lane. `--remote` runs the safe remote `validate` lane only;
+  reproducibility, host-native runtime reproducibility, and optionally the
+  remote linux/amd64 lane. The shared `scripts/verify-reproducible-build.sh`
+  entrypoint remains multi-platform by default; CI and release preflight keep
+  the cross-platform reproducibility gate. `--remote` runs the safe remote
+  `validate` lane only;
   `--remote-heavy` is the explicit shared-daemon escape hatch for remote
   `smoke` / `repro` / `release-bundle` checks. By default it requires a clean
   worktree, including untracked files. With `--allow-dirty`, local validation

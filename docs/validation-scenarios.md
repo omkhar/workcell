@@ -12,7 +12,10 @@ container smoke that does not depend on provider auth.
 
 Recommended entry points are the normal local validation commands already
 documented in the README, such as `./scripts/dev-quick-check.sh` and the
-broader pre-merge path when you need full local coverage.
+broader pre-merge path when you need the standard local developer gate. That
+path keeps repository validation, invariants, smoke, release-bundle checks, and
+host-native runtime reproducibility local; CI and release preflight remain the
+cross-platform reproducibility authority.
 
 Recommended commands:
 

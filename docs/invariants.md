@@ -25,10 +25,6 @@ environment. Provider credentials injected through the dedicated
 `[credentials]` path must not be re-staged into a second plaintext host-side
 bundle before launch; they are validated on the host, mounted read-only for the
 current session, and then copied into the ephemeral agent home.
-If Workcell later offers to save a credential set that succeeded interactively,
-that promotion must remain a separate host-side action after verified auth
-success; the live provider session must not write back into the host control
-plane directly.
 Secret-bearing sources used by the injection policy must be explicit files or
 directories owned by the invoking UID, must not be symlinks, and must not be
 group- or world-readable by default. Credential entries may also be scoped to
@@ -128,15 +124,17 @@ lower-assurance mode
 
 The reference launcher satisfies this by appending an operator-visible audit log
 under the managed Colima profile directory on each real launch and exit,
-including package-mutation downgrade events inferred from the session-assurance
-marker that the launcher copies out of the runtime after exit. Injected secret
-values themselves are not part of that durable record. By default, this durable
-audit is metadata-only. Full host-persisted stdout/stderr debug capture and
-full interactive transcript capture are explicit opt-in observability paths and
-are classified as lower-assurance because they can persist provider content
-outside the ephemeral runtime boundary. The transcript path retains terminal I/O
-plus session timestamps and the final exit code, but not the raw host launch
-command.
+including package-mutation downgrade events inferred from a host-visible
+session-assurance marker path that the launcher provides to the runtime during
+the session and, when needed, copies out after exit as a fallback. Injected
+secret values themselves are not part of that durable record. By default, this
+durable audit is metadata-only. Full host-persisted stdout/stderr debug capture
+and session-home file transaction trace capture plus full interactive
+transcript capture are explicit opt-in observability paths and are classified
+as lower-assurance because they can persist provider content or host-retained
+session metadata outside the ephemeral runtime boundary. The transcript path
+retains terminal I/O plus session timestamps and the final exit code, but not
+the raw host launch command.
 
 ## Profile expectations
 
