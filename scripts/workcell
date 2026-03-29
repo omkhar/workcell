@@ -1423,6 +1423,9 @@ Notes:
   - publish-pr runs on the host, not inside the Workcell container.
   - It uses the host Git and GitHub CLI configuration so maintainer signing
     and publication stay outside the Tier 1 container boundary.
+  - Host-side git commands explicitly bypass repo hooks during publication
+    because workspace hook content is untrusted; signed commits remain
+    mandatory.
   - The default snapshot is worktree, which stages the current tracked and
     untracked workspace changes with `git add -A` before committing.
 EOF
@@ -1636,9 +1639,11 @@ publish_pr_main() {
   local pr_url=""
   local -a cleanup_files=()
   local -a branch_cmd=()
+  local -a add_cmd=()
   local -a commit_cmd=()
   local -a push_cmd=()
   local -a pr_cmd=()
+  local -a publish_git_cmd=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1755,16 +1760,18 @@ publish_pr_main() {
   trap 'if ((${#cleanup_files[@]} > 0)); then rm -f "${cleanup_files[@]}"; fi' RETURN
 
   current_branch="$(publish_pr_current_branch "${resolved_workspace}")"
+  publish_git_cmd=("${HOST_GIT_BIN}" -c core.hooksPath=/dev/null -C "${resolved_workspace}")
   if [[ "${current_branch}" == "${branch}" ]]; then
-    branch_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" switch "${branch}")
+    branch_cmd=("${publish_git_cmd[@]}" switch --no-guess "${branch}")
   elif publish_pr_branch_exists "${resolved_workspace}" "${branch}"; then
-    branch_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" switch "${branch}")
+    branch_cmd=("${publish_git_cmd[@]}" switch --no-guess "${branch}")
   else
-    branch_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" switch -c "${branch}")
+    branch_cmd=("${publish_git_cmd[@]}" switch -c --no-guess "${branch}")
   fi
 
-  commit_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" commit -S -F "${resolved_commit_message_file}")
-  push_cmd=("${HOST_GIT_BIN}" -C "${resolved_workspace}" push -u origin "${branch}")
+  add_cmd=("${publish_git_cmd[@]}" add -A)
+  commit_cmd=("${publish_git_cmd[@]}" commit --no-verify -S -F "${resolved_commit_message_file}")
+  push_cmd=("${publish_git_cmd[@]}" push --no-verify -u origin "${branch}")
   pr_cmd=("${HOST_GH_BIN}" pr create --base "${base}" --head "${branch}" --title "${title_text}")
   if [[ "${ready}" -eq 0 ]]; then
     pr_cmd+=(--draft)
@@ -1783,7 +1790,7 @@ publish_pr_main() {
     printf 'publish_draft=%s\n' "$([[ "${ready}" -eq 0 ]] && printf '1' || printf '0')"
     emit_command "${branch_cmd[@]}"
     if [[ "${snapshot}" == "worktree" ]]; then
-      emit_command "${HOST_GIT_BIN}" -C "${resolved_workspace}" add -A
+      emit_command "${add_cmd[@]}"
     fi
     emit_command "${commit_cmd[@]}"
     emit_command "${push_cmd[@]}"
@@ -1793,7 +1800,7 @@ publish_pr_main() {
 
   run_publish_host_command_in_dir "${resolved_workspace}" "${branch_cmd[@]}"
   if [[ "${snapshot}" == "worktree" ]]; then
-    run_publish_host_command_in_dir "${resolved_workspace}" "${HOST_GIT_BIN}" -C "${resolved_workspace}" add -A
+    run_publish_host_command_in_dir "${resolved_workspace}" "${add_cmd[@]}"
   fi
   if ! publish_pr_has_staged_changes "${resolved_workspace}"; then
     echo "publish-pr found no staged changes to commit in ${resolved_workspace}." >&2

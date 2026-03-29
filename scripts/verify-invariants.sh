@@ -2437,6 +2437,16 @@ if ! sed -n '/^validate_publish_base_name()/,/^}/p' "${ROOT_DIR}/scripts/workcel
   exit 1
 fi
 
+if ! sed -n '/^publish_pr_main()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'core.hooksPath=/dev/null'; then
+  echo "Expected publish_pr_main to disable repo hooks for host-side publish git commands" >&2
+  exit 1
+fi
+
+if ! sed -n '/^publish_pr_main()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q -- '--no-verify'; then
+  echo "Expected publish_pr_main to bypass repo hooks explicitly on host-side commit and push" >&2
+  exit 1
+fi
+
 if ! sed -n '/^add_shadow_git_hooks_mount()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "copy_tree_without_symlinks"; then
   echo "Expected add_shadow_git_hooks_mount to avoid copying symlinked hook content into the readonly shadow" >&2
   exit 1
@@ -4744,10 +4754,11 @@ PUBLISH_PR_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
   --dry-run)"
 grep -q '^publish_snapshot=worktree$' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q '^publish_branch=feature/publish-fixture$' <<<"${PUBLISH_PR_DRY_RUN}"
-grep -q -- 'switch -c feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'switch -c --no-guess feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' add -A ' <<<"${PUBLISH_PR_DRY_RUN}"
-grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_DRY_RUN}"
-grep -q -- ' push -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' push --no-verify -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- 'gh pr create --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
 
 git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
@@ -4763,8 +4774,9 @@ if grep -q -- ' add -A ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"; then
   echo "publish-pr index snapshot should not auto-stage the worktree" >&2
   exit 1
 fi
-grep -q -- 'switch -c feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
-grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- 'switch -c --no-guess feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
 
 if "${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${PUBLISH_PR_FIXTURE}" \
