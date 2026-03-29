@@ -2414,6 +2414,7 @@ if ! sed -n '/^git_alias_value_is_blocked()/,/^}/p' "${ROOT_DIR}/scripts/workcel
 fi
 
 for _git_env_var in GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE; do
+  # shellcheck disable=SC2016
   printf -v _git_env_literal '"${%s:-}"' "${_git_env_var}"
   if ! grep -Fq "${_git_env_literal}" "${ROOT_DIR}/runtime/container/bin/git"; then
     echo "Expected runtime/container/bin/git to block ${_git_env_var} to prevent object-store redirection" >&2
