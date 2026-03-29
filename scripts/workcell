@@ -319,6 +319,31 @@ profile_disk_dir() {
   printf '%s/_lima/_disks/colima-%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
+remove_profile_state_dirs() {
+  local profile="$1"
+
+  rm -rf \
+    "$(profile_dir "${profile}")" \
+    "$(profile_lima_dir "${profile}")" \
+    "$(profile_disk_dir "${profile}")"
+}
+
+profile_state_dirs_exist() {
+  local profile="$1"
+  local path=""
+
+  for path in \
+    "$(profile_dir "${profile}")" \
+    "$(profile_lima_dir "${profile}")" \
+    "$(profile_disk_dir "${profile}")"; do
+    if [[ -e "${path}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 profile_colima_config_path() {
   local profile="$1"
   local candidate=""
@@ -549,21 +574,19 @@ maybe_reap_stale_profile_processes() {
 
 refresh_managed_profile() {
   local message="$1"
-  local delete_status=0
 
   echo "${message}" >&2
   stash_profile_audit_log "${COLIMA_PROFILE}"
   reap_stale_profile_processes "${COLIMA_PROFILE}"
   run_host_colima_with_timeout "${WORKCELL_COLIMA_DELETE_TIMEOUT_SECONDS:-30}" \
-    delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || delete_status=$?
+    delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
   reap_stale_profile_processes "${COLIMA_PROFILE}"
-  rm -rf "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")"
+  remove_profile_state_dirs "${COLIMA_PROFILE}"
   if profile_process_pids "${COLIMA_PROFILE}" | grep -q .; then
     echo "Failed to fully tear down managed Colima profile ${COLIMA_PROFILE} during refresh." >&2
     return 1
   fi
-  if [[ "${delete_status}" -ne 0 ]] &&
-    { [[ -e "${PROFILE_DIR}" ]] || [[ -e "$(profile_lima_dir "${COLIMA_PROFILE}")" ]]; }; then
+  if profile_state_dirs_exist "${COLIMA_PROFILE}"; then
     echo "Failed to remove managed Colima profile state for ${COLIMA_PROFILE} during refresh." >&2
     return 1
   fi
@@ -649,7 +672,7 @@ cleanup() {
         run_host_colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
       else
         run_host_colima_with_timeout "${WORKCELL_COLIMA_DELETE_TIMEOUT_SECONDS:-30}" delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
-        rm -rf "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")"
+        remove_profile_state_dirs "${COLIMA_PROFILE}"
       fi
     else
       run_host_colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
@@ -2410,11 +2433,6 @@ show_requested_logs() {
 
 delete_unmanaged_profile() {
   local profile="$1"
-  local state_dir
-  local lima_dir
-
-  state_dir="$(profile_dir "${profile}")"
-  lima_dir="$(profile_lima_dir "${profile}")"
 
   echo "Repairing conflicting unmanaged Colima profile: ${profile}" >&2
   echo "Workcell will delete the profile state and recreate it with reviewed mounts and policy." >&2
@@ -2428,9 +2446,9 @@ delete_unmanaged_profile() {
   export COLIMA_HOME="${COLIMA_STATE_ROOT}"
   maybe_reap_stale_profile_processes "${profile}"
   run_host_colima delete --profile "${profile}" --force >/dev/null 2>&1 || true
-  rm -rf "${state_dir}" "${lima_dir}"
+  remove_profile_state_dirs "${profile}"
 
-  if [[ -e "${state_dir}" ]] || [[ -e "${lima_dir}" ]]; then
+  if profile_state_dirs_exist "${profile}"; then
     echo "Failed to remove conflicting Colima profile state for ${profile}." >&2
     exit 2
   fi
