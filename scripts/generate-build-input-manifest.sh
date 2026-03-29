@@ -138,6 +138,8 @@ def walk_files(relative_root, *, exclude_parts=()):
         relative_path = path.relative_to(root_dir)
         if any(part in relative_path.parts for part in exclude_parts):
             continue
+        if "__pycache__" in relative_path.parts or path.suffix == ".pyc":
+            continue
         yield str(relative_path)
 
 def walk_doc_files():
@@ -149,6 +151,8 @@ def walk_doc_files():
             part in relative_path.parts
             for part in (".git", "dist", "tmp", "node_modules", "vendor", "target")
         ):
+            continue
+        if "__pycache__" in relative_path.parts or path.suffix == ".pyc":
             continue
         if path.suffix not in (".md", ".txt", ".1"):
             continue
@@ -164,6 +168,8 @@ def walk_repo_files():
             part in relative_path.parts
             for part in (".git", "dist", "tmp", "node_modules", "target")
         ):
+            continue
+        if "__pycache__" in relative_path.parts or path.suffix == ".pyc":
             continue
         yield str(relative_path)
 
