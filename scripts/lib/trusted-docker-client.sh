@@ -191,22 +191,51 @@ buildx_cmd() {
   fi
 }
 
+buildx_expected_endpoints() {
+  local context_endpoint=""
+
+  if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
+    printf '%s\n' "${DOCKER_CONTEXT_NAME}"
+    context_endpoint="$(run_workcell_docker_client_command \
+      docker context inspect "${DOCKER_CONTEXT_NAME}" --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+    if [[ -n "${context_endpoint}" ]] && [[ "${context_endpoint}" != "${DOCKER_CONTEXT_NAME}" ]]; then
+      printf '%s\n' "${context_endpoint}"
+    fi
+    return 0
+  fi
+
+  if [[ -n "${DOCKER_HOST:-}" ]]; then
+    printf '%s\n' "${DOCKER_HOST}"
+  fi
+}
+
 buildx_builder_matches_context() {
   local inspect_output_path="$1"
-  local expected_endpoint="${2:-}"
+  shift
+  local line=""
+  local endpoint=""
+  local expected_endpoint=""
 
-  [[ -n "${expected_endpoint}" ]] || return 0
-  awk -F': *' -v expected="${expected_endpoint}" '
-    $1 == "Endpoint" {
-      saw_endpoint = 1
-      if ($2 == expected) {
-        matched = 1
-      }
-    }
-    END {
-      exit((saw_endpoint && matched) ? 0 : 1)
-    }
-  ' "${inspect_output_path}"
+  [[ "$#" -gt 0 ]] || return 0
+  while IFS= read -r line; do
+    case "${line}" in
+      Endpoint:*)
+        endpoint="${line#Endpoint: }"
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    [[ -n "${endpoint}" ]] || continue
+    for expected_endpoint in "$@"; do
+      [[ -n "${expected_endpoint}" ]] || continue
+      if [[ "${endpoint}" == "${expected_endpoint}" ]]; then
+        return 0
+      fi
+    done
+  done < "${inspect_output_path}"
+
+  return 1
 }
 
 prepare_workcell_buildkitd_config() {
@@ -274,14 +303,18 @@ prepare_workcell_buildkitd_config() {
 ensure_workcell_selected_builder() {
   local builder_name="${BUILDX_BUILDER:-}"
   local buildkitd_config=""
-  local expected_endpoint="${DOCKER_CONTEXT_NAME:-${DOCKER_HOST:-}}"
+  local expected_endpoint=""
   local inspect_output=""
   local recreate_builder=0
+  local -a expected_endpoints=()
 
   [[ -n "${builder_name}" ]] || return 0
+  while IFS= read -r expected_endpoint; do
+    [[ -n "${expected_endpoint}" ]] && expected_endpoints+=("${expected_endpoint}")
+  done < <(buildx_expected_endpoints)
   inspect_output="$(mktemp "${TMPDIR:-/tmp}/workcell-buildx-inspect.XXXXXX")"
   if buildx_cmd inspect "${builder_name}" >"${inspect_output}" 2>&1; then
-    if ! buildx_builder_matches_context "${inspect_output}" "${expected_endpoint}"; then
+    if ! buildx_builder_matches_context "${inspect_output}" "${expected_endpoints[@]}"; then
       recreate_builder=1
     fi
   elif grep -Eq '^Name:|^Nodes:' "${inspect_output}"; then
