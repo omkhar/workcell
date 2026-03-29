@@ -1480,7 +1480,7 @@ EOF
     exit 1
   fi
 
-cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-gemini-node-env.sh"
+  cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-gemini-node-env.sh"
 #!/bin/sh
 printf '{"claude_config":"%s","relaunch":"%s","gemini_sandbox":"%s","sandbox":"%s","sandbox_flags":"%s","sandbox_set_uid_gid":"%s","seatbelt":"%s","sandbox_mounts":"%s","sandbox_env":"%s","aws":"%s","gh":"%s","ssh":"%s","args":"%s"}\n' \
   "${CLAUDE_CONFIG_DIR-}" \
