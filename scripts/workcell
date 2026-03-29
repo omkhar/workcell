@@ -621,6 +621,8 @@ declare -a WORKSPACE_IMPORT_MOUNTS=()
 declare -a CACHE_MOUNTS=()
 declare -a RUNTIME_NETWORK_ARGS=()
 
+# cleanup is only reached through trap 'cleanup' EXIT; validator/CI ShellCheck
+# still misclassifies the trap-only body as unreachable.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
   if [[ -n "${CONTROL_PLANE_SHADOW_ROOT}" ]] && [[ -e "${CONTROL_PLANE_SHADOW_ROOT}" ]]; then

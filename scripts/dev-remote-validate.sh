@@ -301,6 +301,7 @@ remote_cmd() {
     return
   fi
 
+  # Intentionally forward a vetted local argv vector through ssh unchanged.
   # shellcheck disable=SC2029
   ssh "${REMOTE_HOST}" "$@"
 }
@@ -320,6 +321,7 @@ remote_docker() {
     return
   fi
 
+  # Intentionally forward a vetted local argv vector through ssh unchanged.
   # shellcheck disable=SC2029
   ssh "${REMOTE_HOST}" docker "$@"
 }
