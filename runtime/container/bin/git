@@ -214,7 +214,10 @@ has_unsafe_git_env() {
     [[ -n "${EDITOR:-}" ]] ||
     [[ -n "${PAGER:-}" ]] ||
     [[ -n "${VISUAL:-}" ]] ||
-    [[ -n "${GIT_CONFIG_NOSYSTEM:-}" && "${GIT_CONFIG_NOSYSTEM}" != "1" ]]; then
+    [[ -n "${GIT_CONFIG_NOSYSTEM:-}" && "${GIT_CONFIG_NOSYSTEM}" != "1" ]] ||
+    [[ -n "${GIT_OBJECT_DIRECTORY:-}" ]] ||
+    [[ -n "${GIT_ALTERNATE_OBJECT_DIRECTORIES:-}" ]] ||
+    [[ -n "${GIT_INDEX_FILE:-}" ]]; then
     return 0
   fi
 
@@ -340,7 +343,7 @@ if [[ "${hooks_path_bypass}" -eq 1 ]]; then
 fi
 
 if [[ "${env_config_bypass}" -eq 1 ]]; then
-  echo "Workcell blocked git control-plane override: remove GIT_CONFIG_*, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_EXEC_PATH, askpass/editor overrides, GIT_SSH, or GIT_SSH_COMMAND overrides." >&2
+  echo "Workcell blocked git control-plane override: remove GIT_CONFIG_*, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_EXEC_PATH, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_INDEX_FILE, askpass/editor overrides, GIT_SSH, or GIT_SSH_COMMAND overrides." >&2
   exit 2
 fi
 

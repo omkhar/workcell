@@ -18,6 +18,15 @@ workcell_runtime_user_die() {
 workcell_pid1_env_value() {
   local key="$1"
 
+  case "${key}" in
+    WORKCELL_CONTAINER_MUTABILITY | WORKCELL_MODE | CODEX_PROFILE | \
+      WORKCELL_AGENT_AUTONOMY | WORKCELL_SESSION_ASSURANCE | \
+      WORKCELL_HOST_UID | WORKCELL_HOST_GID | WORKCELL_HOST_USER) ;;
+    *)
+      echo "Workcell internal error: unexpected key for pid1 env lookup: ${key}" >&2
+      return 1
+      ;;
+  esac
   [[ -r /proc/1/environ ]] || return 1
   tr '\0' '\n' </proc/1/environ | sed -n "s/^${key}=//p" | head -n1
 }
