@@ -19,7 +19,7 @@ require_tool python3
   cd "${ROOT_DIR}"
   actionlint
 )
-zizmor --config "${ROOT_DIR}/.github/zizmor.yml" "${ROOT_DIR}/.github/workflows/"*.yml
+zizmor --persona auditor --config "${ROOT_DIR}/.github/zizmor.yml" "${ROOT_DIR}/.github/workflows/"*.yml
 
 python3 - "${ROOT_DIR}" "${POLICY_PATH}" <<'PY'
 import pathlib

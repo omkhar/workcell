@@ -183,12 +183,20 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
       ;; \
   esac \
   && curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" \
+    --retry 5 \
+    --retry-all-errors \
+    --retry-delay 5 \
+    --connect-timeout 20 \
     -o /tmp/claude \
   && echo "${CLAUDE_SHA256}  /tmp/claude" | sha256sum -c - \
   && install -m 0755 /tmp/claude /usr/local/libexec/workcell/real/claude \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/claude \
   && rm -f /tmp/claude \
   && curl -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${CODEX_ARCH}.tar.gz" \
+    --retry 5 \
+    --retry-all-errors \
+    --retry-delay 5 \
+    --connect-timeout 20 \
     -o /tmp/codex.tar.gz \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex.tar.gz -C /tmp \

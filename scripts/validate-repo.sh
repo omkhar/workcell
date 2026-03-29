@@ -111,7 +111,9 @@ shell_files=(
   "${ROOT_DIR}/tests/scenarios/claude-swe/test-hook-parametric.sh"
 )
 
-shellcheck -x "${shell_files[@]}"
+for file in "${shell_files[@]}"; do
+  shellcheck -x "${file}"
+done
 shfmt -ln=bash -i 2 -ci -d "${shell_files[@]}"
 
 for file in "${shell_files[@]}"; do

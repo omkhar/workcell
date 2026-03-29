@@ -1,5 +1,4 @@
 #!/bin/bash -p
-# shellcheck disable=SC2029,SC2119,SC2120
 readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   exec /usr/bin/env -i \
@@ -302,6 +301,7 @@ remote_cmd() {
     return
   fi
 
+  # shellcheck disable=SC2029
   ssh "${REMOTE_HOST}" "$@"
 }
 
@@ -320,6 +320,7 @@ remote_docker() {
     return
   fi
 
+  # shellcheck disable=SC2029
   ssh "${REMOTE_HOST}" docker "$@"
 }
 

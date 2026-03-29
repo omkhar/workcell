@@ -45,6 +45,18 @@ assert_output_contains() {
   fi
 }
 
+assert_output_matches_regex() {
+  local regex="$1"
+  local output_path="$2"
+  local context="$3"
+
+  if ! grep -Eq -- "${regex}" "${output_path}"; then
+    echo "${context}" >&2
+    cat "${output_path}" >&2
+    exit 1
+  fi
+}
+
 free_bytes_for_path() {
   local target_path="$1"
   /bin/df -Pk "${target_path}" | awk 'NR==2 {print $4 * 1024}'
@@ -113,6 +125,30 @@ PY
 )"
 ROOT_DRY_RUN_PROFILE_DIR="${REAL_HOME}/.colima/${ROOT_DRY_RUN_PROFILE_NAME}"
 ROOT_DRY_RUN_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${ROOT_DRY_RUN_PROFILE_NAME}"
+LIVE_DEBUG_PROFILE_NAME=""
+AUDIT_RESTORE_PROFILE_NAME=""
+STRICT_REFRESH_PROFILE_NAME=""
+STRICT_PREFLIGHT_PROFILE=""
+DEBUG_LOG_PROFILE=""
+TRANSCRIPT_LOG_PROFILE=""
+BROKEN_DEBUG_POINTER_PROFILE=""
+UNMANAGED_PROFILE_NAME=""
+VERIFY_INVARIANTS_CLEANUP_ACTIVE=0
+
+delete_verify_colima_profile() {
+  local profile_name="$1"
+
+  [[ -n "${profile_name}" ]] || return 0
+  if [[ -x /opt/homebrew/bin/colima ]]; then
+    /opt/homebrew/bin/colima delete --profile "${profile_name}" --force >/dev/null 2>&1 || true
+  elif [[ -x /usr/local/bin/colima ]]; then
+    /usr/local/bin/colima delete --profile "${profile_name}" --force >/dev/null 2>&1 || true
+  fi
+  rm -rf \
+    "${REAL_HOME}/.colima/${profile_name}" \
+    "${REAL_HOME}/.colima/_lima/colima-${profile_name}" \
+    "${REAL_HOME}/.colima/_lima/_disks/colima-${profile_name}"
+}
 
 file_mode_octal() {
   local path="$1"
@@ -136,6 +172,19 @@ extract_top_level_bash_function() {
 }
 
 cleanup() {
+  [[ "${VERIFY_INVARIANTS_CLEANUP_ACTIVE}" -eq 0 ]] || return 0
+  VERIFY_INVARIANTS_CLEANUP_ACTIVE=1
+  trap - EXIT
+  set +e
+
+  delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME:-}"
+  delete_verify_colima_profile "${AUDIT_RESTORE_PROFILE_NAME:-}"
+  delete_verify_colima_profile "${STRICT_REFRESH_PROFILE_NAME:-}"
+  delete_verify_colima_profile "${STRICT_PREFLIGHT_PROFILE:-}"
+  delete_verify_colima_profile "${DEBUG_LOG_PROFILE:-}"
+  delete_verify_colima_profile "${TRANSCRIPT_LOG_PROFILE:-}"
+  delete_verify_colima_profile "${BROKEN_DEBUG_POINTER_PROFILE:-}"
+  delete_verify_colima_profile "${UNMANAGED_PROFILE_NAME:-}"
   rm -rf "${CODEX_VERIFY_HOME}"
   rm -rf "${BARRIER_VERIFY_ROOT}"
   rm -rf "${INSTALL_VERIFY_HOME}"
@@ -1047,6 +1096,7 @@ fi
 mkdir -p "${INSTALL_VERIFY_HOME}/.config/workcell"
 printf 'version = 1\n' >"${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
 mkdir -p \
+  "${INSTALL_VERIFY_HOME}/.local/state/workcell/tmp" \
   "${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile" \
   "${INSTALL_VERIFY_HOME}/.colima/_lima/colima-workcell-verify-profile" \
   "${INSTALL_VERIFY_HOME}/.colima/locks/workcell-verify-profile.lock" \
@@ -1069,6 +1119,7 @@ fi
 
 test ! -e "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
 test ! -e "${INSTALL_VERIFY_HOME}/.local/share/man/man1/workcell.1"
+test ! -e "${INSTALL_VERIFY_HOME}/.local/state/workcell"
 test ! -e "${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile"
 test ! -e "${INSTALL_VERIFY_HOME}/.colima/_lima/colima-workcell-verify-profile"
 test ! -e "${INSTALL_VERIFY_HOME}/.colima/locks/workcell-verify-profile.lock"
@@ -1077,7 +1128,114 @@ test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow"
 test -e "${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
 test ! -e "/tmp/workcell-uninstall-verify.log.$$"
 test ! -e "/tmp/workcell-docker.verify-uninstall.$$"
-grep -q 'Preserved ~/.config/workcell and any user-specified debug/transcript files.' /tmp/workcell-uninstall.out
+grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files.' /tmp/workcell-uninstall.out
+
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug >/tmp/workcell-install-debug.out 2>&1; then
+  echo "Expected scripts/install.sh --debug to succeed in a clean temporary HOME" >&2
+  cat /tmp/workcell-install-debug.out >&2
+  exit 1
+fi
+
+if [[ ! -f "${INSTALL_VERIFY_HOME}/.local/bin/workcell" ]] || [[ -L "${INSTALL_VERIFY_HOME}/.local/bin/workcell" ]]; then
+  echo "Expected debug install to write a launcher wrapper script" >&2
+  exit 1
+fi
+
+grep -q 'DEFAULT_DEBUG_LOG=' "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
+grep -q 'EXTRA_ARGS+=(--debug-log ' "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
+grep -q 'EXTRA_ARGS+=(--rebuild)' "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
+
+if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" --help >/tmp/workcell-installed-debug-help.out 2>&1; then
+  echo "Expected debug-installed ~/.local/bin/workcell wrapper to resolve support files correctly" >&2
+  cat /tmp/workcell-installed-debug-help.out >&2
+  exit 1
+fi
+
+if ! grep -q '^Usage: workcell' /tmp/workcell-installed-debug-help.out; then
+  echo "Expected debug-installed ~/.local/bin/workcell --help to print usage" >&2
+  exit 1
+fi
+
+if "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --allow-control-plane-vcs \
+  --ack-control-plane-vcs \
+  --dry-run >/tmp/workcell-installed-debug-strict-dry-run.out 2>&1; then
+  echo "Expected debug-installed ~/.local/bin/workcell strict dry-run to surface the injected --rebuild behavior" >&2
+  exit 1
+fi
+grep -q 'strict mode does not rebuild or cold-bootstrap the runtime image.' /tmp/workcell-installed-debug-strict-dry-run.out
+
+if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --mode build \
+  --allow-control-plane-vcs \
+  --ack-control-plane-vcs \
+  --dry-run >/tmp/workcell-installed-debug-dry-run.out 2>&1; then
+  echo "Expected debug-installed ~/.local/bin/workcell launch path to succeed through dry-run" >&2
+  cat /tmp/workcell-installed-debug-dry-run.out >&2
+  exit 1
+fi
+grep -q 'Workcell warning: host-persisted launcher debug stderr capture is enabled' /tmp/workcell-installed-debug-dry-run.out
+grep -q "debug_log=${INSTALL_VERIFY_HOME}/.config/workcell/debug/latest-debug.log" /tmp/workcell-installed-debug-dry-run.out
+
+if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+  --auth-status \
+  --agent codex \
+  --workspace "${ROOT_DIR}" >/tmp/workcell-installed-debug-auth-status.out 2>&1; then
+  echo "Expected debug-installed ~/.local/bin/workcell non-launch path to skip auto debug flags" >&2
+  cat /tmp/workcell-installed-debug-auth-status.out >&2
+  exit 1
+fi
+if grep -q -- '--debug-log, --file-trace-log, and --audit-transcript apply only to launched sessions.' /tmp/workcell-installed-debug-auth-status.out; then
+  echo "Expected debug-installed ~/.local/bin/workcell to skip auto debug flags on non-launch paths" >&2
+  cat /tmp/workcell-installed-debug-auth-status.out >&2
+  exit 1
+fi
+
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall-debug.out 2>&1; then
+  echo "Expected scripts/uninstall.sh to remove the debug installer wrapper cleanly" >&2
+  cat /tmp/workcell-uninstall-debug.out >&2
+  exit 1
+fi
+
+test ! -e "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
+test ! -e "${INSTALL_VERIFY_HOME}/.local/share/man/man1/workcell.1"
+grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files.' /tmp/workcell-uninstall-debug.out
+
+CUSTOM_DEBUG_DIR="${INSTALL_VERIFY_HOME}/custom-workcell-debug"
+CUSTOM_DEBUG_DIR_REAL="$(
+  /usr/bin/python3 - "${CUSTOM_DEBUG_DIR}" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(sys.argv[1]))
+PY
+)"
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug --debug-dir "${CUSTOM_DEBUG_DIR}" >/tmp/workcell-install-custom-debug.out 2>&1; then
+  echo "Expected scripts/install.sh --debug --debug-dir to succeed in a clean temporary HOME" >&2
+  cat /tmp/workcell-install-custom-debug.out >&2
+  exit 1
+fi
+if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --mode build \
+  --allow-control-plane-vcs \
+  --ack-control-plane-vcs \
+  --dry-run >/tmp/workcell-installed-custom-debug-dry-run.out 2>&1; then
+  echo "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to succeed through dry-run" >&2
+  cat /tmp/workcell-installed-custom-debug-dry-run.out >&2
+  exit 1
+fi
+grep -q "debug_log=${CUSTOM_DEBUG_DIR_REAL}/latest-debug.log" /tmp/workcell-installed-custom-debug-dry-run.out
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall-custom-debug.out 2>&1; then
+  echo "Expected scripts/uninstall.sh to remove the custom debug installer wrapper cleanly" >&2
+  cat /tmp/workcell-uninstall-custom-debug.out >&2
+  exit 1
+fi
 
 INJECTION_POLICY_FIXTURE_ROOT="${BARRIER_VERIFY_ROOT}/injection-policy"
 INJECTION_STATE_ROOT="${INJECTION_POLICY_FIXTURE_ROOT}/xdg-state"
@@ -1938,6 +2096,144 @@ if ! rg -q 'run_clean_host_command "\$\{HOST_RUBY_BIN\}"' "${ROOT_DIR}/scripts/w
   exit 1
 fi
 
+WORKCELL_COLIMA_TIMEOUT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-colima-timeout-harness.sh"
+{
+  printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" kill_process_tree_by_pid
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" terminate_process_tree_by_pid
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_host_colima_with_timeout
+  printf '\n'
+  cat <<'EOF'
+run_host_colima() {
+  sleep 60
+}
+
+start_epoch="$(date +%s)"
+if run_host_colima_with_timeout 1 delete --profile timeout-fixture; then
+  echo "Expected run_host_colima_with_timeout to time out for a hung colima command" >&2
+  exit 1
+else
+  status=$?
+fi
+elapsed=$(( $(date +%s) - start_epoch ))
+[[ "${status}" -eq 124 ]]
+[[ "${elapsed}" -lt 15 ]]
+EOF
+} >"${WORKCELL_COLIMA_TIMEOUT_HARNESS}"
+bash "${WORKCELL_COLIMA_TIMEOUT_HARNESS}"
+
+WORKCELL_REFRESH_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-refresh-harness.sh"
+{
+  printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" refresh_managed_profile
+  printf '\n'
+  cat <<'EOF'
+ROOT="$(mktemp -d)"
+COLIMA_PROFILE="refresh-fixture"
+PROFILE_DIR="${ROOT}/profile"
+PROFILE_WAS_REFRESHED=0
+PROFILE_PREEXISTED=1
+PROFILE_MARKER_WORKSPACE="bound"
+PROFILE_RUNNING=1
+
+stash_profile_audit_log() { :; }
+reap_stale_profile_processes() { :; }
+run_host_colima_with_timeout() { return 124; }
+profile_lima_dir() { printf '%s/lima-%s\n' "${ROOT}" "$1"; }
+profile_process_pids() { return 1; }
+
+mkdir -p "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")"
+refresh_managed_profile "refreshing fixture profile"
+[[ ! -e "${PROFILE_DIR}" ]]
+[[ ! -e "$(profile_lima_dir "${COLIMA_PROFILE}")" ]]
+[[ "${PROFILE_WAS_REFRESHED}" -eq 1 ]]
+[[ "${PROFILE_PREEXISTED}" -eq 0 ]]
+[[ -z "${PROFILE_MARKER_WORKSPACE}" ]]
+[[ "${PROFILE_RUNNING}" -eq 0 ]]
+EOF
+} >"${WORKCELL_REFRESH_HARNESS}"
+bash "${WORKCELL_REFRESH_HARNESS}"
+
+WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harness.sh"
+{
+  printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" start_managed_profile
+  printf '\n'
+  cat <<'EOF'
+COLIMA_PROFILE="start-retry-fixture"
+WORKSPACE="/tmp/workspace"
+COLIMA_CPU=4
+COLIMA_MEMORY=8
+COLIMA_DISK=60
+PROFILE_RUNNING=0
+RUN_COUNT=0
+REFRESH_COUNT=0
+
+maybe_reap_stale_profile_processes() { :; }
+reap_stale_profile_processes() { :; }
+run_command_with_debug_log() {
+  RUN_COUNT=$((RUN_COUNT + 1))
+  if [[ "${RUN_COUNT}" -eq 1 ]]; then
+    return 124
+  fi
+  return 0
+}
+refresh_managed_profile() {
+  REFRESH_COUNT=$((REFRESH_COUNT + 1))
+  return 0
+}
+
+start_managed_profile
+[[ "${RUN_COUNT}" -eq 2 ]]
+[[ "${REFRESH_COUNT}" -eq 1 ]]
+[[ "${PROFILE_RUNNING}" -eq 1 ]]
+EOF
+} >"${WORKCELL_START_RETRY_HARNESS}"
+bash "${WORKCELL_START_RETRY_HARNESS}"
+
+WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-timeout-cleanup-harness.sh"
+{
+  printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" start_managed_profile
+  printf '\n'
+  cat <<'EOF'
+COLIMA_PROFILE="start-timeout-cleanup-fixture"
+WORKSPACE="/tmp/workspace"
+COLIMA_CPU=4
+COLIMA_MEMORY=8
+COLIMA_DISK=60
+PROFILE_RUNNING=0
+RUN_COUNT=0
+REFRESH_COUNT=0
+FINAL_STATUS=0
+
+maybe_reap_stale_profile_processes() { :; }
+reap_stale_profile_processes() { :; }
+run_command_with_debug_log() {
+  RUN_COUNT=$((RUN_COUNT + 1))
+  return 124
+}
+refresh_managed_profile() {
+  REFRESH_COUNT=$((REFRESH_COUNT + 1))
+  return 0
+}
+
+if start_managed_profile; then
+  echo "Expected repeated Colima start timeouts to fail" >&2
+  exit 1
+else
+  FINAL_STATUS=$?
+fi
+[[ "${RUN_COUNT}" -eq 2 ]]
+[[ "${REFRESH_COUNT}" -eq 2 ]]
+[[ "${FINAL_STATUS}" -eq 124 ]]
+[[ "${PROFILE_RUNNING}" -eq 0 ]]
+EOF
+} >"${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
+bash "${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
+
 if ! rg -q 'env -i PATH="\$\{TRUSTED_HOST_PATH\}" "\$\{HOST_PYTHON3_BIN\}"' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell to invoke the bootstrap Python helper under a scrubbed environment" >&2
   exit 1
@@ -1950,6 +2246,12 @@ fi
 
 if rg -q 'AGENT_NAME="\$\{AGENT_NAME:-codex\}"' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
   echo "runtime/container/entrypoint.sh still defaults AGENT_NAME to codex" >&2
+  exit 1
+fi
+
+if ! rg -q "trap 'workcell_run_command_with_file_trace_signal INT' INT" "${ROOT_DIR}/runtime/container/entrypoint.sh" ||
+  ! rg -q "trap 'workcell_run_command_with_file_trace_signal TERM' TERM" "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "Expected runtime/container/entrypoint.sh to trap INT/TERM and finalize file-trace shutdown before exit" >&2
   exit 1
 fi
 
@@ -2034,6 +2336,16 @@ for script in \
   fi
 done
 
+if ! rg -q 'BUILDX_BUILDER="workcell-release-' "${ROOT_DIR}/scripts/verify-release-bundle.sh"; then
+  echo "Expected verify-release-bundle.sh to choose a deterministic context-scoped Buildx builder by default" >&2
+  exit 1
+fi
+
+if ! rg -q 'expected_endpoint="\$\{DOCKER_CONTEXT_NAME:-\$\{DOCKER_HOST:-\}\}"' "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"; then
+  echo "Expected trusted-docker-client.sh to validate existing Buildx builders against either DOCKER_CONTEXT_NAME or DOCKER_HOST" >&2
+  exit 1
+fi
+
 if ! rg -q 'COLIMA_HOME="\$\{colima_home\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
   echo "Expected scripts/colima-egress-allowlist.sh to pin COLIMA_HOME while operating on Lima state" >&2
   exit 1
@@ -2041,6 +2353,11 @@ fi
 
 if ! rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to allow snapshot.debian.org" >&2
+  exit 1
+fi
+
+if ! rg -q 'docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on Cloudflare R2" >&2
   exit 1
 fi
 
@@ -2420,11 +2737,41 @@ WORKCELL_RELEASE_BUNDLE_DOCKER_CONTEXT ${ROOT_DIR}/scripts/verify-release-bundle
 WORKCELL_REPRO_DOCKER_CONTEXT ${ROOT_DIR}/scripts/verify-reproducible-build.sh
 EOF
 
+BUILDER_RECREATE_PROBE_NAME="workcell-verify-builder-recreate-$$"
+BUILDER_RECREATE_OUTPUT="/tmp/workcell-builder-recreate.out"
+if ! (
+  set -euo pipefail
+  source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+  setup_workcell_trusted_docker_client
+  select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
+  PROBE_DOCKER_CONTEXT_NAME="${DOCKER_CONTEXT_NAME}"
+  DOCKER_HOST=""
+  BUILDX_BUILDER="${BUILDER_RECREATE_PROBE_NAME}"
+  buildx_cmd rm --force "${BUILDER_RECREATE_PROBE_NAME}" >/dev/null 2>&1 || true
+  buildx_cmd create --driver docker-container --name "${BUILDER_RECREATE_PROBE_NAME}" --use >/dev/null
+  DOCKER_CONTEXT_NAME=""
+  export DOCKER_HOST
+  DOCKER_HOST="$(docker context inspect "${PROBE_DOCKER_CONTEXT_NAME}" --format '{{.Endpoints.docker.Host}}')"
+  ensure_workcell_selected_builder
+  buildx_cmd inspect "${BUILDER_RECREATE_PROBE_NAME}" >"${BUILDER_RECREATE_OUTPUT}"
+  awk -F': *' -v expected="${DOCKER_HOST}" '
+    $1 == "Endpoint" && $2 == expected { matched = 1 }
+    END { exit(matched ? 0 : 1) }
+  ' "${BUILDER_RECREATE_OUTPUT}"
+  buildx_cmd rm --force "${BUILDER_RECREATE_PROBE_NAME}" >/dev/null 2>&1 || true
+  cleanup_workcell_trusted_docker_client
+); then
+  echo "Expected trusted-docker-client.sh to recreate a stale Buildx builder when the active DOCKER_HOST endpoint differs" >&2
+  cat "${BUILDER_RECREATE_OUTPUT}" >&2 || true
+  exit 1
+fi
+
 DOCKER_CONTEXT_SELECTOR_FAKEBIN="${BARRIER_VERIFY_ROOT}/docker-context-selector-bin"
 DOCKER_CONTEXT_SELECTOR_HARNESS="${BARRIER_VERIFY_ROOT}/docker-context-selector-harness.sh"
 mkdir -p "${DOCKER_CONTEXT_SELECTOR_FAKEBIN}"
 cat >"${DOCKER_CONTEXT_SELECTOR_FAKEBIN}/docker" <<'EOF'
 #!/bin/sh
+mode="${DOCKER_CONTEXT_SELECTOR_MODE:-default}"
 case "$1 $2 $3" in
   "context inspect colima")
     exit 0
@@ -2432,10 +2779,23 @@ case "$1 $2 $3" in
   "context inspect default")
     exit 0
     ;;
+  "context inspect sandbox")
+    exit 0
+    ;;
+  "context ls --format")
+    printf '%s\n' colima default sandbox
+    exit 0
+    ;;
   "--context colima info")
     exit 1
     ;;
   "--context default info")
+    if [ "${mode}" = "fallback" ]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+  "--context sandbox info")
     exit 0
     ;;
 esac
@@ -2447,6 +2807,7 @@ set -euo pipefail
 
 explicit_context_output="${BARRIER_VERIFY_ROOT}/docker-context-selector-explicit.out"
 if PATH="${DOCKER_CONTEXT_SELECTOR_FAKEBIN}:${PATH}" \
+  HOME=/tmp \
   ROOT_DIR="${ROOT_DIR}" \
   BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
   /bin/bash -lc '
@@ -2465,6 +2826,7 @@ grep -q "Requested Docker context 'colima' is not healthy" "${explicit_context_o
 
 selected_context="$(
   PATH="${DOCKER_CONTEXT_SELECTOR_FAKEBIN}:${PATH}" \
+  HOME=/tmp \
   ROOT_DIR="${ROOT_DIR}" \
   BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
   /bin/bash -lc '
@@ -2480,6 +2842,28 @@ selected_context="$(
 )"
 if [[ "${selected_context}" != "default" ]]; then
   echo "Expected auto-selection to continue past unhealthy colima" >&2
+  exit 1
+fi
+
+fallback_context="$(
+  DOCKER_CONTEXT_SELECTOR_MODE=fallback \
+    PATH="${DOCKER_CONTEXT_SELECTOR_FAKEBIN}:${PATH}" \
+    HOME=/tmp \
+    ROOT_DIR="${ROOT_DIR}" \
+    BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
+    /bin/bash -lc '
+      set -euo pipefail
+      source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+      unset DOCKER_CONTEXT_NAME
+      select_workcell_docker_context \
+        "Requested Docker context" \
+        "No healthy Docker contexts" \
+        colima default >/dev/null
+      printf "%s\n" "${DOCKER_CONTEXT_NAME:-}"
+    '
+)"
+if [[ "${fallback_context}" != "sandbox" ]]; then
+  echo "Expected auto-selection to fall back to a healthy listed Docker context outside the preferred set" >&2
   exit 1
 fi
 EOF
@@ -2498,7 +2882,7 @@ mkdir -p "${buildx_root}/refs/default/default"
 printf '{"LocalPath":"/tmp/stale","DockerfilePath":"/tmp/stale/Dockerfile"}\n' >"${buildx_root}/refs/default/default/ref.json"
 printf '{"Key":"default","Name":"","Global":false}\n' >"${buildx_root}/current"
 
-ROOT_DIR="${ROOT_DIR}" BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" /bin/bash -lc '
+ROOT_DIR="${ROOT_DIR}" BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" HOME=/tmp /bin/bash -lc '
   set -euo pipefail
   source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   sanitize_workcell_docker_buildx_state "'"${buildx_root}"'"
@@ -2531,7 +2915,7 @@ printf '%s\n' "$PWD"
 EOS
 chmod 0755 "${FAKE_DOCKER_BIN}/docker"
 
-ROOT_DIR="${ROOT_DIR}" PATH="${FAKE_DOCKER_BIN}:${PATH}" /bin/bash -lc '
+ROOT_DIR="${ROOT_DIR}" PATH="${FAKE_DOCKER_BIN}:${PATH}" HOME=/tmp /bin/bash -lc '
   set -euo pipefail
   source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   export HOME="${BARRIER_VERIFY_ROOT}/docker-client-home"
@@ -2552,7 +2936,7 @@ DOCKER_CLIENT_EMPTY_ARGV_HARNESS="${BARRIER_VERIFY_ROOT}/docker-client-empty-arg
 cat >"${DOCKER_CLIENT_EMPTY_ARGV_HARNESS}" <<'EOF'
 set -euo pipefail
 
-ROOT_DIR="${ROOT_DIR}" /bin/bash -lc '
+ROOT_DIR="${ROOT_DIR}" HOME=/tmp /bin/bash -lc '
   set -euo pipefail
   source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   run_workcell_docker_client_command
@@ -3089,7 +3473,7 @@ if ! "${ROOT_DIR}/scripts/workcell" \
 fi
 test -f "${DEBUG_LOG_CAPTURE}"
 test "$(file_mode_octal "${DEBUG_LOG_CAPTURE}")" = "600"
-grep -q 'Workcell warning: full host-persisted debug log capture is enabled for this session:' /tmp/workcell-debug-log.out
+grep -q 'Workcell warning: host-persisted launcher debug stderr capture is enabled for this session:' /tmp/workcell-debug-log.out
 grep -q 'execution_path=' "${DEBUG_LOG_CAPTURE}"
 RUN_COMMAND_DEBUG_FAILURE_HARNESS="${BARRIER_VERIFY_ROOT}/debug/run-command-debug-failure.sh"
 RUN_COMMAND_DEBUG_FAILURE_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/run-command-debug-failure.log"
@@ -3162,6 +3546,9 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q 'execution_path=' /tmp/workcell-logs-debug.out
+
+FILE_TRACE_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.file-trace.log"
+rm -f "${FILE_TRACE_CAPTURE}"
 
 TRANSCRIPT_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.transcript"
 TRANSCRIPT_LOG_PROFILE="${STRICT_PREFLIGHT_PROFILE}-transcript-logs"
@@ -3608,641 +3995,6 @@ EOF
 } >"${GEMINI_AUTH_FAILURE_HARNESS}"
 /bin/bash "${GEMINI_AUTH_FAILURE_HARNESS}"
 rm -f "${GEMINI_AUTH_FAILURE_HARNESS}"
-EXTRACTED_CREDENTIAL_MODE_HARNESS="$(mktemp)"
-{
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" saved_credential_helper_path
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" describe_credential_source
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" claude_onboarding_config_detected
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" provider_candidate_container_paths
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" extract_promotable_container_credentials
-  printf '\n'
-  printf 'ROOT_DIR=%q\n' "${ROOT_DIR}"
-  cat <<'EOF'
-set -euo pipefail
-
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "${TMP_ROOT}"' EXIT
-HOST_PYTHON3_BIN="$(command -v python3)"
-HOST_DOCKER_BIN=docker
-AGENT=claude
-
-run_clean_host_command() {
-  "$@"
-}
-
-run_workcell_docker_client_command() {
-  local _docker_bin="$1"
-  shift
-
-  [[ "${1:-}" == "cp" ]] || return 1
-  case "${2:-}" in
-    fake-container:/state/agent-home/.claude/.claude.json)
-      cp "${TMP_ROOT}/container-current-claude-auth.json" "${3}"
-      chmod 0644 "${3}"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-printf '{"oauthAccount":{"emailAddress":"user@example.com"},"projects":{"/workspace":{"lastSessionId":"123"}},"numStartups":7}\n' >"${TMP_ROOT}/container-current-claude-auth.json"
-chmod 0600 "${TMP_ROOT}/container-current-claude-auth.json"
-printf '{"refresh_token":"legacy"}\n' >"${TMP_ROOT}/container-legacy-claude-auth.json"
-chmod 0600 "${TMP_ROOT}/container-legacy-claude-auth.json"
-
-output="$(extract_promotable_container_credentials fake-container "${TMP_ROOT}/extracted" | tr -d '\n')"
-expected=$'claude_auth\t'"${TMP_ROOT}"$'/extracted/claude_auth.0'
-if [[ "${output}" != "${expected}" ]]; then
-  echo "Expected extracted current Claude credential candidate despite permissive copied mode, got: ${output}" >&2
-  exit 1
-fi
-
-if stat -f '%Lp' "${TMP_ROOT}/extracted/claude_auth.0" >/dev/null 2>&1; then
-  copied_mode="$(stat -f '%Lp' "${TMP_ROOT}/extracted/claude_auth.0")"
-else
-  copied_mode="$(stat -c '%a' "${TMP_ROOT}/extracted/claude_auth.0")"
-fi
-if [[ "${copied_mode}" != "600" ]]; then
-  echo "Expected extracted current Claude credential candidate to be normalized to 0600, got ${copied_mode}" >&2
-  exit 1
-fi
-
-run_workcell_docker_client_command() {
-  local _docker_bin="$1"
-  shift
-
-  [[ "${1:-}" == "cp" ]] || return 1
-  case "${2:-}" in
-    fake-container:/state/agent-home/.claude/.credentials.json)
-      cp "${TMP_ROOT}/container-legacy-claude-auth.json" "${3}"
-      chmod 0644 "${3}"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-output="$(extract_promotable_container_credentials fake-container "${TMP_ROOT}/legacy-extracted" | tr -d '\n')"
-expected=$'claude_auth\t'"${TMP_ROOT}"$'/legacy-extracted/claude_auth.2'
-if [[ "${output}" != "${expected}" ]]; then
-  echo "Expected extracted legacy Claude credential candidate despite permissive copied mode, got: ${output}" >&2
-  exit 1
-fi
-
-if stat -f '%Lp' "${TMP_ROOT}/legacy-extracted/claude_auth.2" >/dev/null 2>&1; then
-  copied_mode="$(stat -f '%Lp' "${TMP_ROOT}/legacy-extracted/claude_auth.2")"
-else
-  copied_mode="$(stat -c '%a' "${TMP_ROOT}/legacy-extracted/claude_auth.2")"
-fi
-if [[ "${copied_mode}" != "600" ]]; then
-  echo "Expected extracted legacy Claude credential candidate to be normalized to 0600, got ${copied_mode}" >&2
-  exit 1
-fi
-EOF
-} >"${EXTRACTED_CREDENTIAL_MODE_HARNESS}"
-/bin/bash "${EXTRACTED_CREDENTIAL_MODE_HARNESS}"
-rm -f "${EXTRACTED_CREDENTIAL_MODE_HARNESS}"
-SAVED_CREDENTIAL_SELECTION_HARNESS="$(mktemp)"
-{
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" saved_credential_helper_path
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" injection_manifest_credential_source
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_sources_semantically_match
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source_prefer_changed
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" gemini_env_requires_gcloud_adc
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" gcloud_adc_available_for_future_launches
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" emit_credential_bundle_spec
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_source_differs_from_injected_source
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" promotable_saved_credential_bundles
-  printf '\n'
-  printf 'ROOT_DIR=%q\n' "${ROOT_DIR}"
-  cat <<'EOF'
-set -euo pipefail
-
-HOST_PYTHON3_BIN="$(command -v python3)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "${TMP_ROOT}"' EXIT
-AGENT=codex
-INJECTION_BUNDLE_ROOT="${TMP_ROOT}/bundle"
-mkdir -p "${INJECTION_BUNDLE_ROOT}"
-
-describe_credential_source() {
-  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/manage_saved_credentials.py" \
-    describe --key "$1" --source "$2"
-}
-
-run_clean_host_command() {
-  "$@"
-}
-
-render_sanitized_bundle() {
-  local agent="$1"
-  local policy_path="$2"
-
-  rm -rf "${INJECTION_BUNDLE_ROOT}"
-  mkdir -p "${INJECTION_BUNDLE_ROOT}"
-  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
-    --policy "${policy_path}" \
-    --agent "${agent}" \
-    --mode strict \
-    --output-root "${INJECTION_BUNDLE_ROOT}" >/dev/null
-  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
-    --manifest "${INJECTION_BUNDLE_ROOT}/manifest.json" \
-    --mount-spec "${INJECTION_BUNDLE_ROOT}.mounts.json" >/dev/null
-}
-
-extract_promotable_container_credentials() {
-  case "${WORKCELL_TEST_SELECTION_CASE}" in
-    codex-semantic-equal)
-      printf 'codex_auth\t%s\n' "${TMP_ROOT}/candidate-codex-auth.json"
-      ;;
-    env-bundle)
-      printf 'gemini_env\t%s\n' "${TMP_ROOT}/candidate.env"
-      printf 'gcloud_adc\t%s\n' "${TMP_ROOT}/candidate-adc.json"
-      ;;
-    adc-only)
-      printf 'gemini_env\t%s\n' "${TMP_ROOT}/unchanged.env"
-      printf 'gcloud_adc\t%s\n' "${TMP_ROOT}/refreshed-adc.json"
-      ;;
-    claude-fresh-divergent)
-      printf 'claude_auth\t%s\n' "${TMP_ROOT}/fresh-claude-global.json"
-      printf 'claude_auth\t%s\n' "${TMP_ROOT}/fresh-claude-credentials.json"
-      printf 'claude_auth\t%s\n' "${TMP_ROOT}/fresh-claude-auth.json"
-      ;;
-    claude-refresh)
-      printf 'claude_auth\t%s\n' "${TMP_ROOT}/stale-claude-auth.json"
-      printf 'claude_auth\t%s\n' "${TMP_ROOT}/refreshed-claude-auth.json"
-      ;;
-  esac
-}
-
-cat >"${TMP_ROOT}/seed-codex-auth.json" <<'JSON'
-{"token":"abc","refresh":"def"}
-JSON
-chmod 0600 "${TMP_ROOT}/seed-codex-auth.json"
-cat >"${TMP_ROOT}/candidate-codex-auth.json" <<'JSON'
-{
-  "refresh": "def",
-  "token": "abc"
-}
-JSON
-chmod 0600 "${TMP_ROOT}/candidate-codex-auth.json"
-cat >"${TMP_ROOT}/codex-policy.toml" <<EOF2
-version = 1
-
-[credentials]
-codex_auth = "${TMP_ROOT}/seed-codex-auth.json"
-EOF2
-chmod 0600 "${TMP_ROOT}/codex-policy.toml"
-render_sanitized_bundle codex "${TMP_ROOT}/codex-policy.toml"
-
-WORKCELL_TEST_SELECTION_CASE=codex-semantic-equal
-bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-codex" | tr -d '\n')"
-if [[ -n "${bundle}" ]]; then
-  echo "Expected semantically unchanged Codex auth not to be promoted, got: ${bundle}" >&2
-  exit 1
-fi
-
-AGENT=gemini
-
-cat >"${TMP_ROOT}/initial.env" <<'ENV'
-GEMINI_API_KEY=old-token
-ENV
-chmod 0600 "${TMP_ROOT}/initial.env"
-cat >"${TMP_ROOT}/candidate.env" <<'ENV'
-GOOGLE_GENAI_USE_GCA=true
-ENV
-chmod 0600 "${TMP_ROOT}/candidate.env"
-cat >"${TMP_ROOT}/candidate-adc.json" <<'JSON'
-{"type":"authorized_user"}
-JSON
-chmod 0600 "${TMP_ROOT}/candidate-adc.json"
-cat >"${TMP_ROOT}/gemini-policy.toml" <<EOF2
-version = 1
-
-[credentials]
-gemini_env = "${TMP_ROOT}/initial.env"
-EOF2
-chmod 0600 "${TMP_ROOT}/gemini-policy.toml"
-render_sanitized_bundle gemini "${TMP_ROOT}/gemini-policy.toml"
-
-WORKCELL_TEST_SELECTION_CASE=env-bundle
-bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out" | tr -d '\n')"
-expected=$'gemini_env\t'"${TMP_ROOT}"$'/candidate.env\tgcloud_adc\t'"${TMP_ROOT}"$'/candidate-adc.json'
-if [[ "${bundle}" != "${expected}" ]]; then
-  echo "Expected Gemini bundle selection to include gemini_env plus gcloud_adc, got: ${bundle}" >&2
-  exit 1
-fi
-
-cat >"${TMP_ROOT}/unchanged.env" <<'ENV'
-export GOOGLE_GENAI_USE_GCA=TRUE # same auth, different formatting
-ENV
-chmod 0600 "${TMP_ROOT}/unchanged.env"
-cat >"${TMP_ROOT}/refreshed-adc.json" <<'JSON'
-{"type":"authorized_user","refresh_token":"new"}
-JSON
-chmod 0600 "${TMP_ROOT}/refreshed-adc.json"
-cat >"${TMP_ROOT}/gemini-policy.toml" <<EOF2
-version = 1
-
-[credentials]
-gemini_env = "${TMP_ROOT}/unchanged.env"
-EOF2
-chmod 0600 "${TMP_ROOT}/gemini-policy.toml"
-render_sanitized_bundle gemini "${TMP_ROOT}/gemini-policy.toml"
-
-WORKCELL_TEST_SELECTION_CASE=adc-only
-bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-adc-only" | tr -d '\n')"
-expected=$'gcloud_adc\t'"${TMP_ROOT}"$'/refreshed-adc.json'
-if [[ "${bundle}" != "${expected}" ]]; then
-  echo "Expected Gemini ADC-only bundle selection to include only refreshed gcloud_adc, got: ${bundle}" >&2
-  exit 1
-fi
-
-AGENT=claude
-cat >"${TMP_ROOT}/seed-claude-auth.json" <<'JSON'
-{"refresh_token":"seed"}
-JSON
-chmod 0600 "${TMP_ROOT}/seed-claude-auth.json"
-cat >"${TMP_ROOT}/stale-claude-auth.json" <<'JSON'
-{"refresh_token":"seed"}
-JSON
-chmod 0600 "${TMP_ROOT}/stale-claude-auth.json"
-cat >"${TMP_ROOT}/refreshed-claude-auth.json" <<'JSON'
-{"refresh_token":"refreshed"}
-JSON
-chmod 0600 "${TMP_ROOT}/refreshed-claude-auth.json"
-cat >"${TMP_ROOT}/fresh-claude-credentials.json" <<'JSON'
-{"refresh_token":"preferred"}
-JSON
-chmod 0600 "${TMP_ROOT}/fresh-claude-credentials.json"
-cat >"${TMP_ROOT}/fresh-claude-global.json" <<'JSON'
-{"oauthAccount":{"emailAddress":"user@example.com"},"projects":{"/workspace":{"lastSessionId":"current"}},"numStartups":12}
-JSON
-chmod 0600 "${TMP_ROOT}/fresh-claude-global.json"
-cat >"${TMP_ROOT}/fresh-claude-auth.json" <<'JSON'
-{"refresh_token":"compatibility"}
-JSON
-chmod 0600 "${TMP_ROOT}/fresh-claude-auth.json"
-cat >"${TMP_ROOT}/claude-policy.toml" <<EOF2
-version = 1
-
-[credentials]
-claude_auth = "${TMP_ROOT}/seed-claude-auth.json"
-EOF2
-chmod 0600 "${TMP_ROOT}/claude-policy.toml"
-render_sanitized_bundle claude "${TMP_ROOT}/claude-policy.toml"
-
-WORKCELL_TEST_SELECTION_CASE=claude-refresh
-bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-claude" | tr -d '\n')"
-expected=$'claude_auth\t'"${TMP_ROOT}"$'/refreshed-claude-auth.json'
-if [[ "${bundle}" != "${expected}" ]]; then
-  echo "Expected Claude bundle selection to prefer the changed auth file, got: ${bundle}" >&2
-  exit 1
-fi
-
-rm -rf "${INJECTION_BUNDLE_ROOT}"
-WORKCELL_TEST_SELECTION_CASE=claude-fresh-divergent
-bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/out-claude-fresh" | tr -d '\n')"
-expected=$'claude_auth\t'"${TMP_ROOT}"$'/fresh-claude-global.json'
-if [[ "${bundle}" != "${expected}" ]]; then
-  echo "Expected fresh Claude bundle selection to prefer ~/.claude/.claude.json, got: ${bundle}" >&2
-  exit 1
-fi
-EOF
-} >"${SAVED_CREDENTIAL_SELECTION_HARNESS}"
-/bin/bash "${SAVED_CREDENTIAL_SELECTION_HARNESS}"
-rm -f "${SAVED_CREDENTIAL_SELECTION_HARNESS}"
-SAVED_CREDENTIAL_PROMOTION_HARNESS="$(mktemp)"
-{
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" append_credential_persist_audit_record
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" saved_credential_helper_path
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_config_root
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_fragment_path
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_root
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" sanitize_saved_credential_audit_path
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" sanitize_saved_credential_audit_paths_csv
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_display_name
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" describe_credential_source
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_bundle_keys_csv
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_bundle_display_names
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prompt_to_save_credential
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" maybe_offer_saved_credential_persistence
-  printf '\n'
-  printf 'ROOT_DIR=%q\n' "${ROOT_DIR}"
-  cat <<'EOF'
-set -euo pipefail
-
-AUDIT_CAPTURE="$(mktemp)"
-STDERR_CAPTURE="$(mktemp)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "${TMP_ROOT}" "${AUDIT_CAPTURE}" "${STDERR_CAPTURE}"' EXIT
-COLIMA_PROFILE=workcell-test
-MODE=strict
-AGENT=codex
-WORKSPACE=/tmp/workcell-credential-workspace
-UI=cli
-ALLOW_ARBITRARY_COMMAND=0
-PREPARE_ONLY=0
-DRY_RUN=0
-INJECTION_POLICY_SHA256=test-policy
-HOST_PYTHON3_BIN="$(command -v python3)"
-CREDENTIAL_PROMOTION_TMP_ROOT=""
-WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=accept
-
-append_audit_record() {
-  local profile="$1"
-  shift
-  printf '%s|%s\n' "${profile}" "$*" >>"${AUDIT_CAPTURE}"
-}
-
-session_assurance_final() {
-  printf 'managed-mutable\n'
-}
-
-run_clean_host_command() {
-  "$@"
-}
-
-default_injection_policy_path() {
-  printf '%s/injection-policy.toml\n' "${TMP_ROOT}/config"
-}
-
-promotable_saved_credential_bundles() {
-  printf 'codex_auth\t%s\n' "${TMP_ROOT}/candidate-auth.json"
-}
-
-printf '{"token":"abc"}\n' >"${TMP_ROOT}/candidate-auth.json"
-chmod 0600 "${TMP_ROOT}/candidate-auth.json"
-
-if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
-  echo "Expected saved credential promotion harness accept path to succeed" >&2
-  exit 1
-fi
-grep -q 'action=offered' "${AUDIT_CAPTURE}"
-grep -q 'action=accepted' "${AUDIT_CAPTURE}"
-grep -q 'credential_key=codex_auth' "${AUDIT_CAPTURE}"
-grep -q 'root_policy=injection-policy.toml' "${AUDIT_CAPTURE}"
-grep -q 'fragment_path=injection-policy.d/saved-credentials.toml' "${AUDIT_CAPTURE}"
-grep -q 'credential_path=credentials/codex-auth.json' "${AUDIT_CAPTURE}"
-if grep -Fq "${TMP_ROOT}" "${AUDIT_CAPTURE}"; then
-  echo "Expected credential-persist audit records to redact managed host paths" >&2
-  exit 1
-fi
-grep -q 'Saved Codex credential for future Workcell launches.' "${STDERR_CAPTURE}"
-[[ -f "${TMP_ROOT}/config/injection-policy.toml" ]]
-[[ -f "${TMP_ROOT}/config/injection-policy.d/saved-credentials.toml" ]]
-[[ -f "${TMP_ROOT}/config/credentials/codex-auth.json" ]]
-
->"${AUDIT_CAPTURE}"
->"${STDERR_CAPTURE}"
-rm -rf "${TMP_ROOT}/config"
-WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=decline
-
-if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
-  echo "Expected saved credential promotion harness decline path to succeed" >&2
-  exit 1
-fi
-grep -q 'action=offered' "${AUDIT_CAPTURE}"
-grep -q 'action=declined' "${AUDIT_CAPTURE}"
-grep -q 'future launches will ask again' "${STDERR_CAPTURE}"
-if [[ -e "${TMP_ROOT}/config/injection-policy.toml" ]]; then
-  echo "Expected decline path to avoid writing default config" >&2
-  exit 1
-fi
-
->"${AUDIT_CAPTURE}"
->"${STDERR_CAPTURE}"
-AGENT=claude
-INJECTION_CREDENTIAL_KEYS=claude_api_key
-WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=accept
-
-promotable_saved_credential_bundles() {
-  printf 'claude_auth\t%s\n' "${TMP_ROOT}/candidate-claude-auth.json"
-}
-
-printf '{"refresh_token":"claude"}\n' >"${TMP_ROOT}/candidate-claude-auth.json"
-chmod 0600 "${TMP_ROOT}/candidate-claude-auth.json"
-
-if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
-  echo "Expected saved credential promotion harness Claude path to succeed" >&2
-  exit 1
-fi
-grep -q 'credential_key=claude_auth' "${AUDIT_CAPTURE}"
-grep -q 'Saved Claude credential for future Workcell launches.' "${STDERR_CAPTURE}"
-[[ -f "${TMP_ROOT}/config/credentials/claude-auth.json" ]]
-for managed_path in \
-  "${TMP_ROOT}/config/injection-policy.toml" \
-  "${TMP_ROOT}/config/injection-policy.d/saved-credentials.toml" \
-  "${TMP_ROOT}/config/credentials/claude-auth.json"; do
-  if stat -f '%Lp' "${managed_path}" >/dev/null 2>&1; then
-    managed_mode="$(stat -f '%Lp' "${managed_path}")"
-  else
-    managed_mode="$(stat -c '%a' "${managed_path}")"
-  fi
-  if [[ "${managed_mode}" != "600" ]]; then
-    echo "Expected managed Claude credential artifact ${managed_path} to be 0600, got ${managed_mode}" >&2
-    exit 1
-  fi
-done
-for managed_dir in \
-  "${TMP_ROOT}/config/credentials" \
-  "${TMP_ROOT}/config/injection-policy.d"; do
-  if stat -f '%Lp' "${managed_dir}" >/dev/null 2>&1; then
-    managed_mode="$(stat -f '%Lp' "${managed_dir}")"
-  else
-    managed_mode="$(stat -c '%a' "${managed_dir}")"
-  fi
-  if [[ "${managed_mode}" != "700" ]]; then
-    echo "Expected managed Claude credential directory ${managed_dir} to be 0700, got ${managed_mode}" >&2
-    exit 1
-  fi
-done
-
->"${AUDIT_CAPTURE}"
->"${STDERR_CAPTURE}"
-rm -rf "${TMP_ROOT}/config"
-AGENT=claude
-INJECTION_CREDENTIAL_KEYS=
-WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=accept
-
-promotable_saved_credential_bundles() {
-  : > "${CLAUDE_ONBOARDING_CONFIG_MARKER:?}"
-  return 0
-}
-
-if ! maybe_offer_saved_credential_persistence workcell-test-container 0 2>"${STDERR_CAPTURE}"; then
-  echo "Expected saved credential promotion harness Claude onboarding-stub path to succeed" >&2
-  exit 1
-fi
-grep -q 'Claude only wrote first-run onboarding config' "${STDERR_CAPTURE}"
-if [[ -e "${TMP_ROOT}/config/injection-policy.toml" ]]; then
-  echo "Expected Claude onboarding-stub path to avoid writing saved credentials" >&2
-  exit 1
-fi
-EOF
-} >"${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
-/bin/bash "${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
-rm -f "${SAVED_CREDENTIAL_PROMOTION_HARNESS}"
-CLAUDE_RELAUNCH_PERSISTENCE_HARNESS="$(mktemp)"
-{
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" append_credential_persist_audit_record
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" saved_credential_helper_path
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_config_root
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_fragment_path
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" default_saved_credentials_root
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" sanitize_saved_credential_audit_path
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" sanitize_saved_credential_audit_paths_csv
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_display_name
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" describe_credential_source
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_bundle_keys_csv
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_bundle_display_names
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prompt_to_save_credential
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" maybe_offer_saved_credential_persistence
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" injection_manifest_credential_source
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_sources_semantically_match
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" find_extracted_credential_source_prefer_changed
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" emit_credential_bundle_spec
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_source_differs_from_injected_source
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" promotable_saved_credential_bundles
-  printf '\n'
-  printf 'ROOT_DIR=%q\n' "${ROOT_DIR}"
-  cat <<'EOF'
-set -euo pipefail
-
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "${TMP_ROOT}"' EXIT
-COLIMA_PROFILE=workcell-test
-MODE=strict
-AGENT=claude
-WORKSPACE=/tmp/workcell-claude-relaunch
-UI=cli
-ALLOW_ARBITRARY_COMMAND=0
-PREPARE_ONLY=0
-DRY_RUN=0
-INJECTION_POLICY_SHA256=test-policy
-HOST_PYTHON3_BIN="$(command -v python3)"
-INJECTION_BUNDLE_ROOT="${TMP_ROOT}/bundle"
-WORKCELL_TEST_CREDENTIAL_PROMPT_RESPONSE=accept
-WORKCELL_TEST_SELECTION_CASE=first-launch
-
-append_audit_record() {
-  :
-}
-
-session_assurance_final() {
-  printf 'managed-mutable\n'
-}
-
-run_clean_host_command() {
-  "$@"
-}
-
-default_injection_policy_path() {
-  printf '%s/injection-policy.toml\n' "${TMP_ROOT}/config"
-}
-
-render_sanitized_bundle() {
-  local agent="$1"
-  local policy_path="$2"
-
-  rm -rf "${INJECTION_BUNDLE_ROOT}"
-  mkdir -p "${INJECTION_BUNDLE_ROOT}"
-  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
-    --policy "${policy_path}" \
-    --agent "${agent}" \
-    --mode strict \
-    --output-root "${INJECTION_BUNDLE_ROOT}" >/dev/null
-  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
-    --manifest "${INJECTION_BUNDLE_ROOT}/manifest.json" \
-    --mount-spec "${INJECTION_BUNDLE_ROOT}.mounts.json" >/dev/null
-}
-
-extract_promotable_container_credentials() {
-  case "${WORKCELL_TEST_SELECTION_CASE}" in
-    first-launch)
-      printf 'claude_auth\t%s\n' "${TMP_ROOT}/first-launch-claude-auth.json"
-      ;;
-    relaunch)
-      printf 'claude_auth\t%s\n' "${TMP_ROOT}/relaunch-claude-auth.json"
-      ;;
-  esac
-}
-
-printf '{"oauthAccount":{"emailAddress":"user@example.com"},"projects":{"/workspace":{"lastSessionId":"aaa","lastTotalInputTokens":10}},"numStartups":1,"tipsHistory":{"continue":1},"cachedGrowthBookFeatures":{"flag":true}}\n' >"${TMP_ROOT}/first-launch-claude-auth.json"
-chmod 0600 "${TMP_ROOT}/first-launch-claude-auth.json"
-printf '{"oauthAccount":{"emailAddress":"user@example.com"},"projects":{"/workspace":{"lastSessionId":"bbb","lastTotalInputTokens":999}},"numStartups":8,"tipsHistory":{"continue":9},"cachedGrowthBookFeatures":{"flag":false}}\n' >"${TMP_ROOT}/relaunch-claude-auth.json"
-chmod 0600 "${TMP_ROOT}/relaunch-claude-auth.json"
-
-if ! maybe_offer_saved_credential_persistence workcell-test-container 0 >/dev/null 2>&1; then
-  echo "Expected first-launch Claude persistence harness to succeed" >&2
-  exit 1
-fi
-
-render_sanitized_bundle claude "${TMP_ROOT}/config/injection-policy.toml"
-saved_source="$(injection_manifest_credential_source claude_auth || true)"
-if [[ "${saved_source}" != "${TMP_ROOT}/config/credentials/claude-auth.json" ]]; then
-  echo "Expected relaunch bundle to source the saved Claude credential, got ${saved_source}" >&2
-  exit 1
-fi
-
-WORKCELL_TEST_SELECTION_CASE=relaunch
-bundle="$(promotable_saved_credential_bundles fake-container "${TMP_ROOT}/relaunch-out" | tr -d '\n')"
-if [[ -n "${bundle}" ]]; then
-  echo "Expected relaunch Claude flow with unchanged auth to avoid a second save prompt, got: ${bundle}" >&2
-  exit 1
-fi
-EOF
-} >"${CLAUDE_RELAUNCH_PERSISTENCE_HARNESS}"
-/bin/bash "${CLAUDE_RELAUNCH_PERSISTENCE_HARNESS}"
-rm -f "${CLAUDE_RELAUNCH_PERSISTENCE_HARNESS}"
 PROFILE_PROCESS_MATCH_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" profile_process_pids
@@ -4432,7 +4184,7 @@ if "${ROOT_DIR}/scripts/workcell" \
   echo "Expected non-launch --inspect to reject --debug-log" >&2
   exit 1
 fi
-grep -q -- '--debug-log and --audit-transcript apply only to launched sessions.' /tmp/workcell-nonlaunch-debug-log.out
+grep -q -- '--debug-log, --file-trace-log, and --audit-transcript apply only to launched sessions.' /tmp/workcell-nonlaunch-debug-log.out
 
 if ! "${ROOT_DIR}/scripts/workcell" --gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc.out 2>&1; then
   echo "Expected --gc to succeed" >&2
@@ -4486,6 +4238,13 @@ printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
 EOF
   chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/${stub}"
 done
+cat >"${PREMERGE_HARNESS_ROOT}/scripts/verify-reproducible-build.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
+printf 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=%s\n' "${WORKCELL_REPRO_PLATFORMS-}" >>"${PREMERGE_LOG}"
+EOF
+chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/verify-reproducible-build.sh"
 cat >"${PREMERGE_FAKEBIN}/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -4647,6 +4406,7 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  WORKCELL_PREMERGE_REPRO_PLATFORMS='linux/arm64' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --local-snapshot worktree \
   --local-include-untracked >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
@@ -4658,6 +4418,30 @@ grep -q 'local validation will run from snapshot (worktree).' /tmp/workcell-prem
 grep -q 'with-validation-snapshot.sh --repo ' "${PREMERGE_LOG}"
 grep -q -- '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --local-snapshot worktree --local-include-untracked' "${PREMERGE_LOG}"
 grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
+grep -q 'verify-reproducible-build.sh ' "${PREMERGE_LOG}"
+grep -q 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64' "${PREMERGE_LOG}"
+grep -q 'local_premerge_repro_platforms()' "${ROOT_DIR}/scripts/pre-merge.sh"
+grep -q 'WORKCELL_PREMERGE_REPRO_PLATFORMS' "${ROOT_DIR}/scripts/pre-merge.sh"
+grep -Fq "WORKCELL_REPRO_PLATFORMS=\"\${PREMERGE_REPRO_PLATFORMS}\"" "${ROOT_DIR}/scripts/pre-merge.sh"
+
+FILE_TRACE_SENSITIVITY_HARNESS="$(mktemp)"
+cat >"${FILE_TRACE_SENSITIVITY_HARNESS}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+HOME="\$1"
+$(extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_file_trace_path_is_sensitive)
+workcell_file_trace_path_is_sensitive "\${HOME}/.aws/credentials"
+workcell_file_trace_path_is_sensitive "\${HOME}/.docker/config.json"
+workcell_file_trace_path_is_sensitive "\${HOME}/.gnupg/pubring.kbx"
+workcell_file_trace_path_is_sensitive "\${HOME}/.kube/config"
+if workcell_file_trace_path_is_sensitive "\${HOME}/.cache/claude-cli-nodejs/log.json"; then
+  echo "Expected file trace sensitivity filter to keep benign cache paths visible" >&2
+  exit 1
+fi
+EOF
+chmod 0755 "${FILE_TRACE_SENSITIVITY_HARNESS}"
+"${FILE_TRACE_SENSITIVITY_HARNESS}" "${INSTALL_VERIFY_HOME}"
+rm -f "${FILE_TRACE_SENSITIVITY_HARNESS}"
 
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
@@ -5223,7 +5007,14 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     exit 1
   else
     LIVE_DEBUG_PROFILE_NAME="workcell-live-debug-$$"
+    delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME}"
     LIVE_DEBUG_LOG="${BARRIER_VERIFY_ROOT}/debug/live-debug.log"
+    LIVE_DEBUG_PREPARE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.prepare.out"
+    LIVE_DEBUG_FILE_TRACE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.file-trace.out"
+    LIVE_DEBUG_LOGS_FILE_TRACE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.logs-file-trace.out"
+    LIVE_DEBUG_INSPECT_FILE_TRACE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.inspect-file-trace.out"
+    LIVE_DEBUG_LOGS_DEBUG_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.logs-debug.out"
+    AUDIT_SESSION_LOG="${BARRIER_VERIFY_ROOT}/debug/live-debug.audit-session.log"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --prepare-only \
@@ -5231,29 +5022,69 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --workspace "${ROOT_DIR}" \
       --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
-      --debug-log "${LIVE_DEBUG_LOG}" >/tmp/workcell-audit-prepare.out 2>&1; then
+      --debug-log "${LIVE_DEBUG_LOG}" >"${LIVE_DEBUG_PREPARE_OUT}" 2>&1; then
       echo "Expected audit verification prepare run to seed a managed image" >&2
-      cat /tmp/workcell-audit-prepare.out >&2
+      cat "${LIVE_DEBUG_PREPARE_OUT}" >&2
       exit 1
     fi
-    grep -q 'starting colima' "${LIVE_DEBUG_LOG}"
-    grep -q 'runtime-builder' "${LIVE_DEBUG_LOG}"
+    assert_output_matches_regex 'Starting managed Colima profile|starting colima' "${LIVE_DEBUG_LOG}" \
+      "Expected audit verification prepare run debug log to capture managed Colima startup"
+    assert_output_matches_regex 'Preparing the runtime image for profile|runtime-build|runtime-builder' "${LIVE_DEBUG_LOG}" \
+      "Expected audit verification prepare run debug log to capture runtime image preparation"
+    if ! "${ROOT_DIR}/scripts/workcell" \
+      --agent codex \
+      --workspace "${ROOT_DIR}" \
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
+      --file-trace-log "${FILE_TRACE_CAPTURE}" \
+      --agent-arg --version >"${LIVE_DEBUG_FILE_TRACE_OUT}" 2>&1; then
+      echo "Expected launched session with --file-trace-log to succeed" >&2
+      cat "${LIVE_DEBUG_FILE_TRACE_OUT}" >&2
+      exit 1
+    fi
+    test -s "${FILE_TRACE_CAPTURE}"
+    grep -q 'event=provider-launch' "${FILE_TRACE_CAPTURE}"
+    grep -q 'event=watch-start' "${FILE_TRACE_CAPTURE}"
+    grep -q 'event=provider-exit' "${FILE_TRACE_CAPTURE}"
+    if ! "${ROOT_DIR}/scripts/workcell" \
+      --logs file-trace \
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_LOGS_FILE_TRACE_OUT}" 2>&1; then
+      echo "Expected --logs file-trace to print the latest retained file trace log" >&2
+      exit 1
+    fi
+    grep -q 'event=provider-launch' "${LIVE_DEBUG_LOGS_FILE_TRACE_OUT}"
+    if ! "${ROOT_DIR}/scripts/workcell" \
+      --inspect \
+      --agent codex \
+      --workspace "${ROOT_DIR}" \
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}" 2>&1; then
+      echo "Expected --inspect to surface the latest retained file trace log" >&2
+      cat "${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}" >&2
+      exit 1
+    fi
+    grep -q "latest_file_trace_log=${FILE_TRACE_CAPTURE}" "${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --logs debug \
-      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >/tmp/workcell-live-logs-debug.out 2>&1; then
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_LOGS_DEBUG_OUT}" 2>&1; then
       echo "Expected successful prepare run to persist the latest debug-log pointer" >&2
       exit 1
     fi
-    grep -q 'starting colima' /tmp/workcell-live-logs-debug.out
-    AUDIT_LOG="$(sed -n 's/.*audit_log=\([^ ]*\).*/\1/p' /tmp/workcell-audit-prepare.out | head -n1)"
-    if [[ -z "${AUDIT_LOG}" ]]; then
-      echo "Expected audit verification prepare run to report an audit log path" >&2
-      exit 1
-    fi
-    AUDIT_BASE_LINES=0
-    if [[ -f "${AUDIT_LOG}" ]]; then
-      AUDIT_BASE_LINES="$(wc -l <"${AUDIT_LOG}")"
-    fi
+    assert_output_matches_regex 'Starting managed Colima profile|starting colima' "${LIVE_DEBUG_LOGS_DEBUG_OUT}" \
+      "Expected workcell logs debug to print the retained managed Colima startup log"
+    AUDIT_LOG="${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}/workcell.audit.log"
+    PACKAGE_MUTATION_AUDIT_COMMAND="$(
+      cat <<'EOF'
+for attempt in 1 2 3; do
+  if sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update >/dev/null &&
+    sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y --no-install-recommends make >/dev/null; then
+    exit 0
+  fi
+  if [[ "${attempt}" -eq 3 ]]; then
+    exit 1
+  fi
+  sleep "$((attempt * 5))"
+done
+EOF
+    )"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
@@ -5262,19 +5093,19 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
       --ack-arbitrary-command \
-      -- /bin/bash -lc 'sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update >/dev/null && sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y --no-install-recommends make >/dev/null'; then
+      -- /bin/bash -lc "${PACKAGE_MUTATION_AUDIT_COMMAND}"; then
       echo "Expected package-mutation audit verification run to succeed" >&2
       exit 1
     fi
-    tail -n "+$((AUDIT_BASE_LINES + 1))" "${AUDIT_LOG}" >/tmp/workcell-audit-session.log
-    grep -q 'event=launch' /tmp/workcell-audit-session.log
-    grep -q 'record_digest=' /tmp/workcell-audit-session.log
-    grep -q 'execution_path=lower-assurance-debug-command' /tmp/workcell-audit-session.log
-    grep -q 'event=assurance-change' /tmp/workcell-audit-session.log
-    grep -q 'reason=package-mutation' /tmp/workcell-audit-session.log
-    grep -q 'session_assurance_final=lower-assurance-package-mutation' /tmp/workcell-audit-session.log
-    grep -q 'event=exit' /tmp/workcell-audit-session.log
-    grep -q 'package_mutation_downgraded=1' /tmp/workcell-audit-session.log
+    cp "${AUDIT_LOG}" "${AUDIT_SESSION_LOG}"
+    grep -q 'event=launch' "${AUDIT_SESSION_LOG}"
+    grep -q 'record_digest=' "${AUDIT_SESSION_LOG}"
+    grep -q 'execution_path=lower-assurance-debug-command' "${AUDIT_SESSION_LOG}"
+    grep -q 'event=assurance-change' "${AUDIT_SESSION_LOG}"
+    grep -q 'reason=package-mutation' "${AUDIT_SESSION_LOG}"
+    grep -q 'session_assurance_final=lower-assurance-package-mutation' "${AUDIT_SESSION_LOG}"
+    grep -q 'event=exit' "${AUDIT_SESSION_LOG}"
+    grep -q 'package_mutation_downgraded=1' "${AUDIT_SESSION_LOG}"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
@@ -5287,18 +5118,14 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       echo "Expected live launcher run to stage an injection manifest and mount the tracked workspace AGENTS.md snapshot as a file" >&2
       exit 1
     fi
-    if [[ -x /opt/homebrew/bin/colima ]]; then
-      /opt/homebrew/bin/colima delete --profile "${LIVE_DEBUG_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-    else
-      /usr/local/bin/colima delete --profile "${LIVE_DEBUG_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-    fi
-    rm -rf "${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${LIVE_DEBUG_PROFILE_NAME}"
+    delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME}"
     AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
     AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"
+    AUDIT_RESTORE_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
     AUDIT_RESTORE_LOG="${AUDIT_RESTORE_DIR}/workcell.audit.log"
-    mkdir -p "${AUDIT_RESTORE_DIR}"
+    mkdir -p "${AUDIT_RESTORE_DIR}" "${AUDIT_RESTORE_LIMA_DIR}"
     printf '%s\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_DIR}/workcell.managed"
-    cat >"${AUDIT_RESTORE_DIR}/colima.yaml" <<'EOF'
+    cat >"${AUDIT_RESTORE_LIMA_DIR}/lima.yaml" <<'EOF'
 cpu: 4
 memory: 8
 disk: 60
@@ -5320,14 +5147,10 @@ EOF
     fi
     grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-audit-restore.out
     grep -q 'timestamp=test event=launch' "${AUDIT_RESTORE_LOG}"
-    if [[ -x /opt/homebrew/bin/colima ]]; then
-      /opt/homebrew/bin/colima delete --profile "${AUDIT_RESTORE_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-    else
-      /usr/local/bin/colima delete --profile "${AUDIT_RESTORE_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-    fi
-    rm -rf "${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
+    delete_verify_colima_profile "${AUDIT_RESTORE_PROFILE_NAME}"
 
     STRICT_REFRESH_PROFILE_NAME="workcell-strict-refresh-$$"
+    delete_verify_colima_profile "${STRICT_REFRESH_PROFILE_NAME}"
     STRICT_REFRESH_DIR="${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}"
     mkdir -p "${STRICT_REFRESH_DIR}"
     printf '%s\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.managed"
@@ -5391,12 +5214,7 @@ EOF
       echo "Strict-mode refresh preflight should leave the profile recoverable by --prepare" >&2
       exit 1
     fi
-    if [[ -x /opt/homebrew/bin/colima ]]; then
-      /opt/homebrew/bin/colima delete --profile "${STRICT_REFRESH_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-    else
-      /usr/local/bin/colima delete --profile "${STRICT_REFRESH_PROFILE_NAME}" --force >/dev/null 2>&1 || true
-    fi
-    rm -rf "${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${STRICT_REFRESH_PROFILE_NAME}"
+    delete_verify_colima_profile "${STRICT_REFRESH_PROFILE_NAME}"
   fi
 fi
 
@@ -5442,7 +5260,10 @@ for agent in claude gemini; do
   grep -q 'repair_action=delete_unmanaged_profile' /tmp/workcell-repair-profile-${agent}-dry-run.out
   grep -q 'docker run' /tmp/workcell-repair-profile-${agent}-dry-run.out
 done
-rm -rf "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}" "${REAL_HOME}/.colima/_lima/colima-${UNMANAGED_PROFILE_NAME}"
+rm -rf \
+  "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}" \
+  "${REAL_HOME}/.colima/_lima/colima-${UNMANAGED_PROFILE_NAME}" \
+  "${REAL_HOME}/.colima/_lima/_disks/colima-${UNMANAGED_PROFILE_NAME}"
 
 if [[ "$(uname -s)" == "Darwin" ]] &&
   host_tool_exists /opt/homebrew/bin/colima /usr/local/bin/colima &&

@@ -139,12 +139,21 @@ to surface successful Colima and runtime-build output in addition to the normal
 high-signal launcher messages.
 .TP
 .B --debug-log PATH
-Persist the full launcher plus container stdout/stderr stream to
+Persist launcher stderr plus any build/output streams that Workcell explicitly
+forwards through the launcher to
 .IR PATH .
 This is an explicit lower-assurance host logging path because provider output
 may be retained outside the ephemeral runtime, and Workcell prints an explicit
 warning banner when it is enabled. This flag is only valid for real launched
 sessions.
+.TP
+.B --file-trace-log PATH
+Persist a host-retained file transaction trace from inside the session home to
+.IR PATH .
+This is an explicit lower-assurance host logging path because it records
+session-local file operations outside the ephemeral runtime. Workcell prints an
+explicit warning banner when it is enabled. This flag is only valid for real
+launched sessions.
 .TP
 .B --audit-transcript PATH
 Persist a full interactive terminal transcript, including typed input and child
@@ -260,10 +269,10 @@ metadata, and latest retained host-log pointers without launching the runtime.
 Also available as
 .BR "workcell inspect" .
 .TP
-.B --logs audit|debug|transcript
+.B --logs audit|debug|file-trace|transcript
 Print the latest retained log of the selected type for the derived or explicit
 Colima profile and exit. Also available as
-.BR "workcell logs audit|debug|transcript" .
+.BR "workcell logs audit|debug|file-trace|transcript" .
 .TP
 .B --auth-status
 Print the selected injection or credential posture derived from the rendered

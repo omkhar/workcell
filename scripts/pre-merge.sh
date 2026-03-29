@@ -61,6 +61,20 @@ require_tool() {
   }
 }
 
+local_premerge_repro_platforms() {
+  case "$(uname -m)" in
+    arm64 | aarch64)
+      printf 'linux/arm64\n'
+      ;;
+    x86_64 | amd64)
+      printf 'linux/amd64\n'
+      ;;
+    *)
+      printf '\n'
+      ;;
+  esac
+}
+
 require_clean_tree() {
   local status_output=""
 
@@ -308,9 +322,17 @@ if [[ "${RUN_RELEASE_BUNDLE}" -eq 1 ]]; then
 fi
 
 if [[ "${RUN_REPRO}" -eq 1 ]]; then
-  echo "[pre-merge] runtime reproducibility"
-  SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-    "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
+  PREMERGE_REPRO_PLATFORMS="${WORKCELL_PREMERGE_REPRO_PLATFORMS:-$(local_premerge_repro_platforms)}"
+  if [[ -n "${PREMERGE_REPRO_PLATFORMS}" ]]; then
+    echo "[pre-merge] runtime reproducibility (${PREMERGE_REPRO_PLATFORMS})"
+    WORKCELL_REPRO_PLATFORMS="${PREMERGE_REPRO_PLATFORMS}" \
+      SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+      "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
+  else
+    echo "[pre-merge] runtime reproducibility"
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+      "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
+  fi
 fi
 
 if [[ "${RUN_REMOTE}" -eq 1 ]]; then

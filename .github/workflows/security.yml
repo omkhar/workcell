@@ -63,9 +63,9 @@ jobs:
     name: GitHub Actions security analysis
     runs-on: ubuntu-latest
     permissions:
-      actions: read
+      actions: read # Read workflow metadata required while emitting Zizmor SARIF.
       contents: read
-      security-events: write
+      security-events: write # Upload SARIF results to GitHub code scanning when enabled.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -76,6 +76,7 @@ jobs:
         with:
           advanced-security: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_ZIZMOR_SARIF == 'true' }}
           inputs: .github/workflows
+          persona: auditor
           version: 1.23.1
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
