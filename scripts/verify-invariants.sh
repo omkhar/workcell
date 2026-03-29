@@ -2127,12 +2127,15 @@ bash "${WORKCELL_COLIMA_TIMEOUT_HARNESS}"
 WORKCELL_REFRESH_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-refresh-harness.sh"
 {
   printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" remove_profile_state_dirs
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" profile_state_dirs_exist
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" refresh_managed_profile
   printf '\n'
   cat <<'EOF'
 ROOT="$(mktemp -d)"
 COLIMA_PROFILE="refresh-fixture"
-PROFILE_DIR="${ROOT}/profile"
 PROFILE_WAS_REFRESHED=0
 PROFILE_PREEXISTED=1
 PROFILE_MARKER_WORKSPACE="bound"
@@ -2141,13 +2144,17 @@ PROFILE_RUNNING=1
 stash_profile_audit_log() { :; }
 reap_stale_profile_processes() { :; }
 run_host_colima_with_timeout() { return 124; }
+profile_dir() { printf '%s/profile-%s\n' "${ROOT}" "$1"; }
 profile_lima_dir() { printf '%s/lima-%s\n' "${ROOT}" "$1"; }
+profile_disk_dir() { printf '%s/disk-%s\n' "${ROOT}" "$1"; }
 profile_process_pids() { return 1; }
 
-mkdir -p "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")"
+PROFILE_DIR="$(profile_dir "${COLIMA_PROFILE}")"
+mkdir -p "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")" "$(profile_disk_dir "${COLIMA_PROFILE}")"
 refresh_managed_profile "refreshing fixture profile"
 [[ ! -e "${PROFILE_DIR}" ]]
 [[ ! -e "$(profile_lima_dir "${COLIMA_PROFILE}")" ]]
+[[ ! -e "$(profile_disk_dir "${COLIMA_PROFILE}")" ]]
 [[ "${PROFILE_WAS_REFRESHED}" -eq 1 ]]
 [[ "${PROFILE_PREEXISTED}" -eq 0 ]]
 [[ -z "${PROFILE_MARKER_WORKSPACE}" ]]
@@ -2341,8 +2348,13 @@ if ! rg -q 'BUILDX_BUILDER="workcell-release-' "${ROOT_DIR}/scripts/verify-relea
   exit 1
 fi
 
-if ! rg -q 'expected_endpoint="\$\{DOCKER_CONTEXT_NAME:-\$\{DOCKER_HOST:-\}\}"' "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"; then
-  echo "Expected trusted-docker-client.sh to validate existing Buildx builders against either DOCKER_CONTEXT_NAME or DOCKER_HOST" >&2
+if ! rg -q 'buildx_expected_endpoints\(\)' "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"; then
+  echo "Expected trusted-docker-client.sh to compute accepted Buildx endpoints from the active Docker context or host" >&2
+  exit 1
+fi
+
+if ! rg -q 'docker context inspect "\$\{DOCKER_CONTEXT_NAME\}" --format' "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"; then
+  echo "Expected trusted-docker-client.sh to resolve Docker context host URIs when validating existing Buildx builders" >&2
   exit 1
 fi
 
@@ -2741,28 +2753,56 @@ BUILDER_RECREATE_PROBE_NAME="workcell-verify-builder-recreate-$$"
 BUILDER_RECREATE_OUTPUT="/tmp/workcell-builder-recreate.out"
 if ! (
   set -euo pipefail
+  local_probe_docker_host=""
   source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   setup_workcell_trusted_docker_client
   select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
   PROBE_DOCKER_CONTEXT_NAME="${DOCKER_CONTEXT_NAME}"
-  DOCKER_HOST=""
-  BUILDX_BUILDER="${BUILDER_RECREATE_PROBE_NAME}"
   buildx_cmd rm --force "${BUILDER_RECREATE_PROBE_NAME}" >/dev/null 2>&1 || true
   buildx_cmd create --driver docker-container --name "${BUILDER_RECREATE_PROBE_NAME}" --use >/dev/null
-  DOCKER_CONTEXT_NAME=""
-  export DOCKER_HOST
-  DOCKER_HOST="$(docker context inspect "${PROBE_DOCKER_CONTEXT_NAME}" --format '{{.Endpoints.docker.Host}}')"
-  ensure_workcell_selected_builder
-  buildx_cmd inspect "${BUILDER_RECREATE_PROBE_NAME}" >"${BUILDER_RECREATE_OUTPUT}"
-  awk -F': *' -v expected="${DOCKER_HOST}" '
-    $1 == "Endpoint" && $2 == expected { matched = 1 }
-    END { exit(matched ? 0 : 1) }
-  ' "${BUILDER_RECREATE_OUTPUT}"
+  local_probe_docker_host="$(docker context inspect "${PROBE_DOCKER_CONTEXT_NAME}" --format '{{.Endpoints.docker.Host}}')"
+  DOCKER_CONTEXT_NAME="" DOCKER_HOST="${local_probe_docker_host}" BUILDX_BUILDER="${BUILDER_RECREATE_PROBE_NAME}" \
+    ensure_workcell_selected_builder
+  DOCKER_CONTEXT_NAME="" DOCKER_HOST="${local_probe_docker_host}" \
+    buildx_cmd inspect "${BUILDER_RECREATE_PROBE_NAME}" >"${BUILDER_RECREATE_OUTPUT}"
+  while IFS= read -r line; do
+    case "${line}" in
+      "Endpoint: ${local_probe_docker_host}")
+        matched=1
+        break
+        ;;
+    esac
+  done <"${BUILDER_RECREATE_OUTPUT}"
+  [[ "${matched:-0}" -eq 1 ]]
   buildx_cmd rm --force "${BUILDER_RECREATE_PROBE_NAME}" >/dev/null 2>&1 || true
   cleanup_workcell_trusted_docker_client
 ); then
   echo "Expected trusted-docker-client.sh to recreate a stale Buildx builder when the active DOCKER_HOST endpoint differs" >&2
   cat "${BUILDER_RECREATE_OUTPUT}" >&2 || true
+  exit 1
+fi
+
+BUILDER_ENDPOINT_MATCH_PROBE="/tmp/workcell-builder-match.out"
+if ! (
+  set -euo pipefail
+  source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+  cat >"${BUILDER_ENDPOINT_MATCH_PROBE}" <<'EOF'
+Name: test
+Nodes:
+Name: test0
+Endpoint: colima
+EOF
+  buildx_builder_matches_context "${BUILDER_ENDPOINT_MATCH_PROBE}" colima unix:///tmp/workcell-docker.sock
+  cat >"${BUILDER_ENDPOINT_MATCH_PROBE}" <<'EOF'
+Name: test
+Nodes:
+Name: test0
+Endpoint: unix:///tmp/workcell-docker.sock
+EOF
+  buildx_builder_matches_context "${BUILDER_ENDPOINT_MATCH_PROBE}" colima unix:///tmp/workcell-docker.sock
+); then
+  echo "Expected trusted-docker-client.sh to accept either a Docker context name or its resolved host URI when matching Buildx builders" >&2
+  cat "${BUILDER_ENDPOINT_MATCH_PROBE}" >&2 || true
   exit 1
 fi
 
