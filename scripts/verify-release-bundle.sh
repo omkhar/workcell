@@ -176,8 +176,7 @@ build_bundle_in_validator() {
   docker_root="$(workcell_docker_host_path "${ROOT_DIR}")"
   relative_destination="${destination_dir#"${ROOT_DIR}/"}"
 
-  # shellcheck disable=SC2016
-  docker_cmd run --rm \
+  docker_cmd run --rm -i \
     --entrypoint /bin/bash \
     -v "${docker_root}:/workspace" \
     -w /workspace \
@@ -192,33 +191,33 @@ build_bundle_in_validator() {
     -e GIT_CONFIG_SYSTEM=/dev/null \
     -e GIT_CONFIG_GLOBAL=/dev/null \
     "${VALIDATOR_IMAGE}" \
-    -lc '
-      set -euo pipefail
-      tar_path="${DESTINATION_DIR}/${BUNDLE_NAME%.tar.gz}.tar"
-      clone_dir="$(mktemp -d /tmp/workcell-release-clone.XXXXXX)"
-      template_dir="$(mktemp -d /tmp/workcell-git-template.XXXXXX)"
-      gitconfig="$(mktemp /tmp/workcell-safe-gitconfig.XXXXXX)"
-      trap '\''rm -rf "${clone_dir}" "${template_dir}" "${gitconfig}"'\'' EXIT
-      git config --file "${gitconfig}" --add safe.directory /workspace
-      git config --file "${gitconfig}" --add safe.directory /workspace/.git
-      GIT_CONFIG_GLOBAL="${gitconfig}" git \
-        clone \
-        --quiet \
-        --no-checkout \
-        --no-local \
-        --template "${template_dir}" \
-        /workspace \
-        "${clone_dir}"
-      git -C "${clone_dir}" archive \
-        --format=tar \
-        --mtime="@${SOURCE_DATE_EPOCH}" \
-        --prefix="${BUNDLE_PREFIX}" \
-        -o "${tar_path}" \
-        "${ARCHIVE_REF}"
-      gzip -n -9 <"${tar_path}" >"${DESTINATION_DIR}/${BUNDLE_NAME}"
-      rm -f "${tar_path}"
-      (cd "${DESTINATION_DIR}" && sha256sum "${BUNDLE_NAME}" >SHA256SUMS)
-    '
+    -s <<'SCRIPT'
+set -euo pipefail
+tar_path="${DESTINATION_DIR}/${BUNDLE_NAME%.tar.gz}.tar"
+clone_dir="$(mktemp -d /tmp/workcell-release-clone.XXXXXX)"
+template_dir="$(mktemp -d /tmp/workcell-git-template.XXXXXX)"
+gitconfig="$(mktemp /tmp/workcell-safe-gitconfig.XXXXXX)"
+trap 'rm -rf "${clone_dir}" "${template_dir}" "${gitconfig}"' EXIT
+git config --file "${gitconfig}" --add safe.directory /workspace
+git config --file "${gitconfig}" --add safe.directory /workspace/.git
+GIT_CONFIG_GLOBAL="${gitconfig}" git \
+  clone \
+  --quiet \
+  --no-checkout \
+  --no-local \
+  --template "${template_dir}" \
+  /workspace \
+  "${clone_dir}"
+git -C "${clone_dir}" archive \
+  --format=tar \
+  --mtime="@${SOURCE_DATE_EPOCH}" \
+  --prefix="${BUNDLE_PREFIX}" \
+  -o "${tar_path}" \
+  "${ARCHIVE_REF}"
+gzip -n -9 <"${tar_path}" >"${DESTINATION_DIR}/${BUNDLE_NAME}"
+rm -f "${tar_path}"
+(cd "${DESTINATION_DIR}" && sha256sum "${BUNDLE_NAME}" >SHA256SUMS)
+SCRIPT
 }
 
 if [[ -n "${BUNDLE_MANIFEST_PATH}" ]]; then
@@ -228,6 +227,10 @@ fi
 if command -v docker >/dev/null 2>&1; then
   setup_workcell_trusted_docker_client
   select_docker_context
+  if [[ -z "${BUILDX_BUILDER:-}" ]]; then
+    safe_builder_context="${DOCKER_CONTEXT_NAME//[^[:alnum:]_.-]/-}"
+    BUILDX_BUILDER="workcell-release-${safe_builder_context}"
+  fi
   ensure_workcell_selected_builder
   buildx_cmd build \
     --load \

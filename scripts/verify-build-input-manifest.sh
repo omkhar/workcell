@@ -22,8 +22,7 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-build-inputs.XXXXXX")"
 NESTED_ROOT=""
-BUILD_REF="${WORKCELL_BUILD_INPUT_REF:-$(git -C "${ROOT_DIR}" rev-parse HEAD 2>/dev/null || printf 'UNKNOWN')}"
-SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
+SAFE_GIT_CONFIG="${TMP_ROOT}/safe-gitconfig"
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
@@ -33,6 +32,27 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+git config --file "${SAFE_GIT_CONFIG}" --add safe.directory "${ROOT_DIR}"
+if [[ -d "${ROOT_DIR}/.git" ]]; then
+  git config --file "${SAFE_GIT_CONFIG}" --add safe.directory "${ROOT_DIR}/.git"
+fi
+
+safe_git() {
+  env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME=/tmp \
+    LC_ALL=C \
+    LANG=C \
+    GIT_ATTR_NOSYSTEM=1 \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_CONFIG_GLOBAL="${SAFE_GIT_CONFIG}" \
+    git "$@"
+}
+
+BUILD_REF="${WORKCELL_BUILD_INPUT_REF:-$(safe_git -C "${ROOT_DIR}" rev-parse HEAD 2>/dev/null || printf 'UNKNOWN')}"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(safe_git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 
 copy_tracked_worktree() {
   local destination="$1"
@@ -48,7 +68,7 @@ copy_tracked_worktree() {
     fi
     mkdir -p "$(dirname "${destination_path}")"
     cp -pP "${source_path}" "${destination_path}"
-  done < <(git -C "${ROOT_DIR}" ls-files -z)
+  done < <(safe_git -C "${ROOT_DIR}" ls-files -z)
 }
 
 export WORKCELL_BUILD_INPUT_REF="${BUILD_REF}"
@@ -67,7 +87,7 @@ if [[ "${digest_a}" != "${digest_b}" ]]; then
   exit 1
 fi
 
-if git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   mkdir -p "${ROOT_DIR}/tmp"
   NESTED_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-build-input-nested.XXXXXX")"
   ARCHIVE_ROOT="${TMP_ROOT}/archived-source"

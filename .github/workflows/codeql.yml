@@ -23,9 +23,9 @@ jobs:
     if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
     runs-on: ubuntu-latest
     permissions:
-      actions: read
+      actions: read # Read workflow metadata required by the CodeQL action helpers.
       contents: read
-      security-events: write
+      security-events: write # Upload SARIF results to GitHub code scanning.
     strategy:
       fail-fast: false
       matrix:

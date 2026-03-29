@@ -57,7 +57,7 @@ jobs:
         run: |
           docker build \
             -f tools/validator/Dockerfile \
-            -t workcell-validator:${{ github.sha }} \
+            -t "workcell-validator:${GITHUB_SHA}" \
             .
 
       - name: Check docs spelling and manpage
@@ -65,7 +65,7 @@ jobs:
           docker run --rm \
             -v "${PWD}:/workspace" \
             -w /workspace \
-            workcell-validator:${{ github.sha }} \
+            "workcell-validator:${GITHUB_SHA}" \
             /bin/bash -lc '
               mapfile -d "" doc_files < <(
                 find /workspace \

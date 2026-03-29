@@ -41,6 +41,69 @@ emit_session_assurance_notice() {
   esac
 }
 
+WORKCELL_FILE_TRACE_CHILD_PID=""
+WORKCELL_FILE_TRACE_STATUS=0
+WORKCELL_FILE_TRACE_TEARDOWN_DONE=0
+
+workcell_run_command_with_file_trace_finish() {
+  [[ "${WORKCELL_FILE_TRACE_TEARDOWN_DONE}" == "1" ]] && return 0
+  workcell_file_trace_stop_watcher
+  workcell_file_trace_emit \
+    "event=provider-exit" \
+    "agent=${AGENT_NAME}" \
+    "status=${WORKCELL_FILE_TRACE_STATUS}"
+  WORKCELL_FILE_TRACE_TEARDOWN_DONE=1
+}
+
+workcell_run_command_with_file_trace_signal() {
+  local signal="$1"
+
+  if [[ -n "${WORKCELL_FILE_TRACE_CHILD_PID}" ]] &&
+    kill -0 "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1; then
+    kill "-${signal}" "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1 ||
+      kill "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1 || true
+    wait "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1 || true
+  fi
+  case "${signal}" in
+    INT) WORKCELL_FILE_TRACE_STATUS=130 ;;
+    TERM) WORKCELL_FILE_TRACE_STATUS=143 ;;
+    *) WORKCELL_FILE_TRACE_STATUS=128 ;;
+  esac
+  trap - INT TERM
+  workcell_run_command_with_file_trace_finish
+  exit "${WORKCELL_FILE_TRACE_STATUS}"
+}
+
+run_command_with_file_trace() {
+  local status=0
+  local child_pid=""
+
+  workcell_file_trace_emit \
+    "event=provider-launch" \
+    "agent=${AGENT_NAME}" \
+    "ui=${AGENT_UI}" \
+    "mode=${WORKCELL_MODE}"
+  workcell_file_trace_start_watcher "${HOME}"
+
+  WORKCELL_FILE_TRACE_CHILD_PID=""
+  WORKCELL_FILE_TRACE_STATUS=0
+  WORKCELL_FILE_TRACE_TEARDOWN_DONE=0
+  trap 'workcell_run_command_with_file_trace_signal INT' INT
+  trap 'workcell_run_command_with_file_trace_signal TERM' TERM
+  "$@" &
+  child_pid="$!"
+  WORKCELL_FILE_TRACE_CHILD_PID="${child_pid}"
+  set +e
+  wait "${child_pid}"
+  status="$?"
+  set -e
+
+  WORKCELL_FILE_TRACE_STATUS="${status}"
+  trap - INT TERM
+  workcell_run_command_with_file_trace_finish
+  return "${status}"
+}
+
 umask 077
 
 if [[ "$$" -ne 1 ]]; then
@@ -130,4 +193,8 @@ if [[ $# -gt 0 ]]; then
 fi
 
 printf 'agent=%s ui=%s mode=%s autonomy=%s workspace=%s\n' "${AGENT_NAME}" "${AGENT_UI}" "${WORKCELL_MODE}" "${WORKCELL_AGENT_AUTONOMY}" "${WORKSPACE}" >&2
+if workcell_file_trace_enabled; then
+  run_command_with_file_trace "$@"
+  exit "$?"
+fi
 exec "$@"

@@ -121,12 +121,6 @@ modes = ["strict", "build"]
 - Use `[credentials]` for provider and GitHub auth material that should land in
   Workcell-managed session paths without a fresh login every time. This is the
   safest way to persist reusable provider auth on the host.
-- When Workcell offers to save a credential that succeeded interactively,
-  accept only if you want that credential set added to the default host
-  Workcell config for future launches. Workcell writes host-owned secret
-  file(s) under `~/.config/workcell/credentials/` and updates a managed include
-  fragment under `~/.config/workcell/injection-policy.d/`; it does not write
-  secrets back into the workspace, adapter baseline, or the live session home.
 - Keep secret sources owner-only (`0600` for files, `0700` for directories) and
   avoid symlinks. Workcell rejects looser permissions on secret-bearing inputs.
   `ssh.known_hosts` is the exception: standard world-readable files are

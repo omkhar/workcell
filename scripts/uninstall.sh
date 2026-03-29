@@ -13,14 +13,15 @@ Usage: uninstall.sh [--dry-run]
 Remove Workcell-owned local install links and managed host state:
   - ~/.local/bin/workcell
   - ~/.local/share/man/man1/workcell.1
-  - ~/.colima/workcell-* profiles, matching _lima dirs, and Workcell locks
+  - ~/.local/state/workcell
+  - ~/.colima/workcell-* profiles, matching _lima dirs, matching _lima/_disks dirs, and Workcell locks
   - ~/Library/Caches/colima/workcell-host-inputs
   - ~/Library/Caches/colima/workcell-shadow
   - /tmp/workcell-docker.* and /tmp/workcell-*.log.*
 
 Preserved on purpose:
   - ~/.config/workcell/*
-  - user-specified debug log and transcript files
+  - user-specified debug log, file trace log, and transcript files
   - unrelated Colima profiles and caches
 EOF
 }
@@ -65,6 +66,7 @@ PY
 COLIMA_HOME="${REAL_HOME}/.colima"
 INSTALL_PATH="${REAL_HOME}/.local/bin/workcell"
 MAN_PATH="${REAL_HOME}/.local/share/man/man1/workcell.1"
+STATE_ROOT="${REAL_HOME}/.local/state/workcell"
 INJECTION_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
 SHADOW_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
 
@@ -117,6 +119,18 @@ log_action() {
   printf '%s %s\n' "${action}" "${target}"
 }
 
+prepare_directory_tree_for_removal() {
+  local target="$1"
+
+  [[ -d "${target}" ]] || return 0
+  [[ ! -L "${target}" ]] || return 0
+
+  if command -v chflags >/dev/null 2>&1; then
+    chflags -R nouchg,noschg "${target}" 2>/dev/null || true
+  fi
+  find "${target}" -exec chmod u+rwx {} + 2>/dev/null || true
+}
+
 remove_path() {
   local target="$1"
 
@@ -124,12 +138,36 @@ remove_path() {
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     log_action "Would remove" "${target}"
   else
-    if [[ -d "${target}" ]] && [[ ! -L "${target}" ]]; then
-      chmod -R u+w "${target}" 2>/dev/null || true
+    prepare_directory_tree_for_removal "${target}"
+    if ! rm -rf "${target}" 2>/dev/null; then
+      prepare_directory_tree_for_removal "${target}"
+      rm -rf "${target}"
     fi
-    rm -rf "${target}"
     log_action "Removed" "${target}"
   fi
+  REMOVED_COUNT=$((REMOVED_COUNT + 1))
+}
+
+remove_path_best_effort() {
+  local target="$1"
+
+  [[ -e "${target}" || -L "${target}" ]] || return 0
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    log_action "Would remove" "${target}"
+    REMOVED_COUNT=$((REMOVED_COUNT + 1))
+    return 0
+  fi
+
+  prepare_directory_tree_for_removal "${target}"
+  if ! rm -rf "${target}" 2>/dev/null; then
+    prepare_directory_tree_for_removal "${target}"
+    if ! rm -rf "${target}" 2>/dev/null; then
+      preserve_path "active temp root" "${target}"
+      return 0
+    fi
+  fi
+
+  log_action "Removed" "${target}"
   REMOVED_COUNT=$((REMOVED_COUNT + 1))
 }
 
@@ -162,6 +200,25 @@ remove_workcell_symlink() {
       preserve_path "${label} symlink not owned by Workcell (${target})" "${path}"
       ;;
   esac
+}
+
+remove_workcell_launcher_install() {
+  local path="$1"
+
+  if [[ -L "${path}" ]]; then
+    remove_workcell_symlink "${path}" "scripts/workcell" "launcher"
+    return 0
+  fi
+
+  if [[ ! -f "${path}" ]]; then
+    return 0
+  fi
+
+  if grep -q '^# Workcell debug installer wrapper$' "${path}" 2>/dev/null; then
+    remove_path "${path}"
+  else
+    preserve_path "non-Workcell launcher" "${path}"
+  fi
 }
 
 resolve_host_tool_optional() {
@@ -271,7 +328,7 @@ cleanup_temp_root() {
   for pattern in "${patterns[@]}"; do
     for candidate in "${temp_root}"/${pattern}; do
       [[ -O "${candidate}" ]] || continue
-      remove_path "${candidate}"
+      remove_path_best_effort "${candidate}"
     done
   done
 
@@ -288,9 +345,10 @@ for profile in "${PROFILE_NAMES[@]}"; do
   delete_managed_profile "${profile}" "${COLIMA_BIN}"
 done
 
-remove_workcell_symlink "${INSTALL_PATH}" "scripts/workcell" "launcher"
+remove_workcell_launcher_install "${INSTALL_PATH}"
 remove_workcell_symlink "${MAN_PATH}" "man/workcell.1" "man page"
 
+remove_path "${STATE_ROOT}"
 remove_path "${INJECTION_ROOT}"
 remove_path "${SHADOW_ROOT}"
 
@@ -310,4 +368,4 @@ else
   fi
 fi
 
-echo "Preserved ~/.config/workcell and any user-specified debug/transcript files."
+echo "Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files."

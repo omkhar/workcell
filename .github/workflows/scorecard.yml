@@ -19,12 +19,12 @@ jobs:
     name: Scorecard analysis
     runs-on: ubuntu-latest
     permissions:
-      checks: read
+      checks: read # Read existing check metadata that Scorecard correlates in its report.
       contents: read
-      id-token: write
-      issues: read
-      pull-requests: read
-      security-events: write
+      id-token: write # Mint an OIDC token for Scorecard provenance checks.
+      issues: read # Read issue metadata used by Scorecard's review signals.
+      pull-requests: read # Read pull request metadata used by Scorecard's review signals.
+      security-events: write # Upload SARIF results to GitHub code scanning when enabled.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

@@ -16,7 +16,7 @@ jobs:
   boundary:
     name: Self-hosted boundary check
     if: ${{ vars.WORKCELL_ENABLE_SELF_HOSTED_MACOS == 'true' }}
-    runs-on:
+    runs-on: # zizmor: ignore[self-hosted-runner] requires reviewed macOS+Colima boundary coverage
       - self-hosted
       - macOS
     permissions:

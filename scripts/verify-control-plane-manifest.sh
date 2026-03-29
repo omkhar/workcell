@@ -21,6 +21,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMMITTED_MANIFEST="${ROOT_DIR}/runtime/container/control-plane-manifest.json"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-control-plane.XXXXXX")"
 NESTED_ROOT=""
+SAFE_GIT_CONFIG="${TMP_ROOT}/safe-gitconfig"
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
@@ -30,6 +31,24 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+git config --file "${SAFE_GIT_CONFIG}" --add safe.directory "${ROOT_DIR}"
+if [[ -d "${ROOT_DIR}/.git" ]]; then
+  git config --file "${SAFE_GIT_CONFIG}" --add safe.directory "${ROOT_DIR}/.git"
+fi
+
+safe_git() {
+  env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME=/tmp \
+    LC_ALL=C \
+    LANG=C \
+    GIT_ATTR_NOSYSTEM=1 \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_CONFIG_GLOBAL="${SAFE_GIT_CONFIG}" \
+    git "$@"
+}
 
 copy_tracked_worktree() {
   local destination="$1"
@@ -47,7 +66,7 @@ copy_tracked_worktree() {
     fi
     mkdir -p "$(dirname "${destination_path}")"
     cp -pP "${source_path}" "${destination_path}"
-  done < <(git -C "${ROOT_DIR}" ls-files -z)
+  done < <(safe_git -C "${ROOT_DIR}" ls-files -z)
 }
 
 "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh" "${TMP_ROOT}/a.json"
@@ -111,7 +130,7 @@ for entry in runtime_artifacts:
         raise SystemExit(f"invalid runtime artifact digest: {entry!r}")
 PY
 
-if git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   mkdir -p "${ROOT_DIR}/tmp"
   NESTED_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-control-plane-nested.XXXXXX")"
   ARCHIVE_ROOT="${TMP_ROOT}/archived-source"
@@ -139,7 +158,11 @@ if git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   cp -R "${ARCHIVE_ROOT}" "${TMP_ROOT}/symlink-artifact"
   ln -sf "${TMP_ROOT}/a.json" "${TMP_ROOT}/symlink-artifact/scripts/workcell"
   SYMLINK_LOG="${TMP_ROOT}/symlink-out.log"
-  if WORKCELL_CONTROL_PLANE_ROOT="${TMP_ROOT}/symlink-artifact" \
+  if env \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME="${HOME:-/tmp}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_CONTROL_PLANE_ROOT="${TMP_ROOT}/symlink-artifact" \
     "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh" "${TMP_ROOT}/symlink-out.json" \
     >"${SYMLINK_LOG}" 2>&1; then
     echo "Expected control-plane manifest generation to reject symlinked tracked artifacts" >&2

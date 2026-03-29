@@ -64,6 +64,7 @@ workcell_prepare_session_directory() {
   fi
   mkdir -p "${target_path}"
   workcell_assert_no_symlink_path_components "${target_path}" "${label}"
+  workcell_file_trace_log_path_state "prepare-directory" "${target_path}" "label=$(printf '%q' "${label}")"
 }
 
 workcell_reset_session_target() {
@@ -72,11 +73,17 @@ workcell_reset_session_target() {
 
   workcell_prepare_session_parent "${target_path}" "${label}"
   if [[ -L "${target_path}" ]]; then
+    workcell_file_trace_log_path_state "reset-remove" "${target_path}" "label=$(printf '%q' "${label}")"
     rm -f "${target_path}"
   elif [[ -e "${target_path}" ]]; then
+    workcell_file_trace_log_path_state "reset-remove" "${target_path}" "label=$(printf '%q' "${label}")"
     rm -rf "${target_path}"
   fi
   workcell_assert_no_symlink_path_components "${target_path}" "${label}"
+  workcell_file_trace_emit \
+    "event=reset-complete" \
+    "path=$(printf '%q' "${target_path}")" \
+    "label=$(printf '%q' "${label}")"
 }
 
 workcell_link_control_plane_path() {
@@ -85,6 +92,7 @@ workcell_link_control_plane_path() {
 
   workcell_reset_session_target "${target_path}" "control-plane link"
   ln -s "${source_path}" "${target_path}"
+  workcell_file_trace_log_path_state "link-control-plane" "${target_path}" "source=$(printf '%q' "${source_path}")"
 }
 
 workcell_copy_control_plane_tree() {
@@ -99,6 +107,7 @@ workcell_copy_control_plane_tree() {
   find "${target_path}" -type d -exec chmod "${dir_mode}" {} +
   find "${target_path}" -type f -exec chmod "${file_mode}" {} +
   chmod "${dir_mode}" "${target_path}"
+  workcell_file_trace_log_path_state "copy-control-plane-tree" "${target_path}" "source=$(printf '%q' "${source_path}")"
 }
 
 workcell_copy_control_plane_file() {
@@ -109,6 +118,268 @@ workcell_copy_control_plane_file() {
   workcell_reset_session_target "${target_path}" "control-plane file"
   cp "${source_path}" "${target_path}"
   chmod "${file_mode}" "${target_path}"
+  workcell_file_trace_log_path_state "copy-control-plane-file" "${target_path}" "source=$(printf '%q' "${source_path}")"
+}
+
+WORKCELL_FILE_TRACE_PATH="${WORKCELL_FILE_TRACE_PATH:-}"
+WORKCELL_FILE_TRACE_INTERVAL_SEC="${WORKCELL_FILE_TRACE_INTERVAL_SEC:-1}"
+WORKCELL_FILE_TRACE_WATCH_PID=""
+WORKCELL_FILE_TRACE_WATCH_ROOT=""
+WORKCELL_FILE_TRACE_WATCH_STATE_FILE=""
+
+workcell_file_trace_enabled() {
+  [[ -n "${WORKCELL_FILE_TRACE_PATH}" ]]
+}
+
+workcell_file_trace_emit() {
+  local field=""
+
+  workcell_file_trace_enabled || return 0
+  mkdir -p "$(dirname "${WORKCELL_FILE_TRACE_PATH}")"
+  touch "${WORKCELL_FILE_TRACE_PATH}"
+  chmod 0600 "${WORKCELL_FILE_TRACE_PATH}" 2>/dev/null || true
+  printf '%s' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"${WORKCELL_FILE_TRACE_PATH}"
+  for field in "$@"; do
+    printf '\t%s' "${field}" >>"${WORKCELL_FILE_TRACE_PATH}"
+  done
+  printf '\n' >>"${WORKCELL_FILE_TRACE_PATH}"
+}
+
+workcell_file_trace_path_is_sensitive() {
+  local path="$1"
+  local candidate=""
+  local -a sensitive_exact_paths=(
+    "${HOME}/.claude.json"
+    "${HOME}/.mcp.json"
+    "${HOME}/.npmrc"
+    "${HOME}/.pypirc"
+  )
+  local -a sensitive_prefixes=(
+    "${HOME}/.aws"
+    "${HOME}/.azure"
+    "${HOME}/.codex"
+    "${HOME}/.claude"
+    "${HOME}/.config/aws"
+    "${HOME}/.config/azure"
+    "${HOME}/.config/claude-code"
+    "${HOME}/.config/docker"
+    "${HOME}/.gemini"
+    "${HOME}/.config/gcloud"
+    "${HOME}/.config/gh"
+    "${HOME}/.docker"
+    "${HOME}/.gnupg"
+    "${HOME}/.kube"
+    "${HOME}/.npm"
+    "${HOME}/.ssh"
+    "${HOME}/.terraform.d"
+  )
+
+  for candidate in "${sensitive_exact_paths[@]}"; do
+    if [[ "${path}" == "${candidate}" ]]; then
+      return 0
+    fi
+  done
+
+  for candidate in "${sensitive_prefixes[@]}"; do
+    if [[ "${path}" == "${candidate}" ]] || [[ "${path}" == "${candidate}/"* ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+workcell_file_trace_snapshot_row() {
+  local path="$1"
+  local kind="missing"
+  local mode="-"
+  local size="-"
+  local mtime="-"
+  local target="-"
+
+  workcell_file_trace_path_is_sensitive "${path}" && return 1
+
+  if [[ -L "${path}" ]]; then
+    kind="symlink"
+    target="$(readlink "${path}" 2>/dev/null || true)"
+  elif [[ -d "${path}" ]]; then
+    kind="dir"
+  elif [[ -f "${path}" ]]; then
+    kind="file"
+  elif [[ -e "${path}" ]]; then
+    kind="other"
+  fi
+
+  if [[ "${kind}" != "missing" ]]; then
+    mode="$(stat -c '%a' -- "${path}" 2>/dev/null || true)"
+    size="$(stat -c '%s' -- "${path}" 2>/dev/null || true)"
+    mtime="$(stat -c '%Y' -- "${path}" 2>/dev/null || true)"
+  fi
+
+  printf '%q\t%s\t%s\t%s\t%s\t%q\n' "${path}" "${kind}" "${mode:-?}" "${size:-?}" "${mtime:-?}" "${target}"
+}
+
+workcell_file_trace_collect_snapshot() {
+  local root_path="$1"
+  local output_path="$2"
+  local candidate=""
+  local row=""
+
+  : >"${output_path}"
+  [[ -d "${root_path}" ]] || return 0
+  while IFS= read -r -d '' candidate; do
+    row="$(workcell_file_trace_snapshot_row "${candidate}")" || continue
+    printf '%s\n' "${row}" >>"${output_path}"
+  done < <(find "${root_path}" -xdev \( -type d -o -type f -o -type l \) -print0 | LC_ALL=C sort -z)
+}
+
+workcell_file_trace_diff_snapshots() {
+  local phase="$1"
+  local before_path="$2"
+  local after_path="$3"
+  local path_key=""
+  local state=""
+  local -A before_map=()
+  local -A after_map=()
+
+  [[ -f "${before_path}" ]] || : >"${before_path}"
+  [[ -f "${after_path}" ]] || : >"${after_path}"
+
+  while IFS=$'\t' read -r path_key state; do
+    [[ -n "${path_key}" ]] || continue
+    before_map["${path_key}"]="${state}"
+  done <"${before_path}"
+
+  while IFS=$'\t' read -r path_key state; do
+    [[ -n "${path_key}" ]] || continue
+    after_map["${path_key}"]="${state}"
+  done <"${after_path}"
+
+  for path_key in "${!before_map[@]}"; do
+    if [[ ! -v after_map["${path_key}"] ]]; then
+      workcell_file_trace_emit \
+        "event=delete" \
+        "phase=${phase}" \
+        "path=${path_key}" \
+        "previous=${before_map[${path_key}]}"
+    elif [[ "${before_map[${path_key}]}" != "${after_map[${path_key}]}" ]]; then
+      workcell_file_trace_emit \
+        "event=modify" \
+        "phase=${phase}" \
+        "path=${path_key}" \
+        "previous=${before_map[${path_key}]}" \
+        "current=${after_map[${path_key}]}"
+    fi
+  done
+
+  for path_key in "${!after_map[@]}"; do
+    if [[ ! -v before_map["${path_key}"] ]]; then
+      workcell_file_trace_emit \
+        "event=create" \
+        "phase=${phase}" \
+        "path=${path_key}" \
+        "current=${after_map[${path_key}]}"
+    fi
+  done
+}
+
+workcell_file_trace_log_path_state() {
+  local event="$1"
+  local path="$2"
+  local detail="${3:-}"
+  local kind="missing"
+  local mode="-"
+  local size="-"
+  local mtime="-"
+  local sha256="-"
+  local target="-"
+
+  workcell_file_trace_enabled || return 0
+  workcell_file_trace_path_is_sensitive "${path}" && return 0
+
+  if [[ -L "${path}" ]]; then
+    kind="symlink"
+    target="$(readlink "${path}" 2>/dev/null || true)"
+  elif [[ -d "${path}" ]]; then
+    kind="dir"
+  elif [[ -f "${path}" ]]; then
+    kind="file"
+  elif [[ -e "${path}" ]]; then
+    kind="other"
+  fi
+
+  if [[ "${kind}" != "missing" ]]; then
+    mode="$(stat -c '%a' -- "${path}" 2>/dev/null || true)"
+    size="$(stat -c '%s' -- "${path}" 2>/dev/null || true)"
+    mtime="$(stat -c '%Y' -- "${path}" 2>/dev/null || true)"
+  fi
+  if [[ "${kind}" == "file" ]]; then
+    sha256="$(sha256sum "${path}" 2>/dev/null | awk '{print $1}' || true)"
+    [[ -n "${sha256}" ]] || sha256="-"
+  fi
+
+  workcell_file_trace_emit \
+    "event=${event}" \
+    "path=$(printf '%q' "${path}")" \
+    "kind=${kind}" \
+    "mode=${mode:-?}" \
+    "size=${size:-?}" \
+    "mtime=${mtime:-?}" \
+    "sha256=${sha256}" \
+    "target=$(printf '%q' "${target}")" \
+    "${detail}"
+}
+
+workcell_file_trace_watch_session_root() {
+  local root_path="$1"
+  local state_path="$2"
+  local next_state=""
+
+  while :; do
+    sleep "${WORKCELL_FILE_TRACE_INTERVAL_SEC}"
+    next_state="$(mktemp /tmp/workcell-file-trace.snapshot.XXXXXX)"
+    workcell_file_trace_collect_snapshot "${root_path}" "${next_state}"
+    workcell_file_trace_diff_snapshots "watch" "${state_path}" "${next_state}"
+    mv "${next_state}" "${state_path}"
+  done
+}
+
+workcell_file_trace_start_watcher() {
+  local root_path="$1"
+
+  workcell_file_trace_enabled || return 0
+  [[ -n "${WORKCELL_FILE_TRACE_WATCH_PID}" ]] && return 0
+
+  WORKCELL_FILE_TRACE_WATCH_ROOT="${root_path}"
+  WORKCELL_FILE_TRACE_WATCH_STATE_FILE="$(mktemp /tmp/workcell-file-trace.state.XXXXXX)"
+  workcell_file_trace_collect_snapshot "${root_path}" "${WORKCELL_FILE_TRACE_WATCH_STATE_FILE}"
+  workcell_file_trace_emit \
+    "event=watch-start" \
+    "root=$(printf '%q' "${root_path}")" \
+    "interval_sec=${WORKCELL_FILE_TRACE_INTERVAL_SEC}"
+  workcell_file_trace_watch_session_root "${root_path}" "${WORKCELL_FILE_TRACE_WATCH_STATE_FILE}" &
+  WORKCELL_FILE_TRACE_WATCH_PID="$!"
+}
+
+workcell_file_trace_stop_watcher() {
+  local final_state=""
+
+  workcell_file_trace_enabled || return 0
+  [[ -n "${WORKCELL_FILE_TRACE_WATCH_PID}" ]] || return 0
+
+  kill "${WORKCELL_FILE_TRACE_WATCH_PID}" >/dev/null 2>&1 || true
+  wait "${WORKCELL_FILE_TRACE_WATCH_PID}" >/dev/null 2>&1 || true
+  final_state="$(mktemp /tmp/workcell-file-trace.final.XXXXXX)"
+  workcell_file_trace_collect_snapshot "${WORKCELL_FILE_TRACE_WATCH_ROOT}" "${final_state}"
+  workcell_file_trace_diff_snapshots "final" "${WORKCELL_FILE_TRACE_WATCH_STATE_FILE}" "${final_state}"
+  mv "${final_state}" "${WORKCELL_FILE_TRACE_WATCH_STATE_FILE}"
+  workcell_file_trace_emit \
+    "event=watch-stop" \
+    "root=$(printf '%q' "${WORKCELL_FILE_TRACE_WATCH_ROOT}")"
+  rm -f "${WORKCELL_FILE_TRACE_WATCH_STATE_FILE}"
+  WORKCELL_FILE_TRACE_WATCH_PID=""
+  WORKCELL_FILE_TRACE_WATCH_ROOT=""
+  WORKCELL_FILE_TRACE_WATCH_STATE_FILE=""
 }
 
 WORKCELL_WORKSPACE_IMPORT_ROOT="${WORKCELL_WORKSPACE_IMPORT_ROOT:-/opt/workcell/workspace-control-plane}"
@@ -373,6 +644,7 @@ workcell_copy_manifest_credential_file() {
   fi
   cp "${source_path}" "${target_path}"
   chmod 0600 "${target_path}"
+  workcell_file_trace_log_path_state "copy-credential" "${target_path}" "key=${key}"$'\t'"source=$(printf '%q' "${source_path}")"
   return 0
 }
 
@@ -801,9 +1073,11 @@ workcell_render_claude_settings() {
   workcell_reset_session_target "${helper_script}" "Claude helper script"
   printf '#!/bin/sh\nset -eu\ncat %s\n' "${api_key_source@Q}" >"${helper_script}"
   chmod 0700 "${helper_script}"
+  workcell_file_trace_log_path_state "render-claude-helper" "${helper_script}" "source=$(printf '%q' "${api_key_source}")"
   workcell_reset_session_target "${target_path}" "Claude settings"
   jq --arg helper "${helper_script}" '.apiKeyHelper = $helper' "${baseline_path}" >"${target_path}"
   chmod 0600 "${target_path}"
+  workcell_file_trace_log_path_state "render-claude-settings" "${target_path}" "baseline=$(printf '%q' "${baseline_path}")"
 }
 
 workcell_target_is_allowed() {
@@ -872,6 +1146,7 @@ workcell_copy_manifest_entry() {
       workcell_assert_no_symlink_path_components "${target_path}" "injected copy" 0
       cp "${source_path}" "${target_path}"
       chmod "${file_mode}" "${target_path}"
+      workcell_file_trace_log_path_state "copy-injected-file" "${target_path}" "source=$(printf '%q' "${source_path}")"
       ;;
     dir)
       workcell_reset_session_target "${target_path}" "injected copy"
@@ -881,6 +1156,7 @@ workcell_copy_manifest_entry() {
       find "${target_path}" -type d -exec chmod "${dir_mode}" {} +
       find "${target_path}" -type f -exec chmod "${file_mode}" {} +
       chmod "${dir_mode}" "${target_path}"
+      workcell_file_trace_log_path_state "copy-injected-dir" "${target_path}" "source=$(printf '%q' "${source_path}")"
       ;;
     *)
       workcell_die "Unsupported Workcell injection kind: ${kind}"
@@ -943,6 +1219,7 @@ workcell_render_provider_doc() {
     fi
   } >"${target_path}"
   chmod 0444 "${target_path}"
+  workcell_file_trace_log_path_state "render-provider-doc" "${target_path}" "provider=${provider_key}"$'\t'"baseline=$(printf '%q' "${baseline_path}")"
 }
 
 workcell_seed_codex_rules() {
