@@ -47,7 +47,7 @@ grep -q '^publish_branch=feature/publish-scenario$' <<<"${worktree_dry_run}"
 grep -q '^publish_base=main$' <<<"${worktree_dry_run}"
 grep -q '^publish_draft=1$' <<<"${worktree_dry_run}"
 grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${worktree_dry_run}"
-grep -q -- 'switch -c --no-guess feature/publish-scenario' <<<"${worktree_dry_run}"
+grep -q -- 'switch --no-guess -c feature/publish-scenario' <<<"${worktree_dry_run}"
 grep -q -- ' add -A ' <<<"${worktree_dry_run}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${worktree_dry_run}"
 grep -q -- ' push --no-verify -u origin feature/publish-scenario ' <<<"${worktree_dry_run}"
@@ -65,7 +65,7 @@ index_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
 grep -q '^publish_snapshot=index$' <<<"${index_dry_run}"
 grep -q '^publish_branch=feature/publish-index$' <<<"${index_dry_run}"
 grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${index_dry_run}"
-grep -q -- 'switch -c --no-guess feature/publish-index' <<<"${index_dry_run}"
+grep -q -- 'switch --no-guess -c feature/publish-index' <<<"${index_dry_run}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${index_dry_run}"
 if grep -q -- ' add -A ' <<<"${index_dry_run}"; then
   echo "publish-pr index snapshot should not auto-stage the worktree" >&2
