@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "54ff83335cc3b4627a09dbd7b16874d816d2efc0deacf5b2ba4f71051cd54f1d"
+      "sha256": "e580cc17df1f4a414249c2cc1b4c60261812557acfc0d270fa1c2f1ab2be156f"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts.py",
