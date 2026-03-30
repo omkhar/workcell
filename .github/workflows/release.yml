@@ -494,7 +494,7 @@ jobs:
             -t "${IMAGE_NAME}:${GITHUB_REF_NAME}" \
             -t "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
             "${refs[@]}"
-          manifest_json="$(docker buildx imagetools inspect "${IMAGE_NAME}:${GITHUB_REF_NAME}" --format '{{json .manifest}}')"
+          manifest_json="$(docker buildx imagetools inspect "${IMAGE_NAME}:${GITHUB_REF_NAME}" --format '{{json .Manifest}}')"
           MANIFEST_JSON="${manifest_json}" python3 - "${GITHUB_OUTPUT}" "dist/workcell-image.digest" "${IMAGE_NAME}" <<'PY'
           import json
           import os
