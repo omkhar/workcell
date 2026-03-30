@@ -1843,7 +1843,7 @@ publish_pr_main() {
   elif publish_pr_branch_exists "${resolved_workspace}" "${branch}"; then
     branch_cmd=("${publish_git_cmd[@]}" switch --no-guess "${branch}")
   else
-    branch_cmd=("${publish_git_cmd[@]}" switch -c --no-guess "${branch}")
+    branch_cmd=("${publish_git_cmd[@]}" switch --no-guess -c "${branch}")
   fi
 
   add_cmd=("${publish_git_cmd[@]}" add -A)
