@@ -506,13 +506,18 @@ jobs:
           image_name = sys.argv[3]
           manifest = json.loads(os.environ["MANIFEST_JSON"])
 
+          image_manifests = [
+              entry
+              for entry in manifest.get("manifests", [])
+              if entry.get("annotations", {}).get("vnd.docker.reference.type") != "attestation-manifest"
+          ]
           platform_arches = [
               entry.get("platform", {}).get("architecture")
-              for entry in manifest.get("manifests", [])
+              for entry in image_manifests
           ]
           if platform_arches != ["amd64", "arm64"]:
               raise SystemExit(
-                  "Deterministic multi-arch manifest must contain exactly amd64 then arm64, "
+                  "Deterministic multi-arch image manifest must contain exactly amd64 then arm64, "
                   f"found {platform_arches!r}"
               )
 
