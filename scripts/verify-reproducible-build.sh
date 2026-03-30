@@ -31,8 +31,12 @@ REPRO_MANIFEST_PATH="${WORKCELL_REPRO_MANIFEST_PATH:-}"
 OCI_EXPORT_ROOT=""
 OCI_EXPORT_A=""
 OCI_EXPORT_B=""
+PLATFORM_LIST=()
 MANIFEST_DIGESTS=()
 CONFIG_DIGESTS=()
+CURRENT_MANIFEST_DIGESTS=()
+CURRENT_CONFIG_DIGESTS=()
+CURRENT_SUBJECT_DIGEST=""
 WORKCELL_DOCKER_SANDBOX_ROOT=""
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
@@ -117,6 +121,28 @@ build_oci_layout_pair() {
       exit 2
       ;;
   esac
+}
+
+capture_oci_digests() {
+  local dir="$1"
+  local index=""
+  local platform=""
+  local manifest=""
+
+  CURRENT_SUBJECT_DIGEST="$(oci_subject_digest "${dir}")"
+  CURRENT_MANIFEST_DIGESTS=()
+  CURRENT_CONFIG_DIGESTS=()
+
+  for index in "${!PLATFORM_LIST[@]}"; do
+    platform="${PLATFORM_LIST[${index}]}"
+    manifest="$(manifest_digest "${dir}" "${platform}")"
+    CURRENT_MANIFEST_DIGESTS[index]="${manifest}"
+    CURRENT_CONFIG_DIGESTS[index]="$(config_digest "${dir}" "${manifest}")"
+  done
+}
+
+prune_repro_builder_cache() {
+  buildx_cmd prune -af >/dev/null 2>&1 || true
 }
 
 oci_subject_digest() {
@@ -274,22 +300,48 @@ if [[ -n "${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT:-}" ]]; then
 else
   OCI_EXPORT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-repro.XXXXXX")"
 fi
-IFS=',' read -r -a platform_list <<<"${REPRO_PLATFORMS}"
+IFS=',' read -r -a PLATFORM_LIST <<<"${REPRO_PLATFORMS}"
 
 OCI_EXPORT_A="${OCI_EXPORT_ROOT}/a"
 OCI_EXPORT_B="${OCI_EXPORT_ROOT}/b"
-build_oci_layout_pair "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}" "${OCI_EXPORT_B}"
-
-subject_digest_a="$(oci_subject_digest "${OCI_EXPORT_A}")"
-subject_digest_b="$(oci_subject_digest "${OCI_EXPORT_B}")"
+case "${REPRO_BUILD_MODE}" in
+  parallel)
+    build_oci_layout_pair "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}" "${OCI_EXPORT_B}"
+    capture_oci_digests "${OCI_EXPORT_A}"
+    subject_digest_a="${CURRENT_SUBJECT_DIGEST}"
+    MANIFEST_DIGESTS=("${CURRENT_MANIFEST_DIGESTS[@]}")
+    CONFIG_DIGESTS=("${CURRENT_CONFIG_DIGESTS[@]}")
+    capture_oci_digests "${OCI_EXPORT_B}"
+    subject_digest_b="${CURRENT_SUBJECT_DIGEST}"
+    ;;
+  serial)
+    build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}"
+    capture_oci_digests "${OCI_EXPORT_A}"
+    subject_digest_a="${CURRENT_SUBJECT_DIGEST}"
+    MANIFEST_DIGESTS=("${CURRENT_MANIFEST_DIGESTS[@]}")
+    CONFIG_DIGESTS=("${CURRENT_CONFIG_DIGESTS[@]}")
+    rm -rf "${OCI_EXPORT_A}"
+    OCI_EXPORT_A=""
+    # Reclaim builder/cache state before the second pass so the default serial
+    # verification path stays within GitHub runner disk limits.
+    prune_repro_builder_cache
+    build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_B}"
+    capture_oci_digests "${OCI_EXPORT_B}"
+    subject_digest_b="${CURRENT_SUBJECT_DIGEST}"
+    ;;
+  *)
+    echo "Unsupported WORKCELL_REPRO_BUILD_MODE: ${REPRO_BUILD_MODE}" >&2
+    exit 2
+    ;;
+esac
 repro_failed=0
 
-for index in "${!platform_list[@]}"; do
-  platform="${platform_list[${index}]}"
-  manifest_a="$(manifest_digest "${OCI_EXPORT_A}" "${platform}")"
-  manifest_b="$(manifest_digest "${OCI_EXPORT_B}" "${platform}")"
-  config_a="$(config_digest "${OCI_EXPORT_A}" "${manifest_a}")"
-  config_b="$(config_digest "${OCI_EXPORT_B}" "${manifest_b}")"
+for index in "${!PLATFORM_LIST[@]}"; do
+  platform="${PLATFORM_LIST[${index}]}"
+  manifest_a="${MANIFEST_DIGESTS[index]}"
+  manifest_b="${CURRENT_MANIFEST_DIGESTS[index]}"
+  config_a="${CONFIG_DIGESTS[index]}"
+  config_b="${CURRENT_CONFIG_DIGESTS[index]}"
 
   if [[ "${manifest_a}" != "${manifest_b}" ]]; then
     echo "Manifest digests (${platform}): ${manifest_a} != ${manifest_b}" >&2
@@ -300,9 +352,6 @@ for index in "${!platform_list[@]}"; do
     echo "Config digests (${platform}): ${config_a} != ${config_b}" >&2
     repro_failed=1
   fi
-
-  MANIFEST_DIGESTS[index]="${manifest_a}"
-  CONFIG_DIGESTS[index]="${config_a}"
 done
 
 if [[ "${subject_digest_a}" != "${subject_digest_b}" ]]; then
@@ -315,7 +364,7 @@ if [[ "${repro_failed}" -ne 0 ]]; then
 fi
 
 if [[ -n "${REPRO_MANIFEST_PATH}" ]]; then
-  python3 - "${REPRO_MANIFEST_PATH}" "${SOURCE_DATE_EPOCH}" "${subject_digest_a}" "${#platform_list[@]}" "${platform_list[@]}" "${MANIFEST_DIGESTS[@]}" -- "${CONFIG_DIGESTS[@]}" <<'PY'
+  python3 - "${REPRO_MANIFEST_PATH}" "${SOURCE_DATE_EPOCH}" "${subject_digest_a}" "${#PLATFORM_LIST[@]}" "${PLATFORM_LIST[@]}" "${MANIFEST_DIGESTS[@]}" -- "${CONFIG_DIGESTS[@]}" <<'PY'
 import json
 import pathlib
 import sys
