@@ -89,7 +89,7 @@ home directories, git config, or socket passthrough paths.
 Recommended local credential files:
 
 - Codex: `credentials.codex_auth = "~/.codex/auth.json"`
-- Claude: `credentials.claude_auth = "~/.claude/.credentials.json"` or
+- Claude: `credentials.claude_auth = "~/.claude.json"` or
   `credentials.claude_api_key = "~/.config/workcell/claude-api-key.txt"`
 - Gemini: `credentials.gemini_env = "~/.config/workcell/gemini.env"` or
   `credentials.gemini_oauth = "~/.config/workcell/gemini-oauth.json"`
@@ -97,6 +97,10 @@ Recommended local credential files:
   "~/.config/gcloud/application_default_credentials.json"`
 - Shared GitHub CLI auth when needed:
   `credentials.github_hosts` / `credentials.github_config`
+
+For Claude, Workcell currently seeds the reviewed `claude_auth` artifact into
+the session-local `~/.claude/.claude.json` path and mirrors it into the older
+Claude auth locations for compatibility.
 
 Recommended GitHub environment secret names:
 

@@ -55,12 +55,16 @@ resulting session file:
 version = 1
 
 [credentials]
-claude_auth = "/Users/example/.claude/.credentials.json"
+claude_auth = "/Users/example/.claude.json"
 ```
 
-If your current Claude install still writes `~/.config/claude-code/auth.json`,
-you can point `claude_auth` there instead. Workcell seeds both session-local
-paths for compatibility.
+On the host, `claude_auth` can point at your reviewed Claude login artifact,
+commonly `~/.claude.json`. Inside Workcell, current Claude releases persist
+session state under `~/.claude/.claude.json` when `CLAUDE_CONFIG_DIR=~/.claude`.
+If your host still writes `~/.claude/.credentials.json` or
+`~/.config/claude-code/auth.json`, you can point `claude_auth` at that legacy
+path instead. Workcell seeds the current session path plus the legacy mirrors
+for compatibility.
 
 Only one of `claude_api_key` or `claude_auth` is needed for most workflows.
 

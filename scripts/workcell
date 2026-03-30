@@ -2261,7 +2261,11 @@ provider_candidate_container_paths() {
     claude)
       # Workcell never extracts plaintext API keys from the live session.
       # Claude recovery is promoted through provider-written auth files only.
-      # The wrapper points Claude at ~/.claude first, so prefer that file.
+      # Current Claude releases persist auth/config in ~/.claude/.claude.json
+      # when CLAUDE_CONFIG_DIR points at ~/.claude. Keep host/root and legacy
+      # paths for compatibility with older builds and imported host state.
+      printf 'claude_auth\t/state/agent-home/.claude/.claude.json\n'
+      printf 'claude_auth\t/state/agent-home/.claude.json\n'
       printf 'claude_auth\t/state/agent-home/.claude/.credentials.json\n'
       printf 'claude_auth\t/state/agent-home/.config/claude-code/auth.json\n'
       ;;
@@ -2295,10 +2299,57 @@ extract_promotable_container_credentials() {
       if describe_credential_source "${key}" "${host_path}" >/dev/null 2>&1; then
         printf '%s\t%s\n' "${key}" "${host_path}"
       else
+        if [[ "${key}" == "claude_auth" ]] &&
+          [[ -n "${CLAUDE_ONBOARDING_CONFIG_MARKER:-}" ]] &&
+          claude_onboarding_config_detected "${host_path}"; then
+          : >"${CLAUDE_ONBOARDING_CONFIG_MARKER}"
+        fi
         rm -f "${host_path}"
       fi
     fi
   done < <(provider_candidate_container_paths)
+}
+
+claude_onboarding_config_detected() {
+  local source="$1"
+
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${source}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+try:
+    value = json.loads(source.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+if not isinstance(value, dict):
+    raise SystemExit(1)
+
+legacy_auth_markers = {"access_token", "account_id", "refresh_token"}
+if legacy_auth_markers & set(value):
+    raise SystemExit(1)
+
+oauth_account = value.get("oauthAccount")
+if isinstance(oauth_account, dict) and {
+    "accountUuid",
+    "emailAddress",
+    "organizationUuid",
+} & set(oauth_account):
+    raise SystemExit(1)
+
+if {
+    "firstStartTime",
+    "changelogLastFetched",
+    "opusProMigrationComplete",
+    "sonnet1m45MigrationComplete",
+} & set(value):
+    print("1")
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
 }
 
 credential_source_differs_from_injected_source() {
@@ -2680,6 +2731,8 @@ maybe_offer_saved_credential_persistence() {
   local -a bundle_fields=()
   local -a persist_args=()
   local index=0
+  local onboarding_marker=""
+  local saw_bundle=0
 
   if [[ "${exit_status}" -ne 0 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
     return 0
@@ -2699,11 +2752,15 @@ maybe_offer_saved_credential_persistence() {
   esac
 
   CREDENTIAL_PROMOTION_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-credential-promotion.XXXXXX")"
+  onboarding_marker="${CREDENTIAL_PROMOTION_TMP_ROOT}/claude-onboarding-config-detected"
+  rm -f "${onboarding_marker}"
+  CLAUDE_ONBOARDING_CONFIG_MARKER="${onboarding_marker}"
   while IFS=$'\t' read -r -a bundle_fields; do
     [[ "${#bundle_fields[@]}" -gt 0 ]] || continue
     if ((${#bundle_fields[@]} % 2 != 0)); then
       continue
     fi
+    saw_bundle=1
 
     bundle_keys="$(credential_bundle_keys_csv "${bundle_fields[@]}")"
     bundle_names="$(credential_bundle_display_names "${bundle_fields[@]}")"
@@ -2759,6 +2816,10 @@ EOF
     append_credential_persist_audit_record "${COLIMA_PROFILE}" accepted "${bundle_keys}" saved "${root_policy}" "${fragment_path}" "${credential_paths}"
     echo "Saved ${bundle_names} for future Workcell launches." >&2
   done < <(promotable_saved_credential_bundles "${container_name}" "${CREDENTIAL_PROMOTION_TMP_ROOT}/candidates")
+
+  if [[ "${AGENT}" == "claude" ]] && [[ "${saw_bundle}" -eq 0 ]] && [[ -e "${onboarding_marker}" ]]; then
+    echo "Claude only wrote first-run onboarding config in this session, not an authenticated Claude login, so Workcell had nothing to save." >&2
+  fi
 }
 
 selected_provider_auth_mode() {

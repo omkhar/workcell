@@ -152,11 +152,12 @@ modes = ["strict", "build"]
   credential path, so Claude can reuse an API key without mutating the
   reviewed baseline settings or creating an extra session-local secret copy.
 - `credentials.claude_auth` mounts persisted Claude auth into
-  `~/.claude/.credentials.json` and mirrors the same reviewed artifact into
+  `~/.claude/.claude.json` inside the session and mirrors the same reviewed
+  artifact into `~/.claude.json`, `~/.claude/.credentials.json`, plus
   `~/.config/claude-code/auth.json` for compatibility when you already have
-  reviewed host-side Claude login state. If your host still writes only
-  `~/.config/claude-code/auth.json`, you can point the injection policy there
-  and Workcell will seed both session-local paths.
+  reviewed host-side Claude login state. If your host still writes one of the
+  legacy Claude auth files, you can point the injection policy there and
+  Workcell will seed all supported session-local Claude auth paths.
 - `credentials.claude_mcp` mounts an approved Claude `.mcp.json` into the
   session without widening trust to the whole workspace copy.
 - `credentials.gemini_env` mounts a provider-native `~/.gemini/.env`.
