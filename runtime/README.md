@@ -1,49 +1,40 @@
 # Runtime Boundary
 
-Tier 1 uses two layers:
+Tier 1 is a two-layer boundary:
 
 1. a dedicated Colima VM profile on macOS
-2. a hardened Docker container inside that VM
+2. a hardened inner container inside that VM
 
-The VM is the strongest practical local boundary available on this host. The
-container keeps the environment reproducible and usable across multiple agent
-providers.
+The VM is the main local isolation boundary. The container provides a reviewed,
+reproducible runtime for the supported providers.
 
-## Design goals
+## Goals
 
 - keep the safe path one command away
-- keep the selected agent inside the boundary, not on the host
-- keep the VM mount set to the selected workspace only
+- run the provider inside the boundary, not on the host
+- mount only the selected workspace
 - keep the container unprivileged
-- keep common git hook-bypass flags and inline hook-path overrides blocked on
-  the safe path
-- push network enforcement to the VM layer
+- enforce network posture at the VM layer
+- block common control-plane escape hatches on the managed path
 
-## Profiles
+## Runtime profiles
 
-- `strict`: allowlisted runtime access only, requires a prebuilt prepared
-  runtime image, and refuses launch if Docker seccomp support is not active
-- `build`: broader registry allowlist for dependency installation, prepared
-  image creation, and rebuilds
-- `breakglass`: unrestricted network plus the provider's highest-trust mode
-  where one exists; Codex maps this to `danger-full-access`
+- `strict`: default developer lane
+- `build`: explicit build and image-preparation lane
+- `breakglass`: explicit higher-trust lane
 
-## GUI status
-
-CLI is the only implemented Tier 1 path today. GUI support is not claimed until
-the GUI is wired as a client to the same bounded runtime.
+`strict` expects a prepared runtime image. Image creation and rebuild belong to
+`build`.
 
 ## Main entrypoints
 
-- `scripts/workcell`: start the VM, build the runtime image, apply the selected
-  network mode, and launch the selected agent inside the container; `strict`
-  refuses image rebuilds, requires the image to have been seeded through
-  `build`, and supports metadata-only audit by default plus explicit
-  lower-assurance debug or transcript capture when the operator opts in
-- `scripts/colima-egress-allowlist.sh`: apply or clear VM-level egress rules
-- `scripts/verify-invariants.sh`: run basic regression checks against the
-  current runtime assumptions
-- `scripts/container-smoke.sh`: exercise generic container-local runtime and
-  provider-wrapper behavior under Docker
-- `scripts/validate-repo.sh`: run the local repository validation suite,
-  including shell, Python, Rust, manifest, mutation, and invariant checks
+- `scripts/workcell`: host launcher and operator entrypoint
+- `scripts/colima-egress-allowlist.sh`: VM-level network posture helper
+- `scripts/container-smoke.sh`: direct container smoke coverage
+- `scripts/verify-invariants.sh`: invariant checks
+- `scripts/validate-repo.sh`: repo-wide validation
+
+## GUI status
+
+CLI is the implemented Tier 1 path today. GUI or IDE surfaces are lower
+assurance unless they become clients of the same bounded runtime.

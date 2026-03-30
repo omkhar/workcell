@@ -1,20 +1,21 @@
 # Claude Adapter
 
-This adapter maps the shared Workcell runtime boundary into Claude Code's
-native control surface:
+The Claude adapter maps the shared Workcell runtime into Claude Code's native
+files and guardrails.
+
+Managed surfaces:
 
 - `~/.claude/settings.json`
-- `CLAUDE.md`
-- `.mcp.json`
-- optional hooks as guardrails
+- rendered `~/.claude/CLAUDE.md`
+- `~/.mcp.json`
+- Claude auth compatibility files when injected
+- a reviewed `PreToolUse` Bash hook as defense in depth
 
-Claude hooks are defense in depth, not the security boundary.
+Key points:
 
-The strict baseline seeds an empty `.mcp.json`. Networked or package-fetching
-MCP servers must be opted into explicitly in a broader runtime mode.
-Reviewed Claude auth and MCP state can be injected explicitly with
-`credentials.claude_auth` and `credentials.claude_mcp`.
-
-Claude CLI is Tier 1 when it runs inside the shared bounded runtime. GUI or IDE
-surfaces are lower assurance unless they are attached to that same bounded
-runtime rather than executing on the host.
+- hooks are guardrails, not the security boundary
+- the default MCP template is empty
+- `claude_api_key`, `claude_auth`, and `claude_mcp` are the supported
+  credential/injection paths
+- GUI or IDE use is lower assurance unless it is only a client to the same
+  bounded runtime

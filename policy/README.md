@@ -1,16 +1,13 @@
 # Policy Core
 
-`policy/` is the generic contract layer for `Workcell`.
+`policy/` holds the shared contract layer for Workcell.
 
-It does not try to define one universal provider config format. Instead it
-captures the shared rules that every adapter must preserve:
+It exists to define what every adapter and workflow must preserve:
 
 - the runtime boundary is primary
-- host secrets and control sockets stay out
+- host secrets and control sockets stay out by default
 - network modes are explicit
-- `breakglass` is named and narrow
-- lower-assurance GUI modes are clearly labeled
-- repository-hosted controls that live outside git still need explicit,
-  auditable policy declarations
+- `breakglass` is narrow and visibly lower assurance
+- hosted controls outside git still require explicit policy
 
-Provider-native config belongs under `adapters/`.
+Provider-native config does not live here. That belongs in `adapters/`.
