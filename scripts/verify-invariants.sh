@@ -2437,6 +2437,16 @@ if ! sed -n '/^validate_publish_base_name()/,/^}/p' "${ROOT_DIR}/scripts/workcel
   exit 1
 fi
 
+if ! sed -n '/^publish_pr_main()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'core.hooksPath=/dev/null'; then
+  echo "Expected publish_pr_main to disable repo hooks for host-side publish git commands" >&2
+  exit 1
+fi
+
+if ! sed -n '/^publish_pr_main()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q -- '--no-verify'; then
+  echo "Expected publish_pr_main to bypass repo hooks explicitly on host-side commit and push" >&2
+  exit 1
+fi
+
 if ! sed -n '/^add_shadow_git_hooks_mount()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "copy_tree_without_symlinks"; then
   echo "Expected add_shadow_git_hooks_mount to avoid copying symlinked hook content into the readonly shadow" >&2
   exit 1
@@ -3427,6 +3437,9 @@ grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}"'$' /tmp/workcell-inspect.out
 grep -q '^workspace_status=marker-only$' /tmp/workcell-inspect.out
 grep -q '^cache_profile=off$' /tmp/workcell-inspect.out
 grep -q '^cache_assurance=managed-no-persistent-cache$' /tmp/workcell-inspect.out
+grep -q '^provider_native_sandbox_configured=workspace-write$' /tmp/workcell-inspect.out
+grep -q '^provider_native_sandbox_effective=workspace-write$' /tmp/workcell-inspect.out
+grep -q '^provider_native_sandbox_reason=managed-profile-strict$' /tmp/workcell-inspect.out
 grep -q '^injection_policy=none$' /tmp/workcell-inspect.out
 if ! "${ROOT_DIR}/scripts/workcell" \
   inspect \
@@ -3439,6 +3452,34 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}"'$' /tmp/workcell-inspect-subcommand.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent claude \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}-claude-inspect" \
+  --inspect >/tmp/workcell-inspect-claude.out 2>&1; then
+  echo "Expected Claude --inspect to succeed without launching the runtime" >&2
+  exit 1
+fi
+grep -q '^provider_native_sandbox_configured=deferred$' /tmp/workcell-inspect-claude.out
+grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect-claude.out
+grep -q '^provider_native_sandbox_reason=deferred-until-runtime-prereqs-and-validation$' /tmp/workcell-inspect-claude.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent gemini \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}-gemini-inspect" \
+  --inspect >/tmp/workcell-inspect-gemini.out 2>&1; then
+  echo "Expected Gemini --inspect to succeed without launching the runtime" >&2
+  exit 1
+fi
+grep -q '^provider_native_sandbox_configured=disabled$' /tmp/workcell-inspect-gemini.out
+grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect-gemini.out
+grep -q '^provider_native_sandbox_reason=workcell-pinned-off-until-validated$' /tmp/workcell-inspect-gemini.out
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
@@ -4744,10 +4785,11 @@ PUBLISH_PR_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
   --dry-run)"
 grep -q '^publish_snapshot=worktree$' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q '^publish_branch=feature/publish-fixture$' <<<"${PUBLISH_PR_DRY_RUN}"
-grep -q -- 'switch -c feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'switch -c --no-guess feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' add -A ' <<<"${PUBLISH_PR_DRY_RUN}"
-grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_DRY_RUN}"
-grep -q -- ' push -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- ' push --no-verify -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- 'gh pr create --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
 
 git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
@@ -4763,8 +4805,9 @@ if grep -q -- ' add -A ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"; then
   echo "publish-pr index snapshot should not auto-stage the worktree" >&2
   exit 1
 fi
-grep -q -- 'switch -c feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
-grep -q -- ' commit -S -F ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- 'switch -c --no-guess feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
 
 if "${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${PUBLISH_PR_FIXTURE}" \
@@ -5165,6 +5208,9 @@ EOF
     grep -q 'event=launch' "${AUDIT_SESSION_LOG}"
     grep -q 'record_digest=' "${AUDIT_SESSION_LOG}"
     grep -q 'execution_path=lower-assurance-debug-command' "${AUDIT_SESSION_LOG}"
+    grep -q 'provider_native_sandbox_configured=workspace-write' "${AUDIT_SESSION_LOG}"
+    grep -q 'provider_native_sandbox_effective=workspace-write' "${AUDIT_SESSION_LOG}"
+    grep -q 'provider_native_sandbox_reason=managed-profile-build' "${AUDIT_SESSION_LOG}"
     grep -q 'event=assurance-change' "${AUDIT_SESSION_LOG}"
     grep -q 'reason=package-mutation' "${AUDIT_SESSION_LOG}"
     grep -q 'session_assurance_final=lower-assurance-package-mutation' "${AUDIT_SESSION_LOG}"
@@ -6247,6 +6293,10 @@ if ! grep -Fq "workcell_reset_session_target \"\${HOME}/.gemini/settings.json\" 
   echo "Expected Gemini home seeding to reset settings.json through workcell_reset_session_target" >&2
   exit 1
 fi
+if ! grep -Fq "workcell_set_gemini_tool_sandbox \"\${HOME}/.gemini/settings.json\" false" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
+  echo "Expected Gemini home seeding to pin the nested sandbox setting explicitly" >&2
+  exit 1
+fi
 if ! grep -Fq "workcell_copy_manifest_credential_file claude_auth \"\${HOME}/.claude/.credentials.json\" || true" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
   echo "Expected Claude home seeding to copy auth into .claude/.credentials.json" >&2
   exit 1
@@ -6271,8 +6321,30 @@ if ! grep -Fq 'unset DISABLE_AUTOUPDATER' "${ROOT_DIR}/runtime/container/provide
   echo "Expected provider wrapper to discard caller-supplied DISABLE_AUTOUPDATER" >&2
   exit 1
 fi
+for gemini_sandbox_env in \
+  'unset GEMINI_SANDBOX' \
+  'unset GEMINI_SANDBOX_IMAGE' \
+  'unset GEMINI_SANDBOX_IMAGE_DEFAULT' \
+  'unset GEMINI_SANDBOX_PROXY_COMMAND' \
+  'unset BUILD_SANDBOX' \
+  'unset SANDBOX' \
+  'unset SANDBOX_FLAGS' \
+  'unset SANDBOX_MOUNTS' \
+  'unset SANDBOX_ENV' \
+  'unset SANDBOX_PORTS' \
+  'unset SANDBOX_SET_UID_GID' \
+  'unset SEATBELT_PROFILE'; do
+  if ! grep -Fq "${gemini_sandbox_env}" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+    echo "Expected provider wrapper to scrub Gemini sandbox env knob: ${gemini_sandbox_env}" >&2
+    exit 1
+  fi
+done
 if ! grep -Fq "DISABLE_AUTOUPDATER=1 CLAUDE_CONFIG_DIR=\"\${HOME}/.claude\" exec /usr/local/libexec/workcell/real/claude \\" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
   echo "Expected provider wrapper to launch the pinned native Claude binary with managed env" >&2
+  exit 1
+fi
+if ! grep -Fq "GEMINI_CLI_NO_RELAUNCH=1 GEMINI_SANDBOX=false exec /usr/local/libexec/workcell/real/node \\" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to pin Gemini native sandbox off on the managed path" >&2
   exit 1
 fi
 if ! grep -Fq "Workcell blocked Claude lifecycle command: \${arg}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
@@ -6348,7 +6420,16 @@ import sys
 from pathlib import Path
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-required = ["--inspect", "print_inspect_state", "codex", "claude", "gemini"]
+required = [
+    "--inspect",
+    "print_inspect_state",
+    "provider_native_sandbox_configured",
+    "provider_native_sandbox_effective",
+    "provider_native_sandbox_reason",
+    "codex",
+    "claude",
+    "gemini",
+]
 for token in required:
     if token not in text:
         raise SystemExit(f"Expected workcell to contain --inspect contract token: {token}")
@@ -6359,7 +6440,17 @@ import sys
 from pathlib import Path
 
 content = "".join(Path(p).read_text(encoding="utf-8") for p in sys.argv[1:])
-required = ["workspace", "network_policy", "session_assurance_initial", "codex", "claude", "gemini"]
+required = [
+    "workspace",
+    "network_policy",
+    "session_assurance_initial",
+    "provider_native_sandbox_configured",
+    "provider_native_sandbox_effective",
+    "provider_native_sandbox_reason",
+    "codex",
+    "claude",
+    "gemini",
+]
 for field in required:
     if field not in content:
         raise SystemExit(f"Expected audit log field referenced in control scripts: {field}")
