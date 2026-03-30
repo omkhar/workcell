@@ -662,6 +662,24 @@ require_contains(
     "release-preflight actionlint extraction isolated under RUNNER_TEMP",
     ".github/workflows/release.yml",
 )
+require_contains(
+    release_workflow,
+    "Reclaim runner space before reproducible image check",
+    "a release-preflight runner-space reclamation step before the reproducible image check",
+    ".github/workflows/release.yml",
+)
+require_contains(
+    release_workflow,
+    'docker image rm -f "workcell-validator:${GITHUB_SHA}" >/dev/null 2>&1 || true',
+    "release-preflight validator image cleanup before the reproducible image check",
+    ".github/workflows/release.yml",
+)
+require_contains(
+    release_workflow,
+    "docker buildx prune -af || true",
+    "release-preflight Buildx cache cleanup before the reproducible image check",
+    ".github/workflows/release.yml",
+)
 for workflow_path in sorted(workflows_dir.glob("*.yml")):
     workflow_text = workflow_path.read_text(encoding="utf-8")
     require_regex(
