@@ -175,6 +175,15 @@ jobs:
       - name: Run container smoke
         run: ./scripts/container-smoke.sh
 
+      - name: Reclaim runner space before reproducible image check
+        run: |
+          docker image rm -f "workcell-validator:${GITHUB_SHA}" >/dev/null 2>&1 || true
+          docker container prune -f || true
+          docker image prune -af || true
+          docker buildx prune -af || true
+          docker builder prune -af || true
+          docker system df || true
+
       - name: Verify reproducible runtime image
         env:
           WORKCELL_REPRO_MANIFEST_PATH: dist/workcell-runtime-preflight.json
