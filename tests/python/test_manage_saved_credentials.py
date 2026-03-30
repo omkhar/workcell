@@ -72,6 +72,78 @@ class ManageSavedCredentialsTests(unittest.TestCase):
 
             self.assertTrue(self.module.equivalent_saved_credentials("claude_auth", left, right))
 
+    def test_equivalent_saved_credentials_ignores_claude_global_config_churn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            left = root / "left.json"
+            right = root / "right.json"
+            self.write_secret_file(
+                left,
+                json.dumps(
+                    {
+                        "oauthAccount": {
+                            "emailAddress": "user@example.com",
+                            "organizationUuid": "org-123",
+                        },
+                        "projects": {
+                            "/workspace": {
+                                "lastSessionId": "aaa",
+                                "lastTotalInputTokens": 10,
+                            }
+                        },
+                        "numStartups": 1,
+                        "tipsHistory": {"continue": 1},
+                        "cachedGrowthBookFeatures": {"flag": True},
+                    }
+                )
+                + "\n",
+            )
+            self.write_secret_file(
+                right,
+                json.dumps(
+                    {
+                        "cachedGrowthBookFeatures": {"flag": False},
+                        "numStartups": 9,
+                        "oauthAccount": {
+                            "organizationUuid": "org-123",
+                            "emailAddress": "user@example.com",
+                        },
+                        "projects": {
+                            "/workspace": {
+                                "lastSessionId": "bbb",
+                                "lastTotalInputTokens": 999,
+                            }
+                        },
+                        "tipsHistory": {"continue": 7, "theme-command": 1},
+                    }
+                )
+                + "\n",
+            )
+
+            self.assertTrue(self.module.equivalent_saved_credentials("claude_auth", left, right))
+
+    def test_validate_saved_credential_rejects_unauthenticated_claude_global_stub(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "claude.json"
+            self.write_secret_file(
+                source,
+                json.dumps(
+                    {
+                        "firstStartTime": "2026-03-28T22:10:13.238Z",
+                        "opusProMigrationComplete": True,
+                        "sonnet1m45MigrationComplete": True,
+                        "changelogLastFetched": 1774735813395,
+                    }
+                )
+                + "\n",
+            )
+
+            with self.assertRaises(SystemExit) as cm:
+                self.module.validate_saved_credential("claude_auth", source)
+
+            self.assertIn("must contain an authenticated Claude session payload", str(cm.exception))
+
     def test_equivalent_saved_credentials_ignores_env_order_comments_and_export(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -171,7 +243,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
             codex_source = root / "codex-auth.json"
             self.write_secret_file(codex_source, '{"token":"codex"}\n')
             claude_source = root / "claude-auth.json"
-            self.write_secret_file(claude_source, '{"token":"claude"}\n')
+            self.write_secret_file(claude_source, '{"refresh_token":"claude"}\n')
             root_policy = root / "injection-policy.toml"
             root_policy.write_text(
                 'version = 1\nincludes = ["shared.toml"]\n',
@@ -216,7 +288,7 @@ class ManageSavedCredentialsTests(unittest.TestCase):
             )
             self.assertEqual(
                 Path(credentials["claude_auth"]).read_text(encoding="utf-8"),
-                '{"token":"claude"}\n',
+                '{"refresh_token":"claude"}\n',
             )
 
     def test_persist_saved_credentials_writes_multi_file_gemini_bundle(self) -> None:

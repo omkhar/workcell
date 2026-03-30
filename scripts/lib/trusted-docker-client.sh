@@ -117,6 +117,10 @@ docker_context_is_healthy() {
   run_workcell_docker_client_command docker --context "${context_name}" info >/dev/null 2>&1
 }
 
+docker_context_names() {
+  run_workcell_docker_client_command docker context ls --format '{{.Name}}' 2>/dev/null || true
+}
+
 select_workcell_docker_context() {
   local explicit_error_prefix="$1"
   local missing_error_prefix="$2"
@@ -124,6 +128,8 @@ select_workcell_docker_context() {
 
   local candidate=""
   local attempted=""
+  local discovered_context=""
+  local discovered_attempted=""
 
   if [[ "$#" -eq 0 ]]; then
     set -- colima default
@@ -149,6 +155,27 @@ select_workcell_docker_context() {
       return 0
     fi
   done
+
+  while IFS= read -r discovered_context; do
+    [[ -n "${discovered_context}" ]] || continue
+    case ",${attempted}," in
+      *,"${discovered_context}",*)
+        continue
+        ;;
+    esac
+    if [[ -n "${discovered_attempted}" ]]; then
+      discovered_attempted+=", "
+    fi
+    discovered_attempted+="${discovered_context}"
+    if docker_context_is_healthy "${discovered_context}"; then
+      DOCKER_CONTEXT_NAME="${discovered_context}"
+      return 0
+    fi
+  done < <(docker_context_names)
+
+  if [[ -n "${discovered_attempted}" ]]; then
+    attempted+=", ${discovered_attempted}"
+  fi
 
   echo "${missing_error_prefix} (tried: ${attempted})" >&2
   exit 1

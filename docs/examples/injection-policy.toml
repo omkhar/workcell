@@ -9,7 +9,7 @@ gemini = "/Users/example/.config/workcell/gemini-extra.md"
 
 [credentials]
 codex_auth = "/Users/example/.codex/auth.json"
-claude_auth = "/Users/example/.claude/.credentials.json"
+claude_auth = "/Users/example/.claude.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
 claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
 gemini_env = "/Users/example/.config/workcell/gemini.env"

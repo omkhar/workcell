@@ -824,6 +824,8 @@ workcell_target_is_allowed() {
       /state/agent-home/.codex/requirements.toml | \
       /state/agent-home/.claude/settings.json | \
       /state/agent-home/.claude/CLAUDE.md | \
+      /state/agent-home/.claude/.claude.json | \
+      /state/agent-home/.claude.json | \
       /state/agent-home/.claude/.credentials.json | \
       /state/agent-home/.claude/workcell | \
       /state/agent-home/.claude/workcell/* | \
@@ -1060,6 +1062,8 @@ seed_claude_home() {
   workcell_render_claude_settings
   workcell_render_provider_doc "${ADAPTER_ROOT}/claude/CLAUDE.md" "${HOME}/.claude/CLAUDE.md" claude
   workcell_prepare_session_directory "${HOME}/.config/claude-code" "Claude auth directory"
+  workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude/.claude.json" || true
+  workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude.json" || true
   workcell_copy_manifest_credential_file claude_auth "${HOME}/.config/claude-code/auth.json" || true
   workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude/.credentials.json" || true
   if ! workcell_copy_manifest_credential_file claude_mcp "${HOME}/.mcp.json"; then
