@@ -676,6 +676,12 @@ require_contains(
 )
 require_contains(
     release_workflow,
+    "git -c safe.directory=/workspace archive \\",
+    "an explicit safe.directory override for release bundle archiving inside the validator container",
+    ".github/workflows/release.yml",
+)
+require_contains(
+    release_workflow,
     "docker buildx prune -af || true",
     "release-preflight Buildx cache cleanup before the reproducible image check",
     ".github/workflows/release.yml",

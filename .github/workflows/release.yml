@@ -299,7 +299,7 @@ jobs:
             -lc '
               set -euo pipefail
               bundle_tar="/dist/${BUNDLE_NAME%.tar.gz}.tar"
-              git archive \
+              git -c safe.directory=/workspace archive \
                 --format=tar \
                 --mtime="@${SOURCE_DATE_EPOCH}" \
                 --prefix="${BUNDLE_PREFIX}" \
