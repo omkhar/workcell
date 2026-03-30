@@ -1,95 +1,78 @@
 # Adapter Porting Workflow
 
-This workflow turns the provider matrix into an implementation sequence. It
-assumes the secure boundary is a dedicated Colima VM profile plus a hardened
-container inside it.
+Use this checklist when adding or refactoring a provider adapter.
 
-## Objectives
+## Goal
 
-Preserve the useful parts of each provider's workflow surface without carrying
-over provider-specific coupling into the shared boundary.
+Preserve the shared Workcell boundary while mapping into the provider's native
+control plane. Do not blur the boundary and the adapter into one layer.
 
-The output should optimize for:
+## Design order
+
+Optimize in this order:
+
 1. Developer experience
 2. Simplicity
 3. Security invariant preservation
 4. Performance
 5. Idiomatic correctness
 
-That optimization order only applies after the runtime boundary and invariants
-are fixed. Do not trade them away for ergonomics.
+That order only applies after the runtime boundary is fixed.
 
-## Operating Rules
+## Porting sequence
 
-1. Keep the policy layer and runtime boundary separate.
-2. Prefer one clear mechanism over multiple overlapping ones.
-3. Treat hooks and rules as guardrails, not as the boundary.
-4. Keep high-autonomy execution inside the strongest available runtime boundary only.
-5. Make every workflow reproducible from files in the repo.
+### 1. Lock the shared boundary first
 
-## Migration Sequence
+Before touching provider specifics, confirm that the shared runtime still
+guarantees:
 
-### 1. Lock the boundary
+- dedicated VM profile
+- hardened inner container
+- narrow mount set
+- explicit network posture
+- no host home, sockets, or ambient credential passthrough
 
-Start by implementing and documenting the Tier 1 runtime:
+### 2. Define the native control plane
 
-1. Dedicated Colima VM profile for the selected Workcell task.
-2. Hardened container inside that VM.
-3. Only the task workspace mounted.
-4. No host home, no agent socket, no Docker socket, no keychain passthrough.
-5. Network off by default.
+Document exactly which provider files Workcell owns, seeds, links, or masks.
+Keep the list small and auditable.
 
-Do not let the policy layer expand trust before this boundary exists.
+### 3. Keep the adapter thin
 
-### 2. Establish the generic core and adapter split
+Use the provider's native config surfaces where possible. Do not invent a fake
+universal provider config layer.
 
-Create the shared core first, then the provider adapters:
+### 4. Add the runtime seeding path
 
-1. shared invariants and threat model
-2. one provider adapter directory per product
-3. native config for each provider
-4. explicit MCP allowlists or deny-by-default posture
-5. provider-specific downgrade notes for GUI surfaces
+Update the home-control-plane logic so the provider-facing home is rebuilt from:
 
-### 3. Port workflows, not syntax
+- the immutable adapter baseline
+- imported workspace docs
+- explicit injection-policy input
 
-Rewrite useful provider workflows as generic bounded workflows:
+### 5. Add deny-list and downgrade logic
 
-1. review workflows become provider-specific review commands plus peer-review gates
-2. fix workflows become bounded execution plus plan/implement/test/review steps
-3. bootstrap/install becomes pinned adapter installation
-4. hook-based logging becomes wrapper-script logging or Git-based auditing
+Block provider-native flags or workflows that would silently widen trust, and
+document any lower-assurance paths explicitly.
 
-### 4. Add subagent reviews
+### 6. Add validation with the adapter
 
-Use subagents as the peer-review ring before merging any parity change:
+No adapter change is complete without matching invariant or smoke coverage.
 
-1. Architecture and portability review.
-2. Security boundary review.
-3. macOS and container boundary review.
-4. Provider-native config consistency review.
+### 7. Update the docs in the same change
 
-No change should land until the subagent consensus is clear or the disagreement is documented.
+At minimum, update:
 
-### 5. Verify the invariants
+- `docs/provider-matrix.md`
+- `docs/adapter-control-planes.md`
+- provider-specific quickstart or adapter README material if behavior changed
 
-Every implementation slice should be checked against the same tests:
+## Review questions
 
-1. Host secret reads are blocked.
-2. Writes outside the workspace are blocked.
-3. Unapproved MCP access is blocked.
-4. Network egress is controlled.
-5. Destructive shell patterns are blocked or escalated.
-6. Workflow wrappers still work end-to-end.
+Before merging an adapter change, ask:
 
-## Review Gate
-
-Before merging any doc or runtime change, ask:
-
-1. Did this improve developer experience or just add indirection?
-2. Is there a simpler way to express the same invariant?
-3. Does the control survive prompt injection and agent drift?
-4. Does the control live in the runtime boundary, not only in text?
-5. Is the performance cost justified by the security gain?
-
-If the answer to any of those is no, simplify before proceeding.
+1. Did this improve the workflow, or just add indirection?
+2. Is the provider config being mistaken for the primary boundary?
+3. Can repo content retake the control plane after this change?
+4. Are any lower-assurance paths clearly labeled?
+5. Is the new behavior covered by validation?

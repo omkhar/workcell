@@ -31,6 +31,7 @@ CODEOWNERS_PATH="${ROOT_DIR}/.github/CODEOWNERS"
 CODEX_REQUIREMENTS_PATH="${ROOT_DIR}/adapters/codex/requirements.toml"
 CODEX_MCP_CONFIG_PATH="${ROOT_DIR}/adapters/codex/mcp/config.toml"
 HOSTED_CONTROLS_POLICY_PATH="${ROOT_DIR}/policy/github-hosted-controls.toml"
+HOSTED_CONTROLS_SCRIPT_PATH="${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
 MAX_DEBIAN_SNAPSHOT_AGE_DAYS="${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-45}"
 
 require_tool() {
@@ -42,7 +43,7 @@ require_tool() {
 
 require_tool python3
 
-python3 - "${DOCKERFILE_PATH}" "${VALIDATOR_DOCKERFILE_PATH}" "${REMOTE_VALIDATOR_DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${PROVIDERS_PACKAGE_LOCK_PATH}" "${WORKFLOWS_DIR}" "${CI_WORKFLOW_PATH}" "${RELEASE_WORKFLOW_PATH}" "${CODEOWNERS_PATH}" "${CODEX_REQUIREMENTS_PATH}" "${CODEX_MCP_CONFIG_PATH}" "${HOSTED_CONTROLS_POLICY_PATH}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}" <<'PY'
+python3 - "${DOCKERFILE_PATH}" "${VALIDATOR_DOCKERFILE_PATH}" "${REMOTE_VALIDATOR_DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${PROVIDERS_PACKAGE_LOCK_PATH}" "${WORKFLOWS_DIR}" "${CI_WORKFLOW_PATH}" "${RELEASE_WORKFLOW_PATH}" "${CODEOWNERS_PATH}" "${CODEX_REQUIREMENTS_PATH}" "${CODEX_MCP_CONFIG_PATH}" "${HOSTED_CONTROLS_POLICY_PATH}" "${HOSTED_CONTROLS_SCRIPT_PATH}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -62,7 +63,8 @@ codeowners = pathlib.Path(sys.argv[9]).read_text(encoding="utf-8")
 codex_requirements = tomllib.loads(pathlib.Path(sys.argv[10]).read_text(encoding="utf-8"))
 codex_mcp_config = tomllib.loads(pathlib.Path(sys.argv[11]).read_text(encoding="utf-8"))
 hosted_controls_policy = tomllib.loads(pathlib.Path(sys.argv[12]).read_text(encoding="utf-8"))
-max_snapshot_age_days = int(sys.argv[13])
+hosted_controls_script = pathlib.Path(sys.argv[13]).read_text(encoding="utf-8")
+max_snapshot_age_days = int(sys.argv[14])
 
 def require_arg(text: str, name: str, path: str) -> str:
     match = re.search(rf"^ARG {re.escape(name)}=(.+)$", text, re.MULTILINE)
@@ -548,6 +550,14 @@ if "vnd.docker.reference.type" not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must ignore attestation manifests when validating published multi-arch image platforms"
     )
+if "ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}" not in release_workflow:
+    raise SystemExit(
+        ".github/workflows/release.yml must derive GitHub attestation enablement from the reviewed repository variable"
+    )
+if "actions/attest@" not in release_workflow:
+    raise SystemExit(
+        ".github/workflows/release.yml must retain GitHub attestation publication steps"
+    )
 if "Verify release bundle matches preflight" not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must compare the published source bundle against the preflight manifest"
@@ -745,6 +755,27 @@ if release_mode not in {"review-gated", "single-owner-private"}:
         "policy/github-hosted-controls.toml must set release_environment.mode "
         "to 'review-gated' or 'single-owner-private'"
     )
+repository_variables = hosted_controls_policy.get("repository_variables")
+if not isinstance(repository_variables, dict) or not repository_variables:
+    raise SystemExit(
+        "policy/github-hosted-controls.toml must declare canonical repository variables"
+    )
+if repository_variables.get("WORKCELL_ENABLE_GITHUB_ATTESTATIONS") != "true":
+    raise SystemExit(
+        "policy/github-hosted-controls.toml must require WORKCELL_ENABLE_GITHUB_ATTESTATIONS = \"true\""
+    )
+require_contains(
+    hosted_controls_script,
+    'actions/variables?per_page=100',
+    "repository variable auditing in the hosted-controls audit",
+    "scripts/verify-github-hosted-controls.sh",
+)
+require_contains(
+    hosted_controls_script,
+    "WORKCELL_ENABLE_GITHUB_ATTESTATIONS",
+    "GitHub attestation repository variable enforcement in the hosted-controls audit",
+    "scripts/verify-github-hosted-controls.sh",
+)
 
 print("Workcell pinned input policy check passed.")
 PY

@@ -1,35 +1,23 @@
-# Quickstart: OpenAI Codex in Workcell
+# Quickstart: Codex in Workcell
 
-This guide walks through running OpenAI Codex inside the Workcell bounded
-runtime. All commands are copy-pasteable. Use fake credentials in examples;
-never substitute real keys.
+This guide walks through the normal Codex path inside Workcell's bounded
+runtime.
 
 ## Prerequisites
 
-- macOS (the host launcher is macOS only)
-- [Colima](https://github.com/abiosoft/colima) installed (`brew install colima`)
-- Docker CLI installed (`brew install docker`)
-- Workcell installed (`./scripts/install.sh` from the repo root)
+- macOS
+- Colima
+- Docker CLI
+- Workcell installed from the repo root with `./scripts/install.sh`
 
-Verify the install:
+## 1. Create a reviewed auth file
 
-```bash
-workcell --version
-```
-
-## 1. Credential setup
-
-Workcell does not forward host environment variables or host home directories
-into the session. Credentials reach the agent only through an explicit
-injection policy.
-
-Create the API key file with owner-only permissions:
+Workcell does not pass host environment variables or provider homes through to
+the session. Use an injection policy instead.
 
 ```bash
 mkdir -p ~/.config/workcell
-# Write your actual key here; the file must be mode 0600
 install -m 0600 /dev/null ~/.config/workcell/codex-auth.json
-# Populate the file with your reviewed Codex auth.json content
 ```
 
 Create `~/.config/workcell/injection-policy.toml`:
@@ -41,149 +29,79 @@ version = 1
 codex_auth = "/Users/example/.config/workcell/codex-auth.json"
 ```
 
-Replace `/Users/example` with your actual home path. The `codex_auth` key
-mounts the file read-only into the session and copies it to
-`~/.codex/auth.json` inside the container.
-
-> **Note:** Never store credentials in environment variables, shell history,
-> or committed files. `FIXTURE_FAKE_KEY_DO_NOT_USE` is used as a placeholder
-> in examples throughout this document and must never appear in real config.
-
-## 2. Prepare the runtime image
-
-The `strict` profile (the default) requires a prebuilt runtime image. Run
-`--prepare` on first launch or after a Workcell update:
+## 2. Prepare the runtime
 
 ```bash
 workcell --prepare --agent codex --workspace /path/to/repo
 ```
 
-To preload the image without starting a session:
+To prewarm without launching:
 
 ```bash
 workcell --prepare-only --agent codex --workspace /path/to/repo
 ```
 
-## 3. Check preconditions
-
-Before launching a session, verify host, workspace, and profile posture:
+## 3. Check the derived state
 
 ```bash
 workcell doctor --agent codex --workspace /path/to/repo
+workcell inspect --agent codex --workspace /path/to/repo
 ```
 
-`doctor` reports the first blocking issue and prints the next safe command.
-Run it whenever a launch fails unexpectedly.
-
-## 4. Basic launch
+## 4. Launch Codex
 
 ```bash
 workcell --agent codex --workspace /path/to/repo
 ```
 
-Workcell starts the dedicated Colima VM profile, builds or reuses the
-prepared runtime image, and launches Codex inside the hardened inner
-container. The workspace is mounted at `/workspace` inside the container.
+Important defaults:
 
-The default autonomy mode is `yolo` (`--ask-for-approval never`). Codex
-proceeds without per-action approval prompts.
+- `strict` is the default mode
+- `yolo` is the default autonomy posture
+- the injection policy at `~/.config/workcell/injection-policy.toml` is used
+  automatically if present
 
-With an explicit injection policy:
+## 5. Optional lower-assurance paths
 
-```bash
-workcell --agent codex --workspace /path/to/repo \
-  --injection-policy ~/.config/workcell/injection-policy.toml
-```
-
-If `~/.config/workcell/injection-policy.toml` exists, Workcell uses it
-automatically without `--injection-policy`.
-
-## 5. Inspect derived session state
-
-To see the full derived configuration without launching a session:
-
-```bash
-workcell --agent codex --inspect --workspace /path/to/repo
-```
-
-This prints the resolved profile, network mode, injection inputs, and
-assurance fields. Use it to confirm credentials will be injected correctly
-before a real launch.
-
-## 6. Publish a PR after work is done
-
-Final branch publication is a host-side action. The agent prepares a branch
-and commit message inside the session; the operator runs `publish-pr` on the
-host to sign the commit, push, and open a draft PR.
-
-Prepare the PR metadata files (the agent or operator fills these in):
-
-```bash
-echo "Add feature X" > /tmp/pr-title.txt
-cat > /tmp/pr-body.md <<'EOF'
-## Summary
-
-- Implements feature X
-- Adds tests
-
-## Test plan
-
-- [ ] Unit tests pass
-EOF
-```
-
-Then publish from the host:
-
-```bash
-workcell publish-pr \
-  --branch feature-branch \
-  --title-file /tmp/pr-title.txt \
-  --body-file /tmp/pr-body.md \
-  --workspace /path/to/repo
-```
-
-`publish-pr` creates or switches to the named branch, makes a signed commit
-using the operator's host identity, pushes it, and opens a draft PR. It does
-not run inside the container.
-
-## 7. Lower-assurance options
-
-> **Note (lower-assurance):** The options below reduce session integrity
-> guarantees. They are explicitly surfaced in the launch audit output and
-> should only be used when you understand the tradeoff.
-
-**Prompt autonomy** keeps Codex's ordinary per-action approval flow but marks
-the session as `autonomy_assurance=lower-assurance-prompt-autonomy`:
+Prompt mode:
 
 ```bash
 workcell --agent codex --agent-autonomy prompt --workspace /path/to/repo
 ```
 
-**Session-writable Codex rules** allow execpolicy amendments to persist
-across nested Codex launches until container exit:
+Session-local writable rules:
 
 ```bash
 workcell --agent codex --codex-rules-mutability session --workspace /path/to/repo
 ```
 
-**Build mode** opens a broader egress allowlist for package registries and
-dependency fetching. Use this for image preparation and build work:
+Build lane:
 
 ```bash
 workcell --agent codex --mode build --workspace /path/to/repo
 ```
 
-**Breakglass** requires an explicit acknowledgement flag and gives
-unrestricted network access. The managed in-container entrypoint still does
-not auto-inject unsafe provider flags:
+Breakglass:
 
 ```bash
 workcell --agent codex --mode breakglass --ack-breakglass --workspace /path/to/repo
 ```
 
+## 6. Publish on the host
+
+Prepare the PR metadata, then publish from the host:
+
+```bash
+workcell publish-pr \
+  --workspace /path/to/repo \
+  --branch feature/name \
+  --title-file /tmp/pr-title.txt \
+  --body-file /tmp/pr-body.md \
+  --commit-message-file /tmp/commit-message.txt
+```
+
 ## Further reading
 
-- `docs/injection-policy.md` — full injection policy reference
-- `docs/invariants.md` — the seven security invariants
-- `adapters/codex/README.md` — Codex adapter control-plane details
-- `docs/adapter-control-planes.md` — full control file matrix
+- [Injection policy](../injection-policy.md)
+- [Codex adapter](../../adapters/codex/README.md)
+- [Adapter control planes](../adapter-control-planes.md)
