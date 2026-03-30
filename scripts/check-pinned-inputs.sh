@@ -536,6 +536,14 @@ if '"imagetools", "inspect", "--raw"' not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must normalize attested published platform digests before comparing them against the preflight manifest"
     )
+if "{{json .Manifest}}" not in release_workflow:
+    raise SystemExit(
+        ".github/workflows/release.yml must use the supported Buildx .Manifest template field when reading the published multi-arch manifest"
+    )
+if "{{json .manifest}}" in release_workflow:
+    raise SystemExit(
+        ".github/workflows/release.yml must not use the unsupported lowercase Buildx .manifest template field"
+    )
 if "Verify release bundle matches preflight" not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must compare the published source bundle against the preflight manifest"
