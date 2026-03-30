@@ -397,20 +397,87 @@ jobs:
           import json
           import os
           import pathlib
+          import subprocess
 
-          manifest = json.loads(
+          preflight_manifest = json.loads(
               pathlib.Path("dist/preflight/workcell-runtime-preflight.json").read_text(encoding="utf-8")
           )
           expected = {
-              "linux/amd64": manifest["platforms"]["linux/amd64"]["image_manifest_digest"],
-              "linux/arm64": manifest["platforms"]["linux/arm64"]["image_manifest_digest"],
+              platform: {
+                  "image_manifest_digest": details["image_manifest_digest"],
+                  "config_digest": details["config_digest"],
+              }
+              for platform, details in preflight_manifest["platforms"].items()
           }
+
+          def inspect_raw(ref: str) -> dict:
+              output = subprocess.check_output(
+                  ["docker", "buildx", "imagetools", "inspect", "--raw", ref],
+                  text=True,
+              )
+              return json.loads(output)
+
+          def resolve_published_platform(index_digest: str, platform: str) -> dict:
+              ref = f"{os.environ['IMAGE_NAME']}@{index_digest}"
+              os_name, arch = platform.split("/", 1)
+              document = inspect_raw(ref)
+              media_type = document.get("mediaType")
+
+              if media_type in {
+                  "application/vnd.docker.distribution.manifest.v2+json",
+                  "application/vnd.oci.image.manifest.v1+json",
+              }:
+                  image_manifest_digest = index_digest
+                  image_manifest = document
+              elif media_type in {
+                  "application/vnd.docker.distribution.manifest.list.v2+json",
+                  "application/vnd.oci.image.index.v1+json",
+              }:
+                  candidates = []
+                  for entry in document.get("manifests", []):
+                      entry_platform = entry.get("platform", {})
+                      annotations = entry.get("annotations", {})
+                      if annotations.get("vnd.docker.reference.type") == "attestation-manifest":
+                          continue
+                      if entry_platform.get("os") != os_name:
+                          continue
+                      if entry_platform.get("architecture") != arch:
+                          continue
+                      candidates.append(entry)
+
+                  if len(candidates) != 1:
+                      raise SystemExit(
+                          f"Expected exactly one published image manifest for {platform} in {ref}, "
+                          f"found {len(candidates)}"
+                      )
+
+                  image_manifest_digest = candidates[0].get("digest")
+                  if not isinstance(image_manifest_digest, str) or not image_manifest_digest.startswith("sha256:"):
+                      raise SystemExit(
+                          f"Malformed published image manifest digest for {platform} in {ref}: "
+                          f"{image_manifest_digest!r}"
+                      )
+                  image_manifest = inspect_raw(f"{os.environ['IMAGE_NAME']}@{image_manifest_digest}")
+              else:
+                  raise SystemExit(f"Unsupported published descriptor media type for {ref}: {media_type!r}")
+
+              config_digest = image_manifest.get("config", {}).get("digest")
+              if not isinstance(config_digest, str) or not config_digest.startswith("sha256:"):
+                  raise SystemExit(f"Malformed published config digest for {platform} in {ref}: {config_digest!r}")
+
+              return {
+                  "image_manifest_digest": image_manifest_digest,
+                  "config_digest": config_digest,
+              }
+
           actual = {
-              "linux/amd64": os.environ["AMD64_DIGEST"],
-              "linux/arm64": os.environ["ARM64_DIGEST"],
+              "linux/amd64": resolve_published_platform(os.environ["AMD64_DIGEST"], "linux/amd64"),
+              "linux/arm64": resolve_published_platform(os.environ["ARM64_DIGEST"], "linux/arm64"),
           }
           if actual != expected:
-              raise SystemExit(f"Published platform digests differ from preflight: {actual!r} != {expected!r}")
+              raise SystemExit(
+                  f"Published platform image/config digests differ from preflight: {actual!r} != {expected!r}"
+              )
           PY
 
       - id: publish_manifest
