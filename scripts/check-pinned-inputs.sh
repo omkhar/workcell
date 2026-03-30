@@ -532,6 +532,10 @@ if "Verify published platform digests match preflight" not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must compare published per-platform image digests against the preflight manifest"
     )
+if '"imagetools", "inspect", "--raw"' not in release_workflow:
+    raise SystemExit(
+        ".github/workflows/release.yml must normalize attested published platform digests before comparing them against the preflight manifest"
+    )
 if "Verify release bundle matches preflight" not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must compare the published source bundle against the preflight manifest"
