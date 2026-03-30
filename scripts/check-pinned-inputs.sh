@@ -544,6 +544,10 @@ if "{{json .manifest}}" in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must not use the unsupported lowercase Buildx .manifest template field"
     )
+if "vnd.docker.reference.type" not in release_workflow:
+    raise SystemExit(
+        ".github/workflows/release.yml must ignore attestation manifests when validating published multi-arch image platforms"
+    )
 if "Verify release bundle matches preflight" not in release_workflow:
     raise SystemExit(
         ".github/workflows/release.yml must compare the published source bundle against the preflight manifest"
