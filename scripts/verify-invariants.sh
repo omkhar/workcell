@@ -4786,7 +4786,7 @@ PUBLISH_PR_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
 grep -q '^publish_snapshot=worktree$' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q '^publish_branch=feature/publish-fixture$' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${PUBLISH_PR_DRY_RUN}"
-grep -q -- 'switch -c --no-guess feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'switch --no-guess -c feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' add -A ' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' push --no-verify -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
@@ -4806,7 +4806,7 @@ if grep -q -- ' add -A ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"; then
   exit 1
 fi
 grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
-grep -q -- 'switch -c --no-guess feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+grep -q -- 'switch --no-guess -c feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
 
 if "${ROOT_DIR}/scripts/workcell" publish-pr \
