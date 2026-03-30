@@ -151,11 +151,12 @@ modes = ["strict", "build"]
   session-local Claude `apiKeyHelper` that reads the reviewed direct-mounted
   credential path, so Claude can reuse an API key without mutating the
   reviewed baseline settings or creating an extra session-local secret copy.
-- `credentials.claude_auth` mounts persisted Claude CLI auth into
-  `~/.config/claude-code/auth.json` and mirrors the same reviewed artifact into
-  `~/.claude/.credentials.json` when you already have reviewed host-side Claude
-  login state. If your host uses `CLAUDE_CONFIG_DIR`, point the injection
-  policy at that alternate `.credentials.json` path explicitly.
+- `credentials.claude_auth` mounts persisted Claude auth into
+  `~/.claude/.credentials.json` and mirrors the same reviewed artifact into
+  `~/.config/claude-code/auth.json` for compatibility when you already have
+  reviewed host-side Claude login state. If your host still writes only
+  `~/.config/claude-code/auth.json`, you can point the injection policy there
+  and Workcell will seed both session-local paths.
 - `credentials.claude_mcp` mounts an approved Claude `.mcp.json` into the
   session without widening trust to the whole workspace copy.
 - `credentials.gemini_env` mounts a provider-native `~/.gemini/.env`.

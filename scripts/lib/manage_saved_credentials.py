@@ -72,6 +72,11 @@ def parse_args() -> argparse.Namespace:
     describe.add_argument("--key", required=True, choices=sorted(PROBEABLE_KEYS))
     describe.add_argument("--source", required=True)
 
+    equivalent = subparsers.add_parser("equivalent")
+    equivalent.add_argument("--key", required=True, choices=sorted(PROBEABLE_KEYS))
+    equivalent.add_argument("--left", required=True)
+    equivalent.add_argument("--right", required=True)
+
     persist = subparsers.add_parser("persist")
     persist.add_argument(
         "--entry",
@@ -134,6 +139,38 @@ def validate_saved_credential(key: str, source: Path) -> dict[str, object]:
     else:
         die(f"unsupported credential key: {key}")
     return metadata
+
+
+def normalized_gemini_env_values(source: Path) -> dict[str, object]:
+    values = RENDER_HELPERS.parse_simple_env_file(source)
+    normalized: dict[str, object] = {}
+
+    for key, value in values.items():
+        if key in {"GOOGLE_GENAI_USE_GCA", "GOOGLE_GENAI_USE_VERTEXAI"}:
+            normalized[key] = RENDER_HELPERS.parse_env_boolean_value(values, source, key)
+            continue
+        if key in RENDER_HELPERS.GEMINI_VERTEX_LOCATION_KEYS:
+            normalized_value = RENDER_HELPERS.normalize_vertex_location(value)
+            normalized[key] = value if normalized_value is None else normalized_value
+            continue
+        normalized[key] = value
+    return normalized
+
+
+def normalized_credential_value(key: str, source: Path) -> object:
+    validate_saved_credential(key, source)
+
+    if key in {"codex_auth", "claude_auth", "gemini_oauth", "gcloud_adc"}:
+        return RENDER_HELPERS.validate_json_object_file(source, PROBEABLE_KEYS[key]["label"])
+    if key == "claude_api_key":
+        return source.read_text(encoding="utf-8").strip()
+    if key == "gemini_env":
+        return normalized_gemini_env_values(source)
+    die(f"unsupported credential key: {key}")
+
+
+def equivalent_saved_credentials(key: str, left: Path, right: Path) -> bool:
+    return normalized_credential_value(key, left) == normalized_credential_value(key, right)
 
 
 def json_string(value: str) -> str:
@@ -537,6 +574,12 @@ def main() -> int:
     if args.command == "describe":
         source = expand_absolute_path(args.source)
         print(json.dumps(validate_saved_credential(args.key, source), sort_keys=True))
+        return 0
+
+    if args.command == "equivalent":
+        left = expand_absolute_path(args.left)
+        right = expand_absolute_path(args.right)
+        print("1" if equivalent_saved_credentials(args.key, left, right) else "0")
         return 0
 
     if args.command == "persist":
