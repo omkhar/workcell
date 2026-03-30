@@ -89,13 +89,15 @@ jobs:
           ACTIONLINT_SHA256: 900919a84f2229bac68ca9cd4103ea297abc35e9689ebb842c6e34a3d1b01b0a
           ACTIONLINT_VERSION: 1.7.11
         run: |
+          actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"
+          actionlint_bin="${RUNNER_TEMP}/actionlint"
           curl -fsSL \
-            -o actionlint.tar.gz \
+            -o "${actionlint_archive}" \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          echo "${ACTIONLINT_SHA256}  ${actionlint_archive}" | sha256sum -c -
           mkdir -p "${RUNNER_TEMP}/bin"
-          tar -xzf actionlint.tar.gz actionlint
-          install -m 0755 actionlint "${RUNNER_TEMP}/bin/actionlint"
+          tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint
+          install -m 0755 "${actionlint_bin}" "${RUNNER_TEMP}/bin/actionlint"
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
 
       - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
