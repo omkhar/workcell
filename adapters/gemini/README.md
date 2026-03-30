@@ -1,38 +1,22 @@
 # Gemini Adapter
 
-This adapter maps the shared Workcell runtime boundary into Gemini CLI's native
-control surface:
+The Gemini adapter seeds Gemini CLI's session-local home from reviewed
+baselines and explicit injection inputs.
+
+Managed surfaces:
 
 - `~/.gemini/settings.json`
-- `GEMINI.md`
-- optional injected `projects.json`
+- rendered `~/.gemini/GEMINI.md`
+- `~/.gemini/.env`
+- `~/.gemini/oauth_creds.json`
+- `~/.gemini/projects.json`
+- `~/.gemini/trustedFolders.json`
 
-Gemini CLI exposes its own sandbox setting, but the shared external runtime is
-the primary boundary here. Nested sandboxing is optional and not required for
-Tier 1.
+Key points:
 
-On the safe path, repo-local `.gemini/` workspace files stay masked. Use
-Workcell injection policy inputs such as `documents.gemini` or
-`credentials.gemini_projects` when you want reviewed Gemini state or
-instructions to persist across launches.
-
-On the managed strict/build path, the adapter seeds Gemini's session-local
-trusted-folders registry for `/workspace` and disables Gemini CLI's own
-folder-trust gate in the managed baseline. Workcell already masks repo-local
-Gemini control files and seeds the only trusted Gemini home inside the bounded
-runtime, so surfacing Gemini's restart-based trust flow there would add friction
-without adding a stronger boundary. In `breakglass`, Workcell restores Gemini's
-own folder-trust prompt behavior because the workspace control plane is no
-longer masked.
-
-When Gemini auth is injected, Workcell also preselects the matching Gemini auth
-mode inside the session-local settings when it can do so unambiguously.
-`GEMINI_API_KEY` and Google-login flows can stand alone. Vertex flows must set
-`GOOGLE_GENAI_USE_VERTEXAI=true` and then provide either `GOOGLE_API_KEY` or
-both `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. `gcloud_adc` is only a
-supplemental Vertex input and must be paired with explicit Vertex settings in
-`credentials.gemini_env`.
-
-Gemini CLI is Tier 1 when it runs fully inside the bounded runtime. GUI or IDE
-integration is lower assurance unless it is only a client to the same bounded
-executor.
+- Workcell's external VM-plus-container boundary is primary; Gemini's own
+  sandbox is optional and not the Tier 1 boundary here
+- repo-local `.gemini/` content stays masked on the safe path
+- `gemini_env`, `gemini_oauth`, `gemini_projects`, and `gcloud_adc` cover the
+  supported long-lived auth and project-state paths
+- `breakglass` restores Gemini's own folder-trust prompt behavior

@@ -34,3 +34,10 @@ contexts = [
   "GitHub Actions lint",
   "GitHub Actions security analysis",
 ]
+
+[repository_variables]
+# The canonical Workcell repository publishes both Sigstore materials and
+# GitHub-native attestations on tagged releases. Forks can loosen this policy,
+# but the upstream repo treats the variable as part of the reviewed control
+# plane so publication posture cannot silently drift.
+WORKCELL_ENABLE_GITHUB_ATTESTATIONS = "true"

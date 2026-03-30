@@ -27,6 +27,7 @@ trap cleanup EXIT
 
 gh api "repos/${REPO}" >"${TMP_DIR}/repo.json"
 gh api "repos/${REPO}/actions/permissions" >"${TMP_DIR}/actions-permissions.json"
+gh api "repos/${REPO}/actions/variables?per_page=100" >"${TMP_DIR}/actions-variables.json"
 gh api "repos/${REPO}/collaborators?affiliation=direct&per_page=100" >"${TMP_DIR}/collaborators-direct.json"
 gh api "repos/${REPO}/rulesets" >"${TMP_DIR}/rulesets-summary.json"
 python3 - "${TMP_DIR}" "${REPO}" <<'PY'
@@ -70,6 +71,7 @@ policy_path = pathlib.Path(sys.argv[3])
 
 repo_meta = json.loads((tmp_dir / "repo.json").read_text(encoding="utf-8"))
 actions_permissions = json.loads((tmp_dir / "actions-permissions.json").read_text(encoding="utf-8"))
+actions_variables = json.loads((tmp_dir / "actions-variables.json").read_text(encoding="utf-8"))
 direct_collaborators = json.loads((tmp_dir / "collaborators-direct.json").read_text(encoding="utf-8"))
 rulesets = json.loads((tmp_dir / "rulesets.json").read_text(encoding="utf-8"))
 release_env = json.loads((tmp_dir / "environment-release.json").read_text(encoding="utf-8"))
@@ -108,6 +110,25 @@ if not isinstance(expected_status_contexts, list) or not expected_status_context
 if not all(isinstance(context, str) and context for context in expected_status_contexts):
     raise SystemExit(
         f"{policy_path} must define required_status_checks.contexts as non-empty strings"
+    )
+expected_repo_variables = policy.get("repository_variables", {})
+if not isinstance(expected_repo_variables, dict):
+    raise SystemExit(
+        f"{policy_path} must define repository_variables as a table of exact expected values"
+    )
+required_attestation_variable = "WORKCELL_ENABLE_GITHUB_ATTESTATIONS"
+if not all(
+    isinstance(name, str)
+    and name
+    and isinstance(value, str)
+    for name, value in expected_repo_variables.items()
+):
+    raise SystemExit(
+        f"{policy_path} repository_variables entries must map non-empty names to exact string values"
+    )
+if required_attestation_variable not in expected_repo_variables:
+    raise SystemExit(
+        f"{policy_path} must declare {required_attestation_variable} in repository_variables"
     )
 
 if not actions_permissions.get("enabled"):
@@ -274,6 +295,32 @@ if missing_status_contexts:
     raise SystemExit(
         f"Default-branch status-check ruleset on {repo} is missing required contexts: "
         + ", ".join(missing_status_contexts)
+    )
+
+actual_repo_variables = {
+    entry.get("name"): entry.get("value")
+    for entry in actions_variables.get("variables", [])
+    if entry.get("name")
+}
+missing_repo_variables = sorted(
+    name for name in expected_repo_variables if name not in actual_repo_variables
+)
+if missing_repo_variables:
+    raise SystemExit(
+        f"Repository variables missing on {repo}: " + ", ".join(missing_repo_variables)
+    )
+wrong_repo_variables = sorted(
+    name
+    for name, expected_value in expected_repo_variables.items()
+    if actual_repo_variables.get(name) != expected_value
+)
+if wrong_repo_variables:
+    details = ", ".join(
+        f"{name}={actual_repo_variables.get(name)!r} (expected {expected_repo_variables[name]!r})"
+        for name in wrong_repo_variables
+    )
+    raise SystemExit(
+        f"Repository variables on {repo} do not match policy: {details}"
     )
 
 protection_rules = release_env.get("protection_rules", [])

@@ -1,26 +1,28 @@
 # Invariant Test Plan
 
-The verification harness should answer one question: does the current runtime
-still satisfy the documented invariants?
+The invariant suite answers one question: does the current implementation still
+match the documented security and control-plane contract?
 
 ## Minimum checks
 
-1. `strict` starts the selected agent inside the container and not on the host.
-2. The container does not receive host auth or control-plane mounts.
-3. The Codex profile inside the container defaults to `strict`.
-4. The wrapper mounts only the selected workspace.
-5. The VM egress policy is applied for `strict` and `build`.
-6. `breakglass` is visibly different and must be explicitly selected.
-7. Policy files exist and are loadable by the local Codex binary.
-8. Broad workspaces such as `/` and `$HOME` are rejected by default.
+The suite should keep verifying that:
+
+1. the provider launches inside the container, not on the host
+2. the runtime receives only the reviewed host mounts
+3. host auth state and sockets stay out by default
+4. the selected workspace is the only writable host mount
+5. network posture is applied for the managed modes
+6. `breakglass` is explicit and visibly different
+7. provider control-plane files are present and loadable
+8. unsafe broad workspaces are rejected
 
 ## Negative checks
 
-The harness should fail if it detects:
+The suite should fail if it finds:
 
 - `docker.sock` passthrough
-- host `~/.codex` passthrough
+- host home passthrough
+- host provider-state passthrough
 - SSH or GPG agent socket passthrough
-- host home directory passthrough
-- missing egress policy when `strict` is requested
-- `breakglass` defaults
+- missing egress controls on the managed path
+- silent defaulting into `breakglass`
