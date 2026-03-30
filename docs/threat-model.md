@@ -2,66 +2,64 @@
 
 ## Assets
 
-- host credentials and long-lived tokens
-- host filesystem outside the task workspace
-- git history and remote branch integrity
-- Workcell policy, runtime, and reviewer configuration
-- autonomous-run audit metadata
+- the host's credentials, homes, keychains, and agent sockets
+- the selected workspace and git history
+- the reviewed runtime and adapter baselines
+- release materials: image, source bundle, SBOMs, signatures, and manifests
 
 ## Trust boundaries
 
-1. macOS host
-2. dedicated Colima VM profile
-3. hardened inner container
-4. active provider process and provider-managed shell commands
-5. mounted task workspace
-6. explicitly enabled MCP servers and outbound network destinations
+1. host OS
+2. dedicated Colima VM
+3. hardened runtime container
+4. provider-native process inside the container
+5. explicit injected material staged for the session
+6. repository-hosted GitHub controls used for release and branch protection
 
 ## Main attacker models
 
 ### Malicious repository content
 
-The repository being analyzed may contain prompt injection, dangerous scripts,
-malicious dependency metadata, and files intended to exfiltrate secrets or push
-the agent into destructive actions.
+Untrusted workspace files try to change provider behavior, steal secrets, or
+influence host publication flows.
 
 ### Malicious or compromised MCP server
 
-An MCP server may try to widen trust, obtain credentials, or cause unexpected
-mutations.
+An MCP server or related config attempts to widen network or filesystem access
+from inside the session.
 
 ### Mis-scoped operator trust
 
-An operator may accidentally run the tool outside the wrapper, use the wrong
-profile, or mount host state that should remain outside the trust boundary.
+An operator accidentally chooses a lower-assurance mode and assumes it is
+equivalent to the default path.
+
+### Supply-chain or release tampering
+
+A workflow, hosted control, or release input changes in a way that weakens the
+published provenance story.
 
 ## Primary abuse paths
 
-1. Read host secrets through ambient mounts or inherited environment.
-2. Escape the intended workspace by using broad writable roots or host
-   passthrough.
-3. Use ambient network access to exfiltrate code or pull malicious tooling.
-4. Rewrite git history or mutate shared branches from an autonomous workflow.
-5. Expand tool reach by enabling project MCP servers, dangerous profiles, or
-   weaker host-native GUI paths.
+- repo-local control-plane files replacing reviewed provider baselines
+- host socket or credential passthrough through the runtime boundary
+- uncontrolled egress on the managed path
+- unsafe provider-native flag overrides
+- unsigned or weakly attested release publication
 
 ## Controls
 
-- dedicated Colima VM profile rather than the shared default profile
-- inner container with `no-new-privileges`; mutable sessions add only
-  `SETUID` and `SETGID` to support the root-to-runtime-user handoff
-- explicit mount allowlist
-- Workcell profile split: `strict`, `build`, `breakglass`
-- disabled web search by default
-- explicit MCP definitions and disabled-by-default posture
-- command guardrails in `.rules`
-- VM-level egress policy rather than extra container capabilities
+- dedicated VM plus container boundary
+- explicit runtime profiles with separate assurance labels
+- masking and re-seeding of provider control-plane files
+- explicit injection-policy inputs instead of ambient host passthrough
+- invariant tests and container smoke checks
+- signed commits, branch rulesets, and hosted-control audits
+- Sigstore-based release signing plus GitHub attestations in the canonical repo
 
 ## Residual risks
 
-- If the operator bypasses the wrapper and runs Codex on the host, Tier 1 is
-  lost.
-- Bind mounts remain the main path from the VM into host-controlled data.
-- Network allowlists based on resolved IPs are best-effort and must be refreshed
-  when endpoints change.
-- Lower-assurance app and IDE flows may remain necessary for some workflows.
+- the full macOS boundary is still a local or self-hosted exercise, not a
+  GitHub-hosted guarantee
+- `breakglass`, prompt autonomy, and other explicit downgrades remain
+  operator-controlled trust decisions
+- MCP servers remain extension points and need deliberate operator review

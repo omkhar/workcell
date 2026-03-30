@@ -1,31 +1,22 @@
 # Provider Matrix
 
-`Workcell` keeps one shared runtime boundary and exposes thin adapters for
-provider-native control planes.
+Workcell keeps one shared runtime boundary and adapts each provider into it
+through a native control-plane mapping.
 
-## Summary
+## Current support
 
-The runtime boundary is shared. The adapter layer changes by provider.
-
-CLI adapters are the primary Tier 1 target because they can stay fully inside
-the bounded runtime. GUI adapters are Tier 2 only when they are clients to that
-same runtime, not host-native executors.
-
-## Matrix
-
-| Provider | Primary Tier 1 surface | Native control plane | Boundary fit | Notes |
+| Provider | Tier 1 surface today | Managed control plane | Long-lived auth inputs | Notes |
 |---|---|---|---|---|
-| Codex | CLI | `~/.codex/config.toml`, `AGENTS.md`, `.rules`, MCP config | Clean | Best fit for runtime-plus-adapter design |
-| Codex | App / GUI | app plus `app-server` | Partial | Tier 2 only when execution stays in the bounded runtime |
-| Claude | Claude Code CLI | `~/.claude/settings.json`, `~/.claude/.claude.json`, compatibility mirror `~/.claude.json`, `/etc/claude-code/managed-settings.json`, legacy mirrors under `~/.claude/.credentials.json` and `~/.config/claude-code/auth.json`, imported shared `AGENTS.md` plus `CLAUDE.md` overlay when present, `.mcp.json`, hooks | Partial | Hooks are guardrails, not the boundary; reviewed `managed-settings.json`, `.mcp.json`, and auth can be injected explicitly |
-| Claude | IDE / GUI workflows | IDE and host integrations | Partial | Lower assurance unless attached to the same bounded workspace/runtime |
-| Gemini | Gemini CLI | `~/.gemini/settings.json`, imported shared `AGENTS.md` plus `GEMINI.md` overlay when present, injected `projects.json` | Partial | Internal sandbox is not the primary boundary here; repo `.gemini/` stays masked on the safe path |
-| Gemini | IDE / GUI workflows | IDE integration and host UI surfaces | Partial | Tier 2 only if execution is still fully remote/containerized |
+| Codex | CLI | `~/.codex/config.toml`, `managed_config.toml`, `requirements.toml`, rules, MCP config, rendered `AGENTS.md` | `codex_auth` | best fit for the shared boundary model |
+| Claude | Claude Code CLI | `~/.claude/settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, reviewed Bash hook | `claude_auth`, `claude_api_key`, `claude_mcp` | hooks are defense in depth, not the primary boundary |
+| Gemini | Gemini CLI | `~/.gemini/settings.json`, rendered `GEMINI.md`, `.env`, OAuth creds, `projects.json`, trusted folders | `gemini_env`, `gemini_oauth`, `gemini_projects`, `gcloud_adc` | Gemini's own sandbox is not the Tier 1 boundary here |
 
-## Adapter rule
+## Tiering rule
 
-Do not force one provider's control model onto another. Keep:
+- Tier 1: provider CLI runs fully inside the bounded runtime
+- Tier 2: GUI or IDE surface is only a client to that same bounded runtime
+- Tier 3: host-native GUI, cloud, or web-only guidance with no claim of
+  equivalent local isolation
 
-1. one shared runtime boundary
-2. one shared invariant set
-3. one provider adapter per product
+Do not force one provider's control model onto another. Keep one shared
+boundary and one thin adapter per product.
