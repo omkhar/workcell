@@ -2413,6 +2413,30 @@ if ! sed -n '/^git_alias_value_is_blocked()/,/^}/p' "${ROOT_DIR}/scripts/workcel
   exit 1
 fi
 
+for _git_env_var in GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE; do
+  # shellcheck disable=SC2016
+  printf -v _git_env_literal '"${%s:-}"' "${_git_env_var}"
+  if ! grep -Fq "${_git_env_literal}" "${ROOT_DIR}/runtime/container/bin/git"; then
+    echo "Expected runtime/container/bin/git to block ${_git_env_var} to prevent object-store redirection" >&2
+    exit 1
+  fi
+done
+
+if ! sed -n '/^checkout_git_index_paths_to_prefix()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'CONTROL_PLANE_SHADOW_ROOT'; then
+  echo "Expected checkout_git_index_paths_to_prefix to validate prefix is inside CONTROL_PLANE_SHADOW_ROOT" >&2
+  exit 1
+fi
+
+if ! sed -n '/^git_index_populate_shadow_dir()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'sanitized_paths_file'; then
+  echo "Expected git_index_populate_shadow_dir to sanitize index paths before checkout-index to prevent path traversal" >&2
+  exit 1
+fi
+
+if ! sed -n '/^validate_publish_base_name()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'check-ref-format'; then
+  echo "Expected validate_publish_base_name to validate the publish-pr --base branch name" >&2
+  exit 1
+fi
+
 if ! sed -n '/^add_shadow_git_hooks_mount()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "copy_tree_without_symlinks"; then
   echo "Expected add_shadow_git_hooks_mount to avoid copying symlinked hook content into the readonly shadow" >&2
   exit 1

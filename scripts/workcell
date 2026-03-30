@@ -1545,7 +1545,7 @@ validate_publish_base_name() {
   local base="$1"
 
   if [[ -z "${base}" ]]; then
-    echo "publish-pr requires --base." >&2
+    echo "publish-pr requires a non-empty --base branch name." >&2
     exit 2
   fi
   if ! "${HOST_GIT_BIN}" check-ref-format --branch "${base}" >/dev/null 2>&1; then
@@ -3807,6 +3807,12 @@ checkout_git_index_paths_to_prefix() {
 
   [[ "$#" -gt 0 ]] || return 1
   workspace_is_git_worktree "${workspace}" || return 1
+  # Prefix must be absolute, end with /, and remain inside the shadow root so
+  # that a crafted git index cannot write files outside the controlled area.
+  if [[ "${prefix}" != /* ]] || [[ "${prefix}" != */ ]] || [[ "${prefix}" != "${CONTROL_PLANE_SHADOW_ROOT}/"* ]]; then
+    echo "Workcell internal error: unsafe checkout-index prefix rejected: ${prefix}" >&2
+    return 2
+  fi
   run_clean_host_command git -C "${workspace}" checkout-index --prefix="${prefix}" -- "$@"
 }
 
@@ -3815,6 +3821,8 @@ git_index_populate_shadow_dir() {
   local relative_path="$2"
   local source_root="$3"
   local tracked_paths_file=""
+  local sanitized_paths_file=""
+  local entry=""
 
   workspace_is_git_worktree "${workspace}" || return 1
   tracked_paths_file="$(mktemp "${CONTROL_PLANE_SHADOW_ROOT}/index-paths.XXXXXX")"
@@ -3823,8 +3831,33 @@ git_index_populate_shadow_dir() {
     rm -f "${tracked_paths_file}"
     return 1
   fi
-  run_clean_host_command git -C "${workspace}" checkout-index --stdin -z --prefix="${CONTROL_PLANE_SHADOW_ROOT}/dirs/" <"${tracked_paths_file}"
+  # Reject any path that could escape the shadow prefix via traversal segments
+  # or absolute references.  Such entries indicate a malicious or corrupted
+  # repository and must not reach checkout-index.
+  sanitized_paths_file="$(mktemp "${CONTROL_PLANE_SHADOW_ROOT}/index-safe.XXXXXX")"
+  exec 3<"${tracked_paths_file}"
+  exec 4>"${sanitized_paths_file}"
+  while IFS= read -r -d '' entry <&3; do
+    case "${entry}" in
+      '' | /* | */../* | ../* | */..)
+        echo "Workcell blocked checkout-index: unsafe path in git index rejected: ${entry}" >&2
+        exec 3<&-
+        exec 4>&-
+        rm -f "${tracked_paths_file}" "${sanitized_paths_file}"
+        return 2
+        ;;
+    esac
+    printf '%s\0' "${entry}" >&4
+  done
+  exec 3<&-
+  exec 4>&-
   rm -f "${tracked_paths_file}"
+  if [[ ! -s "${sanitized_paths_file}" ]]; then
+    rm -f "${sanitized_paths_file}"
+    return 1
+  fi
+  run_clean_host_command git -C "${workspace}" checkout-index --stdin -z --prefix="${CONTROL_PLANE_SHADOW_ROOT}/dirs/" <"${sanitized_paths_file}"
+  rm -f "${sanitized_paths_file}"
   [[ -d "${source_root}" ]]
 }
 
