@@ -650,6 +650,18 @@ require_contains(
     "trusted-path syft exposure in the publish job",
     ".github/workflows/release.yml",
 )
+require_contains(
+    release_workflow,
+    'actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"',
+    "release-preflight actionlint downloads isolated under RUNNER_TEMP",
+    ".github/workflows/release.yml",
+)
+require_contains(
+    release_workflow,
+    'tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint',
+    "release-preflight actionlint extraction isolated under RUNNER_TEMP",
+    ".github/workflows/release.yml",
+)
 for workflow_path in sorted(workflows_dir.glob("*.yml")):
     workflow_text = workflow_path.read_text(encoding="utf-8")
     require_regex(
