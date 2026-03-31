@@ -108,8 +108,11 @@ shell_files=(
   "${ROOT_DIR}/scripts/run-scenario-tests.sh"
   "${ROOT_DIR}/scripts/verify-scenario-coverage.sh"
   "${ROOT_DIR}/scripts/verify-control-plane-parity.sh"
-  "${ROOT_DIR}/tests/scenarios/claude-swe/test-hook-parametric.sh"
 )
+
+while IFS= read -r file; do
+  shell_files+=("${file}")
+done < <(find "${ROOT_DIR}/tests/scenarios" -type f -name 'test-*.sh' -print | sort)
 
 for file in "${shell_files[@]}"; do
   shellcheck -x "${file}"
@@ -249,6 +252,7 @@ fi
 "${ROOT_DIR}/scripts/verify-coverage.sh"
 
 # Check E: Scenario coverage and control-plane parity
+"${ROOT_DIR}/scripts/run-scenario-tests.sh" --secretless-only
 "${ROOT_DIR}/scripts/verify-scenario-coverage.sh"
 "${ROOT_DIR}/scripts/verify-control-plane-parity.sh"
 

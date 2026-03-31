@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -747,7 +748,8 @@ class RenderInjectionHelperTests(unittest.TestCase):
                 str(output),
             ]
             with mock.patch.object(sys, "argv", argv):
-                self.assertEqual(self.module.main(), 0)
+                with mock.patch("sys.stdout", new_callable=io.StringIO):
+                    self.assertEqual(self.module.main(), 0)
 
             manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["version"], 1)
@@ -791,7 +793,8 @@ class RenderInjectionHelperTests(unittest.TestCase):
             with mock.patch.object(sys, "argv", argv):
                 self.assertEqual(self.extract_module.parse_args().manifest, str(manifest_path))
             with mock.patch.object(sys, "argv", argv):
-                self.assertEqual(self.extract_module.main(), 0)
+                with mock.patch("sys.stdout", new_callable=io.StringIO):
+                    self.assertEqual(self.extract_module.main(), 0)
 
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             mounts = json.loads(mount_spec_path.read_text(encoding="utf-8"))
