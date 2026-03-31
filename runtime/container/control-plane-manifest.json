@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "88cd84aefc1e0bcc8cdc27621bb66dcbe30307f8c590872858d7870d4b10102f"
+      "sha256": "f31f7832de712663cc608cefae0306d214eb1a9f2a20fe2460144051ea871078"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts.py",
@@ -106,7 +106,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "d01dd05b5a1ffc13fb9c50dedb31d0401a31c45673a91a8e1f17f084f670a5f1"
+      "sha256": "f12801ce5b1f7682eb891e12ed9788c4ea26cc37234c5d76172c383f3827f0c5"
     },
     {
       "kind": "adapter-baseline",
