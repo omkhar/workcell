@@ -129,6 +129,7 @@ ARG CLAUDE_VERSION=2.1.86
 # update CODEX_VERSION, download both architecture tarballs, compute sha256sum,
 # and update the CODEX_SHA256 values for arm64 and amd64 below.
 ARG CODEX_VERSION=0.117.0-alpha.8
+ARG CODEX_RELEASE_URL=
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
@@ -168,14 +169,10 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
       CLAUDE_SHA256="c04aebe3de140679b4cce158812d6f011b7e9c483496ccb0472cf38cc1714afe"; \
-      CODEX_ARCH="aarch64-unknown-linux-gnu"; \
-      CODEX_SHA256="120b8bd6ececc125198de3fbce896da98a4795b449a4c78d516534e08a63ab14"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
       CLAUDE_SHA256="adce02c5f94a85b6ca231c8aeef533707597cd387e8934776455b87d10a3051b"; \
-      CODEX_ARCH="x86_64-unknown-linux-gnu"; \
-      CODEX_SHA256="1d65d8aa80847ac771487d74cb2a63c86ef23479636aa1c1b3d051c9931d314b"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -191,13 +188,48 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && echo "${CLAUDE_SHA256}  /tmp/claude" | sha256sum -c - \
   && install -m 0755 /tmp/claude /usr/local/libexec/workcell/real/claude \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/claude \
-  && rm -f /tmp/claude \
-  && curl -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${CODEX_ARCH}.tar.gz" \
-    --retry 5 \
-    --retry-all-errors \
-    --retry-delay 5 \
-    --connect-timeout 20 \
-    -o /tmp/codex.tar.gz \
+  && rm -f /tmp/claude
+
+RUN TARGET_ARCH="${TARGETARCH:-}" \
+  && if [[ -z "${TARGET_ARCH}" ]]; then \
+       case "$(dpkg --print-architecture)" in \
+         arm64) TARGET_ARCH="arm64" ;; \
+         amd64) TARGET_ARCH="amd64" ;; \
+         *) \
+           echo "Unsupported dpkg architecture: $(dpkg --print-architecture)" >&2; \
+           exit 1; \
+           ;; \
+       esac; \
+     fi \
+  && case "${TARGET_ARCH}" in \
+    arm64) \
+      CODEX_ARCH="aarch64-unknown-linux-gnu"; \
+      CODEX_SHA256="120b8bd6ececc125198de3fbce896da98a4795b449a4c78d516534e08a63ab14"; \
+      ;; \
+    amd64) \
+      CODEX_ARCH="x86_64-unknown-linux-gnu"; \
+      CODEX_SHA256="1d65d8aa80847ac771487d74cb2a63c86ef23479636aa1c1b3d051c9931d314b"; \
+      ;; \
+    *) \
+      echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
+      exit 1; \
+      ;; \
+  esac \
+  && if [[ -n "${CODEX_RELEASE_URL}" ]]; then \
+       curl -fsSL "${CODEX_RELEASE_URL}" \
+         --retry 5 \
+         --retry-all-errors \
+         --retry-delay 5 \
+         --connect-timeout 20 \
+         -o /tmp/codex.tar.gz; \
+     else \
+       curl -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${CODEX_ARCH}.tar.gz" \
+         --retry 5 \
+         --retry-all-errors \
+         --retry-delay 5 \
+         --connect-timeout 20 \
+         -o /tmp/codex.tar.gz; \
+     fi \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex.tar.gz -C /tmp \
   && mv "/tmp/codex-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex \
