@@ -756,10 +756,10 @@ for required_codeowner in (
             f".github/CODEOWNERS must declare high-risk ownership for {required_codeowner!r}"
         )
 release_mode = hosted_controls_policy.get("release_environment", {}).get("mode")
-if release_mode not in {"review-gated", "single-owner-private"}:
+if release_mode not in {"review-gated", "single-owner-private", "plan-limited-private"}:
     raise SystemExit(
         "policy/github-hosted-controls.toml must set release_environment.mode "
-        "to 'review-gated' or 'single-owner-private'"
+        "to 'review-gated', 'single-owner-private', or 'plan-limited-private'"
     )
 repository_variables = hosted_controls_policy.get("repository_variables")
 if not isinstance(repository_variables, dict) or not repository_variables:
