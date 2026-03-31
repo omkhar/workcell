@@ -5181,8 +5181,9 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     PACKAGE_MUTATION_AUDIT_COMMAND="$(
       cat <<'EOF'
 for attempt in 1 2 3; do
-  if sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update >/dev/null &&
-    sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y --no-install-recommends make >/dev/null; then
+  # Remove a package baked into the runtime image so the mutation audit does
+  # not depend on live Debian snapshot availability.
+  if sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get remove -y unzip >/dev/null; then
     exit 0
   fi
   if [[ "${attempt}" -eq 3 ]]; then
