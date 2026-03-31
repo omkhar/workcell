@@ -2833,12 +2833,15 @@ fail_fast_for_missing_gemini_auth() {
   fi
 
   echo "Gemini auth is not configured for this session." >&2
+  echo "Workcell uses an injection policy file for credentials rather than a provider login flow;" >&2
+  echo "credentials are staged outside the agent boundary and are not accessible to agent code directly." >&2
   if [[ -n "${INJECTION_POLICY}" ]]; then
     echo "Update ${INJECTION_POLICY} to include credentials.gemini_env or credentials.gemini_oauth." >&2
     echo "credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env." >&2
   else
     echo "Create $(default_injection_policy_path) or pass --injection-policy PATH with credentials.gemini_env or credentials.gemini_oauth." >&2
     echo "credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env." >&2
+    echo "See docs/injection-policy.md for the full credential reference." >&2
   fi
   printf 'Next step: workcell --auth-status --agent gemini --workspace %q\n' "${WORKSPACE}" >&2
   exit 2
@@ -3093,7 +3096,9 @@ validate_workspace() {
   if workspace_has_markers "${path}"; then
     if ! workspace_gitdir_is_self_contained "${path}"; then
       echo "Refusing git workspace with admin state outside the mounted workspace: ${path}" >&2
-      echo "Use a standard checkout on the safe path; linked worktrees require breakglass or a different clone." >&2
+      echo "This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path." >&2
+      echo "To use this workspace on the safe path, create a standard clone at the same location instead." >&2
+      echo "Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree." >&2
       exit 2
     fi
     return
@@ -3367,13 +3372,13 @@ run_command_with_debug_log() {
       runtime-build)
         case "${phase}" in
           start)
-            echo "Preparing the runtime image for profile ${COLIMA_PROFILE}. First-time prepares can take several minutes; reruns are usually faster." >&2
+            echo "Preparing the runtime image for profile ${COLIMA_PROFILE}. First-time prepares typically take 4-8 minutes; reruns are usually faster." >&2
             if [[ "${LOG_LEVEL}" != "debug" ]]; then
               echo "Use --log-level debug for live Docker build output." >&2
             fi
             ;;
           heartbeat)
-            echo "Workcell is still preparing the runtime image for profile ${COLIMA_PROFILE} (${elapsed} elapsed)." >&2
+            echo "Workcell is still preparing the runtime image for profile ${COLIMA_PROFILE} (${elapsed} elapsed). Use --log-level debug for live output." >&2
             ;;
           success)
             if [[ "${PREPARE_ONLY}" -eq 1 ]]; then
