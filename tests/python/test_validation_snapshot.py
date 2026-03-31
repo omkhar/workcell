@@ -37,7 +37,7 @@ class ValidationSnapshotTests(unittest.TestCase):
                 "--",
                 sys.executable,
                 "-c",
-                "import os; print(os.getcwd()); print(os.environ['WORKCELL_VALIDATION_SNAPSHOT_DIR'])",
+                "import os; from pathlib import Path; print(os.getcwd()); print(os.environ['WORKCELL_VALIDATION_SNAPSHOT_DIR']); print(Path('.git').is_dir())",
             ],
             check=False,
             capture_output=True,
@@ -53,9 +53,10 @@ class ValidationSnapshotTests(unittest.TestCase):
             result = self.run_snapshot(repo)
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            cwd, snapshot_dir = result.stdout.strip().splitlines()
+            cwd, snapshot_dir, git_dir_is_directory = result.stdout.strip().splitlines()
             self.assertEqual(Path(cwd), Path(snapshot_dir))
             self.assertEqual(Path(snapshot_dir).parent.resolve(), repo.parent.resolve())
+            self.assertEqual(git_dir_is_directory, "True")
 
     def test_snapshot_parent_override_is_honored(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -69,8 +70,9 @@ class ValidationSnapshotTests(unittest.TestCase):
             result = self.run_snapshot(repo, env=env)
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            _, snapshot_dir = result.stdout.strip().splitlines()
+            _, snapshot_dir, git_dir_is_directory = result.stdout.strip().splitlines()
             self.assertEqual(Path(snapshot_dir).parent.resolve(), override_parent.resolve())
+            self.assertEqual(git_dir_is_directory, "True")
 
 
 if __name__ == "__main__":
