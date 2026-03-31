@@ -23,6 +23,7 @@ from policy_bundle import (  # noqa: E402
     SUPPORTED_MODES,
     composite_policy_sha256,
     die,
+    expand_host_path,
     load_policy_bundle,
     load_raw_policy,
     require_no_symlink_in_path_chain,
@@ -189,12 +190,22 @@ def ensure_credential_not_only_in_includes(
 ) -> None:
     if credential in credentials or not policy_path.exists():
         return
-    merged_policy, _ = load_policy_bundle(policy_path)
+    merged_policy, policy_sources = load_policy_bundle(policy_path)
     merged_credentials = merged_policy.get("credentials", {})
     if isinstance(merged_credentials, dict) and credential in merged_credentials:
+        fragment_path = ""
+        for source in policy_sources:
+            source_path = Path(source["path"])
+            source_policy = load_raw_policy(source_path)
+            source_credentials = source_policy.get("credentials", {})
+            if isinstance(source_credentials, dict) and credential in source_credentials:
+                fragment_path = str(source_path)
+                break
+        fragment_hint = f": {fragment_path}" if fragment_path else ""
         die(
             f"credentials.{credential} is declared by an included policy fragment; "
             f"update that fragment directly before using workcell auth {command}"
+            f"{fragment_hint}"
         )
 
 
@@ -222,7 +233,43 @@ def desired_selectors(
     return selectors
 
 
+def paths_equivalent(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return left == right
+
+
+def entry_source_path(policy_path: Path, existing_source: str) -> Path:
+    return expand_host_path(existing_source, policy_path.parent)
+
+
 def managed_source_path_for_entry(
+    policy_path: Path,
+    managed_root: Path,
+    credential: str,
+    existing_entry: object,
+) -> Path | None:
+    if credential not in CANONICAL_CREDENTIAL_DESTINATIONS:
+        return None
+    candidate = canonical_destination_path(managed_root, credential)
+    existing_source = None
+    if isinstance(existing_entry, dict):
+        existing_source = existing_entry.get("source")
+    elif isinstance(existing_entry, str):
+        existing_source = existing_entry
+    if isinstance(existing_source, str) and existing_source == str(candidate):
+        return candidate
+    if not isinstance(existing_source, str):
+        return None
+    existing_path = entry_source_path(policy_path, existing_source)
+    if paths_equivalent(existing_path, candidate):
+        return candidate
+    return None
+
+
+def foreign_managed_source_path_for_entry(
+    policy_path: Path,
     managed_root: Path,
     credential: str,
     existing_entry: object,
@@ -236,17 +283,39 @@ def managed_source_path_for_entry(
         existing_source = existing_entry.get("source")
     elif isinstance(existing_entry, str):
         existing_source = existing_entry
-    if isinstance(existing_source, str) and existing_source == str(candidate):
-        return candidate
     if not isinstance(existing_source, str):
         return None
-    existing_path = Path(existing_source).expanduser()
+    existing_path = entry_source_path(policy_path, existing_source)
+    if paths_equivalent(existing_path, candidate):
+        return None
     if existing_path.name != filename or existing_path.parent.name != provider_dir:
         return None
     root_candidate = existing_path.parent.parent
     if is_workcell_managed_root(root_candidate):
         return existing_path
     return None
+
+
+def ensure_no_foreign_managed_source(
+    policy_path: Path,
+    managed_root: Path,
+    credential: str,
+    existing_entry: object,
+    command: str,
+) -> None:
+    foreign_path = foreign_managed_source_path_for_entry(
+        policy_path,
+        managed_root,
+        credential,
+        existing_entry,
+    )
+    if foreign_path is None:
+        return
+    die(
+        f"credentials.{credential} is already managed under a different --managed-root "
+        f"({foreign_path.parent.parent}); run workcell auth {command} with that "
+        f"--managed-root before switching roots"
+    )
 
 
 def validate_agent_credential(agent: str, credential: str) -> None:
@@ -313,6 +382,13 @@ def command_set(
         die("credentials must remain a TOML table")
     ensure_credential_not_only_in_includes(policy_path, credentials, credential, "set")
     existing_entry = credentials.get(credential)
+    ensure_no_foreign_managed_source(
+        policy_path,
+        managed_root,
+        credential,
+        existing_entry,
+        "set",
+    )
     selectors = desired_selectors(credentials, credential, agent)
 
     if source_raw is not None:
@@ -327,7 +403,12 @@ def command_set(
             destination,
             f"managed credential path for {credential}",
         )
-        prior_managed_path = managed_source_path_for_entry(managed_root, credential, existing_entry)
+        prior_managed_path = managed_source_path_for_entry(
+            policy_path,
+            managed_root,
+            credential,
+            existing_entry,
+        )
         if prior_managed_path is not None and prior_managed_path != destination:
             require_no_symlink_in_path_chain(
                 prior_managed_path,
@@ -372,7 +453,12 @@ def command_set(
         die(f"{credential} does not support resolver {resolver}")
     if not ack_host_resolver:
         die("set --resolver requires --ack-host-resolver")
-    managed_path = managed_source_path_for_entry(managed_root, credential, existing_entry)
+    managed_path = managed_source_path_for_entry(
+        policy_path,
+        managed_root,
+        credential,
+        existing_entry,
+    )
     if managed_path is not None:
         require_no_symlink_in_path_chain(
             managed_path,
@@ -413,6 +499,13 @@ def command_unset(policy_path: Path, managed_root: Path, credential: str) -> int
         "unset",
     )
     existing_entry = credentials.get(credential) if isinstance(credentials, dict) else None
+    ensure_no_foreign_managed_source(
+        policy_path,
+        managed_root,
+        credential,
+        existing_entry,
+        "unset",
+    )
     if not isinstance(credentials, dict) or credential not in credentials:
         print(f"policy_path={policy_path}")
         print(f"credential={credential}")
@@ -421,7 +514,12 @@ def command_unset(policy_path: Path, managed_root: Path, credential: str) -> int
     del credentials[credential]
     if not credentials:
         policy.pop("credentials", None)
-    managed_path = managed_source_path_for_entry(managed_root, credential, existing_entry)
+    managed_path = managed_source_path_for_entry(
+        policy_path,
+        managed_root,
+        credential,
+        existing_entry,
+    )
     if managed_path is not None:
         require_no_symlink_in_path_chain(
             managed_path,

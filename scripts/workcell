@@ -1922,11 +1922,11 @@ Usage: workcell auth init [options]
 
 Commands:
   init
-    --injection-policy PATH     Policy file to create or validate
+    --injection-policy PATH     Policy file to create or validate (default: ~/.config/workcell/injection-policy.toml)
     --managed-root PATH         Managed credential root (default: ~/.config/workcell/credentials)
 
   set
-    --injection-policy PATH     Policy file to update
+    --injection-policy PATH     Policy file to update (default: ~/.config/workcell/injection-policy.toml)
     --managed-root PATH         Managed credential root (default: ~/.config/workcell/credentials)
     --agent codex|claude|gemini Agent used for validation and default shared-credential scoping
     --credential KEY            Credential key to configure
@@ -1935,18 +1935,20 @@ Commands:
     --ack-host-resolver         Required with --resolver
 
   unset
-    --injection-policy PATH     Policy file to update
+    --injection-policy PATH     Policy file to update (default: ~/.config/workcell/injection-policy.toml)
     --managed-root PATH         Managed credential root (default: ~/.config/workcell/credentials)
     --credential KEY            Credential key to remove
 
   status
-    --injection-policy PATH     Policy file to inspect
+    --injection-policy PATH     Policy file to inspect (default: ~/.config/workcell/injection-policy.toml)
     --agent codex|claude|gemini Filter to the selected agent
     --mode strict|build|breakglass
     --workspace PATH            Accepted for CLI symmetry; ignored by host status
 
 Notes:
   - auth commands run on the host and do not start the Workcell runtime.
+  - auth set/unset rewrite only the entrypoint policy file; if a credential is
+    declared by an included fragment, update that fragment directly.
   - resolver-backed credentials remain host-side preprocessing and do not
     grant Keychain or provider-home access inside Tier 1.
 EOF
@@ -2444,10 +2446,13 @@ PY
     --output-metadata "${resolver_metadata_path}"
     --output-root "${INJECTION_BUNDLE_ROOT}"
   )
-  if [[ -n "${SELF_STAGING_PROBE_CLAUDE_EXPORT_FILE:-}" ]]; then
+  if [[ "${SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT}" == "1" ]]; then
+    synthetic_claude_export="${INJECTION_BUNDLE_ROOT}/self-staging-probe-claude-export.json"
+    umask 077
+    printf '{"token":"claude"}\n' >"${synthetic_claude_export}"
     run_clean_host_command \
       env \
-      "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE=${SELF_STAGING_PROBE_CLAUDE_EXPORT_FILE}" \
+      "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE=${synthetic_claude_export}" \
       "${resolver_cmd[@]}" >/dev/null
   else
     run_clean_host_command "${resolver_cmd[@]}" >/dev/null
@@ -3547,10 +3552,10 @@ run_runtime_image_build_with_retries() {
     safe_builder_context="${COLIMA_PROFILE//[^[:alnum:]_.-]/-}"
     BUILDX_BUILDER="workcell-runtime-${safe_builder_context}"
   fi
-  codex_release_url="$(resolve_codex_release_url || true)"
 
   while :; do
     build_status=0
+    codex_release_url="$(resolve_codex_release_url || true)"
     if [[ "${attempt}" -gt 1 ]]; then
       echo "Retrying the runtime image build for profile ${COLIMA_PROFILE} (attempt ${attempt}/${max_attempts})." >&2
       start_managed_profile || build_status=$?
@@ -4732,7 +4737,7 @@ ACK_BREAKGLASS=0
 ACK_CONTROL_PLANE_VCS=0
 ACK_ARBITRARY_COMMAND=0
 TEST_FAIL_AFTER_PROFILE_REFRESH=0
-SELF_STAGING_PROBE_CLAUDE_EXPORT_FILE=""
+SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT=0
 declare -a AGENT_ARGS=()
 declare -a NORMALIZED_ARGS=()
 
@@ -4744,7 +4749,7 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
   MODE="${4:-strict}"
   ALLOW_CONTROL_PLANE_VCS="${5:-0}"
   PRESERVE_STAGING_PROBE_ARTIFACTS="${6:-0}"
-  SELF_STAGING_PROBE_CLAUDE_EXPORT_FILE="${7:-}"
+  SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT="${7:-0}"
 
   [[ -n "${AGENT}" ]] || {
     echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
@@ -4763,6 +4768,13 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
   WORKSPACE="$(resolve_existing_directory_or_die "${WORKSPACE}")"
   INJECTION_POLICY="$(resolve_host_path "${INJECTION_POLICY}")"
   USE_DEFAULT_INJECTION_POLICY=0
+  case "${SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT}" in
+    0 | 1) ;;
+    *)
+      echo "--self-staging-probe synthetic Claude export flag must be 0 or 1" >&2
+      exit 2
+      ;;
+  esac
   prepare_injection_bundle "${AGENT}" "${MODE}"
   prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
 

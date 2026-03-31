@@ -114,7 +114,9 @@ policy, usually at `~/.config/workcell/injection-policy.toml`.
 
 For host-side setup, Workcell also ships `workcell auth init|set|unset|status`
 to manage explicit policy-backed credentials without widening the runtime
-boundary.
+boundary. Those host-side auth commands only rewrite the entrypoint policy
+file, so credentials declared through `includes = [...]` must still be updated
+in the owning fragment.
 
 Workcell can stage:
 

@@ -530,7 +530,7 @@ class ManageInjectionPolicyTests(unittest.TestCase):
             self.assertIn("must not be a symlink", result.stderr)
             self.assertFalse((escape_root / "auth.json").exists())
 
-    def test_set_and_unset_remove_old_managed_copy_after_managed_root_migration(self) -> None:
+    def test_switching_managed_roots_requires_cleaning_old_root_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             policy_path = root / "injection-policy.toml"
@@ -564,6 +564,13 @@ class ManageInjectionPolicyTests(unittest.TestCase):
                 str(first_source),
             )
             self.assertTrue((old_managed_root / "codex" / "auth.json").is_file())
+            policy_path.write_text(
+                'version = 1\n'
+                '[credentials.codex_auth]\n'
+                'source = "old-credentials/codex/auth.json"\n'
+                'providers = ["codex"]\n',
+                encoding="utf-8",
+            )
 
             self.run_helper(
                 "init",
@@ -572,6 +579,51 @@ class ManageInjectionPolicyTests(unittest.TestCase):
                 "--managed-root",
                 str(new_managed_root),
             )
+            result = self.run_helper(
+                "set",
+                "--policy",
+                str(policy_path),
+                "--managed-root",
+                str(new_managed_root),
+                "--agent",
+                "codex",
+                "--credential",
+                "codex_auth",
+                "--source",
+                str(second_source),
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("already managed under a different --managed-root", result.stderr)
+            self.assertTrue((old_managed_root / "codex" / "auth.json").is_file())
+            self.assertFalse((new_managed_root / "codex" / "auth.json").exists())
+
+            result = self.run_helper(
+                "unset",
+                "--policy",
+                str(policy_path),
+                "--managed-root",
+                str(new_managed_root),
+                "--credential",
+                "codex_auth",
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("already managed under a different --managed-root", result.stderr)
+            self.assertTrue((old_managed_root / "codex" / "auth.json").is_file())
+            self.assertFalse((new_managed_root / "codex" / "auth.json").exists())
+
+            self.run_helper(
+                "unset",
+                "--policy",
+                str(policy_path),
+                "--managed-root",
+                str(old_managed_root),
+                "--credential",
+                "codex_auth",
+            )
+            self.assertFalse((old_managed_root / "codex" / "auth.json").exists())
+
             self.run_helper(
                 "set",
                 "--policy",
@@ -585,19 +637,72 @@ class ManageInjectionPolicyTests(unittest.TestCase):
                 "--source",
                 str(second_source),
             )
-            self.assertFalse((old_managed_root / "codex" / "auth.json").exists())
             self.assertTrue((new_managed_root / "codex" / "auth.json").is_file())
 
+    def test_set_accepts_equivalent_managed_root_alias_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            policy_path = root / "injection-policy.toml"
+            real_parent = root / "private"
+            alias_parent = root / "alias"
+            managed_root = real_parent / "credentials"
+            first_source = root / "first-auth.json"
+            second_source = root / "second-auth.json"
+            real_parent.mkdir()
+            alias_parent.symlink_to(real_parent, target_is_directory=True)
+            first_source.write_text('{"token":"first"}\n', encoding="utf-8")
+            second_source.write_text('{"token":"second"}\n', encoding="utf-8")
+            first_source.chmod(0o600)
+            second_source.chmod(0o600)
+
             self.run_helper(
-                "unset",
+                "init",
                 "--policy",
                 str(policy_path),
                 "--managed-root",
-                str(new_managed_root),
+                str(managed_root),
+            )
+            self.run_helper(
+                "set",
+                "--policy",
+                str(policy_path),
+                "--managed-root",
+                str(managed_root),
+                "--agent",
+                "codex",
                 "--credential",
                 "codex_auth",
+                "--source",
+                str(first_source),
             )
-            self.assertFalse((new_managed_root / "codex" / "auth.json").exists())
+
+            alias_source = alias_parent / "credentials" / "codex" / "auth.json"
+            policy_path.write_text(
+                'version = 1\n'
+                '[credentials.codex_auth]\n'
+                f'source = "{alias_source}"\n'
+                'providers = ["codex"]\n',
+                encoding="utf-8",
+            )
+
+            self.run_helper(
+                "set",
+                "--policy",
+                str(policy_path),
+                "--managed-root",
+                str(managed_root),
+                "--agent",
+                "codex",
+                "--credential",
+                "codex_auth",
+                "--source",
+                str(second_source),
+            )
+
+            self.assertEqual(
+                (managed_root / "codex" / "auth.json").read_text(encoding="utf-8"),
+                '{"token":"second"}\n',
+            )
 
     def test_agentless_status_respects_mode_filter(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

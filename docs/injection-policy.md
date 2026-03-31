@@ -30,6 +30,10 @@ Secret-bearing inputs are handled more carefully than public inputs:
 | `[[copies]]` | explicit copied files or directories for non-reserved targets |
 | `includes = [...]` | compose a policy from smaller operator-owned fragments |
 
+`workcell auth init|set|unset|status` manages the entrypoint policy file only.
+If a credential is declared by an included fragment, update that fragment
+directly.
+
 Selectors let you scope entries to only some launches:
 
 - `providers = ["codex", "claude", "gemini"]`
