@@ -20,6 +20,7 @@ class ValidationSnapshotTests(unittest.TestCase):
             ["git", "-C", str(repo), "config", "user.email", "workcell-tests@example.com"],
             check=True,
         )
+        subprocess.run(["git", "-C", str(repo), "config", "commit.gpgsign", "false"], check=True)
         (repo / "README.md").write_text("fixture\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
         subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True)
