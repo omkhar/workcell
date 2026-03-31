@@ -11,7 +11,6 @@ trap cleanup EXIT
 
 WORKSPACE="${TMP_DIR}/workspace"
 POLICY="${TMP_DIR}/policy.toml"
-EXPORT_FILE="${TMP_DIR}/claude-export.json"
 mkdir -p "${WORKSPACE}"
 
 cat >"${POLICY}" <<'EOF'
@@ -37,9 +36,6 @@ set -e
 test "${failure_rc}" -ne 0
 grep -q 'Claude macOS login reuse is configured' <<<"${failure_output}"
 
-printf '{"token":"claude"}\n' >"${EXPORT_FILE}"
-chmod 0600 "${EXPORT_FILE}"
-
 success_output="$("${ROOT_DIR}/scripts/workcell" \
   --self-staging-probe \
   claude \
@@ -48,7 +44,7 @@ success_output="$("${ROOT_DIR}/scripts/workcell" \
   strict \
   0 \
   0 \
-  "${EXPORT_FILE}")"
+  1)"
 
 grep -q '^injection_bundle_root=' <<<"${success_output}"
 grep -q '^direct_mount=' <<<"${success_output}"
