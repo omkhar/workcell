@@ -35,6 +35,10 @@ shell_files=(
   "${ROOT_DIR}/runtime/container/runtime-user.sh"
 )
 
+while IFS= read -r file; do
+  shell_files+=("${file}")
+done < <(find "${ROOT_DIR}/tests/scenarios" -type f -name 'test-*.sh' -print | sort)
+
 mapfile -t python_files < <(
   find "${ROOT_DIR}/scripts/lib" "${ROOT_DIR}/tests/python" \
     -type f -name '*.py' -print | sort

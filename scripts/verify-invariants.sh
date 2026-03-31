@@ -2422,13 +2422,13 @@ for _git_env_var in GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_IN
   fi
 done
 
-if ! sed -n '/^checkout_git_index_paths_to_prefix()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'CONTROL_PLANE_SHADOW_ROOT'; then
-  echo "Expected checkout_git_index_paths_to_prefix to validate prefix is inside CONTROL_PLANE_SHADOW_ROOT" >&2
+if ! sed -n '/^git_index_materialize_regular_file()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'cat-file blob'; then
+  echo "Expected git_index_materialize_regular_file to materialize tracked blobs without checkout-index" >&2
   exit 1
 fi
 
-if ! sed -n '/^git_index_populate_shadow_dir()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'sanitized_paths_file'; then
-  echo "Expected git_index_populate_shadow_dir to sanitize index paths before checkout-index to prevent path traversal" >&2
+if ! sed -n '/^git_index_populate_shadow_dir()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq '*/../*'; then
+  echo "Expected git_index_populate_shadow_dir to reject unsafe index paths before shadow materialization" >&2
   exit 1
 fi
 
@@ -5181,8 +5181,9 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     PACKAGE_MUTATION_AUDIT_COMMAND="$(
       cat <<'EOF'
 for attempt in 1 2 3; do
-  if sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update >/dev/null &&
-    sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y --no-install-recommends make >/dev/null; then
+  # Remove a package baked into the runtime image so the mutation audit does
+  # not depend on live Debian snapshot availability.
+  if sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get remove -y unzip >/dev/null; then
     exit 0
   fi
   if [[ "${attempt}" -eq 3 ]]; then

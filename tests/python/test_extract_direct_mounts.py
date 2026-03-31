@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
@@ -56,7 +57,8 @@ class ExtractDirectMountsTests(unittest.TestCase):
                 str(mount_spec_path),
             ]
             with mock.patch.object(sys, "argv", argv):
-                self.assertEqual(self.module.main(), 0)
+                with mock.patch("sys.stdout", new_callable=io.StringIO):
+                    self.assertEqual(self.module.main(), 0)
 
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             mounts = json.loads(mount_spec_path.read_text(encoding="utf-8"))
@@ -107,7 +109,8 @@ class ExtractDirectMountsTests(unittest.TestCase):
                 str(mount_spec_path),
             ]
             with mock.patch.object(sys, "argv", argv):
-                self.assertEqual(self.module.main(), 0)
+                with mock.patch("sys.stdout", new_callable=io.StringIO):
+                    self.assertEqual(self.module.main(), 0)
 
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             mounts = json.loads(mount_spec_path.read_text(encoding="utf-8"))

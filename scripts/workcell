@@ -1505,6 +1505,7 @@ Options:
   --workspace PATH              Workspace to publish (default: current directory)
   --branch NAME                 Feature branch to create or switch to (required)
   --base NAME                   Base branch for the PR (default: main)
+  --gh-bin PATH                 Host GitHub CLI to use for PR creation
   --snapshot index|worktree     Publish the current index or stage the worktree (default: worktree)
   --title TEXT                  PR title
   --title-file PATH             Read the PR title from PATH
@@ -1536,6 +1537,20 @@ resolve_existing_file_or_die() {
   resolved_path="$(resolve_host_path "${raw_path}")"
   if [[ ! -f "${resolved_path}" ]]; then
     echo "${label} file does not exist: ${raw_path}" >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${resolved_path}"
+}
+
+resolve_existing_executable_or_die() {
+  local raw_path="$1"
+  local label="$2"
+  local resolved_path=""
+
+  resolved_path="$(resolve_existing_file_or_die "${raw_path}" "${label}")"
+  if [[ ! -x "${resolved_path}" ]]; then
+    echo "${label} file is not executable: ${raw_path}" >&2
     exit 2
   fi
 
@@ -1718,6 +1733,7 @@ publish_pr_main() {
   local workspace="${PWD}"
   local branch=""
   local base="main"
+  local gh_bin=""
   local snapshot="worktree"
   local title=""
   local title_file=""
@@ -1754,6 +1770,10 @@ publish_pr_main() {
         ;;
       --base)
         base="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --gh-bin)
+        gh_bin="$(option_value_or_die "$1" "${2-}")"
         shift 2
         ;;
       --snapshot)
@@ -1809,7 +1829,9 @@ publish_pr_main() {
   validate_publish_snapshot_name "${snapshot}"
   validate_publish_branch_name "${branch}"
   validate_publish_base_name "${base}"
-  if [[ "${dry_run}" -eq 1 ]]; then
+  if [[ -n "${gh_bin}" ]]; then
+    HOST_GH_BIN="$(resolve_existing_executable_or_die "${gh_bin}" "gh-bin")"
+  elif [[ "${dry_run}" -eq 1 ]]; then
     HOST_GH_BIN="${HOST_GH_BIN:-$(resolve_host_tool_optional gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh || true)}"
     [[ -n "${HOST_GH_BIN}" ]] || HOST_GH_BIN="gh"
   else
@@ -4314,7 +4336,7 @@ add_shadow_file_mount() {
   mkdir -p "$(dirname "${source}")"
   rm -f "${source}"
   if git_index_has_path "${workspace}" "${relative_path}"; then
-    checkout_git_index_paths_to_prefix "${workspace}" "${CONTROL_PLANE_SHADOW_ROOT}/files/" "${relative_path}"
+    git_index_materialize_regular_file "${workspace}" "${relative_path}" "${source}" || true
   fi
   if [[ -L "${source}" ]] || [[ ! -f "${source}" ]]; then
     rm -f "${source}"
@@ -4354,20 +4376,43 @@ git_index_has_path() {
   run_clean_host_command git -C "${workspace}" ls-files --error-unmatch -- "${relative_path}" >/dev/null 2>&1
 }
 
-checkout_git_index_paths_to_prefix() {
+git_index_materialize_regular_file() {
   local workspace="$1"
-  local prefix="$2"
-  shift 2 || true
+  local relative_path="$2"
+  local destination_path="$3"
+  local entry=""
+  local metadata=""
+  local mode=""
+  local oid=""
+  local remainder=""
+  local install_mode=""
 
-  [[ "$#" -gt 0 ]] || return 1
   workspace_is_git_worktree "${workspace}" || return 1
-  # Prefix must be absolute, end with /, and remain inside the shadow root so
-  # that a crafted git index cannot write files outside the controlled area.
-  if [[ "${prefix}" != /* ]] || [[ "${prefix}" != */ ]] || [[ "${prefix}" != "${CONTROL_PLANE_SHADOW_ROOT}/"* ]]; then
-    echo "Workcell internal error: unsafe checkout-index prefix rejected: ${prefix}" >&2
-    return 2
-  fi
-  run_clean_host_command git -C "${workspace}" checkout-index --prefix="${prefix}" -- "$@"
+  IFS= read -r -d '' entry < <(run_clean_host_command git -C "${workspace}" ls-files -z --stage -- "${relative_path}") || true
+  [[ -n "${entry}" ]] || return 1
+
+  metadata="${entry%%$'\t'*}"
+  mode="${metadata%% *}"
+  remainder="${metadata#* }"
+  oid="${remainder%% *}"
+
+  case "${mode}" in
+    100644)
+      install_mode="0644"
+      ;;
+    100755)
+      install_mode="0755"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  mkdir -p "$(dirname "${destination_path}")"
+  # Materialize tracked blobs directly so repo-local checkout filters and other
+  # worktree-side behaviors cannot influence host-side control-plane shadowing.
+  run_clean_host_command git -C "${workspace}" cat-file blob "${oid}" >"${destination_path}"
+  chmod "${install_mode}" "${destination_path}" 2>/dev/null || true
 }
 
 git_index_populate_shadow_dir() {
@@ -4375,8 +4420,9 @@ git_index_populate_shadow_dir() {
   local relative_path="$2"
   local source_root="$3"
   local tracked_paths_file=""
-  local sanitized_paths_file=""
-  local entry=""
+  local tracked_path=""
+  local relative_suffix=""
+  local populated=0
 
   workspace_is_git_worktree "${workspace}" || return 1
   tracked_paths_file="$(mktemp "${CONTROL_PLANE_SHADOW_ROOT}/index-paths.XXXXXX")"
@@ -4385,34 +4431,33 @@ git_index_populate_shadow_dir() {
     rm -f "${tracked_paths_file}"
     return 1
   fi
-  # Reject any path that could escape the shadow prefix via traversal segments
-  # or absolute references.  Such entries indicate a malicious or corrupted
-  # repository and must not reach checkout-index.
-  sanitized_paths_file="$(mktemp "${CONTROL_PLANE_SHADOW_ROOT}/index-safe.XXXXXX")"
   exec 3<"${tracked_paths_file}"
-  exec 4>"${sanitized_paths_file}"
-  while IFS= read -r -d '' entry <&3; do
-    case "${entry}" in
+  while IFS= read -r -d '' tracked_path <&3; do
+    case "${tracked_path}" in
       '' | /* | */../* | ../* | */..)
-        echo "Workcell blocked checkout-index: unsafe path in git index rejected: ${entry}" >&2
+        echo "Workcell blocked control-plane shadow materialization: unsafe path in git index rejected: ${tracked_path}" >&2
         exec 3<&-
-        exec 4>&-
-        rm -f "${tracked_paths_file}" "${sanitized_paths_file}"
+        rm -f "${tracked_paths_file}"
         return 2
         ;;
     esac
-    printf '%s\0' "${entry}" >&4
+    if [[ "${tracked_path}" == "${relative_path}" ]]; then
+      relative_suffix="$(basename "${tracked_path}")"
+    elif [[ "${tracked_path}" == "${relative_path}/"* ]]; then
+      relative_suffix="${tracked_path#"${relative_path}"/}"
+    else
+      echo "Workcell blocked control-plane shadow materialization: unexpected tracked path outside requested directory: ${tracked_path}" >&2
+      exec 3<&-
+      rm -f "${tracked_paths_file}"
+      return 2
+    fi
+    if git_index_materialize_regular_file "${workspace}" "${tracked_path}" "${source_root}/${relative_suffix}"; then
+      populated=1
+    fi
   done
   exec 3<&-
-  exec 4>&-
   rm -f "${tracked_paths_file}"
-  if [[ ! -s "${sanitized_paths_file}" ]]; then
-    rm -f "${sanitized_paths_file}"
-    return 1
-  fi
-  run_clean_host_command git -C "${workspace}" checkout-index --stdin -z --prefix="${CONTROL_PLANE_SHADOW_ROOT}/dirs/" <"${sanitized_paths_file}"
-  rm -f "${sanitized_paths_file}"
-  [[ -d "${source_root}" ]]
+  [[ "${populated}" -eq 1 ]]
 }
 
 replace_shadow_symlinks_with_placeholder() {

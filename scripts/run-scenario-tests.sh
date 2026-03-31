@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCENARIO_ROOT="${WORKCELL_SCENARIO_ROOT:-${ROOT_DIR}/tests/scenarios}"
+MANIFEST="${WORKCELL_SCENARIO_MANIFEST:-${SCENARIO_ROOT}/manifest.json}"
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   echo "run-scenario-tests-entrypoint-ok"
@@ -18,7 +20,6 @@ case "${1:-}" in
     ;;
 esac
 
-MANIFEST="${ROOT_DIR}/tests/scenarios/manifest.json"
 CURRENT_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
 passed=0
@@ -77,7 +78,7 @@ run_scenario() {
     return
   fi
 
-  local full_test_path="${ROOT_DIR}/tests/scenarios/${test_file}"
+  local full_test_path="${SCENARIO_ROOT}/${test_file}"
 
   if [[ ! -f "${full_test_path}" ]]; then
     echo "SKIP ${scenario_id} (test file not found: ${test_file})"
@@ -97,18 +98,7 @@ run_scenario() {
 while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform manual; do
   run_scenario "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${manual}"
 done < <(
-  python3 - "${MANIFEST}" <<'PY'
-import json, pathlib, sys
-m = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-for s in m["scenarios"]:
-    sid = s["id"]
-    tf = s.get("test_file", "")
-    rc = "1" if s.get("requires_credentials", False) else "0"
-    lane = s.get("lane", "provider-e2e" if s.get("requires_credentials", False) else "secretless")
-    platform = s.get("platform", "any")
-    manual = "1" if s.get("manual", False) else "0"
-    print(f"{sid}\t{tf}\t{rc}\t{lane}\t{platform}\t{manual}")
-PY
+  python3 "${ROOT_DIR}/scripts/lib/scenario_manifest.py" list-tsv "${MANIFEST}"
 )
 
 echo ""

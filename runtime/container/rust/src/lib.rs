@@ -104,7 +104,7 @@ const SYS_EXECVE: c_long = -1;
 const SYS_EXECVEAT: c_long = -1;
 
 const ARG_BLOCK_MESSAGE: &str = "Workcell blocked git control-plane override: remove --no-verify, git commit -n, --exec-path, --git-dir, --work-tree, or inline hook/include overrides.\n";
-const ENV_BLOCK_MESSAGE: &str = "Workcell blocked git control-plane override: remove GIT_CONFIG_*, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_EXEC_PATH, GIT_ASKPASS, GIT_EDITOR, GIT_SEQUENCE_EDITOR, GIT_SSH, GIT_SSH_COMMAND, SSH_ASKPASS, EDITOR, PAGER, or VISUAL overrides.\n";
+const ENV_BLOCK_MESSAGE: &str = "Workcell blocked git control-plane override: remove GIT_CONFIG_*, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_EXEC_PATH, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_INDEX_FILE, GIT_ASKPASS, GIT_EDITOR, GIT_SEQUENCE_EDITOR, GIT_SSH, GIT_SSH_COMMAND, SSH_ASKPASS, EDITOR, PAGER, or VISUAL overrides.\n";
 const PROTECTED_RUNTIME_BLOCK_MESSAGE: &str =
     "Workcell blocked direct protected runtime execution outside approved wrappers.\n";
 const MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE: &str =
@@ -957,6 +957,9 @@ fn env_has_unsafe_git_override(env_entries: &[String]) -> bool {
             || entry.starts_with("GIT_WORK_TREE=")
             || entry.starts_with("GIT_COMMON_DIR=")
             || entry.starts_with("GIT_EXEC_PATH=")
+            || entry.starts_with("GIT_OBJECT_DIRECTORY=")
+            || entry.starts_with("GIT_ALTERNATE_OBJECT_DIRECTORIES=")
+            || entry.starts_with("GIT_INDEX_FILE=")
             || entry.starts_with("GIT_ASKPASS=")
             || entry.starts_with("GIT_EDITOR=")
             || entry.starts_with("GIT_EXTERNAL_DIFF=")
@@ -1540,6 +1543,30 @@ mod tests {
             Some(4)
         );
         assert_eq!(path_is_current_process_fd_path("/proc/999999/fd/4"), None);
+    }
+
+    #[test]
+    fn env_has_unsafe_git_override_blocks_git_object_directory() {
+        assert!(env_has_unsafe_git_override(&[
+            "GIT_OBJECT_DIRECTORY=/attacker/objects".to_string()
+        ]));
+        assert!(!env_has_unsafe_git_override(&[
+            "SOME_OTHER_VAR=value".to_string()
+        ]));
+    }
+
+    #[test]
+    fn env_has_unsafe_git_override_blocks_git_alternate_object_directories() {
+        assert!(env_has_unsafe_git_override(&[
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES=/attacker/alt".to_string()
+        ]));
+    }
+
+    #[test]
+    fn env_has_unsafe_git_override_blocks_git_index_file() {
+        assert!(env_has_unsafe_git_override(&[
+            "GIT_INDEX_FILE=/attacker/index".to_string()
+        ]));
     }
 
     #[test]
