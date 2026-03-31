@@ -91,7 +91,6 @@ cleanup() {
     echo "Preserved validation snapshot at ${SNAPSHOT_DIR}" >&2
     return 0
   fi
-  git -C "${REPO_ROOT}" worktree remove --force "${SNAPSHOT_DIR}" >/dev/null 2>&1 || true
   rm -rf "${SNAPSHOT_DIR}"
 }
 
@@ -157,7 +156,9 @@ REPO_ROOT="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel)"
 SNAPSHOT_PARENT="${WORKCELL_VALIDATION_SNAPSHOT_PARENT:-$(dirname "${REPO_ROOT}")}"
 SNAPSHOT_PARENT="$(cd "${SNAPSHOT_PARENT}" && pwd)" || die "Snapshot parent does not exist: ${SNAPSHOT_PARENT}"
 SNAPSHOT_DIR="$(mktemp -d "${SNAPSHOT_PARENT}/workcell-validation-snapshot.XXXXXX")"
-git -C "${REPO_ROOT}" worktree add --detach "${SNAPSHOT_DIR}" HEAD >/dev/null
+rm -rf "${SNAPSHOT_DIR}"
+git clone -q --no-hardlinks "${REPO_ROOT}" "${SNAPSHOT_DIR}"
+git -C "${SNAPSHOT_DIR}" checkout -q --detach HEAD
 
 case "${SNAPSHOT_MODE}" in
   index)
