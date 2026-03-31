@@ -2834,7 +2834,7 @@ fail_fast_for_missing_gemini_auth() {
 
   echo "Gemini auth is not configured for this session." >&2
   echo "Workcell uses an injection policy file for credentials rather than a provider login flow;" >&2
-  echo "credentials are staged outside the agent boundary and are not accessible to agent code directly." >&2
+  echo "credentials are staged outside the runtime boundary and are not accessible to agent code directly." >&2
   if [[ -n "${INJECTION_POLICY}" ]]; then
     echo "Update ${INJECTION_POLICY} to include credentials.gemini_env or credentials.gemini_oauth." >&2
     echo "credentials.gcloud_adc only supplements Gemini Vertex auth that is explicitly configured through credentials.gemini_env." >&2
