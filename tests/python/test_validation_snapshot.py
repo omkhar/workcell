@@ -55,7 +55,7 @@ class ValidationSnapshotTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             cwd, snapshot_dir = result.stdout.strip().splitlines()
             self.assertEqual(Path(cwd), Path(snapshot_dir))
-            self.assertEqual(Path(snapshot_dir).parent, repo.parent)
+            self.assertEqual(Path(snapshot_dir).parent.resolve(), repo.parent.resolve())
 
     def test_snapshot_parent_override_is_honored(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -70,7 +70,7 @@ class ValidationSnapshotTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             _, snapshot_dir = result.stdout.strip().splitlines()
-            self.assertEqual(Path(snapshot_dir).parent, override_parent)
+            self.assertEqual(Path(snapshot_dir).parent.resolve(), override_parent.resolve())
 
 
 if __name__ == "__main__":

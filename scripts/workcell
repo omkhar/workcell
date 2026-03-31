@@ -1505,6 +1505,7 @@ Options:
   --workspace PATH              Workspace to publish (default: current directory)
   --branch NAME                 Feature branch to create or switch to (required)
   --base NAME                   Base branch for the PR (default: main)
+  --gh-bin PATH                 Host GitHub CLI to use for PR creation
   --snapshot index|worktree     Publish the current index or stage the worktree (default: worktree)
   --title TEXT                  PR title
   --title-file PATH             Read the PR title from PATH
@@ -1536,6 +1537,20 @@ resolve_existing_file_or_die() {
   resolved_path="$(resolve_host_path "${raw_path}")"
   if [[ ! -f "${resolved_path}" ]]; then
     echo "${label} file does not exist: ${raw_path}" >&2
+    exit 2
+  fi
+
+  printf '%s\n' "${resolved_path}"
+}
+
+resolve_existing_executable_or_die() {
+  local raw_path="$1"
+  local label="$2"
+  local resolved_path=""
+
+  resolved_path="$(resolve_existing_file_or_die "${raw_path}" "${label}")"
+  if [[ ! -x "${resolved_path}" ]]; then
+    echo "${label} file is not executable: ${raw_path}" >&2
     exit 2
   fi
 
@@ -1718,6 +1733,7 @@ publish_pr_main() {
   local workspace="${PWD}"
   local branch=""
   local base="main"
+  local gh_bin=""
   local snapshot="worktree"
   local title=""
   local title_file=""
@@ -1754,6 +1770,10 @@ publish_pr_main() {
         ;;
       --base)
         base="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --gh-bin)
+        gh_bin="$(option_value_or_die "$1" "${2-}")"
         shift 2
         ;;
       --snapshot)
@@ -1809,7 +1829,9 @@ publish_pr_main() {
   validate_publish_snapshot_name "${snapshot}"
   validate_publish_branch_name "${branch}"
   validate_publish_base_name "${base}"
-  if [[ "${dry_run}" -eq 1 ]]; then
+  if [[ -n "${gh_bin}" ]]; then
+    HOST_GH_BIN="$(resolve_existing_executable_or_die "${gh_bin}" "gh-bin")"
+  elif [[ "${dry_run}" -eq 1 ]]; then
     HOST_GH_BIN="${HOST_GH_BIN:-$(resolve_host_tool_optional gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh || true)}"
     [[ -n "${HOST_GH_BIN}" ]] || HOST_GH_BIN="gh"
   else

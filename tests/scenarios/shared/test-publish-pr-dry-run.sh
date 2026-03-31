@@ -40,6 +40,8 @@ git -C "${FIXTURE}" remote add origin "${ORIGIN}"
 printf 'base\n' >"${FIXTURE}/tracked.txt"
 git -C "${FIXTURE}" add tracked.txt
 git -C "${FIXTURE}" commit -q -m init
+git -C "${FIXTURE}" branch -M main
+git -C "${FIXTURE}" push -q -u origin main >/dev/null
 
 cat >"${FIXTURE}/.git/hooks/pre-commit" <<EOF
 #!/bin/sh
@@ -151,9 +153,10 @@ EOF
 chmod +x "${GH_STUB}"
 
 publish_output="$(
-  HOST_GH_BIN="${GH_STUB}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+  "${ROOT_DIR}/scripts/workcell" publish-pr \
     --workspace "${FIXTURE}" \
     --branch feature/publish-live \
+    --gh-bin "${GH_STUB}" \
     --title-file "${LIVE_TITLE_FILE}" \
     --body-file "${LIVE_BODY_FILE}" \
     --commit-message-file "${LIVE_COMMIT_MESSAGE_FILE}" \
