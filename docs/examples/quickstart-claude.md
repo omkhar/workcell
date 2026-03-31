@@ -4,29 +4,39 @@
 
 - Workcell installed with `./scripts/install.sh`
 - a repo you want to mount as the workspace
-- either reviewed Claude login state or a reviewed API key file
+- a reviewed Claude API key file, or an experimental macOS resolver config
 
-## 1. Create an injection policy
+## 1. Create or update the injection policy
 
-Persisted Claude login:
+Supported flow today: API key helper path
 
-```toml
-version = 1
-
-[credentials]
-claude_auth = "/Users/example/.claude.json"
+```bash
+workcell auth init
+workcell auth set \
+  --agent claude \
+  --credential claude_api_key \
+  --source /Users/example/.config/workcell/claude-api-key.txt
 ```
 
-API key helper path:
+Optional fail-closed macOS resolver scaffold:
 
-```toml
-version = 1
-
-[credentials]
-claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
+```bash
+workcell auth set \
+  --agent claude \
+  --credential claude_auth \
+  --resolver claude-macos-keychain \
+  --ack-host-resolver
 ```
+
+That resolver records the intended host-side auth source in policy, but the
+current Workcell implementation still aborts `--prepare-only` and launch flows
+unless a supported export path exists. Use it only to record intent for a
+future supported export and verify the configured-only state with
+`workcell auth status --agent claude`.
 
 ## 2. Prepare the runtime image
+
+If you configured `claude_api_key`, prepare the runtime image:
 
 ```bash
 workcell --prepare-only --agent claude --workspace /path/to/repo
@@ -36,8 +46,16 @@ workcell --prepare-only --agent claude --workspace /path/to/repo
 
 ```bash
 workcell --agent claude --inspect --workspace /path/to/repo
+workcell auth status --agent claude
 workcell --agent claude --auth-status --workspace /path/to/repo
 ```
+
+`workcell auth status` reports the host policy view. `--auth-status` reports the
+staged launch view after selector evaluation and resolver preprocessing.
+
+If you configured only `claude_auth` via the experimental macOS resolver, expect
+`credential_resolution_states=claude_auth:configured-only` and
+`provider_auth_mode=none` until a supported export path exists.
 
 ## 4. Launch Claude
 
@@ -57,8 +75,8 @@ If you want Claude to use a reviewed MCP registry instead of the empty safe
 baseline:
 
 ```toml
-[credentials]
-claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
+[credentials.claude_mcp]
+source = "/Users/example/.config/workcell/claude-mcp.json"
 ```
 
 ## 6. Publish the result on the host

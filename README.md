@@ -112,6 +112,10 @@ What to expect from the safe path:
 The supported way to feed stable inputs into sessions is an explicit injection
 policy, usually at `~/.config/workcell/injection-policy.toml`.
 
+For host-side setup, Workcell also ships `workcell auth init|set|unset|status`
+to manage explicit policy-backed credentials without widening the runtime
+boundary.
+
 Workcell can stage:
 
 - common or provider-specific instruction fragments
@@ -133,7 +137,7 @@ See [docs/injection-policy.md](docs/injection-policy.md) and
 | Provider | Tier 1 surface today | Native control plane | Quickstart |
 |---|---|---|---|
 | Codex | CLI | `~/.codex/config.toml`, `AGENTS.md`, rules, MCP config | [docs/examples/quickstart-codex.md](docs/examples/quickstart-codex.md) |
-| Claude | Claude Code CLI | `~/.claude/settings.json`, `CLAUDE.md`, `.mcp.json`, auth mirrors, hooks | [docs/examples/quickstart-claude.md](docs/examples/quickstart-claude.md) |
+| Claude | Claude Code CLI | `~/.claude/settings.json`, `CLAUDE.md`, `.mcp.json`, auth mirrors, hooks, host-side macOS auth resolver scaffold | [docs/examples/quickstart-claude.md](docs/examples/quickstart-claude.md) |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, `GEMINI.md`, `.env`, `projects.json` | [docs/examples/quickstart-gemini.md](docs/examples/quickstart-gemini.md) |
 
 GUI and IDE surfaces are lower assurance unless they act only as clients to

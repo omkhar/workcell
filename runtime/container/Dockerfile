@@ -129,6 +129,7 @@ ARG CLAUDE_VERSION=2.1.86
 # update CODEX_VERSION, download both architecture tarballs, compute sha256sum,
 # and update the CODEX_SHA256 values for arm64 and amd64 below.
 ARG CODEX_VERSION=0.117.0-alpha.8
+ARG CODEX_RELEASE_URL=
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
@@ -192,12 +193,21 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && install -m 0755 /tmp/claude /usr/local/libexec/workcell/real/claude \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/claude \
   && rm -f /tmp/claude \
-  && curl -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${CODEX_ARCH}.tar.gz" \
-    --retry 5 \
-    --retry-all-errors \
-    --retry-delay 5 \
-    --connect-timeout 20 \
-    -o /tmp/codex.tar.gz \
+  && if [[ -n "${CODEX_RELEASE_URL}" ]]; then \
+       curl -fsSL "${CODEX_RELEASE_URL}" \
+         --retry 5 \
+         --retry-all-errors \
+         --retry-delay 5 \
+         --connect-timeout 20 \
+         -o /tmp/codex.tar.gz; \
+     else \
+       curl -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${CODEX_ARCH}.tar.gz" \
+         --retry 5 \
+         --retry-all-errors \
+         --retry-delay 5 \
+         --connect-timeout 20 \
+         -o /tmp/codex.tar.gz; \
+     fi \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex.tar.gz -C /tmp \
   && mv "/tmp/codex-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex \
