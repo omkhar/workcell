@@ -7,6 +7,9 @@ workcell \- bounded runtime launcher for coding agents
 .br
 .B workcell publish-pr
 [\fIoptions\fR]
+.br
+.B workcell auth
+\fIinit|set|unset|status\fR [\fIoptions\fR]
 .SH DESCRIPTION
 .B workcell
 starts the selected coding agent inside a bounded local runtime with explicit
@@ -129,6 +132,11 @@ Use an explicit host-side injection policy for this launch. Workcell mounts
 credential sources read-only from their original host paths and stages the
 selected docs, copied files, and SSH material into per-session runtime state
 instead of passing through host homes or sockets directly.
+.TP
+.B workcell auth init|set|unset|status
+Manage explicit host-side credential policy state without starting the Workcell
+runtime. Resolver-backed credentials are still host-only preprocessing and do
+not pass Keychain or provider-home access into Tier 1.
 .TP
 .B --log-level normal|debug
 Select launch-time logging verbosity. The default is

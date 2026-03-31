@@ -13,6 +13,28 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/auth-commands",
+      "description": "Host-side auth commands manage explicit policy-backed credential inputs without launching the runtime",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-auth-commands.sh",
+      "requires_credentials": false
+    },
+    {
+      "id": "shared/claude-resolver-launcher",
+      "description": "Claude resolver-backed auth fails closed without an export and resolves through the launcher staging path when the test export hook is present",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["claude"],
+      "persona": "developer",
+      "test_file": "shared/test-claude-resolver-launcher.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/publish-pr",
       "description": "Host-side publish-pr dry-run renders signed commit and draft PR commands",
       "lane": "secretless",

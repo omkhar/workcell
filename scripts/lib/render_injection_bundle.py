@@ -134,6 +134,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent", required=True, choices=sorted(SUPPORTED_AGENTS))
     parser.add_argument("--mode", required=True, choices=sorted(SUPPORTED_MODES))
     parser.add_argument("--output-root", required=True)
+    parser.add_argument("--policy-metadata", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -642,6 +643,36 @@ def effective_policy_sha256(
         separators=(",", ":"),
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def load_policy_metadata_override(path: Path) -> tuple[str, list[dict[str, str]]]:
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        die(f"policy metadata override must be valid JSON: {path} ({exc.msg})")
+    if not isinstance(metadata, dict):
+        die(f"policy metadata override must be a JSON object: {path}")
+
+    entrypoint = metadata.get("policy_entrypoint")
+    if not isinstance(entrypoint, str) or not entrypoint:
+        die(f"policy metadata override must include policy_entrypoint: {path}")
+
+    raw_sources = metadata.get("policy_sources")
+    if not isinstance(raw_sources, list) or not raw_sources:
+        die(f"policy metadata override must include policy_sources: {path}")
+
+    sources: list[dict[str, str]] = []
+    for entry in raw_sources:
+        if not isinstance(entry, dict):
+            die(f"policy metadata override sources must be objects: {path}")
+        source_path = entry.get("path")
+        source_sha = entry.get("sha256")
+        if not isinstance(source_path, str) or not source_path:
+            die(f"policy metadata override source path must be a string: {path}")
+        if not isinstance(source_sha, str) or not source_sha:
+            die(f"policy metadata override source sha256 must be a string: {path}")
+        sources.append({"path": source_path, "sha256": source_sha})
+    return entrypoint, sources
 
 
 def logical_policy_path(policy_path: Path, entrypoint_root: Path) -> str:
@@ -1218,6 +1249,14 @@ def main() -> int:
     output_root.chmod(0o700)
 
     policy, policy_sources = load_policy_bundle(policy_path)
+    policy_entrypoint = logical_policy_path(
+        policy_path.resolve(),
+        policy_path.parent.resolve(),
+    )
+    if args.policy_metadata:
+        policy_entrypoint, policy_sources = load_policy_metadata_override(
+            Path(args.policy_metadata).expanduser().resolve()
+        )
     rendered_documents = render_documents(policy, output_root, policy_path.parent)
     rendered_copies = render_copies(
         policy, output_root, policy_path.parent, args.agent, args.mode
@@ -1230,7 +1269,7 @@ def main() -> int:
     manifest = {
         "version": 1,
         "metadata": {
-            "policy_entrypoint": logical_policy_path(policy_path.resolve(), policy_path.parent.resolve()),
+            "policy_entrypoint": policy_entrypoint,
             "policy_sha256": effective_policy_sha256(
                 policy_sources,
                 output_root,

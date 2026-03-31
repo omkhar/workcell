@@ -93,6 +93,10 @@ SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
 FINAL_SESSION_ASSURANCE=""
 INJECTION_POLICY_SHA256=""
 INJECTION_CREDENTIAL_KEYS=""
+INJECTION_CREDENTIAL_INPUT_KINDS=""
+INJECTION_CREDENTIAL_RESOLVERS=""
+INJECTION_CREDENTIAL_MATERIALIZATION=""
+INJECTION_CREDENTIAL_RESOLUTION_STATES=""
 INJECTION_EXTRA_ENDPOINTS=""
 INJECTION_SSH_ENABLED=0
 INJECTION_SECRET_COPY_TARGETS=""
@@ -102,6 +106,7 @@ usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
+       workcell auth <init|set|unset|status> [options]
 
 Options:
   --agent codex|claude|gemini   Provider to run (required)
@@ -164,6 +169,10 @@ Workflows:
     workcell --repair-profile --agent claude --workspace /path/to/repo
     workcell --repair-profile --agent gemini --workspace /path/to/repo
   Operator actions:
+    workcell auth init
+    workcell auth set --agent codex --credential codex_auth --source /path/to/auth.json
+    workcell auth set --agent claude --credential claude_auth --resolver claude-macos-keychain --ack-host-resolver
+    workcell auth status --agent codex
     workcell inspect --agent codex --workspace /path/to/repo
     workcell doctor --agent codex --workspace /path/to/repo
     workcell logs debug --colima-profile workcell-...
@@ -621,6 +630,16 @@ declare -a WORKSPACE_IMPORT_MOUNTS=()
 declare -a CACHE_MOUNTS=()
 declare -a RUNTIME_NETWORK_ARGS=()
 
+restore_interactive_host_terminal() {
+  [[ -t 0 ]] && [[ -t 1 ]] || return 0
+  [[ -r /dev/tty ]] && [[ -w /dev/tty ]] || return 0
+
+  # Some interactive provider exits leave the host tty in an alternate-screen
+  # or bracketed-paste mode. Reset it before handing control back to the shell.
+  stty sane </dev/tty >/dev/tty 2>/dev/null || true
+  printf '\033[0m\033[?25h\033[?2004l\033[?1004l\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1049l' >/dev/tty 2>/dev/null || true
+}
+
 # cleanup is only reached through trap 'cleanup' EXIT; validator/CI ShellCheck
 # still misclassifies the trap-only body as unreachable.
 # shellcheck disable=SC2317,SC2329
@@ -680,6 +699,7 @@ cleanup() {
       run_host_colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
     fi
   fi
+  restore_interactive_host_terminal
 }
 
 trap 'cleanup' EXIT
@@ -1893,8 +1913,292 @@ publish_pr_main() {
   exit 0
 }
 
+auth_usage() {
+  cat <<'EOF'
+Usage: workcell auth init [options]
+       workcell auth set [options]
+       workcell auth unset [options]
+       workcell auth status [options]
+
+Commands:
+  init
+    --injection-policy PATH     Policy file to create or validate (default: ~/.config/workcell/injection-policy.toml)
+    --managed-root PATH         Managed credential root (default: ~/.config/workcell/credentials)
+
+  set
+    --injection-policy PATH     Policy file to update (default: ~/.config/workcell/injection-policy.toml)
+    --managed-root PATH         Managed credential root (default: ~/.config/workcell/credentials)
+    --agent codex|claude|gemini Agent used for validation and default shared-credential scoping
+    --credential KEY            Credential key to configure
+    --source PATH               Copy PATH into the managed Workcell credential store
+    --resolver NAME             Configure a built-in host resolver
+    --ack-host-resolver         Required with --resolver
+
+  unset
+    --injection-policy PATH     Policy file to update (default: ~/.config/workcell/injection-policy.toml)
+    --managed-root PATH         Managed credential root (default: ~/.config/workcell/credentials)
+    --credential KEY            Credential key to remove
+
+  status
+    --injection-policy PATH     Policy file to inspect (default: ~/.config/workcell/injection-policy.toml)
+    --agent codex|claude|gemini Filter to the selected agent
+    --mode strict|build|breakglass
+    --workspace PATH            Accepted for CLI symmetry; ignored by host status
+
+Notes:
+  - auth commands run on the host and do not start the Workcell runtime.
+  - auth set/unset rewrite only the entrypoint policy file; if a credential is
+    declared by an included fragment, update that fragment directly.
+  - resolver-backed credentials remain host-side preprocessing and do not
+    grant Keychain or provider-home access inside Tier 1.
+EOF
+}
+
 default_injection_policy_path() {
   printf '%s/.config/workcell/injection-policy.toml\n' "${REAL_HOME}"
+}
+
+default_managed_credentials_root() {
+  printf '%s/.config/workcell/credentials\n' "${REAL_HOME}"
+}
+
+auth_main() {
+  local subcommand="${1:-}"
+  local policy_path=""
+  local policy_path_explicit=0
+  local managed_root=""
+  local agent=""
+  local credential=""
+  local source_path=""
+  local source_base=""
+  local resolver_name=""
+  local mode="strict"
+  local ack_host_resolver=0
+  local -a auth_cmd=()
+
+  if [[ "${subcommand}" == "-h" ]] || [[ "${subcommand}" == "--help" ]] || [[ "${subcommand}" == "help" ]]; then
+    auth_usage
+    exit 0
+  fi
+  [[ -n "${subcommand}" ]] || {
+    auth_usage >&2
+    exit 2
+  }
+  shift
+
+  policy_path="$(default_injection_policy_path)"
+  managed_root="$(default_managed_credentials_root)"
+
+  case "${subcommand}" in
+    init)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --injection-policy)
+            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
+            policy_path_explicit=1
+            shift 2
+            ;;
+          --managed-root)
+            managed_root="$(raw_option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          -h | --help)
+            auth_usage
+            exit 0
+            ;;
+          *)
+            echo "Unsupported workcell auth init option: $1" >&2
+            auth_usage >&2
+            exit 2
+            ;;
+        esac
+      done
+      policy_path="$(resolve_host_path "${policy_path}")"
+      managed_root="$(resolve_host_path "${managed_root}")"
+      auth_cmd=(
+        "${HOST_PYTHON3_BIN}"
+        "${ROOT_DIR}/scripts/lib/manage_injection_policy.py"
+        init
+        --policy "${policy_path}"
+        --managed-root "${managed_root}"
+      )
+      run_clean_host_command "${auth_cmd[@]}"
+      exit 0
+      ;;
+    set)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --injection-policy)
+            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
+            policy_path_explicit=1
+            shift 2
+            ;;
+          --managed-root)
+            managed_root="$(raw_option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --agent)
+            agent="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --credential)
+            credential="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --source)
+            source_path="$(raw_option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --resolver)
+            resolver_name="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --ack-host-resolver)
+            ack_host_resolver=1
+            shift
+            ;;
+          -h | --help)
+            auth_usage
+            exit 0
+            ;;
+          *)
+            echo "Unsupported workcell auth set option: $1" >&2
+            auth_usage >&2
+            exit 2
+            ;;
+        esac
+      done
+      [[ -n "${agent}" ]] || {
+        echo "workcell auth set requires --agent." >&2
+        exit 2
+      }
+      [[ -n "${credential}" ]] || {
+        echo "workcell auth set requires --credential." >&2
+        exit 2
+      }
+      if [[ -n "${resolver_name}" ]] && [[ "${ack_host_resolver}" -ne 1 ]]; then
+        echo "workcell auth set requires --ack-host-resolver with --resolver." >&2
+        exit 2
+      fi
+      policy_path="$(resolve_host_path "${policy_path}")"
+      managed_root="$(resolve_host_path "${managed_root}")"
+      auth_cmd=(
+        "${HOST_PYTHON3_BIN}"
+        "${ROOT_DIR}/scripts/lib/manage_injection_policy.py"
+        set
+        --policy "${policy_path}"
+        --managed-root "${managed_root}"
+        --agent "${agent}"
+        --credential "${credential}"
+      )
+      if [[ -n "${source_path}" ]]; then
+        source_base="$(pwd -P)"
+        auth_cmd+=(--source "${source_path}" --source-base "${source_base}")
+      fi
+      if [[ -n "${resolver_name}" ]]; then
+        auth_cmd+=(--resolver "${resolver_name}" --ack-host-resolver)
+      fi
+      run_clean_host_command "${auth_cmd[@]}"
+      exit 0
+      ;;
+    unset)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --injection-policy)
+            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --managed-root)
+            managed_root="$(raw_option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --credential)
+            credential="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          -h | --help)
+            auth_usage
+            exit 0
+            ;;
+          *)
+            echo "Unsupported workcell auth unset option: $1" >&2
+            auth_usage >&2
+            exit 2
+            ;;
+        esac
+      done
+      [[ -n "${credential}" ]] || {
+        echo "workcell auth unset requires --credential." >&2
+        exit 2
+      }
+      policy_path="$(resolve_host_path "${policy_path}")"
+      managed_root="$(resolve_host_path "${managed_root}")"
+      auth_cmd=(
+        "${HOST_PYTHON3_BIN}"
+        "${ROOT_DIR}/scripts/lib/manage_injection_policy.py"
+        unset
+        --policy "${policy_path}"
+        --managed-root "${managed_root}"
+        --credential "${credential}"
+      )
+      run_clean_host_command "${auth_cmd[@]}"
+      exit 0
+      ;;
+    status)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --injection-policy)
+            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
+            policy_path_explicit=1
+            shift 2
+            ;;
+          --agent)
+            agent="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --mode)
+            mode="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --workspace)
+            raw_option_value_or_die "$1" "${2-}" >/dev/null
+            shift 2
+            ;;
+          -h | --help)
+            auth_usage
+            exit 0
+            ;;
+          *)
+            echo "Unsupported workcell auth status option: $1" >&2
+            auth_usage >&2
+            exit 2
+            ;;
+        esac
+      done
+      policy_path="$(resolve_host_path "${policy_path}")"
+      if [[ "${policy_path_explicit}" -eq 1 ]] && [[ ! -f "${policy_path}" ]]; then
+        echo "Injection policy file does not exist: ${policy_path}" >&2
+        exit 2
+      fi
+      auth_cmd=(
+        "${HOST_PYTHON3_BIN}"
+        "${ROOT_DIR}/scripts/lib/manage_injection_policy.py"
+        status
+        --policy "${policy_path}"
+        --mode "${mode}"
+      )
+      if [[ -n "${agent}" ]]; then
+        auth_cmd+=(--agent "${agent}")
+      fi
+      run_clean_host_command "${auth_cmd[@]}"
+      exit 0
+      ;;
+    *)
+      echo "Unsupported workcell auth command: ${subcommand}" >&2
+      auth_usage >&2
+      exit 2
+      ;;
+  esac
 }
 
 default_injection_bundle_parent() {
@@ -2065,8 +2369,13 @@ prepare_injection_bundle() {
   local policy_path="${INJECTION_POLICY}"
   local bundle_parent=""
   local default_policy_path=""
+  local resolved_policy_path=""
+  local resolver_metadata_path=""
+  local resolution_mode="launch"
   local manifest_path=""
   local metadata=""
+  local resolver_metadata=""
+  local -a resolver_cmd=()
 
   if [[ -z "${policy_path}" ]] && [[ "${USE_DEFAULT_INJECTION_POLICY}" -eq 1 ]]; then
     default_policy_path="$(default_injection_policy_path)"
@@ -2078,6 +2387,10 @@ prepare_injection_bundle() {
   if [[ -z "${policy_path}" ]]; then
     INJECTION_POLICY_SHA256=""
     INJECTION_CREDENTIAL_KEYS=""
+    INJECTION_CREDENTIAL_INPUT_KINDS=""
+    INJECTION_CREDENTIAL_RESOLVERS=""
+    INJECTION_CREDENTIAL_MATERIALIZATION=""
+    INJECTION_CREDENTIAL_RESOLUTION_STATES=""
     INJECTION_EXTRA_ENDPOINTS=""
     INJECTION_SSH_ENABLED=0
     INJECTION_SSH_CONFIG_ASSURANCE="off"
@@ -2117,10 +2430,39 @@ owner_path.write_text(
 owner_path.chmod(0o600)
 PY
 
+  if [[ "${AUTH_STATUS}" -eq 1 ]] || [[ "${DOCTOR}" -eq 1 ]] || [[ "${INSPECT}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
+    resolution_mode="metadata"
+  fi
+  resolved_policy_path="${INJECTION_BUNDLE_ROOT}/resolved-policy.toml"
+  resolver_metadata_path="${INJECTION_BUNDLE_ROOT}/resolver-metadata.json"
+  resolver_cmd=(
+    "${HOST_PYTHON3_BIN}"
+    "${ROOT_DIR}/scripts/lib/resolve_credential_sources.py"
+    --policy "${policy_path}"
+    --agent "${agent}"
+    --mode "${mode}"
+    --resolution-mode "${resolution_mode}"
+    --output-policy "${resolved_policy_path}"
+    --output-metadata "${resolver_metadata_path}"
+    --output-root "${INJECTION_BUNDLE_ROOT}"
+  )
+  if [[ "${SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT}" == "1" ]]; then
+    synthetic_claude_export="${INJECTION_BUNDLE_ROOT}/self-staging-probe-claude-export.json"
+    umask 077
+    printf '{"token":"claude"}\n' >"${synthetic_claude_export}"
+    run_clean_host_command \
+      env \
+      "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE=${synthetic_claude_export}" \
+      "${resolver_cmd[@]}" >/dev/null
+  else
+    run_clean_host_command "${resolver_cmd[@]}" >/dev/null
+  fi
+
   manifest_path="$(run_clean_host_command \
     "${HOST_PYTHON3_BIN}" \
     "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
-    --policy "${policy_path}" \
+    --policy "${resolved_policy_path}" \
+    --policy-metadata "${resolver_metadata_path}" \
     --agent "${agent}" \
     --mode "${mode}" \
     --output-root "${INJECTION_BUNDLE_ROOT}")"
@@ -2166,6 +2508,30 @@ PY
   INJECTION_SSH_ENABLED="$(printf '%s\n' "${metadata}" | sed -n '4p')"
   INJECTION_SSH_CONFIG_ASSURANCE="$(printf '%s\n' "${metadata}" | sed -n '5p')"
   INJECTION_SECRET_COPY_TARGETS="$(printf '%s\n' "${metadata}" | sed -n '6p')"
+  resolver_metadata="$(
+    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${resolver_metadata_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+metadata = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+
+def render_map(name):
+    value = metadata.get(name, {})
+    if not isinstance(value, dict) or not value:
+        return "none"
+    return ",".join(f"{key}:{value[key]}" for key in sorted(value))
+
+print(render_map("credential_input_kinds"))
+print(render_map("credential_resolvers"))
+print(render_map("credential_materialization"))
+print(render_map("credential_resolution_states"))
+PY
+  )"
+  INJECTION_CREDENTIAL_INPUT_KINDS="$(printf '%s\n' "${resolver_metadata}" | sed -n '1p')"
+  INJECTION_CREDENTIAL_RESOLVERS="$(printf '%s\n' "${resolver_metadata}" | sed -n '2p')"
+  INJECTION_CREDENTIAL_MATERIALIZATION="$(printf '%s\n' "${resolver_metadata}" | sed -n '3p')"
+  INJECTION_CREDENTIAL_RESOLUTION_STATES="$(printf '%s\n' "${resolver_metadata}" | sed -n '4p')"
 }
 
 build_recommended_command() {
@@ -2325,6 +2691,32 @@ csv_contains_value() {
   return 1
 }
 
+credential_resolution_state() {
+  local key="$1"
+  local states="${INJECTION_CREDENTIAL_RESOLUTION_STATES:-}"
+  local item=""
+  local IFS=','
+
+  [[ -n "${states}" ]] || return 0
+  for item in ${states}; do
+    [[ -n "${item}" ]] || continue
+    if [[ "${item%%:*}" == "${key}" ]]; then
+      printf '%s\n' "${item#*:}"
+      return 0
+    fi
+  done
+}
+
+credential_is_launch_ready() {
+  local state=""
+
+  state="$(credential_resolution_state "$1")"
+  if [[ -z "${state}" ]] || [[ "${state}" == "source" ]] || [[ "${state}" == "resolved" ]]; then
+    return 0
+  fi
+  return 1
+}
+
 provider_auth_modes() {
   local credential_keys="${INJECTION_CREDENTIAL_KEYS:-}"
   local -a modes=()
@@ -2332,23 +2724,23 @@ provider_auth_modes() {
 
   case "${AGENT:-}" in
     codex)
-      if csv_contains_value "${credential_keys}" "codex_auth"; then
+      if csv_contains_value "${credential_keys}" "codex_auth" && credential_is_launch_ready "codex_auth"; then
         modes+=(codex_auth)
       fi
       ;;
     claude)
-      if csv_contains_value "${credential_keys}" "claude_api_key"; then
+      if csv_contains_value "${credential_keys}" "claude_api_key" && credential_is_launch_ready "claude_api_key"; then
         modes+=(claude_api_key)
       fi
-      if csv_contains_value "${credential_keys}" "claude_auth"; then
+      if csv_contains_value "${credential_keys}" "claude_auth" && credential_is_launch_ready "claude_auth"; then
         modes+=(claude_auth)
       fi
       ;;
     gemini)
-      if csv_contains_value "${credential_keys}" "gemini_env"; then
+      if csv_contains_value "${credential_keys}" "gemini_env" && credential_is_launch_ready "gemini_env"; then
         modes+=(gemini_env)
       fi
-      if csv_contains_value "${credential_keys}" "gemini_oauth"; then
+      if csv_contains_value "${credential_keys}" "gemini_oauth" && credential_is_launch_ready "gemini_oauth"; then
         modes+=(gemini_oauth)
       fi
       ;;
@@ -2366,10 +2758,10 @@ shared_auth_modes() {
   local -a modes=()
   local IFS=','
 
-  if csv_contains_value "${credential_keys}" "github_hosts"; then
+  if csv_contains_value "${credential_keys}" "github_hosts" && credential_is_launch_ready "github_hosts"; then
     modes+=(github_hosts)
   fi
-  if csv_contains_value "${credential_keys}" "github_config"; then
+  if csv_contains_value "${credential_keys}" "github_config" && credential_is_launch_ready "github_config"; then
     modes+=(github_config)
   fi
 
@@ -2390,20 +2782,6 @@ github_auth_present() {
 
 selected_provider_auth_mode() {
   local auth_modes=""
-  local credential_keys="${INJECTION_CREDENTIAL_KEYS:-}"
-
-  if [[ "${AGENT:-}" == "gemini" ]]; then
-    if csv_contains_value "${credential_keys}" "gemini_env"; then
-      printf 'gemini_env\n'
-      return 0
-    fi
-    if csv_contains_value "${credential_keys}" "gemini_oauth"; then
-      printf 'gemini_oauth\n'
-      return 0
-    fi
-    printf 'none\n'
-    return 0
-  fi
 
   auth_modes="$(provider_auth_modes)"
   if [[ "${auth_modes}" == "none" ]]; then
@@ -2449,10 +2827,26 @@ print_injection_status() {
     printf 'injection_policy=none\n'
     printf 'default_injection_policy_path=%s\n' "$(default_injection_policy_path)"
     printf 'supported_credential_keys=codex_auth,claude_api_key,claude_auth,claude_mcp,gemini_env,gemini_oauth,gemini_projects,gcloud_adc,github_config,github_hosts\n'
+    printf 'credential_keys=none\n'
+    printf 'credential_input_kinds=none\n'
+    printf 'credential_resolvers=none\n'
+    printf 'credential_materialization=none\n'
+    printf 'credential_resolution_states=none\n'
+    printf 'provider_auth_mode=none\n'
+    printf 'provider_auth_modes=none\n'
+    printf 'shared_auth_modes=none\n'
+    printf 'github_auth_present=0\n'
+    printf 'ssh_injected=0\n'
+    printf 'ssh_config_assurance=off\n'
+    printf 'secret_copy_targets=none\n'
     return 0
   fi
   printf 'injection_policy_sha256=%s\n' "${INJECTION_POLICY_SHA256}"
   printf 'credential_keys=%s\n' "${INJECTION_CREDENTIAL_KEYS:-none}"
+  printf 'credential_input_kinds=%s\n' "${INJECTION_CREDENTIAL_INPUT_KINDS:-none}"
+  printf 'credential_resolvers=%s\n' "${INJECTION_CREDENTIAL_RESOLVERS:-none}"
+  printf 'credential_materialization=%s\n' "${INJECTION_CREDENTIAL_MATERIALIZATION:-none}"
+  printf 'credential_resolution_states=%s\n' "${INJECTION_CREDENTIAL_RESOLUTION_STATES:-none}"
   printf 'provider_auth_mode=%s\n' "$(selected_provider_auth_mode)"
   printf 'provider_auth_modes=%s\n' "$(provider_auth_modes)"
   printf 'shared_auth_modes=%s\n' "$(shared_auth_modes)"
@@ -3081,12 +3475,78 @@ run_command_with_debug_log() {
   return "${status}"
 }
 
+extract_codex_version_from_dockerfile() {
+  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${ROOT_DIR}/runtime/container/Dockerfile" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"^ARG CODEX_VERSION=(.+)$", text, re.MULTILINE)
+if not match:
+    raise SystemExit("Unable to extract CODEX_VERSION from Dockerfile")
+print(match.group(1).strip())
+PY
+}
+
+runtime_build_codex_arch() {
+  local server_arch=""
+
+  server_arch="$(
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" version --format '{{.Server.Arch}}' 2>/dev/null
+  )"
+  server_arch="${server_arch//$'\r'/}"
+  server_arch="${server_arch//$'\n'/}"
+  case "${server_arch}" in
+    arm64 | aarch64)
+      printf 'aarch64-unknown-linux-gnu\n'
+      ;;
+    amd64 | x86_64)
+      printf 'x86_64-unknown-linux-gnu\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+resolve_codex_release_url() {
+  local codex_arch=""
+  local codex_version=""
+  local release_url=""
+  local resolved_url=""
+
+  codex_arch="$(runtime_build_codex_arch)" || return 0
+  codex_version="$(extract_codex_version_from_dockerfile)" || return 0
+  release_url="https://github.com/openai/codex/releases/download/rust-v${codex_version}/codex-${codex_arch}.tar.gz"
+  resolved_url="$(
+    run_clean_host_command curl -fsSLI \
+      --retry 5 \
+      --retry-all-errors \
+      --retry-delay 5 \
+      --connect-timeout 20 \
+      --max-time 20 \
+      -o /dev/null \
+      -w '%{url_effective}' \
+      "${release_url}" 2>/dev/null || true
+  )"
+  resolved_url="${resolved_url//$'\r'/}"
+  resolved_url="${resolved_url//$'\n'/}"
+  case "${resolved_url}" in
+    https://release-assets.githubusercontent.com/*)
+      printf '%s\n' "${resolved_url}"
+      ;;
+  esac
+}
+
 run_runtime_image_build_with_retries() {
   local build_source_date_epoch="$1"
   local build_status=0
   local attempt=1
   local max_attempts=3
+  local codex_release_url=""
   local safe_builder_context=""
+  local -a build_cmd=()
 
   if [[ -z "${BUILDX_BUILDER:-}" ]]; then
     safe_builder_context="${COLIMA_PROFILE//[^[:alnum:]_.-]/-}"
@@ -3095,6 +3555,7 @@ run_runtime_image_build_with_retries() {
 
   while :; do
     build_status=0
+    codex_release_url="$(resolve_codex_release_url || true)"
     if [[ "${attempt}" -gt 1 ]]; then
       echo "Retrying the runtime image build for profile ${COLIMA_PROFILE} (attempt ${attempt}/${max_attempts})." >&2
       start_managed_profile || build_status=$?
@@ -3122,15 +3583,21 @@ run_runtime_image_build_with_retries() {
       fi
     fi
     ensure_workcell_selected_builder
+    build_cmd=(
+      buildx_cmd build
+      --build-arg "SOURCE_DATE_EPOCH=${build_source_date_epoch}"
+      --provenance=false
+      --sbom=false
+      --load
+      -t "${IMAGE_TAG}"
+      -f "${ROOT_DIR}/runtime/container/Dockerfile"
+      "${ROOT_DIR}"
+    )
+    if [[ -n "${codex_release_url}" ]]; then
+      build_cmd+=(--build-arg "CODEX_RELEASE_URL=${codex_release_url}")
+    fi
     SOURCE_DATE_EPOCH="${build_source_date_epoch}" run_command_with_debug_log runtime-build \
-      buildx_cmd build \
-      --build-arg "SOURCE_DATE_EPOCH=${build_source_date_epoch}" \
-      --provenance=false \
-      --sbom=false \
-      --load \
-      -t "${IMAGE_TAG}" \
-      -f "${ROOT_DIR}/runtime/container/Dockerfile" \
-      "${ROOT_DIR}" || build_status=$?
+      "${build_cmd[@]}" || build_status=$?
     if [[ "${build_status}" -eq 0 ]]; then
       return 0
     fi
@@ -4270,6 +4737,7 @@ ACK_BREAKGLASS=0
 ACK_CONTROL_PLANE_VCS=0
 ACK_ARBITRARY_COMMAND=0
 TEST_FAIL_AFTER_PROFILE_REFRESH=0
+SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT=0
 declare -a AGENT_ARGS=()
 declare -a NORMALIZED_ARGS=()
 
@@ -4281,6 +4749,7 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
   MODE="${4:-strict}"
   ALLOW_CONTROL_PLANE_VCS="${5:-0}"
   PRESERVE_STAGING_PROBE_ARTIFACTS="${6:-0}"
+  SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT="${7:-0}"
 
   [[ -n "${AGENT}" ]] || {
     echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
@@ -4299,6 +4768,13 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
   WORKSPACE="$(resolve_existing_directory_or_die "${WORKSPACE}")"
   INJECTION_POLICY="$(resolve_host_path "${INJECTION_POLICY}")"
   USE_DEFAULT_INJECTION_POLICY=0
+  case "${SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT}" in
+    0 | 1) ;;
+    *)
+      echo "--self-staging-probe synthetic Claude export flag must be 0 or 1" >&2
+      exit 2
+      ;;
+  esac
   prepare_injection_bundle "${AGENT}" "${MODE}"
   prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
 
@@ -4324,6 +4800,11 @@ fi
 if [[ "${1:-}" == "publish-pr" ]]; then
   shift
   publish_pr_main "$@"
+fi
+
+if [[ "${1:-}" == "auth" ]]; then
+  shift
+  auth_main "$@"
 fi
 
 if [[ $# -gt 0 ]]; then
@@ -4680,6 +5161,10 @@ NEEDS_REBUILD=0
 
 if [[ -n "${WORKCELL_EGRESS_HELPER:-}" ]]; then
   echo "WORKCELL_EGRESS_HELPER is reserved for the Workcell test harness." >&2
+  exit 2
+fi
+if [[ -n "${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE:-}" ]]; then
+  echo "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE is reserved for the Workcell test harness." >&2
   exit 2
 fi
 
@@ -5093,6 +5578,7 @@ if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
 else
   "${DOCKER_RUN[@]}" || DOCKER_STATUS=$?
 fi
+restore_interactive_host_terminal
 capture_session_audit_state "${CONTAINER_NAME}"
 capture_session_file_trace "${CONTAINER_NAME}"
 finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${DOCKER_STATUS}"

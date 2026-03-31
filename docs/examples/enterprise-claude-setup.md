@@ -8,9 +8,9 @@ whole host homes into the runtime.
 Keep these concerns separate:
 
 - org-wide instructions in `documents.common` or `documents.claude`
-- reviewed persisted Claude auth in `credentials.claude_auth`
+- reviewed Claude API-key access in `credentials.claude_api_key`
 - reviewed MCP state in `credentials.claude_mcp`
-- optional API-key fallback in `credentials.claude_api_key`
+- optional fail-closed macOS resolver scaffold in `credentials.claude_auth`
 
 ## Example policy
 
@@ -21,9 +21,11 @@ version = 1
 common = "/Users/example/.config/workcell/org-agent.md"
 claude = "/Users/example/.config/workcell/claude-overlay.md"
 
-[credentials]
-claude_auth = "/Users/example/.claude.json"
-claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
+[credentials.claude_api_key]
+source = "/Users/example/.config/workcell/claude-api-key.txt"
+
+[credentials.claude_mcp]
+source = "/Users/example/.config/workcell/claude-mcp.json"
 
 [credentials.github_hosts]
 source = "/Users/example/.config/gh/hosts.yml"
@@ -36,6 +38,8 @@ providers = ["claude"]
 - workspace `CLAUDE.md` is imported as a layer instead of becoming the live
   control plane
 - the session gets only the reviewed credentials it needs
+- the macOS Claude resolver can still be recorded separately, but it is
+  currently fail-closed until a supported export path exists
 - final publication still stays on the host with `workcell publish-pr`
 
 ## Launch
