@@ -97,10 +97,10 @@ if branch_review_mode not in {"review-gated", "single-owner-private-pr"}:
         f"'review-gated' or 'single-owner-private-pr'"
     )
 release_mode = policy.get("release_environment", {}).get("mode", "review-gated")
-if release_mode not in {"review-gated", "single-owner-private"}:
+if release_mode not in {"review-gated", "single-owner-private", "plan-limited-private"}:
     raise SystemExit(
         f"{policy_path} must set release_environment.mode to "
-        f"'review-gated' or 'single-owner-private'"
+        f"'review-gated', 'single-owner-private', or 'plan-limited-private'"
     )
 expected_status_contexts = policy.get("required_status_checks", {}).get("contexts")
 if not isinstance(expected_status_contexts, list) or not expected_status_contexts:
@@ -338,6 +338,15 @@ if release_mode == "review-gated":
         raise SystemExit(f"Release environment on {repo} must not allow administrator bypass")
     if admin_bypass_rule and admin_bypass_rule.get("enabled"):
         raise SystemExit(f"Release environment on {repo} must not allow administrator bypass")
+elif release_mode == "plan-limited-private":
+    if not repo_meta.get("private"):
+        raise SystemExit(
+            f"Release environment mode 'plan-limited-private' on {repo} is only valid for private repositories"
+        )
+    if reviewer_rules:
+        raise SystemExit(
+            f"Release environment on {repo} must not define reviewer gates in plan-limited-private mode"
+        )
 elif not repo_meta.get("private"):
     raise SystemExit(
         f"Release environment mode 'single-owner-private' on {repo} is only valid for private repositories"
