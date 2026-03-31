@@ -18,10 +18,13 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
          cargo \
          git \
          groff-base \
+         jq \
          llvm \
          mandoc \
+         openssh-client \
          python3 \
          python3-coverage \
+         procps \
          rustc \
          rust-clippy \
          rustfmt \
