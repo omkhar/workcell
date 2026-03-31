@@ -88,6 +88,7 @@ const APPROVED_WRAPPER_SCRIPTS: &[&str] = &[
     "/usr/local/libexec/workcell/node-wrapper.sh",
     "/usr/local/libexec/workcell/provider-wrapper.sh",
 ];
+const APPROVED_WRAPPER_LAUNCHERS: &[&str] = &["/bin/bash"];
 
 const MUTABLE_EXEC_ROOTS: &[&str] = &["/workspace", "/state"];
 const ALLOWED_LD_PRELOAD: &str = "/usr/local/lib/libworkcell_exec_guard.so";
@@ -530,6 +531,30 @@ fn current_process_wrapper_env_is_clean() -> bool {
             .is_none_or(|value| value.is_empty() || value == ALLOWED_LD_PRELOAD)
 }
 
+fn path_matches_any_same_file(path: &Path, candidates: &[&str]) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    let signature = metadata_signature_from_metadata(&metadata);
+
+    candidates.iter().any(|candidate| {
+        canonicalize_existing_path(candidate)
+            .and_then(|resolved| fs::metadata(resolved).ok())
+            .map(|metadata| metadata_signature_from_metadata(&metadata))
+            .is_some_and(|candidate_sig| {
+                signature.dev == candidate_sig.dev && signature.ino == candidate_sig.ino
+            })
+    })
+}
+
+fn current_process_executable_is_approved_wrapper_launcher() -> bool {
+    let Ok(current_exe) = fs::read_link("/proc/self/exe") else {
+        return false;
+    };
+
+    path_matches_any_same_file(&current_exe, APPROVED_WRAPPER_LAUNCHERS)
+}
+
 fn current_process_uses_approved_wrapper() -> bool {
     if !current_process_wrapper_env_is_clean() {
         return false;
@@ -543,6 +568,10 @@ fn current_process_uses_approved_wrapper() -> bool {
         .filter(|entry| !entry.is_empty())
         .map(|entry| String::from_utf8_lossy(entry).into_owned())
         .collect();
+
+    if !current_process_executable_is_approved_wrapper_launcher() {
+        return false;
+    }
 
     let Some(candidate) = args.get(1) else {
         return false;
@@ -1450,6 +1479,20 @@ pub unsafe extern "C" fn posix_spawnp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+    use std::process;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn create_temp_test_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("current time")
+            .as_nanos();
+        let dir = env::temp_dir().join(format!("workcell-{label}-{}-{unique}", process::id()));
+        fs::create_dir(&dir).expect("create temp test dir");
+        dir
+    }
 
     #[test]
     fn matches_non_strict_recognizes_only_non_empty_non_strict_values() {
@@ -1497,5 +1540,34 @@ mod tests {
             Some(4)
         );
         assert_eq!(path_is_current_process_fd_path("/proc/999999/fd/4"), None);
+    }
+
+    #[test]
+    fn path_matches_any_same_file_requires_same_inode() {
+        let dir = create_temp_test_dir("same-file");
+        let original = dir.join("original");
+        let hardlink = dir.join("hardlink");
+        let symlink_path = dir.join("symlink");
+        let copy = dir.join("copy");
+
+        fs::write(&original, b"#!/bin/sh\n").expect("write fixture");
+        fs::hard_link(&original, &hardlink).expect("create hardlink");
+        symlink(&original, &symlink_path).expect("create symlink");
+        fs::copy(&original, &copy).expect("copy fixture");
+
+        assert!(path_matches_any_same_file(
+            &original,
+            &[hardlink.to_str().expect("hardlink path")]
+        ));
+        assert!(path_matches_any_same_file(
+            &original,
+            &[symlink_path.to_str().expect("symlink path")]
+        ));
+        assert!(!path_matches_any_same_file(
+            &original,
+            &[copy.to_str().expect("copy path")]
+        ));
+
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 }
