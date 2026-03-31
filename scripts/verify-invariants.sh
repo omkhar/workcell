@@ -5428,7 +5428,9 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKTREE_LINKED}"
   echo "Expected linked git worktree with external admin state to be rejected" >&2
   exit 1
 fi
-grep -q 'linked worktrees require breakglass or a different clone' /tmp/workcell-linked-worktree.out
+grep -q 'This workspace is a linked worktree' /tmp/workcell-linked-worktree.out
+grep -q 'create a standard clone at the same location instead' /tmp/workcell-linked-worktree.out
+grep -q 'pass --mode breakglass --ack-breakglass to proceed with a linked worktree' /tmp/workcell-linked-worktree.out
 
 REDIRECTED_ROOT="${BARRIER_VERIFY_ROOT}/redirected-root"
 REDIRECTED_REPO="${REDIRECTED_ROOT}/repo"
