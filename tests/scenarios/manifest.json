@@ -36,13 +36,24 @@
     },
     {
       "id": "shared/publish-pr",
-      "description": "Host-side publish-pr dry-run renders signed commit and draft PR commands",
+      "description": "Host-side publish-pr covers dry-run command rendering plus a signed local publication handoff with repo hooks bypassed",
       "lane": "secretless",
       "platform": "any",
       "manual": false,
       "providers": ["codex", "claude", "gemini"],
       "persona": "devrel",
       "test_file": "shared/test-publish-pr-dry-run.sh",
+      "requires_credentials": false
+    },
+    {
+      "id": "shared/assurance-dry-run",
+      "description": "Dry-run scenarios surface prompt-autonomy, breakglass, readonly, arbitrary-command, and control-plane VCS assurance labels across adapters",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-assurance-dry-run.sh",
       "requires_credentials": false
     },
     {
