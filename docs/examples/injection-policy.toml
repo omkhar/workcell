@@ -9,12 +9,17 @@ gemini = "/Users/example/.config/workcell/gemini-extra.md"
 
 [credentials]
 codex_auth = "/Users/example/.codex/auth.json"
-claude_auth = "/Users/example/.claude.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
 claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
 gemini_env = "/Users/example/.config/workcell/gemini.env"
 gemini_projects = "/Users/example/.config/workcell/gemini-projects.json"
 gcloud_adc = "/Users/example/.config/gcloud/application_default_credentials.json"
+
+[credentials.claude_auth]
+# Records the intended macOS Claude auth source. Current Workcell releases
+# still fail closed unless a supported export path exists.
+resolver = "claude-macos-keychain"
+materialization = "ephemeral"
 
 [credentials.github_hosts]
 source = "/Users/example/.config/gh/hosts.yml"

@@ -134,6 +134,73 @@ class RenderInjectionBundleTests(unittest.TestCase):
                 manifest_b["metadata"]["policy_sha256"],
             )
 
+    def test_policy_metadata_override_preserves_original_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            credential_path = root / "auth.json"
+            credential_path.write_text('{"token":"one"}\n', encoding="utf-8")
+            credential_path.chmod(0o600)
+
+            override_path = root / "policy-metadata.json"
+            override_path.write_text(
+                json.dumps(
+                    {
+                        "policy_entrypoint": "policy.toml",
+                        "policy_sources": [
+                            {
+                                "path": "policy.toml",
+                                "sha256": "sha256:original",
+                            }
+                        ],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            manifests = []
+            for name in ("resolved-a.toml", "resolved-b.toml"):
+                policy_path = root / name
+                bundle_root = root / f"bundle-{name}"
+                policy_path.write_text(
+                    f'version = 1\n[credentials.codex_auth]\nsource = "{credential_path}"\n',
+                    encoding="utf-8",
+                )
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(self.module.__file__).resolve()),
+                        "--policy",
+                        str(policy_path),
+                        "--policy-metadata",
+                        str(override_path),
+                        "--agent",
+                        "codex",
+                        "--mode",
+                        "strict",
+                        "--output-root",
+                        str(bundle_root),
+                    ],
+                    check=True,
+                )
+                manifests.append(
+                    json.loads((bundle_root / "manifest.json").read_text(encoding="utf-8"))
+                )
+
+            self.assertEqual(
+                manifests[0]["metadata"]["policy_entrypoint"],
+                "policy.toml",
+            )
+            self.assertEqual(
+                manifests[0]["metadata"]["policy_sources"][0]["path"],
+                "policy.toml",
+            )
+            self.assertEqual(
+                manifests[0]["metadata"]["policy_sha256"],
+                manifests[1]["metadata"]["policy_sha256"],
+            )
+
     def test_load_policy_bundle_rejects_parent_escape_includes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
