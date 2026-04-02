@@ -17,6 +17,16 @@ is the security boundary.
 Those priorities apply only after the boundary and invariants are fixed.
 Workcell does not trade away the VM-plus-container boundary for convenience.
 
+## Requirements
+
+- **macOS** (Apple Silicon or Intel). Workcell manages a dedicated
+  [Colima](https://github.com/abiosoft/colima) VM profile using Apple's
+  Virtualization.Framework. Linux and Windows host platforms are not currently
+  supported.
+- **Homebrew**, **Colima**, and **Docker CLI** installed on the host:
+  `brew install colima docker`
+- **git**, **python3**, and **GitHub CLI** (`gh`) available on `$PATH`
+
 ## Design stance
 
 Workcell treats the external runtime as primary:
