@@ -25,7 +25,7 @@ Workcell does not trade away the VM-plus-container boundary for convenience.
   supported.
 - **Homebrew**, **Colima**, and **Docker CLI** installed on the host:
   `brew install colima docker`
-- **git** and **python3** available on `$PATH`
+- **git**, **python3**, and **GitHub CLI** (`gh`) available on `$PATH`
 
 ## Design stance
 

@@ -27,6 +27,7 @@ PROVIDERS_PACKAGE_LOCK_PATH="${ROOT_DIR}/runtime/container/providers/package-loc
 WORKFLOWS_DIR="${ROOT_DIR}/.github/workflows"
 CI_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/ci.yml"
 RELEASE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/release.yml"
+PIN_HYGIENE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/pin-hygiene.yml"
 CODEOWNERS_PATH="${ROOT_DIR}/.github/CODEOWNERS"
 CODEX_REQUIREMENTS_PATH="${ROOT_DIR}/adapters/codex/requirements.toml"
 CODEX_MCP_CONFIG_PATH="${ROOT_DIR}/adapters/codex/mcp/config.toml"
@@ -43,7 +44,7 @@ require_tool() {
 
 require_tool python3
 
-python3 - "${DOCKERFILE_PATH}" "${VALIDATOR_DOCKERFILE_PATH}" "${REMOTE_VALIDATOR_DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${PROVIDERS_PACKAGE_LOCK_PATH}" "${WORKFLOWS_DIR}" "${CI_WORKFLOW_PATH}" "${RELEASE_WORKFLOW_PATH}" "${CODEOWNERS_PATH}" "${CODEX_REQUIREMENTS_PATH}" "${CODEX_MCP_CONFIG_PATH}" "${HOSTED_CONTROLS_POLICY_PATH}" "${HOSTED_CONTROLS_SCRIPT_PATH}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}" <<'PY'
+python3 - "${DOCKERFILE_PATH}" "${VALIDATOR_DOCKERFILE_PATH}" "${REMOTE_VALIDATOR_DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${PROVIDERS_PACKAGE_LOCK_PATH}" "${WORKFLOWS_DIR}" "${CI_WORKFLOW_PATH}" "${RELEASE_WORKFLOW_PATH}" "${PIN_HYGIENE_WORKFLOW_PATH}" "${CODEOWNERS_PATH}" "${CODEX_REQUIREMENTS_PATH}" "${CODEX_MCP_CONFIG_PATH}" "${HOSTED_CONTROLS_POLICY_PATH}" "${HOSTED_CONTROLS_SCRIPT_PATH}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -59,12 +60,13 @@ providers_package_lock = json.loads(pathlib.Path(sys.argv[5]).read_text(encoding
 workflows_dir = pathlib.Path(sys.argv[6])
 ci_workflow = pathlib.Path(sys.argv[7]).read_text(encoding="utf-8")
 release_workflow = pathlib.Path(sys.argv[8]).read_text(encoding="utf-8")
-codeowners = pathlib.Path(sys.argv[9]).read_text(encoding="utf-8")
-codex_requirements = tomllib.loads(pathlib.Path(sys.argv[10]).read_text(encoding="utf-8"))
-codex_mcp_config = tomllib.loads(pathlib.Path(sys.argv[11]).read_text(encoding="utf-8"))
-hosted_controls_policy = tomllib.loads(pathlib.Path(sys.argv[12]).read_text(encoding="utf-8"))
-hosted_controls_script = pathlib.Path(sys.argv[13]).read_text(encoding="utf-8")
-max_snapshot_age_days = int(sys.argv[14])
+pin_hygiene_workflow = pathlib.Path(sys.argv[9]).read_text(encoding="utf-8")
+codeowners = pathlib.Path(sys.argv[10]).read_text(encoding="utf-8")
+codex_requirements = tomllib.loads(pathlib.Path(sys.argv[11]).read_text(encoding="utf-8"))
+codex_mcp_config = tomllib.loads(pathlib.Path(sys.argv[12]).read_text(encoding="utf-8"))
+hosted_controls_policy = tomllib.loads(pathlib.Path(sys.argv[13]).read_text(encoding="utf-8"))
+hosted_controls_script = pathlib.Path(sys.argv[14]).read_text(encoding="utf-8")
+max_snapshot_age_days = int(sys.argv[15])
 
 def require_arg(text: str, name: str, path: str) -> str:
     match = re.search(rf"^ARG {re.escape(name)}=(.+)$", text, re.MULTILINE)
@@ -125,6 +127,14 @@ def require_regex(text: str, pattern: str, label: str, path: str) -> re.Match[st
 def require_contains(text: str, needle: str, label: str, path: str) -> None:
     if needle not in text:
         raise SystemExit(f"{path} must contain {label}: {needle!r}")
+
+def require_action_ref(text: str, action: str, path: str) -> str:
+    refs = re.findall(rf"{re.escape(action)}@([0-9a-f]{{40}})", text)
+    if not refs:
+        raise SystemExit(f"{path} must pin {action} to an immutable commit SHA")
+    if len(set(refs)) != 1:
+        raise SystemExit(f"{path} must use a single reviewed ref for {action}")
+    return refs[0]
 
 def require_not_regex(text: str, pattern: str, label: str, path: str) -> None:
     if re.search(pattern, text, re.MULTILINE):
@@ -411,9 +421,15 @@ if ci_buildkit_image != release_buildkit_image:
 require_pinned_base_image(ci_buildkit_image, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml")
 ci_cosign_version = require_yaml_key(ci_workflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/ci.yml")
 release_cosign_version = require_yaml_key(release_workflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/release.yml")
-if ci_cosign_version != release_cosign_version:
+pin_hygiene_cosign_version = require_yaml_key(
+    pin_hygiene_workflow,
+    "WORKCELL_COSIGN_VERSION",
+    ".github/workflows/pin-hygiene.yml",
+)
+if len({ci_cosign_version, release_cosign_version, pin_hygiene_cosign_version}) != 1:
     raise SystemExit(
-        "WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml and .github/workflows/release.yml"
+        "WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, "
+        ".github/workflows/release.yml, and .github/workflows/pin-hygiene.yml"
     )
 if not re.match(r"^v\d+\.\d+\.\d+$", ci_cosign_version):
     raise SystemExit(
@@ -423,6 +439,28 @@ if f"cosign-release: ${{{{ env.WORKCELL_COSIGN_VERSION }}}}" not in ci_workflow:
     raise SystemExit(".github/workflows/ci.yml must pin the installed cosign binary release")
 if f"cosign-release: ${{{{ env.WORKCELL_COSIGN_VERSION }}}}" not in release_workflow:
     raise SystemExit(".github/workflows/release.yml must pin the installed cosign binary release")
+if f"cosign-release: ${{{{ env.WORKCELL_COSIGN_VERSION }}}}" not in pin_hygiene_workflow:
+    raise SystemExit(".github/workflows/pin-hygiene.yml must pin the installed cosign binary release")
+ci_cosign_installer_ref = require_action_ref(
+    ci_workflow,
+    "sigstore/cosign-installer",
+    ".github/workflows/ci.yml",
+)
+release_cosign_installer_ref = require_action_ref(
+    release_workflow,
+    "sigstore/cosign-installer",
+    ".github/workflows/release.yml",
+)
+pin_hygiene_cosign_installer_ref = require_action_ref(
+    pin_hygiene_workflow,
+    "sigstore/cosign-installer",
+    ".github/workflows/pin-hygiene.yml",
+)
+if len({ci_cosign_installer_ref, release_cosign_installer_ref, pin_hygiene_cosign_installer_ref}) != 1:
+    raise SystemExit(
+        "sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, "
+        ".github/workflows/release.yml, and .github/workflows/pin-hygiene.yml"
+    )
 if "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}" not in ci_workflow:
     raise SystemExit(".github/workflows/ci.yml must pin the BuildKit daemon image used by setup-buildx-action")
 if "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}" not in release_workflow:
