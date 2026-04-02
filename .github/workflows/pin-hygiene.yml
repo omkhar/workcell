@@ -32,6 +32,10 @@ jobs:
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
 
+      - name: Expose cosign in trusted system path
+        run: |
+          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
+
       - name: Verify upstream Codex release
         run: ./scripts/verify-upstream-codex-release.sh
 

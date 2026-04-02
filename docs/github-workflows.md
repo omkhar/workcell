@@ -40,7 +40,9 @@ reviewed inputs:
 - branch rulesets for signed commits, anti-rewrite protection, PR gating, and
   required checks
 - tag rulesets for `refs/tags/v*`
-- the protected `release` environment
+- the `release` environment, with reviewer protection when the GitHub plan
+  supports it and an explicitly documented lower-assurance fallback when it
+  does not
 - GitHub Actions SHA pinning
 - canonical repository variables such as
   `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true`
