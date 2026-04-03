@@ -26,6 +26,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
          openssh-client \
          python3 \
          python3-coverage \
+         python3-pytest \
          procps \
          rustc \
          rust-clippy \

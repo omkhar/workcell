@@ -39,6 +39,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
          openssh-client \
          python3 \
          python3-coverage \
+         python3-pytest \
          procps \
          shellcheck \
          shfmt \
@@ -94,6 +95,8 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     /var/cache/apt/* \
     /var/cache/debconf/*-old \
     /var/cache/ldconfig/aux-cache
+
+RUN npm install -g markdownlint-cli@0.48.0
 
 WORKDIR /workspace
 

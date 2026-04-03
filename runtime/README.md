@@ -32,7 +32,7 @@ reproducible runtime for the supported providers.
 - `scripts/colima-egress-allowlist.sh`: VM-level network posture helper
 - `scripts/container-smoke.sh`: direct container smoke coverage
 - `scripts/verify-invariants.sh`: invariant checks
-- `scripts/validate-repo.sh`: repo-wide validation
+- `./build_and_test.sh`: repo-wide validation and local check entry point
 
 ## GUI status
 

@@ -21,13 +21,15 @@ class ValidationEntrypointTests(unittest.TestCase):
         self.assertNotIn("verify-coverage.sh", script)
 
     def test_validation_gates_lint_all_scenario_shell_scripts(self) -> None:
-        expected_probe = 'find "${ROOT_DIR}/tests/scenarios" -type f -name \'test-*.sh\' -print | sort'
+        find_probe = 'find "${ROOT_DIR}/tests/scenarios" -type f -name \'test-*.sh\' -print | sort'
 
         quick_check = (repo_root() / "scripts/dev-quick-check.sh").read_text(encoding="utf-8")
         validate_repo = (repo_root() / "scripts/validate-repo.sh").read_text(encoding="utf-8")
 
-        self.assertIn(expected_probe, quick_check)
-        self.assertIn(expected_probe, validate_repo)
+        self.assertIn(find_probe, quick_check)
+        # validate-repo.sh discovers shell files (including scenario tests)
+        # via _find_files which calls find with -name patterns
+        self.assertIn("_find_files '*.sh'", validate_repo)
 
 
 if __name__ == "__main__":

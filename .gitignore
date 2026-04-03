@@ -27,8 +27,10 @@ adapters/codex/.codex/memories/
 adapters/codex/.codex/tmp/
 dist/
 tmp/
+.venv/
 runtime/container/providers/node_modules/
 runtime/container/providers/mirror/
 runtime/container/rust/target/
 __pycache__/
+.pytest_cache/
 *.pyc

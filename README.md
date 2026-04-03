@@ -117,6 +117,21 @@ What to expect from the safe path:
 - `--debug-log`, `--file-trace-log`, and `--audit-transcript` are explicit
   lower-assurance operator choices and are off by default
 
+## Local development
+
+Run the local check suite before pushing:
+
+```bash
+./build_and_test.sh             # builds validator container, runs all checks
+./build_and_test.sh --list      # list files that would be checked (no Docker needed)
+./build_and_test.sh --strict    # exit on first failure
+./build_and_test.sh --auto-fix  # run markdownlint --fix before linting
+```
+
+This runs inside the same Docker container that CI uses. Release-specific
+checks (upstream verification, release bundle) only run in CI. Requires
+Docker (Docker Desktop or colima), except `--list` which runs on the host.
+
 ## Session inputs
 
 The supported way to feed stable inputs into sessions is an explicit injection
