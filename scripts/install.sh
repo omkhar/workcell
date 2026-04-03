@@ -126,5 +126,14 @@ if [[ "${DEBUG_INSTALL}" -eq 1 ]]; then
   echo "Launch-time rebuilds: enabled"
 fi
 if [[ ":${PATH}:" != *":${INSTALL_DIR}:"* ]]; then
-  echo "Add ${INSTALL_DIR} to PATH to run it without a full path."
+  case "${SHELL:-/bin/zsh}" in
+    */bash) rc_file=".bashrc" ;;
+    *) rc_file=".zshrc" ;;
+  esac
+  echo ""
+  echo "Add this line to ~/${rc_file}:"
+  # shellcheck disable=SC2016
+  echo '  export PATH="$HOME/.local/bin:$PATH"'
+  echo ""
+  echo "Or run it now for this session only."
 fi
