@@ -1,0 +1,1403 @@
+package metadatautil
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+func CheckWorkflows(rootDir, policyPath string) error {
+	if err := ensureWorkflowTools(); err != nil {
+		return err
+	}
+
+	policyText, err := readText(policyPath)
+	if err != nil {
+		return err
+	}
+	policy, err := ParseTOMLSubset(policyText, policyPath)
+	if err != nil {
+		return err
+	}
+
+	contexts, err := requireStringSliceTable(policy, "required_status_checks", "contexts", policyPath)
+	if err != nil {
+		return err
+	}
+	if len(contexts) == 0 {
+		return fmt.Errorf("%s must define required_status_checks.contexts as a non-empty array", policyPath)
+	}
+
+	workflowDir := filepath.Join(rootDir, ".github", "workflows")
+	workflowPaths, err := filepath.Glob(filepath.Join(workflowDir, "*.yml"))
+	if err != nil {
+		return err
+	}
+
+	jobNames := map[string]struct{}{}
+	for _, path := range workflowPaths {
+		content, err := readText(path)
+		if err != nil {
+			return err
+		}
+		for _, match := range workflowNamePattern.FindAllStringSubmatch(content, -1) {
+			name := strings.TrimSpace(match[1])
+			name = strings.Trim(name, `"'`)
+			if name != "" {
+				jobNames[name] = struct{}{}
+			}
+		}
+	}
+
+	missing := make([]string, 0)
+	for _, expected := range contexts {
+		if _, ok := jobNames[expected]; !ok {
+			missing = append(missing, expected)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"Workflow jobs are missing required status-check names from %s: %s",
+			policyPath,
+			strings.Join(missing, ", "),
+		)
+	}
+	return nil
+}
+
+func ensureWorkflowTools() error { return nil }
+
+func FetchGitHubHostedControlsRulesets(tmpDir, repo string) error {
+	var summary []any
+	if err := readJSONFile(filepath.Join(tmpDir, "rulesets-summary.json"), &summary); err != nil {
+		return err
+	}
+
+	details := make([]any, 0, len(summary))
+	for _, raw := range summary {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("unexpected ruleset summary entry: %v", raw)
+		}
+		idValue, ok := entry["id"].(float64)
+		if !ok {
+			return fmt.Errorf("unexpected ruleset summary id: %v", entry)
+		}
+		rulesetID := strconv.FormatInt(int64(idValue), 10)
+		cmd := exec.Command("gh", "api", fmt.Sprintf("repos/%s/rulesets/%s", repo, rulesetID))
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("gh api repos/%s/rulesets/%s: %w", repo, rulesetID, err)
+		}
+		var detail any
+		if err := json.Unmarshal(output, &detail); err != nil {
+			return err
+		}
+		details = append(details, detail)
+	}
+	return writeJSONFile(filepath.Join(tmpDir, "rulesets.json"), details)
+}
+
+func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
+	var repoMeta map[string]any
+	if err := readJSONFile(filepath.Join(tmpDir, "repo.json"), &repoMeta); err != nil {
+		return err
+	}
+	var actionsPermissions map[string]any
+	if err := readJSONFile(filepath.Join(tmpDir, "actions-permissions.json"), &actionsPermissions); err != nil {
+		return err
+	}
+	var actionsVariables map[string]any
+	if err := readJSONFile(filepath.Join(tmpDir, "actions-variables.json"), &actionsVariables); err != nil {
+		return err
+	}
+	var directCollaborators []any
+	if err := readJSONFile(filepath.Join(tmpDir, "collaborators-direct.json"), &directCollaborators); err != nil {
+		return err
+	}
+	var rulesets []any
+	if err := readJSONFile(filepath.Join(tmpDir, "rulesets.json"), &rulesets); err != nil {
+		return err
+	}
+	var releaseEnv map[string]any
+	if err := readJSONFile(filepath.Join(tmpDir, "environment-release.json"), &releaseEnv); err != nil {
+		return err
+	}
+	policyText, err := readText(policyPath)
+	if err != nil {
+		return err
+	}
+	policy, err := ParseTOMLSubset(policyText, policyPath)
+	if err != nil {
+		return err
+	}
+
+	defaultBranch, _ := repoMeta["default_branch"].(string)
+	owner, _ := repoMeta["owner"].(map[string]any)
+	ownerLogin, _ := owner["login"].(string)
+	ownerType, _ := owner["type"].(string)
+
+	branchIntegrityPolicy, ok := policy["branch_integrity"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s must define branch_integrity as a table with explicit booleans", policyPath)
+	}
+	for _, key := range []string{"require_signed_commits", "block_force_pushes", "block_deletions"} {
+		if value, ok := branchIntegrityPolicy[key].(bool); !ok || !value {
+			return fmt.Errorf("%s must set branch_integrity.%s = true", policyPath, key)
+		}
+	}
+	branchReviewPolicy, _ := policy["branch_review"].(map[string]any)
+	branchReviewMode, _ := branchReviewPolicy["mode"].(string)
+	if branchReviewMode == "" {
+		branchReviewMode = "review-gated"
+	}
+	if branchReviewMode != "review-gated" && branchReviewMode != "single-owner-private-pr" {
+		return fmt.Errorf("%s must set branch_review.mode to 'review-gated' or 'single-owner-private-pr'", policyPath)
+	}
+	releasePolicy, _ := policy["release_environment"].(map[string]any)
+	releaseMode, _ := releasePolicy["mode"].(string)
+	if releaseMode == "" {
+		releaseMode = "review-gated"
+	}
+	if releaseMode != "review-gated" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
+		return fmt.Errorf("%s must set release_environment.mode to 'review-gated', 'single-owner-private', or 'plan-limited-private'", policyPath)
+	}
+	expectedContexts, err := requireStringSliceTable(policy, "required_status_checks", "contexts", policyPath)
+	if err != nil {
+		return err
+	}
+	if len(expectedContexts) == 0 {
+		return fmt.Errorf("%s must define required_status_checks.contexts as a non-empty array", policyPath)
+	}
+	expectedRepoVariables, ok := policy["repository_variables"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s must define repository_variables as a table of exact expected values", policyPath)
+	}
+	for name, value := range expectedRepoVariables {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s repository_variables entries must map non-empty names to exact string values", policyPath)
+		}
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("%s repository_variables entries must map non-empty names to exact string values", policyPath)
+		}
+	}
+	if _, ok := expectedRepoVariables["WORKCELL_ENABLE_GITHUB_ATTESTATIONS"]; !ok {
+		return fmt.Errorf("%s must declare WORKCELL_ENABLE_GITHUB_ATTESTATIONS in repository_variables", policyPath)
+	}
+
+	if enabled, _ := actionsPermissions["enabled"].(bool); !enabled {
+		return fmt.Errorf("GitHub Actions must be enabled on %s", repo)
+	}
+	if required, _ := actionsPermissions["sha_pinning_required"].(bool); !required {
+		return fmt.Errorf("GitHub Actions SHA pinning must be required on %s", repo)
+	}
+
+	activeRulesets := make([]map[string]any, 0)
+	for _, raw := range rulesets {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if enforcement, _ := entry["enforcement"].(string); enforcement == "active" {
+			activeRulesets = append(activeRulesets, entry)
+		}
+	}
+	if len(activeRulesets) == 0 {
+		return fmt.Errorf("No active rulesets found on %s", repo)
+	}
+
+	hasRefInclude := func(ruleset map[string]any, expected string) bool {
+		conditions, _ := ruleset["conditions"].(map[string]any)
+		refName, _ := conditions["ref_name"].(map[string]any)
+		include, _ := refName["include"].([]any)
+		for _, raw := range include {
+			if s, _ := raw.(string); s == expected {
+				return true
+			}
+		}
+		return false
+	}
+	hasRule := func(ruleset map[string]any, ruleType string) map[string]any {
+		rules, _ := ruleset["rules"].([]any)
+		for _, raw := range rules {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if typ, _ := entry["type"].(string); typ == ruleType {
+				return entry
+			}
+		}
+		return nil
+	}
+	requireBypassShape := func(ruleset map[string]any, actorType, bypassMode string, requireNonEmpty bool) error {
+		actors, _ := ruleset["bypass_actors"].([]any)
+		if requireNonEmpty && len(actors) == 0 {
+			return fmt.Errorf("Ruleset %v on %s must declare an explicit bypass actor", ruleset["name"], repo)
+		}
+		for _, raw := range actors {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				return fmt.Errorf("Ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
+			}
+			if at, _ := entry["actor_type"].(string); at != actorType {
+				return fmt.Errorf("Ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
+			}
+			if bm, _ := entry["bypass_mode"].(string); bm != bypassMode {
+				return fmt.Errorf("Ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
+			}
+		}
+		return nil
+	}
+
+	var branchIntegrity, branchReview, branchStatusChecks, tagRelease map[string]any
+	for _, ruleset := range activeRulesets {
+		target, _ := ruleset["target"].(string)
+		if target == "branch" && hasRefInclude(ruleset, "~DEFAULT_BRANCH") {
+			if hasRule(ruleset, "required_signatures") != nil && hasRule(ruleset, "non_fast_forward") != nil && hasRule(ruleset, "deletion") != nil {
+				branchIntegrity = ruleset
+			}
+			if hasRule(ruleset, "pull_request") != nil {
+				branchReview = ruleset
+			}
+			if hasRule(ruleset, "required_status_checks") != nil {
+				branchStatusChecks = ruleset
+			}
+		}
+		if target == "tag" && hasRefInclude(ruleset, "refs/tags/v*") {
+			if hasRule(ruleset, "creation") != nil && hasRule(ruleset, "update") != nil && hasRule(ruleset, "deletion") != nil {
+				tagRelease = ruleset
+			}
+		}
+	}
+	if branchIntegrity == nil {
+		return fmt.Errorf("Missing active default-branch integrity ruleset on %s with required_signatures, non_fast_forward, and deletion", repo)
+	}
+	if branchReview == nil {
+		return fmt.Errorf("Missing active default-branch review ruleset on %s with a pull_request rule", repo)
+	}
+	if branchStatusChecks == nil {
+		return fmt.Errorf("Missing active default-branch status-check ruleset on %s with a required_status_checks rule", repo)
+	}
+	if actors, _ := branchIntegrity["bypass_actors"].([]any); len(actors) > 0 {
+		return fmt.Errorf("Default-branch integrity ruleset on %s must not declare bypass actors", repo)
+	}
+	if err := requireBypassShape(branchReview, "RepositoryRole", "pull_request", false); err != nil {
+		return err
+	}
+	if tagRelease == nil {
+		return fmt.Errorf("Missing active release-tag ruleset on %s for refs/tags/v* with creation/update/deletion protection", repo)
+	}
+	if err := requireBypassShape(tagRelease, "RepositoryRole", "always", true); err != nil {
+		return err
+	}
+
+	pullRequestRule := hasRule(branchReview, "pull_request")
+	parameters, _ := pullRequestRule["parameters"].(map[string]any)
+	if branchReviewMode == "review-gated" {
+		if count, _ := parameters["required_approving_review_count"].(float64); count < 1 {
+			return fmt.Errorf("Default-branch review ruleset on %s must require at least one approving review", repo)
+		}
+		if required, _ := parameters["require_code_owner_review"].(bool); !required {
+			return fmt.Errorf("Default-branch review ruleset on %s must require code owner review", repo)
+		}
+		if resolved, _ := parameters["required_review_thread_resolution"].(bool); !resolved {
+			return fmt.Errorf("Default-branch review ruleset on %s must require resolved review threads", repo)
+		}
+	} else {
+		if private, _ := repoMeta["private"].(bool); !private {
+			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s is only valid for private repositories", repo)
+		}
+		if ownerType != "User" {
+			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s is only valid for user-owned repositories", repo)
+		}
+		if len(directCollaborators) != 1 {
+			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s requires exactly one direct collaborator", repo)
+		}
+		collaborator, _ := directCollaborators[0].(map[string]any)
+		if login, _ := collaborator["login"].(string); login != ownerLogin {
+			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s requires the owner to be the only direct collaborator", repo)
+		}
+		permissions, _ := collaborator["permissions"].(map[string]any)
+		if admin, _ := permissions["admin"].(bool); !admin {
+			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s requires the owner to retain admin permission", repo)
+		}
+		if count, _ := parameters["required_approving_review_count"].(float64); count != 0 {
+			return fmt.Errorf("Default-branch review ruleset on %s must require zero approving reviews in single-owner-private-pr mode", repo)
+		}
+		if required, _ := parameters["require_code_owner_review"].(bool); required {
+			return fmt.Errorf("Default-branch review ruleset on %s must not require code owner review in single-owner-private-pr mode", repo)
+		}
+		if resolved, _ := parameters["required_review_thread_resolution"].(bool); resolved {
+			return fmt.Errorf("Default-branch review ruleset on %s must not require resolved review threads in single-owner-private-pr mode", repo)
+		}
+	}
+
+	statusRule := hasRule(branchStatusChecks, "required_status_checks")
+	statusParameters, _ := statusRule["parameters"].(map[string]any)
+	if strict, _ := statusParameters["strict_required_status_checks_policy"].(bool); !strict {
+		return fmt.Errorf("Default-branch status-check ruleset on %s must require strict status checks", repo)
+	}
+	requiredStatusChecks, _ := statusParameters["required_status_checks"].([]any)
+	actualStatus := map[string]struct{}{}
+	for _, raw := range requiredStatusChecks {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if context, _ := entry["context"].(string); context != "" {
+			actualStatus[context] = struct{}{}
+		}
+	}
+	missingStatus := make([]string, 0)
+	for _, expected := range expectedContexts {
+		if _, ok := actualStatus[expected]; !ok {
+			missingStatus = append(missingStatus, expected)
+		}
+	}
+	sort.Strings(missingStatus)
+	if len(missingStatus) > 0 {
+		return fmt.Errorf("Default-branch status-check ruleset on %s is missing required contexts: %s", repo, strings.Join(missingStatus, ", "))
+	}
+
+	actualRepoVariables := map[string]any{}
+	if variables, ok := actionsVariables["variables"].([]any); ok {
+		for _, raw := range variables {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := entry["name"].(string)
+			if name != "" {
+				actualRepoVariables[name] = entry["value"]
+			}
+		}
+	}
+	missingRepoVariables := make([]string, 0)
+	for name := range expectedRepoVariables {
+		if _, ok := actualRepoVariables[name]; !ok {
+			missingRepoVariables = append(missingRepoVariables, name)
+		}
+	}
+	sort.Strings(missingRepoVariables)
+	if len(missingRepoVariables) > 0 {
+		return fmt.Errorf("Repository variables missing on %s: %s", repo, strings.Join(missingRepoVariables, ", "))
+	}
+	wrongRepoVariables := make([]string, 0)
+	for name, expectedValue := range expectedRepoVariables {
+		if actualRepoVariables[name] != expectedValue {
+			wrongRepoVariables = append(wrongRepoVariables, fmt.Sprintf("%s=%#v (expected %#v)", name, actualRepoVariables[name], expectedValue))
+		}
+	}
+	sort.Strings(wrongRepoVariables)
+	if len(wrongRepoVariables) > 0 {
+		return fmt.Errorf("Repository variables on %s do not match policy: %s", repo, strings.Join(wrongRepoVariables, ", "))
+	}
+
+	protectionRules, _ := releaseEnv["protection_rules"].([]any)
+	reviewerRules := make([]map[string]any, 0)
+	var adminBypassRule map[string]any
+	for _, raw := range protectionRules {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := entry["type"].(string); typ == "required_reviewers" {
+			reviewerRules = append(reviewerRules, entry)
+		}
+		if typ, _ := entry["type"].(string); typ == "admin_bypass" {
+			adminBypassRule = entry
+		}
+	}
+	switch releaseMode {
+	case "review-gated":
+		if len(reviewerRules) == 0 {
+			return fmt.Errorf("Release environment on %s must require a human reviewer", repo)
+		}
+		hasReviewer := false
+		for _, rule := range reviewerRules {
+			if reviewers, _ := rule["reviewers"].([]any); len(reviewers) > 0 {
+				hasReviewer = true
+				break
+			}
+		}
+		if !hasReviewer {
+			return fmt.Errorf("Release environment on %s must define at least one reviewer", repo)
+		}
+		if bypass, _ := releaseEnv["can_admins_bypass"].(bool); bypass {
+			return fmt.Errorf("Release environment on %s must not allow administrator bypass", repo)
+		}
+		if adminBypassRule != nil {
+			if enabled, _ := adminBypassRule["enabled"].(bool); enabled {
+				return fmt.Errorf("Release environment on %s must not allow administrator bypass", repo)
+			}
+		}
+	case "plan-limited-private":
+		if private, _ := repoMeta["private"].(bool); !private {
+			return fmt.Errorf("Release environment mode 'plan-limited-private' on %s is only valid for private repositories", repo)
+		}
+		if len(reviewerRules) > 0 {
+			return fmt.Errorf("Release environment on %s must not define reviewer gates in plan-limited-private mode", repo)
+		}
+	default:
+		if private, _ := repoMeta["private"].(bool); !private {
+			return fmt.Errorf("Release environment mode 'single-owner-private' on %s is only valid for private repositories", repo)
+		}
+		if ownerType != "User" {
+			return fmt.Errorf("Release environment mode 'single-owner-private' on %s is only valid for user-owned repositories", repo)
+		}
+		if len(directCollaborators) != 1 {
+			return fmt.Errorf("Release environment mode 'single-owner-private' on %s requires exactly one direct collaborator", repo)
+		}
+		collaborator, _ := directCollaborators[0].(map[string]any)
+		if login, _ := collaborator["login"].(string); login != ownerLogin {
+			return fmt.Errorf("Release environment mode 'single-owner-private' on %s requires the owner to be the only direct collaborator", repo)
+		}
+		permissions, _ := collaborator["permissions"].(map[string]any)
+		if admin, _ := permissions["admin"].(bool); !admin {
+			return fmt.Errorf("Release environment mode 'single-owner-private' on %s requires the owner to retain admin permission", repo)
+		}
+	}
+
+	_ = defaultBranch
+	return nil
+}
+
+func CheckPinnedInputs(cfg PinnedInputsConfig) error {
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	goModPath := filepath.Join(repoRoot, "go.mod")
+	cargoManifestPath := filepath.Join(repoRoot, "runtime", "container", "rust", "Cargo.toml")
+	rustToolchainPath := filepath.Join(repoRoot, "runtime", "container", "rust", "rust-toolchain.toml")
+
+	runtimeDockerfile, err := readText(cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	validatorDockerfile, err := readText(cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorDockerfile, err := readText(cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	providersPackageJSONText, err := readText(cfg.ProvidersPackageJSONPath)
+	if err != nil {
+		return err
+	}
+	providersPackageLockText, err := readText(cfg.ProvidersPackageLockPath)
+	if err != nil {
+		return err
+	}
+	ciWorkflow, err := readText(cfg.CIWorkflowPath)
+	if err != nil {
+		return err
+	}
+	releaseWorkflow, err := readText(cfg.ReleaseWorkflowPath)
+	if err != nil {
+		return err
+	}
+	pinHygieneWorkflow, err := readText(cfg.PinHygieneWorkflowPath)
+	if err != nil {
+		return err
+	}
+	codeowners, err := readText(cfg.CodeownersPath)
+	if err != nil {
+		return err
+	}
+	hostedControlsPolicyText, err := readText(cfg.HostedControlsPolicyPath)
+	if err != nil {
+		return err
+	}
+	hostedControlsScript, err := readText(cfg.HostedControlsScriptPath)
+	if err != nil {
+		return err
+	}
+	codexRequirementsText, err := readText(cfg.CodexRequirementsPath)
+	if err != nil {
+		return err
+	}
+	codexMCPConfigText, err := readText(cfg.CodexMCPConfigPath)
+	if err != nil {
+		return err
+	}
+	goModText, err := readText(goModPath)
+	if err != nil {
+		return err
+	}
+	cargoManifestText, err := readText(cargoManifestPath)
+	if err != nil {
+		return err
+	}
+	rustToolchainText, err := readText(rustToolchainPath)
+	if err != nil {
+		return err
+	}
+
+	var providersPackageJSON map[string]any
+	if err := json.Unmarshal([]byte(providersPackageJSONText), &providersPackageJSON); err != nil {
+		return err
+	}
+	var providersPackageLock map[string]any
+	if err := json.Unmarshal([]byte(providersPackageLockText), &providersPackageLock); err != nil {
+		return err
+	}
+	hostedControlsPolicy, err := ParseTOMLSubset(hostedControlsPolicyText, cfg.HostedControlsPolicyPath)
+	if err != nil {
+		return err
+	}
+
+	requireArg := func(text, name, path string) (string, error) {
+		match := regexp.MustCompile(`(?m)^ARG ` + regexp.QuoteMeta(name) + `=(.+)$`).FindStringSubmatch(text)
+		if match == nil {
+			return "", fmt.Errorf("Unable to extract %s from %s", name, path)
+		}
+		return strings.TrimSpace(match[1]), nil
+	}
+	requireYAMLKey := func(text, name, path string) (string, error) {
+		match := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `:\s*(.+)$`).FindStringSubmatch(text)
+		if match == nil {
+			return "", fmt.Errorf("Unable to extract %s from %s", name, path)
+		}
+		return strings.TrimSpace(match[1]), nil
+	}
+	requirePinnedBaseImage := func(image, label, path string) error {
+		if !regexp.MustCompile(`^[^@]+@sha256:[0-9a-f]{64}$`).MatchString(image) {
+			return fmt.Errorf("%s in %s must be pinned by immutable digest, found %q", label, path, image)
+		}
+		return nil
+	}
+	verifySnapshotFreshness := func(snapshot, path string) error {
+		ts, err := time.Parse("20060102T150405Z", snapshot)
+		if err != nil {
+			return fmt.Errorf("Debian snapshot %s in %s is not valid", snapshot, path)
+		}
+		now := time.Now().UTC()
+		ageDays := int(now.Sub(ts).Hours() / 24)
+		if ageDays > cfg.MaxDebianSnapshotAgeDays {
+			return fmt.Errorf(
+				"Debian snapshot %s in %s is %d days old; refresh it or raise WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS",
+				snapshot,
+				path,
+				ageDays,
+			)
+		}
+		return nil
+	}
+	extractInstallBlocks := func(text, path string) ([][]string, error) {
+		matches := aptInstallPattern.FindAllStringSubmatch(text, -1)
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("Unable to find apt install blocks in %s", path)
+		}
+		blocks := make([][]string, 0, len(matches))
+		for _, match := range matches {
+			body := strings.ReplaceAll(match[1], "\\", " ")
+			fields := strings.Fields(body)
+			if len(fields) == 0 {
+				return nil, fmt.Errorf("Unable to extract package list from install block in %s", path)
+			}
+			blocks = append(blocks, fields)
+		}
+		return blocks, nil
+	}
+	requireExactPackages := func(actual, expected []string, label, path string) error {
+		if len(actual) != len(expected) {
+			return fmt.Errorf("%s package set in %s changed.\nexpected: %v\nactual:   %v", label, path, expected, actual)
+		}
+		for i := range actual {
+			if actual[i] != expected[i] {
+				return fmt.Errorf("%s package set in %s changed.\nexpected: %v\nactual:   %v", label, path, expected, actual)
+			}
+		}
+		return nil
+	}
+	requireRegex := func(text, pattern, label, path string) (*regexp.Regexp, []string, error) {
+		re := regexp.MustCompile(pattern)
+		match := re.FindStringSubmatch(text)
+		if match == nil {
+			return nil, nil, fmt.Errorf("%s in %s must match %q", label, path, pattern)
+		}
+		return re, match, nil
+	}
+	requireActionRef := func(text, action, path string) (string, error) {
+		re := regexp.MustCompile(regexp.QuoteMeta(action) + `@([0-9a-f]{40})`)
+		matches := re.FindAllStringSubmatch(text, -1)
+		if len(matches) == 0 {
+			return "", fmt.Errorf("%s must pin %s to an immutable commit SHA", path, action)
+		}
+		refs := map[string]struct{}{}
+		for _, match := range matches {
+			refs[match[1]] = struct{}{}
+		}
+		if len(refs) != 1 {
+			return "", fmt.Errorf("%s must use a single reviewed ref for %s", path, action)
+		}
+		for ref := range refs {
+			return ref, nil
+		}
+		return "", nil
+	}
+	requireGoDirective := func(text, directive, path string) (string, error) {
+		match := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(directive) + ` ([0-9]+\.[0-9]+\.[0-9]+)$`).FindStringSubmatch(text)
+		if match == nil {
+			return "", fmt.Errorf("Unable to extract %s from %s", directive, path)
+		}
+		return match[1], nil
+	}
+	requireToolchainDirective := func(text, path string) (string, error) {
+		match := regexp.MustCompile(`(?m)^toolchain go([0-9]+\.[0-9]+\.[0-9]+)$`).FindStringSubmatch(text)
+		if match == nil {
+			return "", fmt.Errorf("Unable to extract toolchain from %s", path)
+		}
+		return match[1], nil
+	}
+	requireTOMLString := func(text, key, path string) (string, error) {
+		match := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `\s*=\s*"([^"]+)"\s*$`).FindStringSubmatch(text)
+		if match == nil {
+			return "", fmt.Errorf("Unable to extract %s from %s", key, path)
+		}
+		return match[1], nil
+	}
+	requireEqual := func(label, left, leftPath, right, rightPath string) error {
+		if left != right {
+			return fmt.Errorf("%s must match between %s (%q) and %s (%q)", label, leftPath, left, rightPath, right)
+		}
+		return nil
+	}
+	majorMinor := func(version, path string) (string, error) {
+		match := regexp.MustCompile(`^([0-9]+\.[0-9]+)\.[0-9]+$`).FindStringSubmatch(version)
+		if match == nil {
+			return "", fmt.Errorf("Expected a semantic version in %s, found %q", path, version)
+		}
+		return match[1], nil
+	}
+	goLanguageVersionFromToolchain := func(version, path string) (string, error) {
+		match := regexp.MustCompile(`^([0-9]+\.[0-9]+)\.[0-9]+$`).FindStringSubmatch(version)
+		if match == nil {
+			return "", fmt.Errorf("Expected a semantic Go toolchain version in %s, found %q", path, version)
+		}
+		return match[1] + ".0", nil
+	}
+	extractReproMatrixEntries := func(strategyBlock, path string) ([][3]string, error) {
+		re := regexp.MustCompile(`(?m)^\s{10}- platform:\s*(\S+)\n^\s{12}platform_name:\s*(\S+)\n^\s{12}runner:\s*(\S+)$`)
+		matches := re.FindAllStringSubmatch(strategyBlock, -1)
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("Unable to extract reproducible-build matrix entries from %s", path)
+		}
+		result := make([][3]string, 0, len(matches))
+		for _, match := range matches {
+			result = append(result, [3]string{match[1], match[2], match[3]})
+		}
+		return result, nil
+	}
+	requireNoRegistryBootstrapMCP := func(text, path string) error {
+		disallowedFragments := []string{
+			"npx",
+			"npm exec",
+			"pnpm dlx",
+			"yarn dlx",
+			"bunx",
+			"@upstash/context7-mcp",
+			"exa-mcp-server",
+		}
+		lines := strings.Split(text, "\n")
+		for _, line := range lines {
+			line = stripComment(line)
+			lower := strings.ToLower(line)
+			for _, fragment := range disallowedFragments {
+				if strings.Contains(lower, fragment) {
+					return fmt.Errorf("%s must not seed mutable registry-backed MCP commands; found %q", path, line)
+				}
+			}
+		}
+		return nil
+	}
+
+	runtimeBaseImage, err := requireArg(runtimeDockerfile, "NODE_BASE_IMAGE", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	validatorBaseImage, err := requireArg(validatorDockerfile, "VALIDATOR_BASE_IMAGE", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorBaseImage, err := requireArg(remoteValidatorDockerfile, "VALIDATOR_BASE_IMAGE", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	runtimeSnapshot, err := requireArg(runtimeDockerfile, "DEBIAN_SNAPSHOT", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	validatorSnapshot, err := requireArg(validatorDockerfile, "DEBIAN_SNAPSHOT", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorSnapshot, err := requireArg(remoteValidatorDockerfile, "DEBIAN_SNAPSHOT", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	codexVersion, err := requireArg(runtimeDockerfile, "CODEX_VERSION", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	claudeVersion, err := requireArg(runtimeDockerfile, "CLAUDE_VERSION", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+
+	runtimeInstallBlocks, err := extractInstallBlocks(runtimeDockerfile, cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	validatorInstallBlocks, err := extractInstallBlocks(validatorDockerfile, cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorInstallBlocks, err := extractInstallBlocks(remoteValidatorDockerfile, cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+
+	if err := requirePinnedBaseImage(runtimeBaseImage, "NODE_BASE_IMAGE", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	if err := requirePinnedBaseImage(validatorBaseImage, "VALIDATOR_BASE_IMAGE", cfg.ValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := requirePinnedBaseImage(remoteValidatorBaseImage, "VALIDATOR_BASE_IMAGE", cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := verifySnapshotFreshness(runtimeSnapshot, cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	if err := verifySnapshotFreshness(validatorSnapshot, cfg.ValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := verifySnapshotFreshness(remoteValidatorSnapshot, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireNoRegistryBootstrapMCP(codexRequirementsText, cfg.CodexRequirementsPath); err != nil {
+		return err
+	}
+	if err := requireNoRegistryBootstrapMCP(codexMCPConfigText, cfg.CodexMCPConfigPath); err != nil {
+		return err
+	}
+	if _, _, err := requireRegex(runtimeDockerfile, `curl -fsSL "https://storage\.googleapis\.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/\$\{CLAUDE_VERSION\}/\$\{CLAUDE_PLATFORM\}/claude"`, "Claude native release download URL", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	if _, match, err := requireRegex(runtimeDockerfile, `^\s*arm64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`, "arm64 Claude mapping", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	} else if match[1] != "linux-arm64" {
+		return fmt.Errorf("arm64 Claude mapping in %s must use linux-arm64", cfg.RuntimeDockerfilePath)
+	}
+	if _, match, err := requireRegex(runtimeDockerfile, `^\s*amd64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`, "amd64 Claude mapping", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	} else if match[1] != "linux-x64" {
+		return fmt.Errorf("amd64 Claude mapping in %s must use linux-x64", cfg.RuntimeDockerfilePath)
+	}
+	if !regexp.MustCompile(`^0\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$`).MatchString(codexVersion) {
+		return fmt.Errorf("runtime/container/Dockerfile CODEX_VERSION must stay pinned to an explicit release, found %q", codexVersion)
+	}
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$`).MatchString(claudeVersion) {
+		return fmt.Errorf("runtime/container/Dockerfile CLAUDE_VERSION must stay pinned to an explicit release, found %q", claudeVersion)
+	}
+	if _, match, err := requireRegex(runtimeDockerfile, `^\s*arm64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "arm64 Codex mapping", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	} else if match[1] != "aarch64-unknown-linux-gnu" {
+		return fmt.Errorf("arm64 Codex mapping in %s must use aarch64-unknown-linux-gnu", cfg.RuntimeDockerfilePath)
+	}
+	if _, match, err := requireRegex(runtimeDockerfile, `^\s*amd64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "amd64 Codex mapping", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	} else if match[1] != "x86_64-unknown-linux-gnu" {
+		return fmt.Errorf("amd64 Codex mapping in %s must use x86_64-unknown-linux-gnu", cfg.RuntimeDockerfilePath)
+	}
+	if len(runtimeInstallBlocks) != 2 {
+		return fmt.Errorf("runtime/container/Dockerfile must contain exactly two apt install blocks (runtime base and runtime builder)")
+	}
+	if len(validatorInstallBlocks) != 1 {
+		return errors.New("tools/validator/Dockerfile must contain exactly one apt install block")
+	}
+	if len(remoteValidatorInstallBlocks) != 1 {
+		return errors.New("tools/remote-validator/Dockerfile must contain exactly one apt install block")
+	}
+	if err := requireExactPackages(runtimeInstallBlocks[0], []string{"bash", "bubblewrap", "ca-certificates", "curl", "fd-find", "git", "jq", "less", "openssh-client", "passwd", "procps", "ripgrep", "sudo", "unzip", "util-linux", "xz-utils"}, "Runtime base", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireExactPackages(runtimeInstallBlocks[1], []string{"gcc", "libc6-dev"}, "Runtime builder", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireExactPackages(validatorInstallBlocks[0], []string{"ca-certificates", "codespell", "curl", "gcc", "git", "groff-base", "jq", "libc6-dev", "llvm", "mandoc", "openssh-client", "procps", "shellcheck", "shfmt", "yamllint"}, "Validator", cfg.ValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireExactPackages(remoteValidatorInstallBlocks[0], []string{"ca-certificates", "codespell", "curl", "docker-cli", "docker-buildx", "gcc", "git", "groff-base", "jq", "libc6-dev", "llvm", "mandoc", "openssh-client", "procps", "shellcheck", "shfmt", "yamllint"}, "Remote validator", cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	goLanguageVersion, err := requireGoDirective(goModText, "go", goModPath)
+	if err != nil {
+		return err
+	}
+	goToolchainVersion, err := requireToolchainDirective(goModText, goModPath)
+	if err != nil {
+		return err
+	}
+	validatorGoVersion, err := requireArg(validatorDockerfile, "GO_VERSION", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorGoVersion, err := requireArg(remoteValidatorDockerfile, "GO_VERSION", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("GO_VERSION", validatorGoVersion, cfg.ValidatorDockerfilePath, remoteValidatorGoVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireEqual("Go toolchain version", goToolchainVersion, goModPath, validatorGoVersion, cfg.ValidatorDockerfilePath); err != nil {
+		return err
+	}
+	expectedGoLanguageVersion, err := goLanguageVersionFromToolchain(goToolchainVersion, goModPath)
+	if err != nil {
+		return err
+	}
+	if goLanguageVersion != expectedGoLanguageVersion {
+		return fmt.Errorf("go language version in %s must match the toolchain major/minor at patch zero, expected %q, found %q", goModPath, expectedGoLanguageVersion, goLanguageVersion)
+	}
+	validatorGoSHAx86_64, err := requireArg(validatorDockerfile, "GO_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorGoSHAx86_64, err := requireArg(remoteValidatorDockerfile, "GO_LINUX_X86_64_SHA256", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("GO_LINUX_X86_64_SHA256", validatorGoSHAx86_64, cfg.ValidatorDockerfilePath, remoteValidatorGoSHAx86_64, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	validatorGoSHAArm64, err := requireArg(validatorDockerfile, "GO_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorGoSHAArm64, err := requireArg(remoteValidatorDockerfile, "GO_LINUX_ARM64_SHA256", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("GO_LINUX_ARM64_SHA256", validatorGoSHAArm64, cfg.ValidatorDockerfilePath, remoteValidatorGoSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	cargoEdition, err := requireTOMLString(cargoManifestText, "edition", cargoManifestPath)
+	if err != nil {
+		return err
+	}
+	if cargoEdition != "2024" {
+		return fmt.Errorf("%s must use edition 2024, found %q", cargoManifestPath, cargoEdition)
+	}
+	cargoRustVersion, err := requireTOMLString(cargoManifestText, "rust-version", cargoManifestPath)
+	if err != nil {
+		return err
+	}
+	rustToolchainVersion, err := requireTOMLString(rustToolchainText, "channel", rustToolchainPath)
+	if err != nil {
+		return err
+	}
+	runtimeRustVersion, err := requireArg(runtimeDockerfile, "RUST_VERSION", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	validatorRustVersion, err := requireArg(validatorDockerfile, "RUST_VERSION", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorRustVersion, err := requireArg(remoteValidatorDockerfile, "RUST_VERSION", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("RUST_VERSION", runtimeRustVersion, cfg.RuntimeDockerfilePath, validatorRustVersion, cfg.ValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireEqual("RUST_VERSION", runtimeRustVersion, cfg.RuntimeDockerfilePath, remoteValidatorRustVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireEqual("Rust toolchain channel", rustToolchainVersion, rustToolchainPath, runtimeRustVersion, cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	expectedCargoRustVersion, err := majorMinor(rustToolchainVersion, rustToolchainPath)
+	if err != nil {
+		return err
+	}
+	if cargoRustVersion != expectedCargoRustVersion {
+		return fmt.Errorf("rust-version in %s must match the pinned toolchain major/minor, expected %q, found %q", cargoManifestPath, expectedCargoRustVersion, cargoRustVersion)
+	}
+	runtimeRustupVersion, err := requireArg(runtimeDockerfile, "RUSTUP_VERSION", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	validatorRustupVersion, err := requireArg(validatorDockerfile, "RUSTUP_VERSION", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorRustupVersion, err := requireArg(remoteValidatorDockerfile, "RUSTUP_VERSION", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("RUSTUP_VERSION", runtimeRustupVersion, cfg.RuntimeDockerfilePath, validatorRustupVersion, cfg.ValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireEqual("RUSTUP_VERSION", runtimeRustupVersion, cfg.RuntimeDockerfilePath, remoteValidatorRustupVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	runtimeRustupSHAx86_64, err := requireArg(runtimeDockerfile, "RUSTUP_INIT_LINUX_X86_64_SHA256", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	validatorRustupSHAx86_64, err := requireArg(validatorDockerfile, "RUSTUP_INIT_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorRustupSHAx86_64, err := requireArg(remoteValidatorDockerfile, "RUSTUP_INIT_LINUX_X86_64_SHA256", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("RUSTUP_INIT_LINUX_X86_64_SHA256", runtimeRustupSHAx86_64, cfg.RuntimeDockerfilePath, validatorRustupSHAx86_64, cfg.ValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireEqual("RUSTUP_INIT_LINUX_X86_64_SHA256", runtimeRustupSHAx86_64, cfg.RuntimeDockerfilePath, remoteValidatorRustupSHAx86_64, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	runtimeRustupSHAArm64, err := requireArg(runtimeDockerfile, "RUSTUP_INIT_LINUX_ARM64_SHA256", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	validatorRustupSHAArm64, err := requireArg(validatorDockerfile, "RUSTUP_INIT_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorRustupSHAArm64, err := requireArg(remoteValidatorDockerfile, "RUSTUP_INIT_LINUX_ARM64_SHA256", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("RUSTUP_INIT_LINUX_ARM64_SHA256", runtimeRustupSHAArm64, cfg.RuntimeDockerfilePath, validatorRustupSHAArm64, cfg.ValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if err := requireEqual("RUSTUP_INIT_LINUX_ARM64_SHA256", runtimeRustupSHAArm64, cfg.RuntimeDockerfilePath, remoteValidatorRustupSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+
+	rootPackage, _ := providersPackageLock["packages"].(map[string]any)
+	rootDependencies, _ := rootPackage[""].(map[string]any)
+	expectedDependencies, _ := providersPackageJSON["dependencies"].(map[string]any)
+	actualDependencies, _ := rootDependencies["dependencies"].(map[string]any)
+	if len(actualDependencies) != len(expectedDependencies) {
+		return errors.New("runtime/container/providers/package-lock.json root dependencies do not match package.json")
+	}
+	for name, expected := range expectedDependencies {
+		if actualDependencies[name] != expected {
+			return errors.New("runtime/container/providers/package-lock.json root dependencies do not match package.json")
+		}
+	}
+	for packageName, expectedVersionAny := range expectedDependencies {
+		expectedVersion, _ := expectedVersionAny.(string)
+		pkgEntry, ok := rootPackage["node_modules/"+packageName].(map[string]any)
+		if !ok {
+			return fmt.Errorf("Missing pinned provider package entry for %s", packageName)
+		}
+		if version, _ := pkgEntry["version"].(string); version != expectedVersion {
+			return fmt.Errorf("Pinned provider package %s is %s, expected %s", packageName, version, expectedVersion)
+		}
+		if integrity, _ := pkgEntry["integrity"].(string); integrity == "" {
+			return fmt.Errorf("Pinned provider package %s is missing an integrity hash", packageName)
+		}
+		if resolved, _ := pkgEntry["resolved"].(string); !strings.HasPrefix(resolved, "https://registry.npmjs.org/") {
+			return fmt.Errorf("Pinned provider package %s uses an unexpected source: %q", packageName, resolved)
+		}
+	}
+	for packagePath, rawEntry := range rootPackage {
+		if packagePath == "" {
+			continue
+		}
+		entry, _ := rawEntry.(map[string]any)
+		if link, _ := entry["link"].(bool); link {
+			return fmt.Errorf("Linked npm dependencies are not allowed in the provider lockfile: %s", packagePath)
+		}
+		if integrity, _ := entry["integrity"].(string); integrity == "" {
+			return fmt.Errorf("Provider lockfile entry is missing integrity data: %s", packagePath)
+		}
+		if resolved, _ := entry["resolved"].(string); !strings.HasPrefix(resolved, "https://registry.npmjs.org/") {
+			return fmt.Errorf("Provider lockfile entry uses an unexpected source (%s): %q", packagePath, resolved)
+		}
+	}
+
+	ciBuildxVersion, err := requireYAMLKey(ciWorkflow, "WORKCELL_BUILDX_VERSION", ".github/workflows/ci.yml")
+	if err != nil {
+		return err
+	}
+	releaseBuildxVersion, err := requireYAMLKey(releaseWorkflow, "WORKCELL_BUILDX_VERSION", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	if ciBuildxVersion != releaseBuildxVersion {
+		return errors.New("WORKCELL_BUILDX_VERSION must match between .github/workflows/ci.yml and .github/workflows/release.yml")
+	}
+	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(ciBuildxVersion) {
+		return fmt.Errorf("WORKCELL_BUILDX_VERSION must be an exact pinned release (for example v0.32.1), found %q", ciBuildxVersion)
+	}
+
+	ciQEMUImage, err := requireYAMLKey(ciWorkflow, "WORKCELL_QEMU_IMAGE", ".github/workflows/ci.yml")
+	if err != nil {
+		return err
+	}
+	releaseQEMUImage, err := requireYAMLKey(releaseWorkflow, "WORKCELL_QEMU_IMAGE", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	if ciQEMUImage != releaseQEMUImage {
+		return errors.New("WORKCELL_QEMU_IMAGE must match between .github/workflows/ci.yml and .github/workflows/release.yml")
+	}
+	if err := requirePinnedBaseImage(ciQEMUImage, "WORKCELL_QEMU_IMAGE", ".github/workflows/ci.yml"); err != nil {
+		return err
+	}
+	ciBuildkitImage, err := requireYAMLKey(ciWorkflow, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml")
+	if err != nil {
+		return err
+	}
+	releaseBuildkitImage, err := requireYAMLKey(releaseWorkflow, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	if ciBuildkitImage != releaseBuildkitImage {
+		return errors.New("WORKCELL_BUILDKIT_IMAGE must match between .github/workflows/ci.yml and .github/workflows/release.yml")
+	}
+	if err := requirePinnedBaseImage(ciBuildkitImage, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml"); err != nil {
+		return err
+	}
+
+	ciCosignVersion, err := requireYAMLKey(ciWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/ci.yml")
+	if err != nil {
+		return err
+	}
+	releaseCosignVersion, err := requireYAMLKey(releaseWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	pinHygieneCosignVersion, err := requireYAMLKey(pinHygieneWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/pin-hygiene.yml")
+	if err != nil {
+		return err
+	}
+	if len(map[string]struct{}{ciCosignVersion: {}, releaseCosignVersion: {}, pinHygieneCosignVersion: {}}) != 1 {
+		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, and .github/workflows/pin-hygiene.yml")
+	}
+	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(ciCosignVersion) {
+		return fmt.Errorf("WORKCELL_COSIGN_VERSION must be an exact pinned release, found %q", ciCosignVersion)
+	}
+	for _, workflow := range []struct {
+		text string
+		path string
+	}{{ciWorkflow, ".github/workflows/ci.yml"}, {releaseWorkflow, ".github/workflows/release.yml"}, {pinHygieneWorkflow, ".github/workflows/pin-hygiene.yml"}} {
+		if !strings.Contains(workflow.text, "cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}") {
+			return fmt.Errorf("%s must pin the installed cosign binary release", workflow.path)
+		}
+	}
+	ciCosignInstallerRef, err := requireActionRef(ciWorkflow, "sigstore/cosign-installer", ".github/workflows/ci.yml")
+	if err != nil {
+		return err
+	}
+	releaseCosignInstallerRef, err := requireActionRef(releaseWorkflow, "sigstore/cosign-installer", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	pinHygieneCosignInstallerRef, err := requireActionRef(pinHygieneWorkflow, "sigstore/cosign-installer", ".github/workflows/pin-hygiene.yml")
+	if err != nil {
+		return err
+	}
+	if len(map[string]struct{}{ciCosignInstallerRef: {}, releaseCosignInstallerRef: {}, pinHygieneCosignInstallerRef: {}}) != 1 {
+		return errors.New("sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, .github/workflows/release.yml, and .github/workflows/pin-hygiene.yml")
+	}
+	if !strings.Contains(ciWorkflow, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
+		return errors.New(".github/workflows/ci.yml must pin the BuildKit daemon image used by setup-buildx-action")
+	}
+	if !strings.Contains(releaseWorkflow, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
+		return errors.New(".github/workflows/release.yml must pin the BuildKit daemon image used by setup-buildx-action")
+	}
+	if !strings.Contains(ciWorkflow, "cache-binary: true") {
+		return errors.New("Pinned buildx binary caching must stay enabled in .github/workflows/ci.yml")
+	}
+	extractBetween := func(text, startMarker, endMarker, label string) (string, error) {
+		start := strings.Index(text, startMarker)
+		if start < 0 {
+			return "", fmt.Errorf("Unable to extract %s from .github/workflows/ci.yml", label)
+		}
+		remaining := text[start:]
+		end := strings.Index(remaining, endMarker)
+		if end < 0 {
+			return "", fmt.Errorf("Unable to extract %s from .github/workflows/ci.yml", label)
+		}
+		return remaining[:end+1], nil
+	}
+	ciReproBuildJob, err := extractBetween(ciWorkflow, "  reproducible-build-platform:\n", "\n  reproducible-build:\n", "reproducible-build-platform job")
+	if err != nil {
+		return errors.New("Unable to extract reproducible-build-platform job from .github/workflows/ci.yml")
+	}
+	if !regexp.MustCompile(`(?m)^\s{4}runs-on:\s*\$\{\{\s*matrix\.runner\s*\}\}$`).MatchString(ciReproBuildJob) {
+		return errors.New(".github/workflows/ci.yml must route reproducible-build-platform through runs-on: ${{ matrix.runner }}")
+	}
+	ciReproStrategyBlock, err := extractBetween(ciReproBuildJob, "    strategy:\n", "\n    steps:\n", "reproducible-build-platform strategy block")
+	if err != nil {
+		return errors.New("Unable to extract reproducible-build-platform strategy block from .github/workflows/ci.yml")
+	}
+	expectedCiReproStrategyBlock := "    strategy:\n" +
+		"      fail-fast: false\n" +
+		"      matrix:\n" +
+		"        include:\n" +
+		"          - platform: linux/amd64\n" +
+		"            platform_name: amd64\n" +
+		"            runner: ubuntu-latest\n" +
+		"          - platform: linux/arm64\n" +
+		"            platform_name: arm64\n" +
+		"            runner: ubuntu-24.04-arm\n"
+	if ciReproStrategyBlock != expectedCiReproStrategyBlock {
+		return errors.New(".github/workflows/ci.yml must keep the reviewed reproducible-build matrix structure, including a single native ubuntu-24.04-arm lane for linux/arm64")
+	}
+	entries, err := extractReproMatrixEntries(ciReproStrategyBlock, ".github/workflows/ci.yml")
+	if err != nil {
+		return err
+	}
+	arm64Entries := make([][3]string, 0)
+	for _, entry := range entries {
+		if entry[0] == "linux/arm64" {
+			arm64Entries = append(arm64Entries, entry)
+		}
+	}
+	if len(arm64Entries) != 1 || arm64Entries[0] != [3]string{"linux/arm64", "arm64", "ubuntu-24.04-arm"} {
+		return errors.New(".github/workflows/ci.yml must define exactly one linux/arm64 reproducible-build matrix entry and it must use runner ubuntu-24.04-arm")
+	}
+	if strings.Contains(ciWorkflow, "docker/setup-qemu-action@") {
+		return errors.New(".github/workflows/ci.yml must not configure QEMU in CI now that arm64 reproducible builds use a native runner")
+	}
+	if !strings.Contains(releaseWorkflow, "cache-binary: false") {
+		return errors.New("The publishing release workflow must not cache the Buildx binary")
+	}
+	if !strings.Contains(releaseWorkflow, "cache-image: false") {
+		return errors.New("The publishing release workflow must not cache the QEMU helper image")
+	}
+	releaseSyftVersion, err := requireYAMLKey(releaseWorkflow, "WORKCELL_SYFT_VERSION", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(releaseSyftVersion) {
+		return fmt.Errorf("WORKCELL_SYFT_VERSION must be an exact pinned release, found %q", releaseSyftVersion)
+	}
+	if !strings.Contains(releaseWorkflow, "syft-version: ${{ env.WORKCELL_SYFT_VERSION }}") {
+		return errors.New(".github/workflows/release.yml must pin the Syft version used for release SBOM generation")
+	}
+	if !strings.Contains(releaseWorkflow, "anchore/sbom-action/download-syft@") {
+		return errors.New(".github/workflows/release.yml must install the pinned Syft CLI before generating the builder environment manifest")
+	}
+	if !strings.Contains(releaseWorkflow, "docker buildx imagetools create") {
+		return errors.New(".github/workflows/release.yml must assemble the published multi-arch manifest with docker buildx imagetools create")
+	}
+	if regexp.MustCompile(`docker/build-push-action@.*?platforms:\s*linux/amd64,linux/arm64`).MatchString(releaseWorkflow) {
+		return errors.New(".github/workflows/release.yml must not publish the final multi-arch image through one opaque multi-platform build-push step")
+	}
+	if !strings.Contains(runtimeDockerfile, "COPY runtime/container/rust /workcell-rust") {
+		return errors.New("runtime/container/Dockerfile must vendor the reviewed Rust runtime sources into the builder stage")
+	}
+	if !strings.Contains(runtimeDockerfile, "COPY runtime/container/control-plane-manifest.json /usr/local/libexec/workcell/control-plane-manifest.json") {
+		return errors.New("runtime/container/Dockerfile must copy the reviewed control-plane manifest into the runtime image")
+	}
+	if !strings.Contains(runtimeDockerfile, "cargo build \\") || !strings.Contains(runtimeDockerfile, "--locked \\") || !strings.Contains(runtimeDockerfile, "--offline \\") {
+		return errors.New("runtime/container/Dockerfile must build the shipped Rust launcher artifacts with cargo --locked --offline")
+	}
+	if !strings.Contains(runtimeDockerfile, "CARGO_HOME=/workcell-rust/cargo-home") {
+		return errors.New("runtime/container/Dockerfile must isolate Cargo home inside the vendored runtime source tree")
+	}
+	for _, needle := range []string{
+		"name: workcell-release-preflight",
+		"actions/download-artifact@",
+		"context: dist/release-source",
+		"WORKCELL_BUILD_INPUT_ROOT: ${{ github.workspace }}/dist/release-source",
+		"WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source",
+		"Verify published platform digests match preflight",
+		`"imagetools", "inspect", "--raw"`,
+		"{{json .Manifest}}",
+		"vnd.docker.reference.type",
+		"ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}",
+		"actions/attest@",
+		"Verify release bundle matches preflight",
+		"Verify control-plane manifest matches preflight",
+		"github/codeql-action/init@",
+		"github/codeql-action/analyze@",
+		"./scripts/publish-github-release.sh",
+	} {
+		if !strings.Contains(releaseWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
+		}
+	}
+	if strings.Contains(releaseWorkflow, "{{json .manifest}}") {
+		return errors.New(".github/workflows/release.yml must not use the unsupported lowercase Buildx .manifest template field")
+	}
+	if !strings.Contains(releaseWorkflow, "dist/${{ env.BUNDLE_NAME }}.sigstore.json") ||
+		!strings.Contains(releaseWorkflow, "dist/workcell-control-plane.sigstore.json") ||
+		!strings.Contains(releaseWorkflow, "dist/workcell-source.spdx.sigstore.json") ||
+		!strings.Contains(releaseWorkflow, "dist/workcell-image.spdx.sigstore.json") {
+		return errors.New(".github/workflows/release.yml must publish direct signature bundles for release artifacts")
+	}
+	if !strings.Contains(releaseWorkflow, "dist/workcell-control-plane-preflight.json") ||
+		!strings.Contains(releaseWorkflow, "dist/workcell-control-plane.json") {
+		return errors.New(".github/workflows/release.yml must keep the reviewed control-plane manifest flow")
+	}
+	if strings.Contains(releaseWorkflow, "steps.build.outputs.digest") {
+		return errors.New(".github/workflows/release.yml must not keep referencing the old single-step multi-platform digest output")
+	}
+	if strings.Contains(releaseWorkflow, "gh release ") {
+		return errors.New(".github/workflows/release.yml must not depend on an ambient gh CLI; use a pinned release-publish action")
+	}
+	if !strings.Contains(releaseWorkflow, "./scripts/publish-github-release.sh") {
+		return errors.New(".github/workflows/release.yml must publish assets through the reviewed repo-local GitHub Release API script")
+	}
+	for _, needle := range []string{
+		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
+	} {
+		if !strings.Contains(releaseWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
+		}
+	}
+	hostedControlsWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "hosted-controls.yml"))
+	if err != nil {
+		return err
+	}
+	for _, needle := range []string{
+		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
+		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "0"`,
+	} {
+		if !strings.Contains(hostedControlsWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/hosted-controls.yml must contain %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		"./scripts/verify-upstream-claude-release.sh",
+	} {
+		if !strings.Contains(ciWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/ci.yml must contain %q", needle)
+		}
+		if !strings.Contains(releaseWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		"./scripts/verify-upstream-codex-release.sh",
+		"./scripts/verify-upstream-claude-release.sh",
+	} {
+		if !strings.Contains(pinHygieneWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/pin-hygiene.yml must contain %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		"environment:\n      name: release",
+		`sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign`,
+		`sudo install -m 0755 "$(command -v syft)" /usr/local/bin/syft`,
+		`actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"`,
+		`tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint`,
+		"Reclaim runner space before reproducible image check",
+		`docker image rm -f "workcell-validator:${GITHUB_SHA}" >/dev/null 2>&1 || true`,
+		"git -c safe.directory=/workspace archive \\",
+		"docker buildx prune -af || true",
+	} {
+		if !strings.Contains(releaseWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
+		}
+	}
+	for _, workflowPath := range mustGlob(filepath.Join(cfg.WorkflowsDir, "*.yml")) {
+		workflowText, err := readText(workflowPath)
+		if err != nil {
+			return err
+		}
+		if !workflowPermissionsRE.MatchString(workflowText) {
+			return fmt.Errorf("workflow-level empty permissions declaration missing in %s", workflowPath)
+		}
+		if strings.Contains(workflowText, "pull_request_target") {
+			return fmt.Errorf("%s must not contain pull_request_target triggers", workflowPath)
+		}
+		if regexp.MustCompile(`secrets\.[A-Z0-9_]*(?:PAT|PERSONAL_ACCESS_TOKEN)\b|GH_PAT\b|PERSONAL_ACCESS_TOKEN\b`).MatchString(workflowText) {
+			return fmt.Errorf("%s must not contain long-lived personal access tokens", workflowPath)
+		}
+		for _, match := range regexp.MustCompile(`(?m)^\s*-\s+uses:\s+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)`).FindAllStringSubmatch(workflowText, -1) {
+			if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(match[2]) {
+				return fmt.Errorf("%s must pin GitHub Actions by full commit SHA; found %s@%s", workflowPath, match[1], match[2])
+			}
+		}
+	}
+	for _, required := range []string{
+		"/.github/workflows/ @omkhar",
+		"/scripts/ @omkhar",
+		"/runtime/container/ @omkhar",
+		"/docs/provenance.md @omkhar",
+	} {
+		if !strings.Contains(codeowners, required) {
+			return fmt.Errorf(".github/CODEOWNERS must declare high-risk ownership for %q", required)
+		}
+	}
+	releaseEnvironment, _ := hostedControlsPolicy["release_environment"].(map[string]any)
+	releaseMode, _ := releaseEnvironment["mode"].(string)
+	if releaseMode != "review-gated" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
+		return errors.New("policy/github-hosted-controls.toml must set release_environment.mode to 'review-gated', 'single-owner-private', or 'plan-limited-private'")
+	}
+	repositoryVariables, ok := hostedControlsPolicy["repository_variables"].(map[string]any)
+	if !ok || len(repositoryVariables) == 0 {
+		return errors.New("policy/github-hosted-controls.toml must declare canonical repository variables")
+	}
+	if value, _ := repositoryVariables["WORKCELL_ENABLE_GITHUB_ATTESTATIONS"].(string); value != "true" {
+		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_ENABLE_GITHUB_ATTESTATIONS = \"true\"")
+	}
+	for _, needle := range []string{
+		"actions/variables?per_page=100",
+		"WORKCELL_ENABLE_GITHUB_ATTESTATIONS",
+	} {
+		if !strings.Contains(hostedControlsScript, needle) {
+			return fmt.Errorf("scripts/verify-github-hosted-controls.sh must contain %q", needle)
+		}
+	}
+	if err := requireNoRegistryBootstrapMCP(codexRequirementsText, cfg.CodexRequirementsPath); err != nil {
+		return err
+	}
+	if err := requireNoRegistryBootstrapMCP(codexMCPConfigText, cfg.CodexMCPConfigPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func requireStringSliceTable(root map[string]any, tableName, key, sourcePath string) ([]string, error) {
+	table, ok := root[tableName].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
+	}
+	values, ok, err := MustStringSlice(table[key])
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
+		}
+	}
+	return values, nil
+}
+
+func mustGlob(pattern string) []string {
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		panic(err)
+	}
+	return matches
+}
