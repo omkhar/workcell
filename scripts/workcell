@@ -72,19 +72,23 @@ resolve_fixed_host_tool() {
 
 run_clean_host_command() {
   local home="${REAL_HOME:-/}"
+  local -a clean_env=(
+    PATH="${TRUSTED_HOST_PATH}"
+    LC_ALL=C
+    LANG=C
+  )
 
   [[ "$#" -gt 0 ]] || return 0
-  if [[ ! -d "${home}" ]]; then
+  if [[ -n "${REAL_HOME:-}" ]] && [[ -d "${home}" ]]; then
+    clean_env+=(HOME="${home}")
+  else
     home="/"
   fi
 
   (
     cd "${home}" &&
       env -i \
-        PATH="${TRUSTED_HOST_PATH}" \
-        HOME="${home}" \
-        LC_ALL=C \
-        LANG=C \
+        "${clean_env[@]}" \
         "$@"
   )
 }
@@ -92,6 +96,11 @@ run_clean_host_command() {
 run_clean_host_command_in_dir() {
   local dir="$1"
   local home="${REAL_HOME:-/}"
+  local -a clean_env=(
+    PATH="${TRUSTED_HOST_PATH}"
+    LC_ALL=C
+    LANG=C
+  )
 
   shift
   [[ "$#" -gt 0 ]] || return 0
@@ -99,17 +108,16 @@ run_clean_host_command_in_dir() {
     echo "Missing host working directory: ${dir}" >&2
     exit 2
   fi
-  if [[ ! -d "${home}" ]]; then
+  if [[ -n "${REAL_HOME:-}" ]] && [[ -d "${home}" ]]; then
+    clean_env+=(HOME="${home}")
+  else
     home="/"
   fi
 
   (
     cd "${dir}" &&
       env -i \
-        PATH="${TRUSTED_HOST_PATH}" \
-        HOME="${home}" \
-        LC_ALL=C \
-        LANG=C \
+        "${clean_env[@]}" \
         "$@"
   )
 }
