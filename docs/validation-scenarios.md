@@ -13,7 +13,7 @@ Use this page with:
 These run without provider credentials:
 
 - `./scripts/dev-quick-check.sh`
-- `./build_and_test.sh` (runs in the same container as CI)
+- `./scripts/build-and-test.sh` (runs in the same container as CI)
 - `./scripts/container-smoke.sh`
 - `./scripts/verify-invariants.sh`
 - `./scripts/verify-release-bundle.sh`
