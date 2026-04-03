@@ -1451,7 +1451,7 @@ EOF
   --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes" >/dev/null
 
 [[ "$(jq -r '.documents.common' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/manifest.json")" == "documents/common.md" ]]
-[[ "$(cat "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/documents/common.md")" == $'fragment common\n' ]]
+cmp -s "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/documents/common.md" <(printf 'fragment common\n')
 expected_auth="$(cd "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/../fragments" && pwd -P)/fragment-auth.json"
 [[ "$(jq -r '.credentials.codex_auth.source' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/manifest.json")" == "${expected_auth}" ]]
 
