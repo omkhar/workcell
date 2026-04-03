@@ -28,9 +28,15 @@ require_tool rustfmt
 require_tool git
 require_cargo_subcommand clippy
 
+python_search_roots=(
+  "${ROOT_DIR}/scripts/lib"
+  "${ROOT_DIR}/tests/mutation"
+)
+if [[ -d "${ROOT_DIR}/tests/python" ]]; then
+  python_search_roots+=("${ROOT_DIR}/tests/python")
+fi
 mapfile -t python_files < <(
-  find "${ROOT_DIR}/scripts/lib" "${ROOT_DIR}/tests/python" "${ROOT_DIR}/tests/mutation" \
-    -type f -name '*.py' -print | sort
+  find "${python_search_roots[@]}" -type f -name '*.py' -print | sort
 )
 
 branding_scan() {
@@ -136,7 +142,8 @@ done
 
 python3 -m py_compile "${python_files[@]}"
 
-if find "${ROOT_DIR}/tests/python" -type f -name 'test_*.py' -print -quit | grep -q .; then
+if [[ -d "${ROOT_DIR}/tests/python" ]] &&
+  find "${ROOT_DIR}/tests/python" -type f -name 'test_*.py' -print -quit | grep -q .; then
   python3 -m unittest discover -s "${ROOT_DIR}/tests/python" -p 'test_*.py'
 fi
 
