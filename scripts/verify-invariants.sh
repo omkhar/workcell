@@ -2884,7 +2884,7 @@ if PATH="${DOCKER_CONTEXT_SELECTOR_FAKEBIN}:${PATH}" \
   HOME=/tmp \
   ROOT_DIR="${ROOT_DIR}" \
   BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
-  /bin/bash -lc '
+  /bin/bash -c '
     set -euo pipefail
     source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
     export DOCKER_CONTEXT_NAME=colima
@@ -2903,7 +2903,7 @@ selected_context="$(
   HOME=/tmp \
   ROOT_DIR="${ROOT_DIR}" \
   BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
-  /bin/bash -lc '
+  /bin/bash -c '
     set -euo pipefail
     source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
     unset DOCKER_CONTEXT_NAME
@@ -2925,7 +2925,7 @@ fallback_context="$(
     HOME=/tmp \
     ROOT_DIR="${ROOT_DIR}" \
     BARRIER_VERIFY_ROOT="${BARRIER_VERIFY_ROOT}" \
-    /bin/bash -lc '
+    /bin/bash -c '
       set -euo pipefail
       source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
       unset DOCKER_CONTEXT_NAME
@@ -2989,7 +2989,7 @@ printf '%s\n' "$PWD"
 EOS
 chmod 0755 "${FAKE_DOCKER_BIN}/docker"
 
-ROOT_DIR="${ROOT_DIR}" PATH="${FAKE_DOCKER_BIN}:${PATH}" HOME=/tmp /bin/bash -lc '
+ROOT_DIR="${ROOT_DIR}" PATH="${FAKE_DOCKER_BIN}:${PATH}" HOME=/tmp /bin/bash -c '
   set -euo pipefail
   source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   export HOME="${BARRIER_VERIFY_ROOT}/docker-client-home"

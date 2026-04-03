@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 from pathlib import Path, PurePosixPath
+from typing import NoReturn
 
 
 VALID_LANES = {"secretless", "provider-e2e"}
@@ -13,7 +14,7 @@ VALID_PROVIDERS = {"codex", "claude", "gemini"}
 PERSONA_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
-def die(message: str) -> None:
+def die(message: str) -> NoReturn:
     raise SystemExit(message)
 
 
@@ -202,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     parser.error(f"unsupported command: {args.command}")
-    return 2
+    return 2  # unreachable; defensive in case parser.error is overridden
 
 
 if __name__ == "__main__":
