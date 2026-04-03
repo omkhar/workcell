@@ -423,6 +423,31 @@ require_exact_packages(
     "tools/remote-validator/Dockerfile",
 )
 
+# Verify markdownlint-cli pinning in both validator Dockerfiles.
+for label, dockerfile_text, dockerfile_path in [
+    ("Validator", validator_dockerfile, "tools/validator/Dockerfile"),
+    ("Remote validator", remote_validator_dockerfile, "tools/remote-validator/Dockerfile"),
+]:
+    mdl_version = require_arg(dockerfile_text, "MARKDOWNLINT_VERSION", dockerfile_path)
+    mdl_sha512 = require_arg(dockerfile_text, "MARKDOWNLINT_SHA512", dockerfile_path)
+    if len(mdl_sha512) != 128 or not all(c in "0123456789abcdef" for c in mdl_sha512):
+        raise SystemExit(f"{dockerfile_path}: MARKDOWNLINT_SHA512 must be 128 hex characters")
+    if "sha512sum -c" not in dockerfile_text:
+        raise SystemExit(f"{dockerfile_path}: markdownlint-cli must be installed from a verified tarball")
+
+validator_mdl_version = require_arg(validator_dockerfile, "MARKDOWNLINT_VERSION", "tools/validator/Dockerfile")
+remote_mdl_version = require_arg(remote_validator_dockerfile, "MARKDOWNLINT_VERSION", "tools/remote-validator/Dockerfile")
+if validator_mdl_version != remote_mdl_version:
+    raise SystemExit(
+        f"MARKDOWNLINT_VERSION mismatch: validator={validator_mdl_version}, remote-validator={remote_mdl_version}"
+    )
+validator_mdl_sha = require_arg(validator_dockerfile, "MARKDOWNLINT_SHA512", "tools/validator/Dockerfile")
+remote_mdl_sha = require_arg(remote_validator_dockerfile, "MARKDOWNLINT_SHA512", "tools/remote-validator/Dockerfile")
+if validator_mdl_sha != remote_mdl_sha:
+    raise SystemExit(
+        f"MARKDOWNLINT_SHA512 mismatch between validator and remote-validator Dockerfiles"
+    )
+
 root_package = providers_package_lock.get("packages", {}).get("", {})
 expected_dependencies = providers_package_json.get("dependencies", {})
 actual_dependencies = root_package.get("dependencies", {})

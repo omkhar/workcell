@@ -49,6 +49,15 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
      done \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache
 
+# Pin markdownlint-cli: fetch tarball from registry and verify sha512 before install.
+ARG MARKDOWNLINT_VERSION=0.48.0
+ARG MARKDOWNLINT_SHA512=36465036ed84d10e6a2c4107c168faef87982124cb0f88cc1e40730e86ee8d777592ffb20b18bc8ce683feb66840d5b514104c306429b96e52a3c079d4dfded0
+RUN cd /tmp \
+  && npm pack "markdownlint-cli@${MARKDOWNLINT_VERSION}" --pack-destination . \
+  && echo "${MARKDOWNLINT_SHA512}  markdownlint-cli-${MARKDOWNLINT_VERSION}.tgz" | sha512sum -c - \
+  && npm install -g "markdownlint-cli-${MARKDOWNLINT_VERSION}.tgz" \
+  && rm -f "markdownlint-cli-${MARKDOWNLINT_VERSION}.tgz"
+
 WORKDIR /workspace
 
 ENV WORKCELL_REQUIRE_SUPPORTED_COVERAGE=1
