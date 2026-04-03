@@ -82,7 +82,7 @@ Other defaults that matter:
 Install the launcher symlink and verify the host prerequisites:
 
 ```bash
-./scripts/install.sh
+./install.sh
 workcell --prepare --agent codex --workspace /path/to/repo
 ```
 
@@ -117,20 +117,32 @@ What to expect from the safe path:
 - `--debug-log`, `--file-trace-log`, and `--audit-transcript` are explicit
   lower-assurance operator choices and are off by default
 
-## Local development
+## Contributing
 
-Run the local check suite before pushing:
+Validation tiers, from fastest to most thorough:
 
 ```bash
-./build_and_test.sh             # builds validator container, runs all checks
-./build_and_test.sh --list      # list files that would be checked (no Docker needed)
-./build_and_test.sh --strict    # exit on first failure
-./build_and_test.sh --auto-fix  # run markdownlint --fix before linting
+scripts/dev-quick-check.sh      # seconds, host tools only (shellcheck, cargo, pytest)
+scripts/build-and-test.sh       # minutes, all checks, host tools only
+scripts/pre-merge.sh            # full release gate with Docker, repro builds
 ```
 
-This runs inside the same Docker container that CI uses. Release-specific
-checks (upstream verification, release bundle) only run in CI. Requires
-Docker (Docker Desktop or colima), except `--list` which runs on the host.
+`dev-quick-check.sh` is the normal edit loop. `build-and-test.sh` runs the
+full validation suite directly on the host using locally installed tools. CI
+is the authority on exact tool versions; local runs catch issues early without
+Docker overhead. `pre-merge.sh` adds container-smoke tests, reproducible-build
+verification, and release-specific checks (requires Docker).
+
+`build-and-test.sh` flags:
+
+```bash
+scripts/build-and-test.sh --install   # install missing host tools (brew, pip, npm)
+scripts/build-and-test.sh --list      # list files that would be checked
+scripts/build-and-test.sh --strict    # exit on first failure
+scripts/build-and-test.sh --auto-fix  # run markdownlint --fix before linting
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites and workflow details.
 
 ## Session inputs
 
