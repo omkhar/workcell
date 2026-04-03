@@ -868,10 +868,18 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir string) map[string]
 						rebasedSSH[sshKey] = rebaseFragmentPath(sshValue, fragmentDir)
 					}
 				}
-				if identities, ok := rebasedSSH["identities"].([]any); ok {
+				switch identities := rebasedSSH["identities"].(type) {
+				case []any:
 					rebasedIDs := make([]any, 0, len(identities))
 					for _, identity := range identities {
 						rebasedIDs = append(rebasedIDs, rebaseFragmentPath(identity, fragmentDir))
+					}
+					rebasedSSH["identities"] = rebasedIDs
+				case []string:
+					rebasedIDs := make([]string, len(identities))
+					for i, identity := range identities {
+						rebasedIdentity, _ := rebaseFragmentPath(identity, fragmentDir).(string)
+						rebasedIDs[i] = rebasedIdentity
 					}
 					rebasedSSH["identities"] = rebasedIDs
 				}
