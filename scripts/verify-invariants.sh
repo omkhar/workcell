@@ -168,6 +168,14 @@ cleanup() {
   trap - EXIT
   set +e
 
+  remove_tree() {
+    local path="$1"
+
+    [[ -n "${path}" && -e "${path}" ]] || return 0
+    chmod -R u+w "${path}" 2>/dev/null || true
+    rm -rf "${path}" 2>/dev/null || true
+  }
+
   delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME:-}"
   delete_verify_colima_profile "${AUDIT_RESTORE_PROFILE_NAME:-}"
   delete_verify_colima_profile "${STRICT_REFRESH_PROFILE_NAME:-}"
@@ -176,16 +184,16 @@ cleanup() {
   delete_verify_colima_profile "${TRANSCRIPT_LOG_PROFILE:-}"
   delete_verify_colima_profile "${BROKEN_DEBUG_POINTER_PROFILE:-}"
   delete_verify_colima_profile "${UNMANAGED_PROFILE_NAME:-}"
-  rm -rf "${CODEX_VERIFY_HOME}"
-  rm -rf "${BARRIER_VERIFY_ROOT}"
-  rm -rf "${INSTALL_VERIFY_HOME}"
-  rm -rf "${REMOTE_VALIDATE_CONFIG_ROOT}"
+  remove_tree "${CODEX_VERIFY_HOME}"
+  remove_tree "${BARRIER_VERIFY_ROOT}"
+  remove_tree "${INSTALL_VERIFY_HOME}"
+  remove_tree "${REMOTE_VALIDATE_CONFIG_ROOT}"
   rm -f "${REPO_LOCAL_REMOTE_CONFIG_PATH}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
   if [[ -n "${COLIMA_PROFILE_FIXTURE}" ]] && [[ -d "${COLIMA_PROFILE_FIXTURE}" ]]; then
-    rm -rf "${COLIMA_PROFILE_FIXTURE}"
+    remove_tree "${COLIMA_PROFILE_FIXTURE}"
   fi
   rm -f "${LEGACY_LOCAL_REMOTE_CONFIG_PATH}"
 }
