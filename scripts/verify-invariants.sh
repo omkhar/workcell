@@ -2313,7 +2313,7 @@ fi
 for _git_env_var in GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE; do
   # shellcheck disable=SC2016
   printf -v _git_env_literal '"${%s:-}"' "${_git_env_var}"
-  if ! grep -Fq "${_git_env_literal}" "${ROOT_DIR}/runtime/container/bin/git"; then
+  if ! grep -Fq -- "${_git_env_literal}" "${ROOT_DIR}/runtime/container/bin/git"; then
     echo "Expected runtime/container/bin/git to block ${_git_env_var} to prevent object-store redirection" >&2
     exit 1
   fi
@@ -2364,7 +2364,7 @@ for needle in \
   '-type l \) -name hooks' \
   '-type l \) \( -name config -o -name config.worktree \)' \
   '-type l \) -name worktrees'; do
-  if ! grep -Fq "${needle}" "${ROOT_DIR}/scripts/workcell"; then
+  if ! grep -Fq -- "${needle}" "${ROOT_DIR}/scripts/workcell"; then
     echo "Expected prepare_workspace_control_plane_shadow to match snippet: ${needle}" >&2
     exit 1
   fi
@@ -5415,7 +5415,7 @@ provider_e2e_workflow="${ROOT_DIR}/.github/workflows/provider-e2e.yml"
 provider_e2e_top_block="$(sed -n '1,/^permissions:/p' "${provider_e2e_workflow}")"
 grep -Fq 'workflow_dispatch:' <<<"${provider_e2e_top_block}"
 for forbidden in 'push:' 'pull_request:' 'pull_request_target:' 'schedule:'; do
-  if grep -Fq "${forbidden}" <<<"${provider_e2e_top_block}"; then
+  if grep -Fq -- "${forbidden}" <<<"${provider_e2e_top_block}"; then
     echo "Unexpected provider-e2e workflow trigger: ${forbidden}" >&2
     exit 1
   fi
@@ -5433,7 +5433,7 @@ for needle in \
   $'permissions:\n      contents: read' \
   'persist-credentials: false' \
   'ref: ${{ github.sha }}'; do
-  if ! grep -Fq "${needle}" "${provider_e2e_workflow}"; then
+  if ! grep -Fq -- "${needle}" "${provider_e2e_workflow}"; then
     echo "Missing provider-e2e workflow invariant: ${needle}" >&2
     exit 1
   fi
@@ -5470,22 +5470,22 @@ check_provider_step() {
     capture { print }
   ' "${provider_e2e_workflow}")"
 
-  if ! grep -Fq "${expected_if}" <<<"${block}"; then
+  if ! grep -Fq -- "${expected_if}" <<<"${block}"; then
     echo "Missing provider selector in ${step_name}" >&2
     exit 1
   fi
-  if ! grep -Fq "${expected_agent}" <<<"${block}"; then
+  if ! grep -Fq -- "${expected_agent}" <<<"${block}"; then
     echo "Missing pinned agent launch in ${step_name}" >&2
     exit 1
   fi
   for needle in "${required[@]}"; do
-    if ! grep -Fq "${needle}" <<<"${block}"; then
+    if ! grep -Fq -- "${needle}" <<<"${block}"; then
       echo "Missing required env ${needle} in ${step_name}" >&2
       exit 1
     fi
   done
   for needle in "${forbidden[@]}"; do
-    if grep -Fq "${needle}" <<<"${block}"; then
+    if grep -Fq -- "${needle}" <<<"${block}"; then
       echo "Unexpected env ${needle} in ${step_name}" >&2
       exit 1
     fi
@@ -6228,7 +6228,7 @@ for gemini_sandbox_env in \
   'unset SANDBOX_PORTS' \
   'unset SANDBOX_SET_UID_GID' \
   'unset SEATBELT_PROFILE'; do
-  if ! grep -Fq "${gemini_sandbox_env}" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  if ! grep -Fq -- "${gemini_sandbox_env}" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
     echo "Expected provider wrapper to scrub Gemini sandbox env knob: ${gemini_sandbox_env}" >&2
     exit 1
   fi
@@ -6279,7 +6279,7 @@ for needle in \
   'validate_colima_runtime_workspace_view "${profile}" "${workspace}"' \
   'Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents.' \
   'Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view.'; do
-  if ! grep -Fq "${needle}" "${ROOT_DIR}/scripts/workcell"; then
+  if ! grep -Fq -- "${needle}" "${ROOT_DIR}/scripts/workcell"; then
     echo "Expected workcell mount-view validation snippet missing: ${needle}" >&2
     exit 1
   fi
@@ -6287,21 +6287,21 @@ done
 
 # shellcheck disable=SC2016
 for needle in 'cd "${home}" &&' 'cd / &&' 'LIMA_WORKDIR=/'; do
-  if ! grep -Fq "${needle}" "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
+  if ! grep -Fq -- "${needle}" "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
     echo "Expected egress helper safe-cwd snippet missing: ${needle}" >&2
     exit 1
   fi
 done
 
 for token in '--inspect' 'print_inspect_state' 'provider_native_sandbox_configured' 'provider_native_sandbox_effective' 'provider_native_sandbox_reason' 'codex' 'claude' 'gemini'; do
-  if ! grep -Fq "${token}" "${ROOT_DIR}/scripts/workcell"; then
+  if ! grep -Fq -- "${token}" "${ROOT_DIR}/scripts/workcell"; then
     echo "Expected workcell to contain --inspect contract token: ${token}" >&2
     exit 1
   fi
 done
 
 for field in workspace network_policy session_assurance_initial provider_native_sandbox_configured provider_native_sandbox_effective provider_native_sandbox_reason codex claude gemini; do
-  if ! grep -Fq "${field}" "${ROOT_DIR}/scripts/workcell" && ! grep -Fq "${field}" "${ROOT_DIR}/runtime/container/assurance.sh"; then
+  if ! grep -Fq -- "${field}" "${ROOT_DIR}/scripts/workcell" && ! grep -Fq -- "${field}" "${ROOT_DIR}/runtime/container/assurance.sh"; then
     echo "Expected audit log field referenced in control scripts: ${field}" >&2
     exit 1
   fi
@@ -6336,7 +6336,7 @@ for scenario_script_basename in \
   "run-scenario-tests.sh" \
   "verify-scenario-coverage.sh" \
   "verify-control-plane-parity.sh"; do
-  if ! grep -Fq "${scenario_script_basename}" "${ROOT_DIR}/scripts/validate-repo.sh"; then
+  if ! grep -Fq -- "${scenario_script_basename}" "${ROOT_DIR}/scripts/validate-repo.sh"; then
     echo "validate-repo.sh must reference ${scenario_script_basename}" >&2
     exit 1
   fi
