@@ -233,7 +233,7 @@ buildx_builder_matches_context() {
         return 0
       fi
     done
-  done < "${inspect_output_path}"
+  done <"${inspect_output_path}"
 
   return 1
 }

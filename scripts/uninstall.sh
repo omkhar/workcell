@@ -3,6 +3,8 @@ set -euo pipefail
 
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GO_BIN="${WORKCELL_GO_BIN:-}"
 
 DRY_RUN=0
 
@@ -26,6 +28,27 @@ Preserved on purpose:
 EOF
 }
 
+resolve_go_bin() {
+  if [[ -n "${GO_BIN}" && -x "${GO_BIN}" ]]; then
+    return 0
+  fi
+  if GO_BIN="$(command -v go 2>/dev/null)"; then
+    return 0
+  fi
+  for candidate in \
+    /opt/homebrew/bin/go \
+    /usr/local/go/bin/go \
+    /usr/local/bin/go \
+    /usr/bin/go; do
+    if [[ -x "${candidate}" ]]; then
+      GO_BIN="${candidate}"
+      return 0
+    fi
+  done
+  echo "Missing required tool: go" >&2
+  exit 1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
@@ -44,25 +67,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-REAL_HOME="${HOME:-}"
-if [[ -z "${REAL_HOME}" ]]; then
-  REAL_HOME="$(
-    /usr/bin/python3 - <<'PY'
-import os
-import pwd
-
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
-  )"
-fi
-REAL_HOME="$(
-  /usr/bin/python3 - "${REAL_HOME}" <<'PY'
-import os
-import sys
-
-print(os.path.realpath(os.path.expanduser(sys.argv[1])))
-PY
-)"
+resolve_go_bin
+REAL_HOME="$(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-hostutil path home)"
 COLIMA_HOME="${REAL_HOME}/.colima"
 INSTALL_PATH="${REAL_HOME}/.local/bin/workcell"
 MAN_PATH="${REAL_HOME}/.local/share/man/man1/workcell.1"

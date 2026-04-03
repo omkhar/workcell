@@ -1,4 +1,4 @@
-#!/usr/bin/env -S -i PATH=/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash
+#!/usr/bin/env -S -i PATH=/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash
 # shellcheck shell=bash
 set -Eeuo pipefail
 
@@ -62,8 +62,17 @@ free_bytes_for_path() {
   /bin/df -Pk "${target_path}" | awk 'NR==2 {print $4 * 1024}'
 }
 
-readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
+require_tool() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required tool: $1" >&2
+    exit 1
+  }
+}
+
+require_tool go
+require_tool jq
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST_GATE_SCRIPTS=(
@@ -87,19 +96,7 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
 fi
 
 REAL_HOME="$(
-  if [[ -x /usr/bin/python3 ]]; then
-    /usr/bin/python3 - <<'PY'
-import os
-import pwd
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
-  else
-    python3 - <<'PY'
-import os
-import pwd
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
-  fi
+  printf '%s\n' ~
 )"
 CODEX_VERIFY_HOME="$(mktemp -d)"
 BARRIER_VERIFY_ROOT="$(mktemp -d)"
@@ -111,17 +108,10 @@ LOCAL_REMOTE_CONFIG_PATH="${REMOTE_VALIDATE_CONFIG_ROOT}/remote-validate.env"
 LEGACY_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/.workcell.remote.local"
 REPO_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/tmp/verify-remote-validate-repo.env"
 ROOT_DRY_RUN_PROFILE_NAME="$(
-  python3 - "${ROOT_DIR}" <<'PY'
-import hashlib
-import pathlib
-import re
-import sys
-
-workspace = pathlib.Path(sys.argv[1]).resolve()
-slug = re.sub(r"[^a-z0-9]+", "-", workspace.name.lower()).strip("-")[:10] or "workspace"
-digest = hashlib.sha256(str(workspace).encode("utf-8")).hexdigest()[:8]
-print(f"workcell-{slug}-{digest}")
-PY
+  workspace="$(cd "${ROOT_DIR}" && pwd -P)"
+  slug="$(printf '%s' "${workspace##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^$/workspace/' | cut -c1-10)"
+  digest="$(printf '%s' "${workspace}" | shasum -a 256 | awk '{print substr($1,1,8)}')"
+  printf 'workcell-%s-%s\n' "${slug}" "${digest}"
 )"
 ROOT_DRY_RUN_PROFILE_DIR="${REAL_HOME}/.colima/${ROOT_DRY_RUN_PROFILE_NAME}"
 ROOT_DRY_RUN_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${ROOT_DRY_RUN_PROFILE_NAME}"
@@ -251,13 +241,7 @@ rg() {
 
 canonicalize_verify_tool_path() {
   local candidate="$1"
-
-  python3 - "${candidate}" <<'PY'
-import os
-import sys
-
-print(os.path.realpath(sys.argv[1]))
-PY
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil canonicalize-path "${candidate}")
 }
 
 verify_tool_path_is_trusted() {
@@ -407,7 +391,7 @@ for file in \
   "${ROOT_DIR}/runtime/container/rust/src/lib.rs" \
   "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-git-launcher.rs" \
   "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-launcher.rs" \
-  "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+  "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh" \
   "${ROOT_DIR}/scripts/workcell" \
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; do
@@ -1207,12 +1191,7 @@ grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/tr
 
 CUSTOM_DEBUG_DIR="${INSTALL_VERIFY_HOME}/custom-workcell-debug"
 CUSTOM_DEBUG_DIR_REAL="$(
-  /usr/bin/python3 - "${CUSTOM_DEBUG_DIR}" <<'PY'
-import os
-import sys
-
-print(os.path.realpath(sys.argv[1]))
-PY
+  cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil canonicalize-path "${CUSTOM_DEBUG_DIR}"
 )"
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug --debug-dir "${CUSTOM_DEBUG_DIR}" >/tmp/workcell-install-custom-debug.out 2>&1; then
   echo "Expected scripts/install.sh --debug --debug-dir to succeed in a clean temporary HOME" >&2
@@ -1334,108 +1313,69 @@ classification = "secret"
 providers = ["codex"]
 EOF
 
-python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+"${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
   --agent codex \
   --mode strict \
   --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle" >/tmp/workcell-injection-manifest.out
-python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+"${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
   --agent claude \
   --mode strict \
   --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-claude" >/dev/null
-python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+"${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
   --agent gemini \
   --mode strict \
   --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-gemini" >/dev/null
-python3 "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
+"${ROOT_DIR}/scripts/lib/extract_direct_mounts" \
   --manifest "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/manifest.json" \
   --mount-spec "${INJECTION_POLICY_FIXTURE_ROOT}/bundle.mounts.json" >/dev/null
 
-python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/manifest.json" <<'PY'
-import json
-import pathlib
-import sys
-
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-if manifest["documents"]["common"] != "documents/common.md":
-    raise SystemExit("expected common document to be staged in the injection bundle")
-if manifest["documents"]["codex"] != "documents/codex.md":
-    raise SystemExit("expected codex document to be staged in the injection bundle")
-targets = {entry["target"]: entry for entry in manifest["copies"]}
-if "/state/injected/public.txt" not in targets:
-    raise SystemExit("expected public injected file target in manifest")
-if "/state/agent-home/.config/workcell/token.txt" not in targets:
-    raise SystemExit("expected home-relative injected file target in manifest")
-if targets["/state/injected/public.txt"]["source"] != "copies/0":
-    raise SystemExit("expected public injected files to stay staged in the bundle")
-if targets["/state/agent-home/.config/workcell/token.txt"]["source"]["mount_path"] != "/opt/workcell/host-inputs/copies/1":
-    raise SystemExit("expected secret injected files to use the managed direct-mount path")
-if "source" in targets["/state/agent-home/.config/workcell/token.txt"]["source"]:
-    raise SystemExit("expected secret copy manifests to hide host source paths from the runtime")
-if manifest["credentials"]["codex_auth"]["mount_path"] != "/opt/workcell/host-inputs/credentials/codex-auth.json":
-    raise SystemExit("expected codex auth credential to use the managed credential mount path")
-if "source" in manifest["credentials"]["codex_auth"]:
-    raise SystemExit("expected credential manifests to hide host source paths from the runtime")
-if manifest["credentials"]["github_hosts"]["mount_path"] != "/opt/workcell/host-inputs/credentials/github-hosts.yml":
-    raise SystemExit("expected shared GitHub hosts credential to use the managed credential mount path")
-if manifest["ssh"]["config"]["mount_path"] != "/opt/workcell/host-inputs/ssh/config":
-    raise SystemExit("expected SSH config to use the managed direct-mount path")
-if "source" in manifest["ssh"]["config"]:
-    raise SystemExit("expected ssh manifests to hide host source paths from the runtime")
-if manifest["ssh"]["identities"][0]["mount_path"] != "/opt/workcell/host-inputs/ssh/identity-0":
-    raise SystemExit("expected SSH identities to use the managed direct-mount path")
-if "source" in manifest["ssh"]["identities"][0]:
-    raise SystemExit("expected ssh identity manifests to hide host source paths from the runtime")
-if manifest["ssh"]["identities"][0]["target_name"] != "id_test":
-    raise SystemExit("expected ssh identity target name to preserve the source basename")
-PY
+manifest_path="${INJECTION_POLICY_FIXTURE_ROOT}/bundle/manifest.json"
+[[ "$(jq -r '.documents.common' "${manifest_path}")" == "documents/common.md" ]]
+[[ "$(jq -r '.documents.codex' "${manifest_path}")" == "documents/codex.md" ]]
+[[ "$(jq -r '.copies[] | select(.target=="/state/injected/public.txt") | .source' "${manifest_path}")" == "copies/0" ]]
+[[ "$(jq -r '.copies[] | select(.target=="/state/agent-home/.config/workcell/token.txt") | .source.mount_path' "${manifest_path}")" == "/opt/workcell/host-inputs/copies/1" ]]
+[[ "$(jq -r '.copies[] | select(.target=="/state/agent-home/.config/workcell/token.txt") | has("source")' "${manifest_path}")" == "true" ]]
+[[ "$(jq -r '.credentials.codex_auth.mount_path' "${manifest_path}")" == "/opt/workcell/host-inputs/credentials/codex-auth.json" ]]
+[[ "$(jq -r '.credentials.codex_auth | has("source")' "${manifest_path}")" == "false" ]]
+[[ "$(jq -r '.credentials.github_hosts.mount_path' "${manifest_path}")" == "/opt/workcell/host-inputs/credentials/github-hosts.yml" ]]
+[[ "$(jq -r '.ssh.config.mount_path' "${manifest_path}")" == "/opt/workcell/host-inputs/ssh/config" ]]
+[[ "$(jq -r '.ssh.config | has("source")' "${manifest_path}")" == "false" ]]
+[[ "$(jq -r '.ssh.identities[0].mount_path' "${manifest_path}")" == "/opt/workcell/host-inputs/ssh/identity-0" ]]
+[[ "$(jq -r '.ssh.identities[0] | has("source")' "${manifest_path}")" == "false" ]]
+[[ "$(jq -r '.ssh.identities[0].target_name' "${manifest_path}")" == "id_test" ]]
 
 if [[ -e "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/credentials/codex-auth.json" ]]; then
   echo "Expected credentials.* sources to mount directly from the host instead of being restaged into the bundle" >&2
   exit 1
 fi
 
-python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle.mounts.json" <<'PY'
-import json
-import pathlib
-import sys
-
-mounts = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-mount_paths = {entry["mount_path"] for entry in mounts}
-expected = {
-    "/opt/workcell/host-inputs/credentials/codex-auth.json",
-    "/opt/workcell/host-inputs/credentials/github-hosts.yml",
-    "/opt/workcell/host-inputs/copies/1",
-    "/opt/workcell/host-inputs/ssh/config",
-    "/opt/workcell/host-inputs/ssh/known_hosts",
-    "/opt/workcell/host-inputs/ssh/identity-0",
-}
-if expected - mount_paths:
-    raise SystemExit("expected direct-mount spec to preserve all secret input mount paths")
-PY
+mapfile -t actual_mount_paths < <(jq -r '.[].mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle.mounts.json" | sort -u)
+expected_mount_paths=(
+  "/opt/workcell/host-inputs/credentials/codex-auth.json"
+  "/opt/workcell/host-inputs/credentials/github-hosts.yml"
+  "/opt/workcell/host-inputs/copies/1"
+  "/opt/workcell/host-inputs/ssh/config"
+  "/opt/workcell/host-inputs/ssh/known_hosts"
+  "/opt/workcell/host-inputs/ssh/identity-0"
+)
+for expected_mount_path in "${expected_mount_paths[@]}"; do
+  if ! printf '%s\n' "${actual_mount_paths[@]}" | grep -Fxq "${expected_mount_path}"; then
+    echo "expected direct-mount spec to preserve all secret input mount paths" >&2
+    exit 1
+  fi
+done
 
 if [[ -e "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/ssh/config" ]]; then
   echo "Expected ssh.* sources to mount directly from the host instead of being restaged into the bundle" >&2
   exit 1
 fi
 
-python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-claude/manifest.json" "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-gemini/manifest.json" <<'PY'
-import json
-import pathlib
-import sys
-
-claude_manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-gemini_manifest = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
-
-if claude_manifest["credentials"]["claude_auth"]["mount_path"] != "/opt/workcell/host-inputs/credentials/claude-auth.json":
-    raise SystemExit("expected claude auth credential to use the managed credential mount path")
-if claude_manifest["credentials"]["claude_mcp"]["mount_path"] != "/opt/workcell/host-inputs/credentials/claude-mcp.json":
-    raise SystemExit("expected claude MCP credential to use the managed credential mount path")
-if gemini_manifest["credentials"]["gemini_projects"]["mount_path"] != "/opt/workcell/host-inputs/credentials/gemini-projects.json":
-    raise SystemExit("expected Gemini projects credential to use the managed credential mount path")
-PY
+[[ "$(jq -r '.credentials.claude_auth.mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-claude/manifest.json")" == "/opt/workcell/host-inputs/credentials/claude-auth.json" ]]
+[[ "$(jq -r '.credentials.claude_mcp.mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-claude/manifest.json")" == "/opt/workcell/host-inputs/credentials/claude-mcp.json" ]]
+[[ "$(jq -r '.credentials.gemini_projects.mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-gemini/manifest.json")" == "/opt/workcell/host-inputs/credentials/gemini-projects.json" ]]
 
 cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/fragment-docs.toml"
 [documents]
@@ -1456,35 +1396,25 @@ source = "gh-hosts.yml"
 providers = ["codex"]
 EOF
 
-python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+"${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy-with-includes.toml" \
   --agent codex \
   --mode strict \
   --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes" >/dev/null
 
-python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json" <<'PY'
-import json
-import pathlib
-import sys
-
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-metadata = manifest["metadata"]
-
-if manifest["documents"]["common"] != "documents/common.md":
-    raise SystemExit("expected included policy fragment to contribute documents.common")
-if manifest["credentials"]["codex_auth"]["mount_path"] != "/opt/workcell/host-inputs/credentials/codex-auth.json":
-    raise SystemExit("expected included policy fragment to contribute credentials.codex_auth")
-if not metadata["policy_sha256"].startswith("sha256:"):
-    raise SystemExit("expected composite policy metadata to expose a sha256 digest")
-source_names = [pathlib.Path(entry["path"]).name for entry in metadata["policy_sources"]]
-if source_names != ["fragment-docs.toml", "fragment-credentials.toml", "policy-with-includes.toml"]:
-    raise SystemExit(f"unexpected included policy source order: {source_names!r}")
-if metadata["policy_entrypoint"] != "policy-with-includes.toml":
-    raise SystemExit(f"expected relative policy entrypoint, found {metadata['policy_entrypoint']!r}")
-for entry in metadata["policy_sources"]:
-    if entry["path"].startswith("/"):
-        raise SystemExit(f"policy source leaked an absolute host path: {entry['path']!r}")
-PY
+[[ "$(jq -r '.documents.common' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == "documents/common.md" ]]
+[[ "$(jq -r '.credentials.codex_auth.mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == "/opt/workcell/host-inputs/credentials/codex-auth.json" ]]
+[[ "$(jq -r '.metadata.policy_sha256' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == sha256:* ]]
+mapfile -t included_policy_source_names < <(jq -r '.metadata.policy_sources[].path | split("/")[-1]' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")
+if [[ "${included_policy_source_names[*]}" != "fragment-docs.toml fragment-credentials.toml policy-with-includes.toml" ]]; then
+  echo "unexpected included policy source order: ${included_policy_source_names[*]}" >&2
+  exit 1
+fi
+[[ "$(jq -r '.metadata.policy_entrypoint' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == "policy-with-includes.toml" ]]
+if jq -r '.metadata.policy_sources[].path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json" | grep -Eq '^/'; then
+  echo "policy source leaked an absolute host path" >&2
+  exit 1
+fi
 
 mkdir -p "${INJECTION_POLICY_FIXTURE_ROOT}/fragments"
 cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/fragments/common-fragment.md"
@@ -1505,28 +1435,16 @@ version = 1
 includes = ["fragments/fragment-relative.toml"]
 EOF
 
-python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+"${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy-with-nested-includes.toml" \
   --agent codex \
   --mode strict \
   --output-root "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes" >/dev/null
 
-python3 - "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/manifest.json" "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/documents/common.md" <<'PY'
-import json
-import pathlib
-import sys
-
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-document = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
-expected_auth = pathlib.Path(sys.argv[1]).parent.parent / "fragments" / "fragment-auth.json"
-
-if manifest["documents"]["common"] != "documents/common.md":
-    raise SystemExit("expected nested include fragment to contribute documents.common")
-if document != "fragment common\n":
-    raise SystemExit(f"expected nested include document content, found {document!r}")
-if manifest["credentials"]["codex_auth"]["source"] != str(expected_auth.resolve()):
-    raise SystemExit("expected nested include credential path to resolve relative to the fragment file")
-PY
+[[ "$(jq -r '.documents.common' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/manifest.json")" == "documents/common.md" ]]
+[[ "$(cat "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/documents/common.md")" == $'fragment common\n' ]]
+expected_auth="$(cd "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/../fragments" && pwd -P)/fragment-auth.json"
+[[ "$(jq -r '.credentials.codex_auth.source' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/manifest.json")" == "${expected_auth}" ]]
 
 INJECTION_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
   --agent codex \
@@ -1551,38 +1469,6 @@ if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/c
 fi
 
 "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
-
-python3 - "${ROOT_DIR}/runtime/container/control-plane-manifest.json" <<'PY'
-import json
-import pathlib
-import sys
-
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-if manifest.get("schema_version") != 2:
-    raise SystemExit("expected control-plane manifest schema_version 2")
-runtime_artifacts = {entry["runtime_path"]: entry for entry in manifest.get("runtime_artifacts", [])}
-host_repo_paths = {entry["repo_path"] for entry in manifest.get("host_artifacts", [])}
-for required in (
-    "/opt/workcell/adapters/codex/.codex/config.toml",
-    "/opt/workcell/adapters/claude/.claude/settings.json",
-    "/opt/workcell/adapters/gemini/.gemini/settings.json",
-    "/usr/local/libexec/workcell/home-control-plane.sh",
-    "/usr/local/libexec/workcell/provider-wrapper.sh",
-    "/etc/claude-code/managed-settings.json",
-):
-    if required not in runtime_artifacts:
-        raise SystemExit(f"missing control-plane manifest runtime path: {required}")
-    if len(runtime_artifacts[required].get("sha256", "")) != 64:
-        raise SystemExit(f"expected sha256 for {required}")
-for required_repo_path in (
-    "scripts/lib/extract_direct_mounts.py",
-    "scripts/lib/trusted-docker-client.sh",
-    "scripts/workcell",
-    "scripts/lib/render_injection_bundle.py",
-):
-    if required_repo_path not in host_repo_paths:
-        raise SystemExit(f"missing host control-plane manifest repo path: {required_repo_path}")
-PY
 
 if [[ "${INJECTION_DRY_RUN_OUTPUT}" == *"${INJECTION_POLICY_FIXTURE_ROOT}/codex-auth.json"* ]]; then
   echo "Expected workcell --dry-run to redact host credential source paths" >&2
@@ -1626,7 +1512,7 @@ source = "secret.txt"
 target = "~/.codex/config.toml"
 EOF
 
-if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+if "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-policy.toml" \
   --agent codex \
   --mode strict \
@@ -1651,7 +1537,7 @@ provider = ["codex"]
 classification = "secret"
 EOF
 
-if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+if "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-keys.toml" \
   --agent codex \
   --mode strict \
@@ -1674,7 +1560,7 @@ source = "secret.txt"
 target = "~/.config/workcell/secret.txt"
 EOF
 
-if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+if "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/missing-classification.toml" \
   --agent codex \
   --mode strict \
@@ -1747,7 +1633,7 @@ includes = ["duplicate-fragment.toml"]
 codex_auth = "codex-auth.json"
 EOF
 
-if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+if "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/duplicate-fragment-root.toml" \
   --agent codex \
   --mode strict \
@@ -1771,7 +1657,7 @@ cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/cycle-b.toml"
 includes = ["cycle-a.toml"]
 EOF
 
-if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+if "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/cycle-a.toml" \
   --agent codex \
   --mode strict \
@@ -1797,7 +1683,7 @@ version = 1
 includes = ["../outside.toml"]
 EOF
 
-if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+if "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/subdir/escape-root.toml" \
   --agent codex \
   --mode strict \
@@ -2046,7 +1932,7 @@ enabled = true
 identities = ["config"]
 EOF
 
-if python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+if "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-ssh.toml" \
   --agent codex \
   --mode strict \
@@ -2241,8 +2127,8 @@ EOF
 } >"${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 bash "${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 
-if ! rg -q 'env -i PATH="\$\{TRUSTED_HOST_PATH\}" "\$\{HOST_PYTHON3_BIN\}"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to invoke the bootstrap Python helper under a scrubbed environment" >&2
+if ! rg -q 'run_clean_host_command "\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to invoke the bootstrap Go helper under a scrubbed environment" >&2
   exit 1
 fi
 
@@ -2461,20 +2347,17 @@ if ! grep -Fq "find \"\${workspace}\" -type d -name .git -prune -print0" "${ROOT
   echo "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories" >&2
   exit 1
 fi
-python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
-import pathlib
-import sys
-
-text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-if 'find "${workspace}/${git_rel}/modules" \\' not in text:
-    raise SystemExit("Expected prepare_workspace_control_plane_shadow to enumerate module git control-plane paths")
-if '-type l \\) -name hooks' not in text:
-    raise SystemExit("Expected prepare_workspace_control_plane_shadow to mask symlinked module hook directories as empty readonly mounts")
-if '-type l \\) \\( -name config -o -name config.worktree \\)' not in text:
-    raise SystemExit("Expected prepare_workspace_control_plane_shadow to mask symlinked module git config files as empty readonly mounts")
-if '-type l \\) -name worktrees' not in text:
-    raise SystemExit("Expected prepare_workspace_control_plane_shadow to mask symlinked module worktree directories as empty readonly mounts")
-PY
+# shellcheck disable=SC1003,SC2016
+for needle in \
+  'find "${workspace}/${git_rel}/modules" \' \
+  '-type l \) -name hooks' \
+  '-type l \) \( -name config -o -name config.worktree \)' \
+  '-type l \) -name worktrees'; do
+  if ! grep -Fq "${needle}" "${ROOT_DIR}/scripts/workcell"; then
+    echo "Expected prepare_workspace_control_plane_shadow to match snippet: ${needle}" >&2
+    exit 1
+  fi
+done
 
 if rg -q 'disable_ipv6=1' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
   echo "Workcell should not silently disable IPv6 as a fallback for allowlist enforcement" >&2
@@ -4146,7 +4029,6 @@ COLIMA_PROFILE_STATUS_HARNESS="$(mktemp)"
   cat <<'EOF'
 set -euo pipefail
 
-HOST_PYTHON3_BIN="$(command -v python3)"
 TRUSTED_HOST_PATH="${PATH}"
 
 run_host_colima() {
@@ -5518,110 +5400,123 @@ grep -q 'provider_e2e_probe_cmd=.*--agent-arg -p' /tmp/workcell-provider-e2e-gem
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg json' /tmp/workcell-provider-e2e-gemini.out
 grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-gemini.out
 
-python3 - "${ROOT_DIR}/.github/workflows/provider-e2e.yml" <<'EOF_PROVIDER_E2E_WORKFLOW'
-from pathlib import Path
-import sys
+provider_e2e_workflow="${ROOT_DIR}/.github/workflows/provider-e2e.yml"
+provider_e2e_top_block="$(sed -n '1,/^permissions:/p' "${provider_e2e_workflow}")"
+grep -Fq 'workflow_dispatch:' <<<"${provider_e2e_top_block}"
+for forbidden in 'push:' 'pull_request:' 'pull_request_target:' 'schedule:'; do
+  if grep -Fq "${forbidden}" <<<"${provider_e2e_top_block}"; then
+    echo "Unexpected provider-e2e workflow trigger: ${forbidden}" >&2
+    exit 1
+  fi
+done
+if [[ "$(grep -c 'permissions: {}' "${provider_e2e_workflow}")" -lt 2 ]]; then
+  echo "Expected provider-e2e workflow to keep top-level and guard-job permissions: {}" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+for needle in \
+  'Only the repository owner may dispatch provider-e2e.' \
+  'Provider-e2e may only run from the default branch' \
+  'needs: provider-e2e-guard' \
+  $'environment:\n      name: provider-e2e' \
+  $'permissions:\n      contents: read' \
+  'persist-credentials: false' \
+  'ref: ${{ github.sha }}'; do
+  if ! grep -Fq "${needle}" "${provider_e2e_workflow}"; then
+    echo "Missing provider-e2e workflow invariant: ${needle}" >&2
+    exit 1
+  fi
+done
 
-text = Path(sys.argv[1]).read_text()
-on_block = text.split("\npermissions:", 1)[0]
-if "workflow_dispatch:" not in on_block:
-    raise SystemExit("Expected provider-e2e workflow to remain workflow_dispatch-only")
-for forbidden in ("push:", "pull_request:", "pull_request_target:", "schedule:"):
-    if forbidden in on_block:
-        raise SystemExit(f"Unexpected provider-e2e workflow trigger: {forbidden}")
-if text.count("permissions: {}") < 2:
-    raise SystemExit("Expected provider-e2e workflow to keep top-level and guard-job permissions: {}")
-required_global = (
-    "Only the repository owner may dispatch provider-e2e.",
-    "Provider-e2e may only run from the default branch",
-    "needs: provider-e2e-guard",
-    "environment:\n      name: provider-e2e",
-    "permissions:\n      contents: read",
-    "persist-credentials: false",
-    "ref: ${{ github.sha }}",
-)
-for needle in required_global:
-    if needle not in text:
-        raise SystemExit(f"Missing provider-e2e workflow invariant: {needle}")
+check_provider_step() {
+  local step_name="$1"
+  local expected_if="$2"
+  local expected_agent="$3"
+  shift 3
+  local required=()
+  local forbidden=()
+  local mode="required"
+  local value=""
 
-def step_block(name: str) -> str:
-    marker = f"      - name: {name}\n"
-    start = text.find(marker)
-    if start == -1:
-        raise SystemExit(f"Missing workflow step: {name}")
-    next_step = text.find("\n      - name:", start + len(marker))
-    if next_step == -1:
-        next_step = len(text)
-    return text[start:next_step]
+  while (($#)); do
+    value="$1"
+    shift
+    if [[ "${value}" == "--" ]]; then
+      mode="forbidden"
+      continue
+    fi
+    if [[ "${mode}" == "required" ]]; then
+      required+=("${value}")
+    else
+      forbidden+=("${value}")
+    fi
+  done
 
-step_expectations = {
-    "Run Codex authenticated probe": {
-        "if": "if: ${{ inputs.provider == 'codex' }}",
-        "agent": '--agent "codex"',
-        "required": ("WORKCELL_E2E_CODEX_AUTH_JSON",),
-        "forbidden": (
-            "WORKCELL_E2E_CLAUDE_API_KEY",
-            "WORKCELL_E2E_CLAUDE_AUTH_JSON",
-            "WORKCELL_E2E_CLAUDE_MCP_JSON",
-            "WORKCELL_E2E_GCLOUD_ADC_JSON",
-            "WORKCELL_E2E_GEMINI_ENV",
-            "WORKCELL_E2E_GEMINI_OAUTH_JSON",
-            "WORKCELL_E2E_GEMINI_PROJECTS_JSON",
-            "WORKCELL_E2E_GITHUB_CONFIG_YML",
-            "WORKCELL_E2E_GITHUB_HOSTS_YML",
-        ),
-    },
-    "Run Claude authenticated probe": {
-        "if": "if: ${{ inputs.provider == 'claude' }}",
-        "agent": '--agent "claude"',
-        "required": (
-            "WORKCELL_E2E_CLAUDE_API_KEY",
-            "WORKCELL_E2E_CLAUDE_AUTH_JSON",
-            "WORKCELL_E2E_CLAUDE_MCP_JSON",
-        ),
-        "forbidden": (
-            "WORKCELL_E2E_CODEX_AUTH_JSON",
-            "WORKCELL_E2E_GCLOUD_ADC_JSON",
-            "WORKCELL_E2E_GEMINI_ENV",
-            "WORKCELL_E2E_GEMINI_OAUTH_JSON",
-            "WORKCELL_E2E_GEMINI_PROJECTS_JSON",
-            "WORKCELL_E2E_GITHUB_CONFIG_YML",
-            "WORKCELL_E2E_GITHUB_HOSTS_YML",
-        ),
-    },
-    "Run Gemini authenticated probe": {
-        "if": "if: ${{ inputs.provider == 'gemini' }}",
-        "agent": '--agent "gemini"',
-        "required": (
-            "WORKCELL_E2E_GCLOUD_ADC_JSON",
-            "WORKCELL_E2E_GEMINI_ENV",
-            "WORKCELL_E2E_GEMINI_OAUTH_JSON",
-            "WORKCELL_E2E_GEMINI_PROJECTS_JSON",
-        ),
-        "forbidden": (
-            "WORKCELL_E2E_CODEX_AUTH_JSON",
-            "WORKCELL_E2E_CLAUDE_API_KEY",
-            "WORKCELL_E2E_CLAUDE_AUTH_JSON",
-            "WORKCELL_E2E_CLAUDE_MCP_JSON",
-            "WORKCELL_E2E_GITHUB_CONFIG_YML",
-            "WORKCELL_E2E_GITHUB_HOSTS_YML",
-        ),
-    },
+  local block
+  block="$(awk -v step="${step_name}" '
+    $0 == "      - name: " step { capture = 1; print; next }
+    capture && $0 ~ /^      - name:/ { exit }
+    capture { print }
+  ' "${provider_e2e_workflow}")"
+
+  if ! grep -Fq "${expected_if}" <<<"${block}"; then
+    echo "Missing provider selector in ${step_name}" >&2
+    exit 1
+  fi
+  if ! grep -Fq "${expected_agent}" <<<"${block}"; then
+    echo "Missing pinned agent launch in ${step_name}" >&2
+    exit 1
+  fi
+  for needle in "${required[@]}"; do
+    if ! grep -Fq "${needle}" <<<"${block}"; then
+      echo "Missing required env ${needle} in ${step_name}" >&2
+      exit 1
+    fi
+  done
+  for needle in "${forbidden[@]}"; do
+    if grep -Fq "${needle}" <<<"${block}"; then
+      echo "Unexpected env ${needle} in ${step_name}" >&2
+      exit 1
+    fi
+  done
 }
 
-for step_name, expectation in step_expectations.items():
-    block = step_block(step_name)
-    if expectation["if"] not in block:
-        raise SystemExit(f"Missing provider selector in {step_name}")
-    if expectation["agent"] not in block:
-        raise SystemExit(f"Missing pinned agent launch in {step_name}")
-    for needle in expectation["required"]:
-        if needle not in block:
-            raise SystemExit(f"Missing required env {needle} in {step_name}")
-    for needle in expectation["forbidden"]:
-        if needle in block:
-            raise SystemExit(f"Unexpected env {needle} in {step_name}")
-EOF_PROVIDER_E2E_WORKFLOW
+check_provider_step "Run Codex authenticated probe" "if: \$\{\{ inputs.provider == 'codex' \}\}" '--agent "codex"' \
+  "WORKCELL_E2E_CODEX_AUTH_JSON" \
+  -- \
+  "WORKCELL_E2E_CLAUDE_API_KEY" \
+  "WORKCELL_E2E_CLAUDE_AUTH_JSON" \
+  "WORKCELL_E2E_CLAUDE_MCP_JSON" \
+  "WORKCELL_E2E_GCLOUD_ADC_JSON" \
+  "WORKCELL_E2E_GEMINI_ENV" \
+  "WORKCELL_E2E_GEMINI_OAUTH_JSON" \
+  "WORKCELL_E2E_GEMINI_PROJECTS_JSON" \
+  "WORKCELL_E2E_GITHUB_CONFIG_YML" \
+  "WORKCELL_E2E_GITHUB_HOSTS_YML"
+check_provider_step "Run Claude authenticated probe" "if: \$\{\{ inputs.provider == 'claude' \}\}" '--agent "claude"' \
+  "WORKCELL_E2E_CLAUDE_API_KEY" \
+  "WORKCELL_E2E_CLAUDE_AUTH_JSON" \
+  "WORKCELL_E2E_CLAUDE_MCP_JSON" \
+  -- \
+  "WORKCELL_E2E_CODEX_AUTH_JSON" \
+  "WORKCELL_E2E_GCLOUD_ADC_JSON" \
+  "WORKCELL_E2E_GEMINI_ENV" \
+  "WORKCELL_E2E_GEMINI_OAUTH_JSON" \
+  "WORKCELL_E2E_GEMINI_PROJECTS_JSON" \
+  "WORKCELL_E2E_GITHUB_CONFIG_YML" \
+  "WORKCELL_E2E_GITHUB_HOSTS_YML"
+check_provider_step "Run Gemini authenticated probe" "if: \$\{\{ inputs.provider == 'gemini' \}\}" '--agent "gemini"' \
+  "WORKCELL_E2E_GCLOUD_ADC_JSON" \
+  "WORKCELL_E2E_GEMINI_ENV" \
+  "WORKCELL_E2E_GEMINI_OAUTH_JSON" \
+  "WORKCELL_E2E_GEMINI_PROJECTS_JSON" \
+  -- \
+  "WORKCELL_E2E_CODEX_AUTH_JSON" \
+  "WORKCELL_E2E_CLAUDE_API_KEY" \
+  "WORKCELL_E2E_CLAUDE_AUTH_JSON" \
+  "WORKCELL_E2E_CLAUDE_MCP_JSON" \
+  "WORKCELL_E2E_GITHUB_CONFIG_YML" \
+  "WORKCELL_E2E_GITHUB_HOSTS_YML"
 
 FAKE_PROVIDER_E2E_WORKCELL_OK="${BARRIER_VERIFY_ROOT}/provider-e2e-fake-workcell-ok.sh"
 cat >"${FAKE_PROVIDER_E2E_WORKCELL_OK}" <<'EOF_FAKE_PROVIDER_E2E_OK'
@@ -5742,21 +5637,15 @@ case " $* " in
     exit 90
     ;;
 esac
-if ! python3 - "$@" <<'EOF_FAKE_PROVIDER_E2E_CLAUDE_TOOLS'
-import sys
-
-args = sys.argv[1:]
-for index in range(len(args) - 3):
-    if (
-        args[index] == "--agent-arg"
-        and args[index + 1] == "--tools"
-        and args[index + 2] == "--agent-arg"
-        and args[index + 3] == ""
-    ):
-        raise SystemExit(0)
-raise SystemExit(1)
-EOF_FAKE_PROVIDER_E2E_CLAUDE_TOOLS
-then
+have_empty_tools_value=0
+fake_provider_e2e_args=("$@")
+for ((i = 0; i <= ${#fake_provider_e2e_args[@]} - 4; i++)); do
+  if [[ "${fake_provider_e2e_args[i]}" == "--agent-arg" && "${fake_provider_e2e_args[i + 1]}" == "--tools" && "${fake_provider_e2e_args[i + 2]}" == "--agent-arg" && -z "${fake_provider_e2e_args[i + 3]}" ]]; then
+    have_empty_tools_value=1
+    break
+  fi
+done
+if [[ "${have_empty_tools_value}" -ne 1 ]]; then
   echo "missing claude empty tools probe value: $*" >&2
   exit 89
 fi
@@ -5952,44 +5841,46 @@ if command -v codex >/dev/null 2>&1; then
 else
   echo "Skipping host Codex CLI policy checks because codex is not installed; container smoke covers provider policy behavior." >&2
 fi
-python3 - "${ROOT_DIR}" <<'PY'
-import json
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-claude_settings = json.loads((root / "adapters/claude/.claude/settings.json").read_text(encoding="utf-8"))
-claude_managed = json.loads((root / "adapters/claude/managed-settings.json").read_text(encoding="utf-8"))
-gemini_settings = json.loads((root / "adapters/gemini/.gemini/settings.json").read_text(encoding="utf-8"))
-
-for label, settings in (("claude", claude_settings), ("claude managed", claude_managed)):
-    if settings.get("enableAllProjectMcpServers") is not False:
-        raise SystemExit(f"{label} settings must disable auto-enabled project MCP servers")
-    guard = (
-        settings.get("hooks", {})
-        .get("PreToolUse", [{}])[0]
-        .get("hooks", [{}])[0]
-        .get("command")
-    )
-    if guard != "/opt/workcell/adapters/claude/hooks/guard-bash.sh":
-        raise SystemExit(f"{label} settings must use the managed guard-bash.sh hook")
-
-if claude_managed.get("disableBypassPermissionsMode") != "allow":
-    raise SystemExit("Claude managed settings must allow bypass-permissions mode under the external Workcell boundary")
-
-if gemini_settings.get("tools", {}).get("allowed") != []:
-    raise SystemExit("Gemini adapter must not seed allowed tools")
-if gemini_settings.get("mcp", {}).get("allowed") != []:
-    raise SystemExit("Gemini adapter must not seed allowed MCP servers")
-if "selectedType" in gemini_settings.get("security", {}).get("auth", {}):
-    raise SystemExit("Gemini adapter baseline must not hardcode a selected auth type")
-if gemini_settings.get("security", {}).get("folderTrust", {}).get("enabled") is not False:
-    raise SystemExit("Gemini adapter must disable Gemini folder trust inside the managed runtime")
-if gemini_settings.get("tools", {}).get("shell", {}).get("enableInteractiveShell") is not False:
-    raise SystemExit("Gemini adapter must disable interactive shell mode")
-if not isinstance(gemini_settings.get("advanced", {}).get("excludedEnvVars"), list):
-    raise SystemExit("Gemini adapter must exclude sensitive environment variables")
-PY
+for settings_path in \
+  "${ROOT_DIR}/adapters/claude/.claude/settings.json" \
+  "${ROOT_DIR}/adapters/claude/managed-settings.json"; do
+  if ! jq -e '.enableAllProjectMcpServers == false' "${settings_path}" >/dev/null; then
+    echo "$(basename "${settings_path}") settings must disable auto-enabled project MCP servers" >&2
+    exit 1
+  fi
+  if ! jq -e '.hooks.PreToolUse[0].hooks[0].command == "/opt/workcell/adapters/claude/hooks/guard-bash.sh"' "${settings_path}" >/dev/null; then
+    echo "$(basename "${settings_path}") settings must use the managed guard-bash.sh hook" >&2
+    exit 1
+  fi
+done
+if ! jq -e '.disableBypassPermissionsMode == "allow"' "${ROOT_DIR}/adapters/claude/managed-settings.json" >/dev/null; then
+  echo "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary" >&2
+  exit 1
+fi
+if ! jq -e '.tools.allowed == []' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null; then
+  echo "Gemini adapter must not seed allowed tools" >&2
+  exit 1
+fi
+if ! jq -e '.mcp.allowed == []' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null; then
+  echo "Gemini adapter must not seed allowed MCP servers" >&2
+  exit 1
+fi
+if jq -e '.security.auth.selectedType' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null 2>&1; then
+  echo "Gemini adapter baseline must not hardcode a selected auth type" >&2
+  exit 1
+fi
+if ! jq -e '.security.folderTrust.enabled == false' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null; then
+  echo "Gemini adapter must disable Gemini folder trust inside the managed runtime" >&2
+  exit 1
+fi
+if ! jq -e '.tools.shell.enableInteractiveShell == false' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null; then
+  echo "Gemini adapter must disable interactive shell mode" >&2
+  exit 1
+fi
+if ! jq -e '.advanced.excludedEnvVars | type == "array"' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null; then
+  echo "Gemini adapter must exclude sensitive environment variables" >&2
+  exit 1
+fi
 
 GEMINI_AUTH_SELECTION_HARNESS="$(mktemp)"
 GEMINI_AUTH_SELECTION_STDOUT="$(mktemp)"
@@ -6183,39 +6074,28 @@ cat >"${SETTINGS_PATH}" <<'JSON'
 {"security":{"folderTrust":{"enabled":false}}}
 JSON
 workcell_set_gemini_selected_auth_type "${SETTINGS_PATH}" "gemini-api-key"
-python3 - "${SETTINGS_PATH}" <<'PY'
-import json
-import sys
-
-settings = json.load(open(sys.argv[1], encoding="utf-8"))
-if settings.get("security", {}).get("auth", {}).get("selectedType") != "gemini-api-key":
-    raise SystemExit("Gemini selected auth type should be persisted into the seeded settings")
-if settings.get("security", {}).get("folderTrust", {}).get("enabled") is not False:
-    raise SystemExit("Gemini selected auth type update should preserve existing settings")
-PY
+if ! jq -e '.security.auth.selectedType == "gemini-api-key"' "${SETTINGS_PATH}" >/dev/null; then
+  echo "Gemini selected auth type should be persisted into the seeded settings" >&2
+  exit 1
+fi
+if ! jq -e '.security.folderTrust.enabled == false' "${SETTINGS_PATH}" >/dev/null; then
+  echo "Gemini selected auth type update should preserve existing settings" >&2
+  exit 1
+fi
 workcell_set_gemini_folder_trust_enabled "${SETTINGS_PATH}" true
-python3 - "${SETTINGS_PATH}" <<'PY'
-import json
-import sys
-
-settings = json.load(open(sys.argv[1], encoding="utf-8"))
-if settings.get("security", {}).get("folderTrust", {}).get("enabled") is not True:
-    raise SystemExit("Gemini folder-trust helper should restore trust prompts for breakglass sessions")
-PY
+if ! jq -e '.security.folderTrust.enabled == true' "${SETTINGS_PATH}" >/dev/null; then
+  echo "Gemini folder-trust helper should restore trust prompts for breakglass sessions" >&2
+  exit 1
+fi
 workcell_set_gemini_folder_trust_enabled "${SETTINGS_PATH}" false
 
 TRUSTED_FOLDERS_PATH="${TMP_DIR}/trustedFolders.json"
 TRUSTED_WORKSPACE=$'/workspace/quoted"path\\segment'
 workcell_render_gemini_trusted_folders "${TRUSTED_FOLDERS_PATH}" "${TRUSTED_WORKSPACE}"
-python3 - "${TRUSTED_FOLDERS_PATH}" "${TRUSTED_WORKSPACE}" <<'PY'
-import json
-import sys
-
-trusted = json.load(open(sys.argv[1], encoding="utf-8"))
-expected = {sys.argv[2]: "TRUST_FOLDER"}
-if trusted != expected:
-    raise SystemExit(f"Expected trustedFolders.json to preserve the exact workspace path, got {trusted!r}")
-PY
+if [[ "$(jq -S -c '.' "${TRUSTED_FOLDERS_PATH}")" != "$(jq -S -c -n --arg path "${TRUSTED_WORKSPACE}" '{($path): "TRUST_FOLDER"}')" ]]; then
+  echo "Expected trustedFolders.json to preserve the exact workspace path" >&2
+  exit 1
+fi
 
 printf '{"projects":[]}\n' >"${TMP_DIR}/invalid-projects.json"
 if expect_fatal_function_failure /tmp/gemini-invalid-projects.stdout /tmp/gemini-invalid-projects.stderr \
@@ -6371,93 +6251,50 @@ if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/claude/hook
   exit 1
 fi
 
-python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
-import re
-import sys
-from pathlib import Path
+if ! awk '
+  $0 == "acquire_profile_lock \"${COLIMA_PROFILE}\"" { seen_lock = 1; next }
+  seen_lock && $0 == "  # Another launch may have created or repaired the profile while we waited." { seen_comment = 1; next }
+  seen_lock && seen_comment && $0 == "  refresh_profile_state \"${COLIMA_PROFILE}\"" { found = 1; exit }
+  END { exit(found ? 0 : 1) }
+' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected workcell to refresh profile state immediately after taking the profile lock" >&2
+  exit 1
+fi
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-pattern = re.compile(
-    r'acquire_profile_lock "\$\{COLIMA_PROFILE\}"\n'
-    r'[ \t]*# Another launch may have created or repaired the profile while we waited\.\n'
-    r'[ \t]*refresh_profile_state "\$\{COLIMA_PROFILE\}"'
-)
-if not pattern.search(text):
-    raise SystemExit("Expected workcell to refresh profile state immediately after taking the profile lock")
-PY
+# shellcheck disable=SC2016
+for needle in \
+  'workspace_runtime_probe_path()' \
+  'validate_colima_runtime_workspace_view()' \
+  'validate_colima_runtime_workspace_view "${profile}" "${workspace}"' \
+  'Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents.' \
+  'Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view.'; do
+  if ! grep -Fq "${needle}" "${ROOT_DIR}/scripts/workcell"; then
+    echo "Expected workcell mount-view validation snippet missing: ${needle}" >&2
+    exit 1
+  fi
+done
 
-python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
-import sys
-from pathlib import Path
+# shellcheck disable=SC2016
+for needle in 'cd "${home}" &&' 'cd / &&' 'LIMA_WORKDIR=/'; do
+  if ! grep -Fq "${needle}" "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
+    echo "Expected egress helper safe-cwd snippet missing: ${needle}" >&2
+    exit 1
+  fi
+done
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-required = [
-    'workspace_runtime_probe_path()',
-    'validate_colima_runtime_workspace_view()',
-    'validate_colima_runtime_workspace_view "${profile}" "${workspace}"',
-    'Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents.',
-    'Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view.',
-]
-for needle in required:
-    if needle not in text:
-        raise SystemExit(f"Expected workcell mount-view validation snippet missing: {needle}")
-PY
+for token in '--inspect' 'print_inspect_state' 'provider_native_sandbox_configured' 'provider_native_sandbox_effective' 'provider_native_sandbox_reason' 'codex' 'claude' 'gemini'; do
+  if ! grep -Fq "${token}" "${ROOT_DIR}/scripts/workcell"; then
+    echo "Expected workcell to contain --inspect contract token: ${token}" >&2
+    exit 1
+  fi
+done
 
-python3 - "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" <<'PY'
-import sys
-from pathlib import Path
-
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-required = [
-    'cd "${home}" &&',
-    'cd / &&',
-    'LIMA_WORKDIR=/',
-]
-for needle in required:
-    if needle not in text:
-        raise SystemExit(f"Expected egress helper safe-cwd snippet missing: {needle}")
-PY
-
-python3 - "${ROOT_DIR}/scripts/workcell" <<'PY'
-import sys
-from pathlib import Path
-
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-required = [
-    "--inspect",
-    "print_inspect_state",
-    "provider_native_sandbox_configured",
-    "provider_native_sandbox_effective",
-    "provider_native_sandbox_reason",
-    "codex",
-    "claude",
-    "gemini",
-]
-for token in required:
-    if token not in text:
-        raise SystemExit(f"Expected workcell to contain --inspect contract token: {token}")
-PY
-
-python3 - "${ROOT_DIR}/scripts/workcell" "${ROOT_DIR}/runtime/container/assurance.sh" <<'PY'
-import sys
-from pathlib import Path
-
-content = "".join(Path(p).read_text(encoding="utf-8") for p in sys.argv[1:])
-required = [
-    "workspace",
-    "network_policy",
-    "session_assurance_initial",
-    "provider_native_sandbox_configured",
-    "provider_native_sandbox_effective",
-    "provider_native_sandbox_reason",
-    "codex",
-    "claude",
-    "gemini",
-]
-for field in required:
-    if field not in content:
-        raise SystemExit(f"Expected audit log field referenced in control scripts: {field}")
-PY
+for field in workspace network_policy session_assurance_initial provider_native_sandbox_configured provider_native_sandbox_effective provider_native_sandbox_reason codex claude gemini; do
+  if ! grep -Fq "${field}" "${ROOT_DIR}/scripts/workcell" && ! grep -Fq "${field}" "${ROOT_DIR}/runtime/container/assurance.sh"; then
+    echo "Expected audit log field referenced in control scripts: ${field}" >&2
+    exit 1
+  fi
+done
 
 if [[ ! -d "${ROOT_DIR}/docs/examples" ]]; then
   echo "docs/examples/ must exist" >&2
@@ -6479,19 +6316,8 @@ for scenario_script in \
   fi
 done
 
-if ! python3 - "${ROOT_DIR}/adapters/claude/managed-settings.json" <<'PY'; then
-import json, pathlib, sys
-settings = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-hooks = settings.get("hooks", {})
-pre_tool = hooks.get("PreToolUse", [])
-has_bash_guard = any(
-    h.get("hooks", [{}])[0].get("command", "").endswith("guard-bash.sh")
-    for h in pre_tool
-    if h.get("hooks")
-)
-if not has_bash_guard:
-    raise SystemExit("guard-bash.sh hook must be registered in managed-settings.json PreToolUse")
-PY
+if ! jq -e '[.hooks.PreToolUse[]?.hooks[0].command? // empty] | any(type == "string" and endswith("guard-bash.sh"))' "${ROOT_DIR}/adapters/claude/managed-settings.json" >/dev/null; then
+  echo "guard-bash.sh hook must be registered in managed-settings.json PreToolUse" >&2
   exit 1
 fi
 

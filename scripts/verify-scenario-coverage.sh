@@ -10,6 +10,6 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   exit 0
 fi
 
-python3 "${ROOT_DIR}/scripts/lib/scenario_manifest.py" verify-coverage "${SCENARIO_ROOT}" "${MANIFEST}"
+"${ROOT_DIR}/scripts/lib/scenario_manifest" verify-coverage "${SCENARIO_ROOT}" "${MANIFEST}"
 
 echo "Scenario coverage verification passed"

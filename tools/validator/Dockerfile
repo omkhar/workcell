@@ -31,6 +31,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
          curl \
          gcc \
          git \
+         golang-go \
          groff-base \
          jq \
          libc6-dev \
