@@ -1068,10 +1068,9 @@ check_mutation_tests || true
 strict_gate
 
 # --- Verification ---
-# Scenario tests require the container exec guard (libworkcell_exec_guard.so)
-# and only pass inside the runtime container.  Run via pre-merge.sh instead.
-# check_scenario_tests || true
-# strict_gate
+# Scenario tests (run-scenario-tests.sh) require the container exec guard
+# (libworkcell_exec_guard.so) and only pass inside the runtime container.
+# Run via pre-merge.sh instead.
 check_coverage || true
 strict_gate
 check_scenario_coverage || true
