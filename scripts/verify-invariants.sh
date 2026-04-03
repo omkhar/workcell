@@ -2193,8 +2193,9 @@ if ! rg -q 'is_trusted_host_tool_path' "${ROOT_DIR}/scripts/colima-egress-allowl
   exit 1
 fi
 
-if ! rg -q 'run_clean_host_command "\$\{PYTHON3_BIN\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected scripts/colima-egress-allowlist.sh to invoke host Python helpers under a scrubbed environment" >&2
+if ! rg -q 'run_clean_repo_command "\$\{GO_BIN\}" run ./cmd/workcell-runtimeutil' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
+  ! rg -q 'go_runtimeutil canonicalize-path' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
+  echo "Expected scripts/colima-egress-allowlist.sh to invoke host Go helpers under a scrubbed environment" >&2
   exit 1
 fi
 
