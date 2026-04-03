@@ -91,10 +91,12 @@ FROM runtime-base AS provider-builder
 
 ARG SOURCE_DATE_EPOCH
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+WORKDIR /opt/workcell/providers
+
 COPY runtime/container/providers /opt/workcell/providers
 
-RUN cd /opt/workcell/providers \
-  && install_provider_packages() { \
+RUN install_provider_packages() { \
        npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
        && return 0; \
      } \
@@ -137,6 +139,9 @@ ARG RUSTUP_INIT_LINUX_ARM64_SHA256=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+WORKDIR /workcell-rust
 
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
@@ -290,14 +295,13 @@ COPY runtime/container/runtime-user.sh /usr/local/libexec/workcell/runtime-user.
 COPY runtime/container/public-node-guard.mjs /usr/local/libexec/workcell/public-node-guard.mjs
 COPY runtime/container/entrypoint.sh /usr/local/libexec/workcell/entrypoint.sh
 
-RUN cd /workcell-rust \
-  && SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+RUN SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     CARGO_HOME=/workcell-rust/cargo-home \
     CARGO_TARGET_DIR=/tmp/workcell-rust-target \
     cargo build \
-      --release \
-      --locked \
-      --offline \
+    --release \
+    --locked \
+    --offline \
   && install -m 0644 /tmp/workcell-rust-target/release/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so \
   && install -m 0644 /tmp/workcell-rust-target/release/workcell-launcher /usr/local/libexec/workcell/core/launcher \
   && install -m 0644 /tmp/workcell-rust-target/release/workcell-git-launcher /usr/local/libexec/workcell/core/git \
