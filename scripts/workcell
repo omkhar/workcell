@@ -4393,13 +4393,25 @@ git_index_materialize_regular_file() {
   local install_mode=""
 
   workspace_is_git_worktree "${workspace}" || return 1
-  IFS= read -r -d '' entry < <(run_clean_host_command git -C "${workspace}" ls-files -z --stage -- "${relative_path}") || true
-  [[ -n "${entry}" ]] || return 1
+  local stage=""
+  local found=0
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    mode="${metadata%% *}"
+    remainder="${metadata#* }"
+    oid="${remainder%% *}"
+    stage="${remainder##* }"
+    if [[ "${stage}" == "0" ]]; then
+      found=1
+      break
+    fi
+  done < <(run_clean_host_command git -C "${workspace}" ls-files -z --stage -- "${relative_path}")
+  [[ "${found}" -eq 1 ]] || return 1
 
-  metadata="${entry%%$'\t'*}"
-  mode="${metadata%% *}"
-  remainder="${metadata#* }"
-  oid="${remainder%% *}"
+  if [[ ${#oid} -lt 40 ]] || [[ ! "${oid}" =~ ^[0-9a-f]+$ ]]; then
+    echo "Workcell blocked shadow materialization: malformed OID in git index: ${oid}" >&2
+    return 1
+  fi
 
   case "${mode}" in
     100644)
@@ -4408,7 +4420,12 @@ git_index_materialize_regular_file() {
     100755)
       install_mode="0755"
       ;;
+    120000)
+      echo "Workcell shadow materialization: skipping symlink: ${relative_path}" >&2
+      return 1
+      ;;
     *)
+      echo "Workcell shadow materialization: skipping unsupported mode ${mode}: ${relative_path}" >&2
       return 1
       ;;
   esac
@@ -4416,7 +4433,11 @@ git_index_materialize_regular_file() {
   mkdir -p "$(dirname "${destination_path}")"
   # Materialize tracked blobs directly so repo-local checkout filters and other
   # worktree-side behaviors cannot influence host-side control-plane shadowing.
-  run_clean_host_command git -C "${workspace}" cat-file blob "${oid}" >"${destination_path}"
+  if ! run_clean_host_command git -C "${workspace}" cat-file blob "${oid}" >"${destination_path}"; then
+    echo "Workcell shadow materialization: failed to read blob ${oid} for path: ${relative_path}" >&2
+    rm -f "${destination_path}"
+    return 1
+  fi
   chmod "${install_mode}" "${destination_path}" 2>/dev/null || true
 }
 
@@ -4439,7 +4460,7 @@ git_index_populate_shadow_dir() {
   exec 3<"${tracked_paths_file}"
   while IFS= read -r -d '' tracked_path <&3; do
     case "${tracked_path}" in
-      '' | /* | */../* | ../* | */..)
+      '' | . | .. | ./* | /* | */../* | ../* | */..)
         echo "Workcell blocked control-plane shadow materialization: unsafe path in git index rejected: ${tracked_path}" >&2
         exec 3<&-
         rm -f "${tracked_paths_file}"
