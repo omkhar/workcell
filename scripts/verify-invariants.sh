@@ -2136,7 +2136,8 @@ EOF
 } >"${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 bash "${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 
-if ! rg -q 'run_clean_host_command "\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil' "${ROOT_DIR}/scripts/workcell"; then
+if ! rg -q 'REAL_HOME="\$\(go_hostutil path home\)"' "${ROOT_DIR}/scripts/workcell" ||
+  ! rg -q 'run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell to invoke the bootstrap Go helper under a scrubbed environment" >&2
   exit 1
 fi

@@ -2,11 +2,6 @@
 resolve_workcell_real_home() {
   local uid entry home user_name
 
-  if [[ -n "${HOME:-}" && -d "${HOME}" ]]; then
-    printf '%s\n' "${HOME}"
-    return 0
-  fi
-
   uid="$(id -u)"
   user_name="$(id -un)"
   if command -v getent >/dev/null 2>&1; then
@@ -26,6 +21,11 @@ resolve_workcell_real_home() {
       printf '%s\n' "${home}"
       return 0
     fi
+  fi
+
+  if [[ -n "${HOME:-}" && -d "${HOME}" ]]; then
+    printf '%s\n' "${HOME}"
+    return 0
   fi
 
   echo "Unable to resolve real home directory for uid ${uid}" >&2
