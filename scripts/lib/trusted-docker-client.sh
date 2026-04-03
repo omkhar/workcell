@@ -1,19 +1,35 @@
 # shellcheck shell=bash
 resolve_workcell_real_home() {
-  local python_bin
+  local uid entry home user_name
 
-  if [[ -x /usr/bin/python3 ]]; then
-    python_bin=/usr/bin/python3
-  else
-    python_bin=python3
+  if [[ -n "${HOME:-}" && -d "${HOME}" ]]; then
+    printf '%s\n' "${HOME}"
+    return 0
   fi
 
-  "${python_bin}" - <<'PY'
-import os
-import pwd
+  uid="$(id -u)"
+  user_name="$(id -un)"
+  if command -v getent >/dev/null 2>&1; then
+    entry="$(getent passwd "${uid}" 2>/dev/null || true)"
+    if [[ -n "${entry}" ]]; then
+      IFS=: read -r _ _ _ _ _ home _ <<<"${entry}"
+      if [[ -n "${home}" ]]; then
+        printf '%s\n' "${home}"
+        return 0
+      fi
+    fi
+  fi
 
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
+  if command -v dscl >/dev/null 2>&1; then
+    home="$(dscl . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk '{print $2}' | tail -n 1)"
+    if [[ -n "${home}" ]]; then
+      printf '%s\n' "${home}"
+      return 0
+    fi
+  fi
+
+  echo "Unable to resolve real home directory for uid ${uid}" >&2
+  return 1
 }
 
 copy_workcell_docker_state_tree() {
