@@ -33,21 +33,11 @@ mapfile -t python_files < <(
 
 branding_scan() {
   local pattern="agent-boundary|Agent Boundary|agent boundary"
-
-  if command -v rg >/dev/null 2>&1; then
-    rg -n "${pattern}" "${ROOT_DIR}" \
-      -g '!**/.git/**' \
-      -g '!scripts/validate-repo.sh' \
-      -g '!dist/**' \
-      -g '!tmp/**'
-    return
-  fi
-
-  grep -RInE "${pattern}" "${ROOT_DIR}" \
-    --exclude-dir=.git \
-    --exclude-dir=dist \
-    --exclude-dir=tmp \
-    --exclude=validate-repo.sh
+  git -C "${ROOT_DIR}" grep -nE "${pattern}" -- \
+    . \
+    ':(exclude)scripts/validate-repo.sh' \
+    ':(exclude)dist/**' \
+    ':(exclude)tmp/**'
 }
 
 validate_manpage() {
