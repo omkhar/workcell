@@ -200,6 +200,18 @@ remote_validator_snapshot = require_arg(
 )
 codex_version = require_arg(runtime_dockerfile, "CODEX_VERSION", "runtime/container/Dockerfile")
 claude_version = require_arg(runtime_dockerfile, "CLAUDE_VERSION", "runtime/container/Dockerfile")
+runtime_rust_version = require_arg(runtime_dockerfile, "RUST_VERSION", "runtime/container/Dockerfile")
+runtime_rustup_version = require_arg(runtime_dockerfile, "RUSTUP_VERSION", "runtime/container/Dockerfile")
+runtime_rustup_init_linux_x86_64_sha256 = require_arg(
+    runtime_dockerfile,
+    "RUSTUP_INIT_LINUX_X86_64_SHA256",
+    "runtime/container/Dockerfile",
+)
+runtime_rustup_init_linux_arm64_sha256 = require_arg(
+    runtime_dockerfile,
+    "RUSTUP_INIT_LINUX_ARM64_SHA256",
+    "runtime/container/Dockerfile",
+)
 runtime_install_blocks = extract_install_blocks(runtime_dockerfile, "runtime/container/Dockerfile")
 validator_install_blocks = extract_install_blocks(validator_dockerfile, "tools/validator/Dockerfile")
 remote_validator_install_blocks = extract_install_blocks(
@@ -269,6 +281,54 @@ if not re.match(r"^0\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$", codex_version):
         "runtime/container/Dockerfile CODEX_VERSION must stay pinned to an "
         f"explicit release, found {codex_version!r}"
     )
+if not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$", runtime_rust_version):
+    raise SystemExit(
+        "runtime/container/Dockerfile RUST_VERSION must stay pinned to an "
+        f"explicit release, found {runtime_rust_version!r}"
+    )
+if not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$", runtime_rustup_version):
+    raise SystemExit(
+        "runtime/container/Dockerfile RUSTUP_VERSION must stay pinned to an "
+        f"explicit release, found {runtime_rustup_version!r}"
+    )
+if not re.fullmatch(r"[0-9a-f]{64}", runtime_rustup_init_linux_x86_64_sha256):
+    raise SystemExit(
+        "runtime/container/Dockerfile RUSTUP_INIT_LINUX_X86_64_SHA256 must be a full SHA256 digest"
+    )
+if not re.fullmatch(r"[0-9a-f]{64}", runtime_rustup_init_linux_arm64_sha256):
+    raise SystemExit(
+        "runtime/container/Dockerfile RUSTUP_INIT_LINUX_ARM64_SHA256 must be a full SHA256 digest"
+    )
+require_contains(
+    runtime_dockerfile,
+    'https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rustup_target}/rustup-init',
+    "rustup bootstrap URL",
+    "runtime/container/Dockerfile",
+)
+require_contains(
+    runtime_dockerfile,
+    'ENV CARGO_HOME=/usr/local/cargo',
+    "runtime builder Cargo home",
+    "runtime/container/Dockerfile",
+)
+require_contains(
+    runtime_dockerfile,
+    'ENV PATH=/usr/local/cargo/bin:${PATH}',
+    "runtime builder Cargo PATH export",
+    "runtime/container/Dockerfile",
+)
+require_contains(
+    runtime_dockerfile,
+    'ENV RUSTUP_HOME=/usr/local/rustup',
+    "runtime builder rustup home",
+    "runtime/container/Dockerfile",
+)
+require_contains(
+    runtime_dockerfile,
+    'rustc --version | grep -F "rustc ${RUST_VERSION} "',
+    "installed Rust version verification",
+    "runtime/container/Dockerfile",
+)
 if len(runtime_install_blocks) != 2:
     raise SystemExit(
         "runtime/container/Dockerfile must contain exactly two apt install blocks "
@@ -304,8 +364,8 @@ require_exact_packages(
 require_exact_packages(
     runtime_install_blocks[1],
     [
-        "cargo",
-        "rustc",
+        "gcc",
+        "libc6-dev",
     ],
     "Runtime builder",
     "runtime/container/Dockerfile",
@@ -313,20 +373,20 @@ require_exact_packages(
 require_exact_packages(
     validator_install_blocks[0],
     [
+        "ca-certificates",
         "codespell",
-        "cargo",
+        "curl",
+        "gcc",
         "git",
         "groff-base",
         "jq",
+        "libc6-dev",
         "llvm",
         "mandoc",
         "openssh-client",
         "python3",
         "python3-coverage",
         "procps",
-        "rustc",
-        "rust-clippy",
-        "rustfmt",
         "shellcheck",
         "shfmt",
         "yamllint",
