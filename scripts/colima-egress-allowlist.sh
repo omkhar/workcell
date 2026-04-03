@@ -25,9 +25,10 @@ scrub_host_process_env() {
 
 scrub_host_process_env
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly ROOT_DIR
+GO_BIN="${WORKCELL_GO_BIN:-}"
 LIMACTL_BIN=""
-PYTHON3_BIN=""
-CANONICALIZER_PYTHON="/usr/bin/python3"
 TEST_RUN_IN_VM_CAPTURE_DIR=""
 
 usage() {
@@ -37,6 +38,84 @@ Usage:
   colima-egress-allowlist.sh apply <profile> "<host:port ...>"
   colima-egress-allowlist.sh clear <profile>
 EOF
+}
+
+resolve_go_bin() {
+  if [[ -n "${GO_BIN}" && -x "${GO_BIN}" ]]; then
+    return 0
+  fi
+  if GO_BIN="$(command -v go 2>/dev/null)"; then
+    return 0
+  fi
+  for candidate in \
+    /opt/homebrew/bin/go \
+    /usr/local/go/bin/go \
+    /usr/local/bin/go \
+    /usr/bin/go; do
+    if [[ -x "${candidate}" ]]; then
+      GO_BIN="${candidate}"
+      return 0
+    fi
+  done
+  echo "Missing required tool: go" >&2
+  exit 1
+}
+
+run_clean_repo_command() {
+  local home="${REAL_HOME:-${HOME:-/tmp}}"
+
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${home}" ]]; then
+    home="/"
+  fi
+
+  (
+    cd "${ROOT_DIR}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${home}" \
+        LC_ALL=C \
+        LANG=C \
+        "$@"
+  )
+}
+
+go_runtimeutil() {
+  resolve_go_bin
+  run_clean_repo_command "${GO_BIN}" run ./cmd/workcell-runtimeutil "$@"
+}
+
+resolve_workcell_real_home() {
+  local uid entry home user_name
+
+  if [[ -n "${HOME:-}" && -d "${HOME}" ]]; then
+    printf '%s\n' "${HOME}"
+    return 0
+  fi
+
+  uid="$(id -u)"
+  user_name="$(id -un)"
+  if command -v getent >/dev/null 2>&1; then
+    entry="$(getent passwd "${uid}" 2>/dev/null || true)"
+    if [[ -n "${entry}" ]]; then
+      IFS=: read -r _ _ _ _ _ home _ <<<"${entry}"
+      if [[ -n "${home}" ]]; then
+        printf '%s\n' "${home}"
+        return 0
+      fi
+    fi
+  fi
+
+  if command -v dscl >/dev/null 2>&1; then
+    home="$(dscl . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk '{print $2}' | tail -n 1)"
+    if [[ -n "${home}" ]]; then
+      printf '%s\n' "${home}"
+      return 0
+    fi
+  fi
+
+  echo "Unable to resolve real home directory for uid ${uid}" >&2
+  return 1
 }
 
 resolve_host_tool() {
@@ -93,17 +172,7 @@ canonicalize_host_tool_path() {
     return 0
   fi
 
-  if [[ -x "${CANONICALIZER_PYTHON}" ]]; then
-    run_clean_host_command "${CANONICALIZER_PYTHON}" - "${candidate}" <<'PY'
-import os
-import sys
-
-print(os.path.realpath(sys.argv[1]))
-PY
-    return 0
-  fi
-
-  printf '%s\n' "${candidate}"
+  go_runtimeutil canonicalize-path "${candidate}"
 }
 
 run_clean_host_command() {
@@ -174,20 +243,7 @@ validate_endpoint() {
 
 resolve_ips() {
   local host="$1"
-  if [[ "${host}" == \[*\] ]]; then
-    host="${host:1:${#host}-2}"
-  fi
-  run_clean_host_command "${PYTHON3_BIN}" - "$host" <<'PY'
-import socket, sys
-host = sys.argv[1]
-seen = []
-for family, _, _, _, sockaddr in socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM):
-    ip = sockaddr[0]
-    if ip not in seen:
-        seen.append(ip)
-for ip in seen:
-    print(ip)
-PY
+  go_runtimeutil resolve-ips "${host}"
 }
 
 COMMAND="${1:-}"
@@ -213,19 +269,9 @@ PROFILE="${2:-}"
 }
 
 initialize_vm_tools() {
-  if [[ -n "${PYTHON3_BIN}" && -n "${REAL_HOME:-}" ]]; then
-    :
-  else
-    PYTHON3_BIN="$(resolve_host_tool python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3)"
-    REAL_HOME="$(
-      run_clean_host_command "${PYTHON3_BIN}" - <<'PY'
-import os
-import pwd
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
-    )"
+  if [[ -z "${REAL_HOME:-}" ]]; then
+    REAL_HOME="$(resolve_workcell_real_home)"
   fi
-
   if [[ -n "${LIMACTL_BIN}" ]]; then
     return 0
   fi
@@ -234,18 +280,9 @@ PY
 }
 
 initialize_host_tools() {
-  if [[ -n "${PYTHON3_BIN}" && -n "${REAL_HOME:-}" ]]; then
-    return 0
+  if [[ -z "${REAL_HOME:-}" ]]; then
+    REAL_HOME="$(resolve_workcell_real_home)"
   fi
-
-  PYTHON3_BIN="$(resolve_host_tool python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3)"
-  REAL_HOME="$(
-    run_clean_host_command "${PYTHON3_BIN}" - <<'PY'
-import os
-import pwd
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
-  )"
 }
 
 lima_instance() {

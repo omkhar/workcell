@@ -52,6 +52,8 @@ ROOT_DIR="$(cd -P "$(dirname "$(resolve_self_path)")/.." && pwd)"
 source "${ROOT_DIR}/runtime/container/assurance.sh"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 resolve_fixed_host_tool() {
   local name="$1"
   shift
@@ -68,14 +70,70 @@ resolve_fixed_host_tool() {
   exit 1
 }
 
-HOST_PYTHON3_BIN="$(resolve_fixed_host_tool python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3)"
-REAL_HOME="$(
-  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - <<'PY'
-import os
-import pwd
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
-)"
+run_clean_host_command() {
+  local home="${REAL_HOME:-/}"
+
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${home}" ]]; then
+    home="/"
+  fi
+
+  (
+    cd "${home}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${home}" \
+        LC_ALL=C \
+        LANG=C \
+        "$@"
+  )
+}
+
+run_clean_host_command_in_dir() {
+  local dir="$1"
+  local home="${REAL_HOME:-/}"
+
+  shift
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${dir}" ]]; then
+    echo "Missing host working directory: ${dir}" >&2
+    exit 2
+  fi
+  if [[ ! -d "${home}" ]]; then
+    home="/"
+  fi
+
+  (
+    cd "${dir}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${home}" \
+        LC_ALL=C \
+        LANG=C \
+        "$@"
+  )
+}
+
+HOST_GO_BIN="$(resolve_fixed_host_tool go /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go)"
+go_hostutil() {
+  ensure_go_run_env
+  run_clean_host_command_in_dir "${ROOT_DIR}" env \
+    GOPATH="${GOPATH}" \
+    GOMODCACHE="${GOMODCACHE}" \
+    GOCACHE="${GOCACHE}" \
+    "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
+}
+
+go_runtimeutil() {
+  ensure_go_run_env
+  run_clean_host_command_in_dir "${ROOT_DIR}" env \
+    GOPATH="${GOPATH}" \
+    GOMODCACHE="${GOMODCACHE}" \
+    GOCACHE="${GOCACHE}" \
+    "${HOST_GO_BIN}" run ./cmd/workcell-runtimeutil "$@"
+}
+
+REAL_HOME="$(go_hostutil path home)"
 HOST_GIT_BIN=""
 HOST_COLIMA_BIN=""
 HOST_DOCKER_BIN=""
@@ -198,11 +256,7 @@ slugify() {
 }
 
 generate_session_suffix() {
-  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - <<'PY'
-import secrets
-
-print(secrets.token_hex(4))
-PY
+  go_hostutil launcher session-suffix
 }
 
 lower_ascii() {
@@ -465,34 +519,7 @@ colima_profile_status() {
   fi
   [[ -n "${list_output}" ]] || return 3
 
-  env -i \
-    PATH="${TRUSTED_HOST_PATH}" \
-    PROFILE_NAME="${profile}" \
-    COLIMA_LIST_JSON="${list_output}" \
-    "${HOST_PYTHON3_BIN}" - <<'PY'
-import json
-import os
-import sys
-
-profile_name = os.environ.get("PROFILE_NAME", "")
-for line in os.environ.get("COLIMA_LIST_JSON", "").splitlines():
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        record = json.loads(line)
-    except json.JSONDecodeError:
-        sys.exit(1)
-    if record.get("name") != profile_name:
-        continue
-    status = record.get("status")
-    if isinstance(status, str) and status:
-        print(status)
-        sys.exit(0)
-    sys.exit(1)
-
-sys.exit(3)
-PY
+  printf '%s' "${list_output}" | go_hostutil launcher colima-status "${profile}"
 }
 
 profile_process_pids() {
@@ -799,79 +826,13 @@ read_latest_log_pointer() {
 cleanup_stale_latest_log_pointers() {
   local colima_root="$1"
 
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${colima_root}" <<'PY'
-import os
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1]).expanduser()
-if not root.exists():
-    raise SystemExit(0)
-
-uid = os.getuid()
-for profile_dir in root.iterdir():
-    if not profile_dir.is_dir() or profile_dir.is_symlink():
-        continue
-    for pointer_name in (
-        "workcell.latest-debug-log",
-        "workcell.latest-file-trace-log",
-        "workcell.latest-transcript-log",
-    ):
-        pointer_path = profile_dir / pointer_name
-        try:
-            stat_result = pointer_path.lstat()
-        except FileNotFoundError:
-            continue
-        if stat_result.st_uid != uid or pointer_path.is_symlink():
-            continue
-        try:
-            lines = pointer_path.read_text(encoding="utf-8").splitlines()
-        except FileNotFoundError:
-            continue
-        target_path = Path(lines[0]).expanduser() if lines else None
-        if target_path is None or not target_path.exists():
-            pointer_path.unlink(missing_ok=True)
-PY
+  go_hostutil launcher cleanup-stale-log-pointers "${colima_root}"
 }
 
 profile_lock_is_stale() {
   local lock_dir="$1"
 
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${lock_dir}" <<'PY'
-import json
-import os
-import signal
-import subprocess
-import sys
-from pathlib import Path
-
-lock_dir = Path(sys.argv[1])
-owner_path = lock_dir / "owner.json"
-if not owner_path.is_file():
-    print("1")
-    raise SystemExit(0)
-
-try:
-    owner = json.loads(owner_path.read_text(encoding="utf-8"))
-    pid = int(owner["pid"])
-    started = str(owner["started"])
-except Exception:
-    print("1")
-    raise SystemExit(0)
-
-try:
-    os.kill(pid, 0)
-except OSError:
-    print("1")
-    raise SystemExit(0)
-
-observed = subprocess.check_output(
-    ["ps", "-o", "lstart=", "-p", str(pid)],
-    text=True,
-    stderr=subprocess.DEVNULL,
-).strip()
-print("0" if observed == started else "1")
-PY
+  go_hostutil launcher profile-lock-is-stale "${lock_dir}"
 }
 
 acquire_profile_lock() {
@@ -897,57 +858,14 @@ acquire_profile_lock() {
   done
 
   PROFILE_LOCK_DIR="${lock_dir}"
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${lock_dir}/owner.json" "$$" <<'PY'
-import json
-import subprocess
-import sys
-from pathlib import Path
-
-started = subprocess.check_output(
-    ["ps", "-o", "lstart=", "-p", sys.argv[2]],
-    text=True,
-    stderr=subprocess.DEVNULL,
-).strip()
-Path(sys.argv[1]).write_text(
-    json.dumps({"pid": int(sys.argv[2]), "started": started}, sort_keys=True) + "\n",
-    encoding="utf-8",
-)
-PY
+  go_hostutil launcher write-profile-owner "${lock_dir}/owner.json" "$$"
   chmod 0600 "${lock_dir}/owner.json" 2>/dev/null || true
 }
 
 cleanup_stale_session_audit_dirs() {
   local colima_root="$1"
 
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${colima_root}" <<'PY'
-import os
-import shutil
-import sys
-import time
-from pathlib import Path
-
-root = Path(sys.argv[1]).expanduser()
-if not root.exists():
-    raise SystemExit(0)
-
-cutoff = time.time() - (12 * 60 * 60)
-uid = os.getuid()
-
-for profile_dir in root.iterdir():
-    if not profile_dir.is_dir() or profile_dir.is_symlink():
-        continue
-    for candidate in profile_dir.glob("session-audit.*"):
-        try:
-            stat_result = candidate.lstat()
-        except FileNotFoundError:
-            continue
-        if stat_result.st_uid != uid:
-            continue
-        if candidate.is_dir():
-            if stat_result.st_mtime > cutoff:
-                continue
-            shutil.rmtree(candidate, ignore_errors=False)
-PY
+  go_hostutil launcher cleanup-stale-session-audit-dirs "${colima_root}"
 }
 
 audit_record_digest() {
@@ -955,13 +873,7 @@ audit_record_digest() {
   local timestamp="$2"
   shift 2
 
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${prev_digest}" "${timestamp}" "$@" <<'PY'
-import hashlib
-import sys
-
-payload = "\0".join(sys.argv[1:])
-print(hashlib.sha256(payload.encode("utf-8")).hexdigest())
-PY
+  go_hostutil launcher audit-digest "${prev_digest}" "${timestamp}" "$@"
 }
 
 stash_profile_audit_log() {
@@ -1436,47 +1348,11 @@ emit_redacted_command() {
 }
 
 resolve_host_path() {
-  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - "$1" <<'PY'
-import os
-import sys
-
-print(os.path.realpath(os.path.expanduser(sys.argv[1])))
-PY
+  go_hostutil path resolve --base "$(pwd -P)" "$1"
 }
 
 resolve_host_output_candidate() {
-  env -i PATH="${TRUSTED_HOST_PATH}" "${HOST_PYTHON3_BIN}" - "$1" <<'PY'
-import os
-import stat
-import sys
-from pathlib import Path
-
-target = Path(os.path.abspath(os.path.expanduser(sys.argv[1])))
-allowed_symlink_roots = {Path("/var"), Path("/tmp")} if sys.platform == "darwin" else set()
-
-current = target
-while True:
-    try:
-        path_stat = current.lstat()
-    except FileNotFoundError:
-        pass
-    else:
-        if stat.S_ISLNK(path_stat.st_mode):
-            if current in allowed_symlink_roots:
-                if current == current.parent:
-                    break
-                current = current.parent
-                continue
-            raise SystemExit(f"Refusing symlinked host output path component: {current}")
-    if current == current.parent:
-        break
-    current = current.parent
-
-if target.exists() and not target.is_file():
-    raise SystemExit(f"Host output path must be a regular file or a new file path: {target}")
-
-print(target)
-PY
+  go_hostutil launcher resolve-host-output-candidate "$1"
 }
 
 resolve_existing_directory_or_die() {
@@ -1555,31 +1431,6 @@ resolve_existing_executable_or_die() {
   fi
 
   printf '%s\n' "${resolved_path}"
-}
-
-run_clean_host_command_in_dir() {
-  local dir="$1"
-  local home="${REAL_HOME:-/}"
-
-  shift
-  [[ "$#" -gt 0 ]] || return 0
-  if [[ ! -d "${dir}" ]]; then
-    echo "Missing host working directory: ${dir}" >&2
-    exit 2
-  fi
-  if [[ ! -d "${home}" ]]; then
-    home="/"
-  fi
-
-  (
-    cd "${dir}" &&
-      env -i \
-        PATH="${TRUSTED_HOST_PATH}" \
-        HOME="${home}" \
-        LC_ALL=C \
-        LANG=C \
-        "$@"
-  )
 }
 
 run_publish_host_command_in_dir() {
@@ -2038,8 +1889,7 @@ auth_main() {
       policy_path="$(resolve_host_path "${policy_path}")"
       managed_root="$(resolve_host_path "${managed_root}")"
       auth_cmd=(
-        "${HOST_PYTHON3_BIN}"
-        "${ROOT_DIR}/scripts/lib/manage_injection_policy.py"
+        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
         init
         --policy "${policy_path}"
         --managed-root "${managed_root}"
@@ -2105,8 +1955,7 @@ auth_main() {
       policy_path="$(resolve_host_path "${policy_path}")"
       managed_root="$(resolve_host_path "${managed_root}")"
       auth_cmd=(
-        "${HOST_PYTHON3_BIN}"
-        "${ROOT_DIR}/scripts/lib/manage_injection_policy.py"
+        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
         set
         --policy "${policy_path}"
         --managed-root "${managed_root}"
@@ -2156,8 +2005,7 @@ auth_main() {
       policy_path="$(resolve_host_path "${policy_path}")"
       managed_root="$(resolve_host_path "${managed_root}")"
       auth_cmd=(
-        "${HOST_PYTHON3_BIN}"
-        "${ROOT_DIR}/scripts/lib/manage_injection_policy.py"
+        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
         unset
         --policy "${policy_path}"
         --managed-root "${managed_root}"
@@ -2203,8 +2051,7 @@ auth_main() {
         exit 2
       fi
       auth_cmd=(
-        "${HOST_PYTHON3_BIN}"
-        "${ROOT_DIR}/scripts/lib/manage_injection_policy.py"
+        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
         status
         --policy "${policy_path}"
         --mode "${mode}"
@@ -2230,86 +2077,7 @@ default_injection_bundle_parent() {
 cleanup_stale_injection_bundles() {
   local bundle_parent="$1"
 
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${bundle_parent}" <<'PY'
-import os
-import json
-import shutil
-import subprocess
-import sys
-import time
-from pathlib import Path
-
-root = Path(sys.argv[1]).expanduser()
-if not root.exists():
-    raise SystemExit(0)
-
-cutoff = time.time() - (12 * 60 * 60)
-uid = os.getuid()
-
-def process_start(pid):
-    try:
-        return subprocess.check_output(
-            ["ps", "-o", "lstart=", "-p", str(pid)],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip() or None
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return None
-
-def sidecar_path(bundle_dir: Path) -> Path:
-    return bundle_dir.parent / f"{bundle_dir.name}.mounts.json"
-
-for candidate in root.iterdir():
-    if not candidate.name.startswith("workcell-injections."):
-        continue
-    try:
-        stat = candidate.lstat()
-    except FileNotFoundError:
-        continue
-    if stat.st_uid != uid:
-        continue
-    if not candidate.is_dir() or candidate.is_symlink():
-        continue
-    owner_meta_path = candidate / "owner.json"
-    owner_pid = None
-    owner_started = None
-    if owner_meta_path.is_file():
-        try:
-            owner_meta = json.loads(owner_meta_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError):
-            owner_meta = {}
-        owner_pid = owner_meta.get("pid")
-        owner_started = owner_meta.get("started")
-    if isinstance(owner_pid, int):
-        current_start = process_start(owner_pid)
-        if current_start is not None and current_start == owner_started:
-            continue
-    elif stat.st_mtime > cutoff:
-        continue
-    try:
-        shutil.rmtree(candidate, ignore_errors=False)
-    except FileNotFoundError:
-        continue
-    try:
-        sidecar = sidecar_path(candidate)
-        if sidecar.is_file():
-            sidecar.unlink()
-    except FileNotFoundError:
-        pass
-
-for candidate in root.iterdir():
-    if not candidate.name.startswith("workcell-injections.") or not candidate.name.endswith(".mounts.json"):
-        continue
-    try:
-        stat = candidate.lstat()
-    except FileNotFoundError:
-        continue
-    if stat.st_uid != uid or not candidate.is_file() or candidate.is_symlink():
-        continue
-    if (root / candidate.name.removesuffix(".mounts.json")).exists():
-        continue
-    candidate.unlink()
-PY
+  go_hostutil launcher cleanup-stale-injection-bundles "${bundle_parent}"
 }
 
 prepare_injection_direct_mounts() {
@@ -2347,16 +2115,7 @@ prepare_injection_direct_mounts() {
     esac
 
     entry_hash="$(
-      run_clean_host_command "${HOST_PYTHON3_BIN}" - "${host_source}" "${mount_path}" <<'PY'
-import hashlib
-import sys
-
-digest = hashlib.sha256()
-for value in sys.argv[1:]:
-    digest.update(value.encode("utf-8"))
-    digest.update(b"\0")
-print(digest.hexdigest()[:16])
-PY
+      printf '%s\0%s\0' "${host_source}" "${mount_path}" | shasum -a 256 | awk '{print substr($1, 1, 16)}'
     )"
     staged_source="${staged_root}/${entry_hash}"
     rm -rf "${staged_source}"
@@ -2370,19 +2129,7 @@ PY
     chmod -R go-rwx "${staged_source}" 2>/dev/null || true
 
     DIRECT_SOURCE_MOUNTS+=(-v "${staged_source}:${mount_path}:ro")
-  done < <(
-    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${mount_spec_path}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-entries = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-for entry in entries:
-    source = entry["source"]
-    mount_path = entry["mount_path"]
-    print(f"{source}\t{mount_path}")
-PY
-  )
+  done < <(go_runtimeutil list-direct-mounts "${mount_spec_path}")
 }
 
 prepare_injection_bundle() {
@@ -2433,24 +2180,7 @@ prepare_injection_bundle() {
   INJECTION_BUNDLE_ROOT="$(mktemp -d "${bundle_parent%/}/workcell-injections.XXXXXX")"
   INJECTION_BUNDLE_ROOT="$(resolve_host_path "${INJECTION_BUNDLE_ROOT}")"
   chmod 0700 "${INJECTION_BUNDLE_ROOT}"
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${INJECTION_BUNDLE_ROOT}/owner.json" "$$" <<'PY'
-import json
-import subprocess
-import sys
-from pathlib import Path
-
-started = subprocess.check_output(
-    ["ps", "-o", "lstart=", "-p", sys.argv[2]],
-    text=True,
-    stderr=subprocess.DEVNULL,
-).strip()
-owner_path = Path(sys.argv[1])
-owner_path.write_text(
-    json.dumps({"pid": int(sys.argv[2]), "started": started}, sort_keys=True) + "\n",
-    encoding="utf-8",
-)
-owner_path.chmod(0o600)
-PY
+  go_hostutil launcher write-profile-owner "${INJECTION_BUNDLE_ROOT}/owner.json" "$$"
 
   if [[ "${AUTH_STATUS}" -eq 1 ]] || [[ "${DOCTOR}" -eq 1 ]] || [[ "${INSPECT}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
     resolution_mode="metadata"
@@ -2458,8 +2188,7 @@ PY
   resolved_policy_path="${INJECTION_BUNDLE_ROOT}/resolved-policy.toml"
   resolver_metadata_path="${INJECTION_BUNDLE_ROOT}/resolver-metadata.json"
   resolver_cmd=(
-    "${HOST_PYTHON3_BIN}"
-    "${ROOT_DIR}/scripts/lib/resolve_credential_sources.py"
+    "${ROOT_DIR}/scripts/lib/resolve_credential_sources"
     --policy "${policy_path}"
     --agent "${agent}"
     --mode "${mode}"
@@ -2481,8 +2210,7 @@ PY
   fi
 
   manifest_path="$(run_clean_host_command \
-    "${HOST_PYTHON3_BIN}" \
-    "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+    "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
     --policy "${resolved_policy_path}" \
     --policy-metadata "${resolver_metadata_path}" \
     --agent "${agent}" \
@@ -2503,53 +2231,18 @@ PY
   DIRECT_MOUNT_SPEC_PATH="${INJECTION_BUNDLE_ROOT}.mounts.json"
   DIRECT_MOUNT_SPEC_PATH="$(resolve_host_path "${DIRECT_MOUNT_SPEC_PATH}")"
   run_clean_host_command \
-    "${HOST_PYTHON3_BIN}" \
-    "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
+    "${ROOT_DIR}/scripts/lib/extract_direct_mounts" \
     --manifest "${manifest_path}" \
     --mount-spec "${DIRECT_MOUNT_SPEC_PATH}" >/dev/null
   prepare_injection_direct_mounts "${DIRECT_MOUNT_SPEC_PATH}"
-  metadata="$(
-    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${manifest_path}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-metadata = manifest.get("metadata", {})
-print(metadata.get("policy_sha256", ""))
-print(",".join(metadata.get("credential_keys", [])))
-print(" ".join(metadata.get("extra_endpoints", [])))
-print("1" if metadata.get("ssh_enabled") else "0")
-print(metadata.get("ssh_config_assurance", "off"))
-print(",".join(metadata.get("secret_copy_targets", [])))
-PY
-  )"
+  metadata="$(go_hostutil launcher manifest-metadata "${manifest_path}")"
   INJECTION_POLICY_SHA256="$(printf '%s\n' "${metadata}" | sed -n '1p')"
   INJECTION_CREDENTIAL_KEYS="$(printf '%s\n' "${metadata}" | sed -n '2p')"
   INJECTION_EXTRA_ENDPOINTS="$(printf '%s\n' "${metadata}" | sed -n '3p')"
   INJECTION_SSH_ENABLED="$(printf '%s\n' "${metadata}" | sed -n '4p')"
   INJECTION_SSH_CONFIG_ASSURANCE="$(printf '%s\n' "${metadata}" | sed -n '5p')"
   INJECTION_SECRET_COPY_TARGETS="$(printf '%s\n' "${metadata}" | sed -n '6p')"
-  resolver_metadata="$(
-    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${resolver_metadata_path}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-metadata = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-
-def render_map(name):
-    value = metadata.get(name, {})
-    if not isinstance(value, dict) or not value:
-        return "none"
-    return ",".join(f"{key}:{value[key]}" for key in sorted(value))
-
-print(render_map("credential_input_kinds"))
-print(render_map("credential_resolvers"))
-print(render_map("credential_materialization"))
-print(render_map("credential_resolution_states"))
-PY
-  )"
+  resolver_metadata="$(go_hostutil launcher resolver-metadata "${resolver_metadata_path}")"
   INJECTION_CREDENTIAL_INPUT_KINDS="$(printf '%s\n' "${resolver_metadata}" | sed -n '1p')"
   INJECTION_CREDENTIAL_RESOLVERS="$(printf '%s\n' "${resolver_metadata}" | sed -n '2p')"
   INJECTION_CREDENTIAL_MATERIALIZATION="$(printf '%s\n' "${resolver_metadata}" | sed -n '3p')"
@@ -3118,25 +2811,6 @@ validate_workspace() {
   exit 2
 }
 
-run_clean_host_command() {
-  local home="${REAL_HOME:-/}"
-
-  [[ "$#" -gt 0 ]] || return 0
-  if [[ ! -d "${home}" ]]; then
-    home="/"
-  fi
-
-  (
-    cd "${home}" &&
-      env -i \
-        PATH="${TRUSTED_HOST_PATH}" \
-        HOME="${home}" \
-        LC_ALL=C \
-        LANG=C \
-        "$@"
-  )
-}
-
 validate_mode_requirements() {
   local mode="$1"
   local ack_breakglass="$2"
@@ -3270,15 +2944,7 @@ prepare_cache_mounts() {
   esac
 
   workspace_cache_key="$(
-    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${workspace}" <<'PY'
-import hashlib
-import os
-import pathlib
-import sys
-
-workspace = pathlib.Path(os.path.realpath(os.path.expanduser(sys.argv[1])))
-print(hashlib.sha256(os.fspath(workspace).encode("utf-8")).hexdigest()[:16])
-PY
+    go_hostutil launcher workspace-cache-key "${workspace}"
   )"
   cache_root="$(resolve_host_path "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/cache/${agent}/${workspace_cache_key}")"
   if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -3503,17 +3169,7 @@ run_command_with_debug_log() {
 }
 
 extract_codex_version_from_dockerfile() {
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${ROOT_DIR}/runtime/container/Dockerfile" <<'PY'
-import pathlib
-import re
-import sys
-
-text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r"^ARG CODEX_VERSION=(.+)$", text, re.MULTILINE)
-if not match:
-    raise SystemExit("Unable to extract CODEX_VERSION from Dockerfile")
-print(match.group(1).strip())
-PY
+  go_hostutil launcher extract-codex-version "${ROOT_DIR}/runtime/container/Dockerfile"
 }
 
 runtime_build_codex_arch() {
@@ -3699,12 +3355,7 @@ derive_profile_name() {
   slug="$(slugify "$(basename "${workspace}")" | cut -c1-10)"
   [[ -n "${slug}" ]] || slug="workspace"
   hash="$(
-    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${workspace}" <<'PY'
-import hashlib
-import sys
-
-print(hashlib.sha256(sys.argv[1].encode("utf-8")).hexdigest()[:8])
-PY
+    printf '%s' "${workspace}" | shasum -a 256 | awk '{print substr($1, 1, 8)}'
   )"
   printf 'workcell-%s-%s\n' "${slug}" "${hash}"
 }
@@ -3924,16 +3575,7 @@ validate_runtime_security_posture() {
     exit 2
   }
 
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${security_options_json}" <<'PY'
-import json
-import sys
-
-options = json.loads(sys.argv[1])
-if not isinstance(options, list):
-    raise SystemExit("Unexpected Docker security options payload")
-if not any(isinstance(entry, str) and entry.startswith("name=seccomp") for entry in options):
-    raise SystemExit("Managed runtime requires Docker seccomp support to stay active.")
-PY
+  go_hostutil launcher validate-security-options "${security_options_json}"
 }
 
 is_trusted_host_tool_path() {
@@ -3972,17 +3614,7 @@ is_trusted_host_tool_path() {
 
 canonicalize_host_tool_path() {
   local candidate="$1"
-  if [[ -z "${HOST_PYTHON3_BIN}" ]]; then
-    printf '%s\n' "${candidate}"
-    return 0
-  fi
-
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "${candidate}" <<'PY'
-import os
-import sys
-
-print(os.path.realpath(sys.argv[1]))
-PY
+  go_hostutil launcher canonicalize-tool-path "${candidate}"
 }
 
 resolve_host_tool() {
@@ -4114,17 +3746,7 @@ credential_extra_endpoints() {
 }
 
 dedupe_endpoint_list() {
-  run_clean_host_command "${HOST_PYTHON3_BIN}" - "$1" <<'PY'
-import sys
-
-seen = set()
-ordered = []
-for entry in sys.argv[1].split():
-    if entry and entry not in seen:
-        seen.add(entry)
-        ordered.append(entry)
-print(" ".join(ordered))
-PY
+  go_hostutil launcher dedupe-endpoints "$1"
 }
 
 build_runtime_host_aliases() {
@@ -4142,38 +3764,7 @@ build_runtime_host_aliases() {
     else
       RUNTIME_NETWORK_ARGS+=(--add-host "${host}:${ip}")
     fi
-  done < <(
-    run_clean_host_command "${HOST_PYTHON3_BIN}" - "${endpoint_list}" <<'PY'
-import socket
-import sys
-
-for endpoint in sys.argv[1].split():
-    host, _, _port = endpoint.rpartition(":")
-    if host.startswith("[") and host.endswith("]"):
-        continue
-    if host.replace(".", "").isdigit():
-        continue
-    try:
-        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
-        continue
-    seen = set()
-    ipv4_addrs = []
-    ipv6_addrs = []
-    for family, _socktype, _proto, _canonname, sockaddr in infos:
-        ip = sockaddr[0]
-        key = (host, ip)
-        if key in seen:
-            continue
-        seen.add(key)
-        if family == socket.AF_INET6:
-            ipv6_addrs.append(ip)
-        else:
-            ipv4_addrs.append(ip)
-    for ip in ipv4_addrs + ipv6_addrs:
-        print(f"{host}\t{ip}")
-PY
-  )
+  done < <(go_hostutil launcher resolve-endpoints "${endpoint_list}")
 
 }
 
@@ -5624,7 +5215,7 @@ if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
     exit 2
   fi
   echo "Workcell warning: full host-persisted terminal transcript capture is enabled for this session: ${AUDIT_TRANSCRIPT_PATH}" >&2
-  "${HOST_PYTHON3_BIN}" "${ROOT_DIR}/scripts/lib/pty_transcript.py" --log "${AUDIT_TRANSCRIPT_PATH}" -- "${DOCKER_RUN[@]}" || DOCKER_STATUS=$?
+  "${ROOT_DIR}/scripts/lib/pty_transcript" --log "${AUDIT_TRANSCRIPT_PATH}" -- "${DOCKER_RUN[@]}" || DOCKER_STATUS=$?
 else
   "${DOCKER_RUN[@]}" || DOCKER_STATUS=$?
 fi

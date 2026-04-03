@@ -19,6 +19,8 @@ require_cargo_subcommand() {
 
 require_tool shellcheck
 require_tool shfmt
+require_tool go
+require_tool gofmt
 require_tool python3
 require_tool yamllint
 require_tool cargo
@@ -63,6 +65,13 @@ shell_files=(
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/dev-quick-check.sh"
   "${ROOT_DIR}/scripts/dev-remote-validate.sh"
+  "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
+  "${ROOT_DIR}/scripts/lib/manage_injection_policy"
+  "${ROOT_DIR}/scripts/lib/pty_transcript"
+  "${ROOT_DIR}/scripts/lib/render_injection_bundle"
+  "${ROOT_DIR}/scripts/lib/resolve_credential_sources"
+  "${ROOT_DIR}/scripts/lib/scenario_manifest"
+  "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
@@ -126,7 +135,20 @@ for scratch_dir in \
 done
 
 python3 -m py_compile "${python_files[@]}"
-python3 -m unittest discover -s "${ROOT_DIR}/tests/python" -p 'test_*.py'
+
+if find "${ROOT_DIR}/tests/python" -type f -name 'test_*.py' -print -quit | grep -q .; then
+  python3 -m unittest discover -s "${ROOT_DIR}/tests/python" -p 'test_*.py'
+fi
+
+mapfile -d '' -t go_files < <(find "${ROOT_DIR}/cmd" "${ROOT_DIR}/internal" -type f -name '*.go' -print0 | sort -z)
+if [[ "${#go_files[@]}" -gt 0 ]]; then
+  if gofmt -l "${go_files[@]}" | grep -q .; then
+    echo "Go files are not formatted with gofmt." >&2
+    exit 1
+  fi
+fi
+go vet ./...
+go test ./...
 
 while IFS= read -r file; do
   python3 -m json.tool "${file}" >/dev/null

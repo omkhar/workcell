@@ -46,8 +46,8 @@ output_path = pathlib.Path(sys.argv[2])
 
 host_artifacts = [
     "scripts/workcell",
-    "scripts/lib/extract_direct_mounts.py",
-    "scripts/lib/render_injection_bundle.py",
+    "scripts/lib/extract_direct_mounts",
+    "scripts/lib/render_injection_bundle",
     "scripts/lib/trusted-docker-client.sh",
 ]
 
