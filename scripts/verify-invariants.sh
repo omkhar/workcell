@@ -75,6 +75,7 @@ require_tool go
 require_tool jq
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
@@ -110,7 +111,7 @@ REPO_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/tmp/verify-remote-validate-repo.env"
 ROOT_DRY_RUN_PROFILE_NAME="$(
   workspace="$(cd "${ROOT_DIR}" && pwd -P)"
   slug="$(printf '%s' "${workspace##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^$/workspace/' | cut -c1-10)"
-  digest="$(printf '%s' "${workspace}" | shasum -a 256 | awk '{print substr($1,1,8)}')"
+  digest="$(run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-hostutil launcher workspace-cache-key "${workspace}" | cut -c1-8)"
   printf 'workcell-%s-%s\n' "${slug}" "${digest}"
 )"
 ROOT_DRY_RUN_PROFILE_DIR="${REAL_HOME}/.colima/${ROOT_DRY_RUN_PROFILE_NAME}"
