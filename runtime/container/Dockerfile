@@ -130,14 +130,22 @@ ARG CLAUDE_VERSION=2.1.86
 # and update the CODEX_SHA256 values for arm64 and amd64 below.
 ARG CODEX_VERSION=0.117.0-alpha.8
 ARG CODEX_RELEASE_URL=
+ARG RUST_VERSION=1.94.1
+ARG RUSTUP_VERSION=1.29.0
+ARG RUSTUP_INIT_LINUX_X86_64_SHA256=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
+ARG RUSTUP_INIT_LINUX_ARM64_SHA256=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
 
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:${PATH}
+ENV RUSTUP_HOME=/usr/local/rustup
+
 RUN install_runtime_builder_packages() { \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      cargo \
-      rustc \
+      gcc \
+      libc6-dev \
       && return 0; \
     } \
   && for attempt in 1 2 3; do \
@@ -151,8 +159,39 @@ RUN install_runtime_builder_packages() { \
        fi; \
        sleep "$((attempt * 5))"; \
      done \
+  && rustup_target="" \
+  && rustup_sha256="" \
+  && case "$(dpkg --print-architecture)" in \
+       amd64) \
+         rustup_target="x86_64-unknown-linux-gnu"; \
+         rustup_sha256="${RUSTUP_INIT_LINUX_X86_64_SHA256}"; \
+         ;; \
+       arm64) \
+         rustup_target="aarch64-unknown-linux-gnu"; \
+         rustup_sha256="${RUSTUP_INIT_LINUX_ARM64_SHA256}"; \
+         ;; \
+       *) \
+         echo "Unsupported dpkg architecture for rustup: $(dpkg --print-architecture)" >&2; \
+         exit 1; \
+         ;; \
+     esac \
+  && curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+    "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rustup_target}/rustup-init" \
+    -o /tmp/rustup-init \
+  && echo "${rustup_sha256}  /tmp/rustup-init" | sha256sum -c - \
+  && chmod 0755 /tmp/rustup-init \
+  && CARGO_HOME=/usr/local/cargo \
+     RUSTUP_HOME=/usr/local/rustup \
+     /tmp/rustup-init -y --profile minimal --default-toolchain "${RUST_VERSION}" --no-modify-path \
+  && CARGO_HOME=/usr/local/cargo \
+     RUSTUP_HOME=/usr/local/rustup \
+     /usr/local/cargo/bin/rustup default "${RUST_VERSION}" \
+  && ln -sf /usr/local/cargo/bin/cargo /usr/local/bin/cargo \
+  && ln -sf /usr/local/cargo/bin/rustc /usr/local/bin/rustc \
+  && rustc --version | grep -F "rustc ${RUST_VERSION} " >/dev/null \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
-  && rm -f /etc/ld.so.cache
+  && rm -f /etc/ld.so.cache /tmp/rustup-init \
+  && rm -rf /usr/local/rustup/downloads /usr/local/rustup/tmp
 
 RUN TARGET_ARCH="${TARGETARCH:-}" \
   && if [[ -z "${TARGET_ARCH}" ]]; then \

@@ -1,4 +1,5 @@
 #![allow(clippy::missing_safety_doc)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use libc::{c_char, c_int, c_long, c_void, pid_t};
 #[cfg(all(
@@ -10,7 +11,7 @@ use std::env;
 use std::ffi::{CStr, CString};
 use std::fs::{self, File};
 use std::io::Read;
-use std::mem;
+use std::mem::{self, MaybeUninit};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -107,8 +108,7 @@ const ARG_BLOCK_MESSAGE: &str = "Workcell blocked git control-plane override: re
 const ENV_BLOCK_MESSAGE: &str = "Workcell blocked git control-plane override: remove GIT_CONFIG_*, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_EXEC_PATH, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_INDEX_FILE, GIT_ASKPASS, GIT_EDITOR, GIT_SEQUENCE_EDITOR, GIT_SSH, GIT_SSH_COMMAND, SSH_ASKPASS, EDITOR, PAGER, or VISUAL overrides.\n";
 const PROTECTED_RUNTIME_BLOCK_MESSAGE: &str =
     "Workcell blocked direct protected runtime execution outside approved wrappers.\n";
-const MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE: &str =
-    "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile.\n";
+const MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE: &str = "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile.\n";
 
 type ExecveFn =
     unsafe extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int;
@@ -383,12 +383,11 @@ fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -
         )
         .unwrap_or(token.clone());
 
-        if token_is_shell_interpreter(&token_path) {
-            if let Some(target) = next_shebang_token(&mut scan) {
-                if shell_option_executes_command(&target) {
-                    return true;
-                }
-            }
+        if token_is_shell_interpreter(&token_path)
+            && let Some(target) = next_shebang_token(&mut scan)
+            && shell_option_executes_command(&target)
+        {
+            return true;
         }
 
         if classify_protected_runtime_path(&token_path) != ProtectedRuntime::None {
@@ -902,10 +901,10 @@ fn should_block(path: &str, args: &[String]) -> bool {
             _ => {}
         }
 
-        if let Some(spec) = arg.strip_prefix("--config-env=") {
-            if git_config_spec_is_blocked(spec) {
-                return true;
-            }
+        if let Some(spec) = arg.strip_prefix("--config-env=")
+            && git_config_spec_is_blocked(spec)
+        {
+            return true;
         }
         if arg.starts_with("--exec-path=")
             || arg.starts_with("--git-dir=")
@@ -976,16 +975,16 @@ fn env_has_unsafe_git_override(env_entries: &[String]) -> bool {
             return true;
         }
 
-        if let Some(value) = entry.strip_prefix("GIT_CONFIG_GLOBAL=") {
-            if value != "/dev/null" {
-                return true;
-            }
+        if let Some(value) = entry.strip_prefix("GIT_CONFIG_GLOBAL=")
+            && value != "/dev/null"
+        {
+            return true;
         }
 
-        if let Some(value) = entry.strip_prefix("GIT_CONFIG_NOSYSTEM=") {
-            if value != "1" {
-                return true;
-            }
+        if let Some(value) = entry.strip_prefix("GIT_CONFIG_NOSYSTEM=")
+            && value != "1"
+        {
+            return true;
         }
 
         if let Some(value) = entry.strip_prefix("GIT_CONFIG_COUNT=") {
@@ -1018,12 +1017,12 @@ fn report(message: &str) {
 
 #[cfg(target_os = "linux")]
 unsafe fn errno_location() -> *mut c_int {
-    libc::__errno_location()
+    unsafe { libc::__errno_location() }
 }
 
 #[cfg(target_os = "macos")]
 unsafe fn errno_location() -> *mut c_int {
-    libc::__error()
+    unsafe { libc::__error() }
 }
 
 fn report_block(env_bypass: bool) {
@@ -1042,46 +1041,46 @@ fn report_mutable_native_exec_block() {
     report(MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE);
 }
 
-unsafe fn load_symbol<T: Copy>(name: &[u8]) -> T {
-    let symbol = libc::dlsym(libc::RTLD_NEXT, name.as_ptr().cast());
+unsafe fn load_symbol<T: Copy>(name: &CStr) -> T {
+    let symbol = unsafe { libc::dlsym(libc::RTLD_NEXT, name.as_ptr().cast()) };
     assert!(!symbol.is_null(), "missing required symbol {:?}", name);
-    mem::transmute_copy(&symbol)
+    unsafe { mem::transmute_copy(&symbol) }
 }
 
 fn execve_fn() -> ExecveFn {
-    *EXECVE_FN.get_or_init(|| unsafe { load_symbol(b"execve\0") })
+    *EXECVE_FN.get_or_init(|| unsafe { load_symbol(c"execve") })
 }
 
 fn execv_fn() -> ExecvFn {
-    *EXECV_FN.get_or_init(|| unsafe { load_symbol(b"execv\0") })
+    *EXECV_FN.get_or_init(|| unsafe { load_symbol(c"execv") })
 }
 
 fn execvp_fn() -> ExecvpFn {
-    *EXECVP_FN.get_or_init(|| unsafe { load_symbol(b"execvp\0") })
+    *EXECVP_FN.get_or_init(|| unsafe { load_symbol(c"execvp") })
 }
 
 fn execvpe_fn() -> ExecvpeFn {
-    *EXECVPE_FN.get_or_init(|| unsafe { load_symbol(b"execvpe\0") })
+    *EXECVPE_FN.get_or_init(|| unsafe { load_symbol(c"execvpe") })
 }
 
 fn execveat_fn() -> ExecveatFn {
-    *EXECVEAT_FN.get_or_init(|| unsafe { load_symbol(b"execveat\0") })
+    *EXECVEAT_FN.get_or_init(|| unsafe { load_symbol(c"execveat") })
 }
 
 fn fexecve_fn() -> FexecveFn {
-    *FEXECVE_FN.get_or_init(|| unsafe { load_symbol(b"fexecve\0") })
+    *FEXECVE_FN.get_or_init(|| unsafe { load_symbol(c"fexecve") })
 }
 
 fn posix_spawn_fn() -> PosixSpawnFn {
-    *POSIX_SPAWN_FN.get_or_init(|| unsafe { load_symbol(b"posix_spawn\0") })
+    *POSIX_SPAWN_FN.get_or_init(|| unsafe { load_symbol(c"posix_spawn") })
 }
 
 fn posix_spawnp_fn() -> PosixSpawnpFn {
-    *POSIX_SPAWNP_FN.get_or_init(|| unsafe { load_symbol(b"posix_spawnp\0") })
+    *POSIX_SPAWNP_FN.get_or_init(|| unsafe { load_symbol(c"posix_spawnp") })
 }
 
 fn real_syscall_fn() -> SyscallFn {
-    *REAL_SYSCALL_FN.get_or_init(|| unsafe { load_symbol(b"syscall\0") })
+    *REAL_SYSCALL_FN.get_or_init(|| unsafe { load_symbol(c"syscall") })
 }
 
 fn c_path_string(path: *const c_char) -> String {
@@ -1117,10 +1116,11 @@ fn is_git_execveat_target(dirfd: c_int, pathname: &str, flags: c_int) -> bool {
     let Ok(c_path) = CString::new(pathname.as_bytes()) else {
         return false;
     };
-    let mut stat_buf = unsafe { mem::zeroed::<libc::stat>() };
-    if unsafe { libc::fstatat(dirfd, c_path.as_ptr(), &mut stat_buf, 0) } != 0 {
+    let mut stat_buf = MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstatat(dirfd, c_path.as_ptr(), stat_buf.as_mut_ptr(), 0) } != 0 {
         return false;
     }
+    let stat_buf = unsafe { stat_buf.assume_init() };
 
     let Some(signature) = stat_signature_from_stat(&stat_buf) else {
         return false;
@@ -1142,24 +1142,28 @@ pub unsafe extern "C" fn workcell_syscall_shim(
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         if number == SYS_EXECVE {
-            return execve(
-                arg1 as *const c_char,
-                arg2 as *const *const c_char,
-                arg3 as *const *const c_char,
-            ) as c_long;
+            return unsafe {
+                execve(
+                    arg1 as *const c_char,
+                    arg2 as *const *const c_char,
+                    arg3 as *const *const c_char,
+                ) as c_long
+            };
         }
         if number == SYS_EXECVEAT {
-            return execveat(
-                arg1 as c_int,
-                arg2 as *const c_char,
-                arg3 as *const *const c_char,
-                arg4 as *const *const c_char,
-                arg5 as c_int,
-            ) as c_long;
+            return unsafe {
+                execveat(
+                    arg1 as c_int,
+                    arg2 as *const c_char,
+                    arg3 as *const *const c_char,
+                    arg4 as *const *const c_char,
+                    arg5 as c_int,
+                ) as c_long
+            };
         }
     }
 
-    real_syscall_fn()(number, arg1, arg2, arg3, arg4, arg5, arg6)
+    unsafe { real_syscall_fn()(number, arg1, arg2, arg3, arg4, arg5, arg6) }
 }
 
 #[unsafe(no_mangle)]
@@ -1189,14 +1193,14 @@ pub unsafe extern "C" fn execve(
         return -1;
     }
 
-    execve_fn()(path, argv, envp)
+    unsafe { execve_fn()(path, argv, envp) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) -> c_int {
     let path_string = c_path_string(path);
     let args = collect_cstring_array(argv);
-    let env_entries = collect_cstring_array(environ.cast());
+    let env_entries = collect_cstring_array(unsafe { environ.cast() });
 
     if should_block_protected_runtime_exec(&path_string, &args, &env_entries) {
         report_protected_runtime_block();
@@ -1215,14 +1219,14 @@ pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) 
         return -1;
     }
 
-    execv_fn()(path, argv)
+    unsafe { execv_fn()(path, argv) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char) -> c_int {
     let file_string = c_path_string(file);
     let args = collect_cstring_array(argv);
-    let env_entries = collect_cstring_array(environ.cast());
+    let env_entries = collect_cstring_array(unsafe { environ.cast() });
     let effective_path = resolve_exec_search_target(&file_string, &env_entries);
 
     if should_block_protected_runtime_exec(&effective_path, &args, &env_entries) {
@@ -1242,7 +1246,7 @@ pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char)
         return -1;
     }
 
-    execvp_fn()(file, argv)
+    unsafe { execvp_fn()(file, argv) }
 }
 
 #[unsafe(no_mangle)]
@@ -1273,7 +1277,7 @@ pub unsafe extern "C" fn execvpe(
         return -1;
     }
 
-    execvpe_fn()(file, argv, envp)
+    unsafe { execvpe_fn()(file, argv, envp) }
 }
 
 #[unsafe(no_mangle)]
@@ -1308,25 +1312,29 @@ pub unsafe extern "C" fn execveat(
             let mut mutable_shebang_target = false;
 
             if let Ok(c_path) = CString::new(pathname_string.as_bytes()) {
-                let mut stat_buf = mem::zeroed::<libc::stat>();
-                if libc::fstatat(dirfd, c_path.as_ptr(), &mut stat_buf, 0) == 0 {
-                    if let Some(signature) = stat_signature_from_stat(&stat_buf) {
+                unsafe {
+                    let mut stat_buf = MaybeUninit::<libc::stat>::uninit();
+                    if libc::fstatat(dirfd, c_path.as_ptr(), stat_buf.as_mut_ptr(), 0) == 0
+                        && let stat_buf = stat_buf.assume_init()
+                        && let Some(signature) = stat_signature_from_stat(&stat_buf)
+                    {
                         protected_target = stat_matches_protected_runtime(&signature);
                     }
-                }
 
-                let candidate_fd =
-                    libc::openat(dirfd, c_path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
-                if candidate_fd >= 0 {
-                    mutable_native_target = file_descriptor_is_mutable_native_exec(candidate_fd);
-                    if !mutable_native_target {
-                        mutable_shebang_target =
-                            file_descriptor_is_mutable_shebang_to_protected_runtime(
-                                candidate_fd,
-                                &env_entries,
-                            );
+                    let candidate_fd =
+                        libc::openat(dirfd, c_path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
+                    if candidate_fd >= 0 {
+                        mutable_native_target =
+                            file_descriptor_is_mutable_native_exec(candidate_fd);
+                        if !mutable_native_target {
+                            mutable_shebang_target =
+                                file_descriptor_is_mutable_shebang_to_protected_runtime(
+                                    candidate_fd,
+                                    &env_entries,
+                                );
+                        }
+                        libc::close(candidate_fd);
                     }
-                    libc::close(candidate_fd);
                 }
             }
 
@@ -1374,7 +1382,7 @@ pub unsafe extern "C" fn execveat(
         return -1;
     }
 
-    execveat_fn()(dirfd, pathname, argv, envp, flags)
+    unsafe { execveat_fn()(dirfd, pathname, argv, envp, flags) }
 }
 
 #[unsafe(no_mangle)]
@@ -1409,7 +1417,7 @@ pub unsafe extern "C" fn fexecve(
         return -1;
     }
 
-    fexecve_fn()(fd, argv, envp)
+    unsafe { fexecve_fn()(fd, argv, envp) }
 }
 
 #[unsafe(no_mangle)]
@@ -1442,7 +1450,7 @@ pub unsafe extern "C" fn posix_spawn(
         return libc::EPERM;
     }
 
-    posix_spawn_fn()(pid, path, file_actions, attrp, argv, envp)
+    unsafe { posix_spawn_fn()(pid, path, file_actions, attrp, argv, envp) }
 }
 
 #[unsafe(no_mangle)]
@@ -1476,7 +1484,7 @@ pub unsafe extern "C" fn posix_spawnp(
         return libc::EPERM;
     }
 
-    posix_spawnp_fn()(pid, file, file_actions, attrp, argv, envp)
+    unsafe { posix_spawnp_fn()(pid, file, file_actions, attrp, argv, envp) }
 }
 
 #[cfg(test)]
