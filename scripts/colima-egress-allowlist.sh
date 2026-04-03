@@ -44,9 +44,6 @@ resolve_go_bin() {
   if [[ -n "${GO_BIN}" && -x "${GO_BIN}" ]]; then
     return 0
   fi
-  if GO_BIN="$(command -v go 2>/dev/null)"; then
-    return 0
-  fi
   for candidate in \
     /opt/homebrew/bin/go \
     /usr/local/go/bin/go \
@@ -86,12 +83,18 @@ go_runtimeutil() {
 }
 
 resolve_workcell_real_home() {
-  local uid entry home user_name
+  local uid entry home user_name getent_bin="" dscl_bin=""
 
   uid="$(id -u)"
   user_name="$(id -un)"
-  if command -v getent >/dev/null 2>&1; then
-    entry="$(getent passwd "${uid}" 2>/dev/null || true)"
+  for candidate in /usr/bin/getent /bin/getent; do
+    if [[ -x "${candidate}" ]]; then
+      getent_bin="${candidate}"
+      break
+    fi
+  done
+  if [[ -n "${getent_bin}" ]]; then
+    entry="$("${getent_bin}" passwd "${uid}" 2>/dev/null || true)"
     if [[ -n "${entry}" ]]; then
       IFS=: read -r _ _ _ _ _ home _ <<<"${entry}"
       if [[ -n "${home}" ]]; then
@@ -101,8 +104,11 @@ resolve_workcell_real_home() {
     fi
   fi
 
-  if command -v dscl >/dev/null 2>&1; then
-    home="$(dscl . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk '{print $2}' | tail -n 1)"
+  if [[ -x /usr/bin/dscl ]]; then
+    dscl_bin=/usr/bin/dscl
+  fi
+  if [[ -n "${dscl_bin}" ]]; then
+    home="$("${dscl_bin}" . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk 'END {print $2}')"
     if [[ -n "${home}" ]]; then
       printf '%s\n' "${home}"
       return 0
