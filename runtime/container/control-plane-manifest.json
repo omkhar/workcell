@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "e4717dc1309e392bb00dedab52ae5b9242634fbc96981792954503f063d7b577"
+      "sha256": "0687bf201d4cfa1bc1db5b3330c9c5114d82f6d4c52f92374c6329f1d5e931de"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts",
@@ -14,7 +14,7 @@
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
-      "sha256": "61579c5e8d96322004fdb7f48bec1883250fe2da93806dec7bbabed7baaa1b6d"
+      "sha256": "4f066f977179a02c7b918e804a05495e52c170ce46f4f8bd695a9e9e14c2edba"
     }
   ],
   "runtime_artifacts": [
