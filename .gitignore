@@ -7,6 +7,7 @@
 .env.*
 .mcp.local.json
 *.local
+.claude/settings.local.json
 *.override
 *.pem
 *.key
