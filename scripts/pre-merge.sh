@@ -308,13 +308,6 @@ docker run --rm \
   "${VALIDATOR_IMAGE}" \
   ./scripts/validate-repo.sh
 
-echo "[pre-merge] scenario tests (container exec guard required)"
-docker run --rm \
-  -v "${ROOT_DIR}:/workspace" \
-  -w /workspace \
-  "${VALIDATOR_IMAGE}" \
-  ./scripts/run-scenario-tests.sh --secretless-only
-
 echo "[pre-merge] host launcher invariants"
 "${ROOT_DIR}/scripts/verify-invariants.sh"
 

@@ -133,13 +133,10 @@ is the authority on exact tool versions; local runs catch issues early without
 Docker overhead. `pre-merge.sh` adds container-smoke tests, reproducible-build
 verification, and release-specific checks (requires Docker).
 
-`build-and-test.sh` flags:
+To install missing host tools:
 
 ```bash
 scripts/build-and-test.sh --install   # install missing host tools (brew, pip, npm)
-scripts/build-and-test.sh --list      # list files that would be checked
-scripts/build-and-test.sh --strict    # exit on first failure
-scripts/build-and-test.sh --auto-fix  # run markdownlint --fix before linting
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites and workflow details.
