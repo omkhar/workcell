@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/omkhar/workcell/security/advisories/new
+    about: >
+      Report sandbox escapes, secret exposure, signing or provenance bypasses,
+      or unexpected trust widening via private advisory. Do not open a public
+      issue for security bugs.

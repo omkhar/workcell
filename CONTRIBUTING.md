@@ -26,7 +26,33 @@ Local development expects:
 - `zizmor`
 - `jq`
 
-On macOS, also install Colima for the real VM boundary path.
+On macOS with Homebrew:
+
+```bash
+brew install go shellcheck shfmt actionlint zizmor jq
+brew install --cask docker
+rustup-init  # installs cargo, rustfmt, clippy
+```
+
+For the real VM boundary path:
+
+```bash
+brew install colima
+```
+
+## Commit signing
+
+Every commit on `main` must be signed. Set up GPG or SSH signing before your
+first contribution:
+
+```bash
+git config --global commit.gpgsign true
+git config --global user.signingkey <your-key>
+```
+
+See [GitHub's docs on signing commits][sign-docs] for setup details.
+
+[sign-docs]: https://docs.github.com/en/authentication/managing-commit-signature-verification
 
 ## Recommended workflow
 
