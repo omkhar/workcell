@@ -54,13 +54,133 @@ remove_path_from_snapshot() {
   rm -rf "${target_path}"
 }
 
+overlay_head_state() {
+  local entry=""
+  local metadata=""
+  local mode=""
+  local obj_type=""
+  local oid=""
+  local tracked_path=""
+  local dest=""
+  local install_mode=""
+
+  # Materialize HEAD's committed tree via cat-file to bypass smudge/clean
+  # filters.  Uses git ls-tree which outputs: <mode> <type> <oid>\t<path>\0
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    tracked_path="${entry#*$'\t'}"
+    mode="${metadata%% *}"
+    local remainder="${metadata#* }"
+    obj_type="${remainder%% *}"
+    oid="${remainder##* }"
+
+    [[ "${obj_type}" == "blob" ]] || continue
+
+    case "${mode}" in
+      100644) install_mode="0644" ;;
+      100755) install_mode="0755" ;;
+      120000)
+        echo "with-validation-snapshot: skipping symlink in HEAD tree: ${tracked_path}" >&2
+        continue
+        ;;
+      *)
+        echo "with-validation-snapshot: skipping unsupported mode ${mode} in HEAD tree: ${tracked_path}" >&2
+        continue
+        ;;
+    esac
+
+    case "${tracked_path}" in
+      '' | . | .. | ./* | /* | */../* | ../* | */..)
+        echo "with-validation-snapshot: unsafe path in HEAD tree rejected: ${tracked_path}" >&2
+        continue
+        ;;
+    esac
+
+    if [[ ${#oid} -lt 40 ]] || [[ ! "${oid}" =~ ^[0-9a-f]+$ ]]; then
+      echo "with-validation-snapshot: malformed OID in HEAD tree: ${oid}" >&2
+      continue
+    fi
+
+    dest="${SNAPSHOT_DIR}/${tracked_path}"
+    if [[ -d "${dest}" ]]; then
+      rm -rf "${dest}"
+    fi
+    mkdir -p "$(dirname "${dest}")"
+    if ! git -C "${REPO_ROOT}" cat-file blob "${oid}" >"${dest}"; then
+      echo "with-validation-snapshot: failed to read blob ${oid} for path: ${tracked_path}" >&2
+      rm -f "${dest}"
+      continue
+    fi
+    chmod "${install_mode}" "${dest}" 2>/dev/null || true
+  done < <(git -C "${REPO_ROOT}" ls-tree -r -z HEAD)
+}
+
 overlay_index_state() {
   local tracked_path=""
+  local entry=""
+  local metadata=""
+  local mode=""
+  local oid=""
+  local remainder=""
+  local stage=""
+  local dest=""
+  local install_mode=""
 
   while IFS= read -r -d '' tracked_path; do
     remove_path_from_snapshot "${tracked_path}"
   done < <(git -C "${SNAPSHOT_DIR}" ls-files -z)
-  git -C "${REPO_ROOT}" checkout-index -a -f --prefix="${SNAPSHOT_DIR}/"
+
+  # Materialize each tracked blob via cat-file to bypass smudge/clean filters
+  # that a malicious .gitattributes could use for code execution.  Only regular
+  # file modes (100644, 100755) are materialized; symlinks and submodules are
+  # intentionally skipped since the validation snapshot does not need them.
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    tracked_path="${entry#*$'\t'}"
+    mode="${metadata%% *}"
+    remainder="${metadata#* }"
+    oid="${remainder%% *}"
+    stage="${remainder##* }"
+    [[ "${stage}" == "0" ]] || continue
+
+    case "${mode}" in
+      100644) install_mode="0644" ;;
+      100755) install_mode="0755" ;;
+      120000)
+        echo "with-validation-snapshot: skipping symlink in git index: ${tracked_path}" >&2
+        continue
+        ;;
+      *)
+        echo "with-validation-snapshot: skipping unsupported mode ${mode} in git index: ${tracked_path}" >&2
+        continue
+        ;;
+    esac
+
+    # Reject paths that could escape SNAPSHOT_DIR
+    case "${tracked_path}" in
+      '' | . | .. | ./* | /* | */../* | ../* | */..)
+        echo "with-validation-snapshot: unsafe path in git index rejected: ${tracked_path}" >&2
+        continue
+        ;;
+    esac
+
+    if [[ ${#oid} -lt 40 ]] || [[ ! "${oid}" =~ ^[0-9a-f]+$ ]]; then
+      echo "with-validation-snapshot: malformed OID in git index: ${oid}" >&2
+      continue
+    fi
+
+    dest="${SNAPSHOT_DIR}/${tracked_path}"
+    if [[ -d "${dest}" ]]; then
+      rm -rf "${dest}"
+    fi
+    mkdir -p "$(dirname "${dest}")"
+    if ! git -C "${REPO_ROOT}" cat-file blob "${oid}" >"${dest}"; then
+      echo "with-validation-snapshot: failed to read blob ${oid} for path: ${tracked_path}" >&2
+      rm -f "${dest}"
+      continue
+    fi
+    chmod "${install_mode}" "${dest}" 2>/dev/null || true
+  done < <(git -C "${REPO_ROOT}" ls-files -z --stage)
 }
 
 overlay_worktree_state() {
@@ -156,11 +276,15 @@ REPO_ROOT="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel)"
 SNAPSHOT_PARENT="${WORKCELL_VALIDATION_SNAPSHOT_PARENT:-$(dirname "${REPO_ROOT}")}"
 SNAPSHOT_PARENT="$(cd "${SNAPSHOT_PARENT}" && pwd)" || die "Snapshot parent does not exist: ${SNAPSHOT_PARENT}"
 SNAPSHOT_DIR="$(mktemp -d "${SNAPSHOT_PARENT}/workcell-validation-snapshot.XXXXXX")"
-rm -rf "${SNAPSHOT_DIR}"
-git clone -q --no-hardlinks "${REPO_ROOT}" "${SNAPSHOT_DIR}"
-git -C "${SNAPSHOT_DIR}" checkout -q --detach HEAD
+# Clone without checkout so repository-controlled smudge/clean filters in
+# .gitattributes cannot execute during snapshot creation.  All modes
+# materialize tracked content via cat-file blob in overlay_index_state.
+git clone -q --no-hardlinks --no-checkout "${REPO_ROOT}" "${SNAPSHOT_DIR}"
 
 case "${SNAPSHOT_MODE}" in
+  head)
+    overlay_head_state
+    ;;
   index)
     overlay_index_state
     ;;

@@ -85,11 +85,13 @@ append_unique_value() {
   local existing=""
 
   [[ -n "${value}" ]] || return 0
-  for existing in "${PROFILE_NAMES[@]}"; do
-    if [[ "${existing}" == "${value}" ]]; then
-      return 0
-    fi
-  done
+  if [[ ${#PROFILE_NAMES[@]} -gt 0 ]]; then
+    for existing in "${PROFILE_NAMES[@]}"; do
+      if [[ "${existing}" == "${value}" ]]; then
+        return 0
+      fi
+    done
+  fi
   PROFILE_NAMES+=("${value}")
 }
 
@@ -98,11 +100,13 @@ append_unique_temp_root() {
   local existing=""
 
   [[ -n "${value}" ]] || return 0
-  for existing in "${TEMP_ROOTS[@]}"; do
-    if [[ "${existing}" == "${value}" ]]; then
-      return 0
-    fi
-  done
+  if [[ ${#TEMP_ROOTS[@]} -gt 0 ]]; then
+    for existing in "${TEMP_ROOTS[@]}"; do
+      if [[ "${existing}" == "${value}" ]]; then
+        return 0
+      fi
+    done
+  fi
   TEMP_ROOTS+=("${value}")
 }
 
@@ -347,9 +351,11 @@ COLIMA_BIN="$(resolve_host_tool_optional colima /opt/homebrew/bin/colima /usr/lo
 
 collect_profiles
 
-for profile in "${PROFILE_NAMES[@]}"; do
-  delete_managed_profile "${profile}" "${COLIMA_BIN}"
-done
+if [[ ${#PROFILE_NAMES[@]} -gt 0 ]]; then
+  for profile in "${PROFILE_NAMES[@]}"; do
+    delete_managed_profile "${profile}" "${COLIMA_BIN}"
+  done
+fi
 
 remove_workcell_launcher_install "${INSTALL_PATH}"
 remove_workcell_symlink "${MAN_PATH}" "man/workcell.1" "man page"
@@ -360,9 +366,11 @@ remove_path "${SHADOW_ROOT}"
 
 append_unique_temp_root "/tmp"
 append_unique_temp_root "${TMPDIR:-}"
-for temp_root in "${TEMP_ROOTS[@]}"; do
-  cleanup_temp_root "${temp_root}"
-done
+if [[ ${#TEMP_ROOTS[@]} -gt 0 ]]; then
+  for temp_root in "${TEMP_ROOTS[@]}"; do
+    cleanup_temp_root "${temp_root}"
+  done
+fi
 
 if [[ "${REMOVED_COUNT}" -eq 0 ]]; then
   echo "No Workcell-owned install links or managed host state found."

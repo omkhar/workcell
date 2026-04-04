@@ -58,13 +58,17 @@ write_debug_wrapper() {
   mkdir -p "${debug_dir}"
   chmod 0700 "${debug_dir}" 2>/dev/null || true
   rm -f "${install_path}"
+  local quoted_root_dir
+  quoted_root_dir="$(printf '%q' "${root_dir}")"
+  local quoted_debug_dir
+  quoted_debug_dir="$(printf '%q' "${debug_dir}")"
   cat >"${install_path}" <<EOF
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
 # Workcell debug installer wrapper
 
-ROOT_DIR=${root_dir@Q}
-DEBUG_DIR=${debug_dir@Q}
+ROOT_DIR=${quoted_root_dir}
+DEBUG_DIR=${quoted_debug_dir}
 DEFAULT_DEBUG_LOG="\${DEBUG_DIR}/latest-debug.log"
 HAS_DEBUG_LOG=0
 HAS_REBUILD=0
@@ -96,7 +100,7 @@ if [[ "\${SKIP_AUTO_DEBUG}" -eq 0 ]] && [[ "\${HAS_REBUILD}" -eq 0 ]]; then
   EXTRA_ARGS+=(--rebuild)
 fi
 
-exec "\${ROOT_DIR}/scripts/workcell" "\${EXTRA_ARGS[@]}" "\$@"
+exec "\${ROOT_DIR}/scripts/workcell" \${EXTRA_ARGS[@]:+"\${EXTRA_ARGS[@]}"} "\$@"
 EOF
   chmod 0755 "${install_path}"
 }
@@ -140,5 +144,14 @@ if [[ "${DEBUG_INSTALL}" -eq 1 ]]; then
   echo "Launch-time rebuilds: enabled"
 fi
 if [[ ":${PATH}:" != *":${INSTALL_DIR}:"* ]]; then
-  echo "Add ${INSTALL_DIR} to PATH to run it without a full path."
+  case "${SHELL:-/bin/zsh}" in
+    */bash) rc_file=".bashrc" ;;
+    *) rc_file=".zshrc" ;;
+  esac
+  echo ""
+  echo "Add this line to ~/${rc_file}:"
+  # shellcheck disable=SC2016
+  echo '  export PATH="$HOME/.local/bin:$PATH"'
+  echo ""
+  echo "Or run it now for this session only."
 fi
