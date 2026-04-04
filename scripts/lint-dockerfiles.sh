@@ -4,7 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REQUIRE_DOCKERFILE_LINT="${WORKCELL_REQUIRE_DOCKERFILE_LINT:-0}"
 
-mapfile -d '' -t dockerfiles < <(
+dockerfiles=()
+while IFS= read -r -d '' file; do
+  dockerfiles+=("${file}")
+done < <(
   find "${ROOT_DIR}" \
     -path "${ROOT_DIR}/.git" -prune -o \
     -path "${ROOT_DIR}/dist" -prune -o \
