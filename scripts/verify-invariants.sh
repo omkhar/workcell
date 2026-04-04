@@ -1,4 +1,4 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
 # shellcheck shell=bash
 set -Eeuo pipefail
 
