@@ -13,7 +13,7 @@ Use this page with:
 These run without provider credentials:
 
 - `./scripts/dev-quick-check.sh`
-- `./scripts/build-and-test.sh` (host-native, no Docker required)
+- `./scripts/build-and-test.sh` (host-native by default; `--docker` reruns repo validation inside the CI validator container)
 - `./scripts/container-smoke.sh`
 - `./scripts/verify-invariants.sh`
 - `./scripts/verify-release-bundle.sh`

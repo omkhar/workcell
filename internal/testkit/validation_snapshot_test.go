@@ -210,3 +210,168 @@ func TestValidationSnapshotFailsWhenTrackedBlobIsUnreadable(t *testing.T) {
 		t.Fatalf("snapshot output = %q want failed to read blob", snapshotOutput)
 	}
 }
+
+func TestValidationSnapshotPreservesGitIndexState(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	repo := createSnapshotFixtureRepo(t, tempRoot)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("index\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", repo, "add", "README.md")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add README.md failed: %v\n%s", err, output)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("worktree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		mode          string
+		expectedIndex string
+		expectedFile  string
+	}{
+		{mode: "head", expectedIndex: "fixture", expectedFile: "fixture"},
+		{mode: "index", expectedIndex: "index", expectedFile: "index"},
+		{mode: "worktree", expectedIndex: "index", expectedFile: "worktree"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.mode, func(t *testing.T) {
+			t.Parallel()
+
+			code, output := runValidationSnapshotCommand(
+				t,
+				repo,
+				tc.mode,
+				`printf 'index=%s\n' "$(git show :README.md | tr -d '\n')"; printf 'worktree=%s\n' "$(tr -d '\n' < README.md)"`,
+				nil,
+			)
+			if code != 0 {
+				t.Fatalf("snapshot exit code = %d output=%q", code, output)
+			}
+			expected := "index=" + tc.expectedIndex + "\nworktree=" + tc.expectedFile + "\n"
+			if output != expected {
+				t.Fatalf("snapshot output = %q want %q", output, expected)
+			}
+		})
+	}
+}
+
+func TestValidationSnapshotPreservesIntentToAddState(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	repo := createSnapshotFixtureRepo(t, tempRoot)
+	if err := os.WriteFile(filepath.Join(repo, "planned.txt"), []byte("planned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", repo, "add", "-N", "planned.txt")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add -N planned.txt failed: %v\n%s", err, output)
+	}
+
+	cases := []struct {
+		mode          string
+		expectedIndex string
+		expectedDiff  string
+		expectedFile  string
+	}{
+		{mode: "index", expectedIndex: "present", expectedDiff: "", expectedFile: "missing"},
+		{mode: "worktree", expectedIndex: "present", expectedDiff: "", expectedFile: "present"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.mode, func(t *testing.T) {
+			t.Parallel()
+
+			code, output := runValidationSnapshotCommand(
+				t,
+				repo,
+				tc.mode,
+				`if git ls-files --error-unmatch planned.txt >/dev/null 2>&1; then echo index=present; else echo index=missing; fi; printf 'cached=%s\n' "$(git diff --cached --name-status -- planned.txt | tr -d '\n')"; if [ -e planned.txt ]; then echo file=present; else echo file=missing; fi`,
+				nil,
+			)
+			if code != 0 {
+				t.Fatalf("snapshot exit code = %d output=%q", code, output)
+			}
+			expected := "index=" + tc.expectedIndex + "\ncached=" + tc.expectedDiff + "\nfile=" + tc.expectedFile + "\n"
+			if output != expected {
+				t.Fatalf("snapshot output = %q want %q", output, expected)
+			}
+		})
+	}
+}
+
+func TestValidationSnapshotPreservesIntentToAddWithoutWorktreeCopy(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	repo := createSnapshotFixtureRepo(t, tempRoot)
+	if err := os.WriteFile(filepath.Join(repo, "planned.txt"), []byte("planned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", repo, "add", "-N", "planned.txt")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add -N planned.txt failed: %v\n%s", err, output)
+	}
+	if err := os.Remove(filepath.Join(repo, "planned.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	code, output := runValidationSnapshotCommand(
+		t,
+		repo,
+		"index",
+		`if git ls-files --error-unmatch planned.txt >/dev/null 2>&1; then echo index=present; else echo index=missing; fi; printf 'cached=%s\n' "$(git diff --cached --name-status -- planned.txt | tr -d '\n')"; if [ -e planned.txt ]; then echo file=present; else echo file=missing; fi`,
+		nil,
+	)
+	if code != 0 {
+		t.Fatalf("snapshot exit code = %d output=%q", code, output)
+	}
+	expected := "index=present\ncached=\nfile=missing\n"
+	if output != expected {
+		t.Fatalf("snapshot output = %q want %q", output, expected)
+	}
+}
+
+func TestValidationSnapshotPreservesIgnoredIntentToAddState(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	repo := createSnapshotFixtureRepo(t, tempRoot)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("planned.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", repo, "add", ".gitignore")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add .gitignore failed: %v\n%s", err, output)
+	}
+	cmd = exec.Command("git", "-C", repo, "commit", "-q", "-m", "add ignore")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit add ignore failed: %v\n%s", err, output)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "planned.txt"), []byte("planned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "-C", repo, "add", "-N", "-f", "planned.txt")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add -N -f planned.txt failed: %v\n%s", err, output)
+	}
+
+	code, output := runValidationSnapshotCommand(
+		t,
+		repo,
+		"index",
+		`if git ls-files --error-unmatch planned.txt >/dev/null 2>&1; then echo index=present; else echo index=missing; fi; printf 'cached=%s\n' "$(git diff --cached --name-status -- planned.txt | tr -d '\n')"; if [ -e planned.txt ]; then echo file=present; else echo file=missing; fi`,
+		nil,
+	)
+	if code != 0 {
+		t.Fatalf("snapshot exit code = %d output=%q", code, output)
+	}
+	expected := "index=present\ncached=\nfile=missing\n"
+	if output != expected {
+		t.Fatalf("snapshot output = %q want %q", output, expected)
+	}
+}

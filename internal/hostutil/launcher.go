@@ -53,6 +53,10 @@ func ColimaProfileStatus(listJSON []byte, profile string) (string, error) {
 	return "", errNoMatch
 }
 
+func IsNoMatch(err error) bool {
+	return errors.Is(err, errNoMatch)
+}
+
 func CleanupStaleLatestLogPointers(colimaRoot string) error {
 	root := filepath.Clean(colimaRoot)
 	info, err := os.Stat(root)
@@ -229,6 +233,11 @@ func AuditRecordDigest(prevDigest, timestamp string, args []string) string {
 	values := append([]string{prevDigest, timestamp}, args...)
 	sum := sha256.Sum256([]byte(strings.Join(values, "\x00")))
 	return hex.EncodeToString(sum[:])
+}
+
+func DirectMountCacheKey(hostSource, mountPath string) string {
+	sum := sha256.Sum256([]byte(hostSource + "\x00" + mountPath + "\x00"))
+	return hex.EncodeToString(sum[:8])
 }
 
 func ResolveHostOutputCandidate(raw string) (string, error) {

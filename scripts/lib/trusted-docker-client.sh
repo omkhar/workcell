@@ -1,35 +1,26 @@
 # shellcheck shell=bash
 resolve_workcell_real_home() {
-  local uid entry home user_name
+  local uid="" user="" home=""
 
   uid="$(id -u)"
-  user_name="$(id -un)"
+  user="$(id -un)"
+
   if command -v getent >/dev/null 2>&1; then
-    entry="$(getent passwd "${uid}" 2>/dev/null || true)"
-    if [[ -n "${entry}" ]]; then
-      IFS=: read -r _ _ _ _ _ home _ <<<"${entry}"
-      if [[ -n "${home}" ]]; then
-        printf '%s\n' "${home}"
-        return 0
-      fi
-    fi
+    home="$(getent passwd "${uid}" 2>/dev/null | awk -F: 'NR==1 {print $6}' || true)"
+  fi
+  if [[ -z "${home}" ]] && command -v dscl >/dev/null 2>&1; then
+    home="$(dscl . -read "/Users/${user}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  fi
+  if [[ -z "${home}" && -r /etc/passwd ]]; then
+    home="$(awk -F: -v uid="${uid}" '$3 == uid {print $6; exit}' /etc/passwd)"
   fi
 
-  if command -v dscl >/dev/null 2>&1; then
-    home="$(dscl . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk '{print $2}' | tail -n 1)"
-    if [[ -n "${home}" ]]; then
-      printf '%s\n' "${home}"
-      return 0
-    fi
+  if [[ -z "${home}" ]]; then
+    echo "Unable to resolve real home directory for uid ${uid}" >&2
+    return 1
   fi
 
-  if [[ -n "${HOME:-}" && -d "${HOME}" ]]; then
-    printf '%s\n' "${HOME}"
-    return 0
-  fi
-
-  echo "Unable to resolve real home directory for uid ${uid}" >&2
-  return 1
+  printf '%s\n' "${home}"
 }
 
 copy_workcell_docker_state_tree() {

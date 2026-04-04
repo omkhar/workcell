@@ -1,5 +1,5 @@
 #!/bin/bash -p
-readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   exec /usr/bin/env -i \
     BUILDX_BUILDER="${BUILDX_BUILDER-}" \
@@ -58,17 +58,6 @@ docker_cmd() {
     docker "$@"
   fi
 }
-
-if [[ "${1:-}" == "--self-docker-probe" ]]; then
-  require_tool docker
-  setup_workcell_trusted_docker_client
-  if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
-    select_docker_context
-  fi
-  buildx_cmd version >/dev/null
-  echo "verify-reproducible-build-docker-probe-ok"
-  exit 0
-fi
 
 build_oci_layout() {
   local platforms="$1"
@@ -129,6 +118,15 @@ cleanup() {
 
 trap cleanup EXIT
 
+if [[ "${1:-}" == "--self-docker-probe" ]]; then
+  require_tool docker
+  setup_workcell_trusted_docker_client
+  select_docker_context
+  buildx_cmd version >/dev/null
+  echo "verify-reproducible-build-docker-probe-ok"
+  exit 0
+fi
+
 require_tool docker
 require_tool go
 setup_workcell_trusted_docker_client
@@ -153,7 +151,7 @@ REPRO_REFERENCE_MANIFEST="${OCI_EXPORT_ROOT}/reference.json"
 case "${REPRO_BUILD_MODE}" in
   parallel)
     build_oci_layout_pair "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}" "${OCI_EXPORT_B}"
-    (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil generate-reproducible-build-manifest "${OCI_EXPORT_A}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}" "${SOURCE_DATE_EPOCH}")
+    (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil verify-reproducible-build "${OCI_EXPORT_A}" "${OCI_EXPORT_B}" "${REPRO_PLATFORMS}" "${REPRO_MANIFEST_PATH}" "${SOURCE_DATE_EPOCH}")
     ;;
   serial)
     build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}"
@@ -162,17 +160,16 @@ case "${REPRO_BUILD_MODE}" in
     OCI_EXPORT_A=""
     prune_repro_builder_cache
     build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_B}"
+    (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil verify-reproducible-build-manifest "${OCI_EXPORT_B}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}")
+    if [[ -n "${REPRO_MANIFEST_PATH}" ]]; then
+      mkdir -p "$(dirname "${REPRO_MANIFEST_PATH}")"
+      cp "${REPRO_REFERENCE_MANIFEST}" "${REPRO_MANIFEST_PATH}"
+    fi
     ;;
   *)
     echo "Unsupported WORKCELL_REPRO_BUILD_MODE: ${REPRO_BUILD_MODE}" >&2
     exit 2
     ;;
 esac
-
-(cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil verify-reproducible-build-manifest "${OCI_EXPORT_B}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}")
-if [[ -n "${REPRO_MANIFEST_PATH}" ]]; then
-  mkdir -p "$(dirname "${REPRO_MANIFEST_PATH}")"
-  cp "${REPRO_REFERENCE_MANIFEST}" "${REPRO_MANIFEST_PATH}"
-fi
 
 echo "Workcell reproducible build verification passed."

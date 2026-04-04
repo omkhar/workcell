@@ -519,13 +519,29 @@ run_host_colima_with_timeout() {
 colima_profile_status() {
   local profile="$1"
   local list_output=""
+  local status_output=""
+  local status_error=""
+  local status_error_path=""
 
   if ! list_output="$(run_host_colima list --json 2>/dev/null)"; then
     return 1
   fi
   [[ -n "${list_output}" ]] || return 3
 
-  printf '%s' "${list_output}" | go_hostutil launcher colima-status "${profile}"
+  status_error_path="$(mktemp "${TMPDIR:-/tmp}/workcell-colima-status.XXXXXX")"
+  if status_output="$(printf '%s' "${list_output}" | go_hostutil launcher colima-status "${profile}" 2>"${status_error_path}")"; then
+    rm -f "${status_error_path}"
+    printf '%s\n' "${status_output}"
+    return 0
+  fi
+
+  status_error="$(cat "${status_error_path}" 2>/dev/null || true)"
+  rm -f "${status_error_path}"
+  if printf '%s\n' "${status_error}" | grep -Fq -- 'not found'; then
+    return 3
+  fi
+
+  return 1
 }
 
 profile_process_pids() {
@@ -2120,9 +2136,7 @@ prepare_injection_direct_mounts() {
         ;;
     esac
 
-    entry_hash="$(
-      go_hostutil launcher audit-digest "" "" "${host_source}" "${mount_path}" | cut -c1-16
-    )"
+    entry_hash="$(go_hostutil launcher direct-mount-cache-key "${host_source}" "${mount_path}")"
     staged_source="${staged_root}/${entry_hash}"
     rm -rf "${staged_source}"
     if [[ -d "${host_source}" ]]; then
@@ -2159,6 +2173,11 @@ prepare_injection_bundle() {
     fi
   fi
 
+  bundle_parent="$(default_injection_bundle_parent)"
+  mkdir -p "${bundle_parent}"
+  chmod 0700 "${bundle_parent}" 2>/dev/null || true
+  cleanup_stale_injection_bundles "${bundle_parent}"
+
   if [[ -z "${policy_path}" ]]; then
     INJECTION_POLICY_SHA256=""
     INJECTION_CREDENTIAL_KEYS=""
@@ -2179,10 +2198,6 @@ prepare_injection_bundle() {
     exit 2
   fi
 
-  bundle_parent="$(default_injection_bundle_parent)"
-  mkdir -p "${bundle_parent}"
-  chmod 0700 "${bundle_parent}" 2>/dev/null || true
-  cleanup_stale_injection_bundles "${bundle_parent}"
   INJECTION_BUNDLE_ROOT="$(mktemp -d "${bundle_parent%/}/workcell-injections.XXXXXX")"
   INJECTION_BUNDLE_ROOT="$(resolve_host_path "${INJECTION_BUNDLE_ROOT}")"
   chmod 0700 "${INJECTION_BUNDLE_ROOT}"
@@ -3987,11 +4002,11 @@ git_index_materialize_regular_file() {
   local mode=""
   local oid=""
   local remainder=""
+  local stage=""
   local install_mode=""
+  local found=0
 
   workspace_is_git_worktree "${workspace}" || return 1
-  local stage=""
-  local found=0
   while IFS= read -r -d '' entry; do
     metadata="${entry%%$'\t'*}"
     mode="${metadata%% *}"
@@ -4017,12 +4032,7 @@ git_index_materialize_regular_file() {
     100755)
       install_mode="0755"
       ;;
-    120000)
-      echo "Workcell shadow materialization: skipping symlink: ${relative_path}" >&2
-      return 1
-      ;;
     *)
-      echo "Workcell shadow materialization: skipping unsupported mode ${mode}: ${relative_path}" >&2
       return 1
       ;;
   esac
@@ -4031,8 +4041,8 @@ git_index_materialize_regular_file() {
   # Materialize tracked blobs directly so repo-local checkout filters and other
   # worktree-side behaviors cannot influence host-side control-plane shadowing.
   if ! run_clean_host_command git -C "${workspace}" cat-file blob "${oid}" >"${destination_path}"; then
-    echo "Workcell shadow materialization: failed to read blob ${oid} for path: ${relative_path}" >&2
     rm -f "${destination_path}"
+    echo "Workcell blocked shadow materialization: failed to read tracked blob ${oid} for ${relative_path}" >&2
     return 1
   fi
   chmod "${install_mode}" "${destination_path}" 2>/dev/null || true
@@ -4057,7 +4067,7 @@ git_index_populate_shadow_dir() {
   exec 3<"${tracked_paths_file}"
   while IFS= read -r -d '' tracked_path <&3; do
     case "${tracked_path}" in
-      '' | . | .. | ./* | /* | */../* | ../* | */..)
+      '' | /* | */../* | ../* | */..)
         echo "Workcell blocked control-plane shadow materialization: unsafe path in git index rejected: ${tracked_path}" >&2
         exec 3<&-
         rm -f "${tracked_paths_file}"
@@ -4364,7 +4374,7 @@ prepare_workspace_control_plane_shadow() {
 }
 
 bootstrap_endpoints() {
-  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 storage.googleapis.com:443 snapshot.debian.org:80"
+  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 static.rust-lang.org:443 storage.googleapis.com:443 snapshot.debian.org:80"
 }
 
 AGENT=""

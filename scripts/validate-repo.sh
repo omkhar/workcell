@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SKIP_HEAVY_HOST_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
 
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -40,7 +41,7 @@ build_metadatautil() {
     return 0
   fi
   METADATAUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-metadatautil.XXXXXX")"
-  (cd "${ROOT_DIR}" && go build -buildvcs=false -o "${METADATAUTIL_BIN}" ./cmd/workcell-metadatautil)
+  (cd "${ROOT_DIR}" && go build -o "${METADATAUTIL_BIN}" ./cmd/workcell-metadatautil)
 }
 
 run_metadatautil() {
@@ -99,8 +100,8 @@ validate_manpage() {
 
 shell_files=(
   "${ROOT_DIR}/install.sh"
-  "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
+  "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/check-workflows.sh"
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
@@ -159,7 +160,24 @@ while IFS= read -r file; do
   shell_files+=("${file}")
 done < <(find "${ROOT_DIR}/tests/scenarios" -type f -name 'test-*.sh' -print | sort)
 
-shellcheck -x "${shell_files[@]}"
+should_skip_shellcheck_file() {
+  local file="$1"
+
+  [[ "${SKIP_HEAVY_HOST_SHELLCHECK}" == "1" ]] || return 1
+  case "${file}" in
+    "${ROOT_DIR}/scripts/workcell" | "${ROOT_DIR}/scripts/verify-invariants.sh")
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+for file in "${shell_files[@]}"; do
+  if should_skip_shellcheck_file "${file}"; then
+    continue
+  fi
+  shellcheck -x "${file}"
+done
 shfmt -ln=bash -i 2 -ci -d "${shell_files[@]}"
 "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
 
@@ -180,13 +198,13 @@ for scratch_dir in \
 done
 
 if [[ "${#python_files[@]}" -gt 0 ]]; then
-  echo "Unexpected repo-owned Python source files remain:" >&2
+  echo "Unexpected Python source files remain in scripts/lib:" >&2
   printf '  %s\n' "${python_files[@]}" >&2
   exit 1
 fi
 go_files=()
-while IFS= read -r -d '' file; do
-  go_files+=("${file}")
+while IFS= read -r -d '' path; do
+  go_files+=("${path}")
 done < <(find "${ROOT_DIR}/cmd" "${ROOT_DIR}/internal" -type f -name '*.go' -print0 | sort -z)
 if [[ "${#go_files[@]}" -gt 0 ]]; then
   if gofmt -l "${go_files[@]}" | grep -q .; then
@@ -198,8 +216,9 @@ go vet ./...
 go test ./...
 
 json_files=()
-while IFS= read -r file; do
-  json_files+=("${file}")
+while IFS= read -r path; do
+  [[ -n "${path}" ]] || continue
+  json_files+=("${path}")
 done < <(
   find "${ROOT_DIR}/adapters" "${ROOT_DIR}/.github" "${ROOT_DIR}/runtime/container/providers" "${ROOT_DIR}/tests/scenarios" \
     -path '*/node_modules' -prune -o \
@@ -210,8 +229,9 @@ if [[ "${#json_files[@]}" -gt 0 ]]; then
 fi
 
 toml_files=()
-while IFS= read -r file; do
-  toml_files+=("${file}")
+while IFS= read -r path; do
+  [[ -n "${path}" ]] || continue
+  toml_files+=("${path}")
 done < <(
   find "${ROOT_DIR}" \
     -path "${ROOT_DIR}/.git" -prune -o \
@@ -237,9 +257,9 @@ while IFS= read -r -d '' file; do
   doc_files+=("${file}")
 done < <(find "${ROOT_DIR}" \
   -path "${ROOT_DIR}/.git" -prune -o \
-  -path "${ROOT_DIR}/.venv" -prune -o \
   -path "${ROOT_DIR}/dist" -prune -o \
   -path "${ROOT_DIR}/tmp" -prune -o \
+  -path "${ROOT_DIR}/.venv" -prune -o \
   -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
   -path "${ROOT_DIR}/runtime/container/rust/vendor" -prune -o \
   -path "${ROOT_DIR}/runtime/container/rust/target" -prune -o \
