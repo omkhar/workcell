@@ -2,6 +2,8 @@ package hostutil
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -187,6 +189,29 @@ func TestWriteReleaseBundleManifest(t *testing.T) {
 	}, "\n")
 	if string(got) != want {
 		t.Fatalf("unexpected manifest:\n%s", got)
+	}
+}
+
+func TestDirectMountCacheKeyMatchesNULTerminatedHash(t *testing.T) {
+	got := DirectMountCacheKey("/host/auth.json", "/opt/workcell/host-inputs/credentials/codex-auth.json")
+
+	sum := sha256.Sum256([]byte("/host/auth.json\x00/opt/workcell/host-inputs/credentials/codex-auth.json\x00"))
+	want := hex.EncodeToString(sum[:8])
+	if got != want {
+		t.Fatalf("DirectMountCacheKey() = %q, want %q", got, want)
+	}
+}
+
+func TestColimaProfileStatusMissingProfileReturnsNoMatch(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		`{"name":"default","status":"Running"}`,
+		`{"name":"workcell-test","status":"Stopped"}`,
+		"",
+	}, "\n"))
+
+	_, err := ColimaProfileStatus(input, "does-not-exist")
+	if !IsNoMatch(err) {
+		t.Fatalf("ColimaProfileStatus() err = %v, want IsNoMatch", err)
 	}
 }
 

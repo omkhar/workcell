@@ -34,6 +34,48 @@ require_tool() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required tool: $1"
 }
 
+populate_snapshot_head_index() {
+  git -C "${SNAPSHOT_DIR}" read-tree HEAD >/dev/null 2>&1 ||
+    die "with-validation-snapshot: failed to populate HEAD index in snapshot"
+}
+
+populate_snapshot_index_from_source() {
+  local source_git_dir=""
+  local snapshot_git_dir=""
+  local shared_index=""
+
+  source_git_dir="$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir)" ||
+    die "with-validation-snapshot: failed to resolve source git dir"
+  snapshot_git_dir="$(git -C "${SNAPSHOT_DIR}" rev-parse --absolute-git-dir)" ||
+    die "with-validation-snapshot: failed to resolve snapshot git dir"
+  cp -p "${source_git_dir}/index" "${snapshot_git_dir}/index" ||
+    die "with-validation-snapshot: failed to copy source index into snapshot"
+  while IFS= read -r shared_index; do
+    cp -p "${shared_index}" "${snapshot_git_dir}/$(basename "${shared_index}")" ||
+      die "with-validation-snapshot: failed to copy shared index into snapshot"
+  done < <(find "${source_git_dir}" -maxdepth 1 -type f -name 'sharedindex.*' -print)
+}
+
+path_exists_in_head() {
+  local tracked_path="$1"
+
+  IFS= read -r -d '' _ < <(
+    GIT_LITERAL_PATHSPECS=1 git -C "${REPO_ROOT}" ls-tree -r -z --name-only HEAD -- "${tracked_path}"
+  )
+}
+
+path_is_intent_to_add() {
+  local tracked_path="$1"
+
+  if path_exists_in_head "${tracked_path}"; then
+    return 1
+  fi
+  if GIT_LITERAL_PATHSPECS=1 git -C "${REPO_ROOT}" diff --cached --quiet -- "${tracked_path}"; then
+    return 0
+  fi
+  return 1
+}
+
 copy_path_into_snapshot() {
   local relative_path="$1"
   local source_path="${REPO_ROOT}/${relative_path}"
@@ -54,13 +96,125 @@ remove_path_from_snapshot() {
   rm -rf "${target_path}"
 }
 
+validate_tracked_path() {
+  local tracked_path="$1"
+  local label="$2"
+
+  case "${tracked_path}" in
+    '' | . | .. | ./* | /* | */../* | ../* | */..)
+      die "with-validation-snapshot: unsafe path in ${label} rejected: ${tracked_path}"
+      ;;
+  esac
+}
+
+validate_blob_oid() {
+  local oid="$1"
+  local label="$2"
+
+  if [[ ${#oid} -lt 40 ]] || [[ ! "${oid}" =~ ^[0-9a-f]+$ ]]; then
+    die "with-validation-snapshot: malformed OID in ${label}: ${oid}"
+  fi
+}
+
+materialize_tracked_entry() {
+  local mode="$1"
+  local oid="$2"
+  local tracked_path="$3"
+  local label="$4"
+  local dest="${SNAPSHOT_DIR}/${tracked_path}"
+  local install_mode=""
+  local link_target=""
+
+  validate_tracked_path "${tracked_path}" "${label}"
+  validate_blob_oid "${oid}" "${label}"
+
+  case "${mode}" in
+    100644)
+      install_mode="0644"
+      ;;
+    100755)
+      install_mode="0755"
+      ;;
+    120000)
+      rm -rf "${dest}"
+      mkdir -p "$(dirname "${dest}")"
+      if ! IFS= read -r -d '' link_target < <(git -C "${REPO_ROOT}" cat-file blob "${oid}" && printf '\0'); then
+        die "with-validation-snapshot: failed to read symlink blob ${oid} for path: ${tracked_path}"
+      fi
+      ln -s "${link_target}" "${dest}"
+      return 0
+      ;;
+    *)
+      echo "with-validation-snapshot: skipping unsupported mode ${mode} in ${label}: ${tracked_path}" >&2
+      return 0
+      ;;
+  esac
+
+  if [[ -d "${dest}" ]]; then
+    rm -rf "${dest}"
+  fi
+  mkdir -p "$(dirname "${dest}")"
+  if ! git -C "${REPO_ROOT}" cat-file blob "${oid}" >"${dest}"; then
+    rm -f "${dest}"
+    die "with-validation-snapshot: failed to read blob ${oid} for path: ${tracked_path}"
+  fi
+  chmod "${install_mode}" "${dest}" 2>/dev/null || true
+}
+
+overlay_head_state() {
+  local entry=""
+  local metadata=""
+  local mode=""
+  local obj_type=""
+  local oid=""
+  local tracked_path=""
+  local dest=""
+  local install_mode=""
+
+  # Materialize HEAD's committed tree via cat-file to bypass smudge/clean
+  # filters.  Uses git ls-tree which outputs: <mode> <type> <oid>\t<path>\0
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    tracked_path="${entry#*$'\t'}"
+    mode="${metadata%% *}"
+    local remainder="${metadata#* }"
+    obj_type="${remainder%% *}"
+    oid="${remainder##* }"
+
+    [[ "${obj_type}" == "blob" ]] || continue
+
+    materialize_tracked_entry "${mode}" "${oid}" "${tracked_path}" "HEAD tree"
+  done < <(git -C "${REPO_ROOT}" ls-tree -r -z HEAD)
+}
+
 overlay_index_state() {
   local tracked_path=""
-
+  local entry=""
+  local metadata=""
+  local mode=""
+  local oid=""
+  local remainder=""
+  local stage=""
   while IFS= read -r -d '' tracked_path; do
     remove_path_from_snapshot "${tracked_path}"
   done < <(git -C "${SNAPSHOT_DIR}" ls-files -z)
-  git -C "${REPO_ROOT}" checkout-index -a -f --prefix="${SNAPSHOT_DIR}/"
+
+  # Materialize each tracked blob via cat-file to bypass smudge/clean filters
+  # that a malicious .gitattributes could use for code execution.
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    tracked_path="${entry#*$'\t'}"
+    mode="${metadata%% *}"
+    remainder="${metadata#* }"
+    oid="${remainder%% *}"
+    stage="${remainder##* }"
+    [[ "${stage}" == "0" ]] || continue
+
+    if path_is_intent_to_add "${tracked_path}"; then
+      continue
+    fi
+    materialize_tracked_entry "${mode}" "${oid}" "${tracked_path}" "git index"
+  done < <(git -C "${REPO_ROOT}" ls-files -z --stage)
 }
 
 overlay_worktree_state() {
@@ -154,17 +308,24 @@ git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
 REPO_ROOT="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel)"
 
 SNAPSHOT_PARENT="${WORKCELL_VALIDATION_SNAPSHOT_PARENT:-$(dirname "${REPO_ROOT}")}"
-SNAPSHOT_PARENT="$(cd "${SNAPSHOT_PARENT}" && pwd)" || die "Snapshot parent does not exist: ${SNAPSHOT_PARENT}"
+SNAPSHOT_PARENT="$(cd "${SNAPSHOT_PARENT}" && pwd -P)" || die "Snapshot parent does not exist: ${SNAPSHOT_PARENT}"
 SNAPSHOT_DIR="$(mktemp -d "${SNAPSHOT_PARENT}/workcell-validation-snapshot.XXXXXX")"
-rm -rf "${SNAPSHOT_DIR}"
-git clone -q --no-hardlinks "${REPO_ROOT}" "${SNAPSHOT_DIR}"
-git -C "${SNAPSHOT_DIR}" checkout -q --detach HEAD
+# Clone without checkout so repository-controlled smudge/clean filters in
+# .gitattributes cannot execute during snapshot creation.  Each mode
+# materializes tracked content via cat-file blob in its overlay function.
+git clone -q --no-hardlinks --no-checkout "${REPO_ROOT}" "${SNAPSHOT_DIR}"
 
 case "${SNAPSHOT_MODE}" in
+  head)
+    populate_snapshot_head_index
+    overlay_head_state
+    ;;
   index)
+    populate_snapshot_index_from_source
     overlay_index_state
     ;;
   worktree)
+    populate_snapshot_index_from_source
     overlay_index_state
     overlay_worktree_state
     ;;

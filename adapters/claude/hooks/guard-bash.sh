@@ -275,7 +275,7 @@ command_has_source_command_word() {
 command="$(printf '%s' "${WORKCELL_HOOK_PAYLOAD}" | jq -er '.tool_input.command | select(type == "string")' 2>/dev/null || true)"
 [[ -n "${command}" ]] || exit 0
 
-command_lower="${command,,}"
+command_lower="$(printf '%s' "${command}" | tr '[:upper:]' '[:lower:]')"
 command_lower_dequoted="$(printf '%s' "${command_lower}" | tr -d "\"'")"
 command_lower_deescaped="$(printf '%s' "${command_lower_dequoted}" | tr -d "\\")"
 command_substitution_marker="\$("

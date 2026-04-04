@@ -128,7 +128,10 @@ esac
 
 "${HOSTUTIL_BIN}" release metadata "${release_json}" "${TMP_ROOT}/release-metadata.txt" "$@"
 
-mapfile -d '' -t release_metadata <"${TMP_ROOT}/release-metadata.txt"
+release_metadata=()
+while IFS= read -r -d '' field; do
+  release_metadata+=("${field}")
+done <"${TMP_ROOT}/release-metadata.txt"
 release_id="${release_metadata[0]}"
 upload_url="${release_metadata[1]}"
 

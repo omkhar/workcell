@@ -1,5 +1,15 @@
 #!/bin/bash -p
 # shellcheck shell=bash
+readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  exec /usr/bin/env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME="${HOME:-/tmp}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1 \
+    /bin/bash -p "$0" "$@"
+fi
+unset BASH_ENV ENV
 set -Eeuo pipefail
 
 report_verify_invariants_failure() {
@@ -62,7 +72,6 @@ free_bytes_for_path() {
   /bin/df -Pk "${target_path}" | awk 'NR==2 {print $4 * 1024}'
 }
 
-readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -76,7 +85,17 @@ require_tool jq
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
+
+go_verify_metadatautil() {
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-metadatautil "$@"
+}
+
+go_verify_hostutil() {
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-hostutil "$@"
+}
+
 HOST_GATE_SCRIPTS=(
+  "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
@@ -111,7 +130,7 @@ REPO_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/tmp/verify-remote-validate-repo.env"
 ROOT_DRY_RUN_PROFILE_NAME="$(
   workspace="$(cd "${ROOT_DIR}" && pwd -P)"
   slug="$(printf '%s' "${workspace##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^$/workspace/' | cut -c1-10)"
-  digest="$(run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-hostutil launcher workspace-cache-key "${workspace}" | cut -c1-8)"
+  digest="$(go_verify_hostutil launcher workspace-cache-key "${workspace}" | cut -c1-8)"
   printf 'workcell-%s-%s\n' "${slug}" "${digest}"
 )"
 ROOT_DRY_RUN_PROFILE_DIR="${REAL_HOME}/.colima/${ROOT_DRY_RUN_PROFILE_NAME}"
@@ -165,16 +184,8 @@ extract_top_level_bash_function() {
 cleanup() {
   [[ "${VERIFY_INVARIANTS_CLEANUP_ACTIVE}" -eq 0 ]] || return 0
   VERIFY_INVARIANTS_CLEANUP_ACTIVE=1
-  trap - EXIT
+  trap - EXIT ERR
   set +e
-
-  remove_tree() {
-    local path="$1"
-
-    [[ -n "${path}" && -e "${path}" ]] || return 0
-    chmod -R u+w "${path}" 2>/dev/null || true
-    rm -rf "${path}" 2>/dev/null || true
-  }
 
   delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME:-}"
   delete_verify_colima_profile "${AUDIT_RESTORE_PROFILE_NAME:-}"
@@ -184,16 +195,17 @@ cleanup() {
   delete_verify_colima_profile "${TRANSCRIPT_LOG_PROFILE:-}"
   delete_verify_colima_profile "${BROKEN_DEBUG_POINTER_PROFILE:-}"
   delete_verify_colima_profile "${UNMANAGED_PROFILE_NAME:-}"
-  remove_tree "${CODEX_VERIFY_HOME}"
-  remove_tree "${BARRIER_VERIFY_ROOT}"
-  remove_tree "${INSTALL_VERIFY_HOME}"
-  remove_tree "${REMOTE_VALIDATE_CONFIG_ROOT}"
+  chmod -R u+w "${CODEX_VERIFY_HOME}" "${BARRIER_VERIFY_ROOT}" "${INSTALL_VERIFY_HOME}" 2>/dev/null || true
+  rm -rf "${CODEX_VERIFY_HOME}"
+  rm -rf "${BARRIER_VERIFY_ROOT}"
+  rm -rf "${INSTALL_VERIFY_HOME}"
+  rm -rf "${REMOTE_VALIDATE_CONFIG_ROOT}"
   rm -f "${REPO_LOCAL_REMOTE_CONFIG_PATH}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
   if [[ -n "${COLIMA_PROFILE_FIXTURE}" ]] && [[ -d "${COLIMA_PROFILE_FIXTURE}" ]]; then
-    remove_tree "${COLIMA_PROFILE_FIXTURE}"
+    rm -rf "${COLIMA_PROFILE_FIXTURE}"
   fi
   rm -f "${LEGACY_LOCAL_REMOTE_CONFIG_PATH}"
 }
@@ -250,7 +262,7 @@ rg() {
 
 canonicalize_verify_tool_path() {
   local candidate="$1"
-  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil canonicalize-path "${candidate}")
+  go_verify_metadatautil canonicalize-path "${candidate}"
 }
 
 verify_tool_path_is_trusted() {
@@ -1199,9 +1211,7 @@ test ! -e "${INSTALL_VERIFY_HOME}/.local/share/man/man1/workcell.1"
 grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files.' /tmp/workcell-uninstall-debug.out
 
 CUSTOM_DEBUG_DIR="${INSTALL_VERIFY_HOME}/custom-workcell-debug"
-CUSTOM_DEBUG_DIR_REAL="$(
-  cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil canonicalize-path "${CUSTOM_DEBUG_DIR}"
-)"
+CUSTOM_DEBUG_DIR_REAL="$(go_verify_metadatautil canonicalize-path "${CUSTOM_DEBUG_DIR}")"
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug --debug-dir "${CUSTOM_DEBUG_DIR}" >/tmp/workcell-install-custom-debug.out 2>&1; then
   echo "Expected scripts/install.sh --debug --debug-dir to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-install-custom-debug.out >&2
@@ -1361,7 +1371,11 @@ if [[ -e "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/credentials/codex-auth.json" ]
   exit 1
 fi
 
-mapfile -t actual_mount_paths < <(jq -r '.[].mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle.mounts.json" | sort -u)
+actual_mount_paths=()
+while IFS= read -r line; do
+  [[ -n "${line}" ]] || continue
+  actual_mount_paths+=("${line}")
+done < <(jq -r '.[].mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle.mounts.json" | sort -u)
 expected_mount_paths=(
   "/opt/workcell/host-inputs/credentials/codex-auth.json"
   "/opt/workcell/host-inputs/credentials/github-hosts.yml"
@@ -1414,7 +1428,11 @@ EOF
 [[ "$(jq -r '.documents.common' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == "documents/common.md" ]]
 [[ "$(jq -r '.credentials.codex_auth.mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == "/opt/workcell/host-inputs/credentials/codex-auth.json" ]]
 [[ "$(jq -r '.metadata.policy_sha256' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == sha256:* ]]
-mapfile -t included_policy_source_names < <(jq -r '.metadata.policy_sources[].path | split("/")[-1]' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")
+included_policy_source_names=()
+while IFS= read -r line; do
+  [[ -n "${line}" ]] || continue
+  included_policy_source_names+=("${line}")
+done < <(jq -r '.metadata.policy_sources[].path | split("/")[-1]' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")
 if [[ "${included_policy_source_names[*]}" != "fragment-docs.toml fragment-credentials.toml policy-with-includes.toml" ]]; then
   echo "unexpected included policy source order: ${included_policy_source_names[*]}" >&2
   exit 1
@@ -2136,9 +2154,12 @@ EOF
 } >"${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 bash "${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 
-if ! rg -q 'REAL_HOME="\$\(go_hostutil path home\)"' "${ROOT_DIR}/scripts/workcell" ||
-  ! rg -q 'run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to invoke the bootstrap Go helper under a scrubbed environment" >&2
+if ! rg -q 'run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env' "${ROOT_DIR}/scripts/workcell" ||
+  ! rg -q 'GOPATH="\$\{GOPATH\}"' "${ROOT_DIR}/scripts/workcell" ||
+  ! rg -q 'GOMODCACHE="\$\{GOMODCACHE\}"' "${ROOT_DIR}/scripts/workcell" ||
+  ! rg -q 'GOCACHE="\$\{GOCACHE\}"' "${ROOT_DIR}/scripts/workcell" ||
+  ! rg -q '"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches" >&2
   exit 1
 fi
 
@@ -2193,9 +2214,12 @@ if ! rg -q 'is_trusted_host_tool_path' "${ROOT_DIR}/scripts/colima-egress-allowl
   exit 1
 fi
 
-if ! rg -q 'run_clean_repo_command "\$\{GO_BIN\}" run ./cmd/workcell-runtimeutil' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
-  ! rg -q 'go_runtimeutil canonicalize-path' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected scripts/colima-egress-allowlist.sh to invoke host Go helpers under a scrubbed environment" >&2
+if ! rg -q 'run_clean_repo_command env' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
+  ! rg -q 'GOPATH="\$\{GOPATH\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
+  ! rg -q 'GOMODCACHE="\$\{GOMODCACHE\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
+  ! rg -q 'GOCACHE="\$\{GOCACHE\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
+  ! rg -q '"\$\{GO_BIN\}" run ./cmd/workcell-runtimeutil "\$@"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
+  echo "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches" >&2
   exit 1
 fi
 
@@ -2265,6 +2289,11 @@ if ! rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
+if ! rg -q 'static\.rust-lang\.org:443' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell bootstrap endpoints to allow static.rust-lang.org for rustup bootstrapping" >&2
+  exit 1
+fi
+
 if ! rg -q 'docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on Cloudflare R2" >&2
   exit 1
@@ -2324,8 +2353,25 @@ if ! sed -n '/^git_index_materialize_regular_file()/,/^}/p' "${ROOT_DIR}/scripts
   exit 1
 fi
 
+if ! sed -n '/^git_index_materialize_regular_file()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'failed to read tracked blob'; then
+  echo "Expected git_index_materialize_regular_file to fail closed when a tracked control-plane blob is unreadable" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC2016
+if ! sed -n '/^git_index_materialize_regular_file()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq 'rm -f "${destination_path}"'; then
+  echo "Expected git_index_materialize_regular_file to remove partially materialized files after blob read failures" >&2
+  exit 1
+fi
+
 if ! sed -n '/^git_index_populate_shadow_dir()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq '*/../*'; then
   echo "Expected git_index_populate_shadow_dir to reject unsafe index paths before shadow materialization" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC2016
+if ! grep -Fq -- '-path "${ROOT_DIR}/.venv" -prune -o' "${ROOT_DIR}/scripts/validate-repo.sh"; then
+  echo "Expected validate-repo.sh to prune repo-local virtualenv content from documentation scans" >&2
   exit 1
 fi
 
@@ -4040,29 +4086,29 @@ COLIMA_PROFILE_STATUS_HARNESS="$(mktemp)"
   cat <<'EOF'
 set -euo pipefail
 
+ROOT_DIR="__ROOT_DIR__"
 TRUSTED_HOST_PATH="${PATH}"
 
+# Match scripts/workcell's scrubbed repo-root go_hostutil invocation.
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
+
 go_hostutil() {
-  local scope="$1"
-  local action="$2"
-  local profile="$3"
-  local payload=""
+  local host_go_bin=""
 
-  payload="$(cat)"
-  [[ "${scope}" == "launcher" && "${action}" == "colima-status" ]] || return 1
-  [[ "${payload}" != '{not-json' ]] || return 1
-
-  case "${profile}" in
-    workcell-workcell-ac42b1dc)
-      printf 'Stopped\n'
-      ;;
-    workcell-other)
-      printf 'Running\n'
-      ;;
-    *)
-      return 3
-      ;;
-  esac
+  ensure_go_run_env
+  host_go_bin="$(resolve_go_bin)"
+  (
+    cd "${ROOT_DIR}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME=/tmp \
+        LC_ALL=C \
+        LANG=C \
+        GOPATH="${GOPATH}" \
+        GOMODCACHE="${GOMODCACHE}" \
+        GOCACHE="${GOCACHE}" \
+        "${host_go_bin}" run ./cmd/workcell-hostutil "$@"
+  )
 }
 
 run_host_colima() {
@@ -4151,7 +4197,7 @@ if [[ -n "$(maybe_reap_stale_profile_processes workcell-parse-failure)" ]]; then
   exit 1
 fi
 EOF
-} >"${COLIMA_PROFILE_STATUS_HARNESS}"
+} | sed "s|__ROOT_DIR__|${ROOT_DIR}|g" >"${COLIMA_PROFILE_STATUS_HARNESS}"
 /bin/bash "${COLIMA_PROFILE_STATUS_HARNESS}"
 rm -f "${COLIMA_PROFILE_STATUS_HARNESS}"
 if ! "${ROOT_DIR}/scripts/workcell" \
@@ -4221,13 +4267,20 @@ fi
 PREMERGE_HARNESS_ROOT="${BARRIER_VERIFY_ROOT}/premerge-harness"
 PREMERGE_FAKEBIN="${PREMERGE_HARNESS_ROOT}/fakebin"
 PREMERGE_LOG="${PREMERGE_HARNESS_ROOT}/premerge.log"
+PREMERGE_DEFAULT_HOME="${PREMERGE_HARNESS_ROOT}/home"
+if [[ "${OSTYPE:-}" == darwin* ]]; then
+  PREMERGE_DEFAULT_SNAPSHOT_PARENT="${PREMERGE_DEFAULT_HOME}/Library/Caches/workcell-validation-snapshots"
+else
+  PREMERGE_DEFAULT_SNAPSHOT_PARENT="${PREMERGE_DEFAULT_HOME}/.cache/workcell-validation-snapshots"
+fi
 rm -rf "${PREMERGE_HARNESS_ROOT}"
-mkdir -p "${PREMERGE_HARNESS_ROOT}/scripts" "${PREMERGE_HARNESS_ROOT}/tools/validator" "${PREMERGE_FAKEBIN}"
+mkdir -p "${PREMERGE_HARNESS_ROOT}/scripts" "${PREMERGE_HARNESS_ROOT}/tools/validator" "${PREMERGE_FAKEBIN}" "${PREMERGE_DEFAULT_HOME}"
 install -m 0755 "${ROOT_DIR}/scripts/pre-merge.sh" "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh"
 cat >"${PREMERGE_HARNESS_ROOT}/scripts/with-validation-snapshot.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'with-validation-snapshot.sh %s\n' "$*" >>"${PREMERGE_LOG}"
+printf 'WORKCELL_VALIDATION_SNAPSHOT_PARENT=%s\n' "${WORKCELL_VALIDATION_SNAPSHOT_PARENT-}" >>"${PREMERGE_LOG}"
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == "--" ]]; then
     shift
@@ -4350,9 +4403,12 @@ grep -q -- '--local-include-untracked requires --local-snapshot worktree.' /tmp/
 
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  HOME="${PREMERGE_DEFAULT_HOME}" \
+  XDG_CACHE_HOME='' \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  WORKCELL_VALIDATION_SNAPSHOT_PARENT='' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --local-snapshot head >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
   echo "Expected --local-snapshot head pre-merge harness to succeed on a dirty worktree" >&2
@@ -4360,6 +4416,7 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'local validation will run from snapshot (head).' /tmp/workcell-premerge-local-snapshot.out
+grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_DEFAULT_SNAPSHOT_PARENT}" "${PREMERGE_LOG}"
 grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
 
 : >"${PREMERGE_LOG}"
@@ -4427,6 +4484,7 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  WORKCELL_VALIDATION_SNAPSHOT_PARENT='relative-snapshots' \
   WORKCELL_PREMERGE_REPRO_PLATFORMS='linux/arm64' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --local-snapshot worktree \
@@ -4437,6 +4495,7 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
 fi
 grep -q 'local validation will run from snapshot (worktree).' /tmp/workcell-premerge-local-snapshot.out
 grep -q 'with-validation-snapshot.sh --repo ' "${PREMERGE_LOG}"
+grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_HARNESS_ROOT}/relative-snapshots" "${PREMERGE_LOG}"
 grep -q -- '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --local-snapshot worktree --local-include-untracked' "${PREMERGE_LOG}"
 grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
 grep -q 'verify-reproducible-build.sh ' "${PREMERGE_LOG}"
@@ -4812,6 +4871,52 @@ fi
 grep -q '"tracked": true' "${MASK_SNAPSHOT_ROOT}/dirs/.claude/settings.json"
 chmod -R u+w "${MASK_SNAPSHOT_ROOT}" 2>/dev/null || true
 rm -rf "${MASK_SNAPSHOT_ROOT}"
+
+CONFLICT_SHADOW_REPO="${BARRIER_VERIFY_ROOT}/conflict-shadow-repo"
+git init -q "${CONFLICT_SHADOW_REPO}"
+git -C "${CONFLICT_SHADOW_REPO}" config user.name "Workcell Verify"
+git -C "${CONFLICT_SHADOW_REPO}" config user.email "workcell-verify@example.com"
+mkdir -p "${CONFLICT_SHADOW_REPO}/.claude"
+cat <<'EOF' >"${CONFLICT_SHADOW_REPO}/.claude/settings.json"
+{"value":"base"}
+EOF
+git -C "${CONFLICT_SHADOW_REPO}" add .claude/settings.json
+git -C "${CONFLICT_SHADOW_REPO}" commit -q -m init
+git -C "${CONFLICT_SHADOW_REPO}" checkout -q -b other
+cat <<'EOF' >"${CONFLICT_SHADOW_REPO}/.claude/settings.json"
+{"value":"other"}
+EOF
+git -C "${CONFLICT_SHADOW_REPO}" commit -q -am other
+git -C "${CONFLICT_SHADOW_REPO}" checkout -q master
+cat <<'EOF' >"${CONFLICT_SHADOW_REPO}/.claude/settings.json"
+{"value":"master"}
+EOF
+git -C "${CONFLICT_SHADOW_REPO}" commit -q -am master
+if git -C "${CONFLICT_SHADOW_REPO}" merge other >/tmp/workcell-conflict-shadow-merge.out 2>&1; then
+  echo "Expected conflict-shadow fixture merge to leave unresolved index stages" >&2
+  exit 1
+fi
+CONFLICT_SHADOW_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
+  --self-staging-probe \
+  codex \
+  "${CONFLICT_SHADOW_REPO}" \
+  "${AUTH_STATUS_ROOT}/policy.toml" \
+  strict \
+  0 \
+  1)"
+CONFLICT_SHADOW_ROOT="$(printf '%s\n' "${CONFLICT_SHADOW_OUTPUT}" | sed -n 's/^shadow_root=//p' | head -n1)"
+if [[ -z "${CONFLICT_SHADOW_ROOT}" ]] || [[ ! -d "${CONFLICT_SHADOW_ROOT}" ]]; then
+  echo "Expected conflicted shadow staging probe to expose a shadow root" >&2
+  printf '%s\n' "${CONFLICT_SHADOW_OUTPUT}" >&2
+  exit 1
+fi
+if [[ -e "${CONFLICT_SHADOW_ROOT}/dirs/.claude/settings.json" ]]; then
+  echo "Expected unresolved git index entries to be excluded from the control-plane shadow without leaking stage 1/2/3 blobs" >&2
+  cat "${CONFLICT_SHADOW_ROOT}/dirs/.claude/settings.json" >&2
+  exit 1
+fi
+chmod -R u+w "${CONFLICT_SHADOW_ROOT}" 2>/dev/null || true
+rm -rf "${CONFLICT_SHADOW_ROOT}"
 
 mkdir -p "${MASK_VERIFY_WORKSPACE}/symlinked"
 ln -s "${REAL_HOME}/.ssh/config" "${MASK_VERIFY_WORKSPACE}/symlinked/GEMINI.md"
