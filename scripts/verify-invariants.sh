@@ -1362,7 +1362,10 @@ if [[ -e "${INJECTION_POLICY_FIXTURE_ROOT}/bundle/credentials/codex-auth.json" ]
   exit 1
 fi
 
-mapfile -t actual_mount_paths < <(jq -r '.[].mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle.mounts.json" | sort -u)
+actual_mount_paths=()
+while IFS= read -r line; do
+  actual_mount_paths+=("${line}")
+done < <(jq -r '.[].mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle.mounts.json" | sort -u)
 expected_mount_paths=(
   "/opt/workcell/host-inputs/credentials/codex-auth.json"
   "/opt/workcell/host-inputs/credentials/github-hosts.yml"
@@ -1415,7 +1418,10 @@ EOF
 [[ "$(jq -r '.documents.common' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == "documents/common.md" ]]
 [[ "$(jq -r '.credentials.codex_auth.mount_path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == "/opt/workcell/host-inputs/credentials/codex-auth.json" ]]
 [[ "$(jq -r '.metadata.policy_sha256' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == sha256:* ]]
-mapfile -t included_policy_source_names < <(jq -r '.metadata.policy_sources[].path | split("/")[-1]' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")
+included_policy_source_names=()
+while IFS= read -r line; do
+  included_policy_source_names+=("${line}")
+done < <(jq -r '.metadata.policy_sources[].path | split("/")[-1]' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")
 if [[ "${included_policy_source_names[*]}" != "fragment-docs.toml fragment-credentials.toml policy-with-includes.toml" ]]; then
   echo "unexpected included policy source order: ${included_policy_source_names[*]}" >&2
   exit 1

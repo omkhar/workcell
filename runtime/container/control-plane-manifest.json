@@ -34,7 +34,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/claude/hooks/guard-bash.sh",
       "runtime_path": "/opt/workcell/adapters/claude/hooks/guard-bash.sh",
-      "sha256": "d40e2b13f22fa9f1a92cf3033df6f465f6195d6f9bf256bbcdec328e61803804"
+      "sha256": "fd81d0f21dccf0e97cee2b69138e2fa8d40450caee326e1e2b4cd348d7fb6379"
     },
     {
       "kind": "adapter-baseline",

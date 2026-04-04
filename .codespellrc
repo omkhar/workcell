@@ -1,4 +1,4 @@
 [codespell]
-skip = .git,dist,tmp,runtime/container/providers/node_modules,runtime/container/rust/vendor,runtime/container/rust/target
+skip = .git,.venv,dist,tmp,runtime/container/providers/node_modules,runtime/container/rust/vendor,runtime/container/rust/target
 quiet-level = 2
 ignore-regex = ^\s*\.IP\s+\\\(bu\s+2$
