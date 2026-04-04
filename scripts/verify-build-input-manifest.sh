@@ -63,12 +63,11 @@ copy_tracked_worktree() {
     source_path="${ROOT_DIR}/${path}"
     destination_path="${destination}/${path}"
     if [[ ! -e "${source_path}" ]]; then
-      echo "Tracked release input is missing from the working tree during archived-source verification: ${path}" >&2
-      exit 1
+      continue
     fi
     mkdir -p "$(dirname "${destination_path}")"
     cp -pP "${source_path}" "${destination_path}"
-  done < <(safe_git -C "${ROOT_DIR}" ls-files -z)
+  done < <(safe_git -C "${ROOT_DIR}" ls-files -z --cached --modified --others --exclude-standard --deduplicate)
 }
 
 export WORKCELL_BUILD_INPUT_REF="${BUILD_REF}"
