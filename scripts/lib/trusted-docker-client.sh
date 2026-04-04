@@ -108,6 +108,7 @@ setup_workcell_trusted_docker_client() {
 
 cleanup_workcell_trusted_docker_client() {
   if [[ -n "${WORKCELL_DOCKER_SANDBOX_ROOT:-}" ]] && [[ -d "${WORKCELL_DOCKER_SANDBOX_ROOT}" ]]; then
+    chmod -R u+w "${WORKCELL_DOCKER_SANDBOX_ROOT}" 2>/dev/null || true
     rm -rf "${WORKCELL_DOCKER_SANDBOX_ROOT}"
   fi
 }
