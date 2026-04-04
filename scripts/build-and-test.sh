@@ -6,7 +6,7 @@
 #
 # This is a build-time tool, not a runtime entry point; it does not
 # launch a Workcell session or go through the launcher's runtime boundary.
-readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   exec /usr/bin/env -i \
     PATH="${TRUSTED_HOST_PATH}" \
