@@ -72,6 +72,8 @@ for agent in codex claude gemini; do
   grep -q '^workspace_control_plane=unmasked$' "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^network_policy=unrestricted ' "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^execution_path=lower-assurance-breakglass audit_log=' "${TMP_DIR}/breakglass-${agent}.stderr"
+  grep -q '^autonomy_assurance=managed-yolo$' "${TMP_DIR}/breakglass-${agent}.stderr"
+  grep -q '^session_assurance_initial=managed-mutable$' "${TMP_DIR}/breakglass-${agent}.stderr"
 done
 
 for agent in codex claude gemini; do
