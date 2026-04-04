@@ -44,8 +44,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          auth_header="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n')"
-          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${auth_header}" \
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${GITHUB_TOKEN}" \
             fetch "https://github.com/${GITHUB_REPOSITORY}.git" main --depth=1
           git merge-base --is-ancestor "${GITHUB_SHA}" FETCH_HEAD
 

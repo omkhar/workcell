@@ -119,3 +119,23 @@ updates:
       runtime-rust:
         patterns:
           - "*"
+
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:30"
+      timezone: "America/Toronto"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "go"
+    groups:
+      go-modules:
+        patterns:
+          - "*"

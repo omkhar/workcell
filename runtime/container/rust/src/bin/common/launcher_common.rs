@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Omkhar Arasaratnam
+
 use std::env;
 use std::ffi::{CString, OsStr, OsString};
 use std::fmt;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Omkhar Arasaratnam
+
 package hostutil
 
 import (
@@ -129,7 +132,7 @@ func ProfileLockIsStale(lockDir string) (bool, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return true, nil
 		}
-		return true, nil
+		return false, err
 	}
 
 	var owner struct {
@@ -217,7 +220,7 @@ func CleanupStaleSessionAuditDirs(colimaRoot string) error {
 			if err != nil {
 				continue
 			}
-			if statUID(info) != uid || info.IsDir() == false || info.Mode()&os.ModeSymlink != 0 {
+			if statUID(info) != uid || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 				continue
 			}
 			if info.ModTime().After(cutoff) {
@@ -528,17 +531,16 @@ func injectionBundleIsLive(bundlePath string, cutoff time.Time) (bool, error) {
 	}
 
 	var owner struct {
-		PID     any    `json:"pid"`
+		PID     int    `json:"pid"`
 		Started string `json:"started"`
 	}
 	if err := json.Unmarshal(content, &owner); err != nil {
 		return false, nil
 	}
-	pid, ok := owner.PID.(float64)
-	if !ok || owner.Started == "" {
+	if owner.PID <= 0 || owner.Started == "" {
 		return false, nil
 	}
-	started, err := processStartTime(int(pid))
+	started, err := processStartTime(owner.PID)
 	if err != nil {
 		return false, nil
 	}

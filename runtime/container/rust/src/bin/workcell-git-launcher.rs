@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Omkhar Arasaratnam
+
 #[path = "common/launcher_common.rs"]
 mod launcher_common;
 
