@@ -98,7 +98,7 @@ run_scenario() {
 while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform manual; do
   run_scenario "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${manual}"
 done < <(
-  python3 "${ROOT_DIR}/scripts/lib/scenario_manifest.py" list-tsv "${MANIFEST}"
+  "${ROOT_DIR}/scripts/lib/scenario_manifest" list-tsv "${MANIFEST}"
 )
 
 echo ""

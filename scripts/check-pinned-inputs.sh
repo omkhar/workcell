@@ -378,6 +378,7 @@ require_exact_packages(
         "curl",
         "gcc",
         "git",
+        "golang-go",
         "groff-base",
         "jq",
         "libc6-dev",

@@ -1,0 +1,8 @@
+#!/usr/bin/env -S BASH_ENV= ENV= bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
+
+exec_go_run_in_repo "${ROOT_DIR}" ./cmd/workcell-manage-injection-policy "$@"

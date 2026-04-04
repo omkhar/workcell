@@ -2,19 +2,19 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "79ca5c9971ade02d1f9a113fd3e218728034f58595c19b74077cbb15e303a667"
+      "sha256": "0687bf201d4cfa1bc1db5b3330c9c5114d82f6d4c52f92374c6329f1d5e931de"
     },
     {
-      "repo_path": "scripts/lib/extract_direct_mounts.py",
-      "sha256": "66f9042444a3852a8155eb1d8c100fb026ac968b242573c62f34b536d2fab5fa"
+      "repo_path": "scripts/lib/extract_direct_mounts",
+      "sha256": "c7845ce20cca15add76f015cff2257c8b2263352414db787e38eb5040f537b62"
     },
     {
-      "repo_path": "scripts/lib/render_injection_bundle.py",
-      "sha256": "2722a0680c5db9b56fe65f63a590b286c391086d559028585ef03a749572e882"
+      "repo_path": "scripts/lib/render_injection_bundle",
+      "sha256": "3fc8c51037893b74d2790a9ed0f1a8e64f311887210f482d25ecb964407c8d56"
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
-      "sha256": "d8ba38682adfe753233e126621210f453765796aedc692dade51cdb275c71122"
+      "sha256": "6e5c0ef2c0a710be998a88cb0d2384c610f8a53184d7c8109108e3e4515a3695"
     }
   ],
   "runtime_artifacts": [
