@@ -21,7 +21,9 @@ mode = "review-gated"
 
 [release_environment]
 # Valid modes:
-# - "review-gated": require at least one human reviewer and no admin bypass
+# - "review-gated": require at least one human reviewer and no admin bypass;
+#   upgrade to this once the repository is public (public repos on the free
+#   plan can enforce environment reviewers, private repos cannot)
 # - "single-owner-private": allow a private single-owner repo to use the
 #   release environment without a reviewer gate
 # - "plan-limited-private": lower-assurance fallback for private repositories
