@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "0687bf201d4cfa1bc1db5b3330c9c5114d82f6d4c52f92374c6329f1d5e931de"
+      "sha256": "56113deacee4a698ca2b2f6543c6b7abc43e7052a3bc01eda6f2bcef9f8b438c"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts",
@@ -14,7 +14,7 @@
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
-      "sha256": "6e5c0ef2c0a710be998a88cb0d2384c610f8a53184d7c8109108e3e4515a3695"
+      "sha256": "1d165051ed01d85507e7219f3533b3738f31353e349e5cdcced32af514908013"
     }
   ],
   "runtime_artifacts": [
@@ -34,7 +34,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/claude/hooks/guard-bash.sh",
       "runtime_path": "/opt/workcell/adapters/claude/hooks/guard-bash.sh",
-      "sha256": "d40e2b13f22fa9f1a92cf3033df6f465f6195d6f9bf256bbcdec328e61803804"
+      "sha256": "fd81d0f21dccf0e97cee2b69138e2fa8d40450caee326e1e2b4cd348d7fb6379"
     },
     {
       "kind": "adapter-baseline",

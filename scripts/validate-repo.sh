@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SKIP_HEAVY_HOST_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
 
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -50,9 +51,13 @@ run_metadatautil() {
 
 trap cleanup EXIT
 
-mapfile -t python_files < <(
+python_files=()
+while IFS= read -r file; do
+  python_files+=("${file}")
+done < <(
   find "${ROOT_DIR}" \
     -path "${ROOT_DIR}/.git" -prune -o \
+    -path "${ROOT_DIR}/.venv" -prune -o \
     -path "${ROOT_DIR}/dist" -prune -o \
     -path "${ROOT_DIR}/tmp" -prune -o \
     -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
@@ -94,13 +99,16 @@ validate_manpage() {
 }
 
 shell_files=(
+  "${ROOT_DIR}/install.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
+  "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/check-workflows.sh"
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/dev-quick-check.sh"
   "${ROOT_DIR}/scripts/go-port-validate.sh"
+  "${ROOT_DIR}/scripts/install-dev-tools.sh"
   "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
   "${ROOT_DIR}/scripts/dev-remote-validate.sh"
   "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
@@ -152,7 +160,24 @@ while IFS= read -r file; do
   shell_files+=("${file}")
 done < <(find "${ROOT_DIR}/tests/scenarios" -type f -name 'test-*.sh' -print | sort)
 
-shellcheck -x "${shell_files[@]}"
+should_skip_shellcheck_file() {
+  local file="$1"
+
+  [[ "${SKIP_HEAVY_HOST_SHELLCHECK}" == "1" ]] || return 1
+  case "${file}" in
+    "${ROOT_DIR}/scripts/workcell" | "${ROOT_DIR}/scripts/verify-invariants.sh")
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+for file in "${shell_files[@]}"; do
+  if should_skip_shellcheck_file "${file}"; then
+    continue
+  fi
+  shellcheck -x "${file}"
+done
 shfmt -ln=bash -i 2 -ci -d "${shell_files[@]}"
 "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
 
@@ -173,11 +198,14 @@ for scratch_dir in \
 done
 
 if [[ "${#python_files[@]}" -gt 0 ]]; then
-  echo "Unexpected repo-owned Python source files remain:" >&2
+  echo "Unexpected Python source files remain in scripts/lib:" >&2
   printf '  %s\n' "${python_files[@]}" >&2
   exit 1
 fi
-mapfile -d '' -t go_files < <(find "${ROOT_DIR}/cmd" "${ROOT_DIR}/internal" -type f -name '*.go' -print0 | sort -z)
+go_files=()
+while IFS= read -r -d '' path; do
+  go_files+=("${path}")
+done < <(find "${ROOT_DIR}/cmd" "${ROOT_DIR}/internal" -type f -name '*.go' -print0 | sort -z)
 if [[ "${#go_files[@]}" -gt 0 ]]; then
   if gofmt -l "${go_files[@]}" | grep -q .; then
     echo "Go files are not formatted with gofmt." >&2
@@ -187,7 +215,11 @@ fi
 go vet ./...
 go test ./...
 
-mapfile -t json_files < <(
+json_files=()
+while IFS= read -r path; do
+  [[ -n "${path}" ]] || continue
+  json_files+=("${path}")
+done < <(
   find "${ROOT_DIR}/adapters" "${ROOT_DIR}/.github" "${ROOT_DIR}/runtime/container/providers" "${ROOT_DIR}/tests/scenarios" \
     -path '*/node_modules' -prune -o \
     -type f -name '*.json' -print | sort
@@ -196,7 +228,11 @@ if [[ "${#json_files[@]}" -gt 0 ]]; then
   run_metadatautil validate-json "${json_files[@]}"
 fi
 
-mapfile -t toml_files < <(
+toml_files=()
+while IFS= read -r path; do
+  [[ -n "${path}" ]] || continue
+  toml_files+=("${path}")
+done < <(
   find "${ROOT_DIR}" \
     -path "${ROOT_DIR}/.git" -prune -o \
     -path "${ROOT_DIR}/dist" -prune -o \
@@ -223,6 +259,7 @@ done < <(find "${ROOT_DIR}" \
   -path "${ROOT_DIR}/.git" -prune -o \
   -path "${ROOT_DIR}/dist" -prune -o \
   -path "${ROOT_DIR}/tmp" -prune -o \
+  -path "${ROOT_DIR}/.venv" -prune -o \
   -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
   -path "${ROOT_DIR}/runtime/container/rust/vendor" -prune -o \
   -path "${ROOT_DIR}/runtime/container/rust/target" -prune -o \

@@ -1,0 +1,121 @@
+package metadatautil
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestCheckWorkflowsRecognizesRequiredJobNames(t *testing.T) {
+	root := t.TempDir()
+	workflowDir := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "ci.yml"), []byte(`name: CI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate repository
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+
+  container-smoke:
+    name: Container smoke
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+
+  reproducible-build:
+    name: Reproducible build
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(ci.yml) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "security.yml"), []byte(`name: Security
+
+on:
+  workflow_dispatch:
+
+jobs:
+  actionlint:
+    name: GitHub Actions lint
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+
+  zizmor:
+    name: GitHub Actions security analysis
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(security.yml) error = %v", err)
+	}
+
+	policyPath := filepath.Join(root, "policy.toml")
+	if err := os.WriteFile(policyPath, []byte(`[required_status_checks]
+contexts = [
+  "Validate repository",
+  "Container smoke",
+  "Reproducible build",
+  "GitHub Actions lint",
+  "GitHub Actions security analysis",
+]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(policy.toml) error = %v", err)
+	}
+
+	if err := CheckWorkflows(root, policyPath); err != nil {
+		t.Fatalf("CheckWorkflows() error = %v", err)
+	}
+}
+
+func TestCheckWorkflowsRejectsMultilineSpoofedName(t *testing.T) {
+	root := t.TempDir()
+	workflowDir := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "ci.yml"), []byte(`name: CI
+
+on:
+  workflow_dispatch:
+
+env:
+  SPOOFED_NAME: |
+    name: Validate repository
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(ci.yml) error = %v", err)
+	}
+
+	policyPath := filepath.Join(root, "policy.toml")
+	if err := os.WriteFile(policyPath, []byte(`[required_status_checks]
+contexts = [
+  "Validate repository",
+]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(policy.toml) error = %v", err)
+	}
+
+	err := CheckWorkflows(root, policyPath)
+	if err == nil {
+		t.Fatal("CheckWorkflows() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "Validate repository") {
+		t.Fatalf("CheckWorkflows() error = %v, want missing Validate repository", err)
+	}
+}

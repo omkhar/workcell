@@ -75,6 +75,6 @@ build_go_tool_in_repo() {
   go_bin="$(resolve_go_bin)"
   (
     cd "${repo_root}" &&
-      "${go_bin}" build -buildvcs=false -o "${output_path}" "$@"
+      "${go_bin}" build -o "${output_path}" "$@"
   )
 }

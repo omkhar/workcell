@@ -267,7 +267,7 @@ while [[ $# -gt 0 ]]; do
       REQUIRE_INJECTION=1
       shift
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -357,7 +357,10 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
   printf 'provider_e2e_workspace=%s\n' "${WORKSPACE}"
   printf 'provider_e2e_injection_source=%s\n' "${INJECTION_SOURCE}"
   if ((${#GENERATED_CREDENTIAL_KEYS[@]} > 0)); then
-    printf 'provider_e2e_credential_keys=%s\n' "$(IFS=,; printf '%s' "${GENERATED_CREDENTIAL_KEYS[*]}")"
+    printf 'provider_e2e_credential_keys=%s\n' "$(
+      IFS=,
+      printf '%s' "${GENERATED_CREDENTIAL_KEYS[*]}"
+    )"
   else
     printf 'provider_e2e_credential_keys=\n'
   fi

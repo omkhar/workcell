@@ -17,7 +17,6 @@ import (
 
 var (
 	hexDigestPattern      = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	workflowNamePattern   = regexp.MustCompile(`^ {4}name:\s*(.+?)\s*$`)
 	workflowPermissionsRE = regexp.MustCompile(`(?m)^permissions:\s+\{\}$`)
 	actionRefPattern      = regexp.MustCompile(`(?:^|[^[:alnum:]/_.-])%s@([0-9a-f]{40})`)
 	aptInstallPattern     = regexp.MustCompile(`apt-get install -y --no-install-recommends(?s:(.*?))&&`)
