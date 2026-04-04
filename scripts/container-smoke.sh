@@ -163,6 +163,10 @@ prepare_smoke_workspace() {
 
   rm -f "${path_list_raw}" "${path_list_filtered}"
   mkdir -p "${SMOKE_WORKSPACE}/tmp"
+  # 1777 (sticky + world-writable) mirrors the container's /tmp posture so the
+  # mapped runtime user can write here without elevated privileges.  The second
+  # chmod re-applies 1777 after align_path_for_mapped_runtime_user, which resets
+  # the workspace root to 0755 as part of UID alignment.
   chmod 1777 "${SMOKE_WORKSPACE}" "${SMOKE_WORKSPACE}/tmp"
   align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}" 0644 0755
   chmod 1777 "${SMOKE_WORKSPACE}/tmp"

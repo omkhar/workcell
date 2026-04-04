@@ -4,6 +4,7 @@
 /.github/workflows/ @omkhar
 /.github/dependabot.yml @omkhar
 /.github/dependency-review-config.yml @omkhar
+/.github/zizmor.yml @omkhar
 
 # Runtime boundary, launchers, and release/signing paths.
 /scripts/ @omkhar
