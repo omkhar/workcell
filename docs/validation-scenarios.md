@@ -13,7 +13,7 @@ Use this page with:
 These run without provider credentials:
 
 - `./scripts/dev-quick-check.sh`
-- `./scripts/validate-repo.sh`
+- `./scripts/build-and-test.sh` (host-native, no Docker required)
 - `./scripts/container-smoke.sh`
 - `./scripts/verify-invariants.sh`
 - `./scripts/verify-release-bundle.sh`

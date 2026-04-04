@@ -82,7 +82,7 @@ Other defaults that matter:
 Install the launcher symlink and verify the host prerequisites:
 
 ```bash
-./scripts/install.sh
+./install.sh
 workcell --prepare --agent codex --workspace /path/to/repo
 ```
 
@@ -116,6 +116,30 @@ What to expect from the safe path:
   outside the Tier 1 container
 - `--debug-log`, `--file-trace-log`, and `--audit-transcript` are explicit
   lower-assurance operator choices and are off by default
+
+## Contributing
+
+Validation tiers, from fastest to most thorough:
+
+```bash
+scripts/dev-quick-check.sh      # seconds, host tools only (shellcheck, cargo, pytest)
+scripts/build-and-test.sh       # minutes, all checks, host tools only
+scripts/pre-merge.sh            # full release gate with Docker, repro builds
+```
+
+`dev-quick-check.sh` is the normal edit loop. `build-and-test.sh` runs the
+full validation suite directly on the host using locally installed tools. CI
+is the authority on exact tool versions; local runs catch issues early without
+Docker overhead. `pre-merge.sh` adds container-smoke tests, reproducible-build
+verification, and release-specific checks (requires Docker).
+
+To install missing host tools:
+
+```bash
+scripts/build-and-test.sh --install   # install missing host tools (brew, pip, npm)
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites and workflow details.
 
 ## Session inputs
 

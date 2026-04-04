@@ -75,7 +75,10 @@ run_rust_launcher_coverage() {
 
   (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil coverage-executables "${message_file}") >"${TMP_ROOT}/rust-binaries.txt"
 
-  mapfile -t rust_binaries <"${TMP_ROOT}/rust-binaries.txt"
+  rust_binaries=()
+  while IFS= read -r line; do
+    rust_binaries+=("${line}")
+  done <"${TMP_ROOT}/rust-binaries.txt"
   if [[ "${#rust_binaries[@]}" -eq 0 ]]; then
     echo "Unable to locate instrumented Rust test executables for coverage." >&2
     exit 1

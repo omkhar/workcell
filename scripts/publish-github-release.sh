@@ -128,13 +128,17 @@ esac
 
 "${HOSTUTIL_BIN}" release metadata "${release_json}" "${TMP_ROOT}/release-metadata.txt" "$@"
 
-mapfile -d '' -t release_metadata <"${TMP_ROOT}/release-metadata.txt"
+release_metadata=()
+while IFS= read -r -d '' item; do
+  release_metadata+=("${item}")
+done <"${TMP_ROOT}/release-metadata.txt"
 release_id="${release_metadata[0]}"
 upload_url="${release_metadata[1]}"
 
 for ((i = 2; i < ${#release_metadata[@]}; i += 2)); do
   asset_name="${release_metadata[i]}"
-  asset_id="${release_metadata[i + 1]}"
+  j=$((i + 1))
+  asset_id="${release_metadata[j]}"
 
   if [[ -n "${asset_id}" ]]; then
     delete_status="$(api DELETE "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" "" "${TMP_ROOT}/delete-${asset_id}.json")"
