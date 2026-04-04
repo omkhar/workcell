@@ -277,8 +277,8 @@ SNAPSHOT_PARENT="${WORKCELL_VALIDATION_SNAPSHOT_PARENT:-$(dirname "${REPO_ROOT}"
 SNAPSHOT_PARENT="$(cd "${SNAPSHOT_PARENT}" && pwd)" || die "Snapshot parent does not exist: ${SNAPSHOT_PARENT}"
 SNAPSHOT_DIR="$(mktemp -d "${SNAPSHOT_PARENT}/workcell-validation-snapshot.XXXXXX")"
 # Clone without checkout so repository-controlled smudge/clean filters in
-# .gitattributes cannot execute during snapshot creation.  All modes
-# materialize tracked content via cat-file blob in overlay_index_state.
+# .gitattributes cannot execute during snapshot creation.  Each mode
+# materializes tracked content via cat-file blob in its overlay function.
 git clone -q --no-hardlinks --no-checkout "${REPO_ROOT}" "${SNAPSHOT_DIR}"
 
 case "${SNAPSHOT_MODE}" in

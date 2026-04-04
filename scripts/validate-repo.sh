@@ -98,6 +98,8 @@ validate_manpage() {
 }
 
 shell_files=(
+  "${ROOT_DIR}/install.sh"
+  "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/check-workflows.sh"
@@ -105,6 +107,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/dev-quick-check.sh"
   "${ROOT_DIR}/scripts/go-port-validate.sh"
+  "${ROOT_DIR}/scripts/install-dev-tools.sh"
   "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
   "${ROOT_DIR}/scripts/dev-remote-validate.sh"
   "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
