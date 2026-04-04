@@ -22,6 +22,7 @@ trap 'echo "container-smoke failed at line ${LINENO}" >&2' ERR
 export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GO_BIN="${WORKCELL_GO_BIN:-}"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 IMAGE_TAG="${WORKCELL_IMAGE_TAG:-workcell:smoke}"
@@ -48,6 +49,32 @@ require_tool() {
     echo "Missing required tool: $1" >&2
     exit 1
   }
+}
+
+resolve_go_bin() {
+  if [[ -n "${GO_BIN}" && -x "${GO_BIN}" ]]; then
+    return 0
+  fi
+  if GO_BIN="$(command -v go 2>/dev/null)"; then
+    return 0
+  fi
+  for candidate in \
+    /opt/homebrew/bin/go \
+    /usr/local/go/bin/go \
+    /usr/local/bin/go \
+    /usr/bin/go; do
+    if [[ -x "${candidate}" ]]; then
+      GO_BIN="${candidate}"
+      return 0
+    fi
+  done
+  echo "Missing required tool: go" >&2
+  exit 1
+}
+
+go_runtimeutil() {
+  resolve_go_bin
+  (cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-runtimeutil "$@")
 }
 
 align_path_for_mapped_runtime_user() {
@@ -189,7 +216,7 @@ prepare_direct_mount_spec_for_bundle() {
   local bundle_root="$1"
   local mount_spec_path="${bundle_root}.mounts.json"
 
-  python3 "${ROOT_DIR}/scripts/lib/extract_direct_mounts.py" \
+  "${ROOT_DIR}/scripts/lib/extract_direct_mounts" \
     --manifest "${bundle_root}/manifest.json" \
     --mount-spec "${mount_spec_path}" >/dev/null
   align_path_for_mapped_runtime_user "${bundle_root}" 0644 0755
@@ -204,33 +231,11 @@ clone_bundle_with_credential_override() {
 
   rm -rf "${bundle_root}"
   cp -R "${source_bundle}" "${bundle_root}"
-  python3 - "${bundle_root}/manifest.json" "${source_bundle}.mounts.json" "${credential_key}" "${override_source}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-manifest_path = Path(sys.argv[1])
-mount_spec_path = Path(sys.argv[2])
-credential_key = sys.argv[3]
-override_source = sys.argv[4]
-manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-mount_sources = {}
-
-if mount_spec_path.is_file():
-    for entry in json.loads(mount_spec_path.read_text(encoding="utf-8")):
-        mount_path = entry.get("mount_path")
-        source = entry.get("source")
-        if isinstance(mount_path, str) and mount_path and isinstance(source, str) and source:
-            mount_sources[mount_path] = source
-
-for entry in manifest.get("credentials", {}).values():
-    mount_path = entry.get("mount_path")
-    if "source" not in entry and isinstance(mount_path, str) and mount_path in mount_sources:
-        entry["source"] = mount_sources[mount_path]
-
-manifest["credentials"][credential_key]["source"] = override_source
-manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-PY
+  go_runtimeutil rewrite-bundle-credential-source \
+    "${bundle_root}/manifest.json" \
+    "${source_bundle}.mounts.json" \
+    "${credential_key}" \
+    "${override_source}"
   prepare_direct_mount_spec_for_bundle "${bundle_root}"
 }
 
@@ -239,14 +244,7 @@ direct_mount_specs_for_bundle() {
   local mount_spec_path="${bundle_root}.mounts.json"
   [[ -f "${mount_spec_path}" ]] || return 0
 
-  python3 - "${mount_spec_path}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-for entry in json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")):
-    print(f'{entry["source"]}\t{entry["mount_path"]}')
-PY
+  go_runtimeutil list-direct-mounts "${mount_spec_path}"
 }
 
 workspace_import_mounts() {
@@ -997,42 +995,42 @@ chmod 0600 \
   "${INJECTION_FIXTURE_ROOT}/ssh-config" \
   "${INJECTION_FIXTURE_ROOT}/id_smoke"
 
-run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+run_as_mapped_host_user "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
   --agent codex \
   --mode strict \
   --output-root "${INJECTION_BUNDLE_ROOT}/codex" >/dev/null
 prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/codex"
 
-run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+run_as_mapped_host_user "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
   --agent claude \
   --mode strict \
   --output-root "${INJECTION_BUNDLE_ROOT}/claude" >/dev/null
 prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/claude"
 
-run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+run_as_mapped_host_user "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
   --agent gemini \
   --mode strict \
   --output-root "${INJECTION_BUNDLE_ROOT}/gemini" >/dev/null
 prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/gemini"
 
-run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+run_as_mapped_host_user "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy-gemini-gcloud-adc.toml" \
   --agent gemini \
   --mode strict \
   --output-root "${INJECTION_BUNDLE_ROOT}/gemini-gcloud-adc" >/dev/null
 prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/gemini-gcloud-adc"
 
-run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+run_as_mapped_host_user "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy-gemini-vertex-express.toml" \
   --agent gemini \
   --mode strict \
   --output-root "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express" >/dev/null
 prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/gemini-vertex-express"
 
-run_as_mapped_host_user python3 "${ROOT_DIR}/scripts/lib/render_injection_bundle.py" \
+run_as_mapped_host_user "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy-gemini-env-plus-oauth.toml" \
   --agent gemini \
   --mode strict \

@@ -1,19 +1,26 @@
 # shellcheck shell=bash
 resolve_workcell_real_home() {
-  local python_bin
+  local uid user home
 
-  if [[ -x /usr/bin/python3 ]]; then
-    python_bin=/usr/bin/python3
-  else
-    python_bin=python3
+  uid="$(id -u)"
+  user="$(id -un)"
+
+  if command -v getent >/dev/null 2>&1; then
+    home="$(getent passwd "${uid}" | awk -F: 'NR==1 {print $6}')"
+  fi
+  if [[ -z "${home}" ]] && command -v dscl >/dev/null 2>&1; then
+    home="$(dscl . -read "/Users/${user}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  fi
+  if [[ -z "${home}" && -r /etc/passwd ]]; then
+    home="$(awk -F: -v uid="${uid}" '$3 == uid {print $6; exit}' /etc/passwd)"
   fi
 
-  "${python_bin}" - <<'PY'
-import os
-import pwd
+  if [[ -z "${home}" ]]; then
+    echo "Unable to resolve real home directory for uid ${uid}" >&2
+    return 1
+  fi
 
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
+  printf '%s\n' "${home}"
 }
 
 copy_workcell_docker_state_tree() {
@@ -233,7 +240,7 @@ buildx_builder_matches_context() {
         return 0
       fi
     done
-  done < "${inspect_output_path}"
+  done <"${inspect_output_path}"
 
   return 1
 }

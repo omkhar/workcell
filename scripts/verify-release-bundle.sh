@@ -31,6 +31,7 @@ ARCHIVE_REF="${WORKCELL_RELEASE_BUNDLE_REF:-HEAD}"
 BUNDLE_NAME="${WORKCELL_RELEASE_BUNDLE_NAME:-workcell-release-check.tar.gz}"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-workcell-validator:local}"
 BUNDLE_MANIFEST_PATH="${WORKCELL_RELEASE_BUNDLE_MANIFEST_PATH:-}"
+GO_BIN="${WORKCELL_GO_BIN:-}"
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
@@ -43,6 +44,27 @@ require_tool() {
     echo "Missing required tool: $1" >&2
     exit 1
   }
+}
+
+resolve_go_bin() {
+  if [[ -n "${GO_BIN}" && -x "${GO_BIN}" ]]; then
+    return 0
+  fi
+  if GO_BIN="$(command -v go 2>/dev/null)"; then
+    return 0
+  fi
+  for candidate in \
+    /opt/homebrew/bin/go \
+    /usr/local/go/bin/go \
+    /usr/local/bin/go \
+    /usr/bin/go; do
+    if [[ -x "${candidate}" ]]; then
+      GO_BIN="${candidate}"
+      return 0
+    fi
+  done
+  echo "Missing required tool: go" >&2
+  exit 1
 }
 
 sanitized_git() {
@@ -221,7 +243,7 @@ SCRIPT
 }
 
 if [[ -n "${BUNDLE_MANIFEST_PATH}" ]]; then
-  require_tool python3
+  resolve_go_bin
 fi
 
 if command -v docker >/dev/null 2>&1; then
@@ -260,23 +282,7 @@ if [[ "${checksum_a}" != "${checksum_b}" ]]; then
 fi
 
 if [[ -n "${BUNDLE_MANIFEST_PATH}" ]]; then
-  python3 - "${BUNDLE_MANIFEST_PATH}" "${ARCHIVE_REF}" "${BUNDLE_NAME}" "${BUNDLE_PREFIX%/}/" "${SOURCE_DATE_EPOCH}" "${digest_a}" "${checksum_a}" <<'PY'
-import json
-import pathlib
-import sys
-
-manifest_path = pathlib.Path(sys.argv[1])
-manifest = {
-    "archive_ref": sys.argv[2],
-    "bundle_name": sys.argv[3],
-    "bundle_prefix": sys.argv[4],
-    "source_date_epoch": int(sys.argv[5]),
-    "bundle_sha256": sys.argv[6],
-    "checksums_sha256": sys.argv[7],
-}
-manifest_path.parent.mkdir(parents=True, exist_ok=True)
-manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
+  (cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-hostutil release bundle-manifest "${BUNDLE_MANIFEST_PATH}" "${ARCHIVE_REF}" "${BUNDLE_NAME}" "${BUNDLE_PREFIX%/}/" "${SOURCE_DATE_EPOCH}" "${digest_a}" "${checksum_a}")
 fi
 
 echo "Workcell release bundle reproducibility passed."

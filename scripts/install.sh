@@ -8,6 +8,7 @@ MAN_DIR="${HOME}/.local/share/man/man1"
 MAN_PATH="${MAN_DIR}/workcell.1"
 DEBUG_INSTALL=0
 DEBUG_DIR="${HOME}/.config/workcell/debug"
+GO_BIN="${WORKCELL_GO_BIN:-}"
 
 usage() {
   cat <<'EOF'
@@ -24,12 +25,29 @@ EOF
 }
 
 resolve_output_dir() {
-  /usr/bin/python3 - "$1" <<'PY'
-import os
-import sys
+  resolve_go_bin
+  (cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-hostutil path resolve --base "$(pwd -P)" "$1")
+}
 
-print(os.path.realpath(os.path.expanduser(sys.argv[1])))
-PY
+resolve_go_bin() {
+  if [[ -n "${GO_BIN}" && -x "${GO_BIN}" ]]; then
+    return 0
+  fi
+  if GO_BIN="$(command -v go 2>/dev/null)"; then
+    return 0
+  fi
+  for candidate in \
+    /opt/homebrew/bin/go \
+    /usr/local/go/bin/go \
+    /usr/local/bin/go \
+    /usr/bin/go; do
+    if [[ -x "${candidate}" ]]; then
+      GO_BIN="${candidate}"
+      return 0
+    fi
+  done
+  echo "Missing required tool: go" >&2
+  exit 1
 }
 
 write_debug_wrapper() {

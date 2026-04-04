@@ -12,6 +12,9 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
 fi
 set -euo pipefail
 export PATH="${TRUSTED_HOST_PATH}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
@@ -49,7 +52,6 @@ shift
 }
 
 require_tool curl
-require_tool python3
 
 for path in "$@"; do
   [[ -f "${path}" ]] || {
@@ -91,12 +93,15 @@ api() {
 }
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-release-api.XXXXXX")"
+HOSTUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-hostutil.XXXXXX")"
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
+  rm -f "${HOSTUTIL_BIN}"
 }
 
 trap cleanup EXIT
+build_go_tool_in_repo "${ROOT_DIR}" "${HOSTUTIL_BIN}" ./cmd/workcell-hostutil
 
 release_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG_NAME}"
 release_json="${TMP_ROOT}/release.json"
@@ -106,20 +111,7 @@ status="$(api GET "${release_url}" "" "${release_json}")"
 case "${status}" in
   200) ;;
   404)
-    python3 - "${TAG_NAME}" "${create_payload}" <<'PY'
-import json
-import pathlib
-import sys
-
-payload = {
-    "tag_name": sys.argv[1],
-    "generate_release_notes": True,
-}
-pathlib.Path(sys.argv[2]).write_text(
-    json.dumps(payload, separators=(",", ":")),
-    encoding="utf-8",
-)
-PY
+    "${HOSTUTIL_BIN}" release create-payload "${TAG_NAME}" "${create_payload}"
     status="$(api POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" "${create_payload}" "${release_json}")"
     [[ "${status}" == "201" ]] || {
       echo "GitHub release creation failed with status ${status}" >&2
@@ -134,45 +126,15 @@ PY
     ;;
 esac
 
-python3 - "${release_json}" "$@" >"${TMP_ROOT}/release-metadata.txt" <<'PY'
-import json
-import pathlib
-import sys
+"${HOSTUTIL_BIN}" release metadata "${release_json}" "${TMP_ROOT}/release-metadata.txt" "$@"
 
-release = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-upload_url = release["upload_url"].split("{", 1)[0]
-print(release["id"])
-print(upload_url)
-
-assets = {asset["name"]: asset["id"] for asset in release.get("assets", [])}
-for file_path in sys.argv[2:]:
-    print(json.dumps({"name": pathlib.Path(file_path).name, "id": assets.get(pathlib.Path(file_path).name)}))
-PY
-
-mapfile -t release_metadata <"${TMP_ROOT}/release-metadata.txt"
+mapfile -d '' -t release_metadata <"${TMP_ROOT}/release-metadata.txt"
 release_id="${release_metadata[0]}"
 upload_url="${release_metadata[1]}"
 
-for ((i = 2; i < ${#release_metadata[@]}; i++)); do
-  asset_record="${release_metadata[i]}"
-  asset_name="$(
-    python3 - "${asset_record}" <<'PY'
-import json
-import sys
-
-record = json.loads(sys.argv[1])
-print(record["name"])
-PY
-  )"
-  asset_id="$(
-    python3 - "${asset_record}" <<'PY'
-import json
-import sys
-
-record = json.loads(sys.argv[1])
-print("" if record["id"] is None else record["id"])
-PY
-  )"
+for ((i = 2; i < ${#release_metadata[@]}; i += 2)); do
+  asset_name="${release_metadata[i]}"
+  asset_id="${release_metadata[i+1]}"
 
   if [[ -n "${asset_id}" ]]; then
     delete_status="$(api DELETE "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" "" "${TMP_ROOT}/delete-${asset_id}.json")"
@@ -186,14 +148,7 @@ done
 
 for path in "$@"; do
   asset_name="$(basename "${path}")"
-  encoded_name="$(
-    python3 - "${asset_name}" <<'PY'
-import sys
-import urllib.parse
-
-print(urllib.parse.quote(sys.argv[1], safe=""))
-PY
-  )"
+  encoded_name="$("${HOSTUTIL_BIN}" release encode-name "${asset_name}")"
   upload_response="${TMP_ROOT}/upload-${asset_name}.json"
   upload_status="$(curl -sS \
     -o "${upload_response}" \

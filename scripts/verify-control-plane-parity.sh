@@ -8,6 +8,38 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   exit 0
 fi
 
+require_tool() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required tool: $1" >&2
+    exit 1
+  }
+}
+
+resolve_go_bin() {
+  local candidate
+
+  if candidate="$(command -v go 2>/dev/null)"; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+
+  for candidate in \
+    /opt/homebrew/bin/go \
+    /usr/local/go/bin/go \
+    /usr/local/bin/go \
+    /usr/bin/go; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Missing required tool: go" >&2
+  exit 1
+}
+
+GO_BIN="$(resolve_go_bin)"
+
 MANIFEST="${ROOT_DIR}/runtime/container/control-plane-manifest.json"
 CONTROL_PLANE="${ROOT_DIR}/runtime/container/home-control-plane.sh"
 
@@ -37,27 +69,7 @@ while IFS=$'\t' read -r requirement_type label value; do
       ;;
   esac
 done < <(
-  python3 - "${MANIFEST}" <<'PY'
-import json
-import pathlib
-import sys
-
-m = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-runtime_paths = {
-    artifact.get("runtime_path", "")
-    for artifact in m.get("runtime_artifacts", [])
-    if artifact.get("runtime_path")
-}
-
-for provider in ("codex", "claude", "gemini"):
-    prefix = f"/opt/workcell/adapters/{provider}/"
-    if any(path.startswith(prefix) for path in runtime_paths):
-        print(f"prefix\t{provider}\t{prefix}")
-
-managed_settings_path = "/etc/claude-code/managed-settings.json"
-if managed_settings_path in runtime_paths:
-    print(f"path\tclaude-managed-settings\t{managed_settings_path}")
-PY
+  cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-metadatautil verify-control-plane-parity "${MANIFEST}"
 )
 
 if [[ "${missing}" -gt 0 ]]; then
