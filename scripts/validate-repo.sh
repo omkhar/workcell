@@ -40,7 +40,7 @@ build_metadatautil() {
     return 0
   fi
   METADATAUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-metadatautil.XXXXXX")"
-  (cd "${ROOT_DIR}" && go build -o "${METADATAUTIL_BIN}" ./cmd/workcell-metadatautil)
+  (cd "${ROOT_DIR}" && go build -buildvcs=false -o "${METADATAUTIL_BIN}" ./cmd/workcell-metadatautil)
 }
 
 run_metadatautil() {
