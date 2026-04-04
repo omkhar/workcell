@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Omkhar Arasaratnam
+
 package metadatautil
 
 import (
@@ -168,7 +171,6 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		return err
 	}
 
-	defaultBranch, _ := repoMeta["default_branch"].(string)
 	owner, _ := repoMeta["owner"].(map[string]any)
 	ownerLogin, _ := owner["login"].(string)
 	ownerType, _ := owner["type"].(string)
@@ -495,7 +497,6 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		}
 	}
 
-	_ = defaultBranch
 	return nil
 }
 

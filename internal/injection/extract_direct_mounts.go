@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Omkhar Arasaratnam
+
 package injection
 
 import (
@@ -93,11 +96,7 @@ func collectDirectMounts(manifest map[string]any) ([]DirectMount, error) {
 			if err != nil {
 				return nil, err
 			}
-			if rawSource, ok := entry["source"]; ok && rawSource != nil {
-				source, ok := rawSource.(map[string]any)
-				if !ok {
-					continue
-				}
+			if source, ok := entry["source"].(map[string]any); ok {
 				directMount, err := RequireDirectMount(source, fmt.Sprintf("copies[%d].source", index))
 				if err != nil {
 					return nil, err
