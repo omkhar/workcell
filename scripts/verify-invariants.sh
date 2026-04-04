@@ -6286,7 +6286,7 @@ if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/claude/hook
 fi
 
 if ! awk '
-  $0 == "acquire_profile_lock \"${COLIMA_PROFILE}\"" { seen_lock = 1; next }
+  $0 == "  acquire_profile_lock \"${COLIMA_PROFILE}\"" { seen_lock = 1; next }
   seen_lock && $0 == "  # Another launch may have created or repaired the profile while we waited." { seen_comment = 1; next }
   seen_lock && seen_comment && $0 == "  refresh_profile_state \"${COLIMA_PROFILE}\"" { found = 1; exit }
   END { exit(found ? 0 : 1) }
