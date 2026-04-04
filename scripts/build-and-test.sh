@@ -42,9 +42,6 @@ validate-repo.sh directly on the host using locally installed tools.
 
 Options:
   --install     Install missing host tools (brew/apt) and set up Python venv
-  --auto-fix    Run markdownlint --fix before linting
-  --strict      Exit on first check failure
-  -l, --list    List files that would be checked, then exit
   -h, --help    Show this help
 EOF
       exit 0
