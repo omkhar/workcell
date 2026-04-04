@@ -72,6 +72,22 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
 
 5. Open a PR against `main`.
 
+## Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```
+<type>: <description>
+
+[optional body]
+```
+
+Common types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`.
+
+Keep the subject line under 72 characters. If the change touches the
+runtime boundary, trust model, or provider adapters, mention it in the
+body.
+
 ## Validation levels
 
 ### Fast local gate
