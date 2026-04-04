@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+func TestVerifyInvariantsUsesDedicatedSanitizedEntrypoint(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "verify-invariants.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		"#!/bin/bash -p",
+		"WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT",
+		`exec /usr/bin/env -i \`,
+		`/bin/bash -p "$0" "$@"`,
+		"unset BASH_ENV ENV",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
 func TestDevQuickCheckStaysBoundedToFastLocalWork(t *testing.T) {
 	t.Parallel()
 

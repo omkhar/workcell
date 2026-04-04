@@ -1,5 +1,15 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
 # shellcheck shell=bash
+readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  exec /usr/bin/env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME="${HOME:-/tmp}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1 \
+    /bin/bash -p "$0" "$@"
+fi
+unset BASH_ENV ENV
 set -Eeuo pipefail
 
 report_verify_invariants_failure() {
@@ -62,7 +72,6 @@ free_bytes_for_path() {
   /bin/df -Pk "${target_path}" | awk 'NR==2 {print $4 * 1024}'
 }
 
-readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -4258,9 +4267,14 @@ fi
 PREMERGE_HARNESS_ROOT="${BARRIER_VERIFY_ROOT}/premerge-harness"
 PREMERGE_FAKEBIN="${PREMERGE_HARNESS_ROOT}/fakebin"
 PREMERGE_LOG="${PREMERGE_HARNESS_ROOT}/premerge.log"
-PREMERGE_DEFAULT_SNAPSHOT_PARENT="$(dirname "${PREMERGE_HARNESS_ROOT}")"
+PREMERGE_DEFAULT_HOME="${PREMERGE_HARNESS_ROOT}/home"
+if [[ "${OSTYPE:-}" == darwin* ]]; then
+  PREMERGE_DEFAULT_SNAPSHOT_PARENT="${PREMERGE_DEFAULT_HOME}/Library/Caches/workcell-validation-snapshots"
+else
+  PREMERGE_DEFAULT_SNAPSHOT_PARENT="${PREMERGE_DEFAULT_HOME}/.cache/workcell-validation-snapshots"
+fi
 rm -rf "${PREMERGE_HARNESS_ROOT}"
-mkdir -p "${PREMERGE_HARNESS_ROOT}/scripts" "${PREMERGE_HARNESS_ROOT}/tools/validator" "${PREMERGE_FAKEBIN}"
+mkdir -p "${PREMERGE_HARNESS_ROOT}/scripts" "${PREMERGE_HARNESS_ROOT}/tools/validator" "${PREMERGE_FAKEBIN}" "${PREMERGE_DEFAULT_HOME}"
 install -m 0755 "${ROOT_DIR}/scripts/pre-merge.sh" "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh"
 cat >"${PREMERGE_HARNESS_ROOT}/scripts/with-validation-snapshot.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -4389,9 +4403,12 @@ grep -q -- '--local-include-untracked requires --local-snapshot worktree.' /tmp/
 
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  HOME="${PREMERGE_DEFAULT_HOME}" \
+  XDG_CACHE_HOME='' \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  WORKCELL_VALIDATION_SNAPSHOT_PARENT='' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --local-snapshot head >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
   echo "Expected --local-snapshot head pre-merge harness to succeed on a dirty worktree" >&2
