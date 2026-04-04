@@ -82,4 +82,10 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		}
 	}
 
+	if !strings.Contains(string(quickCheck), "scripts/verify-go-python-parity.sh") {
+		t.Fatalf("%s must include scripts/verify-go-python-parity.sh", quickCheckPath)
+	}
+	if !strings.Contains(string(validateRepo), "scripts/verify-go-python-parity.sh") {
+		t.Fatalf("%s must include scripts/verify-go-python-parity.sh", validateRepoPath)
+	}
 }

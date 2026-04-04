@@ -17,8 +17,8 @@ ergonomics second.
 Local development expects:
 
 - `git`
+- `go`
 - `docker`
-- `python3`
 - `shellcheck`
 - `shfmt`
 - `cargo`, `rustfmt`, and `clippy`
@@ -53,7 +53,6 @@ On macOS, also install Colima for the real VM boundary path.
 `./scripts/dev-quick-check.sh` is the normal edit loop. It covers:
 
 - shell lint and format checks
-- Python compile and unit tests
 - Rust fmt, clippy, and tests
 
 ### Full local gate
