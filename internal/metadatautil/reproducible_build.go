@@ -41,6 +41,60 @@ func VerifyReproducibleBuild(layoutA, layoutB, platformsCSV, manifestPath string
 		return err
 	}
 
+	if err := compareReproducibleBuildReports(reportA, reportB, platforms); err != nil {
+		return err
+	}
+
+	if manifestPath == "" {
+		return nil
+	}
+	return writeJSONFile(manifestPath, reproducibleBuildManifestFromReport(reportA, platforms, sourceDateEpoch))
+}
+
+func GenerateReproducibleBuildManifest(layout, platformsCSV, manifestPath string, sourceDateEpoch int64) error {
+	platforms, err := parseReproducibleBuildPlatforms(platformsCSV)
+	if err != nil {
+		return err
+	}
+	report, err := inspectOCIExport(layout, platforms)
+	if err != nil {
+		return err
+	}
+	return writeJSONFile(manifestPath, reproducibleBuildManifestFromReport(report, platforms, sourceDateEpoch))
+}
+
+func VerifyReproducibleBuildManifest(layout, platformsCSV, manifestPath string) error {
+	platforms, err := parseReproducibleBuildPlatforms(platformsCSV)
+	if err != nil {
+		return err
+	}
+	report, err := inspectOCIExport(layout, platforms)
+	if err != nil {
+		return err
+	}
+	var manifest reproducibleBuildManifest
+	if err := readJSONFile(manifestPath, &manifest); err != nil {
+		return err
+	}
+	return compareReproducibleBuildReportToManifest(report, manifest, platforms)
+}
+
+func reproducibleBuildManifestFromReport(report reproducibleBuildReport, platforms []string, sourceDateEpoch int64) reproducibleBuildManifest {
+	platformManifests := make(map[string]reproducibleBuildPlatformDigest, len(platforms))
+	for _, platform := range platforms {
+		platformManifests[platform] = reproducibleBuildPlatformDigest{
+			ImageManifestDigest: report.manifestDigests[platform],
+			ConfigDigest:        report.configDigests[platform],
+		}
+	}
+	return reproducibleBuildManifest{
+		OCISubjectDigest: report.subjectDigest,
+		SourceDateEpoch:  sourceDateEpoch,
+		Platforms:        platformManifests,
+	}
+}
+
+func compareReproducibleBuildReports(reportA, reportB reproducibleBuildReport, platforms []string) error {
 	problems := make([]string, 0)
 	for _, platform := range platforms {
 		if reportA.manifestDigests[platform] != reportB.manifestDigests[platform] {
@@ -70,22 +124,53 @@ func VerifyReproducibleBuild(layoutA, layoutB, platformsCSV, manifestPath string
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "\n"))
 	}
+	return nil
+}
 
-	if manifestPath == "" {
-		return nil
-	}
-	platformManifests := make(map[string]reproducibleBuildPlatformDigest, len(platforms))
+func compareReproducibleBuildReportToManifest(report reproducibleBuildReport, manifest reproducibleBuildManifest, platforms []string) error {
+	expectedPlatforms := make(map[string]struct{}, len(platforms))
+	problems := make([]string, 0)
+
 	for _, platform := range platforms {
-		platformManifests[platform] = reproducibleBuildPlatformDigest{
-			ImageManifestDigest: reportA.manifestDigests[platform],
-			ConfigDigest:        reportA.configDigests[platform],
+		expectedPlatforms[platform] = struct{}{}
+		expected, ok := manifest.Platforms[platform]
+		if !ok {
+			problems = append(problems, fmt.Sprintf("Missing platform digest entry in reproducible build manifest: %s", platform))
+			continue
+		}
+		if report.manifestDigests[platform] != expected.ImageManifestDigest {
+			problems = append(problems, fmt.Sprintf(
+				"Manifest digests (%s): %s != %s",
+				platform,
+				expected.ImageManifestDigest,
+				report.manifestDigests[platform],
+			))
+		}
+		if report.configDigests[platform] != expected.ConfigDigest {
+			problems = append(problems, fmt.Sprintf(
+				"Config digests (%s): %s != %s",
+				platform,
+				expected.ConfigDigest,
+				report.configDigests[platform],
+			))
 		}
 	}
-	return writeJSONFile(manifestPath, reproducibleBuildManifest{
-		OCISubjectDigest: reportA.subjectDigest,
-		SourceDateEpoch:  sourceDateEpoch,
-		Platforms:        platformManifests,
-	})
+	for platform := range manifest.Platforms {
+		if _, ok := expectedPlatforms[platform]; !ok {
+			problems = append(problems, fmt.Sprintf("Unexpected platform digest entry in reproducible build manifest: %s", platform))
+		}
+	}
+	if report.subjectDigest != manifest.OCISubjectDigest {
+		problems = append(problems, fmt.Sprintf(
+			"Non-reproducible OCI export subject digest: %s != %s",
+			manifest.OCISubjectDigest,
+			report.subjectDigest,
+		))
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "\n"))
+	}
+	return nil
 }
 
 func inspectOCIExport(layoutDir string, platforms []string) (reproducibleBuildReport, error) {

@@ -31,6 +31,7 @@ REPRO_MANIFEST_PATH="${WORKCELL_REPRO_MANIFEST_PATH:-}"
 OCI_EXPORT_ROOT=""
 OCI_EXPORT_A=""
 OCI_EXPORT_B=""
+REPRO_REFERENCE_MANIFEST=""
 WORKCELL_DOCKER_SANDBOX_ROOT=""
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
@@ -57,6 +58,17 @@ docker_cmd() {
     docker "$@"
   fi
 }
+
+if [[ "${1:-}" == "--self-docker-probe" ]]; then
+  require_tool docker
+  setup_workcell_trusted_docker_client
+  if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
+    select_docker_context
+  fi
+  buildx_cmd version >/dev/null
+  echo "verify-reproducible-build-docker-probe-ok"
+  exit 0
+fi
 
 build_oci_layout() {
   local platforms="$1"
@@ -137,12 +149,17 @@ fi
 
 OCI_EXPORT_A="${OCI_EXPORT_ROOT}/a"
 OCI_EXPORT_B="${OCI_EXPORT_ROOT}/b"
+REPRO_REFERENCE_MANIFEST="${OCI_EXPORT_ROOT}/reference.json"
 case "${REPRO_BUILD_MODE}" in
   parallel)
     build_oci_layout_pair "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}" "${OCI_EXPORT_B}"
+    (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil generate-reproducible-build-manifest "${OCI_EXPORT_A}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}" "${SOURCE_DATE_EPOCH}")
     ;;
   serial)
     build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}"
+    (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil generate-reproducible-build-manifest "${OCI_EXPORT_A}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}" "${SOURCE_DATE_EPOCH}")
+    rm -rf "${OCI_EXPORT_A}"
+    OCI_EXPORT_A=""
     prune_repro_builder_cache
     build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_B}"
     ;;
@@ -152,6 +169,10 @@ case "${REPRO_BUILD_MODE}" in
     ;;
 esac
 
-(cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil verify-reproducible-build "${OCI_EXPORT_A}" "${OCI_EXPORT_B}" "${REPRO_PLATFORMS}" "${REPRO_MANIFEST_PATH}" "${SOURCE_DATE_EPOCH}")
+(cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil verify-reproducible-build-manifest "${OCI_EXPORT_B}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}")
+if [[ -n "${REPRO_MANIFEST_PATH}" ]]; then
+  mkdir -p "$(dirname "${REPRO_MANIFEST_PATH}")"
+  cp "${REPRO_REFERENCE_MANIFEST}" "${REPRO_MANIFEST_PATH}"
+fi
 
 echo "Workcell reproducible build verification passed."
