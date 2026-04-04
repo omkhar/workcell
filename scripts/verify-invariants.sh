@@ -1,4 +1,4 @@
-#!/usr/bin/env -S -i PATH=/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash
+#!/usr/bin/env -S BASH_ENV= ENV= bash
 # shellcheck shell=bash
 set -Eeuo pipefail
 
