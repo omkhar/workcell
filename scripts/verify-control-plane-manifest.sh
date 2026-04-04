@@ -17,6 +17,38 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   exit 0
 fi
 
+require_tool() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required tool: $1" >&2
+    exit 1
+  }
+}
+
+resolve_go_bin() {
+  local candidate
+
+  if candidate="$(command -v go 2>/dev/null)"; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+
+  for candidate in \
+    /opt/homebrew/bin/go \
+    /usr/local/go/bin/go \
+    /usr/local/bin/go \
+    /usr/bin/go; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Missing required tool: go" >&2
+  exit 1
+}
+
+GO_BIN="$(resolve_go_bin)"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMMITTED_MANIFEST="${ROOT_DIR}/runtime/container/control-plane-manifest.json"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-control-plane.XXXXXX")"
@@ -61,12 +93,11 @@ copy_tracked_worktree() {
     source_path="${ROOT_DIR}/${path}"
     destination_path="${destination}/${path}"
     if [[ ! -e "${source_path}" ]]; then
-      echo "Tracked control-plane input is missing from the working tree during archived-source verification: ${path}" >&2
-      exit 1
+      continue
     fi
     mkdir -p "$(dirname "${destination_path}")"
     cp -pP "${source_path}" "${destination_path}"
-  done < <(safe_git -C "${ROOT_DIR}" ls-files -z)
+  done < <(safe_git -C "${ROOT_DIR}" ls-files -z --cached --modified --others --exclude-standard --deduplicate)
 }
 
 "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh" "${TMP_ROOT}/a.json"
@@ -88,47 +119,7 @@ if [[ "${digest_a}" != "${committed_digest}" ]]; then
   exit 1
 fi
 
-python3 - "${TMP_ROOT}/a.json" <<'PY'
-import json
-import pathlib
-import sys
-
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-if manifest.get("schema_version") != 2:
-    raise SystemExit("control-plane manifest must use schema_version 2")
-
-host_artifacts = manifest.get("host_artifacts")
-runtime_artifacts = manifest.get("runtime_artifacts")
-if not isinstance(host_artifacts, list) or not host_artifacts:
-    raise SystemExit("control-plane manifest must include non-empty host_artifacts")
-if not isinstance(runtime_artifacts, list) or not runtime_artifacts:
-    raise SystemExit("control-plane manifest must include non-empty runtime_artifacts")
-
-seen_runtime_paths: set[str] = set()
-seen_host_paths: set[str] = set()
-for entry in host_artifacts:
-    if sorted(entry.keys()) != ["repo_path", "sha256"]:
-        raise SystemExit(f"unexpected host artifact shape: {entry!r}")
-    repo_path = entry["repo_path"]
-    if not isinstance(repo_path, str) or repo_path in seen_host_paths:
-        raise SystemExit(f"duplicate or invalid host artifact path: {entry!r}")
-    seen_host_paths.add(repo_path)
-    if len(entry["sha256"]) != 64 or any(ch not in "0123456789abcdef" for ch in entry["sha256"]):
-        raise SystemExit(f"invalid host artifact digest: {entry!r}")
-
-for entry in runtime_artifacts:
-    for key in ("kind", "repo_path", "runtime_path", "sha256"):
-        if key not in entry:
-            raise SystemExit(f"runtime artifact is missing {key}: {entry!r}")
-    runtime_path = entry["runtime_path"]
-    if not isinstance(runtime_path, str) or not runtime_path.startswith("/"):
-        raise SystemExit(f"runtime artifact path must be absolute: {entry!r}")
-    if runtime_path in seen_runtime_paths:
-        raise SystemExit(f"duplicate runtime artifact path: {runtime_path}")
-    seen_runtime_paths.add(runtime_path)
-    if len(entry["sha256"]) != 64 or any(ch not in "0123456789abcdef" for ch in entry["sha256"]):
-        raise SystemExit(f"invalid runtime artifact digest: {entry!r}")
-PY
+(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-metadatautil verify-control-plane-manifest "${TMP_ROOT}/a.json")
 
 if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   mkdir -p "${ROOT_DIR}/tmp"

@@ -794,12 +794,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if _, _, err := requireRegex(runtimeDockerfile, `curl -fsSL "https://storage\.googleapis\.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/\$\{CLAUDE_VERSION\}/\$\{CLAUDE_PLATFORM\}/claude"`, "Claude native release download URL", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
-	if _, match, err := requireRegex(runtimeDockerfile, `^\s*arm64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`, "arm64 Claude mapping", cfg.RuntimeDockerfilePath); err != nil {
+	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*arm64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`, "arm64 Claude mapping", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	} else if match[1] != "linux-arm64" {
 		return fmt.Errorf("arm64 Claude mapping in %s must use linux-arm64", cfg.RuntimeDockerfilePath)
 	}
-	if _, match, err := requireRegex(runtimeDockerfile, `^\s*amd64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`, "amd64 Claude mapping", cfg.RuntimeDockerfilePath); err != nil {
+	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*amd64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`, "amd64 Claude mapping", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	} else if match[1] != "linux-x64" {
 		return fmt.Errorf("amd64 Claude mapping in %s must use linux-x64", cfg.RuntimeDockerfilePath)
@@ -810,12 +810,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$`).MatchString(claudeVersion) {
 		return fmt.Errorf("runtime/container/Dockerfile CLAUDE_VERSION must stay pinned to an explicit release, found %q", claudeVersion)
 	}
-	if _, match, err := requireRegex(runtimeDockerfile, `^\s*arm64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "arm64 Codex mapping", cfg.RuntimeDockerfilePath); err != nil {
+	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*arm64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "arm64 Codex mapping", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	} else if match[1] != "aarch64-unknown-linux-gnu" {
 		return fmt.Errorf("arm64 Codex mapping in %s must use aarch64-unknown-linux-gnu", cfg.RuntimeDockerfilePath)
 	}
-	if _, match, err := requireRegex(runtimeDockerfile, `^\s*amd64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "amd64 Codex mapping", cfg.RuntimeDockerfilePath); err != nil {
+	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*amd64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "amd64 Codex mapping", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	} else if match[1] != "x86_64-unknown-linux-gnu" {
 		return fmt.Errorf("amd64 Codex mapping in %s must use x86_64-unknown-linux-gnu", cfg.RuntimeDockerfilePath)
@@ -1224,7 +1224,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		"WORKCELL_BUILD_INPUT_ROOT: ${{ github.workspace }}/dist/release-source",
 		"WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source",
 		"Verify published platform digests match preflight",
-		`"imagetools", "inspect", "--raw"`,
+		"docker buildx imagetools inspect --raw",
 		"{{json .Manifest}}",
 		"vnd.docker.reference.type",
 		"ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}",
@@ -1359,7 +1359,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	for _, needle := range []string{
 		"actions/variables?per_page=100",
-		"WORKCELL_ENABLE_GITHUB_ATTESTATIONS",
+		`verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"`,
 	} {
 		if !strings.Contains(hostedControlsScript, needle) {
 			return fmt.Errorf("scripts/verify-github-hosted-controls.sh must contain %q", needle)

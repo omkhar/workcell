@@ -25,6 +25,7 @@ ENV npm_config_audit=false
 ENV npm_config_fund=false
 ENV npm_config_update_notifier=false
 
+# hadolint ignore=DL3008
 RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
   && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
   && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
@@ -147,6 +148,7 @@ ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
 ENV RUSTUP_HOME=/usr/local/rustup
 
+# hadolint ignore=DL3008
 RUN install_runtime_builder_packages() { \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       gcc \
@@ -339,6 +341,8 @@ RUN SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
 FROM runtime-base AS runtime
 
 ARG SOURCE_DATE_EPOCH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 COPY --from=provider-builder /opt/workcell/providers.tar /tmp/workcell-providers.tar
 COPY --from=runtime-builder /etc/claude-code/managed-settings.json /etc/claude-code/managed-settings.json
