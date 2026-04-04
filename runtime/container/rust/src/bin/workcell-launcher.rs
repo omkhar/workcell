@@ -198,6 +198,20 @@ mod tests {
     }
 
     #[test]
+    fn all_launch_targets_have_no_nul_bytes() {
+        for (name, path) in LAUNCH_TARGETS {
+            assert!(
+                CString::new(*name).is_ok(),
+                "LAUNCH_TARGETS entry name contains a NUL byte: {name:?}"
+            );
+            assert!(
+                CString::new(*path).is_ok(),
+                "LAUNCH_TARGETS entry path contains a NUL byte: {path:?}"
+            );
+        }
+    }
+
+    #[test]
     fn exec_request_returns_failure_code_when_shell_is_unavailable() {
         let request = LaunchRequest {
             target_name: "codex",
