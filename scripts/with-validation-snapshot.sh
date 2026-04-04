@@ -34,6 +34,48 @@ require_tool() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required tool: $1"
 }
 
+populate_snapshot_head_index() {
+  git -C "${SNAPSHOT_DIR}" read-tree HEAD >/dev/null 2>&1 ||
+    die "with-validation-snapshot: failed to populate HEAD index in snapshot"
+}
+
+populate_snapshot_index_from_source() {
+  local source_git_dir=""
+  local snapshot_git_dir=""
+  local shared_index=""
+
+  source_git_dir="$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir)" ||
+    die "with-validation-snapshot: failed to resolve source git dir"
+  snapshot_git_dir="$(git -C "${SNAPSHOT_DIR}" rev-parse --absolute-git-dir)" ||
+    die "with-validation-snapshot: failed to resolve snapshot git dir"
+  cp -p "${source_git_dir}/index" "${snapshot_git_dir}/index" ||
+    die "with-validation-snapshot: failed to copy source index into snapshot"
+  while IFS= read -r shared_index; do
+    cp -p "${shared_index}" "${snapshot_git_dir}/$(basename "${shared_index}")" ||
+      die "with-validation-snapshot: failed to copy shared index into snapshot"
+  done < <(find "${source_git_dir}" -maxdepth 1 -type f -name 'sharedindex.*' -print)
+}
+
+path_exists_in_head() {
+  local tracked_path="$1"
+
+  IFS= read -r -d '' _ < <(
+    GIT_LITERAL_PATHSPECS=1 git -C "${REPO_ROOT}" ls-tree -r -z --name-only HEAD -- "${tracked_path}"
+  )
+}
+
+path_is_intent_to_add() {
+  local tracked_path="$1"
+
+  if path_exists_in_head "${tracked_path}"; then
+    return 1
+  fi
+  if GIT_LITERAL_PATHSPECS=1 git -C "${REPO_ROOT}" diff --cached --quiet -- "${tracked_path}"; then
+    return 0
+  fi
+  return 1
+}
+
 copy_path_into_snapshot() {
   local relative_path="$1"
   local source_path="${REPO_ROOT}/${relative_path}"
@@ -168,6 +210,9 @@ overlay_index_state() {
     stage="${remainder##* }"
     [[ "${stage}" == "0" ]] || continue
 
+    if path_is_intent_to_add "${tracked_path}"; then
+      continue
+    fi
     materialize_tracked_entry "${mode}" "${oid}" "${tracked_path}" "git index"
   done < <(git -C "${REPO_ROOT}" ls-files -z --stage)
 }
@@ -263,7 +308,7 @@ git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
 REPO_ROOT="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel)"
 
 SNAPSHOT_PARENT="${WORKCELL_VALIDATION_SNAPSHOT_PARENT:-$(dirname "${REPO_ROOT}")}"
-SNAPSHOT_PARENT="$(cd "${SNAPSHOT_PARENT}" && pwd)" || die "Snapshot parent does not exist: ${SNAPSHOT_PARENT}"
+SNAPSHOT_PARENT="$(cd "${SNAPSHOT_PARENT}" && pwd -P)" || die "Snapshot parent does not exist: ${SNAPSHOT_PARENT}"
 SNAPSHOT_DIR="$(mktemp -d "${SNAPSHOT_PARENT}/workcell-validation-snapshot.XXXXXX")"
 # Clone without checkout so repository-controlled smudge/clean filters in
 # .gitattributes cannot execute during snapshot creation.  Each mode
@@ -272,12 +317,15 @@ git clone -q --no-hardlinks --no-checkout "${REPO_ROOT}" "${SNAPSHOT_DIR}"
 
 case "${SNAPSHOT_MODE}" in
   head)
+    populate_snapshot_head_index
     overlay_head_state
     ;;
   index)
+    populate_snapshot_index_from_source
     overlay_index_state
     ;;
   worktree)
+    populate_snapshot_index_from_source
     overlay_index_state
     overlay_worktree_state
     ;;

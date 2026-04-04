@@ -27,6 +27,10 @@ scrub_host_process_env
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 GO_BIN="${WORKCELL_GO_BIN:-}"
 LIMACTL_BIN=""
 TEST_RUN_IN_VM_CAPTURE_DIR=""
@@ -41,8 +45,18 @@ EOF
 }
 
 resolve_go_bin() {
+  local candidate=""
+
   if [[ -n "${GO_BIN}" && -x "${GO_BIN}" ]]; then
-    return 0
+    case "${GO_BIN}" in
+      /opt/homebrew/bin/go | /usr/local/go/bin/go | /usr/local/bin/go | /usr/bin/go)
+        return 0
+        ;;
+      *)
+        echo "Untrusted go binary path: ${GO_BIN}" >&2
+        exit 1
+        ;;
+    esac
   fi
   for candidate in \
     /opt/homebrew/bin/go \
@@ -59,9 +73,12 @@ resolve_go_bin() {
 }
 
 run_clean_repo_command() {
-  local home="${REAL_HOME:-${HOME:-/tmp}}"
+  local home="${REAL_HOME:-}"
 
   [[ "$#" -gt 0 ]] || return 0
+  if [[ -z "${home}" ]]; then
+    home="$(resolve_workcell_real_home 2>/dev/null || true)"
+  fi
   if [[ ! -d "${home}" ]]; then
     home="/"
   fi
@@ -79,49 +96,12 @@ run_clean_repo_command() {
 
 go_runtimeutil() {
   resolve_go_bin
-  run_clean_repo_command "${GO_BIN}" run ./cmd/workcell-runtimeutil "$@"
-}
-
-resolve_workcell_real_home() {
-  local uid entry home user_name getent_bin="" dscl_bin=""
-
-  uid="$(id -u)"
-  user_name="$(id -un)"
-  for candidate in /usr/bin/getent /bin/getent; do
-    if [[ -x "${candidate}" ]]; then
-      getent_bin="${candidate}"
-      break
-    fi
-  done
-  if [[ -n "${getent_bin}" ]]; then
-    entry="$("${getent_bin}" passwd "${uid}" 2>/dev/null || true)"
-    if [[ -n "${entry}" ]]; then
-      IFS=: read -r _ _ _ _ _ home _ <<<"${entry}"
-      if [[ -n "${home}" ]]; then
-        printf '%s\n' "${home}"
-        return 0
-      fi
-    fi
-  fi
-
-  if [[ -x /usr/bin/dscl ]]; then
-    dscl_bin=/usr/bin/dscl
-  fi
-  if [[ -n "${dscl_bin}" ]]; then
-    home="$("${dscl_bin}" . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk 'END {print $2}')"
-    if [[ -n "${home}" ]]; then
-      printf '%s\n' "${home}"
-      return 0
-    fi
-  fi
-
-  if [[ -n "${HOME:-}" && -d "${HOME}" ]]; then
-    printf '%s\n' "${HOME}"
-    return 0
-  fi
-
-  echo "Unable to resolve real home directory for uid ${uid}" >&2
-  return 1
+  ensure_go_run_env
+  run_clean_repo_command env \
+    GOPATH="${GOPATH}" \
+    GOMODCACHE="${GOMODCACHE}" \
+    GOCACHE="${GOCACHE}" \
+    "${GO_BIN}" run ./cmd/workcell-runtimeutil "$@"
 }
 
 resolve_host_tool() {
@@ -182,9 +162,12 @@ canonicalize_host_tool_path() {
 }
 
 run_clean_host_command() {
-  local home="${REAL_HOME:-/}"
+  local home="${REAL_HOME:-}"
 
   [[ "$#" -gt 0 ]] || return 0
+  if [[ -z "${home}" ]]; then
+    home="$(resolve_workcell_real_home 2>/dev/null || true)"
+  fi
   if [[ ! -d "${home}" ]]; then
     home="/"
   fi
@@ -395,6 +378,14 @@ build_allowlist_rules() {
     else
       host="${endpoint%:*}"
       port="${endpoint##*:}"
+    fi
+    if [[ "${host}" == \[*\] ]]; then
+      IPV6_RULES+=("sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d ${host:1:${#host}-2} --dport ${port} -j ACCEPT")
+      continue
+    fi
+    if [[ "${host}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      RULES+=("sudo iptables -A WORKCELL_EGRESS -p tcp -d ${host} --dport ${port} -j ACCEPT")
+      continue
     fi
     while IFS= read -r ip; do
       [[ -n "${ip}" ]] || continue

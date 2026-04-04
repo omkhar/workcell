@@ -187,14 +187,7 @@ RUN install_runtime_builder_packages() { \
     -o /tmp/rustup-init \
   && echo "${rustup_sha256}  /tmp/rustup-init" | sha256sum -c - \
   && chmod 0755 /tmp/rustup-init \
-  && CARGO_HOME=/usr/local/cargo \
-     RUSTUP_HOME=/usr/local/rustup \
-     /tmp/rustup-init -y --profile minimal --default-toolchain "${RUST_VERSION}" --no-modify-path \
-  && CARGO_HOME=/usr/local/cargo \
-     RUSTUP_HOME=/usr/local/rustup \
-     /usr/local/cargo/bin/rustup default "${RUST_VERSION}" \
-  && ln -sf /usr/local/cargo/bin/cargo /usr/local/bin/cargo \
-  && ln -sf /usr/local/cargo/bin/rustc /usr/local/bin/rustc \
+  && /tmp/rustup-init -y --profile minimal --default-toolchain "${RUST_VERSION}" --no-modify-path \
   && rustc --version | grep -F "rustc ${RUST_VERSION} " >/dev/null \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
   && rm -f /etc/ld.so.cache /tmp/rustup-init \
@@ -301,9 +294,9 @@ RUN SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     CARGO_HOME=/workcell-rust/cargo-home \
     CARGO_TARGET_DIR=/tmp/workcell-rust-target \
     cargo build \
-    --release \
-    --locked \
-    --offline \
+      --release \
+      --locked \
+      --offline \
   && install -m 0644 /tmp/workcell-rust-target/release/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so \
   && install -m 0644 /tmp/workcell-rust-target/release/workcell-launcher /usr/local/libexec/workcell/core/launcher \
   && install -m 0644 /tmp/workcell-rust-target/release/workcell-git-launcher /usr/local/libexec/workcell/core/git \

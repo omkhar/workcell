@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -11,7 +12,34 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
+
+type workflowDocument struct {
+	Jobs map[string]workflowJob `yaml:"jobs"`
+}
+
+type workflowJob struct {
+	Name string `yaml:"name"`
+}
+
+func collectWorkflowJobNames(content []byte) ([]string, error) {
+	var document workflowDocument
+	if err := yaml.Unmarshal(content, &document); err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(document.Jobs))
+	for _, job := range document.Jobs {
+		name := strings.TrimSpace(job.Name)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
 
 func CheckWorkflows(rootDir, policyPath string) error {
 	if err := ensureWorkflowTools(); err != nil {
@@ -43,16 +71,16 @@ func CheckWorkflows(rootDir, policyPath string) error {
 
 	jobNames := map[string]struct{}{}
 	for _, path := range workflowPaths {
-		content, err := readText(path)
+		content, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		for _, match := range workflowNamePattern.FindAllStringSubmatch(content, -1) {
-			name := strings.TrimSpace(match[1])
-			name = strings.Trim(name, `"'`)
-			if name != "" {
-				jobNames[name] = struct{}{}
-			}
+		names, err := collectWorkflowJobNames(content)
+		if err != nil {
+			return fmt.Errorf("%s: parse workflow job names: %w", path, err)
+		}
+		for _, name := range names {
+			jobNames[name] = struct{}{}
 		}
 	}
 

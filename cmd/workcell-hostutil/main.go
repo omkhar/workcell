@@ -132,6 +132,10 @@ func runLauncher(args []string) error {
 		}
 		status, statusErr := hostutil.ColimaProfileStatus(input, args[1])
 		if statusErr != nil {
+			if hostutil.IsNoMatch(statusErr) {
+				fmt.Fprintln(os.Stderr, statusErr)
+				os.Exit(3)
+			}
 			return statusErr
 		}
 		fmt.Println(status)
@@ -174,6 +178,12 @@ func runLauncher(args []string) error {
 			return launcherUsage()
 		}
 		fmt.Println(hostutil.AuditRecordDigest(args[1], args[2], args[3:]))
+		return nil
+	case "direct-mount-cache-key":
+		if len(args) != 3 {
+			return launcherUsage()
+		}
+		fmt.Println(hostutil.DirectMountCacheKey(args[1], args[2]))
 		return nil
 	case "resolve-host-output-candidate":
 		if len(args) != 2 {
@@ -285,5 +295,5 @@ func releaseUsage() error {
 }
 
 func launcherUsage() error {
-	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|write-profile-owner|cleanup-stale-session-audit-dirs|audit-digest|resolve-host-output-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints> ...")
+	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|write-profile-owner|cleanup-stale-session-audit-dirs|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints> ...")
 }

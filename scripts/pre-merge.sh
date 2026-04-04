@@ -92,15 +92,50 @@ has_untracked_files() {
   grep -qE '^\?\?' <<<"${status_output}"
 }
 
+default_local_snapshot_parent() {
+  local raw_parent=""
+
+  if [[ -n "${WORKCELL_VALIDATION_SNAPSHOT_PARENT:-}" ]]; then
+    raw_parent="${WORKCELL_VALIDATION_SNAPSHOT_PARENT}"
+  elif [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+    raw_parent="${XDG_CACHE_HOME}/workcell-validation-snapshots"
+  elif [[ -n "${HOME:-}" ]]; then
+    if [[ "${OSTYPE:-}" == darwin* ]]; then
+      raw_parent="${HOME}/Library/Caches/workcell-validation-snapshots"
+    else
+      raw_parent="${HOME}/.cache/workcell-validation-snapshots"
+    fi
+  else
+    # Keep local validation snapshots outside Workcell-managed Colima caches so
+    # host-invariant cleanup tests cannot race with the validation workspace,
+    # while still landing under a user cache path that Docker can bind-mount.
+    raw_parent="$(dirname "${ROOT_DIR}")"
+  fi
+
+  case "${raw_parent}" in
+    /*)
+      printf '%s\n' "${raw_parent}"
+      ;;
+    *)
+      printf '%s\n' "${ROOT_DIR}/${raw_parent}"
+      ;;
+  esac
+}
+
 run_from_local_snapshot() {
   local -a snapshot_cmd=()
+  local snapshot_parent=""
   local status=0
 
   [[ -n "${LOCAL_SNAPSHOT_MODE}" ]] || return 0
   [[ "${LOCAL_SNAPSHOT_ACTIVE}" == "1" ]] && return 0
 
   echo "[pre-merge] local validation will run from snapshot (${LOCAL_SNAPSHOT_MODE})." >&2
+  snapshot_parent="$(default_local_snapshot_parent)"
+  mkdir -p "${snapshot_parent}"
   snapshot_cmd=(
+    env
+    "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${snapshot_parent}"
     "${ROOT_DIR}/scripts/with-validation-snapshot.sh"
     --repo "${ROOT_DIR}"
     --mode "${LOCAL_SNAPSHOT_MODE}"
@@ -273,6 +308,7 @@ done
 
 require_tool docker
 require_tool git
+require_tool shellcheck
 
 if [[ "${LOCAL_INCLUDE_UNTRACKED}" -eq 1 ]] && [[ "${LOCAL_SNAPSHOT_MODE}" != "worktree" ]]; then
   echo "--local-include-untracked requires --local-snapshot worktree." >&2
@@ -301,8 +337,22 @@ build_validator_image
 echo "[pre-merge] workflow lint and policy analysis"
 "${ROOT_DIR}/scripts/check-workflows.sh"
 
+heavy_shellcheck_targets=()
+for file in \
+  "${ROOT_DIR}/scripts/workcell" \
+  "${ROOT_DIR}/scripts/verify-invariants.sh"; do
+  if [[ -f "${file}" ]]; then
+    heavy_shellcheck_targets+=("${file}")
+  fi
+done
+if ((${#heavy_shellcheck_targets[@]} > 0)); then
+  echo "[pre-merge] host shellcheck for large shell harnesses"
+  shellcheck -x "${heavy_shellcheck_targets[@]}"
+fi
+
 echo "[pre-merge] repository validation in validator container"
 docker run --rm \
+  -e WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK=1 \
   -v "${ROOT_DIR}:/workspace" \
   -w /workspace \
   "${VALIDATOR_IMAGE}" \

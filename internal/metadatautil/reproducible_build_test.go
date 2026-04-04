@@ -94,6 +94,22 @@ func TestVerifyReproducibleBuildReportsMismatch(t *testing.T) {
 	}
 }
 
+func TestGenerateAndVerifyReproducibleBuildManifest(t *testing.T) {
+	root := t.TempDir()
+	layoutA := filepath.Join(root, "layout-a")
+	layoutB := filepath.Join(root, "layout-b")
+	writeSyntheticOCIExport(t, layoutA)
+	writeSyntheticOCIExport(t, layoutB)
+
+	manifestPath := filepath.Join(root, "repro.json")
+	if err := GenerateReproducibleBuildManifest(layoutA, "linux/amd64,linux/arm64", manifestPath, 1700000000); err != nil {
+		t.Fatalf("GenerateReproducibleBuildManifest() error = %v", err)
+	}
+	if err := VerifyReproducibleBuildManifest(layoutB, "linux/amd64,linux/arm64", manifestPath); err != nil {
+		t.Fatalf("VerifyReproducibleBuildManifest() error = %v", err)
+	}
+}
+
 func writeSyntheticOCIExport(t *testing.T, root string) {
 	t.Helper()
 
