@@ -19,6 +19,7 @@ jobs:
     runs-on: # zizmor: ignore[self-hosted-runner] requires reviewed macOS+Colima boundary coverage
       - self-hosted
       - macOS
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
