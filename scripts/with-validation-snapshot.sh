@@ -54,6 +54,71 @@ remove_path_from_snapshot() {
   rm -rf "${target_path}"
 }
 
+validate_tracked_path() {
+  local tracked_path="$1"
+  local label="$2"
+
+  case "${tracked_path}" in
+    '' | . | .. | ./* | /* | */../* | ../* | */..)
+      die "with-validation-snapshot: unsafe path in ${label} rejected: ${tracked_path}"
+      ;;
+  esac
+}
+
+validate_blob_oid() {
+  local oid="$1"
+  local label="$2"
+
+  if [[ ${#oid} -lt 40 ]] || [[ ! "${oid}" =~ ^[0-9a-f]+$ ]]; then
+    die "with-validation-snapshot: malformed OID in ${label}: ${oid}"
+  fi
+}
+
+materialize_tracked_entry() {
+  local mode="$1"
+  local oid="$2"
+  local tracked_path="$3"
+  local label="$4"
+  local dest="${SNAPSHOT_DIR}/${tracked_path}"
+  local install_mode=""
+  local link_target=""
+
+  validate_tracked_path "${tracked_path}" "${label}"
+  validate_blob_oid "${oid}" "${label}"
+
+  case "${mode}" in
+    100644)
+      install_mode="0644"
+      ;;
+    100755)
+      install_mode="0755"
+      ;;
+    120000)
+      rm -rf "${dest}"
+      mkdir -p "$(dirname "${dest}")"
+      if ! IFS= read -r -d '' link_target < <(git -C "${REPO_ROOT}" cat-file blob "${oid}" && printf '\0'); then
+        die "with-validation-snapshot: failed to read symlink blob ${oid} for path: ${tracked_path}"
+      fi
+      ln -s "${link_target}" "${dest}"
+      return 0
+      ;;
+    *)
+      echo "with-validation-snapshot: skipping unsupported mode ${mode} in ${label}: ${tracked_path}" >&2
+      return 0
+      ;;
+  esac
+
+  if [[ -d "${dest}" ]]; then
+    rm -rf "${dest}"
+  fi
+  mkdir -p "$(dirname "${dest}")"
+  if ! git -C "${REPO_ROOT}" cat-file blob "${oid}" >"${dest}"; then
+    rm -f "${dest}"
+    die "with-validation-snapshot: failed to read blob ${oid} for path: ${tracked_path}"
+  fi
+  chmod "${install_mode}" "${dest}" 2>/dev/null || true
+}
+
 overlay_head_state() {
   local entry=""
   local metadata=""
@@ -76,42 +141,7 @@ overlay_head_state() {
 
     [[ "${obj_type}" == "blob" ]] || continue
 
-    case "${mode}" in
-      100644) install_mode="0644" ;;
-      100755) install_mode="0755" ;;
-      120000)
-        echo "with-validation-snapshot: skipping symlink in HEAD tree: ${tracked_path}" >&2
-        continue
-        ;;
-      *)
-        echo "with-validation-snapshot: skipping unsupported mode ${mode} in HEAD tree: ${tracked_path}" >&2
-        continue
-        ;;
-    esac
-
-    case "${tracked_path}" in
-      '' | . | .. | ./* | /* | */../* | ../* | */..)
-        echo "with-validation-snapshot: unsafe path in HEAD tree rejected: ${tracked_path}" >&2
-        continue
-        ;;
-    esac
-
-    if [[ ${#oid} -lt 40 ]] || [[ ! "${oid}" =~ ^[0-9a-f]+$ ]]; then
-      echo "with-validation-snapshot: malformed OID in HEAD tree: ${oid}" >&2
-      continue
-    fi
-
-    dest="${SNAPSHOT_DIR}/${tracked_path}"
-    if [[ -d "${dest}" ]]; then
-      rm -rf "${dest}"
-    fi
-    mkdir -p "$(dirname "${dest}")"
-    if ! git -C "${REPO_ROOT}" cat-file blob "${oid}" >"${dest}"; then
-      echo "with-validation-snapshot: failed to read blob ${oid} for path: ${tracked_path}" >&2
-      rm -f "${dest}"
-      continue
-    fi
-    chmod "${install_mode}" "${dest}" 2>/dev/null || true
+    materialize_tracked_entry "${mode}" "${oid}" "${tracked_path}" "HEAD tree"
   done < <(git -C "${REPO_ROOT}" ls-tree -r -z HEAD)
 }
 
@@ -123,17 +153,12 @@ overlay_index_state() {
   local oid=""
   local remainder=""
   local stage=""
-  local dest=""
-  local install_mode=""
-
   while IFS= read -r -d '' tracked_path; do
     remove_path_from_snapshot "${tracked_path}"
   done < <(git -C "${SNAPSHOT_DIR}" ls-files -z)
 
   # Materialize each tracked blob via cat-file to bypass smudge/clean filters
-  # that a malicious .gitattributes could use for code execution.  Only regular
-  # file modes (100644, 100755) are materialized; symlinks and submodules are
-  # intentionally skipped since the validation snapshot does not need them.
+  # that a malicious .gitattributes could use for code execution.
   while IFS= read -r -d '' entry; do
     metadata="${entry%%$'\t'*}"
     tracked_path="${entry#*$'\t'}"
@@ -143,43 +168,7 @@ overlay_index_state() {
     stage="${remainder##* }"
     [[ "${stage}" == "0" ]] || continue
 
-    case "${mode}" in
-      100644) install_mode="0644" ;;
-      100755) install_mode="0755" ;;
-      120000)
-        echo "with-validation-snapshot: skipping symlink in git index: ${tracked_path}" >&2
-        continue
-        ;;
-      *)
-        echo "with-validation-snapshot: skipping unsupported mode ${mode} in git index: ${tracked_path}" >&2
-        continue
-        ;;
-    esac
-
-    # Reject paths that could escape SNAPSHOT_DIR
-    case "${tracked_path}" in
-      '' | . | .. | ./* | /* | */../* | ../* | */..)
-        echo "with-validation-snapshot: unsafe path in git index rejected: ${tracked_path}" >&2
-        continue
-        ;;
-    esac
-
-    if [[ ${#oid} -lt 40 ]] || [[ ! "${oid}" =~ ^[0-9a-f]+$ ]]; then
-      echo "with-validation-snapshot: malformed OID in git index: ${oid}" >&2
-      continue
-    fi
-
-    dest="${SNAPSHOT_DIR}/${tracked_path}"
-    if [[ -d "${dest}" ]]; then
-      rm -rf "${dest}"
-    fi
-    mkdir -p "$(dirname "${dest}")"
-    if ! git -C "${REPO_ROOT}" cat-file blob "${oid}" >"${dest}"; then
-      echo "with-validation-snapshot: failed to read blob ${oid} for path: ${tracked_path}" >&2
-      rm -f "${dest}"
-      continue
-    fi
-    chmod "${install_mode}" "${dest}" 2>/dev/null || true
+    materialize_tracked_entry "${mode}" "${oid}" "${tracked_path}" "git index"
   done < <(git -C "${REPO_ROOT}" ls-files -z --stage)
 }
 

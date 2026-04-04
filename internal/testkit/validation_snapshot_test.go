@@ -46,17 +46,17 @@ func createSnapshotFixtureRepo(tb testing.TB, root string) string {
 	return repo
 }
 
-func runValidationSnapshot(tb testing.TB, repo string, extraEnv map[string]string) (int, string, string) {
+func runValidationSnapshotCommand(tb testing.TB, repo string, mode string, command string, extraEnv map[string]string) (int, string) {
 	tb.Helper()
 
 	script := filepath.Join(repoRoot(tb), "scripts", "with-validation-snapshot.sh")
 	cmd := exec.Command(
 		script,
 		"--repo", repo,
-		"--mode", "head",
+		"--mode", mode,
 		"--",
 		"/bin/sh", "-c",
-		`pwd; printf '%s\n' "$WORKCELL_VALIDATION_SNAPSHOT_DIR"; if [ -d .git ]; then echo True; else echo False; fi`,
+		command,
 	)
 	cmd.Env = os.Environ()
 	for key, value := range extraEnv {
@@ -64,13 +64,24 @@ func runValidationSnapshot(tb testing.TB, repo string, extraEnv map[string]strin
 	}
 	output, err := cmd.CombinedOutput()
 	if err == nil {
-		return 0, string(output), ""
+		return 0, string(output)
 	}
 	if exitErr, ok := err.(*exec.ExitError); ok {
-		return exitErr.ExitCode(), string(output), string(exitErr.Stderr)
+		return exitErr.ExitCode(), string(output)
 	}
 	tb.Fatalf("snapshot command failed: %v", err)
-	return 0, "", ""
+	return 0, ""
+}
+
+func runValidationSnapshot(tb testing.TB, repo string, extraEnv map[string]string) (int, string) {
+	tb.Helper()
+	return runValidationSnapshotCommand(
+		tb,
+		repo,
+		"head",
+		`pwd; printf '%s\n' "$WORKCELL_VALIDATION_SNAPSHOT_DIR"; if [ -d .git ]; then echo True; else echo False; fi`,
+		extraEnv,
+	)
 }
 
 func TestValidationSnapshotDefaultsToRepoParent(t *testing.T) {
@@ -79,7 +90,7 @@ func TestValidationSnapshotDefaultsToRepoParent(t *testing.T) {
 	tempRoot := t.TempDir()
 	repo := createSnapshotFixtureRepo(t, tempRoot)
 
-	code, stdout, _ := runValidationSnapshot(t, repo, nil)
+	code, stdout := runValidationSnapshot(t, repo, nil)
 	if code != 0 {
 		t.Fatalf("snapshot exit code = %d stdout=%q", code, stdout)
 	}
@@ -113,7 +124,7 @@ func TestValidationSnapshotParentOverrideIsHonored(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, stdout, _ := runValidationSnapshot(t, repo, map[string]string{
+	code, stdout := runValidationSnapshot(t, repo, map[string]string{
 		"WORKCELL_VALIDATION_SNAPSHOT_PARENT": overrideParent,
 	})
 	if code != 0 {
@@ -132,5 +143,70 @@ func TestValidationSnapshotParentOverrideIsHonored(t *testing.T) {
 	}
 	if gitDir != "True" {
 		t.Fatalf("git dir flag = %q want True", gitDir)
+	}
+}
+
+func TestValidationSnapshotPreservesTrackedSymlinks(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	repo := createSnapshotFixtureRepo(t, tempRoot)
+	linkPath := filepath.Join(repo, "link.txt")
+	if err := os.Symlink("README.md", linkPath); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", repo, "add", "link.txt")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add link.txt failed: %v\n%s", err, output)
+	}
+	cmd = exec.Command("git", "-C", repo, "commit", "-q", "-m", "add symlink")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit add symlink failed: %v\n%s", err, output)
+	}
+
+	for _, mode := range []string{"head", "index", "worktree"} {
+		mode := mode
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+
+			code, output := runValidationSnapshotCommand(
+				t,
+				repo,
+				mode,
+				`if [ -L link.txt ]; then printf 'target=%s\n' "$(readlink link.txt)"; else echo missing; fi`,
+				nil,
+			)
+			if code != 0 {
+				t.Fatalf("snapshot exit code = %d output=%q", code, output)
+			}
+			if strings.TrimSpace(output) != "target=README.md" {
+				t.Fatalf("snapshot output = %q want target=README.md", output)
+			}
+		})
+	}
+}
+
+func TestValidationSnapshotFailsWhenTrackedBlobIsUnreadable(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	repo := createSnapshotFixtureRepo(t, tempRoot)
+	cmd := exec.Command("git", "-C", repo, "rev-parse", "HEAD:README.md")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse README blob failed: %v\n%s", err, output)
+	}
+	oid := strings.TrimSpace(string(output))
+	objectPath := filepath.Join(repo, ".git", "objects", oid[:2], oid[2:])
+	if err := os.Remove(objectPath); err != nil {
+		t.Fatalf("remove blob object: %v", err)
+	}
+
+	code, snapshotOutput := runValidationSnapshotCommand(t, repo, "head", `echo should-not-run`, nil)
+	if code == 0 {
+		t.Fatalf("snapshot unexpectedly succeeded: %q", snapshotOutput)
+	}
+	if !strings.Contains(snapshotOutput, "failed to read blob") {
+		t.Fatalf("snapshot output = %q want failed to read blob", snapshotOutput)
 	}
 }
