@@ -16,14 +16,31 @@ set -euo pipefail
 export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REAL_HOME="$(
-  /usr/bin/env -i PATH="${TRUSTED_HOST_PATH}" /usr/bin/python3 - <<'PY'
-import os
-import pwd
+GO_BIN="${WORKCELL_GO_BIN:-}"
 
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
-)"
+resolve_go_bin() {
+  if [[ -n "${GO_BIN}" && -x "${GO_BIN}" ]]; then
+    return 0
+  fi
+  if GO_BIN="$(command -v go 2>/dev/null)"; then
+    return 0
+  fi
+  for candidate in \
+    /opt/homebrew/bin/go \
+    /usr/local/go/bin/go \
+    /usr/local/bin/go \
+    /usr/bin/go; do
+    if [[ -x "${candidate}" ]]; then
+      GO_BIN="${candidate}"
+      return 0
+    fi
+  done
+  echo "Missing required tool: go" >&2
+  exit 1
+}
+
+resolve_go_bin
+REAL_HOME="$(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-hostutil path home)"
 LEGACY_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/.workcell.remote.local"
 REMOTE_CONFIG_PATH="${WORKCELL_REMOTE_VALIDATE_CONFIG_PATH:-${REAL_HOME}/.config/workcell/remote-validate.env}"
 REMOTE_HOST="${WORKCELL_REMOTE_VALIDATE_HOST:-}"
@@ -109,13 +126,7 @@ require_remote_host() {
 canonicalize_host_path() {
   local path="$1"
 
-  /usr/bin/env -i PATH="${TRUSTED_HOST_PATH}" /usr/bin/python3 - "$path" <<'PY'
-import os
-import pathlib
-import sys
-
-print(pathlib.Path(sys.argv[1]).expanduser().resolve(strict=False))
-PY
+  (cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-hostutil path resolve --base "$(pwd -P)" "$path")
 }
 
 assert_supported_remote_config_path() {

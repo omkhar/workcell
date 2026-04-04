@@ -1,19 +1,35 @@
 # shellcheck shell=bash
 resolve_workcell_real_home() {
-  local python_bin
+  local uid entry home user_name
 
-  if [[ -x /usr/bin/python3 ]]; then
-    python_bin=/usr/bin/python3
-  else
-    python_bin=python3
+  uid="$(id -u)"
+  user_name="$(id -un)"
+  if command -v getent >/dev/null 2>&1; then
+    entry="$(getent passwd "${uid}" 2>/dev/null || true)"
+    if [[ -n "${entry}" ]]; then
+      IFS=: read -r _ _ _ _ _ home _ <<<"${entry}"
+      if [[ -n "${home}" ]]; then
+        printf '%s\n' "${home}"
+        return 0
+      fi
+    fi
   fi
 
-  "${python_bin}" - <<'PY'
-import os
-import pwd
+  if command -v dscl >/dev/null 2>&1; then
+    home="$(dscl . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk '{print $2}' | tail -n 1)"
+    if [[ -n "${home}" ]]; then
+      printf '%s\n' "${home}"
+      return 0
+    fi
+  fi
 
-print(pwd.getpwuid(os.getuid()).pw_dir)
-PY
+  if [[ -n "${HOME:-}" && -d "${HOME}" ]]; then
+    printf '%s\n' "${HOME}"
+    return 0
+  fi
+
+  echo "Unable to resolve real home directory for uid ${uid}" >&2
+  return 1
 }
 
 copy_workcell_docker_state_tree() {
@@ -92,6 +108,7 @@ setup_workcell_trusted_docker_client() {
 
 cleanup_workcell_trusted_docker_client() {
   if [[ -n "${WORKCELL_DOCKER_SANDBOX_ROOT:-}" ]] && [[ -d "${WORKCELL_DOCKER_SANDBOX_ROOT}" ]]; then
+    chmod -R u+w "${WORKCELL_DOCKER_SANDBOX_ROOT}" 2>/dev/null || true
     rm -rf "${WORKCELL_DOCKER_SANDBOX_ROOT}"
   fi
 }
@@ -233,7 +250,7 @@ buildx_builder_matches_context() {
         return 0
       fi
     done
-  done < "${inspect_output_path}"
+  done <"${inspect_output_path}"
 
   return 1
 }

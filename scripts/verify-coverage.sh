@@ -53,6 +53,12 @@ cleanup() {
 trap cleanup EXIT
 
 run_python_coverage() {
+  if [[ ! -d "${ROOT_DIR}/tests/python" ]] ||
+    ! find "${ROOT_DIR}/tests/python" -type f -name 'test_*.py' -print -quit | grep -q .; then
+    echo "Skipping Python helper coverage because no Python helper tests remain."
+    return 0
+  fi
+
   local data_file="${TMP_ROOT}/python-coverage.data"
   local report_file="${TMP_ROOT}/python-coverage.json"
 
