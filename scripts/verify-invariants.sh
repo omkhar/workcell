@@ -5515,7 +5515,7 @@ check_provider_step() {
   done
 }
 
-check_provider_step "Run Codex authenticated probe" "if: \$\{\{ inputs.provider == 'codex' \}\}" '--agent "codex"' \
+check_provider_step "Run Codex authenticated probe" "if: \${{ inputs.provider == 'codex' }}" '--agent "codex"' \
   "WORKCELL_E2E_CODEX_AUTH_JSON" \
   -- \
   "WORKCELL_E2E_CLAUDE_API_KEY" \
@@ -5527,7 +5527,7 @@ check_provider_step "Run Codex authenticated probe" "if: \$\{\{ inputs.provider 
   "WORKCELL_E2E_GEMINI_PROJECTS_JSON" \
   "WORKCELL_E2E_GITHUB_CONFIG_YML" \
   "WORKCELL_E2E_GITHUB_HOSTS_YML"
-check_provider_step "Run Claude authenticated probe" "if: \$\{\{ inputs.provider == 'claude' \}\}" '--agent "claude"' \
+check_provider_step "Run Claude authenticated probe" "if: \${{ inputs.provider == 'claude' }}" '--agent "claude"' \
   "WORKCELL_E2E_CLAUDE_API_KEY" \
   "WORKCELL_E2E_CLAUDE_AUTH_JSON" \
   "WORKCELL_E2E_CLAUDE_MCP_JSON" \
@@ -5539,7 +5539,7 @@ check_provider_step "Run Claude authenticated probe" "if: \$\{\{ inputs.provider
   "WORKCELL_E2E_GEMINI_PROJECTS_JSON" \
   "WORKCELL_E2E_GITHUB_CONFIG_YML" \
   "WORKCELL_E2E_GITHUB_HOSTS_YML"
-check_provider_step "Run Gemini authenticated probe" "if: \$\{\{ inputs.provider == 'gemini' \}\}" '--agent "gemini"' \
+check_provider_step "Run Gemini authenticated probe" "if: \${{ inputs.provider == 'gemini' }}" '--agent "gemini"' \
   "WORKCELL_E2E_GCLOUD_ADC_JSON" \
   "WORKCELL_E2E_GEMINI_ENV" \
   "WORKCELL_E2E_GEMINI_OAUTH_JSON" \
