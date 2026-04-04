@@ -51,7 +51,11 @@ run_metadatautil() {
 trap cleanup EXIT
 
 mapfile -t python_files < <(
-  find "${ROOT_DIR}/scripts/lib" \
+  find "${ROOT_DIR}" \
+    -path "${ROOT_DIR}/.git" -prune -o \
+    -path "${ROOT_DIR}/dist" -prune -o \
+    -path "${ROOT_DIR}/tmp" -prune -o \
+    -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
     -type f -name '*.py' -print | sort
 )
 
@@ -169,7 +173,7 @@ for scratch_dir in \
 done
 
 if [[ "${#python_files[@]}" -gt 0 ]]; then
-  echo "Unexpected Python source files remain in scripts/lib:" >&2
+  echo "Unexpected repo-owned Python source files remain:" >&2
   printf '  %s\n' "${python_files[@]}" >&2
   exit 1
 fi
