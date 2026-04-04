@@ -53,7 +53,10 @@ done < <(find "${ROOT_DIR}/tests/scenarios" -type f -name 'test-*.sh' -print | s
 shellcheck -x "${shell_files[@]}"
 shfmt -ln=bash -i 2 -ci -d "${shell_files[@]}"
 "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
-mapfile -d '' -t go_files < <(find "${ROOT_DIR}/cmd" "${ROOT_DIR}/internal" -type f -name '*.go' -print0 | sort -z)
+go_files=()
+while IFS= read -r -d '' item; do
+  go_files+=("${item}")
+done < <(find "${ROOT_DIR}/cmd" "${ROOT_DIR}/internal" -type f -name '*.go' -print0 | sort -z)
 if [[ "${#go_files[@]}" -gt 0 ]]; then
   if gofmt -l "${go_files[@]}" | grep -q .; then
     echo "Go files are not formatted with gofmt." >&2
