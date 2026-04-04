@@ -4042,6 +4042,29 @@ set -euo pipefail
 
 TRUSTED_HOST_PATH="${PATH}"
 
+go_hostutil() {
+  local scope="$1"
+  local action="$2"
+  local profile="$3"
+  local payload=""
+
+  payload="$(cat)"
+  [[ "${scope}" == "launcher" && "${action}" == "colima-status" ]] || return 1
+  [[ "${payload}" != '{not-json' ]] || return 1
+
+  case "${profile}" in
+    workcell-workcell-ac42b1dc)
+      printf 'Stopped\n'
+      ;;
+    workcell-other)
+      printf 'Running\n'
+      ;;
+    *)
+      return 3
+      ;;
+  esac
+}
+
 run_host_colima() {
   cat <<'JSON'
 {"name":"default","status":"Running"}
