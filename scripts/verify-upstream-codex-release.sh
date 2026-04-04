@@ -37,37 +37,12 @@ require_tool() {
 }
 
 extract_codex_version() {
-  python3 - "${DOCKERFILE_PATH}" <<'PY'
-import pathlib
-import re
-import sys
-
-text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r"^ARG CODEX_VERSION=(.+)$", text, re.MULTILINE)
-if not match:
-    raise SystemExit("Unable to extract CODEX_VERSION from Dockerfile")
-print(match.group(1).strip())
-PY
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil extract-dockerfile-arg "${DOCKERFILE_PATH}" CODEX_VERSION)
 }
 
 extract_codex_sha() {
   local target_arch="$1"
-  python3 - "${DOCKERFILE_PATH}" "${target_arch}" <<'PY'
-import pathlib
-import re
-import sys
-
-text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-target_arch = sys.argv[2]
-pattern = re.compile(
-    rf'{re.escape(target_arch)}\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="[^"]+";\s+\\\s*CODEX_SHA256="([0-9a-f]{{64}})";',
-    re.MULTILINE,
-)
-match = pattern.search(text)
-if not match:
-    raise SystemExit(f"Unable to extract CODEX_SHA256 for {target_arch}")
-print(match.group(1))
-PY
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil extract-codex-sha "${DOCKERFILE_PATH}" "${target_arch}")
 }
 
 verify_asset() {
@@ -94,7 +69,7 @@ verify_asset() {
 
 require_tool cosign
 require_tool curl
-require_tool python3
+require_tool go
 require_tool sha256sum
 require_tool tar
 

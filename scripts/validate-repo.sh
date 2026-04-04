@@ -21,31 +21,61 @@ require_tool shellcheck
 require_tool shfmt
 require_tool go
 require_tool gofmt
-require_tool python3
 require_tool yamllint
 require_tool cargo
 require_tool rustfmt
 require_tool git
 require_cargo_subcommand clippy
 
-python_search_roots=(
-  "${ROOT_DIR}/scripts/lib"
-  "${ROOT_DIR}/tests/mutation"
-)
-if [[ -d "${ROOT_DIR}/tests/python" ]]; then
-  python_search_roots+=("${ROOT_DIR}/tests/python")
-fi
+METADATAUTIL_BIN=""
+
+cleanup() {
+  if [[ -n "${METADATAUTIL_BIN}" && -e "${METADATAUTIL_BIN}" ]]; then
+    rm -f "${METADATAUTIL_BIN}"
+  fi
+}
+
+build_metadatautil() {
+  if [[ -n "${METADATAUTIL_BIN}" ]]; then
+    return 0
+  fi
+  METADATAUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-metadatautil.XXXXXX")"
+  (cd "${ROOT_DIR}" && go build -buildvcs=false -o "${METADATAUTIL_BIN}" ./cmd/workcell-metadatautil)
+}
+
+run_metadatautil() {
+  build_metadatautil
+  "${METADATAUTIL_BIN}" "$@"
+}
+
+trap cleanup EXIT
+
 mapfile -t python_files < <(
-  find "${python_search_roots[@]}" -type f -name '*.py' -print | sort
+  find "${ROOT_DIR}" \
+    -path "${ROOT_DIR}/.git" -prune -o \
+    -path "${ROOT_DIR}/dist" -prune -o \
+    -path "${ROOT_DIR}/tmp" -prune -o \
+    -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
+    -type f -name '*.py' -print | sort
 )
 
 branding_scan() {
   local pattern="agent-boundary|Agent Boundary|agent boundary"
-  git -C "${ROOT_DIR}" grep -nE "${pattern}" -- \
-    . \
-    ':(exclude)scripts/validate-repo.sh' \
-    ':(exclude)dist/**' \
-    ':(exclude)tmp/**'
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -n "${pattern}" "${ROOT_DIR}" \
+      -g '!**/.git/**' \
+      -g '!scripts/validate-repo.sh' \
+      -g '!dist/**' \
+      -g '!tmp/**'
+    return
+  fi
+
+  grep -RInE "${pattern}" "${ROOT_DIR}" \
+    --exclude-dir=.git \
+    --exclude-dir=dist \
+    --exclude-dir=tmp \
+    --exclude=validate-repo.sh
 }
 
 validate_manpage() {
@@ -70,6 +100,8 @@ shell_files=(
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/dev-quick-check.sh"
+  "${ROOT_DIR}/scripts/go-port-validate.sh"
+  "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
   "${ROOT_DIR}/scripts/dev-remote-validate.sh"
   "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
   "${ROOT_DIR}/scripts/lib/manage_injection_policy"
@@ -90,6 +122,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/run-mutation-tests.sh"
   "${ROOT_DIR}/scripts/verify-coverage.sh"
   "${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
+  "${ROOT_DIR}/scripts/verify-go-python-parity.sh"
   "${ROOT_DIR}/scripts/validate-repo.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
@@ -119,10 +152,9 @@ while IFS= read -r file; do
   shell_files+=("${file}")
 done < <(find "${ROOT_DIR}/tests/scenarios" -type f -name 'test-*.sh' -print | sort)
 
-for file in "${shell_files[@]}"; do
-  shellcheck -x "${file}"
-done
+shellcheck -x "${shell_files[@]}"
 shfmt -ln=bash -i 2 -ci -d "${shell_files[@]}"
+"${ROOT_DIR}/scripts/lint-dockerfiles.sh"
 
 for file in "${shell_files[@]}"; do
   if [[ ! -x "${file}" ]]; then
@@ -140,13 +172,11 @@ for scratch_dir in \
   fi
 done
 
-python3 -m py_compile "${python_files[@]}"
-
-if [[ -d "${ROOT_DIR}/tests/python" ]] &&
-  find "${ROOT_DIR}/tests/python" -type f -name 'test_*.py' -print -quit | grep -q .; then
-  python3 -m unittest discover -s "${ROOT_DIR}/tests/python" -p 'test_*.py'
+if [[ "${#python_files[@]}" -gt 0 ]]; then
+  echo "Unexpected repo-owned Python source files remain:" >&2
+  printf '  %s\n' "${python_files[@]}" >&2
+  exit 1
 fi
-
 mapfile -d '' -t go_files < <(find "${ROOT_DIR}/cmd" "${ROOT_DIR}/internal" -type f -name '*.go' -print0 | sort -z)
 if [[ "${#go_files[@]}" -gt 0 ]]; then
   if gofmt -l "${go_files[@]}" | grep -q .; then
@@ -157,26 +187,26 @@ fi
 go vet ./...
 go test ./...
 
-while IFS= read -r file; do
-  python3 -m json.tool "${file}" >/dev/null
-done < <(find "${ROOT_DIR}/adapters" "${ROOT_DIR}/.github" "${ROOT_DIR}/runtime/container/providers" "${ROOT_DIR}/tests/scenarios" \
-  -path '*/node_modules' -prune -o \
-  -type f -name '*.json' -print | sort)
+mapfile -t json_files < <(
+  find "${ROOT_DIR}/adapters" "${ROOT_DIR}/.github" "${ROOT_DIR}/runtime/container/providers" "${ROOT_DIR}/tests/scenarios" \
+    -path '*/node_modules' -prune -o \
+    -type f -name '*.json' -print | sort
+)
+if [[ "${#json_files[@]}" -gt 0 ]]; then
+  run_metadatautil validate-json "${json_files[@]}"
+fi
 
-python3 - "${ROOT_DIR}" <<'PY'
-import pathlib
-import tomllib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-for path in sorted(root.rglob("*.toml")):
-    if ".git" in path.parts:
-        continue
-    if "node_modules" in path.parts:
-        continue
-    with path.open("rb") as handle:
-        tomllib.load(handle)
-PY
+mapfile -t toml_files < <(
+  find "${ROOT_DIR}" \
+    -path "${ROOT_DIR}/.git" -prune -o \
+    -path "${ROOT_DIR}/dist" -prune -o \
+    -path "${ROOT_DIR}/tmp" -prune -o \
+    -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
+    -type f -name '*.toml' -print | sort
+)
+if [[ "${#toml_files[@]}" -gt 0 ]]; then
+  run_metadatautil validate-toml "${toml_files[@]}"
+fi
 
 yamllint -d "{extends: default, rules: {comments: disable, document-start: disable, line-length: disable, truthy: disable}}" \
   "${ROOT_DIR}/.github/dependency-review-config.yml" \
@@ -213,41 +243,10 @@ if [[ ! -d "${ROOT_DIR}/docs/examples" ]] || ! find "${ROOT_DIR}/docs/examples" 
 fi
 
 # Check B: TOML validation for docs/examples/ is already covered by the
-# root.rglob("*.toml") loop above, which scans all subdirectories.
+# validate-toml pass above, which scans the repository tree.
 
 # Check C: Credential pattern scan in tests/ and docs/examples/
-python3 - "${ROOT_DIR}" <<'PY'
-import pathlib
-import re
-import sys
-
-root = pathlib.Path(sys.argv[1])
-patterns = [
-    re.compile(r'sk-[A-Za-z0-9]{40,}'),
-    re.compile(r'AIza[A-Za-z0-9\-_]{35}'),
-    re.compile(r'ya29\.[A-Za-z0-9\-_]+'),
-]
-scan_dirs = [root / "tests", root / "docs" / "examples"]
-found = 0
-for scan_dir in scan_dirs:
-    if not scan_dir.exists():
-        continue
-    for path in sorted(scan_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        if ".git" in path.parts:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for pattern in patterns:
-            if pattern.search(text):
-                print(f"Possible credential in {path}", file=__import__("sys").stderr)
-                found += 1
-if found:
-    raise SystemExit(f"Found {found} possible credential(s) in tests/ or docs/examples/")
-PY
+run_metadatautil scan-credential-patterns "${ROOT_DIR}"
 
 if branding_scan; then
   echo "Found stale pre-rename branding." >&2
@@ -263,7 +262,6 @@ fi
   cd "${ROOT_DIR}/runtime/container/rust"
   cargo fmt --all --check
   cargo clippy --all-targets --locked --offline -- -D warnings
-  cargo check --locked --offline
   cargo test --locked --offline
 )
 

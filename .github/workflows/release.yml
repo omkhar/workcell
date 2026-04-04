@@ -143,7 +143,7 @@ jobs:
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
         uses: github/codeql-action/init@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
         with:
-          languages: rust,javascript-typescript,python
+          languages: rust,javascript-typescript,go
           build-mode: none
 
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
@@ -317,20 +317,15 @@ jobs:
 
       - name: Verify release bundle matches preflight
         run: |
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import pathlib
-
-          root = pathlib.Path("dist")
-          manifest = json.loads((root / "preflight" / "workcell-release-bundle-preflight.json").read_text(encoding="utf-8"))
-          bundle_path = root / manifest["bundle_name"]
-          digest = hashlib.sha256(bundle_path.read_bytes()).hexdigest()
-          if digest != manifest["bundle_sha256"]:
-              raise SystemExit(
-                  f"Release bundle digest mismatch: {digest} != {manifest['bundle_sha256']}"
-              )
-          PY
+          set -euo pipefail
+          manifest="dist/preflight/workcell-release-bundle-preflight.json"
+          bundle_name="$(jq -r '.bundle_name' "${manifest}")"
+          expected_digest="$(jq -r '.bundle_sha256' "${manifest}")"
+          actual_digest="$(sha256sum "dist/${bundle_name}" | awk '{print $1}')"
+          if [[ "${actual_digest}" != "${expected_digest}" ]]; then
+            echo "Release bundle digest mismatch: ${actual_digest} != ${expected_digest}" >&2
+            exit 1
+          fi
 
       - name: Regenerate build input manifest from archived source tree
         env:
@@ -393,92 +388,85 @@ jobs:
           AMD64_DIGEST: ${{ steps.build_amd64.outputs.digest }}
           ARM64_DIGEST: ${{ steps.build_arm64.outputs.digest }}
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import pathlib
-          import subprocess
+          set -euo pipefail
 
-          preflight_manifest = json.loads(
-              pathlib.Path("dist/preflight/workcell-runtime-preflight.json").read_text(encoding="utf-8")
-          )
-          expected = {
-              platform: {
-                  "image_manifest_digest": details["image_manifest_digest"],
-                  "config_digest": details["config_digest"],
-              }
-              for platform, details in preflight_manifest["platforms"].items()
+          inspect_raw() {
+            docker buildx imagetools inspect --raw "$1"
           }
 
-          def inspect_raw(ref: str) -> dict:
-              output = subprocess.check_output(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", ref],
-                  text=True,
-              )
-              return json.loads(output)
+          resolve_published_platform() {
+            local index_digest="$1"
+            local platform="$2"
+            local ref="${IMAGE_NAME}@${index_digest}"
+            local os_name="${platform%%/*}"
+            local arch="${platform#*/}"
+            local document=""
+            local media_type=""
+            local image_manifest_digest=""
+            local image_manifest=""
+            local config_digest=""
+            local -a candidate_digests=()
 
-          def resolve_published_platform(index_digest: str, platform: str) -> dict:
-              ref = f"{os.environ['IMAGE_NAME']}@{index_digest}"
-              os_name, arch = platform.split("/", 1)
-              document = inspect_raw(ref)
-              media_type = document.get("mediaType")
+            document="$(inspect_raw "${ref}")"
+            media_type="$(jq -r '.mediaType // empty' <<<"${document}")"
 
-              if media_type in {
-                  "application/vnd.docker.distribution.manifest.v2+json",
-                  "application/vnd.oci.image.manifest.v1+json",
-              }:
-                  image_manifest_digest = index_digest
-                  image_manifest = document
-              elif media_type in {
-                  "application/vnd.docker.distribution.manifest.list.v2+json",
-                  "application/vnd.oci.image.index.v1+json",
-              }:
-                  candidates = []
-                  for entry in document.get("manifests", []):
-                      entry_platform = entry.get("platform", {})
-                      annotations = entry.get("annotations", {})
-                      if annotations.get("vnd.docker.reference.type") == "attestation-manifest":
-                          continue
-                      if entry_platform.get("os") != os_name:
-                          continue
-                      if entry_platform.get("architecture") != arch:
-                          continue
-                      candidates.append(entry)
+            case "${media_type}" in
+              application/vnd.docker.distribution.manifest.v2+json|application/vnd.oci.image.manifest.v1+json)
+                image_manifest_digest="${index_digest}"
+                image_manifest="${document}"
+                ;;
+              application/vnd.docker.distribution.manifest.list.v2+json|application/vnd.oci.image.index.v1+json)
+                mapfile -t candidate_digests < <(
+                  jq -r --arg os "${os_name}" --arg arch "${arch}" '
+                    .manifests // []
+                    | map(select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest"))
+                    | map(select(.platform.os == $os and .platform.architecture == $arch))
+                    | .[].digest
+                  ' <<<"${document}"
+                )
+                if [[ "${#candidate_digests[@]}" -ne 1 ]]; then
+                  echo "Expected exactly one published image manifest for ${platform} in ${ref}, found ${#candidate_digests[@]}" >&2
+                  exit 1
+                fi
+                image_manifest_digest="${candidate_digests[0]}"
+                if [[ "${image_manifest_digest}" != sha256:* ]]; then
+                  echo "Malformed published image manifest digest for ${platform} in ${ref}: ${image_manifest_digest}" >&2
+                  exit 1
+                fi
+                image_manifest="$(inspect_raw "${IMAGE_NAME}@${image_manifest_digest}")"
+                ;;
+              *)
+                echo "Unsupported published descriptor media type for ${ref}: ${media_type}" >&2
+                exit 1
+                ;;
+            esac
 
-                  if len(candidates) != 1:
-                      raise SystemExit(
-                          f"Expected exactly one published image manifest for {platform} in {ref}, "
-                          f"found {len(candidates)}"
-                      )
+            config_digest="$(jq -r '.config.digest // empty' <<<"${image_manifest}")"
+            if [[ "${config_digest}" != sha256:* ]]; then
+              echo "Malformed published config digest for ${platform} in ${ref}: ${config_digest}" >&2
+              exit 1
+            fi
 
-                  image_manifest_digest = candidates[0].get("digest")
-                  if not isinstance(image_manifest_digest, str) or not image_manifest_digest.startswith("sha256:"):
-                      raise SystemExit(
-                          f"Malformed published image manifest digest for {platform} in {ref}: "
-                          f"{image_manifest_digest!r}"
-                      )
-                  image_manifest = inspect_raw(f"{os.environ['IMAGE_NAME']}@{image_manifest_digest}")
-              else:
-                  raise SystemExit(f"Unsupported published descriptor media type for {ref}: {media_type!r}")
-
-              config_digest = image_manifest.get("config", {}).get("digest")
-              if not isinstance(config_digest, str) or not config_digest.startswith("sha256:"):
-                  raise SystemExit(f"Malformed published config digest for {platform} in {ref}: {config_digest!r}")
-
-              return {
-                  "image_manifest_digest": image_manifest_digest,
-                  "config_digest": config_digest,
-              }
-
-          actual = {
-              "linux/amd64": resolve_published_platform(os.environ["AMD64_DIGEST"], "linux/amd64"),
-              "linux/arm64": resolve_published_platform(os.environ["ARM64_DIGEST"], "linux/arm64"),
+            printf '%s %s\n' "${image_manifest_digest}" "${config_digest}"
           }
-          if actual != expected:
-              raise SystemExit(
-                  f"Published platform image/config digests differ from preflight: {actual!r} != {expected!r}"
-              )
-          PY
+
+          expected_manifest_amd64="$(jq -r '.platforms["linux/amd64"].image_manifest_digest' dist/preflight/workcell-runtime-preflight.json)"
+          expected_config_amd64="$(jq -r '.platforms["linux/amd64"].config_digest' dist/preflight/workcell-runtime-preflight.json)"
+          expected_manifest_arm64="$(jq -r '.platforms["linux/arm64"].image_manifest_digest' dist/preflight/workcell-runtime-preflight.json)"
+          expected_config_arm64="$(jq -r '.platforms["linux/arm64"].config_digest' dist/preflight/workcell-runtime-preflight.json)"
+
+          read -r actual_manifest_amd64 actual_config_amd64 < <(resolve_published_platform "${AMD64_DIGEST}" "linux/amd64")
+          read -r actual_manifest_arm64 actual_config_arm64 < <(resolve_published_platform "${ARM64_DIGEST}" "linux/arm64")
+
+          if [[ "${actual_manifest_amd64}" != "${expected_manifest_amd64}" ]] || \
+             [[ "${actual_config_amd64}" != "${expected_config_amd64}" ]] || \
+             [[ "${actual_manifest_arm64}" != "${expected_manifest_arm64}" ]] || \
+             [[ "${actual_config_arm64}" != "${expected_config_arm64}" ]]; then
+            echo "Published platform image/config digests differ from preflight" >&2
+            echo "amd64: ${actual_manifest_amd64} ${actual_config_amd64} expected ${expected_manifest_amd64} ${expected_config_amd64}" >&2
+            echo "arm64: ${actual_manifest_arm64} ${actual_config_arm64} expected ${expected_manifest_arm64} ${expected_config_arm64}" >&2
+            exit 1
+          fi
 
       - id: publish_manifest
         name: Publish deterministic multi-arch manifest
@@ -495,43 +483,21 @@ jobs:
             -t "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
             "${refs[@]}"
           manifest_json="$(docker buildx imagetools inspect "${IMAGE_NAME}:${GITHUB_REF_NAME}" --format '{{json .Manifest}}')"
-          MANIFEST_JSON="${manifest_json}" python3 - "${GITHUB_OUTPUT}" "dist/workcell-image.digest" "${IMAGE_NAME}" <<'PY'
-          import json
-          import os
-          import pathlib
-          import sys
+          image_manifests_json="$(jq -c '[.manifests[]? | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")]' <<<"${manifest_json}")"
+          platform_arches="$(jq -r '[.[].platform.architecture] | @json' <<<"${image_manifests_json}")"
+          if [[ "${platform_arches}" != '["amd64","arm64"]' ]]; then
+            echo "Deterministic multi-arch image manifest must contain exactly amd64 then arm64, found ${platform_arches}" >&2
+            exit 1
+          fi
 
-          output_path = pathlib.Path(sys.argv[1])
-          digest_path = pathlib.Path(sys.argv[2])
-          image_name = sys.argv[3]
-          manifest = json.loads(os.environ["MANIFEST_JSON"])
+          digest="$(jq -r '.digest // empty' <<<"${manifest_json}")"
+          if [[ "${digest}" != sha256:* ]]; then
+            echo "Unable to determine published manifest digest from imagetools inspect: ${digest}" >&2
+            exit 1
+          fi
 
-          image_manifests = [
-              entry
-              for entry in manifest.get("manifests", [])
-              if entry.get("annotations", {}).get("vnd.docker.reference.type") != "attestation-manifest"
-          ]
-          platform_arches = [
-              entry.get("platform", {}).get("architecture")
-              for entry in image_manifests
-          ]
-          if platform_arches != ["amd64", "arm64"]:
-              raise SystemExit(
-                  "Deterministic multi-arch image manifest must contain exactly amd64 then arm64, "
-                  f"found {platform_arches!r}"
-              )
-
-          digest = manifest.get("digest")
-          if not isinstance(digest, str) or not digest.startswith("sha256:"):
-              raise SystemExit(
-                  f"Unable to determine published manifest digest from imagetools inspect: {digest!r}"
-              )
-
-          with output_path.open("a", encoding="utf-8") as handle:
-              handle.write(f"digest={digest}\n")
-
-          digest_path.write_text(f"{image_name}@{digest}\n", encoding="utf-8")
-          PY
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          printf '%s@%s\n' "${IMAGE_NAME}" "${digest}" > dist/workcell-image.digest
 
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:

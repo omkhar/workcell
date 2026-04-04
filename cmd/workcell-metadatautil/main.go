@@ -168,6 +168,20 @@ func main() {
 			die(convErr)
 		}
 		err = metadatautil.VerifyReproducibleBuild(os.Args[2], os.Args[3], os.Args[4], os.Args[5], sourceEpoch)
+	case "generate-reproducible-build-manifest":
+		if len(os.Args) != 6 {
+			die(fmt.Errorf("usage: %s generate-reproducible-build-manifest OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", os.Args[0]))
+		}
+		sourceEpoch, convErr := strconv.ParseInt(os.Args[5], 10, 64)
+		if convErr != nil {
+			die(convErr)
+		}
+		err = metadatautil.GenerateReproducibleBuildManifest(os.Args[2], os.Args[3], os.Args[4], sourceEpoch)
+	case "verify-reproducible-build-manifest":
+		if len(os.Args) != 5 {
+			die(fmt.Errorf("usage: %s verify-reproducible-build-manifest OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", os.Args[0]))
+		}
+		err = metadatautil.VerifyReproducibleBuildManifest(os.Args[2], os.Args[3], os.Args[4])
 	case "canonicalize-path":
 		if len(os.Args) != 3 {
 			die(fmt.Errorf("usage: %s canonicalize-path PATH", os.Args[0]))
