@@ -98,9 +98,15 @@ if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; th
     "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "${TMP_ROOT}/archive-outside.json"
   WORKCELL_BUILD_INPUT_ROOT="${NESTED_ROOT}" \
     "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "${TMP_ROOT}/archive-nested.json"
+  (
+    cd "${TMP_ROOT}"
+    WORKCELL_BUILD_INPUT_ROOT="${ARCHIVE_ROOT}" \
+      "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "archive-relative.json"
+  )
 
   digest_archive_outside="$(shasum -a 256 "${TMP_ROOT}/archive-outside.json" | awk '{print $1}')"
   digest_archive_nested="$(shasum -a 256 "${TMP_ROOT}/archive-nested.json" | awk '{print $1}')"
+  digest_archive_relative="$(shasum -a 256 "${TMP_ROOT}/archive-relative.json" | awk '{print $1}')"
   if [[ "${digest_a}" != "${digest_archive_outside}" ]]; then
     echo "Archived-source manifest diverged from the tracked working-tree manifest: ${digest_archive_outside} != ${digest_a}" >&2
     diff -u "${TMP_ROOT}/a.json" "${TMP_ROOT}/archive-outside.json" || true
@@ -109,6 +115,11 @@ if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; th
   if [[ "${digest_archive_outside}" != "${digest_archive_nested}" ]]; then
     echo "Nested archived-source manifest diverged from standalone archived-source manifest: ${digest_archive_nested} != ${digest_archive_outside}" >&2
     diff -u "${TMP_ROOT}/archive-outside.json" "${TMP_ROOT}/archive-nested.json" || true
+    exit 1
+  fi
+  if [[ "${digest_archive_outside}" != "${digest_archive_relative}" ]]; then
+    echo "Relative-output archived-source manifest diverged from absolute-output archived-source manifest: ${digest_archive_relative} != ${digest_archive_outside}" >&2
+    diff -u "${TMP_ROOT}/archive-outside.json" "${TMP_ROOT}/archive-relative.json" || true
     exit 1
   fi
 fi
