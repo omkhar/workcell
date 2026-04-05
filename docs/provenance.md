@@ -73,16 +73,16 @@ from those attestation entries.
 Verify the image with Cosign:
 
 ```bash
-cosign verify ghcr.io/OWNER/workcell@sha256:DIGEST \
-  --certificate-identity-regexp 'https://github.com/OWNER/workcell/.github/workflows/release.yml@refs/tags/.+' \
+cosign verify ghcr.io/omkhar/workcell@sha256:DIGEST \
+  --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 Verify the same image with GitHub attestation tooling:
 
 ```bash
-gh attestation verify oci://ghcr.io/OWNER/workcell@sha256:DIGEST \
-  --repo OWNER/workcell
+gh attestation verify oci://ghcr.io/omkhar/workcell@sha256:DIGEST \
+  --repo omkhar/workcell
 ```
 
 ## Verifying release assets
@@ -99,7 +99,7 @@ Example:
 ```bash
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp 'https://github.com/OWNER/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 sha256sum -c SHA256SUMS
@@ -108,7 +108,7 @@ sha256sum -c SHA256SUMS
 If you want GitHub's attestation view for the source bundle:
 
 ```bash
-gh attestation verify workcell-VERSION.tar.gz --repo OWNER/workcell
+gh attestation verify workcell-VERSION.tar.gz --repo omkhar/workcell
 ```
 
 ## Scope note
