@@ -82,9 +82,12 @@ Other defaults that matter:
 Install the launcher symlink and verify the host prerequisites:
 
 ```bash
-./scripts/install.sh
+./install.sh
 workcell --prepare --agent codex --workspace /path/to/repo
 ```
+
+`./install.sh` is the supported repo-root entrypoint. The `scripts/` installer
+helper is an internal implementation detail.
 
 Launch a provider inside the bounded runtime:
 

@@ -1031,8 +1031,8 @@ if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${RO
   exit 1
 fi
 
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" >/tmp/workcell-install.out 2>&1; then
-  echo "Expected scripts/install.sh to succeed in a clean temporary HOME" >&2
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/install.sh" >/tmp/workcell-install.out 2>&1; then
+  echo "Expected install.sh to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-install.out >&2
   exit 1
 fi
@@ -1135,8 +1135,8 @@ test ! -e "/tmp/workcell-uninstall-verify.log.$$"
 test ! -e "/tmp/workcell-docker.verify-uninstall.$$"
 grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files.' /tmp/workcell-uninstall.out
 
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug >/tmp/workcell-install-debug.out 2>&1; then
-  echo "Expected scripts/install.sh --debug to succeed in a clean temporary HOME" >&2
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/install.sh" --debug >/tmp/workcell-install-debug.out 2>&1; then
+  echo "Expected install.sh --debug to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-install-debug.out >&2
   exit 1
 fi
@@ -1212,8 +1212,8 @@ grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/tr
 
 CUSTOM_DEBUG_DIR="${INSTALL_VERIFY_HOME}/custom-workcell-debug"
 CUSTOM_DEBUG_DIR_REAL="$(go_verify_metadatautil canonicalize-path "${CUSTOM_DEBUG_DIR}")"
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug --debug-dir "${CUSTOM_DEBUG_DIR}" >/tmp/workcell-install-custom-debug.out 2>&1; then
-  echo "Expected scripts/install.sh --debug --debug-dir to succeed in a clean temporary HOME" >&2
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/install.sh" --debug --debug-dir "${CUSTOM_DEBUG_DIR}" >/tmp/workcell-install-custom-debug.out 2>&1; then
+  echo "Expected install.sh --debug --debug-dir to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-install-custom-debug.out >&2
   exit 1
 fi

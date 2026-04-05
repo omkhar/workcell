@@ -1,5 +1,5 @@
 #!/bin/bash -p
-# Install Workcell into ~/.local/bin.  Forwards to scripts/install.sh.
+# Public Workcell installer entrypoint. Forwards to scripts/install-workcell.sh.
 readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   exec /usr/bin/env -i \
@@ -20,4 +20,4 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "${ROOT_DIR}/scripts/install.sh" "$@"
+exec "${ROOT_DIR}/scripts/install-workcell.sh" "$@"

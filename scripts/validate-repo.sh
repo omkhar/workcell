@@ -122,7 +122,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
-  "${ROOT_DIR}/scripts/install.sh"
+  "${ROOT_DIR}/scripts/install-workcell.sh"
   "${ROOT_DIR}/scripts/uninstall.sh"
   "${ROOT_DIR}/scripts/pre-merge.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"

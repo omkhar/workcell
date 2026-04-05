@@ -9,6 +9,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
+source() {
+  return 0
+}
+
+jq() {
+  printf '1' >>"${JQ_COUNT_FILE}"
+  printf '%s\n' "$*" >>"${JQ_LOG}"
+  command jq "$@"
+}
+
+workcell_die() {
+  printf '%s\n' "$*" >&2
+  return 1
+}
+
+mkdir() {
+  return 0
+}
+
+chmod() {
+  return 0
+}
+
+cp() {
+  printf '%s\t%s\n' "$1" "$2" >>"${SSH_LOG}"
+  return 0
+}
+
 MANIFEST_ROOT="${TMP_DIR}/manifest-root"
 DIRECT_INPUT_ROOT="/opt/workcell/host-inputs"
 JQ_LOG="${TMP_DIR}/jq.log"
@@ -17,7 +45,7 @@ COPIES_LOG="${TMP_DIR}/copies.log"
 SSH_LOG="${TMP_DIR}/ssh.log"
 MANIFEST_PATH="${MANIFEST_ROOT}/manifest.json"
 
-mkdir -p "${MANIFEST_ROOT}/ssh"
+command mkdir -p "${MANIFEST_ROOT}/ssh"
 
 cat >"${MANIFEST_ROOT}/string-copy.txt" <<'EOF'
 string copy source
@@ -86,34 +114,6 @@ cat >"${MANIFEST_PATH}" <<EOF
   }
 }
 EOF
-
-source() {
-  return 0
-}
-
-jq() {
-  printf '1' >>"${JQ_COUNT_FILE}"
-  printf '%s\n' "$*" >>"${JQ_LOG}"
-  command jq "$@"
-}
-
-workcell_die() {
-  printf '%s\n' "$*" >&2
-  return 1
-}
-
-mkdir() {
-  return 0
-}
-
-chmod() {
-  return 0
-}
-
-cp() {
-  printf '%s\t%s\n' "$1" "$2" >>"${SSH_LOG}"
-  return 0
-}
 
 HOME="${TMP_DIR}/session-home"
 # shellcheck disable=SC2034

@@ -12,7 +12,7 @@ GO_BIN="${WORKCELL_GO_BIN:-}"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--debug] [--debug-dir PATH]
+Usage: ./install.sh [--debug] [--debug-dir PATH]
 
 Install Workcell into ~/.local/bin and the man page into ~/.local/share/man/man1.
 
