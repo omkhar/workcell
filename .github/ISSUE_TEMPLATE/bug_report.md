@@ -20,7 +20,7 @@ What you expected to happen.
 
 **Environment**
 - OS: [e.g. macOS 15.4]
-- Workcell version: [e.g. v0.2.7 or commit SHA]
+- Workcell version: [e.g. v0.5.0 or commit SHA]
 - Provider: [Codex / Claude / Gemini]
 - Mode: [strict / build / breakglass]
 - Docker version: `docker --version`

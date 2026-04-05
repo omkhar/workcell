@@ -13,8 +13,10 @@ the best evidence today is local or self-hosted macOS verification.
 
 ### End-to-end authenticated coverage for every provider
 
-Manual provider-authenticated smoke exists, but not every documented auth path
-has full automated end-to-end coverage across all providers.
+Provider-authenticated smoke (`scripts/provider-e2e.sh`) is available for
+local use, but it requires a real macOS+Colima environment and live provider
+credentials and is not run in CI. Not every documented auth path has full
+automated end-to-end coverage across all providers.
 
 ### Lower-assurance transition coverage
 
