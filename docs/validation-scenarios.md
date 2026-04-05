@@ -13,12 +13,12 @@ Use this page with:
 These run without provider credentials:
 
 - `./scripts/dev-quick-check.sh`
-- `./scripts/build-and-test.sh` (host-native by default; `--docker` reruns repo validation inside the CI validator container)
+- `./scripts/build-and-test.sh` (host-native by default; `--docker` reruns repo validation inside the pinned CI validator container from a disposable snapshot)
 - `./scripts/container-smoke.sh`
 - `./scripts/verify-invariants.sh`
 - `./scripts/verify-release-bundle.sh`
 - `./scripts/verify-reproducible-build.sh`
-- `./scripts/pre-merge.sh`
+- `./scripts/pre-merge.sh` (builds or reuses the same pinned validator container and can run the local stack from a disposable snapshot before optional remote lanes)
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 

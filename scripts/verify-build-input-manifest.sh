@@ -90,14 +90,18 @@ if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; th
   mkdir -p "${ROOT_DIR}/tmp"
   NESTED_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-build-input-nested.XXXXXX")"
   ARCHIVE_ROOT="${TMP_ROOT}/archived-source"
+  ARCHIVE_ROOT_LINK="${TMP_ROOT}/archived-source-link"
   copy_tracked_worktree "${ARCHIVE_ROOT}"
   copy_tracked_worktree "${NESTED_ROOT}"
+  ln -s "${ARCHIVE_ROOT}" "${ARCHIVE_ROOT_LINK}"
 
   unset WORKCELL_BUILD_INPUT_REQUIRE_TRACKED
   WORKCELL_BUILD_INPUT_ROOT="${ARCHIVE_ROOT}" \
     "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "${TMP_ROOT}/archive-outside.json"
   WORKCELL_BUILD_INPUT_ROOT="${NESTED_ROOT}" \
     "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "${TMP_ROOT}/archive-nested.json"
+  WORKCELL_BUILD_INPUT_ROOT="${ARCHIVE_ROOT_LINK}" \
+    "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "${TMP_ROOT}/archive-symlink-root.json"
   (
     cd "${TMP_ROOT}"
     WORKCELL_BUILD_INPUT_ROOT="${ARCHIVE_ROOT}" \
@@ -107,6 +111,7 @@ if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; th
   digest_archive_outside="$(shasum -a 256 "${TMP_ROOT}/archive-outside.json" | awk '{print $1}')"
   digest_archive_nested="$(shasum -a 256 "${TMP_ROOT}/archive-nested.json" | awk '{print $1}')"
   digest_archive_relative="$(shasum -a 256 "${TMP_ROOT}/archive-relative.json" | awk '{print $1}')"
+  digest_archive_symlink_root="$(shasum -a 256 "${TMP_ROOT}/archive-symlink-root.json" | awk '{print $1}')"
   if [[ "${digest_a}" != "${digest_archive_outside}" ]]; then
     echo "Archived-source manifest diverged from the tracked working-tree manifest: ${digest_archive_outside} != ${digest_a}" >&2
     diff -u "${TMP_ROOT}/a.json" "${TMP_ROOT}/archive-outside.json" || true
@@ -120,6 +125,11 @@ if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; th
   if [[ "${digest_archive_outside}" != "${digest_archive_relative}" ]]; then
     echo "Relative-output archived-source manifest diverged from absolute-output archived-source manifest: ${digest_archive_relative} != ${digest_archive_outside}" >&2
     diff -u "${TMP_ROOT}/archive-outside.json" "${TMP_ROOT}/archive-relative.json" || true
+    exit 1
+  fi
+  if [[ "${digest_archive_outside}" != "${digest_archive_symlink_root}" ]]; then
+    echo "Symlink-root archived-source manifest diverged from physical-root archived-source manifest: ${digest_archive_symlink_root} != ${digest_archive_outside}" >&2
+    diff -u "${TMP_ROOT}/archive-outside.json" "${TMP_ROOT}/archive-symlink-root.json" || true
     exit 1
   fi
 fi
