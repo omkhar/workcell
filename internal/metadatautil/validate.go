@@ -106,6 +106,19 @@ func CheckWorkflows(rootDir, policyPath string) error {
 
 func ensureWorkflowTools() error { return nil }
 
+func validateReleaseWorkflowControlPlaneFlow(releaseWorkflow string) error {
+	if !strings.Contains(releaseWorkflow, "dist/workcell-control-plane-preflight.json") {
+		return errors.New(".github/workflows/release.yml must keep the reviewed control-plane manifest flow")
+	}
+	if !strings.Contains(releaseWorkflow, "run: ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane.json") {
+		return errors.New(".github/workflows/release.yml must regenerate the published control-plane manifest under dist/workcell-control-plane.json")
+	}
+	if !regexp.MustCompile(`(?s)Verify control-plane manifest matches preflight.*?cmp -s \\\s+dist/workcell-control-plane\.json \\\s+dist/preflight/workcell-control-plane-preflight\.json`).MatchString(releaseWorkflow) {
+		return errors.New(".github/workflows/release.yml must verify the published control-plane manifest against the preflight artifact")
+	}
+	return nil
+}
+
 func FetchGitHubHostedControlsRulesets(tmpDir, repo string) error {
 	var summary []any
 	if err := readJSONFile(filepath.Join(tmpDir, "rulesets-summary.json"), &summary); err != nil {
@@ -1277,9 +1290,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		!strings.Contains(releaseWorkflow, "dist/workcell-image.spdx.sigstore.json") {
 		return errors.New(".github/workflows/release.yml must publish direct signature bundles for release artifacts")
 	}
-	if !strings.Contains(releaseWorkflow, "dist/workcell-control-plane-preflight.json") ||
-		!strings.Contains(releaseWorkflow, "dist/workcell-control-plane.json") {
-		return errors.New(".github/workflows/release.yml must keep the reviewed control-plane manifest flow")
+	if err := validateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
+		return err
 	}
 	if strings.Contains(releaseWorkflow, "steps.build.outputs.digest") {
 		return errors.New(".github/workflows/release.yml must not keep referencing the old single-step multi-platform digest output")

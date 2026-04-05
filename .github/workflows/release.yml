@@ -347,7 +347,7 @@ jobs:
       - name: Regenerate control-plane manifest from archived source tree
         env:
           WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source
-        run: ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane-archived.json
+        run: ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane.json
 
       - name: Verify build input manifest matches preflight
         run: |
@@ -358,7 +358,7 @@ jobs:
       - name: Verify control-plane manifest matches preflight
         run: |
           cmp -s \
-            dist/workcell-control-plane-archived.json \
+            dist/workcell-control-plane.json \
             dist/preflight/workcell-control-plane-preflight.json
 
       - id: build_amd64

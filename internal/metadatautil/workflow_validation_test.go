@@ -122,3 +122,53 @@ contexts = [
 		t.Fatalf("CheckWorkflows() error = %v, want missing Validate repository", err)
 	}
 }
+
+func TestValidateReleaseWorkflowControlPlaneFlowRejectsMissingCanonicalArtifact(t *testing.T) {
+	releaseWorkflow := `      - name: Generate preflight control-plane manifest
+        run: |
+          mkdir -p dist
+          ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane-preflight.json
+
+      - name: Regenerate control-plane manifest from archived source tree
+        env:
+          WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source
+        run: ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane-archived.json
+
+      - name: Verify control-plane manifest matches preflight
+        run: |
+          cmp -s \
+            dist/workcell-control-plane-archived.json \
+            dist/preflight/workcell-control-plane-preflight.json
+`
+
+	err := validateReleaseWorkflowControlPlaneFlow(releaseWorkflow)
+	if err == nil {
+		t.Fatal("validateReleaseWorkflowControlPlaneFlow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "dist/workcell-control-plane.json") {
+		t.Fatalf("validateReleaseWorkflowControlPlaneFlow() error = %v, want canonical control-plane artifact path", err)
+	}
+}
+
+func TestValidateReleaseWorkflowControlPlaneFlowAcceptsCanonicalArtifact(t *testing.T) {
+	releaseWorkflow := `      - name: Generate preflight control-plane manifest
+        run: |
+          mkdir -p dist
+          ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane-preflight.json
+
+      - name: Regenerate control-plane manifest from archived source tree
+        env:
+          WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source
+        run: ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane.json
+
+      - name: Verify control-plane manifest matches preflight
+        run: |
+          cmp -s \
+            dist/workcell-control-plane.json \
+            dist/preflight/workcell-control-plane-preflight.json
+`
+
+	if err := validateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
+		t.Fatalf("validateReleaseWorkflowControlPlaneFlow() error = %v", err)
+	}
+}
