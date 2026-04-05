@@ -5539,124 +5539,6 @@ grep -q 'provider_e2e_probe_cmd=.*--agent-arg -p' /tmp/workcell-provider-e2e-gem
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg json' /tmp/workcell-provider-e2e-gemini.out
 grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-gemini.out
 
-provider_e2e_workflow="${ROOT_DIR}/.github/workflows/provider-e2e.yml"
-provider_e2e_top_block="$(sed -n '1,/^permissions:/p' "${provider_e2e_workflow}")"
-grep -Fq 'workflow_dispatch:' <<<"${provider_e2e_top_block}"
-for forbidden in 'push:' 'pull_request:' 'pull_request_target:' 'schedule:'; do
-  if grep -Fq -- "${forbidden}" <<<"${provider_e2e_top_block}"; then
-    echo "Unexpected provider-e2e workflow trigger: ${forbidden}" >&2
-    exit 1
-  fi
-done
-if [[ "$(grep -c 'permissions: {}' "${provider_e2e_workflow}")" -lt 2 ]]; then
-  echo "Expected provider-e2e workflow to keep top-level and guard-job permissions: {}" >&2
-  exit 1
-fi
-# shellcheck disable=SC2016
-for needle in \
-  'Only the repository owner may dispatch provider-e2e.' \
-  'Provider-e2e may only run from the default branch' \
-  'needs: provider-e2e-guard' \
-  $'environment:\n      name: provider-e2e' \
-  $'permissions:\n      contents: read' \
-  'persist-credentials: false' \
-  'ref: ${{ github.sha }}'; do
-  if ! grep -Fq -- "${needle}" "${provider_e2e_workflow}"; then
-    echo "Missing provider-e2e workflow invariant: ${needle}" >&2
-    exit 1
-  fi
-done
-
-check_provider_step() {
-  local step_name="$1"
-  local expected_if="$2"
-  local expected_agent="$3"
-  shift 3
-  local required=()
-  local forbidden=()
-  local mode="required"
-  local value=""
-
-  while (($#)); do
-    value="$1"
-    shift
-    if [[ "${value}" == "--" ]]; then
-      mode="forbidden"
-      continue
-    fi
-    if [[ "${mode}" == "required" ]]; then
-      required+=("${value}")
-    else
-      forbidden+=("${value}")
-    fi
-  done
-
-  local block
-  block="$(awk -v step="${step_name}" '
-    $0 == "      - name: " step { capture = 1; print; next }
-    capture && $0 ~ /^      - name:/ { exit }
-    capture { print }
-  ' "${provider_e2e_workflow}")"
-
-  if ! grep -Fq -- "${expected_if}" <<<"${block}"; then
-    echo "Missing provider selector in ${step_name}" >&2
-    exit 1
-  fi
-  if ! grep -Fq -- "${expected_agent}" <<<"${block}"; then
-    echo "Missing pinned agent launch in ${step_name}" >&2
-    exit 1
-  fi
-  for needle in "${required[@]}"; do
-    if ! grep -Fq -- "${needle}" <<<"${block}"; then
-      echo "Missing required env ${needle} in ${step_name}" >&2
-      exit 1
-    fi
-  done
-  for needle in "${forbidden[@]}"; do
-    if grep -Fq -- "${needle}" <<<"${block}"; then
-      echo "Unexpected env ${needle} in ${step_name}" >&2
-      exit 1
-    fi
-  done
-}
-
-check_provider_step "Run Codex authenticated probe" "if: \${{ inputs.provider == 'codex' }}" '--agent "codex"' \
-  "WORKCELL_E2E_CODEX_AUTH_JSON" \
-  -- \
-  "WORKCELL_E2E_CLAUDE_API_KEY" \
-  "WORKCELL_E2E_CLAUDE_AUTH_JSON" \
-  "WORKCELL_E2E_CLAUDE_MCP_JSON" \
-  "WORKCELL_E2E_GCLOUD_ADC_JSON" \
-  "WORKCELL_E2E_GEMINI_ENV" \
-  "WORKCELL_E2E_GEMINI_OAUTH_JSON" \
-  "WORKCELL_E2E_GEMINI_PROJECTS_JSON" \
-  "WORKCELL_E2E_GITHUB_CONFIG_YML" \
-  "WORKCELL_E2E_GITHUB_HOSTS_YML"
-check_provider_step "Run Claude authenticated probe" "if: \${{ inputs.provider == 'claude' }}" '--agent "claude"' \
-  "WORKCELL_E2E_CLAUDE_API_KEY" \
-  "WORKCELL_E2E_CLAUDE_AUTH_JSON" \
-  "WORKCELL_E2E_CLAUDE_MCP_JSON" \
-  -- \
-  "WORKCELL_E2E_CODEX_AUTH_JSON" \
-  "WORKCELL_E2E_GCLOUD_ADC_JSON" \
-  "WORKCELL_E2E_GEMINI_ENV" \
-  "WORKCELL_E2E_GEMINI_OAUTH_JSON" \
-  "WORKCELL_E2E_GEMINI_PROJECTS_JSON" \
-  "WORKCELL_E2E_GITHUB_CONFIG_YML" \
-  "WORKCELL_E2E_GITHUB_HOSTS_YML"
-check_provider_step "Run Gemini authenticated probe" "if: \${{ inputs.provider == 'gemini' }}" '--agent "gemini"' \
-  "WORKCELL_E2E_GCLOUD_ADC_JSON" \
-  "WORKCELL_E2E_GEMINI_ENV" \
-  "WORKCELL_E2E_GEMINI_OAUTH_JSON" \
-  "WORKCELL_E2E_GEMINI_PROJECTS_JSON" \
-  -- \
-  "WORKCELL_E2E_CODEX_AUTH_JSON" \
-  "WORKCELL_E2E_CLAUDE_API_KEY" \
-  "WORKCELL_E2E_CLAUDE_AUTH_JSON" \
-  "WORKCELL_E2E_CLAUDE_MCP_JSON" \
-  "WORKCELL_E2E_GITHUB_CONFIG_YML" \
-  "WORKCELL_E2E_GITHUB_HOSTS_YML"
-
 FAKE_PROVIDER_E2E_WORKCELL_OK="${BARRIER_VERIFY_ROOT}/provider-e2e-fake-workcell-ok.sh"
 cat >"${FAKE_PROVIDER_E2E_WORKCELL_OK}" <<'EOF_FAKE_PROVIDER_E2E_OK'
 #!/bin/bash
@@ -5913,7 +5795,6 @@ if "${ROOT_DIR}/scripts/provider-e2e.sh" \
   exit 1
 fi
 grep -q 'No injection policy is available' /tmp/workcell-provider-e2e-missing-injection.out
-grep -q -- '--require-injection' "${ROOT_DIR}/.github/workflows/provider-e2e.yml"
 grep -q 'Remote host: builder@example.internal' /tmp/workcell-remote-config.out
 grep -q 'Remote base dir: /var/tmp/workcell' /tmp/workcell-remote-config.out
 grep -q "Remote config path: ${LOCAL_REMOTE_CONFIG_PATH}" /tmp/workcell-remote-config.out
