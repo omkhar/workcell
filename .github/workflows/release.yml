@@ -44,10 +44,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          git config --local http."https://github.com/".extraheader \
-            "AUTHORIZATION: bearer ${GITHUB_TOKEN}"
-          git fetch "https://github.com/${GITHUB_REPOSITORY}.git" main --depth=1
-          git merge-base --is-ancestor "${GITHUB_SHA}" FETCH_HEAD
+          # Use the GitHub compare API (via gh, which is pre-authenticated) to
+          # verify that the tagged commit is an ancestor of main.  The git-fetch
+          # approach requires re-authenticating against a private repo and has
+          # proven unreliable with the actions/checkout credential cleanup.
+          cmp_status="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...main" \
+            --jq '.status' 2>/dev/null || true)"
+          case "${cmp_status}" in
+            ahead|identical) ;;
+            *)
+              echo "Tagged commit ${GITHUB_SHA} is not an ancestor of main (compare status: ${cmp_status:-error})" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Validate release tag name
         run: |
