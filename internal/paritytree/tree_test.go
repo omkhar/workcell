@@ -4,6 +4,8 @@
 package paritytree
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,13 +57,14 @@ func TestSnapshotCapturesSymlinks(t *testing.T) {
 	if len(entries) != 3 {
 		t.Fatalf("len(entries) = %d, want 3", len(entries))
 	}
-	if entries[0].Path != "dir" || entries[0].Kind != "dir" {
+	if entries[0].Path != "dir" || entries[0].Kind != "dir" || !entries[0].Mode.IsDir() {
 		t.Fatalf("dir entry = %#v", entries[0])
 	}
-	if entries[1].Path != filepath.ToSlash(filepath.Join("dir", "file.txt")) || entries[1].Kind != "file" {
+	wantHash := sha256.Sum256([]byte("hello"))
+	if entries[1].Path != filepath.ToSlash(filepath.Join("dir", "file.txt")) || entries[1].Kind != "file" || !entries[1].Mode.IsRegular() || entries[1].SHA256 != hex.EncodeToString(wantHash[:]) {
 		t.Fatalf("file entry = %#v", entries[1])
 	}
-	if entries[2].Path != "link.txt" || entries[2].Kind != "symlink" {
+	if entries[2].Path != "link.txt" || entries[2].Kind != "symlink" || entries[2].Mode&os.ModeSymlink == 0 || entries[2].LinkTarget != filepath.Join("dir", "file.txt") {
 		t.Fatalf("symlink entry = %#v", entries[2])
 	}
 }

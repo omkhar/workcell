@@ -15,7 +15,7 @@ git_config_key_is_blocked() {
   local key_lower="$1"
 
   case "${key_lower}" in
-    core.askpass | core.editor | core.hookspath | core.pager | core.sshcommand | core.worktree | credential.helper | credential.*.helper | diff.external | include.path | includeif.*.path | pager.* | sequence.editor)
+    core.askpass | core.editor | core.fsmonitor | core.hookspath | core.pager | core.sshcommand | core.worktree | credential.helper | credential.*.helper | diff.external | include.path | includeif.*.path | pager.* | sequence.editor)
       return 0
       ;;
   esac
@@ -38,6 +38,7 @@ has_hooks_path_env_bypass() {
     { [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.hookspath"* ]] ||
       [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.askpass"* ]] ||
       [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.editor"* ]] ||
+      [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.fsmonitor"* ]] ||
       [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.pager"* ]] ||
       [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.sshcommand"* ]] ||
       [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.worktree"* ]] ||
@@ -66,6 +67,7 @@ has_hooks_path_env_bypass() {
     if git_config_key_is_blocked "${key_lower}" ||
       [[ "${value,,}" == *"core.askpass"* ]] ||
       [[ "${value,,}" == *"core.editor"* ]] ||
+      [[ "${value,,}" == *"core.fsmonitor"* ]] ||
       [[ "${value,,}" == *"core.hookspath"* ]] ||
       [[ "${value,,}" == *"core.pager"* ]] ||
       [[ "${value,,}" == *"core.sshcommand"* ]] ||
@@ -103,6 +105,7 @@ alias_body_is_blocked() {
     [[ "${alias_body_lower}" == *"--work-tree"* ]] ||
     [[ "${alias_body_lower}" == *"core.askpass"* ]] ||
     [[ "${alias_body_lower}" == *"core.editor"* ]] ||
+    [[ "${alias_body_lower}" == *"core.fsmonitor"* ]] ||
     [[ "${alias_body_lower}" == *"git_exec_path="* ]] ||
     [[ "${alias_body_lower}" == *"git_dir="* ]] ||
     [[ "${alias_body_lower}" == *"git_work_tree="* ]] ||

@@ -4,9 +4,12 @@
 package metadatautil
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 )
@@ -36,32 +39,57 @@ func CoveragePercent(reportPath string) (float64, error) {
 }
 
 func CoverageExecutables(messagePath string) ([]string, error) {
-	content, err := os.ReadFile(messagePath)
+	handle, err := os.Open(messagePath)
 	if err != nil {
 		return nil, err
 	}
+	defer handle.Close()
+
+	reader := bufio.NewReader(handle)
 	executables := make([]string, 0)
-	for _, rawLine := range splitLines(string(content)) {
-		if rawLine == "" || rawLine[0] != '{' {
+	var lineBuf bytes.Buffer
+	for {
+		fragment, isPrefix, readErr := reader.ReadLine()
+		if len(fragment) == 0 && errors.Is(readErr, io.EOF) {
+			break
+		}
+		if len(fragment) > 0 {
+			lineBuf.Write(fragment)
+		}
+		if isPrefix {
+			if readErr != nil && !errors.Is(readErr, io.EOF) {
+				return nil, readErr
+			}
 			continue
 		}
-		var message map[string]any
-		if err := json.Unmarshal([]byte(rawLine), &message); err != nil {
-			continue
-		}
-		if message["reason"] != "compiler-artifact" {
-			continue
-		}
-		executable, _ := message["executable"].(string)
-		target, _ := message["target"].(map[string]any)
-		if executable != "" && target != nil {
-			if kind, _ := target["kind"].([]any); len(kind) == 1 {
-				if label, _ := kind[0].(string); label == "bin" {
-					executables = append(executables, executable)
+
+		line := bytes.TrimSpace(lineBuf.Bytes())
+		if len(line) > 0 && line[0] == '{' {
+			var message map[string]any
+			if err := json.Unmarshal(line, &message); err == nil {
+				if message["reason"] == "compiler-artifact" {
+					executable, _ := message["executable"].(string)
+					target, _ := message["target"].(map[string]any)
+					if executable != "" && target != nil {
+						if kind, _ := target["kind"].([]any); len(kind) == 1 {
+							if label, _ := kind[0].(string); label == "bin" {
+								executables = append(executables, executable)
+							}
+						}
+					}
 				}
 			}
 		}
+		lineBuf.Reset()
+
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
 	}
+
 	if len(executables) == 0 {
 		return nil, errors.New("Unable to locate instrumented Rust test executables for coverage")
 	}
@@ -88,24 +116,6 @@ func jsonNumberToFloat64(value any) (float64, bool) {
 		}
 	}
 	return 0, false
-}
-
-func splitLines(text string) []string {
-	if text == "" {
-		return nil
-	}
-	lines := make([]string, 0)
-	start := 0
-	for i := 0; i < len(text); i++ {
-		if text[i] == '\n' {
-			lines = append(lines, text[start:i])
-			start = i + 1
-		}
-	}
-	if start <= len(text) {
-		lines = append(lines, text[start:])
-	}
-	return lines
 }
 
 func formatCoveragePercent(label string, percent float64) string {

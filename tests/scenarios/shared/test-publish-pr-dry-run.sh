@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-publish-pr-scenario.XXXXXX")"
 
 cleanup() {
+  rm -f "${TRUSTED_GH_STUB:-}"
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
@@ -13,7 +14,7 @@ FIXTURE="${TMP_DIR}/publish-pr-fixture"
 ORIGIN="${TMP_DIR}/publish-pr-origin.git"
 SSH_SIGNING_KEY="${TMP_DIR}/signing_key"
 ALLOWED_SIGNERS="${TMP_DIR}/allowed_signers"
-GH_STUB="${TMP_DIR}/gh-stub"
+UNTRUSTED_GH_STUB="${TMP_DIR}/gh-stub"
 GH_LOG="${TMP_DIR}/gh.log"
 HOOK_MARKER_DIR="${TMP_DIR}/hook-markers"
 TITLE_FILE="${TMP_DIR}/pr-title.txt"
@@ -22,6 +23,20 @@ COMMIT_MESSAGE_FILE="${TMP_DIR}/commit-message.txt"
 LIVE_TITLE_FILE="${TMP_DIR}/live-pr-title.txt"
 LIVE_BODY_FILE="${TMP_DIR}/live-pr-body.md"
 LIVE_COMMIT_MESSAGE_FILE="${TMP_DIR}/live-commit-message.txt"
+TRUSTED_BIN_DIR=""
+TRUSTED_GH_STUB=""
+
+for candidate in /opt/homebrew/bin /usr/local/bin; do
+  if [[ -d "${candidate}" ]] && [[ -w "${candidate}" ]]; then
+    TRUSTED_BIN_DIR="${candidate}"
+    break
+  fi
+done
+if [[ -z "${TRUSTED_BIN_DIR}" ]]; then
+  echo "missing writable trusted host bin directory" >&2
+  exit 1
+fi
+TRUSTED_GH_STUB="${TRUSTED_BIN_DIR}/workcell-gh-scenario-${RANDOM}-$$"
 
 mkdir -p "${FIXTURE}" "${HOOK_MARKER_DIR}"
 git init -q --bare "${ORIGIN}"
@@ -144,19 +159,54 @@ EOF
 cat >"${LIVE_COMMIT_MESSAGE_FILE}" <<'EOF'
 Live scenario commit
 EOF
-cat >"${GH_STUB}" <<EOF
+cat >"${UNTRUSTED_GH_STUB}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "\$*" >"${GH_LOG}"
 printf 'https://example.invalid/pr/123\n'
 EOF
-chmod +x "${GH_STUB}"
+chmod +x "${UNTRUSTED_GH_STUB}"
+
+set +e
+untrusted_gh_output="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/publish-live \
+  --gh-bin "${UNTRUSTED_GH_STUB}" \
+  --title-file "${LIVE_TITLE_FILE}" \
+  --body-file "${LIVE_BODY_FILE}" \
+  --commit-message-file "${LIVE_COMMIT_MESSAGE_FILE}" \
+  --dry-run 2>&1)"
+untrusted_gh_rc=$?
+set -e
+test "${untrusted_gh_rc}" -eq 2
+grep -q 'gh-bin must point to a trusted host executable path' <<<"${untrusted_gh_output}"
+
+set +e
+host_gh_output="$(HOST_GH_BIN="${UNTRUSTED_GH_STUB}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/publish-live \
+  --title-file "${LIVE_TITLE_FILE}" \
+  --body-file "${LIVE_BODY_FILE}" \
+  --commit-message-file "${LIVE_COMMIT_MESSAGE_FILE}" \
+  --dry-run 2>&1)"
+host_gh_rc=$?
+set -e
+test "${host_gh_rc}" -eq 2
+grep -q 'HOST_GH_BIN must point to a trusted host executable path' <<<"${host_gh_output}"
+
+cat >"${TRUSTED_GH_STUB}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >"${GH_LOG}"
+printf 'https://example.invalid/pr/123\n'
+EOF
+chmod +x "${TRUSTED_GH_STUB}"
 
 publish_output="$(
   "${ROOT_DIR}/scripts/workcell" publish-pr \
     --workspace "${FIXTURE}" \
     --branch feature/publish-live \
-    --gh-bin "${GH_STUB}" \
+    --gh-bin "${TRUSTED_GH_STUB}" \
     --title-file "${LIVE_TITLE_FILE}" \
     --body-file "${LIVE_BODY_FILE}" \
     --commit-message-file "${LIVE_COMMIT_MESSAGE_FILE}" \

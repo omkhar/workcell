@@ -2339,6 +2339,11 @@ if ! sed -n '/^git_alias_value_is_blocked()/,/^}/p' "${ROOT_DIR}/scripts/workcel
   exit 1
 fi
 
+if ! sed -n '/^resolve_existing_executable_or_die()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'is_trusted_host_tool_path'; then
+  echo "Expected resolve_existing_executable_or_die to reject untrusted host executable paths" >&2
+  exit 1
+fi
+
 for _git_env_var in GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE; do
   # shellcheck disable=SC2016
   printf -v _git_env_literal '"${%s:-}"' "${_git_env_var}"
@@ -2369,9 +2374,19 @@ if ! sed -n '/^git_index_populate_shadow_dir()/,/^}/p' "${ROOT_DIR}/scripts/work
   exit 1
 fi
 
+if ! sed -n '/^sanitize_shadowed_git_config()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'git_config_key_is_blocked'; then
+  echo "Expected sanitize_shadowed_git_config to reuse the shared blocked git-config key matcher" >&2
+  exit 1
+fi
+
 # shellcheck disable=SC2016
 if ! grep -Fq -- '-path "${ROOT_DIR}/.venv" -prune -o' "${ROOT_DIR}/scripts/validate-repo.sh"; then
   echo "Expected validate-repo.sh to prune repo-local virtualenv content from documentation scans" >&2
+  exit 1
+fi
+
+if ! grep -Fq "build -buildvcs=false -o \"\${output_path}\"" "${ROOT_DIR}/scripts/lib/go-run-env.sh"; then
+  echo "Expected build_go_tool_in_repo to disable Go VCS stamping in untrusted repos" >&2
   exit 1
 fi
 
@@ -4818,6 +4833,34 @@ if "${ROOT_DIR}/scripts/workcell" publish-pr \
 fi
 grep -q 'Invalid publish base branch name: topic.lock' /tmp/workcell-publish-pr-invalid-base.out
 
+cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/gh-untrusted"
+#!/usr/bin/env bash
+printf 'https://example.invalid/pr/123\n'
+EOF
+chmod +x "${PUBLISH_PR_FIXTURE}/gh-untrusted"
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-untrusted-gh \
+  --gh-bin "${PUBLISH_PR_FIXTURE}/gh-untrusted" \
+  --title "Untrusted gh" \
+  --commit-message "Untrusted gh commit" \
+  --dry-run >/tmp/workcell-publish-pr-untrusted-gh.out 2>&1; then
+  echo "Expected publish-pr to reject an untrusted --gh-bin path" >&2
+  exit 1
+fi
+grep -q 'gh-bin must point to a trusted host executable path' /tmp/workcell-publish-pr-untrusted-gh.out
+
+if HOST_GH_BIN="${PUBLISH_PR_FIXTURE}/gh-untrusted" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-untrusted-host-gh \
+  --title "Untrusted host gh" \
+  --commit-message "Untrusted host gh commit" \
+  --dry-run >/tmp/workcell-publish-pr-untrusted-host-gh.out 2>&1; then
+  echo "Expected publish-pr to reject an untrusted HOST_GH_BIN path" >&2
+  exit 1
+fi
+grep -q 'HOST_GH_BIN must point to a trusted host executable path' /tmp/workcell-publish-pr-untrusted-host-gh.out
+
 git -C "${PUBLISH_PR_FIXTURE}" reset -q --hard HEAD
 git -C "${PUBLISH_PR_FIXTURE}" clean -fdq
 if "${ROOT_DIR}/scripts/workcell" publish-pr \
@@ -4831,6 +4874,115 @@ if "${ROOT_DIR}/scripts/workcell" publish-pr \
   exit 1
 fi
 grep -q 'publish-pr found no workspace changes to publish' /tmp/workcell-publish-pr-noop.out
+
+SHADOW_GIT_CONFIG_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" lower_ascii
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" git_config_key_is_blocked
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" git_alias_value_is_blocked
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" git_commit_short_arg_is_no_verify
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" sanitize_shadowed_git_config
+  cat <<'EOF'
+set -Eeuo pipefail
+HOST_GIT_BIN="$(command -v git)"
+sanitize_shadowed_git_config "$1"
+EOF
+} >"${SHADOW_GIT_CONFIG_HARNESS}"
+chmod +x "${SHADOW_GIT_CONFIG_HARNESS}"
+SHADOW_GIT_CONFIG_FIXTURE="${BARRIER_VERIFY_ROOT}/shadowed-git-config"
+cat <<'EOF' >"${SHADOW_GIT_CONFIG_FIXTURE}"
+[core]
+  askPass = /tmp/askpass
+  editor = /tmp/editor
+  fsMonitor = /tmp/fsmonitor
+  hooksPath = /tmp/hooks
+  pager = /tmp/pager
+  sshCommand = ssh -F /tmp/config
+  worktree = /tmp/worktree
+[credential]
+  helper = store
+[credential "https://example.invalid"]
+  helper = cache
+[diff]
+  external = /tmp/diff
+[include]
+  path = /tmp/include
+[includeIf "gitdir:/tmp/"]
+  path = /tmp/includeif
+[pager]
+  log = /tmp/pager-log
+[sequence]
+  editor = /tmp/sequence-editor
+[alias]
+  bad = -c core.fsmonitor=/tmp/fsmonitor status
+  good = status
+[safe]
+  keep = value
+EOF
+"${SHADOW_GIT_CONFIG_HARNESS}" "${SHADOW_GIT_CONFIG_FIXTURE}"
+for blocked_key in \
+  core.askpass \
+  core.editor \
+  core.fsmonitor \
+  core.hookspath \
+  core.pager \
+  core.sshcommand \
+  core.worktree \
+  credential.helper \
+  diff.external \
+  include.path \
+  pager.log \
+  sequence.editor \
+  alias.bad; do
+  if git config --file "${SHADOW_GIT_CONFIG_FIXTURE}" --get-all "${blocked_key}" >/dev/null 2>&1; then
+    echo "Expected sanitize_shadowed_git_config to strip ${blocked_key}" >&2
+    exit 1
+  fi
+done
+if git config --file "${SHADOW_GIT_CONFIG_FIXTURE}" --name-only --get-regexp '^credential\..*\.helper$' >/dev/null 2>&1; then
+  echo "Expected sanitize_shadowed_git_config to strip credential.*.helper entries" >&2
+  exit 1
+fi
+if git config --file "${SHADOW_GIT_CONFIG_FIXTURE}" --name-only --get-regexp '^includeif\..*\.path$' >/dev/null 2>&1; then
+  echo "Expected sanitize_shadowed_git_config to strip includeIf.*.path entries" >&2
+  exit 1
+fi
+[[ "$(git config --file "${SHADOW_GIT_CONFIG_FIXTURE}" --get alias.good)" == "status" ]]
+[[ "$(git config --file "${SHADOW_GIT_CONFIG_FIXTURE}" --get safe.keep)" == "value" ]]
+
+BUILDVCS_FIXTURE="${BARRIER_VERIFY_ROOT}/buildvcs-fixture"
+mkdir -p "${BUILDVCS_FIXTURE}"
+git init -q "${BUILDVCS_FIXTURE}"
+cat <<'EOF' >"${BUILDVCS_FIXTURE}/go.mod"
+module example.com/workcell/buildvcsfixture
+
+go 1.25.0
+EOF
+cat <<'EOF' >"${BUILDVCS_FIXTURE}/main.go"
+package main
+
+func main() {}
+EOF
+BUILDVCS_MARKER="${BUILDVCS_FIXTURE}/fsmonitor.log"
+cat >"${BUILDVCS_FIXTURE}/fsmonitor.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'fsmonitor-invoked\n' >>"${BUILDVCS_MARKER}"
+exit 0
+EOF
+chmod +x "${BUILDVCS_FIXTURE}/fsmonitor.sh"
+BUILDVCS_OUTPUT="${BUILDVCS_FIXTURE}/fixture-bin"
+git -C "${BUILDVCS_FIXTURE}" config core.fsmonitor "${BUILDVCS_FIXTURE}/fsmonitor.sh"
+build_go_tool_in_repo "${BUILDVCS_FIXTURE}" "${BUILDVCS_OUTPUT}" .
+[[ -x "${BUILDVCS_OUTPUT}" ]]
+if [[ -e "${BUILDVCS_MARKER}" ]]; then
+  echo "Expected build_go_tool_in_repo to avoid repo-controlled fsmonitor execution" >&2
+  exit 1
+fi
 
 MASK_SNAPSHOT_WORKSPACE="${BARRIER_VERIFY_ROOT}/mask-snapshot-workspace"
 mkdir -p "${MASK_SNAPSHOT_WORKSPACE}/.claude"

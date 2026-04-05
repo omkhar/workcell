@@ -648,6 +648,43 @@ workcell_copy_manifest_credential_file() {
   return 0
 }
 
+workcell_manifest_copy_rows() {
+  jq -r '
+    .copies[]? |
+    [
+      (if (.source | type) == "object" then (.source.source // "") else .source end | if . == null then "null" else tostring end),
+      (if (.source | type) == "object" then (.source.mount_path // "") else "" end | if . == null then "" else tostring end),
+      (.target | if . == null then "null" else tostring end),
+      (.kind | if . == null then "null" else tostring end),
+      (.file_mode | if . == null then "null" else tostring end),
+      (.dir_mode | if . == null then "null" else tostring end)
+    ] | join("\u001f")
+  ' "$(workcell_manifest_path)"
+}
+
+workcell_manifest_ssh_config_rows() {
+  jq -r '
+    (.ssh // {}) as $ssh
+    | if ($ssh.config | type) == "object" then
+        ["config", ($ssh.config.source // ""), ($ssh.config.mount_path // "")] | map(tostring) | join("\u001f")
+      elif $ssh.config != null then
+        ["config", $ssh.config, ""] | map(tostring) | join("\u001f")
+      else empty end,
+      if ($ssh.known_hosts | type) == "object" then
+        ["known_hosts", ($ssh.known_hosts.source // ""), ($ssh.known_hosts.mount_path // "")] | map(tostring) | join("\u001f")
+      elif $ssh.known_hosts != null then
+        ["known_hosts", $ssh.known_hosts, ""] | map(tostring) | join("\u001f")
+      else empty end
+  ' "$(workcell_manifest_path)"
+}
+
+workcell_manifest_ssh_identity_rows() {
+  jq -r '
+    (.ssh.identities // [])[]? |
+    ["identity", (.source // ""), (.mount_path // ""), (.target_name // "null")] | map(tostring) | join("\u001f")
+  ' "$(workcell_manifest_path)"
+}
+
 workcell_trim_leading_whitespace() {
   local value="$1"
 
@@ -1263,7 +1300,6 @@ workcell_seed_codex_rules() {
 }
 
 workcell_apply_manifest_copies() {
-  local entry_json=""
   local source_rel=""
   local mount_path=""
   local target_path=""
@@ -1275,13 +1311,7 @@ workcell_apply_manifest_copies() {
   mkdir -p /state/injected
   chmod 0755 /state/injected 2>/dev/null || true
 
-  while IFS= read -r entry_json; do
-    source_rel="$(jq -r 'if (.source | type) == "object" then (.source.source // "") else .source end' <<<"${entry_json}")"
-    mount_path="$(jq -r 'if (.source | type) == "object" then (.source.mount_path // "") else "" end' <<<"${entry_json}")"
-    target_path="$(jq -r '.target' <<<"${entry_json}")"
-    kind="$(jq -r '.kind' <<<"${entry_json}")"
-    file_mode="$(jq -r '.file_mode' <<<"${entry_json}")"
-    dir_mode="$(jq -r '.dir_mode' <<<"${entry_json}")"
+  while IFS=$'\x1f' read -r source_rel mount_path target_path kind file_mode dir_mode; do
     [[ -n "${source_rel}${mount_path}" ]] || continue
     workcell_copy_manifest_entry \
       "$(workcell_resolve_manifest_input_path "${source_rel}" "${mount_path}")" \
@@ -1289,7 +1319,7 @@ workcell_apply_manifest_copies() {
       "${kind}" \
       "${file_mode}" \
       "${dir_mode}"
-  done < <(jq -c '.copies[]?' "$(workcell_manifest_path)")
+  done < <(workcell_manifest_copy_rows)
 }
 
 workcell_apply_manifest_ssh() {
@@ -1297,17 +1327,33 @@ workcell_apply_manifest_ssh() {
   local config_mount_path=""
   local known_hosts_source=""
   local known_hosts_mount_path=""
-  local identity_source=""
-  local identity_mount_path=""
-  local identity_name=""
+  local row_type=""
+  local row_source=""
+  local row_mount_path=""
+  local row_target_name=""
+  local -a identity_rows=()
 
   workcell_ensure_manifest || return 0
-  config_source="$(workcell_manifest_string 'if (.ssh.config | type) == "object" then (.ssh.config.source // empty) else (.ssh.config // empty) end')"
-  config_mount_path="$(workcell_manifest_string 'if (.ssh.config | type) == "object" then (.ssh.config.mount_path // empty) else empty end')"
-  known_hosts_source="$(workcell_manifest_string 'if (.ssh.known_hosts | type) == "object" then (.ssh.known_hosts.source // empty) else (.ssh.known_hosts // empty) end')"
-  known_hosts_mount_path="$(workcell_manifest_string 'if (.ssh.known_hosts | type) == "object" then (.ssh.known_hosts.mount_path // empty) else empty end')"
+  while IFS=$'\x1f' read -r row_type row_source row_mount_path row_target_name; do
+    case "${row_type}" in
+      config)
+        config_source="${row_source}"
+        config_mount_path="${row_mount_path}"
+        ;;
+      known_hosts)
+        known_hosts_source="${row_source}"
+        known_hosts_mount_path="${row_mount_path}"
+        ;;
+    esac
+  done < <(workcell_manifest_ssh_config_rows)
+
+  while IFS=$'\x1f' read -r row_type row_source row_mount_path row_target_name; do
+    [[ "${row_type}" == "identity" ]] || continue
+    identity_rows+=("${row_source}"$'\x1f'"${row_mount_path}"$'\x1f'"${row_target_name}")
+  done < <(workcell_manifest_ssh_identity_rows)
+
   if [[ -z "${config_source}" ]] && [[ -z "${known_hosts_source}" ]] &&
-    [[ "$(workcell_manifest_string '(.ssh.identities // []) | length')" == "0" ]]; then
+    [[ "${#identity_rows[@]}" -eq 0 ]]; then
     return 0
   fi
 
@@ -1326,15 +1372,14 @@ workcell_apply_manifest_ssh() {
     chmod 0600 "${HOME}/.ssh/known_hosts"
   fi
 
-  while IFS= read -r entry_json; do
-    identity_source="$(jq -r '.source // ""' <<<"${entry_json}")"
-    identity_mount_path="$(jq -r '.mount_path // ""' <<<"${entry_json}")"
-    identity_name="$(jq -r '.target_name' <<<"${entry_json}")"
-    [[ -n "${identity_source}${identity_mount_path}" ]] || continue
-    workcell_reset_session_target "${HOME}/.ssh/${identity_name}" "SSH identity"
-    cp "$(workcell_resolve_manifest_input_path "${identity_source}" "${identity_mount_path}")" "${HOME}/.ssh/${identity_name}"
-    chmod 0600 "${HOME}/.ssh/${identity_name}"
-  done < <(jq -c '.ssh.identities[]?' "$(workcell_manifest_path)")
+  while IFS=$'\x1f' read -r row_source row_mount_path row_target_name; do
+    [[ -n "${row_source}${row_mount_path}" ]] || continue
+    workcell_reset_session_target "${HOME}/.ssh/${row_target_name}" "SSH identity"
+    cp "$(workcell_resolve_manifest_input_path "${row_source}" "${row_mount_path}")" "${HOME}/.ssh/${row_target_name}"
+    chmod 0600 "${HOME}/.ssh/${row_target_name}"
+  done < <(
+    printf '%s\n' "${identity_rows[@]}"
+  )
 }
 
 seed_codex_home() {

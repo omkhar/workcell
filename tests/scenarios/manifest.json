@@ -46,6 +46,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/home-control-plane-manifest",
+      "description": "Shared home-control-plane manifest parsing uses one-pass jq readers for copy and ssh entries",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-home-control-plane-manifest.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/assurance-dry-run",
       "description": "Dry-run scenarios surface prompt-autonomy, breakglass, readonly, arbitrary-command, and control-plane VCS assurance labels across adapters",
       "lane": "secretless",

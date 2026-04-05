@@ -281,11 +281,11 @@ func walkFiles(rootDir, relativeRoot string, excludeParts ...string) ([]string, 
 				return nil
 			}
 		}
-		info, err := os.Stat(path)
+		isRegular, err := dirEntryIsRegular(d)
 		if err != nil {
 			return err
 		}
-		if info.Mode().IsRegular() {
+		if isRegular {
 			paths = append(paths, rel)
 		}
 		return nil
@@ -332,11 +332,11 @@ func walkRepoFiles(rootDir string) ([]string, error) {
 			}
 			return nil
 		}
-		info, err := os.Stat(path)
+		isRegular, err := dirEntryIsRegular(d)
 		if err != nil {
 			return err
 		}
-		if info.Mode().IsRegular() {
+		if isRegular {
 			paths = append(paths, rel)
 		}
 		return nil
@@ -346,6 +346,21 @@ func walkRepoFiles(rootDir string) ([]string, error) {
 	}
 	sort.Strings(paths)
 	return paths, nil
+}
+
+func dirEntryIsRegular(d fs.DirEntry) (bool, error) {
+	mode := d.Type()
+	if mode.IsRegular() {
+		return true, nil
+	}
+	if mode&fs.ModeType != 0 {
+		return false, nil
+	}
+	info, err := d.Info()
+	if err != nil {
+		return false, err
+	}
+	return info.Mode().IsRegular(), nil
 }
 
 func digestMap(rootDir string, paths []string) (map[string]string, error) {
