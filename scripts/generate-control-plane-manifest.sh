@@ -18,7 +18,6 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   exit 0
 fi
 
-ROOT_DIR="${WORKCELL_CONTROL_PLANE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 OUTPUT_PATH="${1:-}"
 
 require_tool() {
@@ -51,6 +50,14 @@ resolve_go_bin() {
   exit 1
 }
 
+resolve_root_path() {
+  local candidate="$1"
+  (
+    cd "${candidate}"
+    pwd -P
+  )
+}
+
 resolve_output_path() {
   local candidate="$1"
 
@@ -66,6 +73,7 @@ resolve_output_path() {
   exit 64
 }
 
+ROOT_DIR="$(resolve_root_path "${WORKCELL_CONTROL_PLANE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}")"
 GO_BIN="$(resolve_go_bin)"
 OUTPUT_PATH="$(resolve_output_path "${OUTPUT_PATH}")"
 
