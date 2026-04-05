@@ -136,8 +136,9 @@ release_id="${release_metadata[0]}"
 upload_url="${release_metadata[1]}"
 
 for ((i = 2; i < ${#release_metadata[@]}; i += 2)); do
+  asset_id_index=$((i + 1))
   asset_name="${release_metadata[i]}"
-  asset_id="${release_metadata[i + 1]}"
+  asset_id="${release_metadata[asset_id_index]}"
 
   if [[ -n "${asset_id}" ]]; then
     delete_status="$(api DELETE "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" "" "${TMP_ROOT}/delete-${asset_id}.json")"

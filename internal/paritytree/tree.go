@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ func Snapshot(root string) ([]Entry, error) {
 			return nil
 		}
 
-		info, err := os.Lstat(path)
+		info, err := d.Info()
 		if err != nil {
 			return err
 		}
@@ -55,13 +56,20 @@ func Snapshot(root string) ([]Entry, error) {
 		case info.Mode().IsDir():
 			entry.Kind = "dir"
 		case info.Mode().IsRegular():
-			content, err := os.ReadFile(path)
+			file, err := os.Open(path)
 			if err != nil {
 				return err
 			}
-			sum := sha256.Sum256(content)
+			hasher := sha256.New()
+			if _, err := io.Copy(hasher, file); err != nil {
+				_ = file.Close()
+				return err
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
 			entry.Kind = "file"
-			entry.SHA256 = hex.EncodeToString(sum[:])
+			entry.SHA256 = hex.EncodeToString(hasher.Sum(nil))
 		default:
 			entry.Kind = "other"
 		}

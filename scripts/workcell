@@ -1446,14 +1446,22 @@ resolve_existing_executable_or_die() {
   local raw_path="$1"
   local label="$2"
   local resolved_path=""
+  local canonical_path=""
 
   resolved_path="$(resolve_existing_file_or_die "${raw_path}" "${label}")"
   if [[ ! -x "${resolved_path}" ]]; then
     echo "${label} file is not executable: ${raw_path}" >&2
     exit 2
   fi
+  canonical_path="$(canonicalize_host_tool_path "${resolved_path}")"
+  if [[ -z "${canonical_path}" ]] ||
+    ! is_trusted_host_tool_path "${resolved_path}" ||
+    ! is_trusted_host_tool_path "${canonical_path}"; then
+    echo "${label} must point to a trusted host executable path: ${raw_path}" >&2
+    exit 2
+  fi
 
-  printf '%s\n' "${resolved_path}"
+  printf '%s\n' "${canonical_path}"
 }
 
 run_publish_host_command_in_dir() {
@@ -1699,17 +1707,23 @@ publish_pr_main() {
   done
 
   resolved_workspace="$(resolve_existing_directory_or_die "${workspace}")"
-  HOST_GIT_BIN="${HOST_GIT_BIN:-$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)}"
+  if [[ -n "${HOST_GIT_BIN:-}" ]]; then
+    HOST_GIT_BIN="$(resolve_existing_executable_or_die "${HOST_GIT_BIN}" "HOST_GIT_BIN")"
+  else
+    HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
+  fi
   validate_publish_snapshot_name "${snapshot}"
   validate_publish_branch_name "${branch}"
   validate_publish_base_name "${base}"
   if [[ -n "${gh_bin}" ]]; then
     HOST_GH_BIN="$(resolve_existing_executable_or_die "${gh_bin}" "gh-bin")"
+  elif [[ -n "${HOST_GH_BIN:-}" ]]; then
+    HOST_GH_BIN="$(resolve_existing_executable_or_die "${HOST_GH_BIN}" "HOST_GH_BIN")"
   elif [[ "${dry_run}" -eq 1 ]]; then
-    HOST_GH_BIN="${HOST_GH_BIN:-$(resolve_host_tool_optional gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh || true)}"
+    HOST_GH_BIN="$(resolve_host_tool_optional gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh || true)"
     [[ -n "${HOST_GH_BIN}" ]] || HOST_GH_BIN="gh"
   else
-    HOST_GH_BIN="${HOST_GH_BIN:-$(resolve_host_tool gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh)}"
+    HOST_GH_BIN="$(resolve_host_tool gh /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh)"
   fi
 
   if ! workspace_has_markers "${resolved_workspace}"; then
@@ -3805,13 +3819,23 @@ git_alias_value_is_blocked() {
     [[ "${alias_body_lower}" == *"--exec-path"* ]] ||
     [[ "${alias_body_lower}" == *"--git-dir"* ]] ||
     [[ "${alias_body_lower}" == *"--work-tree"* ]] ||
+    [[ "${alias_body_lower}" == *"core.askpass"* ]] ||
+    [[ "${alias_body_lower}" == *"core.editor"* ]] ||
+    [[ "${alias_body_lower}" == *"core.fsmonitor"* ]] ||
     [[ "${alias_body_lower}" == *"git_exec_path="* ]] ||
     [[ "${alias_body_lower}" == *"git_dir="* ]] ||
     [[ "${alias_body_lower}" == *"git_work_tree="* ]] ||
     [[ "${alias_body_lower}" == *"git_common_dir="* ]] ||
     [[ "${alias_body_lower}" == *"core.hookspath"* ]] ||
+    [[ "${alias_body_lower}" == *"core.pager"* ]] ||
+    [[ "${alias_body_lower}" == *"core.sshcommand"* ]] ||
+    [[ "${alias_body_lower}" == *"core.worktree"* ]] ||
+    [[ "${alias_body_lower}" == *"credential.helper"* ]] ||
+    [[ "${alias_body_lower}" == *"diff.external"* ]] ||
     [[ "${alias_body_lower}" == *"include.path"* ]] ||
-    [[ "${alias_body_lower}" == *"includeif."* ]]; then
+    [[ "${alias_body_lower}" == *"includeif."* ]] ||
+    [[ "${alias_body_lower}" == *"pager."* ]] ||
+    [[ "${alias_body_lower}" == *"sequence.editor"* ]]; then
     return 0
   fi
 
@@ -3825,6 +3849,19 @@ git_alias_value_is_blocked() {
       return 0
     fi
   done
+
+  return 1
+}
+
+git_config_key_is_blocked() {
+  local key_lower=""
+
+  key_lower="$(lower_ascii "$1")"
+  case "${key_lower}" in
+    core.askpass | core.editor | core.fsmonitor | core.hookspath | core.pager | core.sshcommand | core.worktree | credential.helper | credential.*.helper | diff.external | include.path | includeif.*.path | pager.* | sequence.editor)
+      return 0
+      ;;
+  esac
 
   return 1
 }
@@ -3859,10 +3896,11 @@ sanitize_shadowed_git_config() {
   [[ -f "${config_path}" ]] || return 0
 
   while IFS= read -r key; do
+    if git_config_key_is_blocked "${key}"; then
+      "${HOST_GIT_BIN}" config --file "${config_path}" --unset-all "${key}" >/dev/null 2>&1 || true
+      continue
+    fi
     case "$(lower_ascii "${key}")" in
-      core.hookspath | core.worktree | include.path | includeif.*.path)
-        "${HOST_GIT_BIN}" config --file "${config_path}" --unset-all "${key}" >/dev/null 2>&1 || true
-        ;;
       alias.*)
         while IFS= read -r value; do
           if git_alias_value_is_blocked "${value}"; then

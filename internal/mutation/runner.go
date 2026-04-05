@@ -119,6 +119,12 @@ var rustMutations = []mutationCase{
 		replacement:  `false`,
 		label:        "root-prefix matcher",
 	},
+	{
+		relativePath: "runtime/container/rust/src/lib.rs",
+		original:     `            | "core.fsmonitor"` + "\n",
+		replacement:  ``,
+		label:        "core.fsmonitor git-config blocking",
+	},
 }
 
 func Run(repoRoot string) error {

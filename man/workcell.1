@@ -348,11 +348,15 @@ execution cannot retake unmediated native code execution.
 .TP
 .I ~/.local/bin/workcell
 Installed launcher path used by
-.BR scripts/install.sh .
+.BR install.sh .
 .TP
 .I ~/.local/share/man/man1/workcell.1
 Installed man page path used by
-.BR scripts/install.sh .
+.BR install.sh .
+.TP
+.I scripts/install-workcell.sh
+Internal repository installer implementation invoked by
+.BR install.sh .
 .TP
 .I scripts/uninstall.sh
 Repository helper that removes Workcell-owned install links, managed Colima

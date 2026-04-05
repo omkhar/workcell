@@ -834,6 +834,7 @@ fn git_config_key_is_blocked(key: &str) -> bool {
         key.to_ascii_lowercase().as_str(),
         "core.askpass"
             | "core.editor"
+            | "core.fsmonitor"
             | "core.hookspath"
             | "core.pager"
             | "core.sshcommand"
@@ -947,6 +948,7 @@ fn env_has_unsafe_git_override(env_entries: &[String]) -> bool {
         if let Some(value) = entry.strip_prefix("GIT_CONFIG_PARAMETERS=") {
             let lower = value.to_ascii_lowercase();
             if lower.contains("core.hookspath")
+                || lower.contains("core.fsmonitor")
                 || lower.contains("core.worktree")
                 || lower.contains("include.path")
                 || lower.contains("includeif.")
@@ -1577,6 +1579,19 @@ mod tests {
     fn env_has_unsafe_git_override_blocks_git_index_file() {
         assert!(env_has_unsafe_git_override(&[
             "GIT_INDEX_FILE=/attacker/index".to_string()
+        ]));
+    }
+
+    #[test]
+    fn git_config_key_is_blocked_blocks_core_fsmonitor() {
+        assert!(git_config_key_is_blocked("core.fsmonitor"));
+        assert!(git_config_key_is_blocked("Core.FsMonitor"));
+    }
+
+    #[test]
+    fn env_has_unsafe_git_override_blocks_core_fsmonitor_parameters() {
+        assert!(env_has_unsafe_git_override(&[
+            "GIT_CONFIG_PARAMETERS='core.fsmonitor=/attacker/fsmonitor'".to_string()
         ]));
     }
 

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Workcell installed with `./scripts/install.sh`
+- Workcell installed with `./install.sh`
 - a repo you want to mount as the workspace
 - either a reviewed Gemini env file or reviewed cached OAuth material
 

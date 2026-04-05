@@ -2893,11 +2893,21 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-hooks-lower.out
+  if git -c core.fsmonitor=/tmp/workcell-fsmonitor status >/tmp/git-guard-fsmonitor.out 2>&1; then
+    echo "expected Workcell git guard to reject inline core.fsmonitor override" >&2
+    exit 1
+  fi
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-fsmonitor.out
   if GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m smoke >/tmp/git-guard-env.out 2>&1; then
     echo "expected Workcell git guard to reject GIT_CONFIG_* hook override" >&2
     exit 1
   fi
   grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-env.out
+  if GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=/tmp/workcell-fsmonitor git status >/tmp/git-guard-env-fsmonitor.out 2>&1; then
+    echo "expected Workcell git guard to reject GIT_CONFIG_* fsmonitor override" >&2
+    exit 1
+  fi
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-env-fsmonitor.out
   if GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m smoke >/tmp/git-guard-env-mixed.out 2>&1; then
     echo "expected Workcell git guard to reject mixed-case GIT_CONFIG_* hook override" >&2
     exit 1
