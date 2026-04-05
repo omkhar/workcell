@@ -2537,6 +2537,22 @@ if ! grep -q '  asset-a.txt$' "${RELEASE_CHECKSUMS_VERIFY_ROOT}/SHA256SUMS" ||
   cat "${RELEASE_CHECKSUMS_VERIFY_ROOT}/SHA256SUMS" >&2
   exit 1
 fi
+mkdir -p "${RELEASE_CHECKSUMS_VERIFY_ROOT}/dup-a" "${RELEASE_CHECKSUMS_VERIFY_ROOT}/dup-b"
+printf 'charlie\n' >"${RELEASE_CHECKSUMS_VERIFY_ROOT}/dup-a/asset.txt"
+printf 'delta\n' >"${RELEASE_CHECKSUMS_VERIFY_ROOT}/dup-b/asset.txt"
+if "${ROOT_DIR}/scripts/generate-release-checksums.sh" \
+  "${RELEASE_CHECKSUMS_VERIFY_ROOT}/SHA256SUMS-duplicate" \
+  "${RELEASE_CHECKSUMS_VERIFY_ROOT}/dup-a/asset.txt" \
+  "${RELEASE_CHECKSUMS_VERIFY_ROOT}/dup-b/asset.txt" \
+  >/tmp/workcell-release-checksums-duplicate.out 2>&1; then
+  echo "Expected generate-release-checksums.sh to reject duplicate release asset basenames" >&2
+  exit 1
+fi
+if ! grep -q 'Duplicate release asset basename: asset.txt' /tmp/workcell-release-checksums-duplicate.out; then
+  echo "Expected generate-release-checksums.sh duplicate-basename rejection to explain the conflicting asset" >&2
+  cat /tmp/workcell-release-checksums-duplicate.out >&2
+  exit 1
+fi
 
 CONTAINER_SMOKE_BASH_ENV_MARKER="${BARRIER_VERIFY_ROOT}/container-smoke-bashenv-ran"
 if ! HOST_BASH_ENV_MARKER="${CONTAINER_SMOKE_BASH_ENV_MARKER}" \
