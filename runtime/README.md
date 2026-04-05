@@ -33,6 +33,7 @@ reproducible runtime for the supported providers.
 - `scripts/container-smoke.sh`: direct container smoke coverage
 - `scripts/verify-invariants.sh`: invariant checks
 - `scripts/build-and-test.sh`: repo-wide validation and local check entry point
+- `scripts/pre-merge.sh`: pinned validator-container pre-merge harness with optional disposable snapshot and remote validation lanes
 
 ## GUI status
 
