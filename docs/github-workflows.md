@@ -14,8 +14,6 @@ reinforce the runtime boundary and release posture, not replace them.
 | `scorecard.yml` | OpenSSF Scorecard analysis |
 | `pin-hygiene.yml` | scheduled re-validation of pinned inputs and upstream release pins |
 | `hosted-controls.yml` | drift detection for GitHub-hosted controls that live outside git |
-| `provider-e2e.yml` | manual provider-authenticated smoke on the self-hosted macOS boundary path |
-| `macos-boundary.yml` | optional self-hosted verification of the real Colima boundary |
 | `release.yml` | tagged release preflight, publication, signatures, SBOMs, manifests, and attestations |
 
 ## Release workflow posture
