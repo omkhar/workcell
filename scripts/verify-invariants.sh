@@ -5539,7 +5539,6 @@ grep -q 'provider_e2e_probe_cmd=.*--agent-arg -p' /tmp/workcell-provider-e2e-gem
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg json' /tmp/workcell-provider-e2e-gemini.out
 grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-gemini.out
 
-
 FAKE_PROVIDER_E2E_WORKCELL_OK="${BARRIER_VERIFY_ROOT}/provider-e2e-fake-workcell-ok.sh"
 cat >"${FAKE_PROVIDER_E2E_WORKCELL_OK}" <<'EOF_FAKE_PROVIDER_E2E_OK'
 #!/bin/bash
