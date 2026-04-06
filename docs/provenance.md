@@ -24,7 +24,8 @@ Tagged releases publish:
   control-plane manifest, builder-environment manifest, and both SBOMs
 - keyless Sigstore signatures for the published image
 - GitHub attestations for the published image, image SBOM, source bundle, and
-  source SBOM in the canonical upstream repository
+  source SBOM when the reviewed hosted controls say the repository visibility
+  and GitHub plan support that publication path
 
 ## What the release workflow proves
 
@@ -55,9 +56,14 @@ GitHub-independent check.
 
 ## GitHub attestation path
 
-The canonical upstream repo also publishes GitHub attestations. That posture is
-treated as part of the reviewed hosted control plane through the
-`WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` repository variable.
+The canonical upstream repo also publishes GitHub attestations when the
+reviewed hosted controls allow it. That posture is tracked through two
+repository variables:
+
+- `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` requests GitHub attestations
+- `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=true` is only allowed when the
+  repository is private/internal and the GitHub plan actually supports private
+  artifact attestations
 
 This does not replace Sigstore. It adds:
 
@@ -78,7 +84,8 @@ cosign verify ghcr.io/omkhar/workcell@sha256:DIGEST \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-Verify the same image with GitHub attestation tooling:
+If the canonical repo published GitHub attestations for that release, verify
+the same image with GitHub attestation tooling:
 
 ```bash
 gh attestation verify oci://ghcr.io/omkhar/workcell@sha256:DIGEST \
@@ -105,7 +112,8 @@ cosign verify-blob SHA256SUMS \
 sha256sum -c SHA256SUMS
 ```
 
-If you want GitHub's attestation view for the source bundle:
+If you want GitHub's attestation view for the source bundle and the canonical
+repo published GitHub attestations for that release:
 
 ```bash
 gh attestation verify workcell-VERSION.tar.gz --repo omkhar/workcell

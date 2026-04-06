@@ -13,6 +13,7 @@ concurrency:
 
 env:
   ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
+  ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:37539dd4d60fc70968d164d3850d903a2c56f6402214a1953fbf9fcb81ada731
   WORKCELL_BUILDX_VERSION: v0.32.1
@@ -604,14 +605,14 @@ jobs:
             dist/workcell-image.spdx.json
 
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.publish_manifest.outputs.digest }}
           push-to-registry: true
 
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           sbom-path: dist/workcell-image.spdx.json
           subject-name: ${{ env.IMAGE_NAME }}
@@ -619,12 +620,12 @@ jobs:
           push-to-registry: true
 
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/${{ env.BUNDLE_NAME }}
 
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           sbom-path: dist/workcell-source.spdx.json
           subject-path: dist/${{ env.BUNDLE_NAME }}

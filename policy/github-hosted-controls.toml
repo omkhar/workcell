@@ -41,8 +41,11 @@ contexts = [
 ]
 
 [repository_variables]
-# The canonical Workcell repository publishes both Sigstore materials and
-# GitHub-native attestations on tagged releases. Forks can loosen this policy,
-# but the upstream repo treats the variable as part of the reviewed control
-# plane so publication posture cannot silently drift.
+# The canonical Workcell repository always requests GitHub-native attestations
+# when the platform supports them. Public repos support that path on all
+# current plans; private/internal repos need explicit hosted-control approval
+# because GitHub only supports them on Enterprise Cloud. Forks can loosen this
+# policy, but the upstream repo treats both variables as part of the reviewed
+# control plane so publication posture cannot silently drift.
 WORKCELL_ENABLE_GITHUB_ATTESTATIONS = "true"
+WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"

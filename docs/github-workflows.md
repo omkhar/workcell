@@ -23,8 +23,9 @@ reinforce the runtime boundary and release posture, not replace them.
 - it publishes from the archived source bundle, not the live checkout
 - it binds publish outputs to preflight results before signing
 - it signs release assets with keyless Sigstore/Cosign
-- it publishes GitHub attestations in the canonical repo as an additional
-  surface, not a replacement
+- it publishes GitHub attestations as an additional surface, not a
+  replacement, but only when the reviewed hosted controls say the repository
+  visibility and plan support them
 - it uses pinned GitHub Actions and pinned Buildx, QEMU, Cosign, and Syft
   versions
 - it runs with minimal workflow-level permissions and only elevates the publish
@@ -43,7 +44,8 @@ reviewed inputs:
   does not
 - GitHub Actions SHA pinning
 - canonical repository variables such as
-  `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true`
+  `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` and
+  `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=false`
 
 `scripts/verify-github-hosted-controls.sh` audits those settings against
 `policy/github-hosted-controls.toml`.
@@ -57,8 +59,10 @@ conditional:
   auditing
 - private code scanning and some SARIF uploads are opt-in because GitHub plan
   support varies
-- the canonical upstream repository enables GitHub attestations through the
-  reviewed repository-variable policy
+- public repos can publish GitHub attestations when enabled
+- private/internal repos only publish GitHub attestations when the reviewed
+  `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS` variable is explicitly set for
+  a GitHub plan that supports them
 
 ## Deliberate omissions
 

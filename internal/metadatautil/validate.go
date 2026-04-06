@@ -119,6 +119,61 @@ func validateReleaseWorkflowControlPlaneFlow(releaseWorkflow string) error {
 	return nil
 }
 
+func validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error {
+	if !strings.Contains(releaseWorkflow, "ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}") {
+		return errors.New(".github/workflows/release.yml must gate GitHub attestations on public visibility or an explicit private-repo capability flag")
+	}
+	const attestGuard = "if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'"
+	attestStepRE := regexp.MustCompile(`(?m)^\s*-\s+uses:\s+actions/attest@`)
+	guardedAttestStepRE := regexp.MustCompile(`(?ms)^\s*-\s+uses:\s+actions/attest@[^\n]+\n\s+if:\s+env\.ENABLE_GITHUB_ATTESTATIONS == 'true' && env\.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'\n`)
+	totalAttestSteps := len(attestStepRE.FindAllString(releaseWorkflow, -1))
+	if totalAttestSteps != 4 {
+		return errors.New(".github/workflows/release.yml must keep exactly four reviewed GitHub attestation steps")
+	}
+	if len(guardedAttestStepRE.FindAllString(releaseWorkflow, -1)) != totalAttestSteps {
+		return fmt.Errorf(".github/workflows/release.yml must guard every actions/attest step with %q", attestGuard)
+	}
+	return nil
+}
+
+func hostedControlsRepositoryVariables(policy map[string]any, policyPath string) (map[string]any, error) {
+	expectedRepoVariables, ok := policy["repository_variables"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must define repository_variables as a table of exact expected values", policyPath)
+	}
+	for name, value := range expectedRepoVariables {
+		if strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("%s repository_variables entries must map non-empty names to exact string values", policyPath)
+		}
+		if _, ok := value.(string); !ok {
+			return nil, fmt.Errorf("%s repository_variables entries must map non-empty names to exact string values", policyPath)
+		}
+	}
+	for _, requiredName := range []string{
+		"WORKCELL_ENABLE_GITHUB_ATTESTATIONS",
+		"WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS",
+	} {
+		if _, ok := expectedRepoVariables[requiredName]; !ok {
+			return nil, fmt.Errorf("%s must declare %s in repository_variables", policyPath, requiredName)
+		}
+	}
+	return expectedRepoVariables, nil
+}
+
+func validateCanonicalHostedControlsRepositoryVariables(policy map[string]any, policyPath string) error {
+	repositoryVariables, err := hostedControlsRepositoryVariables(policy, policyPath)
+	if err != nil {
+		return err
+	}
+	if value, _ := repositoryVariables["WORKCELL_ENABLE_GITHUB_ATTESTATIONS"].(string); value != "true" {
+		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_ENABLE_GITHUB_ATTESTATIONS = \"true\"")
+	}
+	if value, _ := repositoryVariables["WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS"].(string); value != "false" {
+		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = \"false\"")
+	}
+	return nil
+}
+
 func FetchGitHubHostedControlsRulesets(tmpDir, repo string) error {
 	var summary []any
 	if err := readJSONFile(filepath.Join(tmpDir, "rulesets-summary.json"), &summary); err != nil {
@@ -220,20 +275,9 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	if len(expectedContexts) == 0 {
 		return fmt.Errorf("%s must define required_status_checks.contexts as a non-empty array", policyPath)
 	}
-	expectedRepoVariables, ok := policy["repository_variables"].(map[string]any)
-	if !ok {
-		return fmt.Errorf("%s must define repository_variables as a table of exact expected values", policyPath)
-	}
-	for name, value := range expectedRepoVariables {
-		if strings.TrimSpace(name) == "" {
-			return fmt.Errorf("%s repository_variables entries must map non-empty names to exact string values", policyPath)
-		}
-		if _, ok := value.(string); !ok {
-			return fmt.Errorf("%s repository_variables entries must map non-empty names to exact string values", policyPath)
-		}
-	}
-	if _, ok := expectedRepoVariables["WORKCELL_ENABLE_GITHUB_ATTESTATIONS"]; !ok {
-		return fmt.Errorf("%s must declare WORKCELL_ENABLE_GITHUB_ATTESTATIONS in repository_variables", policyPath)
+	expectedRepoVariables, err := hostedControlsRepositoryVariables(policy, policyPath)
+	if err != nil {
+		return err
 	}
 
 	if enabled, _ := actionsPermissions["enabled"].(bool); !enabled {
@@ -1293,6 +1337,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := validateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
 		return err
 	}
+	if err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
+		return err
+	}
 	if strings.Contains(releaseWorkflow, "steps.build.outputs.digest") {
 		return errors.New(".github/workflows/release.yml must not keep referencing the old single-step multi-platform digest output")
 	}
@@ -1391,12 +1438,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if releaseMode != "review-gated" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
 		return errors.New("policy/github-hosted-controls.toml must set release_environment.mode to 'review-gated', 'single-owner-private', or 'plan-limited-private'")
 	}
-	repositoryVariables, ok := hostedControlsPolicy["repository_variables"].(map[string]any)
-	if !ok || len(repositoryVariables) == 0 {
-		return errors.New("policy/github-hosted-controls.toml must declare canonical repository variables")
-	}
-	if value, _ := repositoryVariables["WORKCELL_ENABLE_GITHUB_ATTESTATIONS"].(string); value != "true" {
-		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_ENABLE_GITHUB_ATTESTATIONS = \"true\"")
+	if err := validateCanonicalHostedControlsRepositoryVariables(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
+		return err
 	}
 	for _, needle := range []string{
 		"actions/variables?per_page=100",
