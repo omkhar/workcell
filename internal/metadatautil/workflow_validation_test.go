@@ -172,3 +172,119 @@ func TestValidateReleaseWorkflowControlPlaneFlowAcceptsCanonicalArtifact(t *test
 		t.Fatalf("validateReleaseWorkflowControlPlaneFlow() error = %v", err)
 	}
 }
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingSupportGuard(t *testing.T) {
+	releaseWorkflow := `env:
+  ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
+  ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ !github.event.repository.private || github.event.repository.owner.type != 'User' }}
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+`
+
+	err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
+	if err == nil {
+		t.Fatal("validateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "public visibility or an explicit private-repo capability flag") {
+		t.Fatalf("validateReleaseWorkflowGitHubAttestationFlow() error = %v, want support guard failure", err)
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedAttestStep(t *testing.T) {
+	releaseWorkflow := `env:
+  ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
+  ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+`
+
+	err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
+	if err == nil {
+		t.Fatal("validateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "guard every actions/attest step") {
+		t.Fatalf("validateReleaseWorkflowGitHubAttestationFlow() error = %v, want unguarded attestation failure", err)
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowAcceptsSupportGuard(t *testing.T) {
+	releaseWorkflow := `env:
+  ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
+  ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+`
+
+	if err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
+		t.Fatalf("validateReleaseWorkflowGitHubAttestationFlow() error = %v", err)
+	}
+}
+
+func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsMissingPrivateAttestationFlag(t *testing.T) {
+	policy := map[string]any{
+		"repository_variables": map[string]any{
+			"WORKCELL_ENABLE_GITHUB_ATTESTATIONS": "true",
+		},
+	}
+
+	err := validateCanonicalHostedControlsRepositoryVariables(policy, "policy/github-hosted-controls.toml")
+	if err == nil {
+		t.Fatal("validateCanonicalHostedControlsRepositoryVariables() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS") {
+		t.Fatalf("validateCanonicalHostedControlsRepositoryVariables() error = %v, want missing private attestation flag", err)
+	}
+}
+
+func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsWrongPrivateAttestationFlag(t *testing.T) {
+	policy := map[string]any{
+		"repository_variables": map[string]any{
+			"WORKCELL_ENABLE_GITHUB_ATTESTATIONS":         "true",
+			"WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS": "true",
+		},
+	}
+
+	err := validateCanonicalHostedControlsRepositoryVariables(policy, "policy/github-hosted-controls.toml")
+	if err == nil {
+		t.Fatal("validateCanonicalHostedControlsRepositoryVariables() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"`) {
+		t.Fatalf("validateCanonicalHostedControlsRepositoryVariables() error = %v, want private attestation value failure", err)
+	}
+}
+
+func TestValidateCanonicalHostedControlsRepositoryVariablesAcceptsCanonicalValues(t *testing.T) {
+	policy := map[string]any{
+		"repository_variables": map[string]any{
+			"WORKCELL_ENABLE_GITHUB_ATTESTATIONS":         "true",
+			"WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS": "false",
+		},
+	}
+
+	if err := validateCanonicalHostedControlsRepositoryVariables(policy, "policy/github-hosted-controls.toml"); err != nil {
+		t.Fatalf("validateCanonicalHostedControlsRepositoryVariables() error = %v", err)
+	}
+}

@@ -167,11 +167,12 @@ Tagged releases are rebuilt and verified before publication. The release path:
 - signs the image, source bundle, checksums, build-input manifest,
   control-plane manifest, builder-environment manifest, and both SBOMs with
   keyless Sigstore/Cosign
-- publishes GitHub-native attestations in the canonical upstream repository as
-  an additional verification surface, not a replacement for Sigstore
+- publishes GitHub-native attestations when the reviewed hosted controls say
+  the repository visibility and GitHub plan support them, as an additional
+  verification surface rather than a replacement for Sigstore
 
-Forks can keep the GitHub attestation gate off. The upstream repo treats that
-setting as hosted control-plane state and audits it accordingly.
+Forks can keep the GitHub attestation gates off. The upstream repo treats
+those settings as hosted control-plane state and audits them accordingly.
 
 See [docs/provenance.md](docs/provenance.md) and
 [docs/github-workflows.md](docs/github-workflows.md).
