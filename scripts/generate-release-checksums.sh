@@ -29,7 +29,7 @@ EOF
 output_path="$1"
 shift
 
-seen_basenames=()
+seen_basenames=""
 
 for path in "$@"; do
   [[ -f "${path}" ]] || {
@@ -38,13 +38,15 @@ for path in "$@"; do
   }
 
   base_name="$(basename "${path}")"
-  for seen_base in "${seen_basenames[@]}"; do
-    if [[ "${seen_base}" == "${base_name}" ]]; then
-      echo "Duplicate release asset basename: ${base_name}" >&2
-      exit 1
-    fi
-  done
-  seen_basenames+=("${base_name}")
+  if [[ -n "${seen_basenames}" ]]; then
+    while IFS= read -r seen_base; do
+      if [[ "${seen_base}" == "${base_name}" ]]; then
+        echo "Duplicate release asset basename: ${base_name}" >&2
+        exit 1
+      fi
+    done <<<"${seen_basenames}"
+  fi
+  seen_basenames+="${base_name}"$'\n'
 done
 
 tmp_output="$(mktemp "${TMPDIR:-/tmp}/workcell-sha256sums.XXXXXX")"
