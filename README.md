@@ -64,8 +64,9 @@ Workcell uses two terms that matter throughout the docs:
 
 | Path | Intended use | Key properties |
 |---|---|---|
-| `strict` | default developer lane | bounded VM plus container, reviewed network posture, repo control-plane masking, `--agent-autonomy yolo` by default |
+| `strict` | default provider lane | bounded VM plus container, reviewed network posture, repo control-plane masking, provider-focused entrypoint, `--agent-autonomy yolo` by default |
 | `strict --container-mutability readonly` | strongest managed lane | package-manager writes blocked; no package-mutation downgrade |
+| `development` | managed interactive development lane | same boundary and masking as `strict`, managed non-provider command execution, broader dependency egress, visibly lower assurance than `strict` |
 | `build` | image preparation and dependency refresh | broader egress for rebuild and preparation work |
 | `breakglass` | explicit higher-trust debugging path | requires `--ack-breakglass`; visibly lower assurance |
 
@@ -75,7 +76,8 @@ Other defaults that matter:
 - `--agent-autonomy yolo` is the default; `--agent-autonomy prompt` is the
   explicit lower-assurance opt-out
 - `--cache-profile off` is the default
-- `--prepare` is the recommended first-run path
+- strict launches prepare the reviewed runtime image automatically when needed
+- `--prepare` and `--prepare-only` remain useful when you want to make that step explicit
 
 ## Quick start
 
@@ -83,7 +85,7 @@ Install the launcher symlink and verify the host prerequisites:
 
 ```bash
 ./install.sh
-workcell --prepare --agent codex --workspace /path/to/repo
+workcell --agent codex --workspace /path/to/repo
 ```
 
 `./install.sh` is the supported repo-root entrypoint. The `scripts/` installer
@@ -100,11 +102,13 @@ workcell --agent gemini --workspace /path/to/repo
 Useful operator flows:
 
 ```bash
+workcell --prepare --agent codex --workspace /path/to/repo
 workcell --prepare-only --agent codex --workspace /path/to/repo
+workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell --inspect --agent codex --workspace /path/to/repo
 workcell --doctor --agent codex --workspace /path/to/repo
 workcell --auth-status --agent codex --workspace /path/to/repo
-workcell --logs audit --colima-profile workcell-...
+workcell --logs audit --colima-profile wcl-...
 workcell publish-pr --workspace /path/to/repo --branch feature/name \
   --title-file /tmp/pr-title.txt \
   --body-file /tmp/pr-body.md \

@@ -63,6 +63,33 @@ grep -q '^codex_rules_mutability_effective_initial=session$' "${TMP_DIR}/prompt-
 grep -q '^codex_rules_mutability_effective_initial=not-applicable$' "${TMP_DIR}/prompt-claude.stderr"
 grep -q '^codex_rules_mutability_effective_initial=not-applicable$' "${TMP_DIR}/prompt-gemini.stderr"
 
+for agent in codex claude gemini; do
+  run_dry_run "development-${agent}" --agent "${agent}" --mode development --agent-arg --version
+  grep -q "^profile=.* mode=development agent=${agent} " "${TMP_DIR}/development-${agent}.stderr"
+  grep -q '^workspace_control_plane=masked$' "${TMP_DIR}/development-${agent}.stderr"
+  grep -q '^network_policy=allowlist ' "${TMP_DIR}/development-${agent}.stderr"
+  grep -q '^execution_path=lower-assurance-development audit_log=' "${TMP_DIR}/development-${agent}.stderr"
+  grep -q '^session_assurance_initial=managed-mutable$' "${TMP_DIR}/development-${agent}.stderr"
+done
+
+for agent in codex claude gemini; do
+  HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
+    "${ROOT_DIR}/scripts/workcell" \
+    --agent "${agent}" \
+    --mode development \
+    --workspace "${WORKSPACE}" \
+    --no-default-injection-policy \
+    --dry-run \
+    -- bash -lc true \
+    >"${TMP_DIR}/development-command-${agent}.stdout" 2>"${TMP_DIR}/development-command-${agent}.stderr"
+  grep -q "^profile=.* mode=development agent=${agent} " "${TMP_DIR}/development-command-${agent}.stderr"
+  grep -q '^execution_path=lower-assurance-development audit_log=' "${TMP_DIR}/development-command-${agent}.stderr"
+  if grep -q -- ' --entrypoint bash ' "${TMP_DIR}/development-command-${agent}.stdout"; then
+    echo "development mode should keep managed command execution on the reviewed entrypoint" >&2
+    exit 1
+  fi
+done
+
 run_dry_run_expect_failure 2 "breakglass-noack" --agent codex --mode breakglass
 grep -q '^breakglass mode requires --ack-breakglass\.$' "${TMP_DIR}/breakglass-noack.stderr"
 

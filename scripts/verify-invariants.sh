@@ -131,7 +131,7 @@ ROOT_DRY_RUN_PROFILE_NAME="$(
   workspace="$(cd "${ROOT_DIR}" && pwd -P)"
   slug="$(printf '%s' "${workspace##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^$/workspace/' | cut -c1-10)"
   digest="$(go_verify_hostutil launcher workspace-cache-key "${workspace}" | cut -c1-8)"
-  printf 'workcell-%s-%s\n' "${slug}" "${digest}"
+  printf 'wcl-%s-%s\n' "${slug}" "${digest}"
 )"
 ROOT_DRY_RUN_PROFILE_DIR="${REAL_HOME}/.colima/${ROOT_DRY_RUN_PROFILE_NAME}"
 ROOT_DRY_RUN_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${ROOT_DRY_RUN_PROFILE_NAME}"
@@ -898,6 +898,17 @@ verify_codex_managed_config_invariants() {
   require_toml_assignment "${file}" "profiles.strict" "web_search" '"disabled"' || return 1
   require_toml_section_absent "${file}" "profiles.strict.sandbox_workspace_write" || return 1
 
+  require_toml_exact_keys "${file}" "profiles.development" \
+    "approval_policy" \
+    "sandbox_mode" \
+    "web_search" || return 1
+  require_toml_assignment "${file}" "profiles.development" "sandbox_mode" '"workspace-write"' || return 1
+  require_toml_assignment "${file}" "profiles.development" "approval_policy" '"on-request"' || return 1
+  require_toml_assignment "${file}" "profiles.development" "web_search" '"disabled"' || return 1
+
+  require_toml_exact_keys "${file}" "profiles.development.sandbox_workspace_write" "network_access" || return 1
+  require_toml_assignment "${file}" "profiles.development.sandbox_workspace_write" "network_access" "true" || return 1
+
   require_toml_exact_keys "${file}" "profiles.build" \
     "approval_policy" \
     "sandbox_mode" \
@@ -1170,7 +1181,7 @@ if "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   echo "Expected debug-installed ~/.local/bin/workcell strict dry-run to surface the injected --rebuild behavior" >&2
   exit 1
 fi
-grep -q 'strict mode does not rebuild or cold-bootstrap the runtime image.' /tmp/workcell-installed-debug-strict-dry-run.out
+grep -q 'strict mode requires --prepare when you explicitly request --rebuild.' /tmp/workcell-installed-debug-strict-dry-run.out
 
 if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
@@ -1317,7 +1328,7 @@ config = "ssh-config"
 known_hosts = "known_hosts"
 identities = ["id_test"]
 providers = ["codex"]
-modes = ["strict", "build"]
+modes = ["strict", "development", "build"]
 
 [[copies]]
 source = "public.txt"
@@ -1999,7 +2010,7 @@ if ! rg -q -- '--self-staging-probe' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
-if ! rg -q 'strict mode does not rebuild or cold-bootstrap the runtime image' "${ROOT_DIR}/scripts/workcell"; then
+if ! rg -q 'strict mode requires --prepare when you explicitly request --rebuild.' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell to reject explicit strict-mode image rebuild requests" >&2
   exit 1
 fi
@@ -3306,7 +3317,7 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --rebuild --dry-ru
   echo "Expected strict mode to reject explicit --rebuild requests" >&2
   exit 1
 fi
-grep -q "strict mode does not rebuild or cold-bootstrap the runtime image" /tmp/workcell-strict-rebuild.out
+grep -q "strict mode requires --prepare when you explicitly request --rebuild." /tmp/workcell-strict-rebuild.out
 
 if "${ROOT_DIR}/scripts/workcell" --agent codex --mode >/tmp/workcell-missing-mode.out 2>&1; then
   echo "Expected --mode without a value to fail cleanly" >&2
@@ -3378,25 +3389,18 @@ if "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q "Workspace path does not exist" /tmp/workcell-missing-workspace.out
 grep -q -- '--workspace' /tmp/workcell-missing-workspace.out
-if "${ROOT_DIR}/scripts/workcell" \
+if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
-  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" >/tmp/workcell-strict-preflight.out 2>&1; then
-  echo "Expected strict mode without a prepared image marker to fail fast before launch" >&2
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --doctor >/tmp/workcell-strict-preflight.out 2>&1; then
+  echo "Expected strict-mode doctor to report the missing prepared image without launching the runtime" >&2
   exit 1
 fi
-assert_output_contains \
-  "No prepared runtime image is recorded for strict mode" \
-  /tmp/workcell-strict-preflight.out \
-  "Expected strict preflight output to explain that the prepared image marker is missing"
-assert_output_contains \
-  "--prepare" \
-  /tmp/workcell-strict-preflight.out \
-  "Expected strict preflight output to recommend a strict prepare command"
-assert_output_did_not_start_colima \
-  /tmp/workcell-strict-preflight.out \
-  "Strict preflight should fail before Colima startup when the prepared image marker is absent"
+grep -q '^doctor_prepared_image=0$' /tmp/workcell-strict-preflight.out
+grep -Fq 'doctor_recommended_next=  workcell --prepare --agent codex --workspace ' /tmp/workcell-strict-preflight.out
+grep -Fq -- "--allow-nongit-workspace --colima-profile ${STRICT_PREFLIGHT_PROFILE}" /tmp/workcell-strict-preflight.out
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
@@ -5212,6 +5216,23 @@ if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- '--entrypoint bash'; then
   exit 1
 fi
 
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --mode development \
+  --dry-run \
+  -- bash -lc true \
+  >/tmp/workcell-development-command.stdout 2>/tmp/workcell-development-command.stderr; then
+  echo "Expected managed development command dry-run to succeed" >&2
+  cat /tmp/workcell-development-command.stderr >&2
+  exit 1
+fi
+grep -q 'profile=.* mode=development agent=codex ' /tmp/workcell-development-command.stderr
+grep -q 'execution_path=lower-assurance-development' /tmp/workcell-development-command.stderr
+if grep -q -- '--entrypoint bash' /tmp/workcell-development-command.stdout; then
+  echo "Development command dry-run should stay on the managed entrypoint" >&2
+  exit 1
+fi
+
 if "${ROOT_DIR}/scripts/workcell" --agent codex --colima-profile ../../Library/Caches/colima-evil --dry-run >/dev/null 2>&1; then
   echo "Expected invalid Colima profile name rejection" >&2
   exit 1
@@ -5495,21 +5516,18 @@ EOF
     strict_refresh_status=$?
     set -e
     VERIFY_INVARIANTS_EXPECTED_FAILURE=0
-    if [[ "${strict_refresh_status}" -ne 2 ]]; then
-      echo "Expected strict-mode refresh preflight to fail with exit 2 before the test hook, got ${strict_refresh_status}" >&2
+    if [[ "${strict_refresh_status}" -ne 88 ]]; then
+      echo "Expected strict-mode refresh launch without --prepare to reach the post-refresh test hook, got ${strict_refresh_status}" >&2
       cat /tmp/workcell-strict-refresh-preflight.out >&2
       exit 1
     fi
     grep -q "Refreshing managed Colima profile ${STRICT_REFRESH_PROFILE_NAME} to apply the requested reviewed VM resources." /tmp/workcell-strict-refresh-preflight.out
     grep -q "No prepared runtime image is recorded for strict mode on profile ${STRICT_REFRESH_PROFILE_NAME}." /tmp/workcell-strict-refresh-preflight.out
-    grep -q "No VM or container was started." /tmp/workcell-strict-refresh-preflight.out
+    grep -q "Workcell will seed or refresh the prepared runtime image automatically before launching codex in strict mode." /tmp/workcell-strict-refresh-preflight.out
     assert_output_did_not_start_colima \
       /tmp/workcell-strict-refresh-preflight.out \
-      "Strict-mode refresh preflight should fail before Colima startup when the prepared image marker is absent"
-    if grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-preflight.out; then
-      echo "Strict-mode refresh preflight should fail before the post-refresh test hook runs" >&2
-      exit 1
-    fi
+      "Strict-mode refresh launch should still stop at the post-refresh hook before Colima startup"
+    grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-preflight.out
     VERIFY_INVARIANTS_EXPECTED_FAILURE=1
     set +e
     "${ROOT_DIR}/scripts/workcell" \
@@ -5523,16 +5541,13 @@ EOF
     strict_refresh_prepare_status=$?
     set -e
     VERIFY_INVARIANTS_EXPECTED_FAILURE=0
-    if [[ "${strict_refresh_prepare_status}" -ne 88 ]]; then
-      echo "Expected follow-up strict prepare to reach the post-refresh hook instead of tripping unmanaged-profile preflight, got ${strict_refresh_prepare_status}" >&2
+    if [[ "${strict_refresh_prepare_status}" -ne 2 ]]; then
+      echo "Expected follow-up strict prepare to stop on unmanaged-profile safety preflight, got ${strict_refresh_prepare_status}" >&2
       cat /tmp/workcell-strict-refresh-prepare.out >&2
       exit 1
     fi
-    grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-prepare.out
-    if grep -q 'Refusing to reuse unmanaged Colima profile' /tmp/workcell-strict-refresh-prepare.out; then
-      echo "Strict-mode refresh preflight should leave the profile recoverable by --prepare" >&2
-      exit 1
-    fi
+    grep -q 'Refusing to reuse unmanaged Colima profile' /tmp/workcell-strict-refresh-prepare.out
+    grep -q -- '--repair-profile' /tmp/workcell-strict-refresh-prepare.out
     delete_verify_colima_profile "${STRICT_REFRESH_PROFILE_NAME}"
   fi
 fi

@@ -31,6 +31,7 @@ var (
 	}
 	supportedModes = map[string]struct{}{
 		"strict":     {},
+		"development": {},
 		"build":      {},
 		"breakglass": {},
 	}

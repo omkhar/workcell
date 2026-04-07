@@ -89,7 +89,7 @@ and
 .RS
 .TP
 .B strict + ephemeral
-Default developer path with
+Default mutable managed provider path with
 .BR container_assurance=managed-mutable .
 This allows transient package installs, but a successful package mutation
 downgrades the live session to
@@ -101,6 +101,15 @@ Strongest managed path with
 .BR container_assurance=managed-readonly .
 Package-manager writes stay blocked, so the in-session control-plane posture
 does not downgrade.
+.TP
+.B development + ephemeral
+Managed interactive path with broader dependency egress and
+.BR execution_path=lower-assurance-development .
+It keeps the same VM-plus-container boundary and workspace control-plane
+masking as
+.BR strict ,
+but allows managed non-provider command execution through the reviewed
+development wrapper.
 .TP
 .B --agent-autonomy prompt
 Keeps the provider's approval flow, but Workcell surfaces that separately as
@@ -183,13 +192,14 @@ Select the surface to launch. Only
 .BR cli
 is currently implemented as a preserved-boundary path.
 .TP
-.B --mode strict|build|breakglass
+.B --mode strict|development|build|breakglass
 Select the runtime profile. The default is
 .BR strict .
 .TP
 .B --prepare
 Seed or refresh the prepared runtime image before continuing with the requested
-launch. This is the recommended first-run path.
+launch. Normal strict launches do this automatically when the reviewed image is
+missing or stale.
 .TP
 .B --prepare-only
 Seed or refresh the prepared runtime image and then exit without launching a
@@ -323,9 +333,19 @@ cold builds or rebuilds unless
 .B --prepare
 explicitly tells Workcell to seed the image before continuing.
 .TP
+.B development
+The same mount, masking, and secret restrictions as
+.BR strict ,
+but with managed non-provider command execution through the reviewed
+development wrapper and broader network access for dependency, build, and repo
+work. This path is surfaced in audit state as
+.BR execution_path=lower-assurance-development .
+.TP
 .B build
 The same mount and secret restrictions as
-.BR strict ,
+.BR strict
+and
+.BR development ,
 with broader network access for dependency and build traffic.
 Prepared runtime-image creation and rebuilds happen here.
 .TP
@@ -450,7 +470,15 @@ Reusable provider and GitHub auth should go through
 .BR [credentials]
 in the injection policy rather than generic copied files.
 .SH FIRST RUN AND RECOVERY
-Recommended first launch:
+Direct launch; Workcell prepares the reviewed runtime image automatically on the
+first strict run when needed:
+.IP
+.EX
+workcell --agent codex --workspace /path/to/repo
+.EE
+.PP
+Make the prepare step explicit when you want to prewarm or pay the cold-start
+cost before the interactive session:
 .IP
 .EX
 workcell --prepare --agent codex --workspace /path/to/repo

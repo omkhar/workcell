@@ -26,7 +26,16 @@ version = 1
 gemini_oauth = "/Users/example/.config/workcell/gemini-oauth.json"
 ```
 
-## 2. Prepare the runtime image
+## 2. Optional explicit prepare
+
+A normal strict launch prepares the reviewed runtime image automatically when
+needed:
+
+```bash
+workcell --agent gemini --workspace /path/to/repo
+```
+
+Use `--prepare-only` when you want to prewarm without launching:
 
 ```bash
 workcell --prepare-only --agent gemini --workspace /path/to/repo
@@ -47,6 +56,12 @@ workcell --agent gemini --workspace /path/to/repo
 
 Gemini's trusted-folders registry is seeded on the managed path so `/workspace`
 is already trusted inside the ephemeral session home.
+
+Managed development lane:
+
+```bash
+workcell --agent gemini --mode development --workspace /path/to/repo -- bash -lc 'npm test'
+```
 
 ## 5. Vertex supplement
 

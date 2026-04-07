@@ -283,6 +283,7 @@ COPY runtime/container/bin/apt-helper.sh /usr/local/libexec/workcell/apt-helper.
 COPY runtime/container/bin/apt-wrapper.sh /usr/local/libexec/workcell/apt-wrapper.sh
 COPY runtime/container/rust /workcell-rust
 COPY runtime/container/assurance.sh /usr/local/libexec/workcell/assurance.sh
+COPY runtime/container/development-wrapper.sh /usr/local/libexec/workcell/development-wrapper.sh
 COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
 COPY runtime/container/home-control-plane.sh /usr/local/libexec/workcell/home-control-plane.sh
 COPY runtime/container/provider-wrapper.sh /usr/local/libexec/workcell/provider-wrapper.sh
@@ -310,6 +311,7 @@ RUN SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     /usr/local/libexec/workcell/assurance.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
+    /usr/local/libexec/workcell/development-wrapper.sh \
     /usr/local/libexec/workcell/entrypoint.sh \
     /usr/local/libexec/workcell/git-wrapper.sh \
     /usr/local/libexec/workcell/node-wrapper.sh \
@@ -320,6 +322,7 @@ RUN SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     /usr/local/libexec/workcell/assurance.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
+    /usr/local/libexec/workcell/development-wrapper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
     /usr/local/libexec/workcell/provider-policy.sh \

@@ -35,7 +35,7 @@ config = "/Users/example/.ssh/config"
 known_hosts = "/Users/example/.ssh/known_hosts"
 identities = ["/Users/example/.ssh/id_workcell"]
 providers = ["codex", "claude", "gemini"]
-modes = ["strict", "build"]
+modes = ["strict", "development", "build"]
 
 [[copies]]
 source = "/Users/example/.config/workcell/corp-ca.pem"

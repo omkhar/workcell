@@ -59,6 +59,7 @@ the managed path.
 
 - `strict`: default managed lane
 - `strict --container-mutability readonly`: strongest managed lane
+- `development`: managed interactive lane with broader dependency egress
 - `build`: broader egress for preparation and rebuild work
 - `breakglass`: explicit higher-trust path requiring acknowledgement
 

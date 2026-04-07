@@ -1589,6 +1589,29 @@ if run_entrypoint codex bash -lc true >/tmp/workcell-entrypoint-command.out 2>&1
 fi
 grep -q "Workcell blocked non-provider command" /tmp/workcell-entrypoint-command.out
 
+for agent in codex claude gemini; do
+  if ! run_entrypoint_with_profile "${agent}" development bash -lc "printf '%s\n' development-mode-ok" \
+    >/tmp/workcell-entrypoint-development-${agent}.out 2>&1; then
+    echo "expected Workcell entrypoint development mode to allow managed non-provider commands for ${agent}" >&2
+    cat /tmp/workcell-entrypoint-development-${agent}.out >&2
+    exit 1
+  fi
+  grep -q '^development-mode-ok$' /tmp/workcell-entrypoint-development-${agent}.out
+done
+
+if ! run_entrypoint_with_profile codex development bash -lc '
+  set -euo pipefail
+  git --version >/dev/null
+  sed -n "1p" /workspace/README.md >/tmp/workcell-development-readme.out
+  test -s /tmp/workcell-development-readme.out
+  ls /workspace | grep -q "^README.md$"
+  find /workspace -maxdepth 1 -name README.md | grep -q "^/workspace/README.md$"
+' >/tmp/workcell-entrypoint-development-readonly.out 2>&1; then
+  echo "expected development mode to support managed readonly workspace inspection commands" >&2
+  cat /tmp/workcell-entrypoint-development-readonly.out >&2
+  exit 1
+fi
+
 if run_entrypoint codex codex --search >/tmp/workcell-entrypoint-codex-search.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex web search outside breakglass" >&2
   exit 1
@@ -2202,6 +2225,14 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/provider-wrapper-bashenv.out
+  cat <<'EOF' >/tmp/workcell-development-wrapper-bashenv.sh
+exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/codex --version
+EOF
+  if BASH_ENV=/tmp/workcell-development-wrapper-bashenv.sh bash /usr/local/libexec/workcell/development-wrapper.sh >/tmp/development-wrapper-bashenv.out 2>&1; then
+    echo "expected explicit bash launch of development wrapper with hostile BASH_ENV to fail" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/development-wrapper-bashenv.out
   cat <<'EOF' >/tmp/workcell-node-wrapper-bashenv.sh
 exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/node --version
 EOF

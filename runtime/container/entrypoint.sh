@@ -170,26 +170,30 @@ if [[ $# -eq 0 ]]; then
   esac
 fi
 
-validate_command_args "${AGENT_NAME}" "$@"
+if [[ "${WORKCELL_MODE}" == "development" ]] && [[ $# -gt 0 ]] && [[ "$1" != "${AGENT_NAME}" ]]; then
+  set -- /bin/bash /usr/local/libexec/workcell/development-wrapper.sh "$@"
+else
+  validate_command_args "${AGENT_NAME}" "$@"
 
-if [[ $# -gt 0 ]]; then
-  case "${AGENT_NAME}" in
-    codex)
-      if [[ "$1" == "codex" ]]; then
-        set -- /usr/local/libexec/workcell/core/codex "${@:2}"
-      fi
-      ;;
-    claude)
-      if [[ "$1" == "claude" ]]; then
-        set -- /usr/local/libexec/workcell/core/claude "${@:2}"
-      fi
-      ;;
-    gemini)
-      if [[ "$1" == "gemini" ]]; then
-        set -- /usr/local/libexec/workcell/core/gemini "${@:2}"
-      fi
-      ;;
-  esac
+  if [[ $# -gt 0 ]]; then
+    case "${AGENT_NAME}" in
+      codex)
+        if [[ "$1" == "codex" ]]; then
+          set -- /usr/local/libexec/workcell/core/codex "${@:2}"
+        fi
+        ;;
+      claude)
+        if [[ "$1" == "claude" ]]; then
+          set -- /usr/local/libexec/workcell/core/claude "${@:2}"
+        fi
+        ;;
+      gemini)
+        if [[ "$1" == "gemini" ]]; then
+          set -- /usr/local/libexec/workcell/core/gemini "${@:2}"
+        fi
+        ;;
+    esac
+  fi
 fi
 
 printf 'agent=%s ui=%s mode=%s autonomy=%s workspace=%s\n' "${AGENT_NAME}" "${AGENT_UI}" "${WORKCELL_MODE}" "${WORKCELL_AGENT_AUTONOMY}" "${WORKSPACE}" >&2

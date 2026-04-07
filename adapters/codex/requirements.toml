@@ -6,7 +6,7 @@
 allowed_approval_policies = ["on-request", "never"]
 # danger-full-access is listed here to satisfy Codex schema validation but is
 # only reachable when Workcell runs in breakglass mode (--mode breakglass
-# --ack-breakglass). The strict and build runtime profiles enforce
+# --ack-breakglass). The strict, development, and build runtime profiles enforce
 # workspace-write via the managed container entrypoint; no operator path
 # reaches danger-full-access outside an explicitly acknowledged breakglass
 # session.

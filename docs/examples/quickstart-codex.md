@@ -29,10 +29,13 @@ version = 1
 codex_auth = "/Users/example/.config/workcell/codex-auth.json"
 ```
 
-## 2. Prepare the runtime
+## 2. Optional explicit prepare
+
+A normal strict launch prepares the reviewed runtime image automatically when
+needed:
 
 ```bash
-workcell --prepare --agent codex --workspace /path/to/repo
+workcell --agent codex --workspace /path/to/repo
 ```
 
 To prewarm without launching:
@@ -79,6 +82,12 @@ Build lane:
 
 ```bash
 workcell --agent codex --mode build --workspace /path/to/repo
+```
+
+Managed development lane:
+
+```bash
+workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 ```
 
 Breakglass:

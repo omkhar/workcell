@@ -18,7 +18,7 @@ effective_codex_profile() {
   local requested_profile="${WORKCELL_MODE:-strict}"
 
   case "${requested_profile}" in
-    strict | build)
+    strict | development | build)
       printf '%s\n' "${requested_profile}"
       ;;
     *)

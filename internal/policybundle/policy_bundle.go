@@ -28,6 +28,7 @@ var SupportedAgents = map[string]struct{}{
 
 var SupportedModes = map[string]struct{}{
 	"strict":     {},
+	"development": {},
 	"build":      {},
 	"breakglass": {},
 }

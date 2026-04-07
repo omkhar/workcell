@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "9ec5ab5b2ffa8b6dbe4442aa6f0ea8dfd745859c8ccb5c65525b9be855d13e0c"
+      "sha256": "dc2af073149ef3cbe8b1df24ed36a1eb070cc9ea75c3c60baf4c5bf43211d455"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts",
@@ -82,7 +82,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/config.toml",
-      "sha256": "26e5b940ea519689e594d83018760317eeb0108833bd69b4a1071171f95a3c96"
+      "sha256": "5bc878c96894732def0c2ee8f803b53034ed846debfd09b40539b37c7ca83433"
     },
     {
       "kind": "adapter-baseline",
@@ -94,7 +94,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "bf70e93418a1ba3f9e95a75ecf9147e91efefa7cfafce53b0d9c51f357001655"
+      "sha256": "fd398e5488494b60cf3bee6573b90283eaa169bb1bed026527819068b0ca4025"
     },
     {
       "kind": "adapter-baseline",
@@ -106,7 +106,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "f12801ce5b1f7682eb891e12ed9788c4ea26cc37234c5d76172c383f3827f0c5"
+      "sha256": "e859d3e571d52161c186251d1d3d1a79e300b401b31e7a02c2e4e4405fe0b32f"
     },
     {
       "kind": "adapter-baseline",
@@ -140,9 +140,15 @@
     },
     {
       "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/development-wrapper.sh",
+      "runtime_path": "/usr/local/libexec/workcell/development-wrapper.sh",
+      "sha256": "5c693c364c75c4a0e1db137002a2b19d9bbfa3b259f39aa111b7dbb4d77d42e9"
+    },
+    {
+      "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "bede7aa5a32d3b0dbb491368abfe919c84c8e8a0640e6fafbf49d7dc53716b93"
+      "sha256": "3a37cd8db6cbbbc2417d671335303e0bf4ebe5bf013923b6e02bccad443b3c3b"
     },
     {
       "kind": "runtime-control-plane",
@@ -166,7 +172,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-policy.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "ac94fce402c4d8e3a09d2ae156117a7745e11e217f2451b9c82c7da00150f81a"
+      "sha256": "8b3f0bd99130eba820cb76e28aa3d6727aecba35c0a6b3aa03844e2d9dab690a"
     },
     {
       "kind": "runtime-control-plane",

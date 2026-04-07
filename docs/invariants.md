@@ -31,7 +31,8 @@ quietly take over the runtime control plane.
 
 ## 4. Network posture is explicit
 
-`strict`, `build`, and `breakglass` are distinct runtime profiles. Workcell
+`strict`, `development`, `build`, and `breakglass` are distinct runtime
+profiles. Workcell
 does not rely on provider prompts to describe network posture after the fact.
 
 ## 5. Destructive or trust-widening actions need defense in depth
@@ -51,6 +52,7 @@ Examples:
 
 - `--agent-autonomy prompt`
 - `--cache-profile standard`
+- `development`
 - package mutation inside a mutable container
 - `--allow-control-plane-vcs`
 - `--allow-arbitrary-command`
@@ -70,8 +72,9 @@ than ambient defaults.
 
 | Profile | Expected posture |
 |---|---|
-| `strict` | default developer lane; reviewed mounts, explicit network posture, repo control-plane masking |
+| `strict` | default provider lane; reviewed mounts, explicit network posture, repo control-plane masking |
 | `strict --container-mutability readonly` | strongest managed lane; package-manager writes blocked |
+| `development` | managed interactive lane; same boundary and masking as `strict` with managed non-provider command execution and broader dependency egress |
 | `build` | broader egress for image preparation and dependency refresh |
 | `breakglass` | explicit higher-trust lane requiring acknowledgement |
 

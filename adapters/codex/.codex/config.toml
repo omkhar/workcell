@@ -45,6 +45,14 @@ sandbox_mode = "workspace-write"
 approval_policy = "on-request"
 web_search = "disabled"
 
+[profiles.development]
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+web_search = "disabled"
+
+[profiles.development.sandbox_workspace_write]
+network_access = true
+
 [profiles.build]
 sandbox_mode = "workspace-write"
 approval_policy = "never"
