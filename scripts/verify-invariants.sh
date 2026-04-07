@@ -3399,8 +3399,8 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^doctor_prepared_image=0$' /tmp/workcell-strict-preflight.out
-grep -Fq 'doctor_recommended_next=  workcell --prepare --agent codex --workspace ' /tmp/workcell-strict-preflight.out
-grep -Fq -- "--allow-nongit-workspace --colima-profile ${STRICT_PREFLIGHT_PROFILE}" /tmp/workcell-strict-preflight.out
+assert_doctor_missing_host_tools /tmp/workcell-strict-preflight.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
+assert_doctor_next_for_prepare /tmp/workcell-strict-preflight.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
