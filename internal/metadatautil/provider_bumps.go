@@ -314,6 +314,14 @@ func selectCodexStable(currentVersion string, cutoff time.Time, sources Provider
 			TargetVersion:  currentVersion,
 		}, nil
 	}
+	if version == currentVersion {
+		return ProviderBumpSelection{
+			Channel:        "stable",
+			CurrentVersion: currentVersion,
+			TargetVersion:  version,
+			PublishedAt:    publishedAt.Format(time.RFC3339),
+		}, nil
+	}
 	releaseURL := fmt.Sprintf(sources.CodexReleaseAPIURLFmt, version)
 	var release codexReleaseMetadata
 	if err := fetchJSON(client, releaseURL, &release); err != nil {

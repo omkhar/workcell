@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -215,6 +216,7 @@ func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
 		`channel = "stable"`,
 	}, "\n")+"\n")
 
+	var codexReleaseRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/codex-registry":
@@ -228,26 +230,13 @@ func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
     "created": "2026-01-01T00:00:00Z",
     "modified": "2026-04-08T04:37:07Z",
     "0.118.0": "2026-03-31T17:03:18Z",
-    "0.119.0": "2026-04-02T17:03:18Z",
-    "0.119.0-alpha.19": "2026-04-08T04:37:07Z"
+  "0.119.0": "2026-04-02T17:03:18Z",
+  "0.119.0-alpha.19": "2026-04-08T04:37:07Z"
   }
 }`))
 		case "/codex-release/rust-v0.118.0":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{
-  "tag_name": "rust-v0.118.0",
-  "prerelease": false,
-  "assets": [
-    {
-      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
-      "digest": "sha256:9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7"
-    },
-    {
-      "name": "codex-x86_64-unknown-linux-gnu.tar.gz",
-      "digest": "sha256:220f15ca1c639e905aae385da960e1897882fee76653f5f9f5dffa5f754f7c98"
-    }
-  ]
-}`))
+			codexReleaseRequests.Add(1)
+			http.Error(w, "unexpected Codex release metadata request for unchanged stable pin", http.StatusInternalServerError)
 		case "/gemini-registry":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -296,6 +285,9 @@ func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
 	}
 	if plan.Providers["codex"].Changed {
 		t.Fatal("Codex plan should not propose a version newer than dist-tags.latest")
+	}
+	if got := codexReleaseRequests.Load(); got != 0 {
+		t.Fatalf("Codex release API was queried %d time(s) for an unchanged stable pin", got)
 	}
 }
 
