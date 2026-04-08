@@ -46,6 +46,7 @@ type PinnedInputsConfig struct {
 	CodexMCPConfigPath            string
 	HostedControlsPolicyPath      string
 	HostedControlsScriptPath      string
+	ProviderBumpPolicyPath        string
 	MaxDebianSnapshotAgeDays      int
 }
 
@@ -492,6 +493,7 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/assurance.sh", RuntimePath: "/usr/local/libexec/workcell/assurance.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-helper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-helper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-wrapper.sh"},
+		{Kind: "runtime-control-plane", RepoPath: "runtime/container/development-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/development-wrapper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/entrypoint.sh", RuntimePath: "/usr/local/libexec/workcell/entrypoint.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/git", RuntimePath: "/usr/local/libexec/workcell/git-wrapper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/home-control-plane.sh", RuntimePath: "/usr/local/libexec/workcell/home-control-plane.sh"},

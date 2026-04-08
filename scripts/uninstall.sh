@@ -10,7 +10,7 @@ DRY_RUN=0
 
 usage() {
   cat <<'EOF'
-Usage: uninstall.sh [--dry-run]
+Usage: ./scripts/uninstall.sh [--dry-run]
 
 Remove Workcell-owned local install links and managed host state:
   - ~/.local/bin/workcell

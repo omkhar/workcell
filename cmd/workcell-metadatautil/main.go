@@ -4,9 +4,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/omkhar/workcell/internal/metadatautil"
 )
@@ -105,6 +107,38 @@ func main() {
 			die(fmt.Errorf("usage: %s manifest-version MANIFEST_PATH EXPECTED_VERSION", os.Args[0]))
 		}
 		err = metadatautil.ManifestVersion(os.Args[2], os.Args[3])
+	case "check-provider-bump-policy":
+		if len(os.Args) != 5 {
+			die(fmt.Errorf("usage: %s check-provider-bump-policy POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", os.Args[0]))
+		}
+		err = metadatautil.CheckProviderBumpPolicy(os.Args[2], os.Args[3], os.Args[4])
+	case "provider-bump-plan":
+		if len(os.Args) != 5 && len(os.Args) != 6 {
+			die(fmt.Errorf("usage: %s provider-bump-plan POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON [NOW_RFC3339]", os.Args[0]))
+		}
+		now := time.Now().UTC()
+		if len(os.Args) == 6 {
+			parsedNow, parseErr := time.Parse(time.RFC3339, os.Args[5])
+			if parseErr != nil {
+				die(parseErr)
+			}
+			now = parsedNow.UTC()
+		}
+		plan, planErr := metadatautil.PlanProviderBumps(os.Args[2], os.Args[3], os.Args[4], now, metadatautil.DefaultProviderBumpSources(), nil)
+		if planErr != nil {
+			die(planErr)
+		}
+		content, marshalErr := json.MarshalIndent(plan, "", "  ")
+		if marshalErr != nil {
+			die(marshalErr)
+		}
+		fmt.Printf("%s\n", content)
+		return
+	case "apply-provider-bump-plan":
+		if len(os.Args) != 5 {
+			die(fmt.Errorf("usage: %s apply-provider-bump-plan PLAN_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", os.Args[0]))
+		}
+		err = metadatautil.ApplyProviderBumpPlan(os.Args[2], os.Args[3], os.Args[4])
 	case "generate-build-input-manifest":
 		if len(os.Args) != 9 {
 			die(fmt.Errorf("usage: %s generate-build-input-manifest DOCKERFILE PACKAGE_JSON PACKAGE_LOCK OUTPUT BUILD_REF SOURCE_DATE_EPOCH REQUIRE_TRACKED", os.Args[0]))
@@ -138,10 +172,10 @@ func main() {
 			os.Args[17],
 		)
 	case "check-pinned-inputs":
-		if len(os.Args) != 17 {
-			die(fmt.Errorf("usage: %s check-pinned-inputs DOCKERFILE VALIDATOR_DOCKERFILE REMOTE_VALIDATOR_DOCKERFILE PROVIDERS_PACKAGE_JSON PROVIDERS_PACKAGE_LOCK WORKFLOWS_DIR CI_WORKFLOW RELEASE_WORKFLOW PIN_HYGIENE_WORKFLOW CODEOWNERS CODEX_REQUIREMENTS CODEX_MCP_CONFIG HOSTED_CONTROLS_POLICY HOSTED_CONTROLS_SCRIPT MAX_DEBIAN_SNAPSHOT_AGE_DAYS", os.Args[0]))
+		if len(os.Args) != 18 {
+			die(fmt.Errorf("usage: %s check-pinned-inputs DOCKERFILE VALIDATOR_DOCKERFILE REMOTE_VALIDATOR_DOCKERFILE PROVIDERS_PACKAGE_JSON PROVIDERS_PACKAGE_LOCK WORKFLOWS_DIR CI_WORKFLOW RELEASE_WORKFLOW PIN_HYGIENE_WORKFLOW CODEOWNERS CODEX_REQUIREMENTS CODEX_MCP_CONFIG HOSTED_CONTROLS_POLICY HOSTED_CONTROLS_SCRIPT PROVIDER_BUMP_POLICY MAX_DEBIAN_SNAPSHOT_AGE_DAYS", os.Args[0]))
 		}
-		maxAge, convErr := strconv.Atoi(os.Args[16])
+		maxAge, convErr := strconv.Atoi(os.Args[17])
 		if convErr != nil {
 			die(convErr)
 		}
@@ -160,6 +194,7 @@ func main() {
 			CodexMCPConfigPath:            os.Args[13],
 			HostedControlsPolicyPath:      os.Args[14],
 			HostedControlsScriptPath:      os.Args[15],
+			ProviderBumpPolicyPath:        os.Args[16],
 			MaxDebianSnapshotAgeDays:      maxAge,
 		})
 	case "verify-reproducible-build":

@@ -19,12 +19,13 @@ reproducible runtime for the supported providers.
 
 ## Runtime profiles
 
-- `strict`: default developer lane
+- `strict`: default provider lane
+- `development`: managed interactive development lane
 - `build`: explicit build and image-preparation lane
 - `breakglass`: explicit higher-trust lane
 
-`strict` expects a prepared runtime image. Image creation and rebuild belong to
-`build`.
+`strict` expects a prepared runtime image. Interactive repo work and dependency
+egress belong to `development` or `build`.
 
 ## Main entrypoints
 

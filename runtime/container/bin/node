@@ -5,6 +5,8 @@ REAL_NODE="/usr/local/libexec/workcell/real/node"
 NODE_GUARD="/usr/local/libexec/workcell/public-node-guard.mjs"
 TRUSTED_PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
 SCRIPT_PATH=""
+GEMINI_PROVIDER_SCRIPT_PATH=""
+PROTECTED_PROVIDER_SCRIPT_PATH=""
 
 sanitize_node_env() {
   unset BASH_ENV
@@ -36,13 +38,40 @@ canonicalize_existing_path() {
   return 1
 }
 
+protected_gemini_provider_script() {
+  local package_json="/opt/workcell/providers/node_modules/@google/gemini-cli/package.json"
+  local relative_path=""
+
+  if [[ -n "${GEMINI_PROVIDER_SCRIPT_PATH}" ]]; then
+    printf '%s\n' "${GEMINI_PROVIDER_SCRIPT_PATH}"
+    return 0
+  fi
+
+  relative_path="$(jq -r '
+    .bin
+    | if type == "string" then .
+      elif type == "object" then (.gemini // (to_entries | .[0].value))
+      else empty
+      end
+  ' "${package_json}" 2>/dev/null || true)"
+  if [[ -z "${relative_path}" || "${relative_path}" == "null" ]]; then
+    return 1
+  fi
+
+  GEMINI_PROVIDER_SCRIPT_PATH="/opt/workcell/providers/node_modules/@google/gemini-cli/${relative_path}"
+  printf '%s\n' "${GEMINI_PROVIDER_SCRIPT_PATH}"
+}
+
 is_protected_provider_script() {
   local candidate="${1:-}"
   local canonical_candidate=""
+  local protected_script=""
+
+  protected_script="$(protected_gemini_provider_script 2>/dev/null || true)"
 
   canonical_candidate="$(canonicalize_existing_path "${candidate}" 2>/dev/null || true)"
   case "${canonical_candidate:-${candidate}}" in
-    /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js)
+    "${protected_script}")
       return 0
       ;;
   esac
@@ -80,12 +109,13 @@ no_script_invocation_is_safe() {
 }
 
 for arg in "$@"; do
-  case "${arg}" in
-    *"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"*)
-      echo "Workcell blocked direct provider script execution via node." >&2
-      exit 2
-      ;;
-  esac
+  if [[ -z "${PROTECTED_PROVIDER_SCRIPT_PATH}" ]]; then
+    PROTECTED_PROVIDER_SCRIPT_PATH="$(protected_gemini_provider_script 2>/dev/null || true)"
+  fi
+  if [[ -n "${PROTECTED_PROVIDER_SCRIPT_PATH}" ]] && [[ "${arg}" == *"${PROTECTED_PROVIDER_SCRIPT_PATH}"* ]]; then
+    echo "Workcell blocked direct provider script execution via node." >&2
+    exit 2
+  fi
 
   case "${arg}" in
     --)

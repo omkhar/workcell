@@ -37,7 +37,7 @@ directly.
 Selectors let you scope entries to only some launches:
 
 - `providers = ["codex", "claude", "gemini"]`
-- `modes = ["strict", "build"]`
+- `modes = ["strict", "development", "build"]`
 
 Credential entries can be either direct file sources or built-in host
 resolvers:

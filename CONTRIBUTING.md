@@ -57,20 +57,29 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
 ## Recommended workflow
 
 1. Create a feature branch from `main`.
-2. Make the change.
-3. Run the fast local gate:
+2. Enable the repo-local hooks:
+
+   ```bash
+   git config core.hooksPath .githooks
+   ```
+
+   The pre-commit hook blocks unrelated commits when stable provider pin bumps
+   are pending and points you at `./scripts/publish-provider-bump-pr.sh`.
+
+3. Make the change.
+4. Run the fast local gate:
 
    ```bash
    ./scripts/dev-quick-check.sh
    ```
 
-4. Before opening a PR, run the full local gate:
+5. Before opening a PR, run the full local gate:
 
    ```bash
    ./scripts/pre-merge.sh
    ```
 
-5. Open a PR against `main`.
+6. Open a PR against `main`.
 
 ## Commit messages
 

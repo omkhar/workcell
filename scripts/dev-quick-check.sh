@@ -41,6 +41,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-go-python-parity.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
+  "${ROOT_DIR}/runtime/container/development-wrapper.sh"
   "${ROOT_DIR}/runtime/container/home-control-plane.sh"
   "${ROOT_DIR}/runtime/container/provider-wrapper.sh"
   "${ROOT_DIR}/runtime/container/runtime-user.sh"

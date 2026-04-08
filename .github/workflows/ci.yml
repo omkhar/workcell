@@ -52,6 +52,9 @@ jobs:
       - name: Verify upstream Claude release
         run: ./scripts/verify-upstream-claude-release.sh
 
+      - name: Verify upstream Gemini release
+        run: ./scripts/verify-upstream-gemini-release.sh
+
       - name: Build validation tool image
         run: |
           docker build \

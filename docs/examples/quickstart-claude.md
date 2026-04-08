@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Workcell installed with `./install.sh`
+- Workcell installed with `./scripts/install.sh`
 - a repo you want to mount as the workspace
 - a reviewed Claude API key file, or an experimental macOS resolver config
 
@@ -34,9 +34,16 @@ unless a supported export path exists. Use it only to record intent for a
 future supported export and verify the configured-only state with
 `workcell auth status --agent claude`.
 
-## 2. Prepare the runtime image
+## 2. Optional explicit prepare
 
-If you configured `claude_api_key`, prepare the runtime image:
+If you configured `claude_api_key`, a normal strict launch prepares the reviewed
+runtime image automatically when needed:
+
+```bash
+workcell --agent claude --workspace /path/to/repo
+```
+
+Use `--prepare-only` when you want to prewarm without launching:
 
 ```bash
 workcell --prepare-only --agent claude --workspace /path/to/repo
@@ -67,6 +74,12 @@ Prompt-mode autonomy:
 
 ```bash
 workcell --agent claude --agent-autonomy prompt --workspace /path/to/repo
+```
+
+Managed development lane:
+
+```bash
+workcell --agent claude --mode development --workspace /path/to/repo -- bash -lc 'rg TODO'
 ```
 
 ## 5. Optional reviewed MCP state

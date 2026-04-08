@@ -65,6 +65,6 @@ ambient host passthrough.
 These are not treated as equivalent to the default path:
 
 - host-native GUI execution
-- arbitrary container commands through the managed runtime image
+- arbitrary container commands outside the explicit managed `development` or `--allow-arbitrary-command` paths
 - `breakglass`
 - whole-home or socket passthrough

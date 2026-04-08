@@ -48,6 +48,7 @@ sanitize_provider_env() {
   unset LD_LIBRARY_PATH
   unset SSL_CERT_FILE
   unset SSL_CERT_DIR
+  workcell_sanitize_git_runtime_env
   export NODE_NO_WARNINGS=1
   export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
   export PATH="${TRUSTED_PATH}"
@@ -157,6 +158,22 @@ sanitize_gemini_sandbox_env() {
   unset SEATBELT_PROFILE
 }
 
+gemini_provider_script_path() {
+  local package_json="/opt/workcell/providers/node_modules/@google/gemini-cli/package.json"
+  local relative_path=""
+
+  relative_path="$(jq -r '
+    .bin
+    | if type == "string" then .
+      elif type == "object" then (.gemini // (to_entries | .[0].value))
+      else empty
+      end
+  ' "${package_json}")"
+
+  [[ -n "${relative_path}" && "${relative_path}" != "null" ]] || workcell_die "Unable to resolve Gemini provider entrypoint from ${package_json}."
+  printf '/opt/workcell/providers/node_modules/@google/gemini-cli/%s\n' "${relative_path}"
+}
+
 case "${WORKCELL_AGENT_AUTONOMY}" in
   yolo | prompt) ;;
   *)
@@ -210,7 +227,7 @@ case "${AGENT_NAME}" in
     reject_unsafe_gemini_args "$@"
     # Gemini CLI self-relaunch conflicts with Workcell's protected exec boundary.
     GEMINI_CLI_NO_RELAUNCH=1 GEMINI_SANDBOX=false exec /usr/local/libexec/workcell/real/node \
-      /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
+      "$(gemini_provider_script_path)" \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"
     ;;

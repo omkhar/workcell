@@ -13,6 +13,11 @@ Workcell re-seeds this state into the session-local Codex home on launch.
 Repo-local control files stay masked on the safe path and are imported only as
 reviewed layers.
 
+Codex's own Linux `workspace-write` sandbox is pinned off on the managed
+Workcell path. Workcell already provides the outer VM-plus-container boundary,
+and the current Codex Linux sandbox depends on unprivileged user namespaces
+that are unavailable inside the Tier 1 container.
+
 Final branch publication stays on the host through `workcell publish-pr`, not
 from inside the container session.
 

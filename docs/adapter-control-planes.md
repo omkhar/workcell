@@ -59,6 +59,7 @@ the managed path.
 
 - `strict`: default managed lane
 - `strict --container-mutability readonly`: strongest managed lane
+- `development`: managed interactive lane with broader dependency egress
 - `build`: broader egress for preparation and rebuild work
 - `breakglass`: explicit higher-trust path requiring acknowledgement
 
@@ -72,6 +73,13 @@ copy only when:
 - `--codex-rules-mutability session` is selected
 - prompt autonomy is active
 - the session has already been downgraded by package mutation
+
+### Codex native sandbox
+
+Workcell pins Codex's own Linux shell sandbox off on the managed path.
+Workcell's outer VM-plus-container boundary remains the primary isolation
+control, and the current Codex Linux sandbox requires unprivileged user
+namespaces that are not available inside the Tier 1 container.
 
 ### Claude hook coverage
 

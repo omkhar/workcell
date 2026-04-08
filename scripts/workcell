@@ -180,7 +180,7 @@ Options:
   --codex-rules-mutability readonly|session
                                 Codex execpolicy session mutability (default: readonly)
   --container-mutability ephemeral|readonly
-                                Runtime rootfs posture (default: ephemeral on strict/build/breakglass)
+                                Runtime rootfs posture (default: ephemeral on strict/development/build/breakglass)
   --container-cpu COUNT         Inner container CPU limit (default: unmanaged)
   --container-memory SIZE       Inner container memory limit (default: profile value)
   --injection-policy PATH       Host-side injection policy to stage into each session
@@ -190,7 +190,7 @@ Options:
   --file-trace-log PATH         Persist session file transaction trace to PATH
   --audit-transcript PATH       Persist full interactive terminal transcript to PATH
   --ui cli|gui                  Surface to launch (default: cli)
-  --mode strict|build|breakglass
+  --mode strict|development|build|breakglass
                                 Runtime profile (default: strict)
   --doctor                      Validate host/workspace/profile state and print remediation
   --inspect                     Print derived profile and launch state, then exit
@@ -218,7 +218,15 @@ Options:
   --ack-control-plane-vcs       Required with --allow-control-plane-vcs
 
 Workflows:
-  First run:
+  Direct launch (strict auto-prepares on first run when needed):
+    workcell --agent codex --workspace /path/to/repo
+    workcell --agent claude --workspace /path/to/repo
+    workcell --agent gemini --workspace /path/to/repo
+  Managed development command lane:
+    workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
+    workcell --agent claude --mode development --workspace /path/to/repo -- bash -lc 'rg TODO'
+    workcell --agent gemini --mode development --workspace /path/to/repo -- bash -lc 'npm test'
+  Optional explicit prepare:
     workcell --prepare --agent codex --workspace /path/to/repo
     workcell --prepare --agent claude --workspace /path/to/repo
     workcell --prepare --agent gemini --workspace /path/to/repo
@@ -239,8 +247,8 @@ Workflows:
     workcell auth status --agent codex
     workcell inspect --agent codex --workspace /path/to/repo
     workcell doctor --agent codex --workspace /path/to/repo
-    workcell logs debug --colima-profile workcell-...
-    workcell logs file-trace --colima-profile workcell-...
+    workcell logs debug --colima-profile wcl-...
+    workcell logs file-trace --colima-profile wcl-...
     workcell auth-status --agent codex --workspace /path/to/repo
     workcell publish-pr --workspace /path/to/repo --branch feature/name \
       --title-file /path/to/pr-title.txt --body-file /path/to/pr-body.md \
@@ -982,18 +990,22 @@ maybe_fail_after_profile_refresh_for_tests() {
   exit 88
 }
 
-fail_missing_strict_prepared_image_prelaunch() {
-  if [[ "${PROFILE_WAS_REFRESHED:-0}" -eq 1 ]]; then
-    mkdir -p "${PROFILE_DIR}"
-    printf '%s\n' "${WORKSPACE}" >"${PROFILE_MARKER}"
+announce_strict_auto_prepare() {
+  local headline="$1"
+  local detail="${2:-}"
+
+  if [[ "${STRICT_AUTO_PREPARE}" -eq 1 ]]; then
+    return 0
   fi
-  echo "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." >&2
-  echo "This is expected on the first launch for a workspace or after profile cleanup." >&2
-  echo "Next step:" >&2
-  build_recommended_command 1 0 "${MODE}"
-  echo "That command seeds the prepared runtime image inside the isolated VM and then launches ${AGENT} in strict mode." >&2
-  echo "No VM or container was started." >&2
-  exit 2
+
+  STRICT_AUTO_PREPARE=1
+  PREPARE=1
+  echo "${headline}" >&2
+  if [[ -n "${detail}" ]]; then
+    echo "${detail}" >&2
+  fi
+  echo "Workcell will seed or refresh the prepared runtime image automatically before launching ${AGENT} in strict mode." >&2
+  echo "Use --prepare-only if you want to prewarm the image without launching a session." >&2
 }
 
 container_assurance() {
@@ -1083,17 +1095,7 @@ codex_rules_effective_assurance_initial() {
 provider_native_sandbox_configured() {
   case "${AGENT:-}" in
     codex)
-      case "${MODE}" in
-        strict | build)
-          printf 'workspace-write\n'
-          ;;
-        breakglass)
-          printf 'danger-full-access\n'
-          ;;
-        *)
-          printf 'disabled\n'
-          ;;
-      esac
+      printf 'disabled\n'
       ;;
     claude)
       printf 'deferred\n'
@@ -1124,20 +1126,7 @@ provider_native_sandbox_effective() {
 provider_native_sandbox_reason() {
   case "${AGENT:-}" in
     codex)
-      case "${MODE}" in
-        strict)
-          printf 'managed-profile-strict\n'
-          ;;
-        build)
-          printf 'managed-profile-build\n'
-          ;;
-        breakglass)
-          printf 'managed-profile-breakglass\n'
-          ;;
-        *)
-          printf 'unmanaged-mode\n'
-          ;;
-      esac
+      printf 'workcell-pinned-off-due-to-bwrap-userns-incompatibility\n'
       ;;
     claude)
       printf 'deferred-until-runtime-prereqs-and-validation\n'
@@ -1852,7 +1841,7 @@ Commands:
   status
     --injection-policy PATH     Policy file to inspect (default: ~/.config/workcell/injection-policy.toml)
     --agent codex|claude|gemini Filter to the selected agent
-    --mode strict|build|breakglass
+    --mode strict|development|build|breakglass
     --workspace PATH            Accepted for CLI symmetry; ignored by host status
 
 Notes:
@@ -2547,6 +2536,10 @@ fail_fast_for_missing_gemini_auth() {
     return 0
   fi
 
+  if [[ "${MODE}" == "development" ]] && [[ "$#" -gt 0 ]] && [[ "$1" != "gemini" ]]; then
+    return 0
+  fi
+
   if [[ "$#" -eq 2 ]] && [[ "$1" == "gemini" ]] && [[ "$2" == "--version" ]]; then
     return 0
   fi
@@ -2881,15 +2874,15 @@ validate_mode_requirements() {
   fi
 
   if [[ "${mode}" == "strict" ]] && [[ "${rebuild}" -eq 1 ]] && [[ "${prepare}" -eq 0 ]]; then
-    echo "strict mode does not rebuild or cold-bootstrap the runtime image." >&2
-    echo "Rerun with --prepare when you intentionally want Workcell to seed the prepared image before strict launch." >&2
+    echo "strict mode requires --prepare when you explicitly request --rebuild." >&2
+    echo "Normal strict launches prepare automatically only when the reviewed runtime image is missing or stale." >&2
     exit 2
   fi
 }
 
 validate_mode_name() {
   case "$1" in
-    strict | build | breakglass) ;;
+    strict | development | build | breakglass) ;;
     *)
       echo "Unsupported mode: $1" >&2
       exit 2
@@ -2912,7 +2905,7 @@ default_container_mutability_for_mode() {
     strict)
       printf 'ephemeral\n'
       ;;
-    build | breakglass)
+    development | build | breakglass)
       printf 'ephemeral\n'
       ;;
     *)
@@ -3372,6 +3365,9 @@ profile_env_path() {
     strict)
       printf '%s/runtime/profiles/strict.env\n' "${ROOT_DIR}"
       ;;
+    development)
+      printf '%s/runtime/profiles/development.env\n' "${ROOT_DIR}"
+      ;;
     build)
       printf '%s/runtime/profiles/build.env\n' "${ROOT_DIR}"
       ;;
@@ -3393,7 +3389,9 @@ derive_profile_name() {
   hash="$(
     go_hostutil launcher workspace-cache-key "${workspace}" | cut -c1-8
   )"
-  printf 'workcell-%s-%s\n' "${slug}" "${hash}"
+  # Keep the derived Colima profile name short enough to avoid guest SSH
+  # readiness hangs observed with longer managed profile names on macOS vz.
+  printf 'wcl-%s-%s\n' "${slug}" "${hash}"
 }
 
 validate_colima_runtime_mounts() {
@@ -4441,6 +4439,7 @@ REBUILD=0
 DRY_RUN=0
 PREPARE=0
 PREPARE_ONLY=0
+STRICT_AUTO_PREPARE=0
 REPAIR_PROFILE=0
 DOCTOR=0
 INSPECT=0
@@ -4767,7 +4766,7 @@ else
   set --
 fi
 
-if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 0 ]] && [[ $# -gt 0 ]] && [[ -n "${AGENT}" ]] && [[ "$1" != "${AGENT}" ]]; then
+if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 0 ]] && [[ "${MODE}" != "development" ]] && [[ $# -gt 0 ]] && [[ -n "${AGENT}" ]] && [[ "$1" != "${AGENT}" ]]; then
   set -- "${AGENT}" "$@"
 fi
 
@@ -4990,7 +4989,9 @@ if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" !=
 fi
 
 if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
-  fail_missing_strict_prepared_image_prelaunch
+  announce_strict_auto_prepare \
+    "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." \
+    "This is expected on the first launch for a workspace or after profile cleanup."
 fi
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -5100,6 +5101,8 @@ fi
 EXECUTION_PATH="managed-tier1"
 if [[ "${MODE}" == "breakglass" ]]; then
   EXECUTION_PATH="lower-assurance-breakglass"
+elif [[ "${MODE}" == "development" ]]; then
+  EXECUTION_PATH="lower-assurance-development"
 elif [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
   EXECUTION_PATH="lower-assurance-control-plane-vcs"
 fi
@@ -5193,7 +5196,9 @@ if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
 fi
 
 if [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
-  fail_missing_strict_prepared_image_prelaunch
+  announce_strict_auto_prepare \
+    "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." \
+    "This is expected on the first launch for a workspace or after profile cleanup."
 fi
 
 maybe_fail_after_profile_refresh_for_tests
@@ -5240,16 +5245,15 @@ else
 fi
 
 if [[ "${MODE}" == "strict" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]] && [[ "${PREPARE}" -eq 0 ]]; then
-  restore_runtime_egress
-  echo "Strict mode needs a prepared runtime image for profile ${COLIMA_PROFILE}." >&2
-  echo "The profile started successfully, but the runtime image is missing or stale." >&2
-  echo "Next step:" >&2
-  build_recommended_command 1 0 "${MODE}"
-  exit 2
+  announce_strict_auto_prepare \
+    "Strict mode needs a prepared runtime image for profile ${COLIMA_PROFILE}." \
+    "The profile started successfully, but the prepared image marker is missing or stale."
 fi
 
 if [[ "${NETWORK_POLICY}" == "allowlist" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
-  if [[ "${PREPARE}" -eq 1 ]]; then
+  if [[ "${STRICT_AUTO_PREPARE}" -eq 1 ]]; then
+    echo "Workcell is preparing the reviewed runtime image automatically for this strict-mode launch." >&2
+  elif [[ "${PREPARE}" -eq 1 ]]; then
     echo "prepare=1 seeding the prepared runtime image before launch." >&2
   fi
   BOOTSTRAP_APPLIED=1

@@ -1,0 +1,11 @@
+version = 1
+cooloff_hours = 72
+
+[provider.codex]
+channel = "stable"
+
+[provider.claude]
+channel = "stable"
+
+[provider.gemini]
+channel = "stable"

@@ -877,6 +877,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requireNoRegistryBootstrapMCP(codexMCPConfigText, cfg.CodexMCPConfigPath); err != nil {
 		return err
 	}
+	if err := CheckProviderBumpPolicy(cfg.ProviderBumpPolicyPath, cfg.RuntimeDockerfilePath, cfg.ProvidersPackageJSONPath); err != nil {
+		return err
+	}
 	if _, _, err := requireRegex(runtimeDockerfile, `curl -fsSL "https://storage\.googleapis\.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/\$\{CLAUDE_VERSION\}/\$\{CLAUDE_PLATFORM\}/claude"`, "Claude native release download URL", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
@@ -1371,6 +1374,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 	}
 	for _, needle := range []string{
+		"./scripts/verify-upstream-gemini-release.sh",
 		"./scripts/verify-upstream-claude-release.sh",
 	} {
 		if !strings.Contains(ciWorkflow, needle) {
@@ -1383,9 +1387,18 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	for _, needle := range []string{
 		"./scripts/verify-upstream-codex-release.sh",
 		"./scripts/verify-upstream-claude-release.sh",
+		"./scripts/verify-upstream-gemini-release.sh",
+		"./scripts/update-provider-pins.sh --check",
 	} {
 		if !strings.Contains(pinHygieneWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/pin-hygiene.yml must contain %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		"./scripts/update-provider-pins.sh --check",
+	} {
+		if !strings.Contains(releaseWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
 		}
 	}
 	for _, needle := range []string{

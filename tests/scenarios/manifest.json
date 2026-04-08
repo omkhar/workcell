@@ -58,7 +58,7 @@
     },
     {
       "id": "shared/assurance-dry-run",
-      "description": "Dry-run scenarios surface prompt-autonomy, breakglass, readonly, arbitrary-command, and control-plane VCS assurance labels across adapters",
+      "description": "Dry-run scenarios surface prompt-autonomy, development, breakglass, readonly, arbitrary-command, and control-plane VCS assurance labels across adapters",
       "lane": "secretless",
       "platform": "any",
       "manual": false,

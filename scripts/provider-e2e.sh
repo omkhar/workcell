@@ -29,6 +29,7 @@ AGENT=""
 COLIMA_PROFILE=""
 INJECTION_POLICY=""
 readonly PROBE_RESPONSE_TOKEN="WORKCELL_PROVIDER_E2E_OK"
+readonly SHELL_PROBE_RESPONSE_TOKEN="WORKCELL_PROVIDER_E2E_SHELL_OK"
 DRY_RUN=0
 REQUIRE_INJECTION=0
 GENERATED_POLICY=""
@@ -44,7 +45,8 @@ Run a small provider-focused Workcell credential and launch sequence:
 
 1. Print Workcell auth status for the selected agent
 2. Seed or refresh the prepared runtime image with --prepare-only
-3. Run a small provider-specific authenticated probe inside the strict runtime
+3. Run a managed development-shell Git probe for the selected agent
+4. Run a small provider-specific authenticated probe inside the strict runtime
 
 Options:
   --agent <name>              Provider to exercise: codex, claude, or gemini
@@ -218,6 +220,16 @@ build_probe_prompt() {
   printf 'Reply with exactly the single token %s and nothing else.' "${PROBE_RESPONSE_TOKEN}"
 }
 
+build_shell_probe_command() {
+  printf 'git -c safe.directory=/workspace status --short >/tmp/workcell-provider-e2e-shell.out && printf '\''%%s\\n'\'' %q' "${SHELL_PROBE_RESPONSE_TOKEN}"
+}
+
+shell_probe_output_matches_expected_token() {
+  local output="$1"
+
+  grep -qxF "${SHELL_PROBE_RESPONSE_TOKEN}" <<<"${output}"
+}
+
 probe_output_matches_expected_token() {
   local output="$1"
 
@@ -306,21 +318,28 @@ fi
 
 declare -a auth_status_cmd=("${common_args[@]}" "--auth-status")
 declare -a prepare_only_cmd=("${WORKCELL_SCRIPT}" "--prepare-only" "--agent" "${AGENT}" "--workspace" "${WORKSPACE}")
+declare -a shell_probe_cmd=("${WORKCELL_SCRIPT}" "--agent" "${AGENT}" "--mode" "development" "--workspace" "${WORKSPACE}")
 declare -a probe_cmd=("${WORKCELL_SCRIPT}" "--agent" "${AGENT}" "--workspace" "${WORKSPACE}")
 auth_status_output=""
+shell_probe_output=""
 probe_output=""
+shell_probe_output_path=""
 probe_output_path=""
 if [[ -n "${COLIMA_PROFILE}" ]]; then
   prepare_only_cmd+=("--colima-profile" "${COLIMA_PROFILE}")
+  shell_probe_cmd+=("--colima-profile" "${COLIMA_PROFILE}")
   probe_cmd+=("--colima-profile" "${COLIMA_PROFILE}")
 fi
 if [[ -n "${INJECTION_POLICY}" ]]; then
   prepare_only_cmd+=("--injection-policy" "${INJECTION_POLICY}")
+  shell_probe_cmd+=("--injection-policy" "${INJECTION_POLICY}")
   probe_cmd+=("--injection-policy" "${INJECTION_POLICY}")
 elif [[ -n "${GENERATED_POLICY}" ]]; then
   prepare_only_cmd+=("--injection-policy" "${GENERATED_POLICY}")
+  shell_probe_cmd+=("--injection-policy" "${GENERATED_POLICY}")
   probe_cmd+=("--injection-policy" "${GENERATED_POLICY}")
 fi
+shell_probe_cmd+=("--" "bash" "-lc" "$(build_shell_probe_command)")
 case "${AGENT}" in
   codex)
     probe_cmd+=(
@@ -364,9 +383,10 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
   else
     printf 'provider_e2e_credential_keys=\n'
   fi
-  printf 'provider_e2e_steps=auth-status,prepare-only,live-probe\n'
+  printf 'provider_e2e_steps=auth-status,prepare-only,development-shell,live-probe\n'
   print_command provider_e2e_auth_status_cmd "${auth_status_cmd[@]}"
   print_command provider_e2e_prepare_only_cmd "${prepare_only_cmd[@]}"
+  print_command provider_e2e_shell_probe_cmd "${shell_probe_cmd[@]}"
   print_command provider_e2e_probe_cmd "${probe_cmd[@]}"
   exit 0
 fi
@@ -385,8 +405,19 @@ if grep -q '^provider_auth_mode=none$' <<<"${auth_status_output}"; then
 fi
 printf '[provider-e2e] prepare-only (%s)\n' "${AGENT}"
 "${prepare_only_cmd[@]}"
-printf '[provider-e2e] live-probe (%s)\n' "${AGENT}"
+printf '[provider-e2e] development-shell (%s)\n' "${AGENT}"
 ensure_tmp_root
+shell_probe_output_path="${TMP_ROOT}/${AGENT}-shell-probe.out"
+if ! "${shell_probe_cmd[@]}" >"${shell_probe_output_path}" 2>&1; then
+  cat "${shell_probe_output_path}" >&2
+  exit 1
+fi
+shell_probe_output="$(cat "${shell_probe_output_path}")"
+printf '%s\n' "${shell_probe_output}"
+if ! shell_probe_output_matches_expected_token "${shell_probe_output}"; then
+  die "Development shell probe did not emit the expected token for ${AGENT}."
+fi
+printf '[provider-e2e] live-probe (%s)\n' "${AGENT}"
 probe_output_path="${TMP_ROOT}/${AGENT}-probe.out"
 if ! "${probe_cmd[@]}" >"${probe_output_path}" 2>&1; then
   cat "${probe_output_path}" >&2

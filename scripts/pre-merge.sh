@@ -331,6 +331,15 @@ echo "[pre-merge] pinned-input policy"
 echo "[pre-merge] upstream Codex release verification"
 "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
 
+echo "[pre-merge] upstream Claude release verification"
+"${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
+
+echo "[pre-merge] upstream Gemini release verification"
+"${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
+
+echo "[pre-merge] eligible stable provider pin check"
+"${ROOT_DIR}/scripts/update-provider-pins.sh" --check
+
 echo "[pre-merge] building validator image"
 build_validator_image
 

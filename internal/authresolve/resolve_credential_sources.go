@@ -30,9 +30,10 @@ var (
 		"gemini": {},
 	}
 	supportedModes = map[string]struct{}{
-		"strict":     {},
-		"build":      {},
-		"breakglass": {},
+		"strict":      {},
+		"development": {},
+		"build":       {},
+		"breakglass":  {},
 	}
 	supportedMaterialization = map[string]struct{}{
 		"ephemeral":  {},

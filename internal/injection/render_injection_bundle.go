@@ -33,9 +33,10 @@ var (
 		"gemini": {},
 	}
 	supportedModes = map[string]struct{}{
-		"strict":     {},
-		"build":      {},
-		"breakglass": {},
+		"strict":      {},
+		"development": {},
+		"build":       {},
+		"breakglass":  {},
 	}
 	supportedClassifications = map[string]struct{}{
 		"public": {},

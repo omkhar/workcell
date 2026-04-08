@@ -88,6 +88,7 @@ const PROTECTED_RUNTIME_PATHS: &[(ProtectedRuntime, &str)] = &[
 ];
 
 const APPROVED_WRAPPER_SCRIPTS: &[&str] = &[
+    "/usr/local/libexec/workcell/development-wrapper.sh",
     "/usr/local/libexec/workcell/git-wrapper.sh",
     "/usr/local/libexec/workcell/node-wrapper.sh",
     "/usr/local/libexec/workcell/provider-wrapper.sh",
@@ -1516,6 +1517,7 @@ mod tests {
         assert!(!matches_non_strict(Some("")));
         assert!(!matches_non_strict(Some("strict")));
         assert!(!matches_non_strict(Some("STRICT")));
+        assert!(matches_non_strict(Some("development")));
         assert!(matches_non_strict(Some("build")));
         assert!(matches_non_strict(Some("breakglass")));
     }

@@ -15,22 +15,9 @@ const PROTECTED_PACKAGE_ROOTS = new Map([
   ],
 ]);
 
-const PROTECTED_PACKAGE_MARKERS = new Map([
-  [
-    '@google/gemini-cli',
-    ['LICENSE', 'README.md', 'dist/index.js.map', 'dist/src/gemini.js'],
-  ],
-]);
-const PROTECTED_ENTRYPOINT_PATHS = new Map([
-  ['@google/gemini-cli', 'dist/index.js'],
-]);
 const PROTECTED_PACKAGE_COPY_MATCH_THRESHOLD = 6;
 const PROTECTED_PACKAGE_TOKEN_MATCH_THRESHOLD = 24;
 const PROTECTED_ENTRYPOINT_TOKEN_MATCH_THRESHOLD = 12;
-
-const PROTECTED_ENTRYPOINT_SHA256 = new Set([
-  '766e778d6466285e1d7620b6d50f500d12f2e9c3229d199209d2461552ca2019',
-]);
 
 const fileHashCache = new Map();
 const fileTextCache = new Map();
@@ -44,6 +31,8 @@ const protectedPackageManifestCache = new Map();
 const protectedPackageJsonSignatureCache = new Map();
 const protectedPackageTokenCache = new Map();
 const protectedEntrypointTokenCache = new Map();
+const protectedEntrypointPathCache = new Map();
+const protectedEntrypointDigestCache = new Map();
 const entrypointMarkerCache = new Map();
 const SELF_GUARD_PATH = canonicalizeFilePath(fileURLToPath(import.meta.url));
 const WORKSPACE_ROOT = '/workspace';
@@ -322,7 +311,7 @@ function protectedEntrypointTokens(packageName) {
   }
 
   const protectedRoot = PROTECTED_PACKAGE_ROOTS.get(packageName);
-  const entrypointPath = PROTECTED_ENTRYPOINT_PATHS.get(packageName);
+  const entrypointPath = protectedEntrypointPath(packageName);
   if (typeof protectedRoot !== 'string' || typeof entrypointPath !== 'string') {
     protectedEntrypointTokenCache.set(packageName, null);
     return null;
@@ -353,6 +342,66 @@ function entrypointTokenOverlap(packageName, text) {
   }
 
   return matchedTokens;
+}
+
+function protectedEntrypointPath(packageName) {
+  const cached = protectedEntrypointPathCache.get(packageName);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const protectedRoot = PROTECTED_PACKAGE_ROOTS.get(packageName);
+  if (typeof protectedRoot !== 'string') {
+    protectedEntrypointPathCache.set(packageName, null);
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(path.join(protectedRoot, 'package.json'), 'utf8'),
+    );
+    const bin = parsed?.bin;
+    let entrypointPath = null;
+
+    if (typeof bin === 'string') {
+      entrypointPath = bin;
+    } else if (bin && typeof bin === 'object' && !Array.isArray(bin)) {
+      if (typeof bin.gemini === 'string') {
+        entrypointPath = bin.gemini;
+      } else {
+        const values = Object.values(bin).filter(
+          (value) => typeof value === 'string',
+        );
+        if (values.length === 1) {
+          entrypointPath = values[0];
+        }
+      }
+    }
+
+    protectedEntrypointPathCache.set(packageName, entrypointPath);
+    return entrypointPath;
+  } catch {
+    protectedEntrypointPathCache.set(packageName, null);
+    return null;
+  }
+}
+
+function protectedEntrypointDigest(packageName) {
+  const cached = protectedEntrypointDigestCache.get(packageName);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const protectedRoot = PROTECTED_PACKAGE_ROOTS.get(packageName);
+  const entrypointPath = protectedEntrypointPath(packageName);
+  if (typeof protectedRoot !== 'string' || typeof entrypointPath !== 'string') {
+    protectedEntrypointDigestCache.set(packageName, null);
+    return null;
+  }
+
+  const digest = sha256File(path.join(protectedRoot, entrypointPath));
+  protectedEntrypointDigestCache.set(packageName, digest);
+  return digest;
 }
 
 function isWithinTree(candidate, root) {
@@ -515,7 +564,7 @@ function looksLikeProtectedProviderCopy(rootDir, recursive = true) {
 
   const candidatePackageJsonSignature = packageJsonSignatureForRoot(rootDir);
 
-  for (const packageName of PROTECTED_PACKAGE_MARKERS.keys()) {
+  for (const packageName of PROTECTED_PACKAGES.values()) {
     const protectedPackageSignature = protectedPackageJsonSignature(packageName);
     if (
       candidatePackageJsonSignature !== null &&
@@ -621,8 +670,12 @@ function fileTextLooksProtectedEntrypoint(filePath) {
 
 function isProtectedProviderFile(filePath) {
   const digest = sha256File(filePath);
-  if (digest !== null && PROTECTED_ENTRYPOINT_SHA256.has(digest)) {
-    return true;
+  if (digest !== null) {
+    for (const packageName of PROTECTED_PACKAGES.values()) {
+      if (protectedEntrypointDigest(packageName) === digest) {
+        return true;
+      }
+    }
   }
   if (fileTextLooksProtectedEntrypoint(filePath)) {
     return true;
