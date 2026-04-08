@@ -53,6 +53,7 @@ sanitize_development_env() {
   unset LD_LIBRARY_PATH
   unset SSL_CERT_FILE
   unset SSL_CERT_DIR
+  workcell_sanitize_git_runtime_env
   export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
   export PATH="${TRUSTED_PATH}"
 }

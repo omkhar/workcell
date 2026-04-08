@@ -84,12 +84,12 @@ Other defaults that matter:
 Install the launcher symlink and verify the host prerequisites:
 
 ```bash
-./install.sh
+./scripts/install.sh
 workcell --agent codex --workspace /path/to/repo
 ```
 
-`./install.sh` is the supported repo-root entrypoint. The `scripts/` installer
-helper is an internal implementation detail.
+`./scripts/install.sh` is the supported installer entrypoint. The
+`scripts/install-workcell.sh` helper is an internal implementation detail.
 
 Launch a provider inside the bounded runtime:
 
@@ -108,6 +108,7 @@ workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 
 workcell --inspect --agent codex --workspace /path/to/repo
 workcell --doctor --agent codex --workspace /path/to/repo
 workcell --auth-status --agent codex --workspace /path/to/repo
+./scripts/publish-provider-bump-pr.sh
 workcell --logs audit --colima-profile wcl-...
 workcell publish-pr --workspace /path/to/repo --branch feature/name \
   --title-file /tmp/pr-title.txt \

@@ -122,16 +122,19 @@ RUN install_provider_packages() { \
 FROM runtime-base AS runtime-builder
 
 # Anthropic Claude Code native binary version and SHA256 checksums for each
-# Linux architecture. To update: read the latest version from
-# https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest,
-# verify the per-platform checksums in the corresponding manifest.json, update
-# CLAUDE_VERSION, and refresh the CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.86
+# Linux architecture. Workcell pins the stable channel with the cool-off in
+# policy/provider-bumps.toml. To update manually, read the stable release set
+# from the public release bucket, verify the per-platform checksums in the
+# corresponding manifest.json, update CLAUDE_VERSION, and refresh the
+# CLAUDE_SHA256 values below.
+ARG CLAUDE_VERSION=2.1.92
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
-# To update: find the new release at https://github.com/openai/codex/releases,
-# update CODEX_VERSION, download both architecture tarballs, compute sha256sum,
-# and update the CODEX_SHA256 values for arm64 and amd64 below.
-ARG CODEX_VERSION=0.117.0-alpha.8
+# Workcell follows the stable npm channel and matching non-prerelease Rust
+# release after the cool-off in policy/provider-bumps.toml. To update
+# manually, resolve the eligible stable version, verify the GitHub release
+# asset digests for both Linux tarballs, and refresh the CODEX_SHA256 values
+# for arm64 and amd64 below.
+ARG CODEX_VERSION=0.118.0
 ARG CODEX_RELEASE_URL=
 ARG RUST_VERSION=1.94.1
 ARG RUSTUP_VERSION=1.29.0
@@ -207,11 +210,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="c04aebe3de140679b4cce158812d6f011b7e9c483496ccb0472cf38cc1714afe"; \
+      CLAUDE_SHA256="08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="adce02c5f94a85b6ca231c8aeef533707597cd387e8934776455b87d10a3051b"; \
+      CLAUDE_SHA256="e22324514967ff2d5e9f91f0ee37e4675bf8b6dfec27fafb19cb25cc5b23fcaf"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -243,11 +246,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-gnu"; \
-      CODEX_SHA256="120b8bd6ececc125198de3fbce896da98a4795b449a4c78d516534e08a63ab14"; \
+      CODEX_SHA256="9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-gnu"; \
-      CODEX_SHA256="1d65d8aa80847ac771487d74cb2a63c86ef23479636aa1c1b3d051c9931d314b"; \
+      CODEX_SHA256="220f15ca1c639e905aae385da960e1897882fee76653f5f9f5dffa5f754f7c98"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -372,7 +375,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
     /etc/claude-code/managed-settings.json \
     /usr/local/libexec/workcell/control-plane-manifest.json \
   && chmod 0644 \
-    /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js \
+    /opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js \
   && rm -f /usr/bin/perlbug /usr/bin/perldoc /usr/bin/perlthanks \
   && chmod +x \
     /usr/local/libexec/workcell/core/git \

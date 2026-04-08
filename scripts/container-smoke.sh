@@ -1477,7 +1477,7 @@ EOF
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
-  if [[ "${GEMINI_YOLO_ARGS}" != "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode yolo --version" ]]; then
+  if [[ "${GEMINI_YOLO_ARGS}" != "/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js --approval-mode yolo --version" ]]; then
     echo "unexpected Gemini yolo argv: ${GEMINI_YOLO_ARGS}" >&2
     exit 1
   fi
@@ -1519,7 +1519,7 @@ EOF
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
-  if [[ "${GEMINI_NO_RELAUNCH_ENV}" != '{"claude_config":"","relaunch":"1","gemini_sandbox":"false","sandbox":"","sandbox_flags":"","sandbox_set_uid_gid":"","seatbelt":"","sandbox_mounts":"","sandbox_env":"","aws":"","gh":"","ssh":"","args":"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode yolo --version"}' ]]; then
+  if [[ "${GEMINI_NO_RELAUNCH_ENV}" != '{"claude_config":"","relaunch":"1","gemini_sandbox":"false","sandbox":"","sandbox_flags":"","sandbox_set_uid_gid":"","seatbelt":"","sandbox_mounts":"","sandbox_env":"","aws":"","gh":"","ssh":"","args":"/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js --approval-mode yolo --version"}' ]]; then
     echo "unexpected Gemini relaunch env/argv: ${GEMINI_NO_RELAUNCH_ENV}" >&2
     exit 1
   fi
@@ -1532,7 +1532,7 @@ EOF
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
-  if [[ "${GEMINI_PROMPT_ARGS}" != "/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode default --version" ]]; then
+  if [[ "${GEMINI_PROMPT_ARGS}" != "/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js --approval-mode default --version" ]]; then
     echo "unexpected Gemini prompt argv: ${GEMINI_PROMPT_ARGS}" >&2
     exit 1
   fi
@@ -1552,7 +1552,7 @@ EOF
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
-  if [[ "${GEMINI_PROMPT_ENV}" != '{"claude_config":"","relaunch":"1","gemini_sandbox":"false","sandbox":"","sandbox_flags":"","sandbox_set_uid_gid":"","seatbelt":"","sandbox_mounts":"","sandbox_env":"","aws":"","gh":"","ssh":"","args":"/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --approval-mode default --version"}' ]]; then
+  if [[ "${GEMINI_PROMPT_ENV}" != '{"claude_config":"","relaunch":"1","gemini_sandbox":"false","sandbox":"","sandbox_flags":"","sandbox_set_uid_gid":"","seatbelt":"","sandbox_mounts":"","sandbox_env":"","aws":"","gh":"","ssh":"","args":"/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js --approval-mode default --version"}' ]]; then
     echo "unexpected Gemini prompt env/argv: ${GEMINI_PROMPT_ENV}" >&2
     exit 1
   fi
@@ -2093,6 +2093,7 @@ run_container codex bash -lc "$(
     cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
     codex features list >/tmp/codex-features.out 2>/tmp/codex-features.err
     assert_codex_stderr_clean /tmp/codex-features.err
+    grep -Eq "^unified_exec[[:space:]]+stable[[:space:]]+false$" /tmp/codex-features.out
     if command -v python3 >/tmp/python-which.out 2>&1; then
       echo "expected runtime image to omit python3 from the operator PATH" >&2
       exit 1
@@ -2617,12 +2618,12 @@ EOF
 		exit 1
 	fi
 	grep -q "Workcell blocked direct protected runtime execution" /tmp/claude-loader-copy.out
-	if node /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --yolo >/tmp/node-provider-gemini.out 2>&1; then
+	if node /opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js --yolo >/tmp/node-provider-gemini.out 2>&1; then
 		echo "expected Workcell node wrapper to reject direct Gemini provider script execution" >&2
 		exit 1
 	fi
   grep -q "Workcell blocked direct provider script execution via node." /tmp/node-provider-gemini.out
-  if WORKCELL_ALLOW_PROVIDER_NODE=1 node /opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js --yolo >/tmp/node-provider-env.out 2>&1; then
+  if WORKCELL_ALLOW_PROVIDER_NODE=1 node /opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js --yolo >/tmp/node-provider-env.out 2>&1; then
     echo "expected Workcell node wrapper to ignore caller-supplied provider bypass env" >&2
     exit 1
   fi
@@ -2645,13 +2646,13 @@ EOF
   WORKCELL_EXEC_SCRATCH="${workspace_exec_scratch}" node "${workspace_exec_scratch}/workcell-native-addon-require.js" >/tmp/node-native-addon.out 2>&1
   grep -q "native-addon-load-blocked" /tmp/node-native-addon.out
   cp -R /opt/workcell/providers /tmp/workcell-provider-copy
-  if node /tmp/workcell-provider-copy/node_modules/@google/gemini-cli/dist/index.js --version >/tmp/node-provider-copy-gemini.out 2>&1; then
+  if node /tmp/workcell-provider-copy/node_modules/@google/gemini-cli/bundle/gemini.js --version >/tmp/node-provider-copy-gemini.out 2>&1; then
     echo "expected copied Gemini provider package execution via public node to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked provider package execution via public node." /tmp/node-provider-copy-gemini.out
   cat <<'EOF' >/tmp/workcell-provider-import.mjs
-await import("/tmp/workcell-provider-copy/node_modules/@google/gemini-cli/dist/index.js");
+await import("/tmp/workcell-provider-copy/node_modules/@google/gemini-cli/bundle/gemini.js");
 EOF
   if node /tmp/workcell-provider-import.mjs >/tmp/node-provider-copy-import.out 2>&1; then
     echo "expected imported copied provider package execution via public node to fail" >&2
@@ -3010,6 +3011,25 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked git control-plane override" /tmp/git-guard-visual-env.out
+  if ! AGENT_NAME=codex \
+    WORKCELL_MODE=development \
+    CODEX_PROFILE=development \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=core.pager \
+    GIT_CONFIG_VALUE_0=cat \
+    GIT_PAGER=cat \
+    PAGER=cat \
+    GIT_EDITOR=cat \
+    EDITOR=cat \
+    VISUAL=cat \
+    SSH_ASKPASS="$EXEC_TMP/git-askpass.sh" \
+    GIT_ASKPASS="$EXEC_TMP/git-askpass.sh" \
+    /usr/local/libexec/workcell/development-wrapper.sh \
+    /bin/bash -lc "git --version >/tmp/git-development-wrapper-scrub.out"; then
+    cat /tmp/git-development-wrapper-scrub.out >&2
+    echo "expected development wrapper to scrub inherited git control-plane env before launching git" >&2
+    exit 1
+  fi
   if GIT_CONFIG_GLOBAL="$EXEC_TMP/git-bypass.cfg" git status >/tmp/git-guard-git-config-global-env.out 2>&1; then
     echo "expected Workcell git guard to reject GIT_CONFIG_GLOBAL overrides" >&2
     exit 1

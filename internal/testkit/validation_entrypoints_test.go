@@ -115,9 +115,13 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		t.Fatalf("%s must include scripts/verify-go-python-parity.sh", validateRepoPath)
 	}
 	for _, want := range []string{
-		`${ROOT_DIR}/install.sh`,
+		`${ROOT_DIR}/.githooks/pre-commit`,
+		`${ROOT_DIR}/scripts/install.sh`,
 		`${ROOT_DIR}/scripts/build-and-test.sh`,
 		`${ROOT_DIR}/scripts/install-dev-tools.sh`,
+		`${ROOT_DIR}/scripts/update-provider-pins.sh`,
+		`${ROOT_DIR}/scripts/publish-provider-bump-pr.sh`,
+		`${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh`,
 	} {
 		if !strings.Contains(string(validateRepo), want) {
 			t.Fatalf("%s must lint and format %s", validateRepoPath, want)
@@ -170,6 +174,50 @@ func TestInstallDevToolsBootstrapsNodeAndPythonVenvPrereqs(t *testing.T) {
 		`append_unique_apt nodejs npm`,
 		`append_unique_brew python`,
 		`append_unique_apt python3 python3-venv python3-pip`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
+func TestPublishProviderBumpPRRequiresCleanWorktree(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "publish-provider-bump-pr.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		`git -C "${ROOT_DIR}" status --short`,
+		`git -C "${ROOT_DIR}" fetch origin "${BASE_BRANCH}"`,
+		`refs/remotes/origin/${BASE_BRANCH}`,
+		`worktree add --detach "${worktree_root}" "${base_ref}"`,
+		`requires a clean worktree`,
+		`Commit, stash, or discard local changes first`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
+func TestPreMergeChecksEligibleStableProviderPins(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "pre-merge.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		`echo "[pre-merge] eligible stable provider pin check"`,
+		`"${ROOT_DIR}/scripts/update-provider-pins.sh" --check`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)

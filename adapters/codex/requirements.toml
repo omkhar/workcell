@@ -4,17 +4,16 @@
 # by design and are intended to be copied into an admin-enforced deployment.
 
 allowed_approval_policies = ["on-request", "never"]
-# danger-full-access is listed here to satisfy Codex schema validation but is
-# only reachable when Workcell runs in breakglass mode (--mode breakglass
-# --ack-breakglass). The strict, development, and build runtime profiles enforce
-# workspace-write via the managed container entrypoint; no operator path
-# reaches danger-full-access outside an explicitly acknowledged breakglass
-# session.
-allowed_sandbox_modes = ["workspace-write", "danger-full-access"]
+# Codex's own Linux sandbox is pinned off on the managed Workcell path because
+# it currently depends on unprivileged user namespaces that are unavailable
+# inside the Tier 1 container. Workcell's outer VM-plus-container boundary
+# remains the enforcement point; explicit breakglass is still tracked
+# separately by the launcher/runtime path.
+allowed_sandbox_modes = ["danger-full-access"]
 allowed_web_search_modes = ["disabled"]
 
 [features]
-unified_exec = true
+unified_exec = false
 
 # No MCP identities are seeded in the managed baseline. Enable only pinned,
 # repo-reviewed local commands or immutable container/image references.
@@ -70,6 +69,6 @@ decision = "forbidden"
 justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."
 
 [[rules.prefix_rules]]
-pattern = [{ token = "node" }, { any_of = ["/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"] }]
+pattern = [{ token = "node" }, { any_of = ["/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js"] }]
 decision = "forbidden"
 justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."

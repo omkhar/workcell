@@ -31,6 +31,37 @@ workcell_pid1_env_value() {
   tr '\0' '\n' </proc/1/environ | sed -n "s/^${key}=//p" | head -n1
 }
 
+workcell_unset_env_prefix() {
+  local prefix="$1"
+  local var_name=""
+
+  while IFS= read -r var_name; do
+    unset "${var_name}"
+  done < <(compgen -A variable -- "${prefix}" || true)
+}
+
+workcell_sanitize_git_runtime_env() {
+  unset GIT_DIR
+  unset GIT_WORK_TREE
+  unset GIT_COMMON_DIR
+  unset GIT_EXEC_PATH
+  unset GIT_OBJECT_DIRECTORY
+  unset GIT_ALTERNATE_OBJECT_DIRECTORIES
+  unset GIT_INDEX_FILE
+  unset GIT_ASKPASS
+  unset GIT_EDITOR
+  unset GIT_EXTERNAL_DIFF
+  unset GIT_PAGER
+  unset GIT_SEQUENCE_EDITOR
+  unset GIT_SSH
+  unset GIT_SSH_COMMAND
+  unset SSH_ASKPASS
+  unset EDITOR
+  unset PAGER
+  unset VISUAL
+  workcell_unset_env_prefix GIT_CONFIG_
+}
+
 workcell_runtime_mutability() {
   local value="${WORKCELL_CONTAINER_MUTABILITY:-}"
 

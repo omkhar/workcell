@@ -125,6 +125,12 @@ jobs:
       - name: Verify upstream Claude release
         run: ./scripts/verify-upstream-claude-release.sh
 
+      - name: Verify upstream Gemini release
+        run: ./scripts/verify-upstream-gemini-release.sh
+
+      - name: Require provider pins to match the eligible stable track
+        run: ./scripts/update-provider-pins.sh --check
+
       - name: Build validation tool image
         run: |
           docker build \

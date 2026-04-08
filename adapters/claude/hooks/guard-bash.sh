@@ -336,8 +336,8 @@ if grep_command '(^|[[:space:]'"'"'";|&])(eval)([[:space:]'"'"'";|&]|$)' ||
   fail "Do not use eval or shell variable expansion from the Claude Bash tool inside Workcell."
 fi
 
-if grep_dequoted_command '(^|[^[:alnum:]_./-])(codex|claude|gemini|/usr/local/libexec/workcell/core/codex|/usr/local/libexec/workcell/core/claude|/usr/local/libexec/workcell/core/gemini|/usr/local/libexec/workcell/real/codex|/usr/local/libexec/workcell/real/claude|/opt/workcell/providers/node_modules/\.bin/gemini|/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index\.js)([^[:alnum:]_./-]|$)' ||
-  grep_deescaped_command '(^|[^[:alnum:]_./-])(codex|claude|gemini|/usr/local/libexec/workcell/core/codex|/usr/local/libexec/workcell/core/claude|/usr/local/libexec/workcell/core/gemini|/usr/local/libexec/workcell/real/codex|/usr/local/libexec/workcell/real/claude|/opt/workcell/providers/node_modules/\.bin/gemini|/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index\.js)([^[:alnum:]_./-]|$)'; then
+if grep_dequoted_command '(^|[^[:alnum:]_./-])(codex|claude|gemini|/usr/local/libexec/workcell/core/codex|/usr/local/libexec/workcell/core/claude|/usr/local/libexec/workcell/core/gemini|/usr/local/libexec/workcell/real/codex|/usr/local/libexec/workcell/real/claude|/opt/workcell/providers/node_modules/\.bin/gemini|/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini\.js)([^[:alnum:]_./-]|$)' ||
+  grep_deescaped_command '(^|[^[:alnum:]_./-])(codex|claude|gemini|/usr/local/libexec/workcell/core/codex|/usr/local/libexec/workcell/core/claude|/usr/local/libexec/workcell/core/gemini|/usr/local/libexec/workcell/real/codex|/usr/local/libexec/workcell/real/claude|/opt/workcell/providers/node_modules/\.bin/gemini|/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini\.js)([^[:alnum:]_./-]|$)'; then
   fail "Do not launch nested coding-agent CLIs from the Claude Bash tool inside Workcell."
 fi
 

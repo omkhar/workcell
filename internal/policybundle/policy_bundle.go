@@ -27,10 +27,10 @@ var SupportedAgents = map[string]struct{}{
 }
 
 var SupportedModes = map[string]struct{}{
-	"strict":     {},
+	"strict":      {},
 	"development": {},
-	"build":      {},
-	"breakglass": {},
+	"build":       {},
+	"breakglass":  {},
 }
 
 var CredentialKeys = map[string]struct{}{

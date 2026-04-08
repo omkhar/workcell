@@ -12,7 +12,7 @@ reinforce the runtime boundary and release posture, not replace them.
 | `security.yml` | workflow lint, dependency review, and `zizmor` |
 | `codeql.yml` | code scanning for shipped Rust, Python, and JavaScript surfaces |
 | `scorecard.yml` | OpenSSF Scorecard analysis |
-| `pin-hygiene.yml` | scheduled re-validation of pinned inputs and upstream release pins |
+| `pin-hygiene.yml` | scheduled re-validation of pinned inputs, upstream release pins, and the 72-hour stable provider bump window |
 | `hosted-controls.yml` | drift detection for GitHub-hosted controls that live outside git |
 | `release.yml` | tagged release preflight, publication, signatures, SBOMs, manifests, and attestations |
 
@@ -22,6 +22,7 @@ reinforce the runtime boundary and release posture, not replace them.
 
 - it publishes from the archived source bundle, not the live checkout
 - it binds publish outputs to preflight results before signing
+- it refuses to publish when provider pins lag the newest eligible stable releases in `policy/provider-bumps.toml`
 - it signs release assets with keyless Sigstore/Cosign
 - it publishes GitHub attestations as an additional surface, not a
   replacement, but only when the reviewed hosted controls say the repository

@@ -99,7 +99,7 @@ validate_manpage() {
 }
 
 shell_files=(
-  "${ROOT_DIR}/install.sh"
+  "${ROOT_DIR}/.githooks/pre-commit"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/workcell"
@@ -122,12 +122,15 @@ shell_files=(
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
+  "${ROOT_DIR}/scripts/install.sh"
   "${ROOT_DIR}/scripts/install-workcell.sh"
   "${ROOT_DIR}/scripts/uninstall.sh"
   "${ROOT_DIR}/scripts/pre-merge.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
+  "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
   "${ROOT_DIR}/scripts/run-hosted-controls-audit.sh"
   "${ROOT_DIR}/scripts/run-mutation-tests.sh"
+  "${ROOT_DIR}/scripts/update-provider-pins.sh"
   "${ROOT_DIR}/scripts/verify-coverage.sh"
   "${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
   "${ROOT_DIR}/scripts/verify-go-python-parity.sh"
@@ -139,6 +142,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-invariants.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
   "${ROOT_DIR}/scripts/with-validation-snapshot.sh"
   "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"
   "${ROOT_DIR}/runtime/container/entrypoint.sh"

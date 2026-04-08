@@ -1095,17 +1095,7 @@ codex_rules_effective_assurance_initial() {
 provider_native_sandbox_configured() {
   case "${AGENT:-}" in
     codex)
-      case "${MODE}" in
-        strict | development | build)
-          printf 'workspace-write\n'
-          ;;
-        breakglass)
-          printf 'danger-full-access\n'
-          ;;
-        *)
-          printf 'disabled\n'
-          ;;
-      esac
+      printf 'disabled\n'
       ;;
     claude)
       printf 'deferred\n'
@@ -1136,23 +1126,7 @@ provider_native_sandbox_effective() {
 provider_native_sandbox_reason() {
   case "${AGENT:-}" in
     codex)
-      case "${MODE}" in
-        strict)
-          printf 'managed-profile-strict\n'
-          ;;
-        development)
-          printf 'managed-profile-development\n'
-          ;;
-        build)
-          printf 'managed-profile-build\n'
-          ;;
-        breakglass)
-          printf 'managed-profile-breakglass\n'
-          ;;
-        *)
-          printf 'unmanaged-mode\n'
-          ;;
-      esac
+      printf 'workcell-pinned-off-due-to-bwrap-userns-incompatibility\n'
       ;;
     claude)
       printf 'deferred-until-runtime-prereqs-and-validation\n'
@@ -2559,6 +2533,10 @@ selected_provider_auth_mode() {
 
 fail_fast_for_missing_gemini_auth() {
   if [[ "${AGENT}" != "gemini" ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ "${MODE}" == "development" ]] && [[ "$#" -gt 0 ]] && [[ "$1" != "gemini" ]]; then
     return 0
   fi
 
@@ -4788,7 +4766,7 @@ else
   set --
 fi
 
-if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 0 ]] && [[ $# -gt 0 ]] && [[ -n "${AGENT}" ]] && [[ "$1" != "${AGENT}" ]]; then
+if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 0 ]] && [[ "${MODE}" != "development" ]] && [[ $# -gt 0 ]] && [[ -n "${AGENT}" ]] && [[ "$1" != "${AGENT}" ]]; then
   set -- "${AGENT}" "$@"
 fi
 

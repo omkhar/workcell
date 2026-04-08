@@ -102,13 +102,17 @@ HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
+  "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
+  "${ROOT_DIR}/scripts/update-provider-pins.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 )
+REPO_PRECOMMIT_HOOK="${ROOT_DIR}/.githooks/pre-commit"
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
   echo "verify-invariants-entrypoint-ok"
@@ -886,14 +890,17 @@ verify_codex_managed_config_invariants() {
     "exclude_tmpdir_env_var" \
     "network_access" || return 1
   require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_slash_tmp" "true" || return 1
-  require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_tmpdir_env_var" "true" || return 1
+  require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_tmpdir_env_var" "false" || return 1
   require_toml_assignment "${file}" "sandbox_workspace_write" "network_access" "false" || return 1
+
+  require_toml_exact_keys "${file}" "features" "unified_exec" || return 1
+  require_toml_assignment "${file}" "features" "unified_exec" "false" || return 1
 
   require_toml_exact_keys "${file}" "profiles.strict" \
     "approval_policy" \
     "sandbox_mode" \
     "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.strict" "sandbox_mode" '"workspace-write"' || return 1
+  require_toml_assignment "${file}" "profiles.strict" "sandbox_mode" '"danger-full-access"' || return 1
   require_toml_assignment "${file}" "profiles.strict" "approval_policy" '"on-request"' || return 1
   require_toml_assignment "${file}" "profiles.strict" "web_search" '"disabled"' || return 1
   require_toml_section_absent "${file}" "profiles.strict.sandbox_workspace_write" || return 1
@@ -902,23 +909,19 @@ verify_codex_managed_config_invariants() {
     "approval_policy" \
     "sandbox_mode" \
     "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.development" "sandbox_mode" '"workspace-write"' || return 1
+  require_toml_assignment "${file}" "profiles.development" "sandbox_mode" '"danger-full-access"' || return 1
   require_toml_assignment "${file}" "profiles.development" "approval_policy" '"on-request"' || return 1
   require_toml_assignment "${file}" "profiles.development" "web_search" '"disabled"' || return 1
-
-  require_toml_exact_keys "${file}" "profiles.development.sandbox_workspace_write" "network_access" || return 1
-  require_toml_assignment "${file}" "profiles.development.sandbox_workspace_write" "network_access" "true" || return 1
+  require_toml_section_absent "${file}" "profiles.development.sandbox_workspace_write" || return 1
 
   require_toml_exact_keys "${file}" "profiles.build" \
     "approval_policy" \
     "sandbox_mode" \
     "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.build" "sandbox_mode" '"workspace-write"' || return 1
+  require_toml_assignment "${file}" "profiles.build" "sandbox_mode" '"danger-full-access"' || return 1
   require_toml_assignment "${file}" "profiles.build" "approval_policy" '"never"' || return 1
   require_toml_assignment "${file}" "profiles.build" "web_search" '"disabled"' || return 1
-
-  require_toml_exact_keys "${file}" "profiles.build.sandbox_workspace_write" "network_access" || return 1
-  require_toml_assignment "${file}" "profiles.build.sandbox_workspace_write" "network_access" "true" || return 1
+  require_toml_section_absent "${file}" "profiles.build.sandbox_workspace_write" || return 1
 
   require_toml_exact_keys "${file}" "profiles.breakglass" \
     "approval_policy" \
@@ -1042,8 +1045,8 @@ if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${RO
   exit 1
 fi
 
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/install.sh" >/tmp/workcell-install.out 2>&1; then
-  echo "Expected install.sh to succeed in a clean temporary HOME" >&2
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" >/tmp/workcell-install.out 2>&1; then
+  echo "Expected scripts/install.sh to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-install.out >&2
   exit 1
 fi
@@ -1146,8 +1149,8 @@ test ! -e "/tmp/workcell-uninstall-verify.log.$$"
 test ! -e "/tmp/workcell-docker.verify-uninstall.$$"
 grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files.' /tmp/workcell-uninstall.out
 
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/install.sh" --debug >/tmp/workcell-install-debug.out 2>&1; then
-  echo "Expected install.sh --debug to succeed in a clean temporary HOME" >&2
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug >/tmp/workcell-install-debug.out 2>&1; then
+  echo "Expected scripts/install.sh --debug to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-install-debug.out >&2
   exit 1
 fi
@@ -1223,8 +1226,8 @@ grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/tr
 
 CUSTOM_DEBUG_DIR="${INSTALL_VERIFY_HOME}/custom-workcell-debug"
 CUSTOM_DEBUG_DIR_REAL="$(go_verify_metadatautil canonicalize-path "${CUSTOM_DEBUG_DIR}")"
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/install.sh" --debug --debug-dir "${CUSTOM_DEBUG_DIR}" >/tmp/workcell-install-custom-debug.out 2>&1; then
-  echo "Expected install.sh --debug --debug-dir to succeed in a clean temporary HOME" >&2
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug --debug-dir "${CUSTOM_DEBUG_DIR}" >/tmp/workcell-install-custom-debug.out 2>&1; then
+  echo "Expected scripts/install.sh --debug --debug-dir to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-install-custom-debug.out >&2
   exit 1
 fi
@@ -2244,6 +2247,47 @@ for script in "${HOST_GATE_SCRIPTS[@]}"; do
     exit 1
   fi
 done
+
+if [[ ! -x "${REPO_PRECOMMIT_HOOK}" ]]; then
+  echo "Expected executable repo pre-commit hook: ${REPO_PRECOMMIT_HOOK}" >&2
+  exit 1
+fi
+if ! rg -q 'scripts/update-provider-pins\.sh" --check' "${REPO_PRECOMMIT_HOOK}"; then
+  echo "Expected repo pre-commit hook to gate commits on pending provider pin updates" >&2
+  exit 1
+fi
+
+PRECOMMIT_FIXTURE_ROOT="$(mktemp -d)"
+mkdir -p "${PRECOMMIT_FIXTURE_ROOT}/.githooks" "${PRECOMMIT_FIXTURE_ROOT}/scripts"
+install -m 0755 "${REPO_PRECOMMIT_HOOK}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit"
+cat >"${PRECOMMIT_FIXTURE_ROOT}/scripts/update-provider-pins.sh" <<'EOF'
+#!/bin/bash
+if [[ "${1:-}" == "--check" ]]; then
+  echo "Provider bump policy: 72h cool-off"
+  echo "  codex: 0.118.0 -> 0.119.0 (update available, published 2026-04-10T00:00:00Z)"
+  exit 1
+fi
+exit 2
+EOF
+chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-provider-pins.sh"
+if HOME="${PRECOMMIT_FIXTURE_ROOT}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit.out 2>&1; then
+  echo "Expected repo pre-commit hook to block commits when provider updates are pending" >&2
+  exit 1
+fi
+grep -q 'Stable provider pin updates are available' /tmp/workcell-precommit.out
+grep -q 'publish-provider-bump-pr.sh' /tmp/workcell-precommit.out
+
+cat >"${PRECOMMIT_FIXTURE_ROOT}/scripts/update-provider-pins.sh" <<'EOF'
+#!/bin/bash
+if [[ "${1:-}" == "--check" ]]; then
+  echo "Provider bump policy: 72h cool-off"
+  exit 0
+fi
+exit 2
+EOF
+chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-provider-pins.sh"
+HOME="${PRECOMMIT_FIXTURE_ROOT}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit-ok.out 2>&1
+rm -rf "${PRECOMMIT_FIXTURE_ROOT}"
 
 for script in \
   "${ROOT_DIR}/scripts/container-smoke.sh" \
@@ -3431,9 +3475,9 @@ grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}"'$' /tmp/workcell-inspect.out
 grep -q '^workspace_status=marker-only$' /tmp/workcell-inspect.out
 grep -q '^cache_profile=off$' /tmp/workcell-inspect.out
 grep -q '^cache_assurance=managed-no-persistent-cache$' /tmp/workcell-inspect.out
-grep -q '^provider_native_sandbox_configured=workspace-write$' /tmp/workcell-inspect.out
-grep -q '^provider_native_sandbox_effective=workspace-write$' /tmp/workcell-inspect.out
-grep -q '^provider_native_sandbox_reason=managed-profile-strict$' /tmp/workcell-inspect.out
+grep -q '^provider_native_sandbox_configured=disabled$' /tmp/workcell-inspect.out
+grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect.out
+grep -q '^provider_native_sandbox_reason=workcell-pinned-off-due-to-bwrap-userns-incompatibility$' /tmp/workcell-inspect.out
 grep -q '^injection_policy=none$' /tmp/workcell-inspect.out
 if ! "${ROOT_DIR}/scripts/workcell" \
   inspect \
@@ -4351,7 +4395,10 @@ FROM scratch
 EOF
 for stub in \
   check-pinned-inputs.sh \
+  update-provider-pins.sh \
   verify-upstream-codex-release.sh \
+  verify-upstream-claude-release.sh \
+  verify-upstream-gemini-release.sh \
   check-workflows.sh \
   validate-repo.sh \
   verify-invariants.sh \
@@ -4472,6 +4519,7 @@ fi
 grep -q 'local validation will run from snapshot (head).' /tmp/workcell-premerge-local-snapshot.out
 grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_DEFAULT_SNAPSHOT_PARENT}" "${PREMERGE_LOG}"
 grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
+grep -q 'update-provider-pins.sh --check' "${PREMERGE_LOG}"
 
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
@@ -4552,6 +4600,7 @@ grep -q 'with-validation-snapshot.sh --repo ' "${PREMERGE_LOG}"
 grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_HARNESS_ROOT}/relative-snapshots" "${PREMERGE_LOG}"
 grep -q -- '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --local-snapshot worktree --local-include-untracked' "${PREMERGE_LOG}"
 grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
+grep -q 'update-provider-pins.sh --check' "${PREMERGE_LOG}"
 grep -q 'verify-reproducible-build.sh ' "${PREMERGE_LOG}"
 grep -q 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64' "${PREMERGE_LOG}"
 grep -q 'local_premerge_repro_platforms()' "${ROOT_DIR}/scripts/pre-merge.sh"
@@ -5228,8 +5277,13 @@ if ! "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q 'profile=.* mode=development agent=codex ' /tmp/workcell-development-command.stderr
 grep -q 'execution_path=lower-assurance-development' /tmp/workcell-development-command.stderr
+grep -q -- ' bash -lc true ' /tmp/workcell-development-command.stdout
 if grep -q -- '--entrypoint bash' /tmp/workcell-development-command.stdout; then
   echo "Development command dry-run should stay on the managed entrypoint" >&2
+  exit 1
+fi
+if grep -q -- 'workcell:local codex bash -lc true ' /tmp/workcell-development-command.stdout; then
+  echo "Development command dry-run should not prepend the provider binary to explicit shell commands" >&2
   exit 1
 fi
 
@@ -5406,6 +5460,22 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     fi
     assert_output_matches_regex 'Starting managed Colima profile|starting colima' "${LIVE_DEBUG_LOGS_DEBUG_OUT}" \
       "Expected workcell logs debug to print the retained managed Colima startup log"
+    for agent in codex claude gemini; do
+      if ! GIT_PAGER=cat PAGER=cat \
+        "${ROOT_DIR}/scripts/workcell" \
+        --agent "${agent}" \
+        --mode development \
+        --workspace "${ROOT_DIR}" \
+        --no-default-injection-policy \
+        --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
+        -- bash -lc 'git -c safe.directory=/workspace status --short >/tmp/workcell-development-shell.out && printf "WORKCELL_DEVELOPMENT_SHELL_OK\n"' \
+        >"${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out" 2>&1; then
+        echo "Expected managed development shell command to succeed for ${agent} even with inherited host pager env" >&2
+        cat "${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out" >&2
+        exit 1
+      fi
+      grep -q '^WORKCELL_DEVELOPMENT_SHELL_OK$' "${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out"
+    done
     AUDIT_LOG="${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}/workcell.audit.log"
     PACKAGE_MUTATION_AUDIT_COMMAND="$(
       cat <<'EOF'
@@ -5438,9 +5508,9 @@ EOF
     grep -q 'event=launch' "${AUDIT_SESSION_LOG}"
     grep -q 'record_digest=' "${AUDIT_SESSION_LOG}"
     grep -q 'execution_path=lower-assurance-debug-command' "${AUDIT_SESSION_LOG}"
-    grep -q 'provider_native_sandbox_configured=workspace-write' "${AUDIT_SESSION_LOG}"
-    grep -q 'provider_native_sandbox_effective=workspace-write' "${AUDIT_SESSION_LOG}"
-    grep -q 'provider_native_sandbox_reason=managed-profile-build' "${AUDIT_SESSION_LOG}"
+    grep -q 'provider_native_sandbox_configured=disabled' "${AUDIT_SESSION_LOG}"
+    grep -q 'provider_native_sandbox_effective=disabled' "${AUDIT_SESSION_LOG}"
+    grep -q 'provider_native_sandbox_reason=workcell-pinned-off-due-to-bwrap-userns-incompatibility' "${AUDIT_SESSION_LOG}"
     grep -q 'event=assurance-change' "${AUDIT_SESSION_LOG}"
     grep -q 'reason=package-mutation' "${AUDIT_SESSION_LOG}"
     grep -q 'session_assurance_final=lower-assurance-package-mutation' "${AUDIT_SESSION_LOG}"
@@ -5690,7 +5760,7 @@ if ! WORKCELL_E2E_CODEX_AUTH_JSON='{"token":"codex-smoke"}' \
 fi
 grep -q '^provider_e2e_agent=codex$' /tmp/workcell-provider-e2e-codex.out
 grep -q '^provider_e2e_injection_source=generated-env$' /tmp/workcell-provider-e2e-codex.out
-grep -q '^provider_e2e_steps=auth-status,prepare-only,live-probe$' /tmp/workcell-provider-e2e-codex.out
+grep -q '^provider_e2e_steps=auth-status,prepare-only,development-shell,live-probe$' /tmp/workcell-provider-e2e-codex.out
 grep -q 'codex_auth' /tmp/workcell-provider-e2e-codex.out
 if grep -q 'github_hosts' /tmp/workcell-provider-e2e-codex.out; then
   echo "Expected provider-e2e codex dry-run to omit unrelated shared GitHub credentials" >&2
@@ -5698,6 +5768,9 @@ if grep -q 'github_hosts' /tmp/workcell-provider-e2e-codex.out; then
 fi
 grep -q 'provider_e2e_auth_status_cmd=.*--auth-status' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_prepare_only_cmd=.*--prepare-only' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_shell_probe_cmd=.*--mode development' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_shell_probe_cmd=.*-- bash -lc' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_shell_probe_cmd=.*WORKCELL_PROVIDER_E2E_SHELL_OK' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg exec' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg --json' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-codex.out
@@ -5714,6 +5787,9 @@ fi
 grep -q '^provider_e2e_agent=claude$' /tmp/workcell-provider-e2e-claude.out
 grep -q '^provider_e2e_injection_source=generated-env$' /tmp/workcell-provider-e2e-claude.out
 grep -q 'claude_api_key' /tmp/workcell-provider-e2e-claude.out
+grep -q 'provider_e2e_shell_probe_cmd=.*--mode development' /tmp/workcell-provider-e2e-claude.out
+grep -q 'provider_e2e_shell_probe_cmd=.*-- bash -lc' /tmp/workcell-provider-e2e-claude.out
+grep -q 'provider_e2e_shell_probe_cmd=.*WORKCELL_PROVIDER_E2E_SHELL_OK' /tmp/workcell-provider-e2e-claude.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg -p' /tmp/workcell-provider-e2e-claude.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg json' /tmp/workcell-provider-e2e-claude.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg --no-session-persistence' /tmp/workcell-provider-e2e-claude.out
@@ -5737,6 +5813,9 @@ grep -q '^provider_e2e_agent=gemini$' /tmp/workcell-provider-e2e-gemini.out
 grep -q '^provider_e2e_injection_source=generated-env$' /tmp/workcell-provider-e2e-gemini.out
 grep -q 'gemini_env' /tmp/workcell-provider-e2e-gemini.out
 grep -q 'gcloud_adc' /tmp/workcell-provider-e2e-gemini.out
+grep -q 'provider_e2e_shell_probe_cmd=.*--mode development' /tmp/workcell-provider-e2e-gemini.out
+grep -q 'provider_e2e_shell_probe_cmd=.*-- bash -lc' /tmp/workcell-provider-e2e-gemini.out
+grep -q 'provider_e2e_shell_probe_cmd=.*WORKCELL_PROVIDER_E2E_SHELL_OK' /tmp/workcell-provider-e2e-gemini.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg -p' /tmp/workcell-provider-e2e-gemini.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg json' /tmp/workcell-provider-e2e-gemini.out
 grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-gemini.out
@@ -5763,6 +5842,25 @@ STATUS
 done
 
 if [[ "${1:-}" == "--prepare-only" ]]; then
+  exit 0
+fi
+
+if [[ " $* " == *" --mode development "* ]]; then
+  case " $* " in
+    *" -- bash -lc "* ) ;;
+    * )
+      echo "missing codex development-shell args: $*" >&2
+      exit 96
+      ;;
+  esac
+  case " $* " in
+    *" WORKCELL_PROVIDER_E2E_SHELL_OK "* ) ;;
+    * )
+      echo "missing codex development-shell token: $*" >&2
+      exit 95
+      ;;
+  esac
+  printf 'WORKCELL_PROVIDER_E2E_SHELL_OK\n'
   exit 0
 fi
 
@@ -5797,6 +5895,8 @@ if ! WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_OK}" \
 fi
 grep -q '\[provider-e2e\] auth-status (codex)' /tmp/workcell-provider-e2e-live-probe.out
 grep -q '\[provider-e2e\] prepare-only (codex)' /tmp/workcell-provider-e2e-live-probe.out
+grep -q '\[provider-e2e\] development-shell (codex)' /tmp/workcell-provider-e2e-live-probe.out
+grep -q '^WORKCELL_PROVIDER_E2E_SHELL_OK$' /tmp/workcell-provider-e2e-live-probe.out
 grep -q '\[provider-e2e\] live-probe (codex)' /tmp/workcell-provider-e2e-live-probe.out
 grep -q '"text":"WORKCELL_PROVIDER_E2E_OK"' /tmp/workcell-provider-e2e-live-probe.out
 
@@ -5822,6 +5922,25 @@ STATUS
 done
 
 if [[ "${1:-}" == "--prepare-only" ]]; then
+  exit 0
+fi
+
+if [[ " $* " == *" --mode development "* ]]; then
+  case " $* " in
+    *" -- bash -lc "* ) ;;
+    * )
+      echo "missing claude development-shell args: $*" >&2
+      exit 88
+      ;;
+  esac
+  case " $* " in
+    *" WORKCELL_PROVIDER_E2E_SHELL_OK "* ) ;;
+    * )
+      echo "missing claude development-shell token: $*" >&2
+      exit 87
+      ;;
+  esac
+  printf 'WORKCELL_PROVIDER_E2E_SHELL_OK\n'
   exit 0
 fi
 
@@ -5889,6 +6008,8 @@ if ! WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_CLAUDE}
 fi
 grep -q '\[provider-e2e\] auth-status (claude)' /tmp/workcell-provider-e2e-live-probe-claude.out
 grep -q '\[provider-e2e\] prepare-only (claude)' /tmp/workcell-provider-e2e-live-probe-claude.out
+grep -q '\[provider-e2e\] development-shell (claude)' /tmp/workcell-provider-e2e-live-probe-claude.out
+grep -q '^WORKCELL_PROVIDER_E2E_SHELL_OK$' /tmp/workcell-provider-e2e-live-probe-claude.out
 grep -q '\[provider-e2e\] live-probe (claude)' /tmp/workcell-provider-e2e-live-probe-claude.out
 grep -q '"result":"WORKCELL_PROVIDER_E2E_OK"' /tmp/workcell-provider-e2e-live-probe-claude.out
 
@@ -5914,6 +6035,25 @@ STATUS
 done
 
 if [[ "${1:-}" == "--prepare-only" ]]; then
+  exit 0
+fi
+
+if [[ " $* " == *" --mode development "* ]]; then
+  case " $* " in
+    *" -- bash -lc "* ) ;;
+    * )
+      echo "missing gemini development-shell args: $*" >&2
+      exit 94
+      ;;
+  esac
+  case " $* " in
+    *" WORKCELL_PROVIDER_E2E_SHELL_OK "* ) ;;
+    * )
+      echo "missing gemini development-shell token: $*" >&2
+      exit 93
+      ;;
+  esac
+  printf 'WORKCELL_PROVIDER_E2E_SHELL_OK\n'
   exit 0
 fi
 
@@ -5948,6 +6088,8 @@ if ! WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_GEMINI}
 fi
 grep -q '\[provider-e2e\] auth-status (gemini)' /tmp/workcell-provider-e2e-live-probe-gemini.out
 grep -q '\[provider-e2e\] prepare-only (gemini)' /tmp/workcell-provider-e2e-live-probe-gemini.out
+grep -q '\[provider-e2e\] development-shell (gemini)' /tmp/workcell-provider-e2e-live-probe-gemini.out
+grep -q '^WORKCELL_PROVIDER_E2E_SHELL_OK$' /tmp/workcell-provider-e2e-live-probe-gemini.out
 grep -q '\[provider-e2e\] live-probe (gemini)' /tmp/workcell-provider-e2e-live-probe-gemini.out
 grep -q '"response": "WORKCELL_PROVIDER_E2E_OK"' /tmp/workcell-provider-e2e-live-probe-gemini.out
 

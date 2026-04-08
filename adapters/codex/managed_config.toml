@@ -33,32 +33,29 @@ set = { WORKCELL_RUNTIME = "1" }
 
 [sandbox_workspace_write]
 exclude_slash_tmp = true
-exclude_tmpdir_env_var = true
+# Keep `/tmp` excluded, but allow the managed session tmpdir at `/state/tmp`.
+exclude_tmpdir_env_var = false
 network_access = false
 
 [features]
-unified_exec = true
+# Codex's unified exec path currently fails inside Workcell managed mode with
+# "Failed to create unified exec process: Operation not permitted".
+unified_exec = false
 
 [profiles.strict]
-sandbox_mode = "workspace-write"
+sandbox_mode = "danger-full-access"
 approval_policy = "on-request"
 web_search = "disabled"
 
 [profiles.development]
-sandbox_mode = "workspace-write"
+sandbox_mode = "danger-full-access"
 approval_policy = "on-request"
 web_search = "disabled"
 
-[profiles.development.sandbox_workspace_write]
-network_access = true
-
 [profiles.build]
-sandbox_mode = "workspace-write"
+sandbox_mode = "danger-full-access"
 approval_policy = "never"
 web_search = "disabled"
-
-[profiles.build.sandbox_workspace_write]
-network_access = true
 
 [profiles.breakglass]
 sandbox_mode = "danger-full-access"
@@ -81,6 +78,6 @@ decision = "forbidden"
 justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."
 
 [[rules.prefix_rules]]
-pattern = [{ token = "node" }, { any_of = ["/opt/workcell/providers/node_modules/@google/gemini-cli/dist/index.js"] }]
+pattern = [{ token = "node" }, { any_of = ["/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js"] }]
 decision = "forbidden"
 justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."

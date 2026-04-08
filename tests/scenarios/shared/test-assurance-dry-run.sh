@@ -84,8 +84,13 @@ for agent in codex claude gemini; do
     >"${TMP_DIR}/development-command-${agent}.stdout" 2>"${TMP_DIR}/development-command-${agent}.stderr"
   grep -q "^profile=.* mode=development agent=${agent} " "${TMP_DIR}/development-command-${agent}.stderr"
   grep -q '^execution_path=lower-assurance-development audit_log=' "${TMP_DIR}/development-command-${agent}.stderr"
+  grep -q -- ' bash -lc true ' "${TMP_DIR}/development-command-${agent}.stdout"
   if grep -q -- ' --entrypoint bash ' "${TMP_DIR}/development-command-${agent}.stdout"; then
     echo "development mode should keep managed command execution on the reviewed entrypoint" >&2
+    exit 1
+  fi
+  if grep -q -- "workcell:local ${agent} bash -lc true " "${TMP_DIR}/development-command-${agent}.stdout"; then
+    echo "development mode should forward explicit shell commands directly instead of prepending the provider binary" >&2
     exit 1
   fi
 done

@@ -8,7 +8,7 @@ runtime.
 - macOS
 - Colima
 - Docker CLI
-- Workcell installed from the repo root with `./install.sh`
+- Workcell installed with `./scripts/install.sh`
 
 ## 1. Create a reviewed auth file
 

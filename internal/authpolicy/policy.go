@@ -26,10 +26,10 @@ var (
 		"gemini": {},
 	}
 	SupportedModes = map[string]struct{}{
-		"strict":     {},
+		"strict":      {},
 		"development": {},
-		"build":      {},
-		"breakglass": {},
+		"build":       {},
+		"breakglass":  {},
 	}
 	CredentialKeys = map[string]struct{}{
 		"codex_auth":      {},

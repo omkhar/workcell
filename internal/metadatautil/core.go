@@ -46,6 +46,7 @@ type PinnedInputsConfig struct {
 	CodexMCPConfigPath            string
 	HostedControlsPolicyPath      string
 	HostedControlsScriptPath      string
+	ProviderBumpPolicyPath        string
 	MaxDebianSnapshotAgeDays      int
 }
 

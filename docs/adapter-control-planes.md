@@ -74,6 +74,13 @@ copy only when:
 - prompt autonomy is active
 - the session has already been downgraded by package mutation
 
+### Codex native sandbox
+
+Workcell pins Codex's own Linux shell sandbox off on the managed path.
+Workcell's outer VM-plus-container boundary remains the primary isolation
+control, and the current Codex Linux sandbox requires unprivileged user
+namespaces that are not available inside the Tier 1 container.
+
 ### Claude hook coverage
 
 The Claude adapter installs a reviewed `PreToolUse` Bash hook that blocks

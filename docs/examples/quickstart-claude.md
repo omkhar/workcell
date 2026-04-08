@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Workcell installed with `./install.sh`
+- Workcell installed with `./scripts/install.sh`
 - a repo you want to mount as the workspace
 - a reviewed Claude API key file, or an experimental macOS resolver config
 

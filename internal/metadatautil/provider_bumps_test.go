@@ -1,0 +1,398 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Omkhar Arasaratnam
+
+package metadatautil
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
+	root := t.TempDir()
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	packageJSONPath := filepath.Join(root, "package.json")
+	policyPath := filepath.Join(root, "provider-bumps.toml")
+
+	mustWriteText(t, dockerfilePath, strings.Join([]string{
+		"ARG CLAUDE_VERSION=2.1.86",
+		"ARG CODEX_VERSION=0.117.0-alpha.8",
+		"RUN true",
+	}, "\n")+"\n")
+	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.34.0"}}`+"\n")
+	mustWriteText(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"cooloff_hours = 72",
+		"",
+		"[provider.codex]",
+		`channel = "stable"`,
+		"",
+		"[provider.claude]",
+		`channel = "stable"`,
+		"",
+		"[provider.gemini]",
+		`channel = "stable"`,
+	}, "\n")+"\n")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/codex-registry":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "dist-tags": {
+    "latest": "0.118.0",
+    "alpha": "0.119.0-alpha.19"
+  },
+  "time": {
+    "created": "2026-01-01T00:00:00Z",
+    "modified": "2026-04-08T04:37:07Z",
+    "0.117.0": "2026-03-20T12:00:00Z",
+    "0.118.0": "2026-03-31T17:03:18Z",
+    "0.119.0-alpha.19": "2026-04-08T04:37:07Z"
+  }
+}`))
+		case "/codex-release/rust-v0.118.0":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "tag_name": "rust-v0.118.0",
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7"
+    },
+    {
+      "name": "codex-x86_64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"
+    }
+  ]
+}`))
+		case "/gemini-registry":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "dist-tags": {
+    "latest": "0.36.0",
+    "preview": "0.37.0-preview.2",
+    "nightly": "0.36.0-nightly.20260407.1c22c5b37"
+  },
+  "time": {
+    "created": "2026-01-01T00:00:00Z",
+    "modified": "2026-04-08T00:00:00Z",
+    "0.34.0": "2026-03-17T21:03:34Z",
+    "0.36.0": "2026-04-01T20:23:40Z",
+    "0.37.0-preview.2": "2026-04-07T19:06:31Z"
+  }
+}`))
+		case "/claude-bucket":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <CommonPrefixes><Prefix>claude-code-releases/2.1.96/</Prefix></CommonPrefixes>
+  <CommonPrefixes><Prefix>claude-code-releases/2.1.94/</Prefix></CommonPrefixes>
+  <CommonPrefixes><Prefix>claude-code-releases/2.1.92/</Prefix></CommonPrefixes>
+</ListBucketResult>`))
+		case "/claude-release/2.1.96/manifest.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "version": "2.1.96",
+  "buildDate": "2026-04-08T03:19:21Z",
+  "platforms": {
+    "linux-arm64": {"checksum": "too-new-arm64"},
+    "linux-x64": {"checksum": "too-new-amd64"}
+  }
+}`))
+		case "/claude-release/2.1.94/manifest.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "version": "2.1.94",
+  "buildDate": "2026-04-07T20:58:22Z",
+  "platforms": {
+    "linux-arm64": {"checksum": "still-too-new-arm64"},
+    "linux-x64": {"checksum": "still-too-new-amd64"}
+  }
+}`))
+		case "/claude-release/2.1.92/manifest.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "version": "2.1.92",
+  "buildDate": "2026-04-03T23:57:51Z",
+  "platforms": {
+    "linux-arm64": {"checksum": "08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953"},
+    "linux-x64": {"checksum": "e22324514967ff2d5e9f91f0ee37e4675bf8b6dfec27fafb19cb25cc5b23fcaf"}
+  }
+}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	now := time.Date(2026, time.April, 8, 10, 0, 0, 0, time.UTC)
+	plan, err := PlanProviderBumps(policyPath, dockerfilePath, packageJSONPath, now, ProviderBumpSources{
+		CodexRegistryURL:      server.URL + "/codex-registry",
+		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
+		GeminiRegistryURL:     server.URL + "/gemini-registry",
+		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeReleaseRootURL:  server.URL + "/claude-release",
+	}, server.Client())
+	if err != nil {
+		t.Fatalf("PlanProviderBumps() error = %v", err)
+	}
+
+	if !plan.HasChanges {
+		t.Fatal("PlanProviderBumps() should report pending provider changes")
+	}
+	if got := plan.Providers["codex"].TargetVersion; got != "0.118.0" {
+		t.Fatalf("Codex target = %q, want 0.118.0", got)
+	}
+	if got := plan.Providers["claude"].TargetVersion; got != "2.1.92" {
+		t.Fatalf("Claude target = %q, want 2.1.92", got)
+	}
+	if got := plan.Providers["gemini"].TargetVersion; got != "0.36.0" {
+		t.Fatalf("Gemini target = %q, want 0.36.0", got)
+	}
+	if got := plan.Providers["codex"].Checksums["arm64"]; got != "9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7" {
+		t.Fatalf("Codex arm64 checksum = %q", got)
+	}
+}
+
+func TestCheckProviderBumpPolicyRejectsPrereleaseCodexPin(t *testing.T) {
+	root := t.TempDir()
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	packageJSONPath := filepath.Join(root, "package.json")
+	policyPath := filepath.Join(root, "provider-bumps.toml")
+
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.92\nARG CODEX_VERSION=0.118.0-alpha.1\n")
+	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
+	mustWriteText(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"cooloff_hours = 72",
+		"",
+		"[provider.codex]",
+		`channel = "stable"`,
+		"",
+		"[provider.claude]",
+		`channel = "stable"`,
+		"",
+		"[provider.gemini]",
+		`channel = "stable"`,
+	}, "\n")+"\n")
+
+	err := CheckProviderBumpPolicy(policyPath, dockerfilePath, packageJSONPath)
+	if err == nil {
+		t.Fatal("CheckProviderBumpPolicy() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "stable Codex pin") {
+		t.Fatalf("CheckProviderBumpPolicy() error = %v", err)
+	}
+}
+
+func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
+	root := t.TempDir()
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	packageJSONPath := filepath.Join(root, "package.json")
+	policyPath := filepath.Join(root, "provider-bumps.toml")
+
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.92\nARG CODEX_VERSION=0.118.0\n")
+	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
+	mustWriteText(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"cooloff_hours = 72",
+		"",
+		"[provider.codex]",
+		`channel = "stable"`,
+		"",
+		"[provider.claude]",
+		`channel = "stable"`,
+		"",
+		"[provider.gemini]",
+		`channel = "stable"`,
+	}, "\n")+"\n")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/codex-registry":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "dist-tags": {
+    "latest": "0.118.0",
+    "alpha": "0.119.0-alpha.19"
+  },
+  "time": {
+    "created": "2026-01-01T00:00:00Z",
+    "modified": "2026-04-08T04:37:07Z",
+    "0.118.0": "2026-03-31T17:03:18Z",
+    "0.119.0": "2026-04-02T17:03:18Z",
+    "0.119.0-alpha.19": "2026-04-08T04:37:07Z"
+  }
+}`))
+		case "/codex-release/rust-v0.118.0":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "tag_name": "rust-v0.118.0",
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7"
+    },
+    {
+      "name": "codex-x86_64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:220f15ca1c639e905aae385da960e1897882fee76653f5f9f5dffa5f754f7c98"
+    }
+  ]
+}`))
+		case "/gemini-registry":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "dist-tags": {"latest": "0.36.0"},
+  "time": {
+    "created": "2026-01-01T00:00:00Z",
+    "0.36.0": "2026-04-01T20:23:40Z"
+  }
+}`))
+		case "/claude-bucket":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <CommonPrefixes><Prefix>claude-code-releases/2.1.92/</Prefix></CommonPrefixes>
+</ListBucketResult>`))
+		case "/claude-release/2.1.92/manifest.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "version": "2.1.92",
+  "buildDate": "2026-04-03T23:57:51Z",
+  "platforms": {
+    "linux-arm64": {"checksum": "08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953"},
+    "linux-x64": {"checksum": "e22324514967ff2d5e9f91f0ee37e4675bf8b6dfec27fafb19cb25cc5b23fcaf"}
+  }
+}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	now := time.Date(2026, time.April, 8, 10, 0, 0, 0, time.UTC)
+	plan, err := PlanProviderBumps(policyPath, dockerfilePath, packageJSONPath, now, ProviderBumpSources{
+		CodexRegistryURL:      server.URL + "/codex-registry",
+		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
+		GeminiRegistryURL:     server.URL + "/gemini-registry",
+		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeReleaseRootURL:  server.URL + "/claude-release",
+	}, server.Client())
+	if err != nil {
+		t.Fatalf("PlanProviderBumps() error = %v", err)
+	}
+
+	if plan.Providers["codex"].TargetVersion != "0.118.0" {
+		t.Fatalf("Codex target = %q, want 0.118.0", plan.Providers["codex"].TargetVersion)
+	}
+	if plan.Providers["codex"].Changed {
+		t.Fatal("Codex plan should not propose a version newer than dist-tags.latest")
+	}
+}
+
+func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
+	root := t.TempDir()
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	packageJSONPath := filepath.Join(root, "package.json")
+	planPath := filepath.Join(root, "plan.json")
+
+	mustWriteText(t, dockerfilePath, strings.Join([]string{
+		"ARG CLAUDE_VERSION=2.1.86",
+		"ARG CODEX_VERSION=0.117.0-alpha.8",
+		"RUN case \"${TARGET_ARCH}\" in \\",
+		"  arm64) \\",
+		"    CLAUDE_PLATFORM=\"linux-arm64\"; \\",
+		"    CLAUDE_SHA256=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"; \\",
+		"    ;;",
+		"  amd64) \\",
+		"    CLAUDE_PLATFORM=\"linux-x64\"; \\",
+		"    CLAUDE_SHA256=\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"; \\",
+		"    ;;",
+		"esac",
+		"RUN case \"${TARGET_ARCH}\" in \\",
+		"  arm64) \\",
+		"    CODEX_ARCH=\"aarch64-unknown-linux-gnu\"; \\",
+		"    CODEX_SHA256=\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"; \\",
+		"    ;;",
+		"  amd64) \\",
+		"    CODEX_ARCH=\"x86_64-unknown-linux-gnu\"; \\",
+		"    CODEX_SHA256=\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"; \\",
+		"    ;;",
+		"esac",
+	}, "\n")+"\n")
+	mustWriteText(t, packageJSONPath, "{\n  \"dependencies\": {\n    \"@google/gemini-cli\": \"0.34.0\"\n  }\n}\n")
+
+	plan := ProviderBumpPlan{
+		Providers: map[string]ProviderBumpSelection{
+			"claude": {
+				TargetVersion: "2.1.92",
+				Checksums: map[string]string{
+					"arm64": "08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953",
+					"amd64": "e22324514967ff2d5e9f91f0ee37e4675bf8b6dfec27fafb19cb25cc5b23fcaf",
+				},
+			},
+			"codex": {
+				TargetVersion: "0.118.0",
+				Checksums: map[string]string{
+					"arm64": "9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7",
+					"amd64": "526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b",
+				},
+			},
+			"gemini": {
+				TargetVersion: "0.36.0",
+			},
+		},
+	}
+	content, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyProviderBumpPlan(planPath, dockerfilePath, packageJSONPath); err != nil {
+		t.Fatalf("ApplyProviderBumpPlan() error = %v", err)
+	}
+
+	updatedDockerfile, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updatedDockerfile), "ARG CLAUDE_VERSION=2.1.92") {
+		t.Fatalf("Dockerfile was not updated with Claude target version:\n%s", updatedDockerfile)
+	}
+	if !strings.Contains(string(updatedDockerfile), "ARG CODEX_VERSION=0.118.0") {
+		t.Fatalf("Dockerfile was not updated with Codex target version:\n%s", updatedDockerfile)
+	}
+	if !strings.Contains(string(updatedDockerfile), `CLAUDE_SHA256="08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953"`) {
+		t.Fatalf("Dockerfile was not updated with Claude arm64 checksum:\n%s", updatedDockerfile)
+	}
+	if !strings.Contains(string(updatedDockerfile), `CODEX_SHA256="526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"`) {
+		t.Fatalf("Dockerfile was not updated with Codex amd64 checksum:\n%s", updatedDockerfile)
+	}
+
+	updatedPackageJSON, err := os.ReadFile(packageJSONPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updatedPackageJSON), `"@google/gemini-cli": "0.36.0"`) {
+		t.Fatalf("package.json was not updated with Gemini target version:\n%s", updatedPackageJSON)
+	}
+}
+
+func mustWriteText(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v", path, err)
+	}
+}
