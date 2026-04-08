@@ -39,6 +39,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/lib/scenario_manifest"
   "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   "${ROOT_DIR}/scripts/verify-go-python-parity.sh"
+  "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
   "${ROOT_DIR}/runtime/container/development-wrapper.sh"
@@ -66,6 +67,7 @@ if [[ "${#go_files[@]}" -gt 0 ]]; then
 fi
 go vet ./...
 go test ./...
+"${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
 
 (
   cd "${ROOT_DIR}/runtime/container/rust"

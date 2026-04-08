@@ -105,6 +105,9 @@ Useful operator flows:
 workcell --prepare --agent codex --workspace /path/to/repo
 workcell --prepare-only --agent codex --workspace /path/to/repo
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
+workcell session list
+workcell session show --id 20260408T120000Z-1a2b3c4d
+workcell session export --id 20260408T120000Z-1a2b3c4d --output /tmp/workcell-session.json
 workcell --inspect --agent codex --workspace /path/to/repo
 workcell --doctor --agent codex --workspace /path/to/repo
 workcell --auth-status --agent codex --workspace /path/to/repo
@@ -122,6 +125,8 @@ What to expect from the safe path:
 - there is no separate "start a container, then attach the agent" step
 - `publish-pr` runs on the host so signed commits and GitHub publication stay
   outside the Tier 1 container
+- completed and aborted launches are recorded as durable host-side session
+  records that you can inspect with `workcell session ...`
 - `--debug-log`, `--file-trace-log`, and `--audit-transcript` are explicit
   lower-assurance operator choices and are off by default
 
@@ -192,8 +197,10 @@ See [docs/provenance.md](docs/provenance.md) and
 | Adapter control planes | [docs/adapter-control-planes.md](docs/adapter-control-planes.md) |
 | Injection policy | [docs/injection-policy.md](docs/injection-policy.md) |
 | Validation coverage | [docs/validation-scenarios.md](docs/validation-scenarios.md) |
+| Requirements validation | [docs/requirements-validation.md](docs/requirements-validation.md) |
 | Scenario gaps | [docs/scenario-gaps.md](docs/scenario-gaps.md) |
 | Use-case coverage | [docs/use-case-matrix.md](docs/use-case-matrix.md) |
+| Session supervisor design | [docs/workcell-session-supervisor-design.md](docs/workcell-session-supervisor-design.md) |
 | Provenance and signing | [docs/provenance.md](docs/provenance.md) |
 | GitHub automation | [docs/github-workflows.md](docs/github-workflows.md) |
 | Contributor workflow | [CONTRIBUTING.md](CONTRIBUTING.md) |

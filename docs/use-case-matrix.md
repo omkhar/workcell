@@ -18,6 +18,7 @@ Workcell workflows.
 | host-side signed `publish-pr` handoff | tested | shared scenario tests and invariant checks |
 | repo control-plane masking and provider-home re-seeding | tested | invariants and smoke |
 | prompt-autonomy downgrade labeling | tested for Codex, partial elsewhere | invariants plus provider-specific coverage |
+| host-side session inventory and audit export | tested | `tests/scenarios/shared/test-session-commands.sh`, `internal/hostutil/sessions_test.go` |
 | release-bundle reproducibility | tested | `scripts/verify-release-bundle.sh`, tagged release preflight |
 | runtime-image reproducibility | tested | `scripts/verify-reproducible-build.sh`, CI, tagged release preflight |
 | Sigstore signing and SBOM publication | tested | successful tagged release workflow |

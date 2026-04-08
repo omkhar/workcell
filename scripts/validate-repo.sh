@@ -140,6 +140,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-invariants.sh"
+  "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
@@ -256,6 +257,7 @@ yamllint -d "{extends: default, rules: {comments: disable, document-start: disab
 
 "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
 "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
+"${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
 
 doc_files=()
 while IFS= read -r -d '' file; do

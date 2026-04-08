@@ -155,6 +155,10 @@ SESSION_AUDIT_STATE_FILE=""
 SESSION_AUDIT_CONTAINER_FILE=""
 SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
 FINAL_SESSION_ASSURANCE=""
+SESSION_ID=""
+SESSION_RECORD_PATH=""
+SESSION_RECORD_WRITTEN=0
+SESSION_RECORD_FINALIZED=0
 INJECTION_POLICY_SHA256=""
 INJECTION_CREDENTIAL_KEYS=""
 INJECTION_CREDENTIAL_INPUT_KINDS=""
@@ -170,6 +174,7 @@ usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
+       workcell session <list|show|export> [options]
        workcell auth <init|set|unset|status> [options]
 
 Options:
@@ -245,6 +250,9 @@ Workflows:
     workcell auth set --agent codex --credential codex_auth --source /path/to/auth.json
     workcell auth set --agent claude --credential claude_auth --resolver claude-macos-keychain --ack-host-resolver
     workcell auth status --agent codex
+    workcell session list
+    workcell session show --id 20260408T120000Z-1a2b3c4d
+    workcell session export --id 20260408T120000Z-1a2b3c4d
     workcell inspect --agent codex --workspace /path/to/repo
     workcell doctor --agent codex --workspace /path/to/repo
     workcell logs debug --colima-profile wcl-...
@@ -697,10 +705,16 @@ restore_interactive_host_terminal() {
   printf '\033[0m\033[?25h\033[?2004l\033[?1004l\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1049l' >/dev/tty 2>/dev/null || true
 }
 
-# cleanup is only reached through trap 'cleanup' EXIT; validator/CI ShellCheck
+# cleanup is only reached through trap 'cleanup "$?"' EXIT; validator/CI ShellCheck
 # still misclassifies the trap-only body as unreachable.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
+  local exit_status="${1:-0}"
+
+  if [[ "${SESSION_RECORD_WRITTEN}" -eq 1 ]] && [[ "${SESSION_RECORD_FINALIZED}" -eq 0 ]]; then
+    write_session_record_final "aborted" "${exit_status}" "${FINAL_SESSION_ASSURANCE:-$(session_assurance_initial)}" || true
+  fi
+
   if [[ -n "${CONTROL_PLANE_SHADOW_ROOT}" ]] && [[ -e "${CONTROL_PLANE_SHADOW_ROOT}" ]]; then
     chmod -R u+w "${CONTROL_PLANE_SHADOW_ROOT}" 2>/dev/null || true
     rm -rf "${CONTROL_PLANE_SHADOW_ROOT}"
@@ -759,7 +773,7 @@ cleanup() {
   restore_interactive_host_terminal
 }
 
-trap 'cleanup' EXIT
+trap 'cleanup "$?"' EXIT
 
 profile_marker_path() {
   local profile="$1"
@@ -806,6 +820,17 @@ profile_audit_log_path() {
 
   validate_colima_profile_name "${profile}"
   printf '%s/workcell.audit.log\n' "$(profile_dir "${profile}")"
+}
+
+profile_sessions_dir_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/sessions\n' "$(profile_dir "${profile}")"
+}
+
+generate_session_id() {
+  printf '%s-%s\n' "$(date -u '+%Y%m%dT%H%M%SZ')" "$(generate_session_suffix)"
 }
 
 profile_lock_dir_path() {
@@ -1146,6 +1171,7 @@ append_launch_audit_record() {
 
   append_audit_record "${profile}" \
     "event=launch" \
+    "session_id=${SESSION_ID}" \
     "profile=${profile}" \
     "mode=${MODE}" \
     "agent=${AGENT}" \
@@ -1191,6 +1217,7 @@ append_assurance_change_audit_record() {
 
   append_audit_record "${profile}" \
     "event=assurance-change" \
+    "session_id=${SESSION_ID}" \
     "profile=${profile}" \
     "mode=${MODE}" \
     "agent=${AGENT}" \
@@ -1210,6 +1237,7 @@ append_exit_audit_record() {
 
   append_audit_record "${profile}" \
     "event=exit" \
+    "session_id=${SESSION_ID}" \
     "profile=${profile}" \
     "mode=${MODE}" \
     "agent=${AGENT}" \
@@ -1245,6 +1273,58 @@ append_exit_audit_record() {
     "package_mutation_downgraded=${downgraded}"
 }
 
+write_session_record() {
+  local path="$1"
+  shift
+
+  go_hostutil launcher session-record-write "${path}" "$@"
+}
+
+write_session_record_initial() {
+  local profile="$1"
+  local execution_path="$2"
+  local sessions_dir=""
+
+  [[ -n "${SESSION_ID}" ]] || SESSION_ID="$(generate_session_id)"
+  sessions_dir="$(profile_sessions_dir_path "${profile}")"
+  mkdir -p "${sessions_dir}"
+  SESSION_RECORD_PATH="${sessions_dir}/${SESSION_ID}.json"
+  write_session_record "${SESSION_RECORD_PATH}" \
+    "session_id=${SESSION_ID}" \
+    "profile=${profile}" \
+    "agent=${AGENT}" \
+    "mode=${MODE}" \
+    "status=running" \
+    "ui=${UI}" \
+    "execution_path=${execution_path}" \
+    "workspace=${WORKSPACE}" \
+    "container_name=${CONTAINER_NAME}" \
+    "session_audit_dir=${SESSION_AUDIT_DIR}" \
+    "audit_log_path=$(profile_audit_log_path "${profile}")" \
+    "debug_log_path=${DEBUG_LOG_PATH}" \
+    "file_trace_log_path=${FILE_TRACE_LOG_PATH}" \
+    "transcript_log_path=${AUDIT_TRANSCRIPT_PATH}" \
+    "started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    "initial_assurance=$(session_assurance_initial)" \
+    "workspace_control_plane=$(workspace_control_plane_state)"
+  SESSION_RECORD_WRITTEN=1
+}
+
+write_session_record_final() {
+  local status="$1"
+  local exit_status="$2"
+  local final_assurance="$3"
+
+  [[ "${SESSION_RECORD_WRITTEN}" -eq 1 ]] || return 0
+  [[ -n "${SESSION_RECORD_PATH}" ]] || return 0
+  write_session_record "${SESSION_RECORD_PATH}" \
+    "status=${status}" \
+    "finished_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    "exit_status=${exit_status}" \
+    "final_assurance=${final_assurance}"
+  SESSION_RECORD_FINALIZED=1
+}
+
 prepare_session_audit_state() {
   local profile="$1"
 
@@ -1253,6 +1333,10 @@ prepare_session_audit_state() {
   chmod 0700 "${SESSION_AUDIT_DIR}" 2>/dev/null || true
   SESSION_AUDIT_STATE_FILE="${SESSION_AUDIT_DIR}/session-assurance"
   SESSION_AUDIT_CONTAINER_FILE="/var/lib/workcell/session-assurance"
+  SESSION_ID="$(generate_session_id)"
+  SESSION_RECORD_PATH=""
+  SESSION_RECORD_WRITTEN=0
+  SESSION_RECORD_FINALIZED=0
   rm -f "${SESSION_AUDIT_STATE_FILE}"
 }
 
@@ -1305,6 +1389,11 @@ finalize_session_audit() {
     append_assurance_change_audit_record "${profile}" "${final_assurance}"
   fi
   append_exit_audit_record "${profile}" "${execution_path}" "${exit_status}" "${final_assurance}" "${downgraded}"
+  if [[ "${exit_status}" -eq 0 ]]; then
+    write_session_record_final "exited" "${exit_status}" "${final_assurance}"
+  else
+    write_session_record_final "failed" "${exit_status}" "${final_assurance}"
+  fi
   FINAL_SESSION_ASSURANCE="${final_assurance}"
 }
 
@@ -1810,6 +1899,169 @@ publish_pr_main() {
   printf 'publish_pr_url=%s\n' "${pr_url}"
   printf 'publish_snapshot=%s\n' "${snapshot}"
   exit 0
+}
+
+session_usage() {
+  cat <<'EOF'
+Usage: workcell session list [options]
+       workcell session show --id SESSION_ID
+       workcell session export --id SESSION_ID [--output PATH]
+
+Commands:
+  list
+    --workspace PATH          Filter recorded sessions to PATH
+    --colima-profile NAME     Filter recorded sessions to the selected profile
+    --json                    Emit machine-readable JSON instead of the default table
+
+  show
+    --id SESSION_ID           Show one recorded session as JSON
+
+  export
+    --id SESSION_ID           Export one recorded session plus matching audit records as JSON
+    --output PATH             Write the exported JSON bundle to PATH instead of stdout
+
+Notes:
+  - session commands run on the host and do not start the Workcell runtime.
+  - records are durable host-side metadata for completed or aborted launches.
+  - `session export` includes audit records that match the recorded session id.
+EOF
+}
+
+session_main() {
+  local subcommand="${1:-}"
+  local workspace=""
+  local profile=""
+  local emit_json=0
+  local session_id=""
+  local output_path=""
+  local output=""
+  local -a args=()
+
+  shift || true
+  case "${subcommand}" in
+    list)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --workspace)
+            workspace="$(resolve_host_path "$(option_value_or_die "$1" "${2-}")")"
+            shift 2
+            ;;
+          --colima-profile)
+            profile="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --json)
+            emit_json=1
+            shift
+            ;;
+          -h | --help)
+            session_usage
+            exit 0
+            ;;
+          *)
+            echo "Unsupported workcell session list option: $1" >&2
+            session_usage >&2
+            exit 2
+            ;;
+        esac
+      done
+      args=("${COLIMA_STATE_ROOT}")
+      if [[ "${emit_json}" -eq 1 ]]; then
+        args+=(--json)
+      fi
+      if [[ -n "${workspace}" ]]; then
+        args+=("--workspace=${workspace}")
+      fi
+      if [[ -n "${profile}" ]]; then
+        validate_colima_profile_name "${profile}"
+        args+=("--profile=${profile}")
+      fi
+      output="$(go_hostutil launcher session-list "${args[@]}")"
+      if [[ -z "${output}" ]]; then
+        echo "No recorded sessions."
+        exit 0
+      fi
+      if [[ "${emit_json}" -eq 1 ]]; then
+        printf '%s\n' "${output}"
+      else
+        printf 'session_id\tstatus\tagent\tmode\tprofile\tstarted_at\tassurance\tworkspace\n'
+        printf '%s\n' "${output}"
+      fi
+      exit 0
+      ;;
+    show)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --id)
+            session_id="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          -h | --help)
+            session_usage
+            exit 0
+            ;;
+          *)
+            echo "Unsupported workcell session show option: $1" >&2
+            session_usage >&2
+            exit 2
+            ;;
+        esac
+      done
+      [[ -n "${session_id}" ]] || {
+        echo "workcell session show requires --id." >&2
+        exit 2
+      }
+      go_hostutil launcher session-show "${COLIMA_STATE_ROOT}" "${session_id}"
+      exit 0
+      ;;
+    export)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --id)
+            session_id="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --output)
+            output_path="$(raw_option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          -h | --help)
+            session_usage
+            exit 0
+            ;;
+          *)
+            echo "Unsupported workcell session export option: $1" >&2
+            session_usage >&2
+            exit 2
+            ;;
+        esac
+      done
+      [[ -n "${session_id}" ]] || {
+        echo "workcell session export requires --id." >&2
+        exit 2
+      }
+      output="$(go_hostutil launcher session-export "${COLIMA_STATE_ROOT}" "${session_id}")"
+      if [[ -n "${output_path}" ]]; then
+        output_path="$(resolve_host_output_candidate "${output_path}")"
+        mkdir -p "$(dirname "${output_path}")"
+        printf '%s\n' "${output}" >"${output_path}"
+        chmod 0600 "${output_path}" 2>/dev/null || true
+        printf 'session_export=%s\n' "${output_path}"
+      else
+        printf '%s\n' "${output}"
+      fi
+      exit 0
+      ;;
+    "" | -h | --help)
+      session_usage
+      exit 0
+      ;;
+    *)
+      echo "Unsupported workcell session command: ${subcommand}" >&2
+      session_usage >&2
+      exit 2
+      ;;
+  esac
 }
 
 auth_usage() {
@@ -4518,6 +4770,11 @@ if [[ "${1:-}" == "publish-pr" ]]; then
   publish_pr_main "$@"
 fi
 
+if [[ "${1:-}" == "session" ]]; then
+  shift
+  session_main "$@"
+fi
+
 if [[ "${1:-}" == "auth" ]]; then
   shift
   auth_main "$@"
@@ -5285,6 +5542,7 @@ if [[ "${PREPARE_ONLY}" -eq 1 ]]; then
   echo "Prepared runtime image recorded for profile ${COLIMA_PROFILE}. No session launched because --prepare-only was requested." >&2
   exit 0
 fi
+write_session_record_initial "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 append_launch_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 
 DOCKER_STATUS=0
