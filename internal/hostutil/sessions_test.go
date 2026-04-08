@@ -122,6 +122,21 @@ func TestListSessionRecordsSortsNewestFirstAndFilters(t *testing.T) {
 	}
 }
 
+func TestListSessionRecordsReturnsEmptySliceWhenColimaRootMissing(t *testing.T) {
+	t.Parallel()
+
+	records, err := ListSessionRecords(filepath.Join(t.TempDir(), "missing"), SessionListOptions{})
+	if err != nil {
+		t.Fatalf("ListSessionRecords() error = %v", err)
+	}
+	if records == nil {
+		t.Fatal("ListSessionRecords() returned nil, want empty slice")
+	}
+	if len(records) != 0 {
+		t.Fatalf("ListSessionRecords() len = %d, want 0", len(records))
+	}
+}
+
 func TestExportSessionRecordIncludesMatchingAuditLines(t *testing.T) {
 	t.Parallel()
 

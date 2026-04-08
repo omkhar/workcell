@@ -146,7 +146,7 @@ func ListSessionRecords(colimaRoot string, opts SessionListOptions) ([]SessionRe
 	info, err := os.Stat(root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return []SessionRecord{}, nil
 		}
 		return nil, err
 	}
