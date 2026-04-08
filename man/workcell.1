@@ -1,4 +1,4 @@
-.TH WORKCELL 1 "2026-04-05" "Workcell" "User Commands"
+.TH WORKCELL 1 "2026-04-08" "Workcell" "User Commands"
 .SH NAME
 workcell \- bounded runtime launcher for coding agents
 .SH SYNOPSIS
@@ -7,6 +7,9 @@ workcell \- bounded runtime launcher for coding agents
 .br
 .B workcell publish-pr
 [\fIoptions\fR]
+.br
+.B workcell session
+\fIlist|show|export\fR [\fIoptions\fR]
 .br
 .B workcell auth
 \fIinit|set|unset|status\fR [\fIoptions\fR]
@@ -27,6 +30,11 @@ and uses
 .I /state/tmp
 as the exec-capable temporary directory via
 .BR TMPDIR .
+.TP
+.B workcell session list|show|export
+Inspect durable host-side session records without starting the Workcell
+runtime. These records summarize completed or aborted launches and can be
+exported with the matching profile audit lines.
 .SH OPTIONS
 .TP
 .B --agent codex|claude|gemini

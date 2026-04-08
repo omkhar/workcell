@@ -269,6 +269,11 @@ func main() {
 			die(fmt.Errorf("usage: %s validate-toml FILE...", os.Args[0]))
 		}
 		err = metadatautil.ValidateTOMLFiles(os.Args[2:])
+	case "validate-requirements":
+		if len(os.Args) != 4 {
+			die(fmt.Errorf("usage: %s validate-requirements ROOT_DIR REQUIREMENTS_PATH", os.Args[0]))
+		}
+		err = metadatautil.ValidateRequirements(os.Args[2], os.Args[3])
 	case "scan-credential-patterns":
 		if len(os.Args) != 3 {
 			die(fmt.Errorf("usage: %s scan-credential-patterns ROOT_DIR", os.Args[0]))

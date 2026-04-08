@@ -6,6 +6,8 @@ boundary or release story by itself.
 Use this page with:
 
 - [docs/use-case-matrix.md](use-case-matrix.md) for what is currently covered
+- [docs/requirements-validation.md](requirements-validation.md) for the
+  machine-checked requirement-to-evidence mapping
 - [docs/scenario-gaps.md](scenario-gaps.md) for what is still missing
 
 ## Local secretless checks
@@ -21,6 +23,8 @@ These run without provider credentials:
 - `./scripts/pre-merge.sh` (builds or reuses the same pinned validator container and can run the local stack from a disposable snapshot before optional remote lanes)
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
+They also now cover canonical requirement traceability and host-side session
+inventory behavior.
 
 ## Manual authenticated smoke
 

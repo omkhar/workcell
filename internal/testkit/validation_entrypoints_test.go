@@ -100,6 +100,9 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		if !strings.Contains(content, "scripts/lint-dockerfiles.sh") {
 			t.Fatalf("validation scripts must include scripts/lint-dockerfiles.sh")
 		}
+		if !strings.Contains(content, "scripts/verify-requirements-coverage.sh") {
+			t.Fatalf("validation scripts must include scripts/verify-requirements-coverage.sh")
+		}
 		if !strings.Contains(content, "gofmt -l") {
 			t.Fatalf("validation scripts must include gofmt formatting checks")
 		}
@@ -174,6 +177,26 @@ func TestInstallDevToolsBootstrapsNodeAndPythonVenvPrereqs(t *testing.T) {
 		`append_unique_apt nodejs npm`,
 		`append_unique_brew python`,
 		`append_unique_apt python3 python3-venv python3-pip`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
+func TestInstallWorkcellDebugWrapperSkipsSessionCommands(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "install-workcell.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		"session)",
+		"SKIP_AUTO_DEBUG=1",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)

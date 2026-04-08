@@ -4,10 +4,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/omkhar/workcell/internal/hostutil"
 )
@@ -176,6 +178,25 @@ func runLauncher(args []string) error {
 			return launcherUsage()
 		}
 		return hostutil.CleanupStaleSessionAuditDirs(args[1])
+	case "session-record-write":
+		if len(args) < 3 {
+			return launcherUsage()
+		}
+		updates := map[string]string{}
+		for _, pair := range args[2:] {
+			key, value, ok := strings.Cut(pair, "=")
+			if !ok || key == "" {
+				return fmt.Errorf("invalid session record update %q", pair)
+			}
+			updates[key] = value
+		}
+		return hostutil.WriteSessionRecord(args[1], updates)
+	case "session-list":
+		return runLauncherSessionList(args[1:])
+	case "session-show":
+		return runLauncherSessionShow(args[1:])
+	case "session-export":
+		return runLauncherSessionExport(args[1:])
 	case "audit-digest":
 		if len(args) < 3 {
 			return launcherUsage()
@@ -298,5 +319,97 @@ func releaseUsage() error {
 }
 
 func launcherUsage() error {
-	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|write-profile-owner|cleanup-stale-session-audit-dirs|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints> ...")
+	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|write-profile-owner|cleanup-stale-session-audit-dirs|session-record-write|session-list|session-show|session-export|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints> ...")
+}
+
+func runLauncherSessionList(args []string) error {
+	if len(args) < 1 || len(args) > 4 {
+		return launcherUsage()
+	}
+
+	colimaRoot := args[0]
+	format := "lines"
+	opts := hostutil.SessionListOptions{}
+	for _, arg := range args[1:] {
+		switch {
+		case arg == "--json":
+			format = "json"
+		case strings.HasPrefix(arg, "--workspace="):
+			opts.Workspace = strings.TrimPrefix(arg, "--workspace=")
+		case strings.HasPrefix(arg, "--profile="):
+			opts.Profile = strings.TrimPrefix(arg, "--profile=")
+		default:
+			return launcherUsage()
+		}
+	}
+
+	records, err := hostutil.ListSessionRecords(colimaRoot, opts)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		content, err := json.MarshalIndent(records, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s\n", content)
+		return nil
+	}
+	for _, record := range records {
+		fmt.Printf(
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			record.SessionID,
+			record.Status,
+			record.Agent,
+			record.Mode,
+			record.Profile,
+			record.StartedAt,
+			coalesce(record.FinalAssurance, record.InitialAssurance),
+			record.Workspace,
+		)
+	}
+	return nil
+}
+
+func runLauncherSessionShow(args []string) error {
+	if len(args) != 2 {
+		return launcherUsage()
+	}
+
+	record, err := hostutil.FindSessionRecord(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", content)
+	return nil
+}
+
+func runLauncherSessionExport(args []string) error {
+	if len(args) != 2 {
+		return launcherUsage()
+	}
+
+	exported, err := hostutil.ExportSessionRecord(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(exported, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", content)
+	return nil
+}
+
+func coalesce(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

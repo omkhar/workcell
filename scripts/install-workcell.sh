@@ -84,6 +84,9 @@ for ARG in "\$@"; do
     --auth-status | --doctor | --gc | --help | --inspect | --logs | --prepare-only | -h | auth-status | doctor | gc | help | inspect | logs | publish-pr)
       SKIP_AUTO_DEBUG=1
       ;;
+    session)
+      SKIP_AUTO_DEBUG=1
+      ;;
     --debug-log)
       HAS_DEBUG_LOG=1
       ;;

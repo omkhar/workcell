@@ -1,0 +1,157 @@
+version = 1
+
+[functional.FR-001]
+title = "Managed provider launch"
+summary = "Workcell launches supported providers directly inside the managed Tier 1 runtime without a separate attach step."
+evidence = [
+  "scripts/container-smoke.sh",
+  "scripts/verify-invariants.sh",
+  "tests/scenarios/shared/test-assurance-dry-run.sh",
+]
+docs = [
+  "README.md",
+  "docs/invariants.md",
+  "docs/provider-matrix.md",
+]
+
+[functional.FR-002]
+title = "Policy-backed auth and injection"
+summary = "Workcell manages explicit host-side auth policy and stages reviewed credentials and instruction fragments through the injection bundle path."
+evidence = [
+  "tests/scenarios/shared/test-auth-commands.sh",
+  "tests/scenarios/shared/test-auth-status.sh",
+  "internal/authpolicy/manage_test.go",
+]
+docs = [
+  "README.md",
+  "docs/injection-policy.md",
+  "docs/examples/injection-policy.toml",
+]
+
+[functional.FR-003]
+title = "Workspace control-plane masking"
+summary = "Workcell masks repo-local control-plane files on the safe path and reseeds reviewed content into the effective provider home."
+evidence = [
+  "scripts/container-smoke.sh",
+  "scripts/verify-invariants.sh",
+  "tests/scenarios/shared/test-home-control-plane-manifest.sh",
+]
+docs = [
+  "docs/invariants.md",
+  "docs/adapter-control-planes.md",
+  "docs/workcell-system-design.md",
+]
+
+[functional.FR-004]
+title = "Explicit lower-assurance modes"
+summary = "Development, breakglass, prompt autonomy, arbitrary command, and control-plane VCS paths stay explicit and visibly lower assurance."
+evidence = [
+  "tests/scenarios/shared/test-assurance-dry-run.sh",
+  "scripts/verify-invariants.sh",
+]
+docs = [
+  "README.md",
+  "docs/invariants.md",
+  "man/workcell.1",
+]
+
+[functional.FR-005]
+title = "Host-side publication handoff"
+summary = "Final branch publication remains a host-side action with signed commits and repo hook bypasses handled outside Tier 1."
+evidence = [
+  "tests/scenarios/shared/test-publish-pr-dry-run.sh",
+  "scripts/verify-invariants.sh",
+]
+docs = [
+  "README.md",
+  "docs/provenance.md",
+  "man/workcell.1",
+]
+
+[functional.FR-006]
+title = "Host-side operator commands"
+summary = "Inspect, doctor, logs, gc, and auth/session management run on the host without starting the runtime."
+evidence = [
+  "scripts/verify-invariants.sh",
+  "internal/testkit/validation_entrypoints_test.go",
+]
+docs = [
+  "README.md",
+  "man/workcell.1",
+  "docs/validation-scenarios.md",
+]
+
+[functional.FR-007]
+title = "Durable session inventory"
+summary = "Workcell records durable host-side launch metadata and exposes list, show, and export commands for recorded sessions."
+evidence = [
+  "tests/scenarios/shared/test-session-commands.sh",
+  "internal/hostutil/sessions_test.go",
+]
+docs = [
+  "README.md",
+  "docs/workcell-session-supervisor-design.md",
+  "docs/workcell-system-design.md",
+]
+
+[nonfunctional.NFR-001]
+title = "Bounded VM-plus-container execution"
+summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."
+evidence = [
+  "scripts/container-smoke.sh",
+  "scripts/verify-invariants.sh",
+]
+docs = [
+  "README.md",
+  "docs/invariants.md",
+  "docs/threat-model.md",
+]
+
+[nonfunctional.NFR-002]
+title = "Visible assurance and audit state"
+summary = "Workcell records launch, downgrade, and exit metadata so assurance changes stay visible to operators."
+evidence = [
+  "tests/scenarios/shared/test-assurance-dry-run.sh",
+  "scripts/verify-invariants.sh",
+]
+docs = [
+  "docs/validation-scenarios.md",
+  "docs/workcell-system-design.md",
+  "man/workcell.1",
+]
+
+[nonfunctional.NFR-003]
+title = "Reproducible runtime build"
+summary = "The runtime image must remain reproducible across the reviewed build workflow and per-platform CI lanes."
+evidence = [
+  "scripts/verify-reproducible-build.sh",
+  "internal/metadatautil/workflow_validation_test.go",
+]
+docs = [
+  "docs/provenance.md",
+  "docs/github-workflows.md",
+]
+
+[nonfunctional.NFR-004]
+title = "Release provenance validation"
+summary = "Release artifacts, control-plane manifests, and signing metadata must remain validated and reproducible before publication."
+evidence = [
+  "scripts/verify-release-bundle.sh",
+  "scripts/verify-control-plane-manifest.sh",
+]
+docs = [
+  "docs/provenance.md",
+  "docs/github-workflows.md",
+]
+
+[nonfunctional.NFR-005]
+title = "Canonical requirement traceability"
+summary = "The repository must maintain a machine-checked mapping from supported requirements to automated evidence and documentation."
+evidence = [
+  "scripts/verify-requirements-coverage.sh",
+  "internal/metadatautil/requirements_test.go",
+]
+docs = [
+  "docs/requirements-validation.md",
+  "docs/validation-scenarios.md",
+]

@@ -1,0 +1,102 @@
+#!/usr/bin/env -S BASH_ENV= ENV= bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-session-scenario.XXXXXX")"
+TMP_DIR="$(cd "${TMP_DIR}" && pwd -P)"
+REAL_HOME="$(cd "${ROOT_DIR}" && go run ./cmd/workcell-hostutil path home)"
+PROFILE="wcl-session-scenario-$$"
+SESSION_ONE="20260408T100000Z-11111111-$$"
+SESSION_TWO="20260408T110000Z-22222222-$$"
+
+cleanup() {
+  rm -rf "${REAL_HOME}/.colima/${PROFILE}"
+  rm -rf "${TMP_DIR}"
+}
+trap cleanup EXIT
+
+COLIMA_ROOT="${REAL_HOME}/.colima"
+SESSIONS_DIR="${COLIMA_ROOT}/${PROFILE}/sessions"
+AUDIT_LOG="${COLIMA_ROOT}/${PROFILE}/workcell.audit.log"
+EXPORT_PATH="${TMP_DIR}/session-export.json"
+WORKSPACE_A="${TMP_DIR}/workspace-a"
+WORKSPACE_B="${TMP_DIR}/workspace-b"
+
+mkdir -p "${SESSIONS_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B}"
+WORKSPACE_A="$(cd "${WORKSPACE_A}" && pwd -P)"
+WORKSPACE_B="$(cd "${WORKSPACE_B}" && pwd -P)"
+
+cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
+{
+  "version": 1,
+  "session_id": "${SESSION_ONE}",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "exited",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE_A}",
+  "audit_log_path": "${AUDIT_LOG}",
+  "started_at": "2026-04-08T10:00:00Z",
+  "finished_at": "2026-04-08T10:05:00Z",
+  "exit_status": "0",
+  "initial_assurance": "managed-mutable",
+  "final_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF
+
+cat >"${SESSIONS_DIR}/20260408T110000Z-22222222.json" <<EOF
+{
+  "version": 1,
+  "session_id": "${SESSION_TWO}",
+  "profile": "${PROFILE}",
+  "agent": "claude",
+  "mode": "development",
+  "status": "failed",
+  "ui": "cli",
+  "execution_path": "lower-assurance-development",
+  "workspace": "${WORKSPACE_B}",
+  "audit_log_path": "${AUDIT_LOG}",
+  "started_at": "2026-04-08T11:00:00Z",
+  "finished_at": "2026-04-08T11:03:00Z",
+  "exit_status": "17",
+  "initial_assurance": "managed-mutable",
+  "final_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF
+
+cat >"${AUDIT_LOG}" <<EOF
+timestamp=2026-04-08T10:00:00Z event=launch session_id=${SESSION_ONE} record_digest=aaa
+timestamp=2026-04-08T11:00:00Z event=launch session_id=${SESSION_TWO} record_digest=bbb
+timestamp=2026-04-08T11:03:00Z event=exit session_id=${SESSION_TWO} record_digest=ccc
+EOF
+
+list_output="$("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")"
+grep -q '^session_id[[:space:]]status[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace$' <<<"${list_output}"
+grep -q $'^'"${SESSION_TWO}"$'\tfailed\tclaude\tdevelopment\t'"${PROFILE}"$'\t2026-04-08T11:00:00Z\tmanaged-mutable\t'"${WORKSPACE_B}"'$' <<<"${list_output}"
+grep -q $'^'"${SESSION_ONE}"$'\texited\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
+
+list_json="$("${ROOT_DIR}/scripts/workcell" session list --json --workspace "${WORKSPACE_A}" --colima-profile "${PROFILE}")"
+grep -q "\"session_id\": \"${SESSION_ONE}\"" <<<"${list_json}"
+if grep -q "\"session_id\": \"${SESSION_TWO}\"" <<<"${list_json}"; then
+  echo "session list --workspace returned an unexpected session" >&2
+  exit 1
+fi
+
+show_output="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_TWO}")"
+grep -q "\"session_id\": \"${SESSION_TWO}\"" <<<"${show_output}"
+grep -q '"status": "failed"' <<<"${show_output}"
+
+export_stdout="$("${ROOT_DIR}/scripts/workcell" session export --id "${SESSION_TWO}" --output "${EXPORT_PATH}")"
+grep -q "^session_export=${EXPORT_PATH}$" <<<"${export_stdout}"
+grep -q "\"session_id\": \"${SESSION_TWO}\"" "${EXPORT_PATH}"
+grep -q '"audit_records": \[' "${EXPORT_PATH}"
+grep -q 'record_digest=ccc' "${EXPORT_PATH}"
+
+missing_output="$(
+  "${ROOT_DIR}/scripts/workcell" session show --id missing-session 2>&1 >/dev/null || true
+)"
+grep -q 'file does not exist' <<<"${missing_output}"

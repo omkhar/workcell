@@ -68,6 +68,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/session-commands",
+      "description": "Host-side session inventory lists, shows, and exports durable launch records without starting the runtime",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-session-commands.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "claude-swe/hook-parametric",
       "description": "Claude guard-bash.sh blocks all commands in the fixture file",
       "lane": "secretless",
