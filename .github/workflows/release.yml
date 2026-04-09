@@ -106,6 +106,8 @@ jobs:
           actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"
           actionlint_bin="${RUNNER_TEMP}/actionlint"
           curl -fsSL \
+            --max-time 60 \
+            --connect-timeout 15 \
             -o "${actionlint_archive}" \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           echo "${ACTIONLINT_SHA256}  ${actionlint_archive}" | sha256sum -c -

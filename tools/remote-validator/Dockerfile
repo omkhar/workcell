@@ -6,6 +6,8 @@ ARG GO_LINUX_ARM64_SHA256=c958a1fe1b361391db163a485e21f5f228142d6f8b584f6bef89b2
 ARG HADOLINT_VERSION=v2.14.0
 ARG HADOLINT_LINUX_X86_64_SHA256=6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47
 ARG HADOLINT_LINUX_ARM64_SHA256=331f1d3511b84a4f1e3d18d52fec284723e4019552f4f47b19322a53ce9a40ed
+ARG MARKDOWNLINT_VERSION=0.48.0
+ARG MARKDOWNLINT_SHA512=36465036ed84d10e6a2c4107c168faef87982124cb0f88cc1e40730e86ee8d777592ffb20b18bc8ce683feb66840d5b514104c306429b96e52a3c079d4dfded0
 ARG RUST_VERSION=1.94.1
 ARG RUSTUP_VERSION=1.29.0
 ARG RUSTUP_INIT_LINUX_X86_64_SHA256=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
@@ -20,6 +22,8 @@ ARG GO_LINUX_ARM64_SHA256
 ARG HADOLINT_VERSION
 ARG HADOLINT_LINUX_X86_64_SHA256
 ARG HADOLINT_LINUX_ARM64_SHA256
+ARG MARKDOWNLINT_VERSION
+ARG MARKDOWNLINT_SHA512
 ARG RUST_VERSION
 ARG RUSTUP_VERSION
 ARG RUSTUP_INIT_LINUX_X86_64_SHA256
@@ -121,12 +125,18 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     -o /usr/local/bin/hadolint \
   && echo "${hadolint_sha256}  /usr/local/bin/hadolint" | sha256sum -c - \
   && chmod 0755 /usr/local/bin/hadolint \
+  && markdownlint_tmpdir="$(mktemp -d)" \
+  && npm pack "markdownlint-cli@${MARKDOWNLINT_VERSION}" --pack-destination "${markdownlint_tmpdir}" \
+  && echo "${MARKDOWNLINT_SHA512}  ${markdownlint_tmpdir}/markdownlint-cli-${MARKDOWNLINT_VERSION}.tgz" | sha512sum -c - \
+  && npm install -g "${markdownlint_tmpdir}/markdownlint-cli-${MARKDOWNLINT_VERSION}.tgz" \
   && go version | grep -F "go version go${GO_VERSION} " >/dev/null \
   && rustc --version | grep -F "rustc ${RUST_VERSION} " >/dev/null \
   && cargo fmt --version >/dev/null \
   && cargo clippy --version >/dev/null \
   && hadolint --version >/dev/null \
+  && markdownlint --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null \
   && rm -f /tmp/rustup-init "/tmp/${go_archive}" \
+  && rm -rf "${markdownlint_tmpdir}" \
   && rm -rf \
     /usr/local/rustup/downloads \
     /usr/local/rustup/tmp \

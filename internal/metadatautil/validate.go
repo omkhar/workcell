@@ -1090,6 +1090,52 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requireEqual("HADOLINT_LINUX_ARM64_SHA256", validatorHadolintSHAArm64, cfg.ValidatorDockerfilePath, remoteValidatorHadolintSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
+	validatorMarkdownlintVersion, err := requireArg(validatorDockerfile, "MARKDOWNLINT_VERSION", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorMarkdownlintVersion, err := requireArg(remoteValidatorDockerfile, "MARKDOWNLINT_VERSION", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("MARKDOWNLINT_VERSION", validatorMarkdownlintVersion, cfg.ValidatorDockerfilePath, remoteValidatorMarkdownlintVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if !regexp.MustCompile(`^0\.\d+\.\d+$`).MatchString(validatorMarkdownlintVersion) {
+		return fmt.Errorf("MARKDOWNLINT_VERSION must be an exact pinned release, found %q", validatorMarkdownlintVersion)
+	}
+	validatorMarkdownlintSHA, err := requireArg(validatorDockerfile, "MARKDOWNLINT_SHA512", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorMarkdownlintSHA, err := requireArg(remoteValidatorDockerfile, "MARKDOWNLINT_SHA512", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("MARKDOWNLINT_SHA512", validatorMarkdownlintSHA, cfg.ValidatorDockerfilePath, remoteValidatorMarkdownlintSHA, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{128}$`).MatchString(validatorMarkdownlintSHA) {
+		return fmt.Errorf("MARKDOWNLINT_SHA512 must be a 128-character lowercase hex digest, found %q", validatorMarkdownlintSHA)
+	}
+	for _, dockerfile := range []struct {
+		text string
+		path string
+	}{
+		{text: validatorDockerfile, path: cfg.ValidatorDockerfilePath},
+		{text: remoteValidatorDockerfile, path: cfg.RemoteValidatorDockerfilePath},
+	} {
+		for _, needle := range []string{
+			`npm pack "markdownlint-cli@${MARKDOWNLINT_VERSION}" --pack-destination "${markdownlint_tmpdir}"`,
+			`echo "${MARKDOWNLINT_SHA512}  ${markdownlint_tmpdir}/markdownlint-cli-${MARKDOWNLINT_VERSION}.tgz" | sha512sum -c -`,
+			`npm install -g "${markdownlint_tmpdir}/markdownlint-cli-${MARKDOWNLINT_VERSION}.tgz"`,
+			`markdownlint --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null`,
+		} {
+			if !strings.Contains(dockerfile.text, needle) {
+				return fmt.Errorf("%s must contain %q", dockerfile.path, needle)
+			}
+		}
+	}
 	cargoEdition, err := requireTOMLString(cargoManifestText, "edition", cargoManifestPath)
 	if err != nil {
 		return err
@@ -1425,6 +1471,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	} {
 		if !strings.Contains(workflow.text, "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz") {
 			return fmt.Errorf("%s must derive the actionlint archive URL from ACTIONLINT_VERSION", workflow.path)
+		}
+		if !strings.Contains(workflow.text, "--max-time 60") {
+			return fmt.Errorf("%s must bound actionlint download wall-clock time", workflow.path)
+		}
+		if !strings.Contains(workflow.text, "--connect-timeout 15") {
+			return fmt.Errorf("%s must bound actionlint download connect time", workflow.path)
 		}
 	}
 	for _, needle := range []string{
