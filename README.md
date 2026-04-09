@@ -49,6 +49,16 @@ boundary.
 Breaking changes should be called out in [CHANGELOG.md](CHANGELOG.md) and
 tracked in [ROADMAP.md](ROADMAP.md).
 
+## Community
+
+- use GitHub Discussions for usage questions, operator workflow notes, and
+  open-ended design conversations
+- use GitHub issues for confirmed bugs and concrete feature requests
+- use [SECURITY.md](SECURITY.md) for security-sensitive reports
+
+See [SUPPORT.md](SUPPORT.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
+[CITATION.cff](CITATION.cff) for the contributor and operator contract.
+
 ## 5-minute path
 
 Install Workcell, create the host-side auth policy, inspect the derived

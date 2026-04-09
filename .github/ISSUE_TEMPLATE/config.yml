@@ -1,10 +1,14 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Usage and support
+  - name: Usage and support discussions
+    url: https://github.com/omkhar/workcell/discussions
+    about: >
+      Ask setup, workflow, and assurance-model questions in Discussions so the
+      issue tracker can stay focused on actionable bugs and feature requests.
+  - name: Support guide
     url: https://github.com/omkhar/workcell/blob/main/SUPPORT.md
     about: >
-      Read the support guide before opening a usage question or troubleshooting
-      issue.
+      Read the support guide before opening a bug report or feature request.
   - name: Security vulnerability
     url: https://github.com/omkhar/workcell/security/advisories/new
     about: >
