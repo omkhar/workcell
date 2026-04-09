@@ -162,8 +162,10 @@ func validateMacOSInstallVerificationFlow(workflowText, workflowPath, artifactNa
 		"actions/download-artifact@",
 		`"${bundle_dir}/scripts/install.sh"`,
 		`"${bundle_dir}/scripts/uninstall.sh"`,
-		"brew install --formula",
-		"brew uninstall --force workcell",
+		"brew tap-new",
+		"brew --repo",
+		"brew install \"${tap_name}/workcell\"",
+		"brew uninstall --force \"${tap_name}/workcell\"",
 		"brew list --versions workcell",
 	} {
 		if !strings.Contains(workflowText, needle) {

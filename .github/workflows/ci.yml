@@ -222,19 +222,25 @@ jobs:
             exit 1
           fi
           bundle_path="$(cd "$(dirname "${bundle_path}")" && pwd -P)/$(basename "${bundle_path}")"
+          tap_name="workcell/local-ci"
           formula_path="${RUNNER_TEMP}/workcell-local.rb"
-          cp dist/install/workcell.rb "${formula_path}"
+          brew tap-new "${tap_name}" --no-git
+          tap_dir="$(brew --repo "${tap_name}")"
+          mkdir -p "${tap_dir}/Formula"
+          cp dist/install/workcell.rb "${tap_dir}/Formula/workcell.rb"
+          formula_path="${tap_dir}/Formula/workcell.rb"
           expected_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/ci-${GITHUB_SHA}/$(basename "${bundle_path}")"
           grep -F "url \"${expected_url}\"" "${formula_path}" >/dev/null
           BUNDLE_FILE_URL="file://${bundle_path}" perl -0pi -e 's{^  url ".*"$}{"  url \"" . $ENV{BUNDLE_FILE_URL} . "\""}me' "${formula_path}"
-          brew install --formula "${formula_path}"
-          brew test workcell
-          brew uninstall --force workcell
+          brew install "${tap_name}/workcell"
+          brew test "${tap_name}/workcell"
+          brew uninstall --force "${tap_name}/workcell"
           if brew list --versions workcell >/dev/null 2>&1; then
             echo "Expected brew uninstall to remove the workcell formula" >&2
             exit 1
           fi
           brew cleanup workcell >/dev/null 2>&1 || true
+          brew untap "${tap_name}" >/dev/null 2>&1 || true
 
   reproducible-build-platform:
     name: Reproducible build (${{ matrix.platform_name }})

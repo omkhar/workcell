@@ -61,7 +61,11 @@ class Workcell < Formula
     libexec.install Dir["*"]
     bin.install_symlink libexec/"scripts/workcell" => "workcell"
     man1.install libexec/"man/workcell.1"
-    (share/"doc/workcell").install "README.md", "CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md"
+    (share/"doc/workcell").install \
+      libexec/"README.md",
+      libexec/"CONTRIBUTING.md",
+      libexec/"SECURITY.md",
+      libexec/"SUPPORT.md"
   end
 
   def caveats
@@ -78,7 +82,7 @@ class Workcell < Formula
   end
 
   test do
-    assert_match "bounded runtime launcher for coding agents", shell_output("#{bin}/workcell --help")
+    assert_match "Usage: workcell", shell_output("#{bin}/workcell --help")
   end
 end
 EOF

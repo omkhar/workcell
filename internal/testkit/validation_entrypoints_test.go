@@ -361,8 +361,10 @@ func TestGitHubWorkflowsContinuouslyVerifyInstallAndUninstall(t *testing.T) {
 		for _, want := range []string{
 			"macos-26",
 			"macos-15",
-			"brew install --formula",
-			"brew uninstall --force workcell",
+			"brew tap-new",
+			"brew --repo",
+			"brew install \"${tap_name}/workcell\"",
+			"brew uninstall --force \"${tap_name}/workcell\"",
 			`"${bundle_dir}/scripts/install.sh"`,
 			`"${bundle_dir}/scripts/uninstall.sh"`,
 		} {

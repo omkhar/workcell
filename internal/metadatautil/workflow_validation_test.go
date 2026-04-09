@@ -198,8 +198,10 @@ func TestValidateMacOSInstallVerificationFlowRejectsMissingBundleUninstall(t *te
       - run: |
           bundle_path="$(find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz' -print -quit)"
           "${bundle_dir}/scripts/install.sh"
-          brew install --formula "${formula_path}"
-          brew uninstall --force workcell
+          brew tap-new "${tap_name}" --no-git
+          brew --repo "${tap_name}"
+          brew install "${tap_name}/workcell"
+          brew uninstall --force "${tap_name}/workcell"
           brew list --versions workcell
 `
 
@@ -233,8 +235,10 @@ func TestValidateMacOSInstallVerificationFlowAcceptsCanonicalFlow(t *testing.T) 
           bundle_path="$(find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz' -print -quit)"
           "${bundle_dir}/scripts/install.sh"
           "${bundle_dir}/scripts/uninstall.sh"
-          brew install --formula "${formula_path}"
-          brew uninstall --force workcell
+          brew tap-new "${tap_name}" --no-git
+          brew --repo "${tap_name}"
+          brew install "${tap_name}/workcell"
+          brew uninstall --force "${tap_name}/workcell"
           brew list --versions workcell
 `
 
