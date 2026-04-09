@@ -30,6 +30,7 @@ and uses
 .I /state/tmp
 as the exec-capable temporary directory via
 .BR TMPDIR .
+The supported host platform is Apple Silicon macOS.
 .TP
 .B workcell session list|show|export
 Inspect durable host-side session records without starting the Workcell
@@ -283,8 +284,10 @@ Print the selected runtime command and exit.
 .B --doctor
 Print derived profile and workspace state, identify whether the managed profile
 or prepared image is missing, and emit the recommended next command without
-launching the runtime. Also available as
-.BR "workcell doctor" .
+launching the runtime. The preferred public form is the option form shown in
+this manual;
+.BR "workcell doctor"
+remains accepted for CLI symmetry.
 When the workspace path is missing or invalid, this reports that first instead
 of recommending
 .BR --prepare .
@@ -292,8 +295,9 @@ of recommending
 .B --inspect
 Print the derived launch configuration, active assurance labels, injection
 metadata, and latest retained host-log pointers without launching the runtime.
-Also available as
-.BR "workcell inspect" .
+The preferred public form is the option form shown in this manual;
+.BR "workcell inspect"
+remains accepted for CLI symmetry.
 .TP
 .B --logs audit|debug|file-trace|transcript
 Print the latest retained log of the selected type for the derived or explicit
@@ -303,8 +307,10 @@ Colima profile and exit. Also available as
 .B --auth-status
 Print the selected injection or credential posture derived from the rendered
 injection manifest, including the primary provider auth mode, the ordered
-provider auth mode set, and SSH config assurance, and exit. Also available as
-.BR "workcell auth-status" .
+provider auth mode set, and SSH config assurance, and exit. The preferred
+public form is the option form shown in this manual;
+.BR "workcell auth-status"
+remains accepted for CLI symmetry.
 .TP
 .B --gc
 Remove stale host-side session audit and injection-bundle directories plus
@@ -376,7 +382,10 @@ execution cannot retake unmediated native code execution.
 .TP
 .I ~/.local/bin/workcell
 Installed launcher path used by
-.BR scripts/install.sh .
+.BR scripts/install.sh ,
+which auto-installs missing Homebrew packages on supported macOS hosts unless
+.B --no-install-deps
+is passed.
 .TP
 .I ~/.local/share/man/man1/workcell.1
 Installed man page path used by
@@ -389,7 +398,7 @@ Internal repository installer implementation invoked by
 .I scripts/uninstall.sh
 Repository helper that removes Workcell-owned install links, managed Colima
 profiles, Workcell cache roots, and known Workcell temp artifacts without
-touching
+touching shared host packages or
 .IR ~/.config/workcell .
 .TP
 .I ~/.config/workcell/injection-policy.toml

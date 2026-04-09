@@ -9,7 +9,7 @@ not yet covered as deeply as the core secretless validation path.
 
 The strongest local claim depends on the actual Colima plus
 Virtualization.Framework boundary. GitHub-hosted runners cannot prove that, so
-the best evidence today is local or self-hosted macOS verification.
+the best evidence today is still local macOS verification.
 
 ### End-to-end authenticated coverage for every provider
 

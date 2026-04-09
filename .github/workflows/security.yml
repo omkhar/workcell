@@ -18,7 +18,7 @@ concurrency:
 jobs:
   dependency-review:
     name: Dependency review
-    if: ${{ github.event_name == 'pull_request' && (!github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_DEPENDENCY_REVIEW == 'true') }}
+    if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref_name != 'main')) && (!github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_DEPENDENCY_REVIEW == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,7 +29,9 @@ jobs:
 
       - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
+          base-ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/main' || '' }}
           config-file: ./.github/dependency-review-config.yml
+          head-ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || '' }}
 
   actionlint:
     name: GitHub Actions lint
@@ -43,8 +45,8 @@ jobs:
 
       - name: Install actionlint
         env:
-          ACTIONLINT_SHA256: 900919a84f2229bac68ca9cd4103ea297abc35e9689ebb842c6e34a3d1b01b0a
-          ACTIONLINT_VERSION: 1.7.11
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_VERSION: 1.7.12
         run: |
           curl -fsSL \
             --max-time 60 \

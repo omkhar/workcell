@@ -25,6 +25,30 @@ scrub_host_process_env() {
 
 scrub_host_process_env
 
+require_supported_macos_host_arch() {
+  local host_os=""
+  local host_arch=""
+  local arm64_capable=""
+
+  host_os="$(uname -s 2>/dev/null || true)"
+  [[ "${host_os}" == "Darwin" ]] || return 0
+
+  arm64_capable="$(sysctl -in hw.optional.arm64 2>/dev/null || true)"
+  if [[ "${arm64_capable}" == "1" ]]; then
+    return 0
+  fi
+
+  host_arch="$(uname -m 2>/dev/null || true)"
+  if [[ "${host_arch}" == "arm64" || "${host_arch}" == "aarch64" ]]; then
+    return 0
+  fi
+
+  echo "Workcell supports Apple Silicon macOS hosts only. Intel macOS is not supported." >&2
+  exit 1
+}
+
+require_supported_macos_host_arch
+
 resolve_self_path() {
   local source_path="${BASH_SOURCE[0]}"
   local source_dir=""
@@ -130,6 +154,15 @@ go_hostutil() {
     "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
 }
 
+go_colimautil() {
+  ensure_go_run_env
+  run_clean_host_command_in_dir "${ROOT_DIR}" env \
+    GOPATH="${GOPATH}" \
+    GOMODCACHE="${GOMODCACHE}" \
+    GOCACHE="${GOCACHE}" \
+    "${HOST_GO_BIN}" run ./cmd/workcell-colimautil "$@"
+}
+
 go_runtimeutil() {
   ensure_go_run_env
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
@@ -143,7 +176,6 @@ REAL_HOME="$(go_hostutil path home)"
 HOST_GIT_BIN=""
 HOST_COLIMA_BIN=""
 HOST_DOCKER_BIN=""
-HOST_RUBY_BIN=""
 COLIMA_STATE_ROOT="${REAL_HOME}/.colima"
 PROFILE_PREEXISTED=0
 PROFILE_RUNNING=0
@@ -253,11 +285,11 @@ Workflows:
     workcell session list
     workcell session show --id 20260408T120000Z-1a2b3c4d
     workcell session export --id 20260408T120000Z-1a2b3c4d
-    workcell inspect --agent codex --workspace /path/to/repo
-    workcell doctor --agent codex --workspace /path/to/repo
+    workcell --agent codex --inspect --workspace /path/to/repo
+    workcell --agent codex --doctor --workspace /path/to/repo
     workcell logs debug --colima-profile wcl-...
     workcell logs file-trace --colima-profile wcl-...
-    workcell auth-status --agent codex --workspace /path/to/repo
+    workcell --agent codex --auth-status --workspace /path/to/repo
     workcell publish-pr --workspace /path/to/repo --branch feature/name \
       --title-file /path/to/pr-title.txt --body-file /path/to/pr-body.md \
       --commit-message-file /path/to/commit-message.txt
@@ -3656,45 +3688,7 @@ validate_colima_runtime_mounts() {
     exit 2
   }
 
-  run_clean_host_command "${HOST_RUBY_BIN}" -rpsych -rpathname -e '
-    lima = Psych.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
-    expected = ARGV[1].sub(%r{/$}, "")
-    profile = ARGV[2]
-    home = File.expand_path(ENV.fetch("HOME"))
-
-    def canonicalize(path)
-      expanded = File.expand_path(path)
-      Pathname.new(expanded).exist? ? Pathname.new(expanded).realpath.to_s : Pathname.new(expanded).cleanpath.to_s
-    end
-
-    expected = canonicalize(expected)
-    cache_roots = [canonicalize(File.join(home, "Library", "Caches", "colima"))]
-    lima_mounts = lima["mounts"] || []
-    writable_mounts = lima_mounts.select { |mount| mount["writable"] == true }
-
-    unless writable_mounts.length == 1 && canonicalize(writable_mounts.first["location"].sub(%r{/$}, "")) == expected
-      warn "Colima profile #{profile} must mount only #{expected} as writable."
-      exit 2
-    end
-
-    bad_mount = lima_mounts.find do |mount|
-      location = canonicalize(mount["location"].sub(%r{/$}, ""))
-      mount_point = mount["mountPoint"] || mount["mount_point"]
-      writable = mount["writable"] == true
-      if mount_point
-        mount_point = canonicalize(mount_point.sub(%r{/$}, ""))
-        next true unless mount_point == location
-      end
-      next false if !writable && cache_roots.any? { |root| location == root || location.start_with?(root + "/") }
-
-      location == "~" || location == home || (writable && location != expected) || (!writable && location != expected)
-    end
-
-    if bad_mount
-      warn "Colima profile #{profile} has an unexpected host mount: #{bad_mount["location"]}"
-      exit 2
-    end
-  ' "${lima_path}" "${workspace}" "${profile}"
+  go_colimautil validate-runtime-mounts "${lima_path}" "${workspace}" "${profile}"
 }
 
 workspace_runtime_probe_path() {
@@ -3745,44 +3739,7 @@ validate_colima_profile_config() {
     exit 2
   }
 
-  run_clean_host_command "${HOST_RUBY_BIN}" -rpsych -e '
-    config = Psych.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
-    vm_type = config["vmType"] || config[:vmType] || config["vm_type"] || config[:vm_type]
-    mount_type = config["mountType"] || config[:mountType] || config["mount_type"] || config[:mount_type]
-    runtime = config["runtime"] || config[:runtime]
-    expected = ARGV[1].sub(%r{/$}, "")
-    expected_cpu = ARGV[2]
-    expected_memory = ARGV[3]
-    expected_disk = ARGV[4]
-    cpu = config["cpu"] || config[:cpu]
-    memory = config["memory"] || config[:memory]
-    disk = config["disk"] || config[:disk]
-    mounts = config["mounts"] || config[:mounts] || []
-    runtime_name =
-      case runtime
-      when Hash
-        runtime["name"] || runtime[:name]
-      else
-        runtime
-      end
-
-    expected = File.expand_path(expected)
-
-    abort("Colima profile must not forward the SSH agent.") if config["forwardAgent"] == true || config[:forwardAgent] == true
-    abort("Unexpected configured Colima mounts: #{mounts.inspect}") unless mounts.length == 1
-
-    mount = mounts.first || {}
-    location = File.expand_path((mount["location"] || mount[:location] || "").sub(%r{/$}, ""))
-    writable = mount["writable"] == true || mount[:writable] == true
-    abort("Colima profile must mount only #{expected} as writable in colima.yaml.") unless writable && location == expected
-
-    abort("Unexpected Colima vmType for managed profile: #{vm_type.inspect}") unless vm_type == "vz"
-    abort("Unexpected Colima mountType for managed profile: #{mount_type.inspect}") unless mount_type == "virtiofs"
-    abort("Unexpected Colima runtime for managed profile: #{runtime_name.inspect}") unless runtime_name == "docker"
-    abort("Unexpected Colima CPU count for managed profile: #{cpu.inspect}") unless cpu.to_s == expected_cpu
-    abort("Unexpected Colima memory size for managed profile: #{memory.inspect}") unless memory.to_s == expected_memory
-    abort("Unexpected Colima disk size for managed profile: #{disk.inspect}") unless disk.to_s == expected_disk
-  ' "${config_path}" "${workspace}" "${expected_cpu}" "${expected_memory}" "${expected_disk}"
+  go_colimautil validate-profile-config "${config_path}" "${workspace}" "${expected_cpu}" "${expected_memory}" "${expected_disk}"
 }
 
 validate_colima_profile() {
@@ -3965,7 +3922,6 @@ missing_launch_host_tools_csv() {
 
   resolve_host_tool_optional colima /opt/homebrew/bin/colima /usr/local/bin/colima >/dev/null || missing+=(colima)
   resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker >/dev/null || missing+=(docker)
-  resolve_host_tool_optional ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby >/dev/null || missing+=(ruby)
 
   if ((${#missing[@]} == 0)); then
     printf 'none\n'
@@ -4663,7 +4619,7 @@ prepare_workspace_control_plane_shadow() {
 }
 
 bootstrap_endpoints() {
-  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 static.rust-lang.org:443 storage.googleapis.com:443 snapshot.debian.org:80"
+  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 storage.googleapis.com:443 snapshot.debian.org:80"
 }
 
 AGENT=""
@@ -5253,7 +5209,6 @@ fi
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-  HOST_RUBY_BIN="$(resolve_host_tool ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby)"
   sanitize_host_docker_env
 fi
 

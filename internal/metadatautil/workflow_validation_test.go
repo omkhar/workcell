@@ -173,6 +173,155 @@ func TestValidateReleaseWorkflowControlPlaneFlowAcceptsCanonicalArtifact(t *test
 	}
 }
 
+func TestValidateMacOSInstallVerificationFlowRejectsMissingBundleUninstall(t *testing.T) {
+	workflow := `      - name: Upload CI release install artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: workcell-ci-install-candidate
+
+      - name: Download CI release install artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: workcell-ci-install-candidate
+          path: dist/install
+
+  install-verification:
+    name: Install verification (${{ matrix.runner_label }})
+    strategy:
+      matrix:
+        include:
+          - runner: macos-26
+            runner_label: macos-26
+          - runner: macos-15
+            runner_label: macos-15
+    steps:
+      - run: |
+          bundle_path="$(find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz' -print -quit)"
+          "${bundle_dir}/scripts/install.sh"
+          brew tap-new "${tap_name}" --no-git
+          brew --repo "${tap_name}"
+          brew install "${tap_name}/workcell"
+          brew uninstall --force "${tap_name}/workcell"
+          brew list --versions workcell
+`
+
+	err := validateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})")
+	if err == nil {
+		t.Fatal("validateMacOSInstallVerificationFlow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "scripts/uninstall.sh") {
+		t.Fatalf("validateMacOSInstallVerificationFlow() error = %v, want missing bundle uninstall check", err)
+	}
+}
+
+func TestValidateMacOSInstallVerificationFlowAcceptsCanonicalFlow(t *testing.T) {
+	workflow := `      - name: Upload CI release install artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: workcell-ci-install-candidate
+
+  install-verification:
+    name: Install verification (${{ matrix.runner_label }})
+    strategy:
+      matrix:
+        include:
+          - runner: macos-26
+            runner_label: macos-26
+          - runner: macos-15
+            runner_label: macos-15
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+      - run: |
+          bundle_path="$(find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz' -print -quit)"
+          "${bundle_dir}/scripts/install.sh"
+          "${bundle_dir}/scripts/uninstall.sh"
+          brew tap-new "${tap_name}" --no-git
+          brew --repo "${tap_name}"
+          brew install "${tap_name}/workcell"
+          brew uninstall --force "${tap_name}/workcell"
+          brew list --versions workcell
+`
+
+	if err := validateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
+		t.Fatalf("validateMacOSInstallVerificationFlow() error = %v", err)
+	}
+}
+
+func TestValidateUpstreamRefreshWorkflowRejectsMissingDispatches(t *testing.T) {
+	workflow := `name: Upstream refresh
+
+on:
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: ./scripts/update-upstream-pins.sh --apply
+      - run: ./scripts/update-upstream-pins.sh --check
+      - run: ./scripts/check-pinned-inputs.sh
+      - env:
+          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID }}
+      - run: |
+          git commit -S -F "${commit_file}"
+          gh pr create --draft
+`
+
+	err := validateUpstreamRefreshWorkflow(workflow)
+	if err == nil {
+		t.Fatal("validateUpstreamRefreshWorkflow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "gh workflow run") {
+		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want missing workflow dispatch guard", err)
+	}
+}
+
+func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
+	workflow := `name: Upstream refresh
+
+on:
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: ./scripts/update-upstream-pins.sh --apply
+      - run: |
+          ./scripts/update-upstream-pins.sh --check
+          ./scripts/check-pinned-inputs.sh
+      - env:
+          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID }}
+        run: |
+          git commit -S -F "${commit_file}"
+          gh pr create --draft
+          gh workflow run "ci.yml" --ref "$branch"
+          gh workflow run "docs.yml" --ref "$branch"
+          gh workflow run "security.yml" --ref "$branch"
+          gh workflow run "codeql.yml" --ref "$branch"
+`
+
+	if err := validateUpstreamRefreshWorkflow(workflow); err != nil {
+		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v", err)
+	}
+}
+
 func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingSupportGuard(t *testing.T) {
 	releaseWorkflow := `env:
   ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
@@ -206,12 +355,46 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedAttestStep(
 
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.ENABLE_GITHUB_ATTESTATIONS == 'true'
+        with:
+          sbom-path: dist/workcell-image.spdx.json
+          subject-name: ${{ env.IMAGE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/${{ env.BUNDLE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          sbom-path: dist/workcell-source.spdx.json
+          subject-path: dist/${{ env.BUNDLE_NAME }}
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell.rb
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-image.digest
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-build-inputs.json
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-control-plane.json
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-builder-environment.json
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/SHA256SUMS
 `
 
 	err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
@@ -230,12 +413,46 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowAcceptsSupportGuard(t *test
 
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          sbom-path: dist/workcell-image.spdx.json
+          subject-name: ${{ env.IMAGE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/${{ env.BUNDLE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          sbom-path: dist/workcell-source.spdx.json
+          subject-path: dist/${{ env.BUNDLE_NAME }}
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell.rb
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-image.digest
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-build-inputs.json
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-control-plane.json
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-builder-environment.json
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/SHA256SUMS
 `
 
 	if err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {

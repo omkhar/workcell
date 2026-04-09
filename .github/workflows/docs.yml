@@ -6,9 +6,16 @@ on:
       - main
     paths:
       - ".codespellrc"
+      - "CHANGELOG.md"
+      - "CODE_OF_CONDUCT.md"
+      - "CONTRIBUTING.md"
+      - "GOVERNANCE.md"
+      - "MAINTAINERS.md"
       - "README.md"
+      - "ROADMAP.md"
       - "AGENTS.md"
       - "SECURITY.md"
+      - "SUPPORT.md"
       - "adapters/**"
       - "docs/**"
       - "man/**"
@@ -21,9 +28,16 @@ on:
       - main
     paths:
       - ".codespellrc"
+      - "CHANGELOG.md"
+      - "CODE_OF_CONDUCT.md"
+      - "CONTRIBUTING.md"
+      - "GOVERNANCE.md"
+      - "MAINTAINERS.md"
       - "README.md"
+      - "ROADMAP.md"
       - "AGENTS.md"
       - "SECURITY.md"
+      - "SUPPORT.md"
       - "adapters/**"
       - "docs/**"
       - "man/**"

@@ -60,6 +60,7 @@ func TestDevQuickCheckStaysBoundedToFastLocalWork(t *testing.T) {
 	for _, unwanted := range []string{
 		"container-smoke.sh",
 		"verify-invariants.sh",
+		"verify-go-python-parity.sh",
 		"verify-reproducible-build.sh",
 		"verify-release-bundle.sh",
 		"pre-merge.sh",
@@ -103,6 +104,21 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		if !strings.Contains(content, "scripts/verify-requirements-coverage.sh") {
 			t.Fatalf("validation scripts must include scripts/verify-requirements-coverage.sh")
 		}
+		for _, want := range []string{
+			"scripts/bootstrap-dev.sh",
+			"scripts/generate-homebrew-formula.sh",
+			"scripts/install-workcell.sh",
+			"scripts/install.sh",
+			"scripts/lib/go-run-env.sh",
+			"scripts/provider-e2e.sh",
+			"scripts/uninstall.sh",
+			"scripts/update-upstream-pins.sh",
+			"scripts/verify-github-macos-release-test-runners.sh",
+		} {
+			if !strings.Contains(content, want) {
+				t.Fatalf("validation scripts must include %s", want)
+			}
+		}
 		if !strings.Contains(content, "gofmt -l") {
 			t.Fatalf("validation scripts must include gofmt formatting checks")
 		}
@@ -111,19 +127,21 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(string(quickCheck), "scripts/verify-go-python-parity.sh") {
-		t.Fatalf("%s must include scripts/verify-go-python-parity.sh", quickCheckPath)
+	if strings.Contains(string(quickCheck), "scripts/verify-go-python-parity.sh") {
+		t.Fatalf("%s must not include scripts/verify-go-python-parity.sh", quickCheckPath)
 	}
-	if !strings.Contains(string(validateRepo), "scripts/verify-go-python-parity.sh") {
-		t.Fatalf("%s must include scripts/verify-go-python-parity.sh", validateRepoPath)
+	if strings.Contains(string(validateRepo), "scripts/verify-go-python-parity.sh") {
+		t.Fatalf("%s must not include scripts/verify-go-python-parity.sh", validateRepoPath)
 	}
 	for _, want := range []string{
 		`${ROOT_DIR}/.githooks/pre-commit`,
 		`${ROOT_DIR}/scripts/install.sh`,
 		`${ROOT_DIR}/scripts/build-and-test.sh`,
 		`${ROOT_DIR}/scripts/install-dev-tools.sh`,
+		`${ROOT_DIR}/scripts/update-upstream-pins.sh`,
 		`${ROOT_DIR}/scripts/update-provider-pins.sh`,
 		`${ROOT_DIR}/scripts/publish-provider-bump-pr.sh`,
+		`${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh`,
 		`${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh`,
 	} {
 		if !strings.Contains(string(validateRepo), want) {
@@ -158,9 +176,12 @@ func TestBuildAndTestDockerModeUsesSnapshotBackedValidatorRun(t *testing.T) {
 	if strings.Contains(script, `-v "${ROOT_DIR}:/workspace"`) {
 		t.Fatalf("%s should mount a disposable snapshot into the validator container, not the live worktree", scriptPath)
 	}
+	if strings.Contains(script, ".venv/bin/activate") {
+		t.Fatalf("%s should not depend on a repo-local Python virtualenv", scriptPath)
+	}
 }
 
-func TestInstallDevToolsBootstrapsNodeAndPythonVenvPrereqs(t *testing.T) {
+func TestInstallDevToolsBootstrapsCommonHostPrereqs(t *testing.T) {
 	t.Parallel()
 
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "install-dev-tools.sh")
@@ -172,15 +193,52 @@ func TestInstallDevToolsBootstrapsNodeAndPythonVenvPrereqs(t *testing.T) {
 
 	for _, want := range []string{
 		`command -v npm`,
-		`python3 -m venv --help`,
 		`append_unique_brew node`,
 		`append_unique_apt nodejs npm`,
-		`append_unique_brew python`,
-		`append_unique_apt python3 python3-venv python3-pip`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
 		}
+	}
+	for _, unwanted := range []string{
+		"python3 -m venv",
+		"python3-venv",
+		"pytest",
+	} {
+		if strings.Contains(script, unwanted) {
+			t.Fatalf("%s unexpectedly contains %q", scriptPath, unwanted)
+		}
+	}
+}
+
+func TestInstallWorkcellBootstrapsRequiredHostDependencies(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "install-workcell.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		"--no-install-deps",
+		"Installing required host packages via Homebrew",
+		"Missing required host packages:",
+		"brew install",
+		"colima",
+		"docker",
+		"gh",
+		"git",
+		"go",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+
+	if strings.Contains(script, "Missing required tool: go") {
+		t.Fatalf("%s should not hard-fail on missing go during install anymore", scriptPath)
 	}
 }
 
@@ -201,6 +259,146 @@ func TestInstallWorkcellDebugWrapperSkipsSessionCommands(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
 		}
+	}
+}
+
+func TestUninstallRemovesWorkcellStateWithoutRequiringGo(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "uninstall.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		"resolve_real_home",
+		"Preserved shared host packages installed outside Workcell.",
+		"shared host packages such as colima, docker, gh, git, and go",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+
+	for _, unwanted := range []string{
+		"Missing required tool: go",
+		"WORKCELL_GO_BIN",
+	} {
+		if strings.Contains(script, unwanted) {
+			t.Fatalf("%s unexpectedly contains %q", scriptPath, unwanted)
+		}
+	}
+}
+
+func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
+	t.Parallel()
+
+	launcherPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	launcherContent, err := os.ReadFile(launcherPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := string(launcherContent)
+
+	for _, want := range []string{
+		"hw.optional.arm64",
+		"Intel macOS is not supported",
+		"require_supported_macos_host_arch",
+	} {
+		if !strings.Contains(launcher, want) {
+			t.Fatalf("%s does not contain %q", launcherPath, want)
+		}
+	}
+
+	installerPath := filepath.Join(repoRoot(t), "scripts", "install-workcell.sh")
+	installerContent, err := os.ReadFile(installerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := string(installerContent)
+
+	for _, want := range []string{
+		"hw.optional.arm64",
+		"Intel macOS is not supported",
+		"require_supported_macos_host_arch",
+	} {
+		if !strings.Contains(installer, want) {
+			t.Fatalf("%s does not contain %q", installerPath, want)
+		}
+	}
+
+	formulaScriptPath := filepath.Join(repoRoot(t), "scripts", "generate-homebrew-formula.sh")
+	formulaScriptContent, err := os.ReadFile(formulaScriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	formulaScript := string(formulaScriptContent)
+
+	for _, want := range []string{
+		`Hardware::CPU.arm?`,
+		"Apple Silicon macOS hosts only",
+		`depends_on "git"`,
+	} {
+		if !strings.Contains(formulaScript, want) {
+			t.Fatalf("%s does not contain %q", formulaScriptPath, want)
+		}
+	}
+}
+
+func TestGitHubWorkflowsContinuouslyVerifyInstallAndUninstall(t *testing.T) {
+	t.Parallel()
+
+	for _, workflowName := range []string{"ci.yml", "release.yml"} {
+		workflowPath := filepath.Join(repoRoot(t), ".github", "workflows", workflowName)
+		content, err := os.ReadFile(workflowPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		workflow := string(content)
+
+		for _, want := range []string{
+			"macos-26",
+			"macos-15",
+			"brew tap-new",
+			"brew --repo",
+			"brew install \"${tap_name}/workcell\"",
+			"brew uninstall --force \"${tap_name}/workcell\"",
+			`"${bundle_dir}/scripts/install.sh"`,
+			`"${bundle_dir}/scripts/uninstall.sh"`,
+		} {
+			if !strings.Contains(workflow, want) {
+				t.Fatalf("%s does not contain %q", workflowPath, want)
+			}
+		}
+	}
+
+	ciWorkflowPath := filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")
+	ciContent, err := os.ReadFile(ciWorkflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciWorkflow := string(ciContent)
+
+	for _, want := range []string{
+		"name: workcell-ci-install-candidate",
+		"name: Install verification (${{ matrix.runner_label }})",
+	} {
+		if !strings.Contains(ciWorkflow, want) {
+			t.Fatalf("%s does not contain %q", ciWorkflowPath, want)
+		}
+	}
+
+	releaseWorkflowPath := filepath.Join(repoRoot(t), ".github", "workflows", "release.yml")
+	releaseContent, err := os.ReadFile(releaseWorkflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseWorkflow := string(releaseContent)
+
+	if !strings.Contains(releaseWorkflow, "name: workcell-release-install-candidate") {
+		t.Fatalf("%s does not contain the reviewed release install artifact upload name", releaseWorkflowPath)
 	}
 }
 
@@ -228,7 +426,41 @@ func TestPublishProviderBumpPRRequiresCleanWorktree(t *testing.T) {
 	}
 }
 
-func TestPreMergeChecksEligibleStableProviderPins(t *testing.T) {
+func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "update-upstream-pins.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		"--apply",
+		"--check",
+		"scripts/update-provider-pins.sh",
+		"https://go.dev/dl/?mode=json",
+		"https://static.rust-lang.org/dist/channel-rust-stable.toml",
+		"https://static.rust-lang.org/rustup/release-stable.toml",
+		"https://api.github.com/repos/docker/buildx/releases/latest",
+		"https://api.github.com/repos/sigstore/cosign/releases/latest",
+		"https://api.github.com/repos/anchore/syft/releases/latest",
+		"https://api.github.com/repos/rhysd/actionlint/releases/latest",
+		"https://api.github.com/repos/hadolint/hadolint/releases/latest",
+		"hub.docker.com/v2/repositories/tonistiigi/binfmt/tags",
+		"docker buildx imagetools inspect",
+		"https://snapshot.debian.org/archive/debian/",
+		"https://snapshot.debian.org/archive/debian-security/",
+		"scripts/check-pinned-inputs.sh",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
+func TestPreMergeChecksPinnedUpstreams(t *testing.T) {
 	t.Parallel()
 
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "pre-merge.sh")
@@ -239,8 +471,10 @@ func TestPreMergeChecksEligibleStableProviderPins(t *testing.T) {
 	script := string(content)
 
 	for _, want := range []string{
-		`echo "[pre-merge] eligible stable provider pin check"`,
-		`"${ROOT_DIR}/scripts/update-provider-pins.sh" --check`,
+		`echo "[pre-merge] pinned upstream refresh check"`,
+		`"${ROOT_DIR}/scripts/update-upstream-pins.sh" --check`,
+		`echo "[pre-merge] GitHub macOS release test runner verification"`,
+		`"${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh" macos-26 macos-15`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)

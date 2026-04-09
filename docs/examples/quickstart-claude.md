@@ -52,6 +52,7 @@ workcell --prepare-only --agent claude --workspace /path/to/repo
 ## 3. Check the derived state
 
 ```bash
+workcell --agent claude --doctor --workspace /path/to/repo
 workcell --agent claude --inspect --workspace /path/to/repo
 workcell auth status --agent claude
 workcell --agent claude --auth-status --workspace /path/to/repo
@@ -87,9 +88,11 @@ workcell --agent claude --mode development --workspace /path/to/repo -- bash -lc
 If you want Claude to use a reviewed MCP registry instead of the empty safe
 baseline:
 
-```toml
-[credentials.claude_mcp]
-source = "/Users/example/.config/workcell/claude-mcp.json"
+```bash
+workcell auth set \
+  --agent claude \
+  --credential claude_mcp \
+  --source /Users/example/.config/workcell/claude-mcp.json
 ```
 
 ## 6. Publish the result on the host

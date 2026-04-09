@@ -3,8 +3,6 @@ set -euo pipefail
 
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GO_BIN="${WORKCELL_GO_BIN:-}"
 
 DRY_RUN=0
 
@@ -24,28 +22,38 @@ Remove Workcell-owned local install links and managed host state:
 Preserved on purpose:
   - ~/.config/workcell/*
   - user-specified debug log, file trace log, and transcript files
+  - shared host packages such as colima, docker, gh, git, and go
   - unrelated Colima profiles and caches
 EOF
 }
 
-resolve_go_bin() {
-  if [[ -n "${GO_BIN}" && -x "${GO_BIN}" ]]; then
+resolve_real_home() {
+  local candidate="${HOME:-}"
+  local dscl_output=""
+
+  if [[ -n "${candidate}" ]] && [[ -d "${candidate}" ]]; then
+    (cd "${candidate}" && pwd -P)
     return 0
   fi
-  if GO_BIN="$(command -v go 2>/dev/null)"; then
-    return 0
-  fi
-  for candidate in \
-    /opt/homebrew/bin/go \
-    /usr/local/go/bin/go \
-    /usr/local/bin/go \
-    /usr/bin/go; do
-    if [[ -x "${candidate}" ]]; then
-      GO_BIN="${candidate}"
+
+  if command -v getent >/dev/null 2>&1; then
+    candidate="$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $6}' || true)"
+    if [[ -n "${candidate}" ]] && [[ -d "${candidate}" ]]; then
+      (cd "${candidate}" && pwd -P)
       return 0
     fi
-  done
-  echo "Missing required tool: go" >&2
+  fi
+
+  if command -v dscl >/dev/null 2>&1; then
+    dscl_output="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null || true)"
+    candidate="${dscl_output#NFSHomeDirectory: }"
+    if [[ -n "${candidate}" ]] && [[ -d "${candidate}" ]]; then
+      (cd "${candidate}" && pwd -P)
+      return 0
+    fi
+  fi
+
+  echo "Unable to resolve the current home directory." >&2
   exit 1
 }
 
@@ -67,8 +75,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-resolve_go_bin
-REAL_HOME="$(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-hostutil path home)"
+REAL_HOME="$(resolve_real_home)"
 COLIMA_HOME="${REAL_HOME}/.colima"
 INSTALL_PATH="${REAL_HOME}/.local/bin/workcell"
 MAN_PATH="${REAL_HOME}/.local/share/man/man1/workcell.1"
@@ -383,3 +390,4 @@ else
 fi
 
 echo "Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files."
+echo "Preserved shared host packages installed outside Workcell."

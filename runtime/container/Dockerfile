@@ -1,7 +1,7 @@
 # Node.js LTS base image (v22 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:22-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:22-trixie-slim@sha256:285a78d9fdb7cd2e4a03639cc7bbf609755ce8c0aa4e3b00086211e3e86a7038
+ARG NODE_BASE_IMAGE=node:22-trixie-slim@sha256:76043ed3132293c26b960ede4358d3c8ba424ee64662cd2d56318b76fcc51c4c
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
@@ -10,7 +10,10 @@ ARG SOURCE_DATE_EPOCH=0
 # Debian snapshot date for apt sources. Pinned for reproducibility.
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
-ARG DEBIAN_SNAPSHOT=20260316T000000Z
+ARG DEBIAN_SNAPSHOT=20260409T000000Z
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.94.1-slim-trixie@sha256:a08d20a404f947ed358dfb63d1ee7e0b88ecad3c45ba9682ccbf2cb09c98acca
+
+FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
 FROM ${NODE_BASE_IMAGE} AS runtime-base
 
@@ -127,7 +130,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.92
+ARG CLAUDE_VERSION=2.1.97
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. To update
@@ -137,9 +140,6 @@ ARG CLAUDE_VERSION=2.1.92
 ARG CODEX_VERSION=0.118.0
 ARG CODEX_RELEASE_URL=
 ARG RUST_VERSION=1.94.1
-ARG RUSTUP_VERSION=1.29.0
-ARG RUSTUP_INIT_LINUX_X86_64_SHA256=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
-ARG RUSTUP_INIT_LINUX_ARM64_SHA256=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
@@ -150,6 +150,9 @@ WORKDIR /workcell-rust
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
 ENV RUSTUP_HOME=/usr/local/rustup
+
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 
 # hadolint ignore=DL3008
 RUN install_runtime_builder_packages() { \
@@ -169,31 +172,23 @@ RUN install_runtime_builder_packages() { \
        fi; \
        sleep "$((attempt * 5))"; \
      done \
-  && rustup_target="" \
-  && rustup_sha256="" \
+  && toolchain_target="" \
   && case "$(dpkg --print-architecture)" in \
        amd64) \
-         rustup_target="x86_64-unknown-linux-gnu"; \
-         rustup_sha256="${RUSTUP_INIT_LINUX_X86_64_SHA256}"; \
+         toolchain_target="x86_64-unknown-linux-gnu"; \
          ;; \
        arm64) \
-         rustup_target="aarch64-unknown-linux-gnu"; \
-         rustup_sha256="${RUSTUP_INIT_LINUX_ARM64_SHA256}"; \
+         toolchain_target="aarch64-unknown-linux-gnu"; \
          ;; \
        *) \
-         echo "Unsupported dpkg architecture for rustup: $(dpkg --print-architecture)" >&2; \
+         echo "Unsupported dpkg architecture for Rust toolchain copy: $(dpkg --print-architecture)" >&2; \
          exit 1; \
          ;; \
      esac \
-  && curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-    "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rustup_target}/rustup-init" \
-    -o /tmp/rustup-init \
-  && echo "${rustup_sha256}  /tmp/rustup-init" | sha256sum -c - \
-  && chmod 0755 /tmp/rustup-init \
-  && /tmp/rustup-init -y --profile minimal --default-toolchain "${RUST_VERSION}" --no-modify-path \
-  && rustc --version | grep -F "rustc ${RUST_VERSION} " >/dev/null \
+  && toolchain_bin="${RUSTUP_HOME}/toolchains/${RUST_VERSION}-${toolchain_target}/bin" \
+  && "${toolchain_bin}/rustc" --version | grep -F "rustc ${RUST_VERSION} " >/dev/null \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
-  && rm -f /etc/ld.so.cache /tmp/rustup-init \
+  && rm -f /etc/ld.so.cache \
   && rm -rf /usr/local/rustup/downloads /usr/local/rustup/tmp
 
 RUN TARGET_ARCH="${TARGETARCH:-}" \
@@ -210,11 +205,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953"; \
+      CLAUDE_SHA256="85167cb721655fdd90b002012a28eca273c89dc2fd709be49afe2a7724c365a0"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="e22324514967ff2d5e9f91f0ee37e4675bf8b6dfec27fafb19cb25cc5b23fcaf"; \
+      CLAUDE_SHA256="0d43fcd11d29206563eeef3a1f787f0615c21cd703cc91f3a180915fd5797ef6"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -294,10 +289,26 @@ COPY runtime/container/runtime-user.sh /usr/local/libexec/workcell/runtime-user.
 COPY runtime/container/public-node-guard.mjs /usr/local/libexec/workcell/public-node-guard.mjs
 COPY runtime/container/entrypoint.sh /usr/local/libexec/workcell/entrypoint.sh
 
-RUN SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-    CARGO_HOME=/workcell-rust/cargo-home \
-    CARGO_TARGET_DIR=/tmp/workcell-rust-target \
-    cargo build \
+RUN export \
+      SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+      CARGO_HOME=/workcell-rust/cargo-home \
+      CARGO_TARGET_DIR=/tmp/workcell-rust-target \
+  && toolchain_target="" \
+  && case "$(dpkg --print-architecture)" in \
+       amd64) \
+         toolchain_target="x86_64-unknown-linux-gnu"; \
+         ;; \
+       arm64) \
+         toolchain_target="aarch64-unknown-linux-gnu"; \
+         ;; \
+       *) \
+         echo "Unsupported dpkg architecture for offline cargo build: $(dpkg --print-architecture)" >&2; \
+         exit 1; \
+         ;; \
+     esac \
+  && toolchain_bin="${RUSTUP_HOME}/toolchains/${RUST_VERSION}-${toolchain_target}/bin" \
+  && RUSTC="${toolchain_bin}/rustc" \
+    "${toolchain_bin}/cargo" build \
       --release \
       --locked \
       --offline \

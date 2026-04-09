@@ -6,24 +6,25 @@
 - a repo you want to mount as the workspace
 - either a reviewed Gemini env file or reviewed cached OAuth material
 
-## 1. Create an injection policy
+## 1. Create or update the injection policy
 
 API key or Vertex env-file path:
 
-```toml
-version = 1
-
-[credentials]
-gemini_env = "/Users/example/.config/workcell/gemini.env"
+```bash
+workcell auth init
+workcell auth set \
+  --agent gemini \
+  --credential gemini_env \
+  --source /Users/example/.config/workcell/gemini.env
 ```
 
 Cached OAuth path:
 
-```toml
-version = 1
-
-[credentials]
-gemini_oauth = "/Users/example/.config/workcell/gemini-oauth.json"
+```bash
+workcell auth set \
+  --agent gemini \
+  --credential gemini_oauth \
+  --source /Users/example/.config/workcell/gemini-oauth.json
 ```
 
 ## 2. Optional explicit prepare
@@ -44,7 +45,9 @@ workcell --prepare-only --agent gemini --workspace /path/to/repo
 ## 3. Inspect the derived posture
 
 ```bash
+workcell --agent gemini --doctor --workspace /path/to/repo
 workcell --agent gemini --inspect --workspace /path/to/repo
+workcell auth status --agent gemini
 workcell --agent gemini --auth-status --workspace /path/to/repo
 ```
 
@@ -67,10 +70,11 @@ workcell --agent gemini --mode development --workspace /path/to/repo -- bash -lc
 
 If the env file configures Vertex and you need ADC as a supplemental input:
 
-```toml
-[credentials]
-gemini_env = "/Users/example/.config/workcell/gemini.env"
-gcloud_adc = "/Users/example/.config/gcloud/application_default_credentials.json"
+```bash
+workcell auth set \
+  --agent gemini \
+  --credential gcloud_adc \
+  --source /Users/example/.config/gcloud/application_default_credentials.json
 ```
 
 ## 6. Publish the result on the host

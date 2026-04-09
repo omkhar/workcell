@@ -328,6 +328,9 @@ resolve_remote_snapshot_policy
 echo "[pre-merge] pinned-input policy"
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
 
+echo "[pre-merge] GitHub macOS release test runner verification"
+"${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh" macos-26 macos-15
+
 echo "[pre-merge] upstream Codex release verification"
 "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
 
@@ -337,8 +340,8 @@ echo "[pre-merge] upstream Claude release verification"
 echo "[pre-merge] upstream Gemini release verification"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 
-echo "[pre-merge] eligible stable provider pin check"
-"${ROOT_DIR}/scripts/update-provider-pins.sh" --check
+echo "[pre-merge] pinned upstream refresh check"
+"${ROOT_DIR}/scripts/update-upstream-pins.sh" --check
 
 echo "[pre-merge] building validator image"
 build_validator_image

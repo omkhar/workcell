@@ -10,23 +10,18 @@ runtime.
 - Docker CLI
 - Workcell installed with `./scripts/install.sh`
 
-## 1. Create a reviewed auth file
+## 1. Create or update the injection policy
 
-Workcell does not pass host environment variables or provider homes through to
-the session. Use an injection policy instead.
+Workcell does not pass host provider homes through to the session. Use the
+host-side auth helpers to create the policy and copy the reviewed auth file
+into Workcell's managed credential store:
 
 ```bash
-mkdir -p ~/.config/workcell
-install -m 0600 /dev/null ~/.config/workcell/codex-auth.json
-```
-
-Create `~/.config/workcell/injection-policy.toml`:
-
-```toml
-version = 1
-
-[credentials]
-codex_auth = "/Users/example/.config/workcell/codex-auth.json"
+workcell auth init
+workcell auth set \
+  --agent codex \
+  --credential codex_auth \
+  --source /Users/example/.config/workcell/codex-auth.json
 ```
 
 ## 2. Optional explicit prepare
@@ -47,8 +42,10 @@ workcell --prepare-only --agent codex --workspace /path/to/repo
 ## 3. Check the derived state
 
 ```bash
-workcell doctor --agent codex --workspace /path/to/repo
-workcell inspect --agent codex --workspace /path/to/repo
+workcell --agent codex --doctor --workspace /path/to/repo
+workcell --agent codex --inspect --workspace /path/to/repo
+workcell auth status --agent codex
+workcell --agent codex --auth-status --workspace /path/to/repo
 ```
 
 ## 4. Launch Codex

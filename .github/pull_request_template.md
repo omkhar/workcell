@@ -16,6 +16,7 @@
 - [ ] `./scripts/dev-quick-check.sh` passes locally
 - [ ] Tests added or updated for the change
 - [ ] Docs updated if behavior changes (same PR)
+- [ ] `CHANGELOG.md` updated if user-visible behavior changes
 - [ ] Invariants preserved — no silent trust widening
 - [ ] If touching runtime boundary or policy: linked the relevant section of
       `docs/invariants.md` or `docs/threat-model.md` below

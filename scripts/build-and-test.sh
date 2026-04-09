@@ -101,7 +101,7 @@ validate-repo.sh directly on the host using locally installed tools. Use
 disposable snapshot of the current worktree.
 
 Options:
-  --install     Install missing host tools (brew/apt) and set up Python venv
+  --install     Install missing host tools (brew/apt)
   --docker      Run repo validation inside the validator container
   -h, --help    Show this help
 EOF
@@ -114,12 +114,6 @@ validate_args=()
 for arg in "$@"; do
   [[ "${arg}" == "--docker" ]] || validate_args+=("${arg}")
 done
-
-# Activate the repo venv if it exists (provides pytest).
-if [[ -f "${ROOT_DIR}/.venv/bin/activate" ]]; then
-  # shellcheck source=/dev/null
-  source "${ROOT_DIR}/.venv/bin/activate"
-fi
 
 # --- Host-side checks (same as CI, before validation) ---
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"

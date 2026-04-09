@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 env:
-  WORKCELL_COSIGN_VERSION: v3.0.5
+  WORKCELL_COSIGN_VERSION: v3.0.6
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -28,6 +28,9 @@ jobs:
       - name: Check pinned input policy
         run: ./scripts/check-pinned-inputs.sh
 
+      - name: Verify GitHub macOS release test runners
+        run: ./scripts/verify-github-macos-release-test-runners.sh macos-26 macos-15
+
       - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
@@ -45,5 +48,5 @@ jobs:
       - name: Verify upstream Gemini release
         run: ./scripts/verify-upstream-gemini-release.sh
 
-      - name: Check provider stable bump status
-        run: ./scripts/update-provider-pins.sh --check
+      - name: Check pinned upstream refresh status
+        run: ./scripts/update-upstream-pins.sh --check

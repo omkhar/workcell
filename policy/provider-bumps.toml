@@ -1,5 +1,5 @@
 version = 1
-cooloff_hours = 72
+cooloff_hours = 12
 
 [provider.codex]
 channel = "stable"
