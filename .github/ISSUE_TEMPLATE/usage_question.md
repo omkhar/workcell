@@ -6,23 +6,27 @@ labels: ""
 assignees: ""
 ---
 
-**What are you trying to do?**
+## What are you trying to do?
+
 Describe the task or workflow you are trying to run.
 
-**Command**
+## Command
+
 Paste the exact `workcell ...` command you ran.
 
-**Environment**
+## Environment
+
 - OS:
 - Workcell version or commit SHA:
 - Provider:
 - Mode:
 
-**What did you expect?**
+## What did you expect?
 
-**What happened instead?**
+## What happened instead?
 
-**Helpful context**
+## Helpful context
+
 Include output from:
 
 - `workcell --agent <provider> --doctor --workspace /path/to/repo`

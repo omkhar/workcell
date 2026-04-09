@@ -211,6 +211,27 @@ func TestInstallDevToolsBootstrapsCommonHostPrereqs(t *testing.T) {
 	}
 }
 
+func TestGenerateHomebrewFormulaPinsExplicitVersion(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "generate-homebrew-formula.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		`FORMULA_VERSION="${VERSION}"`,
+		`FORMULA_VERSION="${FORMULA_VERSION#v}"`,
+		`version "${FORMULA_VERSION}"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
 func TestInstallWorkcellBootstrapsRequiredHostDependencies(t *testing.T) {
 	t.Parallel()
 

@@ -3,6 +3,8 @@
 # Detects macOS (brew) vs Linux (apt) and installs missing packages.
 set -euo pipefail
 
+readonly MARKDOWNLINT_VERSION="0.48.0"
+
 append_unique_brew() {
   local candidate=""
   local existing=""
@@ -89,8 +91,8 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 if ! command -v markdownlint &>/dev/null; then
-  echo "  npm install -g markdownlint-cli"
-  npm install -g markdownlint-cli
+  echo "  npm install -g markdownlint-cli@${MARKDOWNLINT_VERSION}"
+  npm install -g "markdownlint-cli@${MARKDOWNLINT_VERSION}"
 fi
 
 echo "Done."

@@ -21,6 +21,11 @@ OUTPUT_PATH="$3"
 shift 3
 
 REPOSITORY="${GITHUB_REPOSITORY:-omkhar/workcell}"
+FORMULA_VERSION="${VERSION}"
+
+if [[ "${FORMULA_VERSION}" =~ ^v[0-9] ]]; then
+  FORMULA_VERSION="${FORMULA_VERSION#v}"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +50,7 @@ class Workcell < Formula
   desc "Bounded runtime launcher for coding agents"
   homepage "https://github.com/${REPOSITORY}"
   url "https://github.com/${REPOSITORY}/releases/download/${VERSION}/workcell-${VERSION}.tar.gz"
+  version "${FORMULA_VERSION}"
   sha256 "${BUNDLE_SHA256}"
   license "Apache-2.0"
 

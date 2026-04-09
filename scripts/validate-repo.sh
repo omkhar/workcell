@@ -22,6 +22,7 @@ require_tool shellcheck
 require_tool shfmt
 require_tool go
 require_tool gofmt
+require_tool markdownlint
 require_tool yamllint
 require_tool cargo
 require_tool rustfmt
@@ -277,10 +278,27 @@ done < <(find "${ROOT_DIR}" \
   -path "${ROOT_DIR}/runtime/container/rust/target" -prune -o \
   -type f \( -name '*.md' -o -name '*.txt' -o -name '*.1' \) -print0 | sort -z)
 
+markdown_files=()
+while IFS= read -r -d '' file; do
+  markdown_files+=("${file}")
+done < <(find "${ROOT_DIR}" \
+  -path "${ROOT_DIR}/.git" -prune -o \
+  -path "${ROOT_DIR}/dist" -prune -o \
+  -path "${ROOT_DIR}/tmp" -prune -o \
+  -path "${ROOT_DIR}/.venv" -prune -o \
+  -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
+  -path "${ROOT_DIR}/runtime/container/rust/vendor" -prune -o \
+  -path "${ROOT_DIR}/runtime/container/rust/target" -prune -o \
+  -type f -name '*.md' -print0 | sort -z)
+
 if command -v codespell >/dev/null 2>&1; then
   codespell --config "${ROOT_DIR}/.codespellrc" "${doc_files[@]}"
 else
   echo "Skipping spelling checks because codespell is not installed locally." >&2
+fi
+
+if [[ "${#markdown_files[@]}" -gt 0 ]]; then
+  markdownlint "${markdown_files[@]}"
 fi
 
 validate_manpage
