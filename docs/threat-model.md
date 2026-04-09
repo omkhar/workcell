@@ -58,8 +58,8 @@ published provenance story.
 
 ## Residual risks
 
-- the full macOS boundary is still a local or self-hosted exercise, not a
-  GitHub-hosted guarantee
+- the full macOS boundary is still a local exercise, not a GitHub-hosted
+  guarantee
 - `breakglass`, prompt autonomy, and other explicit downgrades remain
   operator-controlled trust decisions
 - MCP servers remain extension points and need deliberate operator review

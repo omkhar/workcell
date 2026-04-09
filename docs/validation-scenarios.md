@@ -53,10 +53,12 @@ GitHub-hosted CI proves:
 - repo validation and workflow hygiene
 - smoke behavior in the reviewed runtime image
 - reproducibility and release-preflight logic
+- bundle install/uninstall and Homebrew install/uninstall on GitHub-hosted
+  Apple Silicon `macos-26` and `macos-15`
 - signing and attestation logic on tagged releases
 
 GitHub-hosted CI does not prove the full macOS Colima boundary. That remains a
-local or self-hosted exercise.
+local exercise.
 
 ## Credential placement rule
 

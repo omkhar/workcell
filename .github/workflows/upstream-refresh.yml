@@ -1,0 +1,151 @@
+name: Upstream refresh
+
+on:
+  schedule:
+    - cron: "15 13 * * 1-5"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    name: Refresh pinned upstreams
+    runs-on: ubuntu-latest
+    environment:
+      name: upstream-refresh
+    permissions:
+      actions: write # Dispatch the reviewed validation workflows on the published refresh branch.
+      contents: write # Push the signed refresh branch back to the repository.
+      pull-requests: write # Open the draft refresh pull request.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refresh pinned upstreams
+        run: ./scripts/update-upstream-pins.sh --apply
+
+      - id: changes
+        name: Detect refreshed content
+        run: |
+          if git diff --quiet --exit-code; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Re-check refreshed pin state
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          ./scripts/update-upstream-pins.sh --check
+          ./scripts/check-pinned-inputs.sh
+
+      - id: existing_pr
+        name: Detect overlapping upstream refresh PRs
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing_pr_url="$(
+            gh pr list \
+              --state open \
+              --json title,url,headRefName \
+              --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | startswith("codex/upstream-refresh-")))) | .[0].url // ""'
+          )"
+          if [[ -n "${existing_pr_url}" ]]; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            echo "url=${existing_pr_url}" >> "${GITHUB_OUTPUT}"
+            echo "Upstream refresh PR already open: ${existing_pr_url}"
+            exit 0
+          fi
+          echo "skip=false" >> "${GITHUB_OUTPUT}"
+
+      - name: Configure maintainer signing identity
+        if: steps.changes.outputs.changed == 'true' && steps.existing_pr.outputs.skip != 'true'
+        env:
+          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
+          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${WORKCELL_UPSTREAM_REFRESH_GIT_NAME}" || -z "${WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL}" || -z "${WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY}" || -z "${WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID}" ]]; then
+            echo "Configure WORKCELL_UPSTREAM_REFRESH_GIT_NAME, WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL, WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY, and WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID before running upstream-refresh." >&2
+            exit 1
+          fi
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
+          install -d -m 0700 "${GNUPGHOME}"
+          printf '%s' "${WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY}" | gpg --batch --import
+          gpg --batch --list-secret-keys "${WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID}" >/dev/null
+          git config user.name "${WORKCELL_UPSTREAM_REFRESH_GIT_NAME}"
+          git config user.email "${WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL}"
+          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID}"
+          git config commit.gpgsign true
+          git config gpg.program gpg
+          echo "GNUPGHOME=${GNUPGHOME}" >> "${GITHUB_ENV}"
+
+      - id: publish
+        name: Commit and publish refresh branch
+        if: steps.changes.outputs.changed == 'true' && steps.existing_pr.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch_name="codex/upstream-refresh-$(date -u +%Y%m%d%H%M%S)"
+          title="Refresh pinned upstreams"
+          body_file="$(mktemp "${RUNNER_TEMP}/workcell-upstream-refresh-body.XXXXXX.md")"
+          commit_file="$(mktemp "${RUNNER_TEMP}/workcell-upstream-refresh-commit.XXXXXX.txt")"
+          git checkout -b "${branch_name}"
+          git add -A
+          {
+            printf '%s\n\n' "${title}"
+            printf '%s\n' '- refresh provider pins and Linux base/toolchain inputs'
+            printf '%s\n' '- refresh release-build helper versions and image digests'
+          } > "${commit_file}"
+          git commit -S -F "${commit_file}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${branch_name}"
+          {
+            echo "## Summary"
+            echo
+            echo "- refresh provider pins and Linux base/toolchain inputs from reviewed upstream metadata"
+            echo "- refresh release-build helper versions, image digests, and workflow-managed install tools"
+            echo
+            echo "## Validation"
+            echo
+            echo "- \`ci.yml\`"
+            echo "- \`docs.yml\`"
+            echo "- \`security.yml\`"
+            echo "- \`codeql.yml\`"
+            echo
+            echo "This workflow dispatches those workflows on the refresh branch after PR creation because commits pushed with \`github.token\` do not trigger new workflow runs."
+            echo
+            echo "## Diffstat"
+            echo
+            echo '```'
+            git diff --stat HEAD^ HEAD
+            echo '```'
+          } > "${body_file}"
+          pr_url="$(
+            gh pr create \
+              --base main \
+              --head "${branch_name}" \
+              --title "${title}" \
+              --body-file "${body_file}" \
+              --draft
+          )"
+          echo "branch=${branch_name}" >> "${GITHUB_OUTPUT}"
+          echo "url=${pr_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Dispatch full validation workflows
+        if: steps.publish.outputs.branch != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKCELL_REFRESH_BRANCH: ${{ steps.publish.outputs.branch }}
+        run: |
+          gh workflow run "ci.yml" --ref "${WORKCELL_REFRESH_BRANCH}"
+          gh workflow run "docs.yml" --ref "${WORKCELL_REFRESH_BRANCH}"
+          gh workflow run "security.yml" --ref "${WORKCELL_REFRESH_BRANCH}"
+          gh workflow run "codeql.yml" --ref "${WORKCELL_REFRESH_BRANCH}"

@@ -127,11 +127,82 @@ func validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error 
 	attestStepRE := regexp.MustCompile(`(?m)^\s*-\s+uses:\s+actions/attest@`)
 	guardedAttestStepRE := regexp.MustCompile(`(?ms)^\s*-\s+uses:\s+actions/attest@[^\n]+\n\s+if:\s+env\.ENABLE_GITHUB_ATTESTATIONS == 'true' && env\.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'\n`)
 	totalAttestSteps := len(attestStepRE.FindAllString(releaseWorkflow, -1))
-	if totalAttestSteps != 4 {
-		return errors.New(".github/workflows/release.yml must keep exactly four reviewed GitHub attestation steps")
+	if totalAttestSteps != 10 {
+		return errors.New(".github/workflows/release.yml must keep exactly ten reviewed GitHub attestation steps")
 	}
 	if len(guardedAttestStepRE.FindAllString(releaseWorkflow, -1)) != totalAttestSteps {
 		return fmt.Errorf(".github/workflows/release.yml must guard every actions/attest step with %q", attestGuard)
+	}
+	for _, needle := range []string{
+		"subject-name: ${{ env.IMAGE_NAME }}",
+		"sbom-path: dist/workcell-image.spdx.json",
+		"subject-path: dist/${{ env.BUNDLE_NAME }}",
+		"sbom-path: dist/workcell-source.spdx.json",
+		"subject-path: dist/workcell.rb",
+		"subject-path: dist/workcell-image.digest",
+		"subject-path: dist/workcell-build-inputs.json",
+		"subject-path: dist/workcell-control-plane.json",
+		"subject-path: dist/workcell-builder-environment.json",
+		"subject-path: dist/SHA256SUMS",
+	} {
+		if !strings.Contains(releaseWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
+		}
+	}
+	return nil
+}
+
+func validateMacOSInstallVerificationFlow(workflowText, workflowPath, artifactName, jobName string) error {
+	for _, needle := range []string{
+		fmt.Sprintf("name: %s", artifactName),
+		jobName,
+		"macos-26",
+		"macos-15",
+		"actions/upload-artifact@",
+		"actions/download-artifact@",
+		`"${bundle_dir}/scripts/install.sh"`,
+		`"${bundle_dir}/scripts/uninstall.sh"`,
+		"brew install --formula",
+		"brew uninstall --force workcell",
+		"brew list --versions workcell",
+	} {
+		if !strings.Contains(workflowText, needle) {
+			return fmt.Errorf("%s must contain %q", workflowPath, needle)
+		}
+	}
+
+	if !strings.Contains(workflowText, "find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz'") {
+		return fmt.Errorf("%s must resolve the reviewed install-candidate bundle from the artifact download", workflowPath)
+	}
+
+	return nil
+}
+
+func validateUpstreamRefreshWorkflow(workflowText string) error {
+	for _, needle := range []string{
+		"name: Upstream refresh",
+		"workflow_dispatch:",
+		"./scripts/update-upstream-pins.sh --apply",
+		"./scripts/update-upstream-pins.sh --check",
+		"./scripts/check-pinned-inputs.sh",
+		"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY",
+		"WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID",
+		"git commit -S -F",
+		"gh pr create",
+		"gh workflow run \"ci.yml\" --ref",
+		"gh workflow run \"docs.yml\" --ref",
+		"gh workflow run \"security.yml\" --ref",
+		"gh workflow run \"codeql.yml\" --ref",
+		"--draft",
+		"persist-credentials: false",
+		"fetch-depth: 0",
+		"actions: write",
+		"contents: write",
+		"pull-requests: write",
+	} {
+		if !strings.Contains(workflowText, needle) {
+			return fmt.Errorf(".github/workflows/upstream-refresh.yml must contain %q", needle)
+		}
 	}
 	return nil
 }
@@ -981,6 +1052,42 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requireEqual("GO_LINUX_ARM64_SHA256", validatorGoSHAArm64, cfg.ValidatorDockerfilePath, remoteValidatorGoSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
+	validatorHadolintVersion, err := requireArg(validatorDockerfile, "HADOLINT_VERSION", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorHadolintVersion, err := requireArg(remoteValidatorDockerfile, "HADOLINT_VERSION", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("HADOLINT_VERSION", validatorHadolintVersion, cfg.ValidatorDockerfilePath, remoteValidatorHadolintVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(validatorHadolintVersion) {
+		return fmt.Errorf("HADOLINT_VERSION must be an exact pinned release, found %q", validatorHadolintVersion)
+	}
+	validatorHadolintSHAx86_64, err := requireArg(validatorDockerfile, "HADOLINT_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorHadolintSHAx86_64, err := requireArg(remoteValidatorDockerfile, "HADOLINT_LINUX_X86_64_SHA256", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("HADOLINT_LINUX_X86_64_SHA256", validatorHadolintSHAx86_64, cfg.ValidatorDockerfilePath, remoteValidatorHadolintSHAx86_64, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
+	validatorHadolintSHAArm64, err := requireArg(validatorDockerfile, "HADOLINT_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	remoteValidatorHadolintSHAArm64, err := requireArg(remoteValidatorDockerfile, "HADOLINT_LINUX_ARM64_SHA256", cfg.RemoteValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if err := requireEqual("HADOLINT_LINUX_ARM64_SHA256", validatorHadolintSHAArm64, cfg.ValidatorDockerfilePath, remoteValidatorHadolintSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
+		return err
+	}
 	cargoEdition, err := requireTOMLString(cargoManifestText, "edition", cargoManifestPath)
 	if err != nil {
 		return err
@@ -997,6 +1104,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	}
 	runtimeRustVersion, err := requireArg(runtimeDockerfile, "RUST_VERSION", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
+	runtimeRustToolchainImage, err := requireArg(runtimeDockerfile, "RUST_TOOLCHAIN_IMAGE", cfg.RuntimeDockerfilePath)
 	if err != nil {
 		return err
 	}
@@ -1017,16 +1128,19 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requireEqual("Rust toolchain channel", rustToolchainVersion, rustToolchainPath, runtimeRustVersion, cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
+	if err := requirePinnedBaseImage(runtimeRustToolchainImage, "RUST_TOOLCHAIN_IMAGE", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	expectedRustToolchainTrack := fmt.Sprintf("rust:%s-slim-trixie@", runtimeRustVersion)
+	if !strings.Contains(runtimeRustToolchainImage, expectedRustToolchainTrack) {
+		return fmt.Errorf("RUST_TOOLCHAIN_IMAGE in %s must pin the official rust:%s-slim-trixie image, found %q", cfg.RuntimeDockerfilePath, runtimeRustVersion, runtimeRustToolchainImage)
+	}
 	expectedCargoRustVersion, err := majorMinor(rustToolchainVersion, rustToolchainPath)
 	if err != nil {
 		return err
 	}
 	if cargoRustVersion != expectedCargoRustVersion {
 		return fmt.Errorf("rust-version in %s must match the pinned toolchain major/minor, expected %q, found %q", cargoManifestPath, expectedCargoRustVersion, cargoRustVersion)
-	}
-	runtimeRustupVersion, err := requireArg(runtimeDockerfile, "RUSTUP_VERSION", cfg.RuntimeDockerfilePath)
-	if err != nil {
-		return err
 	}
 	validatorRustupVersion, err := requireArg(validatorDockerfile, "RUSTUP_VERSION", cfg.ValidatorDockerfilePath)
 	if err != nil {
@@ -1036,14 +1150,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := requireEqual("RUSTUP_VERSION", runtimeRustupVersion, cfg.RuntimeDockerfilePath, validatorRustupVersion, cfg.ValidatorDockerfilePath); err != nil {
-		return err
-	}
-	if err := requireEqual("RUSTUP_VERSION", runtimeRustupVersion, cfg.RuntimeDockerfilePath, remoteValidatorRustupVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
-	runtimeRustupSHAx86_64, err := requireArg(runtimeDockerfile, "RUSTUP_INIT_LINUX_X86_64_SHA256", cfg.RuntimeDockerfilePath)
-	if err != nil {
+	if err := requireEqual("RUSTUP_VERSION", validatorRustupVersion, cfg.ValidatorDockerfilePath, remoteValidatorRustupVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
 	validatorRustupSHAx86_64, err := requireArg(validatorDockerfile, "RUSTUP_INIT_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
@@ -1054,14 +1161,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := requireEqual("RUSTUP_INIT_LINUX_X86_64_SHA256", runtimeRustupSHAx86_64, cfg.RuntimeDockerfilePath, validatorRustupSHAx86_64, cfg.ValidatorDockerfilePath); err != nil {
-		return err
-	}
-	if err := requireEqual("RUSTUP_INIT_LINUX_X86_64_SHA256", runtimeRustupSHAx86_64, cfg.RuntimeDockerfilePath, remoteValidatorRustupSHAx86_64, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
-	runtimeRustupSHAArm64, err := requireArg(runtimeDockerfile, "RUSTUP_INIT_LINUX_ARM64_SHA256", cfg.RuntimeDockerfilePath)
-	if err != nil {
+	if err := requireEqual("RUSTUP_INIT_LINUX_X86_64_SHA256", validatorRustupSHAx86_64, cfg.ValidatorDockerfilePath, remoteValidatorRustupSHAx86_64, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
 	validatorRustupSHAArm64, err := requireArg(validatorDockerfile, "RUSTUP_INIT_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
@@ -1072,10 +1172,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := requireEqual("RUSTUP_INIT_LINUX_ARM64_SHA256", runtimeRustupSHAArm64, cfg.RuntimeDockerfilePath, validatorRustupSHAArm64, cfg.ValidatorDockerfilePath); err != nil {
-		return err
-	}
-	if err := requireEqual("RUSTUP_INIT_LINUX_ARM64_SHA256", runtimeRustupSHAArm64, cfg.RuntimeDockerfilePath, remoteValidatorRustupSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
+	if err := requireEqual("RUSTUP_INIT_LINUX_ARM64_SHA256", validatorRustupSHAArm64, cfg.ValidatorDockerfilePath, remoteValidatorRustupSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
 
@@ -1269,6 +1366,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if strings.Contains(ciWorkflow, "docker/setup-qemu-action@") {
 		return errors.New(".github/workflows/ci.yml must not configure QEMU in CI now that arm64 reproducible builds use a native runner")
 	}
+	if err := validateMacOSInstallVerificationFlow(ciWorkflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
+		return err
+	}
 	if !strings.Contains(releaseWorkflow, "cache-binary: false") {
 		return errors.New("The publishing release workflow must not cache the Buildx binary")
 	}
@@ -1288,6 +1388,52 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if !strings.Contains(releaseWorkflow, "anchore/sbom-action/download-syft@") {
 		return errors.New(".github/workflows/release.yml must install the pinned Syft CLI before generating the builder environment manifest")
 	}
+	securityWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "security.yml"))
+	if err != nil {
+		return err
+	}
+	_, securityActionlintVersionMatch, err := requireRegex(securityWorkflow, `(?m)^\s*ACTIONLINT_VERSION:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$`, "security actionlint version", ".github/workflows/security.yml")
+	if err != nil {
+		return err
+	}
+	_, releaseActionlintVersionMatch, err := requireRegex(releaseWorkflow, `(?m)^\s*ACTIONLINT_VERSION:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$`, "release actionlint version", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	if securityActionlintVersionMatch[1] != releaseActionlintVersionMatch[1] {
+		return errors.New("ACTIONLINT_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
+	}
+	_, securityActionlintSHAMatch, err := requireRegex(securityWorkflow, `(?m)^\s*ACTIONLINT_SHA256:\s*([0-9a-f]{64})\s*$`, "security actionlint sha", ".github/workflows/security.yml")
+	if err != nil {
+		return err
+	}
+	_, releaseActionlintSHAMatch, err := requireRegex(releaseWorkflow, `(?m)^\s*ACTIONLINT_SHA256:\s*([0-9a-f]{64})\s*$`, "release actionlint sha", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	if securityActionlintSHAMatch[1] != releaseActionlintSHAMatch[1] {
+		return errors.New("ACTIONLINT_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
+	}
+	for _, workflow := range []struct {
+		text string
+		path string
+	}{
+		{text: securityWorkflow, path: ".github/workflows/security.yml"},
+		{text: releaseWorkflow, path: ".github/workflows/release.yml"},
+	} {
+		if !strings.Contains(workflow.text, "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz") {
+			return fmt.Errorf("%s must derive the actionlint archive URL from ACTIONLINT_VERSION", workflow.path)
+		}
+	}
+	for _, needle := range []string{
+		"github.event_name == 'workflow_dispatch' && github.ref_name != 'main'",
+		"base-ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/main' || '' }}",
+		"head-ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || '' }}",
+	} {
+		if !strings.Contains(securityWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/security.yml must contain %q", needle)
+		}
+	}
 	if !strings.Contains(releaseWorkflow, "docker buildx imagetools create") {
 		return errors.New(".github/workflows/release.yml must assemble the published multi-arch manifest with docker buildx imagetools create")
 	}
@@ -1297,10 +1443,20 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if !strings.Contains(runtimeDockerfile, "COPY runtime/container/rust /workcell-rust") {
 		return errors.New("runtime/container/Dockerfile must vendor the reviewed Rust runtime sources into the builder stage")
 	}
+	for _, needle := range []string{
+		"COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo",
+		"COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup",
+	} {
+		if !strings.Contains(runtimeDockerfile, needle) {
+			return fmt.Errorf("runtime/container/Dockerfile must copy the pinned Rust toolchain through %q", needle)
+		}
+	}
 	if !strings.Contains(runtimeDockerfile, "COPY runtime/container/control-plane-manifest.json /usr/local/libexec/workcell/control-plane-manifest.json") {
 		return errors.New("runtime/container/Dockerfile must copy the reviewed control-plane manifest into the runtime image")
 	}
-	if !strings.Contains(runtimeDockerfile, "cargo build \\") || !strings.Contains(runtimeDockerfile, "--locked \\") || !strings.Contains(runtimeDockerfile, "--offline \\") {
+	hasOfflineCargoBuild := strings.Contains(runtimeDockerfile, "cargo build \\") ||
+		strings.Contains(runtimeDockerfile, "\"${toolchain_bin}/cargo\" build \\")
+	if !hasOfflineCargoBuild || !strings.Contains(runtimeDockerfile, "--locked \\") || !strings.Contains(runtimeDockerfile, "--offline \\") {
 		return errors.New("runtime/container/Dockerfile must build the shipped Rust launcher artifacts with cargo --locked --offline")
 	}
 	if !strings.Contains(runtimeDockerfile, "CARGO_HOME=/workcell-rust/cargo-home") {
@@ -1308,8 +1464,16 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	for _, needle := range []string{
 		"name: workcell-release-preflight",
+		"name: workcell-release-install-candidate",
+		"name: Release install verification (${{ matrix.runner_label }})",
+		"brew install --formula",
+		"macos-26",
+		"macos-15",
 		"actions/download-artifact@",
 		"context: dist/release-source",
+		"name: Re-verify pinned upstreams from archived source tree",
+		"name: Verify GitHub macOS release test runners",
+		"working-directory: dist/release-source",
 		"WORKCELL_BUILD_INPUT_ROOT: ${{ github.workspace }}/dist/release-source",
 		"WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source",
 		"Verify published platform digests match preflight",
@@ -1333,11 +1497,15 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	if !strings.Contains(releaseWorkflow, "dist/${{ env.BUNDLE_NAME }}.sigstore.json") ||
 		!strings.Contains(releaseWorkflow, "dist/workcell-control-plane.sigstore.json") ||
+		!strings.Contains(releaseWorkflow, "dist/workcell-image.digest.sigstore.json") ||
 		!strings.Contains(releaseWorkflow, "dist/workcell-source.spdx.sigstore.json") ||
 		!strings.Contains(releaseWorkflow, "dist/workcell-image.spdx.sigstore.json") {
 		return errors.New(".github/workflows/release.yml must publish direct signature bundles for release artifacts")
 	}
 	if err := validateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
+		return err
+	}
+	if err := validateMacOSInstallVerificationFlow(releaseWorkflow, ".github/workflows/release.yml", "workcell-release-install-candidate", "name: Release install verification (${{ matrix.runner_label }})"); err != nil {
 		return err
 	}
 	if err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
@@ -1360,6 +1528,11 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
 		}
 	}
+	if upstreamRefreshWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "upstream-refresh.yml")); err != nil {
+		return err
+	} else if err := validateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
+		return err
+	}
 	hostedControlsWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "hosted-controls.yml"))
 	if err != nil {
 		return err
@@ -1374,6 +1547,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 	}
 	for _, needle := range []string{
+		"./scripts/verify-github-macos-release-test-runners.sh",
 		"./scripts/verify-upstream-gemini-release.sh",
 		"./scripts/verify-upstream-claude-release.sh",
 	} {
@@ -1385,17 +1559,18 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 	}
 	for _, needle := range []string{
+		"./scripts/verify-github-macos-release-test-runners.sh",
 		"./scripts/verify-upstream-codex-release.sh",
 		"./scripts/verify-upstream-claude-release.sh",
 		"./scripts/verify-upstream-gemini-release.sh",
-		"./scripts/update-provider-pins.sh --check",
+		"./scripts/update-upstream-pins.sh --check",
 	} {
 		if !strings.Contains(pinHygieneWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/pin-hygiene.yml must contain %q", needle)
 		}
 	}
 	for _, needle := range []string{
-		"./scripts/update-provider-pins.sh --check",
+		"./scripts/update-upstream-pins.sh --check",
 	} {
 		if !strings.Contains(releaseWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)

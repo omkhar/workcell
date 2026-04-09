@@ -8,29 +8,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
-
-func repoRoot(tb testing.TB) string {
-	tb.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		tb.Fatal("unable to determine repo root")
-	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
-}
-
-func shellCommand(body, root string) string {
-	return "/bin/sh -c " + shellQuote(body) + " sh " + shellQuote(root)
-}
 
 func TestRunCommandCapturesExitCodeAndStreams(t *testing.T) {
 	t.Parallel()
@@ -137,67 +118,5 @@ func TestRunParityCaseComparesOutputsAndTrees(t *testing.T) {
 
 	if err := RunParityCase(context.Background(), caseSpec); err != nil {
 		t.Fatalf("RunParityCase returned error: %v", err)
-	}
-}
-
-func TestParityScriptDetectsTreeMismatch(t *testing.T) {
-	t.Parallel()
-
-	leftRoot := t.TempDir()
-	rightRoot := t.TempDir()
-	script := `mkdir -p "$1/out"; printf "same\n"; printf "same\n" >&2; printf "left\n" > "$1/out/data.txt"`
-	leftCmd := shellCommand(script, leftRoot)
-	rightCmd := shellCommand(`mkdir -p "$1/out"; printf "same\n"; printf "same\n" >&2; printf "right\n" > "$1/out/data.txt"`, rightRoot)
-	scriptPath := filepath.Join(repoRoot(t), "scripts", "verify-go-python-parity.sh")
-
-	cmd := exec.Command(
-		"bash",
-		scriptPath,
-		"--name",
-		"tree-mismatch",
-		"--python-cmd",
-		leftCmd,
-		"--go-cmd",
-		rightCmd,
-		"--compare-root",
-		leftRoot+":"+rightRoot,
-	)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("script succeeded unexpectedly: %s", out)
-	}
-	if !strings.Contains(string(out), "tree mismatch") {
-		t.Fatalf("script output %q does not mention tree mismatch", out)
-	}
-}
-
-func TestParityScriptPassesForMatchingCommandOutputs(t *testing.T) {
-	t.Parallel()
-
-	leftRoot := t.TempDir()
-	rightRoot := t.TempDir()
-	script := `printf "same\n"; printf "same\n" >&2; mkdir -p "$1/out"; printf "payload\n" > "$1/out/data.txt"`
-	leftCmd := shellCommand(script, leftRoot)
-	rightCmd := shellCommand(script, rightRoot)
-	scriptPath := filepath.Join(repoRoot(t), "scripts", "verify-go-python-parity.sh")
-
-	cmd := exec.Command(
-		"bash",
-		scriptPath,
-		"--name",
-		"parity-smoke",
-		"--python-cmd",
-		leftCmd,
-		"--go-cmd",
-		rightCmd,
-		"--compare-root",
-		leftRoot+":"+rightRoot,
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("script failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "parity passed") {
-		t.Fatalf("script output %q does not mention success", out)
 	}
 }

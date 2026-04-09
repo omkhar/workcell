@@ -28,10 +28,15 @@ func ValidateRequirements(rootDir, requirementsPath string) error {
 
 	seenIDs := map[string]struct{}{}
 	seenTitles := map[string]struct{}{}
-	for category, prefix := range map[string]string{
-		"functional":    "FR-",
-		"nonfunctional": "NFR-",
+	for _, categorySpec := range []struct {
+		category string
+		prefix   string
+	}{
+		{category: "functional", prefix: "FR-"},
+		{category: "nonfunctional", prefix: "NFR-"},
 	} {
+		category := categorySpec.category
+		prefix := categorySpec.prefix
 		rawTable, ok := document[category].(map[string]any)
 		if !ok || len(rawTable) == 0 {
 			return fmt.Errorf("%s must define a non-empty [%s] requirement table", requirementsPath, category)

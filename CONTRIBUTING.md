@@ -12,6 +12,17 @@ ergonomics second.
 - sign every commit
 - use feature branches and pull requests; do not push directly to `main`
 
+## First-time setup
+
+Use the bootstrap helper:
+
+```bash
+./scripts/bootstrap-dev.sh
+```
+
+That script installs the common local toolchain, configures `.githooks` as the
+repo hook path, and leaves you ready to run the local gates.
+
 ## Prerequisites
 
 Local development expects:
@@ -21,15 +32,17 @@ Local development expects:
 - `docker`
 - `shellcheck`
 - `shfmt`
-- `cargo`, `rustfmt`, and `clippy`
+- `yamllint`
+- `codespell`
 - `actionlint`
 - `zizmor`
 - `jq`
+- `cargo`, `rustfmt`, and `clippy`
 
 On macOS with Homebrew:
 
 ```bash
-brew install go shellcheck shfmt actionlint zizmor jq
+brew install go shellcheck shfmt yamllint codespell actionlint zizmor jq
 brew install --cask docker
 rustup-init  # installs cargo, rustfmt, clippy
 ```
@@ -57,14 +70,11 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
 ## Recommended workflow
 
 1. Create a feature branch from `main`.
-2. Enable the repo-local hooks:
+2. Bootstrap once if you have not already:
 
    ```bash
-   git config core.hooksPath .githooks
+   ./scripts/bootstrap-dev.sh
    ```
-
-   The pre-commit hook blocks unrelated commits when stable provider pin bumps
-   are pending and points you at `./scripts/publish-provider-bump-pr.sh`.
 
 3. Make the change.
 4. Run the fast local gate:
@@ -81,6 +91,22 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
 
 6. Open a PR against `main`.
 
+The pre-commit hook blocks unrelated commits when stable provider pin bumps are
+pending and points you at `./scripts/publish-provider-bump-pr.sh`.
+
+## Good first contributions
+
+Useful starter changes tend to be:
+
+- quickstart, README, or manpage consistency fixes
+- validation coverage for already-documented behavior
+- scenario-gap closure that does not change the trust model
+- adapter documentation and control-plane clarity improvements
+
+If a change touches the boundary or policy model, read
+[docs/invariants.md](docs/invariants.md) and [docs/threat-model.md](docs/threat-model.md)
+first.
+
 ## Commit messages
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) format:
@@ -93,9 +119,8 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) format:
 
 Common types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`.
 
-Keep the subject line under 72 characters. If the change touches the
-runtime boundary, trust model, or provider adapters, mention it in the
-body.
+Keep the subject line under 72 characters. If the change touches the runtime
+boundary, trust model, or provider adapters, mention it in the body.
 
 ## Validation levels
 
@@ -148,6 +173,7 @@ A good PR should:
 - call out any runtime or trust assumptions the change depends on
 - note any lower-assurance modes introduced or widened
 - update docs in the same change when behavior changes
+- update [CHANGELOG.md](CHANGELOG.md) for user-visible changes
 
 If you touch the boundary or policy model, link the relevant invariant or
 threat-model section in the PR description.
@@ -174,3 +200,11 @@ Adapters should stay thin. A new or changed adapter should:
 
 See [workflows/adapter-porting.md](workflows/adapter-porting.md) for the
 porting checklist.
+
+## Project docs
+
+- [GOVERNANCE.md](GOVERNANCE.md)
+- [MAINTAINERS.md](MAINTAINERS.md)
+- [ROADMAP.md](ROADMAP.md)
+- [SUPPORT.md](SUPPORT.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)

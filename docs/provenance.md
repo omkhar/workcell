@@ -14,18 +14,23 @@ Tagged releases publish:
 
 - a multi-architecture runtime image to GHCR
 - a source bundle tarball
+- a versioned Homebrew formula asset (`workcell.rb`)
 - `SHA256SUMS`
 - a published image digest file
 - a deterministic build-input manifest
 - a deterministic control-plane manifest
 - a deterministic builder-environment manifest
 - source and image SBOMs in SPDX JSON
-- Sigstore bundles for the source bundle, checksums, build-input manifest,
-  control-plane manifest, builder-environment manifest, and both SBOMs
+- a Sigstore bundle for the Homebrew formula asset
+- Sigstore bundles for the source bundle, published image digest file,
+  checksums, build-input manifest, control-plane manifest,
+  builder-environment manifest, and both SBOMs
 - keyless Sigstore signatures for the published image
-- GitHub attestations for the published image, image SBOM, source bundle, and
-  source SBOM when the reviewed hosted controls say the repository visibility
-  and GitHub plan support that publication path
+- GitHub attestations for the published image, image SBOM, source bundle,
+  source SBOM, Homebrew formula, published image digest file, checksums,
+  build-input manifest, control-plane manifest, and builder-environment
+  manifest when the reviewed hosted controls say the repository visibility and
+  GitHub plan support that publication path
 
 ## What the release workflow proves
 
@@ -36,12 +41,19 @@ Before publish, release preflight reruns:
 - release-bundle reproducibility
 - runtime-image reproducibility
 - hosted-control auditing
-- upstream pinned Codex and Claude release verification
+- authoritative-source verification of the GitHub-hosted Apple Silicon macOS
+  release install runner labels
+- upstream pinned Codex, Claude, and Gemini release verification
+- reviewed upstream pin verification across providers, Linux base images,
+  Linux toolchains, and release-build helper pins
+- release-bundle install/uninstall and Homebrew install/uninstall verification
+  on GitHub-hosted Apple Silicon `macos-26` and `macos-15`
 
 The publish job then rebuilds from the archived source bundle, not the live
-checkout. It binds the published per-platform image digests, source bundle,
-build-input manifest, and control-plane manifest back to preflight results
-before signing and publication.
+checkout, and re-verifies upstream provider releases plus the reviewed upstream
+pin set from that archived source tree. It binds the published per-platform
+image digests, source bundle, build-input manifest, and control-plane manifest
+back to preflight results before signing and publication.
 
 ## Sigstore path
 
@@ -95,11 +107,11 @@ gh attestation verify oci://ghcr.io/omkhar/workcell@sha256:DIGEST \
 ## Verifying release assets
 
 1. Download `SHA256SUMS`, `SHA256SUMS.sigstore.json`, and the assets you want
-   to verify.
+   to verify, including `workcell.rb` if you plan to install through Homebrew.
 2. Verify the signed checksum file with Cosign.
 3. Verify the asset digests against `SHA256SUMS`.
-4. Optionally verify the directly signed JSON manifests or SBOMs with their own
-   Sigstore bundles.
+4. Optionally verify the directly signed Homebrew formula, JSON manifests, or
+   SBOMs with their own Sigstore bundles.
 
 Example:
 
@@ -125,3 +137,7 @@ Release provenance proves how the published artifacts were built and signed. It
 does not, by itself, prove the entire local macOS runtime boundary. That still
 depends on Workcell's local runtime controls, local validation, and operator
 discipline.
+
+Continuous CI and tagged-release install verification are also intentionally
+narrow: they currently prove package installability only on GitHub-hosted
+Apple Silicon `macos-26` and `macos-15`.

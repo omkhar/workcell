@@ -15,11 +15,11 @@ env:
   ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
   ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
   IMAGE_NAME: ghcr.io/${{ github.repository }}
-  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:37539dd4d60fc70968d164d3850d903a2c56f6402214a1953fbf9fcb81ada731
-  WORKCELL_BUILDX_VERSION: v0.32.1
-  WORKCELL_COSIGN_VERSION: v3.0.5
-  WORKCELL_QEMU_IMAGE: tonistiigi/binfmt:qemu-v10.0.4-56@sha256:30cc9a4d03765acac9be2ed0afc23af1ad018aed2c28ea4be8c2eb9afe03fbd1
-  WORKCELL_SYFT_VERSION: v1.41.2
+  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5
+  WORKCELL_BUILDX_VERSION: v0.33.0
+  WORKCELL_COSIGN_VERSION: v3.0.6
+  WORKCELL_QEMU_IMAGE: tonistiigi/binfmt:qemu-v10.2.1-65@sha256:d3b963f787999e6c0219a48dba02978769286ff61a5f4d26245cb6a6e5567ea3
+  WORKCELL_SYFT_VERSION: v1.42.4
 
 jobs:
   preflight:
@@ -73,6 +73,9 @@ jobs:
       - name: Check pinned input policy
         run: ./scripts/check-pinned-inputs.sh
 
+      - name: Verify GitHub macOS release test runners
+        run: ./scripts/verify-github-macos-release-test-runners.sh macos-26 macos-15
+
       - name: Verify build input manifest
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
@@ -97,8 +100,8 @@ jobs:
 
       - name: Install actionlint
         env:
-          ACTIONLINT_SHA256: 900919a84f2229bac68ca9cd4103ea297abc35e9689ebb842c6e34a3d1b01b0a
-          ACTIONLINT_VERSION: 1.7.11
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_VERSION: 1.7.12
         run: |
           actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"
           actionlint_bin="${RUNNER_TEMP}/actionlint"
@@ -128,8 +131,8 @@ jobs:
       - name: Verify upstream Gemini release
         run: ./scripts/verify-upstream-gemini-release.sh
 
-      - name: Require provider pins to match the eligible stable track
-        run: ./scripts/update-provider-pins.sh --check
+      - name: Require pinned upstreams to match the latest reviewed track
+        run: ./scripts/update-upstream-pins.sh --check
 
       - name: Build validation tool image
         run: |
@@ -179,6 +182,43 @@ jobs:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
         run: ./scripts/verify-release-bundle.sh
 
+      - name: Build preflight release install artifacts
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-install
+          bundle="workcell-${GITHUB_REF_NAME}.tar.gz"
+          docker run --rm \
+            --entrypoint /bin/bash \
+            -v "${PWD}:/workspace" \
+            -v "${PWD}/dist/release-install:/dist" \
+            -w /workspace \
+            -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+            -e ARCHIVE_REF="${GITHUB_SHA}" \
+            -e BUNDLE_NAME="${bundle}" \
+            -e BUNDLE_PREFIX="workcell-${GITHUB_REF_NAME}/" \
+            "workcell-validator:${GITHUB_SHA}" \
+            -lc '
+              set -euo pipefail
+              bundle_tar="/dist/${BUNDLE_NAME%.tar.gz}.tar"
+              git -c safe.directory=/workspace archive \
+                --format=tar \
+                --mtime="@${SOURCE_DATE_EPOCH}" \
+                --prefix="${BUNDLE_PREFIX}" \
+                -o "${bundle_tar}" \
+                "${ARCHIVE_REF}"
+              gzip -n -9 < "${bundle_tar}" > "/dist/${BUNDLE_NAME}"
+              rm -f "${bundle_tar}"
+            '
+          bundle_sha="$(sha256sum "dist/release-install/${bundle}" | awk '{print $1}')"
+          ./scripts/generate-homebrew-formula.sh \
+            "${GITHUB_REF_NAME}" \
+            "${bundle_sha}" \
+            dist/release-install/workcell.rb \
+            --repository "${GITHUB_REPOSITORY}"
+
       - name: Run actionlint
         run: actionlint
 
@@ -218,11 +258,97 @@ jobs:
             dist/workcell-runtime-preflight.json
           retention-days: 7
 
+      - name: Upload preflight release install artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: workcell-release-install-candidate
+          path: |
+            dist/release-install/workcell-${{ github.ref_name }}.tar.gz
+            dist/release-install/workcell.rb
+          retention-days: 7
+
+  install-verification:
+    name: Release install verification (${{ matrix.runner_label }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - preflight
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            runner_label: macos-26
+          - runner: macos-15
+            runner_label: macos-15
+    steps:
+      - name: Download preflight release install artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: workcell-release-install-candidate
+          path: dist/install
+
+      - name: Verify release bundle installer
+        env:
+          HOME: ${{ runner.temp }}/workcell-home-bundle
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}"
+          bundle_path="$(find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz' -print -quit)"
+          if [[ -z "${bundle_path}" ]]; then
+            echo "Missing preflight release bundle artifact" >&2
+            exit 1
+          fi
+          extract_root="${RUNNER_TEMP}/bundle-install"
+          rm -rf "${extract_root}"
+          mkdir -p "${extract_root}"
+          tar -xzf "${bundle_path}" -C "${extract_root}"
+          bundle_dir="$(find "${extract_root}" -mindepth 1 -maxdepth 1 -type d -name 'workcell-*' -print -quit)"
+          if [[ -z "${bundle_dir}" ]]; then
+            echo "Unable to locate extracted bundle root" >&2
+            exit 1
+          fi
+          "${bundle_dir}/scripts/install.sh"
+          "${HOME}/.local/bin/workcell" --help >/dev/null
+          HOME="${HOME}" "${bundle_dir}/scripts/uninstall.sh"
+          test ! -e "${HOME}/.local/bin/workcell"
+          test ! -e "${HOME}/.local/share/man/man1/workcell.1"
+
+      - name: Verify Homebrew formula install
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          bundle_path="$(find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz' -print -quit)"
+          if [[ -z "${bundle_path}" ]]; then
+            echo "Missing preflight release bundle artifact" >&2
+            exit 1
+          fi
+          bundle_path="$(cd "$(dirname "${bundle_path}")" && pwd -P)/$(basename "${bundle_path}")"
+          formula_path="${RUNNER_TEMP}/workcell-local.rb"
+          cp dist/install/workcell.rb "${formula_path}"
+          expected_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "${bundle_path}")"
+          grep -F "url \"${expected_url}\"" "${formula_path}" >/dev/null
+          BUNDLE_FILE_URL="file://${bundle_path}" perl -0pi -e 's{^  url ".*"$}{"  url \"" . $ENV{BUNDLE_FILE_URL} . "\""}me' "${formula_path}"
+          brew install --formula "${formula_path}"
+          brew test workcell
+          brew uninstall --force workcell
+          if brew list --versions workcell >/dev/null 2>&1; then
+            echo "Expected brew uninstall to remove the workcell formula" >&2
+            exit 1
+          fi
+          brew cleanup workcell >/dev/null 2>&1 || true
+
   release:
     name: Publish release artifacts
     runs-on: ubuntu-latest
     needs:
       - preflight
+      - install-verification
     environment:
       name: release
       url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
@@ -332,6 +458,14 @@ jobs:
           ./scripts/generate-build-input-manifest.sh dist/workcell-build-inputs.json
           ./scripts/generate-builder-environment-manifest.sh dist/workcell-builder-environment.json
 
+      - name: Re-verify pinned upstreams from archived source tree
+        working-directory: dist/release-source
+        run: |
+          ./scripts/verify-upstream-codex-release.sh
+          ./scripts/verify-upstream-claude-release.sh
+          ./scripts/verify-upstream-gemini-release.sh
+          ./scripts/update-upstream-pins.sh --check
+
       - name: Verify release bundle matches preflight
         run: |
           set -euo pipefail
@@ -355,6 +489,17 @@ jobs:
         env:
           WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source
         run: ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane.json
+
+      - name: Generate Homebrew formula asset
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          bundle_sha="$(sha256sum "dist/${BUNDLE_NAME}" | awk '{print $1}')"
+          ./scripts/generate-homebrew-formula.sh \
+            "${GITHUB_REF_NAME}" \
+            "${bundle_sha}" \
+            dist/workcell.rb \
+            --repository "${GITHUB_REPOSITORY}"
 
       - name: Verify build input manifest matches preflight
         run: |
@@ -540,6 +685,7 @@ jobs:
         run: |
           ./scripts/generate-release-checksums.sh dist/SHA256SUMS \
             "dist/${BUNDLE_NAME}" \
+            dist/workcell.rb \
             dist/workcell-image.digest \
             dist/workcell-build-inputs.json \
             dist/workcell-control-plane.json \
@@ -561,6 +707,22 @@ jobs:
           cosign sign-blob \
             --bundle "dist/${BUNDLE_NAME}.sigstore.json" \
             "dist/${BUNDLE_NAME}"
+
+      - name: Sign Homebrew formula asset
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle dist/workcell.rb.sigstore.json \
+            dist/workcell.rb
+
+      - name: Sign published image digest file
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob \
+            --bundle dist/workcell-image.digest.sigstore.json \
+            dist/workcell-image.digest
 
       - name: Sign release checksums
         env:
@@ -636,6 +798,36 @@ jobs:
           sbom-path: dist/workcell-source.spdx.json
           subject-path: dist/${{ env.BUNDLE_NAME }}
 
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell.rb
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-image.digest
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-build-inputs.json
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-control-plane.json
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/workcell-builder-environment.json
+
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        with:
+          subject-path: dist/SHA256SUMS
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
@@ -643,7 +835,10 @@ jobs:
           path: |
             dist/${{ env.BUNDLE_NAME }}
             dist/${{ env.BUNDLE_NAME }}.sigstore.json
+            dist/workcell.rb
+            dist/workcell.rb.sigstore.json
             dist/workcell-image.digest
+            dist/workcell-image.digest.sigstore.json
             dist/workcell-build-inputs.json
             dist/workcell-build-inputs.sigstore.json
             dist/workcell-control-plane.json
@@ -665,7 +860,10 @@ jobs:
           ./scripts/publish-github-release.sh "${GITHUB_REF_NAME}" \
             "dist/${BUNDLE_NAME}" \
             "dist/${BUNDLE_NAME}.sigstore.json" \
+            dist/workcell.rb \
+            dist/workcell.rb.sigstore.json \
             dist/workcell-image.digest \
+            dist/workcell-image.digest.sigstore.json \
             dist/workcell-build-inputs.json \
             dist/workcell-build-inputs.sigstore.json \
             dist/workcell-control-plane.json \

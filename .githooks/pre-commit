@@ -11,14 +11,14 @@ fi
 set -euo pipefail
 export PATH="${TRUSTED_HOST_PATH}"
 
-if [[ "${WORKCELL_SKIP_PROVIDER_BUMP_PRECOMMIT:-0}" == "1" ]]; then
+if [[ "${WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT:-${WORKCELL_SKIP_PROVIDER_BUMP_PRECOMMIT:-0}}" == "1" ]]; then
   exit 0
 fi
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
 
-if output="$("${ROOT_DIR}/scripts/update-provider-pins.sh" --check 2>&1)"; then
+if output="$("${ROOT_DIR}/scripts/update-upstream-pins.sh" --check 2>&1)"; then
   exit 0
 else
   status=$?
@@ -26,10 +26,10 @@ fi
 
 printf '%s\n' "${output}" >&2
 if [[ "${status}" -eq 1 ]]; then
-  echo "Stable provider pin updates are available." >&2
-  echo "Run ./scripts/publish-provider-bump-pr.sh from a clean worktree before committing unrelated changes." >&2
+  echo "Pinned upstream updates are available." >&2
+  echo "Run ./scripts/update-upstream-pins.sh --apply from a clean worktree or trigger the upstream-refresh workflow before committing unrelated changes." >&2
 else
-  echo "Provider bump pre-commit check failed." >&2
-  echo "Set WORKCELL_SKIP_PROVIDER_BUMP_PRECOMMIT=1 only if you intentionally need to bypass the hook." >&2
+  echo "Pinned upstream pre-commit check failed." >&2
+  echo "Set WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT=1 only if you intentionally need to bypass the hook." >&2
 fi
 exit "${status}"

@@ -94,6 +94,19 @@ docs = [
   "docs/workcell-system-design.md",
 ]
 
+[functional.FR-008]
+title = "Supported install and uninstall surfaces"
+summary = "Bundle installs, bundle uninstalls, and Homebrew installs and uninstalls stay wired to the supported Apple Silicon macOS host matrix, while the manual installer explicitly manages required host dependencies or warns when asked not to."
+evidence = [
+  "scripts/verify-invariants.sh",
+  "internal/metadatautil/workflow_validation_test.go",
+]
+docs = [
+  "README.md",
+  "docs/getting-started.md",
+  "SUPPORT.md",
+]
+
 [nonfunctional.NFR-001]
 title = "Bounded VM-plus-container execution"
 summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."
@@ -153,5 +166,18 @@ evidence = [
 ]
 docs = [
   "docs/requirements-validation.md",
+  "docs/validation-scenarios.md",
+]
+
+[nonfunctional.NFR-006]
+title = "Continuously validated install matrix"
+summary = "CI and tagged release workflows continuously validate package install and uninstall behavior on the documented GitHub-hosted Apple Silicon macOS runners and keep that matrix tied to authoritative runner metadata."
+evidence = [
+  "scripts/verify-github-macos-release-test-runners.sh",
+  "internal/metadatautil/workflow_validation_test.go",
+]
+docs = [
+  "docs/github-workflows.md",
+  "docs/provenance.md",
   "docs/validation-scenarios.md",
 ]

@@ -12,10 +12,10 @@ on:
 permissions: {}
 
 env:
-  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:37539dd4d60fc70968d164d3850d903a2c56f6402214a1953fbf9fcb81ada731
-  WORKCELL_BUILDX_VERSION: v0.32.1
-  WORKCELL_COSIGN_VERSION: v3.0.5
-  WORKCELL_QEMU_IMAGE: tonistiigi/binfmt:qemu-v10.0.4-56@sha256:30cc9a4d03765acac9be2ed0afc23af1ad018aed2c28ea4be8c2eb9afe03fbd1
+  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5
+  WORKCELL_BUILDX_VERSION: v0.33.0
+  WORKCELL_COSIGN_VERSION: v3.0.6
+  WORKCELL_QEMU_IMAGE: tonistiigi/binfmt:qemu-v10.2.1-65@sha256:d3b963f787999e6c0219a48dba02978769286ff61a5f4d26245cb6a6e5567ea3
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,6 +34,9 @@ jobs:
 
       - name: Check pinned input policy
         run: ./scripts/check-pinned-inputs.sh
+
+      - name: Verify GitHub macOS release test runners
+        run: ./scripts/verify-github-macos-release-test-runners.sh macos-26 macos-15
 
       - name: Verify build input manifest determinism
         run: ./scripts/verify-build-input-manifest.sh
@@ -81,6 +84,52 @@ jobs:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
         run: ./scripts/verify-release-bundle.sh
 
+      - name: Build CI release install artifacts
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git log -1 --pretty=%ct "${GITHUB_SHA}")"
+          mkdir -p dist/release-install
+          bundle="workcell-ci-${GITHUB_SHA}.tar.gz"
+          docker run --rm \
+            --entrypoint /bin/bash \
+            -v "${PWD}:/workspace" \
+            -v "${PWD}/dist/release-install:/dist" \
+            -w /workspace \
+            -e SOURCE_DATE_EPOCH="${source_date_epoch}" \
+            -e ARCHIVE_REF="${GITHUB_SHA}" \
+            -e BUNDLE_NAME="${bundle}" \
+            -e BUNDLE_PREFIX="workcell-ci-${GITHUB_SHA}/" \
+            "workcell-validator:${GITHUB_SHA}" \
+            -lc '
+              set -euo pipefail
+              bundle_tar="/dist/${BUNDLE_NAME%.tar.gz}.tar"
+              git -c safe.directory=/workspace archive \
+                --format=tar \
+                --mtime="@${SOURCE_DATE_EPOCH}" \
+                --prefix="${BUNDLE_PREFIX}" \
+                -o "${bundle_tar}" \
+                "${ARCHIVE_REF}"
+              gzip -n -9 < "${bundle_tar}" > "/dist/${BUNDLE_NAME}"
+              rm -f "${bundle_tar}"
+            '
+          bundle_sha="$(sha256sum "dist/release-install/${bundle}" | awk '{print $1}')"
+          ./scripts/generate-homebrew-formula.sh \
+            "ci-${GITHUB_SHA}" \
+            "${bundle_sha}" \
+            dist/release-install/workcell.rb \
+            --repository "${GITHUB_REPOSITORY}"
+
+      - name: Upload CI release install artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: workcell-ci-install-candidate
+          path: |
+            dist/release-install/workcell-ci-${{ github.sha }}.tar.gz
+            dist/release-install/workcell.rb
+          retention-days: 7
+
   container-smoke:
     name: Container smoke
     runs-on: ubuntu-latest
@@ -111,6 +160,81 @@ jobs:
 
       - name: Verify scenario coverage
         run: ./scripts/verify-scenario-coverage.sh
+
+  install-verification:
+    name: Install verification (${{ matrix.runner_label }})
+    runs-on: ${{ matrix.runner }}
+    needs: validate
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            runner_label: macos-26
+          - runner: macos-15
+            runner_label: macos-15
+    steps:
+      - name: Download CI release install artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: workcell-ci-install-candidate
+          path: dist/install
+
+      - name: Verify release bundle installer
+        env:
+          HOME: ${{ runner.temp }}/workcell-home-bundle
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}"
+          bundle_path="$(find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz' -print -quit)"
+          if [[ -z "${bundle_path}" ]]; then
+            echo "Missing CI release bundle artifact" >&2
+            exit 1
+          fi
+          extract_root="${RUNNER_TEMP}/bundle-install"
+          rm -rf "${extract_root}"
+          mkdir -p "${extract_root}"
+          tar -xzf "${bundle_path}" -C "${extract_root}"
+          bundle_dir="$(find "${extract_root}" -mindepth 1 -maxdepth 1 -type d -name 'workcell-*' -print -quit)"
+          if [[ -z "${bundle_dir}" ]]; then
+            echo "Unable to locate extracted bundle root" >&2
+            exit 1
+          fi
+          "${bundle_dir}/scripts/install.sh"
+          "${HOME}/.local/bin/workcell" --help >/dev/null
+          HOME="${HOME}" "${bundle_dir}/scripts/uninstall.sh"
+          test ! -e "${HOME}/.local/bin/workcell"
+          test ! -e "${HOME}/.local/share/man/man1/workcell.1"
+
+      - name: Verify Homebrew formula install
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          bundle_path="$(find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz' -print -quit)"
+          if [[ -z "${bundle_path}" ]]; then
+            echo "Missing CI release bundle artifact" >&2
+            exit 1
+          fi
+          bundle_path="$(cd "$(dirname "${bundle_path}")" && pwd -P)/$(basename "${bundle_path}")"
+          formula_path="${RUNNER_TEMP}/workcell-local.rb"
+          cp dist/install/workcell.rb "${formula_path}"
+          expected_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/ci-${GITHUB_SHA}/$(basename "${bundle_path}")"
+          grep -F "url \"${expected_url}\"" "${formula_path}" >/dev/null
+          BUNDLE_FILE_URL="file://${bundle_path}" perl -0pi -e 's{^  url ".*"$}{"  url \"" . $ENV{BUNDLE_FILE_URL} . "\""}me' "${formula_path}"
+          brew install --formula "${formula_path}"
+          brew test workcell
+          brew uninstall --force workcell
+          if brew list --versions workcell >/dev/null 2>&1; then
+            echo "Expected brew uninstall to remove the workcell formula" >&2
+            exit 1
+          fi
+          brew cleanup workcell >/dev/null 2>&1 || true
 
   reproducible-build-platform:
     name: Reproducible build (${{ matrix.platform_name }})

@@ -103,10 +103,12 @@ HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
+  "${ROOT_DIR}/scripts/update-upstream-pins.sh"
   "${ROOT_DIR}/scripts/update-provider-pins.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
+  "${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
@@ -343,7 +345,6 @@ expected_doctor_missing_host_tools_csv_for_workspace() {
 
   doctor_tool_is_available "${workspace_root}" colima /opt/homebrew/bin/colima /usr/local/bin/colima || missing+=(colima)
   doctor_tool_is_available "${workspace_root}" docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker || missing+=(docker)
-  doctor_tool_is_available "${workspace_root}" ruby /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby || missing+=(ruby)
 
   if ((${#missing[@]} == 0)); then
     printf 'none\n'
@@ -1045,6 +1046,114 @@ if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${RO
   exit 1
 fi
 
+INSTALL_DEPS_VERIFY_BIN="${BARRIER_VERIFY_ROOT}/install-deps-bin"
+INSTALL_DEPS_LOG="${BARRIER_VERIFY_ROOT}/install-deps-brew.log"
+INSTALL_DEPS_VERIFY_HOME="$(mktemp -d "${BARRIER_VERIFY_ROOT}/install-deps-home.XXXXXX")"
+INSTALL_NO_DEPS_VERIFY_HOME="$(mktemp -d "${BARRIER_VERIFY_ROOT}/install-no-deps-home.XXXXXX")"
+INSTALL_DEPS_PATH="${INSTALL_DEPS_VERIFY_BIN}:/bin:/usr/sbin:/sbin"
+mkdir -p "${INSTALL_DEPS_VERIFY_BIN}"
+
+cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/uname"
+#!/bin/bash
+set -euo pipefail
+case "${1:-}" in
+  -s)
+    printf 'Darwin\n'
+    ;;
+  -m)
+    printf 'arm64\n'
+    ;;
+  *)
+    printf 'Darwin\n'
+    ;;
+esac
+EOF
+chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/uname"
+
+cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/dirname"
+#!/bin/bash
+set -euo pipefail
+exec /usr/bin/dirname "$@"
+EOF
+chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/dirname"
+
+cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/basename"
+#!/bin/bash
+set -euo pipefail
+exec /usr/bin/basename "$@"
+EOF
+chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/basename"
+
+cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/sysctl"
+#!/bin/bash
+set -euo pipefail
+if [[ "${1:-}" == "-in" ]] && [[ "${2:-}" == "hw.optional.arm64" ]]; then
+  printf '1\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/sysctl"
+
+cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/brew"
+#!/bin/bash
+set -euo pipefail
+if [[ "${1:-}" != "install" ]]; then
+  echo "Expected only brew install during installer dependency bootstrap" >&2
+  exit 1
+fi
+shift
+printf 'install %s\n' "$*" >"${INSTALL_DEPS_LOG}"
+for pkg in "$@"; do
+  cat <<'EOFAKE' >"${INSTALL_DEPS_FAKEBIN}/${pkg}"
+#!/bin/bash
+set -euo pipefail
+exit 0
+EOFAKE
+  chmod 0755 "${INSTALL_DEPS_FAKEBIN}/${pkg}"
+done
+EOF
+chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/brew"
+
+if ! env -i \
+  HOME="${INSTALL_DEPS_VERIFY_HOME}" \
+  PATH="${INSTALL_DEPS_PATH}" \
+  SHELL=/bin/zsh \
+  INSTALL_DEPS_FAKEBIN="${INSTALL_DEPS_VERIFY_BIN}" \
+  INSTALL_DEPS_LOG="${INSTALL_DEPS_LOG}" \
+  "${ROOT_DIR}/scripts/install-workcell.sh" >/tmp/workcell-install-deps-bootstrap.out 2>&1; then
+  echo "Expected scripts/install-workcell.sh to auto-install missing macOS host dependencies through Homebrew" >&2
+  cat /tmp/workcell-install-deps-bootstrap.out >&2
+  exit 1
+fi
+
+grep -q '^install colima docker gh git go$' "${INSTALL_DEPS_LOG}"
+grep -q '^Installing required host packages via Homebrew: colima docker gh git go$' /tmp/workcell-install-deps-bootstrap.out
+test -L "${INSTALL_DEPS_VERIFY_HOME}/.local/bin/workcell"
+test -L "${INSTALL_DEPS_VERIFY_HOME}/.local/share/man/man1/workcell.1"
+rm -f \
+  "${INSTALL_DEPS_VERIFY_BIN}/colima" \
+  "${INSTALL_DEPS_VERIFY_BIN}/docker" \
+  "${INSTALL_DEPS_VERIFY_BIN}/gh" \
+  "${INSTALL_DEPS_VERIFY_BIN}/git" \
+  "${INSTALL_DEPS_VERIFY_BIN}/go"
+
+if ! env -i \
+  HOME="${INSTALL_NO_DEPS_VERIFY_HOME}" \
+  PATH="${INSTALL_DEPS_PATH}" \
+  SHELL=/bin/zsh \
+  "${ROOT_DIR}/scripts/install-workcell.sh" --no-install-deps >/tmp/workcell-install-no-deps.out 2>&1; then
+  echo "Expected scripts/install-workcell.sh --no-install-deps to install only the launcher and warn at the end" >&2
+  cat /tmp/workcell-install-no-deps.out >&2
+  exit 1
+fi
+
+grep -q 'Workcell warning: the launcher was installed without the full required host toolchain.' /tmp/workcell-install-no-deps.out
+grep -q '^Missing required host packages: colima docker gh git go$' /tmp/workcell-install-no-deps.out
+grep -q '^  brew install colima docker gh git go$' /tmp/workcell-install-no-deps.out
+test -L "${INSTALL_NO_DEPS_VERIFY_HOME}/.local/bin/workcell"
+test -L "${INSTALL_NO_DEPS_VERIFY_HOME}/.local/share/man/man1/workcell.1"
+
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" >/tmp/workcell-install.out 2>&1; then
   echo "Expected scripts/install.sh to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-install.out >&2
@@ -1148,6 +1257,7 @@ test -e "${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
 test ! -e "/tmp/workcell-uninstall-verify.log.$$"
 test ! -e "/tmp/workcell-docker.verify-uninstall.$$"
 grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files.' /tmp/workcell-uninstall.out
+grep -q 'Preserved shared host packages installed outside Workcell.' /tmp/workcell-uninstall.out
 
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug >/tmp/workcell-install-debug.out 2>&1; then
   echo "Expected scripts/install.sh --debug to succeed in a clean temporary HOME" >&2
@@ -1223,6 +1333,7 @@ fi
 test ! -e "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
 test ! -e "${INSTALL_VERIFY_HOME}/.local/share/man/man1/workcell.1"
 grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files.' /tmp/workcell-uninstall-debug.out
+grep -q 'Preserved shared host packages installed outside Workcell.' /tmp/workcell-uninstall-debug.out
 
 CUSTOM_DEBUG_DIR="${INSTALL_VERIFY_HOME}/custom-workcell-debug"
 CUSTOM_DEBUG_DIR_REAL="$(go_verify_metadatautil canonicalize-path "${CUSTOM_DEBUG_DIR}")"
@@ -1248,6 +1359,7 @@ if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DI
   cat /tmp/workcell-uninstall-custom-debug.out >&2
   exit 1
 fi
+grep -q 'Preserved shared host packages installed outside Workcell.' /tmp/workcell-uninstall-custom-debug.out
 
 INJECTION_POLICY_FIXTURE_ROOT="${BARRIER_VERIFY_ROOT}/injection-policy"
 INJECTION_STATE_ROOT="${INJECTION_POLICY_FIXTURE_ROOT}/xdg-state"
@@ -2018,8 +2130,13 @@ if ! rg -q 'strict mode requires --prepare when you explicitly request --rebuild
   exit 1
 fi
 
-if ! rg -q 'run_clean_host_command "\$\{HOST_RUBY_BIN\}"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to invoke host Ruby helpers under a scrubbed environment" >&2
+if ! rg -q 'go_colimautil validate-profile-config' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to validate managed Colima config through the dedicated Go helper" >&2
+  exit 1
+fi
+
+if ! rg -q 'go_colimautil validate-runtime-mounts' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to validate managed Lima mounts through the dedicated Go helper" >&2
   exit 1
 fi
 
@@ -2252,40 +2369,40 @@ if [[ ! -x "${REPO_PRECOMMIT_HOOK}" ]]; then
   echo "Expected executable repo pre-commit hook: ${REPO_PRECOMMIT_HOOK}" >&2
   exit 1
 fi
-if ! rg -q 'scripts/update-provider-pins\.sh" --check' "${REPO_PRECOMMIT_HOOK}"; then
-  echo "Expected repo pre-commit hook to gate commits on pending provider pin updates" >&2
+if ! rg -q 'scripts/update-upstream-pins\.sh" --check' "${REPO_PRECOMMIT_HOOK}"; then
+  echo "Expected repo pre-commit hook to gate commits on pending pinned upstream updates" >&2
   exit 1
 fi
 
 PRECOMMIT_FIXTURE_ROOT="$(mktemp -d)"
 mkdir -p "${PRECOMMIT_FIXTURE_ROOT}/.githooks" "${PRECOMMIT_FIXTURE_ROOT}/scripts"
 install -m 0755 "${REPO_PRECOMMIT_HOOK}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit"
-cat >"${PRECOMMIT_FIXTURE_ROOT}/scripts/update-provider-pins.sh" <<'EOF'
+cat >"${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh" <<'EOF'
 #!/bin/bash
 if [[ "${1:-}" == "--check" ]]; then
-  echo "Provider bump policy: 72h cool-off"
-  echo "  codex: 0.118.0 -> 0.119.0 (update available, published 2026-04-10T00:00:00Z)"
+  echo "Pinned upstream refresh summary:"
+  echo "  buildx-version: v0.32.1 -> v0.33.0"
   exit 1
 fi
 exit 2
 EOF
-chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-provider-pins.sh"
+chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh"
 if HOME="${PRECOMMIT_FIXTURE_ROOT}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit.out 2>&1; then
-  echo "Expected repo pre-commit hook to block commits when provider updates are pending" >&2
+  echo "Expected repo pre-commit hook to block commits when pinned upstream updates are pending" >&2
   exit 1
 fi
-grep -q 'Stable provider pin updates are available' /tmp/workcell-precommit.out
-grep -q 'publish-provider-bump-pr.sh' /tmp/workcell-precommit.out
+grep -q 'Pinned upstream updates are available' /tmp/workcell-precommit.out
+grep -q 'update-upstream-pins.sh --apply' /tmp/workcell-precommit.out
 
-cat >"${PRECOMMIT_FIXTURE_ROOT}/scripts/update-provider-pins.sh" <<'EOF'
+cat >"${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh" <<'EOF'
 #!/bin/bash
 if [[ "${1:-}" == "--check" ]]; then
-  echo "Provider bump policy: 72h cool-off"
+  echo "Pinned upstream refresh summary:"
   exit 0
 fi
 exit 2
 EOF
-chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-provider-pins.sh"
+chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh"
 HOME="${PRECOMMIT_FIXTURE_ROOT}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit-ok.out 2>&1
 rm -rf "${PRECOMMIT_FIXTURE_ROOT}"
 
@@ -2344,8 +2461,8 @@ if ! rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
-if ! rg -q 'static\.rust-lang\.org:443' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell bootstrap endpoints to allow static.rust-lang.org for rustup bootstrapping" >&2
+if rg -q 'static\.rust-lang\.org:443' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell bootstrap endpoints to avoid unused static.rust-lang.org egress" >&2
   exit 1
 fi
 
@@ -4395,7 +4512,9 @@ FROM scratch
 EOF
 for stub in \
   check-pinned-inputs.sh \
+  update-upstream-pins.sh \
   update-provider-pins.sh \
+  verify-github-macos-release-test-runners.sh \
   verify-upstream-codex-release.sh \
   verify-upstream-claude-release.sh \
   verify-upstream-gemini-release.sh \
@@ -4519,7 +4638,8 @@ fi
 grep -q 'local validation will run from snapshot (head).' /tmp/workcell-premerge-local-snapshot.out
 grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_DEFAULT_SNAPSHOT_PARENT}" "${PREMERGE_LOG}"
 grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
-grep -q 'update-provider-pins.sh --check' "${PREMERGE_LOG}"
+grep -q 'verify-github-macos-release-test-runners.sh macos-26 macos-15' "${PREMERGE_LOG}"
+grep -q 'update-upstream-pins.sh --check' "${PREMERGE_LOG}"
 
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
@@ -4600,7 +4720,8 @@ grep -q 'with-validation-snapshot.sh --repo ' "${PREMERGE_LOG}"
 grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_HARNESS_ROOT}/relative-snapshots" "${PREMERGE_LOG}"
 grep -q -- '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --local-snapshot worktree --local-include-untracked' "${PREMERGE_LOG}"
 grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
-grep -q 'update-provider-pins.sh --check' "${PREMERGE_LOG}"
+grep -q 'verify-github-macos-release-test-runners.sh macos-26 macos-15' "${PREMERGE_LOG}"
+grep -q 'update-upstream-pins.sh --check' "${PREMERGE_LOG}"
 grep -q 'verify-reproducible-build.sh ' "${PREMERGE_LOG}"
 grep -q 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64' "${PREMERGE_LOG}"
 grep -q 'local_premerge_repro_platforms()' "${ROOT_DIR}/scripts/pre-merge.sh"
@@ -5671,12 +5792,9 @@ rm -rf \
 
 if [[ "$(uname -s)" == "Darwin" ]] &&
   host_tool_exists /opt/homebrew/bin/colima /usr/local/bin/colima &&
-  host_tool_exists /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker &&
-  host_tool_exists /usr/bin/ruby /opt/homebrew/bin/ruby /usr/local/bin/ruby; then
-  RUBYOPT_MARKER="${BARRIER_VERIFY_ROOT}/rubyopt-ran"
-  RUBYOPT_PAYLOAD="${BARRIER_VERIFY_ROOT}/rubyopt-payload.rb"
-  RUBY_PROFILE_NAME="workcell-ruby-verify-$$"
-  COLIMA_PROFILE_FIXTURE="${REAL_HOME}/.colima/${RUBY_PROFILE_NAME}"
+  host_tool_exists /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker; then
+  GOFLAGS_PROFILE_NAME="workcell-goflags-verify-$$"
+  COLIMA_PROFILE_FIXTURE="${REAL_HOME}/.colima/${GOFLAGS_PROFILE_NAME}"
   mkdir -p "${COLIMA_PROFILE_FIXTURE}"
   printf '%s\n' "${NONGIT_WORKSPACE}" >"${COLIMA_PROFILE_FIXTURE}/workcell.managed"
   printf 'image_tag=workcell:local\nimage_id=sha256:test\nsource_date_epoch=0\n' >"${COLIMA_PROFILE_FIXTURE}/workcell.image-ready"
@@ -5685,23 +5803,19 @@ vmType: qemu
 mountType: virtiofs
 runtime: docker
 EOF
-  cat >"${RUBYOPT_PAYLOAD}" <<'EOF'
-File.write(ENV.fetch("RUBYOPT_MARKER"), "ran\n")
-EOF
-  RUBYOPT_MARKER="${RUBYOPT_MARKER}" \
-    RUBYOPT="-r${RUBYOPT_PAYLOAD}" \
+  GOFLAGS="-modfile=${BARRIER_VERIFY_ROOT}/missing-go.mod" \
     "${ROOT_DIR}/scripts/workcell" \
     --agent codex \
     --allow-nongit-workspace \
     --workspace "${NONGIT_WORKSPACE}" \
-    --colima-profile "${RUBY_PROFILE_NAME}" >/tmp/workcell-rubyopt.out 2>&1 || true
-  if [[ -e "${RUBYOPT_MARKER}" ]]; then
-    echo "scripts/workcell executed hostile Ruby preload hooks before validating managed Colima profiles" >&2
+    --colima-profile "${GOFLAGS_PROFILE_NAME}" >/tmp/workcell-goflags.out 2>&1 || true
+  if grep -q 'missing-go.mod' /tmp/workcell-goflags.out; then
+    echo "scripts/workcell honored hostile GOFLAGS before validating managed Colima profiles" >&2
     exit 1
   fi
-  if ! grep -Eq "Unexpected configured Colima mounts|Unexpected Colima vmType" /tmp/workcell-rubyopt.out; then
-    echo "Expected managed Colima profile validation failure output for hostile Ruby preload fixture" >&2
-    cat /tmp/workcell-rubyopt.out >&2
+  if ! grep -Eq "Unexpected configured Colima mounts|Unexpected Colima vmType" /tmp/workcell-goflags.out; then
+    echo "Expected managed Colima profile validation failure output for hostile GOFLAGS fixture" >&2
+    cat /tmp/workcell-goflags.out >&2
     exit 1
   fi
 fi

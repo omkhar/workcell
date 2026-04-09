@@ -40,6 +40,7 @@ It should cover:
 
 - the main managed launch path
 - host-side operator commands
+- supported install and uninstall surfaces
 - auth and injection behavior
 - assurance and audit behavior
 - release and reproducibility guarantees
