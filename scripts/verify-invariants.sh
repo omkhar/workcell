@@ -1050,8 +1050,18 @@ INSTALL_DEPS_VERIFY_BIN="${BARRIER_VERIFY_ROOT}/install-deps-bin"
 INSTALL_DEPS_LOG="${BARRIER_VERIFY_ROOT}/install-deps-brew.log"
 INSTALL_DEPS_VERIFY_HOME="$(mktemp -d "${BARRIER_VERIFY_ROOT}/install-deps-home.XXXXXX")"
 INSTALL_NO_DEPS_VERIFY_HOME="$(mktemp -d "${BARRIER_VERIFY_ROOT}/install-no-deps-home.XXXXXX")"
-INSTALL_DEPS_PATH="${INSTALL_DEPS_VERIFY_BIN}:/bin:/usr/sbin:/sbin"
+INSTALL_DEPS_PATH="${INSTALL_DEPS_VERIFY_BIN}"
 mkdir -p "${INSTALL_DEPS_VERIFY_BIN}"
+
+for required_tool in basename bash cat chmod dirname ln mkdir rm; do
+  required_tool_path="$(command -v "${required_tool}")"
+  cat <<EOF >"${INSTALL_DEPS_VERIFY_BIN}/${required_tool}"
+#!/bin/bash
+set -euo pipefail
+exec "${required_tool_path}" "\$@"
+EOF
+  chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/${required_tool}"
+done
 
 cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/uname"
 #!/bin/bash
