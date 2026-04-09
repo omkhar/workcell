@@ -2,11 +2,13 @@
 
 ## Where to ask for help
 
-- use GitHub issues for bugs, usage questions, and feature requests
+- use GitHub Discussions for usage questions, setup help, and assurance-model
+  questions
+- use GitHub issues for confirmed bugs and concrete feature requests
 - use [SECURITY.md](SECURITY.md) for sandbox escapes, secret exposure,
   provenance bypasses, or other security-sensitive reports
 
-## Before opening an issue
+## Before opening a discussion or issue
 
 - run `workcell --agent <provider> --doctor --workspace /path/to/repo`
 - run `workcell --agent <provider> --inspect --workspace /path/to/repo`
@@ -20,7 +22,7 @@
 - host OS version
 - provider (`codex`, `claude`, or `gemini`)
 - runtime mode (`strict`, `development`, `build`, or `breakglass`)
-- whether the issue happens on the default safe path or only on a
+- whether the problem happens on the default safe path or only on a
   lower-assurance path
 
 ## Support window

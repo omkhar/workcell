@@ -107,6 +107,10 @@ If a change touches the boundary or policy model, read
 [docs/invariants.md](docs/invariants.md) and [docs/threat-model.md](docs/threat-model.md)
 first.
 
+Use GitHub Discussions for usage questions, open-ended design exploration, and
+operator workflow conversations. Use GitHub issues for confirmed bugs and
+concrete feature requests.
+
 ## Commit messages
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) format:
@@ -208,3 +212,4 @@ porting checklist.
 - [ROADMAP.md](ROADMAP.md)
 - [SUPPORT.md](SUPPORT.md)
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [CITATION.cff](CITATION.cff)

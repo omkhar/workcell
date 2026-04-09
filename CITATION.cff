@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+title: Workcell
+message: >-
+  If you use Workcell in research, benchmarks, or operational guidance, cite
+  the repository and the tagged release you evaluated.
+type: software
+license: Apache-2.0
+repository-code: https://github.com/omkhar/workcell
+url: https://github.com/omkhar/workcell
+authors:
+  - family-names: Arasaratnam
+    given-names: Omkhar
+keywords:
+  - coding-agents
+  - sandbox
+  - macos
+  - containers
+  - provenance
