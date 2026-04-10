@@ -10,6 +10,28 @@ import (
 	"testing"
 )
 
+func installWorkflowToolStubs(t *testing.T, root string) {
+	t.Helper()
+
+	binDir := filepath.Join(root, "test-bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(test-bin) error = %v", err)
+	}
+	for _, name := range []string{"actionlint", "zizmor"} {
+		path := filepath.Join(binDir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", path, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".github"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.github) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".github", "zizmor.yml"), []byte("rules: []\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(zizmor.yml) error = %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func writeWorkflowValidationFixtures(t *testing.T, workflowDir string) {
 	t.Helper()
 
@@ -87,6 +109,7 @@ jobs:
 
 func TestCheckWorkflowsRecognizesRequiredJobNames(t *testing.T) {
 	root := t.TempDir()
+	installWorkflowToolStubs(t, root)
 	workflowDir := filepath.Join(root, ".github", "workflows")
 	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -159,6 +182,7 @@ contexts = [
 
 func TestCheckWorkflowsRejectsMultilineSpoofedName(t *testing.T) {
 	root := t.TempDir()
+	installWorkflowToolStubs(t, root)
 	workflowDir := filepath.Join(root, ".github", "workflows")
 	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)

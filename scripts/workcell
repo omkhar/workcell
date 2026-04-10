@@ -927,14 +927,28 @@ acquire_profile_lock() {
   local profile="$1"
   local lock_dir=""
   local lock_parent=""
+  local acquired_state=""
+  local stale_state=""
   local attempts=0
 
   lock_dir="$(profile_lock_dir_path "${profile}")"
   lock_parent="$(dirname "${lock_dir}")"
   mkdir -p "${lock_parent}"
 
-  while ! mkdir "${lock_dir}" 2>/dev/null; do
-    if [[ "$(profile_lock_is_stale "${lock_dir}")" == "1" ]]; then
+  while true; do
+    if ! acquired_state="$(go_hostutil launcher acquire-profile-lock "${lock_dir}" "$$")"; then
+      echo "Failed to create managed runtime lock for profile ${profile}." >&2
+      return 1
+    fi
+    if [[ "${acquired_state}" == "1" ]]; then
+      PROFILE_LOCK_DIR="${lock_dir}"
+      return 0
+    fi
+    if ! stale_state="$(profile_lock_is_stale "${lock_dir}")"; then
+      echo "Failed to inspect managed runtime lock state for profile ${profile}." >&2
+      return 1
+    fi
+    if [[ "${stale_state}" == "1" ]]; then
       rm -rf "${lock_dir}"
       continue
     fi
@@ -944,10 +958,6 @@ acquire_profile_lock() {
     fi
     sleep 1
   done
-
-  PROFILE_LOCK_DIR="${lock_dir}"
-  go_hostutil launcher write-profile-owner "${lock_dir}/owner.json" "$$"
-  chmod 0600 "${lock_dir}/owner.json" 2>/dev/null || true
 }
 
 cleanup_stale_session_audit_dirs() {

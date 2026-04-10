@@ -8,6 +8,7 @@ package transcript
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
@@ -100,6 +101,7 @@ func spawnPTYReal(command []string, stdin, stdout *os.File, stdinRead, masterRea
 	stdoutFD := int(stdout.Fd())
 	masterFD := int(master.Fd())
 	stdinClosed := false
+	var loopErr error
 
 	for {
 		readfds := syscall.FdSet{}
@@ -123,11 +125,20 @@ func spawnPTYReal(command []string, stdin, stdout *os.File, stdinRead, masterRea
 		if !stdinClosed && fdIsSet(&readfds, stdinFD) {
 			data, readErr := stdinRead(stdinFD)
 			if len(data) > 0 {
-				if err := writeAtFDReal(masterFD, data); err != nil {
-					return 0, err
+				if err := writeAtFD(masterFD, data); err != nil {
+					loopErr = err
+					break
 				}
 			}
-			if readErr != nil || len(data) == 0 {
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					stdinClosed = true
+					continue
+				}
+				loopErr = readErr
+				break
+			}
+			if len(data) == 0 {
 				stdinClosed = true
 			}
 		}
@@ -135,26 +146,44 @@ func spawnPTYReal(command []string, stdin, stdout *os.File, stdinRead, masterRea
 		if fdIsSet(&readfds, masterFD) {
 			data, readErr := masterRead(masterFD)
 			if len(data) > 0 {
-				if err := writeAtFDReal(stdoutFD, data); err != nil {
-					return 0, err
+				if err := writeAtFD(stdoutFD, data); err != nil {
+					loopErr = err
+					break
 				}
 			}
-			if readErr != nil || len(data) == 0 {
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					break
+				}
+				loopErr = readErr
+				break
+			}
+			if len(data) == 0 {
 				break
 			}
 		}
+	}
+
+	if loopErr != nil && cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	}
 
 	err = cmd.Wait()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
+			if loopErr != nil {
+				return 0, loopErr
+			}
 			return 0, err
 		}
 	}
 	status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
 	if !ok {
 		return 0, fmt.Errorf("unexpected process state type %T", cmd.ProcessState.Sys())
+	}
+	if loopErr != nil {
+		return int(status), loopErr
 	}
 	return int(status), nil
 }

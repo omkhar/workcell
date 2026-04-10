@@ -14,6 +14,7 @@ require_tool() {
 }
 
 require_tool gh
+require_tool jq
 
 REPO="${1:-}"
 if [[ -z "${REPO}" ]]; then
@@ -35,7 +36,8 @@ build_go_tool_in_repo "${ROOT_DIR}" "${METADATAUTIL_BIN}" ./cmd/workcell-metadat
 
 gh api "repos/${REPO}" >"${TMP_DIR}/repo.json"
 gh api "repos/${REPO}/actions/permissions" >"${TMP_DIR}/actions-permissions.json"
-gh api "repos/${REPO}/actions/variables?per_page=100" >"${TMP_DIR}/actions-variables.json"
+gh api --paginate "repos/${REPO}/actions/variables?per_page=100" |
+  jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}' >"${TMP_DIR}/actions-variables.json"
 gh api "repos/${REPO}/collaborators?affiliation=direct&per_page=100" >"${TMP_DIR}/collaborators-direct.json"
 gh api "repos/${REPO}/rulesets" >"${TMP_DIR}/rulesets-summary.json"
 "${METADATAUTIL_BIN}" fetch-rulesets "${TMP_DIR}" "${REPO}"

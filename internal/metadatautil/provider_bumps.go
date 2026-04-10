@@ -24,6 +24,7 @@ const (
 	defaultProviderBumpGeminiRegistryURL  = "https://registry.npmjs.org/@google%2fgemini-cli"
 	defaultProviderBumpClaudeBucketURL    = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819?prefix=claude-code-releases/&delimiter=/"
 	defaultProviderBumpClaudeReleaseRoot  = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
+	providerBumpUserAgent                 = "workcell-provider-bump/1.0"
 )
 
 var (
@@ -506,7 +507,12 @@ func compareStableVersions(left, right stableVersion) int {
 }
 
 func fetchJSON(client *http.Client, targetURL string, target any) error {
-	resp, err := client.Get(targetURL)
+	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	if err != nil {
+		return fmt.Errorf("fetch %s: %w", targetURL, err)
+	}
+	req.Header.Set("User-Agent", providerBumpUserAgent)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("fetch %s: %w", targetURL, err)
 	}
@@ -522,7 +528,12 @@ func fetchJSON(client *http.Client, targetURL string, target any) error {
 }
 
 func fetchXML(client *http.Client, targetURL string, target any) error {
-	resp, err := client.Get(targetURL)
+	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	if err != nil {
+		return fmt.Errorf("fetch %s: %w", targetURL, err)
+	}
+	req.Header.Set("User-Agent", providerBumpUserAgent)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("fetch %s: %w", targetURL, err)
 	}

@@ -173,7 +173,7 @@ func gitTrackedFiles(rootDir string) ([]string, bool, error) {
 		return nil, false, nil
 	}
 
-	output, err := gitOutput(rootDir, "ls-files", "-z", "--cached", "--modified", "--others", "--exclude-standard", "--deduplicate")
+	output, err := gitOutput(rootDir, "ls-files", "-z", "--cached", "--modified", "--deduplicate")
 	if err != nil {
 		return nil, false, err
 	}

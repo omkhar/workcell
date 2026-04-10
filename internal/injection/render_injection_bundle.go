@@ -179,6 +179,16 @@ type PolicySource struct {
 	Sha256 string `json:"sha256"`
 }
 
+func ValidateRenderAgentMode(agent, mode string) error {
+	if _, ok := supportedAgents[agent]; !ok {
+		return fmt.Errorf("unsupported agent: %s", agent)
+	}
+	if _, ok := supportedModes[mode]; !ok {
+		return fmt.Errorf("unsupported mode: %s", mode)
+	}
+	return nil
+}
+
 func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadata string) error {
 	resolvedPolicyPath, err := resolvePathLikePython(policyPath)
 	if err != nil {
@@ -192,6 +202,9 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 		return err
 	}
 	if err := os.Chmod(resolvedOutputRoot, 0o700); err != nil {
+		return err
+	}
+	if err := ValidateRenderAgentMode(agent, mode); err != nil {
 		return err
 	}
 
@@ -406,7 +419,9 @@ func renderDocuments(policy map[string]any, outputRoot, policyDir Path) (map[str
 	if !ok {
 		return nil, errors.New("documents must be a TOML table")
 	}
-	validateAllowedKeys(documents, mapKeysSet([]string{"common", "codex", "claude", "gemini"}), "documents")
+	if err := validateAllowedKeys(documents, mapKeysSet([]string{"common", "codex", "claude", "gemini"}), "documents"); err != nil {
+		return nil, err
+	}
 
 	rendered := map[string]string{}
 	ordered := []struct {
@@ -1929,6 +1944,9 @@ func writeIndentedJSON(pathname string, value any, mode os.FileMode) error {
 }
 
 func validateContainerTarget(candidate string) (string, error) {
+	if containsParentPathSegment(candidate) {
+		return "", fmt.Errorf("injection target must not contain parent path segments: %s", candidate)
+	}
 	if !targetIsUnder(candidate, sessionHomeRoot) && !targetIsUnder(candidate, runInjectedRoot) {
 		return "", fmt.Errorf("injection target must stay under /state/agent-home or /state/injected: %s", candidate)
 	}
@@ -1940,16 +1958,25 @@ func validateContainerTarget(candidate string) (string, error) {
 
 func normalizeContainerTarget(raw string) string {
 	if strings.HasPrefix(raw, "~/") {
-		raw = path.Join(sessionHomeRoot, raw[2:])
+		raw = sessionHomeRoot + "/" + raw[2:]
+	}
+	if containsParentPathSegment(raw) {
+		return raw
 	}
 	candidate := path.Clean(raw)
 	if !path.IsAbs(candidate) {
 		return raw
 	}
-	if strings.Contains(candidate, "..") {
-		return raw
-	}
 	return candidate
+}
+
+func containsParentPathSegment(candidate string) bool {
+	for _, segment := range strings.Split(candidate, "/") {
+		if segment == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func targetIsUnder(candidate, root string) bool {

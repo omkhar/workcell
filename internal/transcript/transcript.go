@@ -20,10 +20,28 @@ type ReadFunc func(fd int) ([]byte, error)
 
 type SpawnFunc func(command []string, stdin, stdout *os.File, stdinRead, masterRead ReadFunc) (int, error)
 
+type transcriptLog interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+type transcriptPersistenceError struct {
+	err error
+}
+
+func (e transcriptPersistenceError) Error() string {
+	return e.err.Error()
+}
+
+func (e transcriptPersistenceError) Unwrap() error {
+	return e.err
+}
+
 var (
-	isTerminal = func(file *os.File) bool {
-		info, err := file.Stat()
-		return err == nil && info.Mode()&os.ModeCharDevice != 0
+	isTerminal  = isInteractiveTerminal
+	openLogFile = func(path string) (transcriptLog, error) {
+		return openLog(path)
 	}
 	spawnPTY  SpawnFunc = spawnPTYReal
 	readAtFD            = readAtFDReal
@@ -62,7 +80,7 @@ func Run(program string, stdin, stdout *os.File, stderr io.Writer, args []string
 		return 2
 	}
 
-	logFile, err := openLog(logPath)
+	logFile, err := openLogFile(logPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -70,40 +88,81 @@ func Run(program string, stdin, stdout *os.File, stderr io.Writer, args []string
 	defer logFile.Close()
 
 	var logMu sync.Mutex
-	writeLog := func(data []byte) {
+	var persistErr error
+	writeLog := func(data []byte) error {
 		if len(data) == 0 {
-			return
+			return nil
 		}
 		logMu.Lock()
-		_, _ = logFile.Write(data)
-		_ = logFile.Sync()
-		logMu.Unlock()
+		defer logMu.Unlock()
+		if persistErr != nil {
+			return transcriptPersistenceError{err: persistErr}
+		}
+		if _, err := logFile.Write(data); err != nil {
+			persistErr = err
+			return transcriptPersistenceError{err: err}
+		}
+		if err := logFile.Sync(); err != nil {
+			persistErr = err
+			return transcriptPersistenceError{err: err}
+		}
+		return nil
+	}
+	reportPersistErr := func() int {
+		if persistErr == nil {
+			return 0
+		}
+		fmt.Fprintf(stderr, "%s failed to persist transcript: %s\n", program, persistErr)
+		return 1
 	}
 
 	startedAt := pythonTimestamp(time.Now())
-	writeLog([]byte("# workcell-transcript-v1 start=" + startedAt + "\n"))
+	if err := writeLog([]byte("# workcell-transcript-v1 start=" + startedAt + "\n")); err != nil {
+		return reportPersistErr()
+	}
 
 	stdinRead := func(fd int) ([]byte, error) {
 		data, err := readAtFD(fd)
-		writeLog(data)
+		if writeErr := writeLog(data); writeErr != nil {
+			return nil, writeErr
+		}
 		return data, err
 	}
 	masterRead := func(fd int) ([]byte, error) {
 		data, err := readAtFD(fd)
-		writeLog(data)
+		if writeErr := writeLog(data); writeErr != nil {
+			return data, writeErr
+		}
 		return data, err
 	}
 
 	waitStatus, spawnErr := spawnPTY(command, stdin, stdout, stdinRead, masterRead)
 	exitCode := exitCodeFromWaitStatus(waitStatus)
 	if spawnErr != nil {
-		exitCode = exitCodeFromSpawnError(spawnErr)
-		fmt.Fprintf(stderr, "%s failed to exec %s: %s\n", program, command[0], spawnErrorText(spawnErr))
+		if !isTranscriptPersistenceError(spawnErr) {
+			exitCode = exitCodeFromSpawnError(spawnErr)
+			fmt.Fprintf(stderr, "%s failed to exec %s: %s\n", program, command[0], spawnErrorText(spawnErr))
+		}
 	}
 
 	finishedAt := pythonTimestamp(time.Now())
-	writeLog(renderFooter(finishedAt, exitCode, waitStatus, spawnErr))
+	_ = writeLog(renderFooter(finishedAt, exitCode, waitStatus, spawnErr))
+	if code := reportPersistErr(); code != 0 {
+		return code
+	}
 	return exitCode
+}
+
+func isInteractiveTerminal(file *os.File) bool {
+	if file == nil {
+		return false
+	}
+	return isTerminalFD(file.Fd())
+}
+
+func isTranscriptPersistenceError(err error) bool {
+	var persistErr transcriptPersistenceError
+	return errors.As(err, &persistErr)
 }
 
 func openLog(path string) (*os.File, error) {

@@ -11,7 +11,7 @@ ARG SOURCE_DATE_EPOCH=0
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
 ARG DEBIAN_SNAPSHOT=20260410T000000Z
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.94.1-slim-trixie@sha256:a08d20a404f947ed358dfb63d1ee7e0b88ecad3c45ba9682ccbf2cb09c98acca
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.94.1-slim-trixie@sha256:cf09adf8c3ebaba10779e5c23ff7fe4df4cccdab8a91f199b0c142c53fef3e1a
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -130,7 +130,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.97
+ARG CLAUDE_VERSION=2.1.98
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. To update
@@ -205,11 +205,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="85167cb721655fdd90b002012a28eca273c89dc2fd709be49afe2a7724c365a0"; \
+      CLAUDE_SHA256="67c0b9b7ed9c63f8524ecf5790805842f81d8322254dea849ecb8c7051f8df6b"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="0d43fcd11d29206563eeef3a1f787f0615c21cd703cc91f3a180915fd5797ef6"; \
+      CLAUDE_SHA256="d40827b5aa8d737a7eb68e3aad990b80e2521540a6bc8a405259b63b25d42ed8"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \

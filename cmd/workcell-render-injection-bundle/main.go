@@ -32,6 +32,10 @@ func run(args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "policy, agent, mode, and output-root are required")
 		return 2
 	}
+	if err := injection.ValidateRenderAgentMode(*agent, *mode); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 	if err := injection.RunRenderInjectionBundle(*policyPath, *agent, *mode, *outputRoot, *policyMetadata); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

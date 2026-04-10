@@ -140,21 +140,61 @@ func ProfileLockIsStale(lockDir string) (bool, error) {
 		Started string `json:"started"`
 	}
 	if err := json.Unmarshal(content, &owner); err != nil {
-		return true, nil
+		return false, fmt.Errorf("parse profile lock owner metadata: %w", err)
 	}
 	if owner.PID <= 0 || owner.Started == "" {
-		return true, nil
+		return false, fmt.Errorf("profile lock owner metadata is incomplete: %s", ownerPath)
 	}
 
 	if err := syscall.Kill(owner.PID, 0); err != nil {
-		return true, nil
+		if errors.Is(err, syscall.ESRCH) {
+			return true, nil
+		}
+		return false, err
 	}
 
 	observed, err := processStartTime(owner.PID)
 	if err != nil {
-		return true, nil
+		if killErr := syscall.Kill(owner.PID, 0); killErr != nil {
+			if errors.Is(killErr, syscall.ESRCH) {
+				return true, nil
+			}
+			return false, killErr
+		}
+		return false, err
 	}
 	return observed != owner.Started, nil
+}
+
+func AcquireProfileLock(lockDir string, pid int) (bool, error) {
+	parentDir := filepath.Dir(lockDir)
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		return false, err
+	}
+
+	tempDir, err := os.MkdirTemp(parentDir, filepath.Base(lockDir)+".pending.")
+	if err != nil {
+		return false, err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
+
+	if err := WriteProfileOwner(filepath.Join(tempDir, "owner.json"), pid); err != nil {
+		return false, err
+	}
+	if err := os.Rename(tempDir, lockDir); err != nil {
+		if errors.Is(err, os.ErrExist) || errors.Is(err, syscall.EEXIST) || errors.Is(err, syscall.ENOTEMPTY) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	cleanup = false
+	return true, nil
 }
 
 func WriteProfileOwner(ownerPath string, pid int) error {

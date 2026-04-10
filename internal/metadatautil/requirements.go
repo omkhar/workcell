@@ -142,12 +142,38 @@ func validateRequirementPath(rootDir, requirementsPath, category, id, field, pat
 	if err != nil {
 		return fmt.Errorf("%s requirement %s %s path %s: %w", requirementsPath, id, field, path, err)
 	}
-	info, err := os.Stat(target)
+	if err := rejectRequirementPathSymlinks(rootDir, target); err != nil {
+		return fmt.Errorf("%s requirement %s %s path %s: %w", requirementsPath, id, field, path, err)
+	}
+	info, err := os.Lstat(target)
 	if err != nil {
 		return fmt.Errorf("%s requirement %s %s path %s: %w", requirementsPath, id, field, path, err)
 	}
 	if info.IsDir() {
 		return fmt.Errorf("%s requirement %s %s path %s must point to a file", requirementsPath, id, field, path)
+	}
+	return nil
+}
+
+func rejectRequirementPathSymlinks(rootDir, target string) error {
+	root := filepath.Clean(rootDir)
+	relative, err := filepath.Rel(root, target)
+	if err != nil {
+		return err
+	}
+	current := root
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path must not traverse symlinks")
+		}
 	}
 	return nil
 }

@@ -137,6 +137,40 @@ func TestListSessionRecordsReturnsEmptySliceWhenColimaRootMissing(t *testing.T) 
 	}
 }
 
+func TestListSessionRecordsSkipsSymlinkedSessionsDirectories(t *testing.T) {
+	t.Parallel()
+
+	colimaRoot := t.TempDir()
+	externalSessions := filepath.Join(t.TempDir(), "external-sessions")
+	writeSessionFixture(t, filepath.Join(externalSessions, "session-1.json"), SessionRecord{
+		Version:    1,
+		SessionID:  "session-1",
+		Profile:    "wcl-one",
+		Agent:      "codex",
+		Mode:       "strict",
+		Status:     "exited",
+		Workspace:  "/tmp/workspace-a",
+		StartedAt:  "2026-04-08T10:00:00Z",
+		FinishedAt: "2026-04-08T10:05:00Z",
+		ExitStatus: "0",
+	})
+	profileDir := filepath.Join(colimaRoot, "wcl-one")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalSessions, filepath.Join(profileDir, "sessions")); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := ListSessionRecords(colimaRoot, SessionListOptions{})
+	if err != nil {
+		t.Fatalf("ListSessionRecords() error = %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("ListSessionRecords() len = %d, want 0", len(records))
+	}
+}
+
 func TestExportSessionRecordIncludesMatchingAuditLines(t *testing.T) {
 	t.Parallel()
 

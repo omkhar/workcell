@@ -174,3 +174,52 @@ func TestRunScenarioTestsSecretlessOnlySkipsNonSecretlessEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestRunScenarioTestsFailsWhenManifestValidationFails(t *testing.T) {
+	t.Parallel()
+
+	scenarioRoot := t.TempDir()
+	writeScenarioScript(t, scenarioRoot, "shared/test-secretless.sh", "#!/bin/sh\nexit 0\n")
+	manifestPath := writeScenarioManifest(t, scenarioRoot, []map[string]any{
+		{
+			"id":                   "shared/duplicate",
+			"description":          "First duplicate",
+			"lane":                 "secretless",
+			"platform":             "any",
+			"manual":               false,
+			"providers":            []string{"codex"},
+			"persona":              "developer",
+			"test_file":            "shared/test-secretless.sh",
+			"requires_credentials": false,
+		},
+		{
+			"id":                   "shared/duplicate",
+			"description":          "Second duplicate",
+			"lane":                 "secretless",
+			"platform":             "any",
+			"manual":               false,
+			"providers":            []string{"codex"},
+			"persona":              "developer",
+			"test_file":            "shared/test-secretless.sh",
+			"requires_credentials": false,
+		},
+	})
+
+	code, stdout, _ := runScenarioScript(
+		t,
+		filepath.Join(repoRoot(t), "scripts", "run-scenario-tests.sh"),
+		map[string]string{
+			"WORKCELL_SCENARIO_ROOT":     scenarioRoot,
+			"WORKCELL_SCENARIO_MANIFEST": manifestPath,
+		},
+	)
+	if code != 1 {
+		t.Fatalf("run-scenario-tests exit code = %d stdout=%q", code, stdout)
+	}
+	if !strings.Contains(stdout, "Duplicate scenario id") {
+		t.Fatalf("stdout %q does not contain manifest failure", stdout)
+	}
+	if strings.Contains(stdout, "Scenario tests passed") {
+		t.Fatalf("stdout %q unexpectedly reported success", stdout)
+	}
+}
