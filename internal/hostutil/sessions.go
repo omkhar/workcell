@@ -282,17 +282,20 @@ func validateSessionRecord(record SessionRecord, source string) error {
 	if record.Version != 1 {
 		return fmt.Errorf("%s: unsupported session record version %d", source, record.Version)
 	}
-	for field, value := range map[string]string{
-		"session_id": record.SessionID,
-		"profile":    record.Profile,
-		"agent":      record.Agent,
-		"mode":       record.Mode,
-		"status":     record.Status,
-		"workspace":  record.Workspace,
-		"started_at": record.StartedAt,
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "session_id", value: record.SessionID},
+		{name: "profile", value: record.Profile},
+		{name: "agent", value: record.Agent},
+		{name: "mode", value: record.Mode},
+		{name: "status", value: record.Status},
+		{name: "workspace", value: record.Workspace},
+		{name: "started_at", value: record.StartedAt},
 	} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("%s: missing required session record field %s", source, field)
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s: missing required session record field %s", source, field.name)
 		}
 	}
 
@@ -309,13 +312,16 @@ func validateSessionRecord(record SessionRecord, source string) error {
 		return nil
 	}
 
-	for field, value := range map[string]string{
-		"finished_at":     record.FinishedAt,
-		"exit_status":     record.ExitStatus,
-		"final_assurance": record.FinalAssurance,
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "finished_at", value: record.FinishedAt},
+		{name: "exit_status", value: record.ExitStatus},
+		{name: "final_assurance", value: record.FinalAssurance},
 	} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("%s: completed sessions must set %s", source, field)
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s: completed sessions must set %s", source, field.name)
 		}
 	}
 	return nil
