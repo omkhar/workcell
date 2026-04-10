@@ -142,7 +142,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/development-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/development-wrapper.sh",
-      "sha256": "75bc7f7347906a9d425bbb1e8261279a5f5b65eb3b0399794e3e424fc803a37c"
+      "sha256": "aa38fe3a0fe0bac43a894e80c5f8587150ac0d09c41eade8fb23b23386e2ba4c"
     },
     {
       "kind": "runtime-control-plane",

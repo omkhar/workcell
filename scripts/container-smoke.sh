@@ -2234,6 +2234,24 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/development-wrapper-bashenv.out
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
+    set -euo pipefail
+    mkdir -p /workspace/tmp
+    ln -sf /usr/local/libexec/workcell/real/codex /workspace/tmp/workcell-renamed-codex
+  '
+  if AGENT_NAME=codex \
+    WORKCELL_MODE=development \
+    CODEX_PROFILE=development \
+    HOME=/state/agent-home \
+    CODEX_HOME=/state/agent-home/.codex \
+    TMPDIR=/state/tmp \
+    /usr/local/libexec/workcell/development-wrapper.sh \
+    /workspace/tmp/workcell-renamed-codex --version >/tmp/development-wrapper-renamed-path.out 2>&1; then
+    echo "expected development wrapper to reject renamed symlinks to protected runtimes" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/development-wrapper-renamed-path.out
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups rm -f /workspace/tmp/workcell-renamed-codex
   cat <<'EOF' >/tmp/workcell-node-wrapper-bashenv.sh
 exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/node --version
 EOF

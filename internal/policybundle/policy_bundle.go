@@ -1103,34 +1103,31 @@ func parseQuotedLiteral(text string, start int) (string, int, error) {
 				if i+2 >= len(text) {
 					return "", start, errors.New("invalid hex escape")
 				}
-				value, err := parseHexUint(text[i+1 : i+3])
+				value, err := parseHexByte(text[i+1 : i+3])
 				if err != nil {
 					return "", start, err
 				}
-				b.WriteByte(byte(value))
+				b.WriteByte(value)
 				i += 2
 			case 'u':
 				if i+4 >= len(text) {
 					return "", start, errors.New("invalid unicode escape")
 				}
-				value, err := parseHexUint(text[i+1 : i+5])
+				value, err := parseHexRune(text[i+1:i+5], 16)
 				if err != nil {
 					return "", start, err
 				}
-				b.WriteString(string(rune(value)))
+				b.WriteRune(value)
 				i += 4
 			case 'U':
 				if i+8 >= len(text) {
 					return "", start, errors.New("invalid unicode escape")
 				}
-				value, err := parseHexUint(text[i+1 : i+9])
+				value, err := parseHexRune(text[i+1:i+9], 32)
 				if err != nil {
 					return "", start, err
 				}
-				if value > utf8.MaxRune {
-					return "", start, errors.New("invalid unicode escape")
-				}
-				b.WriteString(string(rune(value)))
+				b.WriteRune(value)
 				i += 8
 			default:
 				return "", start, fmt.Errorf("unknown escape sequence \\%c", esc)
@@ -1144,12 +1141,23 @@ func parseQuotedLiteral(text string, start int) (string, int, error) {
 	return "", start, errors.New("unterminated quoted value")
 }
 
-func parseHexUint(text string) (uint64, error) {
-	value, err := strconv.ParseUint(text, 16, 64)
+func parseHexByte(text string) (byte, error) {
+	value, err := strconv.ParseUint(text, 16, 8)
 	if err != nil {
 		return 0, errors.New("invalid escape sequence")
 	}
-	return value, nil
+	return byte(value), nil
+}
+
+func parseHexRune(text string, bitSize int) (rune, error) {
+	value, err := strconv.ParseUint(text, 16, bitSize)
+	if err != nil {
+		return 0, errors.New("invalid escape sequence")
+	}
+	if value > utf8.MaxRune {
+		return 0, errors.New("invalid unicode escape")
+	}
+	return rune(value), nil
 }
 
 func systemSymlinkAllowed(path string) bool {
