@@ -1163,20 +1163,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if !regexp.MustCompile(`^0\.\d+\.\d+$`).MatchString(validatorMarkdownlintVersion) {
 		return fmt.Errorf("MARKDOWNLINT_VERSION must be an exact pinned release, found %q", validatorMarkdownlintVersion)
 	}
-	validatorMarkdownlintSHA, err := requireArg(validatorDockerfile, "MARKDOWNLINT_SHA512", cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	remoteValidatorMarkdownlintSHA, err := requireArg(remoteValidatorDockerfile, "MARKDOWNLINT_SHA512", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("MARKDOWNLINT_SHA512", validatorMarkdownlintSHA, cfg.ValidatorDockerfilePath, remoteValidatorMarkdownlintSHA, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
-	if !regexp.MustCompile(`^[0-9a-f]{128}$`).MatchString(validatorMarkdownlintSHA) {
-		return fmt.Errorf("MARKDOWNLINT_SHA512 must be a 128-character lowercase hex digest, found %q", validatorMarkdownlintSHA)
-	}
 	for _, dockerfile := range []struct {
 		text string
 		path string
@@ -1185,9 +1171,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		{text: remoteValidatorDockerfile, path: cfg.RemoteValidatorDockerfilePath},
 	} {
 		for _, needle := range []string{
-			`npm pack "markdownlint-cli@${MARKDOWNLINT_VERSION}" --pack-destination "${markdownlint_tmpdir}"`,
-			`echo "${MARKDOWNLINT_SHA512}  ${markdownlint_tmpdir}/markdownlint-cli-${MARKDOWNLINT_VERSION}.tgz" | sha512sum -c -`,
-			`npm install -g "${markdownlint_tmpdir}/markdownlint-cli-${MARKDOWNLINT_VERSION}.tgz"`,
+			`COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /tmp/markdownlint/`,
+			`npm ci --prefix /tmp/markdownlint --ignore-scripts --omit=dev`,
+			`ln -sf /tmp/markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint`,
 			`markdownlint --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null`,
 		} {
 			if !strings.Contains(dockerfile.text, needle) {
