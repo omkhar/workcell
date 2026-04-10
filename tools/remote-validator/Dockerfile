@@ -14,7 +14,7 @@ ARG RUSTUP_INIT_LINUX_ARM64_SHA256=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385
 
 FROM ${VALIDATOR_BASE_IMAGE}
 
-COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /tmp/markdownlint/
+COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/
 
 ARG DEBIAN_SNAPSHOT
 ARG GO_VERSION
@@ -125,8 +125,8 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     -o /usr/local/bin/hadolint \
   && echo "${hadolint_sha256}  /usr/local/bin/hadolint" | sha256sum -c - \
   && chmod 0755 /usr/local/bin/hadolint \
-  && npm ci --prefix /tmp/markdownlint --ignore-scripts --omit=dev \
-  && ln -sf /tmp/markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint \
+  && npm ci --prefix /usr/local/lib/workcell-markdownlint --ignore-scripts --omit=dev \
+  && ln -sf /usr/local/lib/workcell-markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint \
   && go version | grep -F "go version go${GO_VERSION} " >/dev/null \
   && rustc --version | grep -F "rustc ${RUST_VERSION} " >/dev/null \
   && cargo fmt --version >/dev/null \
@@ -135,7 +135,6 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
   && markdownlint --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null \
   && rm -f /tmp/rustup-init "/tmp/${go_archive}" \
   && rm -rf \
-    /tmp/markdownlint \
     /usr/local/rustup/downloads \
     /usr/local/rustup/tmp \
     /var/lib/apt/lists/* \

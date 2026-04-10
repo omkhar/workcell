@@ -1171,9 +1171,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		{text: remoteValidatorDockerfile, path: cfg.RemoteValidatorDockerfilePath},
 	} {
 		for _, needle := range []string{
-			`COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /tmp/markdownlint/`,
-			`npm ci --prefix /tmp/markdownlint --ignore-scripts --omit=dev`,
-			`ln -sf /tmp/markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint`,
+			`COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/`,
+			`npm ci --prefix /usr/local/lib/workcell-markdownlint --ignore-scripts --omit=dev`,
+			`ln -sf /usr/local/lib/workcell-markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint`,
 			`markdownlint --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null`,
 		} {
 			if !strings.Contains(dockerfile.text, needle) {
