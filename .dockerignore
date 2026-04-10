@@ -4,5 +4,7 @@
 !runtime/
 !runtime/container/
 !runtime/container/**
+!tools/markdownlint/
+!tools/markdownlint/**
 runtime/container/providers/node_modules/
 runtime/container/rust/target/
