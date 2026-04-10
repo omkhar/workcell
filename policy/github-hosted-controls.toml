@@ -29,7 +29,7 @@ mode = "review-gated"
 # - "plan-limited-private": lower-assurance fallback for private repositories
 #   on GitHub plans that cannot enforce environment reviewers; the environment
 #   must still exist, but reviewer gating is not available
-mode = "plan-limited-private"
+mode = "review-gated"
 
 [required_status_checks]
 contexts = [
