@@ -101,10 +101,69 @@ func CheckWorkflows(rootDir, policyPath string) error {
 			strings.Join(missing, ", "),
 		)
 	}
+
+	codeqlWorkflowPath := filepath.Join(workflowDir, "codeql.yml")
+	codeqlWorkflow, err := readText(codeqlWorkflowPath)
+	if err != nil {
+		return err
+	}
+	if err := validateCodeQLWorkflow(codeqlWorkflow, codeqlWorkflowPath); err != nil {
+		return err
+	}
+
+	releaseWorkflowPath := filepath.Join(workflowDir, "release.yml")
+	releaseWorkflow, err := readText(releaseWorkflowPath)
+	if err != nil {
+		return err
+	}
+	if err := validateReleaseWorkflowCodeQLFlow(releaseWorkflow); err != nil {
+		return err
+	}
 	return nil
 }
 
 func ensureWorkflowTools() error { return nil }
+
+func validateCodeQLWorkflow(codeqlWorkflow, workflowPath string) error {
+	if regexp.MustCompile(`(?s)- language: go\s+build-mode: none`).MatchString(codeqlWorkflow) {
+		return fmt.Errorf("%s must not configure Go CodeQL with build-mode: none", workflowPath)
+	}
+	for _, needle := range []string{
+		"- language: rust",
+		"build-mode: none",
+		"- language: javascript-typescript",
+		"- language: go",
+		"build-mode: autobuild",
+		"github/codeql-action/init@",
+		"github/codeql-action/autobuild@",
+		"github/codeql-action/analyze@",
+	} {
+		if !strings.Contains(codeqlWorkflow, needle) {
+			return fmt.Errorf("%s must contain %q", workflowPath, needle)
+		}
+	}
+	return nil
+}
+
+func validateReleaseWorkflowCodeQLFlow(releaseWorkflow string) error {
+	for _, needle := range []string{
+		"name: Release CodeQL (${{ matrix.language }})",
+		"- language: rust",
+		"- language: javascript-typescript",
+		"- language: go",
+		"build-mode: autobuild",
+		"github/codeql-action/autobuild@",
+		"- codeql-preflight",
+	} {
+		if !strings.Contains(releaseWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
+		}
+	}
+	if regexp.MustCompile(`(?s)- language: go\s+build-mode: none`).MatchString(releaseWorkflow) {
+		return errors.New(".github/workflows/release.yml must not configure Go CodeQL with build-mode: none")
+	}
+	return nil
+}
 
 func validateReleaseWorkflowControlPlaneFlow(releaseWorkflow string) error {
 	if !strings.Contains(releaseWorkflow, "dist/workcell-control-plane-preflight.json") {

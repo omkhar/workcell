@@ -10,6 +10,81 @@ import (
 	"testing"
 )
 
+func writeWorkflowValidationFixtures(t *testing.T, workflowDir string) {
+	t.Helper()
+
+	if err := os.WriteFile(filepath.Join(workflowDir, "codeql.yml"), []byte(`name: CodeQL
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    strategy:
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+    steps:
+      - uses: github/codeql-action/init@deadbeef
+      - uses: github/codeql-action/autobuild@deadbeef
+      - uses: github/codeql-action/analyze@deadbeef
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(codeql.yml) error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(workflowDir, "release.yml"), []byte(`name: Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  codeql-preflight:
+    name: Release CodeQL (${{ matrix.language }})
+    strategy:
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+    steps:
+      - uses: github/codeql-action/init@deadbeef
+      - uses: github/codeql-action/autobuild@deadbeef
+      - uses: github/codeql-action/analyze@deadbeef
+
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+
+  install-verification:
+    name: Release install verification
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+
+  release:
+    name: Publish release artifacts
+    needs:
+      - codeql-preflight
+      - preflight
+      - install-verification
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(release.yml) error = %v", err)
+	}
+}
+
 func TestCheckWorkflowsRecognizesRequiredJobNames(t *testing.T) {
 	root := t.TempDir()
 	workflowDir := filepath.Join(root, ".github", "workflows")
@@ -62,6 +137,7 @@ jobs:
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(security.yml) error = %v", err)
 	}
+	writeWorkflowValidationFixtures(t, workflowDir)
 
 	policyPath := filepath.Join(root, "policy.toml")
 	if err := os.WriteFile(policyPath, []byte(`[required_status_checks]
@@ -104,6 +180,7 @@ jobs:
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(ci.yml) error = %v", err)
 	}
+	writeWorkflowValidationFixtures(t, workflowDir)
 
 	policyPath := filepath.Join(root, "policy.toml")
 	if err := os.WriteFile(policyPath, []byte(`[required_status_checks]
@@ -244,6 +321,106 @@ func TestValidateMacOSInstallVerificationFlowAcceptsCanonicalFlow(t *testing.T) 
 
 	if err := validateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
 		t.Fatalf("validateMacOSInstallVerificationFlow() error = %v", err)
+	}
+}
+
+func TestValidateCodeQLWorkflowRejectsGoBuildlessMode(t *testing.T) {
+	workflow := `jobs:
+  analyze:
+    strategy:
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: go
+            build-mode: none
+    steps:
+      - uses: github/codeql-action/init@deadbeef
+      - uses: github/codeql-action/analyze@deadbeef
+`
+
+	err := validateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml")
+	if err == nil {
+		t.Fatal("validateCodeQLWorkflow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "build-mode: none") {
+		t.Fatalf("validateCodeQLWorkflow() error = %v, want go build-mode rejection", err)
+	}
+}
+
+func TestValidateCodeQLWorkflowAcceptsGoAutobuild(t *testing.T) {
+	workflow := `jobs:
+  analyze:
+    strategy:
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+    steps:
+      - uses: github/codeql-action/init@deadbeef
+      - uses: github/codeql-action/autobuild@deadbeef
+      - uses: github/codeql-action/analyze@deadbeef
+`
+
+	if err := validateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml"); err != nil {
+		t.Fatalf("validateCodeQLWorkflow() error = %v", err)
+	}
+}
+
+func TestValidateReleaseWorkflowCodeQLFlowRejectsMissingGoAutobuild(t *testing.T) {
+	workflow := `jobs:
+  preflight:
+    steps:
+      - uses: github/codeql-action/init@deadbeef
+      - uses: github/codeql-action/analyze@deadbeef
+
+  release:
+    needs:
+      - preflight
+`
+
+	err := validateReleaseWorkflowCodeQLFlow(workflow)
+	if err == nil {
+		t.Fatal("validateReleaseWorkflowCodeQLFlow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "Release CodeQL") {
+		t.Fatalf("validateReleaseWorkflowCodeQLFlow() error = %v, want missing release CodeQL job", err)
+	}
+}
+
+func TestValidateReleaseWorkflowCodeQLFlowAcceptsMatrixJob(t *testing.T) {
+	workflow := `jobs:
+  codeql-preflight:
+    name: Release CodeQL (${{ matrix.language }})
+    strategy:
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+    steps:
+      - uses: github/codeql-action/init@deadbeef
+      - uses: github/codeql-action/autobuild@deadbeef
+      - uses: github/codeql-action/analyze@deadbeef
+
+  release:
+    needs:
+      - codeql-preflight
+      - preflight
+      - install-verification
+`
+
+	if err := validateReleaseWorkflowCodeQLFlow(workflow); err != nil {
+		t.Fatalf("validateReleaseWorkflowCodeQLFlow() error = %v", err)
 	}
 }
 

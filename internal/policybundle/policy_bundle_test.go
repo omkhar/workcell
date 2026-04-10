@@ -59,6 +59,43 @@ func TestStripCommentAndParseValue(t *testing.T) {
 	}
 }
 
+func TestParseValueDecodesQuotedEscapes(t *testing.T) {
+	t.Parallel()
+
+	policyPath := "/tmp/policy.toml"
+	cases := []struct {
+		raw     string
+		want    string
+		wantErr string
+	}{
+		{raw: `"\x41"`, want: "A"},
+		{raw: `"\u03bb"`, want: "λ"},
+		{raw: `"\U0001f600"`, want: "😀"},
+		{raw: `"\xGG"`, wantErr: "invalid escape sequence"},
+		{raw: `"\U00110000"`, wantErr: "invalid unicode escape"},
+	}
+
+	for _, tc := range cases {
+		got, err := ParseValue(tc.raw, policyPath, 1)
+		if tc.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("ParseValue(%q) error = %v, want substring %q", tc.raw, err, tc.wantErr)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("ParseValue(%q) error: %v", tc.raw, err)
+		}
+		gotString, ok := got.(string)
+		if !ok {
+			t.Fatalf("ParseValue(%q) = %#v, want string", tc.raw, got)
+		}
+		if gotString != tc.want {
+			t.Fatalf("ParseValue(%q) = %q, want %q", tc.raw, gotString, tc.want)
+		}
+	}
+}
+
 func TestParseRenderAndReparsePolicySubset(t *testing.T) {
 	t.Parallel()
 

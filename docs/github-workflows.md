@@ -10,7 +10,7 @@ reinforce the runtime boundary and release posture, not replace them.
 | `ci.yml` | repository validation, smoke, reproducibility, pin verification, upstream release re-verification, and continuous package install/uninstall verification on pushes and PRs |
 | `docs.yml` | fast spelling and manpage feedback for docs-only changes |
 | `security.yml` | workflow lint, dependency review, and `zizmor` |
-| `codeql.yml` | code scanning for shipped Rust, Python, and JavaScript surfaces |
+| `codeql.yml` | code scanning for shipped Rust, Go, and JavaScript surfaces |
 | `scorecard.yml` | OpenSSF Scorecard analysis |
 | `pin-hygiene.yml` | scheduled re-validation of pinned inputs plus upstream refresh drift across providers, Linux base images, toolchains, and release-build pins |
 | `upstream-refresh.yml` | scheduled and manual signed refresh PR creation for reviewed upstream pins, followed by branch validation dispatch |
@@ -28,6 +28,8 @@ reinforce the runtime boundary and release posture, not replace them.
 - it gates publication on release-bundle install/uninstall and Homebrew
   install/uninstall verification on GitHub-hosted Apple Silicon `macos-26`
   and `macos-15`
+- it runs a release-scoped CodeQL matrix so Go uses `autobuild` while Rust and
+  JavaScript keep buildless scanning
 - it binds publish outputs to preflight results before signing
 - it refuses to publish when provider pins, Linux base images, Linux toolchains,
   or release-build pins lag the latest tracked upstream versions
