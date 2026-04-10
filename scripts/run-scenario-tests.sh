@@ -25,6 +25,12 @@ CURRENT_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
 passed=0
 failed=0
 skipped=0
+SCENARIO_LIST="$(mktemp "${TMPDIR:-/tmp}/workcell-scenarios.XXXXXX")"
+
+cleanup() {
+  rm -f "${SCENARIO_LIST}"
+}
+trap cleanup EXIT
 
 scenario_platform_matches() {
   case "${1:-any}" in
@@ -95,11 +101,13 @@ run_scenario() {
   fi
 }
 
+if ! "${ROOT_DIR}/scripts/lib/scenario_manifest" list-tsv "${MANIFEST}" >"${SCENARIO_LIST}"; then
+  exit 1
+fi
+
 while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform manual; do
   run_scenario "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${manual}"
-done < <(
-  "${ROOT_DIR}/scripts/lib/scenario_manifest" list-tsv "${MANIFEST}"
-)
+done <"${SCENARIO_LIST}"
 
 echo ""
 echo "Results: passed=${passed} failed=${failed} skipped=${skipped}"

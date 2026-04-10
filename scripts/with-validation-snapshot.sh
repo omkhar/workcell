@@ -145,8 +145,7 @@ materialize_tracked_entry() {
       return 0
       ;;
     *)
-      echo "with-validation-snapshot: skipping unsupported mode ${mode} in ${label}: ${tracked_path}" >&2
-      return 0
+      die "with-validation-snapshot: unsupported mode ${mode} in ${label}: ${tracked_path}"
       ;;
   esac
 
@@ -181,7 +180,9 @@ overlay_head_state() {
     obj_type="${remainder%% *}"
     oid="${remainder##* }"
 
-    [[ "${obj_type}" == "blob" ]] || continue
+    if [[ "${obj_type}" != "blob" ]]; then
+      die "with-validation-snapshot: unsupported HEAD tree entry type ${obj_type}: ${tracked_path}"
+    fi
 
     materialize_tracked_entry "${mode}" "${oid}" "${tracked_path}" "HEAD tree"
   done < <(git -C "${REPO_ROOT}" ls-tree -r -z HEAD)

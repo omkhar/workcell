@@ -304,13 +304,43 @@ func TestRebasePolicyFragmentAndValidationHelpers(t *testing.T) {
 	if target != "/state/agent-home/notes.txt" {
 		t.Fatalf("normalizeContainerTarget = %s", target)
 	}
+	if got := normalizeContainerTarget("~/../injected/notes.txt"); got != "/state/agent-home/../injected/notes.txt" {
+		t.Fatalf("normalizeContainerTarget home traversal = %s", got)
+	}
+	if got := normalizeContainerTarget("/state/injected/../agent-home/notes.txt"); got != "/state/injected/../agent-home/notes.txt" {
+		t.Fatalf("normalizeContainerTarget traversal = %s", got)
+	}
 	if got, err := validateContainerTarget("/state/injected/notes.txt"); err != nil || got != "/state/injected/notes.txt" {
 		t.Fatalf("validateContainerTarget = %q, %v", got, err)
 	}
-	for _, bad := range []string{"relative.txt", "/tmp/outside", "/state/agent-home/.mcp.json"} {
+	for _, bad := range []string{"relative.txt", "/tmp/outside", "/state/agent-home/.mcp.json", "/state/injected/../agent-home/notes.txt", "/state/agent-home/../injected/notes.txt"} {
 		if _, err := validateContainerTarget(bad); err == nil {
 			t.Fatalf("validateContainerTarget accepted %q", bad)
 		}
+	}
+}
+
+func TestRenderDocumentsRejectsUnknownKeys(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	output := filepath.Join(root, "bundle")
+	if err := os.MkdirAll(output, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeText(t, filepath.Join(root, "common.md"), "common\n", 0o600)
+
+	_, err := renderDocuments(map[string]any{
+		"documents": map[string]any{
+			"common": "common.md",
+			"extra":  "common.md",
+		},
+	}, Path(output), Path(root))
+	if err == nil {
+		t.Fatal("renderDocuments() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "unsupported keys: extra") {
+		t.Fatalf("renderDocuments() error = %v, want unknown key failure", err)
 	}
 }
 

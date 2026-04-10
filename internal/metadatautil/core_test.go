@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -62,5 +63,50 @@ func TestWalkRepoFilesSkipsExcludedPaths(t *testing.T) {
 	want := []string{filepath.Join("pkg", "keep.txt")}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("walkRepoFiles() = %#v, want %#v", got, want)
+	}
+}
+
+func TestGitTrackedFilesExcludesUntrackedFiles(t *testing.T) {
+	root := t.TempDir()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s) error = %v", root, err)
+	}
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(args[0], args[1:]...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, output)
+		}
+	}
+
+	run("git", "init", "-q", canonicalRoot)
+	run("git", "-C", canonicalRoot, "config", "user.name", "Workcell Tests")
+	run("git", "-C", canonicalRoot, "config", "user.email", "workcell-tests@example.com")
+	run("git", "-C", canonicalRoot, "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(canonicalRoot, "tracked.txt"), []byte("tracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("git", "-C", canonicalRoot, "add", "tracked.txt")
+	run("git", "-C", canonicalRoot, "commit", "-q", "-m", "init")
+	if err := os.WriteFile(filepath.Join(canonicalRoot, "tracked.txt"), []byte("modified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(canonicalRoot, "scratch.txt"), []byte("untracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, tracked, err := gitTrackedFiles(canonicalRoot)
+	if err != nil {
+		t.Fatalf("gitTrackedFiles() error = %v", err)
+	}
+	if !tracked {
+		t.Fatal("gitTrackedFiles() should report tracked repository context")
+	}
+	want := []string{"tracked.txt"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("gitTrackedFiles() = %#v, want %#v", got, want)
 	}
 }

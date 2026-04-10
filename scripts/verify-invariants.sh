@@ -6749,6 +6749,27 @@ if ! awk '
   exit 1
 fi
 
+if ! sed -n '/^acquire_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | awk '
+  $0 == "  while true; do" && state == 0 { state = 1; next }
+  $0 == "    if ! acquired_state=\"$(go_hostutil launcher acquire-profile-lock \"${lock_dir}\" \"$$\")\"; then" && state == 1 { state = 2; next }
+  $0 == "      echo \"Failed to create managed runtime lock for profile ${profile}.\" >&2" && state == 2 { state = 3; next }
+  $0 == "      return 1" && state == 3 { state = 4; next }
+  $0 == "    fi" && state == 4 { state = 5; next }
+  $0 == "    if [[ \"${acquired_state}\" == \"1\" ]]; then" && state == 5 { state = 6; next }
+  $0 == "      PROFILE_LOCK_DIR=\"${lock_dir}\"" && state == 6 { state = 7; next }
+  $0 == "      return 0" && state == 7 { state = 8; next }
+  $0 == "    fi" && state == 8 { state = 9; next }
+  $0 == "    if ! stale_state=\"$(profile_lock_is_stale \"${lock_dir}\")\"; then" && state == 9 { state = 10; next }
+  $0 == "      echo \"Failed to inspect managed runtime lock state for profile ${profile}.\" >&2" && state == 10 { state = 11; next }
+  $0 == "      return 1" && state == 11 { state = 12; next }
+  $0 == "    fi" && state == 12 { state = 13; next }
+  $0 == "    if [[ \"${stale_state}\" == \"1\" ]]; then" && state == 13 { state = 14; exit }
+  END { exit(state == 14 ? 0 : 1) }
+'; then
+  echo "Expected workcell to acquire profile locks atomically and fail fast when lock state cannot be inspected" >&2
+  exit 1
+fi
+
 # shellcheck disable=SC2016
 for needle in \
   'workspace_runtime_probe_path()' \

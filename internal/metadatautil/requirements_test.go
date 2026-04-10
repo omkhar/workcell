@@ -177,6 +177,51 @@ docs = ["README.md"]
 	}
 }
 
+func TestValidateRequirementsRejectsSymlinkedPaths(t *testing.T) {
+	root := t.TempDir()
+	outsidePath := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(outsidePath, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteRequirementFixture(t, root, "scripts/verify-example.sh")
+	linkPath := filepath.Join(root, "docs", "linked.md")
+	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsidePath, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	requirementsPath := filepath.Join(root, "policy", "requirements.toml")
+	if err := os.MkdirAll(filepath.Dir(requirementsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requirementsPath, []byte(`version = 1
+
+[functional.FR-001]
+title = "Managed launch"
+summary = "Launch the provider inside the managed runtime."
+evidence = ["scripts/verify-example.sh"]
+docs = ["docs/linked.md"]
+
+[nonfunctional.NFR-001]
+title = "Requirement traceability"
+summary = "Every requirement cites automated evidence."
+evidence = ["scripts/verify-example.sh"]
+docs = ["docs/linked.md"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ValidateRequirements(root, requirementsPath)
+	if err == nil {
+		t.Fatal("ValidateRequirements() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "must not traverse symlinks") {
+		t.Fatalf("ValidateRequirements() error = %v, want symlink rejection", err)
+	}
+}
+
 func mustWriteRequirementFixture(tb testing.TB, root, relativePath string) {
 	tb.Helper()
 

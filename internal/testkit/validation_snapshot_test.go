@@ -214,6 +214,35 @@ func TestValidationSnapshotFailsWhenTrackedBlobIsUnreadable(t *testing.T) {
 	}
 }
 
+func TestValidationSnapshotRejectsGitlinkEntriesInHeadMode(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	repo := createSnapshotFixtureRepo(t, tempRoot)
+	cmd := exec.Command("git", "-C", repo, "rev-parse", "HEAD")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD failed: %v\n%s", err, output)
+	}
+	headCommit := strings.TrimSpace(string(output))
+	cmd = exec.Command("git", "-C", repo, "update-index", "--add", "--cacheinfo", "160000,"+headCommit+",deps/module")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git update-index gitlink failed: %v\n%s", err, output)
+	}
+	cmd = exec.Command("git", "-C", repo, "commit", "-q", "-m", "add gitlink")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit add gitlink failed: %v\n%s", err, output)
+	}
+
+	code, snapshotOutput := runValidationSnapshotCommand(t, repo, "head", `echo should-not-run`, nil)
+	if code == 0 {
+		t.Fatalf("snapshot unexpectedly succeeded: %q", snapshotOutput)
+	}
+	if !strings.Contains(snapshotOutput, "unsupported HEAD tree entry type commit") {
+		t.Fatalf("snapshot output = %q want gitlink rejection", snapshotOutput)
+	}
+}
+
 func TestValidationSnapshotPreservesGitIndexState(t *testing.T) {
 	t.Parallel()
 

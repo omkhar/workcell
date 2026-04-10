@@ -45,7 +45,7 @@ func collectWorkflowJobNames(content []byte) ([]string, error) {
 }
 
 func CheckWorkflows(rootDir, policyPath string) error {
-	if err := ensureWorkflowTools(); err != nil {
+	if err := ensureWorkflowTools(rootDir); err != nil {
 		return err
 	}
 
@@ -122,7 +122,41 @@ func CheckWorkflows(rootDir, policyPath string) error {
 	return nil
 }
 
-func ensureWorkflowTools() error { return nil }
+func ensureWorkflowTools(rootDir string) error {
+	actionlintPath, err := exec.LookPath("actionlint")
+	if err != nil {
+		return fmt.Errorf("actionlint is required for workflow validation: %w", err)
+	}
+	zizmorPath, err := exec.LookPath("zizmor")
+	if err != nil {
+		return fmt.Errorf("zizmor is required for workflow validation: %w", err)
+	}
+
+	actionlintCmd := exec.Command(actionlintPath)
+	actionlintCmd.Dir = rootDir
+	if output, err := actionlintCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("actionlint failed: %w\n%s", err, strings.TrimSpace(string(output)))
+	}
+
+	workflowPaths, err := filepath.Glob(filepath.Join(rootDir, ".github", "workflows", "*.yml"))
+	if err != nil {
+		return err
+	}
+	zizmorArgs := []string{
+		"--persona", "auditor",
+		"--config", filepath.Join(rootDir, ".github", "zizmor.yml"),
+	}
+	zizmorArgs = append(zizmorArgs, workflowPaths...)
+	zizmorCmd := exec.Command(
+		zizmorPath,
+		zizmorArgs...,
+	)
+	zizmorCmd.Dir = rootDir
+	if output, err := zizmorCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("zizmor failed: %w\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
 
 func validateCodeQLWorkflow(codeqlWorkflow, workflowPath string) error {
 	if regexp.MustCompile(`(?s)- language: go\s+build-mode: none`).MatchString(codeqlWorkflow) {
@@ -1731,7 +1765,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	}
 	for _, needle := range []string{
-		"actions/variables?per_page=100",
+		"gh api --paginate \"repos/${REPO}/actions/variables?per_page=100\"",
+		"jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}'",
 		`verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"`,
 	} {
 		if !strings.Contains(hostedControlsScript, needle) {

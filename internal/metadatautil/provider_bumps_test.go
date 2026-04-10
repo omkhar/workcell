@@ -291,6 +291,25 @@ func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
 	}
 }
 
+func TestFetchJSONAddsUserAgentHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("User-Agent"); got != providerBumpUserAgent {
+			t.Fatalf("User-Agent = %q, want %q", got, providerBumpUserAgent)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	var decoded map[string]bool
+	if err := fetchJSON(server.Client(), server.URL, &decoded); err != nil {
+		t.Fatalf("fetchJSON() error = %v", err)
+	}
+	if !decoded["ok"] {
+		t.Fatalf("fetchJSON() decoded = %#v", decoded)
+	}
+}
+
 func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")

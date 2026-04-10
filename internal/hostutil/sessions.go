@@ -173,6 +173,9 @@ func ListSessionRecords(colimaRoot string, opts SessionListOptions) ([]SessionRe
 			continue
 		}
 		sessionDir := filepath.Join(profileDir, "sessions")
+		if isSymlink(sessionDir) {
+			continue
+		}
 		sessionEntries, err := os.ReadDir(sessionDir)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {

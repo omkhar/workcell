@@ -67,7 +67,7 @@ copy_tracked_worktree() {
     fi
     mkdir -p "$(dirname "${destination_path}")"
     cp -pP "${source_path}" "${destination_path}"
-  done < <(safe_git -C "${ROOT_DIR}" ls-files -z --cached --modified --others --exclude-standard --deduplicate)
+  done < <(safe_git -C "${ROOT_DIR}" ls-files -z --cached --modified --deduplicate)
 }
 
 export WORKCELL_BUILD_INPUT_REF="${BUILD_REF}"
