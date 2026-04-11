@@ -156,6 +156,8 @@ static POSIX_SPAWN_FN: OnceLock<PosixSpawnFn> = OnceLock::new();
 static POSIX_SPAWNP_FN: OnceLock<PosixSpawnpFn> = OnceLock::new();
 static REAL_SYSCALL_FN: OnceLock<SyscallFn> = OnceLock::new();
 static STRICT_MUTABLE_EXEC_BLOCK: OnceLock<bool> = OnceLock::new();
+static PROTECTED_RUNTIME_SIGS: OnceLock<Vec<(ProtectedRuntime, StatSignature)>> = OnceLock::new();
+static PROTECTED_GIT_SIGS: OnceLock<Vec<StatSignature>> = OnceLock::new();
 
 fn current_mode_blocks_mutable_native_exec() -> bool {
     *STRICT_MUTABLE_EXEC_BLOCK.get_or_init(|| {
@@ -649,34 +651,38 @@ fn stat_signature_from_stat(stat_buf: &libc::stat) -> Option<StatSignature> {
     })
 }
 
-fn protected_runtime_signatures() -> Vec<(ProtectedRuntime, StatSignature)> {
-    PROTECTED_RUNTIME_PATHS
-        .iter()
-        .filter_map(|(kind, path)| {
-            fs::metadata(path)
-                .ok()
-                .map(|metadata| (*kind, metadata_signature_from_metadata(&metadata)))
-        })
-        .collect()
+fn protected_runtime_signatures() -> &'static Vec<(ProtectedRuntime, StatSignature)> {
+    PROTECTED_RUNTIME_SIGS.get_or_init(|| {
+        PROTECTED_RUNTIME_PATHS
+            .iter()
+            .filter_map(|(kind, path)| {
+                fs::metadata(path)
+                    .ok()
+                    .map(|metadata| (*kind, metadata_signature_from_metadata(&metadata)))
+            })
+            .collect()
+    })
 }
 
-fn protected_git_signatures() -> Vec<StatSignature> {
-    PROTECTED_GIT_PATHS
-        .iter()
-        .filter_map(|path| {
-            fs::metadata(path)
-                .ok()
-                .map(|metadata| metadata_signature_from_metadata(&metadata))
-        })
-        .collect()
+fn protected_git_signatures() -> &'static Vec<StatSignature> {
+    PROTECTED_GIT_SIGS.get_or_init(|| {
+        PROTECTED_GIT_PATHS
+            .iter()
+            .filter_map(|path| {
+                fs::metadata(path)
+                    .ok()
+                    .map(|metadata| metadata_signature_from_metadata(&metadata))
+            })
+            .collect()
+    })
 }
 
 fn stat_matches_protected_runtime(candidate: &StatSignature) -> ProtectedRuntime {
     protected_runtime_signatures()
-        .into_iter()
+        .iter()
         .find_map(|(kind, protected)| {
             if protected.dev == candidate.dev && protected.ino == candidate.ino {
-                Some(kind)
+                Some(*kind)
             } else {
                 None
             }
@@ -687,7 +693,7 @@ fn stat_matches_protected_runtime(candidate: &StatSignature) -> ProtectedRuntime
 fn candidate_size_matches_protected_runtime(candidate: &StatSignature) -> bool {
     (candidate.mode & file_type_bits()) == regular_file_mode()
         && protected_runtime_signatures()
-            .into_iter()
+            .iter()
             .any(|(_, protected)| protected.size == candidate.size)
 }
 
@@ -856,7 +862,7 @@ fn git_config_spec_is_blocked(spec: &str) -> bool {
 
 fn stat_matches_protected_git(candidate: &StatSignature) -> bool {
     protected_git_signatures()
-        .into_iter()
+        .iter()
         .any(|protected| protected.dev == candidate.dev && protected.ino == candidate.ino)
 }
 
