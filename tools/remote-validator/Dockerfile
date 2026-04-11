@@ -46,8 +46,13 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
          ca-certificates \
          codespell \
          curl \
-         docker-cli \
-         docker-buildx \
+          # docker-cli and docker-buildx are required for build validation.
+          # WARNING: mounting /var/run/docker.sock into this container
+          # grants full root on the host.  Only use the
+          # --allow-shared-daemon-heavy-checks flag when you understand
+          # and accept this risk.
+          docker-cli \
+          docker-buildx \
          gcc \
          git \
          groff-base \
@@ -146,5 +151,10 @@ WORKDIR /workspace
 
 ENV WORKCELL_REQUIRE_SUPPORTED_COVERAGE=1
 ENV WORKCELL_REQUIRE_DOCKERFILE_LINT=1
+
+# Defense-in-depth: run as an unprivileged user by default.
+# CI pipelines that need Docker access must explicitly
+# pass --user root or --user 0:0.
+USER nobody
 
 ENTRYPOINT ["/bin/bash", "-lc"]

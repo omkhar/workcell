@@ -415,4 +415,11 @@ ENV CODEX_HOME=/state/agent-home/.codex
 ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 ENV PATH=/usr/local/bin:/usr/bin:/bin
 
+# Defense-in-depth: default to an unprivileged user so that direct
+# `docker run` without `--user root` cannot gain root.  The host
+# workcell launcher passes `--user root` explicitly so that the
+# entrypoint can perform runtime-user setup before dropping
+# privileges via setpriv(1).
+USER nobody
+
 ENTRYPOINT ["/usr/local/bin/workcell-entrypoint"]
