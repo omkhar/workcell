@@ -1050,17 +1050,26 @@ func requireSecretFile(source string, label string) (string, error) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return "", die(fmt.Sprintf("%s must not be a symlink: %s", label, source))
 	}
-	if !info.Mode().IsRegular() {
+	f, err := os.OpenFile(source, os.O_RDONLY, 0)
+	if err != nil {
 		return "", die(fmt.Sprintf("%s must point at a file: %s", label, source))
 	}
-	statT, ok := info.Sys().(*syscall.Stat_t)
+	defer f.Close()
+	fInfo, err := f.Stat()
+	if err != nil {
+		return "", die(fmt.Sprintf("%s must point at a file: %s", label, source))
+	}
+	if !fInfo.Mode().IsRegular() {
+		return "", die(fmt.Sprintf("%s must point at a file: %s", label, source))
+	}
+	statT, ok := fInfo.Sys().(*syscall.Stat_t)
 	if !ok {
 		return "", fmt.Errorf("unexpected stat type")
 	}
 	if int(statT.Uid) != os.Getuid() {
 		return "", die(fmt.Sprintf("%s must be owned by uid %d: %s", label, os.Getuid(), source))
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if fInfo.Mode().Perm()&0o077 != 0 {
 		return "", die(fmt.Sprintf("%s must not be group/world-accessible: %s", label, source))
 	}
 	return source, nil
