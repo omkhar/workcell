@@ -18,7 +18,6 @@ jobs:
     environment:
       name: upstream-refresh
     permissions:
-      actions: write # Dispatch the reviewed validation workflows on the published refresh branch.
       contents: write # Push the signed refresh branch back to the repository.
       pull-requests: write # Open the draft refresh pull request.
     steps:
@@ -120,7 +119,7 @@ jobs:
             echo "- \`security.yml\`"
             echo "- \`codeql.yml\`"
             echo
-            echo "This workflow dispatches those workflows on the refresh branch after PR creation because commits pushed with \`github.token\` do not trigger new workflow runs."
+            echo "Maintainers approve any expensive refresh validation from the draft PR rather than auto-dispatching it during publication."
             echo
             echo "## Diffstat"
             echo

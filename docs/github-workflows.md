@@ -13,7 +13,7 @@ reinforce the runtime boundary and release posture, not replace them.
 | `codeql.yml` | code scanning for shipped Rust, Go, and JavaScript surfaces |
 | `scorecard.yml` | OpenSSF Scorecard analysis |
 | `pin-hygiene.yml` | scheduled re-validation of pinned inputs plus upstream refresh drift across providers, Linux base images, toolchains, and release-build pins |
-| `upstream-refresh.yml` | scheduled and manual signed refresh PR creation for reviewed upstream pins, followed by branch validation dispatch |
+| `upstream-refresh.yml` | scheduled and manual signed refresh PR creation for reviewed upstream pins, followed by maintainer-approved validation from the draft PR |
 | `hosted-controls.yml` | drift detection for GitHub-hosted controls that live outside git |
 | `release.yml` | tagged release preflight, publication, signatures, SBOMs, manifests, and attestations |
 
@@ -58,9 +58,9 @@ Other macOS versions are not install-gated today.
   `WORKCELL_UPSTREAM_REFRESH_GIT_NAME` and
   `WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL` repository variables
 - it opens a draft PR instead of mutating `main`
-- it dispatches `ci.yml`, `docs.yml`, `security.yml`, and `codeql.yml` on the
-  refresh branch after publication so the proposed pin set is fully validated
-  before release
+- it leaves expensive validation behind the same maintainer approval gate used
+  for other public-repo PRs instead of auto-dispatching workflows during
+  publication
 
 ## Hosted controls
 

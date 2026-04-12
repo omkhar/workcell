@@ -448,7 +448,7 @@ func TestValidateReleaseWorkflowCodeQLFlowAcceptsMatrixJob(t *testing.T) {
 	}
 }
 
-func TestValidateUpstreamRefreshWorkflowRejectsMissingDispatches(t *testing.T) {
+func TestValidateUpstreamRefreshWorkflowRejectsMissingSignedDraftPRFlow(t *testing.T) {
 	workflow := `name: Upstream refresh
 
 on:
@@ -457,7 +457,6 @@ on:
 jobs:
   refresh:
     permissions:
-      actions: write
       contents: write
       pull-requests: write
     steps:
@@ -472,16 +471,15 @@ jobs:
           WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
           WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID }}
       - run: |
-          git commit -S -F "${commit_file}"
-          gh pr create --draft
+          git commit -m "unsigned refresh"
 `
 
 	err := validateUpstreamRefreshWorkflow(workflow)
 	if err == nil {
 		t.Fatal("validateUpstreamRefreshWorkflow() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "gh workflow run") {
-		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want missing workflow dispatch guard", err)
+	if !strings.Contains(err.Error(), "git commit -S -F") {
+		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want missing signed draft PR guard", err)
 	}
 }
 
@@ -494,7 +492,6 @@ on:
 jobs:
   refresh:
     permissions:
-      actions: write
       contents: write
       pull-requests: write
     steps:
@@ -512,10 +509,6 @@ jobs:
         run: |
           git commit -S -F "${commit_file}"
           gh pr create --draft
-          gh workflow run "ci.yml" --ref "$branch"
-          gh workflow run "docs.yml" --ref "$branch"
-          gh workflow run "security.yml" --ref "$branch"
-          gh workflow run "codeql.yml" --ref "$branch"
 `
 
 	if err := validateUpstreamRefreshWorkflow(workflow); err != nil {
