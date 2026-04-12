@@ -138,14 +138,3 @@ jobs:
           )"
           echo "branch=${branch_name}" >> "${GITHUB_OUTPUT}"
           echo "url=${pr_url}" >> "${GITHUB_OUTPUT}"
-
-      - name: Dispatch full validation workflows
-        if: steps.publish.outputs.branch != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WORKCELL_REFRESH_BRANCH: ${{ steps.publish.outputs.branch }}
-        run: |
-          gh workflow run "ci.yml" --ref "${WORKCELL_REFRESH_BRANCH}"
-          gh workflow run "docs.yml" --ref "${WORKCELL_REFRESH_BRANCH}"
-          gh workflow run "security.yml" --ref "${WORKCELL_REFRESH_BRANCH}"
-          gh workflow run "codeql.yml" --ref "${WORKCELL_REFRESH_BRANCH}"
