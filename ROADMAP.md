@@ -28,6 +28,10 @@ security model easier to adopt, easier to verify, and easier to contribute to.
 - keep provider quickstarts current as upstream CLIs evolve
 - improve comparison material and use-case guidance for teams evaluating Workcell
 - make release assets easier for operators to consume and verify
+- define the first non-macOS deployment roadmap explicitly: trusted
+  `linux/amd64` remote validation hosts, self-hosted release and reproducibility
+  builders, and operator-managed deployment targets, without claiming Tier 1
+  Linux or Windows host parity before the same boundary guarantees exist
 
 ## Non-goals
 

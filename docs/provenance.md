@@ -40,6 +40,8 @@ Before publish, release preflight reruns:
 - container smoke
 - release-bundle reproducibility
 - runtime-image reproducibility
+- explicit nonroot validator and release-helper execution when the archived or
+  live repository is bind-mounted into verification containers
 - hosted-control auditing
 - authoritative-source verification of the GitHub-hosted Apple Silicon macOS
   release install runner labels

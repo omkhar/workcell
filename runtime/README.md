@@ -13,9 +13,16 @@ reproducible runtime for the supported providers.
 - keep the safe path one command away
 - run the provider inside the boundary, not on the host
 - mount only the selected workspace
-- keep the container unprivileged
+- keep the container unprivileged by default, with a named nonroot `workcell`
+  user in the shipped runtime and validator images
 - enforce network posture at the VM layer
 - block common control-plane escape hatches on the managed path
+
+The host launcher still starts the managed runtime with explicit `--user 0:0`
+only long enough for PID 1 to seed runtime state and then drop privileges.
+Repo-mounted validator and release-helper paths instead run under explicit
+caller UID/GID mappings with isolated writable home, cache, and tmp roots so
+the mounted checkout never depends on ambient container-root defaults.
 
 ## Runtime profiles
 
