@@ -277,6 +277,10 @@ func validateUpstreamRefreshWorkflow(workflowText string) error {
 	for _, needle := range []string{
 		"name: Upstream refresh",
 		"workflow_dispatch:",
+		"WORKCELL_COSIGN_VERSION",
+		"sigstore/cosign-installer@",
+		"cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}",
+		`sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign`,
 		"./scripts/update-upstream-pins.sh --apply",
 		"./scripts/update-upstream-pins.sh --check",
 		"./scripts/check-pinned-inputs.sh",
@@ -753,6 +757,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	}
 	pinHygieneWorkflow, err := readText(cfg.PinHygieneWorkflowPath)
+	if err != nil {
+		return err
+	}
+	upstreamRefreshWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "upstream-refresh.yml"))
 	if err != nil {
 		return err
 	}
@@ -1398,8 +1406,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if len(map[string]struct{}{ciCosignVersion: {}, releaseCosignVersion: {}, pinHygieneCosignVersion: {}}) != 1 {
-		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, and .github/workflows/pin-hygiene.yml")
+	upstreamRefreshCosignVersion, err := requireYAMLKey(upstreamRefreshWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/upstream-refresh.yml")
+	if err != nil {
+		return err
+	}
+	if len(map[string]struct{}{ciCosignVersion: {}, releaseCosignVersion: {}, pinHygieneCosignVersion: {}, upstreamRefreshCosignVersion: {}}) != 1 {
+		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
 	}
 	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(ciCosignVersion) {
 		return fmt.Errorf("WORKCELL_COSIGN_VERSION must be an exact pinned release, found %q", ciCosignVersion)
@@ -1407,7 +1419,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	for _, workflow := range []struct {
 		text string
 		path string
-	}{{ciWorkflow, ".github/workflows/ci.yml"}, {releaseWorkflow, ".github/workflows/release.yml"}, {pinHygieneWorkflow, ".github/workflows/pin-hygiene.yml"}} {
+	}{{ciWorkflow, ".github/workflows/ci.yml"}, {releaseWorkflow, ".github/workflows/release.yml"}, {pinHygieneWorkflow, ".github/workflows/pin-hygiene.yml"}, {upstreamRefreshWorkflow, ".github/workflows/upstream-refresh.yml"}} {
 		if !strings.Contains(workflow.text, "cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}") {
 			return fmt.Errorf("%s must pin the installed cosign binary release", workflow.path)
 		}
@@ -1424,8 +1436,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if len(map[string]struct{}{ciCosignInstallerRef: {}, releaseCosignInstallerRef: {}, pinHygieneCosignInstallerRef: {}}) != 1 {
-		return errors.New("sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, .github/workflows/release.yml, and .github/workflows/pin-hygiene.yml")
+	upstreamRefreshCosignInstallerRef, err := requireActionRef(upstreamRefreshWorkflow, "sigstore/cosign-installer", ".github/workflows/upstream-refresh.yml")
+	if err != nil {
+		return err
+	}
+	if len(map[string]struct{}{ciCosignInstallerRef: {}, releaseCosignInstallerRef: {}, pinHygieneCosignInstallerRef: {}, upstreamRefreshCosignInstallerRef: {}}) != 1 {
+		return errors.New("sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
 	}
 	if !strings.Contains(ciWorkflow, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
 		return errors.New(".github/workflows/ci.yml must pin the BuildKit daemon image used by setup-buildx-action")
@@ -1658,9 +1674,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
 		}
 	}
-	if upstreamRefreshWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "upstream-refresh.yml")); err != nil {
-		return err
-	} else if err := validateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
+	if err := validateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
 		return err
 	}
 	hostedControlsWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "hosted-controls.yml"))

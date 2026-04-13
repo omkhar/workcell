@@ -454,6 +454,9 @@ func TestValidateUpstreamRefreshWorkflowRejectsMissingSignedDraftPRFlow(t *testi
 on:
   workflow_dispatch:
 
+env:
+  WORKCELL_COSIGN_VERSION: v3.0.6
+
 jobs:
   refresh:
     permissions:
@@ -464,6 +467,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+      - run: |
+          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
       - run: ./scripts/update-upstream-pins.sh --check
       - run: ./scripts/check-pinned-inputs.sh
@@ -489,6 +497,9 @@ func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
 on:
   workflow_dispatch:
 
+env:
+  WORKCELL_COSIGN_VERSION: v3.0.6
+
 jobs:
   refresh:
     permissions:
@@ -499,6 +510,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+      - run: |
+          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
       - run: |
           ./scripts/update-upstream-pins.sh --check
