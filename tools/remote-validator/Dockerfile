@@ -35,6 +35,10 @@ ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:/usr/local/go/bin:${PATH}
 ENV RUSTUP_HOME=/usr/local/rustup
 
+# docker-cli and docker-buildx are required for build validation.
+# WARNING: mounting /var/run/docker.sock into this container grants full root
+# on the host. Only use --allow-shared-daemon-heavy-checks when you understand
+# and accept this risk.
 # hadolint ignore=DL3008
 RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
   && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
@@ -46,13 +50,8 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
          ca-certificates \
          codespell \
          curl \
-          # docker-cli and docker-buildx are required for build validation.
-          # WARNING: mounting /var/run/docker.sock into this container
-          # grants full root on the host.  Only use the
-          # --allow-shared-daemon-heavy-checks flag when you understand
-          # and accept this risk.
-          docker-cli \
-          docker-buildx \
+         docker-cli \
+         docker-buildx \
          gcc \
          git \
          groff-base \
@@ -145,16 +144,32 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     /var/lib/apt/lists/* \
     /var/cache/apt/* \
     /var/cache/debconf/*-old \
-    /var/cache/ldconfig/aux-cache
+    /var/cache/ldconfig/aux-cache \
+  && groupadd --system --gid 65532 workcell \
+  && useradd --system --uid 65532 --gid 65532 --home-dir /home/workcell --shell /bin/bash workcell \
+  && install -d -o 65532 -g 65532 -m 0700 \
+    /home/workcell \
+    /home/workcell/.cache \
+    /home/workcell/.cache/go-build \
+    /home/workcell/.cache/go-mod \
+    /home/workcell/.cache/cargo-target \
+    /home/workcell/.tmp
 
 WORKDIR /workspace
 
+ENV HOME=/home/workcell
+ENV XDG_CACHE_HOME=/home/workcell/.cache
+ENV GOCACHE=/home/workcell/.cache/go-build
+ENV GOMODCACHE=/home/workcell/.cache/go-mod
+ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target
+ENV TMPDIR=/home/workcell/.tmp
 ENV WORKCELL_REQUIRE_SUPPORTED_COVERAGE=1
 ENV WORKCELL_REQUIRE_DOCKERFILE_LINT=1
 
 # Defense-in-depth: run as an unprivileged user by default.
-# CI pipelines that need Docker access must explicitly
-# pass --user root or --user 0:0.
-USER nobody
+# Shared-daemon validation paths must opt into an explicit caller UID/GID,
+# Docker socket group mapping, and a separately mounted host home snapshot for
+# trusted Docker client state.
+USER workcell
 
 ENTRYPOINT ["/bin/bash", "-lc"]

@@ -7,6 +7,7 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     HOME=/tmp \
     SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH-}" \
     TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_DOCKER_REAL_HOME="${WORKCELL_DOCKER_REAL_HOME-}" \
     WORKCELL_REMOTE_BUILDKIT_LOCAL_CA="${WORKCELL_REMOTE_BUILDKIT_LOCAL_CA-}" \
     WORKCELL_REMOTE_BUILDKIT_SSL_CERTS="${WORKCELL_REMOTE_BUILDKIT_SSL_CERTS-}" \
     WORKCELL_DOCKER_HOST_HOME_ROOT="${WORKCELL_DOCKER_HOST_HOME_ROOT-}" \
@@ -138,12 +139,8 @@ fi
 ensure_workcell_selected_builder
 buildx_cmd inspect --bootstrap >/dev/null
 
-if [[ -n "${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT:-}" ]]; then
-  mkdir -p "${ROOT_DIR}/tmp"
-  OCI_EXPORT_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-repro.XXXXXX")"
-else
-  OCI_EXPORT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-repro.XXXXXX")"
-fi
+mkdir -p "${TMPDIR:-/tmp}"
+OCI_EXPORT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-repro.XXXXXX")"
 
 OCI_EXPORT_A="${OCI_EXPORT_ROOT}/a"
 OCI_EXPORT_B="${OCI_EXPORT_ROOT}/b"

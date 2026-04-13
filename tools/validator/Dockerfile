@@ -138,13 +138,28 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     /var/lib/apt/lists/* \
     /var/cache/apt/* \
     /var/cache/debconf/*-old \
-    /var/cache/ldconfig/aux-cache
+    /var/cache/ldconfig/aux-cache \
+  && groupadd --system --gid 65532 workcell \
+  && useradd --system --uid 65532 --gid 65532 --home-dir /home/workcell --shell /bin/bash workcell \
+  && install -d -o 65532 -g 65532 -m 0700 \
+    /home/workcell \
+    /home/workcell/.cache \
+    /home/workcell/.cache/go-build \
+    /home/workcell/.cache/go-mod \
+    /home/workcell/.cache/cargo-target \
+    /home/workcell/.tmp
 
 WORKDIR /workspace
 
+ENV HOME=/home/workcell
+ENV XDG_CACHE_HOME=/home/workcell/.cache
+ENV GOCACHE=/home/workcell/.cache/go-build
+ENV GOMODCACHE=/home/workcell/.cache/go-mod
+ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target
+ENV TMPDIR=/home/workcell/.tmp
 ENV WORKCELL_REQUIRE_SUPPORTED_COVERAGE=1
 ENV WORKCELL_REQUIRE_DOCKERFILE_LINT=1
 
-USER nobody
+USER workcell
 
 ENTRYPOINT ["/bin/bash", "-lc"]

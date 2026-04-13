@@ -363,15 +363,35 @@ if ((${#heavy_shellcheck_targets[@]} > 0)); then
 fi
 
 echo "[pre-merge] repository validation in validator container"
+validator_uid="$(id -u)"
+validator_gid="$(id -g)"
+validator_home="/tmp/workcell-home-${validator_uid}"
+validator_cache="${validator_home}/.cache"
+validator_tmp="${validator_home}/.tmp"
 docker run --rm \
+  --user "${validator_uid}:${validator_gid}" \
+  --entrypoint /bin/bash \
   -e WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK=1 \
+  -e HOME="${validator_home}" \
+  -e XDG_CACHE_HOME="${validator_cache}" \
+  -e GOCACHE="${validator_cache}/go-build" \
+  -e GOMODCACHE="${validator_cache}/go-mod" \
+  -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
+  -e TMPDIR="${validator_tmp}" \
   -v "${ROOT_DIR}:/workspace" \
   -w /workspace \
   "${VALIDATOR_IMAGE}" \
-  ./scripts/validate-repo.sh
+  -lc '
+    set -euo pipefail
+    mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
+    ./scripts/validate-repo.sh
+  '
 
 echo "[pre-merge] host launcher invariants"
 "${ROOT_DIR}/scripts/verify-invariants.sh"
+
+echo "[pre-merge] host publish-pr scenario"
+"${ROOT_DIR}/tests/scenarios/shared/test-publish-pr-dry-run.sh"
 
 echo "[pre-merge] container smoke"
 "${ROOT_DIR}/scripts/container-smoke.sh"

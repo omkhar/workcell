@@ -60,6 +60,7 @@ REMOTE_HOME=""
 REMOTE_LOGIN_UID=""
 REMOTE_LOGIN_GID=""
 REMOTE_LOGIN_USER=""
+REMOTE_DOCKER_SOCK_GID=""
 REMOTE_VALIDATOR_IMAGE=""
 declare -a CHECKS=()
 
@@ -558,9 +559,11 @@ echo "Remote workspace: ${REMOTE_DIR}"
 echo "Remote helper image: ${REMOTE_VALIDATOR_IMAGE}"
 
 if [[ "${REMOTE_USE_SUDO}" == "1" ]]; then
-  remote_cmd install -d -m 0700 -o 0 -g 0 "${REMOTE_DIR}/repo"
+  remote_cmd chown "${REMOTE_LOGIN_UID}:${REMOTE_LOGIN_GID}" "${REMOTE_DIR}"
+  remote_cmd chmod 0755 "${REMOTE_DIR}"
+  remote_cmd install -d -m 0700 -o "${REMOTE_LOGIN_UID}" -g "${REMOTE_LOGIN_GID}" "${REMOTE_DIR}/repo"
   remote_cmd install -d -m 0700 -o 0 -g 0 "${REMOTE_DIR}/helper"
-  remote_cmd install -d -m 0700 -o 0 -g 0 "${REMOTE_HOME}"
+  remote_cmd install -d -m 0700 -o "${REMOTE_LOGIN_UID}" -g "${REMOTE_LOGIN_GID}" "${REMOTE_HOME}"
 else
   remote_cmd mkdir -p -- "${REMOTE_DIR}/repo" "${REMOTE_DIR}/helper" "${REMOTE_HOME}"
   remote_cmd chmod 0700 "${REMOTE_DIR}" "${REMOTE_DIR}/repo" "${REMOTE_DIR}/helper" "${REMOTE_HOME}"
@@ -572,7 +575,7 @@ rsync_args=(
   "${REMOTE_HOST}:${REMOTE_DIR}/repo/"
 )
 if [[ "${REMOTE_USE_SUDO}" == "1" ]]; then
-  rsync_args=(--rsync-path="sudo -n rsync" --chown=0:0 "${rsync_args[@]}")
+  rsync_args=(--rsync-path="sudo -n rsync" --chown="${REMOTE_LOGIN_UID}:${REMOTE_LOGIN_GID}" "${rsync_args[@]}")
 fi
 rsync "${rsync_args[@]}"
 if [[ "${REMOTE_USE_SUDO}" == "1" ]]; then
@@ -603,10 +606,20 @@ run_remote_validator_container() {
   local needs_docker="$1"
   shift
   local -a selected_checks=("$@")
+  local validator_home="/tmp/workcell-home-${REMOTE_LOGIN_UID}"
+  local validator_cache_root="/tmp/workcell-cache-${REMOTE_LOGIN_UID}"
+  local validator_tmpdir="/tmp/workcell-tmp-${REMOTE_LOGIN_UID}"
+  local validator_docker_home="/tmp/workcell-remote-home-${REMOTE_LOGIN_UID}"
   local -a docker_args=(
     run --rm
     -i
-    -e HOME=/tmp/workcell-home
+    --user "${REMOTE_LOGIN_UID}:${REMOTE_LOGIN_GID}"
+    -e HOME="${validator_home}"
+    -e XDG_CACHE_HOME="${validator_cache_root}"
+    -e GOCACHE="${validator_cache_root}/go-build"
+    -e GOMODCACHE="${validator_cache_root}/go-mod"
+    -e CARGO_TARGET_DIR="${validator_cache_root}/cargo-target"
+    -e TMPDIR="${validator_tmpdir}"
     -e SSL_CERT_DIR=/etc/ssl/certs
     -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
     -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
@@ -618,8 +631,11 @@ run_remote_validator_container() {
   )
 
   if [[ "${needs_docker}" == "1" ]]; then
+    REMOTE_DOCKER_SOCK_GID="$(remote_cmd stat -c %g /var/run/docker.sock)"
     docker_args+=(
+      --group-add "${REMOTE_DOCKER_SOCK_GID}"
       -e WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT=default
+      -e WORKCELL_DOCKER_REAL_HOME="${validator_docker_home}"
       -e WORKCELL_DOCKER_HOST_HOME_ROOT="${REMOTE_HOME}"
       -e WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${REMOTE_DIR}/repo"
       -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC=1
@@ -630,7 +646,7 @@ run_remote_validator_container() {
       -e WORKCELL_REPRO_DOCKER_CONTEXT=default
       -v /etc/ssl/certs:/host-ssl-certs:ro
       -v /usr/local/share/ca-certificates:/host-local-ca:ro
-      -v "${REMOTE_HOME}:/tmp/workcell-home"
+      -v "${REMOTE_HOME}:${validator_docker_home}:ro"
       -v /var/run/docker.sock:/var/run/docker.sock
     )
   fi
@@ -643,6 +659,8 @@ set -euo pipefail
 
 REMOTE_BUILDER_NAME=""
 
+mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
+
 cleanup_remote_builder() {
   if [[ -n "${REMOTE_BUILDER_NAME}" ]]; then
     docker buildx rm -f "${REMOTE_BUILDER_NAME}" >/dev/null 2>&1 || true
@@ -654,7 +672,6 @@ trap cleanup_remote_builder EXIT
 cd /workspace
 
 mkdir -p /workspace/tmp
-chown "${WORKCELL_TEST_HOST_UID}:${WORKCELL_TEST_HOST_GID}" /workspace/tmp
 chmod 0755 /workspace/tmp
 
 rm -rf /workspace/.git

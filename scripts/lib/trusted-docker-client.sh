@@ -2,8 +2,17 @@
 resolve_workcell_real_home() {
   local uid="" user="" home=""
 
+  if [[ -n "${WORKCELL_DOCKER_REAL_HOME:-}" ]]; then
+    if [[ -d "${WORKCELL_DOCKER_REAL_HOME}" ]]; then
+      printf '%s\n' "${WORKCELL_DOCKER_REAL_HOME}"
+      return 0
+    fi
+    echo "Configured WORKCELL_DOCKER_REAL_HOME does not exist: ${WORKCELL_DOCKER_REAL_HOME}" >&2
+    return 1
+  fi
+
   uid="$(id -u)"
-  user="$(id -un)"
+  user="$(id -un 2>/dev/null || true)"
 
   if command -v getent >/dev/null 2>&1; then
     home="$(getent passwd "${uid}" 2>/dev/null | awk -F: 'NR==1 {print $6}' || true)"
@@ -13,6 +22,9 @@ resolve_workcell_real_home() {
   fi
   if [[ -z "${home}" && -r /etc/passwd ]]; then
     home="$(awk -F: -v uid="${uid}" '$3 == uid {print $6; exit}' /etc/passwd)"
+  fi
+  if [[ -n "${HOME:-}" ]] && { [[ -z "${home}" ]] || [[ ! -d "${home}" ]]; }; then
+    home="${HOME}"
   fi
 
   if [[ -z "${home}" ]]; then

@@ -73,11 +73,29 @@ jobs:
 
       - name: Validate repository
         run: |
+          set -euo pipefail
+          validator_uid="$(id -u)"
+          validator_gid="$(id -g)"
+          validator_home="/tmp/workcell-home-${validator_uid}"
+          validator_cache="${validator_home}/.cache"
+          validator_tmp="${validator_home}/.tmp"
           docker run --rm \
+            --user "${validator_uid}:${validator_gid}" \
+            --entrypoint /bin/bash \
             -v "${PWD}:/workspace" \
             -w /workspace \
+            -e HOME="${validator_home}" \
+            -e XDG_CACHE_HOME="${validator_cache}" \
+            -e GOCACHE="${validator_cache}/go-build" \
+            -e GOMODCACHE="${validator_cache}/go-mod" \
+            -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
+            -e TMPDIR="${validator_tmp}" \
             "workcell-validator:${GITHUB_SHA}" \
-            ./scripts/validate-repo.sh
+            -lc '
+              set -euo pipefail
+              mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
+              ./scripts/validate-repo.sh
+            '
 
       - name: Verify host launcher invariants
         run: ./scripts/verify-invariants.sh
@@ -96,13 +114,22 @@ jobs:
         run: |
           set -euo pipefail
           source_date_epoch="$(git log -1 --pretty=%ct "${GITHUB_SHA}")"
+          validator_uid="$(id -u)"
+          validator_gid="$(id -g)"
+          validator_home="/tmp/workcell-home-${validator_uid}"
+          validator_cache="${validator_home}/.cache"
+          validator_tmp="${validator_home}/.tmp"
           mkdir -p dist/release-install
           bundle="workcell-ci-${GITHUB_SHA}.tar.gz"
           docker run --rm \
+            --user "${validator_uid}:${validator_gid}" \
             --entrypoint /bin/bash \
             -v "${PWD}:/workspace" \
             -v "${PWD}/dist/release-install:/dist" \
             -w /workspace \
+            -e HOME="${validator_home}" \
+            -e XDG_CACHE_HOME="${validator_cache}" \
+            -e TMPDIR="${validator_tmp}" \
             -e SOURCE_DATE_EPOCH="${source_date_epoch}" \
             -e ARCHIVE_REF="${GITHUB_SHA}" \
             -e BUNDLE_NAME="${bundle}" \
@@ -110,6 +137,7 @@ jobs:
             "workcell-validator:${GITHUB_SHA}" \
             -lc '
               set -euo pipefail
+              mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${TMPDIR}"
               bundle_tar="/dist/${BUNDLE_NAME%.tar.gz}.tar"
               git -c safe.directory=/workspace archive \
                 --format=tar \

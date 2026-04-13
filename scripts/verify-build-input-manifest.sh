@@ -87,8 +87,7 @@ if [[ "${digest_a}" != "${digest_b}" ]]; then
 fi
 
 if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  mkdir -p "${ROOT_DIR}/tmp"
-  NESTED_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-build-input-nested.XXXXXX")"
+  NESTED_ROOT="$(mktemp -d "${TMP_ROOT}/nested-build-input.XXXXXX")"
   ARCHIVE_ROOT="${TMP_ROOT}/archived-source"
   ARCHIVE_ROOT_LINK="${TMP_ROOT}/archived-source-link"
   copy_tracked_worktree "${ARCHIVE_ROOT}"

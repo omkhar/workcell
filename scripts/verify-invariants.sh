@@ -2500,6 +2500,108 @@ for dockerfile in \
   fi
 done
 
+for dockerfile in \
+  "${ROOT_DIR}/runtime/container/Dockerfile" \
+  "${ROOT_DIR}/tools/validator/Dockerfile" \
+  "${ROOT_DIR}/tools/remote-validator/Dockerfile"; do
+  if ! rg -q '^USER workcell$' "${dockerfile}"; then
+    echo "Expected ${dockerfile} to default to the named unprivileged workcell user" >&2
+    exit 1
+  fi
+done
+
+for dockerfile in \
+  "${ROOT_DIR}/tools/validator/Dockerfile" \
+  "${ROOT_DIR}/tools/remote-validator/Dockerfile"; do
+  for required in \
+    'ENV HOME=/home/workcell' \
+    'ENV XDG_CACHE_HOME=/home/workcell/.cache' \
+    'ENV GOCACHE=/home/workcell/.cache/go-build' \
+    'ENV GOMODCACHE=/home/workcell/.cache/go-mod' \
+    'ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target' \
+    'ENV TMPDIR=/home/workcell/.tmp'; do
+    if ! grep -Fq "${required}" "${dockerfile}"; then
+      echo "Expected ${dockerfile} to pin its default nonroot writable state under /home/workcell (${required})" >&2
+      exit 1
+    fi
+  done
+done
+
+if ! grep -Fq "CARGO_TARGET_DIR=\"\${CARGO_TARGET_DIR:-\${XDG_CACHE_HOME}/cargo-target}\"" "${ROOT_DIR}/scripts/validate-repo.sh"; then
+  echo "Expected scripts/validate-repo.sh to externalize Cargo target writes away from the mounted workspace" >&2
+  exit 1
+fi
+
+for caller in \
+  "${ROOT_DIR}/.github/workflows/ci.yml" \
+  "${ROOT_DIR}/.github/workflows/docs.yml" \
+  "${ROOT_DIR}/.github/workflows/release.yml" \
+  "${ROOT_DIR}/scripts/pre-merge.sh"; do
+  for required in \
+    "validator_uid=\"\$(id -u)\"" \
+    "validator_gid=\"\$(id -g)\"" \
+    "--user \"\${validator_uid}:\${validator_gid}\"" \
+    "-e HOME=\"\${validator_home}\"" \
+    "-e XDG_CACHE_HOME=\"\${validator_cache}\"" \
+    "-e GOCACHE=\"\${validator_cache}/go-build\"" \
+    "-e GOMODCACHE=\"\${validator_cache}/go-mod\"" \
+    "-e CARGO_TARGET_DIR=\"\${validator_cache}/cargo-target\"" \
+    "-e TMPDIR=\"\${validator_tmp}\"" \
+    "mkdir -p \"\${HOME}\" \"\${XDG_CACHE_HOME}\" \"\${GOCACHE}\" \"\${GOMODCACHE}\" \"\${CARGO_TARGET_DIR}\" \"\${TMPDIR}\""; do
+    if ! grep -Fq -- "${required}" "${caller}"; then
+      echo "Expected ${caller} to launch validator work under an explicit caller UID/GID with isolated writable state (${required})" >&2
+      exit 1
+    fi
+  done
+done
+
+for required in \
+  "--user \"\${validator_uid}:\${validator_gid}\"" \
+  "-e HOME=\"\${validator_home}\"" \
+  "-e XDG_CACHE_HOME=\"\${validator_cache_root}\"" \
+  "-e GOCACHE=\"\${validator_cache_root}/go-build\"" \
+  "-e GOMODCACHE=\"\${validator_cache_root}/go-mod\"" \
+  "-e CARGO_TARGET_DIR=\"\${validator_cache_root}/cargo-target\"" \
+  "-e TMPDIR=\"\${validator_tmpdir}\"" \
+  "mkdir -p \"\${HOME}\" \"\${XDG_CACHE_HOME}\" \"\${GOCACHE}\" \"\${GOMODCACHE}\" \"\${CARGO_TARGET_DIR}\" \"\${TMPDIR}\""; do
+  if ! grep -Fq -- "${required}" "${ROOT_DIR}/scripts/verify-release-bundle.sh"; then
+    echo "Expected scripts/verify-release-bundle.sh to build bundles in the validator under an explicit caller UID/GID with isolated writable state (${required})" >&2
+    exit 1
+  fi
+done
+
+for required in \
+  "--user \"\${REMOTE_LOGIN_UID}:\${REMOTE_LOGIN_GID}\"" \
+  "REMOTE_DOCKER_SOCK_GID=\"\$(remote_cmd stat -c %g /var/run/docker.sock)\"" \
+  "--group-add \"\${REMOTE_DOCKER_SOCK_GID}\"" \
+  "-e WORKCELL_DOCKER_REAL_HOME=\"\${validator_docker_home}\"" \
+  "-v \"\${REMOTE_HOME}:\${validator_docker_home}:ro\""; do
+  if ! grep -Fq -- "${required}" "${ROOT_DIR}/scripts/dev-remote-validate.sh"; then
+    echo "Expected scripts/dev-remote-validate.sh to preserve explicit remote caller identity and docker-socket lane isolation (${required})" >&2
+    exit 1
+  fi
+done
+
+if grep -Fq "\${ROOT_DIR}/tmp/workcell-build-input-nested" "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"; then
+  echo "Expected verify-build-input-manifest.sh nested-source checks to avoid writing under the mounted repo" >&2
+  exit 1
+fi
+
+if grep -Fq "\${ROOT_DIR}/tmp/workcell-control-plane-nested" "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"; then
+  echo "Expected verify-control-plane-manifest.sh nested-source checks to avoid writing under the mounted repo" >&2
+  exit 1
+fi
+
+if grep -Fq "\${ROOT_DIR}/tmp/workcell-release-bundle" "${ROOT_DIR}/scripts/verify-release-bundle.sh"; then
+  echo "Expected verify-release-bundle.sh temp roots to avoid writing under the mounted repo" >&2
+  exit 1
+fi
+
+if grep -Fq "\${ROOT_DIR}/tmp/workcell-repro" "${ROOT_DIR}/scripts/verify-reproducible-build.sh"; then
+  echo "Expected verify-reproducible-build.sh OCI exports to avoid writing under the mounted repo" >&2
+  exit 1
+fi
+
 if ! rg -q '"bootstrap_applied=\$\{BOOTSTRAP_APPLIED\}"' "${ROOT_DIR}/scripts/workcell" ||
   ! rg -q '"bootstrap_endpoints=\$\(\[\[ "\$\{BOOTSTRAP_APPLIED\}" -eq 1 \]\] && printf '\''%s'\'' "\$\{BOOTSTRAP_ENDPOINTS\}" \|\| printf '\'''\''\)"' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell audit records to include bootstrap network metadata" >&2
@@ -4499,7 +4601,12 @@ else
   PREMERGE_DEFAULT_SNAPSHOT_PARENT="${PREMERGE_DEFAULT_HOME}/.cache/workcell-validation-snapshots"
 fi
 rm -rf "${PREMERGE_HARNESS_ROOT}"
-mkdir -p "${PREMERGE_HARNESS_ROOT}/scripts" "${PREMERGE_HARNESS_ROOT}/tools/validator" "${PREMERGE_FAKEBIN}" "${PREMERGE_DEFAULT_HOME}"
+mkdir -p \
+  "${PREMERGE_HARNESS_ROOT}/scripts" \
+  "${PREMERGE_HARNESS_ROOT}/tests/scenarios/shared" \
+  "${PREMERGE_HARNESS_ROOT}/tools/validator" \
+  "${PREMERGE_FAKEBIN}" \
+  "${PREMERGE_DEFAULT_HOME}"
 install -m 0755 "${ROOT_DIR}/scripts/pre-merge.sh" "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh"
 cat >"${PREMERGE_HARNESS_ROOT}/scripts/with-validation-snapshot.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -4549,6 +4656,12 @@ printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
 printf 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=%s\n' "${WORKCELL_REPRO_PLATFORMS-}" >>"${PREMERGE_LOG}"
 EOF
 chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/verify-reproducible-build.sh"
+cat >"${PREMERGE_HARNESS_ROOT}/tests/scenarios/shared/test-publish-pr-dry-run.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
+EOF
+chmod 0755 "${PREMERGE_HARNESS_ROOT}/tests/scenarios/shared/test-publish-pr-dry-run.sh"
 cat >"${PREMERGE_FAKEBIN}/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -4564,7 +4677,7 @@ case "${1-}" in
     printf '%s\n' "${WORKCELL_FAKE_GIT_EPOCH:-1700000000}"
     ;;
   archive)
-    tar -C "${WORKCELL_FAKE_GIT_ROOT}" -cf - scripts tools
+    tar -C "${WORKCELL_FAKE_GIT_ROOT}" -cf - scripts tests tools
     ;;
   checkout-index)
     prefix=""
@@ -4581,13 +4694,15 @@ case "${1-}" in
     }
     mkdir -p "${prefix}"
     cp -R "${WORKCELL_FAKE_GIT_ROOT}/scripts" "${prefix}/scripts"
+    mkdir -p "${prefix}/tests/scenarios"
+    cp -R "${WORKCELL_FAKE_GIT_ROOT}/tests/scenarios/shared" "${prefix}/tests/scenarios/shared"
     mkdir -p "${prefix}/tools"
     cp -R "${WORKCELL_FAKE_GIT_ROOT}/tools/validator" "${prefix}/tools/validator"
     ;;
   ls-files)
     (
       cd "${WORKCELL_FAKE_GIT_ROOT}"
-      find scripts tools -type f -print0 | LC_ALL=C sort -z
+      find scripts tests tools -type f -print0 | LC_ALL=C sort -z
     )
     ;;
   init|config|add|commit)
@@ -4732,6 +4847,7 @@ grep -q -- '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_S
 grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
 grep -q 'verify-github-macos-release-test-runners.sh macos-26 macos-15' "${PREMERGE_LOG}"
 grep -q 'update-upstream-pins.sh --check' "${PREMERGE_LOG}"
+grep -q 'test-publish-pr-dry-run.sh ' "${PREMERGE_LOG}"
 grep -q 'verify-reproducible-build.sh ' "${PREMERGE_LOG}"
 grep -q 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64' "${PREMERGE_LOG}"
 grep -q 'local_premerge_repro_platforms()' "${ROOT_DIR}/scripts/pre-merge.sh"

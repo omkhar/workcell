@@ -66,6 +66,8 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
        sleep "$((attempt * 5))"; \
      done \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+  && groupadd --system --gid 65532 workcell \
+  && useradd --system --uid 65532 --gid 65532 --home-dir /state/agent-home --shell /usr/sbin/nologin workcell \
   && mkdir -p \
     /etc/workcell/empty-xdg \
     /opt/workcell/host-injections \
@@ -77,6 +79,10 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     /usr/local/libexec/workcell/real \
     /workspace \
   && chmod 0555 /etc/workcell/empty-xdg \
+  && chown -R 65532:65532 /state \
+  && chmod 0755 /state \
+  && chmod 0700 /state/agent-home \
+  && install -d -o 65532 -g 65532 -m 1777 /state/tmp \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
   && rm -f /etc/ld.so.cache \
   && find /var/log -type f -delete \
@@ -415,11 +421,11 @@ ENV CODEX_HOME=/state/agent-home/.codex
 ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 ENV PATH=/usr/local/bin:/usr/bin:/bin
 
-# Defense-in-depth: default to an unprivileged user so that direct
-# `docker run` without `--user root` cannot gain root.  The host
-# workcell launcher passes `--user root` explicitly so that the
-# entrypoint can perform runtime-user setup before dropping
-# privileges via setpriv(1).
-USER nobody
+# Defense-in-depth: default to a named unprivileged user so that direct
+# `docker run` without `--user root` stays non-root while still having a
+# deterministic writable session home and tmp dir. The host launcher passes
+# `--user 0:0` explicitly so PID 1 can perform runtime-user setup before
+# dropping privileges via setpriv(1).
+USER workcell
 
 ENTRYPOINT ["/usr/local/bin/workcell-entrypoint"]

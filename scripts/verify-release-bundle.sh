@@ -7,6 +7,7 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     HOME=/tmp \
     SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH-}" \
     TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_DOCKER_REAL_HOME="${WORKCELL_DOCKER_REAL_HOME-}" \
     WORKCELL_REMOTE_BUILDKIT_LOCAL_CA="${WORKCELL_REMOTE_BUILDKIT_LOCAL_CA-}" \
     WORKCELL_REMOTE_BUILDKIT_SSL_CERTS="${WORKCELL_REMOTE_BUILDKIT_SSL_CERTS-}" \
     WORKCELL_DOCKER_HOST_HOME_ROOT="${WORKCELL_DOCKER_HOST_HOME_ROOT-}" \
@@ -104,8 +105,8 @@ sanitized_clone_git() {
   rm -f "${safe_git_config}"
 }
 
-mkdir -p "${ROOT_DIR}/tmp"
-TMP_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-release-bundle.XXXXXX")"
+mkdir -p "${TMPDIR:-/tmp}"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-release-bundle.XXXXXX")"
 EMPTY_GIT_TEMPLATE_DIR="${TMP_ROOT}/empty-git-template"
 mkdir -p "${EMPTY_GIT_TEMPLATE_DIR}"
 
@@ -190,32 +191,46 @@ build_bundle_locally() {
 
 build_bundle_in_validator() {
   local destination_dir="$1"
+  local destination="${destination_dir}/${BUNDLE_NAME}"
   local prefix="${BUNDLE_PREFIX%/}/"
   local docker_root=""
-  local relative_destination
+  local validator_uid=""
+  local validator_gid=""
+  local validator_home=""
+  local validator_cache_root=""
+  local validator_tmpdir=""
 
   mkdir -p "${destination_dir}"
   docker_root="$(workcell_docker_host_path "${ROOT_DIR}")"
-  relative_destination="${destination_dir#"${ROOT_DIR}/"}"
+  validator_uid="$(id -u)"
+  validator_gid="$(id -g)"
+  validator_home="/tmp/workcell-home-${validator_uid}"
+  validator_cache_root="${validator_home}/.cache"
+  validator_tmpdir="${validator_home}/.tmp"
 
   docker_cmd run --rm -i \
+    --user "${validator_uid}:${validator_gid}" \
     --entrypoint /bin/bash \
     -v "${docker_root}:/workspace" \
     -w /workspace \
-    -e HOME=/tmp \
+    -e HOME="${validator_home}" \
+    -e XDG_CACHE_HOME="${validator_cache_root}" \
+    -e GOCACHE="${validator_cache_root}/go-build" \
+    -e GOMODCACHE="${validator_cache_root}/go-mod" \
+    -e CARGO_TARGET_DIR="${validator_cache_root}/cargo-target" \
+    -e TMPDIR="${validator_tmpdir}" \
     -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     -e BUNDLE_NAME="${BUNDLE_NAME}" \
     -e BUNDLE_PREFIX="${prefix}" \
     -e ARCHIVE_REF="${ARCHIVE_REF}" \
-    -e DESTINATION_DIR="/workspace/${relative_destination}" \
     -e GIT_ATTR_NOSYSTEM=1 \
     -e GIT_CONFIG_NOSYSTEM=1 \
     -e GIT_CONFIG_SYSTEM=/dev/null \
     -e GIT_CONFIG_GLOBAL=/dev/null \
     "${VALIDATOR_IMAGE}" \
-    -s <<'SCRIPT'
+    -s <<'SCRIPT' >"${destination}"
 set -euo pipefail
-tar_path="${DESTINATION_DIR}/${BUNDLE_NAME%.tar.gz}.tar"
+mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
 clone_dir="$(mktemp -d /tmp/workcell-release-clone.XXXXXX)"
 template_dir="$(mktemp -d /tmp/workcell-git-template.XXXXXX)"
 gitconfig="$(mktemp /tmp/workcell-safe-gitconfig.XXXXXX)"
@@ -234,12 +249,9 @@ git -C "${clone_dir}" archive \
   --format=tar \
   --mtime="@${SOURCE_DATE_EPOCH}" \
   --prefix="${BUNDLE_PREFIX}" \
-  -o "${tar_path}" \
-  "${ARCHIVE_REF}"
-gzip -n -9 <"${tar_path}" >"${DESTINATION_DIR}/${BUNDLE_NAME}"
-rm -f "${tar_path}"
-(cd "${DESTINATION_DIR}" && sha256sum "${BUNDLE_NAME}" >SHA256SUMS)
+  "${ARCHIVE_REF}" | gzip -n -9
 SCRIPT
+  (cd "${destination_dir}" && sha256sum "${BUNDLE_NAME}" >SHA256SUMS)
 }
 
 if [[ -n "${BUNDLE_MANIFEST_PATH}" ]]; then
