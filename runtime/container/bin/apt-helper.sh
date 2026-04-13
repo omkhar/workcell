@@ -93,7 +93,7 @@ workcell_mark_lower_assurance_session() {
   tmp_file="$(mktemp "${WORKCELL_PERSISTED_ASSURANCE_FILE}.tmp.XXXXXX")"
   printf '%s\n' "lower-assurance-package-mutation" >"${tmp_file}"
   chmod 0444 "${tmp_file}"
-  mv "${tmp_file}" "${WORKCELL_PERSISTED_ASSURANCE_FILE}" 2>/dev/null || true
+  mv "${tmp_file}" "${WORKCELL_PERSISTED_ASSURANCE_FILE}"
 }
 
 mutability="${WORKCELL_CONTAINER_MUTABILITY:-}"
