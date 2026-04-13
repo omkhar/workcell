@@ -20,8 +20,8 @@ Releases.
 ### Changed
 
 - completed the unprivileged-user rollout across CI, release preflight,
-  docs-only validation, local pre-merge, reproducibility, and release-bundle
-  verification paths
+  docs-only validation, local pre-merge, local `build-and-test.sh --docker`
+  validation, reproducibility, and release-bundle verification paths
 - made remote heavy validation explicitly run the helper container as the
   remote login UID/GID, with a mapped Docker socket group and a read-only
   mounted host-home snapshot for trusted Docker client state
@@ -34,6 +34,8 @@ Releases.
   stat-based ownership and mode checks
 - failed closed on persisted runtime assurance writes and replaced predictable
   temp-file patterns with `mktemp` plus atomic writes
+- kept repo-mounted validator lanes nonroot for passwd-less caller UIDs by
+  synthesizing an isolated writable home instead of falling back to `/`
 - removed repeated protected-runtime signature stats from the exec guard fast
   path with cached lookup state
 

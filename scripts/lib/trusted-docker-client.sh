@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 resolve_workcell_real_home() {
-  local uid="" user="" home=""
+  local uid="" user="" home="" fallback_parent="" fallback_home=""
 
   if [[ -n "${WORKCELL_DOCKER_REAL_HOME:-}" ]]; then
     if [[ -d "${WORKCELL_DOCKER_REAL_HOME}" ]]; then
@@ -28,8 +28,18 @@ resolve_workcell_real_home() {
   fi
 
   if [[ -z "${home}" ]]; then
-    echo "Unable to resolve real home directory for uid ${uid}" >&2
-    return 1
+    # Repo-mounted validator lanes can run as arbitrary caller UIDs that do not
+    # have a passwd entry. Keep those flows nonroot by synthesizing an isolated
+    # writable home instead of collapsing to "/".
+    fallback_parent="${TMPDIR:-/tmp}"
+    if [[ "${fallback_parent}" != /* ]]; then
+      fallback_parent="/tmp"
+    fi
+    fallback_home="${fallback_parent%/}/workcell-home-${uid}"
+    mkdir -p "${fallback_home}"
+    chmod 0700 "${fallback_home}" 2>/dev/null || true
+    printf '%s\n' "${fallback_home}"
+    return 0
   fi
 
   printf '%s\n' "${home}"

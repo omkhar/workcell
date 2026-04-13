@@ -2556,6 +2556,28 @@ for caller in \
 done
 
 for required in \
+  "WORKCELL_BUILD_AND_TEST_VALIDATOR_UID=" \
+  "WORKCELL_BUILD_AND_TEST_VALIDATOR_GID=" \
+  "--user \"\${WORKCELL_BUILD_AND_TEST_VALIDATOR_UID}:\${WORKCELL_BUILD_AND_TEST_VALIDATOR_GID}\"" \
+  "-e HOME=\"\${WORKCELL_BUILD_AND_TEST_VALIDATOR_HOME}\"" \
+  "-e XDG_CACHE_HOME=\"\${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}\"" \
+  "-e GOCACHE=\"\${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/go-build\"" \
+  "-e GOMODCACHE=\"\${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/go-mod\"" \
+  "-e CARGO_TARGET_DIR=\"\${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/cargo-target\"" \
+  "-e TMPDIR=\"\${WORKCELL_BUILD_AND_TEST_VALIDATOR_TMP}\"" \
+  "mkdir -p \"\${HOME}\" \"\${XDG_CACHE_HOME}\" \"\${GOCACHE}\" \"\${GOMODCACHE}\" \"\${CARGO_TARGET_DIR}\" \"\${TMPDIR}\""; do
+  if ! grep -Fq -- "${required}" "${ROOT_DIR}/scripts/build-and-test.sh"; then
+    echo "Expected scripts/build-and-test.sh --docker to launch validator work under an explicit caller UID/GID with isolated writable state (${required})" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq "fallback_home=\"\${fallback_parent%/}/workcell-home-\${uid}\"" "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"; then
+  echo "Expected trusted-docker-client.sh to synthesize an isolated home for passwd-less caller UIDs" >&2
+  exit 1
+fi
+
+for required in \
   "--user \"\${validator_uid}:\${validator_gid}\"" \
   "-e HOME=\"\${validator_home}\"" \
   "-e XDG_CACHE_HOME=\"\${validator_cache_root}\"" \

@@ -22,7 +22,11 @@ The host launcher still starts the managed runtime with explicit `--user 0:0`
 only long enough for PID 1 to seed runtime state and then drop privileges.
 Repo-mounted validator and release-helper paths instead run under explicit
 caller UID/GID mappings with isolated writable home, cache, and tmp roots so
-the mounted checkout never depends on ambient container-root defaults.
+the mounted checkout never depends on ambient container-root defaults. When an
+explicit caller UID has no passwd entry inside the image, the launcher
+synthesizes an isolated writable home for that lane. The local
+`scripts/build-and-test.sh --docker` validator snapshot uses that same
+contract.
 
 ## Runtime profiles
 
