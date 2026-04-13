@@ -16,8 +16,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"unicode/utf8"
+
+	"github.com/omkhar/workcell/internal/secretfile"
 )
 
 var SupportedAgents = map[string]struct{}{
@@ -922,31 +923,11 @@ func WritePolicyFile(policyPath string, policy map[string]any) error {
 }
 
 func RequireSecretFile(source string, label string) (string, error) {
-	if err := requireNoSymlink(source, label); err != nil {
-		return "", err
-	}
-	f, err := os.OpenFile(source, os.O_RDONLY, 0)
+	handle, err := secretfile.Open(source, label, getUID())
 	if err != nil {
-		return "", die(fmt.Sprintf("%s must point at a file: %s", label, source))
+		return "", die(err.Error())
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return "", die(fmt.Sprintf("%s must point at a file: %s", label, source))
-	}
-	if !info.Mode().IsRegular() {
-		return "", die(fmt.Sprintf("%s must point at a file: %s", label, source))
-	}
-	sysStat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", errors.New("unsupported file stat type")
-	}
-	if int(sysStat.Uid) != getUID() {
-		return "", die(fmt.Sprintf("%s must be owned by uid %d: %s", label, getUID(), source))
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return "", die(fmt.Sprintf("%s must not be group/world-accessible: %s", label, source))
-	}
+	defer handle.Close()
 	return source, nil
 }
 

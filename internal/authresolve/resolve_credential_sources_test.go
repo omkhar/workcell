@@ -207,6 +207,46 @@ func TestRunLaunchModeAcceptsTestExportFile(t *testing.T) {
 	})
 }
 
+func TestMaterializeFileUnderRootRejectsValidatedSourceSwappedToSymlink(t *testing.T) {
+	root := t.TempDir()
+	outputRoot := filepath.Join(root, "out")
+	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sourcePath := filepath.Join(root, "claude-export.json")
+	writePolicy(t, sourcePath, "{\"token\":\"claude\"}\n")
+	unsafeTarget := filepath.Join(root, "unsafe.json")
+	writePolicy(t, unsafeTarget, "{\"token\":\"unsafe\"}\n")
+	if err := os.Chmod(unsafeTarget, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	validatedSource, err := requireSecretFile(sourcePath, testClaudeExportEnv)
+	if err != nil {
+		t.Fatalf("requireSecretFile() error: %v", err)
+	}
+
+	if err := os.Remove(sourcePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(unsafeTarget, sourcePath); err != nil {
+		t.Fatal(err)
+	}
+
+	outputRootFS, err := os.OpenRoot(outputRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outputRootFS.Close()
+
+	err = materializeFileUnderRoot(validatedSource, outputRootFS, filepath.Join("resolved", "credentials", "claude_auth.json"))
+	if err == nil {
+		got := snapshotFile(t, filepath.Join(outputRoot, "resolved", "credentials", "claude_auth.json"))
+		t.Fatalf("materializeFileUnderRoot() unexpectedly accepted swapped symlink source and copied %q", got.data)
+	}
+}
+
 func TestRunRejectsOutputPolicyOutsideOutputRoot(t *testing.T) {
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
