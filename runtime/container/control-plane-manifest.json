@@ -130,7 +130,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/apt-helper.sh",
       "runtime_path": "/usr/local/libexec/workcell/apt-helper.sh",
-      "sha256": "5b4dc938607e77ab7d19ad9f6b5c7c8677c32bf729d18c95090ba20ed19192b2"
+      "sha256": "d395a8e2bff77e8f9135d4c74a306f22a93ac502884e18da737c5abbe89ea1f4"
     },
     {
       "kind": "runtime-control-plane",
@@ -190,7 +190,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/runtime-user.sh",
       "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
-      "sha256": "18c3ef1bbd91f0571fb3c1f3c730fb3f698080c6b552811fb19efa85aad29b9a"
+      "sha256": "229ae435e982def1b98af1a111133a2a154f4a1857450bf55261fad7d9a4db29"
     },
     {
       "kind": "runtime-control-plane",

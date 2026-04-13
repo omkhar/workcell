@@ -16,9 +16,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/omkhar/workcell/internal/rootio"
+	"github.com/omkhar/workcell/internal/secretfile"
 )
 
 const testClaudeExportEnv = "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE"
@@ -424,7 +424,7 @@ func resolveClaudeMacosKeychain(outputRoot *os.Root, relativeDestination, resolu
 }
 
 func materializeFileUnderRoot(source string, outputRoot *os.Root, relativeDestination string) error {
-	sourceHandle, err := os.Open(source)
+	sourceHandle, err := secretfile.Open(source, testClaudeExportEnv, os.Getuid())
 	if err != nil {
 		return err
 	}
@@ -992,26 +992,11 @@ func requireNoSymlinkInPathChain(path, label string) error {
 }
 
 func requireSecretFile(source, label string) (string, error) {
-	fi, err := os.Lstat(source)
+	handle, err := secretfile.Open(source, label, os.Getuid())
 	if err != nil {
 		return "", err
 	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("%s must not be a symlink: %s", label, source)
-	}
-	if !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("%s must point at a file: %s", label, source)
-	}
-	stat, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", fmt.Errorf("%s metadata unavailable: %s", label, source)
-	}
-	if int(stat.Uid) != os.Getuid() {
-		return "", fmt.Errorf("%s must be owned by uid %d: %s", label, os.Getuid(), source)
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("%s must not be group/world-accessible: %s", label, source)
-	}
+	defer handle.Close()
 	return source, nil
 }
 

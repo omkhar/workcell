@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/rootio"
+	"github.com/omkhar/workcell/internal/secretfile"
 )
 
 var (
@@ -725,7 +726,7 @@ func managedRelativePath(managedRoot string, path string, label string) (string,
 }
 
 func writeSourceFile(root *os.Root, source string, destination string) error {
-	in, err := os.Open(source)
+	in, err := secretfile.Open(source, "credential source", os.Getuid())
 	if err != nil {
 		return err
 	}

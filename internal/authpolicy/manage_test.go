@@ -513,3 +513,40 @@ func TestSetRejectsSymlinkedManagedRootDestination(t *testing.T) {
 	}
 	mustContain(t, got.stderr, "must not be a symlink")
 }
+
+func TestWriteSourceFileRejectsValidatedSourceSwappedToSymlink(t *testing.T) {
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(managedRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sourcePath := filepath.Join(root, "auth.json")
+	writeFile(t, sourcePath, "{\"token\":\"safe\"}\n", 0o600)
+	unsafeTarget := filepath.Join(root, "unsafe.json")
+	writeFile(t, unsafeTarget, "{\"token\":\"unsafe\"}\n", 0o644)
+
+	validatedSource, err := requireSecretFile(sourcePath, "credentials.codex_auth")
+	if err != nil {
+		t.Fatalf("requireSecretFile() error: %v", err)
+	}
+
+	if err := os.Remove(sourcePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(unsafeTarget, sourcePath); err != nil {
+		t.Fatal(err)
+	}
+
+	managedRootFS, err := os.OpenRoot(managedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer managedRootFS.Close()
+
+	err = writeSourceFile(managedRootFS, validatedSource, filepath.Join("codex", "auth.json"))
+	if err == nil {
+		got := readFile(t, filepath.Join(managedRoot, "codex", "auth.json"))
+		t.Fatalf("writeSourceFile() unexpectedly accepted swapped symlink source and copied %q", got)
+	}
+}

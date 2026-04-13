@@ -234,7 +234,8 @@ workcell_prepare_runtime_identity() {
   workcell_append_shadow_entry "${user_name}"
 
   mkdir -p /etc/sudoers.d
-  local sudoers_tmp="/etc/sudoers.d/workcell-runtime-user.tmp.$$"
+  local sudoers_tmp
+  sudoers_tmp="$(mktemp /etc/sudoers.d/workcell-runtime-user.tmp.XXXXXX)"
   printf '%s ALL=(root) NOPASSWD: /usr/local/libexec/workcell/apt-helper.sh\n' "${user_name}" >"${sudoers_tmp}"
   chmod 0440 "${sudoers_tmp}"
   mv "${sudoers_tmp}" /etc/sudoers.d/workcell-runtime-user
@@ -245,7 +246,8 @@ workcell_prepare_runtime_identity() {
 workcell_write_readonly_state_file() {
   local path="$1"
   local value="$2"
-  local tmp_path="${path}.tmp.$$"
+  local tmp_path
+  tmp_path="$(mktemp "${path}.tmp.XXXXXX")"
 
   mkdir -p "$(dirname "${path}")"
   printf '%s\n' "${value}" >"${tmp_path}"

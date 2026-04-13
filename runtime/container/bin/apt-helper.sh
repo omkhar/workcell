@@ -77,24 +77,23 @@ workcell_validate_apt_args() {
 
 workcell_mark_lower_assurance_session() {
   local persisted_dir=""
+  local tmp_file=""
 
   mkdir -p "${WORKCELL_RUNTIME_STATE_DIR}"
-  if [[ -e "${WORKCELL_RUNTIME_ASSURANCE_FILE}" ]]; then
-    chmod u+w "${WORKCELL_RUNTIME_ASSURANCE_FILE}"
-  fi
-  printf '%s\n' "lower-assurance-package-mutation" >"${WORKCELL_RUNTIME_ASSURANCE_FILE}"
-  chmod 0444 "${WORKCELL_RUNTIME_ASSURANCE_FILE}"
+  tmp_file="$(mktemp "${WORKCELL_RUNTIME_ASSURANCE_FILE}.tmp.XXXXXX")"
+  printf '%s\n' "lower-assurance-package-mutation" >"${tmp_file}"
+  chmod 0444 "${tmp_file}"
+  mv "${tmp_file}" "${WORKCELL_RUNTIME_ASSURANCE_FILE}"
   persisted_dir="$(dirname "${WORKCELL_PERSISTED_ASSURANCE_FILE}")"
   mkdir -p "${persisted_dir}"
   if [[ -L "${WORKCELL_PERSISTED_ASSURANCE_FILE}" ]]; then
     echo "Workcell blocked unsafe persisted assurance symlink: ${WORKCELL_PERSISTED_ASSURANCE_FILE}" >&2
     exit 2
   fi
-  if [[ -e "${WORKCELL_PERSISTED_ASSURANCE_FILE}" ]]; then
-    chmod u+w "${WORKCELL_PERSISTED_ASSURANCE_FILE}" 2>/dev/null || true
-  fi
-  printf '%s\n' "lower-assurance-package-mutation" >"${WORKCELL_PERSISTED_ASSURANCE_FILE}"
-  chmod 0444 "${WORKCELL_PERSISTED_ASSURANCE_FILE}" 2>/dev/null || true
+  tmp_file="$(mktemp "${WORKCELL_PERSISTED_ASSURANCE_FILE}.tmp.XXXXXX")"
+  printf '%s\n' "lower-assurance-package-mutation" >"${tmp_file}"
+  chmod 0444 "${tmp_file}"
+  mv "${tmp_file}" "${WORKCELL_PERSISTED_ASSURANCE_FILE}"
 }
 
 mutability="${WORKCELL_CONTAINER_MUTABILITY:-}"
