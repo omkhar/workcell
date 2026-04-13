@@ -4,6 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKIP_HEAVY_HOST_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
 
+HOME="${HOME:-/tmp/workcell-home}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
+GOCACHE="${GOCACHE:-${XDG_CACHE_HOME}/go-build}"
+GOMODCACHE="${GOMODCACHE:-${XDG_CACHE_HOME}/go-mod}"
+CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${XDG_CACHE_HOME}/cargo-target}"
+TMPDIR="${TMPDIR:-${HOME}/.tmp}"
+export HOME XDG_CACHE_HOME GOCACHE GOMODCACHE CARGO_TARGET_DIR TMPDIR
+mkdir -p "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
+
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "Missing required tool: $1" >&2

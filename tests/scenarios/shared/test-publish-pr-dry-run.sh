@@ -33,8 +33,8 @@ for candidate in /opt/homebrew/bin /usr/local/bin; do
   fi
 done
 if [[ -z "${TRUSTED_BIN_DIR}" ]]; then
-  echo "missing writable trusted host bin directory" >&2
-  exit 1
+  echo "Skipping publish-pr scenario: missing writable trusted host bin directory"
+  exit 0
 fi
 TRUSTED_GH_STUB="${TRUSTED_BIN_DIR}/workcell-gh-scenario-${RANDOM}-$$"
 

@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD024 -->
 # Changelog
 
 This project follows a lightweight Keep a Changelog style.
@@ -6,6 +7,61 @@ Historical release details before this file existed remain available in GitHub
 Releases.
 
 ## Unreleased
+
+## v0.8.0 - 2026-04-13
+
+### Added
+
+- a named unprivileged `workcell` default user for the runtime, validator, and
+  remote-validator images
+- invariant coverage that keeps repo-mounted validator callers on explicit
+  caller UID/GID mappings with isolated writable home, cache, and tmp roots
+
+### Changed
+
+- completed the unprivileged-user rollout across CI, release preflight,
+  docs-only validation, local pre-merge, local `build-and-test.sh --docker`
+  validation, reproducibility, and release-bundle verification paths
+- made remote heavy validation explicitly run the helper container as the
+  remote login UID/GID, with a mapped Docker socket group and a read-only
+  mounted host-home snapshot for trusted Docker client state
+- clarified the roadmap around explicit non-macOS deployment planning without
+  claiming host-platform parity
+
+### Fixed
+
+- closed secret-file TOCTOU validation races by opening reviewed files before
+  stat-based ownership and mode checks
+- failed closed on persisted runtime assurance writes and replaced predictable
+  temp-file patterns with `mktemp` plus atomic writes
+- kept repo-mounted validator lanes nonroot for passwd-less caller UIDs by
+  synthesizing an isolated writable home instead of falling back to `/`
+- removed repeated protected-runtime signature stats from the exec guard fast
+  path with cached lookup state
+
+## v0.7.2 - 2026-04-11
+
+### Changed
+
+- hardened runtime validation and audit handling in the managed path and its
+  release-facing checks
+
+## v0.7.1 - 2026-04-10
+
+### Added
+
+- review-gated hosted-control policy for the public release environment
+- fuzz coverage for the validation toolchain and pinned markdownlint installs
+
+### Changed
+
+- kept validator markdownlint available at runtime for repo validation
+- made host-side session validation failures deterministic
+
+### Fixed
+
+- hardened the `development` wrapper and validation gates against trust-widening
+  execution paths
 
 ## v0.7.0 - 2026-04-09
 
@@ -42,3 +98,5 @@ Releases.
   supported runtime or validation flow
 - eliminated the runtime build dependency on live `rustup-init` downloads by
   copying a pinned Rust toolchain image into the container build
+
+<!-- markdownlint-enable MD024 -->

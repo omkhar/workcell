@@ -17,6 +17,7 @@ Workcell workflows.
 | provider auth injected through the reviewed policy model | tested | container smoke, auth-status tests, provider-specific helpers |
 | host-side signed `publish-pr` handoff | tested | shared scenario tests and invariant checks |
 | repo control-plane masking and provider-home re-seeding | tested | invariants and smoke |
+| repo-mounted validator and release-helper runs stay nonroot with explicit caller identity and isolated writable state | tested | CI, release preflight, `scripts/pre-merge.sh`, and invariant checks |
 | prompt-autonomy downgrade labeling | tested for Codex, partial elsewhere | invariants plus provider-specific coverage |
 | host-side session inventory and audit export | tested | `tests/scenarios/shared/test-session-commands.sh`, `internal/hostutil/sessions_test.go` |
 | bundle installer plus uninstall helper on the supported GitHub-hosted macOS matrix | tested | `scripts/verify-invariants.sh`, CI, tagged release install verification |
@@ -30,7 +31,8 @@ Workcell workflows.
 
 ## Notes
 
-The most heavily tested paths are the secretless runtime boundary, release
-preflight, reproducibility, and signed publication. The biggest remaining gaps
-are local macOS boundary proof, deeper end-to-end live-provider coverage, and
-fuller lower-assurance transition coverage.
+The most heavily tested paths are the secretless runtime boundary, explicit
+nonroot repo validation and release preflight, reproducibility, and signed
+publication. The biggest remaining gaps are local macOS boundary proof, deeper
+end-to-end live-provider coverage, and fuller lower-assurance transition
+coverage.

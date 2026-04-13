@@ -45,6 +45,9 @@ Use it when you need to verify:
 remote `linux/amd64` host and runs validation there. This is useful when local
 heavy checks are too slow, but it is still a lower-assurance trusted-builder
 path because the helper container talks to the remote host's Docker daemon.
+The helper now runs as the remote login UID/GID, maps the remote Docker socket
+group explicitly, and mounts only a read-only snapshot of the remote host home
+needed for trusted Docker client state.
 
 ## GitHub CI vs local boundary proof
 

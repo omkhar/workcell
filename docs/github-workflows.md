@@ -24,6 +24,10 @@ reinforce the runtime boundary and release posture, not replace them.
 - it verifies from GitHub-owned sources that the release install matrix still
   matches the newest two GitHub-hosted Apple Silicon macOS runner labels
 - it publishes from the archived source bundle, not the live checkout
+- it runs repo-mounted validator and release-helper lanes under an explicit
+  caller UID/GID with isolated writable home, cache, and tmp roots rather than
+  relying on ambient container-root defaults; passwd-less caller UIDs get a
+  synthesized isolated home instead of collapsing to `/`
 - it re-verifies upstream provider releases and every reviewed upstream pin from the archived source tree before packaging and signing
 - it gates publication on release-bundle install/uninstall and Homebrew
   install/uninstall verification on GitHub-hosted Apple Silicon `macos-26`
@@ -61,6 +65,13 @@ Other macOS versions are not install-gated today.
 - it leaves expensive validation behind the same maintainer approval gate used
   for other public-repo PRs instead of auto-dispatching workflows during
   publication
+
+`ci.yml` and `docs.yml` use the same explicit nonroot validator contract when
+they bind-mount the repository: the workflow computes the caller UID/GID,
+passes isolated writable roots, and creates those paths inside the validator
+before repo validation or docs checks run. That contract still holds when the
+caller UID lacks a passwd entry inside the image because the launcher
+synthesizes an isolated writable home for those lanes.
 
 ## Hosted controls
 

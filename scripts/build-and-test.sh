@@ -59,12 +59,27 @@ run_validate_repo_in_validator_snapshot() {
   shift
 
   local snapshot_parent=""
+  local validator_uid=""
+  local validator_gid=""
+  local validator_home=""
+  local validator_cache=""
+  local validator_tmp=""
   snapshot_parent="$(default_snapshot_parent)"
   mkdir -p "${snapshot_parent}"
+  validator_uid="$(id -u)"
+  validator_gid="$(id -g)"
+  validator_home="/tmp/workcell-home-${validator_uid}"
+  validator_cache="${validator_home}/.cache"
+  validator_tmp="${validator_home}/.tmp"
 
   # shellcheck disable=SC2016
   env \
     "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${snapshot_parent}" \
+    "WORKCELL_BUILD_AND_TEST_VALIDATOR_UID=${validator_uid}" \
+    "WORKCELL_BUILD_AND_TEST_VALIDATOR_GID=${validator_gid}" \
+    "WORKCELL_BUILD_AND_TEST_VALIDATOR_HOME=${validator_home}" \
+    "WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE=${validator_cache}" \
+    "WORKCELL_BUILD_AND_TEST_VALIDATOR_TMP=${validator_tmp}" \
     "${ROOT_DIR}/scripts/with-validation-snapshot.sh" \
     --repo "${ROOT_DIR}" \
     --mode worktree \
@@ -73,10 +88,22 @@ run_validate_repo_in_validator_snapshot() {
     /bin/bash -p -c '
       workspace="$(pwd -P)"
       docker run --rm \
+        --user "${WORKCELL_BUILD_AND_TEST_VALIDATOR_UID}:${WORKCELL_BUILD_AND_TEST_VALIDATOR_GID}" \
+        --entrypoint /bin/bash \
+        -e HOME="${WORKCELL_BUILD_AND_TEST_VALIDATOR_HOME}" \
+        -e XDG_CACHE_HOME="${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}" \
+        -e GOCACHE="${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/go-build" \
+        -e GOMODCACHE="${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/go-mod" \
+        -e CARGO_TARGET_DIR="${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/cargo-target" \
+        -e TMPDIR="${WORKCELL_BUILD_AND_TEST_VALIDATOR_TMP}" \
         -v "${workspace}:/workspace" \
         -w /workspace \
         "$1" \
-        ./scripts/validate-repo.sh "${@:2}"
+        -lc '"'"'
+          set -euo pipefail
+          mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
+          ./scripts/validate-repo.sh "$@"
+        '"'"' bash "${@:2}"
       ./scripts/verify-invariants.sh
     ' bash "${image_tag}" "$@"
 }

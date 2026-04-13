@@ -5,8 +5,8 @@
 [![Security](https://github.com/omkhar/workcell/actions/workflows/security.yml/badge.svg)](https://github.com/omkhar/workcell/actions/workflows/security.yml)
 
 Workcell runs coding agents inside a bounded local runtime on Apple Silicon
-macOS: a
-dedicated Colima VM plus a hardened container inside that VM. It supports
+macOS: a dedicated Colima VM plus a hardened container inside that VM. It
+supports
 Codex, Claude Code, and Gemini through thin provider adapters that seed each
 provider's native control plane without pretending provider config is the
 security boundary.
@@ -23,6 +23,11 @@ boundary.
   control-plane mapping
 - keep publication on the host: signed commits and GitHub publication stay out
   of Tier 1
+- keep verification paths nonroot by default: runtime and validator images
+  default to a named unprivileged `workcell` user, while repo-mounted
+  validation lanes pass explicit caller UID/GID and isolated writable state,
+  with a synthesized isolated home when the caller UID has no passwd entry in
+  the image
 - keep lower-assurance paths visible: `development`, package mutation,
   transcripts, and `breakglass` are labeled instead of implied
 
@@ -240,6 +245,9 @@ workcell publish-pr --workspace /path/to/repo --branch feature/name \
 Tagged releases are rebuilt and verified before publication. The release path:
 
 - reruns validation, smoke, and reproducibility checks
+- reruns repo-mounted validator and release-helper paths under an explicit
+  caller UID/GID with isolated writable home, cache, and tmp roots instead of
+  relying on ambient container-root defaults, including passwd-less caller UIDs
 - verifies from GitHub-owned sources that the release install matrix still
   targets the newest two GitHub-hosted Apple Silicon macOS runner labels
 - refuses to publish if any reviewed provider, Linux base image, Linux

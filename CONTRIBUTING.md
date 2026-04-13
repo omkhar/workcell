@@ -155,6 +155,7 @@ validator container from a disposable snapshot of the current worktree.
 - workflow lint
 - repo validation
 - invariant checks
+- host-side `publish-pr` scenario coverage
 - container smoke
 - source-bundle reproducibility
 - runtime-image reproducibility
@@ -168,6 +169,10 @@ Helpful flags:
 ./scripts/pre-merge.sh --remote
 ./scripts/pre-merge.sh --rebuild-validator
 ```
+
+`--remote` is an explicit lower-assurance trusted-builder path. It is useful
+for heavy `linux/amd64` validation, smoke, repro, and release-bundle checks,
+but it is not equivalent to the default local macOS Colima boundary proof.
 
 ## Pull requests
 

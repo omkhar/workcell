@@ -6,6 +6,7 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     HOME=/tmp \
     TMPDIR="${TMPDIR:-/tmp}" \
     WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT-}" \
+    WORKCELL_DOCKER_REAL_HOME="${WORKCELL_DOCKER_REAL_HOME-}" \
     WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
     WORKCELL_DOCKER_HOST_HOME_ROOT="${WORKCELL_DOCKER_HOST_HOME_ROOT-}" \
     WORKCELL_DOCKER_HOST_WORKSPACE_ROOT="${WORKCELL_DOCKER_HOST_WORKSPACE_ROOT-}" \
@@ -1557,6 +1558,18 @@ EOF
     exit 1
   fi
 fi
+
+if [[ "$(docker_cmd run --rm --entrypoint /usr/bin/id "${IMAGE_TAG}" -u)" == "0" ]]; then
+  echo "expected runtime image default user to remain unprivileged" >&2
+  exit 1
+fi
+
+docker_cmd run --rm \
+  -e AGENT_NAME=codex \
+  -e AGENT_UI=cli \
+  -e CODEX_PROFILE=strict \
+  -e WORKCELL_MODE=strict \
+  "${IMAGE_TAG}" codex --version >/dev/null
 
 populate_runtime_security_args ephemeral
 if docker_cmd run --rm \

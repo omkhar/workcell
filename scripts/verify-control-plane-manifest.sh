@@ -122,8 +122,7 @@ fi
 (cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-metadatautil verify-control-plane-manifest "${TMP_ROOT}/a.json")
 
 if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  mkdir -p "${ROOT_DIR}/tmp"
-  NESTED_ROOT="$(mktemp -d "${ROOT_DIR}/tmp/workcell-control-plane-nested.XXXXXX")"
+  NESTED_ROOT="$(mktemp -d "${TMP_ROOT}/nested-control-plane.XXXXXX")"
   ARCHIVE_ROOT="${TMP_ROOT}/archived-source"
   copy_tracked_worktree "${ARCHIVE_ROOT}"
   copy_tracked_worktree "${NESTED_ROOT}"
