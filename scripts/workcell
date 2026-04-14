@@ -726,8 +726,16 @@ declare -a DIRECT_SOURCE_MOUNTS=()
 declare -a WORKSPACE_IMPORT_MOUNTS=()
 declare -a CACHE_MOUNTS=()
 declare -a RUNTIME_NETWORK_ARGS=()
+INTERACTIVE_HOST_TERMINAL_RESTORE_NEEDED=0
+
+mark_interactive_host_terminal_dirty() {
+  [[ -t 0 ]] && [[ -t 1 ]] || return 0
+  INTERACTIVE_HOST_TERMINAL_RESTORE_NEEDED=1
+}
 
 restore_interactive_host_terminal() {
+  [[ "${INTERACTIVE_HOST_TERMINAL_RESTORE_NEEDED}" -eq 1 ]] || return 0
+  INTERACTIVE_HOST_TERMINAL_RESTORE_NEEDED=0
   [[ -t 0 ]] && [[ -t 1 ]] || return 0
   [[ -r /dev/tty ]] && [[ -w /dev/tty ]] || return 0
 
@@ -5355,6 +5363,7 @@ else
 fi
 
 if [[ -t 0 ]] && [[ -t 1 ]]; then
+  mark_interactive_host_terminal_dirty
   DOCKER_RUN=("${HOST_DOCKER_BIN}" run --init -it "${DOCKER_RUN[@]:3}")
 fi
 

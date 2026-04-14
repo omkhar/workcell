@@ -329,7 +329,7 @@ func selectCodexStable(currentVersion string, cutoff time.Time, sources Provider
 		return ProviderBumpSelection{}, err
 	}
 	if release.Prerelease {
-		return ProviderBumpSelection{}, fmt.Errorf("Codex stable candidate %s unexpectedly resolved to a prerelease", version)
+		return ProviderBumpSelection{}, fmt.Errorf("codex stable candidate %s unexpectedly resolved to a prerelease", version)
 	}
 	armDigest, err := releaseAssetDigest(release, "codex-aarch64-unknown-linux-gnu.tar.gz")
 	if err != nil {
@@ -407,7 +407,7 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, sources Provide
 		armChecksum := manifest.Platforms["linux-arm64"].Checksum
 		amdChecksum := manifest.Platforms["linux-x64"].Checksum
 		if armChecksum == "" || amdChecksum == "" {
-			return ProviderBumpSelection{}, fmt.Errorf("Claude manifest for %s is missing Linux checksums", candidate.Raw)
+			return ProviderBumpSelection{}, fmt.Errorf("claude manifest for %s is missing Linux checksums", candidate.Raw)
 		}
 		return ProviderBumpSelection{
 			Channel:        "stable",

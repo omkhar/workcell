@@ -420,7 +420,7 @@ func resolveClaudeMacosKeychain(outputRoot *os.Root, relativeDestination, resolu
 		}
 		return "configured-only", nil
 	}
-	return "", errors.New("Claude macOS login reuse is configured but no supported export path is available. Use claude_api_key or remove credentials.claude_auth.")
+	return "", errors.New("claude macOS login reuse is configured but no supported export path is available; use claude_api_key or remove credentials.claude_auth")
 }
 
 func materializeFileUnderRoot(source string, outputRoot *os.Root, relativeDestination string) error {
@@ -804,35 +804,6 @@ func mergePolicyFragment(base, addition map[string]any, sourcePath string) error
 	return nil
 }
 
-func loadRawPolicy(policyPath string) (map[string]any, error) {
-	if _, err := os.Stat(policyPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return map[string]any{"version": 1}, nil
-		}
-		return nil, err
-	}
-	content, err := os.ReadFile(policyPath)
-	if err != nil {
-		return nil, err
-	}
-	loaded, err := parseTOMLSubset(string(content), policyPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateAllowedKeys(loaded, rootPolicyKeys, "root policy"); err != nil {
-		return nil, err
-	}
-	version := loaded["version"]
-	if version == nil {
-		loaded["version"] = 1
-		return loaded, nil
-	}
-	if version != 1 {
-		return nil, fmt.Errorf("unsupported injection policy version: %v", version)
-	}
-	return loaded, nil
-}
-
 func rebasePolicyFragment(policy map[string]any, fragmentDir string) map[string]any {
 	rebased := map[string]any{}
 	for key, value := range policy {
@@ -957,16 +928,6 @@ func requirePathWithin(root, candidate, label string) error {
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("%s must stay within %s: %s", label, resolvedRoot, resolvedCandidate)
-	}
-	return nil
-}
-
-func requireNoSymlink(path, label string) error {
-	if _, err := os.Lstat(path); err != nil {
-		return err
-	}
-	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s must not be a symlink: %s", label, path)
 	}
 	return nil
 }

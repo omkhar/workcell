@@ -176,9 +176,6 @@ func parseSetArgs(program string, args []string, stderr io.Writer) (setOptions, 
 	if _, ok := CredentialKeys[opts.credential]; !ok {
 		return setOptions{}, fmt.Errorf("invalid credential: %s", opts.credential)
 	}
-	if opts.sourceRaw != "" && opts.resolver != "" {
-		// Let the command path report the exact Python-style error.
-	}
 	opts.policyPath = resolveInputPath(opts.policyPath)
 	opts.managedRoot = resolveInputPath(opts.managedRoot)
 	return opts, nil
@@ -316,7 +313,7 @@ func commandSet(opts setOptions) error {
 	}
 
 	if opts.sourceRaw != "" {
-		sourceBase := filepath.Clean(".")
+		var sourceBase string
 		if opts.sourceBaseRaw != "" {
 			sourceBase = resolveInputPath(opts.sourceBaseRaw)
 		} else {
@@ -1021,9 +1018,6 @@ func validateStatusCredentialEntry(key string, raw any) error {
 			return die(fmt.Sprintf("credentials.%s must declare source or resolver", key))
 		}
 		return nil
-	}
-	if _, ok := allowedResolvers[key]; !ok || allowedResolvers[key][resolver] == (struct{}{}) {
-		// fallthrough handled below
 	}
 	if _, ok := allowedResolvers[key]; !ok {
 		return die(fmt.Sprintf("credentials.%s.resolver is unsupported: %s", key, resolver))

@@ -39,5 +39,5 @@ func run(args []string) error {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: workcell-colimautil <validate-runtime-mounts|validate-profile-config> ...")
+	return fmt.Errorf("usage: workcell-colimautil <validate-runtime-mounts|validate-profile-config> [args...]")
 }

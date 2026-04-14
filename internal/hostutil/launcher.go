@@ -307,7 +307,7 @@ func ResolveHostOutputCandidate(raw string) (string, error) {
 		info, err := os.Lstat(current)
 		if err == nil && info.Mode()&os.ModeSymlink != 0 {
 			if _, ok := allowedSymlinkRoots[current]; !ok {
-				return "", fmt.Errorf("Refusing symlinked host output path component: %s", current)
+				return "", fmt.Errorf("refusing symlinked host output path component: %s", current)
 			}
 		}
 		if current == filepath.Dir(current) {
@@ -317,7 +317,7 @@ func ResolveHostOutputCandidate(raw string) (string, error) {
 	}
 
 	if info, err := os.Stat(target); err == nil && !info.Mode().IsRegular() {
-		return "", fmt.Errorf("Host output path must be a regular file or a new file path: %s", target)
+		return "", fmt.Errorf("host output path must be a regular file or a new file path: %s", target)
 	}
 	return target, nil
 }
@@ -432,7 +432,7 @@ func ExtractCodexVersion(dockerfilePath string) (string, error) {
 	}
 	match := codexVersionPattern.FindStringSubmatch(string(content))
 	if match == nil {
-		return "", errors.New("Unable to extract CODEX_VERSION from Dockerfile")
+		return "", errors.New("unable to extract CODEX_VERSION from Dockerfile")
 	}
 	return strings.TrimSpace(match[1]), nil
 }
@@ -447,7 +447,7 @@ func ValidateSecurityOptions(raw string) error {
 			return nil
 		}
 	}
-	return errors.New("Managed runtime requires Docker seccomp support to stay active.")
+	return errors.New("managed runtime requires Docker seccomp support to stay active")
 }
 
 func CanonicalizeToolPath(candidate string) (string, error) {

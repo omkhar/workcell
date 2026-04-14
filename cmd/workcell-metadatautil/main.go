@@ -261,12 +261,12 @@ func main() {
 		return
 	case "validate-json":
 		if len(os.Args) < 3 {
-			die(fmt.Errorf("usage: %s validate-json FILE...", os.Args[0]))
+			die(fmt.Errorf("usage: %s validate-json FILE [FILE...]", os.Args[0]))
 		}
 		err = metadatautil.ValidateJSONFiles(os.Args[2:])
 	case "validate-toml":
 		if len(os.Args) < 3 {
-			die(fmt.Errorf("usage: %s validate-toml FILE...", os.Args[0]))
+			die(fmt.Errorf("usage: %s validate-toml FILE [FILE...]", os.Args[0]))
 		}
 		err = metadatautil.ValidateTOMLFiles(os.Args[2:])
 	case "validate-requirements":

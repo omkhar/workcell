@@ -96,7 +96,7 @@ func CheckWorkflows(rootDir, policyPath string) error {
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		return fmt.Errorf(
-			"Workflow jobs are missing required status-check names from %s: %s",
+			"workflow jobs are missing required status-check names from %s: %s",
 			policyPath,
 			strings.Join(missing, ", "),
 		)
@@ -463,7 +463,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		}
 	}
 	if len(activeRulesets) == 0 {
-		return fmt.Errorf("No active rulesets found on %s", repo)
+		return fmt.Errorf("no active rulesets found on %s", repo)
 	}
 
 	hasRefInclude := func(ruleset map[string]any, expected string) bool {
@@ -493,18 +493,18 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	requireBypassShape := func(ruleset map[string]any, actorType, bypassMode string, requireNonEmpty bool) error {
 		actors, _ := ruleset["bypass_actors"].([]any)
 		if requireNonEmpty && len(actors) == 0 {
-			return fmt.Errorf("Ruleset %v on %s must declare an explicit bypass actor", ruleset["name"], repo)
+			return fmt.Errorf("ruleset %v on %s must declare an explicit bypass actor", ruleset["name"], repo)
 		}
 		for _, raw := range actors {
 			entry, ok := raw.(map[string]any)
 			if !ok {
-				return fmt.Errorf("Ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
+				return fmt.Errorf("ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
 			}
 			if at, _ := entry["actor_type"].(string); at != actorType {
-				return fmt.Errorf("Ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
+				return fmt.Errorf("ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
 			}
 			if bm, _ := entry["bypass_mode"].(string); bm != bypassMode {
-				return fmt.Errorf("Ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
+				return fmt.Errorf("ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
 			}
 		}
 		return nil
@@ -531,22 +531,22 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		}
 	}
 	if branchIntegrity == nil {
-		return fmt.Errorf("Missing active default-branch integrity ruleset on %s with required_signatures, non_fast_forward, and deletion", repo)
+		return fmt.Errorf("missing active default-branch integrity ruleset on %s with required_signatures, non_fast_forward, and deletion", repo)
 	}
 	if branchReview == nil {
-		return fmt.Errorf("Missing active default-branch review ruleset on %s with a pull_request rule", repo)
+		return fmt.Errorf("missing active default-branch review ruleset on %s with a pull_request rule", repo)
 	}
 	if branchStatusChecks == nil {
-		return fmt.Errorf("Missing active default-branch status-check ruleset on %s with a required_status_checks rule", repo)
+		return fmt.Errorf("missing active default-branch status-check ruleset on %s with a required_status_checks rule", repo)
 	}
 	if actors, _ := branchIntegrity["bypass_actors"].([]any); len(actors) > 0 {
-		return fmt.Errorf("Default-branch integrity ruleset on %s must not declare bypass actors", repo)
+		return fmt.Errorf("default-branch integrity ruleset on %s must not declare bypass actors", repo)
 	}
 	if err := requireBypassShape(branchReview, "RepositoryRole", "pull_request", false); err != nil {
 		return err
 	}
 	if tagRelease == nil {
-		return fmt.Errorf("Missing active release-tag ruleset on %s for refs/tags/v* with creation/update/deletion protection", repo)
+		return fmt.Errorf("missing active release-tag ruleset on %s for refs/tags/v* with creation/update/deletion protection", repo)
 	}
 	if err := requireBypassShape(tagRelease, "RepositoryRole", "always", true); err != nil {
 		return err
@@ -556,47 +556,47 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	parameters, _ := pullRequestRule["parameters"].(map[string]any)
 	if branchReviewMode == "review-gated" {
 		if count, _ := parameters["required_approving_review_count"].(float64); count < 1 {
-			return fmt.Errorf("Default-branch review ruleset on %s must require at least one approving review", repo)
+			return fmt.Errorf("default-branch review ruleset on %s must require at least one approving review", repo)
 		}
 		if required, _ := parameters["require_code_owner_review"].(bool); !required {
-			return fmt.Errorf("Default-branch review ruleset on %s must require code owner review", repo)
+			return fmt.Errorf("default-branch review ruleset on %s must require code owner review", repo)
 		}
 		if resolved, _ := parameters["required_review_thread_resolution"].(bool); !resolved {
-			return fmt.Errorf("Default-branch review ruleset on %s must require resolved review threads", repo)
+			return fmt.Errorf("default-branch review ruleset on %s must require resolved review threads", repo)
 		}
 	} else {
 		if private, _ := repoMeta["private"].(bool); !private {
-			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s is only valid for private repositories", repo)
+			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s is only valid for private repositories", repo)
 		}
 		if ownerType != "User" {
-			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s is only valid for user-owned repositories", repo)
+			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s is only valid for user-owned repositories", repo)
 		}
 		if len(directCollaborators) != 1 {
-			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s requires exactly one direct collaborator", repo)
+			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires exactly one direct collaborator", repo)
 		}
 		collaborator, _ := directCollaborators[0].(map[string]any)
 		if login, _ := collaborator["login"].(string); login != ownerLogin {
-			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s requires the owner to be the only direct collaborator", repo)
+			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires the owner to be the only direct collaborator", repo)
 		}
 		permissions, _ := collaborator["permissions"].(map[string]any)
 		if admin, _ := permissions["admin"].(bool); !admin {
-			return fmt.Errorf("Branch review mode 'single-owner-private-pr' on %s requires the owner to retain admin permission", repo)
+			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires the owner to retain admin permission", repo)
 		}
 		if count, _ := parameters["required_approving_review_count"].(float64); count != 0 {
-			return fmt.Errorf("Default-branch review ruleset on %s must require zero approving reviews in single-owner-private-pr mode", repo)
+			return fmt.Errorf("default-branch review ruleset on %s must require zero approving reviews in single-owner-private-pr mode", repo)
 		}
 		if required, _ := parameters["require_code_owner_review"].(bool); required {
-			return fmt.Errorf("Default-branch review ruleset on %s must not require code owner review in single-owner-private-pr mode", repo)
+			return fmt.Errorf("default-branch review ruleset on %s must not require code owner review in single-owner-private-pr mode", repo)
 		}
 		if resolved, _ := parameters["required_review_thread_resolution"].(bool); resolved {
-			return fmt.Errorf("Default-branch review ruleset on %s must not require resolved review threads in single-owner-private-pr mode", repo)
+			return fmt.Errorf("default-branch review ruleset on %s must not require resolved review threads in single-owner-private-pr mode", repo)
 		}
 	}
 
 	statusRule := hasRule(branchStatusChecks, "required_status_checks")
 	statusParameters, _ := statusRule["parameters"].(map[string]any)
 	if strict, _ := statusParameters["strict_required_status_checks_policy"].(bool); !strict {
-		return fmt.Errorf("Default-branch status-check ruleset on %s must require strict status checks", repo)
+		return fmt.Errorf("default-branch status-check ruleset on %s must require strict status checks", repo)
 	}
 	requiredStatusChecks, _ := statusParameters["required_status_checks"].([]any)
 	actualStatus := map[string]struct{}{}
@@ -617,7 +617,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	}
 	sort.Strings(missingStatus)
 	if len(missingStatus) > 0 {
-		return fmt.Errorf("Default-branch status-check ruleset on %s is missing required contexts: %s", repo, strings.Join(missingStatus, ", "))
+		return fmt.Errorf("default-branch status-check ruleset on %s is missing required contexts: %s", repo, strings.Join(missingStatus, ", "))
 	}
 
 	actualRepoVariables := map[string]any{}
@@ -641,7 +641,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	}
 	sort.Strings(missingRepoVariables)
 	if len(missingRepoVariables) > 0 {
-		return fmt.Errorf("Repository variables missing on %s: %s", repo, strings.Join(missingRepoVariables, ", "))
+		return fmt.Errorf("repository variables missing on %s: %s", repo, strings.Join(missingRepoVariables, ", "))
 	}
 	wrongRepoVariables := make([]string, 0)
 	for name, expectedValue := range expectedRepoVariables {
@@ -651,7 +651,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	}
 	sort.Strings(wrongRepoVariables)
 	if len(wrongRepoVariables) > 0 {
-		return fmt.Errorf("Repository variables on %s do not match policy: %s", repo, strings.Join(wrongRepoVariables, ", "))
+		return fmt.Errorf("repository variables on %s do not match policy: %s", repo, strings.Join(wrongRepoVariables, ", "))
 	}
 
 	protectionRules, _ := releaseEnv["protection_rules"].([]any)
@@ -672,7 +672,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	switch releaseMode {
 	case "review-gated":
 		if len(reviewerRules) == 0 {
-			return fmt.Errorf("Release environment on %s must require a human reviewer", repo)
+			return fmt.Errorf("release environment on %s must require a human reviewer", repo)
 		}
 		hasReviewer := false
 		for _, rule := range reviewerRules {
@@ -682,40 +682,40 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 			}
 		}
 		if !hasReviewer {
-			return fmt.Errorf("Release environment on %s must define at least one reviewer", repo)
+			return fmt.Errorf("release environment on %s must define at least one reviewer", repo)
 		}
 		if bypass, _ := releaseEnv["can_admins_bypass"].(bool); bypass {
-			return fmt.Errorf("Release environment on %s must not allow administrator bypass", repo)
+			return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
 		}
 		if adminBypassRule != nil {
 			if enabled, _ := adminBypassRule["enabled"].(bool); enabled {
-				return fmt.Errorf("Release environment on %s must not allow administrator bypass", repo)
+				return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
 			}
 		}
 	case "plan-limited-private":
 		if private, _ := repoMeta["private"].(bool); !private {
-			return fmt.Errorf("Release environment mode 'plan-limited-private' on %s is only valid for private repositories", repo)
+			return fmt.Errorf("release environment mode 'plan-limited-private' on %s is only valid for private repositories", repo)
 		}
 		if len(reviewerRules) > 0 {
-			return fmt.Errorf("Release environment on %s must not define reviewer gates in plan-limited-private mode", repo)
+			return fmt.Errorf("release environment on %s must not define reviewer gates in plan-limited-private mode", repo)
 		}
 	default:
 		if private, _ := repoMeta["private"].(bool); !private {
-			return fmt.Errorf("Release environment mode 'single-owner-private' on %s is only valid for private repositories", repo)
+			return fmt.Errorf("release environment mode 'single-owner-private' on %s is only valid for private repositories", repo)
 		}
 		if ownerType != "User" {
-			return fmt.Errorf("Release environment mode 'single-owner-private' on %s is only valid for user-owned repositories", repo)
+			return fmt.Errorf("release environment mode 'single-owner-private' on %s is only valid for user-owned repositories", repo)
 		}
 		if len(directCollaborators) != 1 {
-			return fmt.Errorf("Release environment mode 'single-owner-private' on %s requires exactly one direct collaborator", repo)
+			return fmt.Errorf("release environment mode 'single-owner-private' on %s requires exactly one direct collaborator", repo)
 		}
 		collaborator, _ := directCollaborators[0].(map[string]any)
 		if login, _ := collaborator["login"].(string); login != ownerLogin {
-			return fmt.Errorf("Release environment mode 'single-owner-private' on %s requires the owner to be the only direct collaborator", repo)
+			return fmt.Errorf("release environment mode 'single-owner-private' on %s requires the owner to be the only direct collaborator", repo)
 		}
 		permissions, _ := collaborator["permissions"].(map[string]any)
 		if admin, _ := permissions["admin"].(bool); !admin {
-			return fmt.Errorf("Release environment mode 'single-owner-private' on %s requires the owner to retain admin permission", repo)
+			return fmt.Errorf("release environment mode 'single-owner-private' on %s requires the owner to retain admin permission", repo)
 		}
 	}
 
@@ -813,14 +813,14 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	requireArg := func(text, name, path string) (string, error) {
 		match := regexp.MustCompile(`(?m)^ARG ` + regexp.QuoteMeta(name) + `=(.+)$`).FindStringSubmatch(text)
 		if match == nil {
-			return "", fmt.Errorf("Unable to extract %s from %s", name, path)
+			return "", fmt.Errorf("unable to extract %s from %s", name, path)
 		}
 		return strings.TrimSpace(match[1]), nil
 	}
 	requireYAMLKey := func(text, name, path string) (string, error) {
 		match := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `:\s*(.+)$`).FindStringSubmatch(text)
 		if match == nil {
-			return "", fmt.Errorf("Unable to extract %s from %s", name, path)
+			return "", fmt.Errorf("unable to extract %s from %s", name, path)
 		}
 		return strings.TrimSpace(match[1]), nil
 	}
@@ -833,13 +833,13 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	verifySnapshotFreshness := func(snapshot, path string) error {
 		ts, err := time.Parse("20060102T150405Z", snapshot)
 		if err != nil {
-			return fmt.Errorf("Debian snapshot %s in %s is not valid", snapshot, path)
+			return fmt.Errorf("debian snapshot %s in %s is not valid", snapshot, path)
 		}
 		now := time.Now().UTC()
 		ageDays := int(now.Sub(ts).Hours() / 24)
 		if ageDays > cfg.MaxDebianSnapshotAgeDays {
 			return fmt.Errorf(
-				"Debian snapshot %s in %s is %d days old; refresh it or raise WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS",
+				"debian snapshot %s in %s is %d days old; refresh it or raise WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS",
 				snapshot,
 				path,
 				ageDays,
@@ -850,14 +850,14 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	extractInstallBlocks := func(text, path string) ([][]string, error) {
 		matches := aptInstallPattern.FindAllStringSubmatch(text, -1)
 		if len(matches) == 0 {
-			return nil, fmt.Errorf("Unable to find apt install blocks in %s", path)
+			return nil, fmt.Errorf("unable to find apt install blocks in %s", path)
 		}
 		blocks := make([][]string, 0, len(matches))
 		for _, match := range matches {
 			body := strings.ReplaceAll(match[1], "\\", " ")
 			fields := strings.Fields(body)
 			if len(fields) == 0 {
-				return nil, fmt.Errorf("Unable to extract package list from install block in %s", path)
+				return nil, fmt.Errorf("unable to extract package list from install block in %s", path)
 			}
 			blocks = append(blocks, fields)
 		}
@@ -903,21 +903,21 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	requireGoDirective := func(text, directive, path string) (string, error) {
 		match := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(directive) + ` ([0-9]+\.[0-9]+\.[0-9]+)$`).FindStringSubmatch(text)
 		if match == nil {
-			return "", fmt.Errorf("Unable to extract %s from %s", directive, path)
+			return "", fmt.Errorf("unable to extract %s from %s", directive, path)
 		}
 		return match[1], nil
 	}
 	requireToolchainDirective := func(text, path string) (string, error) {
 		match := regexp.MustCompile(`(?m)^toolchain go([0-9]+\.[0-9]+\.[0-9]+)$`).FindStringSubmatch(text)
 		if match == nil {
-			return "", fmt.Errorf("Unable to extract toolchain from %s", path)
+			return "", fmt.Errorf("unable to extract toolchain from %s", path)
 		}
 		return match[1], nil
 	}
 	requireTOMLString := func(text, key, path string) (string, error) {
 		match := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `\s*=\s*"([^"]+)"\s*$`).FindStringSubmatch(text)
 		if match == nil {
-			return "", fmt.Errorf("Unable to extract %s from %s", key, path)
+			return "", fmt.Errorf("unable to extract %s from %s", key, path)
 		}
 		return match[1], nil
 	}
@@ -930,14 +930,14 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	majorMinor := func(version, path string) (string, error) {
 		match := regexp.MustCompile(`^([0-9]+\.[0-9]+)\.[0-9]+$`).FindStringSubmatch(version)
 		if match == nil {
-			return "", fmt.Errorf("Expected a semantic version in %s, found %q", path, version)
+			return "", fmt.Errorf("expected a semantic version in %s, found %q", path, version)
 		}
 		return match[1], nil
 	}
 	goLanguageVersionFromToolchain := func(version, path string) (string, error) {
 		match := regexp.MustCompile(`^([0-9]+\.[0-9]+)\.[0-9]+$`).FindStringSubmatch(version)
 		if match == nil {
-			return "", fmt.Errorf("Expected a semantic Go toolchain version in %s, found %q", path, version)
+			return "", fmt.Errorf("expected a semantic Go toolchain version in %s, found %q", path, version)
 		}
 		return match[1] + ".0", nil
 	}
@@ -945,7 +945,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		re := regexp.MustCompile(`(?m)^\s{10}- platform:\s*(\S+)\n^\s{12}platform_name:\s*(\S+)\n^\s{12}runner:\s*(\S+)$`)
 		matches := re.FindAllStringSubmatch(strategyBlock, -1)
 		if len(matches) == 0 {
-			return nil, fmt.Errorf("Unable to extract reproducible-build matrix entries from %s", path)
+			return nil, fmt.Errorf("unable to extract reproducible-build matrix entries from %s", path)
 		}
 		result := make([][3]string, 0, len(matches))
 		for _, match := range matches {
@@ -1322,16 +1322,16 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		expectedVersion, _ := expectedVersionAny.(string)
 		pkgEntry, ok := rootPackage["node_modules/"+packageName].(map[string]any)
 		if !ok {
-			return fmt.Errorf("Missing pinned provider package entry for %s", packageName)
+			return fmt.Errorf("missing pinned provider package entry for %s", packageName)
 		}
 		if version, _ := pkgEntry["version"].(string); version != expectedVersion {
-			return fmt.Errorf("Pinned provider package %s is %s, expected %s", packageName, version, expectedVersion)
+			return fmt.Errorf("pinned provider package %s is %s, expected %s", packageName, version, expectedVersion)
 		}
 		if integrity, _ := pkgEntry["integrity"].(string); integrity == "" {
-			return fmt.Errorf("Pinned provider package %s is missing an integrity hash", packageName)
+			return fmt.Errorf("pinned provider package %s is missing an integrity hash", packageName)
 		}
 		if resolved, _ := pkgEntry["resolved"].(string); !strings.HasPrefix(resolved, "https://registry.npmjs.org/") {
-			return fmt.Errorf("Pinned provider package %s uses an unexpected source: %q", packageName, resolved)
+			return fmt.Errorf("pinned provider package %s uses an unexpected source: %q", packageName, resolved)
 		}
 	}
 	for packagePath, rawEntry := range rootPackage {
@@ -1340,13 +1340,13 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 		entry, _ := rawEntry.(map[string]any)
 		if link, _ := entry["link"].(bool); link {
-			return fmt.Errorf("Linked npm dependencies are not allowed in the provider lockfile: %s", packagePath)
+			return fmt.Errorf("linked npm dependencies are not allowed in the provider lockfile: %s", packagePath)
 		}
 		if integrity, _ := entry["integrity"].(string); integrity == "" {
-			return fmt.Errorf("Provider lockfile entry is missing integrity data: %s", packagePath)
+			return fmt.Errorf("provider lockfile entry is missing integrity data: %s", packagePath)
 		}
 		if resolved, _ := entry["resolved"].(string); !strings.HasPrefix(resolved, "https://registry.npmjs.org/") {
-			return fmt.Errorf("Provider lockfile entry uses an unexpected source (%s): %q", packagePath, resolved)
+			return fmt.Errorf("provider lockfile entry uses an unexpected source (%s): %q", packagePath, resolved)
 		}
 	}
 
@@ -1450,30 +1450,30 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return errors.New(".github/workflows/release.yml must pin the BuildKit daemon image used by setup-buildx-action")
 	}
 	if !strings.Contains(ciWorkflow, "cache-binary: true") {
-		return errors.New("Pinned buildx binary caching must stay enabled in .github/workflows/ci.yml")
+		return errors.New("pinned buildx binary caching must stay enabled in .github/workflows/ci.yml")
 	}
 	extractBetween := func(text, startMarker, endMarker, label string) (string, error) {
 		start := strings.Index(text, startMarker)
 		if start < 0 {
-			return "", fmt.Errorf("Unable to extract %s from .github/workflows/ci.yml", label)
+			return "", fmt.Errorf("unable to extract %s from .github/workflows/ci.yml", label)
 		}
 		remaining := text[start:]
 		end := strings.Index(remaining, endMarker)
 		if end < 0 {
-			return "", fmt.Errorf("Unable to extract %s from .github/workflows/ci.yml", label)
+			return "", fmt.Errorf("unable to extract %s from .github/workflows/ci.yml", label)
 		}
 		return remaining[:end+1], nil
 	}
 	ciReproBuildJob, err := extractBetween(ciWorkflow, "  reproducible-build-platform:\n", "\n  reproducible-build:\n", "reproducible-build-platform job")
 	if err != nil {
-		return errors.New("Unable to extract reproducible-build-platform job from .github/workflows/ci.yml")
+		return errors.New("unable to extract reproducible-build-platform job from .github/workflows/ci.yml")
 	}
 	if !regexp.MustCompile(`(?m)^\s{4}runs-on:\s*\$\{\{\s*matrix\.runner\s*\}\}$`).MatchString(ciReproBuildJob) {
 		return errors.New(".github/workflows/ci.yml must route reproducible-build-platform through runs-on: ${{ matrix.runner }}")
 	}
 	ciReproStrategyBlock, err := extractBetween(ciReproBuildJob, "    strategy:\n", "\n    steps:\n", "reproducible-build-platform strategy block")
 	if err != nil {
-		return errors.New("Unable to extract reproducible-build-platform strategy block from .github/workflows/ci.yml")
+		return errors.New("unable to extract reproducible-build-platform strategy block from .github/workflows/ci.yml")
 	}
 	expectedCiReproStrategyBlock := "    strategy:\n" +
 		"      fail-fast: false\n" +
@@ -1508,10 +1508,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	}
 	if !strings.Contains(releaseWorkflow, "cache-binary: false") {
-		return errors.New("The publishing release workflow must not cache the Buildx binary")
+		return errors.New("the publishing release workflow must not cache the Buildx binary")
 	}
 	if !strings.Contains(releaseWorkflow, "cache-image: false") {
-		return errors.New("The publishing release workflow must not cache the QEMU helper image")
+		return errors.New("the publishing release workflow must not cache the QEMU helper image")
 	}
 	releaseSyftVersion, err := requireYAMLKey(releaseWorkflow, "WORKCELL_SYFT_VERSION", ".github/workflows/release.yml")
 	if err != nil {

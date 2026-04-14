@@ -131,7 +131,7 @@ func LoadScenarios(manifestPath string) ([]Scenario, error) {
 			return nil, err
 		}
 		if _, ok := seenIDs[scenarioID]; ok {
-			return nil, fmt.Errorf("Duplicate scenario id: %s", scenarioID)
+			return nil, fmt.Errorf("duplicate scenario id: %s", scenarioID)
 		}
 		seenIDs[scenarioID] = struct{}{}
 
@@ -334,7 +334,7 @@ func VerifyCoverage(scenarioRoot, manifestPath string) error {
 	for _, testFile := range keys {
 		info, err := root.Stat(filepath.FromSlash(testFile))
 		if err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("Missing test file: tests/scenarios/%s", testFile)
+			return fmt.Errorf("missing test file: tests/scenarios/%s", testFile)
 		}
 	}
 

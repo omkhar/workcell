@@ -139,7 +139,7 @@ func TestRunRejectsInvalidManifestsAndCoverage(t *testing.T) {
 				},
 			},
 			command:      []string{"list-tsv"},
-			wantContains: "Duplicate scenario id: shared/duplicate",
+			wantContains: "duplicate scenario id: shared/duplicate",
 		},
 		{
 			name: "missing-test-file",
@@ -158,7 +158,7 @@ func TestRunRejectsInvalidManifestsAndCoverage(t *testing.T) {
 				},
 			},
 			command:      []string{"verify-coverage"},
-			wantContains: "Missing test file: tests/scenarios/shared/test-missing.sh",
+			wantContains: "missing test file: tests/scenarios/shared/test-missing.sh",
 			setup: func(tb testing.TB, root string) {
 				writeScript(tb, root, "shared/test-orphan.sh")
 			},

@@ -167,7 +167,7 @@ func runGoHelperMutations(repoRoot string) error {
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("Go helper mutation coverage did not catch: %s", strings.Join(failures, ", "))
+		return fmt.Errorf("go helper mutation coverage did not catch: %s", strings.Join(failures, ", "))
 	}
 	return nil
 }
@@ -202,7 +202,7 @@ func runRustGuardMutations(repoRoot string) error {
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("Rust mutation coverage did not catch: %s", strings.Join(failures, ", "))
+		return fmt.Errorf("rust mutation coverage did not catch: %s", strings.Join(failures, ", "))
 	}
 	return nil
 }
