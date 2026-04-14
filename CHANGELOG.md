@@ -35,8 +35,6 @@ Releases.
   scenarios in parallel
 - ci: enable GHA layer cache for the validator image build in `ci.yml` and
   `docs.yml` via `docker buildx build --cache-from/--cache-to type=gha`
-- ci: fix `cache-binary: false` → `cache-binary: true` for buildx setup in
-  `release.yml` so the buildx binary itself is cached between release jobs
 - ci: remove the no-op `reproducible-build` aggregator job from `ci.yml`
 - scripts: extract common sanitized-entrypoint preamble into
   `scripts/lib/trusted-entrypoint.sh` and update the three
