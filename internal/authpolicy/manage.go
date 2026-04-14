@@ -812,6 +812,14 @@ func explainCredentialSelection(policy map[string]any, policyBase string, creden
 	}
 	rawMap, ok := raw.(map[string]any)
 	if !ok {
+		if !credentialAllowedForAgent(agent, credential) {
+			return credentialSelectionReport{
+				selected:  false,
+				reason:    "credential is not in scope for agent " + agent,
+				readiness: "out-of-scope",
+				inputKind: "source",
+			}, nil
+		}
 		if err := validateStatusCredentialSource(credential, raw, policyBase); err != nil {
 			return credentialSelectionReport{}, err
 		}
@@ -844,6 +852,11 @@ func explainCredentialSelection(policy map[string]any, policyBase string, creden
 			return credentialSelectionReport{}, err
 		}
 		report.modes = values
+	}
+	if !credentialAllowedForAgent(agent, credential) {
+		report.reason = "credential is not in scope for agent " + agent
+		report.readiness = "out-of-scope"
+		return report, nil
 	}
 	providerMatch := true
 	if len(report.providers) > 0 {
@@ -911,10 +924,7 @@ func explainReadyStates(policy map[string]any, policyBase string, agent string, 
 	}
 
 	relevant := map[string]struct{}{}
-	for key := range SharedCredentialKeys {
-		relevant[key] = struct{}{}
-	}
-	for key := range AgentScopedCredentialKeys[agent] {
+	for key := range allowedCredentialsForAgent(agent) {
 		relevant[key] = struct{}{}
 	}
 	keys := make([]string, 0, len(relevant))
@@ -1334,6 +1344,13 @@ func ensureNoForeignManagedSource(policyPath string, managedRoot string, credent
 }
 
 func validateAgentCredential(agent string, credential string) error {
+	if !credentialAllowedForAgent(agent, credential) {
+		return die(fmt.Sprintf("%s is not valid for agent %s", credential, agent))
+	}
+	return nil
+}
+
+func allowedCredentialsForAgent(agent string) map[string]struct{} {
 	allowed := map[string]struct{}{}
 	for key := range SharedCredentialKeys {
 		allowed[key] = struct{}{}
@@ -1341,10 +1358,12 @@ func validateAgentCredential(agent string, credential string) error {
 	for key := range AgentScopedCredentialKeys[agent] {
 		allowed[key] = struct{}{}
 	}
-	if _, ok := allowed[credential]; !ok {
-		return die(fmt.Sprintf("%s is not valid for agent %s", credential, agent))
-	}
-	return nil
+	return allowed
+}
+
+func credentialAllowedForAgent(agent string, credential string) bool {
+	_, ok := allowedCredentialsForAgent(agent)[credential]
+	return ok
 }
 
 func validateSelectorValues(values any, label string, allowedValues map[string]struct{}) error {

@@ -287,6 +287,31 @@ func TestPolicyWhyExplainsWhenCredentialIsNotSelected(t *testing.T) {
 	mustContain(t, got.stdout, "credential_input_kind=source")
 }
 
+func TestPolicyWhyTreatsOutOfScopeCredentialAsNotSelected(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	writeFile(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.claude_api_key]",
+		`source = "/no/such/file"`,
+	}, "\n")+"\n", 0o600)
+
+	got := runAuthPolicy(
+		"why",
+		"--policy", policyPath,
+		"--credential", "claude_api_key",
+		"--agent", "codex",
+		"--mode", "strict",
+	)
+	if got.code != 0 {
+		t.Fatalf("Run(why) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "selected=0")
+	mustContain(t, got.stdout, "selection_reason=credential is not in scope for agent codex")
+	mustContain(t, got.stdout, "credential_readiness=out-of-scope")
+	mustContain(t, got.stdout, "credential_input_kind=source")
+}
+
 func TestPolicyInspectionCommandsFailClosedOnMissingPolicy(t *testing.T) {
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "missing.toml")

@@ -159,8 +159,8 @@ workcell --agent codex --auth-status --workspace /path/to/repo
 `workcell auth status` shows the host policy view. `--auth-status` shows the
 derived launch view after selector evaluation and preprocessing.
 `workcell policy show|validate|diff` inspects the merged host policy, and
-`workcell why` explains why one credential is selected, filtered, or still only
-configured on the host side.
+`workcell why` explains why one credential is selected, out of scope, filtered,
+or still only configured on the host side.
 
 Workcell can stage:
 

@@ -13,6 +13,7 @@ AUTH_JSON="${TMP_DIR}/auth.json"
 HOSTS_YML="${TMP_DIR}/hosts.yml"
 SHARED_POLICY="${TMP_DIR}/shared.toml"
 POLICY_PATH="${TMP_DIR}/policy.toml"
+OUT_OF_SCOPE_POLICY_PATH="${TMP_DIR}/out-of-scope-policy.toml"
 
 printf '{"token":"super-secret"}\n' >"${AUTH_JSON}"
 chmod 0600 "${AUTH_JSON}"
@@ -38,6 +39,14 @@ source = "${AUTH_JSON}"
 modes = ["strict"]
 EOF
 chmod 0600 "${POLICY_PATH}"
+
+cat >"${OUT_OF_SCOPE_POLICY_PATH}" <<EOF
+version = 1
+
+[credentials.claude_api_key]
+source = "/no/such/file"
+EOF
+chmod 0600 "${OUT_OF_SCOPE_POLICY_PATH}"
 
 show_output="$("${ROOT_DIR}/scripts/workcell" policy show --injection-policy "${POLICY_PATH}")"
 grep -q '^version = 1$' <<<"${show_output}"
@@ -76,6 +85,15 @@ grep -q '^selected=0$' <<<"${why_filtered}"
 grep -q '^credential_readiness=filtered-provider$' <<<"${why_filtered}"
 grep -q '^credential_providers=codex$' <<<"${why_filtered}"
 grep -q '^selection_reason=agent does not match providers; modes not restricted$' <<<"${why_filtered}"
+
+why_out_of_scope="$("${ROOT_DIR}/scripts/workcell" why \
+  --credential claude_api_key \
+  --agent codex \
+  --mode strict \
+  --injection-policy "${OUT_OF_SCOPE_POLICY_PATH}")"
+grep -q '^selected=0$' <<<"${why_out_of_scope}"
+grep -q '^credential_readiness=out-of-scope$' <<<"${why_out_of_scope}"
+grep -q '^selection_reason=credential is not in scope for agent codex$' <<<"${why_out_of_scope}"
 
 set +e
 missing_output="$("${ROOT_DIR}/scripts/workcell" policy validate --injection-policy "${TMP_DIR}/missing.toml" 2>&1)"

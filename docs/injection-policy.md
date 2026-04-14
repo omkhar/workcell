@@ -33,7 +33,8 @@ Secret-bearing inputs are handled more carefully than public inputs:
 `workcell auth init|set|unset|status` manages the entrypoint policy file only.
 `workcell policy show|validate|diff` inspects the merged policy, and
 `workcell why --credential ... --agent ... --mode ...` explains one credential
-decision without launching the runtime. If a credential is declared by an
+decision, including out-of-scope cases, without launching the runtime. If a
+credential is declared by an
 included fragment, update that fragment directly.
 
 Selectors let you scope entries to only some launches:
