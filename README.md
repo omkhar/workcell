@@ -211,6 +211,8 @@ Other defaults that matter:
   explicit lower-assurance opt-out
 - `--cache-profile off` is the default
 - strict launches prepare the reviewed runtime image automatically when needed
+- interactive launches show a spinner with elapsed time by default; use
+  `--no-spinner` to force plain heartbeat updates instead
 - `--prepare` and `--prepare-only` remain useful when you want to make that step explicit
 
 ## Safe-path expectations
@@ -222,7 +224,9 @@ Other defaults that matter:
 - completed and aborted launches are recorded as durable host-side session
   records that you can inspect with `workcell session ...`
 - `workcell session diff` compares the current workspace against the clean git
-  base recorded at launch and fails closed when the launch started dirty
+  base recorded at launch and fails closed when the launch started dirty, when
+  no launch git base was recorded, or when the workspace is not a self-contained
+  git worktree
 - `--debug-log`, `--file-trace-log`, and `--audit-transcript` are explicit
   lower-assurance operator choices and are off by default
 

@@ -2009,7 +2009,8 @@ Notes:
   - `session diff` is read-only and compares the current workspace state to the
     clean launch git base recorded when the session started.
   - `session diff` is unavailable when the session started from a dirty git
-    worktree or from a workspace without a recorded git base.
+    worktree, from a workspace without a recorded git base, or from a workspace
+    that is not a self-contained git worktree.
   - `session export` includes audit records that match the recorded session id.
 EOF
 }

@@ -41,8 +41,9 @@ The supported host platform is Apple Silicon macOS.
 .B workcell session list|show|diff|export
 Inspect durable host-side session records without starting the Workcell
 runtime. These records summarize completed or aborted launches, can render a
-read-only diff against the clean launch git base when one was recorded, and
-can be exported with the matching profile audit lines.
+read-only diff against the clean launch git base when one was recorded, fail
+closed when the session started dirty or lacks self-contained git metadata,
+and can be exported with the matching profile audit lines.
 .TP
 .B workcell policy show|validate|diff
 Inspect the merged host-side injection policy without starting the runtime.

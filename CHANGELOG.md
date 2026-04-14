@@ -8,6 +8,35 @@ Releases.
 
 ## Unreleased
 
+## v0.9.0 - 2026-04-14
+
+### Added
+
+- host-side `workcell policy show|validate|diff` commands and `workcell why`
+  so operators can inspect merged credential policy decisions without launching
+  a session
+- `workcell session diff` with recorded git launch metadata for reviewable
+  session output against the session start point
+- interactive launch spinner support with text heartbeat fallback plus a
+  user-facing `--no-spinner` override
+
+### Changed
+
+- expanded the roadmap and delivery planning docs around `Implement first` and
+  `Implement next` priorities for supervisor, policy, auth, and observability
+- surfaced richer host-side auth readiness and selection reporting in
+  `workcell auth status` and launch-time `--auth-status`
+- synced the man page, policy docs, and scenario coverage with the current
+  session, policy, and launch UX surfaces
+
+### Fixed
+
+- aligned `workcell why` with launch and status credential scoping so
+  out-of-scope credentials are never reported as selected
+- failed closed on `workcell session diff` when the source session launched
+  from a dirty git workspace
+- replaced session-record rewrites with atomic write-and-rename handling
+
 ## v0.8.1 - 2026-04-13
 
 ### Changed
