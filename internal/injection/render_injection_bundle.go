@@ -91,17 +91,6 @@ var (
 		"/state/agent-home/.config/gh/hosts.yml",
 		"/state/agent-home/.ssh",
 	}
-	canonicalCredentialDestinations = map[string]string{
-		"codex_auth":      "codex/auth.json",
-		"claude_api_key":  "claude/api-key.txt",
-		"claude_mcp":      "claude/mcp.json",
-		"gemini_env":      "gemini/gemini.env",
-		"gemini_oauth":    "gemini/oauth_creds.json",
-		"gemini_projects": "gemini/projects.json",
-		"gcloud_adc":      "gemini/gcloud-adc.json",
-		"github_hosts":    "shared/github-hosts.yml",
-		"github_config":   "shared/github-config.yml",
-	}
 	credentialContainerPaths = map[string]string{
 		"codex_auth":      directMountRoot + "/credentials/codex-auth.json",
 		"claude_auth":     directMountRoot + "/credentials/claude-auth.json",
@@ -1395,10 +1384,10 @@ func validateGeminiEnvFile(source Path) (map[string]any, error) {
 	}
 	for key, value := range values {
 		if _, ok := geminiSupportedEnvKeys[key]; !ok {
-			return nil, fmt.Errorf("Unsupported key in Gemini auth env file %s: %s.", source, key)
+			return nil, fmt.Errorf("unsupported key in Gemini auth env file %s: %s", source, key)
 		}
 		if key != "GOOGLE_GENAI_USE_GCA" && key != "GOOGLE_GENAI_USE_VERTEXAI" && strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("Gemini auth env file %s sets %s but leaves it empty.", source, key)
+			return nil, fmt.Errorf("gemini auth env file %s sets %s but leaves it empty", source, key)
 		}
 	}
 
@@ -1427,10 +1416,10 @@ func validateGeminiEnvFile(source Path) (map[string]any, error) {
 		}
 	}
 	if gcaEnabled && vertexEnabled {
-		return nil, fmt.Errorf("Gemini auth env file %s enables both GOOGLE_GENAI_USE_GCA and GOOGLE_GENAI_USE_VERTEXAI. Choose exactly one auth selector.", source)
+		return nil, fmt.Errorf("gemini auth env file %s enables both GOOGLE_GENAI_USE_GCA and GOOGLE_GENAI_USE_VERTEXAI; choose exactly one auth selector", source)
 	}
 	if hasLocation && !hasProject {
-		return nil, fmt.Errorf("Gemini auth env file %s sets a Google Cloud location without a project.", source)
+		return nil, fmt.Errorf("gemini auth env file %s sets a Google Cloud location without a project", source)
 	}
 	endpoints := map[string]struct{}{}
 	if vertexEnabled {
@@ -1447,10 +1436,10 @@ func validateGeminiEnvFile(source Path) (map[string]any, error) {
 				"extra_endpoints":    sortedSetKeys(endpoints),
 			}, nil
 		}
-		return nil, fmt.Errorf("Gemini auth env file %s enables GOOGLE_GENAI_USE_VERTEXAI=true without either GOOGLE_API_KEY or both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION.", source)
+		return nil, fmt.Errorf("gemini auth env file %s enables GOOGLE_GENAI_USE_VERTEXAI=true without either GOOGLE_API_KEY or both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION", source)
 	}
 	if googleAPIKey != "" {
-		return nil, fmt.Errorf("Gemini auth env file %s sets GOOGLE_API_KEY without GOOGLE_GENAI_USE_VERTEXAI=true.", source)
+		return nil, fmt.Errorf("gemini auth env file %s sets GOOGLE_API_KEY without GOOGLE_GENAI_USE_VERTEXAI=true", source)
 	}
 	if gcaEnabled {
 		return map[string]any{
@@ -1464,7 +1453,7 @@ func validateGeminiEnvFile(source Path) (map[string]any, error) {
 			"extra_endpoints":    []string{},
 		}, nil
 	}
-	return nil, fmt.Errorf("Gemini auth env file %s does not configure a supported Gemini auth mode. Use GEMINI_API_KEY, GOOGLE_GENAI_USE_GCA=true, or GOOGLE_GENAI_USE_VERTEXAI=true with GOOGLE_API_KEY or both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION.", source)
+	return nil, fmt.Errorf("gemini auth env file %s does not configure a supported Gemini auth mode; use GEMINI_API_KEY, GOOGLE_GENAI_USE_GCA=true, or GOOGLE_GENAI_USE_VERTEXAI=true with GOOGLE_API_KEY or both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION", source)
 }
 
 func parseSimpleEnvFile(source Path) (map[string]string, error) {
@@ -1483,28 +1472,28 @@ func parseSimpleEnvFile(source Path) (map[string]string, error) {
 		}
 		idx := strings.Index(line, "=")
 		if idx < 0 {
-			return nil, fmt.Errorf("Malformed Gemini auth env file %s: %s. Use KEY=value assignments.", source, strings.TrimSpace(rawLine))
+			return nil, fmt.Errorf("malformed Gemini auth env file %s: %s; use KEY=value assignments", source, strings.TrimSpace(rawLine))
 		}
 		key := strings.TrimSpace(line[:idx])
 		value := stripComment(line[idx+1:])
 		if _, exists := values[key]; exists {
-			return nil, fmt.Errorf("Gemini auth env file %s configures %s more than once.", source, key)
+			return nil, fmt.Errorf("gemini auth env file %s configures %s more than once", source, key)
 		}
 		if value != "" && (value[0] == '\'' || value[0] == '"') {
 			if len(value) < 2 || value[len(value)-1] != value[0] {
-				return nil, fmt.Errorf("Malformed Gemini auth env file %s: %s has an unterminated quoted value.", source, key)
+				return nil, fmt.Errorf("malformed Gemini auth env file %s: %s has an unterminated quoted value", source, key)
 			}
 			if value[0] == '"' {
 				parsed, err := strconv.Unquote(value)
 				if err != nil {
-					return nil, fmt.Errorf("Malformed Gemini auth env file %s: %s has an invalid double-quoted value (%v).", source, key, err)
+					return nil, fmt.Errorf("malformed Gemini auth env file %s: %s has an invalid double-quoted value (%v)", source, key, err)
 				}
 				value = parsed
 			} else {
 				value = value[1 : len(value)-1]
 			}
 		} else if value != "" && (strings.HasSuffix(value, "'") || strings.HasSuffix(value, "\"")) {
-			return nil, fmt.Errorf("Malformed Gemini auth env file %s: %s has an unmatched trailing quote.", source, key)
+			return nil, fmt.Errorf("malformed Gemini auth env file %s: %s has an unmatched trailing quote", source, key)
 		}
 		values[key] = value
 	}
@@ -1518,7 +1507,7 @@ func parseEnvBooleanValue(values map[string]string, source Path, key string) (bo
 	}
 	normalized := strings.ToLower(strings.TrimSpace(raw))
 	if normalized != "true" && normalized != "false" {
-		return false, fmt.Errorf("Invalid boolean in Gemini auth env file %s: %s=%s. Use true or false.", source, key, raw)
+		return false, fmt.Errorf("invalid boolean in Gemini auth env file %s: %s=%s; use true or false", source, key, raw)
 	}
 	return normalized == "true", nil
 }
@@ -2091,10 +2080,6 @@ func (p Path) Base() string {
 func (p Path) IsDir() bool {
 	info, err := os.Stat(string(p))
 	return err == nil && info.IsDir()
-}
-
-func newPath(value string) Path {
-	return Path(value)
 }
 
 func init() {

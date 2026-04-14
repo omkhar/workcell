@@ -21,7 +21,6 @@ import (
 var (
 	hexDigestPattern      = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	workflowPermissionsRE = regexp.MustCompile(`(?m)^permissions:\s+\{\}$`)
-	actionRefPattern      = regexp.MustCompile(`(?:^|[^[:alnum:]/_.-])%s@([0-9a-f]{40})`)
 	aptInstallPattern     = regexp.MustCompile(`apt-get install -y --no-install-recommends(?s:(.*?))&&`)
 )
 
@@ -116,7 +115,7 @@ func ensureNoSymlinkPrefix(rootDir, repoPath string) error {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("Control-plane artifact must not be a symlink: %s", repoPath)
+			return fmt.Errorf("control-plane artifact must not be a symlink: %s", repoPath)
 		}
 	}
 	return nil
@@ -129,9 +128,9 @@ func ensureTrackedRegularFile(rootDir, repoPath string) error {
 	}
 	if err := ensureRegularFile(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("Missing control-plane artifact: %s", repoPath)
+			return fmt.Errorf("missing control-plane artifact: %s", repoPath)
 		}
-		return fmt.Errorf("Control-plane artifact must be a regular file: %s", repoPath)
+		return fmt.Errorf("control-plane artifact must be a regular file: %s", repoPath)
 	}
 	return nil
 }
@@ -372,14 +371,14 @@ func digestMap(rootDir string, paths []string) (map[string]string, error) {
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, fmt.Errorf(
-					"Tracked release input is missing from the working tree; stage the deletion or restore the file before generating a verified build input manifest: %s",
+					"tracked release input is missing from the working tree; stage the deletion or restore the file before generating a verified build input manifest: %s",
 					relativePath,
 				)
 			}
 			return nil, err
 		}
 		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("Tracked release input is missing from the working tree; stage the deletion or restore the file before generating a verified build input manifest: %s", relativePath)
+			return nil, fmt.Errorf("tracked release input is missing from the working tree; stage the deletion or restore the file before generating a verified build input manifest: %s", relativePath)
 		}
 		sum, err := sha256HexFile(candidate)
 		if err != nil {
@@ -398,7 +397,7 @@ func ExtractDockerfileArg(dockerfilePath, argName string) (string, error) {
 	pattern := regexp.MustCompile(`(?m)^ARG ` + regexp.QuoteMeta(argName) + `=(.+)$`)
 	match := pattern.FindStringSubmatch(text)
 	if match == nil {
-		return "", fmt.Errorf("Unable to extract %s from %s", argName, dockerfilePath)
+		return "", fmt.Errorf("unable to extract %s from %s", argName, dockerfilePath)
 	}
 	return strings.TrimSpace(match[1]), nil
 }
@@ -411,7 +410,7 @@ func ExtractClaudeSHA(dockerfilePath, targetArch string) (string, error) {
 	pattern := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(targetArch) + `\)\s+\\\s*CLAUDE_PLATFORM="[^"]+";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`)
 	match := pattern.FindStringSubmatch(text)
 	if match == nil {
-		return "", fmt.Errorf("Unable to extract CLAUDE_SHA256 for %s", targetArch)
+		return "", fmt.Errorf("unable to extract CLAUDE_SHA256 for %s", targetArch)
 	}
 	return match[1], nil
 }
@@ -424,7 +423,7 @@ func ExtractCodexSHA(dockerfilePath, targetArch string) (string, error) {
 	pattern := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(targetArch) + `\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="[^"]+";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`)
 	match := pattern.FindStringSubmatch(text)
 	if match == nil {
-		return "", fmt.Errorf("Unable to extract CODEX_SHA256 for %s", targetArch)
+		return "", fmt.Errorf("unable to extract CODEX_SHA256 for %s", targetArch)
 	}
 	return match[1], nil
 }
@@ -436,15 +435,15 @@ func ManifestChecksum(manifestPath, platform string) (string, error) {
 	}
 	platforms, ok := manifest["platforms"].(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("Missing checksum for %s in Claude release manifest", platform)
+		return "", fmt.Errorf("missing checksum for %s in Claude release manifest", platform)
 	}
 	entry, ok := platforms[platform].(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("Missing checksum for %s in Claude release manifest", platform)
+		return "", fmt.Errorf("missing checksum for %s in Claude release manifest", platform)
 	}
 	checksum, ok := entry["checksum"].(string)
 	if !ok || checksum == "" {
-		return "", fmt.Errorf("Missing checksum for %s in Claude release manifest", platform)
+		return "", fmt.Errorf("missing checksum for %s in Claude release manifest", platform)
 	}
 	return checksum, nil
 }
@@ -457,7 +456,7 @@ func ManifestVersion(manifestPath, expectedVersion string) error {
 	version, _ := manifest["version"].(string)
 	if version != expectedVersion {
 		return fmt.Errorf(
-			"Claude release manifest version %q does not match pinned %q",
+			"claude release manifest version %q does not match pinned %q",
 			version,
 			expectedVersion,
 		)
@@ -776,7 +775,7 @@ func GenerateBuildInputManifest(
 	for _, name := range sortedKeys(rawDependencies) {
 		pkgEntry, ok := lockPackages["node_modules/"+name].(map[string]any)
 		if !ok {
-			return fmt.Errorf("Missing pinned package entry for %s", name)
+			return fmt.Errorf("missing pinned package entry for %s", name)
 		}
 		version, _ := pkgEntry["version"].(string)
 		resolved, _ := pkgEntry["resolved"].(string)

@@ -21,10 +21,8 @@ func runResolveCredentialSources(tb testing.TB, args []string, env map[string]st
 	tb.Helper()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if env != nil {
-		for key, value := range env {
-			tb.Setenv(key, value)
-		}
+	for key, value := range env {
+		tb.Setenv(key, value)
 	}
 	code := Run(args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
@@ -151,7 +149,7 @@ func TestRunLaunchModeFailsClosedWithoutSupportedExportPath(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "Claude macOS login reuse is configured") {
+	if !strings.Contains(stderr, "claude macOS login reuse is configured") {
 		t.Fatalf("stderr %q missing launch-mode failure", stderr)
 	}
 }

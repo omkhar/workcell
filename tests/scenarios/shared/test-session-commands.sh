@@ -79,6 +79,25 @@ grep -q '^session_id[[:space:]]status[[:space:]]agent[[:space:]]mode[[:space:]]p
 grep -q $'^'"${SESSION_TWO}"$'\tfailed\tclaude\tdevelopment\t'"${PROFILE}"$'\t2026-04-08T11:00:00Z\tmanaged-mutable\t'"${WORKSPACE_B}"'$' <<<"${list_output}"
 grep -q $'^'"${SESSION_ONE}"$'\texited\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
 
+if command -v script >/dev/null 2>&1; then
+  tty_list_cmd=("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")
+  if script_help="$(script --help 2>&1 || true)" && grep -q -- ' -c, --command ' <<<"${script_help}"; then
+    printf -v tty_list_shell_cmd '%q ' "${tty_list_cmd[@]}"
+    tty_list_output="$(
+      script -q /dev/null -c "${tty_list_shell_cmd% }" 2>/dev/null | tr -d '\r\004\010'
+    )"
+  else
+    tty_list_output="$(
+      script -q /dev/null "${tty_list_cmd[@]}" 2>/dev/null | tr -d '\r\004\010'
+    )"
+  fi
+  grep -q 'session_id[[:space:]]status[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace' <<<"${tty_list_output}"
+  if printf '%s' "${tty_list_output}" | LC_ALL=C grep -q $'\033\['; then
+    echo "session list leaked terminal reset escapes on a host-only TTY path" >&2
+    exit 1
+  fi
+fi
+
 list_json="$("${ROOT_DIR}/scripts/workcell" session list --json --workspace "${WORKSPACE_A}" --colima-profile "${PROFILE}")"
 grep -q "\"session_id\": \"${SESSION_ONE}\"" <<<"${list_json}"
 if grep -q "\"session_id\": \"${SESSION_TWO}\"" <<<"${list_json}"; then

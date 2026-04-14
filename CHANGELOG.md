@@ -8,6 +8,22 @@ Releases.
 
 ## Unreleased
 
+## v0.8.1 - 2026-04-13
+
+### Changed
+
+- normalized Go package documentation, usage text, and validator error strings
+  for current stable Go tooling
+- removed dead helper paths from auth, injection, policy, and metadata code so
+  static analysis stays actionable
+
+### Fixed
+
+- kept host-only interactive TTY session-list flows from emitting terminal reset
+  escapes before the terminal state is actually dirtied
+- added a TTY regression check for `workcell session list` and aligned scenario
+  and auth-resolution tests with the normalized error surface
+
 ## v0.8.0 - 2026-04-13
 
 ### Added

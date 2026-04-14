@@ -3930,7 +3930,7 @@ if "${ROOT_DIR}/scripts/workcell" \
   echo "Expected --debug-log to reject symlinked host output paths" >&2
   exit 1
 fi
-grep -q 'Refusing symlinked host output path component:' /tmp/workcell-debug-log-symlink.out
+grep -q 'refusing symlinked host output path component:' /tmp/workcell-debug-log-symlink.out
 mkdir -p "${REAL_HOME}/.colima/${DEBUG_LOG_PROFILE}"
 printf '%s\n' "${DEBUG_LOG_CAPTURE}" >"${REAL_HOME}/.colima/${DEBUG_LOG_PROFILE}/workcell.latest-debug-log"
 if ! "${ROOT_DIR}/scripts/workcell" \
@@ -4160,7 +4160,7 @@ if "${ROOT_DIR}/scripts/workcell" \
   echo "Expected Gemini --auth-status to reject malformed Gemini env auth" >&2
   exit 1
 fi
-grep -q 'Malformed Gemini auth env file' /tmp/workcell-auth-status-gemini-invalid-env.out
+grep -q 'malformed Gemini auth env file' /tmp/workcell-auth-status-gemini-invalid-env.out
 
 if "${ROOT_DIR}/scripts/workcell" \
   --agent gemini \

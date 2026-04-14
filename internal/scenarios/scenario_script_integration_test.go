@@ -216,7 +216,7 @@ func TestRunScenarioTestsFailsWhenManifestValidationFails(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("run-scenario-tests exit code = %d stdout=%q", code, stdout)
 	}
-	if !strings.Contains(stdout, "Duplicate scenario id") {
+	if !strings.Contains(stdout, "duplicate scenario id") {
 		t.Fatalf("stdout %q does not contain manifest failure", stdout)
 	}
 	if strings.Contains(stdout, "Scenario tests passed") {

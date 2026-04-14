@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -91,7 +90,7 @@ func CoverageExecutables(messagePath string) ([]string, error) {
 	}
 
 	if len(executables) == 0 {
-		return nil, errors.New("Unable to locate instrumented Rust test executables for coverage")
+		return nil, errors.New("unable to locate instrumented Rust test executables for coverage")
 	}
 	sort.Strings(executables)
 	unique := executables[:0]
@@ -116,8 +115,4 @@ func jsonNumberToFloat64(value any) (float64, bool) {
 		}
 	}
 	return 0, false
-}
-
-func formatCoveragePercent(label string, percent float64) string {
-	return fmt.Sprintf("%s: %.2f%%", label, percent)
 }

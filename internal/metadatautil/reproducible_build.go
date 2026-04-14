@@ -239,11 +239,11 @@ func ociSubjectDigestFromIndex(index map[string]any) (string, error) {
 	}
 	if allOCIManifestsLackPlatform(manifests) {
 		if len(manifests) != 1 {
-			return "", errors.New("Expected a single top-level OCI index wrapper entry for multi-platform export")
+			return "", errors.New("expected a single top-level OCI index wrapper entry for multi-platform export")
 		}
 		digest, ok := ociManifestEntryDigest(manifests[0])
 		if !ok || !strings.HasPrefix(digest, "sha256:") {
-			return "", fmt.Errorf("Malformed wrapped OCI index digest: %q", digest)
+			return "", fmt.Errorf("malformed wrapped OCI index digest: %q", digest)
 		}
 		return digest, nil
 	}
@@ -316,7 +316,7 @@ func ociManifestDigest(layoutDir string, index map[string]any, platform string) 
 		}
 	}
 	if len(matches) != 1 {
-		return "", fmt.Errorf("Expected exactly one manifest for %q, found %d", platform, len(matches))
+		return "", fmt.Errorf("expected exactly one manifest for %q, found %d", platform, len(matches))
 	}
 	return matches[0], nil
 }
@@ -330,11 +330,11 @@ func ociManifestEntries(layoutDir string, index map[string]any) ([]any, error) {
 		return manifests, nil
 	}
 	if len(manifests) != 1 {
-		return nil, errors.New("Expected a single top-level OCI index wrapper entry for multi-platform export")
+		return nil, errors.New("expected a single top-level OCI index wrapper entry for multi-platform export")
 	}
 	digest, ok := ociManifestEntryDigest(manifests[0])
 	if !ok || !strings.HasPrefix(digest, "sha256:") {
-		return nil, fmt.Errorf("Malformed wrapped OCI index digest: %q", digest)
+		return nil, fmt.Errorf("malformed wrapped OCI index digest: %q", digest)
 	}
 	nestedIndexPath := filepath.Join(layoutDir, "blobs", "sha256", strings.TrimPrefix(digest, "sha256:"))
 	var nestedIndex map[string]any
@@ -350,7 +350,7 @@ func ociManifestEntries(layoutDir string, index map[string]any) ([]any, error) {
 
 func ociConfigDigest(layoutDir, manifestDigest string) (string, error) {
 	if !strings.HasPrefix(manifestDigest, "sha256:") {
-		return "", fmt.Errorf("Malformed OCI manifest digest: %q", manifestDigest)
+		return "", fmt.Errorf("malformed OCI manifest digest: %q", manifestDigest)
 	}
 	digest := strings.TrimPrefix(manifestDigest, "sha256:")
 	root := filepath.Join(layoutDir, "blobs", "sha256")
@@ -362,17 +362,17 @@ func ociConfigDigest(layoutDir, manifestDigest string) (string, error) {
 		if config, ok := manifest["config"].(map[string]any); ok {
 			configDigest, _ := config["digest"].(string)
 			if configDigest == "" {
-				return "", fmt.Errorf("Malformed OCI config digest: %q", config)
+				return "", fmt.Errorf("malformed OCI config digest: %q", config)
 			}
 			return configDigest, nil
 		}
 		manifests, ok := manifest["manifests"].([]any)
 		if !ok || len(manifests) == 0 {
-			return "", fmt.Errorf("Malformed OCI index: %q", manifest)
+			return "", fmt.Errorf("malformed OCI index: %q", manifest)
 		}
 		nextDigest, ok := ociManifestEntryDigest(manifests[0])
 		if !ok || !strings.HasPrefix(nextDigest, "sha256:") {
-			return "", fmt.Errorf("Malformed OCI manifest digest: %q", nextDigest)
+			return "", fmt.Errorf("malformed OCI manifest digest: %q", nextDigest)
 		}
 		digest = strings.TrimPrefix(nextDigest, "sha256:")
 	}
@@ -386,7 +386,7 @@ func parsePlatformSelector(platform string) (string, string, string, error) {
 	case 3:
 		return parts[0], parts[1], parts[2], nil
 	default:
-		return "", "", "", fmt.Errorf("Unsupported platform selector: %q", platform)
+		return "", "", "", fmt.Errorf("unsupported platform selector: %q", platform)
 	}
 }
 

@@ -34,7 +34,7 @@ failure_rc=$?
 set -e
 
 test "${failure_rc}" -ne 0
-grep -q 'Claude macOS login reuse is configured' <<<"${failure_output}"
+grep -q 'claude macOS login reuse is configured' <<<"${failure_output}"
 
 success_output="$("${ROOT_DIR}/scripts/workcell" \
   --self-staging-probe \

@@ -931,15 +931,6 @@ func RequireSecretFile(source string, label string) (string, error) {
 	return source, nil
 }
 
-func requireNoSymlink(source string, label string) error {
-	if info, err := os.Lstat(source); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return die(fmt.Sprintf("%s must not be a symlink: %s", label, source))
-		}
-	}
-	return nil
-}
-
 func expandUserPath(raw string) (string, error) {
 	if raw == "" {
 		return "", errors.New("empty path")
