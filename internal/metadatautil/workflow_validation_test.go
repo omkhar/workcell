@@ -108,7 +108,6 @@ jobs:
 }
 
 func TestCheckWorkflowsRecognizesRequiredJobNames(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	installWorkflowToolStubs(t, root)
 	workflowDir := filepath.Join(root, ".github", "workflows")
@@ -182,7 +181,6 @@ contexts = [
 }
 
 func TestCheckWorkflowsRejectsMultilineSpoofedName(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	installWorkflowToolStubs(t, root)
 	workflowDir := filepath.Join(root, ".github", "workflows")

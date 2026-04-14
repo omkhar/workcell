@@ -191,7 +191,6 @@ func TestRunLaunchModeFailsClosedWithoutSupportedExportPath(t *testing.T) {
 }
 
 func TestRunLaunchModeAcceptsTestExportFile(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	exportPath := filepath.Join(root, "claude-export.json")

@@ -16,7 +16,6 @@ import (
 )
 
 func TestCanonicalizePathResolvesHomeAndSymlinks(t *testing.T) {
-	t.Parallel()
 	tmp := t.TempDir()
 	realHome := filepath.Join(tmp, "real-home")
 	linkHome := filepath.Join(tmp, "link-home")
@@ -43,7 +42,6 @@ func TestCanonicalizePathResolvesHomeAndSymlinks(t *testing.T) {
 }
 
 func TestCanonicalizePathResolvesMissingSuffixBehindSymlink(t *testing.T) {
-	t.Parallel()
 	tmp := t.TempDir()
 	realRoot := filepath.Join(tmp, "real-root")
 	linkRoot := filepath.Join(tmp, "link-root")

@@ -4,7 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-session-scenario.XXXXXX")"
 TMP_DIR="$(cd "${TMP_DIR}" && pwd -P)"
-REAL_HOME="$(cd "${ROOT_DIR}" && go run ./cmd/workcell-hostutil path home)"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+REAL_HOME="$(resolve_workcell_real_home)"
 PROFILE="wcl-session-scenario-$$"
 SESSION_ONE="20260408T100000Z-11111111-$$"
 SESSION_TWO="20260408T110000Z-22222222-$$"
