@@ -25,6 +25,9 @@ func TestWriteSessionRecordRoundTrip(t *testing.T) {
 		"ui":                      "cli",
 		"execution_path":          "managed-tier1",
 		"workspace":               "/tmp/workspace",
+		"git_branch":              "feature/session-diff",
+		"git_head":                "abcdef1234567890",
+		"git_base":                "1234567890abcdef",
 		"started_at":              "2026-04-08T12:00:00Z",
 		"initial_assurance":       "managed-mutable",
 		"workspace_control_plane": "masked",
@@ -50,6 +53,46 @@ func TestWriteSessionRecordRoundTrip(t *testing.T) {
 	}
 	if record.Status != "exited" || record.ExitStatus != "0" || record.FinalAssurance != "managed-mutable" {
 		t.Fatalf("unexpected record: %+v", record)
+	}
+	if record.GitBranch != "feature/session-diff" || record.GitHead != "abcdef1234567890" || record.GitBase != "1234567890abcdef" {
+		t.Fatalf("git metadata was not preserved: %+v", record)
+	}
+	info, err := os.Stat(recordPath)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", recordPath, err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("session record mode = %o, want 0600", info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(filepath.Dir(recordPath))
+	if err != nil {
+		t.Fatalf("ReadDir(%s) error = %v", filepath.Dir(recordPath), err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "session-1.json" {
+		t.Fatalf("session record directory contains unexpected files: %+v", entries)
+	}
+}
+
+func TestSessionDiffMetadataLines(t *testing.T) {
+	t.Parallel()
+
+	lines := SessionDiffMetadataLines(SessionRecord{
+		Workspace: "/tmp/workspace",
+	})
+
+	want := []string{
+		"workspace=/tmp/workspace",
+		"git_branch=",
+		"git_head=",
+		"git_base=",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("SessionDiffMetadataLines() len = %d, want %d", len(lines), len(want))
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Fatalf("SessionDiffMetadataLines()[%d] = %q, want %q", i, lines[i], want[i])
+		}
 	}
 }
 

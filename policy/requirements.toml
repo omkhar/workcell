@@ -70,20 +70,23 @@ docs = [
 
 [functional.FR-006]
 title = "Host-side operator commands"
-summary = "Inspect, doctor, logs, gc, and auth/session management run on the host without starting the runtime."
+summary = "Inspect, doctor, logs, gc, auth/policy explainability, and session management run on the host without starting the runtime."
 evidence = [
   "scripts/verify-invariants.sh",
   "internal/testkit/validation_entrypoints_test.go",
+  "tests/scenarios/shared/test-policy-commands.sh",
+  "internal/authpolicy/manage_test.go",
 ]
 docs = [
   "README.md",
   "man/workcell.1",
+  "docs/injection-policy.md",
   "docs/validation-scenarios.md",
 ]
 
 [functional.FR-007]
 title = "Durable session inventory"
-summary = "Workcell records durable host-side launch metadata and exposes list, show, and export commands for recorded sessions."
+summary = "Workcell records durable host-side launch metadata and exposes list, show, clean-base diff, and export commands for recorded sessions."
 evidence = [
   "tests/scenarios/shared/test-session-commands.sh",
   "internal/hostutil/sessions_test.go",

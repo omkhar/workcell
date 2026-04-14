@@ -11,10 +11,12 @@ this repository without weakening the existing boundary model.
 
 ## Phase 1 Scope
 
-Phase 1 adds durable host-side session records and inventory commands:
+Phase 1 adds durable host-side session records plus host-side inventory and
+inspection commands:
 
 - `workcell session list`
 - `workcell session show --id ...`
+- `workcell session diff --id ...`
 - `workcell session export --id ...`
 
 Each launched session writes durable metadata under the managed Colima profile
@@ -32,6 +34,9 @@ Each session record stores:
 - `ui`
 - `execution_path`
 - `workspace`
+- `git_branch`
+- `git_head`
+- `git_base`
 - `container_name`
 - `session_audit_dir`
 - `audit_log_path`
@@ -93,6 +98,11 @@ session metadata.
 
 `workcell session show` returns the full durable record for one session.
 
+`workcell session diff` renders the current workspace status and diff against
+the clean git base recorded when the session started. It fails closed if the
+workspace was already dirty at launch, if no git base was recorded, or if the
+workspace is no longer a self-contained git worktree on the host.
+
 `workcell session export` returns the full record plus matching audit records,
 either to stdout or a user-selected host file.
 
@@ -147,7 +157,7 @@ Phase 3 should add:
 
 - There is no retention policy yet for durable session records.
 - Aborted launches rely on host cleanup logic to mark the record as aborted.
-- The current phase gives inventory and export, not orchestration.
+- The current phase gives inventory and inspection, not orchestration.
 
 Those are acceptable for a first slice because the main goal here is to create
 durable, auditable session objects without weakening the reviewed boundary.

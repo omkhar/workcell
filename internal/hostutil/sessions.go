@@ -25,6 +25,9 @@ type SessionRecord struct {
 	UI                    string `json:"ui,omitempty"`
 	ExecutionPath         string `json:"execution_path,omitempty"`
 	Workspace             string `json:"workspace"`
+	GitBranch             string `json:"git_branch,omitempty"`
+	GitHead               string `json:"git_head,omitempty"`
+	GitBase               string `json:"git_base,omitempty"`
 	ContainerName         string `json:"container_name,omitempty"`
 	SessionAuditDir       string `json:"session_audit_dir,omitempty"`
 	AuditLogPath          string `json:"audit_log_path,omitempty"`
@@ -47,6 +50,15 @@ type SessionListOptions struct {
 type SessionExport struct {
 	Session      SessionRecord `json:"session"`
 	AuditRecords []string      `json:"audit_records,omitempty"`
+}
+
+func SessionDiffMetadataLines(record SessionRecord) []string {
+	return []string{
+		fmt.Sprintf("workspace=%s", record.Workspace),
+		fmt.Sprintf("git_branch=%s", record.GitBranch),
+		fmt.Sprintf("git_head=%s", record.GitHead),
+		fmt.Sprintf("git_base=%s", record.GitBase),
+	}
 }
 
 func WriteSessionRecord(path string, updates map[string]string) error {
@@ -75,6 +87,12 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 			record.ExecutionPath = value
 		case "workspace":
 			record.Workspace = value
+		case "git_branch":
+			record.GitBranch = value
+		case "git_head":
+			record.GitHead = value
+		case "git_base":
+			record.GitBase = value
 		case "container_name":
 			record.ContainerName = value
 		case "session_audit_dir":
@@ -117,7 +135,7 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	return writeFileAtomically(path, data, 0o600)
 }
 
 func ReadSessionRecord(path string) (SessionRecord, error) {
@@ -279,6 +297,41 @@ func auditLineHasSessionID(line, sessionID string) bool {
 		}
 	}
 	return false
+}
+
+func writeFileAtomically(path string, data []byte, mode os.FileMode) error {
+	tempFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	if err := tempFile.Chmod(mode); err != nil {
+		_ = tempFile.Close()
+		return err
+	}
+	if _, err := tempFile.Write(data); err != nil {
+		_ = tempFile.Close()
+		return err
+	}
+	if err := tempFile.Sync(); err != nil {
+		_ = tempFile.Close()
+		return err
+	}
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	removeTemp = false
+	return os.Chmod(path, mode)
 }
 
 func validateSessionRecord(record SessionRecord, source string) error {

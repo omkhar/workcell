@@ -8,6 +8,7 @@ REAL_HOME="$(cd "${ROOT_DIR}" && go run ./cmd/workcell-hostutil path home)"
 PROFILE="wcl-session-scenario-$$"
 SESSION_ONE="20260408T100000Z-11111111-$$"
 SESSION_TWO="20260408T110000Z-22222222-$$"
+SESSION_DIRTY="20260408T120000Z-33333333-$$"
 
 cleanup() {
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
@@ -21,10 +22,29 @@ AUDIT_LOG="${COLIMA_ROOT}/${PROFILE}/workcell.audit.log"
 EXPORT_PATH="${TMP_DIR}/session-export.json"
 WORKSPACE_A="${TMP_DIR}/workspace-a"
 WORKSPACE_B="${TMP_DIR}/workspace-b"
+DIFF_PATH="${TMP_DIR}/session-diff.txt"
+TEXTCONV_MARKER="${WORKSPACE_A}/textconv-ran"
 
 mkdir -p "${SESSIONS_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B}"
 WORKSPACE_A="$(cd "${WORKSPACE_A}" && pwd -P)"
 WORKSPACE_B="$(cd "${WORKSPACE_B}" && pwd -P)"
+
+git -C "${WORKSPACE_A}" init >/dev/null
+cat >"${WORKSPACE_A}/textconv.sh" <<EOF
+#!/bin/sh
+touch "${TEXTCONV_MARKER}"
+cat "\$1"
+EOF
+chmod +x "${WORKSPACE_A}/textconv.sh"
+git -C "${WORKSPACE_A}" config diff.workcell.textconv "${WORKSPACE_A}/textconv.sh"
+printf '*.txt diff=workcell\n' >"${WORKSPACE_A}/.gitattributes"
+printf 'base\n' >"${WORKSPACE_A}/tracked.txt"
+git -C "${WORKSPACE_A}" add .gitattributes tracked.txt
+git -C "${WORKSPACE_A}" -c user.name='Workcell Test' -c user.email='workcell@example.com' commit -m 'initial' >/dev/null
+GIT_BASE="$(git -C "${WORKSPACE_A}" rev-parse HEAD)"
+GIT_BRANCH="$(git -C "${WORKSPACE_A}" branch --show-current)"
+printf 'updated\n' >"${WORKSPACE_A}/tracked.txt"
+printf 'new file\n' >"${WORKSPACE_A}/new.txt"
 
 cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
 {
@@ -37,6 +57,9 @@ cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
   "ui": "cli",
   "execution_path": "managed-tier1",
   "workspace": "${WORKSPACE_A}",
+  "git_branch": "${GIT_BRANCH}",
+  "git_head": "${GIT_BASE}",
+  "git_base": "${GIT_BASE}",
   "audit_log_path": "${AUDIT_LOG}",
   "started_at": "2026-04-08T10:00:00Z",
   "finished_at": "2026-04-08T10:05:00Z",
@@ -108,6 +131,44 @@ fi
 show_output="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_TWO}")"
 grep -q "\"session_id\": \"${SESSION_TWO}\"" <<<"${show_output}"
 grep -q '"status": "failed"' <<<"${show_output}"
+
+diff_stdout="$("${ROOT_DIR}/scripts/workcell" session diff --id "${SESSION_ONE}" --output "${DIFF_PATH}")"
+grep -q "^session_diff=${DIFF_PATH}$" <<<"${diff_stdout}"
+grep -q "^session_id=${SESSION_ONE}$" "${DIFF_PATH}"
+grep -q "^git_branch=${GIT_BRANCH}$" "${DIFF_PATH}"
+grep -q '^ M tracked.txt$' "${DIFF_PATH}"
+grep -Fq '?? new.txt' "${DIFF_PATH}"
+grep -q '^-base$' "${DIFF_PATH}"
+grep -q '^+updated$' "${DIFF_PATH}"
+test ! -e "${TEXTCONV_MARKER}"
+
+cat >"${SESSIONS_DIR}/20260408T120000Z-33333333.json" <<EOF
+{
+  "version": 1,
+  "session_id": "${SESSION_DIRTY}",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "exited",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE_A}",
+  "git_branch": "${GIT_BRANCH}",
+  "git_head": "${GIT_BASE}",
+  "audit_log_path": "${AUDIT_LOG}",
+  "started_at": "2026-04-08T12:00:00Z",
+  "finished_at": "2026-04-08T12:05:00Z",
+  "exit_status": "0",
+  "initial_assurance": "managed-mutable",
+  "final_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF
+
+dirty_diff_output="$(
+  "${ROOT_DIR}/scripts/workcell" session diff --id "${SESSION_DIRTY}" 2>&1 >/dev/null || true
+)"
+grep -q 'session diff requires a clean git launch baseline' <<<"${dirty_diff_output}"
 
 export_stdout="$("${ROOT_DIR}/scripts/workcell" session export --id "${SESSION_TWO}" --output "${EXPORT_PATH}")"
 grep -q "^session_export=${EXPORT_PATH}$" <<<"${export_stdout}"

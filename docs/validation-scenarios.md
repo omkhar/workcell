@@ -23,8 +23,9 @@ These run without provider credentials:
 - `./scripts/pre-merge.sh` (builds or reuses the same pinned validator container and can run the local stack from a disposable snapshot before optional remote lanes)
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
-They also now cover canonical requirement traceability and host-side session
-inventory behavior.
+They also now cover canonical requirement traceability, host-side policy
+inspection and explainability, and host-side session inventory plus clean-base
+diff/export behavior.
 
 ## Manual authenticated smoke
 

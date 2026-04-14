@@ -214,24 +214,15 @@ func validateAllowedKeys(table map[string]any, allowedKeys map[string]struct{}, 
 }
 
 func selectedFor(values any, current string, label string, allowedValues map[string]struct{}) (bool, error) {
-	if values == nil {
+	rawValues, err := selectorStrings(values, label, allowedValues)
+	if err != nil {
+		return false, err
+	}
+	if rawValues == nil {
 		return true, nil
 	}
-	rawValues, ok := values.([]any)
-	if !ok || len(rawValues) == 0 {
-		return false, die(fmt.Sprintf("%s must be a non-empty array when specified", label))
-	}
 	for _, value := range rawValues {
-		s, ok := value.(string)
-		if !ok {
-			return false, die(fmt.Sprintf("%s values must be strings", label))
-		}
-		if _, ok := allowedValues[s]; !ok {
-			return false, die(fmt.Sprintf("%s contains unsupported value: %s", label, s))
-		}
-	}
-	for _, value := range rawValues {
-		if value.(string) == current {
+		if value == current {
 			return true, nil
 		}
 	}

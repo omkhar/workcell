@@ -2,6 +2,30 @@
 
 Workcell is still pre-1.0. The near-term roadmap is about making the current
 security model easier to adopt, easier to verify, and easier to contribute to.
+The delivery shape for the active slice lives in
+`docs/implement-first-delivery-plan.md`.
+
+## Implement first
+
+- ship Phase 2 of the Workcell session supervisor:
+  detached/background sessions, `session start`, `session attach`,
+  `session send`, `session stop`, `session diff`, and default
+  worktree-per-session flows
+- add `workcell why` and richer policy inspection so operators can see why
+  a path, credential, endpoint, or control-plane input is allowed or blocked
+- improve host-owned auth flows: better resolver coverage, clearer
+  `auth-status` diagnostics, and explicit login/setup handoffs where provider
+  onboarding needs browser or credential bootstrap help
+
+## Implement next
+
+- add reviewed team workflow packs at the Workcell layer: versioned
+  instruction bundles, commands, approved MCP packs, and task templates
+- add session observability on top of the supervisor:
+  live status, branch/worktree, assurance state, logs, transcript pointers,
+  and command timeline views
+- add a lightweight TUI or dashboard backed by the same host-controlled
+  session plane rather than a separate execution path
 
 ## Next 90 days
 

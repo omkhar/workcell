@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/hostutil"
 )
 
 type fileSnapshot struct {
@@ -75,11 +77,20 @@ func readJSON(tb testing.TB, path string) map[string]any {
 func TestRunMetadataModeWritesPlaceholderAndMetadata(t *testing.T) {
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
+	githubHostsPath := filepath.Join(root, "hosts.yml")
+	claudeApiKeyPath := filepath.Join(root, "claude-api-key.json")
+	writePolicy(t, githubHostsPath, "github.com:\n")
+	writePolicy(t, claudeApiKeyPath, "{\"token\":\"unused\"}\n")
 	writePolicy(t, policyPath, strings.Join([]string{
 		"version = 1",
+		"[credentials.github_hosts]",
+		`source = "` + githubHostsPath + `"`,
 		"[credentials.claude_auth]",
 		`resolver = "claude-macos-keychain"`,
 		`materialization = "ephemeral"`,
+		"[credentials.claude_api_key]",
+		`source = "` + claudeApiKeyPath + `"`,
+		`providers = ["gemini"]`,
 	}, "\n")+"\n")
 
 	outputRoot := filepath.Join(root, "out")
@@ -121,10 +132,33 @@ func TestRunMetadataModeWritesPlaceholderAndMetadata(t *testing.T) {
 	if got := metadata["credential_input_kinds"].(map[string]any)["claude_auth"]; got != "resolver" {
 		t.Fatalf("credential_input_kinds.claude_auth = %v", got)
 	}
+	if got := metadata["provider_auth_ready_states"].(map[string]any)["claude_auth"]; got != "configured-only" {
+		t.Fatalf("provider_auth_ready_states.claude_auth = %v", got)
+	}
+	if got := metadata["provider_auth_ready_states"].(map[string]any)["claude_api_key"]; got != "filtered-provider" {
+		t.Fatalf("provider_auth_ready_states.claude_api_key = %v", got)
+	}
+	if got := metadata["shared_auth_ready_states"].(map[string]any)["github_hosts"]; got != "ready" {
+		t.Fatalf("shared_auth_ready_states.github_hosts = %v", got)
+	}
 	assertSnapshotEqual(t, filepath.Join(resolvedOutputRoot, "resolved", "credentials", "claude_auth.json"), fileSnapshot{
 		data: []byte("{\"resolver\": \"claude-macos-keychain\", \"workcell\": \"metadata-only\"}\n"),
 		mode: 0o600,
 	})
+
+	lines, err := hostutil.ResolverMetadataLines(filepath.Join(resolvedOutputRoot, "resolver-metadata.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 6 {
+		t.Fatalf("ResolverMetadataLines() len = %d, want 6", len(lines))
+	}
+	if lines[4] != "claude_api_key:filtered-provider,claude_auth:configured-only" {
+		t.Fatalf("provider ready line = %q", lines[4])
+	}
+	if lines[5] != "github_hosts:ready" {
+		t.Fatalf("shared ready line = %q", lines[5])
+	}
 }
 
 func TestRunLaunchModeFailsClosedWithoutSupportedExportPath(t *testing.T) {
@@ -203,6 +237,40 @@ func TestRunLaunchModeAcceptsTestExportFile(t *testing.T) {
 		data: []byte("{\"token\":\"claude\"}\n"),
 		mode: 0o600,
 	})
+}
+
+func TestRunMetadataModeRejectsMissingSourceCredential(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	writePolicy(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.codex_auth]",
+		`source = "/no/such/file"`,
+	}, "\n")+"\n")
+	outputRoot := filepath.Join(root, "out")
+	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resolvedOutputRoot, err := filepath.EvalSymlinks(outputRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runResolveCredentialSources(t, []string{
+		"--policy", policyPath,
+		"--agent", "codex",
+		"--mode", "strict",
+		"--resolution-mode", "metadata",
+		"--output-policy", filepath.Join(resolvedOutputRoot, "resolved-policy.toml"),
+		"--output-metadata", filepath.Join(resolvedOutputRoot, "resolver-metadata.json"),
+		"--output-root", resolvedOutputRoot,
+	}, nil)
+	if code != 1 {
+		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "does not exist") && !strings.Contains(stderr, "no such file or directory") {
+		t.Fatalf("stderr %q missing missing-source failure", stderr)
+	}
 }
 
 func TestMaterializeFileUnderRootRejectsValidatedSourceSwappedToSymlink(t *testing.T) {

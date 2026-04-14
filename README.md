@@ -151,11 +151,16 @@ Use the host-side auth helpers instead of hand-editing the common case:
 workcell auth init
 workcell auth set --agent codex --credential codex_auth --source /path/to/auth.json
 workcell auth status --agent codex
+workcell policy validate
+workcell why --agent codex --mode strict --credential codex_auth
 workcell --agent codex --auth-status --workspace /path/to/repo
 ```
 
 `workcell auth status` shows the host policy view. `--auth-status` shows the
 derived launch view after selector evaluation and preprocessing.
+`workcell policy show|validate|diff` inspects the merged host policy, and
+`workcell why` explains why one credential is selected, filtered, or still only
+configured on the host side.
 
 Workcell can stage:
 
@@ -216,6 +221,8 @@ Other defaults that matter:
   outside the Tier 1 container
 - completed and aborted launches are recorded as durable host-side session
   records that you can inspect with `workcell session ...`
+- `workcell session diff` compares the current workspace against the clean git
+  base recorded at launch and fails closed when the launch started dirty
 - `--debug-log`, `--file-trace-log`, and `--audit-transcript` are explicit
   lower-assurance operator choices and are off by default
 
@@ -227,7 +234,11 @@ workcell --agent codex --prepare-only --workspace /path/to/repo
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell session list
 workcell session show --id 20260408T120000Z-1a2b3c4d
+workcell session diff --id 20260408T120000Z-1a2b3c4d
 workcell session export --id 20260408T120000Z-1a2b3c4d --output /tmp/workcell-session.json
+workcell policy show
+workcell policy diff
+workcell why --agent codex --mode strict --credential codex_auth
 workcell --agent codex --doctor --workspace /path/to/repo
 workcell --agent codex --inspect --workspace /path/to/repo
 workcell --agent codex --auth-status --workspace /path/to/repo

@@ -64,6 +64,8 @@ run_auth_status() {
 
 codex_output="$(run_auth_status codex)"
 grep -Eq '^credential_keys=(codex_auth,github_hosts|github_hosts,codex_auth)$' <<<"${codex_output}"
+grep -q '^provider_auth_ready_states=codex_auth:ready$' <<<"${codex_output}"
+grep -q '^shared_auth_ready_states=github_hosts:ready$' <<<"${codex_output}"
 grep -q '^provider_auth_mode=codex_auth$' <<<"${codex_output}"
 grep -q '^provider_auth_modes=codex_auth$' <<<"${codex_output}"
 grep -q '^shared_auth_modes=github_hosts$' <<<"${codex_output}"
@@ -77,15 +79,20 @@ codex_alias_output="$("${ROOT_DIR}/scripts/workcell" \
   --workspace "${WORKSPACE}" \
   --injection-policy "${AUTH_ROOT}/policy.toml")"
 grep -q '^provider_auth_mode=codex_auth$' <<<"${codex_alias_output}"
+grep -q '^provider_auth_ready_states=codex_auth:ready$' <<<"${codex_alias_output}"
 grep -q '^shared_auth_modes=github_hosts$' <<<"${codex_alias_output}"
 
 claude_output="$(run_auth_status claude)"
+grep -q '^provider_auth_ready_states=claude_api_key:ready,claude_auth:ready$' <<<"${claude_output}"
+grep -q '^shared_auth_ready_states=github_hosts:ready$' <<<"${claude_output}"
 grep -q '^provider_auth_mode=claude_api_key$' <<<"${claude_output}"
 grep -q '^provider_auth_modes=claude_api_key,claude_auth$' <<<"${claude_output}"
 grep -q '^shared_auth_modes=github_hosts$' <<<"${claude_output}"
 grep -q '^github_auth_present=1$' <<<"${claude_output}"
 
 gemini_output="$(run_auth_status gemini)"
+grep -q '^provider_auth_ready_states=gemini_env:ready$' <<<"${gemini_output}"
+grep -q '^shared_auth_ready_states=github_hosts:ready$' <<<"${gemini_output}"
 grep -q '^provider_auth_mode=gemini_env$' <<<"${gemini_output}"
 grep -q '^provider_auth_modes=gemini_env$' <<<"${gemini_output}"
 grep -q '^shared_auth_modes=github_hosts$' <<<"${gemini_output}"

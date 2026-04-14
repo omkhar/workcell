@@ -64,6 +64,13 @@ func mustContain(tb testing.TB, text, want string) {
 	}
 }
 
+func mustNotContain(tb testing.TB, text, want string) {
+	tb.Helper()
+	if strings.Contains(text, want) {
+		tb.Fatalf("%q unexpectedly contains %q", text, want)
+	}
+}
+
 func pathVariants(path string) []string {
 	var variants []string
 	seen := map[string]struct{}{}
@@ -152,6 +159,210 @@ func TestStatusWithoutPolicyReportsNone(t *testing.T) {
 	mustContain(t, got.stdout, "credential_resolution_states=none")
 }
 
+func TestPolicyInspectionCommandsShowValidateAndDiff(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	sourcePath := filepath.Join(root, "auth.json")
+	writeFile(t, sourcePath, "super-secret-token\n", 0o600)
+	writeFile(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"# local note",
+		"[credentials.codex_auth]",
+		`source = "` + sourcePath + `"`,
+		`providers = ["codex"]`,
+		`modes = ["strict"]`,
+	}, "\n")+"\n", 0o600)
+
+	got := runAuthPolicy("show", "--policy", policyPath)
+	if got.code != 0 {
+		t.Fatalf("Run(show) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	if !(strings.Index(got.stdout, `modes = ["strict"]`) < strings.Index(got.stdout, `providers = ["codex"]`) && strings.Index(got.stdout, `providers = ["codex"]`) < strings.Index(got.stdout, `source = "`+sourcePath+`"`)) {
+		t.Fatalf("show output not canonicalized as expected: %q", got.stdout)
+	}
+	mustNotContain(t, got.stdout, "local note")
+
+	got = runAuthPolicy("validate", "--policy", policyPath)
+	if got.code != 0 {
+		t.Fatalf("Run(validate) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "policy_valid=1")
+	mustContain(t, got.stdout, "resolver_readiness=not-applicable")
+
+	got = runAuthPolicy("diff", "--policy", policyPath)
+	if got.code != 0 {
+		t.Fatalf("Run(diff) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "diff_status=changed")
+	mustContain(t, got.stdout, "--- current")
+	mustContain(t, got.stdout, "+++ canonical")
+	mustContain(t, got.stdout, "-# local note")
+}
+
+func TestPolicyWhyExplainsSelectionAndHidesSecrets(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	sourcePath := filepath.Join(root, "auth.json")
+	writeFile(t, sourcePath, "super-secret-token\n", 0o600)
+	writeFile(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.codex_auth]",
+		`source = "` + sourcePath + `"`,
+		`providers = ["codex"]`,
+		`modes = ["strict"]`,
+	}, "\n")+"\n", 0o600)
+
+	got := runAuthPolicy(
+		"why",
+		"--policy", policyPath,
+		"--credential", "codex_auth",
+		"--agent", "codex",
+		"--mode", "strict",
+	)
+	if got.code != 0 {
+		t.Fatalf("Run(why) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "selected=1")
+	mustContain(t, got.stdout, "selection_reason=agent matches providers; mode matches modes")
+	mustContain(t, got.stdout, "credential_readiness=ready")
+	mustContain(t, got.stdout, "credential_input_kind=source")
+	mustContain(t, got.stdout, "credential_providers=codex")
+	mustContain(t, got.stdout, "credential_modes=strict")
+	mustNotContain(t, got.stdout, "super-secret-token")
+}
+
+func TestPolicyWhyExplainsResolverBackedSelection(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	writeFile(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.claude_auth]",
+		`resolver = "claude-macos-keychain"`,
+		`materialization = "ephemeral"`,
+		`providers = ["claude"]`,
+		`modes = ["strict"]`,
+	}, "\n")+"\n", 0o600)
+
+	got := runAuthPolicy(
+		"why",
+		"--policy", policyPath,
+		"--credential", "claude_auth",
+		"--agent", "claude",
+		"--mode", "strict",
+	)
+	if got.code != 0 {
+		t.Fatalf("Run(why) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "selected=1")
+	mustContain(t, got.stdout, "credential_readiness=configured-only")
+	mustContain(t, got.stdout, "credential_input_kind=resolver")
+	mustContain(t, got.stdout, "credential_resolver=claude-macos-keychain")
+	mustContain(t, got.stdout, "selection_reason=agent matches providers; mode matches modes")
+}
+
+func TestPolicyWhyExplainsWhenCredentialIsNotSelected(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	writeFile(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.codex_auth]",
+		`source = "/tmp/auth.json"`,
+		`providers = ["claude"]`,
+		`modes = ["build"]`,
+	}, "\n")+"\n", 0o600)
+
+	got := runAuthPolicy(
+		"why",
+		"--policy", policyPath,
+		"--credential", "codex_auth",
+		"--agent", "codex",
+		"--mode", "strict",
+	)
+	if got.code != 0 {
+		t.Fatalf("Run(why) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "selected=0")
+	mustContain(t, got.stdout, "selection_reason=agent does not match providers; mode does not match modes")
+	mustContain(t, got.stdout, "credential_readiness=filtered-provider")
+	mustContain(t, got.stdout, "credential_input_kind=source")
+}
+
+func TestPolicyInspectionCommandsFailClosedOnMissingPolicy(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "missing.toml")
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{name: "show", args: []string{"show", "--policy", policyPath}},
+		{name: "validate", args: []string{"validate", "--policy", policyPath}},
+		{name: "diff", args: []string{"diff", "--policy", policyPath}},
+		{name: "why", args: []string{"why", "--policy", policyPath, "--credential", "codex_auth", "--agent", "codex", "--mode", "strict"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runAuthPolicy(tc.args...)
+			if got.code != 1 {
+				t.Fatalf("Run(%s) = %d stdout=%q stderr=%q", tc.name, got.code, got.stdout, got.stderr)
+			}
+			mustContainAny(t, got.stderr, "does not exist", "no such file or directory")
+		})
+	}
+}
+
+func TestValidateRejectsInvalidSelectors(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	sourcePath := filepath.Join(root, "auth.json")
+	writeFile(t, sourcePath, "{}\n", 0o600)
+	writeFile(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.codex_auth]",
+		`source = "` + sourcePath + `"`,
+		`providers = ["bogus"]`,
+	}, "\n")+"\n", 0o600)
+
+	got := runAuthPolicy("validate", "--policy", policyPath)
+	if got.code != 1 {
+		t.Fatalf("Run(validate) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stderr, "credentials.codex_auth.providers contains unsupported value: bogus")
+}
+
+func TestValidateRejectsMissingCredentialSource(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	writeFile(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.codex_auth]",
+		`source = "/no/such/file"`,
+	}, "\n")+"\n", 0o600)
+
+	got := runAuthPolicy("validate", "--policy", policyPath)
+	if got.code != 1 {
+		t.Fatalf("Run(validate) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContainAny(t, got.stderr, "does not exist", "no such file or directory")
+}
+
+func TestValidateReportsResolverReadinessAsDeferred(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	writeFile(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.claude_auth]",
+		`resolver = "claude-macos-keychain"`,
+		`materialization = "ephemeral"`,
+	}, "\n")+"\n", 0o600)
+
+	got := runAuthPolicy("validate", "--policy", policyPath)
+	if got.code != 0 {
+		t.Fatalf("Run(validate) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "policy_valid=1")
+	mustContain(t, got.stdout, "resolver_readiness=deferred-to-launch")
+}
+
 func TestInitSetStatusUnsetRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "injection-policy.toml")
@@ -200,6 +411,8 @@ func TestInitSetStatusUnsetRoundTrip(t *testing.T) {
 	}
 	mustContain(t, got.stdout, "credential_keys=codex_auth")
 	mustContain(t, got.stdout, "credential_input_kinds=codex_auth:source")
+	mustContain(t, got.stdout, "provider_auth_ready_states=codex_auth:ready")
+	mustContain(t, got.stdout, "shared_auth_ready_states=none")
 	mustContain(t, got.stdout, "provider_auth_mode=codex_auth")
 	mustContain(t, got.stdout, "shared_auth_modes=none")
 
@@ -249,6 +462,8 @@ func TestSetResolverAndStatus(t *testing.T) {
 	mustContain(t, got.stdout, "credential_resolvers=claude_auth:claude-macos-keychain")
 	mustContain(t, got.stdout, "credential_materialization=claude_auth:ephemeral")
 	mustContain(t, got.stdout, "credential_resolution_states=claude_auth:configured-only")
+	mustContain(t, got.stdout, "provider_auth_ready_states=claude_auth:configured-only")
+	mustContain(t, got.stdout, "shared_auth_ready_states=none")
 	mustContain(t, got.stdout, "provider_auth_mode=none")
 	mustContain(t, got.stdout, "shared_auth_modes=none")
 }
@@ -269,6 +484,8 @@ func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
 	if codexStatus.code != 0 {
 		t.Fatalf("Run(status codex) = %d stdout=%q stderr=%q", codexStatus.code, codexStatus.stdout, codexStatus.stderr)
 	}
+	mustContain(t, codexStatus.stdout, "provider_auth_ready_states=none")
+	mustContain(t, codexStatus.stdout, "shared_auth_ready_states=github_hosts:ready")
 	mustContain(t, codexStatus.stdout, "shared_auth_modes=github_hosts")
 
 	claudeStatus := runAuthPolicy("status", "--policy", policyPath, "--agent", "claude")
@@ -276,6 +493,7 @@ func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
 		t.Fatalf("Run(status claude) = %d stdout=%q stderr=%q", claudeStatus.code, claudeStatus.stdout, claudeStatus.stderr)
 	}
 	mustContain(t, claudeStatus.stdout, "credential_keys=none")
+	mustContain(t, claudeStatus.stdout, "shared_auth_ready_states=github_hosts:filtered-provider")
 	mustContain(t, claudeStatus.stdout, "shared_auth_modes=none")
 }
 
