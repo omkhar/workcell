@@ -148,6 +148,7 @@ func removeExistingPath(tb testing.TB, candidates ...string) {
 }
 
 func TestStatusWithoutPolicyReportsNone(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "missing-policy.toml")
 
@@ -160,6 +161,7 @@ func TestStatusWithoutPolicyReportsNone(t *testing.T) {
 }
 
 func TestPolicyInspectionCommandsShowValidateAndDiff(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	sourcePath := filepath.Join(root, "auth.json")
@@ -200,6 +202,7 @@ func TestPolicyInspectionCommandsShowValidateAndDiff(t *testing.T) {
 }
 
 func TestPolicyWhyExplainsSelectionAndHidesSecrets(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	sourcePath := filepath.Join(root, "auth.json")
@@ -232,6 +235,7 @@ func TestPolicyWhyExplainsSelectionAndHidesSecrets(t *testing.T) {
 }
 
 func TestPolicyWhyExplainsResolverBackedSelection(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writeFile(t, policyPath, strings.Join([]string{
@@ -261,6 +265,7 @@ func TestPolicyWhyExplainsResolverBackedSelection(t *testing.T) {
 }
 
 func TestPolicyWhyExplainsWhenCredentialIsNotSelected(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writeFile(t, policyPath, strings.Join([]string{
@@ -288,6 +293,7 @@ func TestPolicyWhyExplainsWhenCredentialIsNotSelected(t *testing.T) {
 }
 
 func TestPolicyWhyTreatsOutOfScopeCredentialAsNotSelected(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writeFile(t, policyPath, strings.Join([]string{
@@ -313,6 +319,7 @@ func TestPolicyWhyTreatsOutOfScopeCredentialAsNotSelected(t *testing.T) {
 }
 
 func TestPolicyInspectionCommandsFailClosedOnMissingPolicy(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "missing.toml")
 	cases := []struct {
@@ -336,6 +343,7 @@ func TestPolicyInspectionCommandsFailClosedOnMissingPolicy(t *testing.T) {
 }
 
 func TestValidateRejectsInvalidSelectors(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	sourcePath := filepath.Join(root, "auth.json")
@@ -355,6 +363,7 @@ func TestValidateRejectsInvalidSelectors(t *testing.T) {
 }
 
 func TestValidateRejectsMissingCredentialSource(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writeFile(t, policyPath, strings.Join([]string{
@@ -371,6 +380,7 @@ func TestValidateRejectsMissingCredentialSource(t *testing.T) {
 }
 
 func TestValidateReportsResolverReadinessAsDeferred(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writeFile(t, policyPath, strings.Join([]string{
@@ -389,6 +399,7 @@ func TestValidateReportsResolverReadinessAsDeferred(t *testing.T) {
 }
 
 func TestInitSetStatusUnsetRoundTrip(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "injection-policy.toml")
 	managedRoot := filepath.Join(root, "credentials")
@@ -454,6 +465,7 @@ func TestInitSetStatusUnsetRoundTrip(t *testing.T) {
 }
 
 func TestSetResolverAndStatus(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "injection-policy.toml")
 	managedRoot := filepath.Join(root, "credentials")
@@ -494,6 +506,7 @@ func TestSetResolverAndStatus(t *testing.T) {
 }
 
 func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "injection-policy.toml")
 	hostsPath := filepath.Join(root, "hosts.yml")
@@ -523,6 +536,7 @@ func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
 }
 
 func TestRunRejectsInvalidConfigurations(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		policy       string
@@ -652,6 +666,7 @@ func TestRunRejectsInvalidConfigurations(t *testing.T) {
 }
 
 func TestSetRollsBackManagedCopyWhenPolicyWriteFails(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "injection-policy.toml")
 	managedRoot := filepath.Join(root, "credentials")
@@ -685,6 +700,7 @@ func TestSetRollsBackManagedCopyWhenPolicyWriteFails(t *testing.T) {
 }
 
 func TestStatusRejectsMissingManagedSourceFile(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "injection-policy.toml")
 	managedRoot := filepath.Join(root, "credentials")
@@ -725,6 +741,7 @@ func TestStatusRejectsMissingManagedSourceFile(t *testing.T) {
 }
 
 func TestSetRejectsSymlinkedManagedRootDestination(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "injection-policy.toml")
 	managedRoot := filepath.Join(root, "credentials")
@@ -758,6 +775,7 @@ func TestSetRejectsSymlinkedManagedRootDestination(t *testing.T) {
 }
 
 func TestWriteSourceFileRejectsValidatedSourceSwappedToSymlink(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	managedRoot := filepath.Join(root, "managed")
 	if err := os.MkdirAll(managedRoot, 0o700); err != nil {

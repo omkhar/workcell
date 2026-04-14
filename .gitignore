@@ -28,6 +28,7 @@ adapters/codex/.codex/memories/
 adapters/codex/.codex/tmp/
 dist/
 tmp/
+.workcell-build-cache/
 .venv/
 runtime/container/providers/node_modules/
 runtime/container/providers/mirror/

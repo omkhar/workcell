@@ -75,6 +75,7 @@ func readJSON(tb testing.TB, path string) map[string]any {
 }
 
 func TestRunMetadataModeWritesPlaceholderAndMetadata(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	githubHostsPath := filepath.Join(root, "hosts.yml")
@@ -162,6 +163,7 @@ func TestRunMetadataModeWritesPlaceholderAndMetadata(t *testing.T) {
 }
 
 func TestRunLaunchModeFailsClosedWithoutSupportedExportPath(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writePolicy(t, policyPath, strings.Join([]string{
@@ -189,6 +191,7 @@ func TestRunLaunchModeFailsClosedWithoutSupportedExportPath(t *testing.T) {
 }
 
 func TestRunLaunchModeAcceptsTestExportFile(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	exportPath := filepath.Join(root, "claude-export.json")
@@ -240,6 +243,7 @@ func TestRunLaunchModeAcceptsTestExportFile(t *testing.T) {
 }
 
 func TestRunMetadataModeRejectsMissingSourceCredential(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writePolicy(t, policyPath, strings.Join([]string{
@@ -274,6 +278,7 @@ func TestRunMetadataModeRejectsMissingSourceCredential(t *testing.T) {
 }
 
 func TestMaterializeFileUnderRootRejectsValidatedSourceSwappedToSymlink(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	outputRoot := filepath.Join(root, "out")
 	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
@@ -314,6 +319,7 @@ func TestMaterializeFileUnderRootRejectsValidatedSourceSwappedToSymlink(t *testi
 }
 
 func TestRunRejectsOutputPolicyOutsideOutputRoot(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writePolicy(t, policyPath, strings.Join([]string{
@@ -346,6 +352,7 @@ func TestRunRejectsOutputPolicyOutsideOutputRoot(t *testing.T) {
 }
 
 func TestRunMetadataModeRejectsResolvedCredentialSymlinkEscape(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writePolicy(t, policyPath, strings.Join([]string{
@@ -388,6 +395,7 @@ func TestRunMetadataModeRejectsResolvedCredentialSymlinkEscape(t *testing.T) {
 }
 
 func TestRunDropsProviderFilteredResolverEntries(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
 	writePolicy(t, policyPath, strings.Join([]string{
@@ -431,6 +439,7 @@ func TestRunDropsProviderFilteredResolverEntries(t *testing.T) {
 }
 
 func TestRunRejectsInvalidConfigurations(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		policy       string

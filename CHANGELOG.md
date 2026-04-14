@@ -8,6 +8,43 @@ Releases.
 
 ## Unreleased
 
+## v0.9.1 - 2026-04-14
+
+### Changed
+
+- container: decouple adapter and script COPY layers from the Rust build step so
+  non-Rust changes no longer invalidate the 90–180 s cargo compile cache
+- container: copy provider npm artifacts directly between build stages instead of
+  creating and decompressing a tar archive on every container start
+- container: fix apt retry loop so `apt-get` cache is only cleared on failure,
+  not before every attempt; remove the post-success `npm cache clean` that
+  discarded reusable BuildKit layer cache
+- container: scope the `find /` SOURCE\_DATE\_EPOCH normalisation pass to
+  directories written during the build instead of walking the entire image
+  filesystem
+- container: add `.dockerignore` to exclude `.git`, logs, and node\_modules from
+  the build context
+- mutation tests: run all Go and Rust mutation cases in parallel, cutting
+  total mutation test wall time proportionally to available CPU cores
+- unit tests: add `t.Parallel()` to all top-level test functions in
+  `authpolicy`, `hostutil`, `authresolve`, and `metadatautil` packages; fix
+  `canonicalizeForTest` helper to use goroutine-safe `t.Setenv` instead of
+  `os.Setenv`
+- scenario tests: pre-build `workcell-hostutil` before running scenario tests so
+  `scripts/workcell` skips repeated `go run` overhead; run all secretless
+  scenarios in parallel
+- ci: enable GHA layer cache for the validator image build in `ci.yml` and
+  `docs.yml` via `docker buildx build --cache-from/--cache-to type=gha`
+- ci: fix `cache-binary: false` → `cache-binary: true` for buildx setup in
+  `release.yml` so the buildx binary itself is cached between release jobs
+- ci: remove the no-op `reproducible-build` aggregator job from `ci.yml`
+- scripts: extract common sanitized-entrypoint preamble into
+  `scripts/lib/trusted-entrypoint.sh` and update the three
+  `verify-upstream-*-release.sh` scripts to source it
+- runtime: consolidate duplicate `emit_session_assurance_notice()` into
+  `runtime/container/assurance.sh`; remove from `entrypoint.sh`,
+  `provider-wrapper.sh`, and `development-wrapper.sh`
+
 ## v0.9.0 - 2026-04-14
 
 ### Added

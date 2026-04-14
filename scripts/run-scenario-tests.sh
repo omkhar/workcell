@@ -21,14 +21,12 @@ case "${1:-}" in
 esac
 
 CURRENT_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
-
-passed=0
-failed=0
-skipped=0
 SCENARIO_LIST="$(mktemp "${TMPDIR:-/tmp}/workcell-scenarios.XXXXXX")"
+RESULTS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-scenario-results.XXXXXX")"
 
 cleanup() {
   rm -f "${SCENARIO_LIST}"
+  rm -rf "${RESULTS_DIR}"
 }
 trap cleanup EXIT
 
@@ -46,6 +44,7 @@ scenario_platform_matches() {
   esac
 }
 
+# Returns: 0 = pass, 1 = fail, 2 = skip
 run_scenario() {
   local scenario_id="$1"
   local test_file="$2"
@@ -56,48 +55,42 @@ run_scenario() {
 
   if [[ "${manual}" == "1" ]]; then
     echo "SKIP ${scenario_id} (manual lane)"
-    skipped=$((skipped + 1))
-    return
+    return 2
   fi
 
   if ! scenario_platform_matches "${platform}"; then
     echo "SKIP ${scenario_id} (platform ${platform})"
-    skipped=$((skipped + 1))
-    return
+    return 2
   fi
 
   if [[ "${RUN_ALL}" -eq 0 ]] && [[ "${lane}" != "secretless" ]]; then
     echo "SKIP ${scenario_id} (lane ${lane})"
-    skipped=$((skipped + 1))
-    return
+    return 2
   fi
 
   if [[ "${RUN_ALL}" -eq 0 ]] && [[ "${requires_creds}" == "1" ]]; then
     echo "SKIP ${scenario_id} (requires credentials)"
-    skipped=$((skipped + 1))
-    return
+    return 2
   fi
 
   if [[ -z "${test_file}" ]]; then
     echo "SKIP ${scenario_id} (no test_file)"
-    skipped=$((skipped + 1))
-    return
+    return 2
   fi
 
   local full_test_path="${SCENARIO_ROOT}/${test_file}"
 
   if [[ ! -f "${full_test_path}" ]]; then
     echo "SKIP ${scenario_id} (test file not found: ${test_file})"
-    skipped=$((skipped + 1))
-    return
+    return 2
   fi
 
   if bash "${full_test_path}"; then
     echo "PASS ${scenario_id}"
-    passed=$((passed + 1))
+    return 0
   else
     echo "FAIL ${scenario_id}"
-    failed=$((failed + 1))
+    return 1
   fi
 }
 
@@ -105,9 +98,44 @@ if ! "${ROOT_DIR}/scripts/lib/scenario_manifest" list-tsv "${MANIFEST}" >"${SCEN
   exit 1
 fi
 
+# Run all scenarios in parallel; each writes its exit code to a per-index file.
+idx=0
+declare -a pids=()
+
 while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform manual; do
-  run_scenario "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${manual}"
+  idx=$((idx + 1))
+  result_file="${RESULTS_DIR}/${idx}.exit"
+  (
+    exit_code=0
+    run_scenario "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${manual}" || exit_code="$?"
+    printf '%d\n' "${exit_code}" >"${result_file}"
+  ) &
+  pids+=($!)
 done <"${SCENARIO_LIST}"
+
+# Wait for all background jobs to complete
+for pid in "${pids[@]}"; do
+  wait "${pid}" || true
+done
+
+# Aggregate results from per-scenario exit files.
+# Exit codes: 0 = pass, 1 = fail, 2 = skip
+passed=0
+failed=0
+skipped=0
+for i in $(seq 1 "${idx}"); do
+  result_file="${RESULTS_DIR}/${i}.exit"
+  if [[ -f "${result_file}" ]]; then
+    code=$(<"${result_file}")
+    case "${code}" in
+      0) passed=$((passed + 1)) ;;
+      2) skipped=$((skipped + 1)) ;;
+      *) failed=$((failed + 1)) ;;
+    esac
+  else
+    failed=$((failed + 1))
+  fi
+done
 
 echo ""
 echo "Results: passed=${passed} failed=${failed} skipped=${skipped}"

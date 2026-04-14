@@ -55,7 +55,6 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
        && return 0; \
      } \
   && for attempt in 1 2 3; do \
-       rm -rf /var/lib/apt/lists/*; \
        if DEBIAN_FRONTEND=noninteractive apt-get update \
          && install_runtime_packages; then \
          break; \
@@ -63,6 +62,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
        if [[ "${attempt}" -eq 3 ]]; then \
          exit 1; \
        fi; \
+       rm -rf /var/lib/apt/lists/*; \
        sleep "$((attempt * 5))"; \
      done \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
@@ -86,16 +86,22 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
   && rm -f /etc/ld.so.cache \
   && find /var/log -type f -delete \
-  && find / \
-    \( \
-      -path '/dev' -o -path '/dev/*' -o \
-      -path '/proc' -o -path '/proc/*' -o \
-      -path '/run' -o -path '/run/*' -o \
-      -path '/sys' -o -path '/sys/*' -o \
-      -path '/tmp' -o -path '/tmp/*' \
-    \) -prune -o \
-    \( -path '/etc/hostname' -o -path '/etc/hosts' -o -path '/etc/resolv.conf' \) -prune -o \
-    -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
+  && find \
+      /etc/apt \
+      /etc/workcell \
+      /opt/workcell \
+      /state \
+      /usr/local/bin \
+      /usr/local/lib \
+      /usr/local/libexec \
+      /usr/share \
+      /var \
+      \( \
+        -path '/var/lib/apt/lists' -o \
+        -path '/var/cache/apt' \
+      \) -prune -o \
+      \( -path '/etc/hostname' -o -path '/etc/hosts' -o -path '/etc/resolv.conf' \) -prune -o \
+      -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
 FROM runtime-base AS provider-builder
 
@@ -121,12 +127,7 @@ RUN install_provider_packages() { \
        npm cache clean --force >/dev/null 2>&1 || true; \
        sleep "$((attempt * 5))"; \
      done \
-  && npm cache clean --force \
-  && find /opt/workcell/providers -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}" \
-  && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
-    -cf /opt/workcell/providers.tar -C /opt/workcell/providers . \
-  && rm -rf /opt/workcell/providers \
-  && rm -rf /root/.npm /root/.cache
+  && find /opt/workcell/providers -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
 FROM runtime-base AS runtime-builder
 
@@ -168,7 +169,6 @@ RUN install_runtime_builder_packages() { \
       && return 0; \
     } \
   && for attempt in 1 2 3; do \
-       rm -rf /var/lib/apt/lists/*; \
        if DEBIAN_FRONTEND=noninteractive apt-get update \
          && install_runtime_builder_packages; then \
          break; \
@@ -176,6 +176,7 @@ RUN install_runtime_builder_packages() { \
        if [[ "${attempt}" -eq 3 ]]; then \
          exit 1; \
        fi; \
+       rm -rf /var/lib/apt/lists/*; \
        sleep "$((attempt * 5))"; \
      done \
   && toolchain_target="" \
@@ -280,20 +281,9 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/codex \
   && rm -f /tmp/codex.tar.gz
 
-COPY adapters /opt/workcell/adapters
-COPY runtime/container/bin/git /usr/local/libexec/workcell/git-wrapper.sh
-COPY runtime/container/bin/node /usr/local/libexec/workcell/node-wrapper.sh
-COPY runtime/container/bin/apt-helper.sh /usr/local/libexec/workcell/apt-helper.sh
-COPY runtime/container/bin/apt-wrapper.sh /usr/local/libexec/workcell/apt-wrapper.sh
+# Copy ONLY the Rust source before the expensive compile so that changes to
+# adapters or shell scripts do not invalidate the cargo build cache layer.
 COPY runtime/container/rust /workcell-rust
-COPY runtime/container/assurance.sh /usr/local/libexec/workcell/assurance.sh
-COPY runtime/container/development-wrapper.sh /usr/local/libexec/workcell/development-wrapper.sh
-COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
-COPY runtime/container/home-control-plane.sh /usr/local/libexec/workcell/home-control-plane.sh
-COPY runtime/container/provider-wrapper.sh /usr/local/libexec/workcell/provider-wrapper.sh
-COPY runtime/container/runtime-user.sh /usr/local/libexec/workcell/runtime-user.sh
-COPY runtime/container/public-node-guard.mjs /usr/local/libexec/workcell/public-node-guard.mjs
-COPY runtime/container/entrypoint.sh /usr/local/libexec/workcell/entrypoint.sh
 
 RUN export \
       SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
@@ -321,10 +311,27 @@ RUN export \
   && install -m 0644 /tmp/workcell-rust-target/release/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so \
   && install -m 0644 /tmp/workcell-rust-target/release/workcell-launcher /usr/local/libexec/workcell/core/launcher \
   && install -m 0644 /tmp/workcell-rust-target/release/workcell-git-launcher /usr/local/libexec/workcell/core/git \
-  && mkdir -p /etc/claude-code \
-  && cp /opt/workcell/adapters/claude/managed-settings.json /etc/claude-code/managed-settings.json \
-  && rm -rf /tmp/workcell-rust-target /workcell-rust \
   && printf '/usr/local/lib/libworkcell_exec_guard.so\n' > /etc/ld.so.preload \
+  && rm -rf /tmp/workcell-rust-target /workcell-rust
+
+# Copy adapters and control-plane scripts AFTER cargo build so that changes to
+# these frequently-modified files do not invalidate the Rust compilation cache.
+COPY adapters /opt/workcell/adapters
+COPY runtime/container/bin/git /usr/local/libexec/workcell/git-wrapper.sh
+COPY runtime/container/bin/node /usr/local/libexec/workcell/node-wrapper.sh
+COPY runtime/container/bin/apt-helper.sh /usr/local/libexec/workcell/apt-helper.sh
+COPY runtime/container/bin/apt-wrapper.sh /usr/local/libexec/workcell/apt-wrapper.sh
+COPY runtime/container/assurance.sh /usr/local/libexec/workcell/assurance.sh
+COPY runtime/container/development-wrapper.sh /usr/local/libexec/workcell/development-wrapper.sh
+COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
+COPY runtime/container/home-control-plane.sh /usr/local/libexec/workcell/home-control-plane.sh
+COPY runtime/container/provider-wrapper.sh /usr/local/libexec/workcell/provider-wrapper.sh
+COPY runtime/container/runtime-user.sh /usr/local/libexec/workcell/runtime-user.sh
+COPY runtime/container/public-node-guard.mjs /usr/local/libexec/workcell/public-node-guard.mjs
+COPY runtime/container/entrypoint.sh /usr/local/libexec/workcell/entrypoint.sh
+
+RUN mkdir -p /etc/claude-code \
+  && cp /opt/workcell/adapters/claude/managed-settings.json /etc/claude-code/managed-settings.json \
   && chmod 0444 \
     /etc/claude-code/managed-settings.json \
   && chmod 0444 \
@@ -360,7 +367,9 @@ ARG SOURCE_DATE_EPOCH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-COPY --from=provider-builder /opt/workcell/providers.tar /tmp/workcell-providers.tar
+# Copy provider node_modules directly — extraction at build time avoids
+# tar decompression overhead on every container cold start.
+COPY --from=provider-builder /opt/workcell/providers /opt/workcell/providers
 COPY --from=runtime-builder /etc/claude-code/managed-settings.json /etc/claude-code/managed-settings.json
 COPY --from=runtime-builder /etc/ld.so.preload /etc/ld.so.preload
 COPY --from=runtime-builder /opt/workcell/adapters /opt/workcell/adapters
@@ -369,9 +378,6 @@ COPY --from=runtime-builder /usr/local/libexec/workcell /usr/local/libexec/workc
 COPY runtime/container/control-plane-manifest.json /usr/local/libexec/workcell/control-plane-manifest.json
 
 RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
-  && mkdir -p /opt/workcell/providers \
-  && tar -xf /tmp/workcell-providers.tar -C /opt/workcell/providers \
-  && rm -f /tmp/workcell-providers.tar \
   && chmod 0644 /usr/local/libexec/workcell/real/git \
   && mv /usr/local/bin/node /usr/local/libexec/workcell/real/node \
   && chmod 0755 /usr/local/libexec/workcell/real/node \

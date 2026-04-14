@@ -16,6 +16,7 @@ import (
 )
 
 func TestCanonicalizePathResolvesHomeAndSymlinks(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	realHome := filepath.Join(tmp, "real-home")
 	linkHome := filepath.Join(tmp, "link-home")
@@ -26,7 +27,7 @@ func TestCanonicalizePathResolvesHomeAndSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := canonicalizeForTest("~/debug/workcell.log", linkHome)
+	got, err := canonicalizeForTest(t, "~/debug/workcell.log", linkHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +43,7 @@ func TestCanonicalizePathResolvesHomeAndSymlinks(t *testing.T) {
 }
 
 func TestCanonicalizePathResolvesMissingSuffixBehindSymlink(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	realRoot := filepath.Join(tmp, "real-root")
 	linkRoot := filepath.Join(tmp, "link-root")
@@ -52,7 +54,7 @@ func TestCanonicalizePathResolvesMissingSuffixBehindSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := canonicalizeForTest(filepath.Join(linkRoot, "missing", "child"), realRoot)
+	got, err := canonicalizeForTest(t, filepath.Join(linkRoot, "missing", "child"), realRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +70,7 @@ func TestCanonicalizePathResolvesMissingSuffixBehindSymlink(t *testing.T) {
 }
 
 func TestCanonicalizePathFromUsesExplicitBaseForRelativePaths(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	base := filepath.Join(tmp, "workspace")
 	if err := os.MkdirAll(base, 0o755); err != nil {
@@ -90,6 +93,7 @@ func TestCanonicalizePathFromUsesExplicitBaseForRelativePaths(t *testing.T) {
 }
 
 func TestWriteGitHubReleaseCreatePayload(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	outputPath := filepath.Join(tmp, "create.json")
 	if err := WriteGitHubReleaseCreatePayload("v1.2.3", outputPath); err != nil {
@@ -107,6 +111,7 @@ func TestWriteGitHubReleaseCreatePayload(t *testing.T) {
 }
 
 func TestWriteGitHubReleaseMetadata(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	releaseJSONPath := filepath.Join(tmp, "release.json")
 	outputPath := filepath.Join(tmp, "metadata.bin")
@@ -161,6 +166,7 @@ func TestWriteGitHubReleaseMetadata(t *testing.T) {
 }
 
 func TestEncodeReleaseAssetName(t *testing.T) {
+	t.Parallel()
 	got := EncodeReleaseAssetName("workcell a+b.tar.gz")
 	want := "workcell%20a%2Bb.tar.gz"
 	if got != want {
@@ -169,6 +175,7 @@ func TestEncodeReleaseAssetName(t *testing.T) {
 }
 
 func TestWriteReleaseBundleManifest(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	outputPath := filepath.Join(tmp, "bundle", "manifest.json")
 	if err := WriteReleaseBundleManifest(outputPath, "HEAD", "workcell.tar.gz", "workcell/", 123, "sha256:aaa", "sha256:bbb"); err != nil {
@@ -197,6 +204,7 @@ func TestWriteReleaseBundleManifest(t *testing.T) {
 }
 
 func TestDirectMountCacheKeyMatchesNULTerminatedHash(t *testing.T) {
+	t.Parallel()
 	got := DirectMountCacheKey("/host/auth.json", "/opt/workcell/host-inputs/credentials/codex-auth.json")
 
 	sum := sha256.Sum256([]byte("/host/auth.json\x00/opt/workcell/host-inputs/credentials/codex-auth.json\x00"))
@@ -207,6 +215,7 @@ func TestDirectMountCacheKeyMatchesNULTerminatedHash(t *testing.T) {
 }
 
 func TestColimaProfileStatusMissingProfileReturnsNoMatch(t *testing.T) {
+	t.Parallel()
 	input := []byte(strings.Join([]string{
 		`{"name":"default","status":"Running"}`,
 		`{"name":"workcell-test","status":"Stopped"}`,
@@ -220,6 +229,7 @@ func TestColimaProfileStatusMissingProfileReturnsNoMatch(t *testing.T) {
 }
 
 func TestProfileLockIsStaleReportsMalformedOwnerMetadata(t *testing.T) {
+	t.Parallel()
 	lockDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(lockDir, "owner.json"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
@@ -235,6 +245,7 @@ func TestProfileLockIsStaleReportsMalformedOwnerMetadata(t *testing.T) {
 }
 
 func TestProfileLockIsStaleReportsIncompleteOwnerMetadata(t *testing.T) {
+	t.Parallel()
 	lockDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(lockDir, "owner.json"), []byte(`{"pid":`+strconv.Itoa(os.Getpid())+`}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -250,6 +261,7 @@ func TestProfileLockIsStaleReportsIncompleteOwnerMetadata(t *testing.T) {
 }
 
 func TestProfileLockIsStaleRecognizesLiveOwner(t *testing.T) {
+	t.Parallel()
 	lockDir := t.TempDir()
 	started, err := processStartTime(os.Getpid())
 	if err != nil {
@@ -269,6 +281,7 @@ func TestProfileLockIsStaleRecognizesLiveOwner(t *testing.T) {
 }
 
 func TestAcquireProfileLockCreatesOwnerAtomically(t *testing.T) {
+	t.Parallel()
 	lockDir := filepath.Join(t.TempDir(), "profile.lock")
 
 	acquired, err := AcquireProfileLock(lockDir, os.Getpid())
@@ -299,6 +312,7 @@ func TestAcquireProfileLockCreatesOwnerAtomically(t *testing.T) {
 }
 
 func TestAcquireProfileLockReturnsFalseWhenLockExists(t *testing.T) {
+	t.Parallel()
 	parent := t.TempDir()
 	lockDir := filepath.Join(parent, "profile.lock")
 	if err := os.MkdirAll(lockDir, 0o755); err != nil {
@@ -324,13 +338,8 @@ func TestAcquireProfileLockReturnsFalseWhenLockExists(t *testing.T) {
 	}
 }
 
-func canonicalizeForTest(path, home string) (string, error) {
-	oldHome := os.Getenv("HOME")
-	if err := os.Setenv("HOME", home); err != nil {
-		return "", err
-	}
-	defer func() {
-		_ = os.Setenv("HOME", oldHome)
-	}()
+func canonicalizeForTest(t *testing.T, path, home string) (string, error) {
+	t.Helper()
+	t.Setenv("HOME", home)
 	return CanonicalizePath(path)
 }

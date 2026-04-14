@@ -108,6 +108,7 @@ jobs:
 }
 
 func TestCheckWorkflowsRecognizesRequiredJobNames(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	installWorkflowToolStubs(t, root)
 	workflowDir := filepath.Join(root, ".github", "workflows")
@@ -181,6 +182,7 @@ contexts = [
 }
 
 func TestCheckWorkflowsRejectsMultilineSpoofedName(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	installWorkflowToolStubs(t, root)
 	workflowDir := filepath.Join(root, ".github", "workflows")
@@ -225,6 +227,7 @@ contexts = [
 }
 
 func TestValidateReleaseWorkflowControlPlaneFlowRejectsMissingCanonicalArtifact(t *testing.T) {
+	t.Parallel()
 	releaseWorkflow := `      - name: Generate preflight control-plane manifest
         run: |
           mkdir -p dist
@@ -252,6 +255,7 @@ func TestValidateReleaseWorkflowControlPlaneFlowRejectsMissingCanonicalArtifact(
 }
 
 func TestValidateReleaseWorkflowControlPlaneFlowAcceptsCanonicalArtifact(t *testing.T) {
+	t.Parallel()
 	releaseWorkflow := `      - name: Generate preflight control-plane manifest
         run: |
           mkdir -p dist
@@ -275,6 +279,7 @@ func TestValidateReleaseWorkflowControlPlaneFlowAcceptsCanonicalArtifact(t *test
 }
 
 func TestValidateMacOSInstallVerificationFlowRejectsMissingBundleUninstall(t *testing.T) {
+	t.Parallel()
 	workflow := `      - name: Upload CI release install artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
@@ -316,6 +321,7 @@ func TestValidateMacOSInstallVerificationFlowRejectsMissingBundleUninstall(t *te
 }
 
 func TestValidateMacOSInstallVerificationFlowAcceptsCanonicalFlow(t *testing.T) {
+	t.Parallel()
 	workflow := `      - name: Upload CI release install artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
@@ -349,6 +355,7 @@ func TestValidateMacOSInstallVerificationFlowAcceptsCanonicalFlow(t *testing.T) 
 }
 
 func TestValidateCodeQLWorkflowRejectsGoBuildlessMode(t *testing.T) {
+	t.Parallel()
 	workflow := `jobs:
   analyze:
     strategy:
@@ -375,6 +382,7 @@ func TestValidateCodeQLWorkflowRejectsGoBuildlessMode(t *testing.T) {
 }
 
 func TestValidateCodeQLWorkflowAcceptsGoAutobuild(t *testing.T) {
+	t.Parallel()
 	workflow := `jobs:
   analyze:
     strategy:
@@ -398,6 +406,7 @@ func TestValidateCodeQLWorkflowAcceptsGoAutobuild(t *testing.T) {
 }
 
 func TestValidateReleaseWorkflowCodeQLFlowRejectsMissingGoAutobuild(t *testing.T) {
+	t.Parallel()
 	workflow := `jobs:
   preflight:
     steps:
@@ -419,6 +428,7 @@ func TestValidateReleaseWorkflowCodeQLFlowRejectsMissingGoAutobuild(t *testing.T
 }
 
 func TestValidateReleaseWorkflowCodeQLFlowAcceptsMatrixJob(t *testing.T) {
+	t.Parallel()
 	workflow := `jobs:
   codeql-preflight:
     name: Release CodeQL (${{ matrix.language }})
@@ -449,6 +459,7 @@ func TestValidateReleaseWorkflowCodeQLFlowAcceptsMatrixJob(t *testing.T) {
 }
 
 func TestValidateUpstreamRefreshWorkflowRejectsMissingSignedDraftPRFlow(t *testing.T) {
+	t.Parallel()
 	workflow := `name: Upstream refresh
 
 on:
@@ -492,6 +503,7 @@ jobs:
 }
 
 func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
+	t.Parallel()
 	workflow := `name: Upstream refresh
 
 on:
@@ -533,6 +545,7 @@ jobs:
 }
 
 func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingSupportGuard(t *testing.T) {
+	t.Parallel()
 	releaseWorkflow := `env:
   ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
   ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ !github.event.repository.private || github.event.repository.owner.type != 'User' }}
@@ -559,6 +572,7 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingSupportGuard(
 }
 
 func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedAttestStep(t *testing.T) {
+	t.Parallel()
 	releaseWorkflow := `env:
   ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
   ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
@@ -617,6 +631,7 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedAttestStep(
 }
 
 func TestValidateReleaseWorkflowGitHubAttestationFlowAcceptsSupportGuard(t *testing.T) {
+	t.Parallel()
 	releaseWorkflow := `env:
   ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}
   ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
@@ -671,6 +686,7 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowAcceptsSupportGuard(t *test
 }
 
 func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsMissingPrivateAttestationFlag(t *testing.T) {
+	t.Parallel()
 	policy := map[string]any{
 		"repository_variables": map[string]any{
 			"WORKCELL_ENABLE_GITHUB_ATTESTATIONS": "true",
@@ -687,6 +703,7 @@ func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsMissingPrivate
 }
 
 func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsWrongPrivateAttestationFlag(t *testing.T) {
+	t.Parallel()
 	policy := map[string]any{
 		"repository_variables": map[string]any{
 			"WORKCELL_ENABLE_GITHUB_ATTESTATIONS":         "true",
@@ -704,6 +721,7 @@ func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsWrongPrivateAt
 }
 
 func TestValidateCanonicalHostedControlsRepositoryVariablesAcceptsCanonicalValues(t *testing.T) {
+	t.Parallel()
 	policy := map[string]any{
 		"repository_variables": map[string]any{
 			"WORKCELL_ENABLE_GITHUB_ATTESTATIONS":         "true",
