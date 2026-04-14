@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type mutationCase struct {
@@ -137,33 +138,60 @@ func Run(repoRoot string) error {
 	return nil
 }
 
+// runGoHelperMutations runs all Go mutation cases in parallel. Each case
+// operates in its own isolated temp directory so there is no shared state.
 func runGoHelperMutations(repoRoot string) error {
-	failures := make([]string, 0)
-	for _, tc := range goHelperMutations {
-		tempRoot, err := os.MkdirTemp("", "workcell-go-mutation.")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(tempRoot)
+	type result struct {
+		label string
+		err   error
+		pass  bool // true means mutation was NOT caught (test passed when it should fail)
+	}
 
-		for _, relativePath := range []string{
-			"cmd",
-			"internal",
-			"go.mod",
-		} {
-			if err := copyIntoTempRoot(repoRoot, tempRoot, relativePath); err != nil {
-				return err
+	results := make(chan result, len(goHelperMutations))
+	var wg sync.WaitGroup
+
+	for _, tc := range goHelperMutations {
+		tc := tc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			tempRoot, err := os.MkdirTemp("", "workcell-go-mutation.")
+			if err != nil {
+				results <- result{label: tc.label, err: err}
+				return
 			}
+			defer os.RemoveAll(tempRoot)
+
+			for _, relativePath := range []string{"cmd", "internal", "go.mod"} {
+				if err := copyIntoTempRoot(repoRoot, tempRoot, relativePath); err != nil {
+					results <- result{label: tc.label, err: err}
+					return
+				}
+			}
+			if err := applyMutation(filepath.Join(tempRoot, tc.relativePath), tc.original, tc.replacement); err != nil {
+				results <- result{label: tc.label, err: err}
+				return
+			}
+			exitCode, err := runCommand(tempRoot, tc.command)
+			if err != nil {
+				results <- result{label: tc.label, err: err}
+				return
+			}
+			results <- result{label: tc.label, pass: exitCode == 0}
+		}()
+	}
+
+	wg.Wait()
+	close(results)
+
+	var failures []string
+	for r := range results {
+		if r.err != nil {
+			return r.err
 		}
-		if err := applyMutation(filepath.Join(tempRoot, tc.relativePath), tc.original, tc.replacement); err != nil {
-			return err
-		}
-		exitCode, err := runCommand(tempRoot, tc.command)
-		if err != nil {
-			return err
-		}
-		if exitCode == 0 {
-			failures = append(failures, tc.label)
+		if r.pass {
+			failures = append(failures, r.label)
 		}
 	}
 	if len(failures) > 0 {
@@ -172,33 +200,64 @@ func runGoHelperMutations(repoRoot string) error {
 	return nil
 }
 
+// runRustGuardMutations runs all Rust mutation cases in parallel. Each case
+// operates in its own isolated temp directory so there is no shared state.
 func runRustGuardMutations(repoRoot string) error {
-	failures := make([]string, 0)
-	for _, tc := range rustMutations {
-		tempRoot, err := os.MkdirTemp("", "workcell-rust-mutation.")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(tempRoot)
+	type result struct {
+		label string
+		err   error
+		pass  bool
+	}
 
-		if err := copyTree(
-			filepath.Join(repoRoot, "runtime", "container", "rust"),
-			filepath.Join(tempRoot, "runtime", "container", "rust"),
-		); err != nil {
-			return err
+	results := make(chan result, len(rustMutations))
+	var wg sync.WaitGroup
+
+	for _, tc := range rustMutations {
+		tc := tc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			tempRoot, err := os.MkdirTemp("", "workcell-rust-mutation.")
+			if err != nil {
+				results <- result{label: tc.label, err: err}
+				return
+			}
+			defer os.RemoveAll(tempRoot)
+
+			if err := copyTree(
+				filepath.Join(repoRoot, "runtime", "container", "rust"),
+				filepath.Join(tempRoot, "runtime", "container", "rust"),
+			); err != nil {
+				results <- result{label: tc.label, err: err}
+				return
+			}
+			if err := applyMutation(filepath.Join(tempRoot, tc.relativePath), tc.original, tc.replacement); err != nil {
+				results <- result{label: tc.label, err: err}
+				return
+			}
+			exitCode, err := runCommand(filepath.Join(tempRoot, "runtime", "container", "rust"), commandSpec{
+				Path: "cargo",
+				Args: []string{"test", "--locked", "--offline"},
+			})
+			if err != nil {
+				results <- result{label: tc.label, err: err}
+				return
+			}
+			results <- result{label: tc.label, pass: exitCode == 0}
+		}()
+	}
+
+	wg.Wait()
+	close(results)
+
+	var failures []string
+	for r := range results {
+		if r.err != nil {
+			return r.err
 		}
-		if err := applyMutation(filepath.Join(tempRoot, tc.relativePath), tc.original, tc.replacement); err != nil {
-			return err
-		}
-		exitCode, err := runCommand(filepath.Join(tempRoot, "runtime", "container", "rust"), commandSpec{
-			Path: "cargo",
-			Args: []string{"test", "--locked", "--offline"},
-		})
-		if err != nil {
-			return err
-		}
-		if exitCode == 0 {
-			failures = append(failures, tc.label)
+		if r.pass {
+			failures = append(failures, r.label)
 		}
 	}
 	if len(failures) > 0 {

@@ -39,11 +39,13 @@ require_tool git
 require_cargo_subcommand clippy
 
 METADATAUTIL_BIN=""
+BUILD_CACHE_DIR="${ROOT_DIR}/.workcell-build-cache"
 
 cleanup() {
   if [[ -n "${METADATAUTIL_BIN}" && -e "${METADATAUTIL_BIN}" ]]; then
     rm -f "${METADATAUTIL_BIN}"
   fi
+  rm -rf "${BUILD_CACHE_DIR}"
 }
 
 build_metadatautil() {
@@ -124,6 +126,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/dev-remote-validate.sh"
   "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
   "${ROOT_DIR}/scripts/lib/go-run-env.sh"
+  "${ROOT_DIR}/scripts/lib/trusted-entrypoint.sh"
   "${ROOT_DIR}/scripts/lib/manage_injection_policy"
   "${ROOT_DIR}/scripts/lib/pty_transcript"
   "${ROOT_DIR}/scripts/lib/render_injection_bundle"
@@ -343,6 +346,10 @@ fi
 
 "${ROOT_DIR}/scripts/run-mutation-tests.sh"
 "${ROOT_DIR}/scripts/verify-coverage.sh"
+
+# Pre-build hostutil so scenario tests skip `go run` overhead on every invocation
+mkdir -p "${BUILD_CACHE_DIR}"
+(cd "${ROOT_DIR}" && go build -buildvcs=false -o "${BUILD_CACHE_DIR}/hostutil" ./cmd/workcell-hostutil)
 
 # Check E: Scenario coverage and control-plane parity
 "${ROOT_DIR}/scripts/run-scenario-tests.sh" --secretless-only

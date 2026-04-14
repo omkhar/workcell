@@ -2374,7 +2374,7 @@ for script in "${HOST_GATE_SCRIPTS[@]}"; do
     echo "Expected ${script} to use an absolute privileged Bash shebang before self-sanitizing its host entrypoint" >&2
     exit 1
   fi
-  if ! rg -q 'WORKCELL_SANITIZED_ENTRYPOINT' "${script}"; then
+  if ! rg -q 'WORKCELL_SANITIZED_ENTRYPOINT|trusted-entrypoint\.sh' "${script}"; then
     echo "Expected ${script} to self-sanitize its host entrypoint before running release or boundary checks" >&2
     exit 1
   fi

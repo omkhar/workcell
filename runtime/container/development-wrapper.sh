@@ -58,26 +58,8 @@ sanitize_development_env() {
   export PATH="${TRUSTED_PATH}"
 }
 
-emit_session_assurance_notice() {
-  local assurance=""
-
-  if [[ "${WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED:-0}" == "1" ]]; then
-    return 0
-  fi
-
-  assurance="$(workcell_runtime_state_value WORKCELL_SESSION_ASSURANCE || true)"
-  case "${assurance}" in
-    lower-assurance-control-plane-vcs)
-      echo "Workcell warning: this session intentionally exposed readonly workspace control-plane paths for Git VCS operations. Treat workspace control-plane contents as lower-assurance until container exit." >&2
-      export WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED=1
-      ;;
-    lower-assurance-package-mutation)
-      echo "Workcell warning: this session previously ran package-manager mutations as root. In-container control-plane integrity is now lower-assurance until container exit." >&2
-      export WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED=1
-      ;;
-  esac
-}
-
+# shellcheck source=runtime/container/assurance.sh
+source /usr/local/libexec/workcell/assurance.sh
 # shellcheck source=runtime/container/home-control-plane.sh
 source /usr/local/libexec/workcell/home-control-plane.sh
 # shellcheck source=runtime/container/runtime-user.sh

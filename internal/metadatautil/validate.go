@@ -1464,8 +1464,16 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 		return remaining[:end+1], nil
 	}
-	ciReproBuildJob, err := extractBetween(ciWorkflow, "  reproducible-build-platform:\n", "\n  reproducible-build:\n", "reproducible-build-platform job")
-	if err != nil {
+	ciReproBuildJob := ""
+	if start := strings.Index(ciWorkflow, "  reproducible-build-platform:\n"); start >= 0 {
+		remaining := ciWorkflow[start:]
+		if end := strings.Index(remaining, "\n  reproducible-build:\n"); end >= 0 {
+			ciReproBuildJob = remaining[:end+1]
+		} else {
+			ciReproBuildJob = remaining
+		}
+	}
+	if ciReproBuildJob == "" {
 		return errors.New("unable to extract reproducible-build-platform job from .github/workflows/ci.yml")
 	}
 	if !regexp.MustCompile(`(?m)^\s{4}runs-on:\s*\$\{\{\s*matrix\.runner\s*\}\}$`).MatchString(ciReproBuildJob) {
