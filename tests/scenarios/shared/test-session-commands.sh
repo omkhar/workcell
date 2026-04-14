@@ -80,7 +80,7 @@ grep -q $'^'"${SESSION_TWO}"$'\tfailed\tclaude\tdevelopment\t'"${PROFILE}"$'\t20
 grep -q $'^'"${SESSION_ONE}"$'\texited\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
 
 if command -v script >/dev/null 2>&1; then
-  tty_list_cmd=( "${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}" )
+  tty_list_cmd=("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")
   if script_help="$(script --help 2>&1 || true)" && grep -q -- ' -c, --command ' <<<"${script_help}"; then
     printf -v tty_list_shell_cmd '%q ' "${tty_list_cmd[@]}"
     tty_list_output="$(
