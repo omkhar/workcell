@@ -260,6 +260,8 @@ func run(cfg config) error {
 		"credential_resolvers":         map[string]string{},
 		"credential_materialization":   map[string]string{},
 		"credential_resolution_states": map[string]string{},
+		"provider_auth_ready_states":   map[string]string{},
+		"shared_auth_ready_states":     map[string]string{},
 	}
 
 	for _, key := range relevantKeys {
@@ -270,8 +272,16 @@ func run(cfg config) error {
 
 		rawMap, isMap := raw.(map[string]any)
 		if !isMap {
+			source, err := validateSourcePath(raw, "credentials."+key, cwd())
+			if err != nil {
+				return err
+			}
+			if _, err := requireSecretFile(source, "credentials."+key); err != nil {
+				return err
+			}
 			metadata["credential_input_kinds"].(map[string]string)[key] = "source"
 			metadata["credential_resolution_states"].(map[string]string)[key] = "source"
+			recordAuthReadyState(metadata, key, "ready")
 			continue
 		}
 
@@ -287,6 +297,7 @@ func run(cfg config) error {
 			return err
 		}
 		if !ok {
+			recordAuthReadyState(metadata, key, "filtered-provider")
 			if resolverName != "" {
 				delete(credentialTable, key)
 			}
@@ -297,6 +308,7 @@ func run(cfg config) error {
 			return err
 		}
 		if !ok {
+			recordAuthReadyState(metadata, key, "filtered-mode")
 			if resolverName != "" {
 				delete(credentialTable, key)
 			}
@@ -311,8 +323,16 @@ func run(cfg config) error {
 			return fmt.Errorf("credentials.%s must declare source or resolver", key)
 		}
 		if resolverName == "" {
+			source, err := validateSourcePath(rawMap["source"], "credentials."+key, cwd())
+			if err != nil {
+				return err
+			}
+			if _, err := requireSecretFile(source, "credentials."+key); err != nil {
+				return err
+			}
 			metadata["credential_input_kinds"].(map[string]string)[key] = "source"
 			metadata["credential_resolution_states"].(map[string]string)[key] = "source"
+			recordAuthReadyState(metadata, key, "ready")
 			continue
 		}
 
@@ -361,6 +381,7 @@ func run(cfg config) error {
 		metadata["credential_resolvers"].(map[string]string)[key] = resolverName
 		metadata["credential_materialization"].(map[string]string)[key] = materialization
 		metadata["credential_resolution_states"].(map[string]string)[key] = state
+		recordAuthReadyState(metadata, key, authReadyStateForResolution(state))
 	}
 
 	renderedPolicy, err := renderPolicyTOML(policy)
@@ -378,6 +399,23 @@ func run(cfg config) error {
 		return err
 	}
 	return nil
+}
+
+func recordAuthReadyState(metadata map[string]any, key, state string) {
+	if _, ok := sharedCredentialKeys[key]; ok {
+		metadata["shared_auth_ready_states"].(map[string]string)[key] = state
+		return
+	}
+	metadata["provider_auth_ready_states"].(map[string]string)[key] = state
+}
+
+func authReadyStateForResolution(state string) string {
+	switch state {
+	case "resolved", "source":
+		return "ready"
+	default:
+		return state
+	}
 }
 
 func selectedCredentialKeys(agent string) []string {

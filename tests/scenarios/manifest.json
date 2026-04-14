@@ -24,6 +24,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/policy-commands",
+      "description": "Host-side policy commands render, validate, diff, and explain merged credential policy without launching the runtime",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-policy-commands.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/claude-resolver-launcher",
       "description": "Claude resolver-backed auth fails closed without an export and resolves through the launcher staging path when the test export hook is present",
       "lane": "secretless",
@@ -69,7 +80,7 @@
     },
     {
       "id": "shared/session-commands",
-      "description": "Host-side session inventory lists, shows, and exports durable launch records without starting the runtime",
+      "description": "Host-side session inventory lists, shows, diffs, and exports durable launch records without starting the runtime",
       "lane": "secretless",
       "platform": "any",
       "manual": false,

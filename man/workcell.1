@@ -1,4 +1,4 @@
-.TH WORKCELL 1 "2026-04-08" "Workcell" "User Commands"
+.TH WORKCELL 1 "2026-04-14" "Workcell" "User Commands"
 .SH NAME
 workcell \- bounded runtime launcher for coding agents
 .SH SYNOPSIS
@@ -9,10 +9,16 @@ workcell \- bounded runtime launcher for coding agents
 [\fIoptions\fR]
 .br
 .B workcell session
-\fIlist|show|export\fR [\fIoptions\fR]
+\fIlist|show|diff|export\fR [\fIoptions\fR]
 .br
 .B workcell auth
 \fIinit|set|unset|status\fR [\fIoptions\fR]
+.br
+.B workcell policy
+\fIshow|validate|diff\fR [\fIoptions\fR]
+.br
+.B workcell why
+--credential \fIKEY\fR --agent \fINAME\fR [\fIoptions\fR]
 .SH DESCRIPTION
 .B workcell
 starts the selected coding agent inside a bounded local runtime with explicit
@@ -32,10 +38,19 @@ as the exec-capable temporary directory via
 .BR TMPDIR .
 The supported host platform is Apple Silicon macOS.
 .TP
-.B workcell session list|show|export
+.B workcell session list|show|diff|export
 Inspect durable host-side session records without starting the Workcell
-runtime. These records summarize completed or aborted launches and can be
-exported with the matching profile audit lines.
+runtime. These records summarize completed or aborted launches, can render a
+read-only diff against the clean launch git base when one was recorded, fail
+closed when the session started dirty or lacks self-contained git metadata,
+and can be exported with the matching profile audit lines.
+.TP
+.B workcell policy show|validate|diff
+Inspect the merged host-side injection policy without starting the runtime.
+.TP
+.B workcell why
+Explain why a credential is selected, filtered, or still only configured for a
+specific agent and mode without starting the runtime.
 .SH OPTIONS
 .TP
 .B --agent codex|claude|gemini
@@ -156,6 +171,18 @@ Manage explicit host-side credential policy state without starting the Workcell
 runtime. Resolver-backed credentials are still host-only preprocessing and do
 not pass Keychain or provider-home access into Tier 1.
 .TP
+.B workcell policy show|validate|diff
+Render the merged policy, validate fail-closed source-backed entries, or diff
+the selected entrypoint file against the canonical merged render.
+.TP
+.B workcell why
+Explain one credential decision, including agent scope, selector filtering, and
+whether the selected entry is ready or still configured-only on the host. When
+omitted,
+.B --mode
+defaults to
+.BR strict .
+.TP
 .B --log-level normal|debug
 Select launch-time logging verbosity. The default is
 .BR normal .
@@ -163,6 +190,10 @@ Use
 .BR debug
 to surface successful Colima and runtime-build output in addition to the normal
 high-signal launcher messages.
+.TP
+.B --no-spinner
+Disable the interactive launch spinner and fall back to heartbeat text updates
+instead. This affects only interactive launch and prepare flows.
 .TP
 .B --debug-log PATH
 Persist launcher stderr plus any build/output streams that Workcell explicitly

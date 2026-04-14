@@ -100,6 +100,46 @@ func Run(program string, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "show":
+		policyPath, err := parsePolicyPathArgs(program, "show", args[1:], stderr)
+		if err != nil {
+			return 2
+		}
+		if err := commandShow(policyPath, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "validate":
+		policyPath, err := parsePolicyPathArgs(program, "validate", args[1:], stderr)
+		if err != nil {
+			return 2
+		}
+		if err := commandValidate(policyPath, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "diff":
+		policyPath, err := parsePolicyPathArgs(program, "diff", args[1:], stderr)
+		if err != nil {
+			return 2
+		}
+		if err := commandDiff(policyPath, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "why":
+		opts, err := parseWhyArgs(program, args[1:], stderr)
+		if err != nil {
+			return 2
+		}
+		if err := commandWhy(opts, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	default:
 		fmt.Fprintln(stderr, usage(program))
 		fmt.Fprintf(stderr, "%s: unsupported command: %s\n", program, args[0])
@@ -124,14 +164,46 @@ type statusOptions struct {
 	mode       string
 }
 
+type whyOptions struct {
+	policyPath string
+	agent      string
+	mode       string
+	credential string
+}
+
+type credentialSelectionReport struct {
+	selected  bool
+	reason    string
+	readiness string
+	inputKind string
+	providers []string
+	modes     []string
+	resolver  string
+}
+
 func usage(program string) string {
 	if program == "" {
 		program = "workcell-manage-injection-policy"
 	}
 	return fmt.Sprintf(
-		"Usage: %s {init,set,unset,status} ...",
+		"Usage: %s {init,set,unset,status,show,validate,diff,why} ...",
 		program,
 	)
+}
+
+func parsePolicyPathArgs(program string, command string, args []string, stderr io.Writer) (string, error) {
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	policy := fs.String("policy", "", "")
+	fs.Usage = func() { fmt.Fprintln(stderr, usage(program)) }
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+	if fs.NArg() != 0 || *policy == "" {
+		fs.Usage()
+		return "", fmt.Errorf("missing required flags")
+	}
+	return resolveInputPath(*policy), nil
 }
 
 func parseInitArgs(program string, args []string, stderr io.Writer) (string, string, error) {
@@ -223,6 +295,35 @@ func parseStatusArgs(program string, args []string, stderr io.Writer) (statusOpt
 	}
 	if _, ok := SupportedModes[opts.mode]; !ok {
 		return statusOptions{}, fmt.Errorf("invalid mode: %s", opts.mode)
+	}
+	opts.policyPath = resolveInputPath(opts.policyPath)
+	return opts, nil
+}
+
+func parseWhyArgs(program string, args []string, stderr io.Writer) (whyOptions, error) {
+	fs := flag.NewFlagSet("why", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var opts whyOptions
+	fs.StringVar(&opts.policyPath, "policy", "", "")
+	fs.StringVar(&opts.agent, "agent", "", "")
+	fs.StringVar(&opts.mode, "mode", "", "")
+	fs.StringVar(&opts.credential, "credential", "", "")
+	fs.Usage = func() { fmt.Fprintln(stderr, usage(program)) }
+	if err := fs.Parse(args); err != nil {
+		return whyOptions{}, err
+	}
+	if fs.NArg() != 0 || opts.policyPath == "" || opts.agent == "" || opts.mode == "" || opts.credential == "" {
+		fs.Usage()
+		return whyOptions{}, fmt.Errorf("missing required flags")
+	}
+	if _, ok := SupportedAgents[opts.agent]; !ok {
+		return whyOptions{}, fmt.Errorf("invalid agent: %s", opts.agent)
+	}
+	if _, ok := SupportedModes[opts.mode]; !ok {
+		return whyOptions{}, fmt.Errorf("invalid mode: %s", opts.mode)
+	}
+	if _, ok := CredentialKeys[opts.credential]; !ok {
+		return whyOptions{}, fmt.Errorf("invalid credential: %s", opts.credential)
 	}
 	opts.policyPath = resolveInputPath(opts.policyPath)
 	return opts, nil
@@ -497,6 +598,8 @@ func commandStatus(opts statusOptions, stdout io.Writer) error {
 		fmt.Fprintln(stdout, "credential_resolvers=none")
 		fmt.Fprintln(stdout, "credential_materialization=none")
 		fmt.Fprintln(stdout, "credential_resolution_states=none")
+		fmt.Fprintln(stdout, "provider_auth_ready_states=none")
+		fmt.Fprintln(stdout, "shared_auth_ready_states=none")
 		if opts.agent != "" {
 			fmt.Fprintln(stdout, "provider_auth_mode=none")
 			fmt.Fprintln(stdout, "provider_auth_modes=none")
@@ -523,6 +626,8 @@ func commandStatus(opts statusOptions, stdout io.Writer) error {
 	resolvers := map[string]string{}
 	materialization := map[string]string{}
 	resolutionStates := map[string]string{}
+	providerReadyStates := map[string]string{}
+	sharedReadyStates := map[string]string{}
 	for key, raw := range selected {
 		inputKinds[key] = credentialInputKind(raw)
 		if rawMap, ok := raw.(map[string]any); ok {
@@ -539,6 +644,24 @@ func commandStatus(opts statusOptions, stdout io.Writer) error {
 			resolutionStates[key] = "source"
 		}
 	}
+	if opts.agent != "" {
+		providerReadyStates, sharedReadyStates, err = explainReadyStates(policy, filepath.Dir(opts.policyPath), opts.agent, opts.mode)
+		if err != nil {
+			return err
+		}
+	} else {
+		for key := range selected {
+			readyState := "ready"
+			if resolutionStates[key] == "configured-only" {
+				readyState = "configured-only"
+			}
+			if _, ok := SharedCredentialKeys[key]; ok {
+				sharedReadyStates[key] = readyState
+			} else {
+				providerReadyStates[key] = readyState
+			}
+		}
+	}
 
 	fmt.Fprintln(stdout, "policy_source_sha256="+compositePolicySHA256(policySources))
 	fmt.Fprintln(stdout, "credential_keys="+renderModes(sortedKeys(selected)))
@@ -546,6 +669,8 @@ func commandStatus(opts statusOptions, stdout io.Writer) error {
 	fmt.Fprintln(stdout, "credential_resolvers="+renderMap(resolvers))
 	fmt.Fprintln(stdout, "credential_materialization="+renderMap(materialization))
 	fmt.Fprintln(stdout, "credential_resolution_states="+renderMap(resolutionStates))
+	fmt.Fprintln(stdout, "provider_auth_ready_states="+renderMap(providerReadyStates))
+	fmt.Fprintln(stdout, "shared_auth_ready_states="+renderMap(sharedReadyStates))
 	if opts.agent != "" {
 		providerAuthModes := make([]string, 0)
 		for _, key := range statusOrder[opts.agent] {
@@ -573,6 +698,266 @@ func commandStatus(opts statusOptions, stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func commandShow(policyPath string, stdout io.Writer) error {
+	policy, _, err := loadPolicyBundle(policyPath)
+	if err != nil {
+		return err
+	}
+	rendered, err := renderPolicyTOML(policy)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(stdout, rendered)
+	return err
+}
+
+func commandValidate(policyPath string, stdout io.Writer) error {
+	policy, _, err := loadPolicyBundle(policyPath)
+	if err != nil {
+		return err
+	}
+	credentials, _ := policy["credentials"].(map[string]any)
+	hasResolverBacked := false
+	for key, raw := range credentials {
+		if rawMap, ok := raw.(map[string]any); ok {
+			if err := validateStatusCredentialEntry(key, rawMap); err != nil {
+				return err
+			}
+			if resolver, ok := rawMap["resolver"].(string); ok && resolver != "" {
+				hasResolverBacked = true
+			}
+		}
+		if err := validateStatusCredentialSource(key, raw, filepath.Dir(policyPath)); err != nil {
+			return err
+		}
+	}
+	if _, err := selectedCredentials(policy, "", "strict"); err != nil {
+		return err
+	}
+	if _, err := renderPolicyTOML(policy); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "policy_valid=1")
+	if hasResolverBacked {
+		fmt.Fprintln(stdout, "resolver_readiness=deferred-to-launch")
+	} else {
+		fmt.Fprintln(stdout, "resolver_readiness=not-applicable")
+	}
+	return nil
+}
+
+func commandDiff(policyPath string, stdout io.Writer) error {
+	source, err := os.ReadFile(policyPath)
+	if err != nil {
+		return err
+	}
+	policy, _, err := loadPolicyBundle(policyPath)
+	if err != nil {
+		return err
+	}
+	rendered, err := renderPolicyTOML(policy)
+	if err != nil {
+		return err
+	}
+	sourceText := string(source)
+	if sourceText == rendered {
+		fmt.Fprintln(stdout, "diff_status=clean")
+		return nil
+	}
+	fmt.Fprintln(stdout, "diff_status=changed")
+	_, err = io.WriteString(stdout, renderTextDiff("current", "canonical", sourceText, rendered))
+	return err
+}
+
+func commandWhy(opts whyOptions, stdout io.Writer) error {
+	policy, _, err := loadPolicyBundle(opts.policyPath)
+	if err != nil {
+		return err
+	}
+	if _, err := selectedCredentials(policy, opts.agent, opts.mode); err != nil {
+		return err
+	}
+	report, err := explainCredentialSelection(policy, filepath.Dir(opts.policyPath), opts.credential, opts.agent, opts.mode)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "policy_path="+opts.policyPath)
+	fmt.Fprintln(stdout, "credential="+opts.credential)
+	fmt.Fprintln(stdout, "agent="+opts.agent)
+	fmt.Fprintln(stdout, "mode="+opts.mode)
+	fmt.Fprintf(stdout, "selected=%d\n", boolToInt(report.selected))
+	fmt.Fprintln(stdout, "selection_reason="+report.reason)
+	fmt.Fprintln(stdout, "credential_readiness="+report.readiness)
+	fmt.Fprintln(stdout, "credential_input_kind="+report.inputKind)
+	fmt.Fprintln(stdout, "credential_providers="+renderModes(report.providers))
+	fmt.Fprintln(stdout, "credential_modes="+renderModes(report.modes))
+	if report.resolver != "" {
+		fmt.Fprintln(stdout, "credential_resolver="+report.resolver)
+	}
+	return nil
+}
+
+func explainCredentialSelection(policy map[string]any, policyBase string, credential string, agent string, mode string) (credentialSelectionReport, error) {
+	credentials, _ := policy["credentials"].(map[string]any)
+	raw, ok := credentials[credential]
+	if !ok {
+		return credentialSelectionReport{
+			selected:  false,
+			reason:    "not configured in policy",
+			readiness: "absent",
+			inputKind: "none",
+		}, nil
+	}
+	rawMap, ok := raw.(map[string]any)
+	if !ok {
+		if !credentialAllowedForAgent(agent, credential) {
+			return credentialSelectionReport{
+				selected:  false,
+				reason:    "credential is not in scope for agent " + agent,
+				readiness: "out-of-scope",
+				inputKind: "source",
+			}, nil
+		}
+		if err := validateStatusCredentialSource(credential, raw, policyBase); err != nil {
+			return credentialSelectionReport{}, err
+		}
+		return credentialSelectionReport{
+			selected:  true,
+			reason:    "scalar credential entry is selected without provider or mode restrictions",
+			readiness: "ready",
+			inputKind: "source",
+		}, nil
+	}
+	if err := validateStatusCredentialEntry(credential, rawMap); err != nil {
+		return credentialSelectionReport{}, err
+	}
+	report := credentialSelectionReport{
+		inputKind: credentialInputKind(rawMap),
+	}
+	if resolver, ok := rawMap["resolver"].(string); ok {
+		report.resolver = resolver
+	}
+	if providers, ok := rawMap["providers"]; ok {
+		values, err := selectorStrings(providers, "credentials."+credential+".providers", SupportedAgents)
+		if err != nil {
+			return credentialSelectionReport{}, err
+		}
+		report.providers = values
+	}
+	if modes, ok := rawMap["modes"]; ok {
+		values, err := selectorStrings(modes, "credentials."+credential+".modes", SupportedModes)
+		if err != nil {
+			return credentialSelectionReport{}, err
+		}
+		report.modes = values
+	}
+	if !credentialAllowedForAgent(agent, credential) {
+		report.reason = "credential is not in scope for agent " + agent
+		report.readiness = "out-of-scope"
+		return report, nil
+	}
+	providerMatch := true
+	if len(report.providers) > 0 {
+		providerMatch = false
+		for _, candidate := range report.providers {
+			if candidate == agent {
+				providerMatch = true
+				break
+			}
+		}
+	}
+	modeMatch := true
+	if len(report.modes) > 0 {
+		modeMatch = false
+		for _, candidate := range report.modes {
+			if candidate == mode {
+				modeMatch = true
+				break
+			}
+		}
+	}
+	report.selected = providerMatch && modeMatch
+	switch {
+	case !providerMatch:
+		report.readiness = "filtered-provider"
+	case !modeMatch:
+		report.readiness = "filtered-mode"
+	case report.inputKind == "resolver":
+		report.readiness = "configured-only"
+	default:
+		if err := validateStatusCredentialSource(credential, rawMap, policyBase); err != nil {
+			return credentialSelectionReport{}, err
+		}
+		report.readiness = "ready"
+	}
+	reasons := make([]string, 0, 2)
+	if providerMatch {
+		if len(report.providers) == 0 {
+			reasons = append(reasons, "providers not restricted")
+		} else {
+			reasons = append(reasons, "agent matches providers")
+		}
+	} else {
+		reasons = append(reasons, "agent does not match providers")
+	}
+	if modeMatch {
+		if len(report.modes) == 0 {
+			reasons = append(reasons, "modes not restricted")
+		} else {
+			reasons = append(reasons, "mode matches modes")
+		}
+	} else {
+		reasons = append(reasons, "mode does not match modes")
+	}
+	report.reason = strings.Join(reasons, "; ")
+	return report, nil
+}
+
+func explainReadyStates(policy map[string]any, policyBase string, agent string, mode string) (map[string]string, map[string]string, error) {
+	providerReadyStates := map[string]string{}
+	sharedReadyStates := map[string]string{}
+	credentials, _ := policy["credentials"].(map[string]any)
+	if credentials == nil {
+		return providerReadyStates, sharedReadyStates, nil
+	}
+
+	relevant := map[string]struct{}{}
+	for key := range allowedCredentialsForAgent(agent) {
+		relevant[key] = struct{}{}
+	}
+	keys := make([]string, 0, len(relevant))
+	for key := range relevant {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		if _, ok := credentials[key]; !ok {
+			continue
+		}
+		report, err := explainCredentialSelection(policy, policyBase, key, agent, mode)
+		if err != nil {
+			return nil, nil, err
+		}
+		if report.readiness == "" || report.readiness == "absent" {
+			continue
+		}
+		if _, ok := SharedCredentialKeys[key]; ok {
+			sharedReadyStates[key] = report.readiness
+		} else {
+			providerReadyStates[key] = report.readiness
+		}
+	}
+	return providerReadyStates, sharedReadyStates, nil
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func printSetOutput(stdout io.Writer, opts setOptions) {
@@ -959,6 +1344,13 @@ func ensureNoForeignManagedSource(policyPath string, managedRoot string, credent
 }
 
 func validateAgentCredential(agent string, credential string) error {
+	if !credentialAllowedForAgent(agent, credential) {
+		return die(fmt.Sprintf("%s is not valid for agent %s", credential, agent))
+	}
+	return nil
+}
+
+func allowedCredentialsForAgent(agent string) map[string]struct{} {
 	allowed := map[string]struct{}{}
 	for key := range SharedCredentialKeys {
 		allowed[key] = struct{}{}
@@ -966,30 +1358,17 @@ func validateAgentCredential(agent string, credential string) error {
 	for key := range AgentScopedCredentialKeys[agent] {
 		allowed[key] = struct{}{}
 	}
-	if _, ok := allowed[credential]; !ok {
-		return die(fmt.Sprintf("%s is not valid for agent %s", credential, agent))
-	}
-	return nil
+	return allowed
+}
+
+func credentialAllowedForAgent(agent string, credential string) bool {
+	_, ok := allowedCredentialsForAgent(agent)[credential]
+	return ok
 }
 
 func validateSelectorValues(values any, label string, allowedValues map[string]struct{}) error {
-	if values == nil {
-		return nil
-	}
-	rawValues, ok := values.([]any)
-	if !ok || len(rawValues) == 0 {
-		return die(fmt.Sprintf("%s must be a non-empty array when specified", label))
-	}
-	for _, value := range rawValues {
-		s, ok := value.(string)
-		if !ok {
-			return die(fmt.Sprintf("%s values must be strings", label))
-		}
-		if _, ok := allowedValues[s]; !ok {
-			return die(fmt.Sprintf("%s contains unsupported value: %s", label, s))
-		}
-	}
-	return nil
+	_, err := selectorStrings(values, label, allowedValues)
+	return err
 }
 
 func validateStatusCredentialEntry(key string, raw any) error {
@@ -1070,6 +1449,98 @@ func renderModes(keys []string) string {
 		return "none"
 	}
 	return strings.Join(keys, ",")
+}
+
+func renderTextDiff(fromName string, toName string, fromText string, toText string) string {
+	fromLines := splitDiffLines(fromText)
+	toLines := splitDiffLines(toText)
+	matrix := make([][]int, len(fromLines)+1)
+	for i := range matrix {
+		matrix[i] = make([]int, len(toLines)+1)
+	}
+	for i := len(fromLines) - 1; i >= 0; i-- {
+		for j := len(toLines) - 1; j >= 0; j-- {
+			if fromLines[i] == toLines[j] {
+				matrix[i][j] = matrix[i+1][j+1] + 1
+				continue
+			}
+			if matrix[i+1][j] >= matrix[i][j+1] {
+				matrix[i][j] = matrix[i+1][j]
+			} else {
+				matrix[i][j] = matrix[i][j+1]
+			}
+		}
+	}
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "--- %s\n", fromName)
+	fmt.Fprintf(&builder, "+++ %s\n", toName)
+	i, j := 0, 0
+	for i < len(fromLines) && j < len(toLines) {
+		if fromLines[i] == toLines[j] {
+			builder.WriteByte(' ')
+			builder.WriteString(fromLines[i])
+			builder.WriteByte('\n')
+			i++
+			j++
+			continue
+		}
+		if matrix[i+1][j] >= matrix[i][j+1] {
+			builder.WriteByte('-')
+			builder.WriteString(fromLines[i])
+			builder.WriteByte('\n')
+			i++
+			continue
+		}
+		builder.WriteByte('+')
+		builder.WriteString(toLines[j])
+		builder.WriteByte('\n')
+		j++
+	}
+	for ; i < len(fromLines); i++ {
+		builder.WriteByte('-')
+		builder.WriteString(fromLines[i])
+		builder.WriteByte('\n')
+	}
+	for ; j < len(toLines); j++ {
+		builder.WriteByte('+')
+		builder.WriteString(toLines[j])
+		builder.WriteByte('\n')
+	}
+	return builder.String()
+}
+
+func splitDiffLines(text string) []string {
+	if text == "" {
+		return nil
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	if strings.HasSuffix(text, "\n") {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+func selectorStrings(values any, label string, allowedValues map[string]struct{}) ([]string, error) {
+	if values == nil {
+		return nil, nil
+	}
+	rawValues, ok := values.([]any)
+	if !ok || len(rawValues) == 0 {
+		return nil, die(fmt.Sprintf("%s must be a non-empty array when specified", label))
+	}
+	parsed := make([]string, 0, len(rawValues))
+	for _, value := range rawValues {
+		s, ok := value.(string)
+		if !ok {
+			return nil, die(fmt.Sprintf("%s values must be strings", label))
+		}
+		if _, ok := allowedValues[s]; !ok {
+			return nil, die(fmt.Sprintf("%s contains unsupported value: %s", label, s))
+		}
+		parsed = append(parsed, s)
+	}
+	return parsed, nil
 }
 
 func credentialInputKind(raw any) string {

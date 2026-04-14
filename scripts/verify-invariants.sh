@@ -1226,6 +1226,11 @@ if ! grep -q -- '--no-default-injection-policy' /tmp/workcell-installed-help.out
   exit 1
 fi
 
+if ! grep -q -- '--no-spinner' /tmp/workcell-installed-help.out; then
+  echo "Expected installed ~/.local/bin/workcell --help to describe --no-spinner" >&2
+  exit 1
+fi
+
 if ! grep -q 'Provider to run (required)' /tmp/workcell-installed-help.out; then
   echo "Expected installed ~/.local/bin/workcell --help to describe --agent as required" >&2
   exit 1

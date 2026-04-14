@@ -197,17 +197,22 @@ INJECTION_CREDENTIAL_INPUT_KINDS=""
 INJECTION_CREDENTIAL_RESOLVERS=""
 INJECTION_CREDENTIAL_MATERIALIZATION=""
 INJECTION_CREDENTIAL_RESOLUTION_STATES=""
+INJECTION_PROVIDER_AUTH_READY_STATES=""
+INJECTION_SHARED_AUTH_READY_STATES=""
 INJECTION_EXTRA_ENDPOINTS=""
 INJECTION_SSH_ENABLED=0
 INJECTION_SECRET_COPY_TARGETS=""
 PROFILE_LOCK_DIR=""
+NO_SPINNER=0
 
 usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
-       workcell session <list|show|export> [options]
+       workcell session <list|show|diff|export> [options]
        workcell auth <init|set|unset|status> [options]
+       workcell policy <show|validate|diff> [options]
+       workcell why --credential KEY --agent NAME [options]
 
 Options:
   --agent codex|claude|gemini   Provider to run (required)
@@ -223,6 +228,7 @@ Options:
   --injection-policy PATH       Host-side injection policy to stage into each session
   --no-default-injection-policy Ignore ~/.config/workcell/injection-policy.toml for this launch
   --log-level normal|debug      Launcher/build verbosity (default: normal)
+  --no-spinner                  Disable the interactive launch spinner and use heartbeat text instead
   --debug-log PATH              Persist launcher stderr and captured build output to PATH
   --file-trace-log PATH         Persist session file transaction trace to PATH
   --audit-transcript PATH       Persist full interactive terminal transcript to PATH
@@ -282,8 +288,11 @@ Workflows:
     workcell auth set --agent codex --credential codex_auth --source /path/to/auth.json
     workcell auth set --agent claude --credential claude_auth --resolver claude-macos-keychain --ack-host-resolver
     workcell auth status --agent codex
+    workcell policy validate
+    workcell why --credential codex_auth --agent codex --mode strict
     workcell session list
     workcell session show --id 20260408T120000Z-1a2b3c4d
+    workcell session diff --id 20260408T120000Z-1a2b3c4d
     workcell session export --id 20260408T120000Z-1a2b3c4d
     workcell --agent codex --inspect --workspace /path/to/repo
     workcell --agent codex --doctor --workspace /path/to/repo
@@ -1334,11 +1343,27 @@ write_session_record_initial() {
   local profile="$1"
   local execution_path="$2"
   local sessions_dir=""
+  local git_branch=""
+  local git_head=""
+  local git_base=""
 
   [[ -n "${SESSION_ID}" ]] || SESSION_ID="$(generate_session_id)"
   sessions_dir="$(profile_sessions_dir_path "${profile}")"
   mkdir -p "${sessions_dir}"
   SESSION_RECORD_PATH="${sessions_dir}/${SESSION_ID}.json"
+  while IFS= read -r line; do
+    case "${line%%=*}" in
+      git_branch)
+        git_branch="${line#*=}"
+        ;;
+      git_head)
+        git_head="${line#*=}"
+        ;;
+      git_base)
+        git_base="${line#*=}"
+        ;;
+    esac
+  done < <(session_git_metadata_lines "${WORKSPACE}")
   write_session_record "${SESSION_RECORD_PATH}" \
     "session_id=${SESSION_ID}" \
     "profile=${profile}" \
@@ -1354,6 +1379,9 @@ write_session_record_initial() {
     "debug_log_path=${DEBUG_LOG_PATH}" \
     "file_trace_log_path=${FILE_TRACE_LOG_PATH}" \
     "transcript_log_path=${AUDIT_TRANSCRIPT_PATH}" \
+    "git_branch=${git_branch}" \
+    "git_head=${git_head}" \
+    "git_base=${git_base}" \
     "started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     "initial_assurance=$(session_assurance_initial)" \
     "workspace_control_plane=$(workspace_control_plane_state)"
@@ -1731,7 +1759,7 @@ publish_pr_has_remote_origin() {
 publish_pr_has_worktree_changes() {
   local workspace="$1"
 
-  [[ -n "$(run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" status --short --untracked-files=all)" ]]
+  workspace_git_has_worktree_changes "${workspace}"
 }
 publish_pr_has_staged_changes() {
   local workspace="$1"
@@ -1955,6 +1983,7 @@ session_usage() {
   cat <<'EOF'
 Usage: workcell session list [options]
        workcell session show --id SESSION_ID
+       workcell session diff --id SESSION_ID [--output PATH]
        workcell session export --id SESSION_ID [--output PATH]
 
 Commands:
@@ -1966,6 +1995,10 @@ Commands:
   show
     --id SESSION_ID           Show one recorded session as JSON
 
+  diff
+    --id SESSION_ID           Diff the current workspace against the recorded launch git base
+    --output PATH             Write the rendered diff bundle to PATH instead of stdout
+
   export
     --id SESSION_ID           Export one recorded session plus matching audit records as JSON
     --output PATH             Write the exported JSON bundle to PATH instead of stdout
@@ -1973,8 +2006,80 @@ Commands:
 Notes:
   - session commands run on the host and do not start the Workcell runtime.
   - records are durable host-side metadata for completed or aborted launches.
+  - `session diff` is read-only and compares the current workspace state to the
+    clean launch git base recorded when the session started.
+  - `session diff` is unavailable when the session started from a dirty git
+    worktree, from a workspace without a recorded git base, or from a workspace
+    that is not a self-contained git worktree.
   - `session export` includes audit records that match the recorded session id.
 EOF
+}
+
+session_git_metadata_lines() {
+  local workspace="$1"
+  local git_branch=""
+  local git_head=""
+  local git_base=""
+
+  if workspace_is_git_worktree "${workspace}"; then
+    git_branch="$(run_clean_host_command_in_dir "${workspace}" git branch --show-current 2>/dev/null || true)"
+    git_head="$(run_clean_host_command_in_dir "${workspace}" git rev-parse --verify HEAD 2>/dev/null || true)"
+    if [[ -n "${git_head}" ]] && ! workspace_git_has_worktree_changes "${workspace}"; then
+      git_base="${git_head}"
+    fi
+  fi
+
+  printf 'git_branch=%s\n' "${git_branch}"
+  printf 'git_head=%s\n' "${git_head}"
+  printf 'git_base=%s\n' "${git_base}"
+}
+
+render_session_diff_bundle() {
+  local session_id="$1"
+  local workspace="$2"
+  local git_branch="$3"
+  local git_head="$4"
+  local git_base="$5"
+  local status_output=""
+  local diff_output=""
+
+  status_output="$(
+    run_clean_host_command_in_dir "${workspace}" \
+      git \
+      -c core.hooksPath=/dev/null \
+      -c core.fsmonitor=false \
+      -c diff.external= \
+      -c color.ui=false \
+      status --short --untracked-files=all
+  )"
+  diff_output="$(
+    run_clean_host_command_in_dir "${workspace}" \
+      git \
+      -c core.hooksPath=/dev/null \
+      -c core.fsmonitor=false \
+      -c diff.external= \
+      -c color.ui=false \
+      -c pager.diff=false \
+      diff --no-ext-diff --no-textconv --submodule=short "${git_base}" --
+  )"
+
+  printf 'session_id=%s\n' "${session_id}"
+  printf 'workspace=%s\n' "${workspace}"
+  printf 'git_branch=%s\n' "${git_branch:-none}"
+  printf 'git_head=%s\n' "${git_head:-none}"
+  printf 'git_base=%s\n' "${git_base}"
+  printf '\n[status]\n'
+  if [[ -n "${status_output}" ]]; then
+    printf '%s\n' "${status_output}"
+  else
+    printf 'clean\n'
+  fi
+  printf '\n[diff]\n'
+  if [[ -n "${diff_output}" ]]; then
+    printf '%s\n' "${diff_output}"
+  else
+    printf 'clean\n'
+  fi
 }
 
 session_main() {
@@ -1985,6 +2090,11 @@ session_main() {
   local session_id=""
   local output_path=""
   local output=""
+  local metadata=""
+  local git_branch=""
+  local git_head=""
+  local git_base=""
+  local rendered=""
   local -a args=()
 
   shift || true
@@ -2062,6 +2172,92 @@ session_main() {
         exit 2
       }
       go_hostutil launcher session-show "${COLIMA_STATE_ROOT}" "${session_id}"
+      exit 0
+      ;;
+    diff)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --id)
+            session_id="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          --output)
+            output_path="$(raw_option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          -h | --help)
+            session_usage
+            exit 0
+            ;;
+          *)
+            echo "Unsupported workcell session diff option: $1" >&2
+            session_usage >&2
+            exit 2
+            ;;
+        esac
+      done
+      [[ -n "${session_id}" ]] || {
+        echo "workcell session diff requires --id." >&2
+        exit 2
+      }
+      metadata="$(go_hostutil launcher session-diff-metadata "${COLIMA_STATE_ROOT}" "${session_id}")"
+      while IFS= read -r line; do
+        case "${line%%=*}" in
+          workspace)
+            workspace="${line#*=}"
+            ;;
+          git_branch)
+            git_branch="${line#*=}"
+            ;;
+          git_head)
+            git_head="${line#*=}"
+            ;;
+          git_base)
+            git_base="${line#*=}"
+            ;;
+        esac
+      done <<<"${metadata}"
+      [[ -n "${workspace}" ]] || {
+        echo "session diff record is missing a workspace path: ${session_id}" >&2
+        exit 1
+      }
+      [[ -d "${workspace}" ]] || {
+        echo "Recorded workspace does not exist on the host: ${workspace}" >&2
+        exit 1
+      }
+      if [[ -n "${git_head}" ]] && [[ -z "${git_base}" ]]; then
+        echo "session diff requires a clean git launch baseline; relaunch from a clean workspace: ${session_id}" >&2
+        exit 1
+      fi
+      [[ -n "${git_base}" ]] || {
+        echo "session diff requires recorded git metadata for ${session_id}." >&2
+        exit 1
+      }
+      if [[ -z "${HOST_GIT_BIN}" ]]; then
+        HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
+      fi
+      if ! workspace_is_git_worktree "${workspace}"; then
+        echo "Recorded workspace is no longer a git worktree: ${workspace}" >&2
+        exit 1
+      fi
+      if ! workspace_gitdir_is_self_contained "${workspace}"; then
+        echo "session diff refuses linked worktrees with git admin state outside the workspace: ${workspace}" >&2
+        exit 1
+      fi
+      if ! run_clean_host_command_in_dir "${workspace}" git cat-file -e "${git_base}^{commit}" >/dev/null 2>&1; then
+        echo "session diff refuses to compare against a git base that is not present in the current repository: ${git_base}" >&2
+        exit 1
+      fi
+      rendered="$(render_session_diff_bundle "${session_id}" "${workspace}" "${git_branch}" "${git_head}" "${git_base}")"
+      if [[ -n "${output_path}" ]]; then
+        output_path="$(resolve_host_output_candidate "${output_path}")"
+        mkdir -p "$(dirname "${output_path}")"
+        printf '%s\n' "${rendered}" >"${output_path}"
+        chmod 0600 "${output_path}" 2>/dev/null || true
+        printf 'session_diff=%s\n' "${output_path}"
+      else
+        printf '%s\n' "${rendered}"
+      fi
       exit 0
       ;;
     export)
@@ -2398,6 +2594,163 @@ auth_main() {
   esac
 }
 
+policy_usage() {
+  cat <<'EOF'
+Usage: workcell policy show [options]
+       workcell policy validate [options]
+       workcell policy diff [options]
+
+Commands:
+  show
+    --injection-policy PATH     Policy file to render after include expansion
+
+  validate
+    --injection-policy PATH     Policy file to validate
+
+  diff
+    --injection-policy PATH     Policy file to compare against the canonical merged view
+
+Notes:
+  - policy commands run on the host and do not start the Workcell runtime.
+  - when --injection-policy is omitted, commands use the host default policy path.
+  - show renders the merged effective policy after include expansion.
+  - diff compares the selected entrypoint policy file against that canonical
+    merged effective view.
+  - validate fails closed when the selected policy file is missing or invalid.
+  - validate checks source-backed credential paths, but resolver-backed launch
+    readiness remains deferred to the launch path.
+EOF
+}
+
+policy_main() {
+  local subcommand="${1:-}"
+  local policy_path=""
+  local -a policy_cmd=()
+
+  if [[ "${subcommand}" == "-h" ]] || [[ "${subcommand}" == "--help" ]] || [[ "${subcommand}" == "help" ]]; then
+    policy_usage
+    exit 0
+  fi
+  [[ -n "${subcommand}" ]] || {
+    policy_usage >&2
+    exit 2
+  }
+  shift
+
+  policy_path="$(default_injection_policy_path)"
+  case "${subcommand}" in
+    show | validate | diff)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --injection-policy)
+            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
+          -h | --help)
+            policy_usage
+            exit 0
+            ;;
+          *)
+            echo "Unsupported workcell policy ${subcommand} option: $1" >&2
+            policy_usage >&2
+            exit 2
+            ;;
+        esac
+      done
+      policy_path="$(resolve_host_path "${policy_path}")"
+      policy_cmd=(
+        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
+        "${subcommand}"
+        --policy "${policy_path}"
+      )
+      run_clean_host_command "${policy_cmd[@]}"
+      exit 0
+      ;;
+    *)
+      echo "Unsupported workcell policy command: ${subcommand}" >&2
+      policy_usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+why_usage() {
+  cat <<'EOF'
+Usage: workcell why --credential KEY --agent NAME [options]
+
+Options:
+  --credential KEY            Credential key to explain
+  --injection-policy PATH     Policy file to inspect (default: ~/.config/workcell/injection-policy.toml)
+  --agent codex|claude|gemini Agent selector for selection reasoning
+  --mode strict|development|build|breakglass
+                                Selector mode to explain (default: strict)
+
+Notes:
+  - `workcell why` is host-side and read-only.
+  - it explains credential selection, ready state, and policy-source scope.
+EOF
+}
+
+why_main() {
+  local policy_path=""
+  local credential=""
+  local agent=""
+  local mode="strict"
+  local -a why_cmd=()
+
+  policy_path="$(default_injection_policy_path)"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --credential)
+        credential="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --injection-policy)
+        policy_path="$(raw_option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --agent)
+        agent="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --mode)
+        mode="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      -h | --help)
+        why_usage
+        exit 0
+        ;;
+      *)
+        echo "Unsupported workcell why option: $1" >&2
+        why_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+  [[ -n "${credential}" ]] || {
+    echo "workcell why requires --credential." >&2
+    exit 2
+  }
+  [[ -n "${agent}" ]] || {
+    echo "workcell why requires --agent." >&2
+    exit 2
+  }
+  policy_path="$(resolve_host_path "${policy_path}")"
+  why_cmd=(
+    "${ROOT_DIR}/scripts/lib/manage_injection_policy"
+    why
+    --policy "${policy_path}"
+    --credential "${credential}"
+    --mode "${mode}"
+  )
+  if [[ -n "${agent}" ]]; then
+    why_cmd+=(--agent "${agent}")
+  fi
+  run_clean_host_command "${why_cmd[@]}"
+  exit 0
+}
+
 default_injection_bundle_parent() {
   resolve_host_path "${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
 }
@@ -2491,6 +2844,8 @@ prepare_injection_bundle() {
     INJECTION_CREDENTIAL_RESOLVERS=""
     INJECTION_CREDENTIAL_MATERIALIZATION=""
     INJECTION_CREDENTIAL_RESOLUTION_STATES=""
+    INJECTION_PROVIDER_AUTH_READY_STATES=""
+    INJECTION_SHARED_AUTH_READY_STATES=""
     INJECTION_EXTRA_ENDPOINTS=""
     INJECTION_SSH_ENABLED=0
     INJECTION_SSH_CONFIG_ASSURANCE="off"
@@ -2574,6 +2929,8 @@ prepare_injection_bundle() {
   INJECTION_CREDENTIAL_RESOLVERS="$(printf '%s\n' "${resolver_metadata}" | sed -n '2p')"
   INJECTION_CREDENTIAL_MATERIALIZATION="$(printf '%s\n' "${resolver_metadata}" | sed -n '3p')"
   INJECTION_CREDENTIAL_RESOLUTION_STATES="$(printf '%s\n' "${resolver_metadata}" | sed -n '4p')"
+  INJECTION_PROVIDER_AUTH_READY_STATES="$(printf '%s\n' "${resolver_metadata}" | sed -n '5p')"
+  INJECTION_SHARED_AUTH_READY_STATES="$(printf '%s\n' "${resolver_metadata}" | sed -n '6p')"
 }
 
 build_recommended_command() {
@@ -2881,6 +3238,8 @@ print_injection_status() {
     printf 'credential_resolvers=none\n'
     printf 'credential_materialization=none\n'
     printf 'credential_resolution_states=none\n'
+    printf 'provider_auth_ready_states=none\n'
+    printf 'shared_auth_ready_states=none\n'
     printf 'provider_auth_mode=none\n'
     printf 'provider_auth_modes=none\n'
     printf 'shared_auth_modes=none\n'
@@ -2896,6 +3255,8 @@ print_injection_status() {
   printf 'credential_resolvers=%s\n' "${INJECTION_CREDENTIAL_RESOLVERS:-none}"
   printf 'credential_materialization=%s\n' "${INJECTION_CREDENTIAL_MATERIALIZATION:-none}"
   printf 'credential_resolution_states=%s\n' "${INJECTION_CREDENTIAL_RESOLUTION_STATES:-none}"
+  printf 'provider_auth_ready_states=%s\n' "${INJECTION_PROVIDER_AUTH_READY_STATES:-none}"
+  printf 'shared_auth_ready_states=%s\n' "${INJECTION_SHARED_AUTH_READY_STATES:-none}"
   printf 'provider_auth_mode=%s\n' "$(selected_provider_auth_mode)"
   printf 'provider_auth_modes=%s\n' "$(provider_auth_modes)"
   printf 'shared_auth_modes=%s\n' "$(shared_auth_modes)"
@@ -3328,12 +3689,15 @@ run_command_with_debug_log() {
   local log_root=""
   local log_path=""
   local heartbeat_pid=""
+  local spinner_pid=""
+  local spinner_enabled=0
   local tail_pid=""
   local start_seconds=0
   local pid=""
   local status=0
   local timed_out=0
   local timeout_seconds=0
+  local heartbeat_interval_seconds=30
   local next_heartbeat=0
 
   format_elapsed_compact() {
@@ -3346,6 +3710,53 @@ run_command_with_debug_log() {
     else
       printf '%ds' "${seconds}"
     fi
+  }
+
+  progress_summary_line() {
+    local elapsed="$1"
+
+    case "${label}" in
+      colima-start)
+        printf 'Starting managed Colima profile %s... %s elapsed' "${COLIMA_PROFILE}" "${elapsed}"
+        ;;
+      runtime-build)
+        printf 'Preparing runtime image for profile %s... %s elapsed' "${COLIMA_PROFILE}" "${elapsed}"
+        ;;
+      *)
+        printf 'Workcell is still running %s... %s elapsed' "${label}" "${elapsed}"
+        ;;
+    esac
+  }
+
+  clear_progress_spinner_line() {
+    [[ "${spinner_enabled}" -eq 1 ]] || return 0
+    printf '\r\033[2K' >&2
+  }
+
+  start_progress_spinner() {
+    local target_pid="$1"
+    local -a spinner_frames=('|' '/' '-' "\\")
+
+    [[ "${spinner_enabled}" -eq 1 ]] || return 0
+    (
+      local frame_index=0
+      local frame=""
+      while kill -0 "${target_pid}" >/dev/null 2>&1; do
+        frame="${spinner_frames[frame_index]}"
+        printf '\r\033[2K[%s] %s' "${frame}" "$(progress_summary_line "$(format_elapsed_compact "$((SECONDS - start_seconds))")")" >&2
+        frame_index=$(((frame_index + 1) % 4))
+        sleep 0.2
+      done
+    ) &
+    spinner_pid=$!
+  }
+
+  stop_progress_spinner() {
+    [[ -n "${spinner_pid}" ]] || return 0
+    kill "${spinner_pid}" >/dev/null 2>&1 || true
+    wait "${spinner_pid}" 2>/dev/null || true
+    spinner_pid=""
+    clear_progress_spinner_line
   }
 
   maybe_print_progress_update() {
@@ -3402,6 +3813,14 @@ run_command_with_debug_log() {
   chmod 0700 "${log_root}" 2>/dev/null || true
   log_path="$(mktemp "${log_root}/workcell-${label}.log.XXXXXX")"
   start_seconds="${SECONDS}"
+  if [[ -t 2 ]]; then
+    if [[ "${LOG_LEVEL}" != "debug" ]]; then
+      heartbeat_interval_seconds=5
+      if [[ "${NO_SPINNER}" -eq 0 ]] && [[ "${TERM:-}" != "dumb" ]]; then
+        spinner_enabled=1
+      fi
+    fi
+  fi
   case "${label}" in
     colima-start)
       timeout_seconds="${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-180}"
@@ -3411,7 +3830,11 @@ run_command_with_debug_log() {
   if ((timeout_seconds > 0)); then
     "$@" >"${log_path}" 2>&1 &
     pid=$!
-    next_heartbeat=$((SECONDS + 30))
+    if [[ "${spinner_enabled}" -eq 1 ]]; then
+      start_progress_spinner "${pid}"
+    elif [[ "${LOG_LEVEL}" != "debug" ]]; then
+      next_heartbeat=$((SECONDS + heartbeat_interval_seconds))
+    fi
     if [[ "${LOG_LEVEL}" == "debug" ]]; then
       tail -n +1 -f "${log_path}" >&2 &
       tail_pid=$!
@@ -3421,9 +3844,9 @@ run_command_with_debug_log() {
       if ! kill -0 "${pid}" >/dev/null 2>&1; then
         break
       fi
-      if ((SECONDS >= next_heartbeat)); then
+      if [[ "${spinner_enabled}" -eq 0 ]] && [[ "${LOG_LEVEL}" != "debug" ]] && ((SECONDS >= next_heartbeat)); then
         maybe_print_progress_update heartbeat "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
-        next_heartbeat=$((SECONDS + 30))
+        next_heartbeat=$((SECONDS + heartbeat_interval_seconds))
       fi
       if ((SECONDS - start_seconds >= timeout_seconds)); then
         timed_out=1
@@ -3439,6 +3862,7 @@ run_command_with_debug_log() {
     if ((timed_out == 1)); then
       status=124
     fi
+    stop_progress_spinner
     if [[ -n "${tail_pid}" ]]; then
       kill "${tail_pid}" >/dev/null 2>&1 || true
       wait "${tail_pid}" 2>/dev/null || true
@@ -3459,21 +3883,26 @@ run_command_with_debug_log() {
   else
     "$@" >"${log_path}" 2>&1 &
     pid=$!
-    (
-      while kill -0 "${pid}" >/dev/null 2>&1; do
-        sleep 30
-        if ! kill -0 "${pid}" >/dev/null 2>&1; then
-          break
-        fi
-        maybe_print_progress_update heartbeat "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
-      done
-    ) &
-    heartbeat_pid=$!
+    if [[ "${spinner_enabled}" -eq 1 ]]; then
+      start_progress_spinner "${pid}"
+    else
+      (
+        while kill -0 "${pid}" >/dev/null 2>&1; do
+          sleep "${heartbeat_interval_seconds}"
+          if ! kill -0 "${pid}" >/dev/null 2>&1; then
+            break
+          fi
+          maybe_print_progress_update heartbeat "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
+        done
+      ) &
+      heartbeat_pid=$!
+    fi
     if wait "${pid}"; then
       :
     else
       status=$?
     fi
+    stop_progress_spinner
     if [[ -n "${heartbeat_pid}" ]]; then
       kill "${heartbeat_pid}" >/dev/null 2>&1 || true
       wait "${heartbeat_pid}" 2>/dev/null || true
@@ -4248,6 +4677,17 @@ workspace_is_git_worktree() {
   run_clean_host_command git -C "${workspace}" rev-parse --is-inside-work-tree >/dev/null 2>&1
 }
 
+workspace_git_has_worktree_changes() {
+  local workspace="$1"
+
+  workspace_is_git_worktree "${workspace}" || return 1
+  [[ -n "$(run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" \
+    -c core.hooksPath=/dev/null \
+    -c core.fsmonitor=false \
+    -c color.ui=false \
+    status --short --untracked-files=all)" ]]
+}
+
 git_index_has_path() {
   local workspace="$1"
   local relative_path="$2"
@@ -4754,6 +5194,16 @@ if [[ "${1:-}" == "auth" ]]; then
   auth_main "$@"
 fi
 
+if [[ "${1:-}" == "policy" ]]; then
+  shift
+  policy_main "$@"
+fi
+
+if [[ "${1:-}" == "why" ]]; then
+  shift
+  why_main "$@"
+fi
+
 if [[ $# -gt 0 ]]; then
   normalize_cli_aliases "$@"
   set -- "${NORMALIZED_ARGS[@]}"
@@ -4804,6 +5254,10 @@ while [[ $# -gt 0 ]]; do
     --log-level)
       LOG_LEVEL="$(option_value_or_die "$1" "${2-}")"
       shift 2
+      ;;
+    --no-spinner)
+      NO_SPINNER=1
+      shift
       ;;
     --debug-log)
       DEBUG_LOG_PATH="$(raw_option_value_or_die "$1" "${2-}")"

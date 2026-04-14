@@ -53,6 +53,8 @@ status_output="$("${ROOT_DIR}/scripts/workcell" auth status \
   --agent codex)"
 grep -q '^credential_keys=codex_auth$' <<<"${status_output}"
 grep -q '^credential_input_kinds=codex_auth:source$' <<<"${status_output}"
+grep -q '^provider_auth_ready_states=codex_auth:ready$' <<<"${status_output}"
+grep -q '^shared_auth_ready_states=none$' <<<"${status_output}"
 grep -q '^provider_auth_mode=codex_auth$' <<<"${status_output}"
 
 resolver_output="$("${ROOT_DIR}/scripts/workcell" auth set \
@@ -69,6 +71,8 @@ claude_status="$("${ROOT_DIR}/scripts/workcell" auth status \
   --agent claude)"
 grep -q '^credential_resolvers=claude_auth:claude-macos-keychain$' <<<"${claude_status}"
 grep -q '^credential_resolution_states=claude_auth:configured-only$' <<<"${claude_status}"
+grep -q '^provider_auth_ready_states=claude_auth:configured-only$' <<<"${claude_status}"
+grep -q '^shared_auth_ready_states=none$' <<<"${claude_status}"
 grep -q '^provider_auth_mode=none$' <<<"${claude_status}"
 grep -q '^provider_auth_modes=none$' <<<"${claude_status}"
 
@@ -78,6 +82,8 @@ claude_launcher_status="$("${ROOT_DIR}/scripts/workcell" \
   --workspace "${TMP_DIR}" \
   --injection-policy "${POLICY_PATH}")"
 grep -q '^credential_resolution_states=claude_auth:configured-only$' <<<"${claude_launcher_status}"
+grep -q '^provider_auth_ready_states=claude_auth:configured-only$' <<<"${claude_launcher_status}"
+grep -q '^shared_auth_ready_states=none$' <<<"${claude_launcher_status}"
 grep -q '^provider_auth_mode=none$' <<<"${claude_launcher_status}"
 grep -q '^provider_auth_modes=none$' <<<"${claude_launcher_status}"
 

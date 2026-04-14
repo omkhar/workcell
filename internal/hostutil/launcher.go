@@ -413,6 +413,8 @@ func ResolverMetadataLines(metadataPath string) ([]string, error) {
 		renderStringMap(metadata["credential_resolvers"]),
 		renderStringMap(metadata["credential_materialization"]),
 		renderStringMap(metadata["credential_resolution_states"]),
+		renderStringMap(metadata["provider_auth_ready_states"]),
+		renderStringMap(metadata["shared_auth_ready_states"]),
 	}, nil
 }
 
