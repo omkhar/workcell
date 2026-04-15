@@ -1,32 +1,35 @@
-# Summary
+## Summary
 
-<!-- What does this change and why? -->
+- change:
+- reason:
+- user-visible impact:
 
-## Type of change
+## Validation
 
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Documentation
-- [ ] Dependency update
-- [ ] Refactor / simplification
-- [ ] Security hardening
+- [ ] I ran the relevant local validation for this change
+- [ ] Required CI is expected to cover the remaining validation
+- [ ] I updated docs, policy, or verification when the change affects release,
+      provenance, hosted controls, or security posture
 
-## Checklist
+## Review sweep
 
-- [ ] `./scripts/dev-quick-check.sh` passes locally
-- [ ] Tests added or updated for the change
-- [ ] Docs updated if behavior changes (same PR)
-- [ ] `CHANGELOG.md` updated if user-visible behavior changes
-- [ ] Invariants preserved — no silent trust widening
-- [ ] If touching runtime boundary or policy: linked the relevant section of
-      `docs/invariants.md` or `docs/threat-model.md` below
+- [ ] I checked top-level PR comments
+- [ ] I checked inline review comments
+- [ ] I checked unresolved review threads
+- [ ] I addressed or explicitly dispositioned actionable feedback
+- [ ] I will re-check comments after CI turns green before merging
+- [ ] I will do one final comment sweep immediately before merging
 
-## Runtime / trust notes
+## Async reviewer note
 
-<!-- If this touches runtime/, adapters/, policy/, or .github/workflows/,
-     describe the trust assumptions the change depends on. Otherwise delete
-     this section. -->
+This repository expects asynchronous review comments from humans and from the
+configured async reviewers listed in `policy/reviewer-identities.toml`. Do not
+merge until those comments have been swept and any actionable feedback has been
+handled.
 
-## Related issues
+## Security and release impact
 
-<!-- Closes #NNN -->
+- [ ] No release or provenance impact
+- [ ] This changes release behavior, release assets, provenance, SBOMs,
+      attestations, workflow permissions, or hosted controls
+- [ ] I updated the relevant runbook or policy files for that impact

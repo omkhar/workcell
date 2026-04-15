@@ -21,11 +21,10 @@ mode = "review-gated"
 
 [release_environment]
 # Valid modes:
-# - "review-gated": require at least one human reviewer and no admin bypass;
-#   upgrade to this once the repository is public (public repos on the free
-#   plan can enforce environment reviewers, private repos cannot)
+# - "review-gated": require at least one configured reviewer and disallow
+#   admin bypass
 # - "single-owner-private": allow a private single-owner repo to use the
-#   release environment without a reviewer gate
+#   release environment without a second reviewer gate
 # - "plan-limited-private": lower-assurance fallback for private repositories
 #   on GitHub plans that cannot enforce environment reviewers; the environment
 #   must still exist, but reviewer gating is not available
@@ -39,6 +38,18 @@ contexts = [
   "GitHub Actions lint",
   "GitHub Actions security analysis",
 ]
+
+[actions_policy]
+# Release and CI workflows should run with the narrowest practical default
+# token posture and only permit pinned actions from GitHub or explicitly
+# trusted publishers.
+allow_only_pinned_verified_or_explicitly_trusted_actions = true
+default_workflow_token_permissions = "read"
+
+[release_assets]
+# Tagged releases should be published as immutable GitHub releases so release
+# records and attached assets cannot be silently rewritten after publication.
+immutable_github_releases = true
 
 [repository_variables]
 # The canonical Workcell repository always requests GitHub-native attestations

@@ -1,61 +1,56 @@
 # Roadmap
 
-Workcell is still pre-1.0. The near-term roadmap is about making the current
-security model easier to adopt, easier to verify, and easier to contribute to.
+Workcell is still pre-1.0. The next roadmap slices should turn the shipped
+host-side inspection and policy surfaces into a first-class session platform,
+then expand deployment reach without weakening the current VM plus container
+boundary. Delivered features belong in the changelog and user docs rather than
+remaining on this roadmap.
 The delivery shape for the active slice lives in
 `docs/implement-first-delivery-plan.md`.
 
-## Implement first
+## Short term
 
-- ship Phase 2 of the Workcell session supervisor:
+- finish Phase 2 of the session supervisor:
   detached/background sessions, `session start`, `session attach`,
-  `session send`, `session stop`, `session diff`, and default
-  worktree-per-session flows
-- add `workcell why` and richer policy inspection so operators can see why
-  a path, credential, endpoint, or control-plane input is allowed or blocked
-- improve host-owned auth flows: better resolver coverage, clearer
-  `auth-status` diagnostics, and explicit login/setup handoffs where provider
-  onboarding needs browser or credential bootstrap help
+  `session send`, `session stop`, and default worktree-per-session flows
+- add session observability on top of the current host-side inventory:
+  live status, branch/worktree, assurance state, logs, transcript pointers,
+  and command timeline views
+- broaden host-owned auth flows where the current implementation is still thin:
+  more resolver coverage plus explicit browser/bootstrap handoffs for provider
+  onboarding
+- expand end-to-end coverage for authenticated, lower-assurance, and
+  session-supervisor transitions so new orchestration features ship with
+  invariant checks
+- define the first remote and non-macOS deployment targets explicitly:
+  trusted `linux/amd64` validation hosts, operator-managed deployment targets,
+  and the first cloud-spawn path, without claiming Tier 1 Linux or Windows host
+  parity before the same guarantees exist
 
-## Implement next
+## Medium term
 
 - add reviewed team workflow packs at the Workcell layer: versioned
   instruction bundles, commands, approved MCP packs, and task templates
-- add session observability on top of the supervisor:
-  live status, branch/worktree, assurance state, logs, transcript pointers,
-  and command timeline views
 - add a lightweight TUI or dashboard backed by the same host-controlled
   session plane rather than a separate execution path
+- deliver the first cloud-spawned workspace path for the highest-value use
+  cases:
+  secure ephemeral repro and PR environments, standardized onboarding
+  environments, and sandboxed agent workspaces in the operator's own account
+- improve comparison material and use-case guidance for teams evaluating
+  Workcell in cloud, hybrid, and regulated development workflows
+- make release assets and operator verification flows easier to consume
 
-## Next 90 days
+## Long term
 
-### Distribution and onboarding
-
-- keep the secure install path simple from a release, not just from a source checkout
-- standardize provider onboarding around `workcell auth init|set|status`
-- keep the CLI and docs examples consistent across README, manpage, and quickstarts
-
-### Boundary verification
-
-- keep the local macOS Colima boundary proof clearly documented as a local
-  operator responsibility
-- expand end-to-end coverage for authenticated and lower-assurance transitions
-
-### Community and contributor experience
-
-- document governance, support, conduct, and maintainer expectations
-- lower local setup friction with a single contributor bootstrap command
-- make project direction visible through a changelog and roadmap
-
-### Ecosystem fit
-
-- keep provider quickstarts current as upstream CLIs evolve
-- improve comparison material and use-case guidance for teams evaluating Workcell
-- make release assets easier for operators to consume and verify
-- define the first non-macOS deployment roadmap explicitly: trusted
-  `linux/amd64` remote validation hosts, self-hosted release and reproducibility
-  builders, and operator-managed deployment targets, without claiming Tier 1
-  Linux or Windows host parity before the same boundary guarantees exist
+- expand cloud spawning across the major providers `AWS`, `Azure`, and `GCP`
+  through thin provider adapters rather than provider-specific trust models
+- add explicit Linux and Windows support only where the same boundary
+  guarantees, validation coverage, and operator story can be stated honestly
+- add enterprise policy administration, centralized session inventory, and
+  usage and audit analytics
+- add preserved-boundary GUI and IDE entrypoints backed by the same session
+  plane
 
 ## Non-goals
 

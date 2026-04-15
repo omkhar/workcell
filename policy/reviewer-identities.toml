@@ -1,0 +1,14 @@
+# Provider-neutral reviewer identities used for PR comment sweeps and release
+# comment checks.
+#
+# Keep this file focused on who should be swept before merge rather than on
+# provider branding. Review tooling and runbooks should treat these identities
+# as configuration, not hard-coded special cases.
+
+[human_reviewers]
+github_logins = ["omkhar"]
+
+[async_reviewers]
+# Add GitHub logins for configured asynchronous reviewers when they exist.
+# Leave the list empty if no async reviewer identity is currently configured.
+github_logins = []

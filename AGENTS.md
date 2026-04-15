@@ -44,6 +44,43 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   plane.
 - Ship invariant checks with new controls whenever practical.
 
+## Pull request workflow
+
+- Every PR should remain open for comments and review before merge.
+- Every PR must be checked for:
+  - top-level PR comments
+  - inline review comments
+  - unresolved review threads
+  - asynchronous review comments from configured async reviewers listed in
+    `policy/reviewer-identities.toml`
+- Actionable comments must be addressed or explicitly dispositioned before
+  merge.
+- Re-check comments and review threads after CI turns green and immediately
+  before merge.
+- Async reviewer feedback is advisory input, not a substitute for an
+  independent human approval.
+
+## Release workflow
+
+- For release requests, follow `docs/releasing.md`.
+- Workcell currently operates in single-maintainer release mode. Do not claim
+  independent approval or separation of duties unless it actually happened.
+- Review open pull requests, review feedback, and PR comments before cutting a
+  release, and address actionable feedback as part of the release workflow.
+- Use host-side `./scripts/workcell publish-pr` for release PR publication.
+- Wait for the merged `main` commit to finish required GitHub Actions workflows
+  successfully before pushing the signed release tag.
+- After pushing a release tag, follow the `Release` workflow to completion and
+  verify the GitHub release exists with uploaded assets.
+- In the current single-maintainer operating mode, approving the `release`
+  environment is part of finishing the release when the release workflow is
+  otherwise green.
+- If a release tag already exists and its release workflow failed, do not
+  rewrite or delete the tag. Patch `main` and cut the next patch release
+  instead.
+- Prefer immutable GitHub releases and treat mutable release state as a hosted
+  control gap to close.
+
 ## Change discipline
 
 - Root files define shared contracts; keep them concise.
