@@ -301,3 +301,12 @@ jobs:
         env:
           WORKCELL_REPRO_PLATFORMS: ${{ matrix.platform }}
         run: ./scripts/verify-reproducible-build.sh
+
+  reproducible-build:
+    name: Reproducible build
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'approved-heavy-ci') }}
+    runs-on: ubuntu-latest
+    needs: reproducible-build-platform
+    steps:
+      - name: Confirm per-platform reproducible builds passed
+        run: true

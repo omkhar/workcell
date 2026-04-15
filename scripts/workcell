@@ -2032,8 +2032,8 @@ session_git_metadata_lines() {
   local git_base=""
 
   if workspace_is_git_worktree "${workspace}"; then
-    git_branch="$(run_clean_host_command_in_dir "${workspace}" git branch --show-current 2>/dev/null || true)"
-    git_head="$(run_clean_host_command_in_dir "${workspace}" git rev-parse --verify HEAD 2>/dev/null || true)"
+    git_branch="$(run_workspace_safe_git_command_in_dir "${workspace}" branch --show-current 2>/dev/null || true)"
+    git_head="$(run_workspace_safe_git_command_in_dir "${workspace}" rev-parse --verify HEAD 2>/dev/null || true)"
     if [[ -n "${git_head}" ]] && ! workspace_git_has_worktree_changes "${workspace}"; then
       git_base="${git_head}"
     fi
@@ -2054,21 +2054,11 @@ render_session_diff_bundle() {
   local diff_output=""
 
   status_output="$(
-    run_clean_host_command_in_dir "${workspace}" \
-      git \
-      -c core.hooksPath=/dev/null \
-      -c core.fsmonitor=false \
-      -c diff.external= \
-      -c color.ui=false \
+    run_workspace_safe_git_command_in_dir "${workspace}" \
       status --short --untracked-files=all
   )"
   diff_output="$(
-    run_clean_host_command_in_dir "${workspace}" \
-      git \
-      -c core.hooksPath=/dev/null \
-      -c core.fsmonitor=false \
-      -c diff.external= \
-      -c color.ui=false \
+    run_workspace_safe_git_command_in_dir "${workspace}" \
       -c pager.diff=false \
       diff --no-ext-diff --no-textconv --submodule=short "${git_base}" --
   )"
@@ -4687,14 +4677,66 @@ workspace_is_git_worktree() {
   run_clean_host_command git -C "${workspace}" rev-parse --is-inside-work-tree >/dev/null 2>&1
 }
 
+workspace_git_filter_override_args() {
+  local workspace="$1"
+  local key=""
+
+  workspace_is_git_worktree "${workspace}" || return 0
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    case "${key}" in
+      filter.*.clean | filter.*.smudge | filter.*.process)
+        printf -- '-c\0%s=\0' "${key}"
+        ;;
+      filter.*.required)
+        printf -- '-c\0%s=false\0' "${key}"
+        ;;
+    esac
+  done < <(
+    run_clean_host_command_in_dir "${workspace}" env \
+      GIT_CONFIG_NOSYSTEM=1 \
+      GIT_CONFIG_SYSTEM=/dev/null \
+      GIT_CONFIG_GLOBAL=/dev/null \
+      "${HOST_GIT_BIN}" config --name-only --includes \
+      --get-regexp '^filter\..*\.(clean|smudge|process|required)$' 2>/dev/null || true
+  )
+}
+
+run_workspace_safe_git_command_in_dir() {
+  local workspace="$1"
+  shift
+  local -a filter_overrides=()
+  local -a git_command=()
+  local override=""
+
+  while IFS= read -r -d '' override; do
+    filter_overrides+=("${override}")
+  done < <(workspace_git_filter_override_args "${workspace}")
+
+  git_command=(
+    env
+    GIT_CONFIG_NOSYSTEM=1
+    GIT_CONFIG_SYSTEM=/dev/null
+    GIT_CONFIG_GLOBAL=/dev/null
+    "${HOST_GIT_BIN}"
+    -c core.hooksPath=/dev/null
+    -c core.fsmonitor=false
+    -c diff.external=
+    -c color.ui=false
+  )
+  if [[ ${#filter_overrides[@]} -gt 0 ]]; then
+    git_command+=("${filter_overrides[@]}")
+  fi
+  git_command+=("$@")
+
+  run_clean_host_command_in_dir "${workspace}" "${git_command[@]}"
+}
+
 workspace_git_has_worktree_changes() {
   local workspace="$1"
 
   workspace_is_git_worktree "${workspace}" || return 1
-  [[ -n "$(run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" \
-    -c core.hooksPath=/dev/null \
-    -c core.fsmonitor=false \
-    -c color.ui=false \
+  [[ -n "$(run_workspace_safe_git_command_in_dir "${workspace}" \
     status --short --untracked-files=all)" ]]
 }
 
