@@ -8,6 +8,17 @@ Releases.
 
 ## Unreleased
 
+## v0.9.3 - 2026-04-14
+
+### Changed
+
+- release: refresh the reviewed upstream provider pins to Claude CLI `2.1.107`
+  and Gemini CLI `0.37.2` so tagged release preflight matches the latest
+  reviewed track after the `v0.9.2` release attempt
+- release: advance the pinned Debian snapshot to `20260415T000000Z` across the
+  runtime and validator images so release-time package resolution stays aligned
+  with the current reviewed archive snapshot
+
 ## v0.9.2 - 2026-04-14
 
 ### Fixed
