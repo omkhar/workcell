@@ -422,16 +422,16 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	if branchReviewMode == "" {
 		branchReviewMode = "review-gated"
 	}
-	if branchReviewMode != "review-gated" && branchReviewMode != "single-owner-private-pr" {
-		return fmt.Errorf("%s must set branch_review.mode to 'review-gated' or 'single-owner-private-pr'", policyPath)
+	if branchReviewMode != "review-gated" && branchReviewMode != "single-owner-public-pr" && branchReviewMode != "single-owner-private-pr" {
+		return fmt.Errorf("%s must set branch_review.mode to 'review-gated', 'single-owner-public-pr', or 'single-owner-private-pr'", policyPath)
 	}
 	releasePolicy, _ := policy["release_environment"].(map[string]any)
 	releaseMode, _ := releasePolicy["mode"].(string)
 	if releaseMode == "" {
 		releaseMode = "review-gated"
 	}
-	if releaseMode != "review-gated" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
-		return fmt.Errorf("%s must set release_environment.mode to 'review-gated', 'single-owner-private', or 'plan-limited-private'", policyPath)
+	if releaseMode != "review-gated" && releaseMode != "single-owner-public" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
+		return fmt.Errorf("%s must set release_environment.mode to 'review-gated', 'single-owner-public', 'single-owner-private', or 'plan-limited-private'", policyPath)
 	}
 	expectedContexts, err := requireStringSliceTable(policy, "required_status_checks", "contexts", policyPath)
 	if err != nil {
@@ -565,30 +565,46 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 			return fmt.Errorf("default-branch review ruleset on %s must require resolved review threads", repo)
 		}
 	} else {
-		if private, _ := repoMeta["private"].(bool); !private {
-			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s is only valid for private repositories", repo)
-		}
-		if ownerType != "User" {
-			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s is only valid for user-owned repositories", repo)
-		}
-		if len(directCollaborators) != 1 {
-			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires exactly one direct collaborator", repo)
-		}
-		collaborator, _ := directCollaborators[0].(map[string]any)
-		if login, _ := collaborator["login"].(string); login != ownerLogin {
-			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires the owner to be the only direct collaborator", repo)
-		}
-		permissions, _ := collaborator["permissions"].(map[string]any)
-		if admin, _ := permissions["admin"].(bool); !admin {
-			return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires the owner to retain admin permission", repo)
+		if branchReviewMode == "single-owner-private-pr" {
+			if private, _ := repoMeta["private"].(bool); !private {
+				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s is only valid for private repositories", repo)
+			}
+			if ownerType != "User" {
+				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s is only valid for user-owned repositories", repo)
+			}
+			if len(directCollaborators) != 1 {
+				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires exactly one direct collaborator", repo)
+			}
+			collaborator, _ := directCollaborators[0].(map[string]any)
+			if login, _ := collaborator["login"].(string); login != ownerLogin {
+				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires the owner to be the only direct collaborator", repo)
+			}
+			permissions, _ := collaborator["permissions"].(map[string]any)
+			if admin, _ := permissions["admin"].(bool); !admin {
+				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires the owner to retain admin permission", repo)
+			}
+		} else {
+			if private, _ := repoMeta["private"].(bool); private {
+				return fmt.Errorf("branch review mode 'single-owner-public-pr' on %s is only valid for public repositories", repo)
+			}
+			if ownerType != "User" {
+				return fmt.Errorf("branch review mode 'single-owner-public-pr' on %s is only valid for user-owned repositories", repo)
+			}
 		}
 		if count, _ := parameters["required_approving_review_count"].(float64); count != 0 {
-			return fmt.Errorf("default-branch review ruleset on %s must require zero approving reviews in single-owner-private-pr mode", repo)
+			return fmt.Errorf("default-branch review ruleset on %s must require zero approving reviews in %s mode", repo, branchReviewMode)
 		}
 		if required, _ := parameters["require_code_owner_review"].(bool); required {
-			return fmt.Errorf("default-branch review ruleset on %s must not require code owner review in single-owner-private-pr mode", repo)
+			return fmt.Errorf("default-branch review ruleset on %s must not require code owner review in %s mode", repo, branchReviewMode)
 		}
-		if resolved, _ := parameters["required_review_thread_resolution"].(bool); resolved {
+		if lastPushApproval, _ := parameters["require_last_push_approval"].(bool); lastPushApproval {
+			return fmt.Errorf("default-branch review ruleset on %s must not require last-push approval in %s mode", repo, branchReviewMode)
+		}
+		resolved, _ := parameters["required_review_thread_resolution"].(bool)
+		if branchReviewMode == "single-owner-public-pr" && !resolved {
+			return fmt.Errorf("default-branch review ruleset on %s must require resolved review threads in single-owner-public-pr mode", repo)
+		}
+		if branchReviewMode == "single-owner-private-pr" && resolved {
 			return fmt.Errorf("default-branch review ruleset on %s must not require resolved review threads in single-owner-private-pr mode", repo)
 		}
 	}
@@ -698,6 +714,36 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		}
 		if len(reviewerRules) > 0 {
 			return fmt.Errorf("release environment on %s must not define reviewer gates in plan-limited-private mode", repo)
+		}
+	case "single-owner-public":
+		if private, _ := repoMeta["private"].(bool); private {
+			return fmt.Errorf("release environment mode 'single-owner-public' on %s is only valid for public repositories", repo)
+		}
+		if ownerType != "User" {
+			return fmt.Errorf("release environment mode 'single-owner-public' on %s is only valid for user-owned repositories", repo)
+		}
+		if len(reviewerRules) == 0 {
+			return fmt.Errorf("release environment on %s must define a reviewer gate in single-owner-public mode", repo)
+		}
+		hasReviewer := false
+		for _, rule := range reviewerRules {
+			if reviewers, _ := rule["reviewers"].([]any); len(reviewers) > 0 {
+				hasReviewer = true
+			}
+			if preventSelfReview, _ := rule["prevent_self_review"].(bool); preventSelfReview {
+				return fmt.Errorf("release environment on %s must allow self-review in single-owner-public mode", repo)
+			}
+		}
+		if !hasReviewer {
+			return fmt.Errorf("release environment on %s must define at least one reviewer in single-owner-public mode", repo)
+		}
+		if bypass, _ := releaseEnv["can_admins_bypass"].(bool); bypass {
+			return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
+		}
+		if adminBypassRule != nil {
+			if enabled, _ := adminBypassRule["enabled"].(bool); enabled {
+				return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
+			}
 		}
 	default:
 		if private, _ := repoMeta["private"].(bool); !private {
@@ -1775,8 +1821,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	releaseEnvironment, _ := hostedControlsPolicy["release_environment"].(map[string]any)
 	releaseMode, _ := releaseEnvironment["mode"].(string)
-	if releaseMode != "review-gated" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
-		return errors.New("policy/github-hosted-controls.toml must set release_environment.mode to 'review-gated', 'single-owner-private', or 'plan-limited-private'")
+	if releaseMode != "review-gated" && releaseMode != "single-owner-public" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
+		return errors.New("policy/github-hosted-controls.toml must set release_environment.mode to 'review-gated', 'single-owner-public', 'single-owner-private', or 'plan-limited-private'")
 	}
 	if err := validateCanonicalHostedControlsRepositoryVariables(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
 		return err
