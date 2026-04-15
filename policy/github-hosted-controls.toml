@@ -14,22 +14,28 @@ block_deletions = true
 # Valid modes:
 # - "review-gated": require pull requests, at least one approving review,
 #   code owner review, and resolved review threads
+# - "single-owner-public-pr": require pull requests and resolved review
+#   threads on a public single-owner repository, while allowing zero required
+#   human approvals because no second maintainer exists yet; comment sweeps for
+#   human and async reviewers remain mandatory before merge
 # - "single-owner-private-pr": require pull requests on a private user-owned
 #   single-owner repository, but allow zero required approvals and no code
 #   owner/thread gate so merges remain workable without an admin bypass
-mode = "review-gated"
+mode = "single-owner-public-pr"
 
 [release_environment]
 # Valid modes:
-# - "review-gated": require at least one human reviewer and no admin bypass;
-#   upgrade to this once the repository is public (public repos on the free
-#   plan can enforce environment reviewers, private repos cannot)
+# - "review-gated": require at least one human reviewer, prevent self-review,
+#   and disallow admin bypass
+# - "single-owner-public": require a release environment on a public
+#   single-owner repository, disallow admin bypass, and allow maintainer
+#   self-review until a second release approver exists
 # - "single-owner-private": allow a private single-owner repo to use the
-#   release environment without a reviewer gate
+#   release environment without a second reviewer gate
 # - "plan-limited-private": lower-assurance fallback for private repositories
 #   on GitHub plans that cannot enforce environment reviewers; the environment
 #   must still exist, but reviewer gating is not available
-mode = "review-gated"
+mode = "single-owner-public"
 
 [required_status_checks]
 contexts = [
@@ -39,6 +45,18 @@ contexts = [
   "GitHub Actions lint",
   "GitHub Actions security analysis",
 ]
+
+[actions_policy]
+# Release and CI workflows should run with the narrowest practical default
+# token posture and only permit pinned actions from GitHub or explicitly
+# trusted publishers.
+allow_only_pinned_verified_or_explicitly_trusted_actions = true
+default_workflow_token_permissions = "read"
+
+[release_assets]
+# Tagged releases should be published as immutable GitHub releases so release
+# records and attached assets cannot be silently rewritten after publication.
+immutable_github_releases = true
 
 [repository_variables]
 # The canonical Workcell repository always requests GitHub-native attestations
