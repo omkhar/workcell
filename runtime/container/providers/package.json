@@ -5,7 +5,7 @@
   "description": "Pinned npm Gemini CLI dependency for Workcell runtime builds",
   "license": "Apache-2.0",
   "dependencies": {
-    "@google/gemini-cli": "0.37.1"
+    "@google/gemini-cli": "0.37.2"
   },
   "overrides": {
     "@tootallnate/once": "3.0.1",
