@@ -21,7 +21,6 @@ Releases.
 - ci: restore the required `Reproducible build` status context on pull requests
   and `main` merges after the v0.9.1 workflow simplification
 
-
 ## v0.9.1 - 2026-04-14
 
 ### Changed
