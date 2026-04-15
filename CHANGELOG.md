@@ -8,6 +8,20 @@ Releases.
 
 ## Unreleased
 
+## v0.9.2 - 2026-04-14
+
+### Fixed
+
+- scripts: stop `scripts/workcell` from executing repo-local cached `hostutil`
+  and `runtimeutil` binaries so workspace content cannot replace trusted host
+  helpers during host-side publication and inspection flows
+- scripts: harden host-side session git inspection against repository-defined
+  filters, worktree config, and include redirection so git status and diff
+  reads cannot trigger workspace-controlled command execution
+- ci: restore the required `Reproducible build` status context on pull requests
+  and `main` merges after the v0.9.1 workflow simplification
+
+
 ## v0.9.1 - 2026-04-14
 
 ### Changed
