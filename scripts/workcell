@@ -146,11 +146,6 @@ run_clean_host_command_in_dir() {
 
 HOST_GO_BIN="$(resolve_fixed_host_tool go /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go)"
 go_hostutil() {
-  local prebuilt="${ROOT_DIR}/.workcell-build-cache/hostutil"
-  if [[ -x "${prebuilt}" ]]; then
-    run_clean_host_command_in_dir "${ROOT_DIR}" "${prebuilt}" "$@"
-    return
-  fi
   ensure_go_run_env
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
     GOPATH="${GOPATH}" \
@@ -169,11 +164,6 @@ go_colimautil() {
 }
 
 go_runtimeutil() {
-  local prebuilt="${ROOT_DIR}/.workcell-build-cache/runtimeutil"
-  if [[ -x "${prebuilt}" ]]; then
-    run_clean_host_command_in_dir "${ROOT_DIR}" "${prebuilt}" "$@"
-    return
-  fi
   ensure_go_run_env
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
     GOPATH="${GOPATH}" \
