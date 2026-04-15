@@ -26,6 +26,8 @@ WORKSPACE_A="${TMP_DIR}/workspace-a"
 WORKSPACE_B="${TMP_DIR}/workspace-b"
 DIFF_PATH="${TMP_DIR}/session-diff.txt"
 TEXTCONV_MARKER="${WORKSPACE_A}/textconv-ran"
+FILTER_MARKER="${WORKSPACE_A}/filter-ran"
+FILTER_CONFIG="${WORKSPACE_A}/filter.inc"
 
 mkdir -p "${SESSIONS_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B}"
 WORKSPACE_A="$(cd "${WORKSPACE_A}" && pwd -P)"
@@ -38,15 +40,31 @@ touch "${TEXTCONV_MARKER}"
 cat "\$1"
 EOF
 chmod +x "${WORKSPACE_A}/textconv.sh"
+cat >"${WORKSPACE_A}/filter.sh" <<EOF
+#!/bin/sh
+touch "${FILTER_MARKER}"
+cat
+EOF
+chmod +x "${WORKSPACE_A}/filter.sh"
 git -C "${WORKSPACE_A}" config diff.workcell.textconv "${WORKSPACE_A}/textconv.sh"
-printf '*.txt diff=workcell\n' >"${WORKSPACE_A}/.gitattributes"
+git -C "${WORKSPACE_A}" config extensions.worktreeConfig true
+cat >"${FILTER_CONFIG}" <<EOF
+[filter "workcell-test"]
+	clean = ${WORKSPACE_A}/filter.sh
+	smudge = cat
+EOF
+git -C "${WORKSPACE_A}" config --worktree include.path "${FILTER_CONFIG}"
+printf '*.txt diff=workcell\n*.filter filter=workcell-test\n' >"${WORKSPACE_A}/.gitattributes"
 printf 'base\n' >"${WORKSPACE_A}/tracked.txt"
-git -C "${WORKSPACE_A}" add .gitattributes tracked.txt
+printf 'seed\n' >"${WORKSPACE_A}/tracked.filter"
+git -C "${WORKSPACE_A}" add .gitattributes tracked.txt tracked.filter
 git -C "${WORKSPACE_A}" -c user.name='Workcell Test' -c user.email='workcell@example.com' commit -m 'initial' >/dev/null
+rm -f "${FILTER_MARKER}"
 GIT_BASE="$(git -C "${WORKSPACE_A}" rev-parse HEAD)"
 GIT_BRANCH="$(git -C "${WORKSPACE_A}" branch --show-current)"
 printf 'updated\n' >"${WORKSPACE_A}/tracked.txt"
 printf 'new file\n' >"${WORKSPACE_A}/new.txt"
+printf 'changed\n' >"${WORKSPACE_A}/tracked.filter"
 
 cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
 {
@@ -143,6 +161,7 @@ grep -Fq '?? new.txt' "${DIFF_PATH}"
 grep -q '^-base$' "${DIFF_PATH}"
 grep -q '^+updated$' "${DIFF_PATH}"
 test ! -e "${TEXTCONV_MARKER}"
+test ! -e "${FILTER_MARKER}"
 
 cat >"${SESSIONS_DIR}/20260408T120000Z-33333333.json" <<EOF
 {
