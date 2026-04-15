@@ -258,6 +258,15 @@ gh run list --repo "${REPO}" --commit <main-commit-sha>
 Proceed only when every required workflow on the merge commit has completed
 successfully.
 
+Refresh the local repository so the merged `main` commit is present locally
+before tagging:
+
+```sh
+git fetch origin main
+git checkout main
+git pull --ff-only origin main
+```
+
 ## 9. Create and push the signed tag
 
 Create a signed tag on the merged `main` commit:
