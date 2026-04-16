@@ -88,6 +88,33 @@ gh pr checks <pr-number> --repo "${REPO}"
 
 Use the GitHub API or GraphQL as needed to inspect unresolved review threads.
 
+## Documentation review gate
+
+Every release branch must also go through an explicit documentation review.
+
+A release is not ready to merge unless all of the following are true:
+
+- `CHANGELOG.md` accurately summarizes the release contents and date
+- `README.md` and `docs/getting-started.md` still describe the current support
+  boundary, install path, and tested release-install matrix honestly
+- provider and rollout docs that affect the release, such as
+  `docs/injection-policy.md`, `docs/provider-matrix.md`, and relevant
+  quickstarts or setup guides, match the current implementation and auth
+  maturity
+- `ROADMAP.md` and nearby planning or design docs do not describe shipped work
+  as future work and do not remove partially shipped work from the roadmap
+- release-sensitive runbooks such as `docs/releasing.md`,
+  `docs/provenance.md`, and `docs/github-workflows.md` still describe the
+  current release process accurately
+- release-facing documentation claims are backed by code, CI, or focused manual
+  validation rather than assumption
+
+The required documentation review points are:
+
+1. while preparing the release branch
+2. again after the release PR checks turn green
+3. immediately before merge if the release diff changed after the second review
+
 ## 1. Start from a clean `main` worktree
 
 Use a dedicated release worktree or an otherwise clean checkout rooted at
@@ -157,6 +184,23 @@ Before opening the release PR, sweep the roadmap and nearby planning docs:
 - keep any partially implemented work on the roadmap
 - update user or design docs when shipped features would otherwise still appear
   as future work
+
+Perform the release documentation review on the exact branch diff:
+
+```sh
+git diff --stat main...HEAD -- CHANGELOG.md README.md ROADMAP.md docs
+git diff main...HEAD -- CHANGELOG.md README.md ROADMAP.md docs
+```
+
+At minimum, review:
+
+- the changelog entry for the release version and date
+- `README.md`, `docs/getting-started.md`, and changed quickstarts or setup docs
+- `ROADMAP.md` plus any changed planning or system-design docs
+- changed rollout, auth-maturity, provenance, workflow, or release-runbook docs
+- any doc statement about supported hosts, CI coverage, session surfaces, auth
+  maturity, or release posture that could overstate what the current code and
+  validation actually prove
 
 Before opening the release PR, verify release inputs that commonly drift:
 
@@ -228,6 +272,9 @@ If CI fails:
 
 When required checks turn green, perform the second PR comment sweep.
 
+Then repeat the documentation review on the exact release PR diff before
+deciding the branch is ready to merge.
+
 Do not merge while required checks are failing or while comment sweeps are
 incomplete.
 
@@ -239,6 +286,8 @@ following are true:
 - required checks are green
 - the PR comment sweep has been completed after CI turned green
 - the final pre-merge comment sweep has been completed
+- the release documentation review has been completed after CI turned green
+- release-facing docs accurately describe the exact merge diff
 - changelog and release notes are correct
 
 After merge, record the resulting `main` commit SHA. This is the commit that
