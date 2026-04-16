@@ -3,6 +3,11 @@
 This pattern is for teams that want a shared Claude baseline without mounting
 whole host homes into the runtime.
 
+It assumes supported Apple Silicon macOS hosts and the current local-first
+Workcell product shape. Workcell does not yet ship a centralized enterprise
+policy or session-administration plane; teams distribute reviewed host-side
+files through their existing host configuration workflow today.
+
 ## Recommended split
 
 Keep these concerns separate:
@@ -52,3 +57,4 @@ workcell --prepare --agent claude --workspace /path/to/repo
 
 - [docs/injection-policy.md](../injection-policy.md)
 - [docs/adapter-control-planes.md](../adapter-control-planes.md)
+- [docs/enterprise-rollout.md](../enterprise-rollout.md)

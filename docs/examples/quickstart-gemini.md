@@ -1,5 +1,9 @@
 # Quickstart: Gemini in Workcell
 
+This guide assumes a supported Apple Silicon macOS host. GitHub-hosted CI and
+tagged-release install verification currently cover `macos-26` and `macos-15`;
+the strongest local boundary claim still depends on local Colima validation.
+
 ## Prerequisites
 
 - Workcell installed with `./scripts/install.sh`

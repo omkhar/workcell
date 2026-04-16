@@ -24,8 +24,8 @@ These run without provider credentials:
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
-inspection and explainability, and host-side session inventory plus clean-base
-diff/export behavior.
+inspection and explainability, and host-side detached session inventory,
+control, logs/timeline, and clean-base diff/export behavior.
 
 ## Manual authenticated smoke
 

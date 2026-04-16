@@ -1,14 +1,30 @@
 # Quickstart: Claude in Workcell
 
+This guide assumes a supported Apple Silicon macOS host. GitHub-hosted CI and
+tagged-release install verification currently cover `macos-26` and `macos-15`;
+the strongest local boundary claim still depends on local Colima validation.
+
 ## Prerequisites
 
 - Workcell installed with `./scripts/install.sh`
 - a repo you want to mount as the workspace
-- a reviewed Claude API key file, or an experimental macOS resolver config
+- a reviewed Claude auth export, a reviewed Claude API key file, or an
+  experimental macOS resolver config
 
 ## 1. Create or update the injection policy
 
-Supported flow today: API key helper path
+Launch-ready paths today:
+
+Reviewed exported Claude auth file:
+
+```bash
+workcell auth set \
+  --agent claude \
+  --credential claude_auth \
+  --source /Users/example/.config/workcell/claude-auth.json
+```
+
+Reviewed API key helper path:
 
 ```bash
 workcell auth init
@@ -36,8 +52,9 @@ future supported export and verify the configured-only state with
 
 ## 2. Optional explicit prepare
 
-If you configured `claude_api_key`, a normal strict launch prepares the reviewed
-runtime image automatically when needed:
+If you configured a launch-ready Claude auth input such as `claude_auth` or
+`claude_api_key`, a normal strict launch prepares the reviewed runtime image
+automatically when needed:
 
 ```bash
 workcell --agent claude --workspace /path/to/repo
