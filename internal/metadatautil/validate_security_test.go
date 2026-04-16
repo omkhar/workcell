@@ -66,21 +66,21 @@ func writePinnedInputsFixture(tb testing.TB) PinnedInputsConfig {
 	}
 
 	return PinnedInputsConfig{
-		RuntimeDockerfilePath:         filepath.Join(dstRoot, "runtime", "container", "Dockerfile"),
-		ValidatorDockerfilePath:       filepath.Join(dstRoot, "tools", "validator", "Dockerfile"),
-		ProvidersPackageJSONPath:      filepath.Join(dstRoot, "runtime", "container", "providers", "package.json"),
-		ProvidersPackageLockPath:      filepath.Join(dstRoot, "runtime", "container", "providers", "package-lock.json"),
-		WorkflowsDir:                  filepath.Join(dstRoot, ".github", "workflows"),
-		CIWorkflowPath:                filepath.Join(dstRoot, ".github", "workflows", "ci.yml"),
-		ReleaseWorkflowPath:           filepath.Join(dstRoot, ".github", "workflows", "release.yml"),
-		PinHygieneWorkflowPath:        filepath.Join(dstRoot, ".github", "workflows", "pin-hygiene.yml"),
-		CodeownersPath:                filepath.Join(dstRoot, ".github", "CODEOWNERS"),
-		CodexRequirementsPath:         filepath.Join(dstRoot, "adapters", "codex", "requirements.toml"),
-		CodexMCPConfigPath:            filepath.Join(dstRoot, "adapters", "codex", "mcp", "config.toml"),
-		HostedControlsPolicyPath:      filepath.Join(dstRoot, "policy", "github-hosted-controls.toml"),
-		HostedControlsScriptPath:      filepath.Join(dstRoot, "scripts", "verify-github-hosted-controls.sh"),
-		ProviderBumpPolicyPath:        filepath.Join(dstRoot, "policy", "provider-bumps.toml"),
-		MaxDebianSnapshotAgeDays:      3650,
+		RuntimeDockerfilePath:    filepath.Join(dstRoot, "runtime", "container", "Dockerfile"),
+		ValidatorDockerfilePath:  filepath.Join(dstRoot, "tools", "validator", "Dockerfile"),
+		ProvidersPackageJSONPath: filepath.Join(dstRoot, "runtime", "container", "providers", "package.json"),
+		ProvidersPackageLockPath: filepath.Join(dstRoot, "runtime", "container", "providers", "package-lock.json"),
+		WorkflowsDir:             filepath.Join(dstRoot, ".github", "workflows"),
+		CIWorkflowPath:           filepath.Join(dstRoot, ".github", "workflows", "ci.yml"),
+		ReleaseWorkflowPath:      filepath.Join(dstRoot, ".github", "workflows", "release.yml"),
+		PinHygieneWorkflowPath:   filepath.Join(dstRoot, ".github", "workflows", "pin-hygiene.yml"),
+		CodeownersPath:           filepath.Join(dstRoot, ".github", "CODEOWNERS"),
+		CodexRequirementsPath:    filepath.Join(dstRoot, "adapters", "codex", "requirements.toml"),
+		CodexMCPConfigPath:       filepath.Join(dstRoot, "adapters", "codex", "mcp", "config.toml"),
+		HostedControlsPolicyPath: filepath.Join(dstRoot, "policy", "github-hosted-controls.toml"),
+		HostedControlsScriptPath: filepath.Join(dstRoot, "scripts", "verify-github-hosted-controls.sh"),
+		ProviderBumpPolicyPath:   filepath.Join(dstRoot, "policy", "provider-bumps.toml"),
+		MaxDebianSnapshotAgeDays: 3650,
 	}
 }
 
@@ -157,6 +157,13 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		branchReviewParameters = map[string]any{
 			"required_approving_review_count":   float64(1),
 			"require_code_owner_review":         true,
+			"required_review_thread_resolution": true,
+		}
+	} else if branchMode == "approval-gated" {
+		branchReviewParameters = map[string]any{
+			"required_approving_review_count":   float64(1),
+			"require_code_owner_review":         false,
+			"require_last_push_approval":        false,
 			"required_review_thread_resolution": true,
 		}
 	}
@@ -363,6 +370,61 @@ func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForBranchRevie
 	}
 	if !strings.Contains(err.Error(), "requires exactly one direct collaborator") {
 		t.Fatalf("VerifyGitHubHostedControls() error = %v, want collaborator-count rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsAcceptsApprovalGatedPublicRepo(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "approval-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+		{
+			"login": "extra-maintainer",
+			"permissions": map[string]any{
+				"admin": false,
+			},
+		},
+	})
+
+	if err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath); err != nil {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want acceptance for approval-gated public repo", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsApprovalGatedWithoutApproval(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "approval-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+		{
+			"login": "extra-maintainer",
+			"permissions": map[string]any{
+				"admin": false,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "rulesets.json"), func(content string) string {
+		content = strings.Replace(content, `"required_approving_review_count": 1`, `"required_approving_review_count": 0`, 1)
+		return strings.Replace(content, `"required_approving_review_count":1`, `"required_approving_review_count":0`, 1)
+	})
+
+	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted approval-gated review rules without an approval requirement")
+	}
+	if !strings.Contains(err.Error(), "must require at least one approving review") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want approval requirement rejection", err)
 	}
 }
 
