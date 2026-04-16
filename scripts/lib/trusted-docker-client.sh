@@ -4,7 +4,7 @@ canonicalize_workcell_dir() {
 
   [[ -d "${candidate}" ]] || return 1
   (
-    cd "${candidate}"
+    cd "${candidate}" || exit 1
     pwd -P
   )
 }
