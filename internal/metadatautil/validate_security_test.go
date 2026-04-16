@@ -319,6 +319,26 @@ func TestCheckPinnedInputsRejectsInvalidRustupDigest(t *testing.T) {
 	}
 }
 
+func TestCheckPinnedInputsRejectsInvalidValidatorToolDigests(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	rewriteFile(t, cfg.ValidatorDockerfilePath, func(content string) string {
+		content = strings.Replace(content, "ARG GO_LINUX_X86_64_SHA256=", "ARG GO_LINUX_X86_64_SHA256=deadbeef", 1)
+		content = strings.Replace(content, "ARG GO_LINUX_ARM64_SHA256=", "ARG GO_LINUX_ARM64_SHA256=feedface", 1)
+		content = strings.Replace(content, "ARG HADOLINT_LINUX_X86_64_SHA256=", "ARG HADOLINT_LINUX_X86_64_SHA256=deadbeef", 1)
+		return strings.Replace(content, "ARG HADOLINT_LINUX_ARM64_SHA256=", "ARG HADOLINT_LINUX_ARM64_SHA256=feedface", 1)
+	})
+
+	err := CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("CheckPinnedInputs() unexpectedly accepted a non-sha256 validator tool digest")
+	}
+	if !strings.Contains(err.Error(), "_SHA256") {
+		t.Fatalf("CheckPinnedInputs() error = %v, want validator tool digest rejection", err)
+	}
+}
+
 func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForBranchReview(t *testing.T) {
 	t.Parallel()
 
