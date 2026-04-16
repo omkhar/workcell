@@ -313,7 +313,19 @@ func TestRebasePolicyFragmentAndValidationHelpers(t *testing.T) {
 	if got, err := validateContainerTarget("/state/injected/notes.txt"); err != nil || got != "/state/injected/notes.txt" {
 		t.Fatalf("validateContainerTarget = %q, %v", got, err)
 	}
-	for _, bad := range []string{"relative.txt", "/tmp/outside", "/state/agent-home/.mcp.json", "/state/injected/../agent-home/notes.txt", "/state/agent-home/../injected/notes.txt"} {
+	for _, bad := range []string{
+		"relative.txt",
+		"/tmp/outside",
+		"/state/agent-home/.claude",
+		"/state/agent-home/.codex",
+		"/state/agent-home/.gemini",
+		"/state/agent-home/.config/claude-code",
+		"/state/agent-home/.config/gh",
+		"/state/agent-home/.config/gcloud",
+		"/state/agent-home/.mcp.json",
+		"/state/injected/../agent-home/notes.txt",
+		"/state/agent-home/../injected/notes.txt",
+	} {
 		if _, err := validateContainerTarget(bad); err == nil {
 			t.Fatalf("validateContainerTarget accepted %q", bad)
 		}
@@ -341,6 +353,22 @@ func TestRenderDocumentsRejectsUnknownKeys(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported keys: extra") {
 		t.Fatalf("renderDocuments() error = %v, want unknown key failure", err)
+	}
+}
+
+func TestRenderCredentialsRejectsSharedCredentialStringForm(t *testing.T) {
+	t.Parallel()
+
+	_, err := renderCredentials(map[string]any{
+		"credentials": map[string]any{
+			"github_hosts": "/tmp/hosts.yml",
+		},
+	}, Path("/tmp"), "codex", "strict")
+	if err == nil {
+		t.Fatal("renderCredentials() unexpectedly accepted shared credential string form")
+	}
+	if !strings.Contains(err.Error(), "providers is required") {
+		t.Fatalf("renderCredentials() error = %v, want shared credential scoping failure", err)
 	}
 }
 

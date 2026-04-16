@@ -901,7 +901,7 @@ verify_codex_managed_config_invariants() {
     "approval_policy" \
     "sandbox_mode" \
     "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.strict" "sandbox_mode" '"danger-full-access"' || return 1
+  require_toml_assignment "${file}" "profiles.strict" "sandbox_mode" '"workspace-write"' || return 1
   require_toml_assignment "${file}" "profiles.strict" "approval_policy" '"on-request"' || return 1
   require_toml_assignment "${file}" "profiles.strict" "web_search" '"disabled"' || return 1
   require_toml_section_absent "${file}" "profiles.strict.sandbox_workspace_write" || return 1
@@ -910,7 +910,7 @@ verify_codex_managed_config_invariants() {
     "approval_policy" \
     "sandbox_mode" \
     "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.development" "sandbox_mode" '"danger-full-access"' || return 1
+  require_toml_assignment "${file}" "profiles.development" "sandbox_mode" '"workspace-write"' || return 1
   require_toml_assignment "${file}" "profiles.development" "approval_policy" '"on-request"' || return 1
   require_toml_assignment "${file}" "profiles.development" "web_search" '"disabled"' || return 1
   require_toml_section_absent "${file}" "profiles.development.sandbox_workspace_write" || return 1
@@ -919,7 +919,7 @@ verify_codex_managed_config_invariants() {
     "approval_policy" \
     "sandbox_mode" \
     "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.build" "sandbox_mode" '"danger-full-access"' || return 1
+  require_toml_assignment "${file}" "profiles.build" "sandbox_mode" '"workspace-write"' || return 1
   require_toml_assignment "${file}" "profiles.build" "approval_policy" '"never"' || return 1
   require_toml_assignment "${file}" "profiles.build" "web_search" '"disabled"' || return 1
   require_toml_section_absent "${file}" "profiles.build.sandbox_workspace_write" || return 1
@@ -943,8 +943,14 @@ assert_codex_managed_config_rejected() {
   fi
 }
 
+CODEX_CONFIG="${ROOT_DIR}/adapters/codex/.codex/config.toml"
 CODEX_MANAGED_CONFIG="${ROOT_DIR}/adapters/codex/managed_config.toml"
+verify_codex_managed_config_invariants "${CODEX_CONFIG}" || exit 1
 verify_codex_managed_config_invariants "${CODEX_MANAGED_CONFIG}" || exit 1
+if ! grep -Fq 'allowed_sandbox_modes = ["workspace-write", "danger-full-access"]' "${ROOT_DIR}/adapters/codex/requirements.toml"; then
+  echo 'Expected adapters/codex/requirements.toml to allow workspace-write for managed sessions and danger-full-access only for breakglass' >&2
+  exit 1
+fi
 
 codex_managed_config_tmpdir="$(mktemp -d)"
 

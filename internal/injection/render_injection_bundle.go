@@ -64,6 +64,12 @@ var (
 		"userknownhostsfile":  {},
 	}
 	reservedTargets = []string{
+		"/state/agent-home/.codex",
+		"/state/agent-home/.claude",
+		"/state/agent-home/.config/claude-code",
+		"/state/agent-home/.gemini",
+		"/state/agent-home/.config/gcloud",
+		"/state/agent-home/.config/gh",
 		"/state/agent-home/.codex/AGENTS.md",
 		"/state/agent-home/.codex/auth.json",
 		"/state/agent-home/.codex/config.toml",
@@ -705,7 +711,8 @@ func renderCredentials(policy map[string]any, policyDir Path, agent, mode string
 		var providers any
 		var modes any
 		sourceRaw := rawValue
-		if entry, ok := rawValue.(map[string]any); ok {
+		entry, isTable := rawValue.(map[string]any)
+		if isTable {
 			if err := validateAllowedKeys(entry, mapKeysSet([]string{"source", "providers", "modes"}), "credentials."+key); err != nil {
 				return nil, err
 			}
@@ -717,7 +724,7 @@ func renderCredentials(policy map[string]any, policyDir Path, agent, mode string
 		}
 
 		if _, shared := sharedCredentialKeys[key]; shared {
-			if _, isTable := rawValue.(map[string]any); isTable && providers == nil {
+			if !isTable || providers == nil {
 				return nil, fmt.Errorf("credentials.%s.providers is required so shared GitHub credentials stay least-privilege", key)
 			}
 		}

@@ -812,6 +812,9 @@ func explainCredentialSelection(policy map[string]any, policyBase string, creden
 	}
 	rawMap, ok := raw.(map[string]any)
 	if !ok {
+		if _, shared := SharedCredentialKeys[credential]; shared {
+			return credentialSelectionReport{}, die(fmt.Sprintf("credentials.%s.providers is required so shared GitHub credentials stay least-privilege", credential))
+		}
 		if !credentialAllowedForAgent(agent, credential) {
 			return credentialSelectionReport{
 				selected:  false,
@@ -1374,6 +1377,9 @@ func validateSelectorValues(values any, label string, allowedValues map[string]s
 func validateStatusCredentialEntry(key string, raw any) error {
 	rawMap, ok := raw.(map[string]any)
 	if !ok {
+		if _, shared := SharedCredentialKeys[key]; shared {
+			return die(fmt.Sprintf("credentials.%s.providers is required so shared GitHub credentials stay least-privilege", key))
+		}
 		return nil
 	}
 	if err := validateAllowedKeys(rawMap, entryAllowedKeys, "credentials."+key); err != nil {
@@ -1560,10 +1566,10 @@ func selectedCredentials(policy map[string]any, agent string, mode string) (map[
 	if agent == "" {
 		selected := map[string]any{}
 		for key, raw := range credentials {
+			if err := validateStatusCredentialEntry(key, raw); err != nil {
+				return nil, err
+			}
 			if rawMap, ok := raw.(map[string]any); ok {
-				if err := validateStatusCredentialEntry(key, rawMap); err != nil {
-					return nil, err
-				}
 				if err := validateSelectorValues(rawMap["providers"], "credentials."+key+".providers", SupportedAgents); err != nil {
 					return nil, err
 				}
@@ -1597,10 +1603,10 @@ func selectedCredentials(policy map[string]any, agent string, mode string) (map[
 		if !ok {
 			continue
 		}
+		if err := validateStatusCredentialEntry(key, raw); err != nil {
+			return nil, err
+		}
 		if rawMap, ok := raw.(map[string]any); ok {
-			if err := validateStatusCredentialEntry(key, rawMap); err != nil {
-				return nil, err
-			}
 			ok, err := selectedFor(rawMap["providers"], agent, "credentials."+key+".providers", SupportedAgents)
 			if err != nil {
 				return nil, err

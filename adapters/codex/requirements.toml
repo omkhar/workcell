@@ -4,12 +4,9 @@
 # by design and are intended to be copied into an admin-enforced deployment.
 
 allowed_approval_policies = ["on-request", "never"]
-# Codex's own Linux sandbox is pinned off on the managed Workcell path because
-# it currently depends on unprivileged user namespaces that are unavailable
-# inside the Tier 1 container. Workcell's outer VM-plus-container boundary
-# remains the enforcement point; explicit breakglass is still tracked
-# separately by the launcher/runtime path.
-allowed_sandbox_modes = ["danger-full-access"]
+# Managed sessions should stay on the built-in workspace-write boundary and
+# reserve danger-full-access for explicit breakglass operation only.
+allowed_sandbox_modes = ["workspace-write", "danger-full-access"]
 allowed_web_search_modes = ["disabled"]
 
 [features]

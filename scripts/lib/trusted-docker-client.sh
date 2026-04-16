@@ -1,30 +1,51 @@
 # shellcheck shell=bash
-resolve_workcell_real_home() {
-  local uid="" user="" home="" fallback_parent="" fallback_home=""
+canonicalize_workcell_dir() {
+  local candidate="$1"
 
-  if [[ -n "${WORKCELL_DOCKER_REAL_HOME:-}" ]]; then
-    if [[ -d "${WORKCELL_DOCKER_REAL_HOME}" ]]; then
-      printf '%s\n' "${WORKCELL_DOCKER_REAL_HOME}"
-      return 0
-    fi
-    echo "Configured WORKCELL_DOCKER_REAL_HOME does not exist: ${WORKCELL_DOCKER_REAL_HOME}" >&2
-    return 1
-  fi
+  [[ -d "${candidate}" ]] || return 1
+  (
+    cd "${candidate}"
+    pwd -P
+  )
+}
+
+workcell_path_within_root() {
+  local candidate="$1"
+  local root="$2"
+  local candidate_real="" root_real=""
+
+  candidate_real="$(canonicalize_workcell_dir "${candidate}")" || return 1
+  root_real="$(canonicalize_workcell_dir "${root}")" || return 1
+  [[ "${candidate_real}" == "${root_real}" ]] || [[ "${candidate_real}" == "${root_real}"/* ]]
+}
+
+discover_workcell_real_home() {
+  local uid="" user="" home="" fallback_parent="" fallback_home="" source=""
 
   uid="$(id -u)"
   user="$(id -un 2>/dev/null || true)"
 
   if command -v getent >/dev/null 2>&1; then
     home="$(getent passwd "${uid}" 2>/dev/null | awk -F: 'NR==1 {print $6}' || true)"
+    if [[ -n "${home}" ]] && [[ -d "${home}" ]]; then
+      source="identity"
+    fi
   fi
   if [[ -z "${home}" ]] && command -v dscl >/dev/null 2>&1; then
     home="$(dscl . -read "/Users/${user}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+    if [[ -n "${home}" ]] && [[ -d "${home}" ]]; then
+      source="identity"
+    fi
   fi
   if [[ -z "${home}" && -r /etc/passwd ]]; then
     home="$(awk -F: -v uid="${uid}" '$3 == uid {print $6; exit}' /etc/passwd)"
+    if [[ -n "${home}" ]] && [[ -d "${home}" ]]; then
+      source="identity"
+    fi
   fi
   if [[ -n "${HOME:-}" ]] && { [[ -z "${home}" ]] || [[ ! -d "${home}" ]]; }; then
     home="${HOME}"
+    source="env"
   fi
 
   if [[ -z "${home}" ]]; then
@@ -38,11 +59,56 @@ resolve_workcell_real_home() {
     fallback_home="${fallback_parent%/}/workcell-home-${uid}"
     mkdir -p "${fallback_home}"
     chmod 0700 "${fallback_home}" 2>/dev/null || true
-    printf '%s\n' "${fallback_home}"
+    printf 'synthetic\t%s\n' "${fallback_home}"
     return 0
   fi
 
-  printf '%s\n' "${home}"
+  printf '%s\t%s\n' "${source:-env}" "${home}"
+}
+
+resolve_workcell_real_home() {
+  local discovered_source="" discovered_home="" override_home="" discovered_real="" override_real=""
+
+  IFS=$'\t' read -r discovered_source discovered_home < <(discover_workcell_real_home)
+
+  if [[ -z "${WORKCELL_DOCKER_REAL_HOME:-}" ]]; then
+    printf '%s\n' "${discovered_home}"
+    return 0
+  fi
+
+  if [[ ! -d "${WORKCELL_DOCKER_REAL_HOME}" ]]; then
+    echo "Configured WORKCELL_DOCKER_REAL_HOME does not exist: ${WORKCELL_DOCKER_REAL_HOME}" >&2
+    return 1
+  fi
+  override_home="${WORKCELL_DOCKER_REAL_HOME}"
+  override_real="$(canonicalize_workcell_dir "${override_home}")" || {
+    echo "Configured WORKCELL_DOCKER_REAL_HOME is not a directory: ${override_home}" >&2
+    return 1
+  }
+
+  if [[ "${discovered_source}" == "identity" ]]; then
+    discovered_real="$(canonicalize_workcell_dir "${discovered_home}")" || {
+      echo "Discovered Docker home is not a directory: ${discovered_home}" >&2
+      return 1
+    }
+    if [[ "${override_real}" != "${discovered_real}" ]]; then
+      echo "Configured WORKCELL_DOCKER_REAL_HOME must match the operator home: ${override_home}" >&2
+      return 1
+    fi
+    printf '%s\n' "${override_real}"
+    return 0
+  fi
+
+  if [[ -z "${WORKCELL_DOCKER_HOST_HOME_ROOT:-}" ]]; then
+    echo "Configured WORKCELL_DOCKER_REAL_HOME requires WORKCELL_DOCKER_HOST_HOME_ROOT when the operator home cannot be discovered safely" >&2
+    return 1
+  fi
+  if [[ -n "${ROOT_DIR:-}" ]] && workcell_path_within_root "${override_real}" "${ROOT_DIR}"; then
+    echo "Configured WORKCELL_DOCKER_REAL_HOME must not point inside the workspace: ${override_home}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "${override_real}"
 }
 
 copy_workcell_docker_state_tree() {

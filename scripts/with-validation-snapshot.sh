@@ -116,6 +116,18 @@ validate_blob_oid() {
   fi
 }
 
+validate_symlink_target() {
+  local link_target="$1"
+  local label="$2"
+  local tracked_path="$3"
+
+  case "${link_target}" in
+    '' | /* | .. | ../* | */../* | */..)
+      die "with-validation-snapshot: unsafe symlink target in ${label} rejected for ${tracked_path}: ${link_target}"
+      ;;
+  esac
+}
+
 materialize_tracked_entry() {
   local mode="$1"
   local oid="$2"
@@ -141,7 +153,8 @@ materialize_tracked_entry() {
       if ! IFS= read -r -d '' link_target < <(git -C "${REPO_ROOT}" cat-file blob "${oid}" && printf '\0'); then
         die "with-validation-snapshot: failed to read symlink blob ${oid} for path: ${tracked_path}"
       fi
-      ln -s "${link_target}" "${dest}"
+      validate_symlink_target "${link_target}" "${label}" "${tracked_path}"
+      ln -s -- "${link_target}" "${dest}"
       return 0
       ;;
     *)

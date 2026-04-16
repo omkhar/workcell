@@ -600,6 +600,18 @@ func TestRunRejectsInvalidConfigurations(t *testing.T) {
 			wantContains: "credentials.github_hosts.providers is required so shared GitHub credentials stay least-privilege",
 		},
 		{
+			name: "shared-github-string-form",
+			policy: strings.Join([]string{
+				"version = 1",
+				"[credentials]",
+				`github_hosts = "/tmp/hosts.yml"`,
+			}, "\n") + "\n",
+			command:      "status",
+			agent:        "codex",
+			needsInit:    false,
+			wantContains: "credentials.github_hosts.providers is required so shared GitHub credentials stay least-privilege",
+		},
+		{
 			name: "set-rejects-included-credential",
 			policy: strings.Join([]string{
 				"version = 1",

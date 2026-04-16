@@ -106,7 +106,11 @@ func ensureRegularFile(path string) error {
 }
 
 func ensureNoSymlinkPrefix(rootDir, repoPath string) error {
-	relativeParts := strings.Split(filepath.Clean(repoPath), string(filepath.Separator))
+	return ensureNoSymlinkRelativePath(rootDir, repoPath, "control-plane artifact")
+}
+
+func ensureNoSymlinkRelativePath(rootDir, relativePath, label string) error {
+	relativeParts := strings.Split(filepath.Clean(relativePath), string(filepath.Separator))
 	current := rootDir
 	for _, part := range relativeParts {
 		current = filepath.Join(current, part)
@@ -115,7 +119,7 @@ func ensureNoSymlinkPrefix(rootDir, repoPath string) error {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("control-plane artifact must not be a symlink: %s", repoPath)
+			return fmt.Errorf("%s must not be a symlink: %s", label, relativePath)
 		}
 	}
 	return nil
@@ -182,7 +186,10 @@ func gitTrackedFiles(rootDir string) ([]string, bool, error) {
 		if path == "" {
 			continue
 		}
-		info, err := os.Stat(filepath.Join(rootDir, path))
+		if err := ensureNoSymlinkRelativePath(rootDir, path, "tracked release input"); err != nil {
+			return nil, true, err
+		}
+		info, err := os.Lstat(filepath.Join(rootDir, path))
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
@@ -367,7 +374,10 @@ func digestMap(rootDir string, paths []string) (map[string]string, error) {
 	result := make(map[string]string, len(paths))
 	for _, relativePath := range paths {
 		candidate := filepath.Join(rootDir, relativePath)
-		info, err := os.Stat(candidate)
+		if err := ensureNoSymlinkRelativePath(rootDir, relativePath, "tracked release input"); err != nil {
+			return nil, err
+		}
+		info, err := os.Lstat(candidate)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, fmt.Errorf(

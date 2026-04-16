@@ -86,6 +86,7 @@ func TestRunMetadataModeWritesPlaceholderAndMetadata(t *testing.T) {
 		"version = 1",
 		"[credentials.github_hosts]",
 		`source = "` + githubHostsPath + `"`,
+		`providers = ["claude"]`,
 		"[credentials.claude_auth]",
 		`resolver = "claude-macos-keychain"`,
 		`materialization = "ephemeral"`,
@@ -159,6 +160,39 @@ func TestRunMetadataModeWritesPlaceholderAndMetadata(t *testing.T) {
 	}
 	if lines[5] != "github_hosts:ready" {
 		t.Fatalf("shared ready line = %q", lines[5])
+	}
+}
+
+func TestRunMetadataModeRejectsSharedCredentialStringForm(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	writePolicy(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials]",
+		`github_hosts = "/tmp/hosts.yml"`,
+	}, "\n")+"\n")
+
+	outputRoot := filepath.Join(root, "out")
+	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runResolveCredentialSources(t, []string{
+		"--policy", policyPath,
+		"--agent", "codex",
+		"--mode", "strict",
+		"--resolution-mode", "metadata",
+		"--output-policy", filepath.Join(outputRoot, "resolved-policy.toml"),
+		"--output-metadata", filepath.Join(outputRoot, "resolver-metadata.json"),
+		"--output-root", outputRoot,
+	}, nil)
+	if code != 1 {
+		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "providers is required") {
+		t.Fatalf("stderr %q missing shared credential scoping failure", stderr)
 	}
 }
 

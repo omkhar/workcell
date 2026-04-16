@@ -14,7 +14,7 @@
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
-      "sha256": "63686e152c4a4b4f1bbad39114797181c94f7f243eb4c0d8052cfca4fdb763ec"
+      "sha256": "bfb4107724bbd994486fa0e0afed5bbf295e1e5b57936c4d72fc821b23a8354b"
     }
   ],
   "runtime_artifacts": [
@@ -82,7 +82,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/config.toml",
-      "sha256": "523adb1596d5916574cf00f0a1e7f76fa7724cb948198c178773dbd2e2d5a867"
+      "sha256": "9a5fa873da71d3f216ee393a8ce19c7e9f9eef309a6aa641afdaff2e8c18bf95"
     },
     {
       "kind": "adapter-baseline",
@@ -94,7 +94,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "478df1caa04cd8a761a33d46ea96fce0413a036ca577e369f7ecec28459a0969"
+      "sha256": "eeb453c5725a8ec6f5832d4a197e24c13dcf27a3abdd8108766b5d6883177430"
     },
     {
       "kind": "adapter-baseline",
@@ -106,7 +106,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "4eb2570eb49d29925c6a688e2d42755de30ccd58f5bf120c6c7cda8d27ee3e10"
+      "sha256": "6848ce9b85adfdb165a0609d0d7fc61cb8aad2ac4fb36a4b75670646f808666c"
     },
     {
       "kind": "adapter-baseline",
@@ -160,7 +160,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "1349a27c813ca3d1f20a090dd109a3dd50407eec457f420642209f2a601d16da"
+      "sha256": "b3d482570219ea44dc00734dd89befa4999f18bdef9b9890f651d07f87472c98"
     },
     {
       "kind": "runtime-control-plane",

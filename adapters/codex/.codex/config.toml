@@ -44,17 +44,17 @@ network_access = false
 unified_exec = false
 
 [profiles.strict]
-sandbox_mode = "danger-full-access"
+sandbox_mode = "workspace-write"
 approval_policy = "on-request"
 web_search = "disabled"
 
 [profiles.development]
-sandbox_mode = "danger-full-access"
+sandbox_mode = "workspace-write"
 approval_policy = "on-request"
 web_search = "disabled"
 
 [profiles.build]
-sandbox_mode = "danger-full-access"
+sandbox_mode = "workspace-write"
 approval_policy = "never"
 web_search = "disabled"
 

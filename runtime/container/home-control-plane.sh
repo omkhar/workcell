@@ -384,7 +384,7 @@ workcell_file_trace_stop_watcher() {
 
 WORKCELL_WORKSPACE_IMPORT_ROOT="${WORKCELL_WORKSPACE_IMPORT_ROOT:-/opt/workcell/workspace-control-plane}"
 WORKCELL_CODEX_RULES_MUTABILITY="${WORKCELL_CODEX_RULES_MUTABILITY:-readonly}"
-WORKCELL_CONTROL_PLANE_MANIFEST="${WORKCELL_CONTROL_PLANE_MANIFEST:-/usr/local/libexec/workcell/control-plane-manifest.json}"
+WORKCELL_CONTROL_PLANE_MANIFEST="/usr/local/libexec/workcell/control-plane-manifest.json"
 
 workcell_session_assurance() {
   workcell_runtime_state_value WORKCELL_SESSION_ASSURANCE || true
@@ -1148,29 +1148,25 @@ workcell_target_is_allowed() {
   esac
 
   case "${target_path}" in
-    /state/agent-home/.codex/AGENTS.md | \
+    /state/agent-home/.codex | \
+      /state/agent-home/.codex/* | \
+      /state/agent-home/.claude | \
+      /state/agent-home/.claude/* | \
+      /state/agent-home/.config/claude-code | \
+      /state/agent-home/.config/claude-code/* | \
+      /state/agent-home/.gemini | \
+      /state/agent-home/.gemini/* | \
+      /state/agent-home/.config/gcloud | \
+      /state/agent-home/.config/gcloud/* | \
+      /state/agent-home/.config/gh | \
+      /state/agent-home/.config/gh/* | \
+      /state/agent-home/.codex/AGENTS.md | \
       /state/agent-home/.codex/auth.json | \
       /state/agent-home/.codex/config.toml | \
       /state/agent-home/.codex/managed_config.toml | \
       /state/agent-home/.codex/requirements.toml | \
-      /state/agent-home/.claude/settings.json | \
-      /state/agent-home/.claude/CLAUDE.md | \
-      /state/agent-home/.claude/.claude.json | \
       /state/agent-home/.claude.json | \
-      /state/agent-home/.claude/.credentials.json | \
-      /state/agent-home/.claude/workcell | \
-      /state/agent-home/.claude/workcell/* | \
-      /state/agent-home/.config/claude-code/auth.json | \
       /state/agent-home/.mcp.json | \
-      /state/agent-home/.gemini/settings.json | \
-      /state/agent-home/.gemini/GEMINI.md | \
-      /state/agent-home/.gemini/.env | \
-      /state/agent-home/.gemini/oauth_creds.json | \
-      /state/agent-home/.gemini/projects.json | \
-      /state/agent-home/.gemini/trustedFolders.json | \
-      /state/agent-home/.config/gcloud/application_default_credentials.json | \
-      /state/agent-home/.config/gh/config.yml | \
-      /state/agent-home/.config/gh/hosts.yml | \
       /state/agent-home/.ssh | \
       /state/agent-home/.ssh/* | \
       /state/agent-home/.codex/agents | \

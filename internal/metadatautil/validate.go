@@ -407,6 +407,20 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	owner, _ := repoMeta["owner"].(map[string]any)
 	ownerLogin, _ := owner["login"].(string)
 	ownerType, _ := owner["type"].(string)
+	requireSingleOwnerCollaborator := func(mode string) error {
+		if len(directCollaborators) != 1 {
+			return fmt.Errorf("%s on %s requires exactly one direct collaborator", mode, repo)
+		}
+		collaborator, _ := directCollaborators[0].(map[string]any)
+		if login, _ := collaborator["login"].(string); login != ownerLogin {
+			return fmt.Errorf("%s on %s requires the owner to be the only direct collaborator", mode, repo)
+		}
+		permissions, _ := collaborator["permissions"].(map[string]any)
+		if admin, _ := permissions["admin"].(bool); !admin {
+			return fmt.Errorf("%s on %s requires the owner to retain admin permission", mode, repo)
+		}
+		return nil
+	}
 
 	branchIntegrityPolicy, ok := policy["branch_integrity"].(map[string]any)
 	if !ok {
@@ -572,16 +586,8 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 			if ownerType != "User" {
 				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s is only valid for user-owned repositories", repo)
 			}
-			if len(directCollaborators) != 1 {
-				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires exactly one direct collaborator", repo)
-			}
-			collaborator, _ := directCollaborators[0].(map[string]any)
-			if login, _ := collaborator["login"].(string); login != ownerLogin {
-				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires the owner to be the only direct collaborator", repo)
-			}
-			permissions, _ := collaborator["permissions"].(map[string]any)
-			if admin, _ := permissions["admin"].(bool); !admin {
-				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s requires the owner to retain admin permission", repo)
+			if err := requireSingleOwnerCollaborator("branch review mode 'single-owner-private-pr'"); err != nil {
+				return err
 			}
 		} else {
 			if private, _ := repoMeta["private"].(bool); private {
@@ -589,6 +595,9 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 			}
 			if ownerType != "User" {
 				return fmt.Errorf("branch review mode 'single-owner-public-pr' on %s is only valid for user-owned repositories", repo)
+			}
+			if err := requireSingleOwnerCollaborator("branch review mode 'single-owner-public-pr'"); err != nil {
+				return err
 			}
 		}
 		if count, _ := parameters["required_approving_review_count"].(float64); count != 0 {
@@ -722,6 +731,9 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		if ownerType != "User" {
 			return fmt.Errorf("release environment mode 'single-owner-public' on %s is only valid for user-owned repositories", repo)
 		}
+		if err := requireSingleOwnerCollaborator("release environment mode 'single-owner-public'"); err != nil {
+			return err
+		}
 		if len(reviewerRules) == 0 {
 			return fmt.Errorf("release environment on %s must define a reviewer gate in single-owner-public mode", repo)
 		}
@@ -752,16 +764,8 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		if ownerType != "User" {
 			return fmt.Errorf("release environment mode 'single-owner-private' on %s is only valid for user-owned repositories", repo)
 		}
-		if len(directCollaborators) != 1 {
-			return fmt.Errorf("release environment mode 'single-owner-private' on %s requires exactly one direct collaborator", repo)
-		}
-		collaborator, _ := directCollaborators[0].(map[string]any)
-		if login, _ := collaborator["login"].(string); login != ownerLogin {
-			return fmt.Errorf("release environment mode 'single-owner-private' on %s requires the owner to be the only direct collaborator", repo)
-		}
-		permissions, _ := collaborator["permissions"].(map[string]any)
-		if admin, _ := permissions["admin"].(bool); !admin {
-			return fmt.Errorf("release environment mode 'single-owner-private' on %s requires the owner to retain admin permission", repo)
+		if err := requireSingleOwnerCollaborator("release environment mode 'single-owner-private'"); err != nil {
+			return err
 		}
 	}
 
@@ -1329,6 +1333,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requireEqual("RUSTUP_VERSION", validatorRustupVersion, cfg.ValidatorDockerfilePath, remoteValidatorRustupVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$`).MatchString(validatorRustupVersion) {
+		return fmt.Errorf("RUSTUP_VERSION must be an exact pinned release, found %q", validatorRustupVersion)
+	}
 	validatorRustupSHAx86_64, err := requireArg(validatorDockerfile, "RUSTUP_INIT_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
 	if err != nil {
 		return err
@@ -1340,6 +1347,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requireEqual("RUSTUP_INIT_LINUX_X86_64_SHA256", validatorRustupSHAx86_64, cfg.ValidatorDockerfilePath, remoteValidatorRustupSHAx86_64, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
+	if !isHexDigest(validatorRustupSHAx86_64) {
+		return fmt.Errorf("RUSTUP_INIT_LINUX_X86_64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorRustupSHAx86_64)
+	}
 	validatorRustupSHAArm64, err := requireArg(validatorDockerfile, "RUSTUP_INIT_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
 	if err != nil {
 		return err
@@ -1350,6 +1360,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	if err := requireEqual("RUSTUP_INIT_LINUX_ARM64_SHA256", validatorRustupSHAArm64, cfg.ValidatorDockerfilePath, remoteValidatorRustupSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
+	}
+	if !isHexDigest(validatorRustupSHAArm64) {
+		return fmt.Errorf("RUSTUP_INIT_LINUX_ARM64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorRustupSHAArm64)
 	}
 
 	rootPackage, _ := providersPackageLock["packages"].(map[string]any)

@@ -189,6 +189,39 @@ func TestValidationSnapshotPreservesTrackedSymlinks(t *testing.T) {
 	}
 }
 
+func TestValidationSnapshotRejectsUnsafeTrackedSymlinks(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	repo := createSnapshotFixtureRepo(t, tempRoot)
+	if err := os.Symlink("/etc/passwd", filepath.Join(repo, "leak")); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", repo, "add", "leak")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add leak failed: %v\n%s", err, output)
+	}
+	cmd = exec.Command("git", "-C", repo, "commit", "-q", "-m", "add unsafe symlink")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit add unsafe symlink failed: %v\n%s", err, output)
+	}
+
+	for _, mode := range []string{"head", "index", "worktree"} {
+		mode := mode
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+
+			code, output := runValidationSnapshotCommand(t, repo, mode, `echo should-not-run`, nil)
+			if code == 0 {
+				t.Fatalf("snapshot unexpectedly succeeded: %q", output)
+			}
+			if !strings.Contains(output, "unsafe symlink target") {
+				t.Fatalf("snapshot output = %q want unsafe symlink target rejection", output)
+			}
+		})
+	}
+}
+
 func TestValidationSnapshotFailsWhenTrackedBlobIsUnreadable(t *testing.T) {
 	t.Parallel()
 

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -108,5 +109,68 @@ func TestGitTrackedFilesExcludesUntrackedFiles(t *testing.T) {
 	want := []string{"tracked.txt"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("gitTrackedFiles() = %#v, want %#v", got, want)
+	}
+}
+
+func TestGitTrackedFilesRejectsTrackedSymlinks(t *testing.T) {
+	root := t.TempDir()
+	outsideRoot := t.TempDir()
+	outsidePath := filepath.Join(outsideRoot, "outside.txt")
+	if err := os.WriteFile(outsidePath, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s) error = %v", root, err)
+	}
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(args[0], args[1:]...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, output)
+		}
+	}
+
+	run("git", "init", "-q", canonicalRoot)
+	run("git", "-C", canonicalRoot, "config", "user.name", "Workcell Tests")
+	run("git", "-C", canonicalRoot, "config", "user.email", "workcell-tests@example.com")
+	run("git", "-C", canonicalRoot, "config", "commit.gpgsign", "false")
+	if err := os.Symlink(outsidePath, filepath.Join(canonicalRoot, "leak.txt")); err != nil {
+		t.Fatal(err)
+	}
+	run("git", "-C", canonicalRoot, "add", "leak.txt")
+	run("git", "-C", canonicalRoot, "commit", "-q", "-m", "add leak")
+
+	_, tracked, err := gitTrackedFiles(canonicalRoot)
+	if !tracked {
+		t.Fatal("gitTrackedFiles() should report tracked repository context")
+	}
+	if err == nil {
+		t.Fatal("gitTrackedFiles() unexpectedly accepted a tracked symlink")
+	}
+	if !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("gitTrackedFiles() error = %v, want symlink rejection", err)
+	}
+}
+
+func TestDigestMapRejectsSymlinkedInputs(t *testing.T) {
+	root := t.TempDir()
+	outsideRoot := t.TempDir()
+	outsidePath := filepath.Join(outsideRoot, "outside.txt")
+	if err := os.WriteFile(outsidePath, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsidePath, filepath.Join(root, "leak.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := digestMap(root, []string{"leak.txt"})
+	if err == nil {
+		t.Fatal("digestMap() unexpectedly accepted a symlink")
+	}
+	if !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("digestMap() error = %v, want symlink rejection", err)
 	}
 }

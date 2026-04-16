@@ -272,6 +272,9 @@ func run(cfg config) error {
 
 		rawMap, isMap := raw.(map[string]any)
 		if !isMap {
+			if _, shared := sharedCredentialKeys[key]; shared {
+				return fmt.Errorf("credentials.%s.providers is required so shared GitHub credentials stay least-privilege", key)
+			}
 			source, err := validateSourcePath(raw, "credentials."+key, cwd())
 			if err != nil {
 				return err
@@ -291,6 +294,9 @@ func run(cfg config) error {
 		resolverName, _ := rawMap["resolver"].(string)
 		providers := rawMap["providers"]
 		modes := rawMap["modes"]
+		if _, shared := sharedCredentialKeys[key]; shared && providers == nil {
+			return fmt.Errorf("credentials.%s.providers is required so shared GitHub credentials stay least-privilege", key)
+		}
 
 		ok, err := selectedFor(providers, cfg.agent, "credentials."+key+".providers", supportedAgents)
 		if err != nil {
