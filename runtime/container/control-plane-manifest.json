@@ -160,7 +160,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "b3d482570219ea44dc00734dd89befa4999f18bdef9b9890f651d07f87472c98"
+      "sha256": "1160b465e29599a14d52effc4bd422983a4a3a529138b2a5274134fe31ae35e1"
     },
     {
       "kind": "runtime-control-plane",

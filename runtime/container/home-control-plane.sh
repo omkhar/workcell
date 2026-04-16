@@ -1149,7 +1149,6 @@ workcell_target_is_allowed() {
 
   case "${target_path}" in
     /state/agent-home/.codex | \
-      /state/agent-home/.codex/* | \
       /state/agent-home/.claude | \
       /state/agent-home/.claude/* | \
       /state/agent-home/.config/claude-code | \
@@ -1174,7 +1173,8 @@ workcell_target_is_allowed() {
       /state/agent-home/.codex/rules | \
       /state/agent-home/.codex/rules/* | \
       /state/agent-home/.codex/mcp | \
-      /state/agent-home/.codex/mcp/*)
+      /state/agent-home/.codex/mcp/* | \
+      /state/agent-home/.codex/*)
       return 1
       ;;
   esac
