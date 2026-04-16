@@ -60,7 +60,6 @@ func writePinnedInputsFixture(tb testing.TB) PinnedInputsConfig {
 		"runtime/container/rust/Cargo.toml",
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/verify-github-hosted-controls.sh",
-		"tools/remote-validator/Dockerfile",
 		"tools/validator/Dockerfile",
 	} {
 		copyFixtureFile(tb, srcRoot, dstRoot, relativePath)
@@ -69,7 +68,6 @@ func writePinnedInputsFixture(tb testing.TB) PinnedInputsConfig {
 	return PinnedInputsConfig{
 		RuntimeDockerfilePath:         filepath.Join(dstRoot, "runtime", "container", "Dockerfile"),
 		ValidatorDockerfilePath:       filepath.Join(dstRoot, "tools", "validator", "Dockerfile"),
-		RemoteValidatorDockerfilePath: filepath.Join(dstRoot, "tools", "remote-validator", "Dockerfile"),
 		ProvidersPackageJSONPath:      filepath.Join(dstRoot, "runtime", "container", "providers", "package.json"),
 		ProvidersPackageLockPath:      filepath.Join(dstRoot, "runtime", "container", "providers", "package-lock.json"),
 		WorkflowsDir:                  filepath.Join(dstRoot, ".github", "workflows"),

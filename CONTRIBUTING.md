@@ -166,13 +166,8 @@ Helpful flags:
 ./scripts/pre-merge.sh --allow-dirty
 ./scripts/pre-merge.sh --skip-repro
 ./scripts/pre-merge.sh --skip-release-bundle
-./scripts/pre-merge.sh --remote
 ./scripts/pre-merge.sh --rebuild-validator
 ```
-
-`--remote` is an explicit lower-assurance trusted-builder path. It is useful
-for heavy `linux/amd64` validation, smoke, repro, and release-bundle checks,
-but it is not equivalent to the default local macOS Colima boundary proof.
 
 ## Pull requests
 

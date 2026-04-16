@@ -33,7 +33,6 @@ type ControlPlaneArtifact struct {
 type PinnedInputsConfig struct {
 	RuntimeDockerfilePath         string
 	ValidatorDockerfilePath       string
-	RemoteValidatorDockerfilePath string
 	ProvidersPackageJSONPath      string
 	ProvidersPackageLockPath      string
 	WorkflowsDir                  string

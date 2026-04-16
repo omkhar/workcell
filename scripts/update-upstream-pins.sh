@@ -20,7 +20,6 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DOCKERFILE_PATH="${ROOT_DIR}/runtime/container/Dockerfile"
 VALIDATOR_DOCKERFILE_PATH="${ROOT_DIR}/tools/validator/Dockerfile"
-REMOTE_VALIDATOR_DOCKERFILE_PATH="${ROOT_DIR}/tools/remote-validator/Dockerfile"
 GO_MOD_PATH="${ROOT_DIR}/go.mod"
 RUST_TOOLCHAIN_PATH="${ROOT_DIR}/runtime/container/rust/rust-toolchain.toml"
 CARGO_MANIFEST_PATH="${ROOT_DIR}/runtime/container/rust/Cargo.toml"
@@ -295,14 +294,11 @@ target_actionlint_sha="$(
 
 current_runtime_base="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" NODE_BASE_IMAGE)"
 current_validator_base="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" VALIDATOR_BASE_IMAGE)"
-current_remote_validator_base="$(extract_dockerfile_arg "${REMOTE_VALIDATOR_DOCKERFILE_PATH}" VALIDATOR_BASE_IMAGE)"
 current_runtime_snapshot="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" DEBIAN_SNAPSHOT)"
 current_validator_snapshot="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" DEBIAN_SNAPSHOT)"
-current_remote_validator_snapshot="$(extract_dockerfile_arg "${REMOTE_VALIDATOR_DOCKERFILE_PATH}" DEBIAN_SNAPSHOT)"
 current_go_toolchain="$(awk '/^toolchain / { sub(/^toolchain go/, "", $0); print; exit }' "${GO_MOD_PATH}")"
 current_go_language="$(awk '/^go / { print $2; exit }' "${GO_MOD_PATH}")"
 current_validator_go_version="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_VERSION)"
-current_remote_validator_go_version="$(extract_dockerfile_arg "${REMOTE_VALIDATOR_DOCKERFILE_PATH}" GO_VERSION)"
 current_go_sha_amd64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_LINUX_X86_64_SHA256)"
 current_go_sha_arm64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_LINUX_ARM64_SHA256)"
 current_rust_version="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" RUST_VERSION)"
@@ -326,12 +322,10 @@ current_actionlint_sha="$(extract_actionlint_env_value "${SECURITY_WORKFLOW_PATH
 
 runtime_base_track="${current_runtime_base%@*}"
 validator_base_track="${current_validator_base%@*}"
-remote_validator_base_track="${current_remote_validator_base%@*}"
 buildkit_track="${current_buildkit_image%@*}"
 
 target_runtime_base="${runtime_base_track}@$(docker_image_digest "${runtime_base_track}")"
 target_validator_base="${validator_base_track}@$(docker_image_digest "${validator_base_track}")"
-target_remote_validator_base="${remote_validator_base_track}@$(docker_image_digest "${remote_validator_base_track}")"
 target_runtime_rust_toolchain_image="rust:${target_rust_version}-slim-trixie@$(docker_image_digest "rust:${target_rust_version}-slim-trixie")"
 target_debian_snapshot="$(latest_debian_snapshot)"
 target_buildkit_image="${buildkit_track}@$(docker_image_digest "${buildkit_track}")"
@@ -356,14 +350,11 @@ has_changes=0
 for current_target_pair in \
   "${current_runtime_base}|${target_runtime_base}" \
   "${current_validator_base}|${target_validator_base}" \
-  "${current_remote_validator_base}|${target_remote_validator_base}" \
   "${current_runtime_snapshot}|${target_debian_snapshot}" \
   "${current_validator_snapshot}|${target_debian_snapshot}" \
-  "${current_remote_validator_snapshot}|${target_debian_snapshot}" \
   "${current_go_toolchain}|${target_go_toolchain}" \
   "${current_go_language}|${target_go_language}" \
   "${current_validator_go_version}|${target_go_toolchain}" \
-  "${current_remote_validator_go_version}|${target_go_toolchain}" \
   "${current_go_sha_amd64}|${target_go_sha_amd64}" \
   "${current_go_sha_arm64}|${target_go_sha_arm64}" \
   "${current_rust_version}|${target_rust_version}" \
@@ -410,7 +401,6 @@ print_summary() {
   echo "Pinned upstream refresh summary:"
   print_summary_line "runtime-base" "${current_runtime_base}" "${target_runtime_base}"
   print_summary_line "validator-base" "${current_validator_base}" "${target_validator_base}"
-  print_summary_line "remote-validator-base" "${current_remote_validator_base}" "${target_remote_validator_base}"
   print_summary_line "debian-snapshot" "${current_runtime_snapshot}" "${target_debian_snapshot}"
   print_summary_line "go-toolchain" "${current_go_toolchain}" "${target_go_toolchain}"
   print_summary_line "go-language" "${current_go_language}" "${target_go_language}"
@@ -450,25 +440,19 @@ replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG DEBIAN_SNAPSHOT=' "AR
 replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG RUST_VERSION=' "ARG RUST_VERSION=${target_rust_version}"
 replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG RUST_TOOLCHAIN_IMAGE=' "ARG RUST_TOOLCHAIN_IMAGE=${target_runtime_rust_toolchain_image}"
 
-for dockerfile_path in "${VALIDATOR_DOCKERFILE_PATH}" "${REMOTE_VALIDATOR_DOCKERFILE_PATH}"; do
-  if [[ "${dockerfile_path}" == "${VALIDATOR_DOCKERFILE_PATH}" ]]; then
-    target_base="${target_validator_base}"
-  else
-    target_base="${target_remote_validator_base}"
-  fi
-  replace_line_with_prefix "${dockerfile_path}" 'ARG VALIDATOR_BASE_IMAGE=' "ARG VALIDATOR_BASE_IMAGE=${target_base}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG DEBIAN_SNAPSHOT=' "ARG DEBIAN_SNAPSHOT=${target_debian_snapshot}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG GO_VERSION=' "ARG GO_VERSION=${target_go_toolchain}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG GO_LINUX_X86_64_SHA256=' "ARG GO_LINUX_X86_64_SHA256=${target_go_sha_amd64}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG GO_LINUX_ARM64_SHA256=' "ARG GO_LINUX_ARM64_SHA256=${target_go_sha_arm64}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG HADOLINT_VERSION=' "ARG HADOLINT_VERSION=${target_hadolint_version}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG HADOLINT_LINUX_X86_64_SHA256=' "ARG HADOLINT_LINUX_X86_64_SHA256=${target_hadolint_sha_amd64}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG HADOLINT_LINUX_ARM64_SHA256=' "ARG HADOLINT_LINUX_ARM64_SHA256=${target_hadolint_sha_arm64}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG RUST_VERSION=' "ARG RUST_VERSION=${target_rust_version}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG RUSTUP_VERSION=' "ARG RUSTUP_VERSION=${target_rustup_version}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG RUSTUP_INIT_LINUX_X86_64_SHA256=' "ARG RUSTUP_INIT_LINUX_X86_64_SHA256=${target_rustup_sha_amd64}"
-  replace_line_with_prefix "${dockerfile_path}" 'ARG RUSTUP_INIT_LINUX_ARM64_SHA256=' "ARG RUSTUP_INIT_LINUX_ARM64_SHA256=${target_rustup_sha_arm64}"
-done
+target_base="${target_validator_base}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG VALIDATOR_BASE_IMAGE=' "ARG VALIDATOR_BASE_IMAGE=${target_base}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG DEBIAN_SNAPSHOT=' "ARG DEBIAN_SNAPSHOT=${target_debian_snapshot}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG GO_VERSION=' "ARG GO_VERSION=${target_go_toolchain}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG GO_LINUX_X86_64_SHA256=' "ARG GO_LINUX_X86_64_SHA256=${target_go_sha_amd64}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG GO_LINUX_ARM64_SHA256=' "ARG GO_LINUX_ARM64_SHA256=${target_go_sha_arm64}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG HADOLINT_VERSION=' "ARG HADOLINT_VERSION=${target_hadolint_version}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG HADOLINT_LINUX_X86_64_SHA256=' "ARG HADOLINT_LINUX_X86_64_SHA256=${target_hadolint_sha_amd64}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG HADOLINT_LINUX_ARM64_SHA256=' "ARG HADOLINT_LINUX_ARM64_SHA256=${target_hadolint_sha_arm64}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG RUST_VERSION=' "ARG RUST_VERSION=${target_rust_version}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG RUSTUP_VERSION=' "ARG RUSTUP_VERSION=${target_rustup_version}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG RUSTUP_INIT_LINUX_X86_64_SHA256=' "ARG RUSTUP_INIT_LINUX_X86_64_SHA256=${target_rustup_sha_amd64}"
+replace_line_with_prefix "${VALIDATOR_DOCKERFILE_PATH}" 'ARG RUSTUP_INIT_LINUX_ARM64_SHA256=' "ARG RUSTUP_INIT_LINUX_ARM64_SHA256=${target_rustup_sha_arm64}"
 
 replace_line_with_prefix "${GO_MOD_PATH}" 'go ' "go ${target_go_language}"
 replace_line_with_prefix "${GO_MOD_PATH}" 'toolchain go' "toolchain go${target_go_toolchain}"

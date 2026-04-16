@@ -45,7 +45,7 @@ egress belong to `development` or `build`.
 - `scripts/container-smoke.sh`: direct container smoke coverage
 - `scripts/verify-invariants.sh`: invariant checks
 - `scripts/build-and-test.sh`: repo-wide validation and local check entry point
-- `scripts/pre-merge.sh`: pinned validator-container pre-merge harness with optional disposable snapshot and remote validation lanes
+- `scripts/pre-merge.sh`: pinned validator-container pre-merge harness with optional disposable snapshots
 
 ## GUI status
 

@@ -20,7 +20,7 @@ These run without provider credentials:
 - `./scripts/verify-invariants.sh`
 - `./scripts/verify-release-bundle.sh`
 - `./scripts/verify-reproducible-build.sh`
-- `./scripts/pre-merge.sh` (builds or reuses the same pinned validator container and can run the local stack from a disposable snapshot before optional remote lanes)
+- `./scripts/pre-merge.sh` (builds or reuses the same pinned validator container and can run the local stack from a disposable snapshot)
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
@@ -39,16 +39,6 @@ Use it when you need to verify:
 - provider-specific auth selection
 - injected MCP or project-registry behavior
 - provider UX that only shows up with a live account
-
-## Remote heavy validation
-
-`./scripts/dev-remote-validate.sh` stages the selected snapshot to a trusted
-remote `linux/amd64` host and runs validation there. This is useful when local
-heavy checks are too slow, but it is still a lower-assurance trusted-builder
-path because the helper container talks to the remote host's Docker daemon.
-The helper now runs as the remote login UID/GID, maps the remote Docker socket
-group explicitly, and mounts only a read-only snapshot of the remote host home
-needed for trusted Docker client state.
 
 ## GitHub CI vs local boundary proof
 

@@ -172,29 +172,28 @@ func main() {
 			os.Args[17],
 		)
 	case "check-pinned-inputs":
-		if len(os.Args) != 18 {
-			die(fmt.Errorf("usage: %s check-pinned-inputs DOCKERFILE VALIDATOR_DOCKERFILE REMOTE_VALIDATOR_DOCKERFILE PROVIDERS_PACKAGE_JSON PROVIDERS_PACKAGE_LOCK WORKFLOWS_DIR CI_WORKFLOW RELEASE_WORKFLOW PIN_HYGIENE_WORKFLOW CODEOWNERS CODEX_REQUIREMENTS CODEX_MCP_CONFIG HOSTED_CONTROLS_POLICY HOSTED_CONTROLS_SCRIPT PROVIDER_BUMP_POLICY MAX_DEBIAN_SNAPSHOT_AGE_DAYS", os.Args[0]))
+		if len(os.Args) != 17 {
+			die(fmt.Errorf("usage: %s check-pinned-inputs DOCKERFILE VALIDATOR_DOCKERFILE PROVIDERS_PACKAGE_JSON PROVIDERS_PACKAGE_LOCK WORKFLOWS_DIR CI_WORKFLOW RELEASE_WORKFLOW PIN_HYGIENE_WORKFLOW CODEOWNERS CODEX_REQUIREMENTS CODEX_MCP_CONFIG HOSTED_CONTROLS_POLICY HOSTED_CONTROLS_SCRIPT PROVIDER_BUMP_POLICY MAX_DEBIAN_SNAPSHOT_AGE_DAYS", os.Args[0]))
 		}
-		maxAge, convErr := strconv.Atoi(os.Args[17])
+		maxAge, convErr := strconv.Atoi(os.Args[16])
 		if convErr != nil {
 			die(convErr)
 		}
 		err = metadatautil.CheckPinnedInputs(metadatautil.PinnedInputsConfig{
 			RuntimeDockerfilePath:         os.Args[2],
 			ValidatorDockerfilePath:       os.Args[3],
-			RemoteValidatorDockerfilePath: os.Args[4],
-			ProvidersPackageJSONPath:      os.Args[5],
-			ProvidersPackageLockPath:      os.Args[6],
-			WorkflowsDir:                  os.Args[7],
-			CIWorkflowPath:                os.Args[8],
-			ReleaseWorkflowPath:           os.Args[9],
-			PinHygieneWorkflowPath:        os.Args[10],
-			CodeownersPath:                os.Args[11],
-			CodexRequirementsPath:         os.Args[12],
-			CodexMCPConfigPath:            os.Args[13],
-			HostedControlsPolicyPath:      os.Args[14],
-			HostedControlsScriptPath:      os.Args[15],
-			ProviderBumpPolicyPath:        os.Args[16],
+			ProvidersPackageJSONPath:      os.Args[4],
+			ProvidersPackageLockPath:      os.Args[5],
+			WorkflowsDir:                  os.Args[6],
+			CIWorkflowPath:                os.Args[7],
+			ReleaseWorkflowPath:           os.Args[8],
+			PinHygieneWorkflowPath:        os.Args[9],
+			CodeownersPath:                os.Args[10],
+			CodexRequirementsPath:         os.Args[11],
+			CodexMCPConfigPath:            os.Args[12],
+			HostedControlsPolicyPath:      os.Args[13],
+			HostedControlsScriptPath:      os.Args[14],
+			ProviderBumpPolicyPath:        os.Args[15],
 			MaxDebianSnapshotAgeDays:      maxAge,
 		})
 	case "verify-reproducible-build":

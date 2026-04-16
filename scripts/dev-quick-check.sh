@@ -35,7 +35,6 @@ shell_files=(
   "${ROOT_DIR}/scripts/provider-e2e.sh"
   "${ROOT_DIR}/scripts/uninstall.sh"
   "${ROOT_DIR}/scripts/workcell"
-  "${ROOT_DIR}/scripts/dev-remote-validate.sh"
   "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
   "${ROOT_DIR}/scripts/lib/go-run-env.sh"
   "${ROOT_DIR}/scripts/lib/manage_injection_policy"

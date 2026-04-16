@@ -786,10 +786,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	remoteValidatorDockerfile, err := readText(cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
 	providersPackageJSONText, err := readText(cfg.ProvidersPackageJSONPath)
 	if err != nil {
 		return err
@@ -1034,19 +1030,11 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	remoteValidatorBaseImage, err := requireArg(remoteValidatorDockerfile, "VALIDATOR_BASE_IMAGE", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
 	runtimeSnapshot, err := requireArg(runtimeDockerfile, "DEBIAN_SNAPSHOT", cfg.RuntimeDockerfilePath)
 	if err != nil {
 		return err
 	}
 	validatorSnapshot, err := requireArg(validatorDockerfile, "DEBIAN_SNAPSHOT", cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	remoteValidatorSnapshot, err := requireArg(remoteValidatorDockerfile, "DEBIAN_SNAPSHOT", cfg.RemoteValidatorDockerfilePath)
 	if err != nil {
 		return err
 	}
@@ -1067,10 +1055,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	remoteValidatorInstallBlocks, err := extractInstallBlocks(remoteValidatorDockerfile, cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
 
 	if err := requirePinnedBaseImage(runtimeBaseImage, "NODE_BASE_IMAGE", cfg.RuntimeDockerfilePath); err != nil {
 		return err
@@ -1078,16 +1062,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requirePinnedBaseImage(validatorBaseImage, "VALIDATOR_BASE_IMAGE", cfg.ValidatorDockerfilePath); err != nil {
 		return err
 	}
-	if err := requirePinnedBaseImage(remoteValidatorBaseImage, "VALIDATOR_BASE_IMAGE", cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
 	if err := verifySnapshotFreshness(runtimeSnapshot, cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
 	if err := verifySnapshotFreshness(validatorSnapshot, cfg.ValidatorDockerfilePath); err != nil {
-		return err
-	}
-	if err := verifySnapshotFreshness(remoteValidatorSnapshot, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
 	if err := requireNoRegistryBootstrapMCP(codexRequirementsText, cfg.CodexRequirementsPath); err != nil {
@@ -1134,9 +1112,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if len(validatorInstallBlocks) != 1 {
 		return errors.New("tools/validator/Dockerfile must contain exactly one apt install block")
 	}
-	if len(remoteValidatorInstallBlocks) != 1 {
-		return errors.New("tools/remote-validator/Dockerfile must contain exactly one apt install block")
-	}
 	if err := requireExactPackages(runtimeInstallBlocks[0], []string{"bash", "bubblewrap", "ca-certificates", "curl", "fd-find", "git", "jq", "less", "openssh-client", "passwd", "procps", "ripgrep", "sudo", "unzip", "util-linux", "xz-utils"}, "Runtime base", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
@@ -1144,9 +1119,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	}
 	if err := requireExactPackages(validatorInstallBlocks[0], []string{"ca-certificates", "codespell", "curl", "gcc", "git", "groff-base", "jq", "libc6-dev", "llvm", "mandoc", "openssh-client", "procps", "shellcheck", "shfmt", "yamllint"}, "Validator", cfg.ValidatorDockerfilePath); err != nil {
-		return err
-	}
-	if err := requireExactPackages(remoteValidatorInstallBlocks[0], []string{"ca-certificates", "codespell", "curl", "docker-cli", "docker-buildx", "gcc", "git", "groff-base", "jq", "libc6-dev", "llvm", "mandoc", "openssh-client", "procps", "shellcheck", "shfmt", "yamllint"}, "Remote validator", cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
 	goLanguageVersion, err := requireGoDirective(goModText, "go", goModPath)
@@ -1161,13 +1133,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	remoteValidatorGoVersion, err := requireArg(remoteValidatorDockerfile, "GO_VERSION", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("GO_VERSION", validatorGoVersion, cfg.ValidatorDockerfilePath, remoteValidatorGoVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
 	if err := requireEqual("Go toolchain version", goToolchainVersion, goModPath, validatorGoVersion, cfg.ValidatorDockerfilePath); err != nil {
 		return err
 	}
@@ -1178,94 +1143,28 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if goLanguageVersion != expectedGoLanguageVersion {
 		return fmt.Errorf("go language version in %s must match the toolchain major/minor at patch zero, expected %q, found %q", goModPath, expectedGoLanguageVersion, goLanguageVersion)
 	}
-	validatorGoSHAx86_64, err := requireArg(validatorDockerfile, "GO_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	remoteValidatorGoSHAx86_64, err := requireArg(remoteValidatorDockerfile, "GO_LINUX_X86_64_SHA256", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("GO_LINUX_X86_64_SHA256", validatorGoSHAx86_64, cfg.ValidatorDockerfilePath, remoteValidatorGoSHAx86_64, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
-	validatorGoSHAArm64, err := requireArg(validatorDockerfile, "GO_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	remoteValidatorGoSHAArm64, err := requireArg(remoteValidatorDockerfile, "GO_LINUX_ARM64_SHA256", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("GO_LINUX_ARM64_SHA256", validatorGoSHAArm64, cfg.ValidatorDockerfilePath, remoteValidatorGoSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
-	validatorHadolintVersion, err := requireArg(validatorDockerfile, "HADOLINT_VERSION", cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	remoteValidatorHadolintVersion, err := requireArg(remoteValidatorDockerfile, "HADOLINT_VERSION", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("HADOLINT_VERSION", validatorHadolintVersion, cfg.ValidatorDockerfilePath, remoteValidatorHadolintVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
-	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(validatorHadolintVersion) {
-		return fmt.Errorf("HADOLINT_VERSION must be an exact pinned release, found %q", validatorHadolintVersion)
-	}
-	validatorHadolintSHAx86_64, err := requireArg(validatorDockerfile, "HADOLINT_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	remoteValidatorHadolintSHAx86_64, err := requireArg(remoteValidatorDockerfile, "HADOLINT_LINUX_X86_64_SHA256", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("HADOLINT_LINUX_X86_64_SHA256", validatorHadolintSHAx86_64, cfg.ValidatorDockerfilePath, remoteValidatorHadolintSHAx86_64, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
-	validatorHadolintSHAArm64, err := requireArg(validatorDockerfile, "HADOLINT_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	remoteValidatorHadolintSHAArm64, err := requireArg(remoteValidatorDockerfile, "HADOLINT_LINUX_ARM64_SHA256", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("HADOLINT_LINUX_ARM64_SHA256", validatorHadolintSHAArm64, cfg.ValidatorDockerfilePath, remoteValidatorHadolintSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
-	validatorMarkdownlintVersion, err := requireArg(validatorDockerfile, "MARKDOWNLINT_VERSION", cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	remoteValidatorMarkdownlintVersion, err := requireArg(remoteValidatorDockerfile, "MARKDOWNLINT_VERSION", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("MARKDOWNLINT_VERSION", validatorMarkdownlintVersion, cfg.ValidatorDockerfilePath, remoteValidatorMarkdownlintVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
+		validatorHadolintVersion, err := requireArg(validatorDockerfile, "HADOLINT_VERSION", cfg.ValidatorDockerfilePath)
+		if err != nil {
+			return err
+		}
+		if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(validatorHadolintVersion) {
+			return fmt.Errorf("HADOLINT_VERSION must be an exact pinned release, found %q", validatorHadolintVersion)
+		}
+		validatorMarkdownlintVersion, err := requireArg(validatorDockerfile, "MARKDOWNLINT_VERSION", cfg.ValidatorDockerfilePath)
+		if err != nil {
+			return err
+		}
 	if !regexp.MustCompile(`^0\.\d+\.\d+$`).MatchString(validatorMarkdownlintVersion) {
 		return fmt.Errorf("MARKDOWNLINT_VERSION must be an exact pinned release, found %q", validatorMarkdownlintVersion)
 	}
-	for _, dockerfile := range []struct {
-		text string
-		path string
-	}{
-		{text: validatorDockerfile, path: cfg.ValidatorDockerfilePath},
-		{text: remoteValidatorDockerfile, path: cfg.RemoteValidatorDockerfilePath},
+	for _, needle := range []string{
+		`COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/`,
+		`npm ci --prefix /usr/local/lib/workcell-markdownlint --ignore-scripts --omit=dev`,
+		`ln -sf /usr/local/lib/workcell-markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint`,
+		`markdownlint --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null`,
 	} {
-		for _, needle := range []string{
-			`COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/`,
-			`npm ci --prefix /usr/local/lib/workcell-markdownlint --ignore-scripts --omit=dev`,
-			`ln -sf /usr/local/lib/workcell-markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint`,
-			`markdownlint --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null`,
-		} {
-			if !strings.Contains(dockerfile.text, needle) {
-				return fmt.Errorf("%s must contain %q", dockerfile.path, needle)
-			}
+		if !strings.Contains(validatorDockerfile, needle) {
+			return fmt.Errorf("%s must contain %q", cfg.ValidatorDockerfilePath, needle)
 		}
 	}
 	cargoEdition, err := requireTOMLString(cargoManifestText, "edition", cargoManifestPath)
@@ -1295,14 +1194,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	remoteValidatorRustVersion, err := requireArg(remoteValidatorDockerfile, "RUST_VERSION", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
 	if err := requireEqual("RUST_VERSION", runtimeRustVersion, cfg.RuntimeDockerfilePath, validatorRustVersion, cfg.ValidatorDockerfilePath); err != nil {
-		return err
-	}
-	if err := requireEqual("RUST_VERSION", runtimeRustVersion, cfg.RuntimeDockerfilePath, remoteValidatorRustVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
 	if err := requireEqual("Rust toolchain channel", rustToolchainVersion, rustToolchainPath, runtimeRustVersion, cfg.RuntimeDockerfilePath); err != nil {
@@ -1326,13 +1218,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	remoteValidatorRustupVersion, err := requireArg(remoteValidatorDockerfile, "RUSTUP_VERSION", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("RUSTUP_VERSION", validatorRustupVersion, cfg.ValidatorDockerfilePath, remoteValidatorRustupVersion, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$`).MatchString(validatorRustupVersion) {
 		return fmt.Errorf("RUSTUP_VERSION must be an exact pinned release, found %q", validatorRustupVersion)
 	}
@@ -1340,25 +1225,11 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	remoteValidatorRustupSHAx86_64, err := requireArg(remoteValidatorDockerfile, "RUSTUP_INIT_LINUX_X86_64_SHA256", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("RUSTUP_INIT_LINUX_X86_64_SHA256", validatorRustupSHAx86_64, cfg.ValidatorDockerfilePath, remoteValidatorRustupSHAx86_64, cfg.RemoteValidatorDockerfilePath); err != nil {
-		return err
-	}
 	if !isHexDigest(validatorRustupSHAx86_64) {
 		return fmt.Errorf("RUSTUP_INIT_LINUX_X86_64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorRustupSHAx86_64)
 	}
 	validatorRustupSHAArm64, err := requireArg(validatorDockerfile, "RUSTUP_INIT_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
 	if err != nil {
-		return err
-	}
-	remoteValidatorRustupSHAArm64, err := requireArg(remoteValidatorDockerfile, "RUSTUP_INIT_LINUX_ARM64_SHA256", cfg.RemoteValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual("RUSTUP_INIT_LINUX_ARM64_SHA256", validatorRustupSHAArm64, cfg.ValidatorDockerfilePath, remoteValidatorRustupSHAArm64, cfg.RemoteValidatorDockerfilePath); err != nil {
 		return err
 	}
 	if !isHexDigest(validatorRustupSHAArm64) {

@@ -129,10 +129,6 @@ BARRIER_VERIFY_ROOT="$(mktemp -d)"
 BROWSER_PROFILE_FIXTURE=""
 COLIMA_PROFILE_FIXTURE=""
 INSTALL_VERIFY_HOME="$(mktemp -d)"
-REMOTE_VALIDATE_CONFIG_ROOT="$(mktemp -d)"
-LOCAL_REMOTE_CONFIG_PATH="${REMOTE_VALIDATE_CONFIG_ROOT}/remote-validate.env"
-LEGACY_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/.workcell.remote.local"
-REPO_LOCAL_REMOTE_CONFIG_PATH="${ROOT_DIR}/tmp/verify-remote-validate-repo.env"
 ROOT_DRY_RUN_PROFILE_NAME="$(
   workspace="$(cd "${ROOT_DIR}" && pwd -P)"
   slug="$(printf '%s' "${workspace##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^$/workspace/' | cut -c1-10)"
@@ -205,15 +201,12 @@ cleanup() {
   rm -rf "${CODEX_VERIFY_HOME}"
   rm -rf "${BARRIER_VERIFY_ROOT}"
   rm -rf "${INSTALL_VERIFY_HOME}"
-  rm -rf "${REMOTE_VALIDATE_CONFIG_ROOT}"
-  rm -f "${REPO_LOCAL_REMOTE_CONFIG_PATH}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
   if [[ -n "${COLIMA_PROFILE_FIXTURE}" ]] && [[ -d "${COLIMA_PROFILE_FIXTURE}" ]]; then
     rm -rf "${COLIMA_PROFILE_FIXTURE}"
   fi
-  rm -f "${LEGACY_LOCAL_REMOTE_CONFIG_PATH}"
 }
 
 trap cleanup EXIT
@@ -2499,8 +2492,7 @@ fi
 
 for dockerfile in \
   "${ROOT_DIR}/runtime/container/Dockerfile" \
-  "${ROOT_DIR}/tools/validator/Dockerfile" \
-  "${ROOT_DIR}/tools/remote-validator/Dockerfile"; do
+  "${ROOT_DIR}/tools/validator/Dockerfile"; do
   if ! rg -q 'Acquire::Retries "5";' "${dockerfile}"; then
     echo "Expected ${dockerfile} to pin apt retry count for snapshot fetch resilience" >&2
     exit 1
@@ -2513,29 +2505,24 @@ done
 
 for dockerfile in \
   "${ROOT_DIR}/runtime/container/Dockerfile" \
-  "${ROOT_DIR}/tools/validator/Dockerfile" \
-  "${ROOT_DIR}/tools/remote-validator/Dockerfile"; do
+  "${ROOT_DIR}/tools/validator/Dockerfile"; do
   if ! rg -q '^USER workcell$' "${dockerfile}"; then
     echo "Expected ${dockerfile} to default to the named unprivileged workcell user" >&2
     exit 1
   fi
 done
 
-for dockerfile in \
-  "${ROOT_DIR}/tools/validator/Dockerfile" \
-  "${ROOT_DIR}/tools/remote-validator/Dockerfile"; do
-  for required in \
-    'ENV HOME=/home/workcell' \
-    'ENV XDG_CACHE_HOME=/home/workcell/.cache' \
-    'ENV GOCACHE=/home/workcell/.cache/go-build' \
-    'ENV GOMODCACHE=/home/workcell/.cache/go-mod' \
-    'ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target' \
-    'ENV TMPDIR=/home/workcell/.tmp'; do
-    if ! grep -Fq "${required}" "${dockerfile}"; then
-      echo "Expected ${dockerfile} to pin its default nonroot writable state under /home/workcell (${required})" >&2
-      exit 1
-    fi
-  done
+for required in \
+  'ENV HOME=/home/workcell' \
+  'ENV XDG_CACHE_HOME=/home/workcell/.cache' \
+  'ENV GOCACHE=/home/workcell/.cache/go-build' \
+  'ENV GOMODCACHE=/home/workcell/.cache/go-mod' \
+  'ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target' \
+  'ENV TMPDIR=/home/workcell/.tmp'; do
+  if ! grep -Fq "${required}" "${ROOT_DIR}/tools/validator/Dockerfile"; then
+    echo "Expected ${ROOT_DIR}/tools/validator/Dockerfile to pin its default nonroot writable state under /home/workcell (${required})" >&2
+    exit 1
+  fi
 done
 
 if ! grep -Fq "CARGO_TARGET_DIR=\"\${CARGO_TARGET_DIR:-\${XDG_CACHE_HOME}/cargo-target}\"" "${ROOT_DIR}/scripts/validate-repo.sh"; then
@@ -2599,18 +2586,6 @@ for required in \
   "mkdir -p \"\${HOME}\" \"\${XDG_CACHE_HOME}\" \"\${GOCACHE}\" \"\${GOMODCACHE}\" \"\${CARGO_TARGET_DIR}\" \"\${TMPDIR}\""; do
   if ! grep -Fq -- "${required}" "${ROOT_DIR}/scripts/verify-release-bundle.sh"; then
     echo "Expected scripts/verify-release-bundle.sh to build bundles in the validator under an explicit caller UID/GID with isolated writable state (${required})" >&2
-    exit 1
-  fi
-done
-
-for required in \
-  "--user \"\${REMOTE_LOGIN_UID}:\${REMOTE_LOGIN_GID}\"" \
-  "REMOTE_DOCKER_SOCK_GID=\"\$(remote_cmd stat -c %g /var/run/docker.sock)\"" \
-  "--group-add \"\${REMOTE_DOCKER_SOCK_GID}\"" \
-  "-e WORKCELL_DOCKER_REAL_HOME=\"\${validator_docker_home}\"" \
-  "-v \"\${REMOTE_HOME}:\${validator_docker_home}:ro\""; do
-  if ! grep -Fq -- "${required}" "${ROOT_DIR}/scripts/dev-remote-validate.sh"; then
-    echo "Expected scripts/dev-remote-validate.sh to preserve explicit remote caller identity and docker-socket lane isolation (${required})" >&2
     exit 1
   fi
 done
@@ -4673,8 +4648,7 @@ for stub in \
   verify-invariants.sh \
   container-smoke.sh \
   verify-release-bundle.sh \
-  verify-reproducible-build.sh \
-  dev-remote-validate.sh; do
+  verify-reproducible-build.sh; do
   cat >"${PREMERGE_HARNESS_ROOT}/scripts/${stub}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -4800,64 +4774,30 @@ grep -q 'verify-github-macos-release-test-runners.sh macos-26 macos-15' "${PREME
 grep -q 'update-upstream-pins.sh --check' "${PREMERGE_LOG}"
 
 : >"${PREMERGE_LOG}"
-if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --allow-dirty \
-  --remote >/tmp/workcell-premerge-allow-dirty.out 2>&1; then
-  echo "Expected --allow-dirty --remote pre-merge harness to succeed" >&2
-  cat /tmp/workcell-premerge-allow-dirty.out >&2
+  --remote >/tmp/workcell-premerge-remote-removed.out 2>&1; then
+  echo "Expected removed --remote pre-merge flag to be rejected" >&2
   exit 1
 fi
-grep -q 'remote validation will use --remote-snapshot worktree --include-untracked' /tmp/workcell-premerge-allow-dirty.out
-grep -q 'dev-remote-validate.sh --snapshot worktree --include-untracked --check validate' "${PREMERGE_LOG}"
+grep -q 'Unknown option: --remote' /tmp/workcell-premerge-remote-removed.out
 
 : >"${PREMERGE_LOG}"
-if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --allow-dirty \
-  --remote \
-  --remote-snapshot index >/tmp/workcell-premerge-remote-index.out 2>&1; then
-  echo "Expected explicit remote snapshot pre-merge harness to succeed" >&2
-  cat /tmp/workcell-premerge-remote-index.out >&2
+  --remote-heavy >/tmp/workcell-premerge-remote-heavy-removed.out 2>&1; then
+  echo "Expected removed --remote-heavy pre-merge flag to be rejected" >&2
   exit 1
 fi
-grep -q 'warning: --allow-dirty validates the live worktree locally, but remote validation will use --remote-snapshot index.' /tmp/workcell-premerge-remote-index.out
-grep -q 'dev-remote-validate.sh --snapshot index --check validate' "${PREMERGE_LOG}"
-
-: >"${PREMERGE_LOG}"
-if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
-  PREMERGE_LOG="${PREMERGE_LOG}" \
-  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
-  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
-  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
-  --allow-dirty \
-  --remote \
-  --remote-snapshot worktree >/tmp/workcell-premerge-remote-worktree.out 2>&1; then
-  echo "Expected explicit worktree remote snapshot pre-merge harness to succeed" >&2
-  cat /tmp/workcell-premerge-remote-worktree.out >&2
-  exit 1
-fi
-grep -q 'local validation sees untracked files, but remote worktree validation will exclude them without --include-untracked.' /tmp/workcell-premerge-remote-worktree.out
-
-: >"${PREMERGE_LOG}"
-if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
-  PREMERGE_LOG="${PREMERGE_LOG}" \
-  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
-  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
-  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
-  --allow-dirty \
-  --remote-heavy >/tmp/workcell-premerge-remote-heavy.out 2>&1; then
-  echo "Expected explicit heavy remote pre-merge harness to succeed" >&2
-  cat /tmp/workcell-premerge-remote-heavy.out >&2
-  exit 1
-fi
-grep -q 'dev-remote-validate.sh --snapshot worktree --include-untracked --check validate --allow-shared-daemon-heavy-checks --check smoke --check repro --check release-bundle' "${PREMERGE_LOG}"
+grep -q 'Unknown option: --remote-heavy' /tmp/workcell-premerge-remote-heavy-removed.out
 
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
@@ -6009,18 +5949,6 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${REDIRECTED_REPO}"
   exit 1
 fi
 
-cat <<'EOF' >"${LOCAL_REMOTE_CONFIG_PATH}"
-WORKCELL_REMOTE_VALIDATE_HOST=builder@example.internal
-WORKCELL_REMOTE_VALIDATE_BASE_DIR=/var/tmp/workcell
-WORKCELL_REMOTE_VALIDATE_USE_SUDO=0
-EOF
-if ! WORKCELL_REMOTE_VALIDATE_CONFIG_PATH="${LOCAL_REMOTE_CONFIG_PATH}" \
-  "${ROOT_DIR}/scripts/dev-remote-validate.sh" --check validate --dry-run >/tmp/workcell-remote-config.out 2>&1; then
-  echo "Expected host-local remote builder config to be accepted" >&2
-  cat /tmp/workcell-remote-config.out >&2
-  exit 1
-fi
-
 if ! WORKCELL_E2E_CODEX_AUTH_JSON='{"token":"codex-smoke"}' \
   WORKCELL_E2E_GITHUB_HOSTS_YML=$'github.com:\n  user: smoke\n' \
   "${ROOT_DIR}/scripts/provider-e2e.sh" \
@@ -6412,60 +6340,6 @@ if "${ROOT_DIR}/scripts/provider-e2e.sh" \
   exit 1
 fi
 grep -q 'No injection policy is available' /tmp/workcell-provider-e2e-missing-injection.out
-grep -q 'Remote host: builder@example.internal' /tmp/workcell-remote-config.out
-grep -q 'Remote base dir: /var/tmp/workcell' /tmp/workcell-remote-config.out
-grep -q "Remote config path: ${LOCAL_REMOTE_CONFIG_PATH}" /tmp/workcell-remote-config.out
-if ! "${ROOT_DIR}/scripts/dev-remote-validate.sh" --config "${LOCAL_REMOTE_CONFIG_PATH}" --check validate --dry-run >/tmp/workcell-remote-config-cli.out 2>&1; then
-  echo "Expected --config host-local remote builder config to be accepted" >&2
-  cat /tmp/workcell-remote-config-cli.out >&2
-  exit 1
-fi
-grep -q 'Remote host: builder@example.internal' /tmp/workcell-remote-config-cli.out
-grep -q "Remote config path: ${LOCAL_REMOTE_CONFIG_PATH}" /tmp/workcell-remote-config-cli.out
-
-if "${ROOT_DIR}/scripts/dev-remote-validate.sh" --config "${LOCAL_REMOTE_CONFIG_PATH}" --check smoke --dry-run >/tmp/workcell-remote-heavy-no-ack.out 2>&1; then
-  echo "Expected heavy remote validation without an explicit shared-daemon acknowledgement to be rejected" >&2
-  exit 1
-fi
-grep -q 'Heavy remote checks require --allow-shared-daemon-heavy-checks' /tmp/workcell-remote-heavy-no-ack.out
-
-cat <<'EOF' >"${LOCAL_REMOTE_CONFIG_PATH}"
-WORKCELL_REMOTE_VALIDATE_HOST=builder@example.internal
-WORKCELL_REMOTE_VALIDATE_BASE_DIR=/var/tmp/workcell
-WORKCELL_REMOTE_VALIDATE_USE_SUDO=0
-WORKCELL_REMOTE_VALIDATE_ALLOW_SHARED_DAEMON_HEAVY_CHECKS=1
-EOF
-if ! "${ROOT_DIR}/scripts/dev-remote-validate.sh" --config "${LOCAL_REMOTE_CONFIG_PATH}" --check smoke --dry-run >/tmp/workcell-remote-heavy-ack.out 2>&1; then
-  echo "Expected heavy remote validation with an explicit shared-daemon acknowledgement to be accepted" >&2
-  cat /tmp/workcell-remote-heavy-ack.out >&2
-  exit 1
-fi
-grep -q 'Allow shared-daemon heavy checks: 1' /tmp/workcell-remote-heavy-ack.out
-
-cat <<'EOF' >"${LEGACY_LOCAL_REMOTE_CONFIG_PATH}"
-WORKCELL_REMOTE_VALIDATE_HOST=builder@example.internal
-EOF
-if "${ROOT_DIR}/scripts/dev-remote-validate.sh" --check validate --dry-run >/tmp/workcell-remote-config-legacy.out 2>&1; then
-  echo "Expected legacy repo-local remote builder config to be rejected" >&2
-  exit 1
-fi
-grep -q 'Legacy repo-local remote builder config is no longer supported' /tmp/workcell-remote-config-legacy.out
-rm -f "${LEGACY_LOCAL_REMOTE_CONFIG_PATH}"
-
-cat <<'EOF' >"${REPO_LOCAL_REMOTE_CONFIG_PATH}"
-WORKCELL_REMOTE_VALIDATE_HOST=builder@example.internal
-EOF
-if WORKCELL_REMOTE_VALIDATE_CONFIG_PATH="${REPO_LOCAL_REMOTE_CONFIG_PATH}" \
-  "${ROOT_DIR}/scripts/dev-remote-validate.sh" --check validate --dry-run >/tmp/workcell-remote-config-repo-env.out 2>&1; then
-  echo "Expected repo-local remote builder config override via environment to be rejected" >&2
-  exit 1
-fi
-grep -q 'Remote builder config must live outside the repo checkout' /tmp/workcell-remote-config-repo-env.out
-if "${ROOT_DIR}/scripts/dev-remote-validate.sh" --config "${REPO_LOCAL_REMOTE_CONFIG_PATH}" --check validate --dry-run >/tmp/workcell-remote-config-repo-cli.out 2>&1; then
-  echo "Expected repo-local remote builder config override via --config to be rejected" >&2
-  exit 1
-fi
-grep -q 'Remote builder config must live outside the repo checkout' /tmp/workcell-remote-config-repo-cli.out
 
 cp -R "${ROOT_DIR}/adapters/codex/.codex/." "${CODEX_VERIFY_HOME}/"
 if command -v codex >/dev/null 2>&1; then

@@ -123,7 +123,6 @@ shell_files=(
   "${ROOT_DIR}/scripts/go-port-validate.sh"
   "${ROOT_DIR}/scripts/install-dev-tools.sh"
   "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
-  "${ROOT_DIR}/scripts/dev-remote-validate.sh"
   "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
   "${ROOT_DIR}/scripts/lib/go-run-env.sh"
   "${ROOT_DIR}/scripts/lib/trusted-entrypoint.sh"
@@ -329,11 +328,6 @@ run_metadatautil scan-credential-patterns "${ROOT_DIR}"
 
 if branding_scan; then
   echo "Found stale pre-rename branding." >&2
-  exit 1
-fi
-
-if [[ -e "${ROOT_DIR}/.workcell.remote.local" ]]; then
-  echo "Legacy repo-local remote builder config must not exist: ${ROOT_DIR}/.workcell.remote.local" >&2
   exit 1
 fi
 
