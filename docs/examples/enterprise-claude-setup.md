@@ -58,3 +58,5 @@ workcell --prepare --agent claude --workspace /path/to/repo
 - [docs/injection-policy.md](../injection-policy.md)
 - [docs/adapter-control-planes.md](../adapter-control-planes.md)
 - [docs/enterprise-rollout.md](../enterprise-rollout.md)
+- [docs/requirements-validation.md](../requirements-validation.md)
+- [docs/validation-scenarios.md](../validation-scenarios.md)

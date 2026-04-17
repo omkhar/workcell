@@ -124,4 +124,5 @@ workcell publish-pr --workspace /path/to/repo --branch feature/my-change \
 
 - [docs/injection-policy.md](../injection-policy.md)
 - [docs/adapter-control-planes.md](../adapter-control-planes.md)
+- [docs/requirements-validation.md](../requirements-validation.md)
 - [docs/validation-scenarios.md](../validation-scenarios.md)

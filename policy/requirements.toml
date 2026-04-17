@@ -183,4 +183,5 @@ docs = [
   "docs/github-workflows.md",
   "docs/provenance.md",
   "docs/validation-scenarios.md",
+  "docs/enterprise-rollout.md",
 ]

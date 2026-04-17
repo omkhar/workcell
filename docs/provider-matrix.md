@@ -23,3 +23,14 @@ For provider auth maturity and rollout caveats, see
 
 Do not force one provider's control model onto another. Keep one shared
 boundary and one thin adapter per product.
+
+## Validation traceability
+
+Use [docs/requirements-validation.md](requirements-validation.md) for the
+machine-checked requirement mapping and
+[docs/validation-scenarios.md](validation-scenarios.md) for the concrete
+scenario and script anchors behind the auth and control-plane caveats.
+
+The Tier 1, 2, and 3 rule is a support classification. It is not a claim that
+GUI, IDE, or cloud paths receive the same validation depth as the Tier 1 CLI
+path.

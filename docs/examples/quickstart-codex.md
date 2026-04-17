@@ -116,3 +116,5 @@ workcell publish-pr \
 - [Injection policy](../injection-policy.md)
 - [Codex adapter](../../adapters/codex/README.md)
 - [Adapter control planes](../adapter-control-planes.md)
+- [Requirements validation](../requirements-validation.md)
+- [Validation scenarios](../validation-scenarios.md)

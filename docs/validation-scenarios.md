@@ -10,6 +10,25 @@ Use this page with:
   machine-checked requirement-to-evidence mapping
 - [docs/scenario-gaps.md](scenario-gaps.md) for what is still missing
 
+## Traceability anchors
+
+[`tests/scenarios/manifest.json`](../tests/scenarios/manifest.json) is the
+canonical scenario index.
+
+Use these anchors when checking release-facing claims:
+
+- auth and resolver posture:
+  `shared/auth-commands`, `shared/auth-status`,
+  `shared/claude-resolver-launcher`
+- lower-assurance mode claims: `shared/assurance-dry-run`
+- host publication handoff: `shared/publish-pr`
+- host-side session inventory and control: `shared/session-commands`
+- Claude hook coverage: `claude-swe/hook-parametric`
+- supported GitHub-hosted macOS release window:
+  `scripts/verify-github-macos-release-test-runners.sh`
+- Gemini Vertex supplemental `gcloud_adc` and allowlist behavior:
+  `scripts/verify-invariants.sh`
+
 ## Local secretless checks
 
 These run without provider credentials:

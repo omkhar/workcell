@@ -12,6 +12,14 @@ Workcell is local-first today:
 The current rollout model is to distribute reviewed host-side files and let
 operators launch Workcell locally inside the shared VM-plus-container boundary.
 
+## Traceability note
+
+- supported-host and release-window claims map to the validated install matrix
+- auth, policy, session, and host-publication claims map to the named anchors
+  in [validation-scenarios.md](validation-scenarios.md)
+- the "not centralized yet" bullets below are support-boundary statements, not
+  claims of automated proof
+
 ## What Workcell standardizes today
 
 Workcell already gives teams one shared contract for:
@@ -129,5 +137,6 @@ Those are roadmap items, not part of the supported contract today.
 - [Getting started](getting-started.md)
 - [Injection policy](injection-policy.md)
 - [Provider matrix](provider-matrix.md)
+- [Requirements validation](requirements-validation.md)
 - [Validation scenarios](validation-scenarios.md)
 - [Roadmap](../ROADMAP.md)
