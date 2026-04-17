@@ -1155,26 +1155,15 @@ workcell_target_is_allowed() {
       /state/agent-home/.config/claude-code | \
       /state/agent-home/.config/claude-code/* | \
       /state/agent-home/.gemini | \
-      /state/agent-home/.gemini/* | \
-      /state/agent-home/.config/gcloud | \
-      /state/agent-home/.config/gcloud/* | \
-      /state/agent-home/.config/gh | \
-      /state/agent-home/.config/gh/* | \
-      /state/agent-home/.codex/AGENTS.md | \
-      /state/agent-home/.codex/auth.json | \
-      /state/agent-home/.codex/config.toml | \
-      /state/agent-home/.codex/managed_config.toml | \
-      /state/agent-home/.codex/requirements.toml | \
-      /state/agent-home/.claude.json | \
-      /state/agent-home/.mcp.json | \
-      /state/agent-home/.ssh | \
-      /state/agent-home/.ssh/* | \
-      /state/agent-home/.codex/agents | \
-      /state/agent-home/.codex/agents/* | \
-      /state/agent-home/.codex/rules | \
-      /state/agent-home/.codex/rules/* | \
-      /state/agent-home/.codex/mcp | \
-      /state/agent-home/.codex/mcp/*)
+    /state/agent-home/.gemini/* | \
+    /state/agent-home/.config/gcloud | \
+    /state/agent-home/.config/gcloud/* | \
+    /state/agent-home/.config/gh | \
+    /state/agent-home/.config/gh/* | \
+    /state/agent-home/.claude.json | \
+    /state/agent-home/.mcp.json | \
+    /state/agent-home/.ssh | \
+    /state/agent-home/.ssh/*)
       return 1
       ;;
   esac
