@@ -21,12 +21,13 @@ block_deletions = true
 # - "single-owner-private-pr": require pull requests on a private user-owned
 #   single-owner repository, but allow zero required approvals and no code
 #   owner/thread gate so merges remain workable without an admin bypass
-mode = "single-owner-public-pr"
+mode = "review-gated"
 
 [release_environment]
 # Valid modes:
-# - "review-gated": require at least one human reviewer, prevent self-review,
-#   and disallow admin bypass
+# - "review-gated": require at least one human reviewer and disallow admin
+#   bypass; single-maintainer releases may still keep self-review enabled until
+#   an independent release approver exists
 # - "single-owner-public": require a release environment on a public
 #   single-owner repository, disallow admin bypass, and allow maintainer
 #   self-review until a second release approver exists
@@ -35,7 +36,7 @@ mode = "single-owner-public-pr"
 # - "plan-limited-private": lower-assurance fallback for private repositories
 #   on GitHub plans that cannot enforce environment reviewers; the environment
 #   must still exist, but reviewer gating is not available
-mode = "single-owner-public"
+mode = "review-gated"
 
 [required_status_checks]
 contexts = [
