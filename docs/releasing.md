@@ -261,7 +261,8 @@ git diff --check
 Before committing, run a short live sanity sweep for interactive flows that CI
 does not exercise well enough:
 
-- launch an attached interactive session and resize the terminal window
+- from a clean throwaway checkout or other clean scratch workspace, launch an
+  attached interactive session and resize the terminal window
 - from a clean throwaway checkout or other clean scratch workspace, start,
   attach to, send to, stop, and delete a detached session
 - confirm session cleanup removes the expected runtime artifacts only
