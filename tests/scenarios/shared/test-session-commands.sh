@@ -9,6 +9,7 @@ source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 REAL_HOME="$(resolve_workcell_real_home)"
 PROFILE="wcl-session-scenario-$$"
 SESSION_ONE="20260408T100000Z-11111111-$$"
+SESSION_ATTACHED_LIVE="20260408T101500Z-12121212-$$"
 SESSION_TWO="20260408T110000Z-22222222-$$"
 SESSION_DELETE="20260408T113000Z-22666666-$$"
 SESSION_DELETE_RUNNING="20260408T113500Z-22777777-$$"
@@ -112,6 +113,30 @@ cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
 }
 EOF
 
+cat >"${SESSIONS_DIR}/20260408T101500Z-12121212.json" <<EOF
+{
+  "version": 1,
+  "session_id": "${SESSION_ATTACHED_LIVE}",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE_A}",
+  "workspace_origin": "${WORKSPACE_A}",
+  "worktree_path": "${WORKSPACE_A}",
+  "container_name": "workcell-session-live-attached",
+  "session_audit_dir": "${TMP_DIR}/session-audit.live-attached",
+  "audit_log_path": "${AUDIT_LOG}",
+  "started_at": "2026-04-08T10:15:00Z",
+  "current_assurance": "managed-mutable",
+  "initial_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF
+
 cat >"${SESSIONS_DIR}/20260408T110000Z-22222222.json" <<EOF
 {
   "version": 1,
@@ -171,6 +196,7 @@ EOF
 list_output="$("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")"
 grep -q '^session_id[[:space:]]status[[:space:]]live_status[[:space:]]control[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace$' <<<"${list_output}"
 grep -q $'^'"${SESSION_TWO}"$'\tfailed\tstopped\tdetached\tclaude\tdevelopment\t'"${PROFILE}"$'\t2026-04-08T11:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
+grep -q $'^'"${SESSION_ATTACHED_LIVE}"$'\trunning\trunning\tattached\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:15:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
 grep -q $'^'"${SESSION_ONE}"$'\texited\tstopped\tattached\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
 
 if command -v script >/dev/null 2>&1; then
@@ -193,14 +219,14 @@ if command -v script >/dev/null 2>&1; then
 fi
 
 set +e
-stop_attached_stderr="$("${ROOT_DIR}/scripts/workcell" session stop --id "${SESSION_ONE}" 2>&1 >/dev/null)"
+stop_attached_stderr="$("${ROOT_DIR}/scripts/workcell" session stop --id "${SESSION_ATTACHED_LIVE}" 2>&1 >/dev/null)"
 stop_attached_status=$?
 set -e
 if [[ "${stop_attached_status}" -eq 0 ]]; then
   echo "session stop unexpectedly accepted an attached record" >&2
   exit 1
 fi
-grep -q "session stop only works for detached sessions started with 'workcell session start': ${SESSION_ONE}" <<<"${stop_attached_stderr}"
+grep -q "session stop only works for detached sessions started with 'workcell session start': ${SESSION_ATTACHED_LIVE}" <<<"${stop_attached_stderr}"
 grep -q "Use 'workcell session list' to check the control column; attached records are not stoppable." <<<"${stop_attached_stderr}"
 
 set +e

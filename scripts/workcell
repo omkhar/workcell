@@ -1120,6 +1120,9 @@ load_session_runtime_metadata() {
   local value=""
 
   SESSION_META_PROFILE=""
+  SESSION_META_WORKSPACE=""
+  SESSION_META_WORKSPACE_ORIGIN=""
+  SESSION_META_WORKTREE_PATH=""
   SESSION_META_CONTAINER_NAME=""
   SESSION_META_MONITOR_PID=""
   SESSION_META_STATUS=""
@@ -1136,6 +1139,9 @@ load_session_runtime_metadata() {
     value="${line#*=}"
     case "${key}" in
       profile) SESSION_META_PROFILE="${value}" ;;
+      workspace) SESSION_META_WORKSPACE="${value}" ;;
+      workspace_origin) SESSION_META_WORKSPACE_ORIGIN="${value}" ;;
+      worktree_path) SESSION_META_WORKTREE_PATH="${value}" ;;
       container_name) SESSION_META_CONTAINER_NAME="${value}" ;;
       monitor_pid) SESSION_META_MONITOR_PID="${value}" ;;
       status) SESSION_META_STATUS="${value}" ;;
@@ -1150,10 +1156,21 @@ load_session_runtime_metadata() {
   done < <(session_runtime_metadata "${session_id}")
 }
 
+session_record_matches_attached_workspace_shape() {
+  [[ -n "${SESSION_META_WORKSPACE:-}" ]] || return 1
+  [[ -n "${SESSION_META_WORKSPACE_ORIGIN:-}" ]] || return 1
+  [[ "${SESSION_META_WORKSPACE_ORIGIN}" == "${SESSION_META_WORKSPACE}" ]] || return 1
+  [[ -z "${SESSION_META_WORKTREE_PATH:-}" ]] || [[ "${SESSION_META_WORKTREE_PATH}" == "${SESSION_META_WORKSPACE}" ]]
+}
+
 session_record_has_legacy_live_detached_shape() {
   case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS:-}}" in
     starting | running | stopping)
-      [[ -n "${SESSION_META_PROFILE:-}" ]] && [[ -n "${SESSION_META_CONTAINER_NAME:-}" ]]
+      [[ -n "${SESSION_META_PROFILE:-}" ]] && [[ -n "${SESSION_META_CONTAINER_NAME:-}" ]] || return 1
+      if session_record_matches_attached_workspace_shape; then
+        return 1
+      fi
+      return 0
       ;;
     *)
       return 1

@@ -494,8 +494,11 @@ func TestSessionControlModeIgnoresAuditDirWithoutDetachedMarkers(t *testing.T) {
 	t.Parallel()
 
 	attachedRecord := SessionRecord{
-		Status:          "exited",
-		LiveStatus:      "stopped",
+		Status:          "running",
+		LiveStatus:      "running",
+		Workspace:       "/tmp/workspace",
+		WorkspaceOrigin: "/tmp/workspace",
+		WorktreePath:    "/tmp/workspace",
 		Profile:         "wcl-one",
 		ContainerName:   "workcell-session-1",
 		SessionAuditDir: "/tmp/session-audit.attached",

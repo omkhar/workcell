@@ -149,19 +149,19 @@ func TestRunLauncherSessionRuntimeMetadata(t *testing.T) {
 func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 	colimaRoot := t.TempDir()
 	if err := hostutil.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json"), map[string]string{
-		"session_id":      "session-1",
-		"profile":         "wcl-one",
-		"agent":           "codex",
-		"mode":            "strict",
-		"status":          "exited",
-		"live_status":     "stopped",
-		"container_name":  "workcell-session-1",
+		"session_id":        "session-1",
+		"profile":           "wcl-one",
+		"agent":             "codex",
+		"mode":              "strict",
+		"status":            "running",
+		"live_status":       "running",
+		"container_name":    "workcell-session-1",
 		"session_audit_dir": "/tmp/session-audit.attached",
-		"workspace":       "/tmp/workspace-a",
-		"started_at":      "2026-04-08T10:00:00Z",
-		"finished_at":     "2026-04-08T10:05:00Z",
-		"exit_status":     "0",
-		"final_assurance": "managed-mutable",
+		"workspace":         "/tmp/workspace-a",
+		"workspace_origin":  "/tmp/workspace-a",
+		"worktree_path":     "/tmp/workspace-a",
+		"started_at":        "2026-04-08T10:00:00Z",
+		"current_assurance": "managed-mutable",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 	if !strings.Contains(got, "session-2\trunning\trunning\tdetached\tclaude\tdevelopment\twcl-two\t2026-04-08T11:00:00Z\tlower-assurance-package-mutation\t/tmp/source-workspace") {
 		t.Fatalf("session list output = %q, want detached record with live status and control", got)
 	}
-	if !strings.Contains(got, "session-1\texited\tstopped\tattached\tcodex\tstrict\twcl-one\t2026-04-08T10:00:00Z\tmanaged-mutable\t/tmp/workspace-a") {
-		t.Fatalf("session list output = %q, want attached record with live status and control", got)
+	if !strings.Contains(got, "session-1\trunning\trunning\tattached\tcodex\tstrict\twcl-one\t2026-04-08T10:00:00Z\tmanaged-mutable\t/tmp/workspace-a") {
+		t.Fatalf("session list output = %q, want live attached record with attached control", got)
 	}
 }

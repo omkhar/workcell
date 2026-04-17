@@ -109,12 +109,19 @@ func SessionControlMode(record SessionRecord) string {
 	if strings.TrimSpace(record.MonitorPID) != "" {
 		return "detached"
 	}
+	workspace := strings.TrimSpace(record.Workspace)
+	workspaceOrigin := strings.TrimSpace(record.WorkspaceOrigin)
+	worktreePath := strings.TrimSpace(record.WorktreePath)
 	currentStatus := strings.TrimSpace(record.LiveStatus)
 	if currentStatus == "" {
 		currentStatus = strings.TrimSpace(record.Status)
 	}
 	switch currentStatus {
 	case "starting", "running", "stopping":
+		if workspace != "" && workspaceOrigin != "" && workspace == workspaceOrigin &&
+			(worktreePath == "" || worktreePath == workspace) {
+			return "attached"
+		}
 		if strings.TrimSpace(record.Profile) != "" && strings.TrimSpace(record.ContainerName) != "" {
 			return "detached"
 		}
