@@ -304,6 +304,7 @@ Single-maintainer release approval for vX.Y.Z on <timestamp>.
 Reviewed head SHA: <release-pr-head-sha>
 Path used: signed commits, required CI, comment sweeps after publish/green/pre-merge,
 and single-maintainer merge because no second approver was configured.
+PR merge path: <normal merge | explicit admin or branch-protection bypass, with reason>
 If the release workflow later waits on the release environment, I will record
 that self-review publicly with the workflow run URL and timestamp.
 ```
