@@ -2907,17 +2907,18 @@ session_attach_main() {
     exit 2
   }
 
-  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-  sanitize_host_docker_env
   load_session_runtime_metadata "${session_id}"
   [[ -n "${SESSION_META_PROFILE}" ]] || {
     echo "session attach record is missing a profile: ${session_id}" >&2
     exit 1
   }
+  session_require_detached_runtime_metadata "attach" "${session_id}" 1 || exit 1
   [[ -n "${SESSION_META_CONTAINER_NAME}" ]] || {
     echo "session attach record is missing a container name: ${session_id}" >&2
     exit 1
   }
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  sanitize_host_docker_env
   session_require_live_detached_container "attach" "${session_id}" 1 || exit 1
 
   if [[ "${no_stdin}" -eq 1 ]]; then
@@ -2990,17 +2991,18 @@ session_send_main() {
     payload="${message}"
   fi
 
-  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-  sanitize_host_docker_env
   load_session_runtime_metadata "${session_id}"
   [[ -n "${SESSION_META_PROFILE}" ]] || {
     echo "session send record is missing a profile: ${session_id}" >&2
     exit 1
   }
+  session_require_detached_runtime_metadata "send" "${session_id}" 1 || exit 1
   [[ -n "${SESSION_META_CONTAINER_NAME}" ]] || {
     echo "session send record is missing a container name: ${session_id}" >&2
     exit 1
   }
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  sanitize_host_docker_env
   session_require_live_detached_container "send" "${session_id}" 1 || exit 1
 
   runtime_uid="$(id -u)"
@@ -3060,18 +3062,18 @@ session_stop_main() {
     exit 2
   }
 
-  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-  sanitize_host_docker_env
   load_session_runtime_metadata "${session_id}"
   [[ -n "${SESSION_META_PROFILE}" ]] || {
     echo "session stop record is missing a profile: ${session_id}" >&2
     exit 1
   }
+  session_require_detached_runtime_metadata "stop" "${session_id}" 1 || exit 1
   [[ -n "${SESSION_META_CONTAINER_NAME}" ]] || {
     echo "session stop record is missing a container name: ${session_id}" >&2
     exit 1
   }
-  session_require_detached_runtime_metadata "stop" "${session_id}" 1 || exit 1
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  sanitize_host_docker_env
   current_live_status="${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}"
   if ! container_state="$(session_container_live_state "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}" 2>/dev/null)"; then
     echo "session stop could not confirm a live detached session: ${session_id}" >&2
