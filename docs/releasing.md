@@ -42,6 +42,8 @@ honestly in docs, status reports, and release commentary.
 - Follow the tag-triggered `Release` workflow through completion.
 - Approve the `release` environment only after release preflight and install
   verification are green.
+- Verify that the repository-level immutable-release control is enabled before
+  pushing a release tag.
 - Verify the published GitHub release, attached assets, and immutable-release
   state before concluding.
 - Do not rewrite or delete a failed release tag. Recover by patching `main` and
@@ -51,6 +53,10 @@ honestly in docs, status reports, and release commentary.
   single-maintainer path used, including maintainer self-review for the
   `release` environment and any explicit branch-protection bypass actually used
   for the PR merge because no second approver was configured.
+- If the repository-level immutable-release control was disabled, enable it
+  before tagging. A release that was already published mutable cannot be made
+  immutable in place; fix the control, patch `main`, and cut the next patch
+  release instead.
 
 ## Inputs
 
@@ -289,6 +295,20 @@ Prepare and publish the release PR with the host-side helper:
 
 As soon as the PR exists, perform the first PR comment sweep.
 
+Before merge in the current single-maintainer path, leave a public PR comment
+using the exact reviewed release head SHA. A literal template is below so the
+public artifact stays consistent from release to release:
+
+```text
+Single-maintainer release approval for vX.Y.Z on <timestamp>.
+Reviewed head SHA: <release-pr-head-sha>
+Path used: signed commits, required CI, comment sweeps after publish/green/pre-merge,
+and single-maintainer merge because no second approver was configured.
+PR merge path: <normal merge | explicit admin or branch-protection bypass, with reason>
+If the release workflow later waits on the release environment, I will record
+that self-review publicly with the workflow run URL and timestamp.
+```
+
 ## 6. Follow release PR checks and comments until green
 
 Stay on the release PR until all required checks succeed and all actionable
@@ -359,6 +379,18 @@ git checkout main
 git pull --ff-only origin main
 ```
 
+Before pushing the tag, verify the repository-level immutable-release control:
+
+```sh
+gh api repos/"${REPO}"/immutable-releases
+```
+
+If it reports `"enabled": false`, enable it before tagging:
+
+```sh
+gh api -X PUT repos/"${REPO}"/immutable-releases
+```
+
 ## 9. Create and push the signed tag
 
 Create a signed tag on the merged `main` commit:
@@ -385,6 +417,18 @@ If the workflow enters a waiting state for the `release` environment:
 1. verify that preflight and install verification jobs are green
 2. approve the environment in the standard single-maintainer path
 3. continue watching until publication finishes
+
+After approving the environment in single-maintainer mode, leave a public PR
+follow-up comment so the self-review is visible in the same release thread. Use
+this template:
+
+```text
+Single-maintainer release-environment self-review recorded for vX.Y.Z.
+Workflow run: <actions-run-url>
+Approved at: <timestamp>
+Reason: release preflight and install verification were green, and no second
+release approver was configured for this repository.
+```
 
 If the release workflow fails:
 
@@ -457,3 +501,15 @@ If drift is reported, apply the refresh:
 
 Then update the changelog, merge the fix to `main`, and cut the next patch
 release rather than reusing the failed tag.
+
+### Published release is mutable
+
+If the release workflow succeeded but `gh release view` reports
+`"isImmutable": false`:
+
+- do not rewrite, delete, or recreate the published release
+- verify the repository-level immutable-release control with
+  `gh api repos/"${REPO}"/immutable-releases`
+- enable it with `gh api -X PUT repos/"${REPO}"/immutable-releases` if needed
+- patch `main` so the docs and changelog describe the gap honestly
+- cut the next patch release under the enabled immutable-release control
