@@ -39,7 +39,7 @@ ENV RUSTUP_HOME=/usr/local/rustup
 RUN fetch_snapshot_bootstrap_package() { \
       local url="$1"; \
       local output="$2"; \
-      node -e 'const fs = require("fs"); (async () => { const [url, output] = process.argv.slice(1); const response = await fetch(url); if (!response.ok) { throw new Error(`unexpected status ${response.status} for ${url}`); } const file = fs.createWriteStream(output); for await (const chunk of response.body) { file.write(chunk); } file.end(); await new Promise((resolve, reject) => { file.on("finish", resolve); file.on("error", reject); }); })().catch((error) => { console.error(error.stack || error); process.exit(1); });' "${url}" "${output}"; \
+      node -e 'const fs = require("fs"); (async () => { const [url, output] = process.argv.slice(1); const response = await fetch(url); if (!response.ok) { throw new Error("unexpected status " + response.status + " for " + url); } const file = fs.createWriteStream(output); for await (const chunk of response.body) { file.write(chunk); } file.end(); await new Promise((resolve, reject) => { file.on("finish", resolve); file.on("error", reject); }); })().catch((error) => { console.error(error.stack || error); process.exit(1); });' "${url}" "${output}"; \
     } \
   && bootstrap_snapshot_tls() { \
        local openssl_url="" openssl_sha256="" ca_url="" ca_sha256=""; \

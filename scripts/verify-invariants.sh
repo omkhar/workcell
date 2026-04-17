@@ -6299,8 +6299,8 @@ EOF
     if ! WORKCELL_APT_BROKER_ROOT="${APT_BROKER_RUNTIME_ROOT}" \
       WORKCELL_APT_BROKER_WAIT_INTERVAL_SECONDS=0.05 \
       /bin/bash "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh" \
-        -n /usr/local/libexec/workcell/apt-helper.sh apt-get update \
-        >"${APT_BROKER_STDOUT}" 2>"${APT_BROKER_STDERR}"; then
+      -n /usr/local/libexec/workcell/apt-helper.sh apt-get update \
+      >"${APT_BROKER_STDOUT}" 2>"${APT_BROKER_STDERR}"; then
       echo "Expected sudo-wrapper to wait for a slow apt broker request by default" >&2
       cat "${APT_BROKER_STDOUT}" >&2 || true
       cat "${APT_BROKER_STDERR}" >&2 || true
