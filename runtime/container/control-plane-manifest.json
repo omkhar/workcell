@@ -130,7 +130,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/apt-broker.sh",
       "runtime_path": "/usr/local/libexec/workcell/apt-broker.sh",
-      "sha256": "c7d89382b96f5722280682c011ab80da11af197547987fc44f2f4cf4de46ae59"
+      "sha256": "b5884449980950b4d1f657e50a0fe3fb5ed1ebc6a80d1ac10382c4d46143c960"
     },
     {
       "kind": "runtime-control-plane",

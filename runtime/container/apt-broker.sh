@@ -6,7 +6,9 @@ WORKCELL_APT_BROKER_REQUESTS_DIR="${WORKCELL_APT_BROKER_ROOT}/requests"
 WORKCELL_APT_BROKER_RESULTS_DIR="${WORKCELL_APT_BROKER_ROOT}/results"
 WORKCELL_APT_BROKER_PID_FILE="${WORKCELL_APT_BROKER_ROOT}/pid"
 WORKCELL_APT_BROKER_SLEEP_SECONDS="${WORKCELL_APT_BROKER_SLEEP_SECONDS:-0.1}"
-WORKCELL_APT_HELPER="/usr/local/libexec/workcell/apt-helper.sh"
+# Tests may override the helper path when they launch the broker directly.
+# The production runtime-user path does not propagate this variable.
+WORKCELL_APT_HELPER="${WORKCELL_APT_HELPER:-/usr/local/libexec/workcell/apt-helper.sh}"
 WORKCELL_APT_BROKER_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 apt_broker_allowed_env_name() {
