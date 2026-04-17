@@ -67,6 +67,29 @@ assert_output_matches_regex() {
   fi
 }
 
+script_supports_command_flag() {
+  local script_help=""
+
+  script_help="$(script --help 2>&1 || true)"
+  grep -q -- ' -c, --command ' <<<"${script_help}"
+}
+
+run_typescript_probe_with_timeout() {
+  local timeout_seconds="$1"
+  local transcript_path="$2"
+  shift 2
+  local -a command_args=("$@")
+  local command_string=""
+
+  if script_supports_command_flag; then
+    printf -v command_string '%q ' "${command_args[@]}"
+    timeout "${timeout_seconds}" script -qef -c "${command_string% }" "${transcript_path}" </dev/null >/dev/null 2>&1
+    return
+  fi
+
+  timeout "${timeout_seconds}" script -qeF "${transcript_path}" "${command_args[@]}" </dev/null >/dev/null 2>&1
+}
+
 free_bytes_for_path() {
   local target_path="$1"
   /bin/df -Pk "${target_path}" | awk 'NR==2 {print $4 * 1024}'
@@ -138,6 +161,7 @@ ROOT_DRY_RUN_PROFILE_NAME="$(
 ROOT_DRY_RUN_PROFILE_DIR="${REAL_HOME}/.colima/${ROOT_DRY_RUN_PROFILE_NAME}"
 ROOT_DRY_RUN_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${ROOT_DRY_RUN_PROFILE_NAME}"
 LIVE_DEBUG_PROFILE_NAME=""
+LIVE_DETACHED_PROFILE_NAME=""
 AUDIT_RESTORE_PROFILE_NAME=""
 STRICT_REFRESH_PROFILE_NAME=""
 STRICT_PREFLIGHT_PROFILE=""
@@ -145,6 +169,9 @@ DEBUG_LOG_PROFILE=""
 TRANSCRIPT_LOG_PROFILE=""
 BROKEN_DEBUG_POINTER_PROFILE=""
 UNMANAGED_PROFILE_NAME=""
+DETACHED_SESSION_ID=""
+DETACHED_SESSION_WORKSPACE=""
+DETACHED_SESSION_SOURCE_SENTINEL_PATH=""
 VERIFY_INVARIANTS_CLEANUP_ACTIVE=0
 
 delete_verify_colima_profile() {
@@ -160,6 +187,24 @@ delete_verify_colima_profile() {
     "${REAL_HOME}/.colima/${profile_name}" \
     "${REAL_HOME}/.colima/_lima/colima-${profile_name}" \
     "${REAL_HOME}/.colima/_lima/_disks/colima-${profile_name}"
+}
+
+cleanup_detached_session_runtime() {
+  local session_parent=""
+
+  if [[ -n "${DETACHED_SESSION_ID}" ]]; then
+    "${ROOT_DIR}/scripts/workcell" \
+      session stop \
+      --id "${DETACHED_SESSION_ID}" \
+      --force >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${DETACHED_SESSION_WORKSPACE}" ]]; then
+    session_parent="$(dirname "${DETACHED_SESSION_WORKSPACE}")"
+    rm -rf "${session_parent}" 2>/dev/null || true
+  fi
+  if [[ -n "${DETACHED_SESSION_SOURCE_SENTINEL_PATH}" ]]; then
+    rm -f "${DETACHED_SESSION_SOURCE_SENTINEL_PATH}" 2>/dev/null || true
+  fi
 }
 
 file_mode_octal() {
@@ -183,13 +228,89 @@ extract_top_level_bash_function() {
   ' "${source_file}"
 }
 
+make_tree_user_writable_safely() {
+  local target_path="$1"
+
+  [[ -e "${target_path}" || -L "${target_path}" ]] || return 0
+  if [[ -L "${target_path}" ]]; then
+    chmod -h u+w "${target_path}" 2>/dev/null || true
+    return 0
+  fi
+
+  find -P "${target_path}" -type d -exec chmod u+w {} + 2>/dev/null || true
+  find -P "${target_path}" -type f -exec chmod u+w {} + 2>/dev/null || true
+  chmod u+w "${target_path}" 2>/dev/null || true
+}
+
+remove_tree_safely() {
+  local target_path="$1"
+
+  [[ -e "${target_path}" || -L "${target_path}" ]] || return 0
+  make_tree_user_writable_safely "${target_path}"
+  rm -rf "${target_path}"
+}
+
+run_safe_remove_self_test() {
+  local test_root=""
+  local managed_root=""
+  local nested_dir=""
+  local outside_root=""
+  local outside_file=""
+  local before_mode=""
+  local after_mode=""
+
+  test_root="$(mktemp -d "${TMPDIR:-/tmp}/workcell-verify-safe-remove.XXXXXX")"
+  managed_root="${test_root}/managed-root"
+  nested_dir="${managed_root}/nested"
+  outside_root="${test_root}/outside"
+  outside_file="${outside_root}/keep.txt"
+  mkdir -p "${nested_dir}" "${outside_root}"
+  printf 'outside\n' >"${outside_file}"
+  chmod 0600 "${outside_file}"
+  printf 'managed\n' >"${nested_dir}/readonly.txt"
+  ln -s "${outside_file}" "${managed_root}/escape-link"
+  chmod 0555 "${managed_root}" "${nested_dir}"
+  chmod 0444 "${nested_dir}/readonly.txt"
+
+  before_mode="$(file_mode_octal "${outside_file}")"
+  remove_tree_safely "${managed_root}"
+  after_mode="$(file_mode_octal "${outside_file}")"
+
+  [[ ! -e "${managed_root}" ]] || {
+    echo "Expected remove_tree_safely to remove the managed tree" >&2
+    rm -rf "${test_root}"
+    return 1
+  }
+  [[ -f "${outside_file}" ]] || {
+    echo "Expected remove_tree_safely to leave external targets intact" >&2
+    rm -rf "${test_root}"
+    return 1
+  }
+  [[ "${before_mode}" == "${after_mode}" ]] || {
+    echo "Expected remove_tree_safely to avoid chmodding symlink targets" >&2
+    printf 'before=%s after=%s\n' "${before_mode}" "${after_mode}" >&2
+    rm -rf "${test_root}"
+    return 1
+  }
+
+  rm -rf "${test_root}"
+}
+
+if [[ "${1:-}" == "--self-safe-remove-probe" ]]; then
+  run_safe_remove_self_test
+  echo "verify-invariants-safe-remove-ok"
+  exit 0
+fi
+
 cleanup() {
   [[ "${VERIFY_INVARIANTS_CLEANUP_ACTIVE}" -eq 0 ]] || return 0
   VERIFY_INVARIANTS_CLEANUP_ACTIVE=1
   trap - EXIT ERR
   set +e
 
+  cleanup_detached_session_runtime
   delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME:-}"
+  delete_verify_colima_profile "${LIVE_DETACHED_PROFILE_NAME:-}"
   delete_verify_colima_profile "${AUDIT_RESTORE_PROFILE_NAME:-}"
   delete_verify_colima_profile "${STRICT_REFRESH_PROFILE_NAME:-}"
   delete_verify_colima_profile "${STRICT_PREFLIGHT_PROFILE:-}"
@@ -197,10 +318,9 @@ cleanup() {
   delete_verify_colima_profile "${TRANSCRIPT_LOG_PROFILE:-}"
   delete_verify_colima_profile "${BROKEN_DEBUG_POINTER_PROFILE:-}"
   delete_verify_colima_profile "${UNMANAGED_PROFILE_NAME:-}"
-  chmod -R u+w "${CODEX_VERIFY_HOME}" "${BARRIER_VERIFY_ROOT}" "${INSTALL_VERIFY_HOME}" 2>/dev/null || true
-  rm -rf "${CODEX_VERIFY_HOME}"
-  rm -rf "${BARRIER_VERIFY_ROOT}"
-  rm -rf "${INSTALL_VERIFY_HOME}"
+  remove_tree_safely "${CODEX_VERIFY_HOME}"
+  remove_tree_safely "${BARRIER_VERIFY_ROOT}"
+  remove_tree_safely "${INSTALL_VERIFY_HOME}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
@@ -940,10 +1060,14 @@ CODEX_CONFIG="${ROOT_DIR}/adapters/codex/.codex/config.toml"
 CODEX_MANAGED_CONFIG="${ROOT_DIR}/adapters/codex/managed_config.toml"
 verify_codex_managed_config_invariants "${CODEX_CONFIG}" || exit 1
 verify_codex_managed_config_invariants "${CODEX_MANAGED_CONFIG}" || exit 1
-if ! grep -Fq 'allowed_sandbox_modes = ["workspace-write", "danger-full-access"]' "${ROOT_DIR}/adapters/codex/requirements.toml"; then
+require_toml_assignment \
+  "${ROOT_DIR}/adapters/codex/requirements.toml" \
+  "" \
+  "allowed_sandbox_modes" \
+  '["workspace-write", "danger-full-access"]' || {
   echo 'Expected adapters/codex/requirements.toml to allow workspace-write for managed sessions and danger-full-access only for breakglass' >&2
   exit 1
-fi
+}
 
 codex_managed_config_tmpdir="$(mktemp -d)"
 
@@ -2513,6 +2637,7 @@ for dockerfile in \
   fi
 done
 
+validator_dockerfile="${ROOT_DIR}/tools/validator/Dockerfile"
 for required in \
   'ENV HOME=/home/workcell' \
   'ENV XDG_CACHE_HOME=/home/workcell/.cache' \
@@ -2520,8 +2645,8 @@ for required in \
   'ENV GOMODCACHE=/home/workcell/.cache/go-mod' \
   'ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target' \
   'ENV TMPDIR=/home/workcell/.tmp'; do
-  if ! grep -Fq "${required}" "${ROOT_DIR}/tools/validator/Dockerfile"; then
-    echo "Expected ${ROOT_DIR}/tools/validator/Dockerfile to pin its default nonroot writable state under /home/workcell (${required})" >&2
+  if ! grep -Fq "${required}" "${validator_dockerfile}"; then
+    echo "Expected ${validator_dockerfile} to pin its default nonroot writable state under /home/workcell (${required})" >&2
     exit 1
   fi
 done
@@ -3321,6 +3446,27 @@ if [[ -e "${CONTAINER_SMOKE_PATH_MARKER}" ]]; then
   echo "scripts/container-smoke.sh trusted caller PATH before launcher setup" >&2
   exit 1
 fi
+
+if rg -q 'chown -R "\$\{HOST_UID\}:\$\{HOST_GID\}" "\$\{target_path\}"' "${ROOT_DIR}/scripts/container-smoke.sh"; then
+  echo "Expected scripts/container-smoke.sh to avoid raw recursive chown on host-managed paths" >&2
+  exit 1
+fi
+if rg -q 'tar --null -T "\$\{path_list_filtered\}" -cf -' "${ROOT_DIR}/scripts/container-smoke.sh"; then
+  echo "Expected scripts/container-smoke.sh to avoid tar-based smoke workspace staging" >&2
+  exit 1
+fi
+if rg -q 'tar -xf -' "${ROOT_DIR}/scripts/container-smoke.sh"; then
+  echo "Expected scripts/container-smoke.sh to avoid tar-based extraction for smoke workspace staging" >&2
+  exit 1
+fi
+
+if ! "${ROOT_DIR}/scripts/container-smoke.sh" --self-test-host-path-hardening \
+  >/tmp/workcell-container-smoke-host-path-hardening.out 2>&1; then
+  echo "Expected scripts/container-smoke.sh host-path hardening self-test to pass" >&2
+  cat /tmp/workcell-container-smoke-host-path-hardening.out >&2
+  exit 1
+fi
+grep -q '^container-smoke-host-path-hardening-ok$' /tmp/workcell-container-smoke-host-path-hardening.out
 
 RELEASE_BUNDLE_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/verify-release-bundle-path-override-bin"
 RELEASE_BUNDLE_PATH_MARKER="${BARRIER_VERIFY_ROOT}/verify-release-bundle-path-ran"
@@ -5330,8 +5476,7 @@ if grep -q '^# modified instructions$' "${MASK_SNAPSHOT_ROOT}/files/AGENTS.md"; 
   exit 1
 fi
 grep -q '"tracked": true' "${MASK_SNAPSHOT_ROOT}/dirs/.claude/settings.json"
-chmod -R u+w "${MASK_SNAPSHOT_ROOT}" 2>/dev/null || true
-rm -rf "${MASK_SNAPSHOT_ROOT}"
+remove_tree_safely "${MASK_SNAPSHOT_ROOT}"
 
 CONFLICT_SHADOW_REPO="${BARRIER_VERIFY_ROOT}/conflict-shadow-repo"
 git init -q "${CONFLICT_SHADOW_REPO}"
@@ -5376,8 +5521,7 @@ if [[ -e "${CONFLICT_SHADOW_ROOT}/dirs/.claude/settings.json" ]]; then
   cat "${CONFLICT_SHADOW_ROOT}/dirs/.claude/settings.json" >&2
   exit 1
 fi
-chmod -R u+w "${CONFLICT_SHADOW_ROOT}" 2>/dev/null || true
-rm -rf "${CONFLICT_SHADOW_ROOT}"
+remove_tree_safely "${CONFLICT_SHADOW_ROOT}"
 
 mkdir -p "${MASK_VERIFY_WORKSPACE}/symlinked"
 ln -s "${REAL_HOME}/.ssh/config" "${MASK_VERIFY_WORKSPACE}/symlinked/GEMINI.md"
@@ -5626,9 +5770,12 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     exit 1
   else
     LIVE_DEBUG_PROFILE_NAME="workcell-live-debug-$$"
+    LIVE_DETACHED_PROFILE_NAME="wcl-live-det-$$"
     delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME}"
+    delete_verify_colima_profile "${LIVE_DETACHED_PROFILE_NAME}"
     LIVE_DEBUG_LOG="${BARRIER_VERIFY_ROOT}/debug/live-debug.log"
     LIVE_DEBUG_PREPARE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.prepare.out"
+    LIVE_DEBUG_REFRESH_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.refresh.out"
     LIVE_DEBUG_FILE_TRACE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.file-trace.out"
     LIVE_DEBUG_LOGS_FILE_TRACE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.logs-file-trace.out"
     LIVE_DEBUG_INSPECT_FILE_TRACE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.inspect-file-trace.out"
@@ -5639,6 +5786,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --prepare-only \
       --rebuild \
       --workspace "${ROOT_DIR}" \
+      --vm-memory 6 \
       --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --debug-log "${LIVE_DEBUG_LOG}" >"${LIVE_DEBUG_PREPARE_OUT}" 2>&1; then
@@ -5653,6 +5801,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --workspace "${ROOT_DIR}" \
+      --vm-memory 6 \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --file-trace-log "${FILE_TRACE_CAPTURE}" \
       --agent-arg --version >"${LIVE_DEBUG_FILE_TRACE_OUT}" 2>&1; then
@@ -5675,6 +5824,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --inspect \
       --agent codex \
       --workspace "${ROOT_DIR}" \
+      --vm-memory 6 \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}" 2>&1; then
       echo "Expected --inspect to surface the latest retained file trace log" >&2
       cat "${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}" >&2
@@ -5695,6 +5845,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
         --agent "${agent}" \
         --mode development \
         --workspace "${ROOT_DIR}" \
+        --vm-memory 6 \
         --no-default-injection-policy \
         --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
         -- bash -lc 'git -c safe.directory=/workspace status --short >/tmp/workcell-development-shell.out && printf "WORKCELL_DEVELOPMENT_SHELL_OK\n"' \
@@ -5704,7 +5855,335 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
         exit 1
       fi
       grep -q '^WORKCELL_DEVELOPMENT_SHELL_OK$' "${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out"
+      if [[ "${agent}" == "codex" ]] &&
+        grep -Eq 'Preparing the runtime image for profile|runtime-build|429 Too Many Requests' \
+          "${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out"; then
+        echo "Expected refreshed managed development shell to reuse the prepared runtime image without rebuilding" >&2
+        cat "${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out" >&2
+        exit 1
+      fi
     done
+    if ! GIT_PAGER=cat PAGER=cat \
+      "${ROOT_DIR}/scripts/workcell" \
+      --agent codex \
+      --mode development \
+      --workspace "${ROOT_DIR}" \
+      --vm-memory 7 \
+      --no-default-injection-policy \
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
+      -- bash -lc 'git -c safe.directory=/workspace status --short >/tmp/workcell-development-shell-refresh.out && printf "WORKCELL_DEVELOPMENT_REFRESH_OK\n"' \
+      >"${LIVE_DEBUG_REFRESH_OUT}" 2>&1; then
+      echo "Expected managed development shell refresh lane to succeed after the reviewed VM resources changed" >&2
+      cat "${LIVE_DEBUG_REFRESH_OUT}" >&2
+      exit 1
+    fi
+    grep -q '^WORKCELL_DEVELOPMENT_REFRESH_OK$' "${LIVE_DEBUG_REFRESH_OUT}"
+    grep -q "Refreshing managed Colima profile ${LIVE_DEBUG_PROFILE_NAME} to apply the requested reviewed VM resources." "${LIVE_DEBUG_REFRESH_OUT}"
+    grep -q "Restored the prepared runtime image from cache for profile ${LIVE_DEBUG_PROFILE_NAME}." "${LIVE_DEBUG_REFRESH_OUT}"
+    if grep -Eq 'Preparing the runtime image for profile|runtime-build|429 Too Many Requests' "${LIVE_DEBUG_REFRESH_OUT}"; then
+      echo "Expected refreshed managed development shell to restore the prepared runtime image from cache without rebuilding" >&2
+      cat "${LIVE_DEBUG_REFRESH_OUT}" >&2
+      exit 1
+    fi
+    DETACHED_SESSION_START_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.start.out"
+    DETACHED_SESSION_SHOW_RUNNING_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.show-running.out"
+    DETACHED_SESSION_ATTACH_TYPESCRIPT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.attach.typescript"
+    DETACHED_SESSION_SEND_ALPHA_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.send-alpha.out"
+    DETACHED_SESSION_SEND_BETA_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.send-beta.out"
+    DETACHED_SESSION_DIFF_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.diff.out"
+    DETACHED_SESSION_STOP_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.stop.out"
+    DETACHED_SESSION_SHOW_STOPPED_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.show-stopped.out"
+    DETACHED_SESSION_TIMELINE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.timeline.out"
+    DETACHED_SESSION_LOGS_AUDIT_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.logs-audit.out"
+    DETACHED_SESSION_LOGS_DEBUG_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.logs-debug.out"
+    DETACHED_SESSION_LOGS_FILE_TRACE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.logs-file-trace.out"
+    DETACHED_SESSION_LOGS_TRANSCRIPT_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.logs-transcript.out"
+    DETACHED_SESSION_LIST_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.list.out"
+    DETACHED_SESSION_DEBUG_LOG="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.debug.log"
+    DETACHED_SESSION_FILE_TRACE_LOG="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.file-trace.log"
+    DETACHED_SESSION_SOURCE_WORKSPACE="${BARRIER_VERIFY_ROOT}/debug/live-detached-session-source"
+    DETACHED_SESSION_SOURCE_SENTINEL_REL=".workcell-detached-session-sentinel-$$.log"
+    DETACHED_SESSION_HOST_GIT_BIN="$(command -v git)"
+    rm -rf "${DETACHED_SESSION_SOURCE_WORKSPACE}"
+    env -i \
+      PATH="${TRUSTED_HOST_PATH}" \
+      HOME="${REAL_HOME}" \
+      LC_ALL=C \
+      LANG=C \
+      "${DETACHED_SESSION_HOST_GIT_BIN}" clone --quiet --no-hardlinks "${ROOT_DIR}" "${DETACHED_SESSION_SOURCE_WORKSPACE}"
+    DETACHED_SESSION_SOURCE_WORKSPACE="$(cd "${DETACHED_SESSION_SOURCE_WORKSPACE}" && pwd -P)"
+    DETACHED_SESSION_SOURCE_SENTINEL_PATH="${DETACHED_SESSION_SOURCE_WORKSPACE}/${DETACHED_SESSION_SOURCE_SENTINEL_REL}"
+    if [[ -e "${DETACHED_SESSION_SOURCE_SENTINEL_PATH}" ]]; then
+      echo "Detached session source sentinel already exists in the source workspace: ${DETACHED_SESSION_SOURCE_SENTINEL_PATH}" >&2
+      exit 1
+    fi
+    DETACHED_SESSION_WORKER_COMMAND="$(
+      cat <<'EOF'
+set -euo pipefail
+WORKER_SENTINEL_REL="${1:?missing detached-session sentinel path}"
+: >"/workspace/${WORKER_SENTINEL_REL}"
+printf 'SESSION_READY\n'
+printf 'SESSION_READY\n' >>"/workspace/${WORKER_SENTINEL_REL}"
+test -r /workspace/AGENTS.md
+test ! -w /workspace/AGENTS.md
+test -r /workspace/.git/config
+test ! -w /workspace/.git/config
+test -d /opt/workcell/host-inputs
+[[ -z "$(find /opt/workcell/host-inputs -mindepth 1 -print -quit)" ]]
+printf 'SESSION_MASKS_OK\n'
+printf 'SESSION_MASKS_OK\n' >>"/workspace/${WORKER_SENTINEL_REL}"
+trap 'printf "SESSION_STOPPING\n"; exit 0' TERM INT
+while IFS= read -r line; do
+  printf 'SESSION_RECV:%s\n' "${line}"
+  printf 'SESSION_RECV:%s\n' "${line}" >>"/workspace/${WORKER_SENTINEL_REL}"
+done
+EOF
+    )"
+    if ! "${ROOT_DIR}/scripts/workcell" \
+      session start \
+      --agent codex \
+      --mode development \
+      --workspace "${DETACHED_SESSION_SOURCE_WORKSPACE}" \
+      --session-workspace isolated \
+      --no-default-injection-policy \
+      --colima-profile "${LIVE_DETACHED_PROFILE_NAME}" \
+      --debug-log "${DETACHED_SESSION_DEBUG_LOG}" \
+      --file-trace-log "${DETACHED_SESSION_FILE_TRACE_LOG}" \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      -- /bin/bash -lc "${DETACHED_SESSION_WORKER_COMMAND}" -- "${DETACHED_SESSION_SOURCE_SENTINEL_REL}" >"${DETACHED_SESSION_START_OUT}" 2>&1; then
+      echo "Expected detached session start to succeed against the live runtime" >&2
+      cat "${DETACHED_SESSION_START_OUT}" >&2
+      exit 1
+    fi
+    DETACHED_SESSION_ID="$(sed -n 's/^session_id=//p' "${DETACHED_SESSION_START_OUT}" | head -n1)"
+    DETACHED_SESSION_WORKSPACE="$(sed -n 's/^workspace=//p' "${DETACHED_SESSION_START_OUT}" | head -n1)"
+    [[ -n "${DETACHED_SESSION_ID}" ]] || {
+      echo "Detached session start did not report a session_id" >&2
+      cat "${DETACHED_SESSION_START_OUT}" >&2
+      exit 1
+    }
+    [[ -n "${DETACHED_SESSION_WORKSPACE}" ]] || {
+      echo "Detached session start did not report a workspace path" >&2
+      cat "${DETACHED_SESSION_START_OUT}" >&2
+      exit 1
+    }
+    DETACHED_SESSION_MONITOR_PID="$(sed -n 's/^monitor_pid=//p' "${DETACHED_SESSION_START_OUT}" | head -n1)"
+    [[ -n "${DETACHED_SESSION_MONITOR_PID}" ]] || {
+      echo "Detached session start did not report a monitor_pid" >&2
+      cat "${DETACHED_SESSION_START_OUT}" >&2
+      exit 1
+    }
+    grep -q '^status=running$' "${DETACHED_SESSION_START_OUT}"
+    grep -q '^live_status=running$' "${DETACHED_SESSION_START_OUT}"
+    grep -q '^control_mode=detached$' "${DETACHED_SESSION_START_OUT}"
+    grep -q "^workspace_origin=${DETACHED_SESSION_SOURCE_WORKSPACE}$" "${DETACHED_SESSION_START_OUT}"
+    grep -q "^workspace_root=${DETACHED_SESSION_SOURCE_WORKSPACE}$" "${DETACHED_SESSION_START_OUT}"
+    if ! kill -0 "${DETACHED_SESSION_MONITOR_PID}" >/dev/null 2>&1; then
+      echo "Detached session reported a dead monitor_pid immediately after start: ${DETACHED_SESSION_MONITOR_PID}" >&2
+      cat "${DETACHED_SESSION_START_OUT}" >&2
+      exit 1
+    fi
+    case "${DETACHED_SESSION_WORKSPACE}" in
+      "${DETACHED_SESSION_SOURCE_WORKSPACE}/.git/workcell-sessions/"*"/repo") ;;
+      *)
+        echo "Detached session workspace did not stay under the repo git-admin area: ${DETACHED_SESSION_WORKSPACE}" >&2
+        exit 1
+        ;;
+    esac
+    test -d "${DETACHED_SESSION_WORKSPACE}"
+    if ! "${ROOT_DIR}/scripts/workcell" session show --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_SHOW_RUNNING_OUT}" 2>&1; then
+      echo "Expected session show to succeed for a running detached session" >&2
+      cat "${DETACHED_SESSION_SHOW_RUNNING_OUT}" >&2
+      exit 1
+    fi
+    grep -q "\"session_id\": \"${DETACHED_SESSION_ID}\"" "${DETACHED_SESSION_SHOW_RUNNING_OUT}"
+    grep -q '"status": "running"' "${DETACHED_SESSION_SHOW_RUNNING_OUT}"
+    grep -q '"live_status": "running"' "${DETACHED_SESSION_SHOW_RUNNING_OUT}"
+    grep -q "\"workspace_origin\": \"${DETACHED_SESSION_SOURCE_WORKSPACE}\"" "${DETACHED_SESSION_SHOW_RUNNING_OUT}"
+    grep -q "\"workspace_root\": \"${DETACHED_SESSION_SOURCE_WORKSPACE}\"" "${DETACHED_SESSION_SHOW_RUNNING_OUT}"
+    grep -q "\"worktree_path\": \"${DETACHED_SESSION_WORKSPACE}\"" "${DETACHED_SESSION_SHOW_RUNNING_OUT}"
+    grep -q "\"monitor_pid\": \"${DETACHED_SESSION_MONITOR_PID}\"" "${DETACHED_SESSION_SHOW_RUNNING_OUT}"
+    DETACHED_SESSION_AUDIT_DIR="$(jq -r '.session_audit_dir // empty' "${DETACHED_SESSION_SHOW_RUNNING_OUT}")"
+    [[ -n "${DETACHED_SESSION_AUDIT_DIR}" ]] || {
+      echo "Detached session show output did not report session_audit_dir" >&2
+      cat "${DETACHED_SESSION_SHOW_RUNNING_OUT}" >&2
+      exit 1
+    }
+    DETACHED_SESSION_MONITOR_STATE_FILE="${DETACHED_SESSION_AUDIT_DIR}/session-monitor.env"
+    DETACHED_SESSION_MONITOR_COMMAND="$(ps -o command= -p "${DETACHED_SESSION_MONITOR_PID}" 2>/dev/null | head -n1 || true)"
+    case "${DETACHED_SESSION_MONITOR_COMMAND}" in
+      *"${ROOT_DIR}/scripts/workcell"*' session monitor --state-file '*"${DETACHED_SESSION_MONITOR_STATE_FILE}") ;;
+      *)
+        echo "Detached session monitor pid did not match the expected monitor command: ${DETACHED_SESSION_MONITOR_PID}" >&2
+        printf '%s\n' "${DETACHED_SESSION_MONITOR_COMMAND}" >&2
+        exit 1
+        ;;
+    esac
+    DETACHED_SESSION_SENTINEL_PATH="${DETACHED_SESSION_WORKSPACE}/${DETACHED_SESSION_SOURCE_SENTINEL_REL}"
+    for _ in $(seq 1 90); do
+      if [[ -f "${DETACHED_SESSION_SENTINEL_PATH}" ]] &&
+        grep -q '^SESSION_READY$' "${DETACHED_SESSION_SENTINEL_PATH}" &&
+        grep -q '^SESSION_MASKS_OK$' "${DETACHED_SESSION_SENTINEL_PATH}"; then
+        break
+      fi
+      sleep 2
+    done
+    if [[ ! -f "${DETACHED_SESSION_SENTINEL_PATH}" ]]; then
+      echo "Detached session sentinel did not appear in the isolated workspace: ${DETACHED_SESSION_SENTINEL_PATH}" >&2
+      cat "${DETACHED_SESSION_START_OUT}" >&2
+      exit 1
+    fi
+    grep -q '^SESSION_READY$' "${DETACHED_SESSION_SENTINEL_PATH}"
+    grep -q '^SESSION_MASKS_OK$' "${DETACHED_SESSION_SENTINEL_PATH}"
+    DETACHED_ATTACH_STATUS=0
+    (
+      VERIFY_INVARIANTS_EXPECTED_FAILURE=1
+      run_typescript_probe_with_timeout 10 \
+        "${DETACHED_SESSION_ATTACH_TYPESCRIPT}" \
+        "${ROOT_DIR}/scripts/workcell" \
+        session attach \
+        --id "${DETACHED_SESSION_ID}" \
+        --no-stdin
+    ) &
+    DETACHED_ATTACH_PID=$!
+    sleep 1
+    if ! "${ROOT_DIR}/scripts/workcell" session send --id "${DETACHED_SESSION_ID}" --message alpha >"${DETACHED_SESSION_SEND_ALPHA_OUT}" 2>&1; then
+      echo "Expected detached session send(alpha) to succeed" >&2
+      cat "${DETACHED_SESSION_SEND_ALPHA_OUT}" >&2
+      exit 1
+    fi
+    if ! "${ROOT_DIR}/scripts/workcell" session send --id "${DETACHED_SESSION_ID}" --message beta >"${DETACHED_SESSION_SEND_BETA_OUT}" 2>&1; then
+      echo "Expected detached session send(beta) to succeed" >&2
+      cat "${DETACHED_SESSION_SEND_BETA_OUT}" >&2
+      exit 1
+    fi
+    grep -q "^session_id=${DETACHED_SESSION_ID}$" "${DETACHED_SESSION_SEND_ALPHA_OUT}"
+    grep -q '^sent_bytes=6$' "${DETACHED_SESSION_SEND_ALPHA_OUT}"
+    grep -q '^sent_bytes=5$' "${DETACHED_SESSION_SEND_BETA_OUT}"
+    if wait "${DETACHED_ATTACH_PID}"; then
+      DETACHED_ATTACH_STATUS=0
+    else
+      DETACHED_ATTACH_STATUS=$?
+    fi
+    if [[ "${DETACHED_ATTACH_STATUS}" != "0" ]] && [[ "${DETACHED_ATTACH_STATUS}" != "124" ]]; then
+      echo "Expected detached session attach to stream live output or timeout cleanly" >&2
+      cat "${DETACHED_SESSION_ATTACH_TYPESCRIPT}" >&2 || true
+      exit 1
+    fi
+    grep -q 'SESSION_RECV:alpha' "${DETACHED_SESSION_ATTACH_TYPESCRIPT}"
+    grep -q 'SESSION_RECV:beta' "${DETACHED_SESSION_ATTACH_TYPESCRIPT}"
+    DETACHED_SESSION_GIT_DIR="$(git -C "${DETACHED_SESSION_WORKSPACE}" rev-parse --absolute-git-dir)"
+    SOURCE_GIT_DIR="$(git -C "${DETACHED_SESSION_SOURCE_WORKSPACE}" rev-parse --absolute-git-dir)"
+    if [[ "${DETACHED_SESSION_GIT_DIR}" != "${DETACHED_SESSION_WORKSPACE}/.git" ]]; then
+      echo "Detached session clone did not keep a self-contained git dir: ${DETACHED_SESSION_GIT_DIR}" >&2
+      exit 1
+    fi
+    if [[ "${DETACHED_SESSION_GIT_DIR}" == "${SOURCE_GIT_DIR}" ]]; then
+      echo "Detached session clone unexpectedly reused the source workspace git admin directory" >&2
+      exit 1
+    fi
+    for _ in $(seq 1 90); do
+      if [[ -f "${DETACHED_SESSION_SENTINEL_PATH}" ]] &&
+        grep -q '^SESSION_RECV:alpha$' "${DETACHED_SESSION_SENTINEL_PATH}" &&
+        grep -q '^SESSION_RECV:beta$' "${DETACHED_SESSION_SENTINEL_PATH}"; then
+        break
+      fi
+      sleep 2
+    done
+    grep -q '^SESSION_RECV:alpha$' "${DETACHED_SESSION_SENTINEL_PATH}"
+    grep -q '^SESSION_RECV:beta$' "${DETACHED_SESSION_SENTINEL_PATH}"
+    if [[ -e "${DETACHED_SESSION_SOURCE_SENTINEL_PATH}" ]]; then
+      echo "Detached session wrote into the source workspace instead of the isolated clone: ${DETACHED_SESSION_SOURCE_SENTINEL_PATH}" >&2
+      exit 1
+    fi
+    if ! "${ROOT_DIR}/scripts/workcell" session diff --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_DIFF_OUT}" 2>&1; then
+      echo "Expected detached session diff to succeed for the isolated workspace clone" >&2
+      cat "${DETACHED_SESSION_DIFF_OUT}" >&2
+      exit 1
+    fi
+    grep -q "^session_id=${DETACHED_SESSION_ID}$" "${DETACHED_SESSION_DIFF_OUT}"
+    grep -q "^?? ${DETACHED_SESSION_SOURCE_SENTINEL_REL}$" "${DETACHED_SESSION_DIFF_OUT}"
+    if ! "${ROOT_DIR}/scripts/workcell" session stop --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_STOP_OUT}" 2>&1; then
+      echo "Expected detached session stop to succeed" >&2
+      cat "${DETACHED_SESSION_STOP_OUT}" >&2
+      exit 1
+    fi
+    grep -q "^session_id=${DETACHED_SESSION_ID}$" "${DETACHED_SESSION_STOP_OUT}"
+    grep -q '^stop_requested=1$' "${DETACHED_SESSION_STOP_OUT}"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      if "${ROOT_DIR}/scripts/workcell" session show --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_SHOW_STOPPED_OUT}" 2>&1 &&
+        grep -q '"status": "exited"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}" &&
+        grep -q '"live_status": "stopped"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"; then
+        break
+      fi
+      sleep 1
+    done
+    grep -q "\"session_id\": \"${DETACHED_SESSION_ID}\"" "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
+    grep -q '"status": "exited"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
+    grep -q '"live_status": "stopped"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
+    grep -q '"current_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
+    grep -q '"final_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
+    DETACHED_SESSION_MONITOR_COMMAND="$(ps -o command= -p "${DETACHED_SESSION_MONITOR_PID}" 2>/dev/null | head -n1 || true)"
+    case "${DETACHED_SESSION_MONITOR_COMMAND}" in
+      *"${ROOT_DIR}/scripts/workcell"*' session monitor --state-file '*"${DETACHED_SESSION_MONITOR_STATE_FILE}")
+        echo "Detached session monitor remained alive after session finalization: ${DETACHED_SESSION_MONITOR_PID}" >&2
+        cat "${DETACHED_SESSION_SHOW_STOPPED_OUT}" >&2
+        exit 1
+        ;;
+    esac
+    test ! -e "${DETACHED_SESSION_AUDIT_DIR}"
+    test ! -e "${DETACHED_SESSION_MONITOR_STATE_FILE}"
+    if ! "${ROOT_DIR}/scripts/workcell" session timeline --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_TIMELINE_OUT}" 2>&1; then
+      echo "Expected detached session timeline to succeed" >&2
+      cat "${DETACHED_SESSION_TIMELINE_OUT}" >&2
+      exit 1
+    fi
+    grep -q "event=launch session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
+    grep -q "event=attach-attempt session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
+    test "$(grep -c "event=command session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}")" = "2"
+    grep -q "event=stop-request session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
+    grep -q "event=exit session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
+    if ! "${ROOT_DIR}/scripts/workcell" session logs --id "${DETACHED_SESSION_ID}" --kind audit >"${DETACHED_SESSION_LOGS_AUDIT_OUT}" 2>&1; then
+      echo "Expected detached session audit log retrieval to succeed" >&2
+      cat "${DETACHED_SESSION_LOGS_AUDIT_OUT}" >&2
+      exit 1
+    fi
+    grep -q "event=launch session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_LOGS_AUDIT_OUT}"
+    grep -q "event=exit session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_LOGS_AUDIT_OUT}"
+    if ! "${ROOT_DIR}/scripts/workcell" session logs --id "${DETACHED_SESSION_ID}" --kind debug >"${DETACHED_SESSION_LOGS_DEBUG_OUT}" 2>&1; then
+      echo "Expected detached session debug log retrieval to succeed" >&2
+      cat "${DETACHED_SESSION_LOGS_DEBUG_OUT}" >&2
+      exit 1
+    fi
+    grep -q "profile=${LIVE_DETACHED_PROFILE_NAME}" "${DETACHED_SESSION_LOGS_DEBUG_OUT}"
+    if ! "${ROOT_DIR}/scripts/workcell" session logs --id "${DETACHED_SESSION_ID}" --kind file-trace >"${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" 2>&1; then
+      echo "Expected detached session file-trace retrieval to succeed" >&2
+      cat "${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" >&2
+      exit 1
+    fi
+    if ! grep -Eq 'event=watch-start|event=host-collect-missing' "${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}"; then
+      echo "Expected detached session file-trace retrieval to include watcher activity or an explicit host collection fallback" >&2
+      cat "${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" >&2
+      exit 1
+    fi
+    if "${ROOT_DIR}/scripts/workcell" session logs --id "${DETACHED_SESSION_ID}" --kind transcript >"${DETACHED_SESSION_LOGS_TRANSCRIPT_OUT}" 2>&1; then
+      echo "Expected detached session transcript retrieval to fail when transcript capture is not enabled" >&2
+      exit 1
+    fi
+    grep -q "No transcript log is recorded for session ${DETACHED_SESSION_ID}" "${DETACHED_SESSION_LOGS_TRANSCRIPT_OUT}"
+    if ! "${ROOT_DIR}/scripts/workcell" session list --json --workspace "${DETACHED_SESSION_WORKSPACE}" --colima-profile "${LIVE_DETACHED_PROFILE_NAME}" >"${DETACHED_SESSION_LIST_OUT}" 2>&1; then
+      echo "Expected detached session list --json to include the isolated workspace session" >&2
+      cat "${DETACHED_SESSION_LIST_OUT}" >&2
+      exit 1
+    fi
+    grep -q "\"session_id\": \"${DETACHED_SESSION_ID}\"" "${DETACHED_SESSION_LIST_OUT}"
+    grep -q "\"workspace\": \"${DETACHED_SESSION_WORKSPACE}\"" "${DETACHED_SESSION_LIST_OUT}"
+    grep -q '"status": "exited"' "${DETACHED_SESSION_LIST_OUT}"
+    cleanup_detached_session_runtime
+    DETACHED_SESSION_ID=""
+    DETACHED_SESSION_WORKSPACE=""
+    DETACHED_SESSION_SOURCE_SENTINEL_PATH=""
     AUDIT_LOG="${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}/workcell.audit.log"
     PACKAGE_MUTATION_AUDIT_COMMAND="$(
       cat <<'EOF'
@@ -5745,6 +6224,31 @@ EOF
     grep -q 'session_assurance_final=lower-assurance-package-mutation' "${AUDIT_SESSION_LOG}"
     grep -q 'event=exit' "${AUDIT_SESSION_LOG}"
     grep -q 'package_mutation_downgraded=1' "${AUDIT_SESSION_LOG}"
+    PACKAGE_MUTATION_FAILURE_COMMAND="$(
+      cat <<'EOF'
+if sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get install -y workcell-package-that-must-not-exist-verify-fixture \
+  >/tmp/workcell-package-mutation-failure.out 2>/tmp/workcell-package-mutation-failure.err; then
+  echo "Expected apt-helper to propagate package-manager failure status" >&2
+  cat /tmp/workcell-package-mutation-failure.out >&2 || true
+  cat /tmp/workcell-package-mutation-failure.err >&2 || true
+  exit 1
+fi
+codex --version >/tmp/workcell-package-mutation-post-failure.out 2>&1
+grep -q "session previously ran package-manager mutations as root" /tmp/workcell-package-mutation-post-failure.out
+EOF
+    )"
+    if ! "${ROOT_DIR}/scripts/workcell" \
+      --agent codex \
+      --mode build \
+      --workspace "${ROOT_DIR}" \
+      --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+      --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      -- /bin/bash -lc "${PACKAGE_MUTATION_FAILURE_COMMAND}"; then
+      echo "Expected package-mutation failure propagation verification run to succeed" >&2
+      exit 1
+    fi
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
@@ -5758,6 +6262,7 @@ EOF
       exit 1
     fi
     delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME}"
+    delete_verify_colima_profile "${LIVE_DETACHED_PROFILE_NAME}"
     AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
     AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"
     AUDIT_RESTORE_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
@@ -5801,7 +6306,11 @@ runtime: docker
 vmType: vz
 mountType: virtiofs
 EOF
-    printf 'image_id=stale-image\n' >"${STRICT_REFRESH_DIR}/workcell.image-ready"
+    cat >"${STRICT_REFRESH_DIR}/workcell.image-ready" <<'EOF'
+image_tag=workcell:local
+image_id=sha256:strict-refresh-fixture
+source_date_epoch=0
+EOF
     printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.audit.log"
     VERIFY_INVARIANTS_EXPECTED_FAILURE=1
     set +e
@@ -5921,7 +6430,7 @@ EOF
     echo "scripts/workcell honored hostile GOFLAGS before validating managed Colima profiles" >&2
     exit 1
   fi
-  if ! grep -Eq "Unexpected configured Colima mounts|Unexpected Colima vmType" /tmp/workcell-goflags.out; then
+  if ! grep -Eiq "unexpected configured Colima mounts|unexpected Colima vmType" /tmp/workcell-goflags.out; then
     echo "Expected managed Colima profile validation failure output for hostile GOFLAGS fixture" >&2
     cat /tmp/workcell-goflags.out >&2
     exit 1
