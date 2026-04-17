@@ -53,8 +53,10 @@ run_dry_run_expect_failure() {
 run_tty_dry_run() {
   local label="$1"
   shift
+  local tty_home_dir="${HOME_DIR}"
+  local tty_config_home="${tty_home_dir}/.config"
 
-  HOME_DIR="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" ROOT_DIR="${ROOT_DIR}" \
+  HOME_DIR="${tty_home_dir}" XDG_CONFIG_HOME="${tty_config_home}" ROOT_DIR="${ROOT_DIR}" \
     WORKSPACE="${WORKSPACE}" TMP_DIR="${TMP_DIR}" LABEL="${label}" \
     python3 - "$@" <<'PY'
 import os
