@@ -46,6 +46,11 @@ honestly in docs, status reports, and release commentary.
   state before concluding.
 - Do not rewrite or delete a failed release tag. Recover by patching `main` and
   cutting the next patch release.
+- In single-maintainer mode, leave an explicit public release-PR comment before
+  merge that records the version, exact head SHA, timestamp, and the exact
+  single-maintainer path used, including maintainer self-review for the
+  `release` environment and any explicit branch-protection bypass actually used
+  for the PR merge because no second approver was configured.
 
 ## Inputs
 
@@ -53,7 +58,7 @@ Set these values before starting:
 
 ```sh
 export REPO="omkhar/workcell"
-export VERSION="v0.9.3"
+export VERSION="vX.Y.Z"
 export RELEASE_BRANCH="codex/release-${VERSION}"
 export RELEASE_TITLE="Release ${VERSION}"
 ```
@@ -323,6 +328,10 @@ following are true:
 - the release documentation review has been completed after CI turned green
 - release-facing docs accurately describe the exact merge diff
 - changelog and release notes are correct
+- the public single-maintainer release comment records the version, exact head
+  SHA, timestamp, and the exact single-maintainer path used, including any
+  release-environment self-review and any explicit PR-merge bypass when
+  applicable
 
 After merge, record the resulting `main` commit SHA. This is the commit that
 will be tagged.

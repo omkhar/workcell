@@ -46,6 +46,20 @@ They also now cover canonical requirement traceability, host-side policy
 inspection and explainability, and host-side detached session inventory,
 control, logs/timeline, and clean-base diff/export behavior.
 
+## Documentation example coverage
+
+Release-facing examples are expected to map to existing automated evidence even
+when the repo does not add a dedicated new scenario for each page.
+
+| Guide | Primary evidence |
+|---|---|
+| `README.md` install, launch, and session snippets | `scripts/verify-invariants.sh`, `scripts/container-smoke.sh`, `tests/scenarios/shared/test-session-commands.sh`, `cmd/workcell-hostutil/main_test.go` |
+| `docs/getting-started.md` | `scripts/verify-invariants.sh`, `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh` |
+| `docs/examples/quickstart-codex.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
+| `docs/examples/quickstart-claude.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-claude-resolver-launcher.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
+| `docs/examples/quickstart-gemini.md` | `tests/scenarios/shared/test-auth-status.sh` for the staged `gemini_env` path and `tests/scenarios/shared/test-publish-pr-dry-run.sh` for the host-side publication steps; OAuth and `gcloud_adc` remain manual provider-e2e validation paths |
+| `docs/examples/enterprise-claude-setup.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
+
 ## Manual authenticated smoke
 
 `./scripts/provider-e2e.sh` is the reviewed path for provider-authenticated
