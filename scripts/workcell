@@ -262,7 +262,7 @@ Options:
   --session-workspace MODE      direct or isolated session workspace flow
   --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
-  --allow-arbitrary-command     Launch the runtime image with a direct container entrypoint after --
+  --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
   --colima-profile NAME         Override derived Colima profile name
   --vm-cpu COUNT                Colima VM CPU count (default: profile value)
   --vm-memory GIB               Colima VM memory in GiB (default: profile value)
@@ -7468,13 +7468,9 @@ if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
   EXECUTION_PATH="lower-assurance-debug-command"
   DOCKER_RUN=(
     "${DOCKER_RUN_BASE[@]}"
-    --entrypoint "$1"
     "${IMAGE_TAG}"
   )
-  shift
-  if [[ $# -gt 0 ]]; then
-    DOCKER_RUN+=("$@")
-  fi
+  DOCKER_RUN+=("$@")
 else
   DOCKER_RUN=(
     "${DOCKER_RUN_BASE[@]}"

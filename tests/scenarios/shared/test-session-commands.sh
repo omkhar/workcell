@@ -398,10 +398,11 @@ if grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_
   echo "Detached session start honored an inherited workspace-mode env override" >&2
   exit 1
 fi
-if ! grep -Fq -- "--entrypoint /bin/true" <<<"${detached_start_default_output}"; then
-  echo "Detached session start did not preserve the arbitrary-command entrypoint override" >&2
+if grep -Fq -- "--entrypoint /bin/true" <<<"${detached_start_default_output}"; then
+  echo "Detached session start should keep arbitrary-command sessions on the managed entrypoint" >&2
   exit 1
 fi
+grep -Fq -- "workcell:local /bin/true" <<<"${detached_start_default_output}"
 if grep -Eq -- "-e WORKCELL_DETACHED_STDIN_PATH=/run/workcell/session-stdin" <<<"${detached_start_default_output}"; then
   echo "Detached session start kept the detached stdin FIFO under a path that blocks host command injection" >&2
   exit 1

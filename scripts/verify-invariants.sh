@@ -2471,7 +2471,7 @@ if ! rg -q 'COLIMA_HOME="\$\{colima_home\}"' "${ROOT_DIR}/scripts/colima-egress-
   exit 1
 fi
 
-if ! rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
+if ! rg -q 'snapshot\.debian\.org:443' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to allow snapshot.debian.org" >&2
   exit 1
 fi
@@ -2486,8 +2486,8 @@ if ! rg -q 'docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443' "${ROOT_D
   exit 1
 fi
 
-if rg -q 'snapshot\.debian\.org:443' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:443 egress" >&2
+if rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:80 egress" >&2
   exit 1
 fi
 
