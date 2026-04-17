@@ -2824,6 +2824,32 @@ if ! grep -Fq "build -buildvcs=false -o \"\${output_path}\"" "${ROOT_DIR}/script
   exit 1
 fi
 
+go_cache_root_expected=""
+case "$(uname -s)" in
+  Darwin)
+    go_cache_root_expected="${REAL_HOME}/Library/Caches/workcell/go"
+    ;;
+  *)
+    go_cache_root_expected="${REAL_HOME}/.cache/workcell/go"
+    ;;
+esac
+go_cache_root_actual="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="${REAL_HOME}" \
+    LC_ALL=C \
+    LANG=C \
+    bash -lc '
+      source "'"${ROOT_DIR}"'/scripts/lib/go-run-env.sh"
+      ensure_go_run_env
+      printf "%s\n" "${WORKCELL_GO_CACHE_ROOT}"
+    '
+)"
+if [[ "${go_cache_root_actual}" != "${go_cache_root_expected}" ]]; then
+  echo "Expected ensure_go_run_env to default to a stable per-user cache root, got: ${go_cache_root_actual}" >&2
+  exit 1
+fi
+
 if ! sed -n '/^validate_publish_base_name()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'check-ref-format'; then
   echo "Expected validate_publish_base_name to validate the publish-pr --base branch name" >&2
   exit 1
