@@ -10,6 +10,25 @@ Use this page with:
   machine-checked requirement-to-evidence mapping
 - [docs/scenario-gaps.md](scenario-gaps.md) for what is still missing
 
+## Traceability anchors
+
+[`tests/scenarios/manifest.json`](../tests/scenarios/manifest.json) is the
+canonical scenario index.
+
+Use these anchors when checking release-facing claims:
+
+- auth and resolver posture:
+  `shared/auth-commands`, `shared/auth-status`,
+  `shared/claude-resolver-launcher`
+- lower-assurance mode claims: `shared/assurance-dry-run`
+- host publication handoff: `shared/publish-pr`
+- host-side session inventory and control: `shared/session-commands`
+- Claude hook coverage: `claude-swe/hook-parametric`
+- supported GitHub-hosted macOS release window:
+  `scripts/verify-github-macos-release-test-runners.sh`
+- Gemini Vertex supplemental `gcloud_adc` and allowlist behavior:
+  `scripts/verify-invariants.sh`
+
 ## Local secretless checks
 
 These run without provider credentials:
@@ -24,8 +43,8 @@ These run without provider credentials:
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
-inspection and explainability, and host-side session inventory plus clean-base
-diff/export behavior.
+inspection and explainability, and host-side detached session inventory,
+control, logs/timeline, and clean-base diff/export behavior.
 
 ## Manual authenticated smoke
 

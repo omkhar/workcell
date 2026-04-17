@@ -10,12 +10,9 @@ The delivery shape for the active slice lives in
 
 ## Short term
 
-- finish Phase 2 of the session supervisor:
-  detached/background sessions, `session start`, `session attach`,
-  `session send`, `session stop`, and default worktree-per-session flows
-- add session observability on top of the current host-side inventory:
-  live status, branch/worktree, assurance state, logs, transcript pointers,
-  and command timeline views
+- finish the current session-supervisor slice around default
+  worktree-per-session flows and richer live status, branch/worktree,
+  assurance, and log rendering on top of the shipped detached session commands
 - broaden host-owned auth flows where the current implementation is still thin:
   more resolver coverage plus explicit browser/bootstrap handoffs for provider
   onboarding
@@ -29,6 +26,8 @@ The delivery shape for the active slice lives in
 
 ## Medium term
 
+- add pause, resume, checkpoint, and fork flows on the same host-controlled
+  session plane
 - add reviewed team workflow packs at the Workcell layer: versioned
   instruction bundles, commands, approved MCP packs, and task templates
 - add a lightweight TUI or dashboard backed by the same host-controlled
