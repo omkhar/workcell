@@ -137,7 +137,11 @@ func validateRequirementTable(rootDir, requirementsPath, category, id string, ta
 		if err := validateRequirementPath(rootDir, requirementsPath, category, id, "docs", path); err != nil {
 			return err
 		}
-		referencedDocs[path] = struct{}{}
+		canonicalPath, err := canonicalRequirementRepoPath(rootDir, path)
+		if err != nil {
+			return fmt.Errorf("%s requirement %s docs path %s: %w", requirementsPath, id, path, err)
+		}
+		referencedDocs[canonicalPath] = struct{}{}
 	}
 	return nil
 }
@@ -245,6 +249,19 @@ func resolveRequirementPath(rootDir, path string) (string, error) {
 		return "", fmt.Errorf("path escapes repository root")
 	}
 	return target, nil
+}
+
+func canonicalRequirementRepoPath(rootDir, path string) (string, error) {
+	target, err := resolveRequirementPath(rootDir, path)
+	if err != nil {
+		return "", err
+	}
+	root := filepath.Clean(rootDir)
+	relative, err := filepath.Rel(root, target)
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Clean(relative)), nil
 }
 
 func isAutomatedEvidencePath(path string) bool {

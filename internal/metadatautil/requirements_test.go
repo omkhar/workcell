@@ -144,6 +144,55 @@ docs = ["docs/enterprise-rollout.md"]
 	}
 }
 
+func TestValidateRequirementsAcceptsNormalizedReleaseFacingDocPaths(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{
+		"README.md",
+		"docs/provider-matrix.md",
+		"docs/validation-scenarios.md",
+		"docs/enterprise-rollout.md",
+		"docs/examples/quickstart-codex.md",
+		"docs/examples/quickstart-claude.md",
+		"docs/examples/quickstart-gemini.md",
+		"scripts/verify-example.sh",
+		"internal/example/example_test.go",
+	} {
+		mustWriteRequirementFixture(t, root, path)
+	}
+
+	requirementsPath := filepath.Join(root, "policy", "requirements.toml")
+	if err := os.MkdirAll(filepath.Dir(requirementsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requirementsPath, []byte(`version = 1
+
+[functional.FR-001]
+title = "Managed launch"
+summary = "Launch the provider inside the managed runtime."
+evidence = ["scripts/verify-example.sh"]
+docs = [
+  "README.md",
+  "./docs/provider-matrix.md",
+  "docs/validation-scenarios.md",
+  "docs/examples/../examples/quickstart-codex.md",
+  "docs/examples/quickstart-claude.md",
+  "docs/examples/quickstart-gemini.md",
+]
+
+[nonfunctional.NFR-001]
+title = "Requirement traceability"
+summary = "Every requirement cites automated evidence."
+evidence = ["internal/example/example_test.go"]
+docs = ["docs/enterprise-rollout.md"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ValidateRequirements(root, requirementsPath); err != nil {
+		t.Fatalf("ValidateRequirements() error = %v", err)
+	}
+}
+
 func TestValidateRequirementsRejectsMissingEvidencePath(t *testing.T) {
 	root := t.TempDir()
 	mustWriteRequirementFixture(t, root, "README.md")
