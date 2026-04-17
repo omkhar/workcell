@@ -256,7 +256,7 @@ workcell_file_trace_diff_snapshots() {
   done <"${after_path}"
 
   for path_key in "${!before_map[@]}"; do
-    if [[ ! -v after_map["${path_key}"] ]]; then
+    if [[ -z "${after_map[${path_key}]+x}" ]]; then
       workcell_file_trace_emit \
         "event=delete" \
         "phase=${phase}" \
@@ -273,7 +273,7 @@ workcell_file_trace_diff_snapshots() {
   done
 
   for path_key in "${!after_map[@]}"; do
-    if [[ ! -v before_map["${path_key}"] ]]; then
+    if [[ -z "${before_map[${path_key}]+x}" ]]; then
       workcell_file_trace_emit \
         "event=create" \
         "phase=${phase}" \
