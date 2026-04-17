@@ -490,6 +490,33 @@ func TestSessionRuntimeMetadataLines(t *testing.T) {
 	}
 }
 
+func TestSessionControlModeIgnoresAuditDirWithoutDetachedMarkers(t *testing.T) {
+	t.Parallel()
+
+	attachedRecord := SessionRecord{
+		Status:          "exited",
+		LiveStatus:      "stopped",
+		Profile:         "wcl-one",
+		ContainerName:   "workcell-session-1",
+		SessionAuditDir: "/tmp/session-audit.attached",
+	}
+	if got := SessionControlMode(attachedRecord); got != "attached" {
+		t.Fatalf("SessionControlMode(attachedRecord) = %q, want attached", got)
+	}
+
+	detachedRecord := SessionRecord{
+		Status:          "running",
+		LiveStatus:      "running",
+		Profile:         "wcl-one",
+		ContainerName:   "workcell-session-2",
+		MonitorPID:      "4242",
+		SessionAuditDir: "/tmp/session-audit.detached",
+	}
+	if got := SessionControlMode(detachedRecord); got != "detached" {
+		t.Fatalf("SessionControlMode(detachedRecord) = %q, want detached", got)
+	}
+}
+
 func TestWriteSessionRecordRejectsTerminalMetadataForStartingSession(t *testing.T) {
 	t.Parallel()
 

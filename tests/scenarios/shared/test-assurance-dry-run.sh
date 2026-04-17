@@ -213,8 +213,8 @@ for agent in codex claude gemini; do
     >"${TMP_DIR}/arbitrary-command-${agent}.stdout" 2>"${TMP_DIR}/arbitrary-command-${agent}.stderr"
   grep -q "^profile=.* mode=strict agent=${agent} " "${TMP_DIR}/arbitrary-command-${agent}.stderr"
   grep -q '^execution_path=lower-assurance-debug-command audit_log=' "${TMP_DIR}/arbitrary-command-${agent}.stderr"
-  if grep -q -- ' --entrypoint bash ' "${TMP_DIR}/arbitrary-command-${agent}.stdout"; then
-    echo "arbitrary command mode should stay on the managed entrypoint" >&2
+  if ! grep -q -- ' --entrypoint bash ' "${TMP_DIR}/arbitrary-command-${agent}.stdout"; then
+    echo "arbitrary command mode should bypass the managed runtime entrypoint" >&2
     exit 1
   fi
   grep -q -- '-e WORKCELL_ALLOW_ARBITRARY_COMMAND=1' "${TMP_DIR}/arbitrary-command-${agent}.stdout"

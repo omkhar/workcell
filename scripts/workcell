@@ -1166,7 +1166,7 @@ session_require_detached_runtime_metadata() {
   local session_id="$2"
   local allow_legacy_live="${3:-0}"
 
-  if [[ -n "${SESSION_META_MONITOR_PID:-}" ]] || [[ -n "${SESSION_META_SESSION_AUDIT_DIR:-}" ]]; then
+  if [[ -n "${SESSION_META_MONITOR_PID:-}" ]]; then
     return 0
   fi
   if [[ "${allow_legacy_live}" -eq 1 ]] && session_record_has_legacy_live_detached_shape; then
@@ -7449,8 +7449,10 @@ if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
   EXECUTION_PATH="lower-assurance-debug-command"
   DOCKER_RUN=(
     "${DOCKER_RUN_BASE[@]}"
+    --entrypoint "$1"
     "${IMAGE_TAG}"
   )
+  shift
   if [[ $# -gt 0 ]]; then
     DOCKER_RUN+=("$@")
   fi

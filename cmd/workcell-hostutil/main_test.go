@@ -156,6 +156,7 @@ func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 		"status":          "exited",
 		"live_status":     "stopped",
 		"container_name":  "workcell-session-1",
+		"session_audit_dir": "/tmp/session-audit.attached",
 		"workspace":       "/tmp/workspace-a",
 		"started_at":      "2026-04-08T10:00:00Z",
 		"finished_at":     "2026-04-08T10:05:00Z",

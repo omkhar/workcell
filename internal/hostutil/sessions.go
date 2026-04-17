@@ -106,7 +106,7 @@ func SessionRuntimeMetadataLines(record SessionRecord) []string {
 }
 
 func SessionControlMode(record SessionRecord) string {
-	if strings.TrimSpace(record.MonitorPID) != "" || strings.TrimSpace(record.SessionAuditDir) != "" {
+	if strings.TrimSpace(record.MonitorPID) != "" {
 		return "detached"
 	}
 	currentStatus := strings.TrimSpace(record.LiveStatus)

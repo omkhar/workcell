@@ -98,6 +98,7 @@ cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
   "execution_path": "managed-tier1",
   "workspace": "${WORKSPACE_A}",
   "container_name": "workcell-session-one",
+  "session_audit_dir": "${TMP_DIR}/session-audit.attached",
   "git_branch": "${GIT_BRANCH}",
   "git_head": "${GIT_BASE}",
   "git_base": "${GIT_BASE}",
@@ -371,8 +372,8 @@ if grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_
   echo "Detached session start honored an inherited workspace-mode env override" >&2
   exit 1
 fi
-if grep -Fq -- "--entrypoint /bin/bash" <<<"${detached_start_default_output}"; then
-  echo "Detached session start bypassed the runtime entrypoint" >&2
+if ! grep -Fq -- "--entrypoint /bin/true" <<<"${detached_start_default_output}"; then
+  echo "Detached session start did not preserve the arbitrary-command entrypoint override" >&2
   exit 1
 fi
 if grep -Eq -- "-e WORKCELL_DETACHED_STDIN_PATH=/run/workcell/session-stdin" <<<"${detached_start_default_output}"; then
