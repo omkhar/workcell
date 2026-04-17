@@ -8,6 +8,37 @@ Releases.
 
 ## Unreleased
 
+## v0.10.0 - 2026-04-17
+
+### Added
+
+- expanded host-side session control and observability on the shipped session
+  plane, including detached `session start|attach|send|stop`, richer
+  `session list` status/control rendering, and terminal-session cleanup through
+  `session delete`
+- explicit local-first rollout and provider-auth maturity docs for the current
+  Apple Silicon macOS support boundary and single-maintainer release model
+
+### Changed
+
+- restore `workspace-write` as the managed Codex sandbox while keeping
+  `danger-full-access` reserved for breakglass-style paths
+- tighten the provider-bump policy so reviewed holdbacks can cap Claude to a
+  known-good stable version while other upstream pins continue to refresh
+
+### Fixed
+
+- prevent terminal resize from aborting transcript-capture launches and from
+  crashing attached interactive sessions through Docker's embedded `tini`
+  forwarding path
+- harden host and runtime boundaries against the reviewed security finding set,
+  including control-plane manifest override, provider-directory overwrite,
+  validation-snapshot and build-manifest symlink escapes, shared GitHub
+  credential scoping, trusted-Docker home spoofing, and alignment of the
+  tracked hosted-controls policy with the live repository ruleset
+- pin Claude CLI to `2.1.104` while the known defect in `2.1.105+` remains out
+  of policy
+
 ## v0.9.3 - 2026-04-14
 
 ### Changed
