@@ -122,6 +122,9 @@ workcell --agent codex --agent-autonomy prompt --workspace /path/to/repo
 - [Claude quickstart](examples/quickstart-claude.md)
 - [Gemini quickstart](examples/quickstart-gemini.md)
 
+For team rollout patterns on today's local-first product, see
+[Enterprise rollout today](enterprise-rollout.md).
+
 ## 6. Understand the contract
 
 - [Security invariants](invariants.md)

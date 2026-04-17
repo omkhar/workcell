@@ -2,53 +2,49 @@
 
 ## Goal
 
-Workcell needs a session-supervisor layer so operators can reason about Workcell
+Workcell needs a session-supervisor layer so operators can reason about
 launches as durable session objects rather than as one-off foreground shell
 commands.
 
-This document defines the first implementation phase that is now practical in
-this repository without weakening the existing boundary model.
+This document describes the current shipped session-supervisor slice in the
+repository and the gaps that remain without weakening the existing boundary
+model.
 
-## Phase 1 Scope
+## Current Scope
 
-Phase 1 adds durable host-side session records plus host-side inventory and
-inspection commands:
+The current implementation provides durable host-side session records plus
+host-side inventory, observability, and detached-control commands:
 
 - `workcell session list`
 - `workcell session show --id ...`
+- `workcell session logs --id ... --kind ...`
+- `workcell session timeline --id ...`
 - `workcell session diff --id ...`
 - `workcell session export --id ...`
+- `workcell session start`
+- `workcell session attach`
+- `workcell session send`
+- `workcell session stop`
 
 Each launched session writes durable metadata under the managed Colima profile
 state instead of relying only on the transient `session-audit.*` directory.
 
+Detached sessions default to `--session-workspace isolated`, so the detached
+path already points toward worktree-per-session operation on the safe path.
+
 ## Data Model
 
-Each session record stores:
+Each session record stores the durable host-side view of one launch, including:
 
-- `session_id`
-- `profile`
-- `agent`
-- `mode`
-- `status`
-- `ui`
-- `execution_path`
-- `workspace`
-- `git_branch`
-- `git_head`
-- `git_base`
-- `container_name`
-- `session_audit_dir`
-- `audit_log_path`
-- `debug_log_path`
-- `file_trace_log_path`
-- `transcript_log_path`
-- `started_at`
-- `finished_at`
-- `exit_status`
-- `initial_assurance`
-- `final_assurance`
-- `workspace_control_plane`
+- session identity and profile metadata
+- agent, mode, and UI
+- workspace root, workspace origin, and worktree path
+- git branch, head, and clean launch base when available
+- runtime container name, monitor PID, and live status
+- retained audit, debug, file-trace, and transcript paths
+- start, observe, and finish timestamps
+- initial, current, and final assurance state
+- workspace control-plane mode
 
 The durable record lives under:
 
@@ -72,15 +68,17 @@ confusing retention with ephemeral runtime scratch state.
 
 ## Audit Relationship
 
-Phase 1 also adds `session_id` to launch, assurance-change, and exit audit
-records in the profile audit log.
+The current implementation adds `session_id` to launch, control, assurance, and
+exit audit records in the profile audit log.
 
-That allows `workcell session export` to bundle:
+That allows:
 
-- the durable session record
-- matching audit log lines for that session
+- the durable session record to stay machine-readable
+- `workcell session export` to bundle matching audit records
+- `workcell session timeline` to print the session-specific audit trail
+- `workcell session logs` to resolve one retained log for a recorded session
 
-This is a clean bridge between human-readable audit history and machine-readable
+This is the bridge between human-readable audit history and machine-readable
 session metadata.
 
 ## User Experience
@@ -88,15 +86,20 @@ session metadata.
 `workcell session list` is optimized for a quick host-side inventory:
 
 - session id
-- status
-- agent
-- mode
+- status and live status
+- agent and mode
 - profile
 - start time
 - assurance
 - workspace
 
 `workcell session show` returns the full durable record for one session.
+
+`workcell session logs` prints one retained audit, debug, file-trace, or
+transcript log for a recorded session.
+
+`workcell session timeline` prints the audit-log records that match one
+session.
 
 `workcell session diff` renders the current workspace status and diff against
 the clean git base recorded when the session started. It fails closed if the
@@ -106,36 +109,34 @@ workspace is no longer a self-contained git worktree on the host.
 `workcell session export` returns the full record plus matching audit records,
 either to stdout or a user-selected host file.
 
-## Explicit Non-Goals For Phase 1
+Detached sessions can be started, attached to, steered, and stopped from the
+host without introducing a separate always-on daemon or same-user local socket
+trust.
 
-Phase 1 does not attempt to implement:
+## Current Non-Goals
 
-- background execution
+The current slice does not yet attempt to implement:
+
+- a session queue or warm-pool system
 - pause or resume
-- follow-up prompts
-- interactive takeover
-- per-task worktree creation
-- a long-running daemon
+- checkpoints or forks
+- centralized multi-host inventory or analytics
+- preserved-boundary GUI or IDE clients
 - remote worker fleets
 
-Those remain later phases.
+## Remaining Work
 
-## Future Phases
+The remaining near-term work is to:
 
-Phase 2 should add:
+- harden and normalize worktree-per-session defaults
+- expose branch/worktree and assurance state more clearly in operator-facing
+  status views
+- deepen validation coverage for detached-session transitions and
+  lower-assurance paths
+- add richer artifact browsing without weakening the host-owned model
 
-- `workcell session start` as a durable session creator
-- per-session worktree or branch isolation
-- attach and takeover
-- follow-up prompts to a running session
-- artifact browsing beyond raw audit export
-
-Phase 3 should add:
-
-- pause and resume
-- optional warm pools
-- GUI and IDE clients against the same host-controlled session plane
-- enterprise inventory and policy surfaces
+Longer-term product-direction items such as pause/resume, checkpoints, GUI
+clients, and enterprise inventory belong in [ROADMAP.md](../ROADMAP.md).
 
 ## Peer Review
 
@@ -149,15 +150,17 @@ Phase 3 should add:
    Reason: profile audit logs are cumulative and otherwise cannot be filtered
    safely to one launch.
 
-3. Phase 1 should stay host-side and file-based.
+3. The session plane should stay host-side and file-based first.
    Reason: introducing a daemon, sockets, or background workers before the data
    model stabilizes would add complexity faster than it adds operator value.
 
-### Residual Risks
+## Residual Risks
 
 - There is no retention policy yet for durable session records.
 - Aborted launches rely on host cleanup logic to mark the record as aborted.
-- The current phase gives inventory and inspection, not orchestration.
+- Detached-session control exists, but there is still no queue, pause/resume,
+  or centralized session administration plane.
 
-Those are acceptable for a first slice because the main goal here is to create
-durable, auditable session objects without weakening the reviewed boundary.
+Those are acceptable for the current slice because the main goal here is to
+create durable, auditable session objects and bounded detached-session control
+without weakening the reviewed boundary.

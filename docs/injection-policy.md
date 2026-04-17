@@ -56,12 +56,24 @@ Today, `claude-macos-keychain` is a fail-closed resolver scaffold: it lets you
 record the intended host-side auth source in policy, but Workcell still aborts
 launch unless a supported export path exists.
 
+## Provider auth maturity
+
+Direct staged credential files are the primary supported auth path today.
+Built-in host resolvers are intentionally narrow and currently limited to the
+Claude macOS resolver scaffold described above.
+
+| Provider | Launch-ready inputs today | Additional reviewed inputs | Current caveats |
+|---|---|---|---|
+| Codex | `codex_auth` | shared GitHub CLI and SSH inputs via policy as needed | direct staged auth file is the normal path |
+| Claude | `claude_auth`, `claude_api_key`, `claude_mcp` | shared GitHub CLI and SSH inputs via policy as needed | the built-in `claude-macos-keychain` resolver can record intent but remains fail-closed until a supported export path exists |
+| Gemini | `gemini_env`, `gemini_oauth`, `gemini_projects` | `gcloud_adc` as a supplemental Vertex input plus shared GitHub CLI and SSH inputs via policy as needed | `gcloud_adc` is not a standalone Gemini auth mode |
+
 ## Credential keys
 
 | Key | Session target | Notes |
 |---|---|---|
 | `codex_auth` | `~/.codex/auth.json` | persisted Codex auth |
-| `claude_auth` | Claude auth mirrors under `~/.claude/`, `~/.claude.json`, and `~/.config/claude-code/` | on macOS, prefer the built-in `claude-macos-keychain` host resolver |
+| `claude_auth` | Claude auth mirrors under `~/.claude/`, `~/.claude.json`, and `~/.config/claude-code/` | direct staged auth file is launch-ready; the built-in `claude-macos-keychain` resolver remains fail-closed scaffold only |
 | `claude_api_key` | helper-backed Claude API key access | avoids seeding a second plaintext key copy into the session |
 | `claude_mcp` | `~/.mcp.json` | reviewed Claude MCP config |
 | `gemini_env` | `~/.gemini/.env` | API key, GCA, or Vertex configuration |

@@ -40,3 +40,5 @@ workcell --prepare --agent gemini --workspace /path/to/repo
 
 - [docs/injection-policy.md](../injection-policy.md)
 - [docs/examples/quickstart-gemini.md](quickstart-gemini.md)
+- [docs/requirements-validation.md](../requirements-validation.md)
+- [docs/validation-scenarios.md](../validation-scenarios.md)
