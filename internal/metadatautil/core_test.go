@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -172,5 +173,66 @@ func TestDigestMapRejectsSymlinkedInputs(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must not be a symlink") {
 		t.Fatalf("digestMap() error = %v, want symlink rejection", err)
+	}
+}
+
+func TestGenerateControlPlaneManifestIncludesDetachedStdinWrapper(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	outputPath := filepath.Join(t.TempDir(), "control-plane-manifest.json")
+	if err := GenerateControlPlaneManifest(root, outputPath); err != nil {
+		t.Fatalf("GenerateControlPlaneManifest() error = %v", err)
+	}
+
+	var manifest struct {
+		RuntimeArtifacts []struct {
+			RepoPath    string `json:"repo_path"`
+			RuntimePath string `json:"runtime_path"`
+		} `json:"runtime_artifacts"`
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", outputPath, err)
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	for _, artifact := range manifest.RuntimeArtifacts {
+		if artifact.RepoPath == "runtime/container/detached-stdin-wrapper.sh" &&
+			artifact.RuntimePath == "/usr/local/libexec/workcell/detached-stdin-wrapper.sh" {
+			return
+		}
+	}
+	t.Fatal("control-plane manifest missing detached stdin wrapper attestation")
+}
+
+func TestControlPlaneParityRowsIncludePrivilegedAndDetachedWrappers(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	outputPath := filepath.Join(t.TempDir(), "control-plane-manifest.json")
+	if err := GenerateControlPlaneManifest(root, outputPath); err != nil {
+		t.Fatalf("GenerateControlPlaneManifest() error = %v", err)
+	}
+
+	rows, err := ControlPlaneParityRows(outputPath)
+	if err != nil {
+		t.Fatalf("ControlPlaneParityRows() error = %v", err)
+	}
+
+	for _, want := range []string{
+		"path\tapt-broker\t/usr/local/libexec/workcell/apt-broker.sh",
+		"path\tdevelopment-wrapper\t/usr/local/libexec/workcell/development-wrapper.sh",
+		"path\tdetached-stdin-wrapper\t/usr/local/libexec/workcell/detached-stdin-wrapper.sh",
+		"path\tsudo-wrapper\t/usr/local/libexec/workcell/sudo-wrapper.sh",
+	} {
+		found := false
+		for _, row := range rows {
+			if row == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("ControlPlaneParityRows() missing %q in %#v", want, rows)
+		}
 	}
 }

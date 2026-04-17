@@ -42,6 +42,7 @@ GO_BIN="$(resolve_go_bin)"
 
 MANIFEST="${ROOT_DIR}/runtime/container/control-plane-manifest.json"
 CONTROL_PLANE="${ROOT_DIR}/runtime/container/home-control-plane.sh"
+ENTRYPOINT="${ROOT_DIR}/runtime/container/entrypoint.sh"
 
 missing=0
 
@@ -58,7 +59,8 @@ while IFS=$'\t' read -r requirement_type label value; do
       ;;
     path)
       expected_call="workcell_verify_control_plane_path \"${value}\""
-      if ! grep -Fq "${expected_call}" "${CONTROL_PLANE}"; then
+      if ! grep -Fq "${expected_call}" "${CONTROL_PLANE}" &&
+        ! grep -Fq "${expected_call}" "${ENTRYPOINT}"; then
         echo "missing control-plane verification path for ${label}: ${expected_call}" >&2
         missing=$((missing + 1))
       fi

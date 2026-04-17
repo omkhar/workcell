@@ -1418,6 +1418,17 @@ if sudo -n id >/tmp/codex-sudo-id.out 2>&1; then
   echo "expected unrestricted sudo to stay blocked for the runtime user" >&2
   exit 1
 fi
+if /usr/local/libexec/workcell/real/sudo -n id >/tmp/codex-real-sudo-id.out 2>&1; then
+  echo "expected direct access to the relocated real sudo binary to stay blocked" >&2
+  exit 1
+fi
+grep -Eq "no new privileges|Permission denied" /tmp/codex-real-sudo-id.out
+if sudo -n --preserve-env=PATH /usr/local/libexec/workcell/apt-helper.sh apt-get --help \
+  >/tmp/codex-sudo-preserve-path.out 2>/tmp/codex-sudo-preserve-path.err; then
+  echo "expected sudo preserve-env to stay constrained on the apt broker path" >&2
+  exit 1
+fi
+grep -q "blocked unsupported preserved environment variable: PATH" /tmp/codex-sudo-preserve-path.err
 apt-get --help >/dev/null
 codex --version >/dev/null
 mkdir -p /workspace/exfil

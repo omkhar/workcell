@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "7e467299fdce3428641c89f6c07de49213cf47a1f196cf8234094b5c541189e6"
+      "sha256": "2d4c087765026ced6fc2e3341f4f3ef5d3f012dc9e1a4fc874b204fd55a331dd"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts",
@@ -128,15 +128,33 @@
     },
     {
       "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/apt-broker.sh",
+      "runtime_path": "/usr/local/libexec/workcell/apt-broker.sh",
+      "sha256": "b5884449980950b4d1f657e50a0fe3fb5ed1ebc6a80d1ac10382c4d46143c960"
+    },
+    {
+      "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/apt-helper.sh",
       "runtime_path": "/usr/local/libexec/workcell/apt-helper.sh",
-      "sha256": "d395a8e2bff77e8f9135d4c74a306f22a93ac502884e18da737c5abbe89ea1f4"
+      "sha256": "d49970505a2b4a95a882b2ff0cf296991994ed30fa4f128fcd0c2b155d98eeba"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/apt-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/apt-wrapper.sh",
       "sha256": "7f69b164e6440e6082fac91e6fca9d992bdba2053af4a6c113630b251d41dc4e"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/bin/sudo-wrapper.sh",
+      "runtime_path": "/usr/local/libexec/workcell/sudo-wrapper.sh",
+      "sha256": "122c569901830a61820e57cd4da810ef5ba473a4de709d7abbfb68d61238e86a"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/detached-stdin-wrapper.sh",
+      "runtime_path": "/usr/local/libexec/workcell/detached-stdin-wrapper.sh",
+      "sha256": "55b23923d5e22ad5559c1aa598301f98899ac0bf473c591dbeb42f91660b8c98"
     },
     {
       "kind": "runtime-control-plane",
@@ -148,7 +166,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "12eff3190732abaa7a745e4a71b59c830368cb48e98ac9a93737c517d57825eb"
+      "sha256": "5a9793aabf86c7e56362001f7348cb8d91900c6981e5a0fbe16a1a6de2a2b615"
     },
     {
       "kind": "runtime-control-plane",
@@ -160,7 +178,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "fc93fbc1616340208f6aefe522530580b6fa0466003f7ea29a9b2c31a4b2df5e"
+      "sha256": "bcd846dd6cd23e87732c3b636e6d4aa41beddf042493907c1c0791018bf9e5d3"
     },
     {
       "kind": "runtime-control-plane",
@@ -190,7 +208,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/runtime-user.sh",
       "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
-      "sha256": "229ae435e982def1b98af1a111133a2a154f4a1857450bf55261fad7d9a4db29"
+      "sha256": "093867eac3baa96f6e8b58073dc2c88d06d2cab64545a50d5276e78a45d665f4"
     },
     {
       "kind": "runtime-control-plane",

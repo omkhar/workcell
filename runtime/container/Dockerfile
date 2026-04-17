@@ -29,11 +29,42 @@ ENV npm_config_fund=false
 ENV npm_config_update_notifier=false
 
 # hadolint ignore=DL3008
-RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/99workcell-snapshot \
+RUN fetch_snapshot_bootstrap_package() { \
+      local url="$1"; \
+      local output="$2"; \
+      node -e 'const fs = require("fs"); (async () => { const [url, output] = process.argv.slice(1); const response = await fetch(url); if (!response.ok) { throw new Error("unexpected status " + response.status + " for " + url); } const file = fs.createWriteStream(output); for await (const chunk of response.body) { file.write(chunk); } file.end(); await new Promise((resolve, reject) => { file.on("finish", resolve); file.on("error", reject); }); })().catch((error) => { console.error(error.stack || error); process.exit(1); });' "${url}" "${output}"; \
+    } \
+  && bootstrap_snapshot_tls() { \
+       local openssl_url="" openssl_sha256="" ca_url="" ca_sha256=""; \
+       case "$(dpkg --print-architecture)" in \
+         amd64) \
+           openssl_url="https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb"; \
+           openssl_sha256="233d6d1f6ff00509cba554365e7cfb3be36db1dea57291eeb248f2c04d62719d"; \
+           ;; \
+         arm64) \
+           openssl_url="https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb"; \
+           openssl_sha256="92dfcdc213cd7a5e6aa34a1ac9660a59e56838d12876f4b34599f8fea39cb432"; \
+           ;; \
+         *) \
+           echo "Unsupported dpkg architecture for snapshot TLS bootstrap: $(dpkg --print-architecture)" >&2; \
+           exit 1; \
+           ;; \
+       esac; \
+       ca_url="https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb"; \
+       ca_sha256="ef590f89563aa4b46c8260d49d1cea0fc1b181d19e8df3782694706adf05c184"; \
+       fetch_snapshot_bootstrap_package "${openssl_url}" /tmp/workcell-bootstrap-openssl.deb; \
+       echo "${openssl_sha256}  /tmp/workcell-bootstrap-openssl.deb" | sha256sum -c -; \
+       fetch_snapshot_bootstrap_package "${ca_url}" /tmp/workcell-bootstrap-ca-certificates.deb; \
+       echo "${ca_sha256}  /tmp/workcell-bootstrap-ca-certificates.deb" | sha256sum -c -; \
+       dpkg -i /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb; \
+       rm -f /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb; \
+     } \
+  && bootstrap_snapshot_tls \
+  && rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/99workcell-snapshot \
   && install_runtime_packages() { \
        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        bash \
@@ -97,6 +128,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
       /usr/share \
       /var \
       \( \
+        -path '/etc/ssl' -o \
         -path '/var/lib/apt/lists' -o \
         -path '/var/cache/apt' \
       \) -prune -o \
@@ -321,8 +353,11 @@ COPY runtime/container/bin/git /usr/local/libexec/workcell/git-wrapper.sh
 COPY runtime/container/bin/node /usr/local/libexec/workcell/node-wrapper.sh
 COPY runtime/container/bin/apt-helper.sh /usr/local/libexec/workcell/apt-helper.sh
 COPY runtime/container/bin/apt-wrapper.sh /usr/local/libexec/workcell/apt-wrapper.sh
+COPY runtime/container/bin/sudo-wrapper.sh /usr/local/libexec/workcell/sudo-wrapper.sh
 COPY runtime/container/assurance.sh /usr/local/libexec/workcell/assurance.sh
+COPY runtime/container/apt-broker.sh /usr/local/libexec/workcell/apt-broker.sh
 COPY runtime/container/development-wrapper.sh /usr/local/libexec/workcell/development-wrapper.sh
+COPY runtime/container/detached-stdin-wrapper.sh /usr/local/libexec/workcell/detached-stdin-wrapper.sh
 COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
 COPY runtime/container/home-control-plane.sh /usr/local/libexec/workcell/home-control-plane.sh
 COPY runtime/container/provider-wrapper.sh /usr/local/libexec/workcell/provider-wrapper.sh
@@ -336,24 +371,30 @@ RUN mkdir -p /etc/claude-code \
     /etc/claude-code/managed-settings.json \
   && chmod 0444 \
     /usr/local/libexec/workcell/assurance.sh \
+    /usr/local/libexec/workcell/apt-broker.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
+    /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
     /usr/local/libexec/workcell/development-wrapper.sh \
     /usr/local/libexec/workcell/entrypoint.sh \
     /usr/local/libexec/workcell/git-wrapper.sh \
     /usr/local/libexec/workcell/node-wrapper.sh \
     /usr/local/libexec/workcell/provider-wrapper.sh \
+    /usr/local/libexec/workcell/sudo-wrapper.sh \
     /usr/local/libexec/workcell/runtime-user.sh \
   && chmod +x \
     /usr/local/libexec/workcell/core/launcher \
     /usr/local/libexec/workcell/assurance.sh \
+    /usr/local/libexec/workcell/apt-broker.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
+    /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
     /usr/local/libexec/workcell/development-wrapper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
     /usr/local/libexec/workcell/provider-policy.sh \
     /usr/local/libexec/workcell/runtime-user.sh \
+    /usr/local/libexec/workcell/sudo-wrapper.sh \
     /opt/workcell/adapters/claude/hooks/guard-bash.sh \
   && find /opt/workcell/adapters /etc/claude-code /usr/local/libexec/workcell -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}" \
   && touch -h -d "@${SOURCE_DATE_EPOCH}" \
@@ -381,6 +422,8 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && chmod 0644 /usr/local/libexec/workcell/real/git \
   && mv /usr/local/bin/node /usr/local/libexec/workcell/real/node \
   && chmod 0755 /usr/local/libexec/workcell/real/node \
+  && mv /usr/bin/sudo /usr/local/libexec/workcell/real/sudo \
+  && chmod 0700 /usr/local/libexec/workcell/real/sudo \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/libexec/workcell/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/codex \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/claude \
@@ -394,6 +437,8 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/gemini \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/bin/git \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/bin/git \
+  && ln -sf /usr/local/libexec/workcell/sudo-wrapper.sh /usr/local/bin/sudo \
+  && ln -sf /usr/local/libexec/workcell/sudo-wrapper.sh /usr/bin/sudo \
   && chmod 0444 \
     /etc/claude-code/managed-settings.json \
     /usr/local/libexec/workcell/control-plane-manifest.json \
@@ -403,9 +448,12 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && chmod +x \
     /usr/local/libexec/workcell/core/git \
     /usr/local/libexec/workcell/core/launcher \
+    /usr/local/libexec/workcell/apt-broker.sh \
+    /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
     /usr/local/libexec/workcell/provider-policy.sh \
+    /usr/local/libexec/workcell/sudo-wrapper.sh \
     /usr/local/bin/workcell-entrypoint \
     /opt/workcell/adapters/claude/hooks/guard-bash.sh \
   && rm -rf /tmp/* /var/tmp/* /root/.npm /root/.cache /var/lib/apt/lists/* /var/cache/apt/* /var/cache/debconf/*-old /var/cache/ldconfig/aux-cache \
@@ -418,6 +466,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
       /usr/local/lib/libworkcell_exec_guard.so \
       /usr/local/libexec/workcell \
       /usr/bin/git \
+      /usr/bin/sudo \
       -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
 WORKDIR /workspace

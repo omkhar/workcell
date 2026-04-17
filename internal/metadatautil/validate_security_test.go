@@ -159,13 +159,6 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 			"require_code_owner_review":         true,
 			"required_review_thread_resolution": true,
 		}
-	} else if branchMode == "approval-gated" {
-		branchReviewParameters = map[string]any{
-			"required_approving_review_count":   float64(1),
-			"require_code_owner_review":         false,
-			"require_last_push_approval":        false,
-			"required_review_thread_resolution": true,
-		}
 	}
 	rulesets := []map[string]any{
 		{
@@ -373,7 +366,7 @@ func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForBranchRevie
 	}
 }
 
-func TestVerifyGitHubHostedControlsAcceptsApprovalGatedPublicRepo(t *testing.T) {
+func TestVerifyGitHubHostedControlsRejectsApprovalGatedMode(t *testing.T) {
 	t.Parallel()
 
 	tmpDir, policyPath := writeHostedControlsFixture(t, "approval-gated", "review-gated", []map[string]any{
@@ -391,40 +384,38 @@ func TestVerifyGitHubHostedControlsAcceptsApprovalGatedPublicRepo(t *testing.T) 
 		},
 	})
 
-	if err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath); err != nil {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want acceptance for approval-gated public repo", err)
+	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted approval-gated mode")
+	}
+	if !strings.Contains(err.Error(), "must set branch_review.mode to 'review-gated', 'single-owner-public-pr', or 'single-owner-private-pr'") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want unsupported-mode rejection", err)
 	}
 }
 
-func TestVerifyGitHubHostedControlsRejectsApprovalGatedWithoutApproval(t *testing.T) {
+func TestVerifyGitHubHostedControlsRejectsReviewGatedRulesetWithoutCodeOwnerReview(t *testing.T) {
 	t.Parallel()
 
-	tmpDir, policyPath := writeHostedControlsFixture(t, "approval-gated", "review-gated", []map[string]any{
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
 		{
 			"login": "omkhar",
 			"permissions": map[string]any{
 				"admin": true,
-			},
-		},
-		{
-			"login": "extra-maintainer",
-			"permissions": map[string]any{
-				"admin": false,
 			},
 		},
 	})
 
 	rewriteFile(t, filepath.Join(tmpDir, "rulesets.json"), func(content string) string {
-		content = strings.Replace(content, `"required_approving_review_count": 1`, `"required_approving_review_count": 0`, 1)
-		return strings.Replace(content, `"required_approving_review_count":1`, `"required_approving_review_count":0`, 1)
+		content = strings.Replace(content, `"require_code_owner_review": true`, `"require_code_owner_review": false`, 1)
+		return strings.Replace(content, `"require_code_owner_review":true`, `"require_code_owner_review":false`, 1)
 	})
 
 	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted approval-gated review rules without an approval requirement")
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted review-gated rules without code owner review")
 	}
-	if !strings.Contains(err.Error(), "must require at least one approving review") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want approval requirement rejection", err)
+	if !strings.Contains(err.Error(), "must require code owner review") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want code-owner rejection", err)
 	}
 }
 
@@ -452,5 +443,26 @@ func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForReleaseEnv(
 	}
 	if !strings.Contains(err.Error(), "requires exactly one direct collaborator") {
 		t.Fatalf("VerifyGitHubHostedControls() error = %v, want collaborator-count rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsNonOwnerPublicCollaboratorForBranchReview(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "single-owner-public-pr", "single-owner-public", []map[string]any{
+		{
+			"login": "not-the-owner",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted a non-owner collaborator in single-owner-public-pr mode")
+	}
+	if !strings.Contains(err.Error(), "requires the owner to be the only direct collaborator") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want owner-only collaborator rejection", err)
 	}
 }
