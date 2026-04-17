@@ -6284,7 +6284,7 @@ EOF
       WORKCELL_APT_BROKER_SLEEP_SECONDS=0.05 \
       /bin/bash "${ROOT_DIR}/runtime/container/apt-broker.sh" >/dev/null 2>&1 &
     APT_BROKER_PID=$!
-    for attempt in $(seq 1 100); do
+    for _ in $(seq 1 100); do
       if [[ -f "${APT_BROKER_RUNTIME_ROOT}/pid" ]]; then
         break
       fi
