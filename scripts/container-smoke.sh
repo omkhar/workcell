@@ -295,6 +295,9 @@ run_self_test_host_path_hardening() {
   local destination_root=""
   local path_list=""
   local workspace_root=""
+  local bundle_source_root=""
+  local bundle_destination_root=""
+  local bundle_parent_link=""
   local output=""
   local failed=0
 
@@ -360,6 +363,53 @@ run_self_test_host_path_hardening() {
   fi
   [[ -f "${outside_root}/keep.txt" ]] || {
     echo "cleanup_workspace_scratch followed a symlinked tmp root" >&2
+    failed=1
+  }
+
+  bundle_source_root="${test_root}/bundle-source"
+  bundle_destination_root="${test_root}/bundle-destination"
+  mkdir -p "${bundle_source_root}" "${test_root}/bundle-destination-parent"
+  ln -s "${outside_root}/keep.txt" "${bundle_source_root}/leak"
+  if output="$(clone_bundle_with_credential_override \
+    "${bundle_source_root}" \
+    "${bundle_destination_root}" \
+    "github_hosts" \
+    "/override" 2>&1)"; then
+    echo "Expected bundle clone to reject a source tree with symlinked entries" >&2
+    failed=1
+  elif [[ "${output}" != *'symlinked tree entry'* ]]; then
+    echo "Expected bundle clone rejection to mention the blocked source tree entry" >&2
+    printf '%s\n' "${output}" >&2
+    failed=1
+  fi
+  [[ ! -e "${bundle_destination_root}" ]] || {
+    echo "bundle clone created a destination after rejecting a symlinked source tree" >&2
+    failed=1
+  }
+  [[ -f "${outside_root}/keep.txt" ]] || {
+    echo "bundle clone source rejection touched data outside the managed tree" >&2
+    failed=1
+  }
+
+  rm -rf "${bundle_source_root}"
+  mkdir -p "${bundle_source_root}"
+  bundle_parent_link="${test_root}/bundle-destination-parent-link"
+  mkdir -p "${outside_root}/bundle-existing-destination"
+  ln -s "${outside_root}" "${bundle_parent_link}"
+  if output="$(clone_bundle_with_credential_override \
+    "${bundle_source_root}" \
+    "${bundle_parent_link}/bundle-existing-destination" \
+    "github_hosts" \
+    "/override" 2>&1)"; then
+    echo "Expected bundle clone to reject a destination with symlinked path components" >&2
+    failed=1
+  elif [[ "${output}" != *'symlinked path component'* ]]; then
+    echo "Expected bundle clone rejection to mention the blocked destination path" >&2
+    printf '%s\n' "${output}" >&2
+    failed=1
+  fi
+  [[ -d "${outside_root}/bundle-existing-destination" ]] || {
+    echo "bundle clone destination rejection removed data outside the managed tree" >&2
     failed=1
   }
 
