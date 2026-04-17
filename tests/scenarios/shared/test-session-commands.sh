@@ -18,9 +18,9 @@ SESSION_TAMPERED="20260408T140000Z-55555555-$$"
 WORKCELL_FUNCTIONS_COPY="${ROOT_DIR}/scripts/.workcell-test-functions-$$"
 
 cleanup() {
-  rm -f "${WORKCELL_FUNCTIONS_COPY}"
-  rm -rf "${REAL_HOME}/.colima/${PROFILE}"
-  rm -rf "${TMP_DIR}"
+	rm -f "${WORKCELL_FUNCTIONS_COPY}"
+	rm -rf "${REAL_HOME}/.colima/${PROFILE}"
+	rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
 
@@ -200,22 +200,22 @@ grep -q $'^'"${SESSION_ATTACHED_LIVE}"$'\trunning\trunning\tattached\tcodex\tstr
 grep -q $'^'"${SESSION_ONE}"$'\texited\tstopped\tattached\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
 
 if command -v script >/dev/null 2>&1; then
-  tty_list_cmd=("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")
-  if script_help="$(script --help 2>&1 || true)" && grep -q -- ' -c, --command ' <<<"${script_help}"; then
-    printf -v tty_list_shell_cmd '%q ' "${tty_list_cmd[@]}"
-    tty_list_output="$(
-      script -q /dev/null -c "${tty_list_shell_cmd% }" 2>/dev/null | tr -d '\r\004\010'
-    )"
-  else
-    tty_list_output="$(
-      script -q /dev/null "${tty_list_cmd[@]}" 2>/dev/null | tr -d '\r\004\010'
-    )"
-  fi
-  grep -q 'session_id[[:space:]]status[[:space:]]live_status[[:space:]]control[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace' <<<"${tty_list_output}"
-  if printf '%s' "${tty_list_output}" | LC_ALL=C grep -q $'\033\['; then
-    echo "session list leaked terminal reset escapes on a host-only TTY path" >&2
-    exit 1
-  fi
+	tty_list_cmd=("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")
+	if script_help="$(script --help 2>&1 || true)" && grep -q -- ' -c, --command ' <<<"${script_help}"; then
+		printf -v tty_list_shell_cmd '%q ' "${tty_list_cmd[@]}"
+		tty_list_output="$(
+			script -q /dev/null -c "${tty_list_shell_cmd% }" 2>/dev/null | tr -d '\r\004\010'
+		)"
+	else
+		tty_list_output="$(
+			script -q /dev/null "${tty_list_cmd[@]}" 2>/dev/null | tr -d '\r\004\010'
+		)"
+	fi
+	grep -q 'session_id[[:space:]]status[[:space:]]live_status[[:space:]]control[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace' <<<"${tty_list_output}"
+	if printf '%s' "${tty_list_output}" | LC_ALL=C grep -q $'\033\['; then
+		echo "session list leaked terminal reset escapes on a host-only TTY path" >&2
+		exit 1
+	fi
 fi
 
 set +e
@@ -223,8 +223,8 @@ stop_attached_stderr="$("${ROOT_DIR}/scripts/workcell" session stop --id "${SESS
 stop_attached_status=$?
 set -e
 if [[ "${stop_attached_status}" -eq 0 ]]; then
-  echo "session stop unexpectedly accepted an attached record" >&2
-  exit 1
+	echo "session stop unexpectedly accepted an attached record" >&2
+	exit 1
 fi
 grep -q "session stop only works for detached sessions started with 'workcell session start': ${SESSION_ATTACHED_LIVE}" <<<"${stop_attached_stderr}"
 grep -q "Use 'workcell session list' to check the control column; attached records are not stoppable." <<<"${stop_attached_stderr}"
@@ -234,8 +234,8 @@ delete_stderr="$("${ROOT_DIR}/scripts/workcell" session delete --id "${SESSION_D
 delete_status=$?
 set -e
 if [[ "${delete_status}" -eq 0 ]]; then
-  echo "session delete unexpectedly removed a session when container cleanup was unavailable" >&2
-  exit 1
+	echo "session delete unexpectedly removed a session when container cleanup was unavailable" >&2
+	exit 1
 fi
 grep -q "session delete could not confirm cleanup of the recorded session container: ${SESSION_DELETE}" <<<"${delete_stderr}"
 grep -q "Retry while the profile Docker socket is available, or pass --record-only to remove only the session record." <<<"${delete_stderr}"
@@ -266,8 +266,8 @@ delete_running_stderr="$("${ROOT_DIR}/scripts/workcell" session delete --id "${S
 delete_running_status=$?
 set -e
 if [[ "${delete_running_status}" -eq 0 ]]; then
-  echo "session delete unexpectedly accepted a running session" >&2
-  exit 1
+	echo "session delete unexpectedly accepted a running session" >&2
+	exit 1
 fi
 grep -q "session delete only works for exited, failed, or otherwise stopped sessions: ${SESSION_DELETE_RUNNING}" <<<"${delete_running_stderr}"
 grep -q '^This session is still running\.$' <<<"${delete_running_stderr}"
@@ -338,7 +338,7 @@ cat >"${SESSIONS_DIR}/20260408T140000Z-55555555.json" <<EOF
 EOF
 
 dirty_diff_output="$(
-  "${ROOT_DIR}/scripts/workcell" session diff --id "${SESSION_DIRTY}" 2>&1 >/dev/null || true
+	"${ROOT_DIR}/scripts/workcell" session diff --id "${SESSION_DIRTY}" 2>&1 >/dev/null || true
 )"
 grep -q 'session diff requires a clean git launch baseline' <<<"${dirty_diff_output}"
 
@@ -349,27 +349,27 @@ grep -q '"audit_records": \[' "${EXPORT_PATH}"
 grep -q 'record_digest=ccc' "${EXPORT_PATH}"
 
 tampered_session_logs_output="$(
-  "${ROOT_DIR}/scripts/workcell" session logs --id "${SESSION_TAMPERED}" --kind debug 2>&1 >/dev/null || true
+	"${ROOT_DIR}/scripts/workcell" session logs --id "${SESSION_TAMPERED}" --kind debug 2>&1 >/dev/null || true
 )"
 grep -q "Workcell blocked host output path after launch: ${TAMPERED_DEBUG_LINK}" <<<"${tampered_session_logs_output}"
 if grep -q 'top-secret' <<<"${tampered_session_logs_output}"; then
-  echo "session logs followed a tampered debug-log symlink" >&2
-  exit 1
+	echo "session logs followed a tampered debug-log symlink" >&2
+	exit 1
 fi
 printf '%s\n' "${TAMPERED_DEBUG_LINK}" >"${REAL_HOME}/.colima/${PROFILE}/workcell.latest-debug-log"
 tampered_profile_logs_output="$(
-  "${ROOT_DIR}/scripts/workcell" --logs debug --colima-profile "${PROFILE}" 2>&1 >/dev/null || true
+	"${ROOT_DIR}/scripts/workcell" --logs debug --colima-profile "${PROFILE}" 2>&1 >/dev/null || true
 )"
 grep -q "Workcell blocked host output path after launch: ${TAMPERED_DEBUG_LINK}" <<<"${tampered_profile_logs_output}"
 if grep -q 'top-secret' <<<"${tampered_profile_logs_output}"; then
-  echo "profile debug log retrieval followed a tampered symlink" >&2
-  exit 1
+	echo "profile debug log retrieval followed a tampered symlink" >&2
+	exit 1
 fi
 printf '%s\n' "${AUDIT_LOG}" >"${SYMLINKED_POINTER_TARGET}"
 rm -f "${REAL_HOME}/.colima/${PROFILE}/workcell.latest-transcript-log"
 ln -s "${SYMLINKED_POINTER_TARGET}" "${REAL_HOME}/.colima/${PROFILE}/workcell.latest-transcript-log"
 symlinked_pointer_output="$(
-  "${ROOT_DIR}/scripts/workcell" --logs transcript --colima-profile "${PROFILE}" 2>&1 >/dev/null || true
+	"${ROOT_DIR}/scripts/workcell" --logs transcript --colima-profile "${PROFILE}" 2>&1 >/dev/null || true
 )"
 grep -q "Workcell blocked latest transcript pointer path after launch: ${REAL_HOME}/.colima/${PROFILE}/workcell.latest-transcript-log" <<<"${symlinked_pointer_output}"
 
@@ -379,52 +379,52 @@ printf 'seed\n' >"${DETACHED_START_WORKSPACE}/README.md"
 git -C "${DETACHED_START_WORKSPACE}" add README.md
 git -C "${DETACHED_START_WORKSPACE}" -c user.name='Workcell Test' -c user.email='workcell@example.com' commit -m 'initial' >/dev/null
 detached_start_default_output="$(
-  WORKCELL_SESSION_WORKSPACE_MODE=direct \
-    "${ROOT_DIR}/scripts/workcell" \
-    session start \
-    --agent codex \
-    --mode development \
-    --workspace "${DETACHED_START_WORKSPACE}" \
-    --no-default-injection-policy \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    --dry-run \
-    -- /bin/true
+	WORKCELL_SESSION_WORKSPACE_MODE=direct \
+		"${ROOT_DIR}/scripts/workcell" \
+		session start \
+		--agent codex \
+		--mode development \
+		--workspace "${DETACHED_START_WORKSPACE}" \
+		--no-default-injection-policy \
+		--allow-arbitrary-command \
+		--ack-arbitrary-command \
+		--dry-run \
+		-- /bin/true
 )"
 grep -Fq -- "docker run --init -d -i -t" <<<"${detached_start_default_output}"
 grep -Eq -- "-v ${DETACHED_START_WORKSPACE}/\\.git/workcell-sessions/.+/repo:/workspace($| )" <<<"${detached_start_default_output}"
 grep -Fq -- "-e WORKCELL_DETACHED_STDIN_PATH=/state/tmp/workcell/session-stdin" <<<"${detached_start_default_output}"
 if grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_default_output}"; then
-  echo "Detached session start honored an inherited workspace-mode env override" >&2
-  exit 1
+	echo "Detached session start honored an inherited workspace-mode env override" >&2
+	exit 1
 fi
 if ! grep -Fq -- "--entrypoint /bin/true" <<<"${detached_start_default_output}"; then
-  echo "Detached session start did not preserve the arbitrary-command entrypoint override" >&2
-  exit 1
+	echo "Detached session start did not preserve the arbitrary-command entrypoint override" >&2
+	exit 1
 fi
 if grep -Eq -- "-e WORKCELL_DETACHED_STDIN_PATH=/run/workcell/session-stdin" <<<"${detached_start_default_output}"; then
-  echo "Detached session start kept the detached stdin FIFO under a path that blocks host command injection" >&2
-  exit 1
+	echo "Detached session start kept the detached stdin FIFO under a path that blocks host command injection" >&2
+	exit 1
 fi
 detached_start_direct_output="$(
-  WORKCELL_SESSION_WORKSPACE_MODE=isolated \
-    "${ROOT_DIR}/scripts/workcell" \
-    session start \
-    --session-workspace direct \
-    --agent codex \
-    --mode development \
-    --workspace "${DETACHED_START_WORKSPACE}" \
-    --no-default-injection-policy \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    --dry-run \
-    -- /bin/true
+	WORKCELL_SESSION_WORKSPACE_MODE=isolated \
+		"${ROOT_DIR}/scripts/workcell" \
+		session start \
+		--session-workspace direct \
+		--agent codex \
+		--mode development \
+		--workspace "${DETACHED_START_WORKSPACE}" \
+		--no-default-injection-policy \
+		--allow-arbitrary-command \
+		--ack-arbitrary-command \
+		--dry-run \
+		-- /bin/true
 )"
 grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_direct_output}"
 
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
 monitor_env_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -442,7 +442,7 @@ grep -q '^SESSION_RECORD_FINALIZED=0$' <<<"${monitor_env_output}"
 grep -q '^SESSION_MONITOR_READY_PATH=' <<<"${monitor_env_output}"
 
 monitor_ready_probe_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -476,12 +476,12 @@ bash -lc '
 monitor_ready_failure_status=$?
 set -e
 if [[ "${monitor_ready_failure_status}" -eq 0 ]]; then
-  echo "wait_for_session_monitor_ready unexpectedly accepted a monitor that never reported ready" >&2
-  exit 1
+	echo "wait_for_session_monitor_ready unexpectedly accepted a monitor that never reported ready" >&2
+	exit 1
 fi
 
 monitor_wait_status_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -513,7 +513,7 @@ grep -q '^wcl-detached-fixture|inspect --format {{.State.ExitCode}} workcell-ses
 
 START_PROFILE_RETRY_RECORD="${DETACHED_STATE_DIR}/start-profile-retry.record"
 start_profile_retry_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -559,7 +559,7 @@ grep -q '^run|2|colima-start$' "${START_PROFILE_RETRY_RECORD}"
 grep -q '^refresh|Refreshing managed Colima profile start-retry-fixture after Colima failed during Docker startup\.$' "${START_PROFILE_RETRY_RECORD}"
 
 session_final_status_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -578,7 +578,7 @@ grep -q '^run_failed=failed$' <<<"${session_final_status_output}"
 grep -q '^run_exited=exited$' <<<"${session_final_status_output}"
 
 session_monitor_pid_zero_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -596,12 +596,12 @@ session_monitor_pid_zero_output="$(
 )"
 grep -q '^dead$' <<<"${session_monitor_pid_zero_output}"
 if grep -q '^kill-called$' <<<"${session_monitor_pid_zero_output}"; then
-  echo "Detached session monitor liveness still probes kill -0 0" >&2
-  exit 1
+	echo "Detached session monitor liveness still probes kill -0 0" >&2
+	exit 1
 fi
 
 session_monitor_missing_audit_dir_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -619,12 +619,12 @@ session_monitor_missing_audit_dir_output="$(
 )"
 grep -q '^dead$' <<<"${session_monitor_missing_audit_dir_output}"
 if grep -q '^kill-called$' <<<"${session_monitor_missing_audit_dir_output}"; then
-  echo "Detached session monitor liveness accepted a monitor without detached provenance" >&2
-  exit 1
+	echo "Detached session monitor liveness accepted a monitor without detached provenance" >&2
+	exit 1
 fi
 
 detached_running_race_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -656,7 +656,7 @@ grep -q '^result=ok$' <<<"${detached_running_race_output}"
 grep -q '^loads=2$' <<<"${detached_running_race_output}"
 
 existing_file_trace_capture_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -672,8 +672,8 @@ existing_file_trace_capture_output="$(
 )"
 grep -q '^preexisting-watch-start$' <<<"${existing_file_trace_capture_output}"
 if grep -q 'host-collect-missing' <<<"${existing_file_trace_capture_output}"; then
-  echo "Detached session file-trace fallback overwrote an already-populated host log" >&2
-  exit 1
+	echo "Detached session file-trace fallback overwrote an already-populated host log" >&2
+	exit 1
 fi
 
 SESSION_SEND_FAILURE_RECORD="${DETACHED_STATE_DIR}/session-send.failure.record"
@@ -720,25 +720,25 @@ bash -lc '
 session_send_failure_status=$?
 set -e
 if [[ "${session_send_failure_status}" -ne 17 ]]; then
-  echo "Expected detached session send failure to preserve the transport error status" >&2
-  exit 1
+	echo "Expected detached session send failure to preserve the transport error status" >&2
+	exit 1
 fi
 grep -q '^transport|wcl-detached-fixture|exec --user ' "${SESSION_SEND_FAILURE_RECORD}"
 if grep -q '^audit|' "${SESSION_SEND_FAILURE_RECORD}"; then
-  echo "Detached session send wrote an audit record before transport delivery succeeded" >&2
-  exit 1
+	echo "Detached session send wrote an audit record before transport delivery succeeded" >&2
+	exit 1
 fi
 if grep -q '/proc/1/fd/0' "${SESSION_SEND_FAILURE_RECORD}"; then
-  echo "Detached session send fell back to PID 1 stdin instead of failing closed" >&2
-  exit 1
+	echo "Detached session send fell back to PID 1 stdin instead of failing closed" >&2
+	exit 1
 fi
 if ! grep -q '/state/tmp/workcell/session-stdin' "${SESSION_SEND_FAILURE_RECORD}"; then
-  echo "Detached session send stopped targeting the runtime-user-owned FIFO path" >&2
-  exit 1
+	echo "Detached session send stopped targeting the runtime-user-owned FIFO path" >&2
+	exit 1
 fi
 
 session_send_success_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -774,23 +774,23 @@ grep -q '^session_id=detached-fixture$' <<<"${session_send_success_output}"
 grep -q '^sent_bytes=4$' <<<"${session_send_success_output}"
 grep -q '^transport|wcl-detached-fixture|exec --user ' "${SESSION_SEND_SUCCESS_RECORD}"
 if grep -q '/proc/1/fd/0' "${SESSION_SEND_SUCCESS_RECORD}"; then
-  echo "Detached session send still contains the PID 1 stdin fallback on the success path" >&2
-  exit 1
+	echo "Detached session send still contains the PID 1 stdin fallback on the success path" >&2
+	exit 1
 fi
 first_send_record="$(sed -n '1p' "${SESSION_SEND_SUCCESS_RECORD}")"
 second_send_record="$(sed -n '2p' "${SESSION_SEND_SUCCESS_RECORD}")"
 third_send_record="$(sed -n '3p' "${SESSION_SEND_SUCCESS_RECORD}")"
 if [[ "${first_send_record}" != transport\|*inspect* ]]; then
-  echo "Detached session send did not preflight the live detached container before delivery" >&2
-  exit 1
+	echo "Detached session send did not preflight the live detached container before delivery" >&2
+	exit 1
 fi
 if [[ "${second_send_record}" != transport\|*exec* ]]; then
-  echo "Detached session send did not deliver the payload before auditing it" >&2
-  exit 1
+	echo "Detached session send did not deliver the payload before auditing it" >&2
+	exit 1
 fi
 if [[ "${third_send_record}" != audit\|* ]]; then
-  echo "Detached session send did not append the audit record after delivery" >&2
-  exit 1
+	echo "Detached session send did not append the audit record after delivery" >&2
+	exit 1
 fi
 
 set +e
@@ -821,12 +821,12 @@ bash -lc '
 session_send_stopped_status=$?
 set -e
 if [[ "${session_send_stopped_status}" -eq 0 ]]; then
-  echo "Detached session send unexpectedly steered a stopped session record" >&2
-  exit 1
+	echo "Detached session send unexpectedly steered a stopped session record" >&2
+	exit 1
 fi
 if [[ -f "${SESSION_SEND_STOPPED_RECORD}" ]] && grep -q . "${SESSION_SEND_STOPPED_RECORD}"; then
-  echo "Detached session send touched transport or audit state for a stopped record" >&2
-  exit 1
+	echo "Detached session send touched transport or audit state for a stopped record" >&2
+	exit 1
 fi
 
 SESSION_SEND_UNATTACHED_RECORD="${DETACHED_STATE_DIR}/session-send.unattached.record"
@@ -858,12 +858,12 @@ bash -lc '
 session_send_unattached_status=$?
 set -e
 if [[ "${session_send_unattached_status}" -eq 0 ]]; then
-  echo "Detached session send unexpectedly steered a session without detached host provenance" >&2
-  exit 1
+	echo "Detached session send unexpectedly steered a session without detached host provenance" >&2
+	exit 1
 fi
 if [[ -f "${SESSION_SEND_UNATTACHED_RECORD}" ]] && grep -q . "${SESSION_SEND_UNATTACHED_RECORD}"; then
-  echo "Detached session send touched transport or audit state without detached host provenance" >&2
-  exit 1
+	echo "Detached session send touched transport or audit state without detached host provenance" >&2
+	exit 1
 fi
 
 SESSION_SEND_DEAD_MONITOR_RECORD="${DETACHED_STATE_DIR}/session-send.dead-monitor.record"
@@ -896,12 +896,12 @@ bash -lc '
 session_send_dead_monitor_status=$?
 set -e
 if [[ "${session_send_dead_monitor_status}" -eq 0 ]]; then
-  echo "Detached session send unexpectedly steered a session with a dead detached monitor" >&2
-  exit 1
+	echo "Detached session send unexpectedly steered a session with a dead detached monitor" >&2
+	exit 1
 fi
 if [[ -f "${SESSION_SEND_DEAD_MONITOR_RECORD}" ]] && grep -q . "${SESSION_SEND_DEAD_MONITOR_RECORD}"; then
-  echo "Detached session send touched transport or audit state with a dead detached monitor" >&2
-  exit 1
+	echo "Detached session send touched transport or audit state with a dead detached monitor" >&2
+	exit 1
 fi
 
 SESSION_ATTACH_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-attach.stopped.record"
@@ -942,16 +942,16 @@ bash -lc '
 session_attach_stopped_status=$?
 set -e
 if [[ "${session_attach_stopped_status}" -eq 0 ]]; then
-  echo "Detached session attach unexpectedly attached a stopped session" >&2
-  exit 1
+	echo "Detached session attach unexpectedly attached a stopped session" >&2
+	exit 1
 fi
 if [[ -f "${SESSION_ATTACH_STOPPED_RECORD}" ]] && grep -q '^audit|' "${SESSION_ATTACH_STOPPED_RECORD}"; then
-  echo "Detached session attach wrote an audit record before confirming a live container" >&2
-  exit 1
+	echo "Detached session attach wrote an audit record before confirming a live container" >&2
+	exit 1
 fi
 if [[ -f "${SESSION_ATTACH_STOPPED_RECORD}" ]] && grep -q 'attach ' "${SESSION_ATTACH_STOPPED_RECORD}"; then
-  echo "Detached session attach attempted a transport attach after live-state preflight failed" >&2
-  exit 1
+	echo "Detached session attach attempted a transport attach after live-state preflight failed" >&2
+	exit 1
 fi
 
 SESSION_ATTACH_FAILURE_RECORD="${DETACHED_STATE_DIR}/session-attach.failure.record"
@@ -996,13 +996,13 @@ bash -lc '
 session_attach_failure_status=$?
 set -e
 if [[ "${session_attach_failure_status}" -ne 23 ]]; then
-  echo "Detached session attach did not preserve the attach transport error" >&2
-  exit 1
+	echo "Detached session attach did not preserve the attach transport error" >&2
+	exit 1
 fi
 grep -q '^audit|wcl-detached-fixture|detached-fixture|attach-attempt|' "${SESSION_ATTACH_FAILURE_RECORD}"
 if grep -Eq '^audit\|wcl-detached-fixture\|detached-fixture\|attach\|' "${SESSION_ATTACH_FAILURE_RECORD}"; then
-  echo "Detached session attach recorded a successful attach event after transport failure" >&2
-  exit 1
+	echo "Detached session attach recorded a successful attach event after transport failure" >&2
+	exit 1
 fi
 
 SESSION_STOP_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.stopped.record"
@@ -1046,19 +1046,19 @@ bash -lc '
 session_stop_stopped_status=$?
 set -e
 if [[ "${session_stop_stopped_status}" -eq 0 ]]; then
-  echo "Detached session stop unexpectedly signaled a stopped session" >&2
-  exit 1
+	echo "Detached session stop unexpectedly signaled a stopped session" >&2
+	exit 1
 fi
 if [[ -f "${SESSION_STOP_STOPPED_RECORD}" ]] && grep -Eq '^(audit|record)\|' "${SESSION_STOP_STOPPED_RECORD}"; then
-  echo "Detached session stop mutated audit or record state before confirming a live container" >&2
-  exit 1
+	echo "Detached session stop mutated audit or record state before confirming a live container" >&2
+	exit 1
 fi
 
 SESSION_STOP_DEAD_MONITOR_RECORD="${DETACHED_STATE_DIR}/session-stop.dead-monitor.record"
 SESSION_STOP_DEAD_MONITOR_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.dead-monitor.audit"
 mkdir -p "${SESSION_STOP_DEAD_MONITOR_AUDIT_DIR}"
 stop_dead_monitor_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -1123,7 +1123,7 @@ SESSION_STOP_ALREADY_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.already-
 SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped.audit"
 mkdir -p "${SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR}"
 stop_already_stopped_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -1179,15 +1179,15 @@ grep -q '^audit|wcl-detached-fixture|detached-fixture|stop-request|' "${SESSION_
 grep -q '^audit|wcl-detached-fixture|detached-fixture|exit|source=host-stop-fallback' "${SESSION_STOP_ALREADY_STOPPED_RECORD}"
 grep -q '^record|.*/detached-fixture\.json|status=exited|live_status=stopped|observed_at=' "${SESSION_STOP_ALREADY_STOPPED_RECORD}"
 if grep -q '^transport|wcl-detached-fixture|stop ' "${SESSION_STOP_ALREADY_STOPPED_RECORD}"; then
-  echo "Detached session stop tried to stop an already-stopped container during repair" >&2
-  exit 1
+	echo "Detached session stop tried to stop an already-stopped container during repair" >&2
+	exit 1
 fi
 
 SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD="${DETACHED_STATE_DIR}/session-stop.already-stopped-running.record"
 SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped-running.audit"
 mkdir -p "${SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR}"
 stop_already_stopped_running_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -1240,18 +1240,18 @@ grep -q '^session_id=detached-fixture$' <<<"${stop_already_stopped_running_outpu
 grep -q '^stop_requested=1$' <<<"${stop_already_stopped_running_output}"
 grep -q '^marker=cleared$' <<<"${stop_already_stopped_running_output}"
 if grep -q '^audit|' "${SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD}"; then
-  echo "Detached session stop should not append fallback audit records when the monitor is still live" >&2
-  exit 1
+	echo "Detached session stop should not append fallback audit records when the monitor is still live" >&2
+	exit 1
 fi
 if grep -q '^transport|wcl-detached-fixture|stop ' "${SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD}"; then
-  echo "Detached session stop tried to stop an already-stopped running-status container while the monitor was still live" >&2
-  exit 1
+	echo "Detached session stop tried to stop an already-stopped running-status container while the monitor was still live" >&2
+	exit 1
 fi
 
 SESSION_DELETE_CLEANUP_RECORD="${DETACHED_STATE_DIR}/session-delete.cleanup.record"
 SESSION_DELETE_CLEANUP_ROOT="${DETACHED_STATE_DIR}/session-delete.cleanup.root"
 session_delete_cleanup_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -1320,7 +1320,7 @@ grep -q '^transport|wcl-detached-fixture|rm -f workcell-session-fixture$' "${SES
 SESSION_DELETE_RECORD_ONLY_RECORD="${DETACHED_STATE_DIR}/session-delete.record-only.record"
 SESSION_DELETE_RECORD_ONLY_ROOT="${DETACHED_STATE_DIR}/session-delete.record-only.root"
 session_delete_record_only_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -1379,14 +1379,14 @@ grep -q '^record_only=1$' <<<"${session_delete_record_only_output}"
 grep -q '^removed=record$' <<<"${session_delete_record_only_output}"
 grep -q '^kept=container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_record_only_output}"
 if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_RECORD_ONLY_RECORD}"; then
-  echo "session delete --record-only unexpectedly removed a container" >&2
-  exit 1
+	echo "session delete --record-only unexpectedly removed a container" >&2
+	exit 1
 fi
 
 SESSION_DELETE_DRY_RUN_RECORD="${DETACHED_STATE_DIR}/session-delete.dry-run.record"
 SESSION_DELETE_DRY_RUN_ROOT="${DETACHED_STATE_DIR}/session-delete.dry-run.root"
 session_delete_dry_run_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -1444,8 +1444,8 @@ grep -q '^deleted=0$' <<<"${session_delete_dry_run_output}"
 grep -q '^dry_run=1$' <<<"${session_delete_dry_run_output}"
 grep -q '^would_remove=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_dry_run_output}"
 if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_DRY_RUN_RECORD}"; then
-  echo "session delete --dry-run unexpectedly removed a container" >&2
-  exit 1
+	echo "session delete --dry-run unexpectedly removed a container" >&2
+	exit 1
 fi
 
 SESSION_DELETE_LIVE_CONTAINER_RECORD="${DETACHED_STATE_DIR}/session-delete.live-container.record"
@@ -1493,19 +1493,19 @@ bash -lc '
 session_delete_live_container_status=$?
 set -e
 if [[ "${session_delete_live_container_status}" -eq 0 ]]; then
-  echo "session delete unexpectedly accepted a live container cleanup" >&2
-  exit 1
+	echo "session delete unexpectedly accepted a live container cleanup" >&2
+	exit 1
 fi
 if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_LIVE_CONTAINER_RECORD}"; then
-  echo "session delete tried to remove a running container" >&2
-  exit 1
+	echo "session delete tried to remove a running container" >&2
+	exit 1
 fi
 
 RUNTIME_IMAGE_CACHE_EXPORT_SOURCE="${TMP_DIR}/runtime-image-cache-export.tar"
 RUNTIME_IMAGE_CACHE_RECORD="${TMP_DIR}/runtime-image-cache.record"
 printf 'cached-runtime-image\n' >"${RUNTIME_IMAGE_CACHE_EXPORT_SOURCE}"
 runtime_image_cache_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -1572,10 +1572,10 @@ runtime_image_cache_output="$(
     printf "cache_image_id=%s\n" "$(profile_runtime_image_cache_value "${COLIMA_PROFILE}" image_id)"
     printf "cache_epoch=%s\n" "$(profile_runtime_image_cache_value "${COLIMA_PROFILE}" source_date_epoch)"
   ' _ \
-    "${WORKCELL_FUNCTIONS_COPY}" \
-    "${COLIMA_ROOT}" \
-    "${RUNTIME_IMAGE_CACHE_RECORD}" \
-    "${RUNTIME_IMAGE_CACHE_EXPORT_SOURCE}"
+		"${WORKCELL_FUNCTIONS_COPY}" \
+		"${COLIMA_ROOT}" \
+		"${RUNTIME_IMAGE_CACHE_RECORD}" \
+		"${RUNTIME_IMAGE_CACHE_EXPORT_SOURCE}"
 )"
 grep -q '^save_count=1$' <<<"${runtime_image_cache_output}"
 grep -q '^load_count=1$' <<<"${runtime_image_cache_output}"
@@ -1594,7 +1594,7 @@ DETACHED_CAPTURE_RECORD="${DETACHED_STATE_DIR}/capture-record.log"
 printf 'lower-assurance-package-mutation\n' >"${DETACHED_CAPTURE_AUDIT_SOURCE}"
 printf 'event=watch-start\n' >"${DETACHED_CAPTURE_FILE_TRACE_SOURCE}"
 capture_probe_output="$(
-  bash -lc '
+	bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -1633,20 +1633,20 @@ capture_probe_output="$(
     printf "audit=%s\n" "$(cat "${SESSION_AUDIT_STATE_FILE}")"
     printf "trace=%s\n" "$(cat "${FILE_TRACE_LOG_PATH}")"
   ' _ \
-    "${WORKCELL_FUNCTIONS_COPY}" \
-    "${DETACHED_CAPTURE_STATE_FILE}" \
-    "${DETACHED_CAPTURE_FILE_TRACE_LOG}" \
-    "${DETACHED_CAPTURE_AUDIT_SOURCE}" \
-    "${DETACHED_CAPTURE_FILE_TRACE_SOURCE}" \
-    "${DETACHED_CAPTURE_RECORD}"
+		"${WORKCELL_FUNCTIONS_COPY}" \
+		"${DETACHED_CAPTURE_STATE_FILE}" \
+		"${DETACHED_CAPTURE_FILE_TRACE_LOG}" \
+		"${DETACHED_CAPTURE_AUDIT_SOURCE}" \
+		"${DETACHED_CAPTURE_FILE_TRACE_SOURCE}" \
+		"${DETACHED_CAPTURE_RECORD}"
 )"
 grep -q '^audit=lower-assurance-package-mutation$' <<<"${capture_probe_output}"
 grep -q '^trace=event=watch-start$' <<<"${capture_probe_output}"
 grep -q '^wcl-detached-fixture|cp|workcell-session-fixture:/var/lib/workcell/session-assurance|' "${DETACHED_CAPTURE_RECORD}"
 grep -q '^wcl-detached-fixture|cp|workcell-session-fixture:/var/tmp/workcell-file-trace.log|' "${DETACHED_CAPTURE_RECORD}"
 if grep -q 'ambient-docker-client' "${DETACHED_CAPTURE_RECORD}"; then
-  echo "Detached artifact capture unexpectedly used the ambient host docker client" >&2
-  exit 1
+	echo "Detached artifact capture unexpectedly used the ambient host docker client" >&2
+	exit 1
 fi
 
 mkdir -p "${DETACHED_STATE_DIR}" "$(dirname "${DETACHED_WORKSPACE}")"
@@ -1821,15 +1821,15 @@ EOF
 chmod +x "${DETACHED_BACKEND}"
 
 start_output="$(
-  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
-  SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
-  SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
-  SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
-  SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
-  SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
-  SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
-  SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
-    "${DETACHED_BACKEND}" start
+	SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+		SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+		SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+		SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+		SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+		SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+		SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+		SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+		"${DETACHED_BACKEND}" start
 )"
 grep -q "^session_id=${DETACHED_SESSION}$" <<<"${start_output}"
 grep -q '^status=running$' <<<"${start_output}"
@@ -1842,15 +1842,15 @@ grep -q "^file_trace_log_path=${DETACHED_FILE_TRACE_LOG}$" <<<"${start_output}"
 grep -q "^transcript_log_path=${DETACHED_TRANSCRIPT_LOG}$" <<<"${start_output}"
 
 attach_output="$(
-  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
-  SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
-  SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
-  SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
-  SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
-  SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
-  SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
-  SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
-    "${DETACHED_BACKEND}" attach
+	SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+		SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+		SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+		SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+		SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+		SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+		SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+		SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+		"${DETACHED_BACKEND}" attach
 )"
 grep -q "^session_id=${DETACHED_SESSION}$" <<<"${attach_output}"
 grep -q '^status=running$' <<<"${attach_output}"
@@ -1860,30 +1860,30 @@ grep -q "^git_branch=${DETACHED_BRANCH}$" <<<"${attach_output}"
 grep -q "^transcript_log_path=${DETACHED_TRANSCRIPT_LOG}$" <<<"${attach_output}"
 
 send_output="$(
-  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
-  SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
-  SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
-  SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
-  SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
-  SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
-  SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
-  SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
-    "${DETACHED_BACKEND}" send "plan-next-step"
+	SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+		SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+		SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+		SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+		SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+		SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+		SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+		SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+		"${DETACHED_BACKEND}" send "plan-next-step"
 )"
 grep -q '^sent=plan-next-step$' <<<"${send_output}"
 grep -q '^timeline_seq=2$' <<<"${send_output}"
 grep -q "event=command session_id=${DETACHED_SESSION} timeline_seq=2 command=plan-next-step argv=plan-next-step source=attach" "${DETACHED_AUDIT_LOG}"
 
 show_output="$(
-  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
-  SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
-  SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
-  SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
-  SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
-  SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
-  SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
-  SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
-    "${DETACHED_BACKEND}" show
+	SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+		SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+		SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+		SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+		SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+		SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+		SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+		SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+		"${DETACHED_BACKEND}" show
 )"
 grep -q "^  \"session_id\": \"${DETACHED_SESSION}\"" <<<"${show_output}"
 grep -q '^  "status": "running",$' <<<"${show_output}"
@@ -1897,15 +1897,15 @@ grep -q "^  \"file_trace_log_path\": \"${DETACHED_FILE_TRACE_LOG}\",$" <<<"${sho
 grep -q "^  \"transcript_log_path\": \"${DETACHED_TRANSCRIPT_LOG}\",$" <<<"${show_output}"
 
 stop_output="$(
-  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
-  SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
-  SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
-  SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
-  SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
-  SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
-  SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
-  SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
-    "${DETACHED_BACKEND}" stop
+	SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+		SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+		SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+		SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+		SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+		SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+		SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+		SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+		"${DETACHED_BACKEND}" stop
 )"
 grep -q "^session_id=${DETACHED_SESSION}$" <<<"${stop_output}"
 grep -q '^status=exited$' <<<"${stop_output}"
@@ -1914,15 +1914,15 @@ grep -q '^exit_status=0$' <<<"${stop_output}"
 grep -q '^final_assurance=managed-mutable$' <<<"${stop_output}"
 
 export_fixture="$(
-  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
-  SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
-  SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
-  SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
-  SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
-  SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
-  SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
-  SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
-    "${DETACHED_BACKEND}" export
+	SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+		SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+		SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+		SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+		SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+		SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+		SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+		SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+		"${DETACHED_BACKEND}" export
 )"
 grep -q "^    \"session_id\": \"${DETACHED_SESSION}\"" <<<"${export_fixture}"
 grep -q '^    "status": "exited",$' <<<"${export_fixture}"
@@ -1941,6 +1941,6 @@ grep -q 'file-trace: detached session observability fixture' "${DETACHED_FILE_TR
 grep -q 'transcript: detached session observability fixture' "${DETACHED_TRANSCRIPT_LOG}"
 
 missing_output="$(
-  "${ROOT_DIR}/scripts/workcell" session show --id missing-session 2>&1 >/dev/null || true
+	"${ROOT_DIR}/scripts/workcell" session show --id missing-session 2>&1 >/dev/null || true
 )"
 grep -q 'file does not exist' <<<"${missing_output}"
