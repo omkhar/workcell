@@ -1,5 +1,9 @@
 # Quickstart: Gemini in Workcell
 
+This guide assumes a supported Apple Silicon macOS host. GitHub-hosted CI and
+tagged-release install verification currently cover `macos-26` and `macos-15`;
+the strongest local boundary claim still depends on local Colima validation.
+
 ## Prerequisites
 
 - Workcell installed with `./scripts/install.sh`
@@ -90,3 +94,5 @@ workcell publish-pr --workspace /path/to/repo --branch feature/my-change \
 - [docs/injection-policy.md](../injection-policy.md)
 - [docs/examples/gemini-vertex-setup.md](gemini-vertex-setup.md)
 - [docs/adapter-control-planes.md](../adapter-control-planes.md)
+- [docs/requirements-validation.md](../requirements-validation.md)
+- [docs/validation-scenarios.md](../validation-scenarios.md)

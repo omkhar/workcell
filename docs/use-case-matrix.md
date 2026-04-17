@@ -14,13 +14,13 @@ Workcell workflows.
 | Use case | Status | Primary evidence |
 |---|---|---|
 | secretless provider launch on the managed path | tested | `scripts/container-smoke.sh`, `scripts/verify-invariants.sh` |
-| provider auth injected through the reviewed policy model | tested | container smoke, auth-status tests, provider-specific helpers |
+| provider auth injected through the reviewed policy model | tested for direct staged inputs; built-in resolver coverage remains limited | container smoke, auth-status tests, provider-specific helpers |
 | host-side policy inspection and credential explainability | tested | `tests/scenarios/shared/test-policy-commands.sh`, `internal/authpolicy/manage_test.go` |
 | host-side signed `publish-pr` handoff | tested | shared scenario tests and invariant checks |
 | repo control-plane masking and provider-home re-seeding | tested | invariants and smoke |
 | repo-mounted validator and release-helper runs stay nonroot with explicit caller identity and isolated writable state | tested | CI, release preflight, `scripts/pre-merge.sh`, and invariant checks |
 | prompt-autonomy downgrade labeling | tested for Codex, partial elsewhere | invariants plus provider-specific coverage |
-| host-side session inventory, clean-base diff, and audit export | tested | `tests/scenarios/shared/test-session-commands.sh`, `internal/hostutil/sessions_test.go` |
+| host-side session inventory, detached session control, log and timeline views, clean-base diff, and audit export | tested | `tests/scenarios/shared/test-session-commands.sh`, `internal/hostutil/sessions_test.go`, `cmd/workcell-hostutil/main_test.go` |
 | bundle installer plus uninstall helper on the supported GitHub-hosted macOS matrix | tested | `scripts/verify-invariants.sh`, CI, tagged release install verification |
 | Homebrew formula install plus uninstall on the supported GitHub-hosted macOS matrix | tested | CI and tagged release install verification |
 | release-bundle reproducibility | tested | `scripts/verify-release-bundle.sh`, tagged release preflight |
@@ -35,6 +35,6 @@ Workcell workflows.
 The most heavily tested paths are the secretless runtime boundary, explicit
 nonroot repo validation and release preflight, reproducibility, and signed
 publication. The most mature host-side operator surfaces are auth/policy
-inspection plus session inventory and export. The biggest remaining gaps are
-local macOS boundary proof, deeper end-to-end live-provider coverage, and
-fuller lower-assurance transition coverage.
+inspection plus session inventory, detached control, timeline, and export. The
+biggest remaining gaps are local macOS boundary proof, deeper end-to-end
+live-provider coverage, and fuller lower-assurance transition coverage.

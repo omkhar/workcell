@@ -28,6 +28,7 @@ func ValidateRequirements(rootDir, requirementsPath string) error {
 
 	seenIDs := map[string]struct{}{}
 	seenTitles := map[string]struct{}{}
+	referencedDocs := map[string]struct{}{}
 	for _, categorySpec := range []struct {
 		category string
 		prefix   string
@@ -59,15 +60,25 @@ func ValidateRequirements(rootDir, requirementsPath string) error {
 			if !ok {
 				return fmt.Errorf("%s requirement %s must be a table", requirementsPath, id)
 			}
-			if err := validateRequirementTable(rootDir, requirementsPath, category, id, table, seenTitles); err != nil {
+			if err := validateRequirementTable(rootDir, requirementsPath, category, id, table, seenTitles, referencedDocs); err != nil {
 				return err
 			}
 		}
 	}
+	requiredDocs, err := requiredReleaseFacingDocs(rootDir)
+	if err != nil {
+		return err
+	}
+	for _, docPath := range requiredDocs {
+		if _, ok := referencedDocs[docPath]; ok {
+			continue
+		}
+		return fmt.Errorf("%s must cite release-facing documentation path %s in at least one requirement docs array", requirementsPath, docPath)
+	}
 	return nil
 }
 
-func validateRequirementTable(rootDir, requirementsPath, category, id string, table map[string]any, seenTitles map[string]struct{}) error {
+func validateRequirementTable(rootDir, requirementsPath, category, id string, table map[string]any, seenTitles map[string]struct{}, referencedDocs map[string]struct{}) error {
 	allowedKeys := map[string]struct{}{
 		"title":    {},
 		"summary":  {},
@@ -126,8 +137,57 @@ func validateRequirementTable(rootDir, requirementsPath, category, id string, ta
 		if err := validateRequirementPath(rootDir, requirementsPath, category, id, "docs", path); err != nil {
 			return err
 		}
+		canonicalPath, err := canonicalRequirementRepoPath(rootDir, path)
+		if err != nil {
+			return fmt.Errorf("%s requirement %s docs path %s: %w", requirementsPath, id, path, err)
+		}
+		referencedDocs[canonicalPath] = struct{}{}
 	}
 	return nil
+}
+
+func requiredReleaseFacingDocs(rootDir string) ([]string, error) {
+	requiredDocs := []string{}
+	staticDocs := []string{
+		"docs/enterprise-rollout.md",
+		"docs/provider-matrix.md",
+		"docs/validation-scenarios.md",
+	}
+	for _, path := range staticDocs {
+		target, err := resolveRequirementPath(rootDir, path)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Lstat(target)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		if info.IsDir() {
+			continue
+		}
+		requiredDocs = append(requiredDocs, path)
+	}
+
+	examplesDir := filepath.Join(rootDir, "docs", "examples")
+	entries, err := os.ReadDir(examplesDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			sort.Strings(requiredDocs)
+			return requiredDocs, nil
+		}
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+			continue
+		}
+		requiredDocs = append(requiredDocs, filepath.ToSlash(filepath.Join("docs", "examples", entry.Name())))
+	}
+	sort.Strings(requiredDocs)
+	return requiredDocs, nil
 }
 
 func validateRequirementPath(rootDir, requirementsPath, category, id, field, path string) error {
@@ -189,6 +249,19 @@ func resolveRequirementPath(rootDir, path string) (string, error) {
 		return "", fmt.Errorf("path escapes repository root")
 	}
 	return target, nil
+}
+
+func canonicalRequirementRepoPath(rootDir, path string) (string, error) {
+	target, err := resolveRequirementPath(rootDir, path)
+	if err != nil {
+		return "", err
+	}
+	root := filepath.Clean(rootDir)
+	relative, err := filepath.Rel(root, target)
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Clean(relative)), nil
 }
 
 func isAutomatedEvidencePath(path string) bool {

@@ -1140,55 +1140,55 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requireEqual("Go toolchain version", goToolchainVersion, goModPath, validatorGoVersion, cfg.ValidatorDockerfilePath); err != nil {
 		return err
 	}
-		expectedGoLanguageVersion, err := goLanguageVersionFromToolchain(goToolchainVersion, goModPath)
-		if err != nil {
-			return err
-		}
-		if goLanguageVersion != expectedGoLanguageVersion {
-			return fmt.Errorf("go language version in %s must match the toolchain major/minor at patch zero, expected %q, found %q", goModPath, expectedGoLanguageVersion, goLanguageVersion)
-		}
-		validatorGoSHAx86_64, err := requireArg(validatorDockerfile, "GO_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
-		if err != nil {
-			return err
-		}
-		if !isHexDigest(validatorGoSHAx86_64) {
-			return fmt.Errorf("GO_LINUX_X86_64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorGoSHAx86_64)
-		}
-		validatorGoSHAArm64, err := requireArg(validatorDockerfile, "GO_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
-		if err != nil {
-			return err
-		}
-		if !isHexDigest(validatorGoSHAArm64) {
-			return fmt.Errorf("GO_LINUX_ARM64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorGoSHAArm64)
-		}
-		validatorHadolintVersion, err := requireArg(validatorDockerfile, "HADOLINT_VERSION", cfg.ValidatorDockerfilePath)
-		if err != nil {
-			return err
-		}
-		if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(validatorHadolintVersion) {
-			return fmt.Errorf("HADOLINT_VERSION must be an exact pinned release, found %q", validatorHadolintVersion)
-		}
-		validatorHadolintSHAx86_64, err := requireArg(validatorDockerfile, "HADOLINT_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
-		if err != nil {
-			return err
-		}
-		if !isHexDigest(validatorHadolintSHAx86_64) {
-			return fmt.Errorf("HADOLINT_LINUX_X86_64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorHadolintSHAx86_64)
-		}
-		validatorHadolintSHAArm64, err := requireArg(validatorDockerfile, "HADOLINT_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
-		if err != nil {
-			return err
-		}
-		if !isHexDigest(validatorHadolintSHAArm64) {
-			return fmt.Errorf("HADOLINT_LINUX_ARM64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorHadolintSHAArm64)
-		}
-		validatorMarkdownlintVersion, err := requireArg(validatorDockerfile, "MARKDOWNLINT_VERSION", cfg.ValidatorDockerfilePath)
-		if err != nil {
-			return err
-		}
-		if !regexp.MustCompile(`^0\.\d+\.\d+$`).MatchString(validatorMarkdownlintVersion) {
-			return fmt.Errorf("MARKDOWNLINT_VERSION must be an exact pinned release, found %q", validatorMarkdownlintVersion)
-		}
+	expectedGoLanguageVersion, err := goLanguageVersionFromToolchain(goToolchainVersion, goModPath)
+	if err != nil {
+		return err
+	}
+	if goLanguageVersion != expectedGoLanguageVersion {
+		return fmt.Errorf("go language version in %s must match the toolchain major/minor at patch zero, expected %q, found %q", goModPath, expectedGoLanguageVersion, goLanguageVersion)
+	}
+	validatorGoSHAx86_64, err := requireArg(validatorDockerfile, "GO_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if !isHexDigest(validatorGoSHAx86_64) {
+		return fmt.Errorf("GO_LINUX_X86_64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorGoSHAx86_64)
+	}
+	validatorGoSHAArm64, err := requireArg(validatorDockerfile, "GO_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if !isHexDigest(validatorGoSHAArm64) {
+		return fmt.Errorf("GO_LINUX_ARM64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorGoSHAArm64)
+	}
+	validatorHadolintVersion, err := requireArg(validatorDockerfile, "HADOLINT_VERSION", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(validatorHadolintVersion) {
+		return fmt.Errorf("HADOLINT_VERSION must be an exact pinned release, found %q", validatorHadolintVersion)
+	}
+	validatorHadolintSHAx86_64, err := requireArg(validatorDockerfile, "HADOLINT_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if !isHexDigest(validatorHadolintSHAx86_64) {
+		return fmt.Errorf("HADOLINT_LINUX_X86_64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorHadolintSHAx86_64)
+	}
+	validatorHadolintSHAArm64, err := requireArg(validatorDockerfile, "HADOLINT_LINUX_ARM64_SHA256", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if !isHexDigest(validatorHadolintSHAArm64) {
+		return fmt.Errorf("HADOLINT_LINUX_ARM64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorHadolintSHAArm64)
+	}
+	validatorMarkdownlintVersion, err := requireArg(validatorDockerfile, "MARKDOWNLINT_VERSION", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if !regexp.MustCompile(`^0\.\d+\.\d+$`).MatchString(validatorMarkdownlintVersion) {
+		return fmt.Errorf("MARKDOWNLINT_VERSION must be an exact pinned release, found %q", validatorMarkdownlintVersion)
+	}
 	for _, needle := range []string{
 		`COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/`,
 		`npm ci --prefix /usr/local/lib/workcell-markdownlint --ignore-scripts --omit=dev`,

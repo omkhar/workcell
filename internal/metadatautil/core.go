@@ -31,21 +31,21 @@ type ControlPlaneArtifact struct {
 }
 
 type PinnedInputsConfig struct {
-	RuntimeDockerfilePath         string
-	ValidatorDockerfilePath       string
-	ProvidersPackageJSONPath      string
-	ProvidersPackageLockPath      string
-	WorkflowsDir                  string
-	CIWorkflowPath                string
-	ReleaseWorkflowPath           string
-	PinHygieneWorkflowPath        string
-	CodeownersPath                string
-	CodexRequirementsPath         string
-	CodexMCPConfigPath            string
-	HostedControlsPolicyPath      string
-	HostedControlsScriptPath      string
-	ProviderBumpPolicyPath        string
-	MaxDebianSnapshotAgeDays      int
+	RuntimeDockerfilePath    string
+	ValidatorDockerfilePath  string
+	ProvidersPackageJSONPath string
+	ProvidersPackageLockPath string
+	WorkflowsDir             string
+	CIWorkflowPath           string
+	ReleaseWorkflowPath      string
+	PinHygieneWorkflowPath   string
+	CodeownersPath           string
+	CodexRequirementsPath    string
+	CodexMCPConfigPath       string
+	HostedControlsPolicyPath string
+	HostedControlsScriptPath string
+	ProviderBumpPolicyPath   string
+	MaxDebianSnapshotAgeDays int
 }
 
 func readText(path string) (string, error) {

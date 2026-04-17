@@ -42,14 +42,21 @@ boundary.
 ## Project status
 
 - pre-1.0 and still tightening the public contract
-- Apple Silicon macOS hosts only today
-- CLI surfaces for Codex, Claude, and Gemini
+- Apple Silicon macOS hosts only today; Linux and Windows are not currently
+  supported
+- local host-launched runtime first; there is no Workcell-managed cloud or
+  remote worker plane today
+- CLI surfaces for Codex, Claude, and Gemini plus host-side detached session
+  control and inspection commands
 - GitHub-hosted CI verifies repo shape, reproducibility, release posture, and
   secretless runtime behavior
 - GitHub-hosted CI continuously verifies bundle install/uninstall and Homebrew
   install/uninstall on Apple Silicon `macos-26` and `macos-15`
 - the real macOS Colima boundary is still a local operator exercise because
   GitHub-hosted Linux runners cannot prove it
+- Workcell does not yet ship a centralized enterprise policy, inventory, or
+  analytics plane; team rollout today relies on distributing reviewed
+  host-side files
 
 Breaking changes should be called out in [CHANGELOG.md](CHANGELOG.md) and
 tracked in [ROADMAP.md](ROADMAP.md).
@@ -82,7 +89,8 @@ workcell --agent codex --workspace /path/to/repo
 ```
 
 See [docs/getting-started.md](docs/getting-started.md) for the release install
-path and provider-specific onboarding.
+path and provider-specific onboarding. For team rollout patterns on today's
+local-first product, see [docs/enterprise-rollout.md](docs/enterprise-rollout.md).
 
 ## Install options
 
@@ -162,6 +170,11 @@ derived launch view after selector evaluation and preprocessing.
 `workcell why` explains why one credential is selected, out of scope, filtered,
 or still only configured on the host side.
 
+Direct staged credentials are the primary supported auth path today. Built-in
+resolver coverage is intentionally narrow; for example, the Claude macOS
+resolver scaffold can record intent but is not launch-ready until a supported
+export path exists.
+
 Workcell can stage:
 
 - common or provider-specific instruction fragments
@@ -188,6 +201,10 @@ See [docs/injection-policy.md](docs/injection-policy.md) and
 
 GUI and IDE surfaces are lower assurance unless they act only as clients to
 the same bounded runtime.
+
+See [docs/injection-policy.md](docs/injection-policy.md) for provider auth
+maturity and [docs/enterprise-rollout.md](docs/enterprise-rollout.md) for the
+current team rollout model.
 
 ## Mode map
 
@@ -237,7 +254,13 @@ workcell --agent codex --prepare --workspace /path/to/repo
 workcell --agent codex --prepare-only --workspace /path/to/repo
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell session list
+workcell session start --agent codex --workspace /path/to/repo
+workcell session attach --id 20260408T120000Z-1a2b3c4d
+workcell session send --id 20260408T120000Z-1a2b3c4d --message "continue with tests"
+workcell session stop --id 20260408T120000Z-1a2b3c4d
 workcell session show --id 20260408T120000Z-1a2b3c4d
+workcell session logs --id 20260408T120000Z-1a2b3c4d --kind audit
+workcell session timeline --id 20260408T120000Z-1a2b3c4d
 workcell session diff --id 20260408T120000Z-1a2b3c4d
 workcell session export --id 20260408T120000Z-1a2b3c4d --output /tmp/workcell-session.json
 workcell policy show

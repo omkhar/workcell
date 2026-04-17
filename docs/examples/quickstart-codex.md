@@ -3,9 +3,14 @@
 This guide walks through the normal Codex path inside Workcell's bounded
 runtime.
 
+It assumes a supported Apple Silicon macOS host. GitHub-hosted CI and
+tagged-release install verification currently cover `macos-26` and `macos-15`;
+the strongest local boundary claim still depends on local Colima validation.
+
 ## Prerequisites
 
 - macOS
+- Apple Silicon host
 - Colima
 - Docker CLI
 - Workcell installed with `./scripts/install.sh`
@@ -111,3 +116,5 @@ workcell publish-pr \
 - [Injection policy](../injection-policy.md)
 - [Codex adapter](../../adapters/codex/README.md)
 - [Adapter control planes](../adapter-control-planes.md)
+- [Requirements validation](../requirements-validation.md)
+- [Validation scenarios](../validation-scenarios.md)

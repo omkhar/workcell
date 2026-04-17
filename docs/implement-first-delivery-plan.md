@@ -4,6 +4,13 @@ This document turns the current short-term roadmap into a concrete delivery
 shape that keeps the boundary model intact and favors additive host-side
 changes on top of the inspection and policy surfaces that already shipped.
 
+The current repo already includes durable session records plus detached
+host-side session control (`session start|attach|send|stop`) and basic
+observability surfaces (`session list|show|logs|timeline|diff|export`). The
+remaining work in this slice is to make those commands feel like one coherent
+session platform with safer default workspace isolation, richer status
+rendering, and deeper validation coverage.
+
 ## Principles
 
 - keep new control paths host-owned and file-backed before introducing live
@@ -29,13 +36,14 @@ changes on top of the inspection and policy surfaces that already shipped.
 
 Scope for this delivery slice:
 
-- preserve the shipped durable session inventory and inspection surface:
-  `session list`, `session show`, `session diff`, and `session export`
-- add durable session creation and detached execution
-- add `workcell session attach`, `workcell session send`, and
-  `workcell session stop`
+- preserve the shipped durable session inventory and detached control surface:
+  `session list`, `session show`, `session logs`, `session timeline`,
+  `session diff`, `session export`, `session start`, `session attach`,
+  `session send`, and `session stop`
 - default the safe path to one worktree per session when the operator opts into
   orchestrated session flows
+- keep the detached session path file-backed and host-owned rather than adding
+  same-user local socket trust as a shortcut
 - keep the implementation host-owned and file-backed; do not add same-user
   local socket trust as a shortcut
 
@@ -49,8 +57,8 @@ Staffing:
 
 Scope for this delivery slice:
 
-- surface live status, branch/worktree, assurance state, logs, transcript
-  pointers, and command timeline views
+- extend the shipped logs, transcript pointers, and command timeline views
+  with clearer live status, branch/worktree, and assurance rendering
 - keep the first operator-facing surfaces CLI-first
 - add a lightweight TUI or dashboard only after the session object and status
   model stabilize
