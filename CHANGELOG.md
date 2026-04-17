@@ -8,6 +8,19 @@ Releases.
 
 ## Unreleased
 
+## v0.10.3 - 2026-04-17
+
+### Changed
+
+- add an explicit reviewed Claude provider-bump exception path so a known-good
+  stable upstream fix can bypass the normal cool-off window without fighting
+  release preflight
+- bump the pinned Claude CLI from `2.1.104` to `2.1.108` because `2.1.108`
+  fixes the defect that kept the repo on the earlier holdback
+- default the release runbook to maintainer review-gated checkpoints before
+  publish, merge, tag, release-environment approval, and final closeout while
+  keeping the single-maintainer provenance path explicit
+
 ## v0.10.2 - 2026-04-17
 
 ### Fixed

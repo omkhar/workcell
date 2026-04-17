@@ -46,8 +46,9 @@ type ProviderBumpPolicy struct {
 }
 
 type ProviderBumpChannel struct {
-	Channel    string `toml:"channel"`
-	MaxVersion string `toml:"max_version"`
+	Channel         string `toml:"channel"`
+	MaxVersion      string `toml:"max_version"`
+	ApprovedVersion string `toml:"approved_version"`
 }
 
 type ProviderBumpPlan struct {
@@ -150,6 +151,24 @@ func LoadProviderBumpPolicy(policyPath string) (ProviderBumpPolicy, error) {
 				return ProviderBumpPolicy{}, fmt.Errorf("%s must pin provider.%s.max_version to an exact stable version", policyPath, provider)
 			}
 		}
+		if spec.ApprovedVersion != "" {
+			approved, ok := parseStableVersion(spec.ApprovedVersion)
+			if !ok {
+				return ProviderBumpPolicy{}, fmt.Errorf("%s must pin provider.%s.approved_version to an exact stable version", policyPath, provider)
+			}
+			if provider != "claude" {
+				return ProviderBumpPolicy{}, fmt.Errorf("%s only supports provider.claude.approved_version today", policyPath)
+			}
+			if spec.MaxVersion != "" {
+				maxAllowed, ok := parseStableVersion(spec.MaxVersion)
+				if !ok {
+					return ProviderBumpPolicy{}, fmt.Errorf("%s must pin provider.%s.max_version to an exact stable version", policyPath, provider)
+				}
+				if compareStableVersions(approved, maxAllowed) > 0 {
+					return ProviderBumpPolicy{}, fmt.Errorf("%s requires provider.%s.approved_version <= %s", policyPath, provider, spec.MaxVersion)
+				}
+			}
+		}
 	}
 	if len(policy.Providers) != len(requiredProviders) {
 		return ProviderBumpPolicy{}, fmt.Errorf("%s must define exactly %d providers", policyPath, len(requiredProviders))
@@ -226,7 +245,14 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	if err != nil {
 		return nil, err
 	}
-	claudeSelection, err := selectClaudeStable(claudeCurrent, cutoff, policy.Providers["claude"].MaxVersion, sources, client)
+	claudeSelection, err := selectClaudeStable(
+		claudeCurrent,
+		cutoff,
+		policy.Providers["claude"].MaxVersion,
+		policy.Providers["claude"].ApprovedVersion,
+		sources,
+		client,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -420,12 +446,13 @@ func selectGeminiStable(currentVersion string, cutoff time.Time, sources Provide
 	}, nil
 }
 
-func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
+func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion string, approvedVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
 	var listing claudeBucketListing
 	if err := fetchXML(client, sources.ClaudeBucketURL, &listing); err != nil {
 		return ProviderBumpSelection{}, err
 	}
 	maxAllowed, hasMaxVersion := parseStableVersion(maxVersion)
+	approved, hasApprovedVersion := parseStableVersion(approvedVersion)
 	candidates := make([]stableVersion, 0, len(listing.CommonPrefixes))
 	for _, prefix := range listing.CommonPrefixes {
 		match := claudeBucketVersionDirPattern.FindStringSubmatch(prefix.Prefix)
@@ -442,6 +469,39 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		candidates = append(candidates, version)
 	}
 	sortStableVersionsDesc(candidates)
+	if hasApprovedVersion {
+		for _, candidate := range candidates {
+			if compareStableVersions(candidate, approved) != 0 {
+				continue
+			}
+			manifestURL := fmt.Sprintf("%s/%s/manifest.json", sources.ClaudeReleaseRootURL, candidate.Raw)
+			var manifest claudeManifest
+			if err := fetchJSON(client, manifestURL, &manifest); err != nil {
+				return ProviderBumpSelection{}, err
+			}
+			buildTime, err := time.Parse(time.RFC3339, manifest.BuildDate)
+			if err != nil {
+				return ProviderBumpSelection{}, fmt.Errorf("parse Claude manifest buildDate for %s: %w", candidate.Raw, err)
+			}
+			armChecksum := manifest.Platforms["linux-arm64"].Checksum
+			amdChecksum := manifest.Platforms["linux-x64"].Checksum
+			if armChecksum == "" || amdChecksum == "" {
+				return ProviderBumpSelection{}, fmt.Errorf("claude manifest for %s is missing Linux checksums", candidate.Raw)
+			}
+			return ProviderBumpSelection{
+				Channel:        "stable",
+				CurrentVersion: currentVersion,
+				TargetVersion:  candidate.Raw,
+				PublishedAt:    buildTime.UTC().Format(time.RFC3339),
+				Changed:        candidate.Raw != currentVersion,
+				Checksums: map[string]string{
+					"arm64": armChecksum,
+					"amd64": amdChecksum,
+				},
+			}, nil
+		}
+		return ProviderBumpSelection{}, fmt.Errorf("claude approved_version %s is not present in the release bucket listing", approvedVersion)
+	}
 	for _, candidate := range candidates {
 		manifestURL := fmt.Sprintf("%s/%s/manifest.json", sources.ClaudeReleaseRootURL, candidate.Raw)
 		var manifest claudeManifest
