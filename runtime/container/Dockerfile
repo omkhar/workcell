@@ -10,8 +10,8 @@ ARG SOURCE_DATE_EPOCH=0
 # Debian snapshot date for apt sources. Pinned for reproducibility.
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
-ARG DEBIAN_SNAPSHOT=20260415T000000Z
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.94.1-slim-trixie@sha256:cf09adf8c3ebaba10779e5c23ff7fe4df4cccdab8a91f199b0c142c53fef3e1a
+ARG DEBIAN_SNAPSHOT=20260417T000000Z
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.95.0-slim-trixie@sha256:72e5ceb0b77211cd46e45d327e33c12f2ad24b6f48ce54a279e07f95f21382f9
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -137,16 +137,16 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.107
+ARG CLAUDE_VERSION=2.1.104
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. To update
 # manually, resolve the eligible stable version, verify the GitHub release
 # asset digests for both Linux tarballs, and refresh the CODEX_SHA256 values
 # for arm64 and amd64 below.
-ARG CODEX_VERSION=0.120.0
+ARG CODEX_VERSION=0.121.0
 ARG CODEX_RELEASE_URL=
-ARG RUST_VERSION=1.94.1
+ARG RUST_VERSION=1.95.0
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
@@ -212,11 +212,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="b3f1d3acde0a247c67a93638208911dd2f676743d16cb3f9bd3987ffb3498a00"; \
+      CLAUDE_SHA256="f0a79ec304334503a563c6d4618b0ea1fcbbe477a047dd3955e2078a3c5559c1"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="8abe3909c55b3afafa8939d28c2cc2fcf73ba9424a46b4f435bbadda7e0eb00d"; \
+      CLAUDE_SHA256="f5fe84d4b8a5a322b83a8ae63ac117adb143d2a9a0bfd73a201a5201d6423869"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -248,11 +248,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-gnu"; \
-      CODEX_SHA256="81e0b51a4052a05578bfed0789181e683cba727675a8d69c04544b66df9f307e"; \
+      CODEX_SHA256="9ce5edd5524898ad2e95b59f278977e312726e0587957d1f10ee389070fe5034"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-gnu"; \
-      CODEX_SHA256="0d878cc9dbe7cabf813775d7ea5de1194d752d32db0c2326903665a841613c8a"; \
+      CODEX_SHA256="f053ac81e9c6769920f9ee3566abad47ab0856eb7ee792428681664ece113430"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \

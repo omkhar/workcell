@@ -6,6 +6,7 @@ channel = "stable"
 
 [provider.claude]
 channel = "stable"
+max_version = "2.1.104"
 
 [provider.gemini]
 channel = "stable"
