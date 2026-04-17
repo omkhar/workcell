@@ -3,7 +3,7 @@
   "scenarios": [
     {
       "id": "shared/auth-status",
-      "description": "Shared auth-status reports provider and shared credential posture across adapters",
+      "description": "Shared auth-status and resolver-backed launch dry-runs report provider and shared credential posture across adapters",
       "lane": "secretless",
       "platform": "any",
       "manual": false,
@@ -91,7 +91,7 @@
     },
     {
       "id": "shared/session-commands",
-      "description": "Host-side session inventory lists, shows, diffs, and exports durable launch records without starting the runtime",
+      "description": "Host-side session inventory and detached control-plane commands cover durable records plus attach/send/stop/delete lifecycle handling for running and terminal workloads",
       "lane": "secretless",
       "platform": "any",
       "manual": false,

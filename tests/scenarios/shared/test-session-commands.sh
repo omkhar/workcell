@@ -1502,6 +1502,127 @@ if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_LIVE_CONTA
   exit 1
 fi
 
+SESSION_LIFECYCLE_RECORD="${DETACHED_STATE_DIR}/session-lifecycle.record"
+SESSION_LIFECYCLE_ROOT="${DETACHED_STATE_DIR}/session-lifecycle.root"
+SESSION_LIFECYCLE_AUDIT_LOG="${SESSION_LIFECYCLE_ROOT}/wcl-detached-lifecycle/workcell.audit.log"
+session_lifecycle_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_STATE_ROOT="$2"
+    RECORD_FILE="$3"
+    WORKSPACE_PATH="$4"
+    PROFILE_DIR="${COLIMA_STATE_ROOT}/wcl-detached-lifecycle"
+    SESSION_ID="detached-lifecycle"
+    RECORD_PATH="${PROFILE_DIR}/sessions/${SESSION_ID}.json"
+    AUDIT_LOG="${PROFILE_DIR}/workcell.audit.log"
+    DEBUG_LOG="${PROFILE_DIR}/detached.debug.log"
+    FILE_TRACE_LOG="${PROFILE_DIR}/detached.file-trace.log"
+    TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
+    SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.${SESSION_ID}"
+    CONTAINER_STATE_FILE="${PROFILE_DIR}/container.state"
+    mkdir -p "${PROFILE_DIR}/sessions" "${SESSION_AUDIT_DIR}"
+    : >"${PROFILE_DIR}/docker.sock"
+    printf "running\n" >"${CONTAINER_STATE_FILE}"
+    printf "debug\n" >"${DEBUG_LOG}"
+    printf "trace\n" >"${FILE_TRACE_LOG}"
+    printf "transcript\n" >"${TRANSCRIPT_LOG}"
+    cat >"${RECORD_PATH}" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "${SESSION_ID}",
+  "profile": "wcl-detached-lifecycle",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE_PATH}",
+  "workspace_origin": "${WORKSPACE_PATH}",
+  "worktree_path": "${WORKSPACE_PATH}",
+  "container_name": "workcell-session-fixture",
+  "monitor_pid": "4242",
+  "session_audit_dir": "${SESSION_AUDIT_DIR}",
+  "audit_log_path": "${AUDIT_LOG}",
+  "debug_log_path": "${DEBUG_LOG}",
+  "file_trace_log_path": "${FILE_TRACE_LOG}",
+  "transcript_log_path": "${TRANSCRIPT_LOG}",
+  "started_at": "2026-04-08T15:00:00Z",
+  "current_assurance": "managed-mutable",
+  "initial_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF_JSON
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    exit() { return "${1:-0}"; }
+    session_monitor_pid_is_live() {
+      [[ "$(<"${CONTAINER_STATE_FILE}")" == "running" ]]
+    }
+    session_container_exit_code() { printf "0\n"; }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        inspect)
+          printf "%s\n" "$(<"${CONTAINER_STATE_FILE}")"
+          ;;
+        attach)
+          printf "attached\n"
+          ;;
+        exec)
+          return 0
+          ;;
+        stop)
+          printf "stopped\n" >"${CONTAINER_STATE_FILE}"
+          ;;
+        rm)
+          printf "removed\n" >"${CONTAINER_STATE_FILE}"
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+
+    attach_output="$(session_attach_main --id "${SESSION_ID}" --no-stdin)"
+    send_output="$(session_send_main --id "${SESSION_ID}" --message resume)"
+    stop_output="$(session_stop_main --id "${SESSION_ID}")"
+    delete_output="$(session_delete_main --id "${SESSION_ID}")"
+
+    printf "attach_output=%s\n" "${attach_output}"
+    printf "send_output=%s\n" "$(tr "\n" "|" <<<"${send_output}")"
+    printf "stop_output=%s\n" "$(tr "\n" "|" <<<"${stop_output}")"
+    printf "delete_output=%s\n" "$(tr "\n" "|" <<<"${delete_output}")"
+
+    test ! -e "${RECORD_PATH}"
+    test ! -e "${DEBUG_LOG}"
+    test ! -e "${FILE_TRACE_LOG}"
+    test ! -e "${TRANSCRIPT_LOG}"
+    test ! -e "${SESSION_AUDIT_DIR}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_LIFECYCLE_ROOT}" "${SESSION_LIFECYCLE_RECORD}" "${WORKSPACE_A}"
+)"
+grep -q '^attach_output=attached$' <<<"${session_lifecycle_output}"
+grep -q '^send_output=session_id=detached-lifecycle|sent_bytes=7|$' <<<"${session_lifecycle_output}"
+grep -q '^stop_output=session_id=detached-lifecycle|stop_requested=1|$' <<<"${session_lifecycle_output}"
+grep -q '^delete_output=session_id=detached-lifecycle|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${session_lifecycle_output}"
+test -f "${SESSION_LIFECYCLE_AUDIT_LOG}"
+grep -q '^transport|wcl-detached-lifecycle|attach --no-stdin workcell-session-fixture$' "${SESSION_LIFECYCLE_RECORD}"
+grep -q '^transport|wcl-detached-lifecycle|exec --user ' "${SESSION_LIFECYCLE_RECORD}"
+grep -q '/state/tmp/workcell/session-stdin' "${SESSION_LIFECYCLE_RECORD}"
+grep -q '^transport|wcl-detached-lifecycle|stop workcell-session-fixture$' "${SESSION_LIFECYCLE_RECORD}"
+grep -q '^transport|wcl-detached-lifecycle|rm -f workcell-session-fixture$' "${SESSION_LIFECYCLE_RECORD}"
+grep -q 'event=attach-attempt session_id=detached-lifecycle' "${SESSION_LIFECYCLE_AUDIT_LOG}"
+grep -q 'event=attach session_id=detached-lifecycle' "${SESSION_LIFECYCLE_AUDIT_LOG}"
+grep -q 'event=command session_id=detached-lifecycle source=host-cli command=session-send argv=resume' "${SESSION_LIFECYCLE_AUDIT_LOG}"
+grep -q 'event=stop-request session_id=detached-lifecycle' "${SESSION_LIFECYCLE_AUDIT_LOG}"
+grep -q 'event=exit session_id=detached-lifecycle source=host-stop-fallback exit_status=0 final_assurance=managed-mutable' "${SESSION_LIFECYCLE_AUDIT_LOG}"
+
 RUNTIME_IMAGE_CACHE_EXPORT_SOURCE="${TMP_DIR}/runtime-image-cache-export.tar"
 RUNTIME_IMAGE_CACHE_RECORD="${TMP_DIR}/runtime-image-cache.record"
 printf 'cached-runtime-image\n' >"${RUNTIME_IMAGE_CACHE_EXPORT_SOURCE}"
