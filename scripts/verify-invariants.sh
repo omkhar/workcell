@@ -5481,8 +5481,16 @@ if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
   exit 1
 fi
 
-if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- '--entrypoint bash'; then
-  echo "Expected arbitrary command path to bypass the managed container entrypoint" >&2
+if echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- '--entrypoint bash'; then
+  echo "Expected arbitrary command path to stay on the managed container entrypoint" >&2
+  exit 1
+fi
+if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- '-e WORKCELL_ALLOW_ARBITRARY_COMMAND=1'; then
+  echo "Expected arbitrary command path to declare explicit lower-assurance runtime handling" >&2
+  exit 1
+fi
+if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- 'workcell:local bash -lc true '; then
+  echo "Expected arbitrary command path to preserve the explicit runtime command arguments" >&2
   exit 1
 fi
 
