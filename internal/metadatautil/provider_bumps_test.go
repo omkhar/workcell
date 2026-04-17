@@ -257,7 +257,6 @@ func TestCheckProviderBumpPolicyRejectsUnstableClaudePinWithCeiling(t *testing.T
 		t.Fatalf("CheckProviderBumpPolicy() error = %v", err)
 	}
 }
-
 func TestPlanProviderBumpsHonorsClaudeMaxVersion(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")
@@ -405,7 +404,6 @@ func TestApplyProviderBumpPlanRejectsUnstableClaudeTargetVersion(t *testing.T) {
 		t.Fatalf("ApplyProviderBumpPlan() error = %v", err)
 	}
 }
-
 func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")
