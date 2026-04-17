@@ -8,6 +8,17 @@ Releases.
 
 ## Unreleased
 
+## v0.10.1 - 2026-04-17
+
+### Changed
+
+- enabled GitHub immutable releases at the repository level and cut the latest
+  release under that hosted control so the current published release is
+  immutable
+- clarified the single-maintainer release runbook with literal public comment
+  templates for release-PR provenance and release-environment self-review, plus
+  the documented recovery path when an earlier published release was mutable
+
 ## v0.10.0 - 2026-04-17
 
 ### Added
