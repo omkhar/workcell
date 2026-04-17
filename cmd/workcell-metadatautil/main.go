@@ -180,21 +180,21 @@ func main() {
 			die(convErr)
 		}
 		err = metadatautil.CheckPinnedInputs(metadatautil.PinnedInputsConfig{
-			RuntimeDockerfilePath:         os.Args[2],
-			ValidatorDockerfilePath:       os.Args[3],
-			ProvidersPackageJSONPath:      os.Args[4],
-			ProvidersPackageLockPath:      os.Args[5],
-			WorkflowsDir:                  os.Args[6],
-			CIWorkflowPath:                os.Args[7],
-			ReleaseWorkflowPath:           os.Args[8],
-			PinHygieneWorkflowPath:        os.Args[9],
-			CodeownersPath:                os.Args[10],
-			CodexRequirementsPath:         os.Args[11],
-			CodexMCPConfigPath:            os.Args[12],
-			HostedControlsPolicyPath:      os.Args[13],
-			HostedControlsScriptPath:      os.Args[14],
-			ProviderBumpPolicyPath:        os.Args[15],
-			MaxDebianSnapshotAgeDays:      maxAge,
+			RuntimeDockerfilePath:    os.Args[2],
+			ValidatorDockerfilePath:  os.Args[3],
+			ProvidersPackageJSONPath: os.Args[4],
+			ProvidersPackageLockPath: os.Args[5],
+			WorkflowsDir:             os.Args[6],
+			CIWorkflowPath:           os.Args[7],
+			ReleaseWorkflowPath:      os.Args[8],
+			PinHygieneWorkflowPath:   os.Args[9],
+			CodeownersPath:           os.Args[10],
+			CodexRequirementsPath:    os.Args[11],
+			CodexMCPConfigPath:       os.Args[12],
+			HostedControlsPolicyPath: os.Args[13],
+			HostedControlsScriptPath: os.Args[14],
+			ProviderBumpPolicyPath:   os.Args[15],
+			MaxDebianSnapshotAgeDays: maxAge,
 		})
 	case "verify-reproducible-build":
 		if len(os.Args) != 7 {
