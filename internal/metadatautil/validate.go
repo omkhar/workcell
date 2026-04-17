@@ -436,8 +436,8 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	if branchReviewMode == "" {
 		branchReviewMode = "review-gated"
 	}
-	if branchReviewMode != "review-gated" && branchReviewMode != "single-owner-public-pr" && branchReviewMode != "single-owner-private-pr" {
-		return fmt.Errorf("%s must set branch_review.mode to 'review-gated', 'single-owner-public-pr', or 'single-owner-private-pr'", policyPath)
+	if branchReviewMode != "review-gated" && branchReviewMode != "approval-gated" && branchReviewMode != "single-owner-public-pr" && branchReviewMode != "single-owner-private-pr" {
+		return fmt.Errorf("%s must set branch_review.mode to 'review-gated', 'approval-gated', 'single-owner-public-pr', or 'single-owner-private-pr'", policyPath)
 	}
 	releasePolicy, _ := policy["release_environment"].(map[string]any)
 	releaseMode, _ := releasePolicy["mode"].(string)
@@ -568,12 +568,16 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 
 	pullRequestRule := hasRule(branchReview, "pull_request")
 	parameters, _ := pullRequestRule["parameters"].(map[string]any)
-	if branchReviewMode == "review-gated" {
+	if branchReviewMode == "review-gated" || branchReviewMode == "approval-gated" {
 		if count, _ := parameters["required_approving_review_count"].(float64); count < 1 {
 			return fmt.Errorf("default-branch review ruleset on %s must require at least one approving review", repo)
 		}
-		if required, _ := parameters["require_code_owner_review"].(bool); !required {
+		requireCodeOwnerReview, _ := parameters["require_code_owner_review"].(bool)
+		if branchReviewMode == "review-gated" && !requireCodeOwnerReview {
 			return fmt.Errorf("default-branch review ruleset on %s must require code owner review", repo)
+		}
+		if branchReviewMode == "approval-gated" && requireCodeOwnerReview {
+			return fmt.Errorf("default-branch review ruleset on %s must not require code owner review in approval-gated mode", repo)
 		}
 		if resolved, _ := parameters["required_review_thread_resolution"].(bool); !resolved {
 			return fmt.Errorf("default-branch review ruleset on %s must require resolved review threads", repo)
