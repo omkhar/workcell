@@ -27,6 +27,10 @@ This is meant to reduce drift between:
 - requirement ids and titles are unique
 - every requirement cites at least one automated evidence file
 - every evidence and documentation path is repo-relative and exists in the repo
+- every release-facing Markdown example and the current release-evaluation docs
+  (`docs/provider-matrix.md`, `docs/validation-scenarios.md`, and
+  `docs/enterprise-rollout.md` when present) appear in at least one requirement
+  `docs` array
 
 This check runs through the normal validation entrypoints, including
 `./scripts/dev-quick-check.sh` and `./scripts/validate-repo.sh`.
@@ -60,3 +64,7 @@ When a supported requirement changes:
 
 If a requirement cannot point to real automated evidence, it is not ready to be
 claimed as part of the canonical supported contract.
+
+When adding a new Markdown file under `docs/examples/`, update
+`policy/requirements.toml` in the same change so the release-facing example
+docs remain machine-checked.

@@ -12,6 +12,9 @@ docs = [
   "README.md",
   "docs/invariants.md",
   "docs/provider-matrix.md",
+  "docs/examples/quickstart-codex.md",
+  "docs/examples/quickstart-claude.md",
+  "docs/examples/quickstart-gemini.md",
 ]
 
 [functional.FR-002]
@@ -21,11 +24,15 @@ evidence = [
   "tests/scenarios/shared/test-auth-commands.sh",
   "tests/scenarios/shared/test-auth-status.sh",
   "internal/authpolicy/manage_test.go",
+  "scripts/container-smoke.sh",
+  "scripts/verify-invariants.sh",
 ]
 docs = [
   "README.md",
   "docs/injection-policy.md",
   "docs/examples/injection-policy.toml",
+  "docs/examples/enterprise-claude-setup.md",
+  "docs/examples/gemini-vertex-setup.md",
 ]
 
 [functional.FR-003]
