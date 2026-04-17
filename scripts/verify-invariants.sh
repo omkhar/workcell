@@ -2580,20 +2580,18 @@ for dockerfile in \
   fi
 done
 
-for dockerfile in \
-  "${ROOT_DIR}/tools/validator/Dockerfile"; do
-  for required in \
-    'ENV HOME=/home/workcell' \
-    'ENV XDG_CACHE_HOME=/home/workcell/.cache' \
-    'ENV GOCACHE=/home/workcell/.cache/go-build' \
-    'ENV GOMODCACHE=/home/workcell/.cache/go-mod' \
-    'ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target' \
-    'ENV TMPDIR=/home/workcell/.tmp'; do
-    if ! grep -Fq "${required}" "${dockerfile}"; then
-      echo "Expected ${dockerfile} to pin its default nonroot writable state under /home/workcell (${required})" >&2
-      exit 1
-    fi
-  done
+validator_dockerfile="${ROOT_DIR}/tools/validator/Dockerfile"
+for required in \
+  'ENV HOME=/home/workcell' \
+  'ENV XDG_CACHE_HOME=/home/workcell/.cache' \
+  'ENV GOCACHE=/home/workcell/.cache/go-build' \
+  'ENV GOMODCACHE=/home/workcell/.cache/go-mod' \
+  'ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target' \
+  'ENV TMPDIR=/home/workcell/.tmp'; do
+  if ! grep -Fq "${required}" "${validator_dockerfile}"; then
+    echo "Expected ${validator_dockerfile} to pin its default nonroot writable state under /home/workcell (${required})" >&2
+    exit 1
+  fi
 done
 
 if ! grep -Fq "CARGO_TARGET_DIR=\"\${CARGO_TARGET_DIR:-\${XDG_CACHE_HOME}/cargo-target}\"" "${ROOT_DIR}/scripts/validate-repo.sh"; then
