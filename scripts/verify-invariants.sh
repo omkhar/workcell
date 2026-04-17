@@ -2200,6 +2200,7 @@ PROFILE_MARKER_WORKSPACE="bound"
 PROFILE_RUNNING=1
 
 stash_profile_audit_log() { :; }
+remember_profile_runtime_image_for_refresh() { :; }
 reap_stale_profile_processes() { :; }
 run_host_colima_with_timeout() { return 124; }
 profile_dir() { printf '%s/profile-%s\n' "${ROOT}" "$1"; }
