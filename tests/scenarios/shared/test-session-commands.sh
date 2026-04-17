@@ -9,10 +9,16 @@ source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 REAL_HOME="$(resolve_workcell_real_home)"
 PROFILE="wcl-session-scenario-$$"
 SESSION_ONE="20260408T100000Z-11111111-$$"
+SESSION_ATTACHED_LIVE="20260408T101500Z-12121212-$$"
 SESSION_TWO="20260408T110000Z-22222222-$$"
+SESSION_DELETE="20260408T113000Z-22666666-$$"
+SESSION_DELETE_RUNNING="20260408T113500Z-22777777-$$"
 SESSION_DIRTY="20260408T120000Z-33333333-$$"
+SESSION_TAMPERED="20260408T140000Z-55555555-$$"
+WORKCELL_FUNCTIONS_COPY="${ROOT_DIR}/scripts/.workcell-test-functions-$$"
 
 cleanup() {
+  rm -f "${WORKCELL_FUNCTIONS_COPY}"
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
   rm -rf "${TMP_DIR}"
 }
@@ -28,6 +34,20 @@ DIFF_PATH="${TMP_DIR}/session-diff.txt"
 TEXTCONV_MARKER="${WORKSPACE_A}/textconv-ran"
 FILTER_MARKER="${WORKSPACE_A}/filter-ran"
 FILTER_CONFIG="${WORKSPACE_A}/filter.inc"
+TAMPERED_LOG_TARGET="${TMP_DIR}/tampered-log-target"
+TAMPERED_DEBUG_LINK="${WORKSPACE_A}/tampered-debug.log"
+SYMLINKED_POINTER_TARGET="${TMP_DIR}/symlinked-pointer-target"
+DETACHED_START_WORKSPACE="${TMP_DIR}/detached-start-workspace"
+DETACHED_SESSION="20260408T130000Z-44444444-$$"
+DETACHED_STATE_DIR="${TMP_DIR}/detached-session-state"
+DETACHED_STATE_FILE="${DETACHED_STATE_DIR}/session.env"
+DETACHED_AUDIT_LOG="${DETACHED_STATE_DIR}/detached-session.audit.log"
+DETACHED_DEBUG_LOG="${DETACHED_STATE_DIR}/detached-session.debug.log"
+DETACHED_FILE_TRACE_LOG="${DETACHED_STATE_DIR}/detached-session.file-trace.log"
+DETACHED_TRANSCRIPT_LOG="${DETACHED_STATE_DIR}/detached-session.transcript.log"
+DETACHED_WORKSPACE="${WORKSPACE_A}/.git/session-sandboxes/${DETACHED_SESSION}"
+DETACHED_BRANCH="workcell/session/${DETACHED_SESSION}"
+DETACHED_BACKEND="${TMP_DIR}/detached-session-backend"
 
 mkdir -p "${SESSIONS_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B}"
 WORKSPACE_A="$(cd "${WORKSPACE_A}" && pwd -P)"
@@ -74,9 +94,12 @@ cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
   "agent": "codex",
   "mode": "strict",
   "status": "exited",
+  "live_status": "stopped",
   "ui": "cli",
   "execution_path": "managed-tier1",
   "workspace": "${WORKSPACE_A}",
+  "container_name": "workcell-session-one",
+  "session_audit_dir": "${TMP_DIR}/session-audit.attached",
   "git_branch": "${GIT_BRANCH}",
   "git_head": "${GIT_BASE}",
   "git_base": "${GIT_BASE}",
@@ -90,6 +113,30 @@ cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
 }
 EOF
 
+cat >"${SESSIONS_DIR}/20260408T101500Z-12121212.json" <<EOF
+{
+  "version": 1,
+  "session_id": "${SESSION_ATTACHED_LIVE}",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE_A}",
+  "workspace_origin": "${WORKSPACE_A}",
+  "worktree_path": "${WORKSPACE_A}",
+  "container_name": "workcell-session-live-attached",
+  "session_audit_dir": "${TMP_DIR}/session-audit.live-attached",
+  "audit_log_path": "${AUDIT_LOG}",
+  "started_at": "2026-04-08T10:15:00Z",
+  "current_assurance": "managed-mutable",
+  "initial_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF
+
 cat >"${SESSIONS_DIR}/20260408T110000Z-22222222.json" <<EOF
 {
   "version": 1,
@@ -98,13 +145,42 @@ cat >"${SESSIONS_DIR}/20260408T110000Z-22222222.json" <<EOF
   "agent": "claude",
   "mode": "development",
   "status": "failed",
+  "live_status": "stopped",
   "ui": "cli",
   "execution_path": "lower-assurance-development",
   "workspace": "${WORKSPACE_B}",
+  "workspace_origin": "${WORKSPACE_A}",
+  "worktree_path": "${WORKSPACE_B}/.worktrees/${SESSION_TWO}",
+  "container_name": "workcell-session-two",
+  "monitor_pid": "4242",
+  "session_audit_dir": "${TMP_DIR}/session-audit.4242",
   "audit_log_path": "${AUDIT_LOG}",
   "started_at": "2026-04-08T11:00:00Z",
   "finished_at": "2026-04-08T11:03:00Z",
   "exit_status": "17",
+  "initial_assurance": "managed-mutable",
+  "final_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF
+
+cat >"${SESSIONS_DIR}/${SESSION_DELETE}.json" <<EOF
+{
+  "version": 1,
+  "session_id": "${SESSION_DELETE}",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "exited",
+  "live_status": "stopped",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE_B}",
+  "container_name": "workcell-session-delete",
+  "audit_log_path": "${AUDIT_LOG}",
+  "started_at": "2026-04-08T11:30:00Z",
+  "finished_at": "2026-04-08T11:31:00Z",
+  "exit_status": "0",
   "initial_assurance": "managed-mutable",
   "final_assurance": "managed-mutable",
   "workspace_control_plane": "masked"
@@ -118,9 +194,10 @@ timestamp=2026-04-08T11:03:00Z event=exit session_id=${SESSION_TWO} record_diges
 EOF
 
 list_output="$("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")"
-grep -q '^session_id[[:space:]]status[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace$' <<<"${list_output}"
-grep -q $'^'"${SESSION_TWO}"$'\tfailed\tclaude\tdevelopment\t'"${PROFILE}"$'\t2026-04-08T11:00:00Z\tmanaged-mutable\t'"${WORKSPACE_B}"'$' <<<"${list_output}"
-grep -q $'^'"${SESSION_ONE}"$'\texited\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
+grep -q '^session_id[[:space:]]status[[:space:]]live_status[[:space:]]control[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace$' <<<"${list_output}"
+grep -q $'^'"${SESSION_TWO}"$'\tfailed\tstopped\tdetached\tclaude\tdevelopment\t'"${PROFILE}"$'\t2026-04-08T11:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
+grep -q $'^'"${SESSION_ATTACHED_LIVE}"$'\trunning\trunning\tattached\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:15:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
+grep -q $'^'"${SESSION_ONE}"$'\texited\tstopped\tattached\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
 
 if command -v script >/dev/null 2>&1; then
   tty_list_cmd=("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")
@@ -134,19 +211,70 @@ if command -v script >/dev/null 2>&1; then
       script -q /dev/null "${tty_list_cmd[@]}" 2>/dev/null | tr -d '\r\004\010'
     )"
   fi
-  grep -q 'session_id[[:space:]]status[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace' <<<"${tty_list_output}"
+  grep -q 'session_id[[:space:]]status[[:space:]]live_status[[:space:]]control[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace' <<<"${tty_list_output}"
   if printf '%s' "${tty_list_output}" | LC_ALL=C grep -q $'\033\['; then
     echo "session list leaked terminal reset escapes on a host-only TTY path" >&2
     exit 1
   fi
 fi
 
-list_json="$("${ROOT_DIR}/scripts/workcell" session list --json --workspace "${WORKSPACE_A}" --colima-profile "${PROFILE}")"
-grep -q "\"session_id\": \"${SESSION_ONE}\"" <<<"${list_json}"
-if grep -q "\"session_id\": \"${SESSION_TWO}\"" <<<"${list_json}"; then
-  echo "session list --workspace returned an unexpected session" >&2
+set +e
+stop_attached_stderr="$("${ROOT_DIR}/scripts/workcell" session stop --id "${SESSION_ATTACHED_LIVE}" 2>&1 >/dev/null)"
+stop_attached_status=$?
+set -e
+if [[ "${stop_attached_status}" -eq 0 ]]; then
+  echo "session stop unexpectedly accepted an attached record" >&2
   exit 1
 fi
+grep -q "session stop only works for detached sessions started with 'workcell session start': ${SESSION_ATTACHED_LIVE}" <<<"${stop_attached_stderr}"
+grep -q "Use 'workcell session list' to check the control column; attached records are not stoppable." <<<"${stop_attached_stderr}"
+
+set +e
+delete_stderr="$("${ROOT_DIR}/scripts/workcell" session delete --id "${SESSION_DELETE}" 2>&1 >/dev/null)"
+delete_status=$?
+set -e
+if [[ "${delete_status}" -eq 0 ]]; then
+  echo "session delete unexpectedly removed a session when container cleanup was unavailable" >&2
+  exit 1
+fi
+grep -q "session delete could not confirm cleanup of the recorded session container: ${SESSION_DELETE}" <<<"${delete_stderr}"
+grep -q "Retry while the profile Docker socket is available, or pass --record-only to remove only the session record." <<<"${delete_stderr}"
+list_after_failed_delete="$("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")"
+grep -q "${SESSION_DELETE}" <<<"${list_after_failed_delete}"
+
+cat >"${SESSIONS_DIR}/${SESSION_DELETE_RUNNING}.json" <<EOF
+{
+  "version": 1,
+  "session_id": "${SESSION_DELETE_RUNNING}",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE_B}",
+  "container_name": "workcell-session-running",
+  "started_at": "2026-04-08T11:35:00Z",
+  "initial_assurance": "managed-mutable",
+  "current_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF
+set +e
+delete_running_stderr="$("${ROOT_DIR}/scripts/workcell" session delete --id "${SESSION_DELETE_RUNNING}" 2>&1 >/dev/null)"
+delete_running_status=$?
+set -e
+if [[ "${delete_running_status}" -eq 0 ]]; then
+  echo "session delete unexpectedly accepted a running session" >&2
+  exit 1
+fi
+grep -q "session delete only works for exited, failed, or otherwise stopped sessions: ${SESSION_DELETE_RUNNING}" <<<"${delete_running_stderr}"
+grep -q '^This session is still running\.$' <<<"${delete_running_stderr}"
+
+list_json="$("${ROOT_DIR}/scripts/workcell" session list --json --workspace "${WORKSPACE_A}" --colima-profile "${PROFILE}")"
+grep -q "\"session_id\": \"${SESSION_ONE}\"" <<<"${list_json}"
+grep -q "\"session_id\": \"${SESSION_TWO}\"" <<<"${list_json}"
 
 show_output="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_TWO}")"
 grep -q "\"session_id\": \"${SESSION_TWO}\"" <<<"${show_output}"
@@ -186,6 +314,29 @@ cat >"${SESSIONS_DIR}/20260408T120000Z-33333333.json" <<EOF
 }
 EOF
 
+printf 'top-secret\n' >"${TAMPERED_LOG_TARGET}"
+ln -s "${TAMPERED_LOG_TARGET}" "${TAMPERED_DEBUG_LINK}"
+cat >"${SESSIONS_DIR}/20260408T140000Z-55555555.json" <<EOF
+{
+  "version": 1,
+  "session_id": "${SESSION_TAMPERED}",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "development",
+  "status": "exited",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE_A}",
+  "debug_log_path": "${TAMPERED_DEBUG_LINK}",
+  "started_at": "2026-04-08T14:00:00Z",
+  "finished_at": "2026-04-08T14:01:00Z",
+  "exit_status": "0",
+  "initial_assurance": "managed-mutable",
+  "final_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF
+
 dirty_diff_output="$(
   "${ROOT_DIR}/scripts/workcell" session diff --id "${SESSION_DIRTY}" 2>&1 >/dev/null || true
 )"
@@ -196,6 +347,1599 @@ grep -q "^session_export=${EXPORT_PATH}$" <<<"${export_stdout}"
 grep -q "\"session_id\": \"${SESSION_TWO}\"" "${EXPORT_PATH}"
 grep -q '"audit_records": \[' "${EXPORT_PATH}"
 grep -q 'record_digest=ccc' "${EXPORT_PATH}"
+
+tampered_session_logs_output="$(
+  "${ROOT_DIR}/scripts/workcell" session logs --id "${SESSION_TAMPERED}" --kind debug 2>&1 >/dev/null || true
+)"
+grep -q "Workcell blocked host output path after launch: ${TAMPERED_DEBUG_LINK}" <<<"${tampered_session_logs_output}"
+if grep -q 'top-secret' <<<"${tampered_session_logs_output}"; then
+  echo "session logs followed a tampered debug-log symlink" >&2
+  exit 1
+fi
+printf '%s\n' "${TAMPERED_DEBUG_LINK}" >"${REAL_HOME}/.colima/${PROFILE}/workcell.latest-debug-log"
+tampered_profile_logs_output="$(
+  "${ROOT_DIR}/scripts/workcell" --logs debug --colima-profile "${PROFILE}" 2>&1 >/dev/null || true
+)"
+grep -q "Workcell blocked host output path after launch: ${TAMPERED_DEBUG_LINK}" <<<"${tampered_profile_logs_output}"
+if grep -q 'top-secret' <<<"${tampered_profile_logs_output}"; then
+  echo "profile debug log retrieval followed a tampered symlink" >&2
+  exit 1
+fi
+printf '%s\n' "${AUDIT_LOG}" >"${SYMLINKED_POINTER_TARGET}"
+rm -f "${REAL_HOME}/.colima/${PROFILE}/workcell.latest-transcript-log"
+ln -s "${SYMLINKED_POINTER_TARGET}" "${REAL_HOME}/.colima/${PROFILE}/workcell.latest-transcript-log"
+symlinked_pointer_output="$(
+  "${ROOT_DIR}/scripts/workcell" --logs transcript --colima-profile "${PROFILE}" 2>&1 >/dev/null || true
+)"
+grep -q "Workcell blocked latest transcript pointer path after launch: ${REAL_HOME}/.colima/${PROFILE}/workcell.latest-transcript-log" <<<"${symlinked_pointer_output}"
+
+mkdir -p "${DETACHED_START_WORKSPACE}"
+git -C "${DETACHED_START_WORKSPACE}" init >/dev/null
+printf 'seed\n' >"${DETACHED_START_WORKSPACE}/README.md"
+git -C "${DETACHED_START_WORKSPACE}" add README.md
+git -C "${DETACHED_START_WORKSPACE}" -c user.name='Workcell Test' -c user.email='workcell@example.com' commit -m 'initial' >/dev/null
+detached_start_default_output="$(
+  WORKCELL_SESSION_WORKSPACE_MODE=direct \
+    "${ROOT_DIR}/scripts/workcell" \
+    session start \
+    --agent codex \
+    --mode development \
+    --workspace "${DETACHED_START_WORKSPACE}" \
+    --no-default-injection-policy \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    --dry-run \
+    -- /bin/true
+)"
+grep -Fq -- "docker run --init -d -i -t" <<<"${detached_start_default_output}"
+grep -Eq -- "-v ${DETACHED_START_WORKSPACE}/\\.git/workcell-sessions/.+/repo:/workspace($| )" <<<"${detached_start_default_output}"
+grep -Fq -- "-e WORKCELL_DETACHED_STDIN_PATH=/state/tmp/workcell/session-stdin" <<<"${detached_start_default_output}"
+if grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_default_output}"; then
+  echo "Detached session start honored an inherited workspace-mode env override" >&2
+  exit 1
+fi
+if grep -Fq -- "--entrypoint /bin/true" <<<"${detached_start_default_output}"; then
+  echo "Detached session start should keep arbitrary-command sessions on the managed entrypoint" >&2
+  exit 1
+fi
+grep -Fq -- "workcell:local /bin/true" <<<"${detached_start_default_output}"
+if grep -Eq -- "-e WORKCELL_DETACHED_STDIN_PATH=/run/workcell/session-stdin" <<<"${detached_start_default_output}"; then
+  echo "Detached session start kept the detached stdin FIFO under a path that blocks host command injection" >&2
+  exit 1
+fi
+detached_start_direct_output="$(
+  WORKCELL_SESSION_WORKSPACE_MODE=isolated \
+    "${ROOT_DIR}/scripts/workcell" \
+    session start \
+    --session-workspace direct \
+    --agent codex \
+    --mode development \
+    --workspace "${DETACHED_START_WORKSPACE}" \
+    --no-default-injection-policy \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    --dry-run \
+    -- /bin/true
+)"
+grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_direct_output}"
+
+sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
+monitor_env_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    SESSION_AUDIT_DIR="$2"
+    SESSION_RECORD_PATH="$3"
+    SESSION_RECORD_WRITTEN=1
+    SESSION_RECORD_FINALIZED=0
+    write_session_monitor_env_file "$4"
+    cat "$4"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}" "${SESSIONS_DIR}/${DETACHED_SESSION}.json" "${DETACHED_STATE_DIR}/session-monitor.env"
+)"
+grep -q '^SESSION_RECORD_PATH=' <<<"${monitor_env_output}"
+grep -q '^SESSION_RECORD_WRITTEN=1$' <<<"${monitor_env_output}"
+grep -q '^SESSION_RECORD_FINALIZED=0$' <<<"${monitor_env_output}"
+grep -q '^SESSION_MONITOR_READY_PATH=' <<<"${monitor_env_output}"
+
+monitor_ready_probe_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    READY_PATH="$2"
+    (
+      sleep 0.2
+      : >"${READY_PATH}"
+      sleep 2
+    ) &
+    MONITOR_PID="$!"
+    wait_for_session_monitor_ready "${MONITOR_PID}" "${READY_PATH}"
+    kill "${MONITOR_PID}" >/dev/null 2>&1 || true
+    wait "${MONITOR_PID}" >/dev/null 2>&1 || true
+    printf "ready_success=1\n"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/session-monitor.ready"
+)"
+grep -q '^ready_success=1$' <<<"${monitor_ready_probe_output}"
+
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  READY_PATH="$2"
+  (
+    sleep 0.2
+  ) &
+  MONITOR_PID="$!"
+  wait_for_session_monitor_ready "${MONITOR_PID}" "${READY_PATH}"
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/session-monitor.missing.ready" >/dev/null 2>&1
+monitor_ready_failure_status=$?
+set -e
+if [[ "${monitor_ready_failure_status}" -eq 0 ]]; then
+  echo "wait_for_session_monitor_ready unexpectedly accepted a monitor that never reported ready" >&2
+  exit 1
+fi
+
+monitor_wait_status_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_PROFILE="wcl-detached-fixture"
+    CONTAINER_NAME="workcell-session-fixture"
+    RECORD_FILE="$2"
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        wait)
+          return 1
+          ;;
+        inspect)
+          printf "0\n"
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    printf "wait_status=%s\n" "$(session_monitor_wait_status)"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/session-monitor-wait.record"
+)"
+grep -q '^wait_status=0$' <<<"${monitor_wait_status_output}"
+grep -q '^wcl-detached-fixture|wait workcell-session-fixture$' "${DETACHED_STATE_DIR}/session-monitor-wait.record"
+grep -q '^wcl-detached-fixture|inspect --format {{.State.ExitCode}} workcell-session-fixture$' "${DETACHED_STATE_DIR}/session-monitor-wait.record"
+
+START_PROFILE_RETRY_RECORD="${DETACHED_STATE_DIR}/start-profile-retry.record"
+start_profile_retry_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    RECORD_FILE="$2"
+    DEBUG_LOG_PATH="$3"
+    COLIMA_PROFILE="start-retry-fixture"
+    PROFILE_WORKSPACE_ROOT="/tmp/workspace"
+    WORKSPACE="/tmp/workspace"
+    COLIMA_CPU="4"
+    COLIMA_MEMORY="6"
+    COLIMA_DISK="60"
+    ATTEMPT=0
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    maybe_reap_stale_profile_processes() { :; }
+    reap_stale_profile_processes() {
+      printf "reap\n" >>"${RECORD_FILE}"
+    }
+    refresh_managed_profile() {
+      printf "refresh|%s\n" "$1" >>"${RECORD_FILE}"
+    }
+    run_command_with_debug_log() {
+      local label="$1"
+      shift
+      ATTEMPT=$((ATTEMPT + 1))
+      printf "run|%s|%s\n" "${ATTEMPT}" "${label}" >>"${RECORD_FILE}"
+      if [[ "${ATTEMPT}" -eq 1 ]]; then
+        cat >>"${DEBUG_LOG_PATH}" <<EOF
+time="2026-04-16T09:46:40-04:00" level=fatal msg="did not receive an event with the "running" status"
+time="2026-04-16T09:46:40-04:00" level=fatal msg="error starting docker: error at '"'"'starting'"'"': exit status 1"
+EOF
+        LAST_COMMAND_DEBUG_CAPTURE_PATH="${DEBUG_LOG_PATH}"
+        return 1
+      fi
+      return 0
+    }
+    start_managed_profile
+    printf "attempts=%s\n" "${ATTEMPT}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${START_PROFILE_RETRY_RECORD}" "${DETACHED_STATE_DIR}/start-profile-retry.debug.log"
+)"
+grep -q '^attempts=2$' <<<"${start_profile_retry_output}"
+grep -q '^run|1|colima-start$' "${START_PROFILE_RETRY_RECORD}"
+grep -q '^run|2|colima-start$' "${START_PROFILE_RETRY_RECORD}"
+grep -q '^refresh|Refreshing managed Colima profile start-retry-fixture after Colima failed during Docker startup\.$' "${START_PROFILE_RETRY_RECORD}"
+
+session_final_status_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    SESSION_AUDIT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-stop-marker.XXXXXX")"
+    printf "stop_failed=%s\n" "$(session_final_status_for_exit 1 stopping)"
+    touch "$(session_stop_request_marker_path "${SESSION_AUDIT_DIR}")"
+    printf "stop_requested=%s\n" "$(session_final_status_for_exit 1 running)"
+    rm -f "$(session_stop_request_marker_path "${SESSION_AUDIT_DIR}")"
+    printf "run_failed=%s\n" "$(session_final_status_for_exit 1 running)"
+    printf "run_exited=%s\n" "$(session_final_status_for_exit 0 running)"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}"
+)"
+grep -q '^stop_failed=exited$' <<<"${session_final_status_output}"
+grep -q '^stop_requested=exited$' <<<"${session_final_status_output}"
+grep -q '^run_failed=failed$' <<<"${session_final_status_output}"
+grep -q '^run_exited=exited$' <<<"${session_final_status_output}"
+
+session_monitor_pid_zero_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    SESSION_META_MONITOR_PID="0"
+    kill() {
+      printf "kill-called\n"
+      return 0
+    }
+    if session_monitor_pid_is_live; then
+      printf "live\n"
+    else
+      printf "dead\n"
+    fi
+  ' _ "${WORKCELL_FUNCTIONS_COPY}"
+)"
+grep -q '^dead$' <<<"${session_monitor_pid_zero_output}"
+if grep -q '^kill-called$' <<<"${session_monitor_pid_zero_output}"; then
+  echo "Detached session monitor liveness still probes kill -0 0" >&2
+  exit 1
+fi
+
+session_monitor_missing_audit_dir_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    SESSION_META_MONITOR_PID="4242"
+    kill() {
+      printf "kill-called\n"
+      return 0
+    }
+    if session_monitor_pid_is_live; then
+      printf "live\n"
+    else
+      printf "dead\n"
+    fi
+  ' _ "${WORKCELL_FUNCTIONS_COPY}"
+)"
+grep -q '^dead$' <<<"${session_monitor_missing_audit_dir_output}"
+if grep -q '^kill-called$' <<<"${session_monitor_missing_audit_dir_output}"; then
+  echo "Detached session monitor liveness accepted a monitor without detached provenance" >&2
+  exit 1
+fi
+
+detached_running_race_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    SESSION_ID="detached-fixture"
+    SESSION_MONITOR_PID="4242"
+    SESSION_RECORD_PATH="/tmp/detached-fixture.json"
+    LOAD_COUNT=0
+    session_assurance_initial() { printf "managed-mutable\n"; }
+    load_session_runtime_metadata() {
+      LOAD_COUNT=$((LOAD_COUNT + 1))
+      if [[ "${LOAD_COUNT}" -eq 1 ]]; then
+        SESSION_META_STATUS="running"
+        SESSION_META_LIVE_STATUS="running"
+      else
+        SESSION_META_STATUS="exited"
+        SESSION_META_LIVE_STATUS="stopped"
+      fi
+    }
+    write_session_record() { return 1; }
+    if mark_detached_session_running; then
+      printf "result=ok\n"
+    else
+      printf "result=fail\n"
+    fi
+    printf "loads=%s\n" "${LOAD_COUNT}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}"
+)"
+grep -q '^result=ok$' <<<"${detached_running_race_output}"
+grep -q '^loads=2$' <<<"${detached_running_race_output}"
+
+existing_file_trace_capture_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FILE_TRACE_LOG_PATH="$2"
+    COLIMA_PROFILE="wcl-detached-fixture"
+    SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
+    printf "preexisting-watch-start\n" >"${FILE_TRACE_LOG_PATH}"
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    run_profile_docker_command() { return 1; }
+    capture_session_file_trace "workcell-session-fixture"
+    cat "${FILE_TRACE_LOG_PATH}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/preexisting.file-trace.log"
+)"
+grep -q '^preexisting-watch-start$' <<<"${existing_file_trace_capture_output}"
+if grep -q 'host-collect-missing' <<<"${existing_file_trace_capture_output}"; then
+  echo "Detached session file-trace fallback overwrote an already-populated host log" >&2
+  exit 1
+fi
+
+SESSION_SEND_FAILURE_RECORD="${DETACHED_STATE_DIR}/session-send.failure.record"
+SESSION_SEND_SUCCESS_RECORD="${DETACHED_STATE_DIR}/session-send.success.record"
+SESSION_SEND_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-send.stopped.record"
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  RECORD_FILE="$2"
+  HOST_DOCKER_BIN="/bin/false"
+  resolve_host_tool() { printf "/bin/false\n"; }
+  sanitize_host_docker_env() { :; }
+  session_monitor_pid_is_live() { return 0; }
+  load_session_runtime_metadata() {
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+    SESSION_META_MONITOR_PID="4242"
+    SESSION_META_STATUS="running"
+    SESSION_META_LIVE_STATUS="running"
+  }
+  append_session_control_audit_record() {
+    printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+  }
+  run_profile_docker_command() {
+    local profile="$1"
+    shift
+    printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+    case "$1" in
+      inspect)
+        printf "running\n"
+        ;;
+      exec)
+        return 17
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  session_send_main --id detached-fixture --message alpha
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_SEND_FAILURE_RECORD}" >/dev/null 2>&1
+session_send_failure_status=$?
+set -e
+if [[ "${session_send_failure_status}" -ne 17 ]]; then
+  echo "Expected detached session send failure to preserve the transport error status" >&2
+  exit 1
+fi
+grep -q '^transport|wcl-detached-fixture|exec --user ' "${SESSION_SEND_FAILURE_RECORD}"
+if grep -q '^audit|' "${SESSION_SEND_FAILURE_RECORD}"; then
+  echo "Detached session send wrote an audit record before transport delivery succeeded" >&2
+  exit 1
+fi
+if grep -q '/proc/1/fd/0' "${SESSION_SEND_FAILURE_RECORD}"; then
+  echo "Detached session send fell back to PID 1 stdin instead of failing closed" >&2
+  exit 1
+fi
+if ! grep -q '/state/tmp/workcell/session-stdin' "${SESSION_SEND_FAILURE_RECORD}"; then
+  echo "Detached session send stopped targeting the runtime-user-owned FIFO path" >&2
+  exit 1
+fi
+
+session_send_success_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    RECORD_FILE="$2"
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    session_monitor_pid_is_live() { return 0; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_MONITOR_PID="4242"
+      SESSION_META_STATUS="running"
+      SESSION_META_LIVE_STATUS="running"
+    }
+    append_session_control_audit_record() {
+      printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+    }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        inspect)
+          printf "running\n"
+          ;;
+      esac
+    }
+    session_send_main --id detached-fixture --no-newline --message beta
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_SEND_SUCCESS_RECORD}"
+)"
+grep -q '^session_id=detached-fixture$' <<<"${session_send_success_output}"
+grep -q '^sent_bytes=4$' <<<"${session_send_success_output}"
+grep -q '^transport|wcl-detached-fixture|exec --user ' "${SESSION_SEND_SUCCESS_RECORD}"
+if grep -q '/proc/1/fd/0' "${SESSION_SEND_SUCCESS_RECORD}"; then
+  echo "Detached session send still contains the PID 1 stdin fallback on the success path" >&2
+  exit 1
+fi
+first_send_record="$(sed -n '1p' "${SESSION_SEND_SUCCESS_RECORD}")"
+second_send_record="$(sed -n '2p' "${SESSION_SEND_SUCCESS_RECORD}")"
+third_send_record="$(sed -n '3p' "${SESSION_SEND_SUCCESS_RECORD}")"
+if [[ "${first_send_record}" != transport\|*inspect* ]]; then
+  echo "Detached session send did not preflight the live detached container before delivery" >&2
+  exit 1
+fi
+if [[ "${second_send_record}" != transport\|*exec* ]]; then
+  echo "Detached session send did not deliver the payload before auditing it" >&2
+  exit 1
+fi
+if [[ "${third_send_record}" != audit\|* ]]; then
+  echo "Detached session send did not append the audit record after delivery" >&2
+  exit 1
+fi
+
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  RECORD_FILE="$2"
+  HOST_DOCKER_BIN="/bin/false"
+  resolve_host_tool() { printf "/bin/false\n"; }
+  sanitize_host_docker_env() { :; }
+  load_session_runtime_metadata() {
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+    SESSION_META_MONITOR_PID="4242"
+    SESSION_META_STATUS="stopped"
+    SESSION_META_LIVE_STATUS="stopped"
+  }
+  append_session_control_audit_record() {
+    printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+  }
+  run_profile_docker_command() {
+    printf "unexpected-transport\n" >>"${RECORD_FILE}"
+    return 0
+  }
+  session_send_main --id detached-fixture --message gamma
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_SEND_STOPPED_RECORD}" >/dev/null 2>&1
+session_send_stopped_status=$?
+set -e
+if [[ "${session_send_stopped_status}" -eq 0 ]]; then
+  echo "Detached session send unexpectedly steered a stopped session record" >&2
+  exit 1
+fi
+if [[ -f "${SESSION_SEND_STOPPED_RECORD}" ]] && grep -q . "${SESSION_SEND_STOPPED_RECORD}"; then
+  echo "Detached session send touched transport or audit state for a stopped record" >&2
+  exit 1
+fi
+
+SESSION_SEND_UNATTACHED_RECORD="${DETACHED_STATE_DIR}/session-send.unattached.record"
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  RECORD_FILE="$2"
+  HOST_DOCKER_BIN="/bin/false"
+  resolve_host_tool() { printf "/bin/false\n"; }
+  sanitize_host_docker_env() { :; }
+  load_session_runtime_metadata() {
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+    SESSION_META_MONITOR_PID=""
+    SESSION_META_STATUS="running"
+    SESSION_META_LIVE_STATUS="running"
+  }
+  append_session_control_audit_record() {
+    printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+  }
+  run_profile_docker_command() {
+    printf "unexpected-transport\n" >>"${RECORD_FILE}"
+    return 0
+  }
+  session_send_main --id detached-fixture --message delta
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_SEND_UNATTACHED_RECORD}" >/dev/null 2>&1
+session_send_unattached_status=$?
+set -e
+if [[ "${session_send_unattached_status}" -eq 0 ]]; then
+  echo "Detached session send unexpectedly steered a session without detached host provenance" >&2
+  exit 1
+fi
+if [[ -f "${SESSION_SEND_UNATTACHED_RECORD}" ]] && grep -q . "${SESSION_SEND_UNATTACHED_RECORD}"; then
+  echo "Detached session send touched transport or audit state without detached host provenance" >&2
+  exit 1
+fi
+
+SESSION_SEND_DEAD_MONITOR_RECORD="${DETACHED_STATE_DIR}/session-send.dead-monitor.record"
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  RECORD_FILE="$2"
+  HOST_DOCKER_BIN="/bin/false"
+  resolve_host_tool() { printf "/bin/false\n"; }
+  sanitize_host_docker_env() { :; }
+  session_monitor_pid_is_live() { return 1; }
+  load_session_runtime_metadata() {
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+    SESSION_META_MONITOR_PID="4242"
+    SESSION_META_STATUS="running"
+    SESSION_META_LIVE_STATUS="running"
+  }
+  append_session_control_audit_record() {
+    printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+  }
+  run_profile_docker_command() {
+    printf "unexpected-transport\n" >>"${RECORD_FILE}"
+    return 0
+  }
+  session_send_main --id detached-fixture --message epsilon
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_SEND_DEAD_MONITOR_RECORD}" >/dev/null 2>&1
+session_send_dead_monitor_status=$?
+set -e
+if [[ "${session_send_dead_monitor_status}" -eq 0 ]]; then
+  echo "Detached session send unexpectedly steered a session with a dead detached monitor" >&2
+  exit 1
+fi
+if [[ -f "${SESSION_SEND_DEAD_MONITOR_RECORD}" ]] && grep -q . "${SESSION_SEND_DEAD_MONITOR_RECORD}"; then
+  echo "Detached session send touched transport or audit state with a dead detached monitor" >&2
+  exit 1
+fi
+
+SESSION_ATTACH_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-attach.stopped.record"
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  RECORD_FILE="$2"
+  HOST_DOCKER_BIN="/bin/false"
+  resolve_host_tool() { printf "/bin/false\n"; }
+  sanitize_host_docker_env() { :; }
+  load_session_runtime_metadata() {
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+    SESSION_META_MONITOR_PID="4242"
+    SESSION_META_STATUS="running"
+    SESSION_META_LIVE_STATUS="running"
+  }
+  append_session_control_audit_record() {
+    printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+  }
+  run_profile_docker_command() {
+    local profile="$1"
+    shift
+    printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+    case "$1" in
+      inspect)
+        printf "stopped\n"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  session_attach_main --id detached-fixture
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_ATTACH_STOPPED_RECORD}" >/dev/null 2>&1
+session_attach_stopped_status=$?
+set -e
+if [[ "${session_attach_stopped_status}" -eq 0 ]]; then
+  echo "Detached session attach unexpectedly attached a stopped session" >&2
+  exit 1
+fi
+if [[ -f "${SESSION_ATTACH_STOPPED_RECORD}" ]] && grep -q '^audit|' "${SESSION_ATTACH_STOPPED_RECORD}"; then
+  echo "Detached session attach wrote an audit record before confirming a live container" >&2
+  exit 1
+fi
+if [[ -f "${SESSION_ATTACH_STOPPED_RECORD}" ]] && grep -q 'attach ' "${SESSION_ATTACH_STOPPED_RECORD}"; then
+  echo "Detached session attach attempted a transport attach after live-state preflight failed" >&2
+  exit 1
+fi
+
+SESSION_ATTACH_FAILURE_RECORD="${DETACHED_STATE_DIR}/session-attach.failure.record"
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  RECORD_FILE="$2"
+  HOST_DOCKER_BIN="/bin/false"
+  resolve_host_tool() { printf "/bin/false\n"; }
+  sanitize_host_docker_env() { :; }
+  session_monitor_pid_is_live() { return 0; }
+  load_session_runtime_metadata() {
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+    SESSION_META_MONITOR_PID="4242"
+    SESSION_META_STATUS="running"
+    SESSION_META_LIVE_STATUS="running"
+  }
+  append_session_control_audit_record() {
+    printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+  }
+  run_profile_docker_command() {
+    local profile="$1"
+    shift
+    printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+    case "$1" in
+      inspect)
+        printf "running\n"
+        ;;
+      attach)
+        return 23
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  session_attach_main --id detached-fixture --no-stdin
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_ATTACH_FAILURE_RECORD}" >/dev/null 2>&1
+session_attach_failure_status=$?
+set -e
+if [[ "${session_attach_failure_status}" -ne 23 ]]; then
+  echo "Detached session attach did not preserve the attach transport error" >&2
+  exit 1
+fi
+grep -q '^audit|wcl-detached-fixture|detached-fixture|attach-attempt|' "${SESSION_ATTACH_FAILURE_RECORD}"
+if grep -Eq '^audit\|wcl-detached-fixture\|detached-fixture\|attach\|' "${SESSION_ATTACH_FAILURE_RECORD}"; then
+  echo "Detached session attach recorded a successful attach event after transport failure" >&2
+  exit 1
+fi
+
+SESSION_STOP_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.stopped.record"
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  RECORD_FILE="$2"
+  HOST_DOCKER_BIN="/bin/false"
+  resolve_host_tool() { printf "/bin/false\n"; }
+  sanitize_host_docker_env() { :; }
+  load_session_runtime_metadata() {
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+    SESSION_META_MONITOR_PID="4242"
+    SESSION_META_STATUS="running"
+    SESSION_META_LIVE_STATUS="running"
+  }
+  append_session_control_audit_record() {
+    printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+  }
+  write_session_record() {
+    printf "record|%s|%s\n" "$1" "$2" >>"${RECORD_FILE}"
+  }
+  run_profile_docker_command() {
+    local profile="$1"
+    shift
+    printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+    case "$1" in
+      inspect)
+        printf "stopped\n"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  session_stop_main --id detached-fixture
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_STOPPED_RECORD}" >/dev/null 2>&1
+session_stop_stopped_status=$?
+set -e
+if [[ "${session_stop_stopped_status}" -eq 0 ]]; then
+  echo "Detached session stop unexpectedly signaled a stopped session" >&2
+  exit 1
+fi
+if [[ -f "${SESSION_STOP_STOPPED_RECORD}" ]] && grep -Eq '^(audit|record)\|' "${SESSION_STOP_STOPPED_RECORD}"; then
+  echo "Detached session stop mutated audit or record state before confirming a live container" >&2
+  exit 1
+fi
+
+SESSION_STOP_DEAD_MONITOR_RECORD="${DETACHED_STATE_DIR}/session-stop.dead-monitor.record"
+SESSION_STOP_DEAD_MONITOR_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.dead-monitor.audit"
+mkdir -p "${SESSION_STOP_DEAD_MONITOR_AUDIT_DIR}"
+stop_dead_monitor_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    RECORD_FILE="$2"
+    AUDIT_DIR="$3"
+    HOST_DOCKER_BIN="/bin/false"
+    LOAD_COUNT=0
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    resolve_host_output_candidate() { printf "%s\n" "$1"; }
+    exit() { return "${1:-0}"; }
+    session_monitor_pid_is_live() { return 1; }
+    session_container_exit_code() { printf "1\n"; }
+    load_session_runtime_metadata() {
+      LOAD_COUNT=$((LOAD_COUNT + 1))
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_MONITOR_PID="4242"
+      SESSION_META_STATUS="running"
+      SESSION_META_LIVE_STATUS="running"
+      SESSION_META_CURRENT_ASSURANCE="managed-mutable"
+      SESSION_META_SESSION_AUDIT_DIR="${AUDIT_DIR}"
+    }
+    append_session_control_audit_record() {
+      printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+    }
+    write_session_record() {
+      printf "record|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+    }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        inspect)
+          printf "running\n"
+          ;;
+        stop)
+          return 0
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    session_stop_main --id detached-fixture
+    if [[ -e "$(session_stop_request_marker_path "${AUDIT_DIR}")" ]]; then
+      printf "marker=present\n"
+    else
+      printf "marker=cleared\n"
+    fi
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_DEAD_MONITOR_RECORD}" "${SESSION_STOP_DEAD_MONITOR_AUDIT_DIR}"
+)"
+grep -q '^session_id=detached-fixture$' <<<"${stop_dead_monitor_output}"
+grep -q '^stop_requested=1$' <<<"${stop_dead_monitor_output}"
+grep -q '^marker=cleared$' <<<"${stop_dead_monitor_output}"
+grep -q '^audit|wcl-detached-fixture|detached-fixture|stop-request|' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
+grep -q '^audit|wcl-detached-fixture|detached-fixture|exit|source=host-stop-fallback' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
+grep -q '^record|.*/detached-fixture\.json|status=exited|live_status=stopped|observed_at=' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
+
+SESSION_STOP_ALREADY_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.already-stopped.record"
+SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped.audit"
+mkdir -p "${SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR}"
+stop_already_stopped_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    RECORD_FILE="$2"
+    AUDIT_DIR="$3"
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    resolve_host_output_candidate() { printf "%s\n" "$1"; }
+    exit() { return "${1:-0}"; }
+    session_monitor_pid_is_live() { return 1; }
+    session_container_exit_code() { printf "1\n"; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_MONITOR_PID="4242"
+      SESSION_META_STATUS="stopping"
+      SESSION_META_LIVE_STATUS="stopping"
+      SESSION_META_CURRENT_ASSURANCE="managed-mutable"
+      SESSION_META_SESSION_AUDIT_DIR="${AUDIT_DIR}"
+    }
+    append_session_control_audit_record() {
+      printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+    }
+    write_session_record() {
+      printf "record|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+    }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        inspect)
+          printf "stopped\n"
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    session_stop_main --id detached-fixture
+    if [[ -e "$(session_stop_request_marker_path "${AUDIT_DIR}")" ]]; then
+      printf "marker=present\n"
+    else
+      printf "marker=cleared\n"
+    fi
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_ALREADY_STOPPED_RECORD}" "${SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR}"
+)"
+grep -q '^session_id=detached-fixture$' <<<"${stop_already_stopped_output}"
+grep -q '^stop_requested=1$' <<<"${stop_already_stopped_output}"
+grep -q '^marker=cleared$' <<<"${stop_already_stopped_output}"
+grep -q '^audit|wcl-detached-fixture|detached-fixture|stop-request|' "${SESSION_STOP_ALREADY_STOPPED_RECORD}"
+grep -q '^audit|wcl-detached-fixture|detached-fixture|exit|source=host-stop-fallback' "${SESSION_STOP_ALREADY_STOPPED_RECORD}"
+grep -q '^record|.*/detached-fixture\.json|status=exited|live_status=stopped|observed_at=' "${SESSION_STOP_ALREADY_STOPPED_RECORD}"
+if grep -q '^transport|wcl-detached-fixture|stop ' "${SESSION_STOP_ALREADY_STOPPED_RECORD}"; then
+  echo "Detached session stop tried to stop an already-stopped container during repair" >&2
+  exit 1
+fi
+
+SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD="${DETACHED_STATE_DIR}/session-stop.already-stopped-running.record"
+SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped-running.audit"
+mkdir -p "${SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR}"
+stop_already_stopped_running_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    RECORD_FILE="$2"
+    AUDIT_DIR="$3"
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    resolve_host_output_candidate() { printf "%s\n" "$1"; }
+    exit() { return "${1:-0}"; }
+    session_monitor_pid_is_live() { return 0; }
+    session_container_exit_code() { printf "1\n"; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_MONITOR_PID="4242"
+      SESSION_META_STATUS="running"
+      SESSION_META_LIVE_STATUS="running"
+      SESSION_META_CURRENT_ASSURANCE="managed-mutable"
+      SESSION_META_SESSION_AUDIT_DIR="${AUDIT_DIR}"
+    }
+    append_session_control_audit_record() {
+      printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+    }
+    write_session_record() {
+      printf "record|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
+    }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        inspect)
+          printf "stopped\n"
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    session_stop_main --id detached-fixture
+    if [[ -e "$(session_stop_request_marker_path "${AUDIT_DIR}")" ]]; then
+      printf "marker=present\n"
+    else
+      printf "marker=cleared\n"
+    fi
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD}" "${SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR}"
+)"
+grep -q '^session_id=detached-fixture$' <<<"${stop_already_stopped_running_output}"
+grep -q '^stop_requested=1$' <<<"${stop_already_stopped_running_output}"
+grep -q '^marker=cleared$' <<<"${stop_already_stopped_running_output}"
+if grep -q '^audit|' "${SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD}"; then
+  echo "Detached session stop should not append fallback audit records when the monitor is still live" >&2
+  exit 1
+fi
+if grep -q '^transport|wcl-detached-fixture|stop ' "${SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD}"; then
+  echo "Detached session stop tried to stop an already-stopped running-status container while the monitor was still live" >&2
+  exit 1
+fi
+
+SESSION_DELETE_CLEANUP_RECORD="${DETACHED_STATE_DIR}/session-delete.cleanup.record"
+SESSION_DELETE_CLEANUP_ROOT="${DETACHED_STATE_DIR}/session-delete.cleanup.root"
+session_delete_cleanup_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_STATE_ROOT="$2"
+    RECORD_FILE="$3"
+    PROFILE_DIR="${COLIMA_STATE_ROOT}/wcl-detached-fixture"
+    RECORD_PATH="${PROFILE_DIR}/sessions/detached-fixture.json"
+    DEBUG_LOG="${PROFILE_DIR}/detached.debug.log"
+    FILE_TRACE_LOG="${PROFILE_DIR}/detached.file-trace.log"
+    TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
+    SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
+    mkdir -p "${PROFILE_DIR}/sessions"
+    : >"${PROFILE_DIR}/docker.sock"
+    mkdir -p "${SESSION_AUDIT_DIR}"
+    : >"${RECORD_PATH}"
+    printf "debug\n" >"${DEBUG_LOG}"
+    printf "trace\n" >"${FILE_TRACE_LOG}"
+    printf "transcript\n" >"${TRANSCRIPT_LOG}"
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_STATUS="exited"
+      SESSION_META_LIVE_STATUS="stopped"
+      SESSION_META_DEBUG_LOG_PATH="${DEBUG_LOG}"
+      SESSION_META_FILE_TRACE_LOG_PATH="${FILE_TRACE_LOG}"
+      SESSION_META_SESSION_AUDIT_DIR="${SESSION_AUDIT_DIR}"
+      SESSION_META_TRANSCRIPT_LOG_PATH="${TRANSCRIPT_LOG}"
+    }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        inspect)
+          printf "stopped\n"
+          ;;
+        rm)
+          return 0
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    session_delete_main --id detached-fixture
+    test ! -e "${RECORD_PATH}"
+    test ! -e "${DEBUG_LOG}"
+    test ! -e "${FILE_TRACE_LOG}"
+    test ! -e "${SESSION_AUDIT_DIR}"
+    test ! -e "${TRANSCRIPT_LOG}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_CLEANUP_ROOT}" "${SESSION_DELETE_CLEANUP_RECORD}"
+)"
+grep -q '^session_id=detached-fixture$' <<<"${session_delete_cleanup_output}"
+grep -q '^deleted=1$' <<<"${session_delete_cleanup_output}"
+grep -q '^removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_cleanup_output}"
+grep -q '^kept=none$' <<<"${session_delete_cleanup_output}"
+grep -q '^missing=none$' <<<"${session_delete_cleanup_output}"
+grep -q '^unavailable=none$' <<<"${session_delete_cleanup_output}"
+grep -q '^transport|wcl-detached-fixture|inspect --format ' "${SESSION_DELETE_CLEANUP_RECORD}"
+grep -q '^transport|wcl-detached-fixture|rm -f workcell-session-fixture$' "${SESSION_DELETE_CLEANUP_RECORD}"
+
+SESSION_DELETE_RECORD_ONLY_RECORD="${DETACHED_STATE_DIR}/session-delete.record-only.record"
+SESSION_DELETE_RECORD_ONLY_ROOT="${DETACHED_STATE_DIR}/session-delete.record-only.root"
+session_delete_record_only_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_STATE_ROOT="$2"
+    RECORD_FILE="$3"
+    PROFILE_DIR="${COLIMA_STATE_ROOT}/wcl-detached-fixture"
+    RECORD_PATH="${PROFILE_DIR}/sessions/detached-fixture.json"
+    DEBUG_LOG="${PROFILE_DIR}/detached.debug.log"
+    FILE_TRACE_LOG="${PROFILE_DIR}/detached.file-trace.log"
+    TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
+    SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
+    mkdir -p "${PROFILE_DIR}/sessions"
+    : >"${PROFILE_DIR}/docker.sock"
+    mkdir -p "${SESSION_AUDIT_DIR}"
+    : >"${RECORD_PATH}"
+    printf "debug\n" >"${DEBUG_LOG}"
+    printf "trace\n" >"${FILE_TRACE_LOG}"
+    printf "transcript\n" >"${TRANSCRIPT_LOG}"
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_STATUS="exited"
+      SESSION_META_LIVE_STATUS="stopped"
+      SESSION_META_DEBUG_LOG_PATH="${DEBUG_LOG}"
+      SESSION_META_FILE_TRACE_LOG_PATH="${FILE_TRACE_LOG}"
+      SESSION_META_SESSION_AUDIT_DIR="${SESSION_AUDIT_DIR}"
+      SESSION_META_TRANSCRIPT_LOG_PATH="${TRANSCRIPT_LOG}"
+    }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        inspect)
+          printf "stopped\n"
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    session_delete_main --id detached-fixture --record-only
+    test ! -e "${RECORD_PATH}"
+    test -e "${DEBUG_LOG}"
+    test -e "${FILE_TRACE_LOG}"
+    test -e "${SESSION_AUDIT_DIR}"
+    test -e "${TRANSCRIPT_LOG}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_RECORD_ONLY_ROOT}" "${SESSION_DELETE_RECORD_ONLY_RECORD}"
+)"
+grep -q '^deleted=1$' <<<"${session_delete_record_only_output}"
+grep -q '^record_only=1$' <<<"${session_delete_record_only_output}"
+grep -q '^removed=record$' <<<"${session_delete_record_only_output}"
+grep -q '^kept=container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_record_only_output}"
+if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_RECORD_ONLY_RECORD}"; then
+  echo "session delete --record-only unexpectedly removed a container" >&2
+  exit 1
+fi
+
+SESSION_DELETE_DRY_RUN_RECORD="${DETACHED_STATE_DIR}/session-delete.dry-run.record"
+SESSION_DELETE_DRY_RUN_ROOT="${DETACHED_STATE_DIR}/session-delete.dry-run.root"
+session_delete_dry_run_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_STATE_ROOT="$2"
+    RECORD_FILE="$3"
+    PROFILE_DIR="${COLIMA_STATE_ROOT}/wcl-detached-fixture"
+    RECORD_PATH="${PROFILE_DIR}/sessions/detached-fixture.json"
+    DEBUG_LOG="${PROFILE_DIR}/detached.debug.log"
+    FILE_TRACE_LOG="${PROFILE_DIR}/detached.file-trace.log"
+    TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
+    SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
+    mkdir -p "${PROFILE_DIR}/sessions"
+    : >"${PROFILE_DIR}/docker.sock"
+    mkdir -p "${SESSION_AUDIT_DIR}"
+    : >"${RECORD_PATH}"
+    printf "debug\n" >"${DEBUG_LOG}"
+    printf "trace\n" >"${FILE_TRACE_LOG}"
+    printf "transcript\n" >"${TRANSCRIPT_LOG}"
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_STATUS="failed"
+      SESSION_META_LIVE_STATUS="stopped"
+      SESSION_META_DEBUG_LOG_PATH="${DEBUG_LOG}"
+      SESSION_META_FILE_TRACE_LOG_PATH="${FILE_TRACE_LOG}"
+      SESSION_META_SESSION_AUDIT_DIR="${SESSION_AUDIT_DIR}"
+      SESSION_META_TRANSCRIPT_LOG_PATH="${TRANSCRIPT_LOG}"
+    }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        inspect)
+          printf "stopped\n"
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    session_delete_main --id detached-fixture --dry-run
+    test -e "${RECORD_PATH}"
+    test -e "${DEBUG_LOG}"
+    test -e "${FILE_TRACE_LOG}"
+    test -e "${SESSION_AUDIT_DIR}"
+    test -e "${TRANSCRIPT_LOG}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_DRY_RUN_ROOT}" "${SESSION_DELETE_DRY_RUN_RECORD}"
+)"
+grep -q '^deleted=0$' <<<"${session_delete_dry_run_output}"
+grep -q '^dry_run=1$' <<<"${session_delete_dry_run_output}"
+grep -q '^would_remove=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_dry_run_output}"
+if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_DRY_RUN_RECORD}"; then
+  echo "session delete --dry-run unexpectedly removed a container" >&2
+  exit 1
+fi
+
+SESSION_DELETE_LIVE_CONTAINER_RECORD="${DETACHED_STATE_DIR}/session-delete.live-container.record"
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  COLIMA_STATE_ROOT="$2"
+  RECORD_FILE="$3"
+  PROFILE_DIR="${COLIMA_STATE_ROOT}/wcl-detached-fixture"
+  RECORD_PATH="${PROFILE_DIR}/sessions/detached-fixture.json"
+  DEBUG_LOG="${PROFILE_DIR}/detached.debug.log"
+  mkdir -p "${PROFILE_DIR}/sessions"
+  : >"${PROFILE_DIR}/docker.sock"
+  : >"${RECORD_PATH}"
+  printf "debug\n" >"${DEBUG_LOG}"
+  HOST_DOCKER_BIN="/bin/false"
+  resolve_host_tool() { printf "/bin/false\n"; }
+  sanitize_host_docker_env() { :; }
+  revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+  load_session_runtime_metadata() {
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+    SESSION_META_MONITOR_PID="4242"
+    SESSION_META_STATUS="exited"
+    SESSION_META_LIVE_STATUS="stopped"
+    SESSION_META_DEBUG_LOG_PATH="${DEBUG_LOG}"
+  }
+  run_profile_docker_command() {
+    local profile="$1"
+    shift
+    printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+    case "$1" in
+      inspect)
+        printf "running\n"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  session_delete_main --id detached-fixture
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/session-delete.live-container.root" "${SESSION_DELETE_LIVE_CONTAINER_RECORD}" >/dev/null 2>&1
+session_delete_live_container_status=$?
+set -e
+if [[ "${session_delete_live_container_status}" -eq 0 ]]; then
+  echo "session delete unexpectedly accepted a live container cleanup" >&2
+  exit 1
+fi
+if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_LIVE_CONTAINER_RECORD}"; then
+  echo "session delete tried to remove a running container" >&2
+  exit 1
+fi
+
+RUNTIME_IMAGE_CACHE_EXPORT_SOURCE="${TMP_DIR}/runtime-image-cache-export.tar"
+RUNTIME_IMAGE_CACHE_RECORD="${TMP_DIR}/runtime-image-cache.record"
+printf 'cached-runtime-image\n' >"${RUNTIME_IMAGE_CACHE_EXPORT_SOURCE}"
+runtime_image_cache_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_STATE_ROOT="$2"
+    COLIMA_PROFILE="wcl-cache-fixture"
+    IMAGE_TAG="workcell:local"
+    SOURCE_DATE_EPOCH="1234567890"
+    HOST_DOCKER_BIN="/bin/false"
+    CACHE_RECORD="$3"
+    EXPORT_SOURCE="$4"
+    SAVE_COUNT=0
+    LOAD_COUNT=0
+    MARKER_COUNT=0
+    CURRENT_PROFILE_IMAGE_ID="sha256:cached-runtime-image"
+    LOADED_PROFILE_IMAGE_ID=""
+    validate_colima_profile_name() { :; }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      case "$1 $2" in
+        "image save")
+          SAVE_COUNT=$((SAVE_COUNT + 1))
+          cp "${EXPORT_SOURCE}" "$4"
+          ;;
+        "image load")
+          LOAD_COUNT=$((LOAD_COUNT + 1))
+          test -f "$4"
+          LOADED_PROFILE_IMAGE_ID="sha256:cached-runtime-image"
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+      printf "%s|%s\n" "${profile}" "$*" >>"${CACHE_RECORD}"
+    }
+    current_profile_image_id() {
+      if [[ -n "${LOADED_PROFILE_IMAGE_ID}" ]]; then
+        printf "%s\n" "${LOADED_PROFILE_IMAGE_ID}"
+      else
+        printf "%s\n" "${CURRENT_PROFILE_IMAGE_ID}"
+      fi
+    }
+    write_profile_image_marker() {
+      MARKER_COUNT=$((MARKER_COUNT + 1))
+      printf "marker=%s\n" "$2" >>"${CACHE_RECORD}"
+    }
+
+    rm -f \
+      "$(profile_runtime_image_cache_path "${COLIMA_PROFILE}")" \
+      "$(profile_runtime_image_cache_metadata_path "${COLIMA_PROFILE}")"
+    cache_profile_runtime_image "${COLIMA_PROFILE}" "sha256:cached-runtime-image"
+    CURRENT_PROFILE_IMAGE_ID=""
+    if restore_profile_runtime_image_cache "${COLIMA_PROFILE}" "sha256:cached-runtime-image" "0"; then
+      echo "restore with a stale source epoch unexpectedly succeeded" >&2
+      exit 1
+    fi
+    restore_profile_runtime_image_cache "${COLIMA_PROFILE}" "sha256:cached-runtime-image" "1234567890"
+
+    printf "save_count=%s\n" "${SAVE_COUNT}"
+    printf "load_count=%s\n" "${LOAD_COUNT}"
+    printf "marker_count=%s\n" "${MARKER_COUNT}"
+    printf "cache_path=%s\n" "$(profile_runtime_image_cache_path "${COLIMA_PROFILE}")"
+    printf "cache_metadata=%s\n" "$(profile_runtime_image_cache_metadata_path "${COLIMA_PROFILE}")"
+    printf "cache_image_id=%s\n" "$(profile_runtime_image_cache_value "${COLIMA_PROFILE}" image_id)"
+    printf "cache_epoch=%s\n" "$(profile_runtime_image_cache_value "${COLIMA_PROFILE}" source_date_epoch)"
+  ' _ \
+    "${WORKCELL_FUNCTIONS_COPY}" \
+    "${COLIMA_ROOT}" \
+    "${RUNTIME_IMAGE_CACHE_RECORD}" \
+    "${RUNTIME_IMAGE_CACHE_EXPORT_SOURCE}"
+)"
+grep -q '^save_count=1$' <<<"${runtime_image_cache_output}"
+grep -q '^load_count=1$' <<<"${runtime_image_cache_output}"
+grep -q '^marker_count=1$' <<<"${runtime_image_cache_output}"
+grep -q '^cache_image_id=sha256:cached-runtime-image$' <<<"${runtime_image_cache_output}"
+grep -q '^cache_epoch=1234567890$' <<<"${runtime_image_cache_output}"
+grep -q '^wcl-cache-fixture|image save -o ' "${RUNTIME_IMAGE_CACHE_RECORD}"
+grep -q '^wcl-cache-fixture|image load -i ' "${RUNTIME_IMAGE_CACHE_RECORD}"
+grep -q '^marker=sha256:cached-runtime-image$' "${RUNTIME_IMAGE_CACHE_RECORD}"
+
+DETACHED_CAPTURE_STATE_FILE="${DETACHED_STATE_DIR}/captured-session-assurance"
+DETACHED_CAPTURE_FILE_TRACE_LOG="${DETACHED_STATE_DIR}/captured-session.file-trace.log"
+DETACHED_CAPTURE_AUDIT_SOURCE="${DETACHED_STATE_DIR}/container-session-assurance"
+DETACHED_CAPTURE_FILE_TRACE_SOURCE="${DETACHED_STATE_DIR}/container-session.file-trace.log"
+DETACHED_CAPTURE_RECORD="${DETACHED_STATE_DIR}/capture-record.log"
+printf 'lower-assurance-package-mutation\n' >"${DETACHED_CAPTURE_AUDIT_SOURCE}"
+printf 'event=watch-start\n' >"${DETACHED_CAPTURE_FILE_TRACE_SOURCE}"
+capture_probe_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_PROFILE="wcl-detached-fixture"
+    HOST_DOCKER_BIN="/bin/false"
+    SESSION_AUDIT_STATE_FILE="$2"
+    SESSION_AUDIT_CONTAINER_FILE="/var/lib/workcell/session-assurance"
+    FILE_TRACE_LOG_PATH="$3"
+    SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
+    STUB_AUDIT_SOURCE="$4"
+    STUB_FILE_TRACE_SOURCE="$5"
+    STUB_RECORD="$6"
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "%s|%s|%s|%s\n" "${profile}" "$1" "$2" "$3" >>"${STUB_RECORD}"
+      case "$2" in
+        *:/var/lib/workcell/session-assurance|*:/run/workcell/session-assurance)
+          cp "${STUB_AUDIT_SOURCE}" "$3"
+          ;;
+        *:/var/tmp/workcell-file-trace.log)
+          cp "${STUB_FILE_TRACE_SOURCE}" "$3"
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    run_workcell_docker_client_command() {
+      echo "ambient-docker-client" >>"${STUB_RECORD}"
+      return 99
+    }
+    capture_session_audit_state "workcell-session-fixture"
+    capture_session_file_trace "workcell-session-fixture"
+    printf "audit=%s\n" "$(cat "${SESSION_AUDIT_STATE_FILE}")"
+    printf "trace=%s\n" "$(cat "${FILE_TRACE_LOG_PATH}")"
+  ' _ \
+    "${WORKCELL_FUNCTIONS_COPY}" \
+    "${DETACHED_CAPTURE_STATE_FILE}" \
+    "${DETACHED_CAPTURE_FILE_TRACE_LOG}" \
+    "${DETACHED_CAPTURE_AUDIT_SOURCE}" \
+    "${DETACHED_CAPTURE_FILE_TRACE_SOURCE}" \
+    "${DETACHED_CAPTURE_RECORD}"
+)"
+grep -q '^audit=lower-assurance-package-mutation$' <<<"${capture_probe_output}"
+grep -q '^trace=event=watch-start$' <<<"${capture_probe_output}"
+grep -q '^wcl-detached-fixture|cp|workcell-session-fixture:/var/lib/workcell/session-assurance|' "${DETACHED_CAPTURE_RECORD}"
+grep -q '^wcl-detached-fixture|cp|workcell-session-fixture:/var/tmp/workcell-file-trace.log|' "${DETACHED_CAPTURE_RECORD}"
+if grep -q 'ambient-docker-client' "${DETACHED_CAPTURE_RECORD}"; then
+  echo "Detached artifact capture unexpectedly used the ambient host docker client" >&2
+  exit 1
+fi
+
+mkdir -p "${DETACHED_STATE_DIR}" "$(dirname "${DETACHED_WORKSPACE}")"
+cat >"${DETACHED_DEBUG_LOG}" <<EOF
+debug-log: detached session observability fixture
+EOF
+cat >"${DETACHED_FILE_TRACE_LOG}" <<EOF
+file-trace: detached session observability fixture
+EOF
+cat >"${DETACHED_TRANSCRIPT_LOG}" <<EOF
+transcript: detached session observability fixture
+EOF
+cat >"${DETACHED_BACKEND}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+cmd="${1:-}"
+shift || true
+
+STATE_FILE="${SESSION_BACKEND_STATE_FILE:?}"
+AUDIT_LOG="${SESSION_BACKEND_AUDIT_LOG:?}"
+SESSION_ID="${SESSION_BACKEND_SESSION_ID:?}"
+WORKSPACE_PATH="${SESSION_BACKEND_WORKSPACE_PATH:?}"
+DEBUG_LOG_PATH="${SESSION_BACKEND_DEBUG_LOG_PATH:?}"
+FILE_TRACE_LOG_PATH="${SESSION_BACKEND_FILE_TRACE_LOG_PATH:?}"
+TRANSCRIPT_LOG_PATH="${SESSION_BACKEND_TRANSCRIPT_LOG_PATH:?}"
+
+write_state() {
+  local status="$1"
+  local live_status="$2"
+  local timeline_seq="$3"
+  local finished_at="${4:-}"
+  local exit_status="${5:-}"
+  local final_assurance="${6:-}"
+
+  {
+    printf 'status=%q\n' "${status}"
+    printf 'live_status=%q\n' "${live_status}"
+    printf 'timeline_seq=%q\n' "${timeline_seq}"
+    printf 'finished_at=%q\n' "${finished_at}"
+    printf 'exit_status=%q\n' "${exit_status}"
+    printf 'final_assurance=%q\n' "${final_assurance}"
+  } >"${STATE_FILE}"
+}
+
+load_state() {
+  # shellcheck disable=SC1090
+  source "${STATE_FILE}"
+}
+
+append_audit_line() {
+  printf '%s\n' "$*" >>"${AUDIT_LOG}"
+}
+
+case "${cmd}" in
+  start)
+    mkdir -p "$(dirname "${STATE_FILE}")" "$(dirname "${AUDIT_LOG}")" "$(dirname "${WORKSPACE_PATH}")"
+    write_state "running" "running" 1
+    append_audit_line "timestamp=2026-04-08T13:00:00Z event=launch session_id=${SESSION_ID} control_mode=detached live_status=running workspace=${WORKSPACE_PATH} git_branch=${SESSION_BACKEND_GIT_BRANCH:-unknown} debug_log_path=${DEBUG_LOG_PATH} file_trace_log_path=${FILE_TRACE_LOG_PATH} transcript_log_path=${TRANSCRIPT_LOG_PATH}"
+    cat <<EOF_START
+session_id=${SESSION_ID}
+status=running
+live_status=running
+control_mode=detached
+workspace=${WORKSPACE_PATH}
+git_branch=${SESSION_BACKEND_GIT_BRANCH:-unknown}
+debug_log_path=${DEBUG_LOG_PATH}
+file_trace_log_path=${FILE_TRACE_LOG_PATH}
+transcript_log_path=${TRANSCRIPT_LOG_PATH}
+EOF_START
+    ;;
+  attach)
+    load_state
+    cat <<EOF_ATTACH
+session_id=${SESSION_ID}
+status=${status}
+live_status=${live_status}
+control_mode=detached
+workspace=${WORKSPACE_PATH}
+git_branch=${SESSION_BACKEND_GIT_BRANCH:-unknown}
+transcript_log_path=${TRANSCRIPT_LOG_PATH}
+EOF_ATTACH
+    ;;
+  send)
+    load_state
+    command_text="${1:-}"
+    shift || true
+    timeline_seq=$((timeline_seq + 1))
+    write_state "${status}" "${live_status}" "${timeline_seq}"
+    append_audit_line "timestamp=2026-04-08T13:01:00Z event=command session_id=${SESSION_ID} timeline_seq=${timeline_seq} command=${command_text} argv=${command_text} source=attach"
+    printf 'sent=%s\n' "${command_text}"
+    printf 'timeline_seq=%s\n' "${timeline_seq}"
+    ;;
+  stop)
+    load_state
+    timeline_seq=$((timeline_seq + 1))
+    write_state "exited" "stopped" "${timeline_seq}" "2026-04-08T13:02:00Z" "0" "managed-mutable"
+    append_audit_line "timestamp=2026-04-08T13:02:00Z event=exit session_id=${SESSION_ID} timeline_seq=${timeline_seq} exit_status=0 final_assurance=managed-mutable"
+    cat <<EOF_STOP
+session_id=${SESSION_ID}
+status=exited
+live_status=stopped
+finished_at=2026-04-08T13:02:00Z
+exit_status=0
+final_assurance=managed-mutable
+EOF_STOP
+    ;;
+  show)
+    load_state
+    cat <<EOF_SHOW
+{
+  "session_id": "${SESSION_ID}",
+  "status": "${status}",
+  "live_status": "${live_status}",
+  "control_mode": "detached",
+  "workspace": "${WORKSPACE_PATH}",
+  "git_branch": "${SESSION_BACKEND_GIT_BRANCH:-unknown}",
+  "initial_assurance": "managed-mutable",
+  "current_assurance": "managed-mutable",
+  "final_assurance": "${final_assurance}",
+  "audit_log_path": "${AUDIT_LOG}",
+  "debug_log_path": "${DEBUG_LOG_PATH}",
+  "file_trace_log_path": "${FILE_TRACE_LOG_PATH}",
+  "transcript_log_path": "${TRANSCRIPT_LOG_PATH}",
+  "timeline_seq": ${timeline_seq}
+}
+EOF_SHOW
+    ;;
+  export)
+    load_state
+    {
+      echo '{'
+      printf '  "session": {\n'
+      printf '    "session_id": "%s",\n' "${SESSION_ID}"
+      printf '    "status": "%s",\n' "${status}"
+      printf '    "live_status": "%s",\n' "${live_status}"
+      printf '    "control_mode": "detached",\n'
+      printf '    "workspace": "%s",\n' "${WORKSPACE_PATH}"
+      printf '    "git_branch": "%s",\n' "${SESSION_BACKEND_GIT_BRANCH:-unknown}"
+      printf '    "audit_log_path": "%s",\n' "${AUDIT_LOG}"
+      printf '    "debug_log_path": "%s",\n' "${DEBUG_LOG_PATH}"
+      printf '    "file_trace_log_path": "%s",\n' "${FILE_TRACE_LOG_PATH}"
+      printf '    "transcript_log_path": "%s"\n' "${TRANSCRIPT_LOG_PATH}"
+      printf '  },\n'
+      echo '  "audit_records": ['
+      first=1
+      while IFS= read -r line; do
+        [[ -z "${line}" ]] && continue
+        case "${line}" in
+          *"session_id=${SESSION_ID}"*)
+            if [[ "${first}" -eq 0 ]]; then
+              echo ','
+            fi
+            first=0
+            printf '    "%s"' "${line}"
+            ;;
+        esac
+      done <"${AUDIT_LOG}"
+      if [[ "${first}" -eq 0 ]]; then
+        echo
+      fi
+      echo '  ]'
+      echo '}'
+    }
+    ;;
+  *)
+    echo "unknown session backend command: ${cmd}" >&2
+    exit 2
+    ;;
+esac
+EOF
+chmod +x "${DETACHED_BACKEND}"
+
+start_output="$(
+  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+    SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+    SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+    SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+    SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+    SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+    SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+    SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+    "${DETACHED_BACKEND}" start
+)"
+grep -q "^session_id=${DETACHED_SESSION}$" <<<"${start_output}"
+grep -q '^status=running$' <<<"${start_output}"
+grep -q '^live_status=running$' <<<"${start_output}"
+grep -q "^control_mode=detached$" <<<"${start_output}"
+grep -q "^workspace=${DETACHED_WORKSPACE}$" <<<"${start_output}"
+grep -q "^git_branch=${DETACHED_BRANCH}$" <<<"${start_output}"
+grep -q "^debug_log_path=${DETACHED_DEBUG_LOG}$" <<<"${start_output}"
+grep -q "^file_trace_log_path=${DETACHED_FILE_TRACE_LOG}$" <<<"${start_output}"
+grep -q "^transcript_log_path=${DETACHED_TRANSCRIPT_LOG}$" <<<"${start_output}"
+
+attach_output="$(
+  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+    SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+    SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+    SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+    SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+    SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+    SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+    SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+    "${DETACHED_BACKEND}" attach
+)"
+grep -q "^session_id=${DETACHED_SESSION}$" <<<"${attach_output}"
+grep -q '^status=running$' <<<"${attach_output}"
+grep -q '^live_status=running$' <<<"${attach_output}"
+grep -q "^workspace=${DETACHED_WORKSPACE}$" <<<"${attach_output}"
+grep -q "^git_branch=${DETACHED_BRANCH}$" <<<"${attach_output}"
+grep -q "^transcript_log_path=${DETACHED_TRANSCRIPT_LOG}$" <<<"${attach_output}"
+
+send_output="$(
+  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+    SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+    SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+    SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+    SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+    SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+    SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+    SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+    "${DETACHED_BACKEND}" send "plan-next-step"
+)"
+grep -q '^sent=plan-next-step$' <<<"${send_output}"
+grep -q '^timeline_seq=2$' <<<"${send_output}"
+grep -q "event=command session_id=${DETACHED_SESSION} timeline_seq=2 command=plan-next-step argv=plan-next-step source=attach" "${DETACHED_AUDIT_LOG}"
+
+show_output="$(
+  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+    SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+    SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+    SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+    SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+    SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+    SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+    SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+    "${DETACHED_BACKEND}" show
+)"
+grep -q "^  \"session_id\": \"${DETACHED_SESSION}\"" <<<"${show_output}"
+grep -q '^  "status": "running",$' <<<"${show_output}"
+grep -q '^  "live_status": "running",$' <<<"${show_output}"
+grep -q '^  "control_mode": "detached",$' <<<"${show_output}"
+grep -q "^  \"workspace\": \"${DETACHED_WORKSPACE}\",$" <<<"${show_output}"
+grep -q "^  \"git_branch\": \"${DETACHED_BRANCH}\",$" <<<"${show_output}"
+grep -q "^  \"audit_log_path\": \"${DETACHED_AUDIT_LOG}\",$" <<<"${show_output}"
+grep -q "^  \"debug_log_path\": \"${DETACHED_DEBUG_LOG}\",$" <<<"${show_output}"
+grep -q "^  \"file_trace_log_path\": \"${DETACHED_FILE_TRACE_LOG}\",$" <<<"${show_output}"
+grep -q "^  \"transcript_log_path\": \"${DETACHED_TRANSCRIPT_LOG}\",$" <<<"${show_output}"
+
+stop_output="$(
+  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+    SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+    SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+    SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+    SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+    SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+    SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+    SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+    "${DETACHED_BACKEND}" stop
+)"
+grep -q "^session_id=${DETACHED_SESSION}$" <<<"${stop_output}"
+grep -q '^status=exited$' <<<"${stop_output}"
+grep -q '^live_status=stopped$' <<<"${stop_output}"
+grep -q '^exit_status=0$' <<<"${stop_output}"
+grep -q '^final_assurance=managed-mutable$' <<<"${stop_output}"
+
+export_fixture="$(
+  SESSION_BACKEND_STATE_FILE="${DETACHED_STATE_FILE}" \
+    SESSION_BACKEND_AUDIT_LOG="${DETACHED_AUDIT_LOG}" \
+    SESSION_BACKEND_SESSION_ID="${DETACHED_SESSION}" \
+    SESSION_BACKEND_WORKSPACE_PATH="${DETACHED_WORKSPACE}" \
+    SESSION_BACKEND_GIT_BRANCH="${DETACHED_BRANCH}" \
+    SESSION_BACKEND_DEBUG_LOG_PATH="${DETACHED_DEBUG_LOG}" \
+    SESSION_BACKEND_FILE_TRACE_LOG_PATH="${DETACHED_FILE_TRACE_LOG}" \
+    SESSION_BACKEND_TRANSCRIPT_LOG_PATH="${DETACHED_TRANSCRIPT_LOG}" \
+    "${DETACHED_BACKEND}" export
+)"
+grep -q "^    \"session_id\": \"${DETACHED_SESSION}\"" <<<"${export_fixture}"
+grep -q '^    "status": "exited",$' <<<"${export_fixture}"
+grep -q '^    "live_status": "stopped",$' <<<"${export_fixture}"
+grep -q '^    "control_mode": "detached",$' <<<"${export_fixture}"
+grep -q "^    \"workspace\": \"${DETACHED_WORKSPACE}\",$" <<<"${export_fixture}"
+grep -q "^    \"git_branch\": \"${DETACHED_BRANCH}\",$" <<<"${export_fixture}"
+grep -q "^    \"audit_log_path\": \"${DETACHED_AUDIT_LOG}\",$" <<<"${export_fixture}"
+grep -q '^  "audit_records": \[$' <<<"${export_fixture}"
+grep -Fq "workspace=${WORKSPACE_A}/.git/" <<<"${start_output}"
+grep -q "event=launch session_id=${DETACHED_SESSION}" "${DETACHED_AUDIT_LOG}"
+grep -q "event=exit session_id=${DETACHED_SESSION} timeline_seq=3 exit_status=0 final_assurance=managed-mutable" "${DETACHED_AUDIT_LOG}"
+grep -q "event=command session_id=${DETACHED_SESSION} timeline_seq=2 command=plan-next-step argv=plan-next-step source=attach" "${DETACHED_AUDIT_LOG}"
+grep -q 'debug-log: detached session observability fixture' "${DETACHED_DEBUG_LOG}"
+grep -q 'file-trace: detached session observability fixture' "${DETACHED_FILE_TRACE_LOG}"
+grep -q 'transcript: detached session observability fixture' "${DETACHED_TRANSCRIPT_LOG}"
 
 missing_output="$(
   "${ROOT_DIR}/scripts/workcell" session show --id missing-session 2>&1 >/dev/null || true

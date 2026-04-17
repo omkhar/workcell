@@ -244,19 +244,31 @@ func pythonTimestamp(t time.Time) string {
 	return t.Format("2006-01-02T15:04:05") + "." + fracText + "+00:00"
 }
 
+func isRetryableIOError(err error) bool {
+	return errors.Is(err, syscall.EINTR)
+}
+
 func readAtFDReal(fd int) ([]byte, error) {
-	buf := make([]byte, 1024)
-	n, err := syscall.Read(fd, buf)
-	if n > 0 {
-		return buf[:n], err
+	for {
+		buf := make([]byte, 1024)
+		n, err := syscall.Read(fd, buf)
+		if err != nil && isRetryableIOError(err) {
+			continue
+		}
+		if n > 0 {
+			return buf[:n], err
+		}
+		return nil, err
 	}
-	return nil, err
 }
 
 func writeAtFDReal(fd int, data []byte) error {
 	for len(data) > 0 {
 		n, err := syscall.Write(fd, data)
 		if err != nil {
+			if isRetryableIOError(err) {
+				continue
+			}
 			return err
 		}
 		data = data[n:]

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
+	"unsafe"
 )
 
 func TestExitCodeFromWaitStatus(t *testing.T) {
@@ -325,6 +327,161 @@ func TestOpenPTYReturnsSlavePath(t *testing.T) {
 	}
 }
 
+func TestSpawnPTYRealRetriesInterruptedMasterRead(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("pty backend only covered on unix")
+	}
+
+	stdin, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer stdin.Close()
+
+	stdoutPath := filepath.Join(t.TempDir(), "stdout.log")
+	stdout, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("open stdout log: %v", err)
+	}
+	defer stdout.Close()
+
+	interrupted := true
+	status, err := spawnPTYReal(
+		[]string{"/bin/sh", "-lc", "printf 'child output\\n'; sleep 0.1"},
+		stdin,
+		stdout,
+		readAtFDReal,
+		func(fd int) ([]byte, error) {
+			if interrupted {
+				interrupted = false
+				return nil, syscall.EINTR
+			}
+			return readAtFDReal(fd)
+		},
+	)
+	if err != nil {
+		t.Fatalf("spawnPTYReal(master EINTR) error = %v", err)
+	}
+	if got := exitCodeFromWaitStatus(status); got != 0 {
+		t.Fatalf("exit code = %d, want 0", got)
+	}
+	if got := string(readFile(t, stdoutPath)); !strings.Contains(got, "child output") {
+		t.Fatalf("stdout = %q, want child output", got)
+	}
+}
+
+func TestSpawnPTYRealRetriesInterruptedStdinRead(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("pty backend only covered on unix")
+	}
+
+	stdinReader, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error = %v", err)
+	}
+	defer stdinReader.Close()
+
+	if _, err := stdinWriter.WriteString("hello from stdin\n"); err != nil {
+		t.Fatalf("stdin write error = %v", err)
+	}
+	if err := stdinWriter.Close(); err != nil {
+		t.Fatalf("stdin close error = %v", err)
+	}
+
+	stdoutPath := filepath.Join(t.TempDir(), "stdout.log")
+	stdout, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("open stdout log: %v", err)
+	}
+	defer stdout.Close()
+
+	interrupted := true
+	status, err := spawnPTYReal(
+		[]string{"/bin/sh", "-lc", "IFS= read -r line; printf '%s\\n' \"$line\""},
+		stdinReader,
+		stdout,
+		func(fd int) ([]byte, error) {
+			if interrupted {
+				interrupted = false
+				return nil, syscall.EINTR
+			}
+			return readAtFDReal(fd)
+		},
+		readAtFDReal,
+	)
+	if err != nil {
+		t.Fatalf("spawnPTYReal(stdin EINTR) error = %v", err)
+	}
+	if got := exitCodeFromWaitStatus(status); got != 0 {
+		t.Fatalf("exit code = %d, want 0", got)
+	}
+	if got := string(readFile(t, stdoutPath)); !strings.Contains(got, "hello from stdin") {
+		t.Fatalf("stdout = %q, want echoed stdin", got)
+	}
+}
+
+func TestSpawnPTYRealForwardsSIGWINCH(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("pty backend only covered on unix")
+	}
+
+	hostMaster, hostSlaveName, err := openPTY()
+	if err != nil {
+		t.Fatalf("openPTY() error = %v", err)
+	}
+	defer hostMaster.Close()
+
+	hostSlave, err := os.OpenFile(hostSlaveName, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open host slave: %v", err)
+	}
+	defer hostSlave.Close()
+
+	stdoutPath := filepath.Join(t.TempDir(), "stdout.log")
+	stdout, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("open stdout log: %v", err)
+	}
+	defer stdout.Close()
+
+	resultCh := make(chan struct {
+		status int
+		err    error
+	}, 1)
+	go func() {
+		status, err := spawnPTYReal(
+			[]string{"/bin/sh", "-lc", "trap 'printf child-winch\\\\n; exit 0' WINCH; printf child-start\\\\n; while :; do sleep 1; done"},
+			hostSlave,
+			stdout,
+			readAtFDReal,
+			readAtFDReal,
+		)
+		resultCh <- struct {
+			status int
+			err    error
+		}{status: status, err: err}
+	}()
+
+	waitForSubstringInFile(t, stdoutPath, "child-start", 5*time.Second)
+	setWindowSize(t, int(hostMaster.Fd()), 40, 100)
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGWINCH); err != nil {
+		t.Fatalf("kill(SIGWINCH) error = %v", err)
+	}
+	waitForSubstringInFile(t, stdoutPath, "child-winch", 5*time.Second)
+
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("spawnPTYReal(SIGWINCH) error = %v", result.err)
+		}
+		if got := exitCodeFromWaitStatus(result.status); got != 0 {
+			t.Fatalf("exit code = %d, want 0", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("spawnPTYReal did not exit after forwarded SIGWINCH")
+	}
+}
+
 func readFile(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -342,6 +499,26 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("mode mismatch for %s: got %04o want %04o", path, got, want)
+	}
+}
+
+func waitForSubstringInFile(t *testing.T, path, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if strings.Contains(string(readFile(t, path)), want) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %q in %s; contents=%q", want, path, string(readFile(t, path)))
+}
+
+func setWindowSize(t *testing.T, fd int, rows, cols uint16) {
+	t.Helper()
+	size := windowSize{Rows: rows, Cols: cols}
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(&size))); errno != 0 {
+		t.Fatalf("set window size: %v", errno)
 	}
 }
 

@@ -2200,6 +2200,7 @@ PROFILE_MARKER_WORKSPACE="bound"
 PROFILE_RUNNING=1
 
 stash_profile_audit_log() { :; }
+remember_profile_runtime_image_for_refresh() { :; }
 reap_stale_profile_processes() { :; }
 run_host_colima_with_timeout() { return 124; }
 profile_dir() { printf '%s/profile-%s\n' "${ROOT}" "$1"; }
@@ -2470,7 +2471,7 @@ if ! rg -q 'COLIMA_HOME="\$\{colima_home\}"' "${ROOT_DIR}/scripts/colima-egress-
   exit 1
 fi
 
-if ! rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
+if ! rg -q 'snapshot\.debian\.org:443' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to allow snapshot.debian.org" >&2
   exit 1
 fi
@@ -2485,8 +2486,8 @@ if ! rg -q 'docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443' "${ROOT_D
   exit 1
 fi
 
-if rg -q 'snapshot\.debian\.org:443' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:443 egress" >&2
+if rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:80 egress" >&2
   exit 1
 fi
 
@@ -5480,8 +5481,16 @@ if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
   exit 1
 fi
 
-if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- '--entrypoint bash'; then
-  echo "Expected arbitrary command path to bypass the managed container entrypoint" >&2
+if echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- '--entrypoint bash'; then
+  echo "Expected arbitrary command path to stay on the managed container entrypoint" >&2
+  exit 1
+fi
+if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- '-e WORKCELL_ALLOW_ARBITRARY_COMMAND=1'; then
+  echo "Expected arbitrary command path to declare explicit lower-assurance runtime handling" >&2
+  exit 1
+fi
+if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- 'workcell:local bash -lc true '; then
+  echo "Expected arbitrary command path to preserve the explicit runtime command arguments" >&2
   exit 1
 fi
 
