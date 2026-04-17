@@ -168,7 +168,7 @@ printf '%s\n' "${plan_json}" >"${plan_path}"
 
 (
   cd "${ROOT_DIR}"
-  go run ./cmd/workcell-metadatautil apply-provider-bump-plan "${plan_path}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}"
+  go run ./cmd/workcell-metadatautil apply-provider-bump-plan "${plan_path}" "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}"
 )
 
 (

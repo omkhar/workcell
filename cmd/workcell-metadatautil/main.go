@@ -135,10 +135,10 @@ func main() {
 		fmt.Printf("%s\n", content)
 		return
 	case "apply-provider-bump-plan":
-		if len(os.Args) != 5 {
-			die(fmt.Errorf("usage: %s apply-provider-bump-plan PLAN_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", os.Args[0]))
+		if len(os.Args) != 6 {
+			die(fmt.Errorf("usage: %s apply-provider-bump-plan PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", os.Args[0]))
 		}
-		err = metadatautil.ApplyProviderBumpPlan(os.Args[2], os.Args[3], os.Args[4])
+		err = metadatautil.ApplyProviderBumpPlan(os.Args[2], os.Args[3], os.Args[4], os.Args[5])
 	case "generate-build-input-manifest":
 		if len(os.Args) != 9 {
 			die(fmt.Errorf("usage: %s generate-build-input-manifest DOCKERFILE PACKAGE_JSON PACKAGE_LOCK OUTPUT BUILD_REF SOURCE_DATE_EPOCH REQUIRE_TRACKED", os.Args[0]))
