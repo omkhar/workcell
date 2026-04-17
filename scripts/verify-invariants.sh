@@ -228,6 +228,80 @@ extract_top_level_bash_function() {
   ' "${source_file}"
 }
 
+make_tree_user_writable_safely() {
+  local target_path="$1"
+
+  [[ -e "${target_path}" || -L "${target_path}" ]] || return 0
+  if [[ -L "${target_path}" ]]; then
+    chmod -h u+w "${target_path}" 2>/dev/null || true
+    return 0
+  fi
+
+  find -P "${target_path}" -type d -exec chmod u+w {} + 2>/dev/null || true
+  find -P "${target_path}" -type f -exec chmod u+w {} + 2>/dev/null || true
+  chmod u+w "${target_path}" 2>/dev/null || true
+}
+
+remove_tree_safely() {
+  local target_path="$1"
+
+  [[ -e "${target_path}" || -L "${target_path}" ]] || return 0
+  make_tree_user_writable_safely "${target_path}"
+  rm -rf "${target_path}"
+}
+
+run_safe_remove_self_test() {
+  local test_root=""
+  local managed_root=""
+  local nested_dir=""
+  local outside_root=""
+  local outside_file=""
+  local before_mode=""
+  local after_mode=""
+
+  test_root="$(mktemp -d "${TMPDIR:-/tmp}/workcell-verify-safe-remove.XXXXXX")"
+  managed_root="${test_root}/managed-root"
+  nested_dir="${managed_root}/nested"
+  outside_root="${test_root}/outside"
+  outside_file="${outside_root}/keep.txt"
+  mkdir -p "${nested_dir}" "${outside_root}"
+  printf 'outside\n' >"${outside_file}"
+  chmod 0600 "${outside_file}"
+  printf 'managed\n' >"${nested_dir}/readonly.txt"
+  ln -s "${outside_file}" "${managed_root}/escape-link"
+  chmod 0555 "${managed_root}" "${nested_dir}"
+  chmod 0444 "${nested_dir}/readonly.txt"
+
+  before_mode="$(file_mode_octal "${outside_file}")"
+  remove_tree_safely "${managed_root}"
+  after_mode="$(file_mode_octal "${outside_file}")"
+
+  [[ ! -e "${managed_root}" ]] || {
+    echo "Expected remove_tree_safely to remove the managed tree" >&2
+    rm -rf "${test_root}"
+    return 1
+  }
+  [[ -f "${outside_file}" ]] || {
+    echo "Expected remove_tree_safely to leave external targets intact" >&2
+    rm -rf "${test_root}"
+    return 1
+  }
+  [[ "${before_mode}" == "${after_mode}" ]] || {
+    echo "Expected remove_tree_safely to avoid chmodding symlink targets" >&2
+    printf 'before=%s after=%s\n' "${before_mode}" "${after_mode}" >&2
+    rm -rf "${test_root}"
+    return 1
+  }
+
+  rm -rf "${test_root}"
+}
+
+if [[ "${1:-}" == "--self-safe-remove-probe" ]]; then
+  run_safe_remove_self_test
+  echo "verify-invariants-safe-remove-ok"
+  exit 0
+fi
+
 cleanup() {
   [[ "${VERIFY_INVARIANTS_CLEANUP_ACTIVE}" -eq 0 ]] || return 0
   VERIFY_INVARIANTS_CLEANUP_ACTIVE=1
@@ -244,10 +318,9 @@ cleanup() {
   delete_verify_colima_profile "${TRANSCRIPT_LOG_PROFILE:-}"
   delete_verify_colima_profile "${BROKEN_DEBUG_POINTER_PROFILE:-}"
   delete_verify_colima_profile "${UNMANAGED_PROFILE_NAME:-}"
-  chmod -R u+w "${CODEX_VERIFY_HOME}" "${BARRIER_VERIFY_ROOT}" "${INSTALL_VERIFY_HOME}" 2>/dev/null || true
-  rm -rf "${CODEX_VERIFY_HOME}"
-  rm -rf "${BARRIER_VERIFY_ROOT}"
-  rm -rf "${INSTALL_VERIFY_HOME}"
+  remove_tree_safely "${CODEX_VERIFY_HOME}"
+  remove_tree_safely "${BARRIER_VERIFY_ROOT}"
+  remove_tree_safely "${INSTALL_VERIFY_HOME}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
@@ -5403,8 +5476,7 @@ if grep -q '^# modified instructions$' "${MASK_SNAPSHOT_ROOT}/files/AGENTS.md"; 
   exit 1
 fi
 grep -q '"tracked": true' "${MASK_SNAPSHOT_ROOT}/dirs/.claude/settings.json"
-chmod -R u+w "${MASK_SNAPSHOT_ROOT}" 2>/dev/null || true
-rm -rf "${MASK_SNAPSHOT_ROOT}"
+remove_tree_safely "${MASK_SNAPSHOT_ROOT}"
 
 CONFLICT_SHADOW_REPO="${BARRIER_VERIFY_ROOT}/conflict-shadow-repo"
 git init -q "${CONFLICT_SHADOW_REPO}"
@@ -5449,8 +5521,7 @@ if [[ -e "${CONFLICT_SHADOW_ROOT}/dirs/.claude/settings.json" ]]; then
   cat "${CONFLICT_SHADOW_ROOT}/dirs/.claude/settings.json" >&2
   exit 1
 fi
-chmod -R u+w "${CONFLICT_SHADOW_ROOT}" 2>/dev/null || true
-rm -rf "${CONFLICT_SHADOW_ROOT}"
+remove_tree_safely "${CONFLICT_SHADOW_ROOT}"
 
 mkdir -p "${MASK_VERIFY_WORKSPACE}/symlinked"
 ln -s "${REAL_HOME}/.ssh/config" "${MASK_VERIFY_WORKSPACE}/symlinked/GEMINI.md"
