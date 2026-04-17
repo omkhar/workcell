@@ -16,9 +16,36 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
+release_upload_policy_error() {
+  local tag_name="$1"
+  local release_draft="$2"
+  local release_immutable="$3"
+
+  if [[ "${release_draft}" == "true" ]]; then
+    return 0
+  fi
+
+  if [[ "${release_immutable}" == "true" ]]; then
+    echo "GitHub release ${tag_name} is already published and immutable; asset uploads are no longer allowed. Patch main and cut the next patch release instead." >&2
+  else
+    echo "GitHub release ${tag_name} is already published; Workcell only uploads assets to draft releases. Patch main and cut the next patch release instead." >&2
+  fi
+  return 1
+}
+
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
   echo "publish-github-release-entrypoint-ok"
+  exit 0
+fi
+
+if [[ "${1:-}" == "--self-release-state-probe" ]]; then
+  [[ $# -eq 4 ]] || {
+    echo "Usage: publish-github-release.sh --self-release-state-probe TAG DRAFT IMMUTABLE" >&2
+    exit 2
+  }
+  release_upload_policy_error "$2" "$3" "$4"
+  echo "publish-github-release-state-ok"
   exit 0
 fi
 
@@ -134,8 +161,14 @@ while IFS= read -r -d '' field; do
 done <"${TMP_ROOT}/release-metadata.txt"
 release_id="${release_metadata[0]}"
 upload_url="${release_metadata[1]}"
+release_draft="${release_metadata[2]}"
+release_immutable="${release_metadata[3]}"
 
-for ((i = 2; i < ${#release_metadata[@]}; i += 2)); do
+if ! release_upload_policy_error "${TAG_NAME}" "${release_draft}" "${release_immutable}"; then
+  exit 1
+fi
+
+for ((i = 4; i < ${#release_metadata[@]}; i += 2)); do
   asset_id_index=$((i + 1))
   asset_name="${release_metadata[i]}"
   asset_id="${release_metadata[asset_id_index]}"
@@ -171,4 +204,13 @@ for path in "$@"; do
   }
 done
 
-printf 'Published GitHub release assets for %s (release id %s)\n' "${TAG_NAME}" "${release_id}"
+publish_payload="${TMP_ROOT}/publish.json"
+printf '{"draft":false}\n' >"${publish_payload}"
+publish_status="$(api PATCH "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id}" "${publish_payload}" "${TMP_ROOT}/publish-response.json")"
+[[ "${publish_status}" == "200" ]] || {
+  echo "Failed to publish GitHub release ${TAG_NAME} after uploading assets" >&2
+  cat "${TMP_ROOT}/publish-response.json" >&2
+  exit 1
+}
+
+printf 'Uploaded GitHub release assets and published final release for %s (release id %s)\n' "${TAG_NAME}" "${release_id}"

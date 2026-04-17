@@ -44,6 +44,10 @@ honestly in docs, status reports, and release commentary.
   verification are green.
 - Verify that the repository-level immutable-release control is enabled before
   pushing a release tag.
+- Publish release assets through a draft GitHub release first, then publish
+  the final release record only after the asset set is complete. The release
+  workflow handles that draft creation and final publication automatically; the
+  operator verifies the finished published release state.
 - Verify the published GitHub release, attached assets, and immutable-release
   state before concluding.
 - Do not rewrite or delete a failed release tag. Recover by patching `main` and
@@ -418,6 +422,13 @@ If the workflow enters a waiting state for the `release` environment:
 2. approve the environment in the standard single-maintainer path
 3. continue watching until publication finishes
 
+In immutable-release mode, the release publisher must create or reuse a draft
+release, upload the full artifact set into that draft, and only then publish
+the final release record. If publication instead tries to upload assets into an
+already-published immutable release, treat that as a release-process bug,
+patch `main`, and cut the next patch release rather than rewriting the failed
+tag.
+
 After approving the environment in single-maintainer mode, leave a public PR
 follow-up comment so the self-review is visible in the same release thread. Use
 this template:
@@ -511,5 +522,7 @@ If the release workflow succeeded but `gh release view` reports
 - verify the repository-level immutable-release control with
   `gh api repos/"${REPO}"/immutable-releases`
 - enable it with `gh api -X PUT repos/"${REPO}"/immutable-releases` if needed
+- patch `main` so the release publisher uses a draft-first upload flow before
+  the immutable release record is published
 - patch `main` so the docs and changelog describe the gap honestly
 - cut the next patch release under the enabled immutable-release control

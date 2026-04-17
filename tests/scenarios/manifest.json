@@ -57,6 +57,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/publish-github-release",
+      "description": "Host-side publish-github-release only mutates draft releases and fails closed for already-published mutable or immutable releases",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "release-engineer",
+      "test_file": "shared/test-publish-github-release.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/home-control-plane-manifest",
       "description": "Shared home-control-plane manifest parsing uses one-pass jq readers for copy and ssh entries",
       "lane": "secretless",

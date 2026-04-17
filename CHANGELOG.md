@@ -8,6 +8,15 @@ Releases.
 
 ## Unreleased
 
+## v0.10.2 - 2026-04-17
+
+### Fixed
+
+- publish GitHub release assets through a draft-first release flow so
+  repository-level immutable releases can still receive the full artifact,
+  signature, SBOM, and attestation set before the final release record is
+  published
+
 ## v0.10.1 - 2026-04-17
 
 ### Changed
