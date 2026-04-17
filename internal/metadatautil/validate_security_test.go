@@ -393,6 +393,32 @@ func TestVerifyGitHubHostedControlsRejectsApprovalGatedMode(t *testing.T) {
 	}
 }
 
+func TestVerifyGitHubHostedControlsRejectsReviewGatedRulesetWithoutCodeOwnerReview(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "rulesets.json"), func(content string) string {
+		content = strings.Replace(content, `"require_code_owner_review": true`, `"require_code_owner_review": false`, 1)
+		return strings.Replace(content, `"require_code_owner_review":true`, `"require_code_owner_review":false`, 1)
+	})
+
+	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted review-gated rules without code owner review")
+	}
+	if !strings.Contains(err.Error(), "must require code owner review") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want code-owner rejection", err)
+	}
+}
+
 func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForReleaseEnv(t *testing.T) {
 	t.Parallel()
 
@@ -417,5 +443,26 @@ func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForReleaseEnv(
 	}
 	if !strings.Contains(err.Error(), "requires exactly one direct collaborator") {
 		t.Fatalf("VerifyGitHubHostedControls() error = %v, want collaborator-count rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsNonOwnerPublicCollaboratorForBranchReview(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "single-owner-public-pr", "single-owner-public", []map[string]any{
+		{
+			"login": "not-the-owner",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted a non-owner collaborator in single-owner-public-pr mode")
+	}
+	if !strings.Contains(err.Error(), "requires the owner to be the only direct collaborator") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want owner-only collaborator rejection", err)
 	}
 }
