@@ -180,6 +180,7 @@ COLIMA_STATE_ROOT="${REAL_HOME}/.colima"
 PROFILE_PREEXISTED=0
 PROFILE_RUNNING=0
 PROFILE_VALIDATED=0
+PROFILE_WORKSPACE_ROOT=""
 COLIMA_PROFILE=""
 BOOTSTRAP_APPLIED=0
 SESSION_AUDIT_DIR=""
@@ -191,6 +192,16 @@ SESSION_ID=""
 SESSION_RECORD_PATH=""
 SESSION_RECORD_WRITTEN=0
 SESSION_RECORD_FINALIZED=0
+SESSION_STOP_REQUEST_MARKER_NAME=".workcell-stop-requested"
+LAST_COMMAND_DEBUG_CAPTURE_PATH=""
+SESSION_MONITOR_ENV_PATH=""
+SESSION_MONITOR_READY_PATH=""
+SESSION_MONITOR_PID=""
+SESSION_SOURCE_WORKSPACE=""
+SESSION_DETACHED="${WORKCELL_SESSION_DETACHED:-0}"
+DETACHED_SESSION_ACTIVE=0
+DETACHED_SESSION_STDIN_PATH="/state/tmp/workcell/session-stdin"
+SESSION_WORKSPACE_MODE=""
 INJECTION_POLICY_SHA256=""
 INJECTION_CREDENTIAL_KEYS=""
 INJECTION_CREDENTIAL_INPUT_KINDS=""
@@ -209,7 +220,7 @@ usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
-       workcell session <list|show|diff|export> [options]
+       workcell session <start|attach|send|stop|list|show|logs|timeline|diff|export> [options]
        workcell auth <init|set|unset|status> [options]
        workcell policy <show|validate|diff> [options]
        workcell why --credential KEY --agent NAME [options]
@@ -248,6 +259,7 @@ Options:
   --ack-breakglass              Required with --mode breakglass
   --ack-arbitrary-command       Required with --allow-arbitrary-command
   --workspace PATH              Workspace to mount (default: current directory)
+  --session-workspace MODE      direct or isolated session workspace flow
   --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
   --allow-arbitrary-command     Launch the runtime image with a direct container entrypoint after --
@@ -291,7 +303,13 @@ Workflows:
     workcell policy validate
     workcell why --credential codex_auth --agent codex --mode strict
     workcell session list
+    workcell session start --agent codex --workspace /path/to/repo
+    workcell session attach --id 20260408T120000Z-1a2b3c4d
+    workcell session send --id 20260408T120000Z-1a2b3c4d --message 'continue with tests'
+    workcell session stop --id 20260408T120000Z-1a2b3c4d
     workcell session show --id 20260408T120000Z-1a2b3c4d
+    workcell session logs --id 20260408T120000Z-1a2b3c4d --kind audit
+    workcell session timeline --id 20260408T120000Z-1a2b3c4d
     workcell session diff --id 20260408T120000Z-1a2b3c4d
     workcell session export --id 20260408T120000Z-1a2b3c4d
     workcell --agent codex --inspect --workspace /path/to/repo
@@ -402,6 +420,17 @@ validate_logs_kind_name() {
     *)
       echo "Unsupported log kind: $1" >&2
       echo "Use --logs audit, --logs debug, --logs file-trace, or --logs transcript." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_session_workspace_mode() {
+  case "$1" in
+    "" | direct | isolated) ;;
+    *)
+      echo "Unsupported session workspace mode: $1" >&2
+      echo "Use --session-workspace direct or --session-workspace isolated." >&2
       exit 2
       ;;
   esac
@@ -691,6 +720,7 @@ refresh_managed_profile() {
   local message="$1"
 
   echo "${message}" >&2
+  remember_profile_runtime_image_for_refresh "${COLIMA_PROFILE}"
   stash_profile_audit_log "${COLIMA_PROFILE}"
   reap_stale_profile_processes "${COLIMA_PROFILE}"
   run_host_colima_with_timeout "${WORKCELL_COLIMA_DELETE_TIMEOUT_SECONDS:-30}" \
@@ -728,6 +758,8 @@ INJECTION_BUNDLE_ROOT=""
 DIRECT_MOUNT_SPEC_PATH=""
 PROFILE_AUDIT_LOG_STASH=""
 PROFILE_WAS_REFRESHED=0
+PROFILE_REFRESH_EXPECTED_IMAGE_ID=""
+PROFILE_REFRESH_EXPECTED_SOURCE_DATE_EPOCH=""
 PRESERVE_FAILED_PROFILE_STATE=0
 declare -a SHADOW_MOUNTS=()
 declare -a SHADOW_DEST_PATHS=()
@@ -760,7 +792,9 @@ restore_interactive_host_terminal() {
 cleanup() {
   local exit_status="${1:-0}"
 
-  if [[ "${SESSION_RECORD_WRITTEN}" -eq 1 ]] && [[ "${SESSION_RECORD_FINALIZED}" -eq 0 ]]; then
+  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] &&
+    [[ "${SESSION_RECORD_WRITTEN}" -eq 1 ]] &&
+    [[ "${SESSION_RECORD_FINALIZED}" -eq 0 ]]; then
     write_session_record_final "aborted" "${exit_status}" "${FINAL_SESSION_ASSURANCE:-$(session_assurance_initial)}" || true
   fi
 
@@ -791,12 +825,17 @@ cleanup() {
     rm -f "${PROFILE_AUDIT_LOG_STASH}"
   fi
 
-  if [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -e "${SESSION_AUDIT_DIR}" ]]; then
+  if [[ -n "${LAST_COMMAND_DEBUG_CAPTURE_PATH:-}" ]] && [[ -e "${LAST_COMMAND_DEBUG_CAPTURE_PATH}" ]]; then
+    chmod u+w "${LAST_COMMAND_DEBUG_CAPTURE_PATH}" 2>/dev/null || true
+    rm -f "${LAST_COMMAND_DEBUG_CAPTURE_PATH}"
+  fi
+
+  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -e "${SESSION_AUDIT_DIR}" ]]; then
     chmod -R u+w "${SESSION_AUDIT_DIR}" 2>/dev/null || true
     rm -rf "${SESSION_AUDIT_DIR}"
   fi
 
-  if [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
+  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   fi
 
@@ -805,7 +844,8 @@ cleanup() {
   fi
 
   cleanup_workcell_trusted_docker_client
-  if [[ "${PROFILE_RUNNING}" -eq 1 ]] &&
+  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] &&
+    [[ "${PROFILE_RUNNING}" -eq 1 ]] &&
     [[ -n "${COLIMA_PROFILE}" ]] &&
     [[ -n "${HOST_COLIMA_BIN}" ]]; then
     if [[ "${PROFILE_VALIDATED}" -eq 0 ]] && [[ "${PROFILE_PREEXISTED}" -eq 0 ]]; then
@@ -838,6 +878,24 @@ profile_image_marker_path() {
   printf '%s/workcell.image-ready\n' "$(profile_dir "${profile}")"
 }
 
+profile_runtime_image_cache_dir() {
+  printf '%s/runtime-image-cache\n' "${COLIMA_STATE_ROOT}"
+}
+
+profile_runtime_image_cache_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/%s.tar\n' "$(profile_runtime_image_cache_dir)" "${profile}"
+}
+
+profile_runtime_image_cache_metadata_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/%s.env\n' "$(profile_runtime_image_cache_dir)" "${profile}"
+}
+
 refresh_profile_state() {
   local profile="$1"
 
@@ -862,6 +920,17 @@ profile_image_marker_value() {
   marker_path="$(profile_image_marker_path "${profile}")"
   [[ -f "${marker_path}" ]] || return 1
   sed -n "s/^${key}=//p" "${marker_path}" | head -n1
+}
+
+profile_runtime_image_cache_value() {
+  local profile="$1"
+  local key="$2"
+  local metadata_path=""
+
+  [[ "${key}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+  metadata_path="$(profile_runtime_image_cache_metadata_path "${profile}")"
+  [[ -f "${metadata_path}" ]] || return 1
+  sed -n "s/^${key}=//p" "${metadata_path}" | head -n1
 }
 
 profile_audit_log_path() {
@@ -909,23 +978,483 @@ write_latest_log_pointer() {
   local kind="$2"
   local path="$3"
   local pointer_path=""
+  local resolved_pointer_path=""
 
   [[ -n "${path}" ]] || return 0
   pointer_path="$(profile_latest_log_pointer_path "${profile}" "${kind}")"
-  mkdir -p "$(dirname "${pointer_path}")"
+  if ! resolved_pointer_path="$(resolve_host_output_candidate "${pointer_path}")"; then
+    echo "Workcell blocked latest ${kind} pointer path after launch: ${pointer_path}" >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "${resolved_pointer_path}")"
   umask 077
-  printf '%s\n' "${path}" >"${pointer_path}"
-  chmod 0600 "${pointer_path}" 2>/dev/null || true
+  printf '%s\n' "${path}" >"${resolved_pointer_path}"
+  chmod 0600 "${resolved_pointer_path}" 2>/dev/null || true
+}
+
+workspace_absolute_git_dir() {
+  local workspace="$1"
+
+  run_workspace_safe_git_command_in_dir "${workspace}" rev-parse --absolute-git-dir
+}
+
+default_session_workspace_mode() {
+  if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
+    printf 'isolated\n'
+    return 0
+  fi
+  printf 'direct\n'
+}
+
+effective_session_workspace_mode() {
+  if [[ -n "${SESSION_WORKSPACE_MODE}" ]]; then
+    printf '%s\n' "${SESSION_WORKSPACE_MODE}"
+    return 0
+  fi
+  default_session_workspace_mode
+}
+
+session_workspace_parent_dir() {
+  local source_workspace="$1"
+  local git_dir=""
+
+  git_dir="$(workspace_absolute_git_dir "${source_workspace}")"
+  printf '%s/workcell-sessions\n' "${git_dir}"
+}
+
+isolated_session_workspace_path() {
+  local source_workspace="$1"
+  local session_id="$2"
+
+  printf '%s/%s/repo\n' "$(session_workspace_parent_dir "${source_workspace}")" "${session_id}"
+}
+
+session_monitor_state_path() {
+  local session_audit_dir="$1"
+
+  printf '%s/session-monitor.env\n' "${session_audit_dir}"
+}
+
+session_monitor_ready_path() {
+  local session_audit_dir="$1"
+
+  printf '%s/session-monitor.ready\n' "${session_audit_dir}"
+}
+
+create_isolated_session_workspace() {
+  local source_workspace="$1"
+  local session_id="$2"
+  local base_ref=""
+  local target=""
+  local branch_name=""
+
+  workspace_is_git_worktree "${source_workspace}" || {
+    echo "session start requires a git workspace when --session-workspace isolated is selected: ${source_workspace}" >&2
+    exit 2
+  }
+  if ! workspace_gitdir_is_self_contained "${source_workspace}"; then
+    echo "session start requires a self-contained git workspace for isolated session cloning: ${source_workspace}" >&2
+    exit 2
+  fi
+  if workspace_git_has_worktree_changes "${source_workspace}"; then
+    echo "session start requires a clean source workspace for isolated session cloning: ${source_workspace}" >&2
+    exit 2
+  fi
+
+  base_ref="$(run_workspace_safe_git_command_in_dir "${source_workspace}" rev-parse --verify HEAD)"
+  target="$(isolated_session_workspace_path "${source_workspace}" "${session_id}")"
+  if ! target="$(resolve_host_output_candidate "${target}")"; then
+    exit 2
+  fi
+  branch_name="workcell/session-${session_id}"
+
+  [[ ! -e "${target}" ]] || {
+    echo "Refusing to reuse an existing isolated session workspace: ${target}" >&2
+    exit 2
+  }
+
+  mkdir -p "$(dirname "${target}")"
+  run_clean_host_command_in_dir "${ROOT_DIR}" "${HOST_GIT_BIN}" clone --quiet --no-hardlinks "${source_workspace}" "${target}"
+  run_workspace_safe_git_command_in_dir "${target}" checkout --quiet -B "${branch_name}" "${base_ref}"
+  printf '%s\n' "${target}"
+}
+
+profile_docker_socket_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/%s/docker.sock\n' "${COLIMA_STATE_ROOT}" "${profile}"
+}
+
+run_profile_docker_command() {
+  local profile="$1"
+  local socket_path=""
+
+  shift
+  socket_path="$(profile_docker_socket_path "${profile}")"
+  run_workcell_docker_client_command env DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" "$@"
+}
+
+append_session_control_audit_record() {
+  local profile="$1"
+  local session_id="$2"
+  local event_name="$3"
+
+  shift 3
+  append_audit_record "${profile}" \
+    "event=${event_name}" \
+    "session_id=${session_id}" \
+    "$@"
+}
+
+session_runtime_metadata() {
+  local session_id="$1"
+
+  go_hostutil launcher session-runtime-metadata "${COLIMA_STATE_ROOT}" "${session_id}"
+}
+
+load_session_runtime_metadata() {
+  local session_id="$1"
+  local line=""
+  local key=""
+  local value=""
+
+  SESSION_META_PROFILE=""
+  SESSION_META_CONTAINER_NAME=""
+  SESSION_META_MONITOR_PID=""
+  SESSION_META_STATUS=""
+  SESSION_META_LIVE_STATUS=""
+  SESSION_META_CURRENT_ASSURANCE=""
+  SESSION_META_SESSION_AUDIT_DIR=""
+  SESSION_META_AUDIT_LOG_PATH=""
+  SESSION_META_DEBUG_LOG_PATH=""
+  SESSION_META_FILE_TRACE_LOG_PATH=""
+  SESSION_META_TRANSCRIPT_LOG_PATH=""
+
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "${key}" in
+      profile) SESSION_META_PROFILE="${value}" ;;
+      container_name) SESSION_META_CONTAINER_NAME="${value}" ;;
+      monitor_pid) SESSION_META_MONITOR_PID="${value}" ;;
+      status) SESSION_META_STATUS="${value}" ;;
+      live_status) SESSION_META_LIVE_STATUS="${value}" ;;
+      current_assurance) SESSION_META_CURRENT_ASSURANCE="${value}" ;;
+      session_audit_dir) SESSION_META_SESSION_AUDIT_DIR="${value}" ;;
+      audit_log_path) SESSION_META_AUDIT_LOG_PATH="${value}" ;;
+      debug_log_path) SESSION_META_DEBUG_LOG_PATH="${value}" ;;
+      file_trace_log_path) SESSION_META_FILE_TRACE_LOG_PATH="${value}" ;;
+      transcript_log_path) SESSION_META_TRANSCRIPT_LOG_PATH="${value}" ;;
+    esac
+  done < <(session_runtime_metadata "${session_id}")
+}
+
+session_record_has_legacy_live_detached_shape() {
+  case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS:-}}" in
+    starting | running | stopping)
+      [[ -n "${SESSION_META_PROFILE:-}" ]] && [[ -n "${SESSION_META_CONTAINER_NAME:-}" ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+session_require_detached_runtime_metadata() {
+  local action="$1"
+  local session_id="$2"
+  local allow_legacy_live="${3:-0}"
+
+  if [[ -n "${SESSION_META_MONITOR_PID:-}" ]] || [[ -n "${SESSION_META_SESSION_AUDIT_DIR:-}" ]]; then
+    return 0
+  fi
+  if [[ "${allow_legacy_live}" -eq 1 ]] && session_record_has_legacy_live_detached_shape; then
+    return 0
+  fi
+  echo "session ${action} only works for detached sessions started with 'workcell session start': ${session_id}" >&2
+  echo "Use 'workcell session list' to check the control column; attached records are not stoppable." >&2
+  return 1
+}
+
+session_monitor_pid_is_live() {
+  local expected_state_file=""
+  local monitor_command=""
+
+  [[ "${SESSION_META_MONITOR_PID:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ -n "${SESSION_META_SESSION_AUDIT_DIR:-}" ]] || return 1
+  kill -0 "${SESSION_META_MONITOR_PID}" >/dev/null 2>&1 || return 1
+  expected_state_file="$(session_monitor_state_path "${SESSION_META_SESSION_AUDIT_DIR}")"
+  monitor_command="$(ps -o command= -p "${SESSION_META_MONITOR_PID}" 2>/dev/null | head -n1 || true)"
+  [[ -n "${monitor_command}" ]] || return 1
+  case "${monitor_command}" in
+    *"${BASH_SOURCE[0]}"*" session monitor --state-file "*"${expected_state_file}"*) return 0 ;;
+  esac
+  return 1
+}
+
+session_container_live_state() {
+  local profile="$1"
+  local container_name="$2"
+
+  run_profile_docker_command "${profile}" inspect \
+    --format '{{if .State.Running}}running{{else}}stopped{{end}}' \
+    "${container_name}"
+}
+
+session_container_exit_code() {
+  local profile="$1"
+  local container_name="$2"
+  local exit_code=""
+
+  exit_code="$(run_profile_docker_command "${profile}" inspect \
+    --format '{{.State.ExitCode}}' \
+    "${container_name}" 2>/dev/null || true)"
+  exit_code="$(printf '%s\n' "${exit_code}" | tr -d '\r' | tail -n1)"
+  [[ "${exit_code}" =~ ^[0-9]+$ ]] || exit_code="1"
+  printf '%s\n' "${exit_code}"
+}
+
+session_container_state_for_delete() {
+  local profile="$1"
+  local container_name="$2"
+  local inspect_output=""
+  local inspect_status=0
+
+  set +e
+  inspect_output="$(run_profile_docker_command "${profile}" inspect \
+    --format '{{if .State.Running}}running{{else}}stopped{{end}}' \
+    "${container_name}" 2>&1)"
+  inspect_status="$?"
+  set -e
+  inspect_output="$(printf '%s\n' "${inspect_output}" | tr -d '\r' | tail -n1)"
+  if [[ "${inspect_status}" -eq 0 ]]; then
+    case "${inspect_output}" in
+      running | stopped)
+        printf '%s\n' "${inspect_output}"
+        return 0
+        ;;
+    esac
+    return 1
+  fi
+  case "${inspect_output}" in
+    *"No such object"* | *"No such container"*)
+      printf 'missing\n'
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+session_require_live_detached_container() {
+  local action="$1"
+  local session_id="$2"
+  local require_monitor_live="${3:-1}"
+  local container_state=""
+
+  session_require_detached_runtime_metadata "${action}" "${session_id}" || return 1
+  if [[ "${require_monitor_live}" -eq 1 ]] && [[ -n "${SESSION_META_MONITOR_PID:-}" ]] && ! session_monitor_pid_is_live; then
+    echo "session ${action} requires a live detached session monitor: ${session_id}" >&2
+    return 1
+  fi
+  case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
+    starting | running) ;;
+    *)
+      echo "session ${action} requires a detached session that is still running: ${session_id}" >&2
+      return 1
+      ;;
+  esac
+  if ! container_state="$(session_container_live_state "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}" 2>/dev/null)"; then
+    echo "session ${action} could not confirm a live detached session: ${session_id}" >&2
+    return 1
+  fi
+  if [[ "${container_state}" != "running" ]]; then
+    echo "session ${action} requires a detached session that is still running: ${session_id}" >&2
+    return 1
+  fi
+}
+
+session_stop_request_marker_path() {
+  local audit_dir="$1"
+
+  printf '%s/%s\n' "${audit_dir}" "${SESSION_STOP_REQUEST_MARKER_NAME}"
+}
+
+session_record_stop_request_marker() {
+  local marker_path=""
+
+  [[ -n "${SESSION_META_SESSION_AUDIT_DIR:-}" ]] || {
+    echo "Detached session stop requires a session audit directory." >&2
+    return 1
+  }
+  marker_path="$(session_stop_request_marker_path "${SESSION_META_SESSION_AUDIT_DIR}")"
+  if ! marker_path="$(resolve_host_output_candidate "${marker_path}")"; then
+    echo "Workcell blocked detached stop marker path after launch: ${marker_path}" >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "${marker_path}")"
+  umask 077
+  : >"${marker_path}"
+  chmod 0600 "${marker_path}" 2>/dev/null || true
+}
+
+session_clear_stop_request_marker() {
+  local marker_path=""
+
+  [[ -n "${SESSION_META_SESSION_AUDIT_DIR:-}" ]] || return 0
+  marker_path="$(session_stop_request_marker_path "${SESSION_META_SESSION_AUDIT_DIR}")"
+  if ! marker_path="$(resolve_host_output_candidate "${marker_path}")"; then
+    echo "Workcell blocked detached stop marker path after launch: ${marker_path}" >&2
+    return 1
+  fi
+  rm -f "${marker_path}"
+}
+
+session_stop_request_marker_exists() {
+  local marker_path=""
+
+  [[ -n "${SESSION_AUDIT_DIR:-}" ]] || return 1
+  marker_path="$(session_stop_request_marker_path "${SESSION_AUDIT_DIR}")"
+  if ! marker_path="$(resolve_host_output_candidate "${marker_path}")"; then
+    return 1
+  fi
+  [[ -f "${marker_path}" ]]
+}
+
+session_write_stop_requested_terminal_record() {
+  local record_path="$1"
+  local exit_status="$2"
+  local final_assurance="${SESSION_META_CURRENT_ASSURANCE:-}"
+
+  [[ -n "${final_assurance}" ]] || final_assurance="managed-mutable"
+  write_session_record "${record_path}" \
+    "status=exited" \
+    "live_status=stopped" \
+    "observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    "finished_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    "exit_status=${exit_status}" \
+    "current_assurance=${final_assurance}" \
+    "final_assurance=${final_assurance}"
+  session_clear_stop_request_marker
+}
+
+revalidate_recorded_host_output_path() {
+  local recorded_path="$1"
+  local resolved_path=""
+
+  [[ -n "${recorded_path}" ]] || {
+    echo "Recorded host output path is required." >&2
+    return 1
+  }
+  if ! resolved_path="$(resolve_host_output_candidate "${recorded_path}")"; then
+    echo "Workcell blocked host output path after launch: ${recorded_path}" >&2
+    return 1
+  fi
+  if [[ "${resolved_path}" != "${recorded_path}" ]]; then
+    echo "Workcell blocked host output path after launch: ${recorded_path}" >&2
+    return 1
+  fi
+  printf '%s\n' "${resolved_path}"
+}
+
+write_session_monitor_env_file() {
+  local path="$1"
+  local var_name=""
+  local -a exported_vars=(
+    AGENT
+    AGENT_AUTONOMY
+    ALLOW_CONTROL_PLANE_VCS
+    ALLOW_ENDPOINTS
+    AUDIT_TRANSCRIPT_PATH
+    BOOTSTRAP_APPLIED
+    CACHE_PROFILE
+    CODEX_RULES_MUTABILITY
+    COLIMA_PROFILE
+    COLIMA_STATE_ROOT
+    CONTAINER_MUTABILITY
+    CONTAINER_NAME
+    DEBUG_LOG_PATH
+    EXECUTION_PATH
+    FILE_TRACE_LOG_PATH
+    INJECTION_CREDENTIAL_KEYS
+    INJECTION_CREDENTIAL_RESOLUTION_STATES
+    INJECTION_POLICY_SHA256
+    INJECTION_SECRET_COPY_TARGETS
+    INJECTION_SHARED_AUTH_READY_STATES
+    INJECTION_SSH_CONFIG_ASSURANCE
+    INJECTION_SSH_ENABLED
+    LOG_LEVEL
+    MODE
+    NETWORK_POLICY
+    ROOT_DIR
+    SESSION_AUDIT_DIR
+    SESSION_AUDIT_STATE_FILE
+    SESSION_FILE_TRACE_CONTAINER_FILE
+    SESSION_ID
+    SESSION_RECORD_PATH
+    SESSION_RECORD_WRITTEN
+    SESSION_RECORD_FINALIZED
+    SESSION_MONITOR_READY_PATH
+    UI
+    WORKSPACE
+  )
+
+  mkdir -p "$(dirname "${path}")"
+  umask 077
+  : >"${path}"
+  chmod 0600 "${path}" 2>/dev/null || true
+  for var_name in "${exported_vars[@]}"; do
+    printf '%s=%q\n' "${var_name}" "${!var_name-}" >>"${path}"
+  done
+}
+
+wait_for_session_monitor_ready() {
+  local monitor_pid="$1"
+  local ready_path="$2"
+  local attempt=0
+
+  while [[ "${attempt}" -lt 50 ]]; do
+    if [[ -f "${ready_path}" ]] && kill -0 "${monitor_pid}" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! kill -0 "${monitor_pid}" >/dev/null 2>&1; then
+      return 1
+    fi
+    sleep 0.1
+    attempt=$((attempt + 1))
+  done
+  [[ -f "${ready_path}" ]] && kill -0 "${monitor_pid}" >/dev/null 2>&1
+}
+
+session_monitor_wait_status() {
+  local wait_status=""
+
+  wait_status="$(run_profile_docker_command "${COLIMA_PROFILE}" wait "${CONTAINER_NAME}" 2>/dev/null || true)"
+  wait_status="$(printf '%s\n' "${wait_status}" | tr -d '\r' | tail -n1)"
+  if [[ "${wait_status}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${wait_status}"
+    return 0
+  fi
+
+  wait_status="$(run_profile_docker_command "${COLIMA_PROFILE}" inspect --format '{{.State.ExitCode}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
+  wait_status="$(printf '%s\n' "${wait_status}" | tr -d '\r' | tail -n1)"
+  [[ "${wait_status}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${wait_status}"
 }
 
 read_latest_log_pointer() {
   local profile="$1"
   local kind="$2"
   local pointer_path=""
+  local resolved_pointer_path=""
 
   pointer_path="$(profile_latest_log_pointer_path "${profile}" "${kind}")"
-  [[ -f "${pointer_path}" ]] || return 1
-  head -n1 "${pointer_path}"
+  if ! resolved_pointer_path="$(resolve_host_output_candidate "${pointer_path}")"; then
+    echo "Workcell blocked latest ${kind} pointer path after launch: ${pointer_path}" >&2
+    return 1
+  fi
+  [[ -f "${resolved_pointer_path}" ]] || return 1
+  head -n1 "${resolved_pointer_path}"
 }
 
 cleanup_stale_latest_log_pointers() {
@@ -1369,10 +1898,13 @@ write_session_record_initial() {
     "profile=${profile}" \
     "agent=${AGENT}" \
     "mode=${MODE}" \
-    "status=running" \
+    "status=$([[ "${SESSION_DETACHED}" -eq 1 ]] && printf 'starting' || printf 'running')" \
     "ui=${UI}" \
     "execution_path=${execution_path}" \
     "workspace=${WORKSPACE}" \
+    "workspace_origin=${SESSION_SOURCE_WORKSPACE}" \
+    "workspace_root=${PROFILE_WORKSPACE_ROOT}" \
+    "worktree_path=${WORKSPACE}" \
     "container_name=${CONTAINER_NAME}" \
     "session_audit_dir=${SESSION_AUDIT_DIR}" \
     "audit_log_path=$(profile_audit_log_path "${profile}")" \
@@ -1383,7 +1915,10 @@ write_session_record_initial() {
     "git_head=${git_head}" \
     "git_base=${git_base}" \
     "started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    "observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     "initial_assurance=$(session_assurance_initial)" \
+    "current_assurance=$(session_assurance_initial)" \
+    "live_status=$([[ "${SESSION_DETACHED}" -eq 1 ]] && printf 'starting' || printf 'running')" \
     "workspace_control_plane=$(workspace_control_plane_state)"
   SESSION_RECORD_WRITTEN=1
 }
@@ -1397,6 +1932,9 @@ write_session_record_final() {
   [[ -n "${SESSION_RECORD_PATH}" ]] || return 0
   write_session_record "${SESSION_RECORD_PATH}" \
     "status=${status}" \
+    "live_status=$([[ "${status}" == "exited" || "${status}" == "failed" || "${status}" == "aborted" ]] && printf 'stopped' || printf '%s' "${status}")" \
+    "current_assurance=${final_assurance}" \
+    "observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     "finished_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     "exit_status=${exit_status}" \
     "final_assurance=${final_assurance}"
@@ -1411,7 +1949,7 @@ prepare_session_audit_state() {
   chmod 0700 "${SESSION_AUDIT_DIR}" 2>/dev/null || true
   SESSION_AUDIT_STATE_FILE="${SESSION_AUDIT_DIR}/session-assurance"
   SESSION_AUDIT_CONTAINER_FILE="/var/lib/workcell/session-assurance"
-  SESSION_ID="$(generate_session_id)"
+  [[ -n "${SESSION_ID}" ]] || SESSION_ID="$(generate_session_id)"
   SESSION_RECORD_PATH=""
   SESSION_RECORD_WRITTEN=0
   SESSION_RECORD_FINALIZED=0
@@ -1435,8 +1973,8 @@ capture_session_audit_state() {
     return 0
   fi
   mkdir -p "$(dirname "${SESSION_AUDIT_STATE_FILE}")"
-  if ! run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:${SESSION_AUDIT_CONTAINER_FILE}" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
-    if ! run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:/run/workcell/session-assurance" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
+  if ! run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:${SESSION_AUDIT_CONTAINER_FILE}" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
+    if ! run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:/run/workcell/session-assurance" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
       :
     fi
   fi
@@ -1445,13 +1983,47 @@ capture_session_audit_state() {
 
 capture_session_file_trace() {
   local container_name="$1"
+  local file_trace_log_path=""
 
   [[ -n "${FILE_TRACE_LOG_PATH}" ]] || return 0
-  if ! run_workcell_docker_client_command "${HOST_DOCKER_BIN}" cp "${container_name}:${SESSION_FILE_TRACE_CONTAINER_FILE}" "${FILE_TRACE_LOG_PATH}" >/dev/null 2>&1; then
-    printf '%s\tevent=host-collect-missing\tcontainer=%s\tcontainer_path=%s\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${container_name}" "${SESSION_FILE_TRACE_CONTAINER_FILE}" >>"${FILE_TRACE_LOG_PATH}"
+  if ! file_trace_log_path="$(revalidate_recorded_host_output_path "${FILE_TRACE_LOG_PATH}")"; then
+    return 0
   fi
-  chmod 0600 "${FILE_TRACE_LOG_PATH}" 2>/dev/null || true
+  if ! run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:${SESSION_FILE_TRACE_CONTAINER_FILE}" "${file_trace_log_path}" >/dev/null 2>&1; then
+    if [[ ! -s "${file_trace_log_path}" ]]; then
+      printf '%s\tevent=host-collect-missing\tcontainer=%s\tcontainer_path=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${container_name}" "${SESSION_FILE_TRACE_CONTAINER_FILE}" >>"${file_trace_log_path}"
+    fi
+  fi
+  chmod 0600 "${file_trace_log_path}" 2>/dev/null || true
+}
+
+session_record_status() {
+  local status=""
+
+  [[ -n "${SESSION_ID}" ]] || return 1
+  status="$(session_runtime_metadata "${SESSION_ID}" | sed -n 's/^status=//p' | head -n1)"
+  [[ -n "${status}" ]] || return 1
+  printf '%s\n' "${status}"
+}
+
+session_final_status_for_exit() {
+  local exit_status="$1"
+  local current_status="${2:-}"
+
+  if session_stop_request_marker_exists; then
+    printf 'exited\n'
+    return 0
+  fi
+  if [[ "${current_status}" == "stopping" ]]; then
+    printf 'exited\n'
+    return 0
+  fi
+  if [[ "${exit_status}" -eq 0 ]]; then
+    printf 'exited\n'
+  else
+    printf 'failed\n'
+  fi
 }
 
 finalize_session_audit() {
@@ -1459,19 +2031,19 @@ finalize_session_audit() {
   local execution_path="$2"
   local exit_status="$3"
   local final_assurance
+  local current_status=""
+  local final_status=""
   local downgraded=0
 
   final_assurance="$(session_assurance_final)"
+  current_status="$(session_record_status || true)"
+  final_status="$(session_final_status_for_exit "${exit_status}" "${current_status}")"
   if [[ "${final_assurance}" == "lower-assurance-package-mutation" ]]; then
     downgraded=1
     append_assurance_change_audit_record "${profile}" "${final_assurance}"
   fi
   append_exit_audit_record "${profile}" "${execution_path}" "${exit_status}" "${final_assurance}" "${downgraded}"
-  if [[ "${exit_status}" -eq 0 ]]; then
-    write_session_record_final "exited" "${exit_status}" "${final_assurance}"
-  else
-    write_session_record_final "failed" "${exit_status}" "${final_assurance}"
-  fi
+  write_session_record_final "${final_status}" "${exit_status}" "${final_assurance}"
   FINAL_SESSION_ASSURANCE="${final_assurance}"
 }
 
@@ -1498,6 +2070,114 @@ current_profile_image_id() {
   socket_path="${COLIMA_STATE_ROOT}/${profile}/docker.sock"
   [[ -S "${socket_path}" ]] || return 0
   run_workcell_docker_client_command env DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
+}
+
+remember_profile_runtime_image_for_refresh() {
+  local profile="$1"
+  local recorded_image_id=""
+  local recorded_source_date_epoch=""
+  local live_image_id=""
+
+  PROFILE_REFRESH_EXPECTED_IMAGE_ID=""
+  PROFILE_REFRESH_EXPECTED_SOURCE_DATE_EPOCH=""
+  recorded_image_id="$(profile_image_marker_value "${profile}" image_id || true)"
+  [[ -n "${recorded_image_id}" ]] || return 0
+  live_image_id="$(current_profile_image_id "${profile}")"
+  if [[ -n "${live_image_id}" ]] && [[ "${live_image_id}" != "${recorded_image_id}" ]]; then
+    return 0
+  fi
+  recorded_source_date_epoch="$(profile_image_marker_value "${profile}" source_date_epoch || true)"
+  PROFILE_REFRESH_EXPECTED_IMAGE_ID="${recorded_image_id}"
+  PROFILE_REFRESH_EXPECTED_SOURCE_DATE_EPOCH="${recorded_source_date_epoch}"
+}
+
+profile_runtime_image_cache_matches() {
+  local profile="$1"
+  local expected_image_id="$2"
+  local expected_source_date_epoch="$3"
+  local cache_path=""
+  local cached_image_id=""
+  local cached_source_date_epoch=""
+
+  [[ -n "${expected_image_id}" ]] || return 1
+  cache_path="$(profile_runtime_image_cache_path "${profile}")"
+  [[ -f "${cache_path}" ]] || return 1
+  cached_image_id="$(profile_runtime_image_cache_value "${profile}" image_id || true)"
+  [[ -n "${cached_image_id}" ]] && [[ "${cached_image_id}" == "${expected_image_id}" ]] || return 1
+  cached_source_date_epoch="$(profile_runtime_image_cache_value "${profile}" source_date_epoch || true)"
+  if [[ -n "${expected_source_date_epoch}" ]] && [[ "${cached_source_date_epoch}" != "${expected_source_date_epoch}" ]]; then
+    return 1
+  fi
+  if [[ -n "${SOURCE_DATE_EPOCH:-}" ]] && [[ -n "${cached_source_date_epoch}" ]] &&
+    [[ "${cached_source_date_epoch}" != "${SOURCE_DATE_EPOCH}" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+cache_profile_runtime_image() {
+  local profile="$1"
+  local expected_image_id="$2"
+  local cache_dir=""
+  local cache_path=""
+  local metadata_path=""
+  local current_profile_image=""
+  local tmp_cache=""
+  local tmp_metadata=""
+
+  [[ -n "${expected_image_id}" ]] || return 1
+  current_profile_image="$(current_profile_image_id "${profile}")"
+  [[ -n "${current_profile_image}" ]] && [[ "${current_profile_image}" == "${expected_image_id}" ]] || return 1
+  if profile_runtime_image_cache_matches "${profile}" "${expected_image_id}" "${SOURCE_DATE_EPOCH}"; then
+    return 0
+  fi
+
+  cache_dir="$(profile_runtime_image_cache_dir)"
+  cache_path="$(profile_runtime_image_cache_path "${profile}")"
+  metadata_path="$(profile_runtime_image_cache_metadata_path "${profile}")"
+  mkdir -p "${cache_dir}"
+  chmod 0700 "${cache_dir}" 2>/dev/null || true
+  tmp_cache="$(mktemp "${cache_dir}/${profile}.XXXXXX.tar")"
+  tmp_metadata="$(mktemp "${cache_dir}/${profile}.XXXXXX.env")"
+  if ! run_profile_docker_command "${profile}" image save -o "${tmp_cache}" "${IMAGE_TAG}" >/dev/null 2>&1; then
+    rm -f "${tmp_cache}" "${tmp_metadata}"
+    return 1
+  fi
+
+  umask 077
+  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\n' \
+    "${IMAGE_TAG}" "${expected_image_id}" "${SOURCE_DATE_EPOCH}" >"${tmp_metadata}"
+  chmod 0600 "${tmp_cache}" "${tmp_metadata}" 2>/dev/null || true
+  mv "${tmp_cache}" "${cache_path}"
+  mv "${tmp_metadata}" "${metadata_path}"
+}
+
+restore_profile_runtime_image_cache() {
+  local profile="$1"
+  local expected_image_id="$2"
+  local expected_source_date_epoch="$3"
+  local cache_path=""
+  local restored_image_id=""
+
+  [[ -n "${expected_image_id}" ]] || return 1
+  if ! profile_runtime_image_cache_matches "${profile}" "${expected_image_id}" "${expected_source_date_epoch}"; then
+    return 1
+  fi
+  cache_path="$(profile_runtime_image_cache_path "${profile}")"
+  if ! run_profile_docker_command "${profile}" image load -i "${cache_path}" >/dev/null 2>&1; then
+    return 1
+  fi
+  restored_image_id="$(current_profile_image_id "${profile}")"
+  [[ -n "${restored_image_id}" ]] && [[ "${restored_image_id}" == "${expected_image_id}" ]] || return 1
+  echo "Restored the prepared runtime image from cache for profile ${profile}." >&2
+  write_profile_image_marker "${profile}" "${restored_image_id}"
+}
+
+maybe_cache_profile_runtime_image() {
+  local profile="$1"
+  local image_id="$2"
+
+  cache_profile_runtime_image "${profile}" "${image_id}" || true
 }
 
 emit_command() {
@@ -1981,19 +2661,55 @@ publish_pr_main() {
 
 session_usage() {
   cat <<'EOF'
-Usage: workcell session list [options]
+Usage: workcell session start [launch-options] [-- provider-args...]
+       workcell session attach --id SESSION_ID
+       workcell session send --id SESSION_ID --message TEXT [--no-newline]
+       workcell session stop --id SESSION_ID [--force]
+       workcell session list [options]
        workcell session show --id SESSION_ID
+       workcell session delete --id SESSION_ID
+       workcell session logs --id SESSION_ID --kind audit|debug|file-trace|transcript
+       workcell session timeline --id SESSION_ID
        workcell session diff --id SESSION_ID [--output PATH]
        workcell session export --id SESSION_ID [--output PATH]
 
 Commands:
+  start
+    Launch a detached background session using the standard Workcell launch options.
+    Detached sessions default to `--session-workspace isolated`.
+
+  attach
+    --id SESSION_ID           Attach the host terminal to a running detached session
+    --no-stdin               Stream output only without forwarding host stdin
+
+  send
+    --id SESSION_ID           Send one steering message to a running detached session
+    --message TEXT            Message text to inject into the session stdin
+    --no-newline              Do not append a trailing newline to the injected message
+
+  stop
+    --id SESSION_ID           Stop a running detached session started with `workcell session start`
+    --force                   Force-remove the container instead of a graceful stop
+
   list
-    --workspace PATH          Filter recorded sessions to PATH
-    --colima-profile NAME     Filter recorded sessions to the selected profile
-    --json                    Emit machine-readable JSON instead of the default table
+    --workspace PATH          Filter recorded attached and detached sessions to PATH
+    --colima-profile NAME     Filter recorded attached and detached sessions to the selected profile
+    --json                    Emit machine-readable JSON instead of the default table with live status and control
 
   show
     --id SESSION_ID           Show one recorded session as JSON
+
+  delete
+    --id SESSION_ID           Delete one terminal recorded session and clean stopped local artifacts
+    --record-only             Delete only the durable session record and keep container/log artifacts
+    --dry-run                 Print the planned cleanup without deleting anything
+
+  logs
+    --id SESSION_ID           Print the recorded log for one session
+    --kind KIND               One of audit, debug, file-trace, or transcript
+
+  timeline
+    --id SESSION_ID           Print audit-log timeline entries for one session
 
   diff
     --id SESSION_ID           Diff the current workspace against the recorded launch git base
@@ -2005,13 +2721,16 @@ Commands:
 
 Notes:
   - session commands run on the host and do not start the Workcell runtime.
-  - records are durable host-side metadata for completed or aborted launches.
+  - records are durable host-side metadata for detached, completed, or aborted launches.
   - `session diff` is read-only and compares the current workspace state to the
     clean launch git base recorded when the session started.
   - `session diff` is unavailable when the session started from a dirty git
     worktree, from a workspace without a recorded git base, or from a workspace
     that is not a self-contained git worktree.
   - `session export` includes audit records that match the recorded session id.
+  - `session delete` never rewrites the shared profile audit log.
+  - `session delete` cleans only explicitly recorded session-owned artifacts and
+    refuses running sessions or running session containers.
 EOF
 }
 
@@ -2072,6 +2791,787 @@ render_session_diff_bundle() {
   fi
 }
 
+session_record_path_for() {
+  local profile="$1"
+  local session_id="$2"
+
+  printf '%s/%s.json\n' "$(profile_sessions_dir_path "${profile}")" "${session_id}"
+}
+
+start_detached_session_monitor() {
+  local monitor_stderr="/dev/null"
+
+  [[ -n "${SESSION_AUDIT_DIR}" ]] || {
+    echo "Detached session monitor requires a session audit directory." >&2
+    exit 1
+  }
+  SESSION_MONITOR_ENV_PATH="$(session_monitor_state_path "${SESSION_AUDIT_DIR}")"
+  SESSION_MONITOR_READY_PATH="$(session_monitor_ready_path "${SESSION_AUDIT_DIR}")"
+  rm -f "${SESSION_MONITOR_READY_PATH}"
+  write_session_monitor_env_file "${SESSION_MONITOR_ENV_PATH}"
+  if [[ -n "${DEBUG_LOG_PATH}" ]]; then
+    monitor_stderr="${DEBUG_LOG_PATH}"
+  fi
+  env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME="${REAL_HOME}" \
+    LC_ALL=C \
+    LANG=C \
+    WORKCELL_SESSION_DETACHED=0 \
+    /bin/bash "${BASH_SOURCE[0]}" session monitor --state-file "${SESSION_MONITOR_ENV_PATH}" \
+    >/dev/null 2>>"${monitor_stderr}" &
+  SESSION_MONITOR_PID="$!"
+  disown "${SESSION_MONITOR_PID}" 2>/dev/null || true
+  if ! wait_for_session_monitor_ready "${SESSION_MONITOR_PID}" "${SESSION_MONITOR_READY_PATH}"; then
+    kill "${SESSION_MONITOR_PID}" >/dev/null 2>&1 || true
+    wait "${SESSION_MONITOR_PID}" >/dev/null 2>&1 || true
+    rm -f "${SESSION_MONITOR_READY_PATH}"
+    run_profile_docker_command "${COLIMA_PROFILE}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    echo "Detached session monitor failed to become ready for session ${SESSION_ID}." >&2
+    exit 1
+  fi
+  mark_detached_session_running || exit 1
+}
+
+mark_detached_session_running() {
+  load_session_runtime_metadata "${SESSION_ID}"
+  case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
+    stopped | exited | failed | aborted)
+      return 0
+      ;;
+  esac
+  if write_session_record "${SESSION_RECORD_PATH}" \
+    "monitor_pid=${SESSION_MONITOR_PID}" \
+    "status=running" \
+    "live_status=running" \
+    "observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    "current_assurance=$(session_assurance_initial)"; then
+    return 0
+  fi
+  load_session_runtime_metadata "${SESSION_ID}"
+  case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
+    stopped | exited | failed | aborted)
+      return 0
+      ;;
+  esac
+  echo "Detached session monitor failed to mark session running: ${SESSION_ID}" >&2
+  return 1
+}
+
+session_attach_main() {
+  local session_id=""
+  local no_stdin=0
+  local attach_status=0
+  local -a attach_args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id)
+        session_id="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --no-stdin)
+        no_stdin=1
+        shift
+        ;;
+      -h | --help)
+        session_usage
+        exit 0
+        ;;
+      *)
+        echo "Unsupported workcell session attach option: $1" >&2
+        session_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+  [[ -n "${session_id}" ]] || {
+    echo "workcell session attach requires --id." >&2
+    exit 2
+  }
+
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  sanitize_host_docker_env
+  load_session_runtime_metadata "${session_id}"
+  [[ -n "${SESSION_META_PROFILE}" ]] || {
+    echo "session attach record is missing a profile: ${session_id}" >&2
+    exit 1
+  }
+  [[ -n "${SESSION_META_CONTAINER_NAME}" ]] || {
+    echo "session attach record is missing a container name: ${session_id}" >&2
+    exit 1
+  }
+  session_require_live_detached_container "attach" "${session_id}" 1 || exit 1
+
+  if [[ "${no_stdin}" -eq 1 ]]; then
+    attach_args+=(--no-stdin)
+  fi
+  append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "attach-attempt" \
+    "source=host-cli" \
+    "stdin_mode=$([[ "${no_stdin}" -eq 1 ]] && printf 'disabled' || printf 'interactive')" \
+    "container_name=${SESSION_META_CONTAINER_NAME}"
+  set +e
+  run_profile_docker_command "${SESSION_META_PROFILE}" attach "${attach_args[@]}" "${SESSION_META_CONTAINER_NAME}"
+  attach_status="$?"
+  set -e
+  if [[ "${attach_status}" -ne 0 ]]; then
+    exit "${attach_status}"
+  fi
+  append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "attach" \
+    "source=host-cli" \
+    "stdin_mode=$([[ "${no_stdin}" -eq 1 ]] && printf 'disabled' || printf 'interactive')" \
+    "container_name=${SESSION_META_CONTAINER_NAME}"
+  exit 0
+}
+
+session_send_main() {
+  local session_id=""
+  local message=""
+  local append_newline=1
+  local payload=""
+  local runtime_uid=""
+  local runtime_gid=""
+  local send_status=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id)
+        session_id="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --message)
+        message="$(raw_option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --no-newline)
+        append_newline=0
+        shift
+        ;;
+      -h | --help)
+        session_usage
+        exit 0
+        ;;
+      *)
+        echo "Unsupported workcell session send option: $1" >&2
+        session_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+  [[ -n "${session_id}" ]] || {
+    echo "workcell session send requires --id." >&2
+    exit 2
+  }
+  [[ -n "${message}" ]] || {
+    echo "workcell session send requires --message." >&2
+    exit 2
+  }
+
+  if [[ "${append_newline}" -eq 1 ]]; then
+    payload="${message}"$'\n'
+  else
+    payload="${message}"
+  fi
+
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  sanitize_host_docker_env
+  load_session_runtime_metadata "${session_id}"
+  [[ -n "${SESSION_META_PROFILE}" ]] || {
+    echo "session send record is missing a profile: ${session_id}" >&2
+    exit 1
+  }
+  [[ -n "${SESSION_META_CONTAINER_NAME}" ]] || {
+    echo "session send record is missing a container name: ${session_id}" >&2
+    exit 1
+  }
+  session_require_live_detached_container "send" "${session_id}" 1 || exit 1
+
+  runtime_uid="$(id -u)"
+  runtime_gid="$(id -g)"
+  # shellcheck disable=SC2016
+  set +e
+  # shellcheck disable=SC2016
+  run_profile_docker_command "${SESSION_META_PROFILE}" exec \
+    --user "${runtime_uid}:${runtime_gid}" "${SESSION_META_CONTAINER_NAME}" \
+    /bin/sh -lc 'stdin_path="${WORKCELL_DETACHED_STDIN_PATH:-/state/tmp/workcell/session-stdin}"; [ -p "${stdin_path}" ] || { echo "Detached session stdin transport is unavailable: ${stdin_path}" >&2; exit 1; }; [ -w "${stdin_path}" ] || { echo "Detached session stdin transport is not writable: ${stdin_path}" >&2; exit 1; }; printf "%s" "$1" > "${stdin_path}"' sh "${payload}"
+  send_status="$?"
+  set -e
+  if [[ "${send_status}" -ne 0 ]]; then
+    return "${send_status}"
+  fi
+  append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "command" \
+    "source=host-cli" \
+    "command=session-send" \
+    "argv=${message}"
+  printf 'session_id=%s\n' "${session_id}"
+  printf 'sent_bytes=%s\n' "${#payload}"
+  exit 0
+}
+
+session_stop_main() {
+  local session_id=""
+  local force=0
+  local record_path=""
+  local stop_status=0
+  local stop_exit_status=""
+  local container_state=""
+  local current_live_status=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id)
+        session_id="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      -h | --help)
+        session_usage
+        exit 0
+        ;;
+      *)
+        echo "Unsupported workcell session stop option: $1" >&2
+        session_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+  [[ -n "${session_id}" ]] || {
+    echo "workcell session stop requires --id." >&2
+    exit 2
+  }
+
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  sanitize_host_docker_env
+  load_session_runtime_metadata "${session_id}"
+  [[ -n "${SESSION_META_PROFILE}" ]] || {
+    echo "session stop record is missing a profile: ${session_id}" >&2
+    exit 1
+  }
+  [[ -n "${SESSION_META_CONTAINER_NAME}" ]] || {
+    echo "session stop record is missing a container name: ${session_id}" >&2
+    exit 1
+  }
+  session_require_detached_runtime_metadata "stop" "${session_id}" 1 || exit 1
+  current_live_status="${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}"
+  if ! container_state="$(session_container_live_state "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}" 2>/dev/null)"; then
+    echo "session stop could not confirm a live detached session: ${session_id}" >&2
+    exit 1
+  fi
+
+  record_path="$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")"
+  if [[ "${container_state}" != "running" ]]; then
+    if [[ "${container_state}" == "stopped" ]] && ! session_monitor_pid_is_live; then
+      session_record_stop_request_marker || exit 1
+      append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "stop-request" \
+        "source=host-cli" \
+        "force=${force}" \
+        "container_name=${SESSION_META_CONTAINER_NAME}"
+      stop_exit_status="$(session_container_exit_code "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"
+      append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "exit" \
+        "source=host-stop-fallback" \
+        "exit_status=${stop_exit_status}" \
+        "final_assurance=${SESSION_META_CURRENT_ASSURANCE:-managed-mutable}"
+      session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}" || exit 1
+      load_session_runtime_metadata "${session_id}"
+      printf 'session_id=%s\n' "${session_id}"
+      printf 'stop_requested=1\n'
+      return 0
+    fi
+    if [[ "${container_state}" == "stopped" ]] && session_monitor_pid_is_live; then
+      printf 'session_id=%s\n' "${session_id}"
+      printf 'stop_requested=1\n'
+      return 0
+    fi
+    echo "session stop requires a detached session that is still running: ${session_id}" >&2
+    exit 1
+  fi
+  case "${current_live_status}" in
+    starting | running | stopping) ;;
+    *)
+      echo "session stop requires a detached session that is still running: ${session_id}" >&2
+      exit 1
+      ;;
+  esac
+
+  session_record_stop_request_marker || exit 1
+  append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "stop-request" \
+    "source=host-cli" \
+    "force=${force}" \
+    "container_name=${SESSION_META_CONTAINER_NAME}"
+  if [[ "${force}" -eq 1 ]]; then
+    set +e
+    run_profile_docker_command "${SESSION_META_PROFILE}" kill "${SESSION_META_CONTAINER_NAME}" >/dev/null
+    stop_status="$?"
+    set -e
+  else
+    set +e
+    run_profile_docker_command "${SESSION_META_PROFILE}" stop "${SESSION_META_CONTAINER_NAME}" >/dev/null
+    stop_status="$?"
+    set -e
+  fi
+  if [[ "${stop_status}" -ne 0 ]]; then
+    session_clear_stop_request_marker
+    append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "stop-failed" \
+      "source=host-cli" \
+      "force=${force}" \
+      "container_name=${SESSION_META_CONTAINER_NAME}" \
+      "transport_status=${stop_status}"
+    return "${stop_status}"
+  fi
+  load_session_runtime_metadata "${session_id}"
+  case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
+    stopped)
+      if [[ "${SESSION_META_STATUS}" == "failed" ]]; then
+        stop_exit_status="$(session_container_exit_code "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"
+        session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}"
+        load_session_runtime_metadata "${session_id}"
+      fi
+      ;;
+  esac
+  if ! session_monitor_pid_is_live; then
+    case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
+      stopped | exited | failed | aborted) ;;
+      *)
+        stop_exit_status="$(session_container_exit_code "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"
+        append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "exit" \
+          "source=host-stop-fallback" \
+          "exit_status=${stop_exit_status}" \
+          "final_assurance=${SESSION_META_CURRENT_ASSURANCE:-managed-mutable}"
+        session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}"
+        load_session_runtime_metadata "${session_id}"
+        ;;
+    esac
+  fi
+  case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
+    stopped | exited | failed | aborted)
+      session_clear_stop_request_marker || exit 1
+      ;;
+    *)
+      write_session_record "${record_path}" \
+        "status=stopping" \
+        "live_status=stopping" \
+        "observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+      ;;
+  esac
+  printf 'session_id=%s\n' "${session_id}"
+  printf 'stop_requested=1\n'
+  exit 0
+}
+
+session_is_terminal_status() {
+  local status="$1"
+
+  case "${status}" in
+    stopped | exited | failed | aborted)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+csv_join_or_none() {
+  local item=""
+  local IFS=','
+  local -a values=()
+
+  for item in "$@"; do
+    [[ -n "${item}" ]] || continue
+    values+=("${item}")
+  done
+  if [[ "${#values[@]}" -eq 0 ]]; then
+    printf 'none\n'
+    return 0
+  fi
+  printf '%s\n' "${values[*]}"
+}
+
+session_delete_resolve_file_artifact() {
+  local label="$1"
+  local recorded_path="$2"
+  local resolved_path=""
+
+  [[ -n "${recorded_path}" ]] || return 1
+  if ! resolved_path="$(revalidate_recorded_host_output_path "${recorded_path}")"; then
+    echo "session delete refused recorded ${label} path after launch: ${recorded_path}" >&2
+    return 1
+  fi
+  printf '%s\n' "${resolved_path}"
+}
+
+session_delete_resolve_dir_artifact() {
+  local label="$1"
+  local recorded_path="$2"
+
+  session_delete_resolve_file_artifact "${label}" "${recorded_path}"
+}
+
+session_delete_main() {
+  local session_id=""
+  local record_path=""
+  local current_live_status=""
+  local record_only=0
+  local dry_run=0
+  local container_state="missing"
+  local docker_socket_path=""
+  local debug_log_path=""
+  local file_trace_log_path=""
+  local transcript_log_path=""
+  local remove_container=0
+  local remove_debug_log=0
+  local remove_file_trace_log=0
+  local remove_session_audit_dir=0
+  local remove_transcript_log=0
+  local session_audit_dir=""
+  local -a removed=()
+  local -a kept=()
+  local -a missing=()
+  local -a unavailable=()
+  local -a planned_remove=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id)
+        session_id="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --record-only)
+        record_only=1
+        shift
+        ;;
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
+      -h | --help)
+        session_usage
+        exit 0
+        ;;
+      *)
+        echo "Unsupported workcell session delete option: $1" >&2
+        session_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+  [[ -n "${session_id}" ]] || {
+    echo "workcell session delete requires --id." >&2
+    exit 2
+  }
+
+  load_session_runtime_metadata "${session_id}"
+  [[ -n "${SESSION_META_PROFILE}" ]] || {
+    echo "session delete record is missing a profile: ${session_id}" >&2
+    exit 1
+  }
+
+  current_live_status="${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}"
+  if ! session_is_terminal_status "${current_live_status}"; then
+    echo "session delete only works for exited, failed, or otherwise stopped sessions: ${session_id}" >&2
+    echo "This session is still running." >&2
+    if [[ -n "${SESSION_META_MONITOR_PID}" ]]; then
+      echo "For detached sessions, run: workcell session stop --id ${session_id}" >&2
+    fi
+    exit 1
+  fi
+
+  record_path="$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")"
+  if [[ ! -f "${record_path}" ]]; then
+    echo "session delete could not find the recorded session file: ${session_id}" >&2
+    exit 1
+  fi
+
+  if [[ -n "${SESSION_META_CONTAINER_NAME}" ]]; then
+    docker_socket_path="$(profile_docker_socket_path "${SESSION_META_PROFILE}")"
+    if [[ -e "${docker_socket_path}" ]]; then
+      HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+      sanitize_host_docker_env
+      if ! container_state="$(session_container_state_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"; then
+        echo "session delete could not inspect the recorded session container: ${session_id}" >&2
+        exit 1
+      fi
+    else
+      unavailable+=("container")
+    fi
+    if [[ "${record_only}" -eq 0 ]] && [[ "${#unavailable[@]}" -gt 0 ]]; then
+      echo "session delete could not confirm cleanup of the recorded session container: ${session_id}" >&2
+      echo "Retry while the profile Docker socket is available, or pass --record-only to remove only the session record." >&2
+      exit 1
+    fi
+    case "${container_state}" in
+      running)
+        echo "session delete refused cleanup because the session container is still running: ${session_id}" >&2
+        echo "Stop the session first, then delete it." >&2
+        if [[ -n "${SESSION_META_MONITOR_PID}" ]]; then
+          echo "For detached sessions, run: workcell session stop --id ${session_id}" >&2
+        fi
+        exit 1
+        ;;
+      stopped)
+        if [[ "${record_only}" -eq 1 ]]; then
+          kept+=("container")
+        else
+          remove_container=1
+          planned_remove+=("container")
+        fi
+        ;;
+      missing)
+        missing+=("container")
+        ;;
+    esac
+  fi
+  if session_audit_dir="$(session_delete_resolve_dir_artifact "session_audit_dir" "${SESSION_META_SESSION_AUDIT_DIR}")"; then
+    if [[ -e "${session_audit_dir}" ]]; then
+      if [[ "${record_only}" -eq 1 ]]; then
+        kept+=("session_audit_dir")
+      else
+        remove_session_audit_dir=1
+        planned_remove+=("session_audit_dir")
+      fi
+    else
+      missing+=("session_audit_dir")
+    fi
+  fi
+
+  if debug_log_path="$(session_delete_resolve_file_artifact "debug_log" "${SESSION_META_DEBUG_LOG_PATH}")"; then
+    if [[ -e "${debug_log_path}" ]]; then
+      if [[ "${record_only}" -eq 1 ]]; then
+        kept+=("debug_log")
+      else
+        remove_debug_log=1
+        planned_remove+=("debug_log")
+      fi
+    else
+      missing+=("debug_log")
+    fi
+  fi
+  if file_trace_log_path="$(session_delete_resolve_file_artifact "file_trace_log" "${SESSION_META_FILE_TRACE_LOG_PATH}")"; then
+    if [[ -e "${file_trace_log_path}" ]]; then
+      if [[ "${record_only}" -eq 1 ]]; then
+        kept+=("file_trace_log")
+      else
+        remove_file_trace_log=1
+        planned_remove+=("file_trace_log")
+      fi
+    else
+      missing+=("file_trace_log")
+    fi
+  fi
+  if transcript_log_path="$(session_delete_resolve_file_artifact "transcript_log" "${SESSION_META_TRANSCRIPT_LOG_PATH}")"; then
+    if [[ -e "${transcript_log_path}" ]]; then
+      if [[ "${record_only}" -eq 1 ]]; then
+        kept+=("transcript_log")
+      else
+        remove_transcript_log=1
+        planned_remove+=("transcript_log")
+      fi
+    else
+      missing+=("transcript_log")
+    fi
+  fi
+  if [[ "${#planned_remove[@]}" -eq 0 ]]; then
+    planned_remove=("record")
+  else
+    planned_remove=("record" "${planned_remove[@]}")
+  fi
+
+  if [[ "${dry_run}" -eq 1 ]]; then
+    printf 'session_id=%s\n' "${session_id}"
+    printf 'deleted=0\n'
+    printf 'record_only=%s\n' "${record_only}"
+    printf 'dry_run=1\n'
+    printf 'would_remove=%s\n' "$(csv_join_or_none "${planned_remove[@]-}")"
+    printf 'would_keep=%s\n' "$(csv_join_or_none "${kept[@]-}")"
+    printf 'missing=%s\n' "$(csv_join_or_none "${missing[@]-}")"
+    printf 'unavailable=%s\n' "$(csv_join_or_none "${unavailable[@]-}")"
+    exit 0
+  fi
+
+  if [[ "${remove_container}" -eq 1 ]]; then
+    if ! run_profile_docker_command "${SESSION_META_PROFILE}" rm -f "${SESSION_META_CONTAINER_NAME}" >/dev/null 2>&1; then
+      echo "session delete failed to remove the stopped session container: ${session_id}" >&2
+      exit 1
+    fi
+  fi
+  if [[ "${remove_debug_log}" -eq 1 ]]; then
+    rm -f -- "${debug_log_path}" || {
+      echo "session delete failed to remove the recorded debug_log artifact: ${session_id}" >&2
+      exit 1
+    }
+  fi
+  if [[ "${remove_file_trace_log}" -eq 1 ]]; then
+    rm -f -- "${file_trace_log_path}" || {
+      echo "session delete failed to remove the recorded file_trace_log artifact: ${session_id}" >&2
+      exit 1
+    }
+  fi
+  if [[ "${remove_transcript_log}" -eq 1 ]]; then
+    rm -f -- "${transcript_log_path}" || {
+      echo "session delete failed to remove the recorded transcript_log artifact: ${session_id}" >&2
+      exit 1
+    }
+  fi
+  if [[ "${remove_session_audit_dir}" -eq 1 ]]; then
+    rm -rf -- "${session_audit_dir}" || {
+      echo "session delete failed to remove the recorded session_audit_dir artifact: ${session_id}" >&2
+      exit 1
+    }
+  fi
+  rm -f "${record_path}" || {
+    echo "session delete failed to remove the durable session record: ${session_id}" >&2
+    exit 1
+  }
+
+  removed=("${planned_remove[@]}")
+  printf 'session_id=%s\n' "${session_id}"
+  printf 'deleted=1\n'
+  printf 'record_only=%s\n' "${record_only}"
+  printf 'dry_run=0\n'
+  printf 'removed=%s\n' "$(csv_join_or_none "${removed[@]-}")"
+  printf 'kept=%s\n' "$(csv_join_or_none "${kept[@]-}")"
+  printf 'missing=%s\n' "$(csv_join_or_none "${missing[@]-}")"
+  printf 'unavailable=%s\n' "$(csv_join_or_none "${unavailable[@]-}")"
+  exit 0
+}
+
+session_logs_main() {
+  local session_id=""
+  local kind=""
+  local log_path=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id)
+        session_id="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      --kind)
+        kind="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      -h | --help)
+        session_usage
+        exit 0
+        ;;
+      *)
+        echo "Unsupported workcell session logs option: $1" >&2
+        session_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+  [[ -n "${session_id}" ]] || {
+    echo "workcell session logs requires --id." >&2
+    exit 2
+  }
+  [[ -n "${kind}" ]] || {
+    echo "workcell session logs requires --kind." >&2
+    exit 2
+  }
+  validate_logs_kind_name "${kind}"
+
+  load_session_runtime_metadata "${session_id}"
+  case "${kind}" in
+    audit) log_path="${SESSION_META_AUDIT_LOG_PATH}" ;;
+    debug) log_path="${SESSION_META_DEBUG_LOG_PATH}" ;;
+    file-trace) log_path="${SESSION_META_FILE_TRACE_LOG_PATH}" ;;
+    transcript) log_path="${SESSION_META_TRANSCRIPT_LOG_PATH}" ;;
+  esac
+
+  if [[ -z "${log_path}" ]]; then
+    echo "No ${kind} log is recorded for session ${session_id}." >&2
+    exit 2
+  fi
+  if ! log_path="$(revalidate_recorded_host_output_path "${log_path}")"; then
+    exit 2
+  fi
+  if [[ ! -f "${log_path}" ]]; then
+    echo "No ${kind} log is recorded for session ${session_id}." >&2
+    exit 2
+  fi
+  cat "${log_path}"
+  exit 0
+}
+
+session_timeline_main() {
+  local session_id=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id)
+        session_id="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      -h | --help)
+        session_usage
+        exit 0
+        ;;
+      *)
+        echo "Unsupported workcell session timeline option: $1" >&2
+        session_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+  [[ -n "${session_id}" ]] || {
+    echo "workcell session timeline requires --id." >&2
+    exit 2
+  }
+
+  go_hostutil launcher session-timeline "${COLIMA_STATE_ROOT}" "${session_id}"
+  exit 0
+}
+
+session_monitor_main() {
+  local state_file=""
+  local wait_status=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --state-file)
+        state_file="$(option_value_or_die "$1" "${2-}")"
+        shift 2
+        ;;
+      *)
+        echo "Unsupported workcell session monitor option: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+  [[ -n "${state_file}" ]] || {
+    echo "workcell session monitor requires --state-file." >&2
+    exit 2
+  }
+  [[ -f "${state_file}" ]] || {
+    echo "Missing detached session monitor state file: ${state_file}" >&2
+    exit 2
+  }
+
+  # shellcheck disable=SC1090
+  source "${state_file}"
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  sanitize_host_docker_env
+  if [[ -n "${SESSION_MONITOR_READY_PATH:-}" ]]; then
+    mkdir -p "$(dirname "${SESSION_MONITOR_READY_PATH}")"
+    : >"${SESSION_MONITOR_READY_PATH}"
+  fi
+
+  wait_status="$(session_monitor_wait_status || true)"
+  [[ "${wait_status}" =~ ^[0-9]+$ ]] || wait_status="1"
+
+  capture_session_audit_state "${CONTAINER_NAME}"
+  capture_session_file_trace "${CONTAINER_NAME}"
+  finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${wait_status}"
+  run_profile_docker_command "${COLIMA_PROFILE}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  if [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -d "${SESSION_AUDIT_DIR}" ]]; then
+    chmod -R u+w "${SESSION_AUDIT_DIR}" 2>/dev/null || true
+    rm -rf "${SESSION_AUDIT_DIR}"
+  fi
+  exit 0
+}
+
 session_main() {
   local subcommand="${1:-}"
   local workspace=""
@@ -2089,6 +3589,35 @@ session_main() {
 
   shift || true
   case "${subcommand}" in
+    start)
+      if [[ "${#}" -eq 0 ]]; then
+        exec env -i \
+          PATH="${TRUSTED_HOST_PATH}" \
+          HOME="${REAL_HOME}" \
+          TMPDIR="${TMPDIR:-/tmp}" \
+          LC_ALL=C \
+          LANG=C \
+          WORKCELL_SESSION_DETACHED=1 \
+          /bin/bash "${BASH_SOURCE[0]}"
+      fi
+      exec env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${REAL_HOME}" \
+        TMPDIR="${TMPDIR:-/tmp}" \
+        LC_ALL=C \
+        LANG=C \
+        WORKCELL_SESSION_DETACHED=1 \
+        /bin/bash "${BASH_SOURCE[0]}" "$@"
+      ;;
+    attach)
+      session_attach_main "$@"
+      ;;
+    send)
+      session_send_main "$@"
+      ;;
+    stop)
+      session_stop_main "$@"
+      ;;
     list)
       while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -2134,7 +3663,7 @@ session_main() {
       if [[ "${emit_json}" -eq 1 ]]; then
         printf '%s\n' "${output}"
       else
-        printf 'session_id\tstatus\tagent\tmode\tprofile\tstarted_at\tassurance\tworkspace\n'
+        printf 'session_id\tstatus\tlive_status\tcontrol\tagent\tmode\tprofile\tstarted_at\tassurance\tworkspace\n'
         printf '%s\n' "${output}"
       fi
       exit 0
@@ -2163,6 +3692,15 @@ session_main() {
       }
       go_hostutil launcher session-show "${COLIMA_STATE_ROOT}" "${session_id}"
       exit 0
+      ;;
+    delete)
+      session_delete_main "$@"
+      ;;
+    logs)
+      session_logs_main "$@"
+      ;;
+    timeline)
+      session_timeline_main "$@"
       ;;
     diff)
       while [[ $# -gt 0 ]]; do
@@ -2287,6 +3825,9 @@ session_main() {
         printf '%s\n' "${output}"
       fi
       exit 0
+      ;;
+    monitor)
+      session_monitor_main "$@"
       ;;
     "" | -h | --help)
       session_usage
@@ -3307,7 +4848,14 @@ show_requested_logs() {
       ;;
   esac
 
-  if [[ -z "${log_path}" ]] || [[ ! -f "${log_path}" ]]; then
+  if [[ -z "${log_path}" ]]; then
+    echo "No ${LOGS_KIND} log is recorded for profile ${COLIMA_PROFILE}." >&2
+    exit 2
+  fi
+  if ! log_path="$(revalidate_recorded_host_output_path "${log_path}")"; then
+    exit 2
+  fi
+  if [[ ! -f "${log_path}" ]]; then
     echo "No ${LOGS_KIND} log is recorded for profile ${COLIMA_PROFILE}." >&2
     exit 2
   fi
@@ -3689,6 +5237,7 @@ run_command_with_debug_log() {
   local timeout_seconds=0
   local heartbeat_interval_seconds=30
   local next_heartbeat=0
+  local failed_capture_path=""
 
   format_elapsed_compact() {
     local total_seconds="$1"
@@ -3802,6 +5351,10 @@ run_command_with_debug_log() {
   mkdir -p "${log_root}"
   chmod 0700 "${log_root}" 2>/dev/null || true
   log_path="$(mktemp "${log_root}/workcell-${label}.log.XXXXXX")"
+  if [[ -n "${LAST_COMMAND_DEBUG_CAPTURE_PATH:-}" ]] && [[ -e "${LAST_COMMAND_DEBUG_CAPTURE_PATH}" ]]; then
+    rm -f "${LAST_COMMAND_DEBUG_CAPTURE_PATH}"
+  fi
+  LAST_COMMAND_DEBUG_CAPTURE_PATH=""
   start_seconds="${SECONDS}"
   if [[ -t 2 ]]; then
     if [[ "${LOG_LEVEL}" != "debug" ]]; then
@@ -3857,8 +5410,10 @@ run_command_with_debug_log() {
       kill "${tail_pid}" >/dev/null 2>&1 || true
       wait "${tail_pid}" 2>/dev/null || true
     fi
-    if [[ "${status}" -eq 0 ]] && [[ -n "${DEBUG_LOG_PATH}" ]] && [[ -f "${log_path}" ]]; then
-      cat "${log_path}" >>"${DEBUG_LOG_PATH}"
+    if [[ -n "${DEBUG_LOG_PATH}" ]] && [[ -f "${log_path}" ]]; then
+      if debug_log_path="$(revalidate_recorded_host_output_path "${DEBUG_LOG_PATH}")"; then
+        cat "${log_path}" >>"${debug_log_path}"
+      fi
     fi
   elif [[ "${LOG_LEVEL}" == "debug" ]]; then
     set +e
@@ -3897,8 +5452,10 @@ run_command_with_debug_log() {
       kill "${heartbeat_pid}" >/dev/null 2>&1 || true
       wait "${heartbeat_pid}" 2>/dev/null || true
     fi
-    if [[ "${status}" -eq 0 ]] && [[ -n "${DEBUG_LOG_PATH}" ]] && [[ -f "${log_path}" ]]; then
-      cat "${log_path}" >>"${DEBUG_LOG_PATH}"
+    if [[ -n "${DEBUG_LOG_PATH}" ]] && [[ -f "${log_path}" ]]; then
+      if debug_log_path="$(revalidate_recorded_host_output_path "${DEBUG_LOG_PATH}")"; then
+        cat "${log_path}" >>"${debug_log_path}"
+      fi
     fi
   fi
   if [[ "${status}" -eq 0 ]]; then
@@ -3908,6 +5465,12 @@ run_command_with_debug_log() {
       echo "Workcell timed out waiting for managed Colima profile ${COLIMA_PROFILE} to start ($(format_elapsed_compact "$((SECONDS - start_seconds))"))." >&2
     fi
     echo "Workcell ${label} failed." >&2
+    if [[ -f "${log_path}" ]]; then
+      failed_capture_path="$(mktemp "${log_root}/workcell-${label}.failed.XXXXXX")"
+      cp "${log_path}" "${failed_capture_path}"
+      chmod 0600 "${failed_capture_path}" 2>/dev/null || true
+      LAST_COMMAND_DEBUG_CAPTURE_PATH="${failed_capture_path}"
+    fi
     if [[ "${LOG_LEVEL}" != "debug" ]] && [[ -f "${log_path}" ]]; then
       cat "${log_path}" >&2
     elif [[ "${LOG_LEVEL}" != "debug" ]]; then
@@ -3916,6 +5479,12 @@ run_command_with_debug_log() {
   fi
   rm -f "${log_path}"
   return "${status}"
+}
+
+colima_start_hit_recoverable_docker_boot_race() {
+  [[ -n "${LAST_COMMAND_DEBUG_CAPTURE_PATH:-}" ]] || return 1
+  [[ -f "${LAST_COMMAND_DEBUG_CAPTURE_PATH}" ]] || return 1
+  grep -q 'did not receive an event with the "running" status' "${LAST_COMMAND_DEBUG_CAPTURE_PATH}"
 }
 
 extract_codex_version_from_dockerfile() {
@@ -3993,11 +5562,11 @@ run_runtime_image_build_with_retries() {
       echo "Retrying the runtime image build for profile ${COLIMA_PROFILE} (attempt ${attempt}/${max_attempts})." >&2
       start_managed_profile || build_status=$?
       if [[ "${build_status}" -eq 0 ]] &&
-        ! validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+        ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
         refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after a failed runtime image build." || return 2
         start_managed_profile || build_status=$?
         if [[ "${build_status}" -eq 0 ]] &&
-          ! validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+          ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
           build_status=2
         fi
       fi
@@ -4218,7 +5787,7 @@ start_managed_profile() {
       run_host_colima start \
       --profile "${COLIMA_PROFILE}" \
       --vm-type vz \
-      --mount "${WORKSPACE}:w" \
+      --mount "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}:w" \
       --mount-type virtiofs \
       --runtime docker \
       --cpu "${COLIMA_CPU}" \
@@ -4235,6 +5804,14 @@ start_managed_profile() {
     if [[ "${start_status}" -eq 124 ]] && [[ "${attempt}" -ge "${max_attempts}" ]]; then
       refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after repeated startup timeouts." || return 2
       return 124
+    fi
+    if [[ "${start_status}" -ne 124 ]] && [[ "${attempt}" -lt "${max_attempts}" ]] &&
+      colima_start_hit_recoverable_docker_boot_race; then
+      reap_stale_profile_processes "${COLIMA_PROFILE}"
+      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after Colima failed during Docker startup." || return 2
+      echo "Retrying managed Colima profile ${COLIMA_PROFILE} after a Docker startup race (attempt $((attempt + 1))/${max_attempts})." >&2
+      attempt=$((attempt + 1))
+      continue
     fi
     if [[ "${start_status}" -ne 124 ]]; then
       return "${start_status}"
@@ -5119,7 +6696,7 @@ prepare_workspace_control_plane_shadow() {
 }
 
 bootstrap_endpoints() {
-  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 storage.googleapis.com:443 snapshot.debian.org:80"
+  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 storage.googleapis.com:443 snapshot.debian.org:443"
 }
 
 AGENT=""
@@ -5325,6 +6902,10 @@ while [[ $# -gt 0 ]]; do
       WORKSPACE="$(resolve_host_path "$(option_value_or_die "$1" "${2-}")")"
       shift 2
       ;;
+    --session-workspace)
+      SESSION_WORKSPACE_MODE="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
     --colima-profile)
       COLIMA_PROFILE="$(option_value_or_die "$1" "${2-}")"
       COLIMA_PROFILE_EXPLICIT=1
@@ -5429,6 +7010,11 @@ validate_agent_autonomy_name "${AGENT_AUTONOMY}"
 validate_cache_profile_name "${CACHE_PROFILE}"
 validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
 validate_log_level_name "${LOG_LEVEL}"
+validate_session_workspace_mode "${SESSION_WORKSPACE_MODE}"
+if [[ "${SESSION_DETACHED}" -eq 0 ]] && [[ -n "${SESSION_WORKSPACE_MODE}" ]]; then
+  echo "--session-workspace applies only to workcell session start." >&2
+  exit 2
+fi
 if [[ -n "${LOGS_KIND}" ]]; then
   validate_logs_kind_name "${LOGS_KIND}"
 fi
@@ -5623,6 +7209,12 @@ if [[ "${DOCTOR}" -eq 0 ]] && [[ "${INSPECT}" -eq 0 ]] && [[ -z "${LOGS_KIND}" ]
   WORKSPACE="$(resolve_existing_directory_or_die "${WORKSPACE}")"
   validate_workspace "${WORKSPACE}" "${ALLOW_NONGIT_WORKSPACE}"
 fi
+if [[ -z "${PROFILE_WORKSPACE_ROOT}" ]]; then
+  PROFILE_WORKSPACE_ROOT="${WORKSPACE}"
+fi
+if [[ -z "${SESSION_SOURCE_WORKSPACE}" ]]; then
+  SESSION_SOURCE_WORKSPACE="${WORKSPACE}"
+fi
 
 if [[ "${INSPECT}" -eq 1 ]]; then
   print_inspect_state \
@@ -5708,10 +7300,10 @@ if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ -z "${PROFILE_MARKER_WORKSPACE}" ]]
   exit 2
 fi
 
-if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" != "${WORKSPACE}" ]]; then
+if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" != "${PROFILE_WORKSPACE_ROOT}" ]]; then
   echo "Refusing to reuse Colima profile ${COLIMA_PROFILE} for a different workspace." >&2
   echo "Recorded workspace: ${PROFILE_MARKER_WORKSPACE}" >&2
-  echo "Requested workspace: ${WORKSPACE}" >&2
+  echo "Requested workspace: ${PROFILE_WORKSPACE_ROOT}" >&2
   exit 2
 fi
 
@@ -5728,9 +7320,19 @@ fi
 
 ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(credential_extra_endpoints) $(provider_auth_recovery_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS:-}")"
 if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
-  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:80")"
+  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:443")"
 fi
-prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
+WORKSPACE_SHADOW_SOURCE="${WORKSPACE}"
+if [[ "${SESSION_DETACHED}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)" == "isolated" ]]; then
+  [[ -n "${SESSION_ID}" ]] || SESSION_ID="$(generate_session_id)"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    WORKSPACE="$(isolated_session_workspace_path "${SESSION_SOURCE_WORKSPACE}" "${SESSION_ID}")"
+    WORKSPACE_SHADOW_SOURCE="${SESSION_SOURCE_WORKSPACE}"
+  else
+    WORKSPACE="$(create_isolated_session_workspace "${SESSION_SOURCE_WORKSPACE}" "${SESSION_ID}")"
+  fi
+fi
+prepare_workspace_control_plane_shadow "${WORKSPACE_SHADOW_SOURCE}" "${MODE}"
 prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
 build_runtime_host_aliases "${ALLOW_ENDPOINTS}"
 if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -5754,6 +7356,7 @@ DOCKER_RUN_BASE=(
   -e AGENT_NAME="${AGENT}"
   -e WORKCELL_AGENT_AUTONOMY="${AGENT_AUTONOMY}"
   -e WORKCELL_CODEX_RULES_MUTABILITY="${CODEX_RULES_MUTABILITY}"
+  -e WORKCELL_ALLOW_ARBITRARY_COMMAND="${ALLOW_ARBITRARY_COMMAND}"
   -e WORKCELL_CACHE_PROFILE="${CACHE_PROFILE}"
   -e WORKCELL_CONTAINER_MUTABILITY="${CONTAINER_MUTABILITY}"
   -e WORKCELL_SESSION_ASSURANCE_INITIAL="$(session_assurance_initial)"
@@ -5824,6 +7427,11 @@ if [[ -n "${FILE_TRACE_LOG_PATH}" ]]; then
     -e WORKCELL_FILE_TRACE_PATH="${SESSION_FILE_TRACE_CONTAINER_FILE}"
   )
 fi
+if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
+  DOCKER_RUN_BASE+=(
+    -e WORKCELL_DETACHED_STDIN_PATH="${DETACHED_SESSION_STDIN_PATH}"
+  )
+fi
 EXECUTION_PATH="managed-tier1"
 if [[ "${MODE}" == "breakglass" ]]; then
   EXECUTION_PATH="lower-assurance-breakglass"
@@ -5841,10 +7449,8 @@ if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
   EXECUTION_PATH="lower-assurance-debug-command"
   DOCKER_RUN=(
     "${DOCKER_RUN_BASE[@]}"
-    --entrypoint "$1"
     "${IMAGE_TAG}"
   )
-  shift
   if [[ $# -gt 0 ]]; then
     DOCKER_RUN+=("$@")
   fi
@@ -5858,9 +7464,14 @@ else
   fi
 fi
 
-if [[ -t 0 ]] && [[ -t 1 ]]; then
+if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
+  DOCKER_RUN=(
+    "${HOST_DOCKER_BIN}" run --init -d -i -t
+    "${DOCKER_RUN[@]:3}"
+  )
+elif [[ -t 0 ]] && [[ -t 1 ]]; then
   mark_interactive_host_terminal_dirty
-  DOCKER_RUN=("${HOST_DOCKER_BIN}" run --init -it "${DOCKER_RUN[@]:3}")
+  DOCKER_RUN=("${HOST_DOCKER_BIN}" run -it "${DOCKER_RUN[@]:3}")
 fi
 
 printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
@@ -5908,15 +7519,15 @@ if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
   lima_config_path="${COLIMA_STATE_ROOT}/_lima/colima-${COLIMA_PROFILE}/lima.yaml"
   profile_status=""
   if [[ ! -f "${profile_config_path}" ]] ||
-    ! validate_colima_profile_config "${COLIMA_PROFILE}" "${WORKSPACE}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
+    ! validate_colima_profile_config "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
     refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources." || exit 2
   elif [[ ! -f "${lima_config_path}" ]] ||
-    ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+    ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}"; then
     refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts." || exit 2
   else
     profile_status="$(colima_profile_status "${COLIMA_PROFILE}" || true)"
     if [[ "${profile_status}" == "Running" ]] &&
-      ! validate_colima_runtime_workspace_view "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+      ! validate_colima_runtime_workspace_view "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}"; then
       refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents." || exit 2
     fi
   fi
@@ -5931,11 +7542,11 @@ fi
 maybe_fail_after_profile_refresh_for_tests
 
 start_managed_profile
-if ! validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}"; then
+if ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}"; then
   if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ "${PROFILE_WAS_REFRESHED}" -eq 0 ]]; then
     refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view." || exit 2
     start_managed_profile
-    validate_colima_profile "${COLIMA_PROFILE}" "${WORKSPACE}" || exit 2
+    validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}" || exit 2
   else
     exit 2
   fi
@@ -5943,7 +7554,7 @@ fi
 mkdir -p "${PROFILE_DIR}"
 restore_profile_audit_log "${COLIMA_PROFILE}"
 ensure_session_audit_state
-printf '%s\n' "${WORKSPACE}" >"${PROFILE_MARKER}"
+printf '%s\n' "${PROFILE_WORKSPACE_ROOT}" >"${PROFILE_MARKER}"
 PROFILE_VALIDATED=1
 write_latest_log_pointer "${COLIMA_PROFILE}" debug "${DEBUG_LOG_PATH}"
 write_latest_log_pointer "${COLIMA_PROFILE}" file-trace "${FILE_TRACE_LOG_PATH}"
@@ -5961,12 +7572,27 @@ restore_runtime_egress() {
 }
 
 RECORDED_IMAGE_ID="$(profile_image_marker_value "${COLIMA_PROFILE}" image_id || true)"
+RECORDED_SOURCE_DATE_EPOCH="$(profile_image_marker_value "${COLIMA_PROFILE}" source_date_epoch || true)"
+EXPECTED_IMAGE_ID="${RECORDED_IMAGE_ID}"
+EXPECTED_SOURCE_DATE_EPOCH="${RECORDED_SOURCE_DATE_EPOCH}"
+if [[ -z "${EXPECTED_IMAGE_ID}" ]] && [[ -n "${PROFILE_REFRESH_EXPECTED_IMAGE_ID}" ]]; then
+  EXPECTED_IMAGE_ID="${PROFILE_REFRESH_EXPECTED_IMAGE_ID}"
+  EXPECTED_SOURCE_DATE_EPOCH="${PROFILE_REFRESH_EXPECTED_SOURCE_DATE_EPOCH}"
+fi
 CURRENT_IMAGE_ID=""
 if [[ "${REBUILD}" -eq 1 ]]; then
   NEEDS_REBUILD=1
 else
   CURRENT_IMAGE_ID="$(current_image_id)"
-  if [[ -z "${CURRENT_IMAGE_ID}" ]] || [[ -z "${RECORDED_IMAGE_ID}" ]] || [[ "${CURRENT_IMAGE_ID}" != "${RECORDED_IMAGE_ID}" ]]; then
+  if [[ -n "${EXPECTED_IMAGE_ID}" ]] &&
+    { [[ -z "${CURRENT_IMAGE_ID}" ]] || [[ "${CURRENT_IMAGE_ID}" != "${EXPECTED_IMAGE_ID}" ]]; }; then
+    if restore_profile_runtime_image_cache "${COLIMA_PROFILE}" "${EXPECTED_IMAGE_ID}" "${EXPECTED_SOURCE_DATE_EPOCH}"; then
+      CURRENT_IMAGE_ID="$(current_image_id)"
+      RECORDED_IMAGE_ID="${EXPECTED_IMAGE_ID}"
+      RECORDED_SOURCE_DATE_EPOCH="${EXPECTED_SOURCE_DATE_EPOCH}"
+    fi
+  fi
+  if [[ -z "${CURRENT_IMAGE_ID}" ]] || [[ -z "${EXPECTED_IMAGE_ID}" ]] || [[ "${CURRENT_IMAGE_ID}" != "${EXPECTED_IMAGE_ID}" ]]; then
     NEEDS_REBUILD=1
   fi
 fi
@@ -6005,6 +7631,9 @@ if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
     exit 2
   fi
   write_profile_image_marker "${COLIMA_PROFILE}" "${CURRENT_IMAGE_ID}"
+  maybe_cache_profile_runtime_image "${COLIMA_PROFILE}" "${CURRENT_IMAGE_ID}"
+elif [[ -n "${CURRENT_IMAGE_ID}" ]] && [[ -n "${EXPECTED_IMAGE_ID}" ]] && [[ "${CURRENT_IMAGE_ID}" == "${EXPECTED_IMAGE_ID}" ]]; then
+  maybe_cache_profile_runtime_image "${COLIMA_PROFILE}" "${CURRENT_IMAGE_ID}"
 fi
 
 restore_runtime_egress
@@ -6017,7 +7646,36 @@ append_launch_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 
 DOCKER_STATUS=0
 run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
+if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
+  detached_status="running"
+  detached_live_status="running"
+  session_git_branch="$(run_workspace_safe_git_command_in_dir "${WORKSPACE}" branch --show-current 2>/dev/null || true)"
+  if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
+    echo "Detached session start does not support --audit-transcript." >&2
+    exit 2
+  fi
+  "${DOCKER_RUN[@]}" >/dev/null
+  start_detached_session_monitor
+  load_session_runtime_metadata "${SESSION_ID}"
+  detached_status="${SESSION_META_STATUS:-running}"
+  detached_live_status="${SESSION_META_LIVE_STATUS:-running}"
+  DETACHED_SESSION_ACTIVE=1
+  printf 'session_id=%s\n' "${SESSION_ID}"
+  printf 'status=%s\n' "${detached_status}"
+  printf 'live_status=%s\n' "${detached_live_status}"
+  printf 'control_mode=detached\n'
+  printf 'workspace=%s\n' "${WORKSPACE}"
+  printf 'workspace_origin=%s\n' "${SESSION_SOURCE_WORKSPACE}"
+  printf 'workspace_root=%s\n' "${PROFILE_WORKSPACE_ROOT}"
+  printf 'worktree_path=%s\n' "${WORKSPACE}"
+  printf 'git_branch=%s\n' "${session_git_branch:-none}"
+  printf 'monitor_pid=%s\n' "${SESSION_MONITOR_PID}"
+  printf 'audit_log_path=%s\n' "$(profile_audit_log_path "${COLIMA_PROFILE}")"
+  printf 'debug_log_path=%s\n' "${DEBUG_LOG_PATH:-none}"
+  printf 'file_trace_log_path=%s\n' "${FILE_TRACE_LOG_PATH:-none}"
+  printf 'transcript_log_path=%s\n' "${AUDIT_TRANSCRIPT_PATH:-none}"
+  exit 0
+elif [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
   if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
     echo "Full transcript capture requires an interactive terminal." >&2
     exit 2

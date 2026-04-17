@@ -50,6 +50,71 @@ run_dry_run_expect_failure() {
   fi
 }
 
+run_tty_dry_run() {
+  local label="$1"
+  shift
+
+  HOME_DIR="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" ROOT_DIR="${ROOT_DIR}" \
+    WORKSPACE="${WORKSPACE}" TMP_DIR="${TMP_DIR}" LABEL="${label}" \
+    python3 - "$@" <<'PY'
+import os
+import pty
+import subprocess
+import sys
+
+label = os.environ["LABEL"]
+root_dir = os.environ["ROOT_DIR"]
+workspace = os.environ["WORKSPACE"]
+tmp_dir = os.environ["TMP_DIR"]
+home_dir = os.environ["HOME_DIR"]
+
+cmd = [
+    os.path.join(root_dir, "scripts/workcell"),
+    *sys.argv[1:],
+    "--workspace",
+    workspace,
+    "--no-default-injection-policy",
+    "--dry-run",
+]
+
+master_fd, slave_fd = pty.openpty()
+proc = subprocess.Popen(
+    cmd,
+    cwd=root_dir,
+    stdin=slave_fd,
+    stdout=slave_fd,
+    stderr=slave_fd,
+    env={
+        **os.environ,
+        "HOME": home_dir,
+        "XDG_CONFIG_HOME": os.path.join(home_dir, ".config"),
+    },
+)
+os.close(slave_fd)
+chunks = []
+try:
+    while True:
+        try:
+            data = os.read(master_fd, 65536)
+        except OSError:
+            break
+        if not data:
+            break
+        chunks.append(data)
+finally:
+    os.close(master_fd)
+
+rc = proc.wait()
+output_path = os.path.join(tmp_dir, f"{label}.tty")
+with open(output_path, "wb") as fh:
+    fh.write(b"".join(chunks))
+if rc != 0:
+    sys.stderr.write(f"TTY dry-run failed for {label}: rc={rc}\n")
+    sys.stderr.write(b"".join(chunks).decode("utf-8", "replace"))
+    sys.exit(rc)
+PY
+}
+
 for agent in codex claude gemini; do
   run_dry_run "prompt-${agent}" --agent "${agent}" --agent-autonomy prompt --agent-arg --version
   grep -q "^profile=.* mode=strict agent=${agent} " "${TMP_DIR}/prompt-${agent}.stderr"
@@ -146,8 +211,19 @@ for agent in codex claude gemini; do
     >"${TMP_DIR}/arbitrary-command-${agent}.stdout" 2>"${TMP_DIR}/arbitrary-command-${agent}.stderr"
   grep -q "^profile=.* mode=strict agent=${agent} " "${TMP_DIR}/arbitrary-command-${agent}.stderr"
   grep -q '^execution_path=lower-assurance-debug-command audit_log=' "${TMP_DIR}/arbitrary-command-${agent}.stderr"
-  grep -q -- ' --entrypoint bash ' "${TMP_DIR}/arbitrary-command-${agent}.stdout"
+  if grep -q -- ' --entrypoint bash ' "${TMP_DIR}/arbitrary-command-${agent}.stdout"; then
+    echo "arbitrary command mode should stay on the managed entrypoint" >&2
+    exit 1
+  fi
+  grep -q -- '-e WORKCELL_ALLOW_ARBITRARY_COMMAND=1' "${TMP_DIR}/arbitrary-command-${agent}.stdout"
 done
+
+run_tty_dry_run "interactive-codex" --agent codex --agent-arg --version
+grep -q '^docker run -it ' "${TMP_DIR}/interactive-codex.tty"
+if grep -q -- ' docker run --init -it ' "${TMP_DIR}/interactive-codex.tty"; then
+  echo "Interactive attached launch should not route SIGWINCH through docker-init" >&2
+  exit 1
+fi
 
 run_dry_run_expect_failure 2 "control-plane-vcs-noack" --agent codex --allow-control-plane-vcs
 grep -q '^control-plane VCS mode requires --ack-control-plane-vcs\.$' "${TMP_DIR}/control-plane-vcs-noack.stderr"

@@ -217,6 +217,10 @@ func runLauncher(args []string) error {
 		return runLauncherSessionExport(args[1:])
 	case "session-diff-metadata":
 		return runLauncherSessionDiffMetadata(args[1:])
+	case "session-runtime-metadata":
+		return runLauncherSessionRuntimeMetadata(args[1:])
+	case "session-timeline":
+		return runLauncherSessionTimeline(args[1:])
 	case "audit-digest":
 		if len(args) < 3 {
 			return launcherUsage()
@@ -339,7 +343,7 @@ func releaseUsage() error {
 }
 
 func launcherUsage() error {
-	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|acquire-profile-lock|write-profile-owner|cleanup-stale-session-audit-dirs|session-record-write|session-list|session-show|session-export|session-diff-metadata|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints> [args...]")
+	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|acquire-profile-lock|write-profile-owner|cleanup-stale-session-audit-dirs|session-record-write|session-list|session-show|session-export|session-diff-metadata|session-runtime-metadata|session-timeline|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints> [args...]")
 }
 
 func runLauncherSessionList(args []string) error {
@@ -377,15 +381,17 @@ func runLauncherSessionList(args []string) error {
 	}
 	for _, record := range records {
 		fmt.Printf(
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			record.SessionID,
 			record.Status,
+			coalesce(record.LiveStatus, record.Status),
+			hostutil.SessionControlMode(record),
 			record.Agent,
 			record.Mode,
 			record.Profile,
 			record.StartedAt,
-			coalesce(record.FinalAssurance, record.InitialAssurance),
-			record.Workspace,
+			coalesce(record.CurrentAssurance, record.FinalAssurance, record.InitialAssurance),
+			hostutil.SessionDisplayWorkspace(record),
 		)
 	}
 	return nil
@@ -435,6 +441,36 @@ func runLauncherSessionDiffMetadata(args []string) error {
 		return err
 	}
 	for _, line := range hostutil.SessionDiffMetadataLines(record) {
+		fmt.Println(line)
+	}
+	return nil
+}
+
+func runLauncherSessionRuntimeMetadata(args []string) error {
+	if len(args) != 2 {
+		return launcherUsage()
+	}
+
+	record, err := hostutil.FindSessionRecord(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	for _, line := range hostutil.SessionRuntimeMetadataLines(record) {
+		fmt.Println(line)
+	}
+	return nil
+}
+
+func runLauncherSessionTimeline(args []string) error {
+	if len(args) != 2 {
+		return launcherUsage()
+	}
+
+	lines, err := hostutil.SessionTimelineRecords(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	for _, line := range lines {
 		fmt.Println(line)
 	}
 	return nil

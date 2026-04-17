@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -25,19 +26,26 @@ type SessionRecord struct {
 	UI                    string `json:"ui,omitempty"`
 	ExecutionPath         string `json:"execution_path,omitempty"`
 	Workspace             string `json:"workspace"`
+	WorkspaceOrigin       string `json:"workspace_origin,omitempty"`
+	WorkspaceRoot         string `json:"workspace_root,omitempty"`
+	WorktreePath          string `json:"worktree_path,omitempty"`
 	GitBranch             string `json:"git_branch,omitempty"`
 	GitHead               string `json:"git_head,omitempty"`
 	GitBase               string `json:"git_base,omitempty"`
 	ContainerName         string `json:"container_name,omitempty"`
+	MonitorPID            string `json:"monitor_pid,omitempty"`
+	LiveStatus            string `json:"live_status,omitempty"`
 	SessionAuditDir       string `json:"session_audit_dir,omitempty"`
 	AuditLogPath          string `json:"audit_log_path,omitempty"`
 	DebugLogPath          string `json:"debug_log_path,omitempty"`
 	FileTraceLogPath      string `json:"file_trace_log_path,omitempty"`
 	TranscriptLogPath     string `json:"transcript_log_path,omitempty"`
 	StartedAt             string `json:"started_at"`
+	ObservedAt            string `json:"observed_at,omitempty"`
 	FinishedAt            string `json:"finished_at,omitempty"`
 	ExitStatus            string `json:"exit_status,omitempty"`
 	InitialAssurance      string `json:"initial_assurance,omitempty"`
+	CurrentAssurance      string `json:"current_assurance,omitempty"`
 	FinalAssurance        string `json:"final_assurance,omitempty"`
 	WorkspaceControlPlane string `json:"workspace_control_plane,omitempty"`
 }
@@ -55,16 +63,100 @@ type SessionExport struct {
 func SessionDiffMetadataLines(record SessionRecord) []string {
 	return []string{
 		fmt.Sprintf("workspace=%s", record.Workspace),
+		fmt.Sprintf("workspace_origin=%s", record.WorkspaceOrigin),
+		fmt.Sprintf("workspace_root=%s", record.WorkspaceRoot),
+		fmt.Sprintf("worktree_path=%s", record.WorktreePath),
 		fmt.Sprintf("git_branch=%s", record.GitBranch),
 		fmt.Sprintf("git_head=%s", record.GitHead),
 		fmt.Sprintf("git_base=%s", record.GitBase),
+		fmt.Sprintf("status=%s", record.Status),
+		fmt.Sprintf("live_status=%s", record.LiveStatus),
+		fmt.Sprintf("current_assurance=%s", record.CurrentAssurance),
+		fmt.Sprintf("audit_log_path=%s", record.AuditLogPath),
+		fmt.Sprintf("debug_log_path=%s", record.DebugLogPath),
+		fmt.Sprintf("file_trace_log_path=%s", record.FileTraceLogPath),
+		fmt.Sprintf("transcript_log_path=%s", record.TranscriptLogPath),
+		fmt.Sprintf("container_name=%s", record.ContainerName),
+		fmt.Sprintf("observed_at=%s", record.ObservedAt),
+		fmt.Sprintf("workspace_control_plane=%s", record.WorkspaceControlPlane),
+	}
+}
+
+func SessionRuntimeMetadataLines(record SessionRecord) []string {
+	return []string{
+		fmt.Sprintf("session_id=%s", record.SessionID),
+		fmt.Sprintf("profile=%s", record.Profile),
+		fmt.Sprintf("workspace=%s", record.Workspace),
+		fmt.Sprintf("workspace_origin=%s", record.WorkspaceOrigin),
+		fmt.Sprintf("workspace_root=%s", record.WorkspaceRoot),
+		fmt.Sprintf("worktree_path=%s", record.WorktreePath),
+		fmt.Sprintf("container_name=%s", record.ContainerName),
+		fmt.Sprintf("status=%s", record.Status),
+		fmt.Sprintf("mode=%s", record.Mode),
+		fmt.Sprintf("monitor_pid=%s", record.MonitorPID),
+		fmt.Sprintf("live_status=%s", record.LiveStatus),
+		fmt.Sprintf("current_assurance=%s", record.CurrentAssurance),
+		fmt.Sprintf("session_audit_dir=%s", record.SessionAuditDir),
+		fmt.Sprintf("audit_log_path=%s", record.AuditLogPath),
+		fmt.Sprintf("debug_log_path=%s", record.DebugLogPath),
+		fmt.Sprintf("file_trace_log_path=%s", record.FileTraceLogPath),
+		fmt.Sprintf("transcript_log_path=%s", record.TranscriptLogPath),
+		fmt.Sprintf("observed_at=%s", record.ObservedAt),
+	}
+}
+
+func SessionControlMode(record SessionRecord) string {
+	if strings.TrimSpace(record.MonitorPID) != "" || strings.TrimSpace(record.SessionAuditDir) != "" {
+		return "detached"
+	}
+	currentStatus := strings.TrimSpace(record.LiveStatus)
+	if currentStatus == "" {
+		currentStatus = strings.TrimSpace(record.Status)
+	}
+	switch currentStatus {
+	case "starting", "running", "stopping":
+		if strings.TrimSpace(record.Profile) != "" && strings.TrimSpace(record.ContainerName) != "" {
+			return "detached"
+		}
+	}
+	return "attached"
+}
+
+func SessionDisplayWorkspace(record SessionRecord) string {
+	if strings.TrimSpace(record.WorkspaceOrigin) != "" {
+		return record.WorkspaceOrigin
+	}
+	return record.Workspace
+}
+
+func SessionMatchesWorkspace(record SessionRecord, workspace string) bool {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return true
+	}
+	if strings.TrimSpace(record.Workspace) == workspace {
+		return true
+	}
+	return strings.TrimSpace(record.WorkspaceOrigin) == workspace
+}
+
+func isTerminalSessionStatus(status string) bool {
+	switch status {
+	case "exited", "failed", "aborted":
+		return true
+	default:
+		return false
 	}
 }
 
 func WriteSessionRecord(path string, updates map[string]string) error {
 	record := SessionRecord{Version: 1}
+	existingRecord := SessionRecord{}
+	hadExisting := false
 	if existing, err := ReadSessionRecord(path); err == nil {
 		record = existing
+		existingRecord = existing
+		hadExisting = true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -87,6 +179,12 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 			record.ExecutionPath = value
 		case "workspace":
 			record.Workspace = value
+		case "workspace_origin":
+			record.WorkspaceOrigin = value
+		case "workspace_root":
+			record.WorkspaceRoot = value
+		case "worktree_path":
+			record.WorktreePath = value
 		case "git_branch":
 			record.GitBranch = value
 		case "git_head":
@@ -95,6 +193,10 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 			record.GitBase = value
 		case "container_name":
 			record.ContainerName = value
+		case "monitor_pid":
+			record.MonitorPID = value
+		case "live_status":
+			record.LiveStatus = value
 		case "session_audit_dir":
 			record.SessionAuditDir = value
 		case "audit_log_path":
@@ -107,12 +209,16 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 			record.TranscriptLogPath = value
 		case "started_at":
 			record.StartedAt = value
+		case "observed_at":
+			record.ObservedAt = value
 		case "finished_at":
 			record.FinishedAt = value
 		case "exit_status":
 			record.ExitStatus = value
 		case "initial_assurance":
 			record.InitialAssurance = value
+		case "current_assurance":
+			record.CurrentAssurance = value
 		case "final_assurance":
 			record.FinalAssurance = value
 		case "workspace_control_plane":
@@ -120,6 +226,10 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 		default:
 			return fmt.Errorf("unsupported session record field %q", key)
 		}
+	}
+
+	if hadExisting && isTerminalSessionStatus(existingRecord.Status) && !isTerminalSessionStatus(record.Status) {
+		return fmt.Errorf("%s: refusing to overwrite terminal session status %q with %q", path, existingRecord.Status, record.Status)
 	}
 
 	if err := validateSessionRecord(record, path); err != nil {
@@ -216,7 +326,7 @@ func ListSessionRecords(colimaRoot string, opts SessionListOptions) ([]SessionRe
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", sessionPath, err)
 			}
-			if opts.Workspace != "" && record.Workspace != opts.Workspace {
+			if !SessionMatchesWorkspace(record, opts.Workspace) {
 				continue
 			}
 			records = append(records, record)
@@ -263,30 +373,46 @@ func ExportSessionRecord(colimaRoot, sessionID string) (SessionExport, error) {
 		return SessionExport{}, err
 	}
 
-	export := SessionExport{Session: record}
+	records, err := SessionAuditRecords(record)
+	if err != nil {
+		return SessionExport{}, err
+	}
+	return SessionExport{Session: record, AuditRecords: records}, nil
+}
+
+func SessionTimelineRecords(colimaRoot, sessionID string) ([]string, error) {
+	record, err := FindSessionRecord(colimaRoot, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return SessionAuditRecords(record)
+}
+
+func SessionAuditRecords(record SessionRecord) ([]string, error) {
 	if record.AuditLogPath == "" {
-		return export, nil
+		return []string{}, nil
 	}
 
 	data, err := os.ReadFile(record.AuditLogPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return export, nil
+			return []string{}, nil
 		}
-		return SessionExport{}, err
+		return nil, err
 	}
 
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	records := make([]string, 0, len(lines))
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		if auditLineHasSessionID(line, record.SessionID) {
-			export.AuditRecords = append(export.AuditRecords, line)
+			records = append(records, line)
 		}
 	}
-	return export, nil
+	return records, nil
 }
 
 func auditLineHasSessionID(line, sessionID string) bool {
@@ -347,6 +473,45 @@ func validateSessionRecord(record SessionRecord, source string) error {
 		{name: "agent", value: record.Agent},
 		{name: "mode", value: record.Mode},
 		{name: "status", value: record.Status},
+		{name: "ui", value: record.UI},
+		{name: "execution_path", value: record.ExecutionPath},
+		{name: "workspace", value: record.Workspace},
+		{name: "workspace_origin", value: record.WorkspaceOrigin},
+		{name: "workspace_root", value: record.WorkspaceRoot},
+		{name: "worktree_path", value: record.WorktreePath},
+		{name: "git_branch", value: record.GitBranch},
+		{name: "git_head", value: record.GitHead},
+		{name: "git_base", value: record.GitBase},
+		{name: "container_name", value: record.ContainerName},
+		{name: "monitor_pid", value: record.MonitorPID},
+		{name: "live_status", value: record.LiveStatus},
+		{name: "session_audit_dir", value: record.SessionAuditDir},
+		{name: "audit_log_path", value: record.AuditLogPath},
+		{name: "debug_log_path", value: record.DebugLogPath},
+		{name: "file_trace_log_path", value: record.FileTraceLogPath},
+		{name: "transcript_log_path", value: record.TranscriptLogPath},
+		{name: "started_at", value: record.StartedAt},
+		{name: "observed_at", value: record.ObservedAt},
+		{name: "finished_at", value: record.FinishedAt},
+		{name: "exit_status", value: record.ExitStatus},
+		{name: "initial_assurance", value: record.InitialAssurance},
+		{name: "current_assurance", value: record.CurrentAssurance},
+		{name: "final_assurance", value: record.FinalAssurance},
+		{name: "workspace_control_plane", value: record.WorkspaceControlPlane},
+	} {
+		if strings.ContainsAny(field.value, "\r\n") {
+			return fmt.Errorf("%s: session record field %s may not contain newlines", source, field.name)
+		}
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "session_id", value: record.SessionID},
+		{name: "profile", value: record.Profile},
+		{name: "agent", value: record.Agent},
+		{name: "mode", value: record.Mode},
+		{name: "status", value: record.Status},
 		{name: "workspace", value: record.Workspace},
 		{name: "started_at", value: record.StartedAt},
 	} {
@@ -356,14 +521,24 @@ func validateSessionRecord(record SessionRecord, source string) error {
 	}
 
 	switch record.Status {
-	case "running", "exited", "failed", "aborted":
+	case "starting", "running", "stopping", "exited", "failed", "aborted":
 	default:
 		return fmt.Errorf("%s: unsupported session status %q", source, record.Status)
 	}
 
-	if record.Status == "running" {
+	if strings.TrimSpace(record.MonitorPID) != "" {
+		monitorPID, err := strconv.Atoi(record.MonitorPID)
+		if err != nil || monitorPID <= 0 {
+			return fmt.Errorf("%s: invalid monitor_pid %q", source, record.MonitorPID)
+		}
+		if strings.TrimSpace(record.SessionAuditDir) == "" {
+			return fmt.Errorf("%s: monitor_pid requires session_audit_dir", source)
+		}
+	}
+
+	if record.Status == "starting" || record.Status == "running" || record.Status == "stopping" {
 		if record.FinishedAt != "" || record.ExitStatus != "" || record.FinalAssurance != "" {
-			return fmt.Errorf("%s: running sessions may not set finished_at, exit_status, or final_assurance", source)
+			return fmt.Errorf("%s: %s sessions may not set finished_at, exit_status, or final_assurance", source, record.Status)
 		}
 		return nil
 	}

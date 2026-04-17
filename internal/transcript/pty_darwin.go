@@ -91,15 +91,20 @@ func spawnPTYReal(command []string, stdin, stdout *os.File, stdinRead, masterRea
 		Ctty:    0,
 	}
 
+	stdinFD := int(stdin.Fd())
+	stdoutFD := int(stdout.Fd())
+	masterFD := int(master.Fd())
+	_ = copyWindowSize(stdinFD, int(slave.Fd()))
+
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}
 
+	stopForwarding := forwardWindowSizeChanges(stdinFD, masterFD)
+	defer stopForwarding()
+
 	_ = slave.Close()
 
-	stdinFD := int(stdin.Fd())
-	stdoutFD := int(stdout.Fd())
-	masterFD := int(master.Fd())
 	stdinClosed := false
 	var loopErr error
 
@@ -131,6 +136,9 @@ func spawnPTYReal(command []string, stdin, stdout *os.File, stdinRead, masterRea
 				}
 			}
 			if readErr != nil {
+				if isRetryableIOError(readErr) {
+					continue
+				}
 				if errors.Is(readErr, io.EOF) {
 					stdinClosed = true
 					continue
@@ -152,6 +160,9 @@ func spawnPTYReal(command []string, stdin, stdout *os.File, stdinRead, masterRea
 				}
 			}
 			if readErr != nil {
+				if isRetryableIOError(readErr) {
+					continue
+				}
 				if errors.Is(readErr, io.EOF) {
 					break
 				}
