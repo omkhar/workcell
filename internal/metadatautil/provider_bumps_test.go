@@ -226,6 +226,38 @@ func TestCheckProviderBumpPolicyRejectsClaudeVersionAboveConfiguredCeiling(t *te
 	}
 }
 
+func TestCheckProviderBumpPolicyRejectsUnstableClaudePinWithCeiling(t *testing.T) {
+	root := t.TempDir()
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	packageJSONPath := filepath.Join(root, "package.json")
+	policyPath := filepath.Join(root, "provider-bumps.toml")
+
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104-beta\nARG CODEX_VERSION=0.118.0\n")
+	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
+	mustWriteText(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"cooloff_hours = 72",
+		"",
+		"[provider.codex]",
+		`channel = "stable"`,
+		"",
+		"[provider.claude]",
+		`channel = "stable"`,
+		`max_version = "2.1.104"`,
+		"",
+		"[provider.gemini]",
+		`channel = "stable"`,
+	}, "\n")+"\n")
+
+	err := CheckProviderBumpPolicy(policyPath, dockerfilePath, packageJSONPath)
+	if err == nil {
+		t.Fatal("CheckProviderBumpPolicy() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "requires a stable Claude pin") {
+		t.Fatalf("CheckProviderBumpPolicy() error = %v", err)
+	}
+}
+
 func TestPlanProviderBumpsHonorsClaudeMaxVersion(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")
@@ -313,6 +345,64 @@ func TestPlanProviderBumpsHonorsClaudeMaxVersion(t *testing.T) {
 	}
 	if got := plan.Providers["claude"].Checksums["arm64"]; got != "f0a79ec304334503a563c6d4618b0ea1fcbbe477a047dd3955e2078a3c5559c1" {
 		t.Fatalf("Claude arm64 checksum = %q", got)
+	}
+}
+
+func TestApplyProviderBumpPlanRejectsUnstableClaudeTargetVersion(t *testing.T) {
+	root := t.TempDir()
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	packageJSONPath := filepath.Join(root, "package.json")
+	policyPath := filepath.Join(root, "provider-bumps.toml")
+	planPath := filepath.Join(root, "plan.json")
+
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.118.0\n")
+	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
+	mustWriteText(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"cooloff_hours = 12",
+		"",
+		"[provider.codex]",
+		`channel = "stable"`,
+		"",
+		"[provider.claude]",
+		`channel = "stable"`,
+		`max_version = "2.1.104"`,
+		"",
+		"[provider.gemini]",
+		`channel = "stable"`,
+	}, "\n")+"\n")
+
+	plan := ProviderBumpPlan{
+		Providers: map[string]ProviderBumpSelection{
+			"claude": {
+				TargetVersion: "2.1.104-beta",
+				Checksums: map[string]string{
+					"arm64": "99376866bf7ec367142d3be548c17184a79f30a97318441ee9a00f78e51246e7",
+					"amd64": "5d4df970040b0f83aac434ae540b409126a4778a379e8c9b4c793560e3bfa060",
+				},
+			},
+			"codex": {
+				TargetVersion: "0.118.0",
+			},
+			"gemini": {
+				TargetVersion: "0.36.0",
+			},
+		},
+	}
+	content, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, packageJSONPath)
+	if err == nil {
+		t.Fatal("ApplyProviderBumpPlan() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "contains a non-stable Claude target version") {
+		t.Fatalf("ApplyProviderBumpPlan() error = %v", err)
 	}
 }
 

@@ -184,8 +184,14 @@ func CheckProviderBumpPolicy(policyPath, dockerfilePath, providersPackageJSONPat
 		return fmt.Errorf("%s requires a stable Gemini pin, found %q in %s", policyPath, geminiVersion, providersPackageJSONPath)
 	}
 	if maxVersion := policy.Providers["claude"].MaxVersion; maxVersion != "" {
-		current, _ := parseStableVersion(claudeVersion)
-		maxAllowed, _ := parseStableVersion(maxVersion)
+		current, ok := parseStableVersion(claudeVersion)
+		if !ok {
+			return fmt.Errorf("%s requires a stable Claude pin, found %q in %s", policyPath, claudeVersion, dockerfilePath)
+		}
+		maxAllowed, ok := parseStableVersion(maxVersion)
+		if !ok {
+			return fmt.Errorf("%s must pin provider.claude.max_version to an exact stable version", policyPath)
+		}
 		if compareStableVersions(current, maxAllowed) > 0 {
 			return fmt.Errorf("%s requires Claude <= %s, found %q in %s", policyPath, maxVersion, claudeVersion, dockerfilePath)
 		}
@@ -284,8 +290,14 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 			return err
 		}
 		if maxVersion := policy.Providers["claude"].MaxVersion; maxVersion != "" {
-			plannedClaude, _ := parseStableVersion(claudePlan.TargetVersion)
-			maxAllowed, _ := parseStableVersion(maxVersion)
+			plannedClaude, ok := parseStableVersion(claudePlan.TargetVersion)
+			if !ok {
+				return fmt.Errorf("%s contains a non-stable Claude target version %q", planPath, claudePlan.TargetVersion)
+			}
+			maxAllowed, ok := parseStableVersion(maxVersion)
+			if !ok {
+				return fmt.Errorf("%s must pin provider.claude.max_version to an exact stable version", policyPath)
+			}
 			if compareStableVersions(plannedClaude, maxAllowed) > 0 {
 				return fmt.Errorf("%s requires Claude <= %s, found %q in %s", policyPath, maxVersion, claudePlan.TargetVersion, planPath)
 			}
