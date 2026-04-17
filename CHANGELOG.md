@@ -21,6 +21,12 @@ Releases.
   publish, merge, tag, release-environment approval, and final closeout while
   keeping the single-maintainer provenance path explicit
 
+### Fixed
+
+- stop scrubbed host-side Go helper launches from reusing a stale partial
+  module cache under `/tmp`, which could make `workcell --agent claude` fail
+  before launch with `no required module provides package golang.org/x/sys/unix`
+
 ## v0.10.2 - 2026-04-17
 
 ### Fixed
