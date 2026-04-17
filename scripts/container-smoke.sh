@@ -78,24 +78,118 @@ go_runtimeutil() {
   (cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-runtimeutil "$@")
 }
 
+container_smoke_die() {
+  echo "$*" >&2
+  return 1
+}
+
+host_symlink_component_is_allowed() {
+  local candidate="$1"
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    case "${candidate}" in
+      /var | /tmp)
+        return 0
+        ;;
+    esac
+  fi
+  return 1
+}
+
+assert_host_path_components_not_symlinked() {
+  local target_path="$1"
+  local label="$2"
+  local include_target="${3:-1}"
+  local current=""
+  local parent=""
+
+  case "${target_path}" in
+    /*) ;;
+    *)
+      container_smoke_die "container-smoke requires absolute paths for ${label}: ${target_path}"
+      return 1
+      ;;
+  esac
+
+  if [[ "${include_target}" == "1" ]]; then
+    current="${target_path}"
+  else
+    current="$(dirname "${target_path}")"
+  fi
+
+  while :; do
+    if [[ -L "${current}" ]]; then
+      if host_symlink_component_is_allowed "${current}"; then
+        if [[ "${current}" == "/" ]]; then
+          return 0
+        fi
+        parent="$(dirname "${current}")"
+        [[ "${parent}" != "${current}" ]] || return 0
+        current="${parent}"
+        continue
+      fi
+      container_smoke_die "container-smoke refuses ${label}: symlinked path component ${current}"
+      return 1
+    fi
+    if [[ "${current}" == "/" ]]; then
+      return 0
+    fi
+    parent="$(dirname "${current}")"
+    [[ "${parent}" != "${current}" ]] || return 0
+    current="${parent}"
+  done
+}
+
+assert_host_tree_contains_no_symlinks() {
+  local target_path="$1"
+  local label="$2"
+  local first_symlink=""
+
+  [[ -d "${target_path}" ]] || return 0
+  if IFS= read -r -d '' first_symlink < <(find -P "${target_path}" -type l -print0 2>/dev/null); then
+    container_smoke_die "container-smoke refuses ${label}: symlinked tree entry ${first_symlink}"
+    return 1
+  fi
+  return 0
+}
+
 align_path_for_mapped_runtime_user() {
   local target_path="$1"
   local file_mode="$2"
   local dir_mode="$3"
+  local path=""
 
-  [[ -e "${target_path}" ]] || return 0
+  [[ -e "${target_path}" || -L "${target_path}" ]] || return 0
+  assert_host_path_components_not_symlinked "${target_path}" "mapped runtime ownership alignment" || return 1
 
-  if [[ "$(id -u)" == "0" ]]; then
-    chown -R "${HOST_UID}:${HOST_GID}" "${target_path}"
+  if [[ -L "${target_path}" ]]; then
+    container_smoke_die "container-smoke refuses mapped runtime ownership alignment: symlink target ${target_path}"
+    return 1
   fi
 
   if [[ -d "${target_path}" ]]; then
-    find "${target_path}" -type d -exec chmod "${dir_mode}" {} +
-    find "${target_path}" -type f -exec chmod "${file_mode}" {} +
-    chmod "${dir_mode}" "${target_path}"
+    assert_host_tree_contains_no_symlinks "${target_path}" "mapped runtime ownership alignment" || return 1
+    while IFS= read -r -d '' path; do
+      if [[ "$(id -u)" == "0" ]]; then
+        chown "${HOST_UID}:${HOST_GID}" "${path}"
+      fi
+      if [[ -d "${path}" ]]; then
+        chmod "${dir_mode}" "${path}"
+      else
+        chmod "${file_mode}" "${path}"
+      fi
+    done < <(find -P "${target_path}" \( -type d -o -type f \) -print0)
     return 0
   fi
 
+  if [[ ! -f "${target_path}" ]]; then
+    container_smoke_die "container-smoke refuses mapped runtime ownership alignment for unsupported path type: ${target_path}"
+    return 1
+  fi
+
+  if [[ "$(id -u)" == "0" ]]; then
+    chown "${HOST_UID}:${HOST_GID}" "${target_path}"
+  fi
   chmod "${file_mode}" "${target_path}"
 }
 
@@ -108,20 +202,170 @@ run_as_mapped_host_user() {
   "$@"
 }
 
+remove_host_path_safely() {
+  local target_path="$1"
+  local label="$2"
+
+  [[ -e "${target_path}" || -L "${target_path}" ]] || return 0
+  assert_host_path_components_not_symlinked "${target_path}" "${label}" 0 || return 1
+  if [[ -L "${target_path}" ]]; then
+    rm -f "${target_path}"
+    return 0
+  fi
+  assert_host_path_components_not_symlinked "${target_path}" "${label}" || return 1
+  rm -rf "${target_path}"
+}
+
 cleanup_workspace_scratch() {
   local workspace_root="${1:-${SMOKE_WORKSPACE:-${ROOT_DIR}}}"
+  local tmp_root="${workspace_root}/tmp"
+  local entry=""
 
-  rm -rf \
-    "${workspace_root}/.workcell-provider-copy-tampered" \
-    "${workspace_root}/.workcell-provider-copy-aggressive" \
-    "${workspace_root}/.workcell-provider-copy-minimal" \
-    "${workspace_root}/.workcell-provider-copy-split" \
-    "${workspace_root}/.workcell-benign-marker-package"
-  rm -f \
-    "${workspace_root}/.workcell-provider-copy-no-package.js"
-  rm -rf \
-    "${workspace_root}/tmp/.workcell-"* \
-    "${workspace_root}/tmp/workcell-"*
+  assert_host_path_components_not_symlinked "${workspace_root}" "workspace scratch cleanup" || return 1
+  remove_host_path_safely "${workspace_root}/.workcell-provider-copy-tampered" "workspace scratch cleanup"
+  remove_host_path_safely "${workspace_root}/.workcell-provider-copy-aggressive" "workspace scratch cleanup"
+  remove_host_path_safely "${workspace_root}/.workcell-provider-copy-minimal" "workspace scratch cleanup"
+  remove_host_path_safely "${workspace_root}/.workcell-provider-copy-split" "workspace scratch cleanup"
+  remove_host_path_safely "${workspace_root}/.workcell-benign-marker-package" "workspace scratch cleanup"
+  remove_host_path_safely "${workspace_root}/.workcell-provider-copy-no-package.js" "workspace scratch cleanup"
+
+  [[ -e "${tmp_root}" || -L "${tmp_root}" ]] || return 0
+  assert_host_path_components_not_symlinked "${tmp_root}" "workspace scratch cleanup" || return 1
+  while IFS= read -r -d '' entry; do
+    remove_host_path_safely "${entry}" "workspace scratch cleanup"
+  done < <(
+    find -P "${tmp_root}" -mindepth 1 -maxdepth 1 \
+      \( -name '.workcell-*' -o -name 'workcell-*' \) -print0
+  )
+}
+
+validate_smoke_workspace_relative_path() {
+  local relative_path="$1"
+
+  case "${relative_path}" in
+    '' | . | .. | ./* | /* | ../* | */../* | */..)
+      container_smoke_die "container-smoke refuses unsafe smoke workspace path: ${relative_path}"
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+copy_smoke_workspace_path() {
+  local source_root="$1"
+  local destination_root="$2"
+  local relative_path="$3"
+  local source_path="${source_root}/${relative_path}"
+  local destination_path="${destination_root}/${relative_path}"
+
+  validate_smoke_workspace_relative_path "${relative_path}" || return 1
+  [[ -e "${source_path}" || -L "${source_path}" ]] || return 0
+  assert_host_path_components_not_symlinked "${source_path}" "smoke workspace source path" || return 1
+
+  if [[ -d "${source_path}" ]]; then
+    mkdir -p "${destination_path}"
+    return 0
+  fi
+  if [[ -f "${source_path}" ]]; then
+    mkdir -p "$(dirname "${destination_path}")"
+    cp -p "${source_path}" "${destination_path}"
+    return 0
+  fi
+
+  container_smoke_die "container-smoke refuses unsupported smoke workspace source type: ${source_path}"
+  return 1
+}
+
+stage_smoke_workspace_from_path_list() {
+  local source_root="$1"
+  local destination_root="$2"
+  local path_list="$3"
+  local relative_path=""
+
+  while IFS= read -r -d '' relative_path; do
+    copy_smoke_workspace_path "${source_root}" "${destination_root}" "${relative_path}" || return 1
+  done <"${path_list}"
+}
+
+run_self_test_host_path_hardening() {
+  local test_root=""
+  local mutable_tree=""
+  local outside_root=""
+  local source_root=""
+  local destination_root=""
+  local path_list=""
+  local workspace_root=""
+  local output=""
+  local failed=0
+
+  test_root="$(mktemp -d "${TMPDIR:-/tmp}/workcell-container-smoke-selftest.XXXXXX")"
+  mutable_tree="${test_root}/mutable-tree"
+  outside_root="${test_root}/outside"
+  mkdir -p "${mutable_tree}" "${outside_root}"
+  printf 'sentinel\n' >"${outside_root}/keep.txt"
+  ln -s "${outside_root}" "${mutable_tree}/escape-link"
+
+  if output="$(align_path_for_mapped_runtime_user "${mutable_tree}" 0644 0755 2>&1)"; then
+    echo "Expected align_path_for_mapped_runtime_user to reject a nested symlinked tree entry" >&2
+    failed=1
+  elif [[ "${output}" != *'symlinked tree entry'* ]]; then
+    echo "Expected align_path_for_mapped_runtime_user rejection to mention the symlinked tree entry" >&2
+    printf '%s\n' "${output}" >&2
+    failed=1
+  fi
+  [[ -f "${outside_root}/keep.txt" ]] || {
+    echo "align_path_for_mapped_runtime_user touched data outside the managed tree" >&2
+    failed=1
+  }
+
+  source_root="${test_root}/source"
+  destination_root="${test_root}/destination"
+  path_list="${test_root}/paths.list"
+  mkdir -p "${source_root}" "${destination_root}"
+  ln -s "${outside_root}/keep.txt" "${source_root}/leak"
+  printf 'leak\0' >"${path_list}"
+  if output="$(stage_smoke_workspace_from_path_list "${source_root}" "${destination_root}" "${path_list}" 2>&1)"; then
+    echo "Expected smoke workspace staging to reject symlinked source paths" >&2
+    failed=1
+  elif [[ "${output}" != *'symlinked path component'* ]]; then
+    echo "Expected smoke workspace staging rejection to mention the blocked source path" >&2
+    printf '%s\n' "${output}" >&2
+    failed=1
+  fi
+  [[ ! -e "${destination_root}/leak" ]] || {
+    echo "Smoke workspace staging copied a blocked symlink path" >&2
+    failed=1
+  }
+
+  printf '../escape\0' >"${path_list}"
+  if output="$(stage_smoke_workspace_from_path_list "${source_root}" "${destination_root}" "${path_list}" 2>&1)"; then
+    echo "Expected smoke workspace staging to reject unsafe relative paths" >&2
+    failed=1
+  elif [[ "${output}" != *'unsafe smoke workspace path'* ]]; then
+    echo "Expected smoke workspace staging rejection to mention the unsafe relative path" >&2
+    printf '%s\n' "${output}" >&2
+    failed=1
+  fi
+
+  workspace_root="${test_root}/workspace"
+  mkdir -p "${workspace_root}"
+  ln -s "${outside_root}" "${workspace_root}/tmp"
+  if output="$(cleanup_workspace_scratch "${workspace_root}" 2>&1)"; then
+    echo "Expected cleanup_workspace_scratch to reject a symlinked tmp root" >&2
+    failed=1
+  elif [[ "${output}" != *'symlinked path component'* ]]; then
+    echo "Expected cleanup_workspace_scratch rejection to mention the symlinked tmp root" >&2
+    printf '%s\n' "${output}" >&2
+    failed=1
+  fi
+  [[ -f "${outside_root}/keep.txt" ]] || {
+    echo "cleanup_workspace_scratch followed a symlinked tmp root" >&2
+    failed=1
+  }
+
+  rm -rf "${test_root}"
+  [[ "${failed}" == "0" ]] || return 1
+  echo "container-smoke-host-path-hardening-ok"
 }
 
 prepare_smoke_workspace() {
@@ -156,10 +400,7 @@ prepare_smoke_workspace() {
 
   (
     cd "${ROOT_DIR}"
-    tar --null -T "${path_list_filtered}" -cf -
-  ) | (
-    cd "${SMOKE_WORKSPACE}"
-    tar -xf -
+    stage_smoke_workspace_from_path_list "${ROOT_DIR}" "${SMOKE_WORKSPACE}" "${path_list_filtered}"
   )
 
   rm -f "${path_list_raw}" "${path_list_filtered}"
@@ -175,21 +416,21 @@ prepare_smoke_workspace() {
 
 cleanup() {
   cleanup_workcell_trusted_docker_client
-  cleanup_workspace_scratch "${ROOT_DIR}"
+  cleanup_workspace_scratch "${ROOT_DIR}" || true
   if [[ -n "${SMOKE_WORKSPACE}" ]]; then
-    cleanup_workspace_scratch "${SMOKE_WORKSPACE}"
+    cleanup_workspace_scratch "${SMOKE_WORKSPACE}" || true
   fi
   if [[ -n "${INJECTION_FIXTURE_ROOT}" ]]; then
-    rm -rf "${INJECTION_FIXTURE_ROOT}"
+    remove_host_path_safely "${INJECTION_FIXTURE_ROOT}" "container-smoke cleanup" || true
   fi
   if [[ -n "${INJECTION_BUNDLE_ROOT}" ]]; then
-    rm -rf "${INJECTION_BUNDLE_ROOT}"
+    remove_host_path_safely "${INJECTION_BUNDLE_ROOT}" "container-smoke cleanup" || true
   fi
   if [[ -n "${WORKSPACE_IMPORT_ROOT}" ]]; then
-    rm -rf "${WORKSPACE_IMPORT_ROOT}"
+    remove_host_path_safely "${WORKSPACE_IMPORT_ROOT}" "container-smoke cleanup" || true
   fi
   if [[ -n "${SMOKE_WORKSPACE}" ]]; then
-    rm -rf "${SMOKE_WORKSPACE}"
+    remove_host_path_safely "${SMOKE_WORKSPACE}" "container-smoke cleanup" || true
   fi
 }
 
@@ -234,7 +475,9 @@ clone_bundle_with_credential_override() {
   local credential_key="$3"
   local override_source="$4"
 
-  rm -rf "${bundle_root}"
+  assert_host_path_components_not_symlinked "${source_bundle}" "bundle clone source" || return 1
+  assert_host_tree_contains_no_symlinks "${source_bundle}" "bundle clone source" || return 1
+  remove_host_path_safely "${bundle_root}" "bundle clone destination" || return 1
   cp -R "${source_bundle}" "${bundle_root}"
   go_runtimeutil rewrite-bundle-credential-source \
     "${bundle_root}/manifest.json" \
@@ -714,6 +957,11 @@ if [[ "${1:-}" == "--self-docker-probe" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "--self-test-host-path-hardening" ]]; then
+  run_self_test_host_path_hardening
+  exit 0
+fi
+
 require_tool docker
 trap cleanup EXIT
 cleanup_workspace_scratch "${ROOT_DIR}"
@@ -1120,8 +1368,18 @@ if sudo -n id >/tmp/codex-sudo-id.out 2>&1; then
   echo "expected unrestricted sudo to stay blocked for the runtime user" >&2
   exit 1
 fi
+if /usr/local/libexec/workcell/real/sudo -n id >/tmp/codex-real-sudo-id.out 2>&1; then
+  echo "expected direct access to the relocated real sudo binary to stay blocked" >&2
+  exit 1
+fi
+grep -Eq "no new privileges|Permission denied" /tmp/codex-real-sudo-id.out
+if sudo -n --preserve-env=PATH /usr/local/libexec/workcell/apt-helper.sh apt-get --help \
+  >/tmp/codex-sudo-preserve-path.out 2>/tmp/codex-sudo-preserve-path.err; then
+  echo "expected sudo preserve-env to stay constrained on the apt broker path" >&2
+  exit 1
+fi
+grep -q "blocked unsupported preserved environment variable: PATH" /tmp/codex-sudo-preserve-path.err
 apt-get --help >/dev/null
-sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get --help >/dev/null
 codex --version >/dev/null
 mkdir -p /workspace/exfil
 rm -rf "$HOME/.config/workcell"
@@ -1203,8 +1461,26 @@ run_container_with_injection_bundle_stdin gemini "${INJECTION_BUNDLE_ROOT}/gemin
     gemini --version >/dev/null 2>&1
     test ! -e /workspace/exfil/settings-clobber
     test ! -e /workspace/exfil/trusted-clobber
+    script_supports_command_flag() {
+      local script_help=""
+      script_help="$(script --help 2>&1 || true)"
+      grep -q -- " -c, --command " <<<"${script_help}"
+    }
+    run_typescript_probe_with_timeout() {
+      local timeout_seconds="${1:?missing timeout}"
+      local transcript_path="${2:?missing transcript path}"
+      shift 2
+      local -a command_args=("$@")
+      local command_string=""
+      if script_supports_command_flag; then
+        printf -v command_string "%q " "${command_args[@]}"
+        timeout "${timeout_seconds}" script -qef -c "${command_string% }" "${transcript_path}" </dev/null >/dev/null 2>&1
+        return
+      fi
+      timeout "${timeout_seconds}" script -qeF "${transcript_path}" "${command_args[@]}" </dev/null >/dev/null 2>&1
+    }
     interactive_status=0
-    if timeout 20 script -qefc "gemini" /tmp/workcell-gemini-interactive.typescript </dev/null >/dev/null 2>&1; then
+    if run_typescript_probe_with_timeout 20 /tmp/workcell-gemini-interactive.typescript gemini; then
       interactive_status=0
     else
       interactive_status=$?
