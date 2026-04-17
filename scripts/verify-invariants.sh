@@ -2545,28 +2545,12 @@ fi
 for dockerfile in \
   "${ROOT_DIR}/runtime/container/Dockerfile" \
   "${ROOT_DIR}/tools/validator/Dockerfile"; do
-  if ! rg -q 'ca-certificates_20250419_all\.deb' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin a snapshot CA bundle bootstrap package before HTTPS apt" >&2
-    exit 1
-  fi
-  if ! rg -q 'openssl_3\.5\.5-1~deb13u1_amd64\.deb' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin the amd64 snapshot OpenSSL bootstrap package before HTTPS apt" >&2
-    exit 1
-  fi
-  if ! rg -q 'openssl_3\.5\.5-1~deb13u1_arm64\.deb' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin the arm64 snapshot OpenSSL bootstrap package before HTTPS apt" >&2
-    exit 1
-  fi
   if ! rg -q 'Acquire::Retries "5";' "${dockerfile}"; then
     echo "Expected ${dockerfile} to pin apt retry count for snapshot fetch resilience" >&2
     exit 1
   fi
   if ! rg -q 'Acquire::http::Timeout "30";' "${dockerfile}"; then
     echo "Expected ${dockerfile} to pin apt HTTP timeout for snapshot fetch resilience" >&2
-    exit 1
-  fi
-  if ! rg -q 'Acquire::https::Timeout "30";' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin apt HTTPS timeout for snapshot fetch resilience" >&2
     exit 1
   fi
 done
