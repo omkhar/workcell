@@ -46,7 +46,8 @@ type ProviderBumpPolicy struct {
 }
 
 type ProviderBumpChannel struct {
-	Channel string `toml:"channel"`
+	Channel    string `toml:"channel"`
+	MaxVersion string `toml:"max_version"`
 }
 
 type ProviderBumpPlan struct {
@@ -144,6 +145,11 @@ func LoadProviderBumpPolicy(policyPath string) (ProviderBumpPolicy, error) {
 		if spec.Channel != "stable" {
 			return ProviderBumpPolicy{}, fmt.Errorf("%s must pin provider.%s.channel to \"stable\"", policyPath, provider)
 		}
+		if spec.MaxVersion != "" {
+			if _, ok := parseStableVersion(spec.MaxVersion); !ok {
+				return ProviderBumpPolicy{}, fmt.Errorf("%s must pin provider.%s.max_version to an exact stable version", policyPath, provider)
+			}
+		}
 	}
 	if len(policy.Providers) != len(requiredProviders) {
 		return ProviderBumpPolicy{}, fmt.Errorf("%s must define exactly %d providers", policyPath, len(requiredProviders))
@@ -177,6 +183,13 @@ func CheckProviderBumpPolicy(policyPath, dockerfilePath, providersPackageJSONPat
 	if policy.Providers["gemini"].Channel == "stable" && !stableVersionPattern.MatchString(geminiVersion) {
 		return fmt.Errorf("%s requires a stable Gemini pin, found %q in %s", policyPath, geminiVersion, providersPackageJSONPath)
 	}
+	if maxVersion := policy.Providers["claude"].MaxVersion; maxVersion != "" {
+		current, _ := parseStableVersion(claudeVersion)
+		maxAllowed, _ := parseStableVersion(maxVersion)
+		if compareStableVersions(current, maxAllowed) > 0 {
+			return fmt.Errorf("%s requires Claude <= %s, found %q in %s", policyPath, maxVersion, claudeVersion, dockerfilePath)
+		}
+	}
 	return nil
 }
 
@@ -207,7 +220,7 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	if err != nil {
 		return nil, err
 	}
-	claudeSelection, err := selectClaudeStable(claudeCurrent, cutoff, sources, client)
+	claudeSelection, err := selectClaudeStable(claudeCurrent, cutoff, policy.Providers["claude"].MaxVersion, sources, client)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +243,7 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	return plan, nil
 }
 
-func ApplyProviderBumpPlan(planPath, dockerfilePath, providersPackageJSONPath string) error {
+func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackageJSONPath string) error {
 	content, err := os.ReadFile(planPath)
 	if err != nil {
 		return err
@@ -255,6 +268,28 @@ func ApplyProviderBumpPlan(planPath, dockerfilePath, providersPackageJSONPath st
 	geminiPlan, ok := plan.Providers["gemini"]
 	if !ok {
 		return fmt.Errorf("%s does not contain a gemini provider plan", planPath)
+	}
+	if !stableVersionPattern.MatchString(claudePlan.TargetVersion) {
+		return fmt.Errorf("%s contains a non-stable Claude target version %q", planPath, claudePlan.TargetVersion)
+	}
+	if !stableVersionPattern.MatchString(codexPlan.TargetVersion) {
+		return fmt.Errorf("%s contains a non-stable Codex target version %q", planPath, codexPlan.TargetVersion)
+	}
+	if !stableVersionPattern.MatchString(geminiPlan.TargetVersion) {
+		return fmt.Errorf("%s contains a non-stable Gemini target version %q", planPath, geminiPlan.TargetVersion)
+	}
+	if policyPath != "" {
+		policy, err := LoadProviderBumpPolicy(policyPath)
+		if err != nil {
+			return err
+		}
+		if maxVersion := policy.Providers["claude"].MaxVersion; maxVersion != "" {
+			plannedClaude, _ := parseStableVersion(claudePlan.TargetVersion)
+			maxAllowed, _ := parseStableVersion(maxVersion)
+			if compareStableVersions(plannedClaude, maxAllowed) > 0 {
+				return fmt.Errorf("%s requires Claude <= %s, found %q in %s", policyPath, maxVersion, claudePlan.TargetVersion, planPath)
+			}
+		}
 	}
 
 	updatedDockerfile := dockerfileText
@@ -373,11 +408,12 @@ func selectGeminiStable(currentVersion string, cutoff time.Time, sources Provide
 	}, nil
 }
 
-func selectClaudeStable(currentVersion string, cutoff time.Time, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
+func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
 	var listing claudeBucketListing
 	if err := fetchXML(client, sources.ClaudeBucketURL, &listing); err != nil {
 		return ProviderBumpSelection{}, err
 	}
+	maxAllowed, hasMaxVersion := parseStableVersion(maxVersion)
 	candidates := make([]stableVersion, 0, len(listing.CommonPrefixes))
 	for _, prefix := range listing.CommonPrefixes {
 		match := claudeBucketVersionDirPattern.FindStringSubmatch(prefix.Prefix)
@@ -386,6 +422,9 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, sources Provide
 		}
 		version, ok := parseStableVersion(match[1])
 		if !ok {
+			continue
+		}
+		if hasMaxVersion && compareStableVersions(version, maxAllowed) > 0 {
 			continue
 		}
 		candidates = append(candidates, version)
