@@ -143,7 +143,7 @@ func spawnPTYReal(command []string, stdin, stdout *os.File, stdinRead, masterRea
 				if isRetryableIOError(readErr) {
 					continue
 				}
-				if errors.Is(readErr, io.EOF) {
+				if errors.Is(readErr, io.EOF) || errors.Is(readErr, syscall.EIO) {
 					break
 				}
 				loopErr = readErr
