@@ -103,7 +103,7 @@ func TestWriteGitHubReleaseCreatePayload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if string(data) != `{"tag_name":"v1.2.3","generate_release_notes":true}` {
+	if string(data) != `{"tag_name":"v1.2.3","draft":true,"generate_release_notes":true}` {
 		t.Fatalf("unexpected payload: %s", data)
 	}
 }
@@ -116,6 +116,8 @@ func TestWriteGitHubReleaseMetadata(t *testing.T) {
 	releaseJSON := map[string]any{
 		"id":         123,
 		"upload_url": "https://uploads.github.com/repos/example/workcell/releases/123/assets{?name,label}",
+		"draft":      true,
+		"immutable":  false,
 		"assets": []map[string]any{
 			{"name": "workcell-linux-amd64.tar.gz", "id": 11},
 			{"name": "workcell-linux-arm64.tar.gz"},
@@ -148,6 +150,8 @@ func TestWriteGitHubReleaseMetadata(t *testing.T) {
 	want := [][]byte{
 		[]byte("123"),
 		[]byte("https://uploads.github.com/repos/example/workcell/releases/123/assets"),
+		[]byte("true"),
+		[]byte("false"),
 		[]byte("workcell-linux-amd64.tar.gz"),
 		[]byte("11"),
 		[]byte("workcell-linux-arm64.tar.gz"),

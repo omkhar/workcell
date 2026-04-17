@@ -17,6 +17,7 @@ import (
 
 type releaseCreatePayload struct {
 	TagName              string `json:"tag_name"`
+	Draft                bool   `json:"draft"`
 	GenerateReleaseNotes bool   `json:"generate_release_notes"`
 }
 
@@ -28,6 +29,8 @@ type releaseAsset struct {
 type releaseResponse struct {
 	ID        int64          `json:"id"`
 	UploadURL string         `json:"upload_url"`
+	Draft     bool           `json:"draft"`
+	Immutable bool           `json:"immutable"`
 	Assets    []releaseAsset `json:"assets"`
 }
 
@@ -80,6 +83,7 @@ func RealHome() (string, error) {
 func WriteGitHubReleaseCreatePayload(tagName, outputPath string) error {
 	payload := releaseCreatePayload{
 		TagName:              tagName,
+		Draft:                true,
 		GenerateReleaseNotes: true,
 	}
 	data, err := json.Marshal(payload)
@@ -115,6 +119,8 @@ func WriteGitHubReleaseMetadata(releaseJSONPath string, assetPaths []string, out
 
 	writeField(fmt.Sprint(release.ID))
 	writeField(uploadURL)
+	writeField(fmt.Sprint(release.Draft))
+	writeField(fmt.Sprint(release.Immutable))
 	for _, assetPath := range assetPaths {
 		name := filepath.Base(assetPath)
 		writeField(name)
