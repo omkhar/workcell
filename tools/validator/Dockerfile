@@ -36,11 +36,42 @@ ENV PATH=/usr/local/cargo/bin:/usr/local/go/bin:${PATH}
 ENV RUSTUP_HOME=/usr/local/rustup
 
 # hadolint ignore=DL3008
-RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/99workcell-validator-snapshot \
+RUN fetch_snapshot_bootstrap_package() { \
+      local url="$1"; \
+      local output="$2"; \
+      node -e 'const fs = require("fs"); (async () => { const [url, output] = process.argv.slice(1); const response = await fetch(url); if (!response.ok) { throw new Error(`unexpected status ${response.status} for ${url}`); } const file = fs.createWriteStream(output); for await (const chunk of response.body) { file.write(chunk); } file.end(); await new Promise((resolve, reject) => { file.on("finish", resolve); file.on("error", reject); }); })().catch((error) => { console.error(error.stack || error); process.exit(1); });' "${url}" "${output}"; \
+    } \
+  && bootstrap_snapshot_tls() { \
+       local openssl_url="" openssl_sha256="" ca_url="" ca_sha256=""; \
+       case "$(dpkg --print-architecture)" in \
+         amd64) \
+           openssl_url="https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb"; \
+           openssl_sha256="233d6d1f6ff00509cba554365e7cfb3be36db1dea57291eeb248f2c04d62719d"; \
+           ;; \
+         arm64) \
+           openssl_url="https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb"; \
+           openssl_sha256="92dfcdc213cd7a5e6aa34a1ac9660a59e56838d12876f4b34599f8fea39cb432"; \
+           ;; \
+         *) \
+           echo "Unsupported dpkg architecture for snapshot TLS bootstrap: $(dpkg --print-architecture)" >&2; \
+           exit 1; \
+           ;; \
+       esac; \
+       ca_url="https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb"; \
+       ca_sha256="ef590f89563aa4b46c8260d49d1cea0fc1b181d19e8df3782694706adf05c184"; \
+       fetch_snapshot_bootstrap_package "${openssl_url}" /tmp/workcell-bootstrap-openssl.deb; \
+       echo "${openssl_sha256}  /tmp/workcell-bootstrap-openssl.deb" | sha256sum -c -; \
+       fetch_snapshot_bootstrap_package "${ca_url}" /tmp/workcell-bootstrap-ca-certificates.deb; \
+       echo "${ca_sha256}  /tmp/workcell-bootstrap-ca-certificates.deb" | sha256sum -c -; \
+       dpkg -i /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb; \
+       rm -f /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb; \
+     } \
+  && bootstrap_snapshot_tls \
+  && rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/99workcell-validator-snapshot \
   && install_validator_packages() { \
        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
          ca-certificates \

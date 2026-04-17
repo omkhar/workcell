@@ -136,7 +136,7 @@ workcell_file_trace_emit() {
 
   workcell_file_trace_enabled || return 0
   mkdir -p "$(dirname "${WORKCELL_FILE_TRACE_PATH}")"
-  touch "${WORKCELL_FILE_TRACE_PATH}"
+  : >>"${WORKCELL_FILE_TRACE_PATH}"
   chmod 0600 "${WORKCELL_FILE_TRACE_PATH}" 2>/dev/null || true
   printf '%s' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"${WORKCELL_FILE_TRACE_PATH}"
   for field in "$@"; do
@@ -1149,6 +1149,7 @@ workcell_target_is_allowed() {
 
   case "${target_path}" in
     /state/agent-home/.codex | \
+      /state/agent-home/.codex/* | \
       /state/agent-home/.claude | \
       /state/agent-home/.claude/* | \
       /state/agent-home/.config/claude-code | \
@@ -1173,8 +1174,7 @@ workcell_target_is_allowed() {
       /state/agent-home/.codex/rules | \
       /state/agent-home/.codex/rules/* | \
       /state/agent-home/.codex/mcp | \
-      /state/agent-home/.codex/mcp/* | \
-      /state/agent-home/.codex/*)
+      /state/agent-home/.codex/mcp/*)
       return 1
       ;;
   esac

@@ -8,6 +8,7 @@ CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
 CODEX_PROFILE="${CODEX_PROFILE:-strict}"
 WORKCELL_MODE="${WORKCELL_MODE:-${CODEX_PROFILE}}"
 WORKCELL_AGENT_AUTONOMY="${WORKCELL_AGENT_AUTONOMY:-yolo}"
+WORKCELL_ALLOW_ARBITRARY_COMMAND="${WORKCELL_ALLOW_ARBITRARY_COMMAND:-0}"
 TMPDIR="${TMPDIR:-/state/tmp}"
 WORKSPACE="${WORKSPACE:-/workspace}"
 export ADAPTER_ROOT="/opt/workcell/adapters"
@@ -24,6 +25,7 @@ source /usr/local/libexec/workcell/runtime-user.sh
 WORKCELL_FILE_TRACE_CHILD_PID=""
 WORKCELL_FILE_TRACE_STATUS=0
 WORKCELL_FILE_TRACE_TEARDOWN_DONE=0
+WORKCELL_FILE_TRACE_CHILD_DONE=0
 
 workcell_run_command_with_file_trace_finish() {
   [[ "${WORKCELL_FILE_TRACE_TEARDOWN_DONE}" == "1" ]] && return 0
@@ -37,18 +39,34 @@ workcell_run_command_with_file_trace_finish() {
 
 workcell_run_command_with_file_trace_signal() {
   local signal="$1"
+  local child_status=0
+  local child_waited=0
 
-  if [[ -n "${WORKCELL_FILE_TRACE_CHILD_PID}" ]] &&
-    kill -0 "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1; then
-    kill "-${signal}" "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1 ||
-      kill "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1 || true
-    wait "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1 || true
+  if [[ "${WORKCELL_FILE_TRACE_CHILD_DONE}" == "1" ]]; then
+    trap - INT TERM
+    workcell_run_command_with_file_trace_finish
+    exit "${WORKCELL_FILE_TRACE_STATUS}"
   fi
-  case "${signal}" in
-    INT) WORKCELL_FILE_TRACE_STATUS=130 ;;
-    TERM) WORKCELL_FILE_TRACE_STATUS=143 ;;
-    *) WORKCELL_FILE_TRACE_STATUS=128 ;;
-  esac
+  if [[ -n "${WORKCELL_FILE_TRACE_CHILD_PID}" ]]; then
+    if kill -0 "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1; then
+      kill "-${signal}" "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1 ||
+        kill "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1 || true
+    fi
+    set +e
+    wait "${WORKCELL_FILE_TRACE_CHILD_PID}" >/dev/null 2>&1
+    child_status="$?"
+    set -e
+    child_waited=1
+  fi
+  if [[ "${child_waited}" == "1" ]]; then
+    WORKCELL_FILE_TRACE_STATUS="${child_status}"
+  else
+    case "${signal}" in
+      INT) WORKCELL_FILE_TRACE_STATUS=130 ;;
+      TERM) WORKCELL_FILE_TRACE_STATUS=143 ;;
+      *) WORKCELL_FILE_TRACE_STATUS=128 ;;
+    esac
+  fi
   trap - INT TERM
   workcell_run_command_with_file_trace_finish
   exit "${WORKCELL_FILE_TRACE_STATUS}"
@@ -68,18 +86,19 @@ run_command_with_file_trace() {
   WORKCELL_FILE_TRACE_CHILD_PID=""
   WORKCELL_FILE_TRACE_STATUS=0
   WORKCELL_FILE_TRACE_TEARDOWN_DONE=0
-  trap 'workcell_run_command_with_file_trace_signal INT' INT
-  trap 'workcell_run_command_with_file_trace_signal TERM' TERM
+  WORKCELL_FILE_TRACE_CHILD_DONE=0
   "$@" &
   child_pid="$!"
   WORKCELL_FILE_TRACE_CHILD_PID="${child_pid}"
+  trap 'workcell_run_command_with_file_trace_signal INT' INT
+  trap 'workcell_run_command_with_file_trace_signal TERM' TERM
   set +e
   wait "${child_pid}"
   status="$?"
-  set -e
-
   WORKCELL_FILE_TRACE_STATUS="${status}"
+  WORKCELL_FILE_TRACE_CHILD_DONE=1
   trap - INT TERM
+  set -e
   workcell_run_command_with_file_trace_finish
   return "${status}"
 }
@@ -118,8 +137,11 @@ esac
 if [[ "$(id -u)" == "0" ]]; then
   workcell_write_runtime_state
 fi
+workcell_verify_control_plane_path "/usr/local/libexec/workcell/sudo-wrapper.sh"
 
 if workcell_should_reexec_as_runtime_user; then
+  workcell_verify_control_plane_path "/usr/local/libexec/workcell/apt-broker.sh"
+  workcell_start_apt_broker
   workcell_reexec_as_runtime_user /usr/local/libexec/workcell/entrypoint.sh "$@"
 fi
 
@@ -150,7 +172,13 @@ if [[ $# -eq 0 ]]; then
   esac
 fi
 
-if [[ "${WORKCELL_MODE}" == "development" ]] && [[ $# -gt 0 ]] && [[ "$1" != "${AGENT_NAME}" ]]; then
+if [[ "${WORKCELL_ALLOW_ARBITRARY_COMMAND}" == "1" ]]; then
+  if [[ $# -eq 0 ]]; then
+    echo "Workcell arbitrary-command mode requires an explicit command." >&2
+    exit 2
+  fi
+elif [[ "${WORKCELL_MODE}" == "development" ]] && [[ $# -gt 0 ]] && [[ "$1" != "${AGENT_NAME}" ]]; then
+  workcell_verify_control_plane_path "/usr/local/libexec/workcell/development-wrapper.sh"
   set -- /bin/bash /usr/local/libexec/workcell/development-wrapper.sh "$@"
 else
   validate_command_args "${AGENT_NAME}" "$@"
@@ -174,6 +202,11 @@ else
         ;;
     esac
   fi
+fi
+
+if [[ -n "${WORKCELL_DETACHED_STDIN_PATH:-}" ]]; then
+  workcell_verify_control_plane_path "/usr/local/libexec/workcell/detached-stdin-wrapper.sh"
+  set -- /bin/bash /usr/local/libexec/workcell/detached-stdin-wrapper.sh "$@"
 fi
 
 printf 'agent=%s ui=%s mode=%s autonomy=%s workspace=%s\n' "${AGENT_NAME}" "${AGENT_UI}" "${WORKCELL_MODE}" "${WORKCELL_AGENT_AUTONOMY}" "${WORKSPACE}" >&2

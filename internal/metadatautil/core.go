@@ -104,14 +104,10 @@ func ensureRegularFile(path string) error {
 	return nil
 }
 
-func ensureNoSymlinkPrefix(rootDir, repoPath string) error {
-	return ensureNoSymlinkRelativePath(rootDir, repoPath, "control-plane artifact")
-}
-
 func ensureNoSymlinkRelativePath(rootDir, relativePath, label string) error {
-	relativeParts := strings.Split(filepath.Clean(relativePath), string(filepath.Separator))
+	parts := strings.Split(filepath.Clean(relativePath), string(filepath.Separator))
 	current := rootDir
-	for _, part := range relativeParts {
+	for _, part := range parts {
 		current = filepath.Join(current, part)
 		info, err := os.Lstat(current)
 		if err != nil {
@@ -122,6 +118,10 @@ func ensureNoSymlinkRelativePath(rootDir, relativePath, label string) error {
 		}
 	}
 	return nil
+}
+
+func ensureNoSymlinkPrefix(rootDir, repoPath string) error {
+	return ensureNoSymlinkRelativePath(rootDir, repoPath, "control-plane artifact")
 }
 
 func ensureTrackedRegularFile(rootDir, repoPath string) error {
@@ -499,8 +499,11 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/.gemini/settings.json", RuntimePath: "/opt/workcell/adapters/gemini/.gemini/settings.json"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/GEMINI.md", RuntimePath: "/opt/workcell/adapters/gemini/GEMINI.md"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/assurance.sh", RuntimePath: "/usr/local/libexec/workcell/assurance.sh"},
+		{Kind: "runtime-control-plane", RepoPath: "runtime/container/apt-broker.sh", RuntimePath: "/usr/local/libexec/workcell/apt-broker.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-helper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-helper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-wrapper.sh"},
+		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/sudo-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/sudo-wrapper.sh"},
+		{Kind: "runtime-control-plane", RepoPath: "runtime/container/detached-stdin-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/detached-stdin-wrapper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/development-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/development-wrapper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/entrypoint.sh", RuntimePath: "/usr/local/libexec/workcell/entrypoint.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/git", RuntimePath: "/usr/local/libexec/workcell/git-wrapper.sh"},
@@ -653,8 +656,21 @@ func ControlPlaneParityRows(manifestPath string) ([]string, error) {
 			}
 		}
 	}
-	if _, ok := runtimePaths["/etc/claude-code/managed-settings.json"]; ok {
-		rows = append(rows, "path\tclaude-managed-settings\t/etc/claude-code/managed-settings.json")
+
+	pathRequirements := []struct {
+		label       string
+		runtimePath string
+	}{
+		{label: "apt-broker", runtimePath: "/usr/local/libexec/workcell/apt-broker.sh"},
+		{label: "claude-managed-settings", runtimePath: "/etc/claude-code/managed-settings.json"},
+		{label: "development-wrapper", runtimePath: "/usr/local/libexec/workcell/development-wrapper.sh"},
+		{label: "detached-stdin-wrapper", runtimePath: "/usr/local/libexec/workcell/detached-stdin-wrapper.sh"},
+		{label: "sudo-wrapper", runtimePath: "/usr/local/libexec/workcell/sudo-wrapper.sh"},
+	}
+	for _, requirement := range pathRequirements {
+		if _, ok := runtimePaths[requirement.runtimePath]; ok {
+			rows = append(rows, "path\t"+requirement.label+"\t"+requirement.runtimePath)
+		}
 	}
 	return rows, nil
 }

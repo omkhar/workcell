@@ -9,6 +9,12 @@ WORKCELL_RUNTIME_MODE_FILE="${WORKCELL_RUNTIME_STATE_DIR}/mode"
 WORKCELL_RUNTIME_PROFILE_FILE="${WORKCELL_RUNTIME_STATE_DIR}/profile"
 WORKCELL_RUNTIME_AUTONOMY_FILE="${WORKCELL_RUNTIME_STATE_DIR}/autonomy"
 WORKCELL_RUNTIME_ASSURANCE_FILE="${WORKCELL_RUNTIME_STATE_DIR}/session-assurance"
+WORKCELL_APT_BROKER_ROOT="${WORKCELL_RUNTIME_STATE_DIR}/apt-broker"
+WORKCELL_APT_BROKER_REQUESTS_DIR="${WORKCELL_APT_BROKER_ROOT}/requests"
+WORKCELL_APT_BROKER_RESULTS_DIR="${WORKCELL_APT_BROKER_ROOT}/results"
+WORKCELL_APT_BROKER_PID_FILE="${WORKCELL_APT_BROKER_ROOT}/pid"
+WORKCELL_APT_BROKER_START_WAIT_SECONDS="${WORKCELL_APT_BROKER_START_WAIT_SECONDS:-5}"
+WORKCELL_APT_BROKER_START_POLL_SECONDS="${WORKCELL_APT_BROKER_START_POLL_SECONDS:-0.1}"
 
 workcell_runtime_user_die() {
   echo "$*" >&2
@@ -243,6 +249,48 @@ workcell_prepare_runtime_identity() {
   printf '%s\n' "${user_name}"
 }
 
+workcell_apt_broker_running() {
+  local broker_pid=""
+  local broker_cmdline=""
+
+  [[ -f "${WORKCELL_APT_BROKER_PID_FILE}" ]] || return 1
+  broker_pid="$(head -n1 "${WORKCELL_APT_BROKER_PID_FILE}" 2>/dev/null || true)"
+  [[ "${broker_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ -r "/proc/${broker_pid}/cmdline" ]] || return 1
+  broker_cmdline="$(tr '\0' ' ' <"/proc/${broker_pid}/cmdline" 2>/dev/null || true)"
+  [[ "${broker_cmdline}" == *"/usr/local/libexec/workcell/apt-broker.sh"* ]]
+}
+
+workcell_wait_for_apt_broker() {
+  local deadline=0
+
+  deadline=$((SECONDS + WORKCELL_APT_BROKER_START_WAIT_SECONDS))
+  while ((SECONDS < deadline)); do
+    if workcell_apt_broker_running; then
+      return 0
+    fi
+    sleep "${WORKCELL_APT_BROKER_START_POLL_SECONDS}" || true
+  done
+  workcell_runtime_user_die "Workcell apt broker failed to start."
+}
+
+workcell_start_apt_broker() {
+  mkdir -p \
+    "${WORKCELL_APT_BROKER_ROOT}" \
+    "${WORKCELL_APT_BROKER_REQUESTS_DIR}" \
+    "${WORKCELL_APT_BROKER_RESULTS_DIR}"
+  chmod 0755 "${WORKCELL_APT_BROKER_ROOT}" "${WORKCELL_APT_BROKER_RESULTS_DIR}"
+  chmod 1733 "${WORKCELL_APT_BROKER_REQUESTS_DIR}"
+  if workcell_apt_broker_running; then
+    export WORKCELL_APT_BROKER_ROOT
+    return 0
+  fi
+  WORKCELL_APT_BROKER_ROOT="${WORKCELL_APT_BROKER_ROOT}" /usr/bin/setsid -f \
+    /bin/bash /usr/local/libexec/workcell/apt-broker.sh </dev/null >/dev/null 2>&1
+  export WORKCELL_APT_BROKER_ROOT
+  workcell_wait_for_apt_broker
+}
+
 workcell_write_readonly_state_file() {
   local path="$1"
   local value="$2"
@@ -330,6 +378,7 @@ workcell_reexec_as_runtime_user() {
   gid="$(workcell_runtime_host_gid)"
   user_name="$(workcell_prepare_runtime_identity)"
   workcell_write_runtime_state
+  workcell_start_apt_broker
   export USER="${user_name}"
   export LOGNAME="${user_name}"
 
