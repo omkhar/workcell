@@ -14,7 +14,7 @@
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
-      "sha256": "bfb4107724bbd994486fa0e0afed5bbf295e1e5b57936c4d72fc821b23a8354b"
+      "sha256": "604e5e13d27386a53f519bec5d8e9caf6f2fb78e17f4ead2c8ca8fd4fd9e1c7b"
     }
   ],
   "runtime_artifacts": [
@@ -148,7 +148,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/sudo-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/sudo-wrapper.sh",
-      "sha256": "8c93a4c6ce1433a65d70f6ad8d8a79fa994b427c5c1dfe55a239a50a6f0c0df4"
+      "sha256": "122c569901830a61820e57cd4da810ef5ba473a4de709d7abbfb68d61238e86a"
     },
     {
       "kind": "runtime-control-plane",

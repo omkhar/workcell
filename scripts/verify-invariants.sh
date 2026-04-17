@@ -6265,6 +6265,59 @@ EOF
       echo "Expected package-mutation failure propagation verification run to succeed" >&2
       exit 1
     fi
+    APT_BROKER_FIXTURE_ROOT="${BARRIER_VERIFY_ROOT}/workcell-apt-broker-fixture"
+    APT_BROKER_HELPER="${APT_BROKER_FIXTURE_ROOT}/slow-apt-helper.sh"
+    APT_BROKER_RUNTIME_ROOT="${APT_BROKER_FIXTURE_ROOT}/runtime"
+    APT_BROKER_STDOUT="${APT_BROKER_FIXTURE_ROOT}/sudo-wrapper.out"
+    APT_BROKER_STDERR="${APT_BROKER_FIXTURE_ROOT}/sudo-wrapper.err"
+    rm -rf "${APT_BROKER_FIXTURE_ROOT}"
+    mkdir -p "${APT_BROKER_FIXTURE_ROOT}"
+    cat >"${APT_BROKER_HELPER}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+sleep 11
+printf 'slow-apt-helper-ok\n'
+EOF
+    chmod +x "${APT_BROKER_HELPER}"
+    WORKCELL_APT_BROKER_ROOT="${APT_BROKER_RUNTIME_ROOT}" \
+      WORKCELL_APT_HELPER="${APT_BROKER_HELPER}" \
+      WORKCELL_APT_BROKER_SLEEP_SECONDS=0.05 \
+      /bin/bash "${ROOT_DIR}/runtime/container/apt-broker.sh" >/dev/null 2>&1 &
+    APT_BROKER_PID=$!
+    for attempt in $(seq 1 100); do
+      if [[ -f "${APT_BROKER_RUNTIME_ROOT}/pid" ]]; then
+        break
+      fi
+      sleep 0.1
+    done
+    if [[ ! -f "${APT_BROKER_RUNTIME_ROOT}/pid" ]]; then
+      echo "Expected apt broker fixture to publish its pid file" >&2
+      kill "${APT_BROKER_PID}" >/dev/null 2>&1 || true
+      wait "${APT_BROKER_PID}" >/dev/null 2>&1 || true
+      exit 1
+    fi
+    if ! WORKCELL_APT_BROKER_ROOT="${APT_BROKER_RUNTIME_ROOT}" \
+      WORKCELL_APT_BROKER_WAIT_INTERVAL_SECONDS=0.05 \
+      /bin/bash "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh" \
+        -n /usr/local/libexec/workcell/apt-helper.sh apt-get update \
+        >"${APT_BROKER_STDOUT}" 2>"${APT_BROKER_STDERR}"; then
+      echo "Expected sudo-wrapper to wait for a slow apt broker request by default" >&2
+      cat "${APT_BROKER_STDOUT}" >&2 || true
+      cat "${APT_BROKER_STDERR}" >&2 || true
+      kill "${APT_BROKER_PID}" >/dev/null 2>&1 || true
+      wait "${APT_BROKER_PID}" >/dev/null 2>&1 || true
+      exit 1
+    fi
+    grep -q 'slow-apt-helper-ok' "${APT_BROKER_STDOUT}"
+    if grep -q 'Workcell apt broker timed out.' "${APT_BROKER_STDERR}"; then
+      echo "Expected sudo-wrapper default apt broker waits to avoid timing out slow requests" >&2
+      cat "${APT_BROKER_STDERR}" >&2
+      kill "${APT_BROKER_PID}" >/dev/null 2>&1 || true
+      wait "${APT_BROKER_PID}" >/dev/null 2>&1 || true
+      exit 1
+    fi
+    kill "${APT_BROKER_PID}" >/dev/null 2>&1 || true
+    wait "${APT_BROKER_PID}" >/dev/null 2>&1 || true
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
