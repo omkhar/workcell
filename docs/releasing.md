@@ -198,14 +198,15 @@ to rot between releases:
 
 - review any open external or offline security finding queue for the repo
 - run a one-off proof-of-closure for each security finding being marked fixed
-- verify release-facing documentation examples still map to test or scenario
-  coverage
+- verify release-facing documentation examples still map to requirements,
+  tests, or scenario coverage
 - review `policy/provider-bumps.toml` and any temporary holdbacks before
   refreshing upstream pins
 
 Useful commands:
 
 ```sh
+./scripts/verify-requirements-coverage.sh
 ./scripts/run-scenario-tests.sh --secretless-only
 ./scripts/verify-scenario-coverage.sh
 ```
@@ -261,7 +262,8 @@ Before committing, run a short live sanity sweep for interactive flows that CI
 does not exercise well enough:
 
 - launch an attached interactive session and resize the terminal window
-- start, attach to, send to, stop, and delete a detached session
+- from a clean throwaway checkout or other clean scratch workspace, start,
+  attach to, send to, stop, and delete a detached session
 - confirm session cleanup removes the expected runtime artifacts only
 
 Create a signed release commit:
