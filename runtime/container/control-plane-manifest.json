@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "2535c299f088ec41bae4cf9fa3eeb87c1513b2625afa233b78e0e2b9872cf279"
+      "sha256": "2d4c087765026ced6fc2e3341f4f3ef5d3f012dc9e1a4fc874b204fd55a331dd"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts",
@@ -178,7 +178,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "fc93fbc1616340208f6aefe522530580b6fa0466003f7ea29a9b2c31a4b2df5e"
+      "sha256": "caa46c9f5385ecbc414e9fa6673484452f5bad2a333326fcacf1cbc768b0d3f1"
     },
     {
       "kind": "runtime-control-plane",
