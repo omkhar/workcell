@@ -29,6 +29,14 @@ honestly in docs, status reports, and release commentary.
 - Before tagging a release, make sure shipped features are documented and do
   not remain on the roadmap. Remove roadmap items only after the code and
   focused validation confirm they are fully implemented.
+- Before tagging a release, sweep outstanding security findings and verify each
+  claimed fix with a one-off proof-of-closure command or repro, even when the
+  repo already has permanent regression tests.
+- Before tagging a release, verify that release-facing documentation examples
+  are still covered by existing tests or scenario lanes.
+- Review any intentional upstream holdbacks or exceptions before refreshing
+  pins, and document them in policy or release notes rather than carrying
+  unexplained drift.
 - Publish PRs from the host with `./scripts/workcell publish-pr`.
 - Wait for `main` to be green before pushing the release tag.
 - Follow the tag-triggered `Release` workflow through completion.
@@ -185,6 +193,24 @@ Before opening the release PR, sweep the roadmap and nearby planning docs:
 - update user or design docs when shipped features would otherwise still appear
   as future work
 
+Before opening the release PR, complete the release-readiness sweeps that tend
+to rot between releases:
+
+- review any open external or offline security finding queue for the repo
+- run a one-off proof-of-closure for each security finding being marked fixed
+- verify release-facing documentation examples still map to requirements,
+  tests, or scenario coverage
+- review `policy/provider-bumps.toml` and any temporary holdbacks before
+  refreshing upstream pins
+
+Useful commands:
+
+```sh
+./scripts/verify-requirements-coverage.sh
+./scripts/run-scenario-tests.sh --secretless-only
+./scripts/verify-scenario-coverage.sh
+```
+
 Perform the release documentation review on the exact branch diff:
 
 ```sh
@@ -201,7 +227,6 @@ At minimum, review:
 - any doc statement about supported hosts, CI coverage, session surfaces, auth
   maturity, or release posture that could overstate what the current code and
   validation actually prove
-
 Before opening the release PR, verify release inputs that commonly drift:
 
 ```sh
@@ -232,6 +257,15 @@ Then run basic validation before committing:
 ```sh
 git diff --check
 ```
+
+Before committing, run a short live sanity sweep for interactive flows that CI
+does not exercise well enough:
+
+- from a clean throwaway checkout or other clean scratch workspace, launch an
+  attached interactive session and resize the terminal window
+- from a clean throwaway checkout or other clean scratch workspace, start,
+  attach to, send to, stop, and delete a detached session
+- confirm session cleanup removes the expected runtime artifacts only
 
 Create a signed release commit:
 
@@ -377,6 +411,9 @@ At the end of the release, confirm all of the following:
 
 - no open PRs remain that should have been part of the release
 - actionable PR comments were addressed or dispositioned
+- external or offline security findings for the release scope were reviewed,
+  and any claimed closures were validated with one-off PoCs
+- release-facing docs and examples match the shipped behavior
 - `main` is green
 - the signed release tag exists on GitHub
 - the `Release` workflow completed successfully
