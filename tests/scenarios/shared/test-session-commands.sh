@@ -1628,42 +1628,45 @@ grep -q 'event=command session_id=detached-lifecycle source=host-cli command=ses
 grep -q 'event=stop-request session_id=detached-lifecycle' "${SESSION_LIFECYCLE_AUDIT_LOG}"
 grep -q 'event=exit session_id=detached-lifecycle source=host-stop-fallback exit_status=0 final_assurance=managed-mutable' "${SESSION_LIFECYCLE_AUDIT_LOG}"
 
-docker_server_arch="$(docker version --format '{{.Server.Arch}}')"
-case "${docker_server_arch}" in
-  amd64 | arm64)
-    fixture_goarch="${docker_server_arch}"
-    ;;
-  x86_64)
-    fixture_goarch="amd64"
-    ;;
-  aarch64)
-    fixture_goarch="arm64"
-    ;;
-  *)
-    echo "Unsupported Docker server architecture for CLI session fixture image: ${docker_server_arch}" >&2
-    exit 1
-    ;;
-esac
-mkdir -p "${CLI_SESSION_FIXTURE_BUILD_DIR}"
-CGO_ENABLED=0 GOOS=linux GOARCH="${fixture_goarch}" \
-  go build -trimpath -ldflags='-s -w' \
-  -o "${CLI_SESSION_FIXTURE_BUILD_DIR}/session-cli-fixture" \
-  "${ROOT_DIR}/tests/fixtures/session-cli"
-cat >"${CLI_SESSION_FIXTURE_BUILD_DIR}/Dockerfile" <<'EOF'
+HOST_DOCKER_BIN="$(command -v docker || true)"
+if [[ -n "${HOST_DOCKER_BIN}" ]]; then
+  docker_server_arch="$("${HOST_DOCKER_BIN}" version --format '{{.Server.Arch}}')"
+  case "${docker_server_arch}" in
+    amd64 | arm64)
+      fixture_goarch="${docker_server_arch}"
+      ;;
+    x86_64)
+      fixture_goarch="amd64"
+      ;;
+    aarch64)
+      fixture_goarch="arm64"
+      ;;
+    *)
+      echo "Unsupported Docker server architecture for CLI session fixture image: ${docker_server_arch}" >&2
+      exit 1
+      ;;
+  esac
+  mkdir -p "${CLI_SESSION_FIXTURE_BUILD_DIR}"
+  CGO_ENABLED=0 GOOS=linux GOARCH="${fixture_goarch}" \
+    go build -trimpath -ldflags='-s -w' \
+    -o "${CLI_SESSION_FIXTURE_BUILD_DIR}/session-cli-fixture" \
+    "${ROOT_DIR}/tests/fixtures/session-cli"
+  cat >"${CLI_SESSION_FIXTURE_BUILD_DIR}/Dockerfile" <<'EOF'
 FROM scratch
 COPY session-cli-fixture /session-cli-fixture
 COPY session-cli-fixture /bin/sh
 EOF
-docker build -t "${CLI_SESSION_FIXTURE_IMAGE}" "${CLI_SESSION_FIXTURE_BUILD_DIR}" >/dev/null
+  "${HOST_DOCKER_BIN}" build -t "${CLI_SESSION_FIXTURE_IMAGE}" "${CLI_SESSION_FIXTURE_BUILD_DIR}" >/dev/null
 
-cli_attach_output="$(
-  bash -lc '
+  cli_attach_output="$(
+    bash -lc '
     set -euo pipefail
     ROOT_DIR="$1"
     REAL_HOME="$2"
     CLI_SESSION_FIXTURE_IMAGE="$3"
-    PROFILE="wcl-cli-attach-$$"
-    SESSION_ID="cli-attach-$$"
+    HOST_DOCKER_BIN="$4"
+    PROFILE="wcl-cli-att-$$"
+    SESSION_ID="cli-att-$$"
     PROFILE_DIR="${REAL_HOME}/.colima/${PROFILE}"
     SESSIONS_DIR="${PROFILE_DIR}/sessions"
     AUDIT_DIR="${PROFILE_DIR}/session-audit.${SESSION_ID}"
@@ -1677,12 +1680,12 @@ cli_attach_output="$(
         kill "${MONITOR_PID}" >/dev/null 2>&1 || true
         wait "${MONITOR_PID}" >/dev/null 2>&1 || true
       fi
-      docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
       rm -rf "${PROFILE_DIR}" "${WORKSPACE}"
     }
     trap cleanup EXIT
 
-    docker_host="$(docker context inspect "$(docker context show)" --format '"'"'{{ (index .Endpoints "docker").Host }}'"'"')"
+    docker_host="$("${HOST_DOCKER_BIN}" context inspect "$("${HOST_DOCKER_BIN}" context show)" --format '"'"'{{ (index .Endpoints "docker").Host }}'"'"')"
     [[ "${docker_host}" == unix://* ]] || {
       echo "Expected a unix Docker host for CLI session attach integration, got: ${docker_host}" >&2
       exit 1
@@ -1690,7 +1693,7 @@ cli_attach_output="$(
 
     mkdir -p "${SESSIONS_DIR}" "${AUDIT_DIR}"
     ln -s "${docker_host#unix://}" "${PROFILE_DIR}/docker.sock"
-    docker run --pull=never -d --name "${CONTAINER_NAME}" "${CLI_SESSION_FIXTURE_IMAGE}" /session-cli-fixture attach >/dev/null
+    "${HOST_DOCKER_BIN}" run --pull=never -d --name "${CONTAINER_NAME}" "${CLI_SESSION_FIXTURE_IMAGE}" /session-cli-fixture attach >/dev/null
 
     monitor_cmd="${ROOT_DIR}/scripts/workcell session monitor --state-file ${STATE_FILE}"
     bash -c '"'"'exec -a "$0" sleep 30'"'"' "${monitor_cmd}" &
@@ -1725,18 +1728,19 @@ EOF_JSON
     grep -q "event=attach-attempt session_id=${SESSION_ID}" "${AUDIT_LOG}"
     grep -q "event=attach session_id=${SESSION_ID}" "${AUDIT_LOG}"
     printf "attach_cli_output=%s\n" "${attach_output}"
-  ' _ "${ROOT_DIR}" "${REAL_HOME}" "${CLI_SESSION_FIXTURE_IMAGE}"
-)"
-grep -q '^attach_cli_output=attached-from-container$' <<<"${cli_attach_output}"
+  ' _ "${ROOT_DIR}" "${REAL_HOME}" "${CLI_SESSION_FIXTURE_IMAGE}" "${HOST_DOCKER_BIN}"
+  )"
+  grep -q '^attach_cli_output=attached-from-container$' <<<"${cli_attach_output}"
 
-cli_lifecycle_output="$(
-  bash -lc '
+  cli_lifecycle_output="$(
+    bash -lc '
     set -euo pipefail
     ROOT_DIR="$1"
     REAL_HOME="$2"
     CLI_SESSION_FIXTURE_IMAGE="$3"
-    PROFILE="wcl-cli-lifecycle-$$"
-    SESSION_ID="cli-lifecycle-$$"
+    HOST_DOCKER_BIN="$4"
+    PROFILE="wcl-cli-life-$$"
+    SESSION_ID="cli-life-$$"
     PROFILE_DIR="${REAL_HOME}/.colima/${PROFILE}"
     SESSIONS_DIR="${PROFILE_DIR}/sessions"
     AUDIT_DIR="${PROFILE_DIR}/session-audit.${SESSION_ID}"
@@ -1754,12 +1758,12 @@ cli_lifecycle_output="$(
         kill "${MONITOR_PID}" >/dev/null 2>&1 || true
         wait "${MONITOR_PID}" >/dev/null 2>&1 || true
       fi
-      docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
       rm -rf "${PROFILE_DIR}" "${WORKSPACE}"
     }
     trap cleanup EXIT
 
-    docker_host="$(docker context inspect "$(docker context show)" --format '"'"'{{ (index .Endpoints "docker").Host }}'"'"')"
+    docker_host="$("${HOST_DOCKER_BIN}" context inspect "$("${HOST_DOCKER_BIN}" context show)" --format '"'"'{{ (index .Endpoints "docker").Host }}'"'"')"
     [[ "${docker_host}" == unix://* ]] || {
       echo "Expected a unix Docker host for CLI session lifecycle integration, got: ${docker_host}" >&2
       exit 1
@@ -1770,7 +1774,7 @@ cli_lifecycle_output="$(
     : >"${FILE_TRACE_LOG}"
     : >"${TRANSCRIPT_LOG}"
     ln -s "${docker_host#unix://}" "${PROFILE_DIR}/docker.sock"
-    docker run --pull=never -d --name "${CONTAINER_NAME}" -v "${FIXTURE_DIR}:/fixture" "${CLI_SESSION_FIXTURE_IMAGE}" /session-cli-fixture lifecycle /fixture/stdin.log >/dev/null
+    "${HOST_DOCKER_BIN}" run --pull=never -d --name "${CONTAINER_NAME}" -v "${FIXTURE_DIR}:/fixture" "${CLI_SESSION_FIXTURE_IMAGE}" /session-cli-fixture lifecycle /fixture/stdin.log >/dev/null
 
     monitor_cmd="${ROOT_DIR}/scripts/workcell session monitor --state-file ${STATE_FILE}"
     bash -c '"'"'exec -a "$0" sleep 30'"'"' "${monitor_cmd}" &
@@ -1853,7 +1857,7 @@ PY
     test ! -e "${FILE_TRACE_LOG}"
     test ! -e "${TRANSCRIPT_LOG}"
     test ! -e "${AUDIT_DIR}"
-    if docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+    if "${HOST_DOCKER_BIN}" inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
       echo "session delete left the recorded detached container behind on the public CLI" >&2
       exit 1
     fi
@@ -1862,12 +1866,15 @@ PY
     printf "cli_stdin_payload=%s\n" "${stdin_payload}"
     printf "cli_stop_output=%s\n" "$(tr "\n" "|" <<<"${stop_output}")"
     printf "cli_delete_output=%s\n" "$(tr "\n" "|" <<<"${delete_output}")"
-  ' _ "${ROOT_DIR}" "${REAL_HOME}" "${CLI_SESSION_FIXTURE_IMAGE}"
-)"
-grep -q '^cli_send_output=session_id=cli-lifecycle-[0-9]\+|sent_bytes=7|$' <<<"${cli_lifecycle_output}"
-grep -q '^cli_stdin_payload=resume$' <<<"${cli_lifecycle_output}"
-grep -q '^cli_stop_output=session_id=cli-lifecycle-[0-9]\+|stop_requested=1|$' <<<"${cli_lifecycle_output}"
-grep -q '^cli_delete_output=session_id=cli-lifecycle-[0-9]\+|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${cli_lifecycle_output}"
+  ' _ "${ROOT_DIR}" "${REAL_HOME}" "${CLI_SESSION_FIXTURE_IMAGE}" "${HOST_DOCKER_BIN}"
+  )"
+  grep -q '^cli_send_output=session_id=cli-life-[0-9]\+|sent_bytes=7|$' <<<"${cli_lifecycle_output}"
+  grep -q '^cli_stdin_payload=resume$' <<<"${cli_lifecycle_output}"
+  grep -q '^cli_stop_output=session_id=cli-life-[0-9]\+|stop_requested=1|$' <<<"${cli_lifecycle_output}"
+  grep -q '^cli_delete_output=session_id=cli-life-[0-9]\+|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${cli_lifecycle_output}"
+else
+  echo "Skipping public CLI detached workload integration: docker CLI unavailable on PATH" >&2
+fi
 
 TAMPERED_SESSION_AUDIT_TARGET="${TMP_DIR}/tampered-session-audit-target"
 printf 'keep-me\n' >"${TAMPERED_SESSION_AUDIT_TARGET}"
