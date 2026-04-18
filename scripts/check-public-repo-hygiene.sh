@@ -31,19 +31,31 @@ done < <(
 
 check_public_surfaces() {
   local findings
-  local path_prefix_regex
-  local path_regex
-
-  path_prefix_regex='(^|[^[:alnum:]/._~-])'
-  path_regex="${path_prefix_regex}(/Users/[^[:space:]/]+([/[:punct:]]|$)|/home/[^[:space:]/]+([/[:punct:]]|$))"
   findings="$(
-    if command -v rg >/dev/null 2>&1; then
-      rg -n "${path_regex}" "${public_files[@]}" || true
-    else
-      grep -HnE "${path_regex}" "${public_files[@]}" || true
-    fi |
-      grep -vE "${path_prefix_regex}/Users/example(/|$)" |
-      grep -vE "${path_prefix_regex}/home/example(/|$)" || true
+    awk '
+      function is_example_placeholder(path) {
+        return path ~ /^\/Users\/example($|[[:space:]]|\/|[][})>"'"'"'`.,:;!?])/ ||
+          path ~ /^\/home\/example($|[[:space:]]|\/|[][})>"'"'"'`.,:;!?])/
+      }
+
+      function line_has_disallowed_home_path(line,    rest, matched, path) {
+        rest = line
+        while (match(rest, /(^|[^[:alnum:]\/._~-])(\/Users\/[^[:space:]\/]+([[:space:]\/[:punct:]]|$)|\/home\/[^[:space:]\/]+([[:space:]\/[:punct:]]|$))/)) {
+          matched = substr(rest, RSTART, RLENGTH)
+          path = matched
+          sub(/^[^\/]*/, "", path)
+          if (!is_example_placeholder(path)) {
+            return 1
+          }
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+        return 0
+      }
+
+      line_has_disallowed_home_path($0) {
+        printf "%s:%d:%s\n", FILENAME, FNR, $0
+      }
+    ' "${public_files[@]}" || true
   )"
   if [[ -n "${findings}" ]]; then
     echo "Public-facing repo files contain machine-specific absolute home paths:" >&2
