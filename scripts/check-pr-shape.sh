@@ -13,6 +13,123 @@ MAX_FILES="${DEFAULT_MAX_FILES}"
 MAX_LINES="${DEFAULT_MAX_LINES}"
 MAX_AREAS="${DEFAULT_MAX_AREAS}"
 MAX_BINARY_FILES="${DEFAULT_MAX_BINARY_FILES}"
+TRUSTED_HOST_PATH=""
+HOST_GIT_BIN=""
+REAL_HOME=""
+
+build_trusted_host_path() {
+  local dir=""
+  local path=""
+
+  for dir in /opt/homebrew/bin /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+    [[ -d "${dir}" ]] || continue
+    if [[ -z "${path}" ]]; then
+      path="${dir}"
+    else
+      path="${path}:${dir}"
+    fi
+  done
+  printf '%s\n' "${path}"
+}
+
+resolve_fixed_host_tool() {
+  local name="$1"
+  shift
+  local candidate=""
+
+  for candidate in "$@"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Missing trusted host tool: ${name}" >&2
+  exit 1
+}
+
+run_clean_host_command_in_dir() {
+  local dir="$1"
+  shift
+
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ ! -d "${dir}" ]]; then
+    echo "Missing host working directory: ${dir}" >&2
+    exit 2
+  fi
+
+  (
+    cd "${dir}" &&
+      env -i \
+        PATH="${TRUSTED_HOST_PATH}" \
+        HOME="${REAL_HOME}" \
+        LC_ALL=C \
+        LANG=C \
+        "$@"
+  )
+}
+
+workspace_is_git_worktree() {
+  local workspace="$1"
+
+  run_clean_host_command_in_dir "${workspace}" \
+    "${HOST_GIT_BIN}" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+workspace_git_filter_override_args() {
+  local workspace="$1"
+  local key=""
+
+  workspace_is_git_worktree "${workspace}" || return 0
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    case "${key}" in
+      filter.*.clean | filter.*.smudge | filter.*.process)
+        printf -- '-c\0%s=\0' "${key}"
+        ;;
+      filter.*.required)
+        printf -- '-c\0%s=false\0' "${key}"
+        ;;
+    esac
+  done < <(
+    run_clean_host_command_in_dir "${workspace}" env \
+      GIT_CONFIG_NOSYSTEM=1 \
+      GIT_CONFIG_SYSTEM=/dev/null \
+      GIT_CONFIG_GLOBAL=/dev/null \
+      "${HOST_GIT_BIN}" config --name-only --includes \
+      --get-regexp '^filter\..*\.(clean|smudge|process|required)$' 2>/dev/null || true
+  )
+}
+
+run_workspace_safe_git_command_in_dir() {
+  local workspace="$1"
+  shift
+  local -a filter_overrides=()
+  local -a git_command=()
+  local override=""
+
+  while IFS= read -r -d '' override; do
+    filter_overrides+=("${override}")
+  done < <(workspace_git_filter_override_args "${workspace}")
+
+  git_command=(
+    env
+    GIT_CONFIG_NOSYSTEM=1
+    GIT_CONFIG_SYSTEM=/dev/null
+    GIT_CONFIG_GLOBAL=/dev/null
+    "${HOST_GIT_BIN}"
+    -c core.hooksPath=/dev/null
+    -c core.fsmonitor=false
+    -c diff.external=
+    -c color.ui=false
+  )
+  if [[ ${#filter_overrides[@]} -gt 0 ]]; then
+    git_command+=("${filter_overrides[@]}")
+  fi
+  git_command+=("$@")
+
+  run_clean_host_command_in_dir "${workspace}" "${git_command[@]}"
+}
 
 usage() {
   cat <<'EOF'
@@ -56,7 +173,7 @@ resolve_commit_or_die() {
   local ref="$2"
   local commit=""
 
-  commit="$(git -C "${repo_root}" rev-parse --verify --quiet "${ref}^{commit}" || true)"
+  commit="$(run_workspace_safe_git_command_in_dir "${repo_root}" rev-parse --verify --quiet "${ref}^{commit}" || true)"
   if [[ -z "${commit}" ]]; then
     echo "Unable to resolve commit for ref: ${ref}" >&2
     exit 2
@@ -67,11 +184,11 @@ resolve_commit_or_die() {
 default_base_ref() {
   local repo_root="$1"
 
-  if git -C "${repo_root}" rev-parse --verify --quiet "refs/remotes/origin/main^{commit}" >/dev/null 2>&1; then
+  if run_workspace_safe_git_command_in_dir "${repo_root}" rev-parse --verify --quiet "refs/remotes/origin/main^{commit}" >/dev/null 2>&1; then
     printf '%s\n' "refs/remotes/origin/main"
     return 0
   fi
-  if git -C "${repo_root}" rev-parse --verify --quiet "refs/heads/main^{commit}" >/dev/null 2>&1; then
+  if run_workspace_safe_git_command_in_dir "${repo_root}" rev-parse --verify --quiet "refs/heads/main^{commit}" >/dev/null 2>&1; then
     printf '%s\n' "refs/heads/main"
     return 0
   fi
@@ -126,9 +243,15 @@ require_integer "--max-files" "${MAX_FILES}"
 require_integer "--max-lines" "${MAX_LINES}"
 require_integer "--max-areas" "${MAX_AREAS}"
 require_integer "--max-binaries" "${MAX_BINARY_FILES}"
+TRUSTED_HOST_PATH="$(build_trusted_host_path)"
+HOST_GIT_BIN="$(resolve_fixed_host_tool git /opt/homebrew/bin/git /usr/local/bin/git /usr/bin/git /bin/git)"
+REAL_HOME="${HOME:-/}"
+if [[ ! -d "${REAL_HOME}" ]]; then
+  REAL_HOME="/"
+fi
 
 REPO_ROOT="$(cd "${REPO_ROOT}" && pwd -P)"
-if ! git -C "${REPO_ROOT}" rev-parse --show-toplevel >/dev/null 2>&1; then
+if ! run_workspace_safe_git_command_in_dir "${REPO_ROOT}" rev-parse --show-toplevel >/dev/null 2>&1; then
   echo "check-pr-shape requires a git worktree: ${REPO_ROOT}" >&2
   exit 2
 fi
@@ -139,7 +262,7 @@ fi
 
 base_commit="$(resolve_commit_or_die "${REPO_ROOT}" "${BASE_REF}")"
 head_commit="$(resolve_commit_or_die "${REPO_ROOT}" "${HEAD_REF}")"
-merge_base="$(git -C "${REPO_ROOT}" merge-base "${base_commit}" "${head_commit}")"
+merge_base="$(run_workspace_safe_git_command_in_dir "${REPO_ROOT}" merge-base "${base_commit}" "${head_commit}")"
 
 changed_files=0
 changed_lines=0
@@ -162,7 +285,7 @@ while IFS=$'\t' read -r additions deletions path; do
   if ! grep -Fxq -- "${area}" <<<"${changed_areas_text}"; then
     changed_areas_text+="${area}"$'\n'
   fi
-done < <(git -C "${REPO_ROOT}" diff --numstat --find-renames "${merge_base}..${head_commit}")
+done < <(run_workspace_safe_git_command_in_dir "${REPO_ROOT}" diff --numstat --find-renames "${merge_base}..${head_commit}")
 
 changed_area_count="$(printf '%s' "${changed_areas_text}" | grep -c . || true)"
 

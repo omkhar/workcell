@@ -58,6 +58,40 @@ git -C "${FIXTURE}" commit -q -m init
 git -C "${FIXTURE}" branch -M main
 git -C "${FIXTURE}" push -q -u origin main >/dev/null
 
+git -C "${FIXTURE}" switch -q -c feature/pr-shape-safe
+printf 'shape gate\n' >"${FIXTURE}/shape-check.txt"
+git -C "${FIXTURE}" add shape-check.txt
+git -C "${FIXTURE}" commit -q -m "shape gate fixture"
+MALICIOUS_HOME="${TMP_DIR}/malicious-home"
+MALICIOUS_DIFF="${TMP_DIR}/malicious-diff.sh"
+MALICIOUS_MARKER="${TMP_DIR}/malicious-diff.marker"
+mkdir -p "${MALICIOUS_HOME}"
+cat >"${MALICIOUS_DIFF}" <<EOF
+#!/bin/sh
+printf 'unexpected diff.external invocation\n' >"${MALICIOUS_MARKER}"
+exit 99
+EOF
+chmod +x "${MALICIOUS_DIFF}"
+cat >"${MALICIOUS_HOME}/.gitconfig" <<EOF
+[diff]
+	external = ${MALICIOUS_DIFF}
+EOF
+shape_check_output="$(
+  HOME="${MALICIOUS_HOME}" "${ROOT_DIR}/scripts/check-pr-shape.sh" \
+    --repo-root "${FIXTURE}" \
+    --base-ref refs/remotes/origin/main \
+    --head-ref HEAD \
+    --max-files 25 \
+    --max-lines 1200 \
+    --max-areas 8 \
+    --max-binaries 0
+)"
+grep -q '^PR shape check passed: files=1 ' <<<"${shape_check_output}"
+test ! -e "${MALICIOUS_MARKER}"
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" branch -D feature/pr-shape-safe >/dev/null
+
 cat >"${FIXTURE}/.git/hooks/pre-commit" <<EOF
 #!/bin/sh
 printf 'pre-commit\n' >"${HOOK_MARKER_DIR}/pre-commit"
