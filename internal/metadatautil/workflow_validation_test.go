@@ -120,12 +120,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  pr-shape:
-    name: Pull request shape
-    runs-on: ubuntu-latest
-    steps:
-      - run: true
-
   validate:
     name: Validate repository
     runs-on: ubuntu-latest
@@ -171,7 +165,6 @@ jobs:
 	policyPath := filepath.Join(root, "policy.toml")
 	if err := os.WriteFile(policyPath, []byte(`[required_status_checks]
 contexts = [
-  "Pull request shape",
   "Validate repository",
   "Container smoke",
   "Reproducible build",
@@ -216,7 +209,6 @@ jobs:
 	policyPath := filepath.Join(root, "policy.toml")
 	if err := os.WriteFile(policyPath, []byte(`[required_status_checks]
 contexts = [
-  "Pull request shape",
   "Validate repository",
 ]
 `), 0o644); err != nil {
@@ -229,60 +221,6 @@ contexts = [
 	}
 	if !strings.Contains(err.Error(), "Validate repository") {
 		t.Fatalf("CheckWorkflows() error = %v, want missing Validate repository", err)
-	}
-}
-
-func TestValidateCIWorkflowPRShapeFlow(t *testing.T) {
-	t.Parallel()
-
-	workflow := `name: CI
-
-jobs:
-  pr-shape:
-    name: Pull request shape
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@deadbeef
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Check pull request shape
-        if: ${{ github.event_name == 'pull_request' }}
-        env:
-          WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags --prune --depth=1 origin "${WORKCELL_PR_BASE_REF}"
-          ./scripts/check-pr-shape.sh --base-ref "origin/${WORKCELL_PR_BASE_REF}" --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0
-      - name: Skip outside pull requests
-        if: ${{ github.event_name != 'pull_request' }}
-        run: echo "PR shape gate applies only to pull requests."
-`
-
-	if err := validateCIWorkflowPRShapeFlow(workflow); err != nil {
-		t.Fatalf("validateCIWorkflowPRShapeFlow() error = %v", err)
-	}
-}
-
-func TestValidateCIWorkflowPRShapeFlowRejectsMissingGate(t *testing.T) {
-	t.Parallel()
-
-	workflow := `name: CI
-
-jobs:
-  validate:
-    name: Validate repository
-    runs-on: ubuntu-latest
-    steps:
-      - run: true
-`
-
-	err := validateCIWorkflowPRShapeFlow(workflow)
-	if err == nil {
-		t.Fatal("validateCIWorkflowPRShapeFlow() unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), "Pull request shape") {
-		t.Fatalf("validateCIWorkflowPRShapeFlow() error = %v, want Pull request shape", err)
 	}
 }
 
