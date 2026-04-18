@@ -470,14 +470,10 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		candidates = append(candidates, version)
 	}
 	sortStableVersionsDesc(candidates)
+	if hasApprovedVersion && hasCurrentVersion && compareStableVersions(approved, current) <= 0 {
+		hasApprovedVersion = false
+	}
 	if hasApprovedVersion {
-		if hasCurrentVersion && compareStableVersions(approved, current) <= 0 {
-			return ProviderBumpSelection{
-				Channel:        "stable",
-				CurrentVersion: currentVersion,
-				TargetVersion:  currentVersion,
-			}, nil
-		}
 		for _, candidate := range candidates {
 			if compareStableVersions(candidate, approved) != 0 {
 				continue

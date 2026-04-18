@@ -500,7 +500,7 @@ func TestPlanProviderBumpsAllowsApprovedClaudeVersionPastCooloff(t *testing.T) {
 	}
 }
 
-func TestPlanProviderBumpsDoesNotDowngradePastApprovedClaudeVersion(t *testing.T) {
+func TestPlanProviderBumpsIgnoresOlderApprovedClaudeVersionOnceCurrentRuntimeIsNewer(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")
 	packageJSONPath := filepath.Join(root, "package.json")
@@ -560,7 +560,7 @@ func TestPlanProviderBumpsDoesNotDowngradePastApprovedClaudeVersion(t *testing.T
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
   "version": "2.1.110",
-  "buildDate": "2026-04-18T04:00:00Z",
+  "buildDate": "2026-04-17T16:00:00Z",
   "platforms": {
     "linux-arm64": {"checksum": "110arm64110arm64110arm64110arm64110arm64110arm64110arm64110arm64"},
     "linux-x64": {"checksum": "110amd64110amd64110amd64110amd64110amd64110amd64110amd64110amd64"}
@@ -593,11 +593,11 @@ func TestPlanProviderBumpsDoesNotDowngradePastApprovedClaudeVersion(t *testing.T
 	if err != nil {
 		t.Fatalf("PlanProviderBumps() error = %v", err)
 	}
-	if got := plan.Providers["claude"].TargetVersion; got != "2.1.109" {
-		t.Fatalf("Claude target = %q, want 2.1.109", got)
+	if got := plan.Providers["claude"].TargetVersion; got != "2.1.110" {
+		t.Fatalf("Claude target = %q, want 2.1.110", got)
 	}
-	if plan.Providers["claude"].Changed {
-		t.Fatal("Claude plan should not report a downgrade change when current version already exceeds approved_version")
+	if !plan.Providers["claude"].Changed {
+		t.Fatal("Claude plan should continue to advance once a newer stable version has cleared the cool-off window")
 	}
 }
 
