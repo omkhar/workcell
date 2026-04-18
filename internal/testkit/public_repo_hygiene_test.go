@@ -72,3 +72,17 @@ func TestCheckPublicRepoHygieneAllowsExamplePlaceholderPath(t *testing.T) {
 		t.Fatalf("unexpected output: %s", output)
 	}
 }
+
+func TestCheckPublicRepoHygieneRejectsExamplePrefixedUsername(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := writePublicRepoHygieneFixture(t, "Still machine specific: /Users/example-user/workcell")
+	cmd := exec.Command("/bin/bash", scriptPath)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("check-public-repo-hygiene unexpectedly accepted an example-prefixed username")
+	}
+	if !strings.Contains(string(output), "/Users/example-user/workcell") {
+		t.Fatalf("output did not include the leaked path: %s", output)
+	}
+}

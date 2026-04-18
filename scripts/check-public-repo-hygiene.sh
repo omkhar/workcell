@@ -38,8 +38,8 @@ check_public_surfaces() {
     else
       grep -HnE "${path_regex}" "${public_files[@]}" || true
     fi |
-      grep -vE '/Users/example([/[:punct:]]|$)' |
-      grep -vE '/home/example([/[:punct:]]|$)' || true
+      grep -vE '/Users/example(/|$)' |
+      grep -vE '/home/example(/|$)' || true
   )"
   if [[ -n "${findings}" ]]; then
     echo "Public-facing repo files contain machine-specific absolute home paths:" >&2
