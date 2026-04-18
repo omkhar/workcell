@@ -240,7 +240,8 @@ Other defaults that matter:
 - Workcell launches the selected provider directly inside the bounded runtime
 - there is no separate "start a container, then attach the agent" step
 - `publish-pr` runs on the host so signed commits and GitHub publication stay
-  outside the Tier 1 container
+  outside the Tier 1 container, and it blocks over-broad branch diffs before
+  push so published PRs stay reviewable
 - completed and aborted launches are recorded as durable host-side session
   records that you can inspect with `workcell session ...`
 - `workcell session diff` compares the current workspace against the clean git
