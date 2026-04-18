@@ -273,6 +273,11 @@ func main() {
 			die(fmt.Errorf("usage: %s validate-requirements ROOT_DIR REQUIREMENTS_PATH", os.Args[0]))
 		}
 		err = metadatautil.ValidateRequirements(os.Args[2], os.Args[3])
+	case "validate-operator-contract":
+		if len(os.Args) != 5 {
+			die(fmt.Errorf("usage: %s validate-operator-contract ROOT_DIR CONTRACT_PATH REQUIREMENTS_PATH", os.Args[0]))
+		}
+		err = metadatautil.ValidateOperatorContract(os.Args[2], os.Args[3], os.Args[4])
 	case "scan-credential-patterns":
 		if len(os.Args) != 3 {
 			die(fmt.Errorf("usage: %s scan-credential-patterns ROOT_DIR", os.Args[0]))

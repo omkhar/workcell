@@ -9,7 +9,7 @@ workcell \- bounded runtime launcher for coding agents
 [\fIoptions\fR]
 .br
 .B workcell session
-\fIlist|show|diff|export\fR [\fIoptions\fR]
+\fIstart|attach|send|stop|list|show|delete|logs|timeline|diff|export\fR [\fIoptions\fR]
 .br
 .B workcell auth
 \fIinit|set|unset|status\fR [\fIoptions\fR]
@@ -38,12 +38,12 @@ as the exec-capable temporary directory via
 .BR TMPDIR .
 The supported host platform is Apple Silicon macOS.
 .TP
-.B workcell session list|show|diff|export
-Inspect durable host-side session records without starting the Workcell
-runtime. These records summarize completed or aborted launches, can render a
-read-only diff against the clean launch git base when one was recorded, fail
-closed when the session started dirty or lacks self-contained git metadata,
-and can be exported with the matching profile audit lines.
+.B workcell session start|attach|send|stop|list|show|delete|logs|timeline|diff|export
+Launch, control, inspect, diff, export, and delete durable detached sessions
+without starting a second Workcell runtime. Detached sessions default to an
+isolated clean git clone of the selected workspace, while the host-side
+inventory and retained-log commands operate on durable session records plus the
+matching profile audit state.
 .TP
 .B workcell policy show|validate|diff
 Inspect the merged host-side injection policy without starting the runtime.
@@ -272,6 +272,17 @@ to make the lower-assurance control-plane Git lane explicit.
 .B --workspace PATH
 Select the workspace to mount inside the runtime. The default is the current
 directory.
+.TP
+.B --session-workspace direct|isolated
+Select how
+.B workcell session start
+maps the detached workspace. The default is
+.BR isolated ,
+which requires a clean self-contained git workspace and creates a session-owned
+clone. Use
+.BR direct
+when you intentionally want the detached session to reuse the current workspace
+path in place.
 .TP
 .B --allow-nongit-workspace
 Allow a non-git workspace that contains an explicit agent marker file.
@@ -573,6 +584,22 @@ Viewing the latest retained host logs for a profile:
 .EX
 workcell --agent codex --workspace /path/to/repo --logs audit
 workcell --agent codex --workspace /path/to/repo --logs debug
+.EE
+.PP
+Detached session lifecycle on the host:
+.IP
+.EX
+workcell session start --agent codex --workspace /path/to/repo
+workcell session list
+workcell session show --id SESSION_ID
+workcell session delete --id SESSION_ID
+.EE
+.PP
+Use direct detached workspace mode when you intentionally want to keep the
+session on the live workspace path instead of a clean session-owned clone:
+.IP
+.EX
+workcell session start --session-workspace direct --agent codex --workspace /path/to/repo
 .EE
 .PP
 Prompted launch for a selected provider:

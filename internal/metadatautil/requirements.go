@@ -80,10 +80,11 @@ func ValidateRequirements(rootDir, requirementsPath string) error {
 
 func validateRequirementTable(rootDir, requirementsPath, category, id string, table map[string]any, seenTitles map[string]struct{}, referencedDocs map[string]struct{}) error {
 	allowedKeys := map[string]struct{}{
-		"title":    {},
-		"summary":  {},
-		"evidence": {},
-		"docs":     {},
+		"title":     {},
+		"summary":   {},
+		"evidence":  {},
+		"docs":      {},
+		"workflows": {},
 	}
 	for key := range table {
 		if _, ok := allowedKeys[key]; !ok {
@@ -143,7 +144,37 @@ func validateRequirementTable(rootDir, requirementsPath, category, id string, ta
 		}
 		referencedDocs[canonicalPath] = struct{}{}
 	}
+
+	workflows, err := optionalRequirementWorkflows(table)
+	if err != nil {
+		return fmt.Errorf("%s requirement %s workflows: %w", requirementsPath, id, err)
+	}
+	for _, workflowID := range workflows {
+		if !isValidWorkflowID(workflowID) {
+			return fmt.Errorf("%s requirement %s workflow %s must use lowercase snake_case ids", requirementsPath, id, workflowID)
+		}
+	}
 	return nil
+}
+
+func optionalRequirementWorkflows(table map[string]any) ([]string, error) {
+	value, ok := table["workflows"]
+	if !ok {
+		return nil, nil
+	}
+	workflows, found, err := MustStringSlice(value)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	for _, workflowID := range workflows {
+		if strings.TrimSpace(workflowID) == "" {
+			return nil, fmt.Errorf("entries may not be empty")
+		}
+	}
+	return workflows, nil
 }
 
 func requiredReleaseFacingDocs(rootDir string) ([]string, error) {

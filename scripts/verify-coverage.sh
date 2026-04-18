@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUST_MIN_COVERAGE="${WORKCELL_RUST_COVERAGE_MIN:-90}"
+GO_METADATAUTIL_MIN_COVERAGE="${WORKCELL_GO_METADATAUTIL_COVERAGE_MIN:-56}"
 REQUIRE_SUPPORTED_COVERAGE="${WORKCELL_REQUIRE_SUPPORTED_COVERAGE:-0}"
 
 require_tool() {
@@ -94,6 +95,28 @@ run_rust_launcher_coverage() {
   (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil coverage-percent "${export_file}" "${RUST_MIN_COVERAGE}" "Rust launcher coverage")
 }
 
+run_go_metadatautil_coverage() {
+  local cover_file="${TMP_ROOT}/go-metadatautil.cover"
+  local summary=""
+
+  (
+    cd "${ROOT_DIR}"
+    go test -coverprofile="${cover_file}" ./internal/metadatautil >/dev/null
+  )
+
+  summary="$(go tool cover -func="${cover_file}" | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
+  if [[ -z "${summary}" ]]; then
+    echo "Unable to determine Go metadatautil coverage." >&2
+    exit 1
+  fi
+
+  if ! awk -v got="${summary}" -v min="${GO_METADATAUTIL_MIN_COVERAGE}" 'BEGIN { exit !(got + 0 >= min + 0) }'; then
+    echo "Go metadatautil coverage ${summary}% is below ${GO_METADATAUTIL_MIN_COVERAGE}%." >&2
+    exit 1
+  fi
+}
+
 run_rust_launcher_coverage
+run_go_metadatautil_coverage
 
 echo "Workcell supported coverage verification passed."

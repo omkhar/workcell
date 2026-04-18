@@ -185,6 +185,12 @@ for agent in codex claude gemini; do
   grep -q -- '--read-only' "${TMP_DIR}/readonly-${agent}.stdout"
 done
 
+run_dry_run "cache-standard-codex" --agent codex --cache-profile standard --agent-arg --version
+grep -q '^cache_profile=standard$' "${TMP_DIR}/cache-standard-codex.stderr"
+grep -q '^cache_assurance=lower-assurance-persistent-cache$' "${TMP_DIR}/cache-standard-codex.stderr"
+grep -Eq -- "-v .+/workcell/cache/codex/.+/go-mod:/state/cache/go-mod($| )" "${TMP_DIR}/cache-standard-codex.stdout"
+grep -q -- '-e XDG_CACHE_HOME=/state/cache/xdg' "${TMP_DIR}/cache-standard-codex.stdout"
+
 set +e
 HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
   "${ROOT_DIR}/scripts/workcell" \

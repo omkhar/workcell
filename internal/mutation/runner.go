@@ -105,6 +105,46 @@ var goHelperMutations = []mutationCase{
 			Args: []string{"test", "./internal/injection"},
 		},
 	},
+	{
+		relativePath: "internal/metadatautil/operator_contract.go",
+		original:     `if isPublicWorkflowTier(workflow.Support) && len(workflow.Evidence) == 0 {`,
+		replacement:  `if false && isPublicWorkflowTier(workflow.Support) && len(workflow.Evidence) == 0 {`,
+		label:        "workflow evidence requirement",
+		command: commandSpec{
+			Path: "go",
+			Args: []string{"test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"},
+		},
+	},
+	{
+		relativePath: "internal/metadatautil/operator_contract.go",
+		original:     `if _, ok := requirementPaths[canonicalPath]; !ok {`,
+		replacement:  `if _, ok := requirementPaths[canonicalPath]; false && !ok {`,
+		label:        "workflow requirement path parity",
+		command: commandSpec{
+			Path: "go",
+			Args: []string{"test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"},
+		},
+	},
+	{
+		relativePath: "internal/metadatautil/operator_contract.go",
+		original:     `if len(aliasProbes) == 0 {`,
+		replacement:  `if false && len(aliasProbes) == 0 {`,
+		label:        "alias probe requirement",
+		command: commandSpec{
+			Path: "go",
+			Args: []string{"test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"},
+		},
+	},
+	{
+		relativePath: "internal/metadatautil/operator_contract.go",
+		original:     `if !strings.Contains(output, workflow.Canonical) {`,
+		replacement:  `if false && !strings.Contains(output, workflow.Canonical) {`,
+		label:        "alias probe canonical parity",
+		command: commandSpec{
+			Path: "go",
+			Args: []string{"test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"},
+		},
+	},
 }
 
 var rustMutations = []mutationCase{
@@ -163,7 +203,7 @@ func runGoHelperMutations(repoRoot string) error {
 			}
 			defer os.RemoveAll(tempRoot)
 
-			for _, relativePath := range []string{"cmd", "internal", "go.mod"} {
+			for _, relativePath := range []string{"cmd", "internal", "go.mod", "go.sum"} {
 				if err := copyIntoTempRoot(repoRoot, tempRoot, relativePath); err != nil {
 					results <- result{label: tc.label, err: err}
 					return

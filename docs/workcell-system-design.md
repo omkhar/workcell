@@ -271,10 +271,16 @@ surface includes:
 - `workcell session stop`
 - `workcell session list`
 - `workcell session show`
+- `workcell session delete`
 - `workcell session logs`
 - `workcell session timeline`
 - `workcell session diff`
 - `workcell session export`
+
+The supported operator inventory is maintained in
+[`policy/operator-contract.toml`](../policy/operator-contract.toml). This
+system-design doc explains shape and rationale; it should not be treated as the
+authoritative CLI inventory.
 
 Detached session records are written under the Colima profile state tree as
 `~/.colima/<profile>/sessions/<session-id>.json`. The current session record

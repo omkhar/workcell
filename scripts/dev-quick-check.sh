@@ -46,6 +46,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/generate-homebrew-formula.sh"
   "${ROOT_DIR}/scripts/update-upstream-pins.sh"
   "${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh"
+  "${ROOT_DIR}/scripts/verify-operator-contract.sh"
   "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
@@ -75,6 +76,7 @@ fi
 go vet ./...
 go test ./...
 "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
+"${ROOT_DIR}/scripts/verify-operator-contract.sh"
 
 (
   cd "${ROOT_DIR}/runtime/container/rust"

@@ -115,3 +115,42 @@ resolve_workcell_real_home
 		t.Fatalf("resolve_workcell_real_home unexpectedly accepted workspace override: %q", output)
 	}
 }
+
+func TestWorkcellBootstrapResolvesRealHomeBeforeGoHostutil(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	if strings.Contains(script, `REAL_HOME="$(go_hostutil path home)"`) {
+		t.Fatalf("%s must not resolve REAL_HOME through go_hostutil during early bootstrap", scriptPath)
+	}
+
+	realHomeIndex := strings.Index(script, `REAL_HOME="$(resolve_workcell_real_home)"`)
+	if realHomeIndex == -1 {
+		t.Fatalf("%s must resolve REAL_HOME via resolve_workcell_real_home", scriptPath)
+	}
+
+	cacheRootIndex := strings.Index(script, `export WORKCELL_GO_CACHE_ROOT=`)
+	if cacheRootIndex == -1 {
+		t.Fatalf("%s must export WORKCELL_GO_CACHE_ROOT before early go_hostutil use", scriptPath)
+	}
+	if cacheRootIndex < realHomeIndex {
+		t.Fatalf("%s exports WORKCELL_GO_CACHE_ROOT before REAL_HOME is resolved", scriptPath)
+	}
+
+	goHostutilIndex := strings.Index(script, `go_hostutil() {`)
+	if goHostutilIndex == -1 {
+		t.Fatalf("%s must define go_hostutil", scriptPath)
+	}
+	if realHomeIndex > goHostutilIndex {
+		t.Fatalf("%s resolves REAL_HOME after go_hostutil is defined; want bootstrap home resolved first", scriptPath)
+	}
+	if cacheRootIndex > goHostutilIndex {
+		t.Fatalf("%s exports WORKCELL_GO_CACHE_ROOT after go_hostutil is defined; want cache root fixed first", scriptPath)
+	}
+}

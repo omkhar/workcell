@@ -41,6 +41,7 @@ All commits in this repo must use Risk-Aware Commit Notation (based on [Arlo's C
 - **One intention per commit.** Do not mix refactoring, features, bugfixes, or documentation in a single commit. If a task requires both refactoring and a feature change, split them into separate commits (refactoring first, then the feature).
 - **Minimize risk per commit.** Break work into the smallest commits that each achieve the lowest possible risk level. For example, extract a safe refactoring (`.r`) as its own commit before making a risky feature change (`!F`), rather than bundling both into one `!F` commit.
 - **Prefer many small safe commits over fewer risky ones.** A sequence like `.r` then `.r` then `^F` is better than a single `!F` that includes the refactoring.
+- **Keep workflow parity in the same change stream.** When a commit changes a user-visible Workcell workflow, support tier, help surface, contract entry, or validation evidence, land the matching `policy/operator-contract.toml`, `policy/requirements.toml`, help/doc, and test updates in the same series unless the commit message explicitly calls out the staged exception and why it is safe.
 
 ## Notation Justification in Commit Messages
 

@@ -227,6 +227,9 @@ Other defaults that matter:
 - `--agent-autonomy yolo` is the default; `--agent-autonomy prompt` is the
   explicit lower-assurance opt-out
 - `--cache-profile off` is the default
+- `--cache-profile standard` keeps a workspace-scoped persistent non-secret
+  cache plane for package and compiler caches, but it is an explicit
+  lower-assurance path
 - strict launches prepare the reviewed runtime image automatically when needed
 - interactive launches show a spinner with elapsed time by default; use
   `--no-spinner` to force plain heartbeat updates instead
@@ -255,6 +258,7 @@ workcell --agent codex --prepare-only --workspace /path/to/repo
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell session list
 workcell session start --agent codex --workspace /path/to/repo
+workcell session delete --id SESSION_ID
 workcell session attach --id 20260408T120000Z-1a2b3c4d
 workcell session send --id 20260408T120000Z-1a2b3c4d --message "continue with tests"
 workcell session stop --id 20260408T120000Z-1a2b3c4d
