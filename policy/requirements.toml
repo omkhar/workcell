@@ -3,6 +3,7 @@ version = 1
 [functional.FR-001]
 title = "Managed provider launch"
 summary = "Workcell launches supported providers directly inside the managed Tier 1 runtime without a separate attach step."
+workflows = ["launch_managed"]
 evidence = [
   "scripts/container-smoke.sh",
   "scripts/verify-invariants.sh",
@@ -65,6 +66,7 @@ docs = [
 [functional.FR-005]
 title = "Host-side publication handoff"
 summary = "Final branch publication remains a host-side action with signed commits and repo hook bypasses handled outside Tier 1."
+workflows = ["publish_pr"]
 evidence = [
   "tests/scenarios/shared/test-publish-pr-dry-run.sh",
   "scripts/verify-invariants.sh",
@@ -77,12 +79,35 @@ docs = [
 
 [functional.FR-006]
 title = "Host-side operator commands"
-summary = "Inspect, doctor, logs, gc, auth/policy explainability, and session management run on the host without starting the runtime."
+summary = "Prepare, repair, inspect, doctor, latest-log retrieval, auth/policy explainability, and other host-side operator commands run without starting the runtime."
+workflows = [
+  "prepare_image",
+  "prepare_only",
+  "repair_profile",
+  "auth_commands_surface",
+  "auth_init",
+  "auth_set",
+  "auth_unset",
+  "auth_status",
+  "policy_commands_surface",
+  "policy_show",
+  "policy_validate",
+  "policy_diff",
+  "why_credential",
+  "launch_doctor",
+  "launch_inspect",
+  "launch_logs",
+  "launch_auth_status",
+  "launch_gc",
+]
 evidence = [
   "scripts/verify-invariants.sh",
   "internal/testkit/validation_entrypoints_test.go",
   "tests/scenarios/shared/test-policy-commands.sh",
   "internal/authpolicy/manage_test.go",
+  "tests/scenarios/shared/test-auth-commands.sh",
+  "tests/scenarios/shared/test-auth-status.sh",
+  "tests/scenarios/shared/test-agent-launch-smoke.sh",
 ]
 docs = [
   "README.md",
@@ -92,14 +117,30 @@ docs = [
 ]
 
 [functional.FR-007]
-title = "Durable session inventory"
-summary = "Workcell records durable host-side launch metadata and exposes list, show, clean-base diff, and export commands for recorded sessions."
+title = "Durable detached session control"
+summary = "Workcell records durable host-side launch metadata and exposes detached session start, control, inspection, retained logs, diff, export, and delete commands."
+workflows = [
+  "session_commands_surface",
+  "session_start",
+  "session_workspace_mode",
+  "session_attach",
+  "session_send",
+  "session_stop",
+  "session_list",
+  "session_show",
+  "session_logs",
+  "session_timeline",
+  "session_diff",
+  "session_export",
+  "session_delete",
+]
 evidence = [
   "tests/scenarios/shared/test-session-commands.sh",
   "internal/hostutil/sessions_test.go",
 ]
 docs = [
   "README.md",
+  "man/workcell.1",
   "docs/workcell-session-supervisor-design.md",
   "docs/workcell-system-design.md",
 ]
@@ -115,6 +156,19 @@ docs = [
   "README.md",
   "docs/getting-started.md",
   "SUPPORT.md",
+]
+
+[functional.FR-009]
+title = "Opt-in persistent cache plane"
+summary = "Workcell can mount a clearly labeled lower-assurance persistent non-secret cache plane when operators select --cache-profile standard."
+workflows = ["cache_profile_standard"]
+evidence = [
+  "tests/scenarios/shared/test-assurance-dry-run.sh",
+  "scripts/verify-invariants.sh",
+]
+docs = [
+  "docs/invariants.md",
+  "man/workcell.1",
 ]
 
 [nonfunctional.NFR-001]

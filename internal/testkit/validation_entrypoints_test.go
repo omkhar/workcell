@@ -104,6 +104,9 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		if !strings.Contains(content, "scripts/verify-requirements-coverage.sh") {
 			t.Fatalf("validation scripts must include scripts/verify-requirements-coverage.sh")
 		}
+		if !strings.Contains(content, "scripts/verify-operator-contract.sh") {
+			t.Fatalf("validation scripts must include scripts/verify-operator-contract.sh")
+		}
 		for _, want := range []string{
 			"scripts/bootstrap-dev.sh",
 			"scripts/generate-homebrew-formula.sh",
@@ -114,6 +117,7 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 			"scripts/uninstall.sh",
 			"scripts/update-upstream-pins.sh",
 			"scripts/verify-github-macos-release-test-runners.sh",
+			"scripts/verify-operator-contract.sh",
 		} {
 			if !strings.Contains(content, want) {
 				t.Fatalf("validation scripts must include %s", want)
@@ -147,6 +151,21 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		if !strings.Contains(string(validateRepo), want) {
 			t.Fatalf("%s must lint and format %s", validateRepoPath, want)
 		}
+	}
+}
+
+func TestVerifyOperatorContractIgnoresAmbientHelpOverride(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "verify-operator-contract.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	if !strings.Contains(script, "env -u WORKCELL_HELP_BIN") {
+		t.Fatalf("%s must clear WORKCELL_HELP_BIN so normal validation probes the repo script", scriptPath)
 	}
 }
 

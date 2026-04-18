@@ -34,6 +34,12 @@ honestly in docs, status reports, and release commentary.
   repo already has permanent regression tests.
 - Before tagging a release, verify that release-facing documentation examples
   are still covered by existing tests or scenario lanes.
+- Before publishing or merging a release PR, verify that
+  `policy/operator-contract.toml`, `policy/requirements.toml`, `workcell --help`,
+  `man/workcell.1`, and any curated `README.md` workflow claims still agree.
+- When a release changes a user-visible workflow, run the repo-local
+  `workcell-contract-parity` skill sweep and treat any parity failure as a
+  release blocker.
 - Review any intentional upstream holdbacks or exceptions before refreshing
   pins, and document them in policy or release notes rather than carrying
   unexplained drift.
@@ -158,6 +164,9 @@ A release is not ready to merge unless all of the following are true:
   `docs/injection-policy.md`, `docs/provider-matrix.md`, and relevant
   quickstarts or setup guides, match the current implementation and auth
   maturity
+- `policy/operator-contract.toml` still points each public workflow at current
+  docs and automated evidence, and compatibility aliases still have working
+  alias probes
 - `ROADMAP.md` and nearby planning or design docs do not describe shipped work
   as future work and do not remove partially shipped work from the roadmap
 - release-sensitive runbooks such as `docs/releasing.md`,
@@ -273,6 +282,7 @@ At minimum, review:
 - `README.md`, `docs/getting-started.md`, and changed quickstarts or setup docs
 - `ROADMAP.md` plus any changed planning or system-design docs
 - changed rollout, auth-maturity, provenance, workflow, or release-runbook docs
+- `policy/operator-contract.toml` and `policy/requirements.toml`
 - any doc statement about supported hosts, CI coverage, session surfaces, auth
   maturity, or release posture that could overstate what the current code and
   validation actually prove
@@ -296,6 +306,7 @@ Run the focused validation needed to justify roadmap and documentation updates
 before committing:
 
 ```sh
+./scripts/verify-operator-contract.sh
 ./tests/scenarios/shared/test-auth-commands.sh
 ./tests/scenarios/shared/test-auth-status.sh
 ./tests/scenarios/shared/test-session-commands.sh

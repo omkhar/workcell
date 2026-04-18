@@ -145,6 +145,15 @@ run_clean_host_command_in_dir() {
 }
 
 HOST_GO_BIN="$(resolve_fixed_host_tool go /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go)"
+REAL_HOME="$(resolve_workcell_real_home)"
+case "$(uname -s 2>/dev/null || true)" in
+  Darwin)
+    export WORKCELL_GO_CACHE_ROOT="${REAL_HOME}/Library/Caches/workcell/go"
+    ;;
+  *)
+    export WORKCELL_GO_CACHE_ROOT="${XDG_CACHE_HOME:-${REAL_HOME}/.cache}/workcell/go"
+    ;;
+esac
 go_hostutil() {
   ensure_go_run_env
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
@@ -172,7 +181,6 @@ go_runtimeutil() {
     "${HOST_GO_BIN}" run ./cmd/workcell-runtimeutil "$@"
 }
 
-REAL_HOME="$(go_hostutil path home)"
 HOST_GIT_BIN=""
 HOST_COLIMA_BIN=""
 HOST_DOCKER_BIN=""
@@ -220,7 +228,7 @@ usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
-       workcell session <start|attach|send|stop|list|show|logs|timeline|diff|export> [options]
+       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export> [options]
        workcell auth <init|set|unset|status> [options]
        workcell policy <show|validate|diff> [options]
        workcell why --credential KEY --agent NAME [options]
@@ -259,7 +267,8 @@ Options:
   --ack-breakglass              Required with --mode breakglass
   --ack-arbitrary-command       Required with --allow-arbitrary-command
   --workspace PATH              Workspace to mount (default: current directory)
-  --session-workspace MODE      direct or isolated session workspace flow
+  --session-workspace direct|isolated
+                                Detached session workspace flow for session start
   --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
   --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
@@ -304,18 +313,19 @@ Workflows:
     workcell why --credential codex_auth --agent codex --mode strict
     workcell session list
     workcell session start --agent codex --workspace /path/to/repo
-    workcell session attach --id 20260408T120000Z-1a2b3c4d
-    workcell session send --id 20260408T120000Z-1a2b3c4d --message 'continue with tests'
-    workcell session stop --id 20260408T120000Z-1a2b3c4d
-    workcell session show --id 20260408T120000Z-1a2b3c4d
-    workcell session logs --id 20260408T120000Z-1a2b3c4d --kind audit
-    workcell session timeline --id 20260408T120000Z-1a2b3c4d
-    workcell session diff --id 20260408T120000Z-1a2b3c4d
-    workcell session export --id 20260408T120000Z-1a2b3c4d
+    workcell session attach --id SESSION_ID
+    workcell session send --id SESSION_ID --message 'continue with tests'
+    workcell session stop --id SESSION_ID
+    workcell session show --id SESSION_ID
+    workcell session delete --id SESSION_ID
+    workcell session logs --id SESSION_ID --kind audit
+    workcell session timeline --id SESSION_ID
+    workcell session diff --id SESSION_ID
+    workcell session export --id SESSION_ID
     workcell --agent codex --inspect --workspace /path/to/repo
     workcell --agent codex --doctor --workspace /path/to/repo
-    workcell logs debug --colima-profile wcl-...
-    workcell logs file-trace --colima-profile wcl-...
+    workcell --logs debug --colima-profile wcl-...
+    workcell --logs file-trace --colima-profile wcl-...
     workcell --agent codex --auth-status --workspace /path/to/repo
     workcell publish-pr --workspace /path/to/repo --branch feature/name \
       --title-file /path/to/pr-title.txt --body-file /path/to/pr-body.md \
@@ -327,6 +337,51 @@ There is no separate container attach/connect step after launch.
 Host-persisted debug logs, session file traces, and full transcripts are
 explicit lower-assurance operator choices and remain off by default.
 EOF
+}
+
+compatibility_alias_usage() {
+  case "$1" in
+    doctor)
+      cat <<'EOF'
+Usage: workcell doctor [launch-options]
+Compatibility alias for: workcell --doctor
+See workcell --help for the full launch-option list.
+EOF
+      ;;
+    inspect)
+      cat <<'EOF'
+Usage: workcell inspect [launch-options]
+Compatibility alias for: workcell --inspect
+See workcell --help for the full launch-option list.
+EOF
+      ;;
+    logs)
+      cat <<'EOF'
+Usage: workcell logs <audit|debug|file-trace|transcript> [launch-options]
+Print the latest retained log of the selected type.
+Compatibility alias for: workcell --logs audit|debug|file-trace|transcript
+See workcell --help for the full launch-option list.
+EOF
+      ;;
+    auth-status)
+      cat <<'EOF'
+Usage: workcell auth-status [launch-options]
+Compatibility alias for: workcell --auth-status
+See workcell --help for the full launch-option list.
+EOF
+      ;;
+    gc)
+      cat <<'EOF'
+Usage: workcell gc [launch-options]
+Compatibility alias for: workcell --gc
+See workcell --help for the full launch-option list.
+EOF
+      ;;
+    *)
+      echo "Unsupported compatibility alias: $1" >&2
+      exit 2
+      ;;
+  esac
 }
 
 slugify() {
@@ -1048,18 +1103,7 @@ create_isolated_session_workspace() {
   local target=""
   local branch_name=""
 
-  workspace_is_git_worktree "${source_workspace}" || {
-    echo "session start requires a git workspace when --session-workspace isolated is selected: ${source_workspace}" >&2
-    exit 2
-  }
-  if ! workspace_gitdir_is_self_contained "${source_workspace}"; then
-    echo "session start requires a self-contained git workspace for isolated session cloning: ${source_workspace}" >&2
-    exit 2
-  fi
-  if workspace_git_has_worktree_changes "${source_workspace}"; then
-    echo "session start requires a clean source workspace for isolated session cloning: ${source_workspace}" >&2
-    exit 2
-  fi
+  validate_isolated_session_workspace_source "${source_workspace}"
 
   base_ref="$(run_workspace_safe_git_command_in_dir "${source_workspace}" rev-parse --verify HEAD)"
   target="$(isolated_session_workspace_path "${source_workspace}" "${session_id}")"
@@ -1077,6 +1121,26 @@ create_isolated_session_workspace() {
   run_clean_host_command_in_dir "${ROOT_DIR}" "${HOST_GIT_BIN}" clone --quiet --no-hardlinks "${source_workspace}" "${target}"
   run_workspace_safe_git_command_in_dir "${target}" checkout --quiet -B "${branch_name}" "${base_ref}"
   printf '%s\n' "${target}"
+}
+
+validate_isolated_session_workspace_source() {
+  local source_workspace="$1"
+
+  workspace_is_git_worktree "${source_workspace}" || {
+    echo "session start requires a git workspace when --session-workspace isolated is selected: ${source_workspace}" >&2
+    echo "Next step: rerun with --session-workspace direct if you want to use the current workspace in place." >&2
+    exit 2
+  }
+  if ! workspace_gitdir_is_self_contained "${source_workspace}"; then
+    echo "session start requires a self-contained git workspace for isolated session cloning: ${source_workspace}" >&2
+    echo "Next step: rerun with --session-workspace direct if you want to use the current workspace in place." >&2
+    exit 2
+  fi
+  if workspace_git_has_worktree_changes "${source_workspace}"; then
+    echo "session start requires a clean source workspace for isolated session cloning: ${source_workspace}" >&2
+    echo "Next step: commit or stash the workspace changes, or rerun with --session-workspace direct to use the current workspace in place." >&2
+    exit 2
+  fi
 }
 
 profile_docker_socket_path() {
@@ -2717,6 +2781,9 @@ Commands:
   start
     Launch a detached background session using the standard Workcell launch options.
     Detached sessions default to `--session-workspace isolated`.
+    --session-workspace direct|isolated
+                              Select whether detached sessions clone a clean git workspace
+                              or reuse the current workspace path directly
 
   attach
     --id SESSION_ID           Attach the host terminal to a running detached session
@@ -5069,6 +5136,9 @@ validate_workspace() {
       echo "Refusing git workspace with admin state outside the mounted workspace: ${path}" >&2
       echo "This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path." >&2
       echo "To use this workspace on the safe path, create a standard clone at the same location instead." >&2
+      if [[ "${SESSION_DETACHED:-0}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)" == "isolated" ]]; then
+        echo "Next step: rerun with --session-workspace direct if you want to use the current workspace in place." >&2
+      fi
       echo "Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree." >&2
       exit 2
     fi
@@ -5081,6 +5151,10 @@ validate_workspace() {
 
   if [[ "${allow_nongit}" -eq 0 ]]; then
     echo "Workspace is not a git worktree: ${path}" >&2
+    if [[ "${SESSION_DETACHED:-0}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)" == "isolated" ]]; then
+      echo "Detached session start with --session-workspace isolated requires a git workspace." >&2
+      echo "Next step: rerun with --session-workspace direct if you want to use the current workspace in place." >&2
+    fi
     echo "Use --allow-nongit-workspace only when you intentionally want a marker-based workspace." >&2
   else
     echo "Non-git workspace lacks an explicit agent marker file: ${path}" >&2
@@ -5176,20 +5250,36 @@ normalize_cli_aliases() {
 
   case "${NORMALIZED_ARGS[0]-}" in
     doctor)
+      if [[ ${#NORMALIZED_ARGS[@]} -eq 2 ]] && [[ "${NORMALIZED_ARGS[1]}" == "--help" ]]; then
+        compatibility_alias_usage doctor
+        exit 0
+      fi
       NORMALIZED_ARGS=(--doctor "${NORMALIZED_ARGS[@]:1}")
       ;;
     inspect)
+      if [[ ${#NORMALIZED_ARGS[@]} -eq 2 ]] && [[ "${NORMALIZED_ARGS[1]}" == "--help" ]]; then
+        compatibility_alias_usage inspect
+        exit 0
+      fi
       NORMALIZED_ARGS=(--inspect "${NORMALIZED_ARGS[@]:1}")
       ;;
     auth-status)
+      if [[ ${#NORMALIZED_ARGS[@]} -eq 2 ]] && [[ "${NORMALIZED_ARGS[1]}" == "--help" ]]; then
+        compatibility_alias_usage auth-status
+        exit 0
+      fi
       NORMALIZED_ARGS=(--auth-status "${NORMALIZED_ARGS[@]:1}")
       ;;
     gc)
+      if [[ ${#NORMALIZED_ARGS[@]} -eq 2 ]] && [[ "${NORMALIZED_ARGS[1]}" == "--help" ]]; then
+        compatibility_alias_usage gc
+        exit 0
+      fi
       NORMALIZED_ARGS=(--gc "${NORMALIZED_ARGS[@]:1}")
       ;;
     logs)
       if [[ ${#NORMALIZED_ARGS[@]} -eq 2 ]] && [[ "${NORMALIZED_ARGS[1]}" == "--help" ]]; then
-        usage
+        compatibility_alias_usage logs
         exit 0
       fi
       if [[ ${#NORMALIZED_ARGS[@]} -lt 2 ]]; then
@@ -7374,6 +7464,7 @@ WORKSPACE_SHADOW_SOURCE="${WORKSPACE}"
 if [[ "${SESSION_DETACHED}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)" == "isolated" ]]; then
   [[ -n "${SESSION_ID}" ]] || SESSION_ID="$(generate_session_id)"
   if [[ "${DRY_RUN}" -eq 1 ]]; then
+    validate_isolated_session_workspace_source "${SESSION_SOURCE_WORKSPACE}"
     WORKSPACE="$(isolated_session_workspace_path "${SESSION_SOURCE_WORKSPACE}" "${SESSION_ID}")"
     WORKSPACE_SHADOW_SOURCE="${SESSION_SOURCE_WORKSPACE}"
   else

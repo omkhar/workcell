@@ -1,14 +1,27 @@
 # Requirements Validation
 
-Workcell now keeps a canonical requirement-to-evidence mapping in
-[`policy/requirements.toml`](../policy/requirements.toml).
+Workcell now keeps:
+
+- a normative operator workflow contract in
+  [`policy/operator-contract.toml`](../policy/operator-contract.toml)
+- a requirement-to-doc-and-evidence mapping in
+  [`policy/requirements.toml`](../policy/requirements.toml)
 
 ## Purpose
 
-The requirements matrix does two things:
+The operator contract defines:
+
+- which public workflows are supported
+- their canonical syntax and compatibility aliases
+- where those workflows must be discoverable
+- which docs and automated evidence currently back each public workflow
+
+The requirements matrix does three things:
 
 - names the current functional and nonfunctional requirements that the repo is
   claiming as implemented
+- links functional requirements to stable workflow ids from the operator
+  contract
 - points each requirement at concrete automated evidence and supporting
   documentation
 
@@ -32,12 +45,25 @@ This is meant to reduce drift between:
   `docs/enterprise-rollout.md` when present) appear in at least one requirement
   `docs` array
 
-This check runs through the normal validation entrypoints, including
+`./scripts/verify-operator-contract.sh` validates that:
+
+- every public workflow in `policy/operator-contract.toml` is mapped to at
+  least one requirement
+- every requirement workflow reference resolves to a declared workflow id
+- every workflow-cited doc and evidence path exists and is also cited by the
+  referenced requirements
+- required help, README, and manpage surfaces contain the contract-declared
+  workflow syntax
+- compatibility aliases still pass their contract-declared alias probes
+- contract-declared remediation copy still exists in the launcher source
+
+Both checks run through the normal validation entrypoints, including
 `./scripts/dev-quick-check.sh` and `./scripts/validate-repo.sh`.
 
 ## Scope
 
-The matrix is intentionally about the supported repo contract, not every
+The requirements matrix is intentionally not the command-inventory source of
+truth. It is about traceability for the supported repo contract, not every
 possible implementation detail.
 
 It should cover:
@@ -57,10 +83,13 @@ implemented.
 
 When a supported requirement changes:
 
-1. update `policy/requirements.toml`
-2. update or add the automated evidence
-3. update the docs that explain the requirement
-4. rerun the requirement validator
+1. update `policy/operator-contract.toml` when the public workflow surface,
+   canonical syntax, discoverability, compatibility status, docs, or evidence
+   changes
+2. update `policy/requirements.toml`
+3. update or add the automated evidence
+4. update the docs that explain the requirement
+5. rerun both validators
 
 If a requirement cannot point to real automated evidence, it is not ready to be
 claimed as part of the canonical supported contract.

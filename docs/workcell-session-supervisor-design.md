@@ -10,6 +10,10 @@ This document describes the current shipped session-supervisor slice in the
 repository and the gaps that remain without weakening the existing boundary
 model.
 
+For the supported operator inventory, treat
+[`policy/operator-contract.toml`](../policy/operator-contract.toml) plus
+`workcell --help` as authoritative. This design note is explanatory.
+
 ## Current Scope
 
 The current implementation provides durable host-side session records plus
@@ -25,12 +29,15 @@ host-side inventory, observability, and detached-control commands:
 - `workcell session attach`
 - `workcell session send`
 - `workcell session stop`
+- `workcell session delete`
 
 Each launched session writes durable metadata under the managed Colima profile
 state instead of relying only on the transient `session-audit.*` directory.
 
 Detached sessions default to `--session-workspace isolated`, so the detached
-path already points toward worktree-per-session operation on the safe path.
+path already points toward worktree-per-session operation on the safe path. The
+public CLI also supports `--session-workspace direct` when operators
+intentionally want a detached session to reuse the live workspace path.
 
 ## Data Model
 

@@ -26,8 +26,9 @@ boundary and one thin adapter per product.
 
 ## Validation traceability
 
-Use [docs/requirements-validation.md](requirements-validation.md) for the
-machine-checked requirement mapping and
+Use [`policy/operator-contract.toml`](../policy/operator-contract.toml) for the
+supported operator workflow surface, [docs/requirements-validation.md](requirements-validation.md)
+for the machine-checked requirement and evidence mapping, and
 [docs/validation-scenarios.md](validation-scenarios.md) for the concrete
 scenario and script anchors behind the auth and control-plane caveats.
 

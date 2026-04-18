@@ -1334,6 +1334,16 @@ if ! grep -q -- '--agent-arg VALUE' /tmp/workcell-installed-help.out; then
   exit 1
 fi
 
+if ! WORKCELL_HELP_BIN="${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+  go run ./cmd/workcell-metadatautil validate-operator-contract \
+  "${ROOT_DIR}" \
+  "${ROOT_DIR}/policy/operator-contract.toml" \
+  "${ROOT_DIR}/policy/requirements.toml" >/tmp/workcell-installed-operator-contract.out 2>&1; then
+  echo "Expected installed ~/.local/bin/workcell help surfaces to satisfy the operator contract" >&2
+  cat /tmp/workcell-installed-operator-contract.out >&2
+  exit 1
+fi
+
 if ! grep -q -- '--container-mutability ephemeral|readonly' /tmp/workcell-installed-help.out; then
   echo "Expected installed ~/.local/bin/workcell --help to describe --container-mutability" >&2
   exit 1
@@ -3889,6 +3899,23 @@ grep -q 'cache_assurance=managed-no-persistent-cache' /tmp/workcell-dry-run-no-i
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
+  --cache-profile standard \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --dry-run >/tmp/workcell-dry-run-cache-standard.out 2>&1; then
+  echo "Expected strict dry-run with persistent cache mode to work without a prepared image marker" >&2
+  cat /tmp/workcell-dry-run-cache-standard.out >&2
+  exit 1
+fi
+grep -q 'cache_profile=standard' /tmp/workcell-dry-run-cache-standard.out
+grep -q 'cache_assurance=lower-assurance-persistent-cache' /tmp/workcell-dry-run-cache-standard.out
+grep -Eq -- "-v .+/workcell/cache/codex/.+/go-mod:/state/cache/go-mod($| )" /tmp/workcell-dry-run-cache-standard.out
+grep -q -- '-e XDG_CACHE_HOME=/state/cache/xdg' /tmp/workcell-dry-run-cache-standard.out
+
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
   --no-default-injection-policy \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -3905,6 +3932,20 @@ grep -q '^provider_native_sandbox_configured=disabled$' /tmp/workcell-inspect.ou
 grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect.out
 grep -q '^provider_native_sandbox_reason=workcell-pinned-off-due-to-bwrap-userns-incompatibility$' /tmp/workcell-inspect.out
 grep -q '^injection_policy=none$' /tmp/workcell-inspect.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --cache-profile standard \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --inspect >/tmp/workcell-inspect-cache-standard.out 2>&1; then
+  echo "Expected --inspect with persistent cache mode to succeed without launching the runtime" >&2
+  exit 1
+fi
+grep -q '^cache_profile=standard$' /tmp/workcell-inspect-cache-standard.out
+grep -q '^cache_assurance=lower-assurance-persistent-cache$' /tmp/workcell-inspect-cache-standard.out
+grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}"'$' /tmp/workcell-inspect-cache-standard.out
 if ! "${ROOT_DIR}/scripts/workcell" \
   inspect \
   --agent codex \

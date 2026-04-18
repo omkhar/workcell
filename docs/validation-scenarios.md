@@ -5,6 +5,8 @@ boundary or release story by itself.
 
 Use this page with:
 
+- [`policy/operator-contract.toml`](../policy/operator-contract.toml) for the
+  normative operator workflow inventory
 - [docs/use-case-matrix.md](use-case-matrix.md) for what is currently covered
 - [docs/requirements-validation.md](requirements-validation.md) for the
   machine-checked requirement-to-evidence mapping
@@ -22,7 +24,9 @@ Use these anchors when checking release-facing claims:
   `shared/claude-resolver-launcher`
 - lower-assurance mode claims: `shared/assurance-dry-run`
 - host publication handoff: `shared/publish-pr`
-- host-side session inventory and control: `shared/session-commands`
+- host-side session inventory and control plus detached workspace-mode
+  remediation: `shared/session-commands`
+- persistent cache-plane contract checks: `shared/assurance-dry-run`
 - Claude hook coverage: `claude-swe/hook-parametric`
 - supported GitHub-hosted macOS release window:
   `scripts/verify-github-macos-release-test-runners.sh`
@@ -43,8 +47,8 @@ These run without provider credentials:
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
-inspection and explainability, and host-side detached session inventory,
-control, logs/timeline, and clean-base diff/export behavior.
+inspection and explainability, host-side detached session inventory, control,
+logs/timeline, clean-base diff/export behavior, and operator-contract parity.
 
 ## Documentation example coverage
 

@@ -1,0 +1,361 @@
+version = 1
+
+[workflows.launch_managed]
+title = "Managed provider launch"
+support = "supported"
+canonical = "workcell --agent codex --workspace /path/to/repo"
+discoverability = ["top-level-help", "readme"]
+docs = ["README.md", "docs/provider-matrix.md"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "scripts/container-smoke.sh"]
+requirements = ["functional.FR-001"]
+target_state = "retain"
+
+[workflows.prepare_image]
+title = "Explicit image prepare"
+support = "supported"
+canonical = "--prepare"
+discoverability = ["top-level-help", "readme", "manpage"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["scripts/verify-invariants.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.prepare_only]
+title = "Prepare without launch"
+support = "supported"
+canonical = "--prepare-only"
+discoverability = ["top-level-help", "readme", "manpage"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-agent-launch-smoke.sh", "scripts/verify-invariants.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.repair_profile]
+title = "Repair unmanaged profile state"
+support = "supported"
+canonical = "--repair-profile"
+discoverability = ["top-level-help", "manpage"]
+docs = ["man/workcell.1", "docs/validation-scenarios.md"]
+evidence = ["scripts/verify-invariants.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.publish_pr]
+title = "Host-side PR publication"
+support = "supported"
+canonical = "workcell publish-pr"
+discoverability = ["top-level-help", "subcommand-help:publish-pr", "readme", "manpage"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-publish-pr-dry-run.sh"]
+requirements = ["functional.FR-005"]
+target_state = "retain"
+
+[workflows.auth_commands_surface]
+title = "Auth command surface"
+support = "supported"
+canonical = "workcell auth"
+discoverability = ["top-level-help", "manpage"]
+docs = ["README.md", "man/workcell.1", "docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-auth-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.auth_init]
+title = "Initialize auth policy"
+support = "supported"
+canonical = "workcell auth init [options]"
+discoverability = ["subcommand-help:auth"]
+docs = ["docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-auth-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.auth_set]
+title = "Set auth material"
+support = "supported"
+canonical = "workcell auth set [options]"
+discoverability = ["subcommand-help:auth"]
+docs = ["docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-auth-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.auth_unset]
+title = "Unset auth material"
+support = "supported"
+canonical = "workcell auth unset [options]"
+discoverability = ["subcommand-help:auth"]
+docs = ["docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-auth-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.auth_status]
+title = "Inspect auth policy state"
+support = "supported"
+canonical = "workcell auth status [options]"
+discoverability = ["subcommand-help:auth"]
+docs = ["README.md", "docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-auth-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.policy_commands_surface]
+title = "Policy command surface"
+support = "supported"
+canonical = "workcell policy"
+discoverability = ["top-level-help", "manpage"]
+docs = ["README.md", "man/workcell.1", "docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-policy-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.policy_show]
+title = "Render merged policy"
+support = "supported"
+canonical = "workcell policy show [options]"
+discoverability = ["subcommand-help:policy"]
+docs = ["docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-policy-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.policy_validate]
+title = "Validate merged policy"
+support = "supported"
+canonical = "workcell policy validate [options]"
+discoverability = ["subcommand-help:policy"]
+docs = ["docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-policy-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.policy_diff]
+title = "Diff current and canonical policy"
+support = "supported"
+canonical = "workcell policy diff [options]"
+discoverability = ["subcommand-help:policy"]
+docs = ["docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-policy-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.why_credential]
+title = "Explain credential selection"
+support = "supported"
+canonical = "workcell why"
+discoverability = ["top-level-help", "readme", "manpage"]
+docs = ["README.md", "man/workcell.1", "docs/injection-policy.md"]
+evidence = ["tests/scenarios/shared/test-policy-commands.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.session_commands_surface]
+title = "Session command surface"
+support = "supported"
+canonical = "workcell session"
+discoverability = ["top-level-help", "manpage"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_start]
+title = "Start detached session"
+support = "supported"
+canonical = "workcell session start"
+discoverability = ["top-level-help", "subcommand-help:session", "readme"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_workspace_mode]
+title = "Detached session workspace mode"
+support = "supported"
+canonical = "--session-workspace direct|isolated"
+discoverability = ["top-level-help", "subcommand-help:session", "manpage"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+remediation = [
+  "session start requires a git workspace when --session-workspace isolated is selected:",
+  "This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path.",
+  "session start requires a clean source workspace for isolated session cloning:",
+]
+target_state = "retain"
+
+[workflows.session_attach]
+title = "Attach to detached session"
+support = "supported"
+canonical = "workcell session attach --id SESSION_ID"
+discoverability = ["subcommand-help:session"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_send]
+title = "Send input to detached session"
+support = "supported"
+canonical = "workcell session send --id SESSION_ID --message TEXT"
+discoverability = ["subcommand-help:session"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_stop]
+title = "Stop detached session"
+support = "supported"
+canonical = "workcell session stop --id SESSION_ID [--force]"
+discoverability = ["subcommand-help:session"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_list]
+title = "List durable session records"
+support = "supported"
+canonical = "workcell session list"
+discoverability = ["top-level-help", "subcommand-help:session", "readme"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_show]
+title = "Show one durable session record"
+support = "supported"
+canonical = "workcell session show --id SESSION_ID"
+discoverability = ["top-level-help", "subcommand-help:session"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_logs]
+title = "Read retained session logs"
+support = "supported"
+canonical = "workcell session logs --id SESSION_ID --kind audit|debug|file-trace|transcript"
+discoverability = ["subcommand-help:session"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_timeline]
+title = "Read retained session audit timeline"
+support = "supported"
+canonical = "workcell session timeline --id SESSION_ID"
+discoverability = ["subcommand-help:session"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_diff]
+title = "Diff session workspace against launch base"
+support = "supported"
+canonical = "workcell session diff"
+discoverability = ["subcommand-help:session", "readme"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_export]
+title = "Export durable session record"
+support = "supported"
+canonical = "workcell session export --id SESSION_ID [--output PATH]"
+discoverability = ["subcommand-help:session"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.session_delete]
+title = "Delete durable detached session"
+support = "supported"
+canonical = "workcell session delete --id SESSION_ID"
+discoverability = ["top-level-help", "subcommand-help:session", "manpage"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
+[workflows.launch_doctor]
+title = "Host-side doctor"
+support = "supported"
+canonical = "--doctor"
+aliases = ["workcell doctor"]
+alias_lifecycle = "compatibility-only"
+alias_probes = ["doctor --help"]
+discoverability = ["top-level-help", "readme", "manpage"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["scripts/verify-invariants.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.launch_inspect]
+title = "Host-side inspect"
+support = "supported"
+canonical = "--inspect"
+aliases = ["workcell inspect"]
+alias_lifecycle = "compatibility-only"
+alias_probes = ["inspect --help"]
+discoverability = ["top-level-help", "readme", "manpage"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["scripts/verify-invariants.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.launch_logs]
+title = "Read latest profile logs"
+support = "supported"
+canonical = "--logs audit|debug|file-trace|transcript"
+aliases = ["workcell logs audit|debug|file-trace|transcript"]
+alias_lifecycle = "compatibility-only"
+alias_probes = ["logs --help"]
+discoverability = ["top-level-help", "manpage"]
+docs = ["man/workcell.1"]
+evidence = ["scripts/verify-invariants.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.launch_auth_status]
+title = "Inspect launch auth posture"
+support = "supported"
+canonical = "--auth-status"
+aliases = ["workcell auth-status"]
+alias_lifecycle = "compatibility-only"
+alias_probes = ["auth-status --help"]
+discoverability = ["top-level-help", "readme", "manpage"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-auth-status.sh", "scripts/verify-invariants.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.launch_gc]
+title = "Clean stale local state"
+support = "supported"
+canonical = "--gc"
+aliases = ["workcell gc"]
+alias_lifecycle = "compatibility-only"
+alias_probes = ["gc --help"]
+discoverability = ["top-level-help", "manpage"]
+docs = ["man/workcell.1"]
+evidence = ["scripts/verify-invariants.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.cache_profile_standard]
+title = "Opt-in persistent cache plane"
+support = "supported"
+canonical = "--cache-profile off|standard"
+discoverability = ["top-level-help", "manpage"]
+docs = ["docs/invariants.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh"]
+requirements = ["functional.FR-009"]
+target_state = "retain"

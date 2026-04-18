@@ -451,6 +451,82 @@ detached_start_direct_output="$(
 )"
 grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_direct_output}"
 
+NONGIT_DETACHED_WORKSPACE="${TMP_DIR}/detached-start-nongit"
+mkdir -p "${NONGIT_DETACHED_WORKSPACE}"
+set +e
+nongit_isolated_output="$(
+  "${ROOT_DIR}/scripts/workcell" \
+    session start \
+    --session-workspace isolated \
+    --agent codex \
+    --mode development \
+    --workspace "${NONGIT_DETACHED_WORKSPACE}" \
+    --no-default-injection-policy \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    --dry-run \
+    -- /bin/true 2>&1 >/dev/null
+)"
+nongit_isolated_status=$?
+set -e
+test "${nongit_isolated_status}" -eq 2
+grep -q "Workspace is not a git worktree: ${NONGIT_DETACHED_WORKSPACE}" <<<"${nongit_isolated_output}"
+grep -q 'Detached session start with --session-workspace isolated requires a git workspace\.' <<<"${nongit_isolated_output}"
+grep -q 'Next step: rerun with --session-workspace direct if you want to use the current workspace in place\.' <<<"${nongit_isolated_output}"
+
+printf 'dirty\n' >>"${DETACHED_START_WORKSPACE}/README.md"
+set +e
+dirty_isolated_output="$(
+  "${ROOT_DIR}/scripts/workcell" \
+    session start \
+    --session-workspace isolated \
+    --agent codex \
+    --mode development \
+    --workspace "${DETACHED_START_WORKSPACE}" \
+    --no-default-injection-policy \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    --dry-run \
+    -- /bin/true 2>&1 >/dev/null
+)"
+dirty_isolated_status=$?
+set -e
+test "${dirty_isolated_status}" -eq 2
+grep -q "session start requires a clean source workspace for isolated session cloning: ${DETACHED_START_WORKSPACE}" <<<"${dirty_isolated_output}"
+grep -q 'Next step: commit or stash the workspace changes, or rerun with --session-workspace direct to use the current workspace in place\.' <<<"${dirty_isolated_output}"
+
+LINKED_WORKTREE_ROOT="${TMP_DIR}/detached-linked-worktree"
+LINKED_WORKTREE_MAIN="${LINKED_WORKTREE_ROOT}/main"
+LINKED_WORKTREE_PATH="${LINKED_WORKTREE_ROOT}/linked"
+mkdir -p "${LINKED_WORKTREE_ROOT}"
+git init -q "${LINKED_WORKTREE_MAIN}"
+git -C "${LINKED_WORKTREE_MAIN}" config user.name "Workcell Test"
+git -C "${LINKED_WORKTREE_MAIN}" config user.email "workcell@example.com"
+printf 'tracked\n' >"${LINKED_WORKTREE_MAIN}/tracked.txt"
+git -C "${LINKED_WORKTREE_MAIN}" add tracked.txt
+git -C "${LINKED_WORKTREE_MAIN}" commit -q -m init
+git -C "${LINKED_WORKTREE_MAIN}" worktree add -q -b linked "${LINKED_WORKTREE_PATH}"
+set +e
+linked_isolated_output="$(
+  "${ROOT_DIR}/scripts/workcell" \
+    session start \
+    --session-workspace isolated \
+    --agent codex \
+    --mode development \
+    --workspace "${LINKED_WORKTREE_PATH}" \
+    --no-default-injection-policy \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    --dry-run \
+    -- /bin/true 2>&1 >/dev/null
+)"
+linked_isolated_status=$?
+set -e
+test "${linked_isolated_status}" -eq 2
+grep -q "Refusing git workspace with admin state outside the mounted workspace: ${LINKED_WORKTREE_PATH}" <<<"${linked_isolated_output}"
+grep -q 'This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path\.' <<<"${linked_isolated_output}"
+grep -q 'Next step: rerun with --session-workspace direct if you want to use the current workspace in place\.' <<<"${linked_isolated_output}"
+
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
 monitor_env_output="$(
   bash -lc '
