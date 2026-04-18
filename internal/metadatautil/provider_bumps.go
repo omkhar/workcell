@@ -452,8 +452,10 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		return ProviderBumpSelection{}, err
 	}
 	maxAllowed, hasMaxVersion := parseStableVersion(maxVersion)
+	current, hasCurrentVersion := parseStableVersion(currentVersion)
 	approved, hasApprovedVersion := parseStableVersion(approvedVersion)
 	candidates := make([]stableVersion, 0, len(listing.CommonPrefixes))
+	currentPresentInCandidates := false
 	for _, prefix := range listing.CommonPrefixes {
 		match := claudeBucketVersionDirPattern.FindStringSubmatch(prefix.Prefix)
 		if match == nil {
@@ -466,9 +468,15 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		if hasMaxVersion && compareStableVersions(version, maxAllowed) > 0 {
 			continue
 		}
+		if hasCurrentVersion && compareStableVersions(version, current) == 0 {
+			currentPresentInCandidates = true
+		}
 		candidates = append(candidates, version)
 	}
 	sortStableVersionsDesc(candidates)
+	if hasApprovedVersion && hasCurrentVersion && compareStableVersions(approved, current) <= 0 {
+		hasApprovedVersion = false
+	}
 	if hasApprovedVersion {
 		for _, candidate := range candidates {
 			if compareStableVersions(candidate, approved) != 0 {
@@ -502,6 +510,8 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		}
 		return ProviderBumpSelection{}, fmt.Errorf("claude approved_version %s is not present in the release bucket listing", approvedVersion)
 	}
+	var selected *ProviderBumpSelection
+	var selectedVersion stableVersion
 	for _, candidate := range candidates {
 		manifestURL := fmt.Sprintf("%s/%s/manifest.json", sources.ClaudeReleaseRootURL, candidate.Raw)
 		var manifest claudeManifest
@@ -520,7 +530,7 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		if armChecksum == "" || amdChecksum == "" {
 			return ProviderBumpSelection{}, fmt.Errorf("claude manifest for %s is missing Linux checksums", candidate.Raw)
 		}
-		return ProviderBumpSelection{
+		selection := ProviderBumpSelection{
 			Channel:        "stable",
 			CurrentVersion: currentVersion,
 			TargetVersion:  candidate.Raw,
@@ -530,7 +540,32 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 				"arm64": armChecksum,
 				"amd64": amdChecksum,
 			},
-		}, nil
+		}
+		selected = &selection
+		selectedVersion = candidate
+		break
+	}
+	if selected != nil {
+		if hasCurrentVersion && compareStableVersions(selectedVersion, current) < 0 {
+			if hasMaxVersion && compareStableVersions(current, maxAllowed) > 0 {
+				return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s exceeds provider.claude.max_version %s", currentVersion, maxVersion)
+			}
+			if !currentPresentInCandidates {
+				return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s is not present in the release bucket listing", currentVersion)
+			}
+			return ProviderBumpSelection{
+				Channel:        "stable",
+				CurrentVersion: currentVersion,
+				TargetVersion:  currentVersion,
+			}, nil
+		}
+		return *selected, nil
+	}
+	if hasCurrentVersion && hasMaxVersion && compareStableVersions(current, maxAllowed) > 0 {
+		return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s exceeds provider.claude.max_version %s", currentVersion, maxVersion)
+	}
+	if hasCurrentVersion && len(candidates) > 0 && !currentPresentInCandidates && compareStableVersions(current, candidates[0]) > 0 {
+		return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s is not present in the release bucket listing", currentVersion)
 	}
 	return ProviderBumpSelection{
 		Channel:        "stable",

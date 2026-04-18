@@ -26,6 +26,8 @@ Releases.
 - stop scrubbed host-side Go helper launches from reusing a stale partial
   module cache under `/tmp`, which could make `workcell --agent claude` fail
   before launch with `no required module provides package golang.org/x/sys/unix`
+- keep reviewed Claude `approved_version` exceptions from forcing a future
+  downgrade once the pinned runtime has already moved past the exception
 - add real macOS integration coverage that launches Workcell-managed Codex,
   Claude, and Gemini version probes and exercises the host detached-session
   control plane against live and terminal workloads, including
