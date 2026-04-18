@@ -28,8 +28,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pr-shape:
+    name: Pull request shape
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check pull request shape
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune --depth=1 origin "${WORKCELL_PR_BASE_REF}"
+          ./scripts/check-pr-shape.sh --base-ref "origin/${WORKCELL_PR_BASE_REF}" --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0
+
+      - name: Skip outside pull requests
+        if: ${{ github.event_name != 'pull_request' }}
+        run: echo "PR shape gate applies only to pull requests."
+
   validate:
     name: Validate repository
+    needs: pr-shape
     runs-on: ubuntu-latest
     permissions:
       contents: read

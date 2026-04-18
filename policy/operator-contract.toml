@@ -179,8 +179,9 @@ docs = ["man/workcell.1"]
 evidence = ["tests/scenarios/shared/test-session-commands.sh"]
 requirements = ["functional.FR-007"]
 remediation = [
-  "session start requires a git workspace when --session-workspace isolated is selected:",
+  "Detached session start with --session-workspace isolated requires a git workspace.",
   "This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path.",
+  "To use this workspace on the safe path, create a standard clone at the same location instead.",
   "session start requires a clean source workspace for isolated session cloning:",
 ]
 target_state = "retain"

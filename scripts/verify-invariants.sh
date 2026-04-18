@@ -5317,6 +5317,12 @@ grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- 'switch --no-guess -c feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' add -A ' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_DRY_RUN}"
+PUBLISH_PR_WORKTREE_FETCH_LINE="$(grep -n -- ' fetch --no-tags --prune origin main' <<<"${PUBLISH_PR_DRY_RUN}" | cut -d: -f1)"
+PUBLISH_PR_WORKTREE_SHAPE_LINE="$(grep -n -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${PUBLISH_PR_DRY_RUN}" | cut -d: -f1)"
+test -n "${PUBLISH_PR_WORKTREE_FETCH_LINE}"
+test -n "${PUBLISH_PR_WORKTREE_SHAPE_LINE}"
+test "${PUBLISH_PR_WORKTREE_FETCH_LINE}" -lt "${PUBLISH_PR_WORKTREE_SHAPE_LINE}"
+grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' push --no-verify -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- 'gh pr create --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
 
@@ -5336,6 +5342,12 @@ fi
 grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
 grep -q -- 'switch --no-guess -c feature/publish-index' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+PUBLISH_PR_INDEX_FETCH_LINE="$(grep -n -- ' fetch --no-tags --prune origin main' <<<"${PUBLISH_PR_INDEX_DRY_RUN}" | cut -d: -f1)"
+PUBLISH_PR_INDEX_SHAPE_LINE="$(grep -n -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${PUBLISH_PR_INDEX_DRY_RUN}" | cut -d: -f1)"
+test -n "${PUBLISH_PR_INDEX_FETCH_LINE}"
+test -n "${PUBLISH_PR_INDEX_SHAPE_LINE}"
+test "${PUBLISH_PR_INDEX_FETCH_LINE}" -lt "${PUBLISH_PR_INDEX_SHAPE_LINE}"
+grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
 
 if "${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${PUBLISH_PR_FIXTURE}" \
@@ -5412,6 +5424,24 @@ if "${ROOT_DIR}/scripts/workcell" publish-pr \
   exit 1
 fi
 grep -q 'publish-pr found no workspace changes to publish' /tmp/workcell-publish-pr-noop.out
+
+git -C "${PUBLISH_PR_FIXTURE}" switch -C main >/dev/null
+git -C "${PUBLISH_PR_FIXTURE}" reset -q --hard HEAD
+for index in $(seq 1 26); do
+  printf 'broad %02d\n' "${index}" >"${PUBLISH_PR_FIXTURE}/broad-${index}.txt"
+done
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-too-broad \
+  --title "Broad diff" \
+  --commit-message "Broad diff commit" \
+  --dry-run >/tmp/workcell-publish-pr-broad.out 2>&1; then
+  :
+fi
+if ! grep -q 'check-pr-shape\.sh' /tmp/workcell-publish-pr-broad.out; then
+  echo "Expected publish-pr dry-run to include the PR shape gate" >&2
+  exit 1
+fi
 
 SHADOW_GIT_CONFIG_HARNESS="$(mktemp)"
 {

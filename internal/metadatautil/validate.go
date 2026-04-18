@@ -199,6 +199,24 @@ func validateReleaseWorkflowCodeQLFlow(releaseWorkflow string) error {
 	return nil
 }
 
+func validateCIWorkflowPRShapeFlow(ciWorkflow string) error {
+	for _, needle := range []string{
+		"name: Pull request shape",
+		"fetch-depth: 0",
+		"WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}",
+		"Check pull request shape",
+		`git fetch --no-tags --prune --depth=1 origin "${WORKCELL_PR_BASE_REF}"`,
+		`./scripts/check-pr-shape.sh --base-ref "origin/${WORKCELL_PR_BASE_REF}" --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0`,
+		"Skip outside pull requests",
+		`PR shape gate applies only to pull requests.`,
+	} {
+		if !strings.Contains(ciWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/ci.yml must contain %q", needle)
+		}
+	}
+	return nil
+}
+
 func validateReleaseWorkflowControlPlaneFlow(releaseWorkflow string) error {
 	if !strings.Contains(releaseWorkflow, "dist/workcell-control-plane-preflight.json") {
 		return errors.New(".github/workflows/release.yml must keep the reviewed control-plane manifest flow")
@@ -1178,6 +1196,13 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if !isHexDigest(validatorHadolintSHAArm64) {
 		return fmt.Errorf("HADOLINT_LINUX_ARM64_SHA256 in %s must be a full SHA256 digest, found %q", cfg.ValidatorDockerfilePath, validatorHadolintSHAArm64)
 	}
+	validatorDeadcodeVersion, err := requireArg(validatorDockerfile, "DEADCODE_VERSION", cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(validatorDeadcodeVersion) {
+		return fmt.Errorf("DEADCODE_VERSION must be an exact pinned release, found %q", validatorDeadcodeVersion)
+	}
 	validatorMarkdownlintVersion, err := requireArg(validatorDockerfile, "MARKDOWNLINT_VERSION", cfg.ValidatorDockerfilePath)
 	if err != nil {
 		return err
@@ -1186,7 +1211,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return fmt.Errorf("MARKDOWNLINT_VERSION must be an exact pinned release, found %q", validatorMarkdownlintVersion)
 	}
 	for _, needle := range []string{
+		`GOBIN=/usr/local/bin go install "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}"`,
 		`COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/`,
+		`deadcode -h >/dev/null`,
 		`npm ci --prefix /usr/local/lib/workcell-markdownlint --ignore-scripts --omit=dev`,
 		`ln -sf /usr/local/lib/workcell-markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint`,
 		`markdownlint --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null`,
@@ -1469,6 +1496,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	if strings.Contains(ciWorkflow, "docker/setup-qemu-action@") {
 		return errors.New(".github/workflows/ci.yml must not configure QEMU in CI now that arm64 reproducible builds use a native runner")
+	}
+	if err := validateCIWorkflowPRShapeFlow(ciWorkflow); err != nil {
+		return err
 	}
 	if err := validateMacOSInstallVerificationFlow(ciWorkflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
 		return err

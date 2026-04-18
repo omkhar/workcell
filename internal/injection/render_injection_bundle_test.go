@@ -4,6 +4,8 @@
 package injection
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -215,6 +217,12 @@ func TestLoadPolicyBundleMergesIncludesRebasesAndRejectsBadIncludes(t *testing.T
 			}
 		})
 	}
+}
+
+func compositePolicySHA256(policySources []PolicySource) string {
+	data, _ := json.Marshal(policySources)
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func TestRebasePolicyFragmentAndValidationHelpers(t *testing.T) {

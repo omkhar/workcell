@@ -579,10 +579,6 @@ func LoadPolicyBundle(policyPath string) (map[string]any, []PolicySource, error)
 	return loadPolicyBundle(policyPath, "", nil, map[string]struct{}{})
 }
 
-func LoadPolicyBundleAt(policyPath string, entrypointRoot string) (map[string]any, []PolicySource, error) {
-	return loadPolicyBundle(policyPath, entrypointRoot, nil, map[string]struct{}{})
-}
-
 func loadPolicyBundle(policyPath string, entrypointRoot string, activeStack []string, loadedPaths map[string]struct{}) (map[string]any, []PolicySource, error) {
 	resolvedPolicyPath, err := resolveExistingPath(policyPath)
 	if err != nil {
@@ -717,10 +713,6 @@ func LoadRawPolicy(policyPath string) (map[string]any, error) {
 		return nil, die(fmt.Sprintf("unsupported injection policy version: %d", version))
 	}
 	return loaded, nil
-}
-
-func QuoteString(value string) string {
-	return JSONQuote(value)
 }
 
 func JSONQuote(value string) string {

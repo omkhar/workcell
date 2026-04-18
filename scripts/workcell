@@ -1127,13 +1127,16 @@ validate_isolated_session_workspace_source() {
   local source_workspace="$1"
 
   workspace_is_git_worktree "${source_workspace}" || {
-    echo "session start requires a git workspace when --session-workspace isolated is selected: ${source_workspace}" >&2
+    echo "Workspace is not a git worktree: ${source_workspace}" >&2
+    echo "Detached session start with --session-workspace isolated requires a git workspace." >&2
     echo "Next step: rerun with --session-workspace direct if you want to use the current workspace in place." >&2
     exit 2
   }
   if ! workspace_gitdir_is_self_contained "${source_workspace}"; then
-    echo "session start requires a self-contained git workspace for isolated session cloning: ${source_workspace}" >&2
-    echo "Next step: rerun with --session-workspace direct if you want to use the current workspace in place." >&2
+    echo "Refusing git workspace with admin state outside the mounted workspace: ${source_workspace}" >&2
+    echo "This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path." >&2
+    echo "To use this workspace on the safe path, create a standard clone at the same location instead." >&2
+    echo "Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree." >&2
     exit 2
   fi
   if workspace_git_has_worktree_changes "${source_workspace}"; then
@@ -2360,6 +2363,8 @@ Notes:
   - publish-pr runs on the host, not inside the Workcell container.
   - It uses the host Git and GitHub CLI configuration so maintainer signing
     and publication stay outside the Tier 1 container boundary.
+  - It blocks over-broad branch diffs before push so published PRs stay
+    reviewable by a human without juggling unrelated concerns.
   - Host-side git commands explicitly bypass repo hooks during publication
     because workspace hook content is untrusted; signed commits remain
     mandatory.
@@ -2572,10 +2577,13 @@ publish_pr_main() {
   local commit_message_text=""
   local resolved_commit_message_file=""
   local pr_url=""
+  local shape_base_ref=""
   local -a cleanup_files=()
   local -a branch_cmd=()
   local -a add_cmd=()
   local -a commit_cmd=()
+  local -a fetch_base_cmd=()
+  local -a shape_cmd=()
   local -a push_cmd=()
   local -a pr_cmd=()
   local -a publish_git_cmd=()
@@ -2718,6 +2726,9 @@ publish_pr_main() {
 
   add_cmd=("${publish_git_cmd[@]}" add -A)
   commit_cmd=("${publish_git_cmd[@]}" commit --no-verify -S -F "${resolved_commit_message_file}")
+  fetch_base_cmd=("${publish_git_cmd[@]}" fetch --no-tags --prune origin "${base}")
+  shape_base_ref="refs/remotes/origin/${base}"
+  shape_cmd=(/bin/bash "${ROOT_DIR}/scripts/check-pr-shape.sh" --repo-root "${resolved_workspace}" --base-ref "${shape_base_ref}" --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0)
   push_cmd=("${publish_git_cmd[@]}" push --no-verify -u origin "${branch}")
   pr_cmd=("${HOST_GH_BIN}" pr create --base "${base}" --head "${branch}" --title "${title_text}")
   if [[ "${ready}" -eq 0 ]]; then
@@ -2740,6 +2751,8 @@ publish_pr_main() {
       emit_command "${add_cmd[@]}"
     fi
     emit_command "${commit_cmd[@]}"
+    emit_command "${fetch_base_cmd[@]}"
+    emit_command "${shape_cmd[@]}"
     emit_command "${push_cmd[@]}"
     emit_command "${pr_cmd[@]}"
     exit 0
@@ -2754,6 +2767,8 @@ publish_pr_main() {
     exit 2
   fi
   run_publish_host_command_in_dir "${resolved_workspace}" "${commit_cmd[@]}"
+  run_publish_host_command_in_dir "${resolved_workspace}" "${fetch_base_cmd[@]}"
+  run_publish_host_command_in_dir "${resolved_workspace}" "${shape_cmd[@]}"
   run_publish_host_command_in_dir "${resolved_workspace}" "${push_cmd[@]}"
   pr_url="$(run_publish_host_command_in_dir "${resolved_workspace}" "${pr_cmd[@]}")"
   printf 'publish_branch=%s\n' "${branch}"
@@ -5129,6 +5144,11 @@ validate_workspace() {
   if workspace_is_sensitive "${path}"; then
     echo "Refusing sensitive workspace mount: ${path}" >&2
     exit 2
+  fi
+
+  if [[ "${SESSION_DETACHED:-0}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)" == "isolated" ]]; then
+    validate_isolated_session_workspace_source "${path}"
+    return
   fi
 
   if workspace_has_markers "${path}"; then

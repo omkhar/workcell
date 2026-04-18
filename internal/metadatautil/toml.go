@@ -287,11 +287,6 @@ func MustString(value any) (string, bool) {
 	return s, ok
 }
 
-func MustStringMap(value any) (map[string]any, bool) {
-	m, ok := value.(map[string]any)
-	return m, ok
-}
-
 func MustStringSlice(value any) ([]string, bool, error) {
 	raw, ok := value.([]any)
 	if !ok {

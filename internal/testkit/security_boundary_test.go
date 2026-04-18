@@ -4,6 +4,7 @@
 package testkit
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,5 +153,31 @@ func TestWorkcellBootstrapResolvesRealHomeBeforeGoHostutil(t *testing.T) {
 	}
 	if cacheRootIndex > goHostutilIndex {
 		t.Fatalf("%s exports WORKCELL_GO_CACHE_ROOT after go_hostutil is defined; want cache root fixed first", scriptPath)
+	}
+}
+
+func TestEnsureGoRunEnvFallsBackToPerUserCacheWithoutHome(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "lib", "go-run-env.sh")
+	expected := filepath.Join(tempDir, fmt.Sprintf("workcell-go-%d", os.Getuid()))
+
+	code, output := runBashProbe(t, `set -euo pipefail
+unset HOME XDG_CACHE_HOME WORKCELL_GO_CACHE_ROOT
+source "`+scriptPath+`"
+ensure_go_run_env
+printf '%s\n' "${WORKCELL_GO_CACHE_ROOT}"
+`, map[string]string{
+		"HOME":                   "",
+		"TMPDIR":                 tempDir,
+		"XDG_CACHE_HOME":         "",
+		"WORKCELL_GO_CACHE_ROOT": "",
+	})
+	if code != 0 {
+		t.Fatalf("probe exit code = %d output=%q", code, output)
+	}
+	if strings.TrimSpace(output) != expected {
+		t.Fatalf("WORKCELL_GO_CACHE_ROOT = %q, want %q", strings.TrimSpace(output), expected)
 	}
 }

@@ -259,6 +259,9 @@ func parseOperatorWorkflow(contractPath, workflowID string, spec map[string]any)
 	if support == "internal" && len(discoverability) > 0 {
 		return operatorWorkflow{}, fmt.Errorf("%s workflow %s must not declare discoverability surfaces for internal workflows", contractPath, workflowID)
 	}
+	if isPublicWorkflowTier(support) && len(discoverability) == 0 {
+		return operatorWorkflow{}, fmt.Errorf("%s workflow %s must declare at least one discoverability surface", contractPath, workflowID)
+	}
 
 	docs, err := optionalStringSlice(spec, "docs")
 	if err != nil {

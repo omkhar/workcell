@@ -253,6 +253,34 @@ func TestLoadOperatorContractRejectsWrongTypedOptionalStringSlice(t *testing.T) 
 	}
 }
 
+func TestLoadOperatorContractRejectsPublicWorkflowWithoutDiscoverability(t *testing.T) {
+	root := t.TempDir()
+	writeOperatorContractFixture(t, root, true)
+
+	contractPath := filepath.Join(root, "policy", "operator-contract.toml")
+	contract, err := readText(contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract = strings.Replace(
+		contract,
+		"discoverability = [\"top-level-help\", \"manpage\"]\n",
+		"",
+		1,
+	)
+	if err := os.WriteFile(contractPath, []byte(contract), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = loadOperatorContract(contractPath)
+	if err == nil {
+		t.Fatal("loadOperatorContract() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "discoverability") {
+		t.Fatalf("loadOperatorContract() error = %v, want discoverability failure", err)
+	}
+}
+
 func TestStripManpageFormattingRemovesBackspaceMarkup(t *testing.T) {
 	input := "w\bwo\bor\brk\bkc\bce\bel\bll\bl\n"
 	if got := stripManpageFormatting(input); got != "workcell\n" {
