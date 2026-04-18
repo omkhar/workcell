@@ -1505,7 +1505,20 @@ mod tests {
     use std::os::unix::fs::symlink;
     use std::path::PathBuf;
     use std::process;
+    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn run_serial_test(test: impl FnOnce()) {
+        static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+        // The exec guard interposes process-global runtime hooks on Linux, so
+        // the lib tests need to avoid the default parallel harness.
+        let _guard = TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("acquire test lock");
+        test();
+    }
 
     fn create_temp_test_dir(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -1519,116 +1532,140 @@ mod tests {
 
     #[test]
     fn matches_non_strict_recognizes_only_non_empty_non_strict_values() {
-        assert!(!matches_non_strict(None));
-        assert!(!matches_non_strict(Some("")));
-        assert!(!matches_non_strict(Some("strict")));
-        assert!(!matches_non_strict(Some("STRICT")));
-        assert!(matches_non_strict(Some("development")));
-        assert!(matches_non_strict(Some("build")));
-        assert!(matches_non_strict(Some("breakglass")));
+        run_serial_test(|| {
+            assert!(!matches_non_strict(None));
+            assert!(!matches_non_strict(Some("")));
+            assert!(!matches_non_strict(Some("strict")));
+            assert!(!matches_non_strict(Some("STRICT")));
+            assert!(matches_non_strict(Some("development")));
+            assert!(matches_non_strict(Some("build")));
+            assert!(matches_non_strict(Some("breakglass")));
+        });
     }
 
     #[test]
     fn path_has_root_prefix_requires_boundary_match() {
-        assert!(path_has_root_prefix("/workspace", "/workspace"));
-        assert!(path_has_root_prefix("/workspace/project", "/workspace"));
-        assert!(!path_has_root_prefix("/workspace-elsewhere", "/workspace"));
-        assert!(!path_has_root_prefix("/stateful", "/state"));
+        run_serial_test(|| {
+            assert!(path_has_root_prefix("/workspace", "/workspace"));
+            assert!(path_has_root_prefix("/workspace/project", "/workspace"));
+            assert!(!path_has_root_prefix("/workspace-elsewhere", "/workspace"));
+            assert!(!path_has_root_prefix("/stateful", "/state"));
+        });
     }
 
     #[test]
     fn trim_deleted_suffix_only_removes_kernel_deleted_suffix() {
-        assert_eq!(trim_deleted_suffix("/tmp/tool (deleted)"), "/tmp/tool");
-        assert_eq!(trim_deleted_suffix("/tmp/tool"), "/tmp/tool");
+        run_serial_test(|| {
+            assert_eq!(trim_deleted_suffix("/tmp/tool (deleted)"), "/tmp/tool");
+            assert_eq!(trim_deleted_suffix("/tmp/tool"), "/tmp/tool");
+        });
     }
 
     #[test]
     fn git_commit_short_arg_invokes_no_verify_only_for_real_no_verify_flags() {
-        assert!(git_commit_short_arg_invokes_no_verify("-n"));
-        assert!(git_commit_short_arg_invokes_no_verify("-nm"));
-        assert!(git_commit_short_arg_invokes_no_verify("-anm"));
-        assert!(!git_commit_short_arg_invokes_no_verify("-mnote"));
-        assert!(!git_commit_short_arg_invokes_no_verify("-uno"));
-        assert!(!git_commit_short_arg_invokes_no_verify("--no-verify"));
+        run_serial_test(|| {
+            assert!(git_commit_short_arg_invokes_no_verify("-n"));
+            assert!(git_commit_short_arg_invokes_no_verify("-nm"));
+            assert!(git_commit_short_arg_invokes_no_verify("-anm"));
+            assert!(!git_commit_short_arg_invokes_no_verify("-mnote"));
+            assert!(!git_commit_short_arg_invokes_no_verify("-uno"));
+            assert!(!git_commit_short_arg_invokes_no_verify("--no-verify"));
+        });
     }
 
     #[test]
     fn path_is_current_process_fd_path_accepts_supported_fd_forms() {
-        assert_eq!(
-            path_is_current_process_fd_path("/dev/stdin"),
-            Some(libc::STDIN_FILENO)
-        );
-        assert_eq!(path_is_current_process_fd_path("/proc/self/fd/9"), Some(9));
-        assert_eq!(
-            path_is_current_process_fd_path(&format!("/proc/{}/fd/4", unsafe { libc::getpid() })),
-            Some(4)
-        );
-        assert_eq!(path_is_current_process_fd_path("/proc/999999/fd/4"), None);
+        run_serial_test(|| {
+            assert_eq!(
+                path_is_current_process_fd_path("/dev/stdin"),
+                Some(libc::STDIN_FILENO)
+            );
+            assert_eq!(path_is_current_process_fd_path("/proc/self/fd/9"), Some(9));
+            assert_eq!(
+                path_is_current_process_fd_path(&format!("/proc/{}/fd/4", unsafe {
+                    libc::getpid()
+                })),
+                Some(4)
+            );
+            assert_eq!(path_is_current_process_fd_path("/proc/999999/fd/4"), None);
+        });
     }
 
     #[test]
     fn env_has_unsafe_git_override_blocks_git_object_directory() {
-        assert!(env_has_unsafe_git_override(&[
-            "GIT_OBJECT_DIRECTORY=/attacker/objects".to_string()
-        ]));
-        assert!(!env_has_unsafe_git_override(&[
-            "SOME_OTHER_VAR=value".to_string()
-        ]));
+        run_serial_test(|| {
+            assert!(env_has_unsafe_git_override(&[
+                "GIT_OBJECT_DIRECTORY=/attacker/objects".to_string()
+            ]));
+            assert!(!env_has_unsafe_git_override(&[
+                "SOME_OTHER_VAR=value".to_string()
+            ]));
+        });
     }
 
     #[test]
     fn env_has_unsafe_git_override_blocks_git_alternate_object_directories() {
-        assert!(env_has_unsafe_git_override(&[
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES=/attacker/alt".to_string()
-        ]));
+        run_serial_test(|| {
+            assert!(env_has_unsafe_git_override(&[
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES=/attacker/alt".to_string()
+            ]));
+        });
     }
 
     #[test]
     fn env_has_unsafe_git_override_blocks_git_index_file() {
-        assert!(env_has_unsafe_git_override(&[
-            "GIT_INDEX_FILE=/attacker/index".to_string()
-        ]));
+        run_serial_test(|| {
+            assert!(env_has_unsafe_git_override(&[
+                "GIT_INDEX_FILE=/attacker/index".to_string()
+            ]));
+        });
     }
 
     #[test]
     fn git_config_key_is_blocked_blocks_core_fsmonitor() {
-        assert!(git_config_key_is_blocked("core.fsmonitor"));
-        assert!(git_config_key_is_blocked("Core.FsMonitor"));
+        run_serial_test(|| {
+            assert!(git_config_key_is_blocked("core.fsmonitor"));
+            assert!(git_config_key_is_blocked("Core.FsMonitor"));
+        });
     }
 
     #[test]
     fn env_has_unsafe_git_override_blocks_core_fsmonitor_parameters() {
-        assert!(env_has_unsafe_git_override(&[
-            "GIT_CONFIG_PARAMETERS='core.fsmonitor=/attacker/fsmonitor'".to_string()
-        ]));
+        run_serial_test(|| {
+            assert!(env_has_unsafe_git_override(&[
+                "GIT_CONFIG_PARAMETERS='core.fsmonitor=/attacker/fsmonitor'".to_string()
+            ]));
+        });
     }
 
     #[test]
     fn path_matches_any_same_file_requires_same_inode() {
-        let dir = create_temp_test_dir("same-file");
-        let original = dir.join("original");
-        let hardlink = dir.join("hardlink");
-        let symlink_path = dir.join("symlink");
-        let copy = dir.join("copy");
+        run_serial_test(|| {
+            let dir = create_temp_test_dir("same-file");
+            let original = dir.join("original");
+            let hardlink = dir.join("hardlink");
+            let symlink_path = dir.join("symlink");
+            let copy = dir.join("copy");
 
-        fs::write(&original, b"#!/bin/sh\n").expect("write fixture");
-        fs::hard_link(&original, &hardlink).expect("create hardlink");
-        symlink(&original, &symlink_path).expect("create symlink");
-        fs::copy(&original, &copy).expect("copy fixture");
+            fs::write(&original, b"#!/bin/sh\n").expect("write fixture");
+            fs::hard_link(&original, &hardlink).expect("create hardlink");
+            symlink(&original, &symlink_path).expect("create symlink");
+            fs::copy(&original, &copy).expect("copy fixture");
 
-        assert!(path_matches_any_same_file(
-            &original,
-            &[hardlink.to_str().expect("hardlink path")]
-        ));
-        assert!(path_matches_any_same_file(
-            &original,
-            &[symlink_path.to_str().expect("symlink path")]
-        ));
-        assert!(!path_matches_any_same_file(
-            &original,
-            &[copy.to_str().expect("copy path")]
-        ));
+            assert!(path_matches_any_same_file(
+                &original,
+                &[hardlink.to_str().expect("hardlink path")]
+            ));
+            assert!(path_matches_any_same_file(
+                &original,
+                &[symlink_path.to_str().expect("symlink path")]
+            ));
+            assert!(!path_matches_any_same_file(
+                &original,
+                &[copy.to_str().expect("copy path")]
+            ));
 
-        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+            fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+        });
     }
 }
