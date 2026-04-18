@@ -475,6 +475,9 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 	}
 	if hasApprovedVersion {
 		for _, candidate := range candidates {
+			if hasCurrentVersion && compareStableVersions(candidate, current) < 0 {
+				continue
+			}
 			if compareStableVersions(candidate, approved) != 0 {
 				continue
 			}
@@ -507,6 +510,9 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		return ProviderBumpSelection{}, fmt.Errorf("claude approved_version %s is not present in the release bucket listing", approvedVersion)
 	}
 	for _, candidate := range candidates {
+		if hasCurrentVersion && compareStableVersions(candidate, current) < 0 {
+			continue
+		}
 		manifestURL := fmt.Sprintf("%s/%s/manifest.json", sources.ClaudeReleaseRootURL, candidate.Raw)
 		var manifest claudeManifest
 		if err := fetchJSON(client, manifestURL, &manifest); err != nil {
