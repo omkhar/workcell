@@ -44,6 +44,9 @@ func TestDevQuickCheckStaysBoundedToFastLocalWork(t *testing.T) {
 	script := string(content)
 
 	for _, want := range []string{
+		"scripts/check-dead-code.sh",
+		"scripts/check-public-repo-hygiene.sh",
+		"scripts/check-pr-shape.sh",
 		"gofmt -l",
 		"go vet ./...",
 		"go test ./...",
@@ -98,6 +101,15 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		if !strings.Contains(content, "scripts/go-port-validate.sh") {
 			t.Fatalf("validation scripts must include scripts/go-port-validate.sh")
 		}
+		if !strings.Contains(content, "scripts/check-dead-code.sh") {
+			t.Fatalf("validation scripts must include scripts/check-dead-code.sh")
+		}
+		if !strings.Contains(content, "scripts/check-public-repo-hygiene.sh") {
+			t.Fatalf("validation scripts must include scripts/check-public-repo-hygiene.sh")
+		}
+		if !strings.Contains(content, "scripts/check-pr-shape.sh") {
+			t.Fatalf("validation scripts must include scripts/check-pr-shape.sh")
+		}
 		if !strings.Contains(content, "scripts/lint-dockerfiles.sh") {
 			t.Fatalf("validation scripts must include scripts/lint-dockerfiles.sh")
 		}
@@ -109,6 +121,9 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		}
 		for _, want := range []string{
 			"scripts/bootstrap-dev.sh",
+			"scripts/check-dead-code.sh",
+			"scripts/check-public-repo-hygiene.sh",
+			"scripts/check-pr-shape.sh",
 			"scripts/generate-homebrew-formula.sh",
 			"scripts/install-workcell.sh",
 			"scripts/install.sh",
@@ -139,6 +154,9 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 	}
 	for _, want := range []string{
 		`${ROOT_DIR}/.githooks/pre-commit`,
+		`${ROOT_DIR}/scripts/check-dead-code.sh`,
+		`${ROOT_DIR}/scripts/check-public-repo-hygiene.sh`,
+		`${ROOT_DIR}/scripts/check-pr-shape.sh`,
 		`${ROOT_DIR}/scripts/install.sh`,
 		`${ROOT_DIR}/scripts/build-and-test.sh`,
 		`${ROOT_DIR}/scripts/install-dev-tools.sh`,

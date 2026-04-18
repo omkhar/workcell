@@ -113,6 +113,10 @@ Each checkpoint packet should stay short and include:
 - documentation and roadmap status
 - any open risks, tradeoffs, or deviations from the normal path
 
+Release-path pull requests should stay human-reviewable. Split opportunistic
+cleanup, unrelated fixes, or separate reviewer-sized concerns into other PRs
+before publishing the release path.
+
 If the maintainer gives feedback, incorporate it and refresh the packet before
 continuing.
 
