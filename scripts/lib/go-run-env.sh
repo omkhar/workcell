@@ -22,7 +22,9 @@ default_go_cache_root() {
     printf '%s\n' "${HOME}/.cache/workcell/go"
     return 0
   fi
-  printf '%s\n' "${TMPDIR:-/tmp}/workcell-go"
+  local user_suffix="unknown"
+  user_suffix="$(id -u 2>/dev/null || printf '%s' "unknown")"
+  printf '%s\n' "${TMPDIR:-/tmp}/workcell-go-${user_suffix}"
 }
 
 ensure_go_run_env() {

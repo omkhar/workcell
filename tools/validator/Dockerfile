@@ -6,6 +6,7 @@ ARG GO_LINUX_ARM64_SHA256=c958a1fe1b361391db163a485e21f5f228142d6f8b584f6bef89b2
 ARG HADOLINT_VERSION=v2.14.0
 ARG HADOLINT_LINUX_X86_64_SHA256=6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47
 ARG HADOLINT_LINUX_ARM64_SHA256=331f1d3511b84a4f1e3d18d52fec284723e4019552f4f47b19322a53ce9a40ed
+ARG DEADCODE_VERSION=v0.38.0
 ARG MARKDOWNLINT_VERSION=0.48.0
 ARG RUST_VERSION=1.95.0
 ARG RUSTUP_VERSION=1.29.0
@@ -23,6 +24,7 @@ ARG GO_LINUX_ARM64_SHA256
 ARG HADOLINT_VERSION
 ARG HADOLINT_LINUX_X86_64_SHA256
 ARG HADOLINT_LINUX_ARM64_SHA256
+ARG DEADCODE_VERSION
 ARG MARKDOWNLINT_VERSION
 ARG RUST_VERSION
 ARG RUSTUP_VERSION
@@ -154,9 +156,11 @@ RUN fetch_snapshot_bootstrap_package() { \
     -o /usr/local/bin/hadolint \
   && echo "${hadolint_sha256}  /usr/local/bin/hadolint" | sha256sum -c - \
   && chmod 0755 /usr/local/bin/hadolint \
+  && GOBIN=/usr/local/bin go install "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" \
   && npm ci --prefix /usr/local/lib/workcell-markdownlint --ignore-scripts --omit=dev \
   && ln -sf /usr/local/lib/workcell-markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint \
   && go version | grep -F "go version go${GO_VERSION} " >/dev/null \
+  && deadcode -h >/dev/null \
   && rustc --version | grep -F "rustc ${RUST_VERSION} " >/dev/null \
   && cargo fmt --version >/dev/null \
   && cargo clippy --version >/dev/null \

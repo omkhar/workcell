@@ -113,6 +113,9 @@ validate_manpage() {
 shell_files=(
   "${ROOT_DIR}/.githooks/pre-commit"
   "${ROOT_DIR}/scripts/bootstrap-dev.sh"
+  "${ROOT_DIR}/scripts/check-dead-code.sh"
+  "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"
+  "${ROOT_DIR}/scripts/check-pr-shape.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/workcell"
@@ -238,6 +241,8 @@ if [[ "${#go_files[@]}" -gt 0 ]]; then
 fi
 go vet ./...
 go test ./...
+"${ROOT_DIR}/scripts/check-dead-code.sh"
+"${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"
 
 json_files=()
 while IFS= read -r path; do

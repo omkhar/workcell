@@ -5,7 +5,24 @@ description: Risk-Aware Commit Notation. Use when creating git commits to determ
 
 # Risk-Aware Commit Notation
 
-All commits in this repo must use Risk-Aware Commit Notation (based on [Arlo's Commit Notation](https://github.com/RefactoringCombos/ArlosCommitNotation)), a risk-based notation where the first characters of every commit message encode risk level and intention.
+All commits in this repo use Risk-Aware Commit Notation. The first characters of
+the subject encode risk level and intention.
+
+## Standing priorities
+
+Always prefer, in order:
+
+1. Simplicity
+2. Correctness
+3. Linting and clean validation
+4. Appropriate test coverage
+5. Security
+6. Performance
+7. Current idiomatic correctness
+
+These priorities apply only inside the repo invariants. Do not trade away the
+runtime boundary, explicit security guarantees, or host-side publication rules
+for convenience.
 
 ## Format
 
@@ -38,10 +55,25 @@ All commits in this repo must use Risk-Aware Commit Notation (based on [Arlo's C
 
 ## Commit Grouping
 
-- **One intention per commit.** Do not mix refactoring, features, bugfixes, or documentation in a single commit. If a task requires both refactoring and a feature change, split them into separate commits (refactoring first, then the feature).
-- **Minimize risk per commit.** Break work into the smallest commits that each achieve the lowest possible risk level. For example, extract a safe refactoring (`.r`) as its own commit before making a risky feature change (`!F`), rather than bundling both into one `!F` commit.
-- **Prefer many small safe commits over fewer risky ones.** A sequence like `.r` then `.r` then `^F` is better than a single `!F` that includes the refactoring.
-- **Keep workflow parity in the same change stream.** When a commit changes a user-visible Workcell workflow, support tier, help surface, contract entry, or validation evidence, land the matching `policy/operator-contract.toml`, `policy/requirements.toml`, help/doc, and test updates in the same series unless the commit message explicitly calls out the staged exception and why it is safe.
+- One intention per commit.
+- Minimize risk per commit.
+- Prefer small safe commits over fewer risky ones.
+- Keep the eventual PR human-reviewable. Do not bundle unrelated fixes,
+  opportunistic cleanup, and behavior changes into one remote review unit.
+  Split broad work before pushing.
+- Sign every commit.
+- Use feature branches. Do not push directly to `main` or rewrite history.
+- Treat final GitHub publication as a host-side action.
+- When a commit changes a user-visible Workcell workflow, support tier, help
+  surface, repo-local operator docs, contract entry, or validation evidence,
+  land the matching contract/help/doc/test updates in the same change stream
+  unless the commit message explains the staged exception and why it is safe.
+- Remove dead code when it is discovered as part of the change, or explicitly
+  justify why it must remain.
+- Remove machine-specific details from public repo surfaces and clean repo
+  detritus before finalizing the change.
+- If commit hooks are bypassed, rerun the equivalent validations manually and
+  record the reason in the working notes or final report.
 
 ## Notation Justification in Commit Messages
 
@@ -57,10 +89,3 @@ Examples:
 - `^b Update call sites for new signature (compiles and tests green; supporting change for ^F above)`
 - `!F Add experimental diff parser (no tests yet; user-visible feature)`
 - `.r Extract helper, no behavior change (automated rename; internal restructure)`
-
-## Examples
-
-- `.r Style: reformat line wrapping in scm_policy_checker.py`
-- `!F Add new endpoint for policy evaluation`
-- `^B Fix cache invalidation on prompt change (regression test added)`
-- `.d Update README with setup instructions`

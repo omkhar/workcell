@@ -58,6 +58,40 @@ git -C "${FIXTURE}" commit -q -m init
 git -C "${FIXTURE}" branch -M main
 git -C "${FIXTURE}" push -q -u origin main >/dev/null
 
+git -C "${FIXTURE}" switch -q -c feature/pr-shape-safe
+printf 'shape gate\n' >"${FIXTURE}/shape-check.txt"
+git -C "${FIXTURE}" add shape-check.txt
+git -C "${FIXTURE}" commit -q -m "shape gate fixture"
+MALICIOUS_HOME="${TMP_DIR}/malicious-home"
+MALICIOUS_DIFF="${TMP_DIR}/malicious-diff.sh"
+MALICIOUS_MARKER="${TMP_DIR}/malicious-diff.marker"
+mkdir -p "${MALICIOUS_HOME}"
+cat >"${MALICIOUS_DIFF}" <<EOF
+#!/bin/sh
+printf 'unexpected diff.external invocation\n' >"${MALICIOUS_MARKER}"
+exit 99
+EOF
+chmod +x "${MALICIOUS_DIFF}"
+cat >"${MALICIOUS_HOME}/.gitconfig" <<EOF
+[diff]
+	external = ${MALICIOUS_DIFF}
+EOF
+shape_check_output="$(
+  HOME="${MALICIOUS_HOME}" "${ROOT_DIR}/scripts/check-pr-shape.sh" \
+    --repo-root "${FIXTURE}" \
+    --base-ref refs/remotes/origin/main \
+    --head-ref HEAD \
+    --max-files 25 \
+    --max-lines 1200 \
+    --max-areas 8 \
+    --max-binaries 0
+)"
+grep -q '^PR shape check passed: files=1 ' <<<"${shape_check_output}"
+test ! -e "${MALICIOUS_MARKER}"
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" branch -D feature/pr-shape-safe >/dev/null
+
 cat >"${FIXTURE}/.git/hooks/pre-commit" <<EOF
 #!/bin/sh
 printf 'pre-commit\n' >"${HOOK_MARKER_DIR}/pre-commit"
@@ -100,6 +134,12 @@ grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${worktree_dry_run}"
 grep -q -- 'switch --no-guess -c feature/publish-scenario' <<<"${worktree_dry_run}"
 grep -q -- ' add -A ' <<<"${worktree_dry_run}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${worktree_dry_run}"
+worktree_fetch_line="$(grep -n -- ' fetch --no-tags --prune origin main' <<<"${worktree_dry_run}" | cut -d: -f1)"
+worktree_shape_line="$(grep -n -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${worktree_dry_run}" | cut -d: -f1)"
+test -n "${worktree_fetch_line}"
+test -n "${worktree_shape_line}"
+test "${worktree_fetch_line}" -lt "${worktree_shape_line}"
+grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${worktree_dry_run}"
 grep -q -- ' push --no-verify -u origin feature/publish-scenario ' <<<"${worktree_dry_run}"
 grep -q -- 'gh pr create --base main --head feature/publish-scenario --title Scenario\\ PR\\ title --draft --body-file' <<<"${worktree_dry_run}"
 
@@ -117,6 +157,12 @@ grep -q '^publish_branch=feature/publish-index$' <<<"${index_dry_run}"
 grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${index_dry_run}"
 grep -q -- 'switch --no-guess -c feature/publish-index' <<<"${index_dry_run}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${index_dry_run}"
+index_fetch_line="$(grep -n -- ' fetch --no-tags --prune origin main' <<<"${index_dry_run}" | cut -d: -f1)"
+index_shape_line="$(grep -n -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${index_dry_run}" | cut -d: -f1)"
+test -n "${index_fetch_line}"
+test -n "${index_shape_line}"
+test "${index_fetch_line}" -lt "${index_shape_line}"
+grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${index_dry_run}"
 if grep -q -- ' add -A ' <<<"${index_dry_run}"; then
   echo "publish-pr index snapshot should not auto-stage the worktree" >&2
   exit 1
@@ -224,5 +270,52 @@ test "${publish_head}" = "${remote_head}"
 git -C "${FIXTURE}" verify-commit "${publish_head}" >/dev/null 2>&1
 test ! -e "${HOOK_MARKER_DIR}/pre-commit"
 test ! -e "${HOOK_MARKER_DIR}/pre-push"
+
+git -C "${FIXTURE}" switch -C main >/dev/null
+git -C "${FIXTURE}" reset -q --hard origin/main
+for index in $(seq 1 26); do
+  printf 'broad %02d\n' "${index}" >"${FIXTURE}/broad-${index}.txt"
+done
+
+set +e
+broad_output="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/publish-too-broad \
+  --gh-bin "${TRUSTED_GH_STUB}" \
+  --title "Broad scenario title" \
+  --body "Broad scenario body" \
+  --commit-message "Broad scenario commit" \
+  2>&1)"
+broad_rc=$?
+set -e
+test "${broad_rc}" -eq 2
+grep -q 'PR shape check failed' <<<"${broad_output}"
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/publish-too-broad; then
+  echo "publish-pr should not push an over-broad branch" >&2
+  exit 1
+fi
+
+git -C "${FIXTURE}" switch -C main >/dev/null
+git -C "${FIXTURE}" reset -q --hard origin/main
+printf '\x00\x01binary\n' >"${FIXTURE}/artifact.bin"
+
+set +e
+binary_output="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/publish-binary \
+  --gh-bin "${TRUSTED_GH_STUB}" \
+  --title "Binary scenario title" \
+  --body "Binary scenario body" \
+  --commit-message "Binary scenario commit" \
+  2>&1)"
+binary_rc=$?
+set -e
+test "${binary_rc}" -eq 2
+grep -q 'PR shape check failed' <<<"${binary_output}"
+grep -q 'binary_files=1 (limit=0)' <<<"${binary_output}"
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/publish-binary; then
+  echo "publish-pr should not push a binary-only branch" >&2
+  exit 1
+fi
 
 echo "Publish-pr scenario passed"

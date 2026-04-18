@@ -525,7 +525,8 @@ set -e
 test "${linked_isolated_status}" -eq 2
 grep -q "Refusing git workspace with admin state outside the mounted workspace: ${LINKED_WORKTREE_PATH}" <<<"${linked_isolated_output}"
 grep -q 'This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path\.' <<<"${linked_isolated_output}"
-grep -q 'Next step: rerun with --session-workspace direct if you want to use the current workspace in place\.' <<<"${linked_isolated_output}"
+grep -q 'To use this workspace on the safe path, create a standard clone at the same location instead\.' <<<"${linked_isolated_output}"
+grep -q 'Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree\.' <<<"${linked_isolated_output}"
 
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
 monitor_env_output="$(

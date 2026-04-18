@@ -1762,12 +1762,6 @@ func policySHA256(policyPath string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func compositePolicySHA256(policySources []PolicySource) string {
-	data, _ := json.Marshal(policySources)
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
 func logicalPolicyPath(policyPath, entrypointRoot Path) string {
 	relative, err := filepath.Rel(entrypointRoot.String(), policyPath.String())
 	if err != nil {

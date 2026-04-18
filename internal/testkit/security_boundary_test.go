@@ -4,6 +4,7 @@
 package testkit
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,5 +153,141 @@ func TestWorkcellBootstrapResolvesRealHomeBeforeGoHostutil(t *testing.T) {
 	}
 	if cacheRootIndex > goHostutilIndex {
 		t.Fatalf("%s exports WORKCELL_GO_CACHE_ROOT after go_hostutil is defined; want cache root fixed first", scriptPath)
+	}
+}
+
+func TestEnsureGoRunEnvFallsBackToPerUserCacheWithoutHome(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "lib", "go-run-env.sh")
+	expected := filepath.Join(tempDir, fmt.Sprintf("workcell-go-%d", os.Getuid()))
+
+	code, output := runBashProbe(t, `set -euo pipefail
+unset HOME XDG_CACHE_HOME WORKCELL_GO_CACHE_ROOT
+source "`+scriptPath+`"
+ensure_go_run_env
+printf '%s\n' "${WORKCELL_GO_CACHE_ROOT}"
+`, map[string]string{
+		"HOME":                   "",
+		"TMPDIR":                 tempDir,
+		"XDG_CACHE_HOME":         "",
+		"WORKCELL_GO_CACHE_ROOT": "",
+	})
+	if code != 0 {
+		t.Fatalf("probe exit code = %d output=%q", code, output)
+	}
+	if strings.TrimSpace(output) != expected {
+		t.Fatalf("WORKCELL_GO_CACHE_ROOT = %q, want %q", strings.TrimSpace(output), expected)
+	}
+}
+
+func TestCheckPRShapeIgnoresAmbientGitConfig(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	if output, err := exec.Command("git", "init", "--bare", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v output=%q", err, string(output))
+	}
+	if output, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v output=%q", err, string(output))
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v output=%q", args, err, string(output))
+		}
+	}
+
+	runGit("config", "user.name", "Workcell Test")
+	runGit("config", "user.email", "workcell-test@example.com")
+	runGit("remote", "add", "origin", origin)
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "tracked.txt")
+	runGit("commit", "-m", "init")
+	runGit("branch", "-M", "main")
+	runGit("push", "-u", "origin", "main")
+	runGit("switch", "-c", "feature/pr-shape-safe")
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("commit", "-am", "feature change")
+
+	maliciousHome := t.TempDir()
+	maliciousMarker := filepath.Join(t.TempDir(), "diff.marker")
+	maliciousDiff := filepath.Join(t.TempDir(), "malicious-diff.sh")
+	if err := os.WriteFile(maliciousDiff, []byte("#!/bin/sh\nprintf 'unexpected diff.external invocation\\n' >\""+maliciousMarker+"\"\nexit 99\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(maliciousHome, ".gitconfig"), []byte("[diff]\n\texternal = "+maliciousDiff+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "check-pr-shape.sh")
+	code, output := runBashProbe(t, `set -euo pipefail
+"`+scriptPath+`" --repo-root "`+repo+`" --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0
+`, map[string]string{
+		"HOME": maliciousHome,
+	})
+	if code != 0 {
+		t.Fatalf("probe exit code = %d output=%q", code, output)
+	}
+	if strings.Contains(output, "failed") {
+		t.Fatalf("check-pr-shape reported failure under ambient git config: %q", output)
+	}
+	if _, err := os.Stat(maliciousMarker); !os.IsNotExist(err) {
+		t.Fatalf("malicious diff.external hook unexpectedly ran; marker error=%v", err)
+	}
+}
+
+func TestCheckPRShapeCountsRenameDestinationArea(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	if output, err := exec.Command("git", "init", "--bare", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v output=%q", err, string(output))
+	}
+	if output, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v output=%q", err, string(output))
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v output=%q", args, err, string(output))
+		}
+	}
+
+	runGit("config", "user.name", "Workcell Test")
+	runGit("config", "user.email", "workcell-test@example.com")
+	runGit("remote", "add", "origin", origin)
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "tracked.txt")
+	runGit("commit", "-m", "init")
+	runGit("branch", "-M", "main")
+	runGit("push", "-u", "origin", "main")
+	runGit("switch", "-c", "feature/rename-area")
+	if err := os.MkdirAll(filepath.Join(repo, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit("mv", "tracked.txt", "docs/renamed.txt")
+	runGit("commit", "-m", "rename into docs")
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "check-pr-shape.sh")
+	code, output := runBashProbe(t, `set -euo pipefail
+"`+scriptPath+`" --repo-root "`+repo+`" --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 1 --max-binaries 0
+`, nil)
+	if code == 0 {
+		t.Fatalf("check-pr-shape unexpectedly accepted a rename into a second top-level area: %q", output)
+	}
+	if !strings.Contains(output, "changed_areas=2") {
+		t.Fatalf("check-pr-shape did not count both rename areas: %q", output)
 	}
 }
