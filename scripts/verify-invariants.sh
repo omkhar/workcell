@@ -2839,11 +2839,11 @@ go_cache_root_actual="$(
     HOME="${REAL_HOME}" \
     LC_ALL=C \
     LANG=C \
-    bash -lc '
-      source "'"${ROOT_DIR}"'/scripts/lib/go-run-env.sh"
+    bash --noprofile --norc -c "
+      source \"${ROOT_DIR}/scripts/lib/go-run-env.sh\"
       ensure_go_run_env
-      printf "%s\n" "${WORKCELL_GO_CACHE_ROOT}"
-    '
+      printf '%s\n' \"\${WORKCELL_GO_CACHE_ROOT}\"
+    "
 )"
 if [[ "${go_cache_root_actual}" != "${go_cache_root_expected}" ]]; then
   echo "Expected ensure_go_run_env to default to a stable per-user cache root, got: ${go_cache_root_actual}" >&2
