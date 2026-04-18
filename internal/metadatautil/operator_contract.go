@@ -311,7 +311,7 @@ func optionalStringSlice(spec map[string]any, key string) ([]string, error) {
 		return nil, err
 	}
 	if !found {
-		return nil, nil
+		return nil, fmt.Errorf("must be an array of strings")
 	}
 	for _, item := range values {
 		if strings.TrimSpace(item) == "" {

@@ -225,6 +225,34 @@ func TestLoadOperatorContractRejectsAliasesWithoutAliasProbes(t *testing.T) {
 	}
 }
 
+func TestLoadOperatorContractRejectsWrongTypedOptionalStringSlice(t *testing.T) {
+	root := t.TempDir()
+	writeOperatorContractFixture(t, root, true)
+
+	contractPath := filepath.Join(root, "policy", "operator-contract.toml")
+	contract, err := readText(contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract = strings.Replace(
+		contract,
+		`aliases = ["workcell logs audit|debug|file-trace|transcript"]`,
+		`aliases = "workcell logs audit|debug|file-trace|transcript"`,
+		1,
+	)
+	if err := os.WriteFile(contractPath, []byte(contract), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = loadOperatorContract(contractPath)
+	if err == nil {
+		t.Fatal("loadOperatorContract() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "aliases") || !strings.Contains(err.Error(), "array of strings") {
+		t.Fatalf("loadOperatorContract() error = %v, want typed aliases failure", err)
+	}
+}
+
 func TestStripManpageFormattingRemovesBackspaceMarkup(t *testing.T) {
 	input := "w\bwo\bor\brk\bkc\bce\bel\bll\bl\n"
 	if got := stripManpageFormatting(input); got != "workcell\n" {

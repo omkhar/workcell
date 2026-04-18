@@ -358,6 +358,7 @@ EOF
     logs)
       cat <<'EOF'
 Usage: workcell logs <audit|debug|file-trace|transcript> [launch-options]
+Print the latest retained log of the selected type.
 Compatibility alias for: workcell --logs audit|debug|file-trace|transcript
 See workcell --help for the full launch-option list.
 EOF

@@ -167,7 +167,7 @@ func optionalRequirementWorkflows(table map[string]any) ([]string, error) {
 		return nil, err
 	}
 	if !found {
-		return nil, nil
+		return nil, fmt.Errorf("must be an array of strings")
 	}
 	for _, workflowID := range workflows {
 		if strings.TrimSpace(workflowID) == "" {

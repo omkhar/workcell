@@ -193,6 +193,47 @@ docs = ["docs/enterprise-rollout.md"]
 	}
 }
 
+func TestValidateRequirementsRejectsWrongTypedWorkflowMetadata(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{
+		"README.md",
+		"scripts/verify-example.sh",
+		"internal/example/example_test.go",
+	} {
+		mustWriteRequirementFixture(t, root, path)
+	}
+
+	requirementsPath := filepath.Join(root, "policy", "requirements.toml")
+	if err := os.MkdirAll(filepath.Dir(requirementsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requirementsPath, []byte(`version = 1
+
+[functional.FR-001]
+title = "Managed launch"
+summary = "Launch the provider inside the managed runtime."
+workflows = "session_start"
+evidence = ["scripts/verify-example.sh"]
+docs = ["README.md"]
+
+[nonfunctional.NFR-001]
+title = "Requirement traceability"
+summary = "Every requirement cites automated evidence."
+evidence = ["internal/example/example_test.go"]
+docs = ["README.md"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ValidateRequirements(root, requirementsPath)
+	if err == nil {
+		t.Fatal("ValidateRequirements() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "workflows") || !strings.Contains(err.Error(), "array of strings") {
+		t.Fatalf("ValidateRequirements() error = %v, want typed workflows failure", err)
+	}
+}
+
 func TestValidateRequirementsRejectsMissingEvidencePath(t *testing.T) {
 	root := t.TempDir()
 	mustWriteRequirementFixture(t, root, "README.md")
