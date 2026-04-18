@@ -12,6 +12,8 @@ trap cleanup EXIT
 WORKSPACE="${TMP_DIR}/workspace"
 AUTH_ROOT="${TMP_DIR}/auth-status"
 mkdir -p "${WORKSPACE}" "${AUTH_ROOT}"
+git -C "${WORKSPACE}" init -q
+printf 'scenario workspace\n' >"${WORKSPACE}/README.md"
 
 printf '{}\n' >"${AUTH_ROOT}/auth.json"
 chmod 0600 "${AUTH_ROOT}/auth.json"
@@ -62,6 +64,17 @@ run_auth_status() {
     --auth-status
 }
 
+run_launch_dry_run() {
+  local agent="$1"
+
+  "${ROOT_DIR}/scripts/workcell" \
+    --agent "${agent}" \
+    --workspace "${WORKSPACE}" \
+    --injection-policy "${AUTH_ROOT}/policy.toml" \
+    --dry-run \
+    >"${TMP_DIR}/launch-${agent}.stdout" 2>"${TMP_DIR}/launch-${agent}.stderr"
+}
+
 codex_output="$(run_auth_status codex)"
 grep -Eq '^credential_keys=(codex_auth,github_hosts|github_hosts,codex_auth)$' <<<"${codex_output}"
 grep -q '^provider_auth_ready_states=codex_auth:ready$' <<<"${codex_output}"
@@ -98,4 +111,16 @@ grep -q '^provider_auth_modes=gemini_env$' <<<"${gemini_output}"
 grep -q '^shared_auth_modes=github_hosts$' <<<"${gemini_output}"
 grep -q '^github_auth_present=1$' <<<"${gemini_output}"
 
-echo "Auth-status scenario passed"
+for agent in codex claude gemini; do
+  run_launch_dry_run "${agent}"
+  grep -q "^profile=.* mode=strict agent=${agent} " "${TMP_DIR}/launch-${agent}.stderr"
+  grep -q '^workspace_control_plane=masked$' "${TMP_DIR}/launch-${agent}.stderr"
+  grep -q '^session_assurance_initial=managed-mutable$' "${TMP_DIR}/launch-${agent}.stderr"
+  grep -q '^execution_path=managed-tier1 audit_log=' "${TMP_DIR}/launch-${agent}.stderr"
+done
+
+grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=(codex_auth,github_hosts|github_hosts,codex_auth) ssh_injected=1$' "${TMP_DIR}/launch-codex.stderr"
+grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=claude_api_key,claude_auth,github_hosts ssh_injected=1$' "${TMP_DIR}/launch-claude.stderr"
+grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=(gemini_env,github_hosts|github_hosts,gemini_env) ssh_injected=1$' "${TMP_DIR}/launch-gemini.stderr"
+
+echo "Auth-status and launch scenario passed"

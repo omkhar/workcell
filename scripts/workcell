@@ -1270,10 +1270,6 @@ session_require_live_detached_container() {
   local container_state=""
 
   session_require_detached_runtime_metadata "${action}" "${session_id}" || return 1
-  if [[ "${require_monitor_live}" -eq 1 ]] && [[ -n "${SESSION_META_MONITOR_PID:-}" ]] && ! session_monitor_pid_is_live; then
-    echo "session ${action} requires a live detached session monitor: ${session_id}" >&2
-    return 1
-  fi
   case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
     starting | running) ;;
     *)
@@ -1281,6 +1277,10 @@ session_require_live_detached_container() {
       return 1
       ;;
   esac
+  if [[ "${require_monitor_live}" -eq 1 ]] && [[ -n "${SESSION_META_MONITOR_PID:-}" ]] && ! session_monitor_pid_is_live; then
+    echo "session ${action} requires a live detached session monitor: ${session_id}" >&2
+    return 1
+  fi
   if ! container_state="$(session_container_live_state "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}" 2>/dev/null)"; then
     echo "session ${action} could not confirm a live detached session: ${session_id}" >&2
     return 1
@@ -1364,6 +1364,25 @@ revalidate_recorded_host_output_path() {
     return 1
   }
   if ! resolved_path="$(resolve_host_output_candidate "${recorded_path}")"; then
+    echo "Workcell blocked host output path after launch: ${recorded_path}" >&2
+    return 1
+  fi
+  if [[ "${resolved_path}" != "${recorded_path}" ]]; then
+    echo "Workcell blocked host output path after launch: ${recorded_path}" >&2
+    return 1
+  fi
+  printf '%s\n' "${resolved_path}"
+}
+
+revalidate_recorded_host_output_directory() {
+  local recorded_path="$1"
+  local resolved_path=""
+
+  [[ -n "${recorded_path}" ]] || {
+    echo "Recorded host output directory is required." >&2
+    return 1
+  }
+  if ! resolved_path="$(resolve_host_output_directory_candidate "${recorded_path}")"; then
     echo "Workcell blocked host output path after launch: ${recorded_path}" >&2
     return 1
   fi
@@ -2229,6 +2248,10 @@ resolve_host_path() {
 
 resolve_host_output_candidate() {
   go_hostutil launcher resolve-host-output-candidate "$1"
+}
+
+resolve_host_output_directory_candidate() {
+  go_hostutil launcher resolve-host-output-directory-candidate "$1"
 }
 
 resolve_existing_directory_or_die() {
@@ -3223,8 +3246,14 @@ session_delete_resolve_file_artifact() {
 session_delete_resolve_dir_artifact() {
   local label="$1"
   local recorded_path="$2"
+  local resolved_path=""
 
-  session_delete_resolve_file_artifact "${label}" "${recorded_path}"
+  [[ -n "${recorded_path}" ]] || return 1
+  if ! resolved_path="$(revalidate_recorded_host_output_directory "${recorded_path}")"; then
+    echo "session delete refused recorded ${label} path after launch: ${recorded_path}" >&2
+    return 1
+  fi
+  printf '%s\n' "${resolved_path}"
 }
 
 session_delete_main() {

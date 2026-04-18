@@ -1,16 +1,44 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 # shellcheck shell=bash
 
+default_go_cache_root() {
+  if [[ -n "${WORKCELL_GO_CACHE_ROOT:-}" ]]; then
+    printf '%s\n' "${WORKCELL_GO_CACHE_ROOT}"
+    return 0
+  fi
+  if [[ -n "${HOME:-}" ]]; then
+    case "$(uname -s 2>/dev/null || true)" in
+      Darwin)
+        printf '%s\n' "${HOME}/Library/Caches/workcell/go"
+        return 0
+        ;;
+    esac
+  fi
+  if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+    printf '%s\n' "${XDG_CACHE_HOME}/workcell/go"
+    return 0
+  fi
+  if [[ -n "${HOME:-}" ]]; then
+    printf '%s\n' "${HOME}/.cache/workcell/go"
+    return 0
+  fi
+  printf '%s\n' "${TMPDIR:-/tmp}/workcell-go"
+}
+
 ensure_go_run_env() {
-  local cache_root="${WORKCELL_GO_CACHE_ROOT:-${TMPDIR:-/tmp}/workcell-go}"
+  local cache_root
+  cache_root="$(default_go_cache_root)"
   local gopath="${GOPATH:-${cache_root}/gopath}"
   local gomodcache="${GOMODCACHE:-${cache_root}/mod-cache}"
   local gocache="${GOCACHE:-${cache_root}/build-cache}"
 
+  mkdir -p "${cache_root}"
   mkdir -p "${gopath}" "${gomodcache}" "${gocache}"
+  chmod 0700 "${cache_root}" 2>/dev/null || true
   export GOPATH="${gopath}"
   export GOMODCACHE="${gomodcache}"
   export GOCACHE="${gocache}"
+  export WORKCELL_GO_CACHE_ROOT="${cache_root}"
 }
 
 resolve_go_bin() {

@@ -215,3 +215,26 @@ func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 		t.Fatalf("session list output = %q, want live attached record with attached control", got)
 	}
 }
+
+func TestResolveHostOutputDirectoryCandidateRejectsRegularFile(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "session-audit")
+	if err := os.WriteFile(filePath, []byte("not-a-directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := hostutil.ResolveHostOutputDirectoryCandidate(filePath)
+	if err == nil {
+		t.Fatal("ResolveHostOutputDirectoryCandidate unexpectedly accepted a regular file")
+	}
+	if !strings.Contains(err.Error(), "directory or a new directory path") {
+		t.Fatalf("ResolveHostOutputDirectoryCandidate error = %q, want directory-specific guidance", err)
+	}
+}
+
+func TestLauncherUsageListsDirectoryCandidateResolver(t *testing.T) {
+	if err := launcherUsage(); err == nil {
+		t.Fatal("launcherUsage unexpectedly returned nil")
+	} else if !strings.Contains(err.Error(), "resolve-host-output-directory-candidate") {
+		t.Fatalf("launcherUsage error = %q, want resolve-host-output-directory-candidate", err)
+	}
+}

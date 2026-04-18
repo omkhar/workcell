@@ -76,6 +76,40 @@ export RELEASE_TITLE="Release ${VERSION}"
 If a previously pushed release tag already failed, do not reuse it. Bump the
 patch version instead.
 
+## Release mode
+
+Use one of these modes explicitly:
+
+- `review-gated`: default for interactive release work with the maintainer in
+  the thread. Stop before each irreversible release action, present a short
+  review packet, and wait for maintainer feedback or approval.
+- `autonomous`: only when the maintainer explicitly asks for an end-to-end
+  release run without pauses between release gates.
+
+If the operator has not clearly opted into `autonomous`, use `review-gated`.
+
+## Maintainer checkpoints
+
+In `review-gated` mode, stop before each of these actions:
+
+1. publishing the release PR
+2. marking the release PR ready or merging it
+3. pushing the signed release tag
+4. approving the `release` environment
+5. declaring the release complete and cleaning up lingering release branches or
+   temporary workspaces
+
+Each checkpoint packet should stay short and include:
+
+- the exact next action
+- the exact branch, PR, tag, or commit SHA involved
+- current CI and comment-sweep state
+- documentation and roadmap status
+- any open risks, tradeoffs, or deviations from the normal path
+
+If the maintainer gives feedback, incorporate it and refresh the packet before
+continuing.
+
 ## PR comment sweep
 
 Every PR involved in the release path must go through a comment sweep.
@@ -297,6 +331,9 @@ Prepare and publish the release PR with the host-side helper:
 ./scripts/workcell publish-pr
 ```
 
+In `review-gated` mode, stop with the first checkpoint packet before running
+the publish step.
+
 As soon as the PR exists, perform the first PR comment sweep.
 
 Before merge in the current single-maintainer path, leave a public PR comment
@@ -337,6 +374,9 @@ When required checks turn green, perform the second PR comment sweep.
 
 Then repeat the documentation review on the exact release PR diff before
 deciding the branch is ready to merge.
+
+In `review-gated` mode, stop with the second checkpoint packet before marking
+the release PR ready or merging it.
 
 Do not merge while required checks are failing or while comment sweeps are
 incomplete.
@@ -397,6 +437,9 @@ gh api -X PUT repos/"${REPO}"/immutable-releases
 
 ## 9. Create and push the signed tag
 
+In `review-gated` mode, stop with the third checkpoint packet before pushing
+the signed tag.
+
 Create a signed tag on the merged `main` commit:
 
 ```sh
@@ -421,6 +464,9 @@ If the workflow enters a waiting state for the `release` environment:
 1. verify that preflight and install verification jobs are green
 2. approve the environment in the standard single-maintainer path
 3. continue watching until publication finishes
+
+In `review-gated` mode, stop with the fourth checkpoint packet before approving
+the environment.
 
 In immutable-release mode, the release publisher must create or reuse a draft
 release, upload the full artifact set into that draft, and only then publish
@@ -471,6 +517,9 @@ If `isImmutable` is false, treat that as a hosted-control regression to fix.
 
 ## 12. Final closeout
 
+In `review-gated` mode, stop with the fifth checkpoint packet before declaring
+the release complete.
+
 At the end of the release, confirm all of the following:
 
 - no open PRs remain that should have been part of the release
@@ -483,6 +532,10 @@ At the end of the release, confirm all of the following:
 - the `Release` workflow completed successfully
 - the GitHub release exists with uploaded assets
 - the GitHub release is immutable
+- stale remote release-path branches were reviewed for overlap and either merged
+  intentionally or deleted as superseded work
+- temporary release worktrees or clones were removed if the requested outcome
+  was clean local state
 
 ## Recovery notes
 
