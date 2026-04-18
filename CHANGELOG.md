@@ -27,9 +27,10 @@ Releases.
   module cache under `/tmp`, which could make `workcell --agent claude` fail
   before launch with `no required module provides package golang.org/x/sys/unix`
 - add real macOS integration coverage that launches Workcell-managed Codex,
-  Claude, and Gemini version probes and exercises detached session
-  `attach|send|stop|delete` against live and terminal workloads so launcher
-  and control-plane regressions fail earlier in release validation
+  Claude, and Gemini version probes and exercises the host detached-session
+  control plane against live and terminal workloads, including
+  `list|show|logs|timeline|export|attach|send|stop|delete`, so launcher and
+  control-plane regressions fail earlier in release validation
 
 ## v0.10.2 - 2026-04-17
 

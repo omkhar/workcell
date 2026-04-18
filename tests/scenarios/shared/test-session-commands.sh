@@ -1749,6 +1749,7 @@ EOF_JSON
     FILE_TRACE_LOG="${PROFILE_DIR}/${SESSION_ID}.file-trace.log"
     TRANSCRIPT_LOG="${PROFILE_DIR}/${SESSION_ID}.transcript.log"
     STATE_FILE="${AUDIT_DIR}/session-monitor.env"
+    EXPORT_PATH="${PROFILE_DIR}/${SESSION_ID}.export.json"
     WORKSPACE="$(mktemp -d "${REAL_HOME}/.colima/workcell-cli-lifecycle-workspace.XXXXXX")"
     FIXTURE_DIR="${PROFILE_DIR}/fixture"
     CONTAINER_NAME="workcell-cli-lifecycle-$$"
@@ -1808,9 +1809,29 @@ EOF_JSON
 }
 EOF_JSON
 
+    list_running="$("${ROOT_DIR}/scripts/workcell" session list --json --colima-profile "${PROFILE}")"
+    show_running="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_ID}")"
+    grep -q "\"session_id\": \"${SESSION_ID}\"" <<<"${list_running}"
+    grep -q "\"status\": \"running\"" <<<"${show_running}"
+    grep -q "\"live_status\": \"running\"" <<<"${show_running}"
+
     send_output="$("${ROOT_DIR}/scripts/workcell" session send --id "${SESSION_ID}" --message resume)"
+    set +e
+    running_delete_stderr="$("${ROOT_DIR}/scripts/workcell" session delete --id "${SESSION_ID}" 2>&1 >/dev/null)"
+    running_delete_rc="$?"
+    set -e
+    [[ "${running_delete_rc}" -ne 0 ]] || {
+      echo "session delete unexpectedly accepted a live detached session on the public CLI" >&2
+      exit 1
+    }
+    grep -q "session delete only works for exited, failed, or otherwise stopped sessions: ${SESSION_ID}" <<<"${running_delete_stderr}"
+    grep -q "For detached sessions, run: workcell session stop --id ${SESSION_ID}" <<<"${running_delete_stderr}"
     sleep 1
     stdin_payload="$(python3 -c '"'"'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text().rstrip("\\n"))'"'"' "${FIXTURE_DIR}/stdin.log")"
+    audit_log_running="$("${ROOT_DIR}/scripts/workcell" session logs --id "${SESSION_ID}" --kind audit)"
+    timeline_running="$("${ROOT_DIR}/scripts/workcell" session timeline --id "${SESSION_ID}")"
+    grep -q "event=command session_id=${SESSION_ID} source=host-cli command=session-send argv=resume" <<<"${audit_log_running}"
+    grep -q "event=command session_id=${SESSION_ID}" <<<"${timeline_running}"
     kill "${MONITOR_PID}" >/dev/null 2>&1 || true
     wait "${MONITOR_PID}" >/dev/null 2>&1 || true
     MONITOR_PID=""
@@ -1826,6 +1847,30 @@ live_status = record.get("live_status")
 if status != "exited" or live_status != "stopped":
     raise SystemExit(f"unexpected record state: {status} {live_status}")
 PY
+    printf "debug-log\n" >"${DEBUG_LOG}"
+    printf "file-trace-log\n" >"${FILE_TRACE_LOG}"
+    printf "transcript-log\n" >"${TRANSCRIPT_LOG}"
+    list_stopped="$("${ROOT_DIR}/scripts/workcell" session list --json --colima-profile "${PROFILE}")"
+    show_stopped="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_ID}")"
+    audit_log_stopped="$("${ROOT_DIR}/scripts/workcell" session logs --id "${SESSION_ID}" --kind audit)"
+    debug_log_output="$("${ROOT_DIR}/scripts/workcell" session logs --id "${SESSION_ID}" --kind debug)"
+    file_trace_log_output="$("${ROOT_DIR}/scripts/workcell" session logs --id "${SESSION_ID}" --kind file-trace)"
+    transcript_log_output="$("${ROOT_DIR}/scripts/workcell" session logs --id "${SESSION_ID}" --kind transcript)"
+    timeline_stopped="$("${ROOT_DIR}/scripts/workcell" session timeline --id "${SESSION_ID}")"
+    export_output="$("${ROOT_DIR}/scripts/workcell" session export --id "${SESSION_ID}" --output "${EXPORT_PATH}")"
+    grep -q "\"session_id\": \"${SESSION_ID}\"" <<<"${list_stopped}"
+    grep -q "\"live_status\": \"stopped\"" <<<"${show_stopped}"
+    grep -q "\"status\": \"exited\"" <<<"${show_stopped}"
+    grep -q "event=stop-request session_id=${SESSION_ID}" <<<"${audit_log_stopped}"
+    grep -q "event=exit session_id=${SESSION_ID}" <<<"${audit_log_stopped}"
+    grep -q "^debug-log$" <<<"${debug_log_output}"
+    grep -q "^file-trace-log$" <<<"${file_trace_log_output}"
+    grep -q "^transcript-log$" <<<"${transcript_log_output}"
+    grep -q "event=stop-request session_id=${SESSION_ID}" <<<"${timeline_stopped}"
+    grep -q "event=exit session_id=${SESSION_ID}" <<<"${timeline_stopped}"
+    grep -q "^session_export=${EXPORT_PATH}$" <<<"${export_output}"
+    grep -q "\"session_id\": \"${SESSION_ID}\"" "${EXPORT_PATH}"
+    grep -q "\"audit_records\"" "${EXPORT_PATH}"
 
     set +e
     dead_send_stderr="$("${ROOT_DIR}/scripts/workcell" session send --id "${SESSION_ID}" --message after 2>&1 >/dev/null)"
