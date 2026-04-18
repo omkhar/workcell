@@ -131,6 +131,21 @@ run_workspace_safe_git_command_in_dir() {
   run_clean_host_command_in_dir "${workspace}" "${git_command[@]}"
 }
 
+record_changed_area() {
+  local path="$1"
+  local area=""
+
+  [[ -n "${path}" ]] || return 0
+  if [[ "${path}" == */* ]]; then
+    area="${path%%/*}"
+  else
+    area="repo-root"
+  fi
+  if ! grep -Fxq -- "${area}" <<<"${changed_areas_text}"; then
+    changed_areas_text+="${area}"$'\n'
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage: check-pr-shape.sh [options]
@@ -277,15 +292,20 @@ while IFS=$'\t' read -r additions deletions path; do
   else
     changed_lines=$((changed_lines + additions + deletions))
   fi
-  if [[ "${path}" == */* ]]; then
-    area="${path%%/*}"
-  else
-    area="repo-root"
-  fi
-  if ! grep -Fxq -- "${area}" <<<"${changed_areas_text}"; then
-    changed_areas_text+="${area}"$'\n'
-  fi
 done < <(run_workspace_safe_git_command_in_dir "${REPO_ROOT}" diff --numstat --find-renames "${merge_base}..${head_commit}")
+
+while IFS=$'\t' read -r status first_path second_path; do
+  [[ -n "${status:-}" ]] || continue
+  case "${status}" in
+    R* | C*)
+      record_changed_area "${first_path:-}"
+      record_changed_area "${second_path:-}"
+      ;;
+    *)
+      record_changed_area "${first_path:-}"
+      ;;
+  esac
+done < <(run_workspace_safe_git_command_in_dir "${REPO_ROOT}" diff --name-status --find-renames "${merge_base}..${head_commit}")
 
 changed_area_count="$(printf '%s' "${changed_areas_text}" | grep -c . || true)"
 

@@ -243,3 +243,51 @@ func TestCheckPRShapeIgnoresAmbientGitConfig(t *testing.T) {
 		t.Fatalf("malicious diff.external hook unexpectedly ran; marker error=%v", err)
 	}
 }
+
+func TestCheckPRShapeCountsRenameDestinationArea(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	if output, err := exec.Command("git", "init", "--bare", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v output=%q", err, string(output))
+	}
+	if output, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v output=%q", err, string(output))
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v output=%q", args, err, string(output))
+		}
+	}
+
+	runGit("config", "user.name", "Workcell Test")
+	runGit("config", "user.email", "workcell-test@example.com")
+	runGit("remote", "add", "origin", origin)
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "tracked.txt")
+	runGit("commit", "-m", "init")
+	runGit("branch", "-M", "main")
+	runGit("push", "-u", "origin", "main")
+	runGit("switch", "-c", "feature/rename-area")
+	if err := os.MkdirAll(filepath.Join(repo, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit("mv", "tracked.txt", "docs/renamed.txt")
+	runGit("commit", "-m", "rename into docs")
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "check-pr-shape.sh")
+	code, output := runBashProbe(t, `set -euo pipefail
+"`+scriptPath+`" --repo-root "`+repo+`" --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 1 --max-binaries 0
+`, nil)
+	if code == 0 {
+		t.Fatalf("check-pr-shape unexpectedly accepted a rename into a second top-level area: %q", output)
+	}
+	if !strings.Contains(output, "changed_areas=2") {
+		t.Fatalf("check-pr-shape did not count both rename areas: %q", output)
+	}
+}
