@@ -205,7 +205,7 @@ func validateCIWorkflowPRShapeFlow(ciWorkflow string) error {
 		"fetch-depth: 0",
 		"WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}",
 		"Check pull request shape",
-		`git fetch --no-tags --prune --depth=1 origin "${WORKCELL_PR_BASE_REF}"`,
+		`git fetch --no-tags --prune origin "${WORKCELL_PR_BASE_REF}"`,
 		`./scripts/check-pr-shape.sh --base-ref "origin/${WORKCELL_PR_BASE_REF}" --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0`,
 		"Skip outside pull requests",
 		`PR shape gate applies only to pull requests.`,
