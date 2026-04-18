@@ -86,3 +86,45 @@ func TestCheckPublicRepoHygieneRejectsExamplePrefixedUsername(t *testing.T) {
 		t.Fatalf("output did not include the leaked path: %s", output)
 	}
 }
+
+func TestCheckPublicRepoHygieneRejectsBacktickWrappedHomePath(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := writePublicRepoHygieneFixture(t, "Leaked markdown path: `/Users/alice/workcell`")
+	cmd := exec.Command("/bin/bash", scriptPath)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("check-public-repo-hygiene unexpectedly accepted a backtick-wrapped absolute home path")
+	}
+	if !strings.Contains(string(output), "/Users/alice/workcell") {
+		t.Fatalf("output did not include the leaked path: %s", output)
+	}
+}
+
+func TestCheckPublicRepoHygieneRejectsAngleBracketWrappedHomePath(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := writePublicRepoHygieneFixture(t, "Leaked markdown target: </Users/alice/workcell>")
+	cmd := exec.Command("/bin/bash", scriptPath)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("check-public-repo-hygiene unexpectedly accepted an angle-bracket-wrapped absolute home path")
+	}
+	if !strings.Contains(string(output), "/Users/alice/workcell") {
+		t.Fatalf("output did not include the leaked path: %s", output)
+	}
+}
+
+func TestCheckPublicRepoHygieneIgnoresURLSegments(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := writePublicRepoHygieneFixture(t, "Legitimate URL: https://example.com/home/alice/docs")
+	cmd := exec.Command("/bin/bash", scriptPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("check-public-repo-hygiene rejected a URL segment: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "Public repo hygiene check passed.") {
+		t.Fatalf("unexpected output: %s", output)
+	}
+}

@@ -31,15 +31,19 @@ done < <(
 
 check_public_surfaces() {
   local findings
-  local path_regex='/Users/[^[:space:]/]+([/[:punct:]]|$)|/home/[^[:space:]/]+([/[:punct:]]|$)'
+  local path_prefix_regex
+  local path_regex
+
+  path_prefix_regex='(^|[^[:alnum:]/._~-])'
+  path_regex="${path_prefix_regex}(/Users/[^[:space:]/]+([/[:punct:]]|$)|/home/[^[:space:]/]+([/[:punct:]]|$))"
   findings="$(
     if command -v rg >/dev/null 2>&1; then
       rg -n "${path_regex}" "${public_files[@]}" || true
     else
       grep -HnE "${path_regex}" "${public_files[@]}" || true
     fi |
-      grep -vE '/Users/example(/|$)' |
-      grep -vE '/home/example(/|$)' || true
+      grep -vE "${path_prefix_regex}/Users/example(/|$)" |
+      grep -vE "${path_prefix_regex}/home/example(/|$)" || true
   )"
   if [[ -n "${findings}" ]]; then
     echo "Public-facing repo files contain machine-specific absolute home paths:" >&2
