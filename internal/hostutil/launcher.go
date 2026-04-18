@@ -283,7 +283,7 @@ func DirectMountCacheKey(hostSource, mountPath string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-func ResolveHostOutputCandidate(raw string) (string, error) {
+func resolveHostOutputCandidate(raw string, allowExistingDir bool) (string, error) {
 	if raw == "" {
 		return "", errors.New("host output path is required")
 	}
@@ -316,10 +316,27 @@ func ResolveHostOutputCandidate(raw string) (string, error) {
 		current = filepath.Dir(current)
 	}
 
-	if info, err := os.Stat(target); err == nil && !info.Mode().IsRegular() {
+	if info, err := os.Stat(target); err == nil {
+		if allowExistingDir {
+			if info.IsDir() {
+				return target, nil
+			}
+			return "", fmt.Errorf("host output path must be a directory or a new directory path: %s", target)
+		}
+		if info.Mode().IsRegular() {
+			return target, nil
+		}
 		return "", fmt.Errorf("host output path must be a regular file or a new file path: %s", target)
 	}
 	return target, nil
+}
+
+func ResolveHostOutputCandidate(raw string) (string, error) {
+	return resolveHostOutputCandidate(raw, false)
+}
+
+func ResolveHostOutputDirectoryCandidate(raw string) (string, error) {
+	return resolveHostOutputCandidate(raw, true)
 }
 
 func CleanupStaleInjectionBundles(bundleParent string) error {

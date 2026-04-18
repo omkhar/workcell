@@ -15,9 +15,14 @@ SESSION_DELETE="20260408T113000Z-22666666-$$"
 SESSION_DELETE_RUNNING="20260408T113500Z-22777777-$$"
 SESSION_DIRTY="20260408T120000Z-33333333-$$"
 SESSION_TAMPERED="20260408T140000Z-55555555-$$"
+CLI_SESSION_FIXTURE_IMAGE="workcell-session-cli-fixture:test-$$"
+CLI_SESSION_FIXTURE_BUILD_DIR="${TMP_DIR}/session-cli-fixture-build"
 WORKCELL_FUNCTIONS_COPY="${ROOT_DIR}/scripts/.workcell-test-functions-$$"
 
 cleanup() {
+  if [[ -n "${CLI_SESSION_FIXTURE_IMAGE:-}" ]]; then
+    docker image rm -f "${CLI_SESSION_FIXTURE_IMAGE}" >/dev/null 2>&1 || true
+  fi
   rm -f "${WORKCELL_FUNCTIONS_COPY}"
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
   rm -rf "${TMP_DIR}"
@@ -1622,6 +1627,279 @@ grep -q 'event=attach session_id=detached-lifecycle' "${SESSION_LIFECYCLE_AUDIT_
 grep -q 'event=command session_id=detached-lifecycle source=host-cli command=session-send argv=resume' "${SESSION_LIFECYCLE_AUDIT_LOG}"
 grep -q 'event=stop-request session_id=detached-lifecycle' "${SESSION_LIFECYCLE_AUDIT_LOG}"
 grep -q 'event=exit session_id=detached-lifecycle source=host-stop-fallback exit_status=0 final_assurance=managed-mutable' "${SESSION_LIFECYCLE_AUDIT_LOG}"
+
+docker_server_arch="$(docker version --format '{{.Server.Arch}}')"
+case "${docker_server_arch}" in
+  amd64 | arm64)
+    fixture_goarch="${docker_server_arch}"
+    ;;
+  x86_64)
+    fixture_goarch="amd64"
+    ;;
+  aarch64)
+    fixture_goarch="arm64"
+    ;;
+  *)
+    echo "Unsupported Docker server architecture for CLI session fixture image: ${docker_server_arch}" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "${CLI_SESSION_FIXTURE_BUILD_DIR}"
+CGO_ENABLED=0 GOOS=linux GOARCH="${fixture_goarch}" \
+  go build -trimpath -ldflags='-s -w' \
+  -o "${CLI_SESSION_FIXTURE_BUILD_DIR}/session-cli-fixture" \
+  "${ROOT_DIR}/tests/fixtures/session-cli"
+cat >"${CLI_SESSION_FIXTURE_BUILD_DIR}/Dockerfile" <<'EOF'
+FROM scratch
+COPY session-cli-fixture /session-cli-fixture
+COPY session-cli-fixture /bin/sh
+EOF
+docker build -t "${CLI_SESSION_FIXTURE_IMAGE}" "${CLI_SESSION_FIXTURE_BUILD_DIR}" >/dev/null
+
+cli_attach_output="$(
+  bash -lc '
+    set -euo pipefail
+    ROOT_DIR="$1"
+    REAL_HOME="$2"
+    CLI_SESSION_FIXTURE_IMAGE="$3"
+    PROFILE="wcl-cli-attach-$$"
+    SESSION_ID="cli-attach-$$"
+    PROFILE_DIR="${REAL_HOME}/.colima/${PROFILE}"
+    SESSIONS_DIR="${PROFILE_DIR}/sessions"
+    AUDIT_DIR="${PROFILE_DIR}/session-audit.${SESSION_ID}"
+    AUDIT_LOG="${PROFILE_DIR}/workcell.audit.log"
+    STATE_FILE="${AUDIT_DIR}/session-monitor.env"
+    WORKSPACE="$(mktemp -d "${REAL_HOME}/.colima/workcell-cli-attach-workspace.XXXXXX")"
+    CONTAINER_NAME="workcell-cli-attach-$$"
+    MONITOR_PID=""
+    cleanup() {
+      if [[ -n "${MONITOR_PID}" ]]; then
+        kill "${MONITOR_PID}" >/dev/null 2>&1 || true
+        wait "${MONITOR_PID}" >/dev/null 2>&1 || true
+      fi
+      docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      rm -rf "${PROFILE_DIR}" "${WORKSPACE}"
+    }
+    trap cleanup EXIT
+
+    docker_host="$(docker context inspect "$(docker context show)" --format '"'"'{{ (index .Endpoints "docker").Host }}'"'"')"
+    [[ "${docker_host}" == unix://* ]] || {
+      echo "Expected a unix Docker host for CLI session attach integration, got: ${docker_host}" >&2
+      exit 1
+    }
+
+    mkdir -p "${SESSIONS_DIR}" "${AUDIT_DIR}"
+    ln -s "${docker_host#unix://}" "${PROFILE_DIR}/docker.sock"
+    docker run --pull=never -d --name "${CONTAINER_NAME}" "${CLI_SESSION_FIXTURE_IMAGE}" /session-cli-fixture attach >/dev/null
+
+    monitor_cmd="${ROOT_DIR}/scripts/workcell session monitor --state-file ${STATE_FILE}"
+    bash -c '"'"'exec -a "$0" sleep 30'"'"' "${monitor_cmd}" &
+    MONITOR_PID="$!"
+
+    cat >"${SESSIONS_DIR}/${SESSION_ID}.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "${SESSION_ID}",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE}",
+  "workspace_origin": "${WORKSPACE}",
+  "worktree_path": "${WORKSPACE}/.git/workcell-sessions/${SESSION_ID}/repo",
+  "container_name": "${CONTAINER_NAME}",
+  "monitor_pid": "${MONITOR_PID}",
+  "session_audit_dir": "${AUDIT_DIR}",
+  "audit_log_path": "${AUDIT_LOG}",
+  "started_at": "2026-04-08T15:30:00Z",
+  "current_assurance": "managed-mutable",
+  "initial_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF_JSON
+
+    attach_output="$("${ROOT_DIR}/scripts/workcell" session attach --id "${SESSION_ID}" --no-stdin | tr -d "\r")"
+    grep -q "event=attach-attempt session_id=${SESSION_ID}" "${AUDIT_LOG}"
+    grep -q "event=attach session_id=${SESSION_ID}" "${AUDIT_LOG}"
+    printf "attach_cli_output=%s\n" "${attach_output}"
+  ' _ "${ROOT_DIR}" "${REAL_HOME}" "${CLI_SESSION_FIXTURE_IMAGE}"
+)"
+grep -q '^attach_cli_output=attached-from-container$' <<<"${cli_attach_output}"
+
+cli_lifecycle_output="$(
+  bash -lc '
+    set -euo pipefail
+    ROOT_DIR="$1"
+    REAL_HOME="$2"
+    CLI_SESSION_FIXTURE_IMAGE="$3"
+    PROFILE="wcl-cli-lifecycle-$$"
+    SESSION_ID="cli-lifecycle-$$"
+    PROFILE_DIR="${REAL_HOME}/.colima/${PROFILE}"
+    SESSIONS_DIR="${PROFILE_DIR}/sessions"
+    AUDIT_DIR="${PROFILE_DIR}/session-audit.${SESSION_ID}"
+    AUDIT_LOG="${PROFILE_DIR}/workcell.audit.log"
+    DEBUG_LOG="${PROFILE_DIR}/${SESSION_ID}.debug.log"
+    FILE_TRACE_LOG="${PROFILE_DIR}/${SESSION_ID}.file-trace.log"
+    TRANSCRIPT_LOG="${PROFILE_DIR}/${SESSION_ID}.transcript.log"
+    STATE_FILE="${AUDIT_DIR}/session-monitor.env"
+    WORKSPACE="$(mktemp -d "${REAL_HOME}/.colima/workcell-cli-lifecycle-workspace.XXXXXX")"
+    FIXTURE_DIR="${PROFILE_DIR}/fixture"
+    CONTAINER_NAME="workcell-cli-lifecycle-$$"
+    MONITOR_PID=""
+    cleanup() {
+      if [[ -n "${MONITOR_PID}" ]]; then
+        kill "${MONITOR_PID}" >/dev/null 2>&1 || true
+        wait "${MONITOR_PID}" >/dev/null 2>&1 || true
+      fi
+      docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      rm -rf "${PROFILE_DIR}" "${WORKSPACE}"
+    }
+    trap cleanup EXIT
+
+    docker_host="$(docker context inspect "$(docker context show)" --format '"'"'{{ (index .Endpoints "docker").Host }}'"'"')"
+    [[ "${docker_host}" == unix://* ]] || {
+      echo "Expected a unix Docker host for CLI session lifecycle integration, got: ${docker_host}" >&2
+      exit 1
+    }
+
+    mkdir -p "${SESSIONS_DIR}" "${AUDIT_DIR}" "${FIXTURE_DIR}"
+    : >"${DEBUG_LOG}"
+    : >"${FILE_TRACE_LOG}"
+    : >"${TRANSCRIPT_LOG}"
+    ln -s "${docker_host#unix://}" "${PROFILE_DIR}/docker.sock"
+    docker run --pull=never -d --name "${CONTAINER_NAME}" -v "${FIXTURE_DIR}:/fixture" "${CLI_SESSION_FIXTURE_IMAGE}" /session-cli-fixture lifecycle /fixture/stdin.log >/dev/null
+
+    monitor_cmd="${ROOT_DIR}/scripts/workcell session monitor --state-file ${STATE_FILE}"
+    bash -c '"'"'exec -a "$0" sleep 30'"'"' "${monitor_cmd}" &
+    MONITOR_PID="$!"
+
+    cat >"${SESSIONS_DIR}/${SESSION_ID}.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "${SESSION_ID}",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE}",
+  "workspace_origin": "${WORKSPACE}",
+  "worktree_path": "${WORKSPACE}/.git/workcell-sessions/${SESSION_ID}/repo",
+  "container_name": "${CONTAINER_NAME}",
+  "monitor_pid": "${MONITOR_PID}",
+  "session_audit_dir": "${AUDIT_DIR}",
+  "audit_log_path": "${AUDIT_LOG}",
+  "debug_log_path": "${DEBUG_LOG}",
+  "file_trace_log_path": "${FILE_TRACE_LOG}",
+  "transcript_log_path": "${TRANSCRIPT_LOG}",
+  "started_at": "2026-04-08T16:00:00Z",
+  "current_assurance": "managed-mutable",
+  "initial_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF_JSON
+
+    send_output="$("${ROOT_DIR}/scripts/workcell" session send --id "${SESSION_ID}" --message resume)"
+    sleep 1
+    stdin_payload="$(python3 -c '"'"'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text().rstrip("\\n"))'"'"' "${FIXTURE_DIR}/stdin.log")"
+    kill "${MONITOR_PID}" >/dev/null 2>&1 || true
+    wait "${MONITOR_PID}" >/dev/null 2>&1 || true
+    MONITOR_PID=""
+
+    stop_output="$("${ROOT_DIR}/scripts/workcell" session stop --id "${SESSION_ID}")"
+    python3 - "${SESSIONS_DIR}/${SESSION_ID}.json" <<'"'"'PY'"'"'
+import json
+import sys
+
+record = json.load(open(sys.argv[1]))
+status = record.get("status")
+live_status = record.get("live_status")
+if status != "exited" or live_status != "stopped":
+    raise SystemExit(f"unexpected record state: {status} {live_status}")
+PY
+
+    set +e
+    dead_send_stderr="$("${ROOT_DIR}/scripts/workcell" session send --id "${SESSION_ID}" --message after 2>&1 >/dev/null)"
+    dead_send_rc="$?"
+    set -e
+    [[ "${dead_send_rc}" -ne 0 ]] || {
+      echo "session send unexpectedly accepted a stopped detached session on the public CLI" >&2
+      exit 1
+    }
+    grep -q "session send requires a detached session that is still running: ${SESSION_ID}" <<<"${dead_send_stderr}"
+
+    set +e
+    dead_attach_stderr="$("${ROOT_DIR}/scripts/workcell" session attach --id "${SESSION_ID}" --no-stdin 2>&1 >/dev/null)"
+    dead_attach_rc="$?"
+    set -e
+    [[ "${dead_attach_rc}" -ne 0 ]] || {
+      echo "session attach unexpectedly accepted a stopped detached session on the public CLI" >&2
+      exit 1
+    }
+    grep -q "session attach requires a detached session that is still running: ${SESSION_ID}" <<<"${dead_attach_stderr}"
+
+    delete_output="$("${ROOT_DIR}/scripts/workcell" session delete --id "${SESSION_ID}")"
+    grep -q "event=command session_id=${SESSION_ID} source=host-cli command=session-send argv=resume" "${AUDIT_LOG}"
+    grep -q "event=stop-request session_id=${SESSION_ID}" "${AUDIT_LOG}"
+    grep -q "event=exit session_id=${SESSION_ID} source=host-stop-fallback exit_status=" "${AUDIT_LOG}"
+    grep -q "final_assurance=managed-mutable" "${AUDIT_LOG}"
+    test ! -e "${SESSIONS_DIR}/${SESSION_ID}.json"
+    test ! -e "${DEBUG_LOG}"
+    test ! -e "${FILE_TRACE_LOG}"
+    test ! -e "${TRANSCRIPT_LOG}"
+    test ! -e "${AUDIT_DIR}"
+    if docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+      echo "session delete left the recorded detached container behind on the public CLI" >&2
+      exit 1
+    fi
+
+    printf "cli_send_output=%s\n" "$(tr "\n" "|" <<<"${send_output}")"
+    printf "cli_stdin_payload=%s\n" "${stdin_payload}"
+    printf "cli_stop_output=%s\n" "$(tr "\n" "|" <<<"${stop_output}")"
+    printf "cli_delete_output=%s\n" "$(tr "\n" "|" <<<"${delete_output}")"
+  ' _ "${ROOT_DIR}" "${REAL_HOME}" "${CLI_SESSION_FIXTURE_IMAGE}"
+)"
+grep -q '^cli_send_output=session_id=cli-lifecycle-[0-9]\+|sent_bytes=7|$' <<<"${cli_lifecycle_output}"
+grep -q '^cli_stdin_payload=resume$' <<<"${cli_lifecycle_output}"
+grep -q '^cli_stop_output=session_id=cli-lifecycle-[0-9]\+|stop_requested=1|$' <<<"${cli_lifecycle_output}"
+grep -q '^cli_delete_output=session_id=cli-lifecycle-[0-9]\+|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${cli_lifecycle_output}"
+
+TAMPERED_SESSION_AUDIT_TARGET="${TMP_DIR}/tampered-session-audit-target"
+printf 'keep-me\n' >"${TAMPERED_SESSION_AUDIT_TARGET}"
+cat >"${SESSIONS_DIR}/20260408T141500Z-56565656.json" <<EOF
+{
+  "version": 1,
+  "session_id": "20260408T141500Z-56565656",
+  "profile": "${PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "exited",
+  "live_status": "stopped",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${WORKSPACE_A}",
+  "session_audit_dir": "${TAMPERED_SESSION_AUDIT_TARGET}",
+  "started_at": "2026-04-08T14:15:00Z",
+  "finished_at": "2026-04-08T14:16:00Z",
+  "exit_status": "0",
+  "initial_assurance": "managed-mutable",
+  "final_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF
+tampered_session_delete_output="$(
+  "${ROOT_DIR}/scripts/workcell" session delete --id 20260408T141500Z-56565656 2>&1
+)"
+grep -q 'session delete refused recorded session_audit_dir path after launch' <<<"${tampered_session_delete_output}"
+grep -q '^deleted=1$' <<<"${tampered_session_delete_output}"
+grep -q '^removed=record$' <<<"${tampered_session_delete_output}"
+grep -q '^missing=none$' <<<"${tampered_session_delete_output}"
+grep -q 'keep-me' "${TAMPERED_SESSION_AUDIT_TARGET}"
 
 RUNTIME_IMAGE_CACHE_EXPORT_SOURCE="${TMP_DIR}/runtime-image-cache-export.tar"
 RUNTIME_IMAGE_CACHE_RECORD="${TMP_DIR}/runtime-image-cache.record"
