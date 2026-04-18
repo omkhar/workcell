@@ -42,145 +42,75 @@ func writePublicRepoHygieneFixture(t *testing.T, readme string) string {
 	return scriptPath
 }
 
-func TestCheckPublicRepoHygieneRejectsBareAbsoluteHomePath(t *testing.T) {
-	t.Parallel()
+func runPublicRepoHygieneFixture(t *testing.T, readme string) (string, error) {
+	t.Helper()
 
-	scriptPath := writePublicRepoHygieneFixture(t, "Leaked maintainer path: /Users/alice")
+	scriptPath := writePublicRepoHygieneFixture(t, readme)
 	cmd := exec.Command("/bin/bash", scriptPath)
 	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatal("check-public-repo-hygiene unexpectedly accepted a bare absolute home path")
+	return string(output), err
+}
+
+func TestCheckPublicRepoHygieneRejectsLeakedHomePaths(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name       string
+		readme     string
+		wantOutput string
+	}{
+		{name: "bare path", readme: "Leaked maintainer path: /Users/alice", wantOutput: "/Users/alice"},
+		{name: "path with trailing text", readme: "Leaked maintainer path in prose: /Users/alice next-step", wantOutput: "/Users/alice next-step"},
+		{name: "example prefixed username", readme: "Still machine specific: /Users/example-user/workcell", wantOutput: "/Users/example-user/workcell"},
+		{name: "backtick wrapped path", readme: "Leaked markdown path: `/Users/alice/workcell`", wantOutput: "/Users/alice/workcell"},
+		{name: "angle bracket wrapped path", readme: "Leaked markdown target: </Users/alice/workcell>", wantOutput: "/Users/alice/workcell"},
+		{name: "mixed placeholder and real path", readme: "Mixed paths: `/Users/example` and `/Users/alice/workcell`", wantOutput: "/Users/alice/workcell"},
 	}
-	if !strings.Contains(string(output), "machine-specific absolute home paths") {
-		t.Fatalf("unexpected output: %s", output)
-	}
-	if !strings.Contains(string(output), "/Users/alice") {
-		t.Fatalf("output did not include the leaked path: %s", output)
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			output, err := runPublicRepoHygieneFixture(t, tc.readme)
+			if err == nil {
+				t.Fatal("check-public-repo-hygiene unexpectedly accepted a leaked absolute home path")
+			}
+			if !strings.Contains(output, "machine-specific absolute home paths") {
+				t.Fatalf("unexpected output: %s", output)
+			}
+			if !strings.Contains(output, tc.wantOutput) {
+				t.Fatalf("output did not include the leaked path: %s", output)
+			}
+		})
 	}
 }
 
-func TestCheckPublicRepoHygieneRejectsBareAbsoluteHomePathWithTrailingText(t *testing.T) {
+func TestCheckPublicRepoHygieneAllowsPortableExamples(t *testing.T) {
 	t.Parallel()
 
-	scriptPath := writePublicRepoHygieneFixture(t, "Leaked maintainer path in prose: /Users/alice next-step")
-	cmd := exec.Command("/bin/bash", scriptPath)
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatal("check-public-repo-hygiene unexpectedly accepted a bare absolute home path followed by prose text")
+	testCases := []struct {
+		name   string
+		readme string
+	}{
+		{name: "plain example path", readme: "Portable example path: /Users/example"},
+		{name: "punctuation delimited example path", readme: "Portable markdown path: `/Users/example`"},
+		{name: "example path with trailing text", readme: "Portable example path in prose: /Users/example next-step"},
+		{name: "url segment", readme: "Legitimate URL: https://example.com/home/alice/docs"},
 	}
-	if !strings.Contains(string(output), "/Users/alice next-step") {
-		t.Fatalf("output did not include the leaked path context: %s", output)
-	}
-}
 
-func TestCheckPublicRepoHygieneAllowsExamplePlaceholderPath(t *testing.T) {
-	t.Parallel()
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	scriptPath := writePublicRepoHygieneFixture(t, "Portable example path: /Users/example")
-	cmd := exec.Command("/bin/bash", scriptPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("check-public-repo-hygiene rejected the example placeholder: %v\n%s", err, output)
-	}
-	if !strings.Contains(string(output), "Public repo hygiene check passed.") {
-		t.Fatalf("unexpected output: %s", output)
-	}
-}
-
-func TestCheckPublicRepoHygieneAllowsPunctuationDelimitedExamplePlaceholder(t *testing.T) {
-	t.Parallel()
-
-	scriptPath := writePublicRepoHygieneFixture(t, "Portable markdown path: `/Users/example`")
-	cmd := exec.Command("/bin/bash", scriptPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("check-public-repo-hygiene rejected the punctuation-delimited example placeholder: %v\n%s", err, output)
-	}
-	if !strings.Contains(string(output), "Public repo hygiene check passed.") {
-		t.Fatalf("unexpected output: %s", output)
-	}
-}
-
-func TestCheckPublicRepoHygieneAllowsExamplePlaceholderWithTrailingText(t *testing.T) {
-	t.Parallel()
-
-	scriptPath := writePublicRepoHygieneFixture(t, "Portable example path in prose: /Users/example next-step")
-	cmd := exec.Command("/bin/bash", scriptPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("check-public-repo-hygiene rejected the prose example placeholder: %v\n%s", err, output)
-	}
-	if !strings.Contains(string(output), "Public repo hygiene check passed.") {
-		t.Fatalf("unexpected output: %s", output)
-	}
-}
-
-func TestCheckPublicRepoHygieneRejectsExamplePrefixedUsername(t *testing.T) {
-	t.Parallel()
-
-	scriptPath := writePublicRepoHygieneFixture(t, "Still machine specific: /Users/example-user/workcell")
-	cmd := exec.Command("/bin/bash", scriptPath)
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatal("check-public-repo-hygiene unexpectedly accepted an example-prefixed username")
-	}
-	if !strings.Contains(string(output), "/Users/example-user/workcell") {
-		t.Fatalf("output did not include the leaked path: %s", output)
-	}
-}
-
-func TestCheckPublicRepoHygieneRejectsBacktickWrappedHomePath(t *testing.T) {
-	t.Parallel()
-
-	scriptPath := writePublicRepoHygieneFixture(t, "Leaked markdown path: `/Users/alice/workcell`")
-	cmd := exec.Command("/bin/bash", scriptPath)
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatal("check-public-repo-hygiene unexpectedly accepted a backtick-wrapped absolute home path")
-	}
-	if !strings.Contains(string(output), "/Users/alice/workcell") {
-		t.Fatalf("output did not include the leaked path: %s", output)
-	}
-}
-
-func TestCheckPublicRepoHygieneRejectsAngleBracketWrappedHomePath(t *testing.T) {
-	t.Parallel()
-
-	scriptPath := writePublicRepoHygieneFixture(t, "Leaked markdown target: </Users/alice/workcell>")
-	cmd := exec.Command("/bin/bash", scriptPath)
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatal("check-public-repo-hygiene unexpectedly accepted an angle-bracket-wrapped absolute home path")
-	}
-	if !strings.Contains(string(output), "/Users/alice/workcell") {
-		t.Fatalf("output did not include the leaked path: %s", output)
-	}
-}
-
-func TestCheckPublicRepoHygieneIgnoresURLSegments(t *testing.T) {
-	t.Parallel()
-
-	scriptPath := writePublicRepoHygieneFixture(t, "Legitimate URL: https://example.com/home/alice/docs")
-	cmd := exec.Command("/bin/bash", scriptPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("check-public-repo-hygiene rejected a URL segment: %v\n%s", err, output)
-	}
-	if !strings.Contains(string(output), "Public repo hygiene check passed.") {
-		t.Fatalf("unexpected output: %s", output)
-	}
-}
-
-func TestCheckPublicRepoHygieneRejectsMixedPlaceholderAndRealLeak(t *testing.T) {
-	t.Parallel()
-
-	scriptPath := writePublicRepoHygieneFixture(t, "Mixed paths: `/Users/example` and `/Users/alice/workcell`")
-	cmd := exec.Command("/bin/bash", scriptPath)
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatal("check-public-repo-hygiene unexpectedly accepted a mixed placeholder and real leaked path")
-	}
-	if !strings.Contains(string(output), "/Users/alice/workcell") {
-		t.Fatalf("output did not include the leaked path: %s", output)
+			output, err := runPublicRepoHygieneFixture(t, tc.readme)
+			if err != nil {
+				t.Fatalf("check-public-repo-hygiene rejected portable input: %v\n%s", err, output)
+			}
+			if !strings.Contains(output, "Public repo hygiene check passed.") {
+				t.Fatalf("unexpected output: %s", output)
+			}
+		})
 	}
 }
