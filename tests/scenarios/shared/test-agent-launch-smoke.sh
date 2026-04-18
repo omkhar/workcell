@@ -73,6 +73,25 @@ prepare_runtime() {
     >"${TMP_DIR}/prepare.stdout" 2>"${TMP_DIR}/prepare.stderr"
 }
 
+expected_runtime_version() {
+  local agent="$1"
+
+  case "${agent}" in
+    codex)
+      sed -n 's/^ARG CODEX_VERSION=//p' "${ROOT_DIR}/runtime/container/Dockerfile"
+      ;;
+    claude)
+      sed -n 's/^ARG CLAUDE_VERSION=//p' "${ROOT_DIR}/runtime/container/Dockerfile"
+      ;;
+    gemini)
+      jq -r '.dependencies["@google/gemini-cli"]' "${ROOT_DIR}/runtime/container/providers/package.json"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 run_agent_version_smoke() {
   local agent="$1"
   local status=0
@@ -96,11 +115,13 @@ grep -q "^profile=${PROFILE} mode=strict agent=codex " "${TMP_DIR}/prepare.stder
 grep -q "Prepared runtime image recorded for profile ${PROFILE}. No session launched because --prepare-only was requested." "${TMP_DIR}/prepare.stderr"
 
 for agent in codex claude gemini; do
+  expected_version="$(expected_runtime_version "${agent}")"
   run_agent_version_smoke "${agent}"
   grep -q "^profile=${PROFILE} mode=strict agent=${agent} " "${TMP_DIR}/${agent}.stderr"
   grep -q '^execution_path=managed-tier1 audit_log=' "${TMP_DIR}/${agent}.stderr"
   cat "${TMP_DIR}/${agent}.stdout" "${TMP_DIR}/${agent}.stderr" >"${TMP_DIR}/${agent}.combined"
   grep -q '[^[:space:]]' "${TMP_DIR}/${agent}.combined"
+  grep -Fq "${expected_version}" "${TMP_DIR}/${agent}.combined"
 done
 
 echo "Provider launch smoke scenario passed"

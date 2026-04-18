@@ -65,9 +65,7 @@ func runLifecycleFixture(outputPath string) error {
 	}
 	defer out.Close()
 
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
 		for {
 			fifo, err := os.OpenFile(detachedFIFOPath, os.O_RDONLY, 0)
 			if err != nil {
@@ -87,7 +85,6 @@ func runLifecycleFixture(outputPath string) error {
 	defer signal.Stop(sigCh)
 	<-sigCh
 	_ = os.Remove(detachedFIFOPath)
-	<-done
 	return nil
 }
 

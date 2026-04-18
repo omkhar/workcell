@@ -18,10 +18,33 @@ SESSION_TAMPERED="20260408T140000Z-55555555-$$"
 CLI_SESSION_FIXTURE_IMAGE="workcell-session-cli-fixture:test-$$"
 CLI_SESSION_FIXTURE_BUILD_DIR="${TMP_DIR}/session-cli-fixture-build"
 WORKCELL_FUNCTIONS_COPY="${ROOT_DIR}/scripts/.workcell-test-functions-$$"
+HOST_DOCKER_BIN=""
+
+resolve_host_docker_bin() {
+  local candidate=""
+
+  candidate="$(command -v docker 2>/dev/null || true)"
+  if [[ -x "${candidate}" ]]; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+  for candidate in \
+    /opt/homebrew/bin/docker \
+    /usr/local/bin/docker \
+    /Applications/Docker.app/Contents/Resources/bin/docker; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
 
 cleanup() {
   if [[ -n "${CLI_SESSION_FIXTURE_IMAGE:-}" ]]; then
-    docker image rm -f "${CLI_SESSION_FIXTURE_IMAGE}" >/dev/null 2>&1 || true
+    if [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
+      "${HOST_DOCKER_BIN}" image rm -f "${CLI_SESSION_FIXTURE_IMAGE}" >/dev/null 2>&1 || true
+    fi
   fi
   rm -f "${WORKCELL_FUNCTIONS_COPY}"
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
@@ -1628,7 +1651,7 @@ grep -q 'event=command session_id=detached-lifecycle source=host-cli command=ses
 grep -q 'event=stop-request session_id=detached-lifecycle' "${SESSION_LIFECYCLE_AUDIT_LOG}"
 grep -q 'event=exit session_id=detached-lifecycle source=host-stop-fallback exit_status=0 final_assurance=managed-mutable' "${SESSION_LIFECYCLE_AUDIT_LOG}"
 
-HOST_DOCKER_BIN="$(command -v docker || true)"
+HOST_DOCKER_BIN="$(resolve_host_docker_bin || true)"
 if [[ -n "${HOST_DOCKER_BIN}" ]]; then
   docker_server_arch="$("${HOST_DOCKER_BIN}" version --format '{{.Server.Arch}}')"
   case "${docker_server_arch}" in

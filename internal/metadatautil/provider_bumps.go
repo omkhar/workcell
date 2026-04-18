@@ -452,6 +452,7 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		return ProviderBumpSelection{}, err
 	}
 	maxAllowed, hasMaxVersion := parseStableVersion(maxVersion)
+	current, hasCurrentVersion := parseStableVersion(currentVersion)
 	approved, hasApprovedVersion := parseStableVersion(approvedVersion)
 	candidates := make([]stableVersion, 0, len(listing.CommonPrefixes))
 	for _, prefix := range listing.CommonPrefixes {
@@ -470,6 +471,13 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 	}
 	sortStableVersionsDesc(candidates)
 	if hasApprovedVersion {
+		if hasCurrentVersion && compareStableVersions(approved, current) <= 0 {
+			return ProviderBumpSelection{
+				Channel:        "stable",
+				CurrentVersion: currentVersion,
+				TargetVersion:  currentVersion,
+			}, nil
+		}
 		for _, candidate := range candidates {
 			if compareStableVersions(candidate, approved) != 0 {
 				continue
