@@ -102,6 +102,7 @@ func TestCheckPublicRepoHygieneAllowsPortableExamples(t *testing.T) {
 		{name: "custom uri path", readme: "Portable custom URI: profile:///home/alice/docs"},
 		{name: "custom uri with authority path", readme: "Portable custom URI with authority: notfile://localhost/home/alice/docs"},
 		{name: "multiple home-like url segments", readme: "Legitimate URL with multiple segments: https://example.com/home/alice//Users/bob"},
+		{name: "url path containing file scheme text", readme: "Legitimate URL path with embedded file text: https://example.com/path/file://localhost/home/alice/docs"},
 		{name: "url segment", readme: "Legitimate URL: https://example.com/home/alice/docs"},
 	}
 
