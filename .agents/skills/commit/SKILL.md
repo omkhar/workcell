@@ -52,6 +52,11 @@ for convenience.
 - Features/bugfixes exceeding 8 lines of code (including tests) default to highest risk level.
 - Safe refactoring (`.r`) requires provable refactoring via automated tools or test-supported procedural refactoring.
 - Choose the risk level honestly. If you haven't verified invariants, use `!` or `@`.
+- Treat every user request as implicitly including peer review unless the user
+  explicitly narrows that scope.
+- When peer review finds an actionable issue, keep iterating through fixes,
+  validation, and another review pass until no actionable findings remain or a
+  concrete blocker is reported.
 
 ## Commit Grouping
 
@@ -64,6 +69,10 @@ for convenience.
 - Sign every commit.
 - Use feature branches. Do not push directly to `main` or rewrite history.
 - Treat final GitHub publication as a host-side action.
+- For publish, PR follow-up, or merge work in this repository, use the
+  repo-local `workcell-pr-lifecycle` skill. Treat generic GitHub publication
+  skills as fallback only when the repo-local lifecycle instructions do not
+  cover the need.
 - Do not accept failing repo-owned tests, checks, or workflows as "good
   enough." If a lane fails because of the change or a hosted-control drift
   uncovered during the task, keep working until it is fixed or the guarantee is
@@ -71,6 +80,9 @@ for convenience.
 - If the task includes merging, do not stop at PR-green. Follow the merged
   `main` workflows and fix any repo-owned failures they surface before calling
   the work complete.
+- If the task includes publication, review comments, or follow-up CI, do not
+  stop at the first green run. Re-check review surfaces and continue until no
+  actionable findings remain.
 - When a commit changes a user-visible Workcell workflow, support tier, help
   surface, repo-local operator docs, contract entry, or validation evidence,
   land the matching contract/help/doc/test updates in the same change stream

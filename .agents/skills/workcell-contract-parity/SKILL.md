@@ -38,6 +38,11 @@ Docs review is repo-local. Keep Workcell docs, help text, manpages, policies,
 and validators aligned inside this repository. Do not treat external docs as
 the source of truth for repo behavior.
 
+Treat every user request as implicitly including peer review unless the user
+explicitly narrows that scope. For parity work, peer review means continuing
+through findings, fixes, validation, and another review pass until no
+actionable findings remain or a concrete blocker is reported.
+
 ## Read first
 
 - `AGENTS.md`
@@ -71,6 +76,9 @@ If the change is release-bound, also read:
   and bounded enough that a reviewer can reason about the change without
   juggling multiple independent decisions. Split broad work into sequenced PRs
   before host-side publication.
+- For publish, PR follow-up, or merge work in this repository, use the
+  repo-local `workcell-pr-lifecycle` skill so host-side publication, check
+  follow-through, and review sweeps stay versioned in-repo.
 - If `scripts/workcell` changes, regenerate and revalidate
   `runtime/container/control-plane-manifest.json`.
 - Dead code is a simplicity bug. Remove dead code when found, and keep the
@@ -79,6 +87,9 @@ If the change is release-bound, also read:
   from public repo surfaces and clean repo detritus before finishing a change.
 - Re-check PR comments and review threads after CI turns green and immediately
   before merge.
+- Treat newly surfaced review findings, docs drift, or parity regressions as
+  part of the same task. Fix them, rerun validation, and re-review until the
+  change is clean.
 - Do not leave repo-owned tests, checks, or workflows red. If a validation lane
   fails during the task, fix it or explicitly remove/demote the claimed
   guarantee in the same change.
@@ -103,6 +114,8 @@ If the change is release-bound, also read:
 8. If publication or merge is part of the task, follow the repo-owned hosted
    workflows through completion and fix any failures they surface before
    finishing.
+9. Re-review the affected contract surfaces after fixes land and before calling
+   the task done. Do not stop while actionable findings remain.
 
 ## Validation
 
