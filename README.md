@@ -285,6 +285,12 @@ workcell publish-pr --workspace /path/to/repo --branch feature/name \
   --commit-message-file /tmp/commit-message.txt
 ```
 
+`workcell session list --verbose` adds target, workspace transport, git branch,
+and worktree columns without changing the default compact inventory view.
+`workcell session show --text` renders stable key=value lines for the same
+target-aware record, and `workcell session start|send|stop` emit stable
+key=value summaries so host-side detached control stays scriptable.
+
 ## Release posture
 
 Tagged releases are rebuilt and verified before publication. The release path:

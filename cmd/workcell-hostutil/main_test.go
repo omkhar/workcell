@@ -265,7 +265,7 @@ func TestRunLauncherSessionListVerboseShowsTargetMetadata(t *testing.T) {
 		t.Fatalf("run() error = %v", runErr)
 	}
 	got := strings.TrimSpace(stdout.String())
-	want := "session-1\trunning\trunning\tattached\tcodex\tstrict\twcl-one\tlocal_vm/colima/wcl-one\tstrict\tisolated-worktree-mount\t2026-04-08T10:00:00Z\tmanaged-mutable\t/tmp/source-workspace"
+	want := "session-1\trunning\trunning\tattached\tcodex\tstrict\twcl-one\tlocal_vm/colima/wcl-one\tstrict\tisolated-worktree-mount\tnone\t/tmp/workspace-a\t2026-04-08T10:00:00Z\tmanaged-mutable\t/tmp/source-workspace"
 	if got != want {
 		t.Fatalf("session list verbose output = %q, want %q", got, want)
 	}
@@ -332,6 +332,12 @@ func TestRunLauncherSessionShowText(t *testing.T) {
 	}
 	if !strings.Contains(got, "workspace_transport=isolated-worktree-mount") {
 		t.Fatalf("session show --text output = %q, want workspace transport", got)
+	}
+	if !strings.Contains(got, "display_worktree=/tmp/workspace-a/.worktrees/session-1") {
+		t.Fatalf("session show --text output = %q, want display worktree", got)
+	}
+	if !strings.Contains(got, "display_git_branch=feature/session-observability") {
+		t.Fatalf("session show --text output = %q, want display git branch", got)
 	}
 }
 

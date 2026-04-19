@@ -6,9 +6,10 @@ changes on top of the inspection and policy surfaces that already shipped.
 The longer-lived runtime-target and deployment-reach program lives in
 [`docs/runtime-target-expansion-plan.md`](runtime-target-expansion-plan.md),
 and the deterministic phase breakdown lives in
-[`docs/runtime-target-phase-plan.md`](runtime-target-phase-plan.md);
-this document covers only the active slice that must land before broader target
-claims become supportable.
+[`docs/runtime-target-phase-plan.md`](runtime-target-phase-plan.md).
+Phase 1 of that phase plan is now implemented in the repository; this document
+remains as the delivered-scope reference for that slice and the immediate
+bridge to later runtime-target work.
 
 The current repo already includes durable session records plus detached
 host-side session control (`session start|attach|send|stop`) and basic

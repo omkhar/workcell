@@ -228,8 +228,8 @@ grep -q $'^'"${SESSION_ATTACHED_LIVE}"$'\trunning\trunning\tattached\tcodex\tstr
 grep -q $'^'"${SESSION_ONE}"$'\texited\tstopped\tattached\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
 
 list_verbose_output="$("${ROOT_DIR}/scripts/workcell" session list --verbose --colima-profile "${PROFILE}")"
-grep -q '^session_id[[:space:]]status[[:space:]]live_status[[:space:]]control[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]target[[:space:]]target_assurance[[:space:]]workspace_transport[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace$' <<<"${list_verbose_output}"
-grep -q $'^'"${SESSION_TWO}"$'\tfailed\tstopped\tdetached\tclaude\tdevelopment\t'"${PROFILE}"$'\tlocal_vm/colima/'"${PROFILE}"$'\tstrict\tisolated-worktree-mount\t2026-04-08T11:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_verbose_output}"
+grep -q '^session_id[[:space:]]status[[:space:]]live_status[[:space:]]control[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]target[[:space:]]target_assurance[[:space:]]workspace_transport[[:space:]]git_branch[[:space:]]worktree[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace$' <<<"${list_verbose_output}"
+grep -q $'^'"${SESSION_TWO}"$'\tfailed\tstopped\tdetached\tclaude\tdevelopment\t'"${PROFILE}"$'\tlocal_vm/colima/'"${PROFILE}"$'\tstrict\tisolated-worktree-mount\tnone\t'"${WORKSPACE_B}/.worktrees/${SESSION_TWO}"$'\t2026-04-08T11:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_verbose_output}"
 
 if command -v script >/dev/null 2>&1; then
   tty_list_cmd=("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")
@@ -320,8 +320,12 @@ grep -q '"workspace_transport": "isolated-worktree-mount"' <<<"${show_output}"
 show_text_output="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_TWO}" --text)"
 grep -q '^target_summary=local_vm/colima/'"${PROFILE}"'$' <<<"${show_text_output}"
 grep -q '^workspace_transport=isolated-worktree-mount$' <<<"${show_text_output}"
+grep -q '^display_workspace='"${WORKSPACE_A}"'$' <<<"${show_text_output}"
+grep -q '^display_worktree='"${WORKSPACE_B}/.worktrees/${SESSION_TWO}"'$' <<<"${show_text_output}"
+grep -q '^display_git_branch=none$' <<<"${show_text_output}"
 grep -q '^worktree_path='"${WORKSPACE_B}/.worktrees/${SESSION_TWO}"'$' <<<"${show_text_output}"
 show_text_with_git="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_ONE}" --text)"
+grep -q '^display_git_branch='"${GIT_BRANCH}"'$' <<<"${show_text_with_git}"
 grep -q '^git_branch='"${GIT_BRANCH}"'$' <<<"${show_text_with_git}"
 
 diff_stdout="$("${ROOT_DIR}/scripts/workcell" session diff --id "${SESSION_ONE}" --output "${DIFF_PATH}")"
@@ -865,16 +869,49 @@ session_send_success_output="$(
     source "$1"
     trap - EXIT
     RECORD_FILE="$2"
+    COLIMA_STATE_ROOT="$3"
+    PROFILE_DIR="${COLIMA_STATE_ROOT}/wcl-detached-fixture"
+    RECORD_PATH="${PROFILE_DIR}/sessions/detached-fixture.json"
+    SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
     HOST_DOCKER_BIN="/bin/false"
+    mkdir -p "${PROFILE_DIR}/sessions" "${SESSION_AUDIT_DIR}"
+    cat >"${RECORD_PATH}" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "monitor_pid": "4242",
+  "session_audit_dir": "${SESSION_AUDIT_DIR}",
+  "started_at": "2026-04-08T14:00:00Z",
+  "current_assurance": "managed-mutable",
+  "initial_assurance": "managed-mutable"
+}
+EOF_JSON
     resolve_host_tool() { printf "/bin/false\n"; }
     sanitize_host_docker_env() { :; }
     session_monitor_pid_is_live() { return 0; }
     load_session_runtime_metadata() {
       SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_TARGET_KIND="local_vm"
+      SESSION_META_TARGET_PROVIDER="colima"
+      SESSION_META_TARGET_ID="wcl-detached-fixture"
+      SESSION_META_TARGET_ASSURANCE_CLASS="strict"
+      SESSION_META_RUNTIME_API="docker"
+      SESSION_META_WORKSPACE_TRANSPORT="workspace-mount"
+      SESSION_META_WORKSPACE="/tmp/detached-fixture-workspace"
+      SESSION_META_WORKSPACE_ORIGIN="/tmp/detached-fixture-workspace"
+      SESSION_META_WORKTREE_PATH="/tmp/detached-fixture-workspace"
       SESSION_META_CONTAINER_NAME="workcell-session-fixture"
       SESSION_META_MONITOR_PID="4242"
       SESSION_META_STATUS="running"
       SESSION_META_LIVE_STATUS="running"
+      SESSION_META_CURRENT_ASSURANCE="managed-mutable"
     }
     append_session_control_audit_record() {
       printf "audit|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" >>"${RECORD_FILE}"
@@ -890,10 +927,19 @@ session_send_success_output="$(
       esac
     }
     session_send_main --id detached-fixture --no-newline --message beta
-  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_SEND_SUCCESS_RECORD}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_SEND_SUCCESS_RECORD}" "${DETACHED_STATE_DIR}/session-send.success.root"
 )"
 grep -q '^session_id=detached-fixture$' <<<"${session_send_success_output}"
 grep -q '^sent_bytes=4$' <<<"${session_send_success_output}"
+grep -q '^status=running$' <<<"${session_send_success_output}"
+grep -q '^live_status=running$' <<<"${session_send_success_output}"
+grep -q '^control_mode=detached$' <<<"${session_send_success_output}"
+grep -q '^target_summary=local_vm/colima/wcl-detached-fixture$' <<<"${session_send_success_output}"
+grep -q '^workspace_transport=workspace-mount$' <<<"${session_send_success_output}"
+grep -q '^display_workspace=/tmp/detached-fixture-workspace$' <<<"${session_send_success_output}"
+grep -q '^display_worktree=/tmp/detached-fixture-workspace$' <<<"${session_send_success_output}"
+grep -q '^display_git_branch=none$' <<<"${session_send_success_output}"
+grep -q '^assurance=managed-mutable$' <<<"${session_send_success_output}"
 grep -q '^transport|wcl-detached-fixture|exec --user ' "${SESSION_SEND_SUCCESS_RECORD}"
 if grep -q '/proc/1/fd/0' "${SESSION_SEND_SUCCESS_RECORD}"; then
   echo "Detached session send still contains the PID 1 stdin fallback on the success path" >&2
@@ -1388,7 +1434,20 @@ session_delete_cleanup_output="$(
     mkdir -p "${PROFILE_DIR}/sessions"
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
-    : >"${RECORD_PATH}"
+    cat >"${RECORD_PATH}" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "exited",
+  "live_status": "stopped",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
     printf "debug\n" >"${DEBUG_LOG}"
     printf "trace\n" >"${FILE_TRACE_LOG}"
     printf "transcript\n" >"${TRANSCRIPT_LOG}"
@@ -1457,7 +1516,20 @@ session_delete_record_only_output="$(
     mkdir -p "${PROFILE_DIR}/sessions"
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
-    : >"${RECORD_PATH}"
+    cat >"${RECORD_PATH}" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "exited",
+  "live_status": "stopped",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
     printf "debug\n" >"${DEBUG_LOG}"
     printf "trace\n" >"${FILE_TRACE_LOG}"
     printf "transcript\n" >"${TRANSCRIPT_LOG}"
@@ -1523,7 +1595,20 @@ session_delete_dry_run_output="$(
     mkdir -p "${PROFILE_DIR}/sessions"
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
-    : >"${RECORD_PATH}"
+    cat >"${RECORD_PATH}" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "failed",
+  "live_status": "stopped",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
     printf "debug\n" >"${DEBUG_LOG}"
     printf "trace\n" >"${FILE_TRACE_LOG}"
     printf "transcript\n" >"${TRANSCRIPT_LOG}"
@@ -1583,7 +1668,20 @@ bash -lc '
   DEBUG_LOG="${PROFILE_DIR}/detached.debug.log"
   mkdir -p "${PROFILE_DIR}/sessions"
   : >"${PROFILE_DIR}/docker.sock"
-  : >"${RECORD_PATH}"
+  cat >"${RECORD_PATH}" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "exited",
+  "live_status": "stopped",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
   printf "debug\n" >"${DEBUG_LOG}"
   HOST_DOCKER_BIN="/bin/false"
   resolve_host_tool() { printf "/bin/false\n"; }
@@ -1729,8 +1827,8 @@ EOF_JSON
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_LIFECYCLE_ROOT}" "${SESSION_LIFECYCLE_RECORD}" "${WORKSPACE_A}"
 )"
 grep -q '^attach_output=attached$' <<<"${session_lifecycle_output}"
-grep -q '^send_output=session_id=detached-lifecycle|sent_bytes=7|$' <<<"${session_lifecycle_output}"
-grep -q '^stop_output=session_id=detached-lifecycle|stop_requested=1|$' <<<"${session_lifecycle_output}"
+grep -q '^send_output=session_id=detached-lifecycle|sent_bytes=7|status=running|live_status=running|control_mode=detached|target_kind=local_vm|target_provider=colima|target_id=wcl-detached-lifecycle|target_summary=local_vm/colima/wcl-detached-lifecycle|target_assurance_class=strict|runtime_api=docker|workspace_transport=workspace-mount|workspace='"${WORKSPACE_A}"'|display_workspace='"${WORKSPACE_A}"'|workspace_origin='"${WORKSPACE_A}"'|display_worktree='"${WORKSPACE_A}"'|worktree_path='"${WORKSPACE_A}"'|display_git_branch=none|git_branch=|assurance=managed-mutable|$' <<<"${session_lifecycle_output}"
+grep -q '^stop_output=session_id=detached-lifecycle|stop_requested=1|status=exited|live_status=stopped|control_mode=detached|target_kind=local_vm|target_provider=colima|target_id=wcl-detached-lifecycle|target_summary=local_vm/colima/wcl-detached-lifecycle|target_assurance_class=strict|runtime_api=docker|workspace_transport=workspace-mount|workspace='"${WORKSPACE_A}"'|display_workspace='"${WORKSPACE_A}"'|workspace_origin='"${WORKSPACE_A}"'|display_worktree='"${WORKSPACE_A}"'|worktree_path='"${WORKSPACE_A}"'|display_git_branch=none|git_branch=|assurance=managed-mutable|$' <<<"${session_lifecycle_output}"
 grep -q '^delete_output=session_id=detached-lifecycle|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${session_lifecycle_output}"
 test -f "${SESSION_LIFECYCLE_AUDIT_LOG}"
 grep -q '^transport|wcl-detached-lifecycle|attach --no-stdin workcell-session-fixture$' "${SESSION_LIFECYCLE_RECORD}"
@@ -2029,9 +2127,9 @@ PY
     printf "cli_delete_output=%s\n" "$(tr "\n" "|" <<<"${delete_output}")"
   ' _ "${ROOT_DIR}" "${REAL_HOME}" "${CLI_SESSION_FIXTURE_IMAGE}" "${HOST_DOCKER_BIN}"
   )"
-  grep -q '^cli_send_output=session_id=cli-life-[0-9]\+|sent_bytes=7|$' <<<"${cli_lifecycle_output}"
   grep -q '^cli_stdin_payload=resume$' <<<"${cli_lifecycle_output}"
-  grep -q '^cli_stop_output=session_id=cli-life-[0-9]\+|stop_requested=1|$' <<<"${cli_lifecycle_output}"
+  grep -Eq '^cli_send_output=session_id=cli-life-[0-9]+[|]sent_bytes=7[|]status=running[|]live_status=running[|]control_mode=detached[|]target_kind=local_vm[|]target_provider=colima[|]target_id=wcl-cli-life-[0-9]+[|]target_summary=local_vm/colima/wcl-cli-life-[0-9]+[|]target_assurance_class=strict[|]runtime_api=docker[|]workspace_transport=isolated-worktree-mount[|]workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]workspace_origin=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_worktree=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]worktree_path=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]display_git_branch=none[|]git_branch=[|]assurance=managed-mutable[|]$' <<<"${cli_lifecycle_output}"
+  grep -Eq '^cli_stop_output=session_id=cli-life-[0-9]+[|]stop_requested=1[|]status=exited[|]live_status=stopped[|]control_mode=detached[|]target_kind=local_vm[|]target_provider=colima[|]target_id=wcl-cli-life-[0-9]+[|]target_summary=local_vm/colima/wcl-cli-life-[0-9]+[|]target_assurance_class=strict[|]runtime_api=docker[|]workspace_transport=isolated-worktree-mount[|]workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]workspace_origin=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_worktree=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]worktree_path=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]display_git_branch=none[|]git_branch=[|]assurance=managed-mutable[|]$' <<<"${cli_lifecycle_output}"
   grep -q '^cli_delete_output=session_id=cli-life-[0-9]\+|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${cli_lifecycle_output}"
 else
   echo "Skipping public CLI detached workload integration: docker CLI unavailable on PATH" >&2

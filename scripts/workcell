@@ -1187,9 +1187,16 @@ load_session_runtime_metadata() {
   local value=""
 
   SESSION_META_PROFILE=""
+  SESSION_META_TARGET_KIND=""
+  SESSION_META_TARGET_PROVIDER=""
+  SESSION_META_TARGET_ID=""
+  SESSION_META_TARGET_ASSURANCE_CLASS=""
+  SESSION_META_RUNTIME_API=""
+  SESSION_META_WORKSPACE_TRANSPORT=""
   SESSION_META_WORKSPACE=""
   SESSION_META_WORKSPACE_ORIGIN=""
   SESSION_META_WORKTREE_PATH=""
+  SESSION_META_GIT_BRANCH=""
   SESSION_META_CONTAINER_NAME=""
   SESSION_META_MONITOR_PID=""
   SESSION_META_STATUS=""
@@ -1206,9 +1213,16 @@ load_session_runtime_metadata() {
     value="${line#*=}"
     case "${key}" in
       profile) SESSION_META_PROFILE="${value}" ;;
+      target_kind) SESSION_META_TARGET_KIND="${value}" ;;
+      target_provider) SESSION_META_TARGET_PROVIDER="${value}" ;;
+      target_id) SESSION_META_TARGET_ID="${value}" ;;
+      target_assurance_class) SESSION_META_TARGET_ASSURANCE_CLASS="${value}" ;;
+      runtime_api) SESSION_META_RUNTIME_API="${value}" ;;
+      workspace_transport) SESSION_META_WORKSPACE_TRANSPORT="${value}" ;;
       workspace) SESSION_META_WORKSPACE="${value}" ;;
       workspace_origin) SESSION_META_WORKSPACE_ORIGIN="${value}" ;;
       worktree_path) SESSION_META_WORKTREE_PATH="${value}" ;;
+      git_branch) SESSION_META_GIT_BRANCH="${value}" ;;
       container_name) SESSION_META_CONTAINER_NAME="${value}" ;;
       monitor_pid) SESSION_META_MONITOR_PID="${value}" ;;
       status) SESSION_META_STATUS="${value}" ;;
@@ -1221,6 +1235,69 @@ load_session_runtime_metadata() {
       transcript_log_path) SESSION_META_TRANSCRIPT_LOG_PATH="${value}" ;;
     esac
   done < <(session_runtime_metadata "${session_id}")
+}
+
+session_meta_target_summary() {
+  local value=""
+  local -a parts=()
+
+  for value in \
+    "${SESSION_META_TARGET_KIND:-}" \
+    "${SESSION_META_TARGET_PROVIDER:-}" \
+    "${SESSION_META_TARGET_ID:-}"; do
+    [[ -n "${value}" ]] || continue
+    parts+=("${value}")
+  done
+  if [[ "${#parts[@]}" -eq 0 ]]; then
+    printf '\n'
+    return 0
+  fi
+  (
+    IFS='/'
+    printf '%s\n' "${parts[*]}"
+  )
+}
+
+session_meta_display_workspace() {
+  if [[ -n "${SESSION_META_WORKSPACE_ORIGIN:-}" ]]; then
+    printf '%s\n' "${SESSION_META_WORKSPACE_ORIGIN}"
+    return 0
+  fi
+  printf '%s\n' "${SESSION_META_WORKSPACE:-}"
+}
+
+session_meta_display_worktree() {
+  if [[ -n "${SESSION_META_WORKTREE_PATH:-}" ]]; then
+    printf '%s\n' "${SESSION_META_WORKTREE_PATH}"
+    return 0
+  fi
+  printf '%s\n' "${SESSION_META_WORKSPACE:-}"
+}
+
+session_meta_display_git_branch() {
+  if [[ -n "${SESSION_META_GIT_BRANCH:-}" ]]; then
+    printf '%s\n' "${SESSION_META_GIT_BRANCH}"
+    return 0
+  fi
+  printf 'none\n'
+}
+
+emit_loaded_session_control_summary() {
+  printf 'target_kind=%s\n' "${SESSION_META_TARGET_KIND:-}"
+  printf 'target_provider=%s\n' "${SESSION_META_TARGET_PROVIDER:-}"
+  printf 'target_id=%s\n' "${SESSION_META_TARGET_ID:-}"
+  printf 'target_summary=%s\n' "$(session_meta_target_summary)"
+  printf 'target_assurance_class=%s\n' "${SESSION_META_TARGET_ASSURANCE_CLASS:-}"
+  printf 'runtime_api=%s\n' "${SESSION_META_RUNTIME_API:-}"
+  printf 'workspace_transport=%s\n' "${SESSION_META_WORKSPACE_TRANSPORT:-}"
+  printf 'workspace=%s\n' "${SESSION_META_WORKSPACE:-}"
+  printf 'display_workspace=%s\n' "$(session_meta_display_workspace)"
+  printf 'workspace_origin=%s\n' "${SESSION_META_WORKSPACE_ORIGIN:-}"
+  printf 'display_worktree=%s\n' "$(session_meta_display_worktree)"
+  printf 'worktree_path=%s\n' "${SESSION_META_WORKTREE_PATH:-}"
+  printf 'display_git_branch=%s\n' "$(session_meta_display_git_branch)"
+  printf 'git_branch=%s\n' "${SESSION_META_GIT_BRANCH:-}"
+  printf 'assurance=%s\n' "${SESSION_META_CURRENT_ASSURANCE:-}"
 }
 
 current_target_kind() {
@@ -2852,7 +2929,8 @@ Commands:
     --workspace PATH          Filter recorded attached and detached sessions to PATH
     --colima-profile NAME     Filter recorded attached and detached sessions to the selected profile
     --json                    Emit machine-readable JSON instead of the default table with live status and control
-    --verbose                 Emit a wider text table with target and workspace-transport metadata
+    --verbose                 Emit a wider text table with target, workspace transport,
+                              branch, and worktree metadata
 
   show
     --id SESSION_ID           Show one recorded session
@@ -2890,6 +2968,8 @@ Notes:
   - `session delete` never rewrites the shared profile audit log.
   - `session delete` cleans only explicitly recorded session-owned artifacts and
     refuses running sessions or running session containers.
+  - `session start`, `session send`, and `session stop` emit stable key=value
+    summaries so detached-session control stays scriptable on the host.
 EOF
 }
 
@@ -3089,6 +3169,7 @@ session_send_main() {
   local message=""
   local append_newline=1
   local payload=""
+  local record_path=""
   local runtime_uid=""
   local runtime_gid=""
   local send_status=0
@@ -3164,8 +3245,16 @@ session_send_main() {
     "source=host-cli" \
     "command=session-send" \
     "argv=${message}"
+  record_path="$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")"
+  write_session_record "${record_path}" \
+    "observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" || exit 1
+  load_session_runtime_metadata "${session_id}"
   printf 'session_id=%s\n' "${session_id}"
   printf 'sent_bytes=%s\n' "${#payload}"
+  printf 'status=%s\n' "${SESSION_META_STATUS:-}"
+  printf 'live_status=%s\n' "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS:-}}"
+  printf 'control_mode=detached\n'
+  emit_loaded_session_control_summary
   exit 0
 }
 
@@ -3239,11 +3328,19 @@ session_stop_main() {
       load_session_runtime_metadata "${session_id}"
       printf 'session_id=%s\n' "${session_id}"
       printf 'stop_requested=1\n'
+      printf 'status=%s\n' "${SESSION_META_STATUS:-}"
+      printf 'live_status=%s\n' "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS:-}}"
+      printf 'control_mode=detached\n'
+      emit_loaded_session_control_summary
       return 0
     fi
     if [[ "${container_state}" == "stopped" ]] && session_monitor_pid_is_live; then
       printf 'session_id=%s\n' "${session_id}"
       printf 'stop_requested=1\n'
+      printf 'status=%s\n' "${SESSION_META_STATUS:-}"
+      printf 'live_status=%s\n' "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS:-}}"
+      printf 'control_mode=detached\n'
+      emit_loaded_session_control_summary
       return 0
     fi
     echo "session stop requires a detached session that is still running: ${session_id}" >&2
@@ -3319,6 +3416,10 @@ session_stop_main() {
   esac
   printf 'session_id=%s\n' "${session_id}"
   printf 'stop_requested=1\n'
+  printf 'status=%s\n' "${SESSION_META_STATUS:-}"
+  printf 'live_status=%s\n' "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS:-}}"
+  printf 'control_mode=detached\n'
+  emit_loaded_session_control_summary
   exit 0
 }
 
@@ -3843,7 +3944,7 @@ session_main() {
       if [[ "${emit_json}" -eq 1 ]]; then
         printf '%s\n' "${output}"
       elif [[ "${emit_verbose}" -eq 1 ]]; then
-        printf 'session_id\tstatus\tlive_status\tcontrol\tagent\tmode\tprofile\ttarget\ttarget_assurance\tworkspace_transport\tstarted_at\tassurance\tworkspace\n'
+        printf 'session_id\tstatus\tlive_status\tcontrol\tagent\tmode\tprofile\ttarget\ttarget_assurance\tworkspace_transport\tgit_branch\tworktree\tstarted_at\tassurance\tworkspace\n'
         printf '%s\n' "${output}"
       else
         printf 'session_id\tstatus\tlive_status\tcontrol\tagent\tmode\tprofile\tstarted_at\tassurance\tworkspace\n'
@@ -7901,6 +8002,7 @@ if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
   printf 'workspace_root=%s\n' "${PROFILE_WORKSPACE_ROOT}"
   printf 'worktree_path=%s\n' "${WORKSPACE}"
   printf 'git_branch=%s\n' "${session_git_branch:-none}"
+  emit_loaded_session_control_summary
   printf 'monitor_pid=%s\n' "${SESSION_MONITOR_PID}"
   printf 'audit_log_path=%s\n' "$(profile_audit_log_path "${COLIMA_PROFILE}")"
   printf 'debug_log_path=%s\n' "${DEBUG_LOG_PATH:-none}"

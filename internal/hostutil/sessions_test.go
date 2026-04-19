@@ -242,6 +242,26 @@ func TestSessionDisplayWorkspacePrefersWorkspaceOrigin(t *testing.T) {
 	}
 }
 
+func TestSessionDisplayWorktreePrefersRecordedWorktreePath(t *testing.T) {
+	t.Parallel()
+
+	got := SessionDisplayWorktree(SessionRecord{
+		Workspace:    "/tmp/source-workspace",
+		WorktreePath: "/tmp/source-workspace/.git/workcell-sessions/session-1/repo",
+	})
+	if got != "/tmp/source-workspace/.git/workcell-sessions/session-1/repo" {
+		t.Fatalf("SessionDisplayWorktree() = %q, want worktree path", got)
+	}
+}
+
+func TestSessionDisplayGitBranchFallsBackToNone(t *testing.T) {
+	t.Parallel()
+
+	if got := SessionDisplayGitBranch(SessionRecord{}); got != "none" {
+		t.Fatalf("SessionDisplayGitBranch() = %q, want none", got)
+	}
+}
+
 func TestSessionTargetSummary(t *testing.T) {
 	t.Parallel()
 
@@ -472,6 +492,7 @@ func TestSessionRuntimeMetadataLines(t *testing.T) {
 		WorkspaceOrigin:   "/tmp/source-workspace",
 		WorkspaceRoot:     "/tmp",
 		WorktreePath:      "/tmp/workspace/.worktrees/session-1",
+		GitBranch:         "feature/session-diff",
 		ContainerName:     "workcell-session-1",
 		Status:            "running",
 		Mode:              "strict",
@@ -499,6 +520,7 @@ func TestSessionRuntimeMetadataLines(t *testing.T) {
 		"workspace_origin=/tmp/source-workspace",
 		"workspace_root=/tmp",
 		"worktree_path=/tmp/workspace/.worktrees/session-1",
+		"git_branch=feature/session-diff",
 		"container_name=workcell-session-1",
 		"status=running",
 		"mode=strict",
@@ -571,6 +593,8 @@ func TestSessionShowLines(t *testing.T) {
 		"workspace_transport=isolated-worktree-mount",
 		"workspace=/tmp/workspace",
 		"display_workspace=/tmp/source-workspace",
+		"display_worktree=/tmp/workspace/.worktrees/session-1",
+		"display_git_branch=feature/session-observability",
 		"workspace_origin=/tmp/source-workspace",
 		"workspace_root=/tmp",
 		"worktree_path=/tmp/workspace/.worktrees/session-1",

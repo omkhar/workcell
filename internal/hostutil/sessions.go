@@ -110,6 +110,7 @@ func SessionRuntimeMetadataLines(record SessionRecord) []string {
 		fmt.Sprintf("workspace_origin=%s", record.WorkspaceOrigin),
 		fmt.Sprintf("workspace_root=%s", record.WorkspaceRoot),
 		fmt.Sprintf("worktree_path=%s", record.WorktreePath),
+		fmt.Sprintf("git_branch=%s", record.GitBranch),
 		fmt.Sprintf("container_name=%s", record.ContainerName),
 		fmt.Sprintf("status=%s", record.Status),
 		fmt.Sprintf("mode=%s", record.Mode),
@@ -168,6 +169,20 @@ func SessionDisplayWorkspace(record SessionRecord) string {
 	return record.Workspace
 }
 
+func SessionDisplayWorktree(record SessionRecord) string {
+	if strings.TrimSpace(record.WorktreePath) != "" {
+		return record.WorktreePath
+	}
+	return record.Workspace
+}
+
+func SessionDisplayGitBranch(record SessionRecord) string {
+	if strings.TrimSpace(record.GitBranch) != "" {
+		return record.GitBranch
+	}
+	return "none"
+}
+
 func SessionTargetSummary(record SessionRecord) string {
 	record = normalizeSessionRecord(record)
 	parts := make([]string, 0, 3)
@@ -203,6 +218,8 @@ func SessionShowLines(record SessionRecord) []string {
 		fmt.Sprintf("workspace_transport=%s", record.WorkspaceTransport),
 		fmt.Sprintf("workspace=%s", record.Workspace),
 		fmt.Sprintf("display_workspace=%s", SessionDisplayWorkspace(record)),
+		fmt.Sprintf("display_worktree=%s", SessionDisplayWorktree(record)),
+		fmt.Sprintf("display_git_branch=%s", SessionDisplayGitBranch(record)),
 		fmt.Sprintf("workspace_origin=%s", record.WorkspaceOrigin),
 		fmt.Sprintf("workspace_root=%s", record.WorkspaceRoot),
 		fmt.Sprintf("worktree_path=%s", record.WorktreePath),

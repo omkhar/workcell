@@ -398,7 +398,7 @@ func runLauncherSessionList(args []string) error {
 	for _, record := range records {
 		if verbose {
 			fmt.Printf(
-				"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				record.SessionID,
 				record.Status,
 				hostutil.SessionDisplayLiveStatus(record),
@@ -409,6 +409,8 @@ func runLauncherSessionList(args []string) error {
 				hostutil.SessionTargetSummary(record),
 				record.TargetAssuranceClass,
 				record.WorkspaceTransport,
+				hostutil.SessionDisplayGitBranch(record),
+				hostutil.SessionDisplayWorktree(record),
 				record.StartedAt,
 				hostutil.SessionAssuranceSummary(record),
 				hostutil.SessionDisplayWorkspace(record),

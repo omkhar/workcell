@@ -13,6 +13,7 @@ complements:
 Current repo status:
 
 - Phase 0 is implemented in the validation substrate
+- Phase 1 is implemented in the session platform and deterministic evidence
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract
