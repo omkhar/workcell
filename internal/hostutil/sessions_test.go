@@ -411,6 +411,53 @@ func TestListSessionRecordsSupportsLegacyProfileNamedTargets(t *testing.T) {
 	}
 }
 
+func TestListSessionRecordsSkipsSymlinkedTargetsRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	external := t.TempDir()
+	if err := os.Symlink(filepath.Join(external, "targets"), filepath.Join(root, "targets")); err != nil {
+		t.Fatal(err)
+	}
+	writeSessionFixture(t, filepath.Join(external, "targets", "local_vm", "colima", "external-profile", "sessions", "session-external.json"), SessionRecord{
+		Version:        1,
+		SessionID:      "session-external",
+		Profile:        "external-profile",
+		Agent:          "codex",
+		Mode:           "strict",
+		Status:         "exited",
+		Workspace:      "/tmp/workspace-external",
+		StartedAt:      "2026-04-08T09:00:00Z",
+		FinishedAt:     "2026-04-08T09:05:00Z",
+		ExitStatus:     "0",
+		FinalAssurance: "managed-mutable",
+	})
+	writeSessionFixture(t, filepath.Join(root, "wcl-one", "sessions", "session-1.json"), SessionRecord{
+		Version:        1,
+		SessionID:      "session-1",
+		Profile:        "wcl-one",
+		Agent:          "claude",
+		Mode:           "development",
+		Status:         "failed",
+		Workspace:      "/tmp/workspace-one",
+		StartedAt:      "2026-04-08T11:00:00Z",
+		FinishedAt:     "2026-04-08T11:03:00Z",
+		ExitStatus:     "17",
+		FinalAssurance: "managed-mutable",
+	})
+
+	records, err := ListSessionRecords(root, SessionListOptions{})
+	if err != nil {
+		t.Fatalf("ListSessionRecords() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("ListSessionRecords() len = %d, want 1", len(records))
+	}
+	if records[0].SessionID != "session-1" {
+		t.Fatalf("unexpected record set from root with symlinked targets dir: %+v", records)
+	}
+}
+
 func TestFindSessionRecordWithPathInRootsPrefersEarlierRootOnDuplicateSessionID(t *testing.T) {
 	t.Parallel()
 

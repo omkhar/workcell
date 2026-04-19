@@ -641,23 +641,58 @@ legacy_audit_migration_output="$(
 grep -q '^target_log='"${TMP_DIR}/audit-migration-fixture/workcell/targets/local_vm/colima/audit-migration-fixture/workcell.audit.log"'$' <<<"${legacy_audit_migration_output}"
 grep -q '^legacy-audit-line$' <<<"${legacy_audit_migration_output}"
 
+merged_audit_migration_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"
+    COLIMA_STATE_ROOT="${FIXTURE_ROOT}/colima"
+    WORKCELL_STATE_ROOT="${FIXTURE_ROOT}/workcell"
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+    PROFILE_NAME="merged-audit-migration-fixture"
+    LEGACY_LOG="$(legacy_profile_audit_log_path "${PROFILE_NAME}")"
+    TARGET_LOG="$(profile_audit_log_path "${PROFILE_NAME}")"
+    mkdir -p "$(dirname "${LEGACY_LOG}")" "$(dirname "${TARGET_LOG}")"
+    printf "legacy-audit-line\n" >"${LEGACY_LOG}"
+    printf "target-audit-line\n" >"${TARGET_LOG}"
+    stash_profile_audit_log "${PROFILE_NAME}"
+    restore_profile_audit_log "${PROFILE_NAME}"
+    printf "target_log=%s\n" "${TARGET_LOG}"
+    cat "${TARGET_LOG}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${TMP_DIR}/merged-audit-migration-fixture"
+)"
+grep -q '^target_log='"${TMP_DIR}/merged-audit-migration-fixture/workcell/targets/local_vm/colima/merged-audit-migration-fixture/workcell.audit.log"'$' <<<"${merged_audit_migration_output}"
+grep -q '^legacy-audit-line$' <<<"${merged_audit_migration_output}"
+grep -q '^target-audit-line$' <<<"${merged_audit_migration_output}"
+[[ "$(grep -c '^target-audit-line$' <<<"${merged_audit_migration_output}")" -eq 1 ]] || {
+  echo "audit migration duplicated target history during restore" >&2
+  exit 1
+}
+
 monitor_env_output="$(
   bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
+    XDG_STATE_HOME="$5"
+    WORKCELL_STATE_ROOT="${XDG_STATE_HOME}/workcell"
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
     SESSION_AUDIT_DIR="$2"
     SESSION_RECORD_PATH="$3"
     SESSION_RECORD_WRITTEN=1
     SESSION_RECORD_FINALIZED=0
     write_session_monitor_env_file "$4"
     cat "$4"
-  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}" "${SESSIONS_DIR}/${DETACHED_SESSION}.json" "${DETACHED_STATE_DIR}/session-monitor.env"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}" "${SESSIONS_DIR}/${DETACHED_SESSION}.json" "${DETACHED_STATE_DIR}/session-monitor.env" "${TMP_DIR}/monitor-xdg-state"
 )"
 grep -q '^SESSION_RECORD_PATH=' <<<"${monitor_env_output}"
 grep -q '^SESSION_RECORD_WRITTEN=1$' <<<"${monitor_env_output}"
 grep -q '^SESSION_RECORD_FINALIZED=0$' <<<"${monitor_env_output}"
 grep -q '^SESSION_MONITOR_READY_PATH=' <<<"${monitor_env_output}"
+grep -q '^XDG_STATE_HOME='"${TMP_DIR}/monitor-xdg-state"'$' <<<"${monitor_env_output}"
+grep -q '^WORKCELL_STATE_ROOT='"${TMP_DIR}/monitor-xdg-state/workcell"'$' <<<"${monitor_env_output}"
+grep -q '^WORKCELL_TARGET_STATE_ROOT='"${TMP_DIR}/monitor-xdg-state/workcell/targets"'$' <<<"${monitor_env_output}"
 
 monitor_ready_probe_output="$(
   bash -lc '

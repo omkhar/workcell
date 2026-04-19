@@ -1672,6 +1672,9 @@ write_session_monitor_env_file() {
     SESSION_RECORD_FINALIZED
     SESSION_MONITOR_READY_PATH
     UI
+    WORKCELL_STATE_ROOT
+    WORKCELL_TARGET_STATE_ROOT
+    XDG_STATE_HOME
     WORKSPACE
   )
 
@@ -1804,6 +1807,19 @@ cleanup_stale_session_audit_dirs() {
   fi
 }
 
+file_is_trailing_suffix_of_file() {
+  local suffix_path="$1"
+  local file_path="$2"
+  local suffix_size=""
+
+  [[ -f "${suffix_path}" ]] || return 1
+  [[ -f "${file_path}" ]] || return 1
+  suffix_size="$(wc -c <"${suffix_path}" | tr -d '[:space:]')"
+  [[ "${suffix_size}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${suffix_size}" -gt 0 ]] || return 1
+  cmp -s "${suffix_path}" <(tail -c "${suffix_size}" "${file_path}" 2>/dev/null)
+}
+
 audit_record_digest() {
   local prev_digest="$1"
   local timestamp="$2"
@@ -1814,16 +1830,24 @@ audit_record_digest() {
 
 stash_profile_audit_log() {
   local profile="$1"
-  local audit_log=""
+  local target_audit_log=""
+  local legacy_audit_log=""
+  local preserved_any=0
 
-  audit_log="$(profile_audit_log_path "${profile}")"
-  if [[ ! -f "${audit_log}" ]]; then
-    audit_log="$(legacy_profile_audit_log_path "${profile}")"
-  fi
-  [[ -f "${audit_log}" ]] || return 0
+  target_audit_log="$(profile_audit_log_path "${profile}")"
+  legacy_audit_log="$(legacy_profile_audit_log_path "${profile}")"
+  [[ -s "${legacy_audit_log}" ]] && preserved_any=1
+  [[ -s "${target_audit_log}" ]] && preserved_any=1
+  [[ "${preserved_any}" -eq 1 ]] || return 0
 
   PROFILE_AUDIT_LOG_STASH="$(mktemp "${TMPDIR:-/tmp}/workcell-audit-log.XXXXXX")"
-  cp "${audit_log}" "${PROFILE_AUDIT_LOG_STASH}"
+  : >"${PROFILE_AUDIT_LOG_STASH}"
+  if [[ -s "${legacy_audit_log}" ]]; then
+    cat "${legacy_audit_log}" >>"${PROFILE_AUDIT_LOG_STASH}"
+  fi
+  if [[ -s "${target_audit_log}" ]]; then
+    cat "${target_audit_log}" >>"${PROFILE_AUDIT_LOG_STASH}"
+  fi
   chmod 0600 "${PROFILE_AUDIT_LOG_STASH}" 2>/dev/null || true
 }
 
@@ -1841,10 +1865,14 @@ restore_profile_audit_log() {
   audit_log="$(profile_audit_log_path "${profile}")"
   mkdir -p "$(dirname "${audit_log}")"
   if [[ -f "${audit_log}" ]] && [[ -s "${audit_log}" ]]; then
-    merged_log="$(mktemp "${TMPDIR:-/tmp}/workcell-audit-merged.XXXXXX")"
-    cat "${PROFILE_AUDIT_LOG_STASH}" "${audit_log}" >"${merged_log}"
-    chmod 0600 "${merged_log}" 2>/dev/null || true
-    mv "${merged_log}" "${audit_log}"
+    if file_is_trailing_suffix_of_file "${audit_log}" "${PROFILE_AUDIT_LOG_STASH}"; then
+      cp "${PROFILE_AUDIT_LOG_STASH}" "${audit_log}"
+    else
+      merged_log="$(mktemp "${TMPDIR:-/tmp}/workcell-audit-merged.XXXXXX")"
+      cat "${PROFILE_AUDIT_LOG_STASH}" "${audit_log}" >"${merged_log}"
+      chmod 0600 "${merged_log}" 2>/dev/null || true
+      mv "${merged_log}" "${audit_log}"
+    fi
   else
     cp "${PROFILE_AUDIT_LOG_STASH}" "${audit_log}"
   fi
@@ -3140,6 +3168,7 @@ session_record_path_for() {
 
 start_detached_session_monitor() {
   local monitor_stderr="/dev/null"
+  local -a monitor_env=()
 
   [[ -n "${SESSION_AUDIT_DIR}" ]] || {
     echo "Detached session monitor requires a session audit directory." >&2
@@ -3152,12 +3181,18 @@ start_detached_session_monitor() {
   if [[ -n "${DEBUG_LOG_PATH}" ]]; then
     monitor_stderr="${DEBUG_LOG_PATH}"
   fi
+  monitor_env=(
+    PATH="${TRUSTED_HOST_PATH}"
+    HOME="${REAL_HOME}"
+    LC_ALL=C
+    LANG=C
+    WORKCELL_SESSION_DETACHED=0
+  )
+  [[ -n "${XDG_STATE_HOME:-}" ]] && monitor_env+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
+  [[ -n "${WORKCELL_STATE_ROOT:-}" ]] && monitor_env+=("WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}")
+  [[ -n "${WORKCELL_TARGET_STATE_ROOT:-}" ]] && monitor_env+=("WORKCELL_TARGET_STATE_ROOT=${WORKCELL_TARGET_STATE_ROOT}")
   env -i \
-    PATH="${TRUSTED_HOST_PATH}" \
-    HOME="${REAL_HOME}" \
-    LC_ALL=C \
-    LANG=C \
-    WORKCELL_SESSION_DETACHED=0 \
+    "${monitor_env[@]}" \
     /bin/bash "${BASH_SOURCE[0]}" session monitor --state-file "${SESSION_MONITOR_ENV_PATH}" \
     >/dev/null 2>>"${monitor_stderr}" &
   SESSION_MONITOR_PID="$!"
@@ -3933,6 +3968,9 @@ session_monitor_main() {
 
   # shellcheck disable=SC1090
   source "${state_file}"
+  if [[ -n "${WORKCELL_STATE_ROOT:-}" ]]; then
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_TARGET_STATE_ROOT:-${WORKCELL_STATE_ROOT}/targets}"
+  fi
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
   sanitize_host_docker_env
   if [[ -n "${SESSION_MONITOR_READY_PATH:-}" ]]; then

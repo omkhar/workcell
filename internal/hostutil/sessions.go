@@ -418,7 +418,10 @@ func sessionStateDirs(root string) ([]string, error) {
 
 	stateDirs := make([]string, 0)
 	targetsRoot := filepath.Join(root, "targets")
-	if targetsInfo, err := os.Stat(targetsRoot); err == nil {
+	if isSymlink(targetsRoot) {
+		// Ignore symlinked targets roots so session discovery stays confined to
+		// the configured state root.
+	} else if targetsInfo, err := os.Stat(targetsRoot); err == nil {
 		if !targetsInfo.IsDir() {
 			return nil, fmt.Errorf("%s is not a directory", targetsRoot)
 		}
