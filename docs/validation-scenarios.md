@@ -24,7 +24,7 @@ Use these anchors when checking release-facing claims:
   `shared/claude-resolver-launcher`, `shared/codex-resolver-launcher`
 - lower-assurance mode claims: `shared/assurance-dry-run`
 - local runtime certification smoke: `shared/agent-launch-smoke`
-- host publication handoff: `shared/publish-pr`
+- host publication handoff and main-only PR-base safeguards: `shared/publish-pr`
 - host-side session inventory and control plus detached workspace-mode
   remediation: `shared/session-commands`
 - persistent cache-plane contract checks: `shared/assurance-dry-run`
@@ -56,6 +56,10 @@ logs/timeline, clean-base diff/export behavior, and operator-contract parity.
 `./scripts/validate-repo.sh` runs the repo-required scenario tier through:
 
 - `./scripts/run-scenario-tests.sh --repo-required`
+
+That scenario runner executes serially by default so repo-required checks do
+not race on shared host-side state. Set `WORKCELL_SCENARIO_JOBS` above `1`
+only for explicit local debugging where you accept lower determinism.
 
 ## Local certification smoke
 

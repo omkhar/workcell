@@ -113,7 +113,7 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		`mode = "` + releaseMode + `"`,
 		"",
 		"[required_status_checks]",
-		`contexts = ["Validate repository"]`,
+		`contexts = ["Allowed PR base", "Validate repository"]`,
 		"",
 		"[repository_variables]",
 		`WORKCELL_ENABLE_GITHUB_ATTESTATIONS = "true"`,
@@ -214,6 +214,7 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 					"parameters": map[string]any{
 						"strict_required_status_checks_policy": true,
 						"required_status_checks": []map[string]any{
+							{"context": "Allowed PR base"},
 							{"context": "Validate repository"},
 						},
 					},

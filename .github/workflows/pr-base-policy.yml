@@ -1,0 +1,46 @@
+name: PR base policy
+
+on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target
+  # exception. Security review: pull_request would let a same-repo PR rewrite
+  # its own ready-state guard, so this workflow must run from trusted
+  # base-branch code with permissions: {}, no checkout, no reusable workflows,
+  # and no external actions.
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - ready_for_review
+      - converted_to_draft
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-base-policy:
+    name: Allowed PR base
+    runs-on: ubuntu-latest
+    env:
+      WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      WORKCELL_PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
+    steps:
+      - name: Allow supported main-based PRs
+        if: env.WORKCELL_PR_BASE_REF == 'main'
+        run: |
+          echo "main remains the only supported PR base by default."
+
+      - name: Allow lower-assurance non-main draft PRs
+        if: env.WORKCELL_PR_BASE_REF != 'main' && env.WORKCELL_PR_IS_DRAFT == 'true'
+        run: |
+          echo "Non-main PR bases remain lower-assurance draft-only PRs."
+
+      - name: Block unsupported non-main ready PRs
+        if: env.WORKCELL_PR_BASE_REF != 'main' && env.WORKCELL_PR_IS_DRAFT != 'true'
+        run: |
+          echo "Ready pull requests must target main. Non-main PR bases stay draft-only lower-assurance review units." >&2
+          exit 1

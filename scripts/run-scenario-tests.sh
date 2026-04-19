@@ -46,8 +46,20 @@ if [[ "${RUN_ALL}" -eq 1 ]] && [[ "${TIER_SELECTION_EXPLICIT}" -eq 0 ]]; then
 fi
 
 CURRENT_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+SCENARIO_JOBS="${WORKCELL_SCENARIO_JOBS:-1}"
 SCENARIO_LIST="$(mktemp "${TMPDIR:-/tmp}/workcell-scenarios.XXXXXX")"
 RESULTS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-scenario-results.XXXXXX")"
+
+case "${SCENARIO_JOBS}" in
+  '' | *[!0-9]*)
+    echo "WORKCELL_SCENARIO_JOBS must be a positive integer." >&2
+    exit 1
+    ;;
+  0)
+    echo "WORKCELL_SCENARIO_JOBS must be at least 1." >&2
+    exit 1
+    ;;
+esac
 
 cleanup() {
   rm -f "${SCENARIO_LIST}"
@@ -139,25 +151,47 @@ if ! "${ROOT_DIR}/scripts/lib/scenario_manifest" list-tsv "${MANIFEST}" >"${SCEN
   exit 1
 fi
 
-# Run all scenarios in parallel; each writes its exit code to a per-index file.
 idx=0
-declare -a pids=()
+run_scenario_record() {
+  local result_file="$1"
+  shift
 
-while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform validation_tier manual; do
-  idx=$((idx + 1))
-  result_file="${RESULTS_DIR}/${idx}.exit"
   (
     exit_code=0
-    run_scenario "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${validation_tier}" "${manual}" || exit_code="$?"
+    run_scenario "$@" || exit_code="$?"
     printf '%d\n' "${exit_code}" >"${result_file}"
-  ) &
-  pids+=($!)
-done <"${SCENARIO_LIST}"
+  )
+}
 
-# Wait for all background jobs to complete
-for pid in "${pids[@]}"; do
-  wait "${pid}" || true
-done
+if [[ "${SCENARIO_JOBS}" -eq 1 ]]; then
+  while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform validation_tier manual; do
+    idx=$((idx + 1))
+    result_file="${RESULTS_DIR}/${idx}.exit"
+    run_scenario_record "${result_file}" \
+      "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${validation_tier}" "${manual}"
+  done <"${SCENARIO_LIST}"
+else
+  # Explicit opt-in parallel mode for local debugging; repo-required validation
+  # stays serial by default because several scenarios share host-side state.
+  declare -a pids=()
+  running_jobs=0
+  while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform validation_tier manual; do
+    idx=$((idx + 1))
+    result_file="${RESULTS_DIR}/${idx}.exit"
+    run_scenario_record "${result_file}" \
+      "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${validation_tier}" "${manual}" &
+    pids+=($!)
+    running_jobs=$((running_jobs + 1))
+    if [[ "${running_jobs}" -ge "${SCENARIO_JOBS}" ]]; then
+      wait -n || true
+      running_jobs=$((running_jobs - 1))
+    fi
+  done <"${SCENARIO_LIST}"
+
+  for pid in "${pids[@]}"; do
+    wait "${pid}" || true
+  done
+fi
 
 # Aggregate results from per-scenario exit files.
 # Exit codes: 0 = pass, 1 = fail, 2 = skip

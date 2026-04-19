@@ -62,8 +62,9 @@ func CheckWorkflows(rootDir, policyPath string) error {
 	if err != nil {
 		return err
 	}
-	if len(contexts) == 0 {
-		return fmt.Errorf("%s must define required_status_checks.contexts as a non-empty array", policyPath)
+	requiredJobNames := append([]string{}, contexts...)
+	if len(requiredJobNames) == 0 {
+		return fmt.Errorf("%s must define at least one required status-check context", policyPath)
 	}
 
 	workflowDir := filepath.Join(rootDir, ".github", "workflows")
@@ -88,7 +89,7 @@ func CheckWorkflows(rootDir, policyPath string) error {
 	}
 
 	missing := make([]string, 0)
-	for _, expected := range contexts {
+	for _, expected := range requiredJobNames {
 		if _, ok := jobNames[expected]; !ok {
 			missing = append(missing, expected)
 		}
@@ -1740,7 +1741,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 			return fmt.Errorf("workflow-level empty permissions declaration missing in %s", workflowPath)
 		}
 		if strings.Contains(workflowText, "pull_request_target") {
-			return fmt.Errorf("%s must not contain pull_request_target triggers", workflowPath)
+			if err := isSafePullRequestTargetWorkflow(workflowText, workflowPath); err != nil {
+				return err
+			}
 		}
 		if regexp.MustCompile(`secrets\.[A-Z0-9_]*(?:PAT|PERSONAL_ACCESS_TOKEN)\b|GH_PAT\b|PERSONAL_ACCESS_TOKEN\b`).MatchString(workflowText) {
 			return fmt.Errorf("%s must not contain long-lived personal access tokens", workflowPath)
@@ -1805,6 +1808,31 @@ func requireStringSliceTable(root map[string]any, tableName, key, sourcePath str
 		}
 	}
 	return values, nil
+}
+
+func isSafePullRequestTargetWorkflow(workflowText, workflowPath string) error {
+	if filepath.Base(workflowPath) != "pr-base-policy.yml" {
+		return fmt.Errorf("%s must not contain pull_request_target triggers", workflowPath)
+	}
+	if !strings.Contains(workflowText, "kusari-inspector suppress") {
+		return fmt.Errorf("%s must document the reviewed Kusari suppression for pull_request_target", workflowPath)
+	}
+	if !regexp.MustCompile(`(?m)^permissions:\s*\{\}\s*$`).MatchString(workflowText) {
+		return fmt.Errorf("%s must keep top-level permissions: {}", workflowPath)
+	}
+	if regexp.MustCompile(`(?m)^[[:space:]]{2,}permissions:`).MatchString(workflowText) {
+		return fmt.Errorf("%s must not grant job-level permissions under pull_request_target", workflowPath)
+	}
+	if regexp.MustCompile(`(?m)^[[:space:]]{4,}uses:\s+`).MatchString(workflowText) {
+		return fmt.Errorf("%s must not call reusable workflows under pull_request_target", workflowPath)
+	}
+	if strings.Contains(workflowText, "actions/checkout@") {
+		return fmt.Errorf("%s must not checkout repository contents when using pull_request_target", workflowPath)
+	}
+	if regexp.MustCompile(`(?m)^\s*-\s+uses:\s+`).MatchString(workflowText) {
+		return fmt.Errorf("%s must not use external actions when using pull_request_target", workflowPath)
+	}
+	return nil
 }
 
 func mustGlob(pattern string) []string {

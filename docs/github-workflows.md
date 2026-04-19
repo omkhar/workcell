@@ -8,6 +8,7 @@ reinforce the runtime boundary and release posture, not replace them.
 | Workflow | Purpose |
 |---|---|
 | `ci.yml` | repository validation, smoke, reproducibility, pin verification, upstream release re-verification, and continuous package install/uninstall verification on pushes and PRs |
+| `pr-base-policy.yml` | trusted base-branch guard that keeps `main` as the supported ready-PR base and leaves non-`main` PR bases as draft-only lower-assurance review units |
 | `docs.yml` | fast spelling and manpage feedback for docs-only changes |
 | `security.yml` | workflow lint, dependency review, and `zizmor` |
 | `codeql.yml` | code scanning for shipped Rust, Go, and JavaScript surfaces |
@@ -110,7 +111,10 @@ conditional:
 
 Workcell does not use:
 
-- `pull_request_target`
+- general-purpose `pull_request_target` workflows; the only exception is
+  `pr-base-policy.yml`, which reads pull-request metadata from trusted
+  base-branch workflow code, keeps top-level `permissions: {}`, and must not
+  check out repository contents or use external actions
 - ambient PAT-style workflow credentials
 - GitHub-hosted macOS claims for the full Colima boundary
 - stale-issue or other bot churn unrelated to the runtime or release posture
