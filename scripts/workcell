@@ -1282,6 +1282,15 @@ session_meta_display_git_branch() {
   printf 'none\n'
 }
 
+ensure_session_meta_git_branch() {
+  local fallback_git_branch="${1:-}"
+
+  if [[ -n "${SESSION_META_GIT_BRANCH:-}" ]]; then
+    return 0
+  fi
+  SESSION_META_GIT_BRANCH="${fallback_git_branch:-none}"
+}
+
 emit_loaded_session_control_summary() {
   printf 'target_kind=%s\n' "${SESSION_META_TARGET_KIND:-}"
   printf 'target_provider=%s\n' "${SESSION_META_TARGET_PROVIDER:-}"
@@ -7993,6 +8002,7 @@ if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
   detached_status="${SESSION_META_STATUS:-running}"
   detached_live_status="${SESSION_META_LIVE_STATUS:-running}"
   DETACHED_SESSION_ACTIVE=1
+  ensure_session_meta_git_branch "${session_git_branch}"
   printf 'session_id=%s\n' "${SESSION_ID}"
   printf 'status=%s\n' "${detached_status}"
   printf 'live_status=%s\n' "${detached_live_status}"
@@ -8001,7 +8011,6 @@ if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
   printf 'workspace_origin=%s\n' "${SESSION_SOURCE_WORKSPACE}"
   printf 'workspace_root=%s\n' "${PROFILE_WORKSPACE_ROOT}"
   printf 'worktree_path=%s\n' "${WORKSPACE}"
-  printf 'git_branch=%s\n' "${session_git_branch:-none}"
   emit_loaded_session_control_summary
   printf 'monitor_pid=%s\n' "${SESSION_MONITOR_PID}"
   printf 'audit_log_path=%s\n' "$(profile_audit_log_path "${COLIMA_PROFILE}")"
