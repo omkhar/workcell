@@ -113,8 +113,11 @@ Scope to define before the owning later phase starts:
 - define the narrow trusted `linux/amd64` validation-host lane before broader
   non-macOS or cloud claims
 - express support as `host OS x target kind x assurance class`
+- define a versioned capability and support-matrix artifact that docs and
+  diagnostics both consume
 - add backend-aware diagnostics that fail closed on unsupported host/backend
   combinations
+- add deterministic fixture tests for unsupported host/backend combinations
 - keep Linux and Windows claims limited to what the validation-host evidence
   and docs actually prove
 
@@ -132,6 +135,8 @@ Scope to define before the owning later phase starts:
   ships
 - make remote workspace materialization explicit and auditable
 - define the reviewed brokered-access and remote image/bootstrap model
+- add the shared fake remote target, conformance harness, and fixtures that
+  later cloud adapters must reuse unchanged
 - keep target ordering and backend selection in the longer-lived
   runtime-target expansion program rather than in this active slice
 
@@ -157,6 +162,20 @@ Staffing:
 - SWE A: scenario and migration evidence
 - SWE B: operator verification docs and comparison material
 
+## Backend Phase Handoff
+
+Before Phase 6, 7, 8, or 9 begins implementation, assign:
+
+- EM:
+  support-boundary owner for rollout scope, preview/GA decisions, and rollback
+- TL:
+  integration owner for shared harness reuse, deterministic tests, and target
+  behavior
+- contract and docs owner:
+  owner for canonical matrices, rollout docs, and operator verification
+- validation owner:
+  owner for repo-required evidence and certification-lane definitions
+
 ## Sequence
 
 1. finish the shared auth/bootstrap path on the shipped host-owned policy and
@@ -169,7 +188,8 @@ Staffing:
 4. expand authenticated, lower-assurance, and remote-contract coverage as each
    later phase lands rather than as a cleanup pass
 5. leave actual `compat` and cloud-backend delivery to the later
-   runtime-target program phases once these prerequisites are done
+   runtime-target program phases once these prerequisites and owner handoffs
+   are done
 
 ## Non-Goals In This Slice
 

@@ -133,11 +133,17 @@ Deliverables:
 
 - trusted `linux/amd64` validation-host lane
 - support matrix expressed as `host OS x target kind x assurance class`
+- versioned capability and support-matrix artifact that docs, diagnostics, and
+  rollout guidance derive from
 - backend-aware diagnostics that fail closed on unsupported combinations
+- deterministic fixture tests for unsupported host/backend combinations
 
 Complete when:
 
-- the support matrix and validation-host invocation are documented in the repo
+- the machine-readable support matrix and validation-host invocation are
+  documented in the repo
+- target-aware diagnostics and fixture tests derive unsupported-combination
+  behavior from the same support-matrix artifact
 - target-aware diagnostics fail closed for unsupported host/backend
   combinations
 - Linux and Windows support claims are limited to what the validation-host
@@ -155,12 +161,34 @@ Deliverables:
 - explicit remote workspace materialization
 - reviewed brokered-access model
 - remote image/bootstrap contract and session/audit lifecycle
+- reusable fake remote target plus shared remote-VM conformance harness
+- fixture-backed deterministic tests that later cloud adapters can run
+  unchanged against that harness
 
 Complete when:
 
 - deterministic remote-contract tests pass without real cloud dependence
+- the shared fake remote target and conformance harness are in the repo and
+  later cloud adapters can consume them without redefining the contract
 - the remote workspace-materialization, brokered-access, and audit contract is
   documented alongside the tests that prove it
+
+## Backend phase exit ownership
+
+The following owner model applies to Phases 6 through 9:
+
+- EM:
+  owns support-boundary approval, rollout scope, and the final decision that a
+  target is ready to move forward
+- TL:
+  owns deterministic backend integration, shared harness reuse, and rollback
+  readiness
+- contract and docs owner:
+  owns support-matrix, rollout, and operator-verification updates in the same
+  change as target enablement
+- validation owner:
+  owns repo-required evidence, certification-lane definitions, and any
+  required live-smoke gating
 
 ## Phase 6: Docker Desktop compatibility backend
 
@@ -174,34 +202,52 @@ Deliverables:
 - feature-flagged `docker-desktop` target
 - explicit `compat` labeling in docs, diagnostics, and session metadata
 - host-matrix certification evidence
+- repo-required target-selection, state-root-routing, and fail-closed
+  diagnostic tests for the `docker-desktop` path
+- explicit enable, disable, and rollback procedure back to the strict Colima
+  path without silent fallback
 
 Complete when:
 
 - the repo keeps `docker-desktop` support clearly lower assurance than the
   current strict Colima path
+- deterministic backend-selection, state-root-routing, and fail-closed
+  diagnostic behavior is proven under repo-required tests
 - the support matrix, rollout guidance, and operator verification material all
   describe the target as `compat` rather than implying strict parity
 - host-matrix certification evidence is published alongside the docs and
   diagnostics that define the supported combinations
+- the owning EM, TL, contract/docs owner, and validation owner approve the
+  enablement, rollback path, and support boundary for the phase
 
 ## Phase 7: AWS remote VM backend
 
 Goal:
 
-- implement the remote VM contract on the first cloud provider
+- implement the remote VM contract on the first cloud provider as a preview
+  target
 
 Deliverables:
 
 - `aws-ec2-ssm` target
+- preview-only support boundary and limited rollout gate
 - audited lifecycle and brokered access
 - explicit remote workspace materialization on the reviewed host-owned model
+- no inbound public SSH requirement on the supported path
 
 Complete when:
 
-- deterministic adapter and contract suites pass
+- deterministic adapter suites and the shared remote-VM conformance harness
+  pass
+- the canonical provider/bootstrap matrix and host-compat support matrix are
+  updated in the same change as the AWS rollout docs
 - the AWS-specific support-boundary, operator rollout path, and audited access
   model are documented alongside the target enablement change
+- the preview-only support boundary and enablement gate are explicit in docs,
+  diagnostics, and rollout guidance
 - live AWS smoke remains certification-only
+- the owning EM, TL, contract/docs owner, and validation owner approve the
+  preview boundary, matrices, and evidence for the phase
 
 ## Phase 8: GCP remote VM backend
 
@@ -213,13 +259,19 @@ Deliverables:
 
 - `gcp-vm` target with limited provider-specific delta
 - parity on lifecycle, audit, and workspace materialization semantics
+- reuse of the unchanged shared remote-VM conformance harness
 
 Complete when:
 
-- deterministic adapter and contract suites pass
+- deterministic adapter suites and the shared remote-VM conformance harness
+  pass
+- the canonical provider/bootstrap matrix and host-compat support matrix are
+  updated in the same change as the GCP rollout docs
 - the GCP-specific support-boundary, operator rollout path, and audited access
   model are documented alongside the target enablement change
 - live GCP smoke remains certification-only
+- the owning EM, TL, contract/docs owner, and validation owner approve the
+  support boundary, matrices, and evidence for the phase
 
 ## Phase 9: Later expansion decision gate
 
@@ -237,3 +289,5 @@ Complete when:
 
 - the next funded lane is explicit and the rejected paths are documented as
   deferred rather than implied
+- the owning EM, TL, contract/docs owner, and validation owner record the
+  decision and its support-load implications in the planning surfaces

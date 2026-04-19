@@ -105,6 +105,8 @@ targets must stay labeled `compat` or another explicitly lower-assurance class.
 - define a narrow trusted `linux/amd64` validation-host lane before broad
   non-macOS claims
 - express support as `host OS x target kind x assurance class`
+- keep one versioned capability and support-matrix artifact that docs,
+  diagnostics, and rollout guidance derive from
 - do not claim Linux or Windows `strict` parity until the same guarantees are
   proven there
 
@@ -116,6 +118,8 @@ targets must stay labeled `compat` or another explicitly lower-assurance class.
 - add `docker-desktop` as the first `compat` target
 - add `aws-ec2-ssm` as the first `remote_vm` target
 - add `gcp-vm` as the second `remote_vm` target
+- require later cloud adapters to pass the shared remote-VM conformance harness
+  rather than redefining contract suites per provider
 - keep `azure-vm` and managed workstations behind later decision gates
 
 ### 6. Scenario evidence and operator verification
@@ -149,6 +153,9 @@ Current repo status:
 
 - `docker-desktop` is feature-flagged, explicitly `compat`, and backed by
   target-aware diagnostics
+- deterministic target-selection, state-routing, and fail-closed behavior are
+  proven under repo-required tests
+- rollback to the strict Colima path is documented and operator-verifiable
 - Linux and Windows support claims remain limited to what the evidence proves
 
 ### Gate 4: first remote VM preview
@@ -156,12 +163,17 @@ Current repo status:
 - remote workspace materialization is explicit and auditable
 - the remote target uses reviewed brokered access and does not require inbound
   public SSH
+- the shared remote-VM conformance harness stays authoritative for the preview
+- the support boundary remains preview-only and is reflected in canonical
+  matrices plus rollout guidance
 - shared auth/bootstrap and scenario evidence are in place
 
 ### Gate 5: second remote VM on the same contract
 
 - the second cloud provider fits the same control-plane and audit model with
   limited provider-specific delta
+- the unchanged shared conformance harness and canonical matrices still bound
+  the support claim
 
 ### Gate 6: later expansion decision
 
