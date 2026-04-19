@@ -600,6 +600,30 @@ legacy_pointer_output="$(
 grep -q '^pointer='"${DETACHED_TRANSCRIPT_LOG}"'$' <<<"${legacy_pointer_output}"
 rm -f "${LEGACY_STATE_DIR}/workcell.latest-transcript-log"
 
+legacy_audit_migration_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"
+    COLIMA_STATE_ROOT="${FIXTURE_ROOT}/colima"
+    WORKCELL_STATE_ROOT="${FIXTURE_ROOT}/workcell"
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+    PROFILE_NAME="audit-migration-fixture"
+    LEGACY_LOG="$(legacy_profile_audit_log_path "${PROFILE_NAME}")"
+    TARGET_LOG="$(profile_audit_log_path "${PROFILE_NAME}")"
+    mkdir -p "$(dirname "${LEGACY_LOG}")"
+    printf "legacy-audit-line\n" >"${LEGACY_LOG}"
+    stash_profile_audit_log "${PROFILE_NAME}"
+    rm -f "${LEGACY_LOG}"
+    restore_profile_audit_log "${PROFILE_NAME}"
+    printf "target_log=%s\n" "${TARGET_LOG}"
+    cat "${TARGET_LOG}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${TMP_DIR}/audit-migration-fixture"
+)"
+grep -q '^target_log='"${TMP_DIR}/audit-migration-fixture/workcell/targets/local_vm/colima/audit-migration-fixture/workcell.audit.log"'$' <<<"${legacy_audit_migration_output}"
+grep -q '^legacy-audit-line$' <<<"${legacy_audit_migration_output}"
+
 monitor_env_output="$(
   bash -lc '
     set -euo pipefail

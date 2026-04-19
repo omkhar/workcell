@@ -1817,6 +1817,9 @@ stash_profile_audit_log() {
   local audit_log=""
 
   audit_log="$(profile_audit_log_path "${profile}")"
+  if [[ ! -f "${audit_log}" ]]; then
+    audit_log="$(legacy_profile_audit_log_path "${profile}")"
+  fi
   [[ -f "${audit_log}" ]] || return 0
 
   PROFILE_AUDIT_LOG_STASH="$(mktemp "${TMPDIR:-/tmp}/workcell-audit-log.XXXXXX")"
