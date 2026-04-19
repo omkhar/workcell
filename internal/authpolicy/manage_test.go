@@ -158,6 +158,8 @@ func TestStatusWithoutPolicyReportsNone(t *testing.T) {
 	}
 	mustContain(t, got.stdout, "injection_policy=none")
 	mustContain(t, got.stdout, "credential_resolution_states=none")
+	mustContain(t, got.stdout, "provider_bootstrap_state=not-configured")
+	mustContain(t, got.stdout, "provider_bootstrap_path=direct-staged")
 }
 
 func TestPolicyInspectionCommandsShowValidateAndDiff(t *testing.T) {
@@ -231,6 +233,8 @@ func TestPolicyWhyExplainsSelectionAndHidesSecrets(t *testing.T) {
 	mustContain(t, got.stdout, "credential_input_kind=source")
 	mustContain(t, got.stdout, "credential_providers=codex")
 	mustContain(t, got.stdout, "credential_modes=strict")
+	mustContain(t, got.stdout, "bootstrap_path=direct-staged")
+	mustContain(t, got.stdout, "bootstrap_support=repo-required")
 	mustNotContain(t, got.stdout, "super-secret-token")
 }
 
@@ -262,6 +266,8 @@ func TestPolicyWhyExplainsResolverBackedSelection(t *testing.T) {
 	mustContain(t, got.stdout, "credential_input_kind=resolver")
 	mustContain(t, got.stdout, "credential_resolver=claude-macos-keychain")
 	mustContain(t, got.stdout, "selection_reason=agent matches providers; mode matches modes")
+	mustContain(t, got.stdout, "bootstrap_path=host-export-scaffold")
+	mustContain(t, got.stdout, "bootstrap_support=manual")
 }
 
 func TestPolicyWhyExplainsWhenCredentialIsNotSelected(t *testing.T) {
@@ -451,6 +457,9 @@ func TestInitSetStatusUnsetRoundTrip(t *testing.T) {
 	mustContain(t, got.stdout, "shared_auth_ready_states=none")
 	mustContain(t, got.stdout, "provider_auth_mode=codex_auth")
 	mustContain(t, got.stdout, "shared_auth_modes=none")
+	mustContain(t, got.stdout, "provider_bootstrap_state=ready")
+	mustContain(t, got.stdout, "provider_bootstrap_path=direct-staged")
+	mustContain(t, got.stdout, "provider_bootstrap_support=repo-required")
 
 	got = runAuthPolicy("unset", "--policy", policyPath, "--managed-root", managedRoot, "--credential", "codex_auth")
 	if got.code != 0 {
@@ -503,6 +512,49 @@ func TestSetResolverAndStatus(t *testing.T) {
 	mustContain(t, got.stdout, "shared_auth_ready_states=none")
 	mustContain(t, got.stdout, "provider_auth_mode=none")
 	mustContain(t, got.stdout, "shared_auth_modes=none")
+	mustContain(t, got.stdout, "provider_bootstrap_state=configured-only")
+	mustContain(t, got.stdout, "provider_bootstrap_path=host-export-scaffold")
+	mustContain(t, got.stdout, "provider_bootstrap_support=manual")
+}
+
+func TestSetCodexResolverAndStatusWhenHostCacheExists(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "injection-policy.toml")
+	managedRoot := filepath.Join(root, "credentials")
+	codexAuthPath := filepath.Join(root, "codex-auth.json")
+	writeFile(t, codexAuthPath, "{\"token\":\"codex\"}\n", 0o600)
+	t.Setenv("WORKCELL_TEST_CODEX_AUTH_FILE", codexAuthPath)
+
+	got := runAuthPolicy("init", "--policy", policyPath, "--managed-root", managedRoot)
+	if got.code != 0 {
+		t.Fatalf("Run(init) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+
+	got = runAuthPolicy(
+		"set",
+		"--policy", policyPath,
+		"--managed-root", managedRoot,
+		"--agent", "codex",
+		"--credential", "codex_auth",
+		"--resolver", "codex-home-auth-file",
+		"--ack-host-resolver",
+	)
+	if got.code != 0 {
+		t.Fatalf("Run(set codex resolver) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "resolver_status=configured-launch-ready")
+
+	got = runAuthPolicy("status", "--policy", policyPath, "--agent", "codex")
+	if got.code != 0 {
+		t.Fatalf("Run(status) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "credential_input_kinds=codex_auth:resolver")
+	mustContain(t, got.stdout, "credential_resolvers=codex_auth:codex-home-auth-file")
+	mustContain(t, got.stdout, "credential_resolution_states=codex_auth:host-source")
+	mustContain(t, got.stdout, "provider_auth_ready_states=codex_auth:ready")
+	mustContain(t, got.stdout, "provider_auth_mode=codex_auth")
+	mustContain(t, got.stdout, "provider_bootstrap_path=host-resolver")
+	mustContain(t, got.stdout, "provider_bootstrap_support=repo-required")
 }
 
 func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {

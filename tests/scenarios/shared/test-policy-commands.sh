@@ -71,6 +71,8 @@ grep -q '^selected=1$' <<<"${why_selected}"
 grep -q '^credential_readiness=ready$' <<<"${why_selected}"
 grep -q '^credential_input_kind=source$' <<<"${why_selected}"
 grep -q '^selection_reason=providers not restricted; mode matches modes$' <<<"${why_selected}"
+grep -q '^bootstrap_path=direct-staged$' <<<"${why_selected}"
+grep -q '^bootstrap_support=repo-required$' <<<"${why_selected}"
 if grep -q 'super-secret' <<<"${why_selected}"; then
   echo "workcell why leaked credential material" >&2
   exit 1
@@ -85,6 +87,7 @@ grep -q '^selected=0$' <<<"${why_filtered}"
 grep -q '^credential_readiness=filtered-provider$' <<<"${why_filtered}"
 grep -q '^credential_providers=codex$' <<<"${why_filtered}"
 grep -q '^selection_reason=agent does not match providers; modes not restricted$' <<<"${why_filtered}"
+grep -q '^bootstrap_path=direct-staged$' <<<"${why_filtered}"
 
 why_out_of_scope="$("${ROOT_DIR}/scripts/workcell" why \
   --credential claude_api_key \
@@ -94,6 +97,7 @@ why_out_of_scope="$("${ROOT_DIR}/scripts/workcell" why \
 grep -q '^selected=0$' <<<"${why_out_of_scope}"
 grep -q '^credential_readiness=out-of-scope$' <<<"${why_out_of_scope}"
 grep -q '^selection_reason=credential is not in scope for agent codex$' <<<"${why_out_of_scope}"
+grep -q '^bootstrap_path=direct-staged$' <<<"${why_out_of_scope}"
 
 set +e
 missing_output="$("${ROOT_DIR}/scripts/workcell" policy validate --injection-policy "${TMP_DIR}/missing.toml" 2>&1)"

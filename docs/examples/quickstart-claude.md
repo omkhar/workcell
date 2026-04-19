@@ -80,7 +80,9 @@ staged launch view after selector evaluation and resolver preprocessing.
 
 If you configured only `claude_auth` via the experimental macOS resolver, expect
 `credential_resolution_states=claude_auth:configured-only` and
-`provider_auth_mode=none` until a supported export path exists.
+`provider_auth_mode=none` until a supported export path exists. The bootstrap
+summary will also report `provider_bootstrap_path=host-export-scaffold` and
+`provider_bootstrap_support=manual`.
 
 ## 4. Launch Claude
 
@@ -123,6 +125,7 @@ workcell publish-pr --workspace /path/to/repo --branch feature/my-change \
 ## Further reading
 
 - [docs/injection-policy.md](../injection-policy.md)
+- [docs/provider-bootstrap-matrix.md](../provider-bootstrap-matrix.md)
 - [docs/adapter-control-planes.md](../adapter-control-planes.md)
 - [docs/requirements-validation.md](../requirements-validation.md)
 - [docs/validation-scenarios.md](../validation-scenarios.md)

@@ -37,6 +37,11 @@ decision, including out-of-scope cases, without launching the runtime. If a
 credential is declared by an
 included fragment, update that fragment directly.
 
+`workcell auth status` and `workcell --auth-status` report
+`provider_bootstrap_*` lines for the selected agent. `workcell why` reports the
+matching `bootstrap_*` lines for the selected credential so the operator can
+see whether the path is repo-required, certification-only, or manual.
+
 Selectors let you scope entries to only some launches:
 
 - `providers = ["codex", "claude", "gemini"]`
@@ -59,12 +64,17 @@ launch unless a supported export path exists.
 ## Provider auth maturity
 
 Direct staged credential files are the primary supported auth path today.
-Built-in host resolvers are intentionally narrow and currently limited to the
-Claude macOS resolver scaffold described above.
+Built-in host resolvers are still intentionally narrow:
+
+- `codex-home-auth-file` is a reviewed Codex host-auth reuse path
+- `claude-macos-keychain` remains the fail-closed Claude macOS scaffold
+
+See [provider-bootstrap-matrix.md](provider-bootstrap-matrix.md) for the
+current bootstrap tiers, handoffs, and evidence.
 
 | Provider | Launch-ready inputs today | Additional reviewed inputs | Current caveats |
 |---|---|---|---|
-| Codex | `codex_auth` | shared GitHub CLI and SSH inputs via policy as needed | direct staged auth file is the normal path |
+| Codex | direct staged `codex_auth` or the `codex-home-auth-file` resolver | shared GitHub CLI and SSH inputs via policy as needed | direct staged auth is still the default recommendation; host resolver reuse remains host-side preprocessing only |
 | Claude | `claude_auth`, `claude_api_key`, `claude_mcp` | shared GitHub CLI and SSH inputs via policy as needed | the built-in `claude-macos-keychain` resolver can record intent but remains fail-closed until a supported export path exists |
 | Gemini | `gemini_env`, `gemini_oauth`, `gemini_projects` | `gcloud_adc` as a supplemental Vertex input plus shared GitHub CLI and SSH inputs via policy as needed | `gcloud_adc` is not a standalone Gemini auth mode |
 

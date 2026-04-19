@@ -85,6 +85,9 @@ grep -q '^shared_auth_modes=github_hosts$' <<<"${codex_output}"
 grep -q '^github_auth_present=1$' <<<"${codex_output}"
 grep -q '^ssh_injected=1$' <<<"${codex_output}"
 grep -q '^ssh_config_assurance=lower-assurance-unsafe-config$' <<<"${codex_output}"
+grep -q '^provider_bootstrap_state=ready$' <<<"${codex_output}"
+grep -q '^provider_bootstrap_path=direct-staged$' <<<"${codex_output}"
+grep -q '^provider_bootstrap_support=repo-required$' <<<"${codex_output}"
 
 codex_alias_output="$("${ROOT_DIR}/scripts/workcell" \
   auth-status \
@@ -94,6 +97,7 @@ codex_alias_output="$("${ROOT_DIR}/scripts/workcell" \
 grep -q '^provider_auth_mode=codex_auth$' <<<"${codex_alias_output}"
 grep -q '^provider_auth_ready_states=codex_auth:ready$' <<<"${codex_alias_output}"
 grep -q '^shared_auth_modes=github_hosts$' <<<"${codex_alias_output}"
+grep -q '^provider_bootstrap_path=direct-staged$' <<<"${codex_alias_output}"
 
 claude_output="$(run_auth_status claude)"
 grep -q '^provider_auth_ready_states=claude_api_key:ready,claude_auth:ready$' <<<"${claude_output}"
@@ -102,6 +106,9 @@ grep -q '^provider_auth_mode=claude_api_key$' <<<"${claude_output}"
 grep -q '^provider_auth_modes=claude_api_key,claude_auth$' <<<"${claude_output}"
 grep -q '^shared_auth_modes=github_hosts$' <<<"${claude_output}"
 grep -q '^github_auth_present=1$' <<<"${claude_output}"
+grep -q '^provider_bootstrap_state=ready$' <<<"${claude_output}"
+grep -q '^provider_bootstrap_path=direct-staged$' <<<"${claude_output}"
+grep -q '^provider_bootstrap_support=repo-required$' <<<"${claude_output}"
 
 gemini_output="$(run_auth_status gemini)"
 grep -q '^provider_auth_ready_states=gemini_env:ready$' <<<"${gemini_output}"
@@ -110,6 +117,9 @@ grep -q '^provider_auth_mode=gemini_env$' <<<"${gemini_output}"
 grep -q '^provider_auth_modes=gemini_env$' <<<"${gemini_output}"
 grep -q '^shared_auth_modes=github_hosts$' <<<"${gemini_output}"
 grep -q '^github_auth_present=1$' <<<"${gemini_output}"
+grep -q '^provider_bootstrap_state=ready$' <<<"${gemini_output}"
+grep -q '^provider_bootstrap_path=direct-staged$' <<<"${gemini_output}"
+grep -q '^provider_bootstrap_support=repo-required$' <<<"${gemini_output}"
 
 for agent in codex claude gemini; do
   run_launch_dry_run "${agent}"

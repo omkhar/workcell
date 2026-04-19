@@ -50,7 +50,9 @@ Inspect the merged host-side injection policy without starting the runtime.
 .TP
 .B workcell why
 Explain why a credential is selected, filtered, or still only configured for a
-specific agent and mode without starting the runtime.
+specific agent and mode without starting the runtime. The output also includes
+bootstrap path, support tier, and next-step fields for the selected
+credential.
 .SH OPTIONS
 .TP
 .B --agent codex|claude|gemini
@@ -170,6 +172,8 @@ instead of passing through host homes or sockets directly.
 Manage explicit host-side credential policy state without starting the Workcell
 runtime. Resolver-backed credentials are still host-only preprocessing and do
 not pass Keychain or provider-home access into Tier 1.
+.B workcell auth status
+also reports the provider bootstrap summary for the selected agent.
 .TP
 .B workcell policy show|validate|diff
 Render the merged policy, validate fail-closed source-backed entries, or diff
@@ -177,8 +181,9 @@ the selected entrypoint file against the canonical merged render.
 .TP
 .B workcell why
 Explain one credential decision, including agent scope, selector filtering, and
-whether the selected entry is ready or still configured-only on the host. When
-omitted,
+whether the selected entry is ready or still configured-only on the host,
+together with the corresponding bootstrap path, support tier, and next-step
+summary. When omitted,
 .B --mode
 defaults to
 .BR strict .
@@ -349,8 +354,9 @@ Colima profile and exit. Also available as
 .B --auth-status
 Print the selected injection or credential posture derived from the rendered
 injection manifest, including the primary provider auth mode, the ordered
-provider auth mode set, and SSH config assurance, and exit. The preferred
-public form is the option form shown in this manual;
+provider auth mode set, SSH config assurance, and provider bootstrap summary
+fields, and exit. The preferred public form is the option form shown in this
+manual;
 .BR "workcell auth-status"
 remains accepted for CLI symmetry.
 .TP

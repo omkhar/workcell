@@ -29,6 +29,9 @@ gcloud_adc = "/Users/example/.config/gcloud/application_default_credentials.json
 - treats ADC as a supplemental input rather than a standalone auth mode
 - derives the matching regional `aiplatform.googleapis.com` allowlist entry for
   strict-mode launches when a location is present
+- reports the `gcloud_adc` path as `vertex-supplement` with manual bootstrap
+  support in `workcell auth status`, `workcell --auth-status`, and
+  `workcell why`
 
 ## 4. Launch
 
@@ -39,6 +42,7 @@ workcell --prepare --agent gemini --workspace /path/to/repo
 ## Related docs
 
 - [docs/injection-policy.md](../injection-policy.md)
+- [docs/provider-bootstrap-matrix.md](../provider-bootstrap-matrix.md)
 - [docs/examples/quickstart-gemini.md](quickstart-gemini.md)
 - [docs/requirements-validation.md](../requirements-validation.md)
 - [docs/validation-scenarios.md](../validation-scenarios.md)

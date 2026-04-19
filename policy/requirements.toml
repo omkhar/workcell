@@ -24,13 +24,16 @@ summary = "Workcell manages explicit host-side auth policy and stages reviewed c
 evidence = [
   "tests/scenarios/shared/test-auth-commands.sh",
   "tests/scenarios/shared/test-auth-status.sh",
+  "tests/scenarios/shared/test-codex-resolver-launcher.sh",
   "internal/authpolicy/manage_test.go",
+  "internal/authresolve/resolve_credential_sources_test.go",
   "scripts/container-smoke.sh",
   "scripts/verify-invariants.sh",
 ]
 docs = [
   "README.md",
   "docs/injection-policy.md",
+  "docs/provider-bootstrap-matrix.md",
   "docs/examples/injection-policy.toml",
   "docs/examples/enterprise-claude-setup.md",
   "docs/examples/gemini-vertex-setup.md",
@@ -107,12 +110,14 @@ evidence = [
   "internal/authpolicy/manage_test.go",
   "tests/scenarios/shared/test-auth-commands.sh",
   "tests/scenarios/shared/test-auth-status.sh",
+  "tests/scenarios/shared/test-codex-resolver-launcher.sh",
   "tests/scenarios/shared/test-agent-launch-smoke.sh",
 ]
 docs = [
   "README.md",
   "man/workcell.1",
   "docs/injection-policy.md",
+  "docs/provider-bootstrap-matrix.md",
   "docs/validation-scenarios.md",
 ]
 

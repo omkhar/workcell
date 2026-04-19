@@ -4337,6 +4337,8 @@ Notes:
     declared by an included fragment, update that fragment directly.
   - resolver-backed credentials remain host-side preprocessing and do not
     grant Keychain or provider-home access inside Tier 1.
+  - auth status reports provider_bootstrap_* summary fields for the selected
+    agent on the reviewed host-owned path.
 EOF
 }
 
@@ -4676,7 +4678,8 @@ Options:
 
 Notes:
   - `workcell why` is host-side and read-only.
-  - it explains credential selection, ready state, and policy-source scope.
+  - it explains credential selection, ready state, bootstrap path, and
+    policy-source scope.
 EOF
 }
 
@@ -4812,7 +4815,9 @@ prepare_injection_bundle() {
   local manifest_path=""
   local metadata=""
   local resolver_metadata=""
+  local synthetic_claude_export=""
   local -a resolver_cmd=()
+  local -a resolver_env=()
 
   if [[ -z "${policy_path}" ]] && [[ "${USE_DEFAULT_INJECTION_POLICY}" -eq 1 ]]; then
     default_policy_path="$(default_injection_policy_path)"
@@ -4868,14 +4873,17 @@ prepare_injection_bundle() {
     --output-metadata "${resolver_metadata_path}"
     --output-root "${INJECTION_BUNDLE_ROOT}"
   )
+  if [[ -n "${WORKCELL_TEST_CODEX_AUTH_FILE:-}" ]]; then
+    resolver_env+=("WORKCELL_TEST_CODEX_AUTH_FILE=${WORKCELL_TEST_CODEX_AUTH_FILE}")
+  fi
   if [[ "${SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT}" == "1" ]]; then
     synthetic_claude_export="${INJECTION_BUNDLE_ROOT}/self-staging-probe-claude-export.json"
     umask 077
     printf '{"token":"claude"}\n' >"${synthetic_claude_export}"
-    run_clean_host_command \
-      env \
-      "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE=${synthetic_claude_export}" \
-      "${resolver_cmd[@]}" >/dev/null
+    resolver_env+=("WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE=${synthetic_claude_export}")
+  fi
+  if [[ "${#resolver_env[@]}" -gt 0 ]]; then
+    run_clean_host_command env "${resolver_env[@]}" "${resolver_cmd[@]}" >/dev/null
   else
     run_clean_host_command "${resolver_cmd[@]}" >/dev/null
   fi
@@ -5099,10 +5107,24 @@ credential_is_launch_ready() {
   local state=""
 
   state="$(credential_resolution_state "$1")"
-  if [[ -z "${state}" ]] || [[ "${state}" == "source" ]] || [[ "${state}" == "resolved" ]]; then
+  if [[ -z "${state}" ]] || [[ "${state}" == "source" ]] || [[ "${state}" == "resolved" ]] || [[ "${state}" == "host-source" ]]; then
     return 0
   fi
   return 1
+}
+
+print_provider_bootstrap_status() {
+  local bootstrap_output=""
+
+  bootstrap_output="$(run_clean_host_command \
+    "${ROOT_DIR}/scripts/lib/manage_injection_policy" \
+    bootstrap-summary \
+    --agent "${AGENT}" \
+    --input-kinds "${INJECTION_CREDENTIAL_INPUT_KINDS:-none}" \
+    --resolvers "${INJECTION_CREDENTIAL_RESOLVERS:-none}" \
+    --resolution-states "${INJECTION_CREDENTIAL_RESOLUTION_STATES:-none}" \
+    --provider-ready-states "${INJECTION_PROVIDER_AUTH_READY_STATES:-none}")"
+  printf '%s\n' "${bootstrap_output}" | sed -n '/^provider_bootstrap_/p'
 }
 
 provider_auth_modes() {
@@ -5236,6 +5258,7 @@ print_injection_status() {
     printf 'ssh_injected=0\n'
     printf 'ssh_config_assurance=off\n'
     printf 'secret_copy_targets=none\n'
+    print_provider_bootstrap_status
     return 0
   fi
   printf 'injection_policy_sha256=%s\n' "${INJECTION_POLICY_SHA256}"
@@ -5253,6 +5276,7 @@ print_injection_status() {
   printf 'ssh_injected=%s\n' "${INJECTION_SSH_ENABLED}"
   printf 'ssh_config_assurance=%s\n' "${INJECTION_SSH_CONFIG_ASSURANCE:-off}"
   printf 'secret_copy_targets=%s\n' "${INJECTION_SECRET_COPY_TARGETS:-none}"
+  print_provider_bootstrap_status
 }
 
 print_inspect_state() {

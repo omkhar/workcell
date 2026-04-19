@@ -58,6 +58,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/codex-resolver-launcher",
+      "description": "Codex host-auth resolver reports launch readiness from the host and resolves through the launcher staging path with a reviewed host cache file",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex"],
+      "persona": "developer",
+      "test_file": "shared/test-codex-resolver-launcher.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/publish-pr",
       "description": "Host-side publish-pr covers dry-run command rendering plus a signed local publication handoff with repo hooks bypassed",
       "lane": "secretless",
