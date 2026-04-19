@@ -67,6 +67,33 @@ assert_output_matches_regex() {
   fi
 }
 
+extract_named_function_block() {
+  local file_path="$1"
+  local function_name="$2"
+
+  sed -n "/^${function_name}()/,/^}/p" "${file_path}"
+}
+
+function_block_contains_regex() {
+  local file_path="$1"
+  local function_name="$2"
+  local regex="$3"
+  local block_text=""
+
+  block_text="$(extract_named_function_block "${file_path}" "${function_name}")"
+  grep -q -- "${regex}" <<<"${block_text}"
+}
+
+function_block_contains_fixed() {
+  local file_path="$1"
+  local function_name="$2"
+  local needle="$3"
+  local block_text=""
+
+  block_text="$(extract_named_function_block "${file_path}" "${function_name}")"
+  grep -Fq -- "${needle}" <<<"${block_text}"
+}
+
 script_supports_command_flag() {
   local script_help=""
 
@@ -1124,7 +1151,7 @@ fi
 
 rm -rf "${codex_managed_config_tmpdir}"
 
-if ! sed -n '/^run_host_colima()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "HOME=\"\${REAL_HOME}\""; then
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "run_host_colima" "HOME=\"\${REAL_HOME}\""; then
   echo "Expected run_host_colima to restore the real host HOME instead of the Docker client sandbox home" >&2
   exit 1
 fi
@@ -2773,17 +2800,17 @@ if ! rg -q 'bootstrap_policy=allowlist endpoints=%s' "${ROOT_DIR}/scripts/workce
   exit 1
 fi
 
-if ! sed -n '/^validate_colima_profile()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'validate_colima_profile_config'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "validate_colima_profile" 'validate_colima_profile_config'; then
   echo "Expected validate_colima_profile to re-check the managed Colima config before reusing a running profile" >&2
   exit 1
 fi
 
-if ! sed -n '/^git_alias_value_is_blocked()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'git_commit_short_arg_is_no_verify'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "git_alias_value_is_blocked" 'git_commit_short_arg_is_no_verify'; then
   echo "Expected git_alias_value_is_blocked to reuse the precise short-option no-verify parser" >&2
   exit 1
 fi
 
-if ! sed -n '/^resolve_existing_executable_or_die()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'is_trusted_host_tool_path'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "resolve_existing_executable_or_die" 'is_trusted_host_tool_path'; then
   echo "Expected resolve_existing_executable_or_die to reject untrusted host executable paths" >&2
   exit 1
 fi
@@ -2797,28 +2824,28 @@ for _git_env_var in GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_IN
   fi
 done
 
-if ! sed -n '/^git_index_materialize_regular_file()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'cat-file blob'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "git_index_materialize_regular_file" 'cat-file blob'; then
   echo "Expected git_index_materialize_regular_file to materialize tracked blobs without checkout-index" >&2
   exit 1
 fi
 
-if ! sed -n '/^git_index_materialize_regular_file()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'failed to read tracked blob'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "git_index_materialize_regular_file" 'failed to read tracked blob'; then
   echo "Expected git_index_materialize_regular_file to fail closed when a tracked control-plane blob is unreadable" >&2
   exit 1
 fi
 
 # shellcheck disable=SC2016
-if ! sed -n '/^git_index_materialize_regular_file()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq 'rm -f "${destination_path}"'; then
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "git_index_materialize_regular_file" 'rm -f "${destination_path}"'; then
   echo "Expected git_index_materialize_regular_file to remove partially materialized files after blob read failures" >&2
   exit 1
 fi
 
-if ! sed -n '/^git_index_populate_shadow_dir()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq '*/../*'; then
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "git_index_populate_shadow_dir" '*/../*'; then
   echo "Expected git_index_populate_shadow_dir to reject unsafe index paths before shadow materialization" >&2
   exit 1
 fi
 
-if ! sed -n '/^sanitize_shadowed_git_config()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'git_config_key_is_blocked'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "sanitize_shadowed_git_config" 'git_config_key_is_blocked'; then
   echo "Expected sanitize_shadowed_git_config to reuse the shared blocked git-config key matcher" >&2
   exit 1
 fi
@@ -2860,27 +2887,27 @@ if [[ "${go_cache_root_actual}" != "${go_cache_root_expected}" ]]; then
   exit 1
 fi
 
-if ! sed -n '/^validate_publish_base_name()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'check-ref-format'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "validate_publish_base_name" 'check-ref-format'; then
   echo "Expected validate_publish_base_name to validate the publish-pr --base branch name" >&2
   exit 1
 fi
 
-if ! sed -n '/^publish_pr_main()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q 'core.hooksPath=/dev/null'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "publish_pr_main" 'core.hooksPath=/dev/null'; then
   echo "Expected publish_pr_main to disable repo hooks for host-side publish git commands" >&2
   exit 1
 fi
 
-if ! sed -n '/^publish_pr_main()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -q -- '--no-verify'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "publish_pr_main" '--no-verify'; then
   echo "Expected publish_pr_main to bypass repo hooks explicitly on host-side commit and push" >&2
   exit 1
 fi
 
-if ! sed -n '/^add_shadow_git_hooks_mount()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "copy_tree_without_symlinks"; then
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "add_shadow_git_hooks_mount" "copy_tree_without_symlinks"; then
   echo "Expected add_shadow_git_hooks_mount to avoid copying symlinked hook content into the readonly shadow" >&2
   exit 1
 fi
 
-if ! sed -n '/^add_shadow_git_config_mount()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | grep -Fq "! -L \"\${source_path}\""; then
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "add_shadow_git_config_mount" "! -L \"\${source_path}\""; then
   echo "Expected add_shadow_git_config_mount to ignore symlinked git config files" >&2
   exit 1
 fi
@@ -3618,11 +3645,11 @@ if ! rg -q '^render_clear_plan\(\)' "${ROOT_DIR}/scripts/colima-egress-allowlist
   echo "Expected dual-stack allowlist helper to render clear rules in the VM apply plan" >&2
   exit 1
 fi
-if ! sed -n '/^render_allowlist_apply_plan()/,/^}/p' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" | grep -q 'render_clear_plan'; then
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" 'render_clear_plan'; then
   echo "Expected dual-stack allowlist apply plan to include render_clear_plan" >&2
   exit 1
 fi
-if sed -n '/^render_allowlist_apply_plan()/,/^}/p' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" | grep -q '^[[:space:]]*clear_rules$'; then
+if function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" '^[[:space:]]*clear_rules$'; then
   echo "Expected dual-stack allowlist apply plan to avoid invoking clear_rules during render" >&2
   exit 1
 fi
