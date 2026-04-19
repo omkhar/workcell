@@ -23,9 +23,10 @@ The deterministic phase breakdown lives in
   invariant checks
 - add a narrow trusted `linux/amd64` validation-host lane plus target-aware
   diagnostics before broad non-macOS or cloud support claims
-- define the first cross-platform `compat` target and the first `remote_vm`
-  target explicitly, without claiming Tier 1 Linux or Windows host parity
-  before the same guarantees exist
+- define the support matrix, remote-VM contract prerequisites, and evidence
+  gates that later `compat` and `remote_vm` targets must satisfy, without
+  implying backend shipment or Tier 1 Linux or Windows host parity before the
+  same guarantees exist
 
 ## Medium term
 

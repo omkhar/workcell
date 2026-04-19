@@ -16,6 +16,8 @@ Current repo status:
 - Phase 1 is implemented in the session platform and deterministic evidence
 - Phase 2 is implemented in the target-state migration and Colima
   compatibility-read path
+- Phase 3 is the next active slice: shared auth/bootstrap completion on top of
+  the shipped direct staged-auth and explainability surfaces
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract
@@ -99,15 +101,26 @@ Goal:
 
 Deliverables:
 
-- broader resolver coverage
+- broader resolver coverage on top of the shipped direct staged-auth path
 - explicit host-owned browser or setup handoffs where provider bootstrap still
   needs them
 - shared diagnostics and explainability across launcher and operator tooling
+- updated provider/bootstrap support matrix that names which auth inputs and
+  bootstrap paths are repo-required, certification-only, or manual
+- clear separation between repo-required deterministic auth/bootstrap evidence
+  and live-provider certification or manual provider-e2e paths
 
 Complete when:
 
 - deterministic auth and bootstrap suites pass without live provider
   dependence
+- the provider/bootstrap support matrix and rollout docs make the supported
+  resolver and bootstrap paths explicit enough to freeze scope for the phase
+- launcher, operator, and rollout docs describe the reviewed bootstrap and
+  explainability path without implying broader resolver support than the
+  current evidence proves
+- any remaining live-provider bootstrap checks stay explicitly documented as
+  certification-only or manual validation lanes
 
 ## Phase 4: Trusted validation hosts and host-compatibility matrix
 
@@ -124,6 +137,9 @@ Deliverables:
 
 Complete when:
 
+- the support matrix and validation-host invocation are documented in the repo
+- target-aware diagnostics fail closed for unsupported host/backend
+  combinations
 - Linux and Windows support claims are limited to what the validation-host
   evidence and docs prove
 
@@ -143,6 +159,8 @@ Deliverables:
 Complete when:
 
 - deterministic remote-contract tests pass without real cloud dependence
+- the remote workspace-materialization, brokered-access, and audit contract is
+  documented alongside the tests that prove it
 
 ## Phase 6: Docker Desktop compatibility backend
 
@@ -161,6 +179,10 @@ Complete when:
 
 - the repo keeps `docker-desktop` support clearly lower assurance than the
   current strict Colima path
+- the support matrix, rollout guidance, and operator verification material all
+  describe the target as `compat` rather than implying strict parity
+- host-matrix certification evidence is published alongside the docs and
+  diagnostics that define the supported combinations
 
 ## Phase 7: AWS remote VM backend
 
@@ -177,6 +199,8 @@ Deliverables:
 Complete when:
 
 - deterministic adapter and contract suites pass
+- the AWS-specific support-boundary, operator rollout path, and audited access
+  model are documented alongside the target enablement change
 - live AWS smoke remains certification-only
 
 ## Phase 8: GCP remote VM backend
@@ -193,6 +217,8 @@ Deliverables:
 Complete when:
 
 - deterministic adapter and contract suites pass
+- the GCP-specific support-boundary, operator rollout path, and audited access
+  model are documented alongside the target enablement change
 - live GCP smoke remains certification-only
 
 ## Phase 9: Later expansion decision gate
