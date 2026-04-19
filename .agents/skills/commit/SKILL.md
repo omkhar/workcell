@@ -64,6 +64,13 @@ for convenience.
 - Sign every commit.
 - Use feature branches. Do not push directly to `main` or rewrite history.
 - Treat final GitHub publication as a host-side action.
+- Do not accept failing repo-owned tests, checks, or workflows as "good
+  enough." If a lane fails because of the change or a hosted-control drift
+  uncovered during the task, keep working until it is fixed or the guarantee is
+  explicitly changed in the same review unit.
+- If the task includes merging, do not stop at PR-green. Follow the merged
+  `main` workflows and fix any repo-owned failures they surface before calling
+  the work complete.
 - When a commit changes a user-visible Workcell workflow, support tier, help
   surface, repo-local operator docs, contract entry, or validation evidence,
   land the matching contract/help/doc/test updates in the same change stream
