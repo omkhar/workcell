@@ -227,6 +227,10 @@ grep -q $'^'"${SESSION_TWO}"$'\tfailed\tstopped\tdetached\tclaude\tdevelopment\t
 grep -q $'^'"${SESSION_ATTACHED_LIVE}"$'\trunning\trunning\tattached\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:15:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
 grep -q $'^'"${SESSION_ONE}"$'\texited\tstopped\tattached\tcodex\tstrict\t'"${PROFILE}"$'\t2026-04-08T10:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_output}"
 
+list_verbose_output="$("${ROOT_DIR}/scripts/workcell" session list --verbose --colima-profile "${PROFILE}")"
+grep -q '^session_id[[:space:]]status[[:space:]]live_status[[:space:]]control[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]target[[:space:]]target_assurance[[:space:]]workspace_transport[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace$' <<<"${list_verbose_output}"
+grep -q $'^'"${SESSION_TWO}"$'\tfailed\tstopped\tdetached\tclaude\tdevelopment\t'"${PROFILE}"$'\tlocal_vm/colima/'"${PROFILE}"$'\tstrict\tisolated-worktree-mount\t2026-04-08T11:00:00Z\tmanaged-mutable\t'"${WORKSPACE_A}"'$' <<<"${list_verbose_output}"
+
 if command -v script >/dev/null 2>&1; then
   tty_list_cmd=("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")
   if script_help="$(script --help 2>&1 || true)" && grep -q -- ' -c, --command ' <<<"${script_help}"; then
@@ -303,10 +307,22 @@ grep -q '^This session is still running\.$' <<<"${delete_running_stderr}"
 list_json="$("${ROOT_DIR}/scripts/workcell" session list --json --workspace "${WORKSPACE_A}" --colima-profile "${PROFILE}")"
 grep -q "\"session_id\": \"${SESSION_ONE}\"" <<<"${list_json}"
 grep -q "\"session_id\": \"${SESSION_TWO}\"" <<<"${list_json}"
+grep -q '"target_kind": "local_vm"' <<<"${list_json}"
+grep -q '"target_provider": "colima"' <<<"${list_json}"
+grep -q '"target_assurance_class": "strict"' <<<"${list_json}"
 
 show_output="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_TWO}")"
 grep -q "\"session_id\": \"${SESSION_TWO}\"" <<<"${show_output}"
 grep -q '"status": "failed"' <<<"${show_output}"
+grep -q '"target_kind": "local_vm"' <<<"${show_output}"
+grep -q '"workspace_transport": "isolated-worktree-mount"' <<<"${show_output}"
+
+show_text_output="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_TWO}" --text)"
+grep -q '^target_summary=local_vm/colima/'"${PROFILE}"'$' <<<"${show_text_output}"
+grep -q '^workspace_transport=isolated-worktree-mount$' <<<"${show_text_output}"
+grep -q '^worktree_path='"${WORKSPACE_B}/.worktrees/${SESSION_TWO}"'$' <<<"${show_text_output}"
+show_text_with_git="$("${ROOT_DIR}/scripts/workcell" session show --id "${SESSION_ONE}" --text)"
+grep -q '^git_branch='"${GIT_BRANCH}"'$' <<<"${show_text_with_git}"
 
 diff_stdout="$("${ROOT_DIR}/scripts/workcell" session diff --id "${SESSION_ONE}" --output "${DIFF_PATH}")"
 grep -q "^session_diff=${DIFF_PATH}$" <<<"${diff_stdout}"

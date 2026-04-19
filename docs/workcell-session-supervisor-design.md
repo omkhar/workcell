@@ -100,7 +100,13 @@ session metadata.
 - assurance
 - workspace
 
-`workcell session show` returns the full durable record for one session.
+`workcell session list --verbose` adds target identity, target assurance, and
+workspace-transport metadata without changing the default compact table.
+
+`workcell session show` returns the full durable record for one session, and
+`workcell session show --text` renders the same record as stable key=value
+lines, including target metadata, workspace transport, branch, worktree, and
+artifact pointers.
 
 `workcell session logs` prints one retained audit, debug, file-trace, or
 transcript log for a recorded session.
@@ -136,8 +142,6 @@ The current slice does not yet attempt to implement:
 The remaining near-term work is to:
 
 - harden and normalize worktree-per-session defaults
-- expose branch/worktree and assurance state more clearly in operator-facing
-  status views
 - deepen validation coverage for detached-session transitions and
   lower-assurance paths
 - add richer artifact browsing without weakening the host-owned model

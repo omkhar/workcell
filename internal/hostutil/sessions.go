@@ -20,6 +20,12 @@ type SessionRecord struct {
 	Version               int    `json:"version"`
 	SessionID             string `json:"session_id"`
 	Profile               string `json:"profile"`
+	TargetKind            string `json:"target_kind,omitempty"`
+	TargetProvider        string `json:"target_provider,omitempty"`
+	TargetID              string `json:"target_id,omitempty"`
+	TargetAssuranceClass  string `json:"target_assurance_class,omitempty"`
+	RuntimeAPI            string `json:"runtime_api,omitempty"`
+	WorkspaceTransport    string `json:"workspace_transport,omitempty"`
 	Agent                 string `json:"agent"`
 	Mode                  string `json:"mode"`
 	Status                string `json:"status"`
@@ -61,7 +67,14 @@ type SessionExport struct {
 }
 
 func SessionDiffMetadataLines(record SessionRecord) []string {
+	record = normalizeSessionRecord(record)
 	return []string{
+		fmt.Sprintf("target_kind=%s", record.TargetKind),
+		fmt.Sprintf("target_provider=%s", record.TargetProvider),
+		fmt.Sprintf("target_id=%s", record.TargetID),
+		fmt.Sprintf("target_assurance_class=%s", record.TargetAssuranceClass),
+		fmt.Sprintf("runtime_api=%s", record.RuntimeAPI),
+		fmt.Sprintf("workspace_transport=%s", record.WorkspaceTransport),
 		fmt.Sprintf("workspace=%s", record.Workspace),
 		fmt.Sprintf("workspace_origin=%s", record.WorkspaceOrigin),
 		fmt.Sprintf("workspace_root=%s", record.WorkspaceRoot),
@@ -83,9 +96,16 @@ func SessionDiffMetadataLines(record SessionRecord) []string {
 }
 
 func SessionRuntimeMetadataLines(record SessionRecord) []string {
+	record = normalizeSessionRecord(record)
 	return []string{
 		fmt.Sprintf("session_id=%s", record.SessionID),
 		fmt.Sprintf("profile=%s", record.Profile),
+		fmt.Sprintf("target_kind=%s", record.TargetKind),
+		fmt.Sprintf("target_provider=%s", record.TargetProvider),
+		fmt.Sprintf("target_id=%s", record.TargetID),
+		fmt.Sprintf("target_assurance_class=%s", record.TargetAssuranceClass),
+		fmt.Sprintf("runtime_api=%s", record.RuntimeAPI),
+		fmt.Sprintf("workspace_transport=%s", record.WorkspaceTransport),
 		fmt.Sprintf("workspace=%s", record.Workspace),
 		fmt.Sprintf("workspace_origin=%s", record.WorkspaceOrigin),
 		fmt.Sprintf("workspace_root=%s", record.WorkspaceRoot),
@@ -129,11 +149,82 @@ func SessionControlMode(record SessionRecord) string {
 	return "attached"
 }
 
+func SessionDisplayLiveStatus(record SessionRecord) string {
+	return firstNonEmpty(strings.TrimSpace(record.LiveStatus), strings.TrimSpace(record.Status))
+}
+
+func SessionAssuranceSummary(record SessionRecord) string {
+	return firstNonEmpty(
+		strings.TrimSpace(record.CurrentAssurance),
+		strings.TrimSpace(record.FinalAssurance),
+		strings.TrimSpace(record.InitialAssurance),
+	)
+}
+
 func SessionDisplayWorkspace(record SessionRecord) string {
 	if strings.TrimSpace(record.WorkspaceOrigin) != "" {
 		return record.WorkspaceOrigin
 	}
 	return record.Workspace
+}
+
+func SessionTargetSummary(record SessionRecord) string {
+	record = normalizeSessionRecord(record)
+	parts := make([]string, 0, 3)
+	for _, value := range []string{record.TargetKind, record.TargetProvider, record.TargetID} {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		parts = append(parts, value)
+	}
+	return strings.Join(parts, "/")
+}
+
+func SessionShowLines(record SessionRecord) []string {
+	record = normalizeSessionRecord(record)
+	return []string{
+		fmt.Sprintf("session_id=%s", record.SessionID),
+		fmt.Sprintf("profile=%s", record.Profile),
+		fmt.Sprintf("target_kind=%s", record.TargetKind),
+		fmt.Sprintf("target_provider=%s", record.TargetProvider),
+		fmt.Sprintf("target_id=%s", record.TargetID),
+		fmt.Sprintf("target_summary=%s", SessionTargetSummary(record)),
+		fmt.Sprintf("target_assurance_class=%s", record.TargetAssuranceClass),
+		fmt.Sprintf("runtime_api=%s", record.RuntimeAPI),
+		fmt.Sprintf("control=%s", SessionControlMode(record)),
+		fmt.Sprintf("agent=%s", record.Agent),
+		fmt.Sprintf("mode=%s", record.Mode),
+		fmt.Sprintf("ui=%s", record.UI),
+		fmt.Sprintf("execution_path=%s", record.ExecutionPath),
+		fmt.Sprintf("status=%s", record.Status),
+		fmt.Sprintf("live_status=%s", SessionDisplayLiveStatus(record)),
+		fmt.Sprintf("assurance=%s", SessionAssuranceSummary(record)),
+		fmt.Sprintf("workspace_transport=%s", record.WorkspaceTransport),
+		fmt.Sprintf("workspace=%s", record.Workspace),
+		fmt.Sprintf("display_workspace=%s", SessionDisplayWorkspace(record)),
+		fmt.Sprintf("workspace_origin=%s", record.WorkspaceOrigin),
+		fmt.Sprintf("workspace_root=%s", record.WorkspaceRoot),
+		fmt.Sprintf("worktree_path=%s", record.WorktreePath),
+		fmt.Sprintf("git_branch=%s", record.GitBranch),
+		fmt.Sprintf("git_head=%s", record.GitHead),
+		fmt.Sprintf("git_base=%s", record.GitBase),
+		fmt.Sprintf("container_name=%s", record.ContainerName),
+		fmt.Sprintf("monitor_pid=%s", record.MonitorPID),
+		fmt.Sprintf("started_at=%s", record.StartedAt),
+		fmt.Sprintf("observed_at=%s", record.ObservedAt),
+		fmt.Sprintf("finished_at=%s", record.FinishedAt),
+		fmt.Sprintf("exit_status=%s", record.ExitStatus),
+		fmt.Sprintf("initial_assurance=%s", record.InitialAssurance),
+		fmt.Sprintf("current_assurance=%s", record.CurrentAssurance),
+		fmt.Sprintf("final_assurance=%s", record.FinalAssurance),
+		fmt.Sprintf("session_audit_dir=%s", record.SessionAuditDir),
+		fmt.Sprintf("audit_log_path=%s", record.AuditLogPath),
+		fmt.Sprintf("debug_log_path=%s", record.DebugLogPath),
+		fmt.Sprintf("file_trace_log_path=%s", record.FileTraceLogPath),
+		fmt.Sprintf("transcript_log_path=%s", record.TranscriptLogPath),
+		fmt.Sprintf("workspace_control_plane=%s", record.WorkspaceControlPlane),
+	}
 }
 
 func SessionMatchesWorkspace(record SessionRecord, workspace string) bool {
@@ -174,6 +265,18 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 			record.SessionID = value
 		case "profile":
 			record.Profile = value
+		case "target_kind":
+			record.TargetKind = value
+		case "target_provider":
+			record.TargetProvider = value
+		case "target_id":
+			record.TargetID = value
+		case "target_assurance_class":
+			record.TargetAssuranceClass = value
+		case "runtime_api":
+			record.RuntimeAPI = value
+		case "workspace_transport":
+			record.WorkspaceTransport = value
 		case "agent":
 			record.Agent = value
 		case "mode":
@@ -239,6 +342,7 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 		return fmt.Errorf("%s: refusing to overwrite terminal session status %q with %q", path, existingRecord.Status, record.Status)
 	}
 
+	record = normalizeSessionRecord(record)
 	if err := validateSessionRecord(record, path); err != nil {
 		return err
 	}
@@ -270,6 +374,7 @@ func ReadSessionRecord(path string) (SessionRecord, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return record, fmt.Errorf("%s: unexpected trailing content", path)
 	}
+	record = normalizeSessionRecord(record)
 	if err := validateSessionRecord(record, path); err != nil {
 		return SessionRecord{}, err
 	}
@@ -422,6 +527,51 @@ func SessionAuditRecords(record SessionRecord) ([]string, error) {
 	return records, nil
 }
 
+func normalizeSessionRecord(record SessionRecord) SessionRecord {
+	if strings.TrimSpace(record.TargetKind) == "" {
+		record.TargetKind = "local_vm"
+	}
+	if strings.TrimSpace(record.TargetProvider) == "" {
+		record.TargetProvider = "colima"
+	}
+	if strings.TrimSpace(record.TargetID) == "" {
+		record.TargetID = strings.TrimSpace(record.Profile)
+	}
+	if strings.TrimSpace(record.TargetAssuranceClass) == "" {
+		record.TargetAssuranceClass = "strict"
+	}
+	if strings.TrimSpace(record.RuntimeAPI) == "" {
+		record.RuntimeAPI = "docker"
+	}
+	if strings.TrimSpace(record.WorkspaceTransport) == "" {
+		record.WorkspaceTransport = deriveWorkspaceTransport(record)
+	}
+	return record
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func deriveWorkspaceTransport(record SessionRecord) string {
+	workspace := strings.TrimSpace(record.Workspace)
+	workspaceOrigin := strings.TrimSpace(record.WorkspaceOrigin)
+	worktreePath := strings.TrimSpace(record.WorktreePath)
+	if workspace == "" {
+		return ""
+	}
+	if (workspaceOrigin != "" && workspaceOrigin != workspace) ||
+		(worktreePath != "" && worktreePath != workspace) {
+		return "isolated-worktree-mount"
+	}
+	return "workspace-mount"
+}
+
 func auditLineHasSessionID(line, sessionID string) bool {
 	for _, field := range strings.Fields(line) {
 		key, value, ok := strings.Cut(field, "=")
@@ -477,6 +627,12 @@ func validateSessionRecord(record SessionRecord, source string) error {
 	}{
 		{name: "session_id", value: record.SessionID},
 		{name: "profile", value: record.Profile},
+		{name: "target_kind", value: record.TargetKind},
+		{name: "target_provider", value: record.TargetProvider},
+		{name: "target_id", value: record.TargetID},
+		{name: "target_assurance_class", value: record.TargetAssuranceClass},
+		{name: "runtime_api", value: record.RuntimeAPI},
+		{name: "workspace_transport", value: record.WorkspaceTransport},
 		{name: "agent", value: record.Agent},
 		{name: "mode", value: record.Mode},
 		{name: "status", value: record.Status},
@@ -516,6 +672,12 @@ func validateSessionRecord(record SessionRecord, source string) error {
 	}{
 		{name: "session_id", value: record.SessionID},
 		{name: "profile", value: record.Profile},
+		{name: "target_kind", value: record.TargetKind},
+		{name: "target_provider", value: record.TargetProvider},
+		{name: "target_id", value: record.TargetID},
+		{name: "target_assurance_class", value: record.TargetAssuranceClass},
+		{name: "runtime_api", value: record.RuntimeAPI},
+		{name: "workspace_transport", value: record.WorkspaceTransport},
 		{name: "agent", value: record.Agent},
 		{name: "mode", value: record.Mode},
 		{name: "status", value: record.Status},

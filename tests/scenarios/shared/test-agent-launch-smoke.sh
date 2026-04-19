@@ -112,12 +112,14 @@ run_agent_version_smoke() {
 
 prepare_runtime
 grep -q "^profile=${PROFILE} mode=strict agent=codex " "${TMP_DIR}/prepare.stderr"
+grep -q '^target_kind=local_vm target_provider=colima target_id='"${PROFILE}"' target_assurance_class=strict runtime_api=docker workspace_transport=workspace-mount$' "${TMP_DIR}/prepare.stderr"
 grep -q "Prepared runtime image recorded for profile ${PROFILE}. No session launched because --prepare-only was requested." "${TMP_DIR}/prepare.stderr"
 
 for agent in codex claude gemini; do
   expected_version="$(expected_runtime_version "${agent}")"
   run_agent_version_smoke "${agent}"
   grep -q "^profile=${PROFILE} mode=strict agent=${agent} " "${TMP_DIR}/${agent}.stderr"
+  grep -q '^target_kind=local_vm target_provider=colima target_id='"${PROFILE}"' target_assurance_class=strict runtime_api=docker workspace_transport=workspace-mount$' "${TMP_DIR}/${agent}.stderr"
   grep -q '^execution_path=managed-tier1 audit_log=' "${TMP_DIR}/${agent}.stderr"
   cat "${TMP_DIR}/${agent}.stdout" "${TMP_DIR}/${agent}.stderr" >"${TMP_DIR}/${agent}.combined"
   grep -q '[^[:space:]]' "${TMP_DIR}/${agent}.combined"

@@ -70,6 +70,12 @@ func TestWriteSessionRecordRoundTrip(t *testing.T) {
 	if record.WorkspaceOrigin != "/tmp/source-workspace" {
 		t.Fatalf("workspace origin was not preserved: %+v", record)
 	}
+	if record.TargetKind != "local_vm" || record.TargetProvider != "colima" || record.TargetID != "wcl-fixture" {
+		t.Fatalf("target metadata was not derived correctly: %+v", record)
+	}
+	if record.TargetAssuranceClass != "strict" || record.RuntimeAPI != "docker" || record.WorkspaceTransport != "isolated-worktree-mount" {
+		t.Fatalf("target runtime metadata was not derived correctly: %+v", record)
+	}
 	if record.LiveStatus != "stopped" || record.CurrentAssurance != "managed-mutable" || record.ObservedAt != "2026-04-08T12:00:30Z" {
 		t.Fatalf("observability state was not preserved: %+v", record)
 	}
@@ -99,6 +105,7 @@ func TestSessionDiffMetadataLines(t *testing.T) {
 	t.Parallel()
 
 	lines := SessionDiffMetadataLines(SessionRecord{
+		Profile:               "wcl-one",
 		Workspace:             "/tmp/workspace",
 		WorkspaceOrigin:       "/tmp/source-workspace",
 		WorkspaceRoot:         "/tmp",
@@ -119,6 +126,12 @@ func TestSessionDiffMetadataLines(t *testing.T) {
 	})
 
 	want := []string{
+		"target_kind=local_vm",
+		"target_provider=colima",
+		"target_id=wcl-one",
+		"target_assurance_class=strict",
+		"runtime_api=docker",
+		"workspace_transport=isolated-worktree-mount",
 		"workspace=/tmp/workspace",
 		"workspace_origin=/tmp/source-workspace",
 		"workspace_root=/tmp",
@@ -226,6 +239,19 @@ func TestSessionDisplayWorkspacePrefersWorkspaceOrigin(t *testing.T) {
 	})
 	if got != "/tmp/source-workspace" {
 		t.Fatalf("SessionDisplayWorkspace() = %q, want workspace origin", got)
+	}
+}
+
+func TestSessionTargetSummary(t *testing.T) {
+	t.Parallel()
+
+	got := SessionTargetSummary(SessionRecord{
+		TargetKind:     "remote_vm",
+		TargetProvider: "aws-ec2-ssm",
+		TargetID:       "buildbox-1234",
+	})
+	if got != "remote_vm/aws-ec2-ssm/buildbox-1234" {
+		t.Fatalf("SessionTargetSummary() = %q", got)
 	}
 }
 
@@ -463,6 +489,12 @@ func TestSessionRuntimeMetadataLines(t *testing.T) {
 	want := []string{
 		"session_id=session-1",
 		"profile=wcl-one",
+		"target_kind=local_vm",
+		"target_provider=colima",
+		"target_id=wcl-one",
+		"target_assurance_class=strict",
+		"runtime_api=docker",
+		"workspace_transport=isolated-worktree-mount",
 		"workspace=/tmp/workspace",
 		"workspace_origin=/tmp/source-workspace",
 		"workspace_root=/tmp",
@@ -486,6 +518,87 @@ func TestSessionRuntimeMetadataLines(t *testing.T) {
 	for i := range want {
 		if lines[i] != want[i] {
 			t.Fatalf("SessionRuntimeMetadataLines()[%d] = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestSessionShowLines(t *testing.T) {
+	t.Parallel()
+
+	lines := SessionShowLines(SessionRecord{
+		SessionID:             "session-1",
+		Profile:               "wcl-one",
+		Workspace:             "/tmp/workspace",
+		WorkspaceOrigin:       "/tmp/source-workspace",
+		WorkspaceRoot:         "/tmp",
+		WorktreePath:          "/tmp/workspace/.worktrees/session-1",
+		GitBranch:             "feature/session-observability",
+		GitHead:               "abcdef1234567890",
+		GitBase:               "1234567890abcdef",
+		ContainerName:         "workcell-session-1",
+		MonitorPID:            "4242",
+		Status:                "running",
+		Mode:                  "strict",
+		LiveStatus:            "running",
+		CurrentAssurance:      "managed-mutable",
+		SessionAuditDir:       "/tmp/session-audit.1234",
+		AuditLogPath:          "/tmp/audit.log",
+		DebugLogPath:          "/tmp/debug.log",
+		FileTraceLogPath:      "/tmp/file-trace.log",
+		TranscriptLogPath:     "/tmp/transcript.log",
+		StartedAt:             "2026-04-08T12:00:00Z",
+		ObservedAt:            "2026-04-08T12:00:30Z",
+		WorkspaceControlPlane: "masked",
+	})
+
+	want := []string{
+		"session_id=session-1",
+		"profile=wcl-one",
+		"target_kind=local_vm",
+		"target_provider=colima",
+		"target_id=wcl-one",
+		"target_summary=local_vm/colima/wcl-one",
+		"target_assurance_class=strict",
+		"runtime_api=docker",
+		"control=detached",
+		"agent=",
+		"mode=strict",
+		"ui=",
+		"execution_path=",
+		"status=running",
+		"live_status=running",
+		"assurance=managed-mutable",
+		"workspace_transport=isolated-worktree-mount",
+		"workspace=/tmp/workspace",
+		"display_workspace=/tmp/source-workspace",
+		"workspace_origin=/tmp/source-workspace",
+		"workspace_root=/tmp",
+		"worktree_path=/tmp/workspace/.worktrees/session-1",
+		"git_branch=feature/session-observability",
+		"git_head=abcdef1234567890",
+		"git_base=1234567890abcdef",
+		"container_name=workcell-session-1",
+		"monitor_pid=4242",
+		"started_at=2026-04-08T12:00:00Z",
+		"observed_at=2026-04-08T12:00:30Z",
+		"finished_at=",
+		"exit_status=",
+		"initial_assurance=",
+		"current_assurance=managed-mutable",
+		"final_assurance=",
+		"session_audit_dir=/tmp/session-audit.1234",
+		"audit_log_path=/tmp/audit.log",
+		"debug_log_path=/tmp/debug.log",
+		"file_trace_log_path=/tmp/file-trace.log",
+		"transcript_log_path=/tmp/transcript.log",
+		"workspace_control_plane=masked",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("SessionShowLines() len = %d, want %d", len(lines), len(want))
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Fatalf("SessionShowLines()[%d] = %q, want %q", i, lines[i], want[i])
 		}
 	}
 }

@@ -287,8 +287,10 @@ Detached session records are written under the Colima profile state tree as
 schema in [`internal/hostutil/sessions.go`](../internal/hostutil/sessions.go)
 includes:
 
-- session identity, profile, agent, mode, and UI
+- session identity, profile, target kind, target provider, target id,
+  target assurance class, runtime API, agent, mode, and UI
 - workspace path, workspace origin, workspace root, and worktree path
+- workspace transport as a distinct recorded concept alongside workspace paths
 - git branch, head, and clean-base metadata
 - container name, monitor pid, status, and live status
 - audit, debug, file-trace, and transcript log pointers

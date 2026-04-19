@@ -1223,6 +1223,35 @@ load_session_runtime_metadata() {
   done < <(session_runtime_metadata "${session_id}")
 }
 
+current_target_kind() {
+  printf 'local_vm\n'
+}
+
+current_target_provider() {
+  printf 'colima\n'
+}
+
+current_target_id() {
+  printf '%s\n' "${COLIMA_PROFILE}"
+}
+
+current_target_assurance_class() {
+  printf 'strict\n'
+}
+
+current_runtime_api() {
+  printf 'docker\n'
+}
+
+current_workspace_transport() {
+  if [[ -n "${SESSION_SOURCE_WORKSPACE:-}" ]] && [[ -n "${WORKSPACE:-}" ]] &&
+    [[ "${SESSION_SOURCE_WORKSPACE}" != "${WORKSPACE}" ]]; then
+    printf 'isolated-worktree-mount\n'
+    return 0
+  fi
+  printf 'workspace-mount\n'
+}
+
 session_record_matches_attached_workspace_shape() {
   [[ -n "${SESSION_META_WORKSPACE:-}" ]] || return 1
   [[ -n "${SESSION_META_WORKSPACE_ORIGIN:-}" ]] || return 1
@@ -1999,6 +2028,12 @@ write_session_record_initial() {
   write_session_record "${SESSION_RECORD_PATH}" \
     "session_id=${SESSION_ID}" \
     "profile=${profile}" \
+    "target_kind=$(current_target_kind)" \
+    "target_provider=$(current_target_provider)" \
+    "target_id=$(current_target_id)" \
+    "target_assurance_class=$(current_target_assurance_class)" \
+    "runtime_api=$(current_runtime_api)" \
+    "workspace_transport=$(current_workspace_transport)" \
     "agent=${AGENT}" \
     "mode=${MODE}" \
     "status=$([[ "${SESSION_DETACHED}" -eq 1 ]] && printf 'starting' || printf 'running')" \
@@ -2817,9 +2852,11 @@ Commands:
     --workspace PATH          Filter recorded attached and detached sessions to PATH
     --colima-profile NAME     Filter recorded attached and detached sessions to the selected profile
     --json                    Emit machine-readable JSON instead of the default table with live status and control
+    --verbose                 Emit a wider text table with target and workspace-transport metadata
 
   show
-    --id SESSION_ID           Show one recorded session as JSON
+    --id SESSION_ID           Show one recorded session
+    --text                    Emit stable key=value lines instead of JSON
 
   delete
     --id SESSION_ID           Delete one terminal recorded session and clean stopped local artifacts
@@ -3707,6 +3744,8 @@ session_main() {
   local workspace=""
   local profile=""
   local emit_json=0
+  local emit_verbose=0
+  local emit_text=0
   local session_id=""
   local output_path=""
   local output=""
@@ -3763,6 +3802,10 @@ session_main() {
             emit_json=1
             shift
             ;;
+          --verbose)
+            emit_verbose=1
+            shift
+            ;;
           -h | --help)
             session_usage
             exit 0
@@ -3775,8 +3818,15 @@ session_main() {
         esac
       done
       args=("${COLIMA_STATE_ROOT}")
+      if [[ "${emit_json}" -eq 1 ]] && [[ "${emit_verbose}" -eq 1 ]]; then
+        echo "workcell session list accepts either --json or --verbose, not both." >&2
+        exit 2
+      fi
       if [[ "${emit_json}" -eq 1 ]]; then
         args+=(--json)
+      fi
+      if [[ "${emit_verbose}" -eq 1 ]]; then
+        args+=(--verbose)
       fi
       if [[ -n "${workspace}" ]]; then
         args+=("--workspace=${workspace}")
@@ -3792,6 +3842,9 @@ session_main() {
       fi
       if [[ "${emit_json}" -eq 1 ]]; then
         printf '%s\n' "${output}"
+      elif [[ "${emit_verbose}" -eq 1 ]]; then
+        printf 'session_id\tstatus\tlive_status\tcontrol\tagent\tmode\tprofile\ttarget\ttarget_assurance\tworkspace_transport\tstarted_at\tassurance\tworkspace\n'
+        printf '%s\n' "${output}"
       else
         printf 'session_id\tstatus\tlive_status\tcontrol\tagent\tmode\tprofile\tstarted_at\tassurance\tworkspace\n'
         printf '%s\n' "${output}"
@@ -3804,6 +3857,10 @@ session_main() {
           --id)
             session_id="$(option_value_or_die "$1" "${2-}")"
             shift 2
+            ;;
+          --text)
+            emit_text=1
+            shift
             ;;
           -h | --help)
             session_usage
@@ -3820,7 +3877,11 @@ session_main() {
         echo "workcell session show requires --id." >&2
         exit 2
       }
-      go_hostutil launcher session-show "${COLIMA_STATE_ROOT}" "${session_id}"
+      args=("${COLIMA_STATE_ROOT}" "${session_id}")
+      if [[ "${emit_text}" -eq 1 ]]; then
+        args+=(--text)
+      fi
+      go_hostutil launcher session-show "${args[@]}"
       exit 0
       ;;
     delete)
@@ -4938,6 +4999,12 @@ print_inspect_state() {
   latest_file_trace_log="$(read_latest_log_pointer "${COLIMA_PROFILE}" file-trace || true)"
   latest_transcript_log="$(read_latest_log_pointer "${COLIMA_PROFILE}" transcript || true)"
   printf 'profile=%s\n' "${COLIMA_PROFILE}"
+  printf 'target_kind=%s\n' "$(current_target_kind)"
+  printf 'target_provider=%s\n' "$(current_target_provider)"
+  printf 'target_id=%s\n' "$(current_target_id)"
+  printf 'target_assurance_class=%s\n' "$(current_target_assurance_class)"
+  printf 'runtime_api=%s\n' "$(current_runtime_api)"
+  printf 'workspace_transport=%s\n' "$(current_workspace_transport)"
   printf 'workspace=%s\n' "${WORKSPACE}"
   printf 'workspace_status=%s\n' "$(workspace_status "${WORKSPACE}")"
   printf 'agent=%s\n' "${AGENT:-none}"
@@ -7634,6 +7701,13 @@ fi
 
 printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
   "${COLIMA_PROFILE}" "${MODE}" "${AGENT}" "${UI}" "${WORKSPACE}" >&2
+printf 'target_kind=%s target_provider=%s target_id=%s target_assurance_class=%s runtime_api=%s workspace_transport=%s\n' \
+  "$(current_target_kind)" \
+  "$(current_target_provider)" \
+  "$(current_target_id)" \
+  "$(current_target_assurance_class)" \
+  "$(current_runtime_api)" \
+  "$(current_workspace_transport)" >&2
 printf 'agent_autonomy=%s\n' "${AGENT_AUTONOMY}" >&2
 printf 'vm_resources=cpu=%s memory_gib=%s disk_gib=%s\n' "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}" >&2
 printf 'container_resources=mutability=%s cpu=%s memory=%s\n' \
