@@ -23,6 +23,7 @@ Use these anchors when checking release-facing claims:
   `shared/auth-commands`, `shared/auth-status`,
   `shared/claude-resolver-launcher`
 - lower-assurance mode claims: `shared/assurance-dry-run`
+- local runtime certification smoke: `shared/agent-launch-smoke`
 - host publication handoff: `shared/publish-pr`
 - host-side session inventory and control plus detached workspace-mode
   remediation: `shared/session-commands`
@@ -33,9 +34,11 @@ Use these anchors when checking release-facing claims:
 - Gemini Vertex supplemental `gcloud_adc` and allowlist behavior:
   `scripts/verify-invariants.sh`
 
-## Local secretless checks
+## Repo-required deterministic checks
 
-These run without provider credentials:
+These are the checks that must stay green for normal repo validation. They run
+without provider credentials and must not depend on live Colima or cloud
+state:
 
 - `./scripts/dev-quick-check.sh`
 - `./scripts/build-and-test.sh` (host-native by default; `--docker` reruns repo validation inside the pinned CI validator container from a disposable snapshot)
@@ -49,6 +52,26 @@ They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
 inspection and explainability, host-side detached session inventory, control,
 logs/timeline, clean-base diff/export behavior, and operator-contract parity.
+
+`./scripts/validate-repo.sh` runs the repo-required scenario tier through:
+
+- `./scripts/run-scenario-tests.sh --repo-required`
+
+## Local certification smoke
+
+These checks are still valuable, but they are intentionally not part of the
+repo-required validation path because they depend on a live runtime boundary.
+
+- `./scripts/run-scenario-tests.sh --secretless-only --certification-only`
+
+Today that certification tier includes:
+
+- `shared/agent-launch-smoke` for local macOS Colima prepare-only and
+  provider-version smoke on the managed path
+
+Certification smoke is where local boundary proof belongs. It should stay
+available and documented, but it must not be the reason repo validation fails
+on a machine that lacks the live runtime prerequisites.
 
 ## Documentation example coverage
 
@@ -67,8 +90,8 @@ when the repo does not add a dedicated new scenario for each page.
 ## Manual authenticated smoke
 
 `./scripts/provider-e2e.sh` is the reviewed path for provider-authenticated
-checks. It is deliberately separate from default CI so the default path stays
-secretless.
+checks. It is deliberately separate from default CI and from the repo-required
+scenario tier so the default path stays deterministic and secretless.
 
 Use it when you need to verify:
 

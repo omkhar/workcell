@@ -17,6 +17,7 @@
       "description": "macOS secretless smoke launches Workcell-managed Codex, Claude, and Gemini entrypoints against the real runtime and version probes each provider",
       "lane": "secretless",
       "platform": "macos",
+      "validation_tier": "certification",
       "manual": false,
       "providers": ["codex", "claude", "gemini"],
       "persona": "developer",

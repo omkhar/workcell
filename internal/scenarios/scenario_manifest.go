@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	validLanes     = map[string]struct{}{"secretless": {}, "provider-e2e": {}}
-	validPlatforms = map[string]struct{}{"any": {}, "linux": {}, "macos": {}}
-	validProviders = map[string]struct{}{"codex": {}, "claude": {}, "gemini": {}}
-	personaPrefix  = "^[a-z][a-z0-9-]*$"
+	validLanes           = map[string]struct{}{"secretless": {}, "provider-e2e": {}}
+	validPlatforms       = map[string]struct{}{"any": {}, "linux": {}, "macos": {}}
+	validProviders       = map[string]struct{}{"codex": {}, "claude": {}, "gemini": {}}
+	validValidationTiers = map[string]struct{}{"repo-required": {}, "certification": {}}
+	personaPrefix        = "^[a-z][a-z0-9-]*$"
 )
 
 type Scenario struct {
@@ -31,6 +32,7 @@ type Scenario struct {
 	Manual              bool
 	Lane                string
 	Platform            string
+	ValidationTier      string
 	TestFile            string
 }
 
@@ -209,6 +211,19 @@ func LoadScenarios(manifestPath string) ([]Scenario, error) {
 			platform = platformValue
 		}
 
+		validationTier := "repo-required"
+		if rawValidationTier, ok := entry["validation_tier"]; ok {
+			validationTierValue, ok := rawValidationTier.(string)
+			if !ok || !containsKey(validValidationTiers, validationTierValue) {
+				return nil, fmt.Errorf(
+					"scenario %s: validation_tier must be one of: %s",
+					scenarioID,
+					strings.Join(sortedKeys(validValidationTiers), ", "),
+				)
+			}
+			validationTier = validationTierValue
+		}
+
 		testFile, err := normalizeTestFile(entry["test_file"], scenarioID, manual)
 		if err != nil {
 			return nil, err
@@ -229,6 +244,7 @@ func LoadScenarios(manifestPath string) ([]Scenario, error) {
 			Manual:              manual,
 			Lane:                lane,
 			Platform:            platform,
+			ValidationTier:      validationTier,
 			TestFile:            testFile,
 		})
 	}
@@ -374,6 +390,7 @@ func ListTSV(manifestPath string, w io.Writer) error {
 			requires,
 			scenario.Lane,
 			scenario.Platform,
+			scenario.ValidationTier,
 			manual,
 		}, "\t")); err != nil {
 			return err

@@ -152,6 +152,12 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 	if strings.Contains(string(validateRepo), "scripts/verify-go-python-parity.sh") {
 		t.Fatalf("%s must not include scripts/verify-go-python-parity.sh", validateRepoPath)
 	}
+	if !strings.Contains(string(validateRepo), `scripts/run-scenario-tests.sh" --repo-required`) {
+		t.Fatalf("%s must run the repo-required scenario tier", validateRepoPath)
+	}
+	if strings.Contains(string(validateRepo), `scripts/run-scenario-tests.sh" --secretless-only`) {
+		t.Fatalf("%s must not depend on the broader secretless scenario lane", validateRepoPath)
+	}
 	for _, want := range []string{
 		`${ROOT_DIR}/.githooks/pre-commit`,
 		`${ROOT_DIR}/scripts/check-dead-code.sh`,

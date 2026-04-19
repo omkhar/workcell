@@ -352,8 +352,8 @@ fi
 mkdir -p "${BUILD_CACHE_DIR}"
 (cd "${ROOT_DIR}" && go build -buildvcs=false -o "${BUILD_CACHE_DIR}/hostutil" ./cmd/workcell-hostutil)
 
-# Check E: Scenario coverage and control-plane parity
-"${ROOT_DIR}/scripts/run-scenario-tests.sh" --secretless-only
+# Check E: deterministic repo-required scenarios plus control-plane parity
+"${ROOT_DIR}/scripts/run-scenario-tests.sh" --repo-required
 "${ROOT_DIR}/scripts/verify-scenario-coverage.sh"
 "${ROOT_DIR}/scripts/verify-control-plane-parity.sh"
 

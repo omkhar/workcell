@@ -9,7 +9,8 @@ not yet covered as deeply as the core secretless validation path.
 
 The strongest local claim depends on the actual Colima plus
 Virtualization.Framework boundary. GitHub-hosted runners cannot prove that, so
-the best evidence today is still local macOS verification.
+the best evidence today is still the local macOS certification lane:
+`./scripts/run-scenario-tests.sh --secretless-only --certification-only`.
 
 ### End-to-end authenticated coverage for every provider
 
@@ -47,7 +48,7 @@ more explicit end-to-end scenarios, especially:
 
 ## Why these gaps remain acceptable for now
 
-The core secretless path is covered by invariants, smoke tests, repo
-validation, reproducibility checks, and tagged release preflight. The open
+The core repo-required path is covered by invariants, smoke tests, deterministic
+repo validation, reproducibility checks, and tagged release preflight. The open
 gaps are mostly at the edges: live-provider auth, local macOS proof, and
 explicit lower-assurance transitions.
