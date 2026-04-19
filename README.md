@@ -249,7 +249,10 @@ Other defaults that matter:
 - there is no separate "start a container, then attach the agent" step
 - `publish-pr` runs on the host so signed commits and GitHub publication stay
   outside the Tier 1 container, and it blocks over-broad branch diffs before
-  push so published PRs stay reviewable
+  push so published PRs stay reviewable; `main` is the only supported PR base
+  by default, and non-`main` bases remain an explicit lower-assurance draft-only
+  escape hatch with an explicit preflight warning that repo-owned PR checks are
+  not expected for that base
 - completed and aborted launches are recorded as durable host-side session
   records that you can inspect with `workcell session ...`
 - `workcell session diff` compares the current workspace against the clean git
@@ -288,6 +291,12 @@ workcell --agent codex --auth-status --workspace /path/to/repo
 ./scripts/publish-provider-bump-pr.sh
 workcell --logs audit --colima-profile wcl-...
 workcell publish-pr --workspace /path/to/repo --branch feature/name \
+  --title-file /tmp/pr-title.txt \
+  --body-file /tmp/pr-body.md \
+  --commit-message-file /tmp/commit-message.txt
+# Lower-assurance exception: non-main bases stay draft-only.
+workcell publish-pr --workspace /path/to/repo --branch feature/name \
+  --base feature/review-stack --allow-non-main-base \
   --title-file /tmp/pr-title.txt \
   --body-file /tmp/pr-body.md \
   --commit-message-file /tmp/commit-message.txt

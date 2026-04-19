@@ -2580,6 +2580,7 @@ Options:
   --workspace PATH              Workspace to publish (default: current directory)
   --branch NAME                 Feature branch to create or switch to (required)
   --base NAME                   Base branch for the PR (default: main)
+  --allow-non-main-base         Allow a lower-assurance draft PR against a non-main base
   --gh-bin PATH                 Host GitHub CLI to use for PR creation
   --snapshot index|worktree     Publish the current index or stage the worktree (default: worktree)
   --title TEXT                  PR title
@@ -2598,6 +2599,13 @@ Notes:
     and publication stay outside the Tier 1 container boundary.
   - It blocks over-broad branch diffs before push so published PRs stay
     reviewable by a human without juggling unrelated concerns.
+  - By default publish-pr only supports --base main because repo-owned PR
+    workflows and hosted controls only cover main-based review units.
+  - --allow-non-main-base is an explicit lower-assurance escape hatch: the PR
+    stays draft-only and the normal main-based PR validation and merge gating
+    do not apply to that PR shape.
+  - publish-pr preflights whether repo-owned PR checks are expected for the
+    chosen base and surfaces the effective validation mode in dry-run output.
   - Host-side git commands explicitly bypass repo hooks during publication
     because workspace hook content is untrusted; signed commits remain
     mandatory.
@@ -2718,6 +2726,7 @@ validate_publish_branch_name() {
 
 validate_publish_base_name() {
   local base="$1"
+  local allow_non_main_base="$2"
 
   if [[ -z "${base}" ]]; then
     echo "publish-pr requires a non-empty --base branch name." >&2
@@ -2725,6 +2734,10 @@ validate_publish_base_name() {
   fi
   if ! "${HOST_GIT_BIN}" check-ref-format --branch "${base}" >/dev/null 2>&1; then
     echo "Invalid publish base branch name: ${base}" >&2
+    exit 2
+  fi
+  if [[ "${base}" != "main" ]] && [[ "${allow_non_main_base}" -ne 1 ]]; then
+    echo "publish-pr only supports --base main by default. Use --allow-non-main-base for an explicit lower-assurance draft PR." >&2
     exit 2
   fi
 }
@@ -2789,10 +2802,21 @@ publish_pr_has_staged_changes() {
   ! run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" diff --cached --quiet --exit-code
 }
 
+publish_pr_repo_owned_checks_expected() {
+  local base="$1"
+
+  if [[ "${base}" == "main" ]]; then
+    printf '1'
+  else
+    printf '0'
+  fi
+}
+
 publish_pr_main() {
   local workspace="${PWD}"
   local branch=""
   local base="main"
+  local allow_non_main_base=0
   local gh_bin=""
   local snapshot="worktree"
   local title=""
@@ -2811,6 +2835,8 @@ publish_pr_main() {
   local resolved_commit_message_file=""
   local pr_url=""
   local shape_base_ref=""
+  local publish_base_mode="main"
+  local repo_owned_pr_checks_expected="1"
   local -a cleanup_files=()
   local -a branch_cmd=()
   local -a add_cmd=()
@@ -2834,6 +2860,10 @@ publish_pr_main() {
       --base)
         base="$(option_value_or_die "$1" "${2-}")"
         shift 2
+        ;;
+      --allow-non-main-base)
+        allow_non_main_base=1
+        shift
         ;;
       --gh-bin)
         gh_bin="$(option_value_or_die "$1" "${2-}")"
@@ -2895,7 +2925,7 @@ publish_pr_main() {
   fi
   validate_publish_snapshot_name "${snapshot}"
   validate_publish_branch_name "${branch}"
-  validate_publish_base_name "${base}"
+  validate_publish_base_name "${base}" "${allow_non_main_base}"
   if [[ -n "${gh_bin}" ]]; then
     HOST_GH_BIN="$(resolve_existing_executable_or_die "${gh_bin}" "gh-bin")"
   elif [[ -n "${HOST_GH_BIN:-}" ]]; then
@@ -2926,6 +2956,13 @@ publish_pr_main() {
   if [[ -z "${commit_message_text}" ]]; then
     echo "publish-pr requires a non-empty commit message." >&2
     exit 2
+  fi
+  repo_owned_pr_checks_expected="$(publish_pr_repo_owned_checks_expected "${base}")"
+  if [[ "${base}" != "main" ]]; then
+    publish_base_mode="lower-assurance-non-main"
+    echo "publish-pr preflight: repo-owned PR checks are not expected for --base ${base}; use this only for an explicit lower-assurance draft review unit." >&2
+    echo "publish-pr lower-assurance mode: non-main --base stays draft and the normal main-based PR validation and merge gating do not apply to that PR shape." >&2
+    ready=0
   fi
 
   if [[ "${snapshot}" == "worktree" ]]; then
@@ -2978,6 +3015,8 @@ publish_pr_main() {
     printf 'publish_snapshot=%s\n' "${snapshot}"
     printf 'publish_branch=%s\n' "${branch}"
     printf 'publish_base=%s\n' "${base}"
+    printf 'publish_base_mode=%s\n' "${publish_base_mode}"
+    printf 'publish_repo_owned_pr_checks_expected=%s\n' "${repo_owned_pr_checks_expected}"
     printf 'publish_draft=%s\n' "$([[ "${ready}" -eq 0 ]] && printf '1' || printf '0')"
     emit_command "${branch_cmd[@]}"
     if [[ "${snapshot}" == "worktree" ]]; then

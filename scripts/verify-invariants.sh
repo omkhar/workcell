@@ -5313,6 +5313,9 @@ PUBLISH_PR_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
   --dry-run)"
 grep -q '^publish_snapshot=worktree$' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q '^publish_branch=feature/publish-fixture$' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q '^publish_base=main$' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q '^publish_base_mode=main$' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q '^publish_repo_owned_pr_checks_expected=1$' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- 'switch --no-guess -c feature/publish-fixture' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' add -A ' <<<"${PUBLISH_PR_DRY_RUN}"
@@ -5382,6 +5385,35 @@ if "${ROOT_DIR}/scripts/workcell" publish-pr \
   exit 1
 fi
 grep -q 'Invalid publish base branch name: topic.lock' /tmp/workcell-publish-pr-invalid-base.out
+
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-non-main-base \
+  --base feature/review-stack \
+  --title "Unsupported non-main base" \
+  --commit-message "Unsupported non-main base commit" \
+  --dry-run >/tmp/workcell-publish-pr-non-main-base.out 2>&1; then
+  echo "Expected publish-pr to reject a non-main base branch without the explicit lower-assurance override" >&2
+  exit 1
+fi
+grep -q 'publish-pr only supports --base main by default' /tmp/workcell-publish-pr-non-main-base.out
+
+PUBLISH_PR_NON_MAIN_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-non-main-base \
+  --base feature/review-stack \
+  --allow-non-main-base \
+  --title "Lower assurance non-main base" \
+  --commit-message "Lower assurance non-main base commit" \
+  --ready \
+  --dry-run 2>&1)"
+grep -q '^publish_base=feature/review-stack$' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
+grep -q '^publish_base_mode=lower-assurance-non-main$' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
+grep -q '^publish_repo_owned_pr_checks_expected=0$' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
+grep -q '^publish_draft=1$' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
+grep -q 'publish-pr preflight: repo-owned PR checks are not expected for --base feature/review-stack' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
+grep -q 'normal main-based PR validation and merge gating do not apply to that PR shape' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
+grep -q -- "gh pr create --base feature/review-stack --head feature/publish-non-main-base --title Lower\\\\ assurance\\\\ non-main\\\\ base --draft --body ''" <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
 
 cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/gh-untrusted"
 #!/usr/bin/env bash

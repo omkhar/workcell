@@ -60,6 +60,10 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - For publish, PR follow-up, or merge requests in this repository, use the
   repo-local `workcell-pr-lifecycle` skill. Repo-local publication rules
   override generic GitHub publication skills.
+- `main` is the only supported PR base by default. Non-`main` base PRs are
+  lower-assurance exceptions: keep them draft, do not merge them, and do not
+  expect the normal `main`-based repo-owned validation or merge gating for
+  that branch shape.
 - Every PR should remain open for comments and review before merge.
 - Every PR must be checked for:
   - top-level PR comments

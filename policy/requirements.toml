@@ -68,7 +68,7 @@ docs = [
 
 [functional.FR-005]
 title = "Host-side publication handoff"
-summary = "Final branch publication remains a host-side action with signed commits and repo hook bypasses handled outside Tier 1."
+summary = "Final branch publication remains a host-side action with signed commits and repo hook bypasses handled outside Tier 1, with main as the supported PR base by default and any non-main base kept draft-only as a lower-assurance exception."
 workflows = ["publish_pr"]
 evidence = [
   "tests/scenarios/shared/test-publish-pr-dry-run.sh",

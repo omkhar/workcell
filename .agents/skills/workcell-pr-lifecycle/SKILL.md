@@ -59,6 +59,10 @@ If the task is release-bound, also read:
 
 - Final GitHub publication is a host-side action. Use `./scripts/workcell
   publish-pr`; do not normalize direct publication from the Tier 1 session.
+- `main` is the only supported PR base by default. If a lower-assurance
+  non-`main` base path exists, keep that PR draft-only, treat it as
+  non-mergeable, and do not claim the normal `main`-based repo-owned
+  validation or merge gating exists for that branch shape.
 - Keep PRs reviewer-sized and single-purpose. Split broad work before
   publication.
 - Sign every commit and use feature branches.
@@ -87,7 +91,8 @@ If the task is release-bound, also read:
 2. Create signed commits using the repo-local `commit` skill.
 3. Run the focused local validation for the change before publication.
 4. Publish with host-side `./scripts/workcell publish-pr` using a draft PR by
-   default.
+   default and targeting `main` unless an explicit lower-assurance exception is
+   part of the task.
 5. Follow repo-owned checks to completion.
 6. If a repo-owned check fails:
    - inspect the failing GitHub Actions logs or PR checks
@@ -98,7 +103,8 @@ If the task is release-bound, also read:
 7. Sweep top-level comments, inline comments, unresolved threads, and async
    reviewer feedback.
 8. When checks are green and no actionable findings remain, mark the PR ready
-   unless the user explicitly asked to keep it draft.
+   unless the user explicitly asked to keep it draft. Do not mark non-`main`
+   base PRs ready; they stay lower-assurance draft-only review units.
 9. After marking ready, re-check checks and review surfaces again.
 10. If merge is part of the task, repeat the review sweep immediately before
     merge, merge, then follow merged `main` workflows until repo-owned lanes
