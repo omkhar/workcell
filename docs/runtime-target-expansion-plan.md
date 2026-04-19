@@ -110,6 +110,8 @@ targets must stay labeled `compat` or another explicitly lower-assurance class.
 
 ### 5. Backend delivery
 
+- keep backend selection and ordering in this program doc rather than pulling
+  it forward into the active auth/bootstrap slice
 - extract `colima` behind the new target model first
 - add `docker-desktop` as the first `compat` target
 - add `aws-ec2-ssm` as the first `remote_vm` target
