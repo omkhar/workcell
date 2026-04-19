@@ -4574,7 +4574,7 @@ auth_main() {
       if [[ -n "${agent}" ]]; then
         auth_cmd+=(--agent "${agent}")
       fi
-      run_clean_host_command "${auth_cmd[@]}"
+      run_clean_host_policy_command "${auth_cmd[@]}"
       exit 0
       ;;
     *)
