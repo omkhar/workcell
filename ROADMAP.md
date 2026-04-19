@@ -15,9 +15,6 @@ The deterministic phase breakdown lives in
 
 ## Short term
 
-- finish the current session-supervisor slice around default
-  worktree-per-session flows and richer live status, branch/worktree,
-  assurance, and log rendering on top of the shipped detached session commands
 - broaden host-owned auth flows where the current implementation is still thin:
   more resolver coverage plus explicit browser/bootstrap handoffs for provider
   onboarding

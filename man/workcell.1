@@ -592,10 +592,23 @@ Detached session lifecycle on the host:
 workcell session start --agent codex --workspace /path/to/repo
 workcell session list
 workcell session list --verbose
+workcell session send --id SESSION_ID --message "continue with tests"
+workcell session stop --id SESSION_ID
 workcell session show --id SESSION_ID
 workcell session show --id SESSION_ID --text
 workcell session delete --id SESSION_ID
 .EE
+.PP
+The verbose inventory adds target, workspace transport, git branch, and
+worktree columns without changing the default compact table.
+.B workcell session show --text
+and the detached control commands
+.BR "workcell session start" ,
+.BR "workcell session send" ,
+and
+.BR "workcell session stop"
+emit stable key=value output so host-side automation can inspect or steer one
+session without parsing human-oriented prose.
 .PP
 Use direct detached workspace mode when you intentionally want to keep the
 session on the live workspace path instead of a clean session-owned clone:

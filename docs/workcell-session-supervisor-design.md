@@ -100,13 +100,14 @@ session metadata.
 - assurance
 - workspace
 
-`workcell session list --verbose` adds target identity, target assurance, and
-workspace-transport metadata without changing the default compact table.
+`workcell session list --verbose` adds target identity, target assurance,
+workspace transport, git branch, and worktree metadata without changing the
+default compact table.
 
 `workcell session show` returns the full durable record for one session, and
 `workcell session show --text` renders the same record as stable key=value
-lines, including target metadata, workspace transport, branch, worktree, and
-artifact pointers.
+lines, including target metadata, workspace transport, display workspace,
+branch, worktree, and artifact pointers.
 
 `workcell session logs` prints one retained audit, debug, file-trace, or
 transcript log for a recorded session.
@@ -125,6 +126,9 @@ either to stdout or a user-selected host file.
 Detached sessions can be started, attached to, steered, and stopped from the
 host without introducing a separate always-on daemon or same-user local socket
 trust.
+`workcell session start`, `workcell session send`, and `workcell session stop`
+emit stable key=value summaries so detached-session control stays scriptable on
+the host.
 
 ## Current Non-Goals
 
@@ -141,7 +145,8 @@ The current slice does not yet attempt to implement:
 
 The remaining near-term work is to:
 
-- harden and normalize worktree-per-session defaults
+- decouple session, audit, and lock state from Colima-shaped program-level
+  assumptions while preserving compatibility reads
 - deepen validation coverage for detached-session transitions and
   lower-assurance paths
 - add richer artifact browsing without weakening the host-owned model
