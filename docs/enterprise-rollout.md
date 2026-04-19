@@ -69,14 +69,19 @@ Use your existing device-management, bootstrap, or dotfile workflow to place:
 Keep repo-local provider control files as imported inputs, not as the live
 control plane.
 
-### 3. Prefer direct staged auth inputs
+### 3. Prefer direct staged auth inputs, with reviewed Codex host reuse when needed
 
-Direct staged credentials are the main supported auth path today.
+Direct staged credentials are still the main supported auth path today.
 
 - Codex: `codex_auth`
 - Claude: `claude_auth`, `claude_api_key`, and `claude_mcp`
 - Gemini: `gemini_env`, `gemini_oauth`, and `gemini_projects`
 - Gemini Vertex supplement: `gcloud_adc`
+
+Reviewed Codex host-auth reuse through `codex-home-auth-file` is also
+supported on the same staged host-owned path when a team wants to reuse the
+existing `~/.codex/auth.json` cache file instead of copying it into a separate
+managed location.
 
 Current caveats:
 
@@ -86,7 +91,9 @@ Current caveats:
   mode
 
 See [injection-policy.md](injection-policy.md) for the current by-provider auth
-maturity summary.
+maturity summary and
+[provider-bootstrap-matrix.md](provider-bootstrap-matrix.md) for the explicit
+repo-required versus manual bootstrap tiers.
 
 ### 4. Scope shared GitHub and SSH inputs deliberately
 

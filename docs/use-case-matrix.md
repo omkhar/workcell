@@ -14,7 +14,7 @@ Workcell workflows.
 | Use case | Status | Primary evidence |
 |---|---|---|
 | secretless provider launch on the managed path | tested | `scripts/container-smoke.sh`, `scripts/verify-invariants.sh` |
-| provider auth injected through the reviewed policy model | tested for direct staged inputs; built-in resolver coverage remains limited | container smoke, auth-status tests, provider-specific helpers |
+| provider auth injected through the reviewed policy model | tested for direct staged inputs plus Codex host-auth reuse; the Claude macOS resolver remains fail-closed scaffold only | container smoke, auth-status tests, policy tests, provider-specific helpers |
 | host-side policy inspection and credential explainability | tested | `tests/scenarios/shared/test-policy-commands.sh`, `internal/authpolicy/manage_test.go` |
 | host-side signed `publish-pr` handoff | tested | shared scenario tests and invariant checks |
 | repo control-plane masking and provider-home re-seeding | tested | invariants and smoke |

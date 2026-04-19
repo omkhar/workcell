@@ -15,18 +15,19 @@ The deterministic phase breakdown lives in
 
 ## Short term
 
-- broaden host-owned auth flows where the current implementation is still thin:
-  more resolver coverage plus explicit browser/bootstrap handoffs for provider
-  onboarding
 - expand end-to-end coverage for authenticated, lower-assurance, and
   session-supervisor transitions so new orchestration features ship with
   invariant checks
-- add a narrow trusted `linux/amd64` validation-host lane plus target-aware
-  diagnostics before broad non-macOS or cloud support claims
-- define the support matrix, remote-VM contract prerequisites, and evidence
-  gates that later `compat` and `remote_vm` targets must satisfy, without
-  implying backend shipment or Tier 1 Linux or Windows host parity before the
-  same guarantees exist
+- ship the narrow trusted `linux/amd64` validation-host lane, versioned
+  support matrix, and target-aware diagnostics before broad non-macOS or cloud
+  support claims
+- define the remote-VM contract prerequisites and evidence gates that later
+  `compat` and `remote_vm` targets must satisfy, without implying backend
+  shipment or Tier 1 Linux or Windows host parity before the same guarantees
+  exist
+- keep one canonical machine-readable support matrix and one shared remote-VM
+  conformance harness so later targets cannot fork the support contract by
+  accident
 
 ## Medium term
 
