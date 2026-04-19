@@ -1,6 +1,11 @@
 name: PR base policy
 
 on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target
+  # exception. Security review: pull_request would let a same-repo PR rewrite
+  # its own ready-state guard, so this workflow must run from trusted
+  # base-branch code with permissions: {}, no checkout, no reusable workflows,
+  # and no external actions.
   pull_request_target:
     types:
       - opened

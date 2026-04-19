@@ -249,6 +249,7 @@ func TestSafePullRequestTargetWorkflowAllowsTrustedPRBasePolicy(t *testing.T) {
 	workflow := `name: PR base policy
 
 on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target exception.
   pull_request_target:
     types:
       - opened
@@ -273,6 +274,7 @@ func TestSafePullRequestTargetWorkflowRejectsCheckout(t *testing.T) {
 	workflow := `name: PR base policy
 
 on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target exception.
   pull_request_target:
     types:
       - opened
@@ -301,6 +303,7 @@ func TestSafePullRequestTargetWorkflowRejectsJobLevelPermissions(t *testing.T) {
 	workflow := `name: PR base policy
 
 on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target exception.
   pull_request_target:
     types:
       - opened
@@ -331,6 +334,7 @@ func TestSafePullRequestTargetWorkflowRejectsReusableWorkflowCalls(t *testing.T)
 	workflow := `name: PR base policy
 
 on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target exception.
   pull_request_target:
     types:
       - opened
@@ -347,6 +351,34 @@ jobs:
 	}
 	if !strings.Contains(err.Error(), "must not call reusable workflows") {
 		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
+	}
+}
+
+func TestSafePullRequestTargetWorkflowRequiresSuppressionComment(t *testing.T) {
+	t.Parallel()
+
+	workflow := `name: PR base policy
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs:
+  pr-base-policy:
+    name: Allowed PR base
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+`
+	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	if err == nil {
+		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted a pull_request_target workflow without a Kusari suppression comment")
+	}
+	if !strings.Contains(err.Error(), "must document the reviewed Kusari suppression") {
+		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want Kusari suppression rejection", err)
 	}
 }
 

@@ -1814,6 +1814,9 @@ func isSafePullRequestTargetWorkflow(workflowText, workflowPath string) error {
 	if filepath.Base(workflowPath) != "pr-base-policy.yml" {
 		return fmt.Errorf("%s must not contain pull_request_target triggers", workflowPath)
 	}
+	if !strings.Contains(workflowText, "kusari-inspector suppress") {
+		return fmt.Errorf("%s must document the reviewed Kusari suppression for pull_request_target", workflowPath)
+	}
 	if !regexp.MustCompile(`(?m)^permissions:\s*\{\}\s*$`).MatchString(workflowText) {
 		return fmt.Errorf("%s must keep top-level permissions: {}", workflowPath)
 	}
