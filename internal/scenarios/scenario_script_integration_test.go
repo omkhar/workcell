@@ -245,6 +245,78 @@ func TestRunScenarioTestsCertificationOnlySkipsRepoRequiredEntries(t *testing.T)
 	}
 }
 
+func TestRunScenarioTestsAllIncludesCertificationByDefault(t *testing.T) {
+	t.Parallel()
+
+	scenarioRoot := t.TempDir()
+	writeScenarioScript(t, scenarioRoot, "shared/test-required.sh", "#!/bin/sh\nset -eu\nprintf 'required-ran\\n'\n")
+	writeScenarioScript(t, scenarioRoot, "shared/test-certification.sh", "#!/bin/sh\nset -eu\nprintf 'certification-ran\\n'\n")
+	writeScenarioScript(t, scenarioRoot, "shared/test-provider.sh", "#!/bin/sh\nset -eu\nprintf 'provider-ran\\n'\n")
+	manifestPath := writeScenarioManifest(t, scenarioRoot, []map[string]any{
+		{
+			"id":                   "shared/required",
+			"description":          "Repo-required fixture",
+			"lane":                 "secretless",
+			"platform":             "any",
+			"validation_tier":      "repo-required",
+			"manual":               false,
+			"providers":            []string{"codex"},
+			"persona":              "developer",
+			"test_file":            "shared/test-required.sh",
+			"requires_credentials": false,
+		},
+		{
+			"id":                   "shared/certification",
+			"description":          "Certification fixture",
+			"lane":                 "secretless",
+			"platform":             "any",
+			"validation_tier":      "certification",
+			"manual":               false,
+			"providers":            []string{"codex"},
+			"persona":              "developer",
+			"test_file":            "shared/test-certification.sh",
+			"requires_credentials": false,
+		},
+		{
+			"id":                   "shared/provider",
+			"description":          "Provider fixture",
+			"lane":                 "provider-e2e",
+			"platform":             "any",
+			"validation_tier":      "repo-required",
+			"manual":               false,
+			"providers":            []string{"codex"},
+			"persona":              "developer",
+			"test_file":            "shared/test-provider.sh",
+			"requires_credentials": true,
+		},
+	})
+
+	code, stdout, _ := runScenarioScript(
+		t,
+		filepath.Join(repoRoot(t), "scripts", "run-scenario-tests.sh"),
+		map[string]string{
+			"WORKCELL_SCENARIO_ROOT":     scenarioRoot,
+			"WORKCELL_SCENARIO_MANIFEST": manifestPath,
+		},
+		"--all",
+	)
+	if code != 0 {
+		t.Fatalf("run-scenario-tests --all exit code = %d stdout=%q", code, stdout)
+	}
+	for _, want := range []string{
+		"required-ran",
+		"PASS shared/required",
+		"certification-ran",
+		"PASS shared/certification",
+		"provider-ran",
+		"PASS shared/provider",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout %q does not contain %q", stdout, want)
+		}
+	}
+}
+
 func TestRunScenarioTestsFailsWhenManifestValidationFails(t *testing.T) {
 	t.Parallel()
 

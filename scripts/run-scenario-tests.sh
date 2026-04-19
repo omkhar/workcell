@@ -12,6 +12,7 @@ fi
 
 RUN_ALL=0
 TIER_SELECTION="repo-required"
+TIER_SELECTION_EXPLICIT=0
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --all)
@@ -22,12 +23,15 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --repo-required)
       TIER_SELECTION="repo-required"
+      TIER_SELECTION_EXPLICIT=1
       ;;
     --include-certification)
       TIER_SELECTION="include-certification"
+      TIER_SELECTION_EXPLICIT=1
       ;;
     --certification-only)
       TIER_SELECTION="certification-only"
+      TIER_SELECTION_EXPLICIT=1
       ;;
     *)
       echo "Usage: run-scenario-tests.sh [--secretless-only|--all] [--repo-required|--include-certification|--certification-only]" >&2
@@ -36,6 +40,10 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ "${RUN_ALL}" -eq 1 ]] && [[ "${TIER_SELECTION_EXPLICIT}" -eq 0 ]]; then
+  TIER_SELECTION="include-certification"
+fi
 
 CURRENT_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
 SCENARIO_LIST="$(mktemp "${TMPDIR:-/tmp}/workcell-scenarios.XXXXXX")"
