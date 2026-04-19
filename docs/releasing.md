@@ -269,8 +269,15 @@ Useful commands:
 
 ```sh
 ./scripts/verify-requirements-coverage.sh
-./scripts/run-scenario-tests.sh --secretless-only
+./scripts/run-scenario-tests.sh --repo-required
 ./scripts/verify-scenario-coverage.sh
+```
+
+When a release touches the local runtime boundary or launch path, also run the
+local certification lane on a machine that has the live runtime prerequisites:
+
+```sh
+./scripts/run-scenario-tests.sh --secretless-only --certification-only
 ```
 
 Perform the release documentation review on the exact branch diff:

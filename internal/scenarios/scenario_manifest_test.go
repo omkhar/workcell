@@ -89,10 +89,10 @@ func TestLoadScenariosAndListTSV(t *testing.T) {
 	if len(scenarios) != 2 {
 		t.Fatalf("expected 2 scenarios, got %d", len(scenarios))
 	}
-	if scenarios[0].Lane != "secretless" || scenarios[0].Platform != "any" || scenarios[0].Manual || scenarios[0].RequiresCredentials {
+	if scenarios[0].Lane != "secretless" || scenarios[0].Platform != "any" || scenarios[0].ValidationTier != "repo-required" || scenarios[0].Manual || scenarios[0].RequiresCredentials {
 		t.Fatalf("unexpected defaults for first scenario: %#v", scenarios[0])
 	}
-	if scenarios[1].TestFile != "" || !scenarios[1].Manual || scenarios[1].Lane != "provider-e2e" || scenarios[1].Platform != "macos" {
+	if scenarios[1].TestFile != "" || !scenarios[1].Manual || scenarios[1].Lane != "provider-e2e" || scenarios[1].Platform != "macos" || scenarios[1].ValidationTier != "repo-required" {
 		t.Fatalf("unexpected manual scenario normalization: %#v", scenarios[1])
 	}
 
@@ -103,7 +103,7 @@ func TestLoadScenariosAndListTSV(t *testing.T) {
 	if got.stderr != "" {
 		t.Fatalf("unexpected stderr: %q", got.stderr)
 	}
-	want := "shared/example\tshared/test-example.sh\t0\tsecretless\tany\t0\nshared/manual\t\t0\tprovider-e2e\tmacos\t1\n"
+	want := "shared/example\tshared/test-example.sh\t0\tsecretless\tany\trepo-required\t0\nshared/manual\t\t0\tprovider-e2e\tmacos\trepo-required\t1\n"
 	if got.stdout != want {
 		t.Fatalf("unexpected list-tsv output: %q", got.stdout)
 	}
@@ -202,6 +202,24 @@ func TestRunRejectsInvalidManifestsAndCoverage(t *testing.T) {
 			},
 			command:      []string{"list-tsv"},
 			wantContains: "test_file must stay under tests/scenarios without traversal",
+		},
+		{
+			name: "invalid-validation-tier",
+			manifest: map[string]any{
+				"version": 1,
+				"scenarios": []any{
+					map[string]any{
+						"id":              "shared/tier",
+						"description":     "Tier",
+						"persona":         "developer",
+						"providers":       []any{"codex"},
+						"validation_tier": "unknown",
+						"test_file":       "shared/test-tier.sh",
+					},
+				},
+			},
+			command:      []string{"list-tsv"},
+			wantContains: "validation_tier must be one of: certification, repo-required",
 		},
 	}
 

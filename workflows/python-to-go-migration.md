@@ -35,9 +35,14 @@ Before porting anything, capture a passing baseline for:
 
 - `./scripts/verify-coverage.sh`
 - `./scripts/run-mutation-tests.sh`
-- `./scripts/run-scenario-tests.sh --secretless-only`
+- `./scripts/run-scenario-tests.sh --repo-required`
 - `./scripts/verify-scenario-coverage.sh`
 - `./scripts/verify-control-plane-parity.sh`
+
+If the helper touches the live runtime boundary, also capture the local
+certification lane separately:
+
+- `./scripts/run-scenario-tests.sh --secretless-only --certification-only`
 
 ### 2. Keep the shell contract stable
 

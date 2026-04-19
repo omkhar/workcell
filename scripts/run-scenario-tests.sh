@@ -11,14 +11,39 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
 fi
 
 RUN_ALL=0
-case "${1:-}" in
-  --all) RUN_ALL=1 ;;
-  --secretless-only | "") ;;
-  *)
-    echo "Usage: run-scenario-tests.sh [--secretless-only|--all]" >&2
-    exit 1
-    ;;
-esac
+TIER_SELECTION="repo-required"
+TIER_SELECTION_EXPLICIT=0
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --all)
+      RUN_ALL=1
+      ;;
+    --secretless-only)
+      RUN_ALL=0
+      ;;
+    --repo-required)
+      TIER_SELECTION="repo-required"
+      TIER_SELECTION_EXPLICIT=1
+      ;;
+    --include-certification)
+      TIER_SELECTION="include-certification"
+      TIER_SELECTION_EXPLICIT=1
+      ;;
+    --certification-only)
+      TIER_SELECTION="certification-only"
+      TIER_SELECTION_EXPLICIT=1
+      ;;
+    *)
+      echo "Usage: run-scenario-tests.sh [--secretless-only|--all] [--repo-required|--include-certification|--certification-only]" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [[ "${RUN_ALL}" -eq 1 ]] && [[ "${TIER_SELECTION_EXPLICIT}" -eq 0 ]]; then
+  TIER_SELECTION="include-certification"
+fi
 
 CURRENT_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
 SCENARIO_LIST="$(mktemp "${TMPDIR:-/tmp}/workcell-scenarios.XXXXXX")"
@@ -51,7 +76,8 @@ run_scenario() {
   local requires_creds="$3"
   local lane="$4"
   local platform="$5"
-  local manual="$6"
+  local validation_tier="$6"
+  local manual="$7"
 
   if [[ "${manual}" == "1" ]]; then
     echo "SKIP ${scenario_id} (manual lane)"
@@ -62,6 +88,21 @@ run_scenario() {
     echo "SKIP ${scenario_id} (platform ${platform})"
     return 2
   fi
+
+  case "${TIER_SELECTION}" in
+    repo-required)
+      if [[ "${validation_tier}" != "repo-required" ]]; then
+        echo "SKIP ${scenario_id} (validation tier ${validation_tier})"
+        return 2
+      fi
+      ;;
+    certification-only)
+      if [[ "${validation_tier}" != "certification" ]]; then
+        echo "SKIP ${scenario_id} (validation tier ${validation_tier})"
+        return 2
+      fi
+      ;;
+  esac
 
   if [[ "${RUN_ALL}" -eq 0 ]] && [[ "${lane}" != "secretless" ]]; then
     echo "SKIP ${scenario_id} (lane ${lane})"
@@ -102,12 +143,12 @@ fi
 idx=0
 declare -a pids=()
 
-while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform manual; do
+while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform validation_tier manual; do
   idx=$((idx + 1))
   result_file="${RESULTS_DIR}/${idx}.exit"
   (
     exit_code=0
-    run_scenario "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${manual}" || exit_code="$?"
+    run_scenario "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${validation_tier}" "${manual}" || exit_code="$?"
     printf '%d\n' "${exit_code}" >"${result_file}"
   ) &
   pids+=($!)

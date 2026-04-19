@@ -29,15 +29,15 @@ Workcell workflows.
 | runtime-image reproducibility | tested | `scripts/verify-reproducible-build.sh`, CI, tagged release preflight |
 | Sigstore signing and SBOM publication | tested | successful tagged release workflow |
 | GitHub attestations on tagged releases | tested at release time | `release.yml` publish job |
-| full macOS Colima boundary proof | gap | local exercise only |
+| full macOS Colima boundary proof | gap | local certification lane exists, but it is still not repo-required proof |
 | exhaustive live-provider auth UX across all providers | gap | manual provider-e2e path exists, but automation is partial |
 
 ## Notes
 
-The most heavily tested paths are the secretless runtime boundary, explicit
-nonroot repo validation and release preflight, reproducibility, signed
-publication, and the host-side operator plane. The most mature host-side
-operator surfaces are auth/policy inspection plus session inventory, detached
-control, delete, timeline, export, and isolated-workspace remediation. The
-biggest remaining gaps are local macOS boundary proof and deeper end-to-end
-live-provider coverage.
+The most heavily tested paths are the repo-required secretless runtime
+boundary, explicit nonroot repo validation and release preflight,
+reproducibility, signed publication, and the host-side operator plane. The
+most mature host-side operator surfaces are auth/policy inspection plus
+session inventory, detached control, delete, timeline, export, and
+isolated-workspace remediation. The biggest remaining gaps are local macOS
+boundary proof and deeper end-to-end live-provider coverage.
