@@ -15,6 +15,17 @@ runtime boundary with provider-specific adapters.
 These priorities apply only within the defined invariant set. Do not trade away
 the runtime boundary or explicit security guarantees in the name of convenience.
 
+## Peer review default
+
+- Treat every user request as implicitly asking for peer review unless the user
+  explicitly narrows or waives that expectation.
+- Peer review means continuing through review, fixes, revalidation, and another
+  review pass until no actionable findings remain or a concrete blocker is
+  reported.
+- Apply that default across repo-local skills, documentation work, CI follow-up,
+  publication, merge, and release actions. Do not stop at "implemented" if
+  review, checks, or hosted workflows still expose actionable problems.
+
 ## Mandatory rules
 
 - Sign every commit. Do not create or rewrite commits in this repository
@@ -46,6 +57,9 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 
 ## Pull request workflow
 
+- For publish, PR follow-up, or merge requests in this repository, use the
+  repo-local `workcell-pr-lifecycle` skill. Repo-local publication rules
+  override generic GitHub publication skills.
 - Every PR should remain open for comments and review before merge.
 - Every PR must be checked for:
   - top-level PR comments
@@ -57,6 +71,9 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   merge.
 - Re-check comments and review threads after CI turns green and immediately
   before merge.
+- Treat newly surfaced review findings the same way as pre-merge findings:
+  address them, rerun the relevant validation, and re-review until the PR has
+  no actionable findings left.
 - Do not treat failing tests, checks, or repo-owned workflows as acceptable.
   If a repo-owned validation lane fails, keep working until it is fixed or the
   guarantee is explicitly removed or demoted in the same change.
