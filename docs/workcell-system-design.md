@@ -179,7 +179,8 @@ Important properties of the current implementation:
 - resolver-backed credentials are a host preprocessing step, not live host
   socket or keychain passthrough
 - direct staged credentials are the primary supported auth path today
-- built-in resolver coverage is intentionally narrow; for example,
+- built-in resolver coverage remains narrow and explicit:
+  `codex-home-auth-file` is the reviewed Codex host-auth reuse path, while
   `claude-macos-keychain` remains a fail-closed scaffold rather than a launch
   path
 
@@ -377,7 +378,8 @@ roadmap:
 - GUI and IDE surfaces are lower assurance unless they act only as clients to
   the same bounded runtime
 - built-in auth resolver coverage remains narrow, with direct staged inputs as
-  the primary supported auth path
+  the primary supported auth path plus Codex host-auth reuse and the
+  fail-closed Claude macOS scaffold
 - the strongest macOS boundary claim still depends on local validation rather
   than GitHub-hosted CI alone
 

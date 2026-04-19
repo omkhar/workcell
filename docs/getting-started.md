@@ -91,6 +91,11 @@ Check the host-side view at any time:
 workcell auth status --agent codex
 ```
 
+That output, `workcell --auth-status`, and `workcell why` all include bootstrap
+summary fields. Use
+[docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md) to interpret
+whether the selected path is repo-required, certification-only, or manual.
+
 ## 3. Inspect before launch
 
 These commands do not start the runtime. They show whether the host,

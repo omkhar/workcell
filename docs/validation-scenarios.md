@@ -21,7 +21,7 @@ Use these anchors when checking release-facing claims:
 
 - auth and resolver posture:
   `shared/auth-commands`, `shared/auth-status`,
-  `shared/claude-resolver-launcher`
+  `shared/claude-resolver-launcher`, `shared/codex-resolver-launcher`
 - lower-assurance mode claims: `shared/assurance-dry-run`
 - local runtime certification smoke: `shared/agent-launch-smoke`
 - host publication handoff: `shared/publish-pr`
@@ -82,9 +82,10 @@ when the repo does not add a dedicated new scenario for each page.
 |---|---|
 | `README.md` install, launch, and session snippets | `scripts/verify-invariants.sh`, `scripts/container-smoke.sh`, `tests/scenarios/shared/test-session-commands.sh`, `cmd/workcell-hostutil/main_test.go` |
 | `docs/getting-started.md` | `scripts/verify-invariants.sh`, `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh` |
-| `docs/examples/quickstart-codex.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
+| `docs/examples/quickstart-codex.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-codex-resolver-launcher.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
 | `docs/examples/quickstart-claude.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-claude-resolver-launcher.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
 | `docs/examples/quickstart-gemini.md` | `tests/scenarios/shared/test-auth-status.sh` for the staged `gemini_env` path and `tests/scenarios/shared/test-publish-pr-dry-run.sh` for the host-side publication steps; OAuth and `gcloud_adc` remain manual provider-e2e validation paths |
+| `docs/provider-bootstrap-matrix.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-codex-resolver-launcher.sh`, `tests/scenarios/shared/test-claude-resolver-launcher.sh` |
 | `docs/examples/enterprise-claude-setup.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
 
 ## Manual authenticated smoke

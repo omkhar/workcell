@@ -55,6 +55,13 @@ workcell auth status --agent gemini
 workcell --agent gemini --auth-status --workspace /path/to/repo
 ```
 
+The staged `gemini_env`, `gemini_oauth`, and `gemini_projects` paths report
+`provider_bootstrap_path=direct-staged`. `gcloud_adc` remains a supplemental
+Vertex input rather than a standalone Gemini auth mode; see
+[docs/examples/gemini-vertex-setup.md](gemini-vertex-setup.md) and
+[docs/provider-bootstrap-matrix.md](../provider-bootstrap-matrix.md) for the
+current manual handoff.
+
 ## 4. Launch Gemini
 
 ```bash
@@ -92,6 +99,7 @@ workcell publish-pr --workspace /path/to/repo --branch feature/my-change \
 ## Further reading
 
 - [docs/injection-policy.md](../injection-policy.md)
+- [docs/provider-bootstrap-matrix.md](../provider-bootstrap-matrix.md)
 - [docs/examples/gemini-vertex-setup.md](gemini-vertex-setup.md)
 - [docs/adapter-control-planes.md](../adapter-control-planes.md)
 - [docs/requirements-validation.md](../requirements-validation.md)

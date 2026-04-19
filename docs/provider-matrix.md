@@ -7,12 +7,13 @@ through a native control-plane mapping.
 
 | Provider | Tier 1 surface today | Managed control plane | Long-lived auth inputs | Notes |
 |---|---|---|---|---|
-| Codex | CLI | `~/.codex/config.toml`, `managed_config.toml`, `requirements.toml`, rules, MCP config, rendered `AGENTS.md` | `codex_auth` | best fit for the shared boundary model |
+| Codex | CLI | `~/.codex/config.toml`, `managed_config.toml`, `requirements.toml`, rules, MCP config, rendered `AGENTS.md` | `codex_auth` | direct staged `codex_auth` and `codex-home-auth-file` host reuse are supported |
 | Claude | Claude Code CLI | `~/.claude/settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, reviewed Bash hook | `claude_auth`, `claude_api_key`, `claude_mcp` | direct staged `claude_auth` and `claude_api_key` are supported; the built-in macOS resolver scaffold remains fail-closed |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, rendered `GEMINI.md`, `.env`, OAuth creds, `projects.json`, trusted folders | `gemini_env`, `gemini_oauth`, `gemini_projects`, `gcloud_adc` | Gemini's own sandbox is not the Tier 1 boundary here; `gcloud_adc` is supplemental to Vertex config |
 
 For provider auth maturity and rollout caveats, see
-[docs/injection-policy.md](injection-policy.md).
+[docs/injection-policy.md](injection-policy.md) and
+[docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md).
 
 ## Tiering rule
 

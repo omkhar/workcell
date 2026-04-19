@@ -56,6 +56,9 @@ grep -q '^credential_input_kinds=codex_auth:source$' <<<"${status_output}"
 grep -q '^provider_auth_ready_states=codex_auth:ready$' <<<"${status_output}"
 grep -q '^shared_auth_ready_states=none$' <<<"${status_output}"
 grep -q '^provider_auth_mode=codex_auth$' <<<"${status_output}"
+grep -q '^provider_bootstrap_state=ready$' <<<"${status_output}"
+grep -q '^provider_bootstrap_path=direct-staged$' <<<"${status_output}"
+grep -q '^provider_bootstrap_support=repo-required$' <<<"${status_output}"
 
 resolver_output="$("${ROOT_DIR}/scripts/workcell" auth set \
   --injection-policy "${POLICY_PATH}" \
@@ -75,6 +78,9 @@ grep -q '^provider_auth_ready_states=claude_auth:configured-only$' <<<"${claude_
 grep -q '^shared_auth_ready_states=none$' <<<"${claude_status}"
 grep -q '^provider_auth_mode=none$' <<<"${claude_status}"
 grep -q '^provider_auth_modes=none$' <<<"${claude_status}"
+grep -q '^provider_bootstrap_state=configured-only$' <<<"${claude_status}"
+grep -q '^provider_bootstrap_path=host-export-scaffold$' <<<"${claude_status}"
+grep -q '^provider_bootstrap_support=manual$' <<<"${claude_status}"
 
 claude_launcher_status="$("${ROOT_DIR}/scripts/workcell" \
   --agent claude \
@@ -86,6 +92,9 @@ grep -q '^provider_auth_ready_states=claude_auth:configured-only$' <<<"${claude_
 grep -q '^shared_auth_ready_states=none$' <<<"${claude_launcher_status}"
 grep -q '^provider_auth_mode=none$' <<<"${claude_launcher_status}"
 grep -q '^provider_auth_modes=none$' <<<"${claude_launcher_status}"
+grep -q '^provider_bootstrap_state=configured-only$' <<<"${claude_launcher_status}"
+grep -q '^provider_bootstrap_path=host-export-scaffold$' <<<"${claude_launcher_status}"
+grep -q '^provider_bootstrap_support=manual$' <<<"${claude_launcher_status}"
 
 unset_output="$("${ROOT_DIR}/scripts/workcell" auth unset \
   --injection-policy "${POLICY_PATH}" \

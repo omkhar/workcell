@@ -275,6 +275,106 @@ func TestRunLaunchModeAcceptsTestExportFile(t *testing.T) {
 	})
 }
 
+func TestRunMetadataModeMarksCodexHomeResolverReadyWhenHostFileExists(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	codexAuthPath := filepath.Join(root, "codex-auth.json")
+	writePolicy(t, codexAuthPath, "{\"token\":\"codex\"}\n")
+	if err := os.Chmod(codexAuthPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writePolicy(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.codex_auth]",
+		`resolver = "codex-home-auth-file"`,
+		`materialization = "ephemeral"`,
+	}, "\n")+"\n")
+
+	outputRoot := filepath.Join(root, "out")
+	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runResolveCredentialSources(t, []string{
+		"--policy", policyPath,
+		"--agent", "codex",
+		"--mode", "strict",
+		"--resolution-mode", "metadata",
+		"--output-policy", filepath.Join(outputRoot, "resolved-policy.toml"),
+		"--output-metadata", filepath.Join(outputRoot, "resolver-metadata.json"),
+		"--output-root", outputRoot,
+	}, map[string]string{testCodexAuthFileEnv: codexAuthPath})
+	if code != 0 {
+		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+
+	resolvedOutputRoot, err := filepath.EvalSymlinks(outputRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := readJSON(t, filepath.Join(resolvedOutputRoot, "resolver-metadata.json"))
+	if got := metadata["credential_resolvers"].(map[string]any)["codex_auth"]; got != "codex-home-auth-file" {
+		t.Fatalf("credential_resolvers.codex_auth = %v", got)
+	}
+	if got := metadata["credential_resolution_states"].(map[string]any)["codex_auth"]; got != "host-source" {
+		t.Fatalf("credential_resolution_states.codex_auth = %v", got)
+	}
+	if got := metadata["provider_auth_ready_states"].(map[string]any)["codex_auth"]; got != "ready" {
+		t.Fatalf("provider_auth_ready_states.codex_auth = %v", got)
+	}
+	assertSnapshotEqual(t, filepath.Join(resolvedOutputRoot, "resolved", "credentials", "codex_auth.json"), fileSnapshot{
+		data: []byte("{\"resolver\": \"codex-home-auth-file\", \"workcell\": \"metadata-only\"}\n"),
+		mode: 0o600,
+	})
+}
+
+func TestRunLaunchModeMaterializesCodexHomeResolver(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	codexAuthPath := filepath.Join(root, "codex-auth.json")
+	writePolicy(t, codexAuthPath, "{\"token\":\"codex\"}\n")
+	if err := os.Chmod(codexAuthPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writePolicy(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.codex_auth]",
+		`resolver = "codex-home-auth-file"`,
+		`materialization = "ephemeral"`,
+	}, "\n")+"\n")
+
+	outputRoot := filepath.Join(root, "out")
+	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runResolveCredentialSources(t, []string{
+		"--policy", policyPath,
+		"--agent", "codex",
+		"--mode", "strict",
+		"--resolution-mode", "launch",
+		"--output-policy", filepath.Join(outputRoot, "resolved-policy.toml"),
+		"--output-metadata", filepath.Join(outputRoot, "resolver-metadata.json"),
+		"--output-root", outputRoot,
+	}, map[string]string{testCodexAuthFileEnv: codexAuthPath})
+	if code != 0 {
+		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+
+	resolvedOutputRoot, err := filepath.EvalSymlinks(outputRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := readJSON(t, filepath.Join(resolvedOutputRoot, "resolver-metadata.json"))
+	if got := metadata["credential_resolution_states"].(map[string]any)["codex_auth"]; got != "resolved" {
+		t.Fatalf("credential_resolution_states.codex_auth = %v", got)
+	}
+	assertSnapshotEqual(t, filepath.Join(resolvedOutputRoot, "resolved", "credentials", "codex_auth.json"), fileSnapshot{
+		data: []byte("{\"token\":\"codex\"}\n"),
+		mode: 0o600,
+	})
+}
+
 func TestRunMetadataModeRejectsMissingSourceCredential(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -344,7 +444,7 @@ func TestMaterializeFileUnderRootRejectsValidatedSourceSwappedToSymlink(t *testi
 	}
 	defer outputRootFS.Close()
 
-	err = materializeFileUnderRoot(validatedSource, outputRootFS, filepath.Join("resolved", "credentials", "claude_auth.json"))
+	err = materializeFileUnderRoot(validatedSource, "credentials.claude_auth", outputRootFS, filepath.Join("resolved", "credentials", "claude_auth.json"))
 	if err == nil {
 		got := snapshotFile(t, filepath.Join(outputRoot, "resolved", "credentials", "claude_auth.json"))
 		t.Fatalf("materializeFileUnderRoot() unexpectedly accepted swapped symlink source and copied %q", got.data)

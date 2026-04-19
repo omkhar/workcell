@@ -29,6 +29,20 @@ workcell auth set \
   --source /Users/example/.config/workcell/codex-auth.json
 ```
 
+Optional reviewed host-auth reuse path:
+
+```bash
+workcell auth set \
+  --agent codex \
+  --credential codex_auth \
+  --resolver codex-home-auth-file \
+  --ack-host-resolver
+```
+
+That resolver reuses the reviewed `~/.codex/auth.json` file on the host
+through the same staged bundle flow. It does not pass the host home through to
+the runtime.
+
 ## 2. Optional explicit prepare
 
 A normal strict launch prepares the reviewed runtime image automatically when
@@ -52,6 +66,11 @@ workcell --agent codex --inspect --workspace /path/to/repo
 workcell auth status --agent codex
 workcell --agent codex --auth-status --workspace /path/to/repo
 ```
+
+For direct staged `codex_auth`, expect `provider_bootstrap_path=direct-staged`.
+For the resolver-backed path, expect
+`credential_resolution_states=codex_auth:host-source` and
+`provider_bootstrap_path=host-resolver`.
 
 ## 4. Launch Codex
 
@@ -114,6 +133,7 @@ workcell publish-pr \
 ## Further reading
 
 - [Injection policy](../injection-policy.md)
+- [Provider bootstrap matrix](../provider-bootstrap-matrix.md)
 - [Codex adapter](../../adapters/codex/README.md)
 - [Adapter control planes](../adapter-control-planes.md)
 - [Requirements validation](../requirements-validation.md)

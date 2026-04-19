@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
 )
@@ -29,9 +30,6 @@ var (
 		"gcloud_adc":      {"gemini", "gcloud-adc.json"},
 		"github_hosts":    {"shared", "github-hosts.yml"},
 		"github_config":   {"shared", "github-config.yml"},
-	}
-	allowedResolvers = map[string]map[string]struct{}{
-		"claude_auth": {"claude-macos-keychain": {}},
 	}
 	statusOrder = map[string][]string{
 		"codex":  {"codex_auth"},
@@ -140,6 +138,16 @@ func Run(program string, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "bootstrap-summary":
+		opts, err := parseBootstrapSummaryArgs(program, args[1:], stderr)
+		if err != nil {
+			return 2
+		}
+		if err := commandBootstrapSummary(opts, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	default:
 		fmt.Fprintln(stderr, usage(program))
 		fmt.Fprintf(stderr, "%s: unsupported command: %s\n", program, args[0])
@@ -171,6 +179,14 @@ type whyOptions struct {
 	credential string
 }
 
+type bootstrapSummaryOptions struct {
+	agent               string
+	inputKinds          string
+	resolvers           string
+	resolutionStates    string
+	providerReadyStates string
+}
+
 type credentialSelectionReport struct {
 	selected  bool
 	reason    string
@@ -179,6 +195,15 @@ type credentialSelectionReport struct {
 	providers []string
 	modes     []string
 	resolver  string
+}
+
+type bootstrapSummary struct {
+	state    string
+	path     string
+	support  string
+	handoff  string
+	doc      string
+	nextStep string
 }
 
 func usage(program string) string {
@@ -326,6 +351,29 @@ func parseWhyArgs(program string, args []string, stderr io.Writer) (whyOptions, 
 		return whyOptions{}, fmt.Errorf("invalid credential: %s", opts.credential)
 	}
 	opts.policyPath = resolveInputPath(opts.policyPath)
+	return opts, nil
+}
+
+func parseBootstrapSummaryArgs(program string, args []string, stderr io.Writer) (bootstrapSummaryOptions, error) {
+	fs := flag.NewFlagSet("bootstrap-summary", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var opts bootstrapSummaryOptions
+	fs.StringVar(&opts.agent, "agent", "", "")
+	fs.StringVar(&opts.inputKinds, "input-kinds", "none", "")
+	fs.StringVar(&opts.resolvers, "resolvers", "none", "")
+	fs.StringVar(&opts.resolutionStates, "resolution-states", "none", "")
+	fs.StringVar(&opts.providerReadyStates, "provider-ready-states", "none", "")
+	fs.Usage = func() { fmt.Fprintln(stderr, usage(program)) }
+	if err := fs.Parse(args); err != nil {
+		return bootstrapSummaryOptions{}, err
+	}
+	if fs.NArg() != 0 || opts.agent == "" {
+		fs.Usage()
+		return bootstrapSummaryOptions{}, fmt.Errorf("missing required flags")
+	}
+	if _, ok := SupportedAgents[opts.agent]; !ok {
+		return bootstrapSummaryOptions{}, fmt.Errorf("invalid agent: %s", opts.agent)
+	}
 	return opts, nil
 }
 
@@ -488,10 +536,7 @@ func commandSet(opts setOptions) error {
 		return nil
 	}
 
-	if _, ok := allowedResolvers[opts.credential]; !ok {
-		return die(fmt.Sprintf("%s does not support resolver %s", opts.credential, opts.resolver))
-	}
-	if _, ok := allowedResolvers[opts.credential][opts.resolver]; !ok {
+	if !authresolve.ResolverSupported(opts.credential, opts.resolver) {
 		return die(fmt.Sprintf("%s does not support resolver %s", opts.credential, opts.resolver))
 	}
 	if !opts.ackHostResolver {
@@ -605,6 +650,7 @@ func commandStatus(opts statusOptions, stdout io.Writer) error {
 			fmt.Fprintln(stdout, "provider_auth_modes=none")
 			fmt.Fprintln(stdout, "shared_auth_modes=none")
 			fmt.Fprintln(stdout, "github_auth_present=0")
+			printBootstrapSummary(stdout, defaultBootstrapSummary(opts.agent))
 		}
 		return nil
 	}
@@ -639,7 +685,11 @@ func commandStatus(opts statusOptions, stdout io.Writer) error {
 			}
 		}
 		if inputKinds[key] == "resolver" {
-			resolutionStates[key] = "configured-only"
+			state, err := resolverReadinessForStatus(key, resolvers[key])
+			if err != nil {
+				return err
+			}
+			resolutionStates[key] = state
 		} else {
 			resolutionStates[key] = "source"
 		}
@@ -672,18 +722,8 @@ func commandStatus(opts statusOptions, stdout io.Writer) error {
 	fmt.Fprintln(stdout, "provider_auth_ready_states="+renderMap(providerReadyStates))
 	fmt.Fprintln(stdout, "shared_auth_ready_states="+renderMap(sharedReadyStates))
 	if opts.agent != "" {
-		providerAuthModes := make([]string, 0)
-		for _, key := range statusOrder[opts.agent] {
-			if _, ok := selected[key]; ok && resolutionStates[key] != "configured-only" {
-				providerAuthModes = append(providerAuthModes, key)
-			}
-		}
-		sharedAuthModes := make([]string, 0)
-		for _, key := range []string{"github_hosts", "github_config"} {
-			if _, ok := selected[key]; ok && resolutionStates[key] != "configured-only" {
-				sharedAuthModes = append(sharedAuthModes, key)
-			}
-		}
+		providerAuthModes := providerAuthModesForStatus(opts.agent, selected, resolutionStates)
+		sharedAuthModes := sharedAuthModesForStatus(selected, resolutionStates)
 		providerAuthMode := "none"
 		if len(providerAuthModes) > 0 {
 			providerAuthMode = providerAuthModes[0]
@@ -696,6 +736,7 @@ func commandStatus(opts statusOptions, stdout io.Writer) error {
 		} else {
 			fmt.Fprintln(stdout, "github_auth_present=0")
 		}
+		printBootstrapSummary(stdout, summarizeBootstrap(opts.agent, selected, inputKinds, resolvers, resolutionStates, providerReadyStates))
 	}
 	return nil
 }
@@ -796,6 +837,25 @@ func commandWhy(opts whyOptions, stdout io.Writer) error {
 	if report.resolver != "" {
 		fmt.Fprintln(stdout, "credential_resolver="+report.resolver)
 	}
+	printCredentialBootstrapSummary(stdout, bootstrapSummaryForCredential(opts.agent, opts.credential, report))
+	return nil
+}
+
+func commandBootstrapSummary(opts bootstrapSummaryOptions, stdout io.Writer) error {
+	inputKinds := parseRenderedMap(opts.inputKinds)
+	selected := map[string]any{}
+	for key := range inputKinds {
+		selected[key] = true
+	}
+	summary := summarizeBootstrap(
+		opts.agent,
+		selected,
+		inputKinds,
+		parseRenderedMap(opts.resolvers),
+		parseRenderedMap(opts.resolutionStates),
+		parseRenderedMap(opts.providerReadyStates),
+	)
+	printBootstrapSummary(stdout, summary)
 	return nil
 }
 
@@ -888,7 +948,11 @@ func explainCredentialSelection(policy map[string]any, policyBase string, creden
 	case !modeMatch:
 		report.readiness = "filtered-mode"
 	case report.inputKind == "resolver":
-		report.readiness = "configured-only"
+		readiness, err := resolverReadinessForStatus(credential, report.resolver)
+		if err != nil {
+			return credentialSelectionReport{}, err
+		}
+		report.readiness = readiness
 	default:
 		if err := validateStatusCredentialSource(credential, rawMap, policyBase); err != nil {
 			return credentialSelectionReport{}, err
@@ -947,13 +1011,306 @@ func explainReadyStates(policy map[string]any, policyBase string, agent string, 
 		if report.readiness == "" || report.readiness == "absent" {
 			continue
 		}
+		readyState := report.readiness
+		if credentialStateIsReady(report.readiness) {
+			readyState = "ready"
+		}
 		if _, ok := SharedCredentialKeys[key]; ok {
-			sharedReadyStates[key] = report.readiness
+			sharedReadyStates[key] = readyState
 		} else {
-			providerReadyStates[key] = report.readiness
+			providerReadyStates[key] = readyState
 		}
 	}
 	return providerReadyStates, sharedReadyStates, nil
+}
+
+func resolverReadinessForStatus(key, resolver string) (string, error) {
+	if resolver == "" {
+		return "configured-only", nil
+	}
+	return authresolve.ProbeResolverReadiness(key, resolver)
+}
+
+func providerAuthModesForStatus(agent string, selected map[string]any, resolutionStates map[string]string) []string {
+	providerAuthModes := make([]string, 0)
+	for _, key := range statusOrder[agent] {
+		if _, ok := selected[key]; ok && credentialStateIsReady(resolutionStates[key]) {
+			providerAuthModes = append(providerAuthModes, key)
+		}
+	}
+	return providerAuthModes
+}
+
+func sharedAuthModesForStatus(selected map[string]any, resolutionStates map[string]string) []string {
+	sharedAuthModes := make([]string, 0)
+	for _, key := range []string{"github_hosts", "github_config"} {
+		if _, ok := selected[key]; ok && credentialStateIsReady(resolutionStates[key]) {
+			sharedAuthModes = append(sharedAuthModes, key)
+		}
+	}
+	return sharedAuthModes
+}
+
+func credentialStateIsReady(state string) bool {
+	switch state {
+	case "source", "resolved", "host-source", "ready":
+		return true
+	default:
+		return false
+	}
+}
+
+func summarizeBootstrap(agent string, selected map[string]any, inputKinds, resolvers, resolutionStates, providerReadyStates map[string]string) bootstrapSummary {
+	switch agent {
+	case "codex":
+		if readiness, ok := providerReadyStates["codex_auth"]; ok {
+			if credentialStateIsReady(readiness) {
+				if inputKinds["codex_auth"] == "resolver" {
+					return bootstrapSummary{
+						state:    "ready",
+						path:     "host-resolver",
+						support:  "repo-required",
+						handoff:  "none",
+						doc:      "docs/examples/quickstart-codex.md",
+						nextStep: "none",
+					}
+				}
+				return bootstrapSummary{
+					state:    "ready",
+					path:     "direct-staged",
+					support:  "repo-required",
+					handoff:  "none",
+					doc:      "docs/examples/quickstart-codex.md",
+					nextStep: "none",
+				}
+			}
+			if readiness == "configured-only" && resolvers["codex_auth"] == "codex-home-auth-file" {
+				return bootstrapSummary{
+					state:    "configured-only",
+					path:     "host-resolver",
+					support:  "repo-required",
+					handoff:  "host-provider-cache",
+					doc:      "docs/examples/quickstart-codex.md",
+					nextStep: "stage-reviewed-codex-auth",
+				}
+			}
+		}
+		return defaultBootstrapSummary(agent)
+	case "claude":
+		for _, key := range []string{"claude_api_key", "claude_auth"} {
+			if credentialStateIsReady(providerReadyStates[key]) {
+				return bootstrapSummary{
+					state:    "ready",
+					path:     "direct-staged",
+					support:  "repo-required",
+					handoff:  "none",
+					doc:      "docs/examples/quickstart-claude.md",
+					nextStep: "none",
+				}
+			}
+		}
+		if resolutionStates["claude_auth"] == "configured-only" && resolvers["claude_auth"] == "claude-macos-keychain" {
+			return bootstrapSummary{
+				state:    "configured-only",
+				path:     "host-export-scaffold",
+				support:  "manual",
+				handoff:  "host-export",
+				doc:      "docs/examples/quickstart-claude.md",
+				nextStep: "stage-reviewed-claude-auth-or-api-key",
+			}
+		}
+		return defaultBootstrapSummary(agent)
+	case "gemini":
+		for _, key := range []string{"gemini_env", "gemini_oauth"} {
+			if credentialStateIsReady(providerReadyStates[key]) {
+				return bootstrapSummary{
+					state:    "ready",
+					path:     "direct-staged",
+					support:  "repo-required",
+					handoff:  "none",
+					doc:      "docs/examples/quickstart-gemini.md",
+					nextStep: "none",
+				}
+			}
+		}
+		if credentialStateIsReady(providerReadyStates["gcloud_adc"]) {
+			return bootstrapSummary{
+				state:    "supplemental-only",
+				path:     "vertex-supplement",
+				support:  "manual",
+				handoff:  "host-stage-file",
+				doc:      "docs/examples/gemini-vertex-setup.md",
+				nextStep: "stage-reviewed-gemini-env-or-oauth",
+			}
+		}
+		return defaultBootstrapSummary(agent)
+	default:
+		return bootstrapSummary{}
+	}
+}
+
+func defaultBootstrapSummary(agent string) bootstrapSummary {
+	switch agent {
+	case "codex":
+		return bootstrapSummary{
+			state:    "not-configured",
+			path:     "direct-staged",
+			support:  "repo-required",
+			handoff:  "host-stage-file",
+			doc:      "docs/examples/quickstart-codex.md",
+			nextStep: "stage-reviewed-codex-auth",
+		}
+	case "claude":
+		return bootstrapSummary{
+			state:    "not-configured",
+			path:     "direct-staged",
+			support:  "repo-required",
+			handoff:  "host-stage-file",
+			doc:      "docs/examples/quickstart-claude.md",
+			nextStep: "stage-reviewed-claude-auth-or-api-key",
+		}
+	case "gemini":
+		return bootstrapSummary{
+			state:    "not-configured",
+			path:     "direct-staged",
+			support:  "repo-required",
+			handoff:  "host-stage-file",
+			doc:      "docs/examples/quickstart-gemini.md",
+			nextStep: "stage-reviewed-gemini-env-or-oauth",
+		}
+	default:
+		return bootstrapSummary{}
+	}
+}
+
+func bootstrapSummaryForCredential(agent, credential string, report credentialSelectionReport) bootstrapSummary {
+	switch credential {
+	case "codex_auth":
+		if report.inputKind == "resolver" {
+			if credentialStateIsReady(report.readiness) {
+				return bootstrapSummary{
+					state:    "ready",
+					path:     "host-resolver",
+					support:  "repo-required",
+					handoff:  "none",
+					doc:      "docs/examples/quickstart-codex.md",
+					nextStep: "none",
+				}
+			}
+			return bootstrapSummary{
+				state:    report.readiness,
+				path:     "host-resolver",
+				support:  "repo-required",
+				handoff:  "host-provider-cache",
+				doc:      "docs/examples/quickstart-codex.md",
+				nextStep: "stage-reviewed-codex-auth",
+			}
+		}
+		return bootstrapSummary{
+			state:    report.readiness,
+			path:     "direct-staged",
+			support:  "repo-required",
+			handoff:  bootstrapHandoffForReadiness(report.readiness),
+			doc:      "docs/examples/quickstart-codex.md",
+			nextStep: bootstrapNextStepForReadiness(report.readiness, "stage-reviewed-codex-auth"),
+		}
+	case "claude_auth":
+		if report.inputKind == "resolver" {
+			if credentialStateIsReady(report.readiness) {
+				return bootstrapSummary{
+					state:    "ready",
+					path:     "host-export-scaffold",
+					support:  "manual",
+					handoff:  "none",
+					doc:      "docs/examples/quickstart-claude.md",
+					nextStep: "none",
+				}
+			}
+			return bootstrapSummary{
+				state:    report.readiness,
+				path:     "host-export-scaffold",
+				support:  "manual",
+				handoff:  "host-export",
+				doc:      "docs/examples/quickstart-claude.md",
+				nextStep: "stage-reviewed-claude-auth-or-api-key",
+			}
+		}
+		return bootstrapSummary{
+			state:    report.readiness,
+			path:     "direct-staged",
+			support:  "repo-required",
+			handoff:  bootstrapHandoffForReadiness(report.readiness),
+			doc:      "docs/examples/quickstart-claude.md",
+			nextStep: bootstrapNextStepForReadiness(report.readiness, "stage-reviewed-claude-auth-or-api-key"),
+		}
+	case "claude_api_key", "claude_mcp":
+		return bootstrapSummary{
+			state:    report.readiness,
+			path:     "direct-staged",
+			support:  "repo-required",
+			handoff:  bootstrapHandoffForReadiness(report.readiness),
+			doc:      "docs/examples/quickstart-claude.md",
+			nextStep: bootstrapNextStepForReadiness(report.readiness, "stage-reviewed-claude-auth-or-api-key"),
+		}
+	case "gemini_env", "gemini_oauth", "gemini_projects":
+		return bootstrapSummary{
+			state:    report.readiness,
+			path:     "direct-staged",
+			support:  "repo-required",
+			handoff:  bootstrapHandoffForReadiness(report.readiness),
+			doc:      "docs/examples/quickstart-gemini.md",
+			nextStep: bootstrapNextStepForReadiness(report.readiness, "stage-reviewed-gemini-env-or-oauth"),
+		}
+	case "gcloud_adc":
+		return bootstrapSummary{
+			state:    report.readiness,
+			path:     "vertex-supplement",
+			support:  "manual",
+			handoff:  bootstrapHandoffForReadiness(report.readiness),
+			doc:      "docs/examples/gemini-vertex-setup.md",
+			nextStep: bootstrapNextStepForReadiness(report.readiness, "stage-reviewed-gemini-env-or-oauth"),
+		}
+	default:
+		return defaultBootstrapSummary(agent)
+	}
+}
+
+func bootstrapHandoffForReadiness(readiness string) string {
+	if credentialStateIsReady(readiness) {
+		return "none"
+	}
+	return "host-stage-file"
+}
+
+func bootstrapNextStepForReadiness(readiness, nextStep string) string {
+	if credentialStateIsReady(readiness) {
+		return "none"
+	}
+	return nextStep
+}
+
+func printBootstrapSummary(stdout io.Writer, summary bootstrapSummary) {
+	if summary.path == "" {
+		return
+	}
+	fmt.Fprintln(stdout, "provider_bootstrap_state="+summary.state)
+	fmt.Fprintln(stdout, "provider_bootstrap_path="+summary.path)
+	fmt.Fprintln(stdout, "provider_bootstrap_support="+summary.support)
+	fmt.Fprintln(stdout, "provider_bootstrap_handoff="+summary.handoff)
+	fmt.Fprintln(stdout, "provider_bootstrap_doc="+summary.doc)
+	fmt.Fprintln(stdout, "provider_bootstrap_next_step="+summary.nextStep)
+}
+
+func printCredentialBootstrapSummary(stdout io.Writer, summary bootstrapSummary) {
+	if summary.path == "" {
+		return
+	}
+	fmt.Fprintln(stdout, "bootstrap_state="+summary.state)
+	fmt.Fprintln(stdout, "bootstrap_path="+summary.path)
+	fmt.Fprintln(stdout, "bootstrap_support="+summary.support)
+	fmt.Fprintln(stdout, "bootstrap_handoff="+summary.handoff)
+	fmt.Fprintln(stdout, "bootstrap_doc="+summary.doc)
+	fmt.Fprintln(stdout, "bootstrap_next_step="+summary.nextStep)
 }
 
 func boolToInt(value bool) int {
@@ -981,7 +1338,18 @@ func printSetOutput(stdout io.Writer, opts setOptions) {
 	}
 	fmt.Fprintln(stdout, "resolver="+opts.resolver)
 	fmt.Fprintln(stdout, "materialization=ephemeral")
-	fmt.Fprintln(stdout, "resolver_status=configured-fail-closed")
+	resolverStatus := "configured-fail-closed"
+	if readiness, err := resolverReadinessForStatus(opts.credential, opts.resolver); err == nil {
+		switch readiness {
+		case "host-source":
+			resolverStatus = "configured-launch-ready"
+		case "configured-only":
+			if opts.resolver != "claude-macos-keychain" {
+				resolverStatus = "configured-awaiting-host-source"
+			}
+		}
+	}
+	fmt.Fprintln(stdout, "resolver_status="+resolverStatus)
 	if selectors, err := desiredSelectorsFromPolicy(opts.policyPath, opts.credential, opts.agent); err == nil {
 		if providers, ok := selectors["providers"].([]string); ok {
 			fmt.Fprintln(stdout, "providers="+strings.Join(providers, ","))
@@ -1404,10 +1772,7 @@ func validateStatusCredentialEntry(key string, raw any) error {
 		}
 		return nil
 	}
-	if _, ok := allowedResolvers[key]; !ok {
-		return die(fmt.Sprintf("credentials.%s.resolver is unsupported: %s", key, resolver))
-	}
-	if _, ok := allowedResolvers[key][resolver]; !ok {
+	if !authresolve.ResolverSupported(key, resolver) {
 		return die(fmt.Sprintf("credentials.%s.resolver is unsupported: %s", key, resolver))
 	}
 	if hasMaterialization {
@@ -1448,6 +1813,24 @@ func renderMap(value map[string]string) string {
 		parts = append(parts, key+":"+value[key])
 	}
 	return strings.Join(parts, ",")
+}
+
+func parseRenderedMap(raw string) map[string]string {
+	parsed := map[string]string{}
+	if raw == "" || raw == "none" {
+		return parsed
+	}
+	for _, item := range strings.Split(raw, ",") {
+		if item == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(item, ":")
+		if !ok || key == "" {
+			continue
+		}
+		parsed[key] = value
+	}
+	return parsed
 }
 
 func renderModes(keys []string) string {

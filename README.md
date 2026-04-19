@@ -171,9 +171,15 @@ derived launch view after selector evaluation and preprocessing.
 or still only configured on the host side.
 
 Direct staged credentials are the primary supported auth path today. Built-in
-resolver coverage is intentionally narrow; for example, the Claude macOS
-resolver scaffold can record intent but is not launch-ready until a supported
-export path exists.
+resolver coverage now includes Codex host-auth reuse through
+`codex-home-auth-file`, while the Claude macOS resolver remains a fail-closed
+scaffold until a supported export path exists.
+
+`workcell auth status` and `workcell --auth-status` print
+`provider_bootstrap_*` lines, and `workcell why` prints `bootstrap_*` lines for
+the selected credential. Use those fields with
+[docs/provider-bootstrap-matrix.md](docs/provider-bootstrap-matrix.md) to see
+whether a path is repo-required, certification-only, or manual.
 
 Workcell can stage:
 
@@ -190,6 +196,8 @@ secret injection, or host socket forwarding on the safe path.
 
 See [docs/injection-policy.md](docs/injection-policy.md) and
 [docs/examples/injection-policy.toml](docs/examples/injection-policy.toml).
+The by-provider bootstrap tiers and handoffs live in
+[docs/provider-bootstrap-matrix.md](docs/provider-bootstrap-matrix.md).
 
 ## Provider quickstarts
 
