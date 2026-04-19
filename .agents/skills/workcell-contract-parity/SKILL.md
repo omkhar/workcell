@@ -79,6 +79,11 @@ If the change is release-bound, also read:
   from public repo surfaces and clean repo detritus before finishing a change.
 - Re-check PR comments and review threads after CI turns green and immediately
   before merge.
+- Do not leave repo-owned tests, checks, or workflows red. If a validation lane
+  fails during the task, fix it or explicitly remove/demote the claimed
+  guarantee in the same change.
+- If the task includes merging, continue through the merged `main` workflow set
+  and treat any repo-owned failure as part of the same change until resolved.
 
 ## Workflow
 
@@ -95,6 +100,9 @@ If the change is release-bound, also read:
    large opportunistic refactors, or more than one reviewer-sized concern,
    split it before pushing for review.
 7. Run the contract validators and the focused tests.
+8. If publication or merge is part of the task, follow the repo-owned hosted
+   workflows through completion and fix any failures they surface before
+   finishing.
 
 ## Validation
 

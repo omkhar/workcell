@@ -57,6 +57,12 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   merge.
 - Re-check comments and review threads after CI turns green and immediately
   before merge.
+- Do not treat failing tests, checks, or repo-owned workflows as acceptable.
+  If a repo-owned validation lane fails, keep working until it is fixed or the
+  guarantee is explicitly removed or demoted in the same change.
+- When the task includes merging a PR, follow the merged `main` workflows to a
+  finished state and treat any repo-owned failure as actionable work, not as an
+  acceptable post-merge residue.
 - Async reviewer feedback is advisory input, not a substitute for an
   independent human approval.
 
