@@ -160,11 +160,30 @@ jobs:
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(security.yml) error = %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "pr-base-policy.yml"), []byte(`name: PR base policy
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs:
+  pr-base-policy:
+    name: Allowed PR base
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(pr-base-policy.yml) error = %v", err)
+	}
 	writeWorkflowValidationFixtures(t, workflowDir)
 
 	policyPath := filepath.Join(root, "policy.toml")
 	if err := os.WriteFile(policyPath, []byte(`[required_status_checks]
 contexts = [
+  "Allowed PR base",
   "Validate repository",
   "Container smoke",
   "Reproducible build",
@@ -221,6 +240,113 @@ contexts = [
 	}
 	if !strings.Contains(err.Error(), "Validate repository") {
 		t.Fatalf("CheckWorkflows() error = %v, want missing Validate repository", err)
+	}
+}
+
+func TestSafePullRequestTargetWorkflowAllowsTrustedPRBasePolicy(t *testing.T) {
+	t.Parallel()
+
+	workflow := `name: PR base policy
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs:
+  pr-base-policy:
+    name: Allowed PR base
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+`
+	if err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml"); err != nil {
+		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v", err)
+	}
+}
+
+func TestSafePullRequestTargetWorkflowRejectsCheckout(t *testing.T) {
+	t.Parallel()
+
+	workflow := `name: PR base policy
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs:
+  pr-base-policy:
+    name: Allowed PR base
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+`
+	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	if err == nil {
+		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted checkout under pull_request_target")
+	}
+	if !strings.Contains(err.Error(), "must not checkout repository contents") {
+		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
+	}
+}
+
+func TestSafePullRequestTargetWorkflowRejectsJobLevelPermissions(t *testing.T) {
+	t.Parallel()
+
+	workflow := `name: PR base policy
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs:
+  pr-base-policy:
+    name: Allowed PR base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - run: true
+`
+	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	if err == nil {
+		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted job-level permissions under pull_request_target")
+	}
+	if !strings.Contains(err.Error(), "must not grant job-level permissions") {
+		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
+	}
+}
+
+func TestSafePullRequestTargetWorkflowRejectsReusableWorkflowCalls(t *testing.T) {
+	t.Parallel()
+
+	workflow := `name: PR base policy
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs:
+  pr-base-policy:
+    uses: ./.github/workflows/reusable.yml
+`
+	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	if err == nil {
+		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted reusable workflow invocation under pull_request_target")
+	}
+	if !strings.Contains(err.Error(), "must not call reusable workflows") {
+		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
 	}
 }
 

@@ -40,6 +40,7 @@ mode = "review-gated"
 
 [required_status_checks]
 contexts = [
+  "Allowed PR base",
   "Pull request shape",
   "Validate repository",
   "Container smoke",
