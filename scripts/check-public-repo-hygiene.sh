@@ -38,13 +38,25 @@ check_public_surfaces() {
           path ~ /^\/home\/example($|[[:space:]]|\/|[][})>"'"'"'`.,:;!?])/
       }
 
-      function line_has_disallowed_home_path(line,    rest, matched, path) {
+      function has_allowed_home_path_prefix(prefix,    last_char) {
+        if (prefix == "") {
+          return 1
+        }
+
+        last_char = substr(prefix, length(prefix), 1)
+        if (last_char !~ /[[:alnum:]\/._~-]/) {
+          return 1
+        }
+
+        return prefix ~ /file:\/\/([^[:space:]\/?#]+)?$/
+      }
+
+      function line_has_disallowed_home_path(line,    rest, prefix, path) {
         rest = line
-        while (match(rest, /(^|[^[:alnum:]\/._~-])(\/Users\/[^[:space:]\/]+([[:space:]\/[:punct:]]|$)|\/home\/[^[:space:]\/]+([[:space:]\/[:punct:]]|$))/)) {
-          matched = substr(rest, RSTART, RLENGTH)
-          path = matched
-          sub(/^[^\/]*/, "", path)
-          if (!is_example_placeholder(path)) {
+        while (match(rest, /(\/Users\/[^[:space:]\/]+([[:space:]\/[:punct:]]|$)|\/home\/[^[:space:]\/]+([[:space:]\/[:punct:]]|$))/)) {
+          prefix = substr(rest, 1, RSTART - 1)
+          path = substr(rest, RSTART, RLENGTH)
+          if (has_allowed_home_path_prefix(prefix) && !is_example_placeholder(path)) {
             return 1
           }
           rest = substr(rest, RSTART + RLENGTH)
