@@ -4409,7 +4409,7 @@ auth_main() {
         --policy "${policy_path}"
         --managed-root "${managed_root}"
       )
-      run_clean_host_command "${auth_cmd[@]}"
+      run_clean_host_policy_command "${auth_cmd[@]}"
       exit 0
       ;;
     set)
@@ -4739,7 +4739,7 @@ why_main() {
   if [[ -n "${agent}" ]]; then
     why_cmd+=(--agent "${agent}")
   fi
-  run_clean_host_command "${why_cmd[@]}"
+  run_clean_host_policy_command "${why_cmd[@]}"
   exit 0
 }
 
@@ -5064,6 +5064,22 @@ provider_auth_recovery_extra_endpoints() {
     return 0
   fi
   echo "accounts.google.com:443 oauth2.googleapis.com:443 sts.googleapis.com:443"
+}
+
+run_clean_host_policy_command() {
+  local -a policy_env=()
+
+  if [[ -n "${WORKCELL_TEST_CODEX_AUTH_FILE:-}" ]]; then
+    policy_env+=("WORKCELL_TEST_CODEX_AUTH_FILE=${WORKCELL_TEST_CODEX_AUTH_FILE}")
+  fi
+  if [[ -n "${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE:-}" ]]; then
+    policy_env+=("WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE=${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE}")
+  fi
+  if [[ "${#policy_env[@]}" -gt 0 ]]; then
+    run_clean_host_command env "${policy_env[@]}" "$@"
+    return 0
+  fi
+  run_clean_host_command "$@"
 }
 
 enable_debug_log_capture() {
