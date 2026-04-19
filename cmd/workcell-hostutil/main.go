@@ -357,17 +357,20 @@ func launcherUsage() error {
 }
 
 func runLauncherSessionList(args []string) error {
-	if len(args) < 1 || len(args) > 4 {
+	if len(args) < 1 || len(args) > 5 {
 		return launcherUsage()
 	}
 
 	colimaRoot := args[0]
 	format := "lines"
+	verbose := false
 	opts := hostutil.SessionListOptions{}
 	for _, arg := range args[1:] {
 		switch {
 		case arg == "--json":
 			format = "json"
+		case arg == "--verbose":
+			verbose = true
 		case strings.HasPrefix(arg, "--workspace="):
 			opts.Workspace = strings.TrimPrefix(arg, "--workspace=")
 		case strings.HasPrefix(arg, "--profile="):
@@ -375,6 +378,9 @@ func runLauncherSessionList(args []string) error {
 		default:
 			return launcherUsage()
 		}
+	}
+	if format == "json" && verbose {
+		return fmt.Errorf("session-list accepts either --json or --verbose, not both")
 	}
 
 	records, err := hostutil.ListSessionRecords(colimaRoot, opts)
@@ -390,17 +396,36 @@ func runLauncherSessionList(args []string) error {
 		return nil
 	}
 	for _, record := range records {
+		if verbose {
+			fmt.Printf(
+				"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				record.SessionID,
+				record.Status,
+				hostutil.SessionDisplayLiveStatus(record),
+				hostutil.SessionControlMode(record),
+				record.Agent,
+				record.Mode,
+				record.Profile,
+				hostutil.SessionTargetSummary(record),
+				record.TargetAssuranceClass,
+				record.WorkspaceTransport,
+				record.StartedAt,
+				hostutil.SessionAssuranceSummary(record),
+				hostutil.SessionDisplayWorkspace(record),
+			)
+			continue
+		}
 		fmt.Printf(
 			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			record.SessionID,
 			record.Status,
-			coalesce(record.LiveStatus, record.Status),
+			hostutil.SessionDisplayLiveStatus(record),
 			hostutil.SessionControlMode(record),
 			record.Agent,
 			record.Mode,
 			record.Profile,
 			record.StartedAt,
-			coalesce(record.CurrentAssurance, record.FinalAssurance, record.InitialAssurance),
+			hostutil.SessionAssuranceSummary(record),
 			hostutil.SessionDisplayWorkspace(record),
 		)
 	}
@@ -408,13 +433,26 @@ func runLauncherSessionList(args []string) error {
 }
 
 func runLauncherSessionShow(args []string) error {
-	if len(args) != 2 {
+	if len(args) < 2 || len(args) > 3 {
 		return launcherUsage()
 	}
 
+	format := "json"
+	for _, arg := range args[2:] {
+		if arg != "--text" {
+			return launcherUsage()
+		}
+		format = "text"
+	}
 	record, err := hostutil.FindSessionRecord(args[0], args[1])
 	if err != nil {
 		return err
+	}
+	if format == "text" {
+		for _, line := range hostutil.SessionShowLines(record) {
+			fmt.Println(line)
+		}
+		return nil
 	}
 	content, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
@@ -484,13 +522,4 @@ func runLauncherSessionTimeline(args []string) error {
 		fmt.Println(line)
 	}
 	return nil
-}
-
-func coalesce(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

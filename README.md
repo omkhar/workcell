@@ -258,12 +258,14 @@ workcell --agent codex --prepare --workspace /path/to/repo
 workcell --agent codex --prepare-only --workspace /path/to/repo
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell session list
+workcell session list --verbose
 workcell session start --agent codex --workspace /path/to/repo
 workcell session delete --id SESSION_ID
 workcell session attach --id 20260408T120000Z-1a2b3c4d
 workcell session send --id 20260408T120000Z-1a2b3c4d --message "continue with tests"
 workcell session stop --id 20260408T120000Z-1a2b3c4d
 workcell session show --id 20260408T120000Z-1a2b3c4d
+workcell session show --id 20260408T120000Z-1a2b3c4d --text
 workcell session logs --id 20260408T120000Z-1a2b3c4d --kind audit
 workcell session timeline --id 20260408T120000Z-1a2b3c4d
 workcell session diff --id 20260408T120000Z-1a2b3c4d

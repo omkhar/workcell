@@ -135,6 +135,9 @@ func TestRunLauncherSessionRuntimeMetadata(t *testing.T) {
 	if !strings.Contains(got, "workspace_origin=/tmp/source-workspace") {
 		t.Fatalf("runtime metadata output = %q, want workspace_origin line", got)
 	}
+	if !strings.Contains(got, "target_kind=local_vm") || !strings.Contains(got, "target_provider=colima") {
+		t.Fatalf("runtime metadata output = %q, want target metadata", got)
+	}
 	if !strings.Contains(got, "monitor_pid=4242") {
 		t.Fatalf("runtime metadata output = %q, want monitor_pid line", got)
 	}
@@ -213,6 +216,122 @@ func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 	}
 	if !strings.Contains(got, "session-1\trunning\trunning\tattached\tcodex\tstrict\twcl-one\t2026-04-08T10:00:00Z\tmanaged-mutable\t/tmp/workspace-a") {
 		t.Fatalf("session list output = %q, want live attached record with attached control", got)
+	}
+	if strings.Contains(got, "\tlocal_vm\t") {
+		t.Fatalf("session list output = %q, want compact text output without extra target columns", got)
+	}
+}
+
+func TestRunLauncherSessionListVerboseShowsTargetMetadata(t *testing.T) {
+	colimaRoot := t.TempDir()
+	if err := hostutil.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json"), map[string]string{
+		"session_id":        "session-1",
+		"profile":           "wcl-one",
+		"agent":             "codex",
+		"mode":              "strict",
+		"status":            "running",
+		"live_status":       "running",
+		"workspace":         "/tmp/workspace-a",
+		"workspace_origin":  "/tmp/source-workspace",
+		"started_at":        "2026-04-08T10:00:00Z",
+		"current_assurance": "managed-mutable",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = stdout.ReadFrom(r)
+		close(done)
+	}()
+
+	runErr := run([]string{"launcher", "session-list", colimaRoot, "--verbose"})
+	_ = w.Close()
+	<-done
+	_ = r.Close()
+
+	if runErr != nil {
+		t.Fatalf("run() error = %v", runErr)
+	}
+	got := strings.TrimSpace(stdout.String())
+	want := "session-1\trunning\trunning\tattached\tcodex\tstrict\twcl-one\tlocal_vm/colima/wcl-one\tstrict\tisolated-worktree-mount\t2026-04-08T10:00:00Z\tmanaged-mutable\t/tmp/source-workspace"
+	if got != want {
+		t.Fatalf("session list verbose output = %q, want %q", got, want)
+	}
+}
+
+func TestRunLauncherSessionShowText(t *testing.T) {
+	colimaRoot := t.TempDir()
+	sessionPath := filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json")
+	if err := hostutil.WriteSessionRecord(sessionPath, map[string]string{
+		"session_id":              "session-1",
+		"profile":                 "wcl-one",
+		"agent":                   "codex",
+		"mode":                    "strict",
+		"status":                  "running",
+		"live_status":             "running",
+		"workspace":               "/tmp/workspace-a",
+		"workspace_origin":        "/tmp/source-workspace",
+		"worktree_path":           "/tmp/workspace-a/.worktrees/session-1",
+		"git_branch":              "feature/session-observability",
+		"container_name":          "workcell-session-1",
+		"monitor_pid":             "4242",
+		"session_audit_dir":       "/tmp/session-audit.1234",
+		"started_at":              "2026-04-08T10:00:00Z",
+		"current_assurance":       "managed-mutable",
+		"workspace_control_plane": "masked",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = stdout.ReadFrom(r)
+		close(done)
+	}()
+
+	runErr := run([]string{"launcher", "session-show", colimaRoot, "session-1", "--text"})
+	_ = w.Close()
+	<-done
+	_ = r.Close()
+
+	if runErr != nil {
+		t.Fatalf("run() error = %v", runErr)
+	}
+	got := strings.TrimSpace(stdout.String())
+	if !strings.Contains(got, "target_summary=local_vm/colima/wcl-one") {
+		t.Fatalf("session show --text output = %q, want target summary", got)
+	}
+	if !strings.Contains(got, "control=detached") {
+		t.Fatalf("session show --text output = %q, want control line", got)
+	}
+	if !strings.Contains(got, "git_branch=feature/session-observability") {
+		t.Fatalf("session show --text output = %q, want git branch", got)
+	}
+	if !strings.Contains(got, "workspace_transport=isolated-worktree-mount") {
+		t.Fatalf("session show --text output = %q, want workspace transport", got)
 	}
 }
 
