@@ -356,16 +356,40 @@ func launcherUsage() error {
 	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|acquire-profile-lock|write-profile-owner|cleanup-stale-session-audit-dirs|session-record-write|session-list|session-show|session-export|session-diff-metadata|session-runtime-metadata|session-timeline|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|resolve-host-output-directory-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints> [args...]")
 }
 
-func runLauncherSessionList(args []string) error {
-	if len(args) < 1 || len(args) > 5 {
-		return launcherUsage()
+func parseSessionRoots(args []string) ([]string, []string, error) {
+	if len(args) == 0 {
+		return nil, nil, launcherUsage()
 	}
 
-	colimaRoot := args[0]
+	if strings.HasPrefix(args[0], "--root=") {
+		roots := make([]string, 0, len(args))
+		for len(args) > 0 && strings.HasPrefix(args[0], "--root=") {
+			root := strings.TrimPrefix(args[0], "--root=")
+			if root == "" {
+				return nil, nil, launcherUsage()
+			}
+			roots = append(roots, root)
+			args = args[1:]
+		}
+		if len(roots) == 0 {
+			return nil, nil, launcherUsage()
+		}
+		return roots, args, nil
+	}
+
+	return []string{args[0]}, args[1:], nil
+}
+
+func runLauncherSessionList(args []string) error {
+	roots, rest, err := parseSessionRoots(args)
+	if err != nil {
+		return err
+	}
+
 	format := "lines"
 	verbose := false
 	opts := hostutil.SessionListOptions{}
-	for _, arg := range args[1:] {
+	for _, arg := range rest {
 		switch {
 		case arg == "--json":
 			format = "json"
@@ -383,7 +407,7 @@ func runLauncherSessionList(args []string) error {
 		return fmt.Errorf("session-list accepts either --json or --verbose, not both")
 	}
 
-	records, err := hostutil.ListSessionRecords(colimaRoot, opts)
+	records, err := hostutil.ListSessionRecordsInRoots(roots, opts)
 	if err != nil {
 		return err
 	}
@@ -435,18 +459,22 @@ func runLauncherSessionList(args []string) error {
 }
 
 func runLauncherSessionShow(args []string) error {
-	if len(args) < 2 || len(args) > 3 {
+	roots, rest, err := parseSessionRoots(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) < 1 || len(rest) > 2 {
 		return launcherUsage()
 	}
 
 	format := "json"
-	for _, arg := range args[2:] {
+	for _, arg := range rest[1:] {
 		if arg != "--text" {
 			return launcherUsage()
 		}
 		format = "text"
 	}
-	record, err := hostutil.FindSessionRecord(args[0], args[1])
+	record, err := hostutil.FindSessionRecordInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}
@@ -465,11 +493,15 @@ func runLauncherSessionShow(args []string) error {
 }
 
 func runLauncherSessionExport(args []string) error {
-	if len(args) != 2 {
+	roots, rest, err := parseSessionRoots(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
 		return launcherUsage()
 	}
 
-	exported, err := hostutil.ExportSessionRecord(args[0], args[1])
+	exported, err := hostutil.ExportSessionRecordInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}
@@ -482,11 +514,15 @@ func runLauncherSessionExport(args []string) error {
 }
 
 func runLauncherSessionDiffMetadata(args []string) error {
-	if len(args) != 2 {
+	roots, rest, err := parseSessionRoots(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
 		return launcherUsage()
 	}
 
-	record, err := hostutil.FindSessionRecord(args[0], args[1])
+	record, err := hostutil.FindSessionRecordInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}
@@ -497,26 +533,35 @@ func runLauncherSessionDiffMetadata(args []string) error {
 }
 
 func runLauncherSessionRuntimeMetadata(args []string) error {
-	if len(args) != 2 {
+	roots, rest, err := parseSessionRoots(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
 		return launcherUsage()
 	}
 
-	record, err := hostutil.FindSessionRecord(args[0], args[1])
+	record, recordPath, err := hostutil.FindSessionRecordWithPathInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}
 	for _, line := range hostutil.SessionRuntimeMetadataLines(record) {
 		fmt.Println(line)
 	}
+	fmt.Printf("record_path=%s\n", recordPath)
 	return nil
 }
 
 func runLauncherSessionTimeline(args []string) error {
-	if len(args) != 2 {
+	roots, rest, err := parseSessionRoots(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
 		return launcherUsage()
 	}
 
-	lines, err := hostutil.SessionTimelineRecords(args[0], args[1])
+	lines, err := hostutil.SessionTimelineRecordsInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}

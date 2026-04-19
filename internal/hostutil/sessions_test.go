@@ -324,6 +324,94 @@ func TestListSessionRecordsSkipsSymlinkedSessionsDirectories(t *testing.T) {
 	}
 }
 
+func TestListSessionRecordsInRootsReadsTargetStateAndLegacyRoots(t *testing.T) {
+	t.Parallel()
+
+	stateRoot := t.TempDir()
+	legacyRoot := t.TempDir()
+	writeSessionFixture(t, filepath.Join(stateRoot, "targets", "local_vm", "colima", "wcl-two", "sessions", "session-2.json"), SessionRecord{
+		Version:        1,
+		SessionID:      "session-2",
+		Profile:        "wcl-two",
+		Agent:          "claude",
+		Mode:           "development",
+		Status:         "failed",
+		Workspace:      "/tmp/workspace-b",
+		StartedAt:      "2026-04-08T11:00:00Z",
+		FinishedAt:     "2026-04-08T11:03:00Z",
+		ExitStatus:     "17",
+		FinalAssurance: "managed-mutable",
+	})
+	writeSessionFixture(t, filepath.Join(legacyRoot, "wcl-one", "sessions", "session-1.json"), SessionRecord{
+		Version:        1,
+		SessionID:      "session-1",
+		Profile:        "wcl-one",
+		Agent:          "codex",
+		Mode:           "strict",
+		Status:         "exited",
+		Workspace:      "/tmp/workspace-a",
+		StartedAt:      "2026-04-08T10:00:00Z",
+		FinishedAt:     "2026-04-08T10:05:00Z",
+		ExitStatus:     "0",
+		FinalAssurance: "managed-mutable",
+	})
+
+	records, err := ListSessionRecordsInRoots([]string{stateRoot, legacyRoot}, SessionListOptions{})
+	if err != nil {
+		t.Fatalf("ListSessionRecordsInRoots() error = %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("ListSessionRecordsInRoots() len = %d, want 2", len(records))
+	}
+	if records[0].SessionID != "session-2" || records[1].SessionID != "session-1" {
+		t.Fatalf("unexpected multi-root sort order: %+v", records)
+	}
+}
+
+func TestFindSessionRecordWithPathInRootsPrefersEarlierRootOnDuplicateSessionID(t *testing.T) {
+	t.Parallel()
+
+	stateRoot := t.TempDir()
+	legacyRoot := t.TempDir()
+	targetPath := filepath.Join(stateRoot, "targets", "local_vm", "colima", "wcl-one", "sessions", "session-1.json")
+	legacyPath := filepath.Join(legacyRoot, "wcl-one", "sessions", "session-1.json")
+	writeSessionFixture(t, targetPath, SessionRecord{
+		Version:          1,
+		SessionID:        "session-1",
+		Profile:          "wcl-one",
+		Agent:            "codex",
+		Mode:             "strict",
+		Status:           "running",
+		Workspace:        "/tmp/workspace-a",
+		StartedAt:        "2026-04-08T11:00:00Z",
+		CurrentAssurance: "managed-mutable",
+	})
+	writeSessionFixture(t, legacyPath, SessionRecord{
+		Version:        1,
+		SessionID:      "session-1",
+		Profile:        "wcl-one",
+		Agent:          "claude",
+		Mode:           "development",
+		Status:         "exited",
+		Workspace:      "/tmp/workspace-b",
+		StartedAt:      "2026-04-08T10:00:00Z",
+		FinishedAt:     "2026-04-08T10:05:00Z",
+		ExitStatus:     "0",
+		FinalAssurance: "managed-mutable",
+	})
+
+	record, path, err := FindSessionRecordWithPathInRoots([]string{stateRoot, legacyRoot}, "session-1")
+	if err != nil {
+		t.Fatalf("FindSessionRecordWithPathInRoots() error = %v", err)
+	}
+	if path != targetPath {
+		t.Fatalf("FindSessionRecordWithPathInRoots() path = %q, want %q", path, targetPath)
+	}
+	if record.Agent != "codex" || record.Status != "running" {
+		t.Fatalf("FindSessionRecordWithPathInRoots() record = %+v, want target-root record", record)
+	}
+}
+
 func TestExportSessionRecordIncludesMatchingAuditLines(t *testing.T) {
 	t.Parallel()
 

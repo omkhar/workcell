@@ -66,6 +66,11 @@ type SessionExport struct {
 	AuditRecords []string      `json:"audit_records,omitempty"`
 }
 
+type SessionRecordLocation struct {
+	Record SessionRecord
+	Path   string
+}
+
 func SessionDiffMetadataLines(record SessionRecord) []string {
 	record = normalizeSessionRecord(record)
 	return []string{
@@ -398,12 +403,12 @@ func ReadSessionRecord(path string) (SessionRecord, error) {
 	return record, nil
 }
 
-func ListSessionRecords(colimaRoot string, opts SessionListOptions) ([]SessionRecord, error) {
-	root := filepath.Clean(colimaRoot)
+func sessionStateDirs(root string) ([]string, error) {
+	root = filepath.Clean(root)
 	info, err := os.Stat(root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return []SessionRecord{}, nil
+			return []string{}, nil
 		}
 		return nil, err
 	}
@@ -411,25 +416,87 @@ func ListSessionRecords(colimaRoot string, opts SessionListOptions) ([]SessionRe
 		return nil, fmt.Errorf("%s is not a directory", root)
 	}
 
+	targetsRoot := filepath.Join(root, "targets")
+	if targetsInfo, err := os.Stat(targetsRoot); err == nil {
+		if !targetsInfo.IsDir() {
+			return nil, fmt.Errorf("%s is not a directory", targetsRoot)
+		}
+		return targetStateDirs(targetsRoot)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
-
-	records := make([]SessionRecord, 0)
+	stateDirs := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		if opts.Profile != "" && entry.Name() != opts.Profile {
+		stateDir := filepath.Join(root, entry.Name())
+		if isSymlink(stateDir) {
 			continue
 		}
+		stateDirs = append(stateDirs, stateDir)
+	}
+	return stateDirs, nil
+}
 
-		profileDir := filepath.Join(root, entry.Name())
-		if isSymlink(profileDir) {
+func targetStateDirs(targetsRoot string) ([]string, error) {
+	kinds, err := os.ReadDir(targetsRoot)
+	if err != nil {
+		return nil, err
+	}
+	stateDirs := make([]string, 0)
+	for _, kindEntry := range kinds {
+		if !kindEntry.IsDir() {
 			continue
 		}
-		sessionDir := filepath.Join(profileDir, "sessions")
+		kindDir := filepath.Join(targetsRoot, kindEntry.Name())
+		if isSymlink(kindDir) {
+			continue
+		}
+		providers, err := os.ReadDir(kindDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, providerEntry := range providers {
+			if !providerEntry.IsDir() {
+				continue
+			}
+			providerDir := filepath.Join(kindDir, providerEntry.Name())
+			if isSymlink(providerDir) {
+				continue
+			}
+			ids, err := os.ReadDir(providerDir)
+			if err != nil {
+				return nil, err
+			}
+			for _, idEntry := range ids {
+				if !idEntry.IsDir() {
+					continue
+				}
+				stateDir := filepath.Join(providerDir, idEntry.Name())
+				if isSymlink(stateDir) {
+					continue
+				}
+				stateDirs = append(stateDirs, stateDir)
+			}
+		}
+	}
+	return stateDirs, nil
+}
+
+func listSessionRecordLocationsFromRoot(root string, opts SessionListOptions) ([]SessionRecordLocation, error) {
+	stateDirs, err := sessionStateDirs(root)
+	if err != nil {
+		return nil, err
+	}
+	locations := make([]SessionRecordLocation, 0)
+	for _, stateDir := range stateDirs {
+		sessionDir := filepath.Join(stateDir, "sessions")
 		if isSymlink(sessionDir) {
 			continue
 		}
@@ -458,46 +525,106 @@ func ListSessionRecords(colimaRoot string, opts SessionListOptions) ([]SessionRe
 			if !SessionMatchesWorkspace(record, opts.Workspace) {
 				continue
 			}
-			records = append(records, record)
+			if opts.Profile != "" && record.Profile != opts.Profile {
+				continue
+			}
+			locations = append(locations, SessionRecordLocation{
+				Record: record,
+				Path:   sessionPath,
+			})
 		}
 	}
+	return locations, nil
+}
 
-	sort.SliceStable(records, func(i, j int) bool {
-		if records[i].StartedAt == records[j].StartedAt {
-			return records[i].SessionID > records[j].SessionID
+func sortSessionRecordLocations(locations []SessionRecordLocation) {
+	sort.SliceStable(locations, func(i, j int) bool {
+		if locations[i].Record.StartedAt == locations[j].Record.StartedAt {
+			return locations[i].Record.SessionID > locations[j].Record.SessionID
 		}
-		return records[i].StartedAt > records[j].StartedAt
+		return locations[i].Record.StartedAt > locations[j].Record.StartedAt
 	})
+}
+
+func ListSessionRecordLocationsInRoots(roots []string, opts SessionListOptions) ([]SessionRecordLocation, error) {
+	locations := make([]SessionRecordLocation, 0)
+	priorRootSessionIDs := map[string]struct{}{}
+	for _, root := range roots {
+		current, err := listSessionRecordLocationsFromRoot(root, opts)
+		if err != nil {
+			return nil, err
+		}
+		currentRootSessionIDs := map[string]struct{}{}
+		for _, location := range current {
+			if _, exists := priorRootSessionIDs[location.Record.SessionID]; exists {
+				continue
+			}
+			locations = append(locations, location)
+			currentRootSessionIDs[location.Record.SessionID] = struct{}{}
+		}
+		for sessionID := range currentRootSessionIDs {
+			priorRootSessionIDs[sessionID] = struct{}{}
+		}
+	}
+	sortSessionRecordLocations(locations)
+	if locations == nil {
+		return []SessionRecordLocation{}, nil
+	}
+	return locations, nil
+}
+
+func ListSessionRecords(root string, opts SessionListOptions) ([]SessionRecord, error) {
+	return ListSessionRecordsInRoots([]string{root}, opts)
+}
+
+func ListSessionRecordsInRoots(roots []string, opts SessionListOptions) ([]SessionRecord, error) {
+	locations, err := ListSessionRecordLocationsInRoots(roots, opts)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]SessionRecord, 0, len(locations))
+	for _, location := range locations {
+		records = append(records, location.Record)
+	}
 	if records == nil {
 		return []SessionRecord{}, nil
 	}
 	return records, nil
 }
 
-func FindSessionRecord(colimaRoot, sessionID string) (SessionRecord, error) {
-	records, err := ListSessionRecords(colimaRoot, SessionListOptions{})
+func FindSessionRecordInRoots(roots []string, sessionID string) (SessionRecord, error) {
+	record, _, err := FindSessionRecordWithPathInRoots(roots, sessionID)
+	return record, err
+}
+
+func FindSessionRecordWithPathInRoots(roots []string, sessionID string) (SessionRecord, string, error) {
+	locations, err := ListSessionRecordLocationsInRoots(roots, SessionListOptions{})
 	if err != nil {
-		return SessionRecord{}, err
+		return SessionRecord{}, "", err
 	}
 
-	var match *SessionRecord
-	for i := range records {
-		if records[i].SessionID != sessionID {
+	var match *SessionRecordLocation
+	for i := range locations {
+		if locations[i].Record.SessionID != sessionID {
 			continue
 		}
 		if match != nil {
-			return SessionRecord{}, fmt.Errorf("multiple session records matched %q", sessionID)
+			return SessionRecord{}, "", fmt.Errorf("multiple session records matched %q", sessionID)
 		}
-		match = &records[i]
+		match = &locations[i]
 	}
 	if match == nil {
-		return SessionRecord{}, os.ErrNotExist
+		return SessionRecord{}, "", os.ErrNotExist
 	}
-	return *match, nil
+	return match.Record, match.Path, nil
 }
 
-func ExportSessionRecord(colimaRoot, sessionID string) (SessionExport, error) {
-	record, err := FindSessionRecord(colimaRoot, sessionID)
+func ExportSessionRecord(root, sessionID string) (SessionExport, error) {
+	return ExportSessionRecordInRoots([]string{root}, sessionID)
+}
+
+func ExportSessionRecordInRoots(roots []string, sessionID string) (SessionExport, error) {
+	record, err := FindSessionRecordInRoots(roots, sessionID)
 	if err != nil {
 		return SessionExport{}, err
 	}
@@ -509,8 +636,12 @@ func ExportSessionRecord(colimaRoot, sessionID string) (SessionExport, error) {
 	return SessionExport{Session: record, AuditRecords: records}, nil
 }
 
-func SessionTimelineRecords(colimaRoot, sessionID string) ([]string, error) {
-	record, err := FindSessionRecord(colimaRoot, sessionID)
+func SessionTimelineRecords(root, sessionID string) ([]string, error) {
+	return SessionTimelineRecordsInRoots([]string{root}, sessionID)
+}
+
+func SessionTimelineRecordsInRoots(roots []string, sessionID string) ([]string, error) {
+	record, err := FindSessionRecordInRoots(roots, sessionID)
 	if err != nil {
 		return nil, err
 	}

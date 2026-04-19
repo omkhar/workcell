@@ -149,6 +149,63 @@ func TestRunLauncherSessionRuntimeMetadata(t *testing.T) {
 	}
 }
 
+func TestRunLauncherSessionRuntimeMetadataSupportsMultipleRoots(t *testing.T) {
+	stateRoot := t.TempDir()
+	legacyRoot := t.TempDir()
+	sessionPath := filepath.Join(stateRoot, "targets", "local_vm", "colima", "wcl-one", "sessions", "session-1.json")
+	if err := hostutil.WriteSessionRecord(sessionPath, map[string]string{
+		"session_id":        "session-1",
+		"profile":           "wcl-one",
+		"agent":             "codex",
+		"mode":              "strict",
+		"status":            "running",
+		"workspace":         "/tmp/workspace-a",
+		"started_at":        "2026-04-08T10:00:00Z",
+		"current_assurance": "managed-mutable",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = stdout.ReadFrom(r)
+		close(done)
+	}()
+
+	runErr := run([]string{
+		"launcher",
+		"session-runtime-metadata",
+		"--root=" + stateRoot,
+		"--root=" + legacyRoot,
+		"session-1",
+	})
+	_ = w.Close()
+	<-done
+	_ = r.Close()
+
+	if runErr != nil {
+		t.Fatalf("run() error = %v", runErr)
+	}
+	got := strings.TrimSpace(stdout.String())
+	if !strings.Contains(got, "profile=wcl-one") {
+		t.Fatalf("runtime metadata output = %q, want profile line", got)
+	}
+	if !strings.Contains(got, "record_path="+sessionPath) {
+		t.Fatalf("runtime metadata output = %q, want record_path line", got)
+	}
+}
+
 func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 	colimaRoot := t.TempDir()
 	if err := hostutil.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json"), map[string]string{

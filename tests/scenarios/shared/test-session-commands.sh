@@ -48,13 +48,18 @@ cleanup() {
   fi
   rm -f "${WORKCELL_FUNCTIONS_COPY}"
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
+  rm -rf "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets/local_vm/colima/${PROFILE}"
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
 
 COLIMA_ROOT="${REAL_HOME}/.colima"
-SESSIONS_DIR="${COLIMA_ROOT}/${PROFILE}/sessions"
-AUDIT_LOG="${COLIMA_ROOT}/${PROFILE}/workcell.audit.log"
+WORKCELL_STATE_ROOT="${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell"
+TARGET_STATE_DIR="${WORKCELL_STATE_ROOT}/targets/local_vm/colima/${PROFILE}"
+LEGACY_STATE_DIR="${COLIMA_ROOT}/${PROFILE}"
+LEGACY_SESSIONS_DIR="${LEGACY_STATE_DIR}/sessions"
+SESSIONS_DIR="${TARGET_STATE_DIR}/sessions"
+AUDIT_LOG="${TARGET_STATE_DIR}/workcell.audit.log"
 EXPORT_PATH="${TMP_DIR}/session-export.json"
 WORKSPACE_A="${TMP_DIR}/workspace-a"
 WORKSPACE_B="${TMP_DIR}/workspace-b"
@@ -77,7 +82,7 @@ DETACHED_WORKSPACE="${WORKSPACE_A}/.git/session-sandboxes/${DETACHED_SESSION}"
 DETACHED_BRANCH="workcell/session/${DETACHED_SESSION}"
 DETACHED_BACKEND="${TMP_DIR}/detached-session-backend"
 
-mkdir -p "${SESSIONS_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B}"
+mkdir -p "${SESSIONS_DIR}" "${LEGACY_STATE_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B}"
 WORKSPACE_A="$(cd "${WORKSPACE_A}" && pwd -P)"
 WORKSPACE_B="$(cd "${WORKSPACE_B}" && pwd -P)"
 
@@ -549,6 +554,52 @@ grep -q 'To use this workspace on the safe path, create a standard clone at the 
 grep -q 'Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree\.' <<<"${linked_isolated_output}"
 
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
+state_path_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_PROFILE="$2"
+    printf "target_state_dir=%s\n" "$(profile_target_state_dir "${COLIMA_PROFILE}")"
+    printf "sessions_dir=%s\n" "$(profile_sessions_dir_path "${COLIMA_PROFILE}")"
+    printf "audit_log=%s\n" "$(profile_audit_log_path "${COLIMA_PROFILE}")"
+    printf "lock_dir=%s\n" "$(profile_lock_dir_path "${COLIMA_PROFILE}")"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${PROFILE}"
+)"
+grep -q '^target_state_dir='"${TARGET_STATE_DIR}"'$' <<<"${state_path_output}"
+grep -q '^sessions_dir='"${TARGET_STATE_DIR}/sessions"'$' <<<"${state_path_output}"
+grep -q '^audit_log='"${TARGET_STATE_DIR}/workcell.audit.log"'$' <<<"${state_path_output}"
+grep -q '^lock_dir='"${WORKCELL_STATE_ROOT}/locks/local_vm/colima/${PROFILE}.lock"'$' <<<"${state_path_output}"
+
+mkdir -p "${LEGACY_SESSIONS_DIR}"
+printf '{}' >"${LEGACY_SESSIONS_DIR}/${SESSION_ONE}.json"
+legacy_record_path_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_PROFILE="$2"
+    SESSION_ID="$3"
+    printf "record_path=%s\n" "$(session_record_path_for "${COLIMA_PROFILE}" "${SESSION_ID}")"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${PROFILE}" "${SESSION_ONE}"
+)"
+grep -q '^record_path='"${LEGACY_SESSIONS_DIR}/${SESSION_ONE}.json"'$' <<<"${legacy_record_path_output}"
+rm -f "${LEGACY_SESSIONS_DIR}/${SESSION_ONE}.json"
+
+rm -f "${LEGACY_STATE_DIR}/workcell.latest-transcript-log"
+printf '%s\n' "${DETACHED_TRANSCRIPT_LOG}" >"${LEGACY_STATE_DIR}/workcell.latest-transcript-log"
+legacy_pointer_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_PROFILE="$2"
+    printf "pointer=%s\n" "$(read_latest_log_pointer "${COLIMA_PROFILE}" transcript)"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${PROFILE}"
+)"
+grep -q '^pointer='"${DETACHED_TRANSCRIPT_LOG}"'$' <<<"${legacy_pointer_output}"
+rm -f "${LEGACY_STATE_DIR}/workcell.latest-transcript-log"
+
 monitor_env_output="$(
   bash -lc '
     set -euo pipefail

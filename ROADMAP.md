@@ -21,14 +21,6 @@ The deterministic phase breakdown lives in
 - expand end-to-end coverage for authenticated, lower-assurance, and
   session-supervisor transitions so new orchestration features ship with
   invariant checks
-- define the runtime-target model explicitly:
-  separate target kind, assurance class, and workspace transport in the
-  control plane, CLI, docs, and session records
-- generalize host-owned state and session metadata away from Colima-specific
-  `profile` and `~/.colima/...` assumptions while preserving compatibility
-  reads for existing records
-- extract `colima` behind the new target model without changing the current
-  strict macOS contract
 - add a narrow trusted `linux/amd64` validation-host lane plus target-aware
   diagnostics before broad non-macOS or cloud support claims
 - define the first cross-platform `compat` target and the first `remote_vm`

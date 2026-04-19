@@ -185,6 +185,8 @@ HOST_GIT_BIN=""
 HOST_COLIMA_BIN=""
 HOST_DOCKER_BIN=""
 COLIMA_STATE_ROOT="${REAL_HOME}/.colima"
+WORKCELL_STATE_ROOT="${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell"
+WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
 PROFILE_PREEXISTED=0
 PROFILE_RUNNING=0
 PROFILE_VALIDATED=0
@@ -200,6 +202,7 @@ SESSION_ID=""
 SESSION_RECORD_PATH=""
 SESSION_RECORD_WRITTEN=0
 SESSION_RECORD_FINALIZED=0
+SESSION_META_RECORD_PATH=""
 SESSION_STOP_REQUEST_MARKER_NAME=".workcell-stop-requested"
 LAST_COMMAND_DEBUG_CAPTURE_PATH=""
 SESSION_MONITOR_ENV_PATH=""
@@ -223,6 +226,10 @@ INJECTION_SSH_ENABLED=0
 INJECTION_SECRET_COPY_TARGETS=""
 PROFILE_LOCK_DIR=""
 NO_SPINNER=0
+
+session_lookup_root_args() {
+  printf '%s\n' "--root=${WORKCELL_STATE_ROOT}" "--root=${COLIMA_STATE_ROOT}"
+}
 
 usage() {
   cat <<'EOF'
@@ -513,6 +520,13 @@ profile_dir() {
 
   validate_colima_profile_name "${profile}"
   printf '%s/%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
+}
+
+profile_target_state_dir() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/local_vm/colima/%s\n' "${WORKCELL_TARGET_STATE_ROOT}" "${profile}"
 }
 
 profile_lima_dir() {
@@ -992,10 +1006,24 @@ profile_audit_log_path() {
   local profile="$1"
 
   validate_colima_profile_name "${profile}"
+  printf '%s/workcell.audit.log\n' "$(profile_target_state_dir "${profile}")"
+}
+
+legacy_profile_audit_log_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
   printf '%s/workcell.audit.log\n' "$(profile_dir "${profile}")"
 }
 
 profile_sessions_dir_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/sessions\n' "$(profile_target_state_dir "${profile}")"
+}
+
+legacy_profile_sessions_dir_path() {
   local profile="$1"
 
   validate_colima_profile_name "${profile}"
@@ -1010,10 +1038,25 @@ profile_lock_dir_path() {
   local profile="$1"
 
   validate_colima_profile_name "${profile}"
-  printf '%s/locks/%s.lock\n' "${COLIMA_STATE_ROOT}" "${profile}"
+  printf '%s/locks/local_vm/colima/%s.lock\n' "${WORKCELL_STATE_ROOT}" "${profile}"
 }
 
 profile_latest_log_pointer_path() {
+  local profile="$1"
+  local kind="$2"
+
+  validate_colima_profile_name "${profile}"
+  case "${kind}" in
+    debug | file-trace | transcript) ;;
+    *)
+      echo "Unsupported latest log pointer kind: ${kind}" >&2
+      exit 2
+      ;;
+  esac
+  printf '%s/workcell.latest-%s-log\n' "$(profile_target_state_dir "${profile}")" "${kind}"
+}
+
+legacy_profile_latest_log_pointer_path() {
   local profile="$1"
   local kind="$2"
 
@@ -1166,8 +1209,17 @@ append_session_control_audit_record() {
   local profile="$1"
   local session_id="$2"
   local event_name="$3"
+  local audit_path=""
 
   shift 3
+  audit_path="${SESSION_META_AUDIT_LOG_PATH:-}"
+  if [[ -n "${audit_path}" ]]; then
+    append_audit_record_to_path "${audit_path}" \
+      "event=${event_name}" \
+      "session_id=${session_id}" \
+      "$@"
+    return 0
+  fi
   append_audit_record "${profile}" \
     "event=${event_name}" \
     "session_id=${session_id}" \
@@ -1176,8 +1228,12 @@ append_session_control_audit_record() {
 
 session_runtime_metadata() {
   local session_id="$1"
+  local -a lookup_roots=()
 
-  go_hostutil launcher session-runtime-metadata "${COLIMA_STATE_ROOT}" "${session_id}"
+  while IFS= read -r root; do
+    lookup_roots+=("${root}")
+  done < <(session_lookup_root_args)
+  go_hostutil launcher session-runtime-metadata "${lookup_roots[@]}" "${session_id}"
 }
 
 load_session_runtime_metadata() {
@@ -1187,6 +1243,7 @@ load_session_runtime_metadata() {
   local value=""
 
   SESSION_META_PROFILE=""
+  SESSION_META_RECORD_PATH=""
   SESSION_META_TARGET_KIND=""
   SESSION_META_TARGET_PROVIDER=""
   SESSION_META_TARGET_ID=""
@@ -1212,6 +1269,7 @@ load_session_runtime_metadata() {
     key="${line%%=*}"
     value="${line#*=}"
     case "${key}" in
+      record_path) SESSION_META_RECORD_PATH="${value}" ;;
       profile) SESSION_META_PROFILE="${value}" ;;
       target_kind) SESSION_META_TARGET_KIND="${value}" ;;
       target_provider) SESSION_META_TARGET_PROVIDER="${value}" ;;
@@ -1665,20 +1723,32 @@ read_latest_log_pointer() {
   local kind="$2"
   local pointer_path=""
   local resolved_pointer_path=""
+  local -a candidates=()
 
-  pointer_path="$(profile_latest_log_pointer_path "${profile}" "${kind}")"
-  if ! resolved_pointer_path="$(resolve_host_output_candidate "${pointer_path}")"; then
-    echo "Workcell blocked latest ${kind} pointer path after launch: ${pointer_path}" >&2
-    return 1
-  fi
-  [[ -f "${resolved_pointer_path}" ]] || return 1
-  head -n1 "${resolved_pointer_path}"
+  candidates=(
+    "$(profile_latest_log_pointer_path "${profile}" "${kind}")"
+    "$(legacy_profile_latest_log_pointer_path "${profile}" "${kind}")"
+  )
+  for pointer_path in "${candidates[@]}"; do
+    if ! resolved_pointer_path="$(resolve_host_output_candidate "${pointer_path}")"; then
+      echo "Workcell blocked latest ${kind} pointer path after launch: ${pointer_path}" >&2
+      return 1
+    fi
+    [[ -f "${resolved_pointer_path}" ]] || continue
+    head -n1 "${resolved_pointer_path}"
+    return 0
+  done
+  return 1
 }
 
 cleanup_stale_latest_log_pointers() {
-  local colima_root="$1"
+  local state_root="$1"
+  local legacy_root="${2:-}"
 
-  go_hostutil launcher cleanup-stale-log-pointers "${colima_root}"
+  go_hostutil launcher cleanup-stale-log-pointers "${state_root}"
+  if [[ -n "${legacy_root}" ]]; then
+    go_hostutil launcher cleanup-stale-log-pointers "${legacy_root}"
+  fi
 }
 
 profile_lock_is_stale() {
@@ -1725,9 +1795,13 @@ acquire_profile_lock() {
 }
 
 cleanup_stale_session_audit_dirs() {
-  local colima_root="$1"
+  local state_root="$1"
+  local legacy_root="${2:-}"
 
-  go_hostutil launcher cleanup-stale-session-audit-dirs "${colima_root}"
+  go_hostutil launcher cleanup-stale-session-audit-dirs "${state_root}"
+  if [[ -n "${legacy_root}" ]]; then
+    go_hostutil launcher cleanup-stale-session-audit-dirs "${legacy_root}"
+  fi
 }
 
 audit_record_digest() {
@@ -1786,12 +1860,19 @@ read_profile_marker_workspace() {
 append_audit_record() {
   local profile="$1"
   shift
-  local audit_path
+  local audit_path=""
+
+  audit_path="$(profile_audit_log_path "${profile}")"
+  append_audit_record_to_path "${audit_path}" "$@"
+}
+
+append_audit_record_to_path() {
+  local audit_path="$1"
+  shift
   local timestamp
   local prev_digest=""
   local record_digest=""
 
-  audit_path="$(profile_audit_log_path "${profile}")"
   mkdir -p "$(dirname "${audit_path}")"
   umask 077
   touch "${audit_path}"
@@ -2168,8 +2249,8 @@ write_session_record_final() {
 prepare_session_audit_state() {
   local profile="$1"
 
-  mkdir -p "$(profile_dir "${profile}")"
-  SESSION_AUDIT_DIR="$(mktemp -d "$(profile_dir "${profile}")/session-audit.XXXXXX")"
+  mkdir -p "$(profile_target_state_dir "${profile}")"
+  SESSION_AUDIT_DIR="$(mktemp -d "$(profile_target_state_dir "${profile}")/session-audit.XXXXXX")"
   chmod 0700 "${SESSION_AUDIT_DIR}" 2>/dev/null || true
   SESSION_AUDIT_STATE_FILE="${SESSION_AUDIT_DIR}/session-assurance"
   SESSION_AUDIT_CONTAINER_FILE="/var/lib/workcell/session-assurance"
@@ -3042,8 +3123,16 @@ render_session_diff_bundle() {
 session_record_path_for() {
   local profile="$1"
   local session_id="$2"
+  local target_path=""
+  local legacy_path=""
 
-  printf '%s/%s.json\n' "$(profile_sessions_dir_path "${profile}")" "${session_id}"
+  target_path="$(profile_sessions_dir_path "${profile}")/${session_id}.json"
+  legacy_path="$(legacy_profile_sessions_dir_path "${profile}")/${session_id}.json"
+  if [[ -f "${legacy_path}" ]] && [[ ! -f "${target_path}" ]]; then
+    printf '%s\n' "${legacy_path}"
+    return 0
+  fi
+  printf '%s\n' "${target_path}"
 }
 
 start_detached_session_monitor() {
@@ -3254,7 +3343,10 @@ session_send_main() {
     "source=host-cli" \
     "command=session-send" \
     "argv=${message}"
-  record_path="$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")"
+  record_path="${SESSION_META_RECORD_PATH}"
+  if [[ -z "${record_path}" ]]; then
+    record_path="$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")"
+  fi
   write_session_record "${record_path}" \
     "observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" || exit 1
   load_session_runtime_metadata "${session_id}"
@@ -3320,7 +3412,10 @@ session_stop_main() {
     exit 1
   fi
 
-  record_path="$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")"
+  record_path="${SESSION_META_RECORD_PATH}"
+  if [[ -z "${record_path}" ]]; then
+    record_path="$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")"
+  fi
   if [[ "${container_state}" != "running" ]]; then
     if [[ "${container_state}" == "stopped" ]] && ! session_monitor_pid_is_live; then
       session_record_stop_request_marker || exit 1
@@ -3554,7 +3649,10 @@ session_delete_main() {
     exit 1
   fi
 
-  record_path="$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")"
+  record_path="${SESSION_META_RECORD_PATH}"
+  if [[ -z "${record_path}" ]]; then
+    record_path="$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")"
+  fi
   if [[ ! -f "${record_path}" ]]; then
     echo "session delete could not find the recorded session file: ${session_id}" >&2
     exit 1
@@ -3774,6 +3872,7 @@ session_logs_main() {
 
 session_timeline_main() {
   local session_id=""
+  local -a lookup_roots=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -3797,7 +3896,10 @@ session_timeline_main() {
     exit 2
   }
 
-  go_hostutil launcher session-timeline "${COLIMA_STATE_ROOT}" "${session_id}"
+  while IFS= read -r root; do
+    lookup_roots+=("${root}")
+  done < <(session_lookup_root_args)
+  go_hostutil launcher session-timeline "${lookup_roots[@]}" "${session_id}"
   exit 0
 }
 
@@ -3865,6 +3967,7 @@ session_main() {
   local git_base=""
   local rendered=""
   local -a args=()
+  local -a lookup_roots=()
 
   shift || true
   case "${subcommand}" in
@@ -3927,7 +4030,10 @@ session_main() {
             ;;
         esac
       done
-      args=("${COLIMA_STATE_ROOT}")
+      while IFS= read -r root; do
+        lookup_roots+=("${root}")
+      done < <(session_lookup_root_args)
+      args=("${lookup_roots[@]}")
       if [[ "${emit_json}" -eq 1 ]] && [[ "${emit_verbose}" -eq 1 ]]; then
         echo "workcell session list accepts either --json or --verbose, not both." >&2
         exit 2
@@ -3987,7 +4093,10 @@ session_main() {
         echo "workcell session show requires --id." >&2
         exit 2
       }
-      args=("${COLIMA_STATE_ROOT}" "${session_id}")
+      while IFS= read -r root; do
+        lookup_roots+=("${root}")
+      done < <(session_lookup_root_args)
+      args=("${lookup_roots[@]}" "${session_id}")
       if [[ "${emit_text}" -eq 1 ]]; then
         args+=(--text)
       fi
@@ -4029,7 +4138,10 @@ session_main() {
         echo "workcell session diff requires --id." >&2
         exit 2
       }
-      metadata="$(go_hostutil launcher session-diff-metadata "${COLIMA_STATE_ROOT}" "${session_id}")"
+      while IFS= read -r root; do
+        lookup_roots+=("${root}")
+      done < <(session_lookup_root_args)
+      metadata="$(go_hostutil launcher session-diff-metadata "${lookup_roots[@]}" "${session_id}")"
       while IFS= read -r line; do
         case "${line%%=*}" in
           workspace)
@@ -4115,7 +4227,10 @@ session_main() {
         echo "workcell session export requires --id." >&2
         exit 2
       }
-      output="$(go_hostutil launcher session-export "${COLIMA_STATE_ROOT}" "${session_id}")"
+      while IFS= read -r root; do
+        lookup_roots+=("${root}")
+      done < <(session_lookup_root_args)
+      output="$(go_hostutil launcher session-export "${lookup_roots[@]}" "${session_id}")"
       if [[ -n "${output_path}" ]]; then
         output_path="$(resolve_host_output_candidate "${output_path}")"
         mkdir -p "$(dirname "${output_path}")"
@@ -5132,6 +5247,7 @@ print_inspect_state() {
   printf 'provider_native_sandbox_reason=%s\n' "$(provider_native_sandbox_reason)"
   printf 'log_level=%s\n' "${LOG_LEVEL}"
   printf 'profile_dir=%s\n' "$(profile_dir "${COLIMA_PROFILE}")"
+  printf 'target_state_dir=%s\n' "$(profile_target_state_dir "${COLIMA_PROFILE}")"
   printf 'profile_marker=%s\n' "$(profile_marker_path "${COLIMA_PROFILE}")"
   printf 'image_marker=%s\n' "$(profile_image_marker_path "${COLIMA_PROFILE}")"
   printf 'audit_log=%s\n' "$(profile_audit_log_path "${COLIMA_PROFILE}")"
@@ -5149,6 +5265,9 @@ show_requested_logs() {
   case "${LOGS_KIND}" in
     audit)
       log_path="$(profile_audit_log_path "${COLIMA_PROFILE}")"
+      if [[ ! -f "${log_path}" ]]; then
+        log_path="$(legacy_profile_audit_log_path "${COLIMA_PROFILE}")"
+      fi
       ;;
     debug | file-trace | transcript)
       log_path="$(read_latest_log_pointer "${COLIMA_PROFILE}" "${LOGS_KIND}" || true)"
@@ -7396,8 +7515,8 @@ if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
 fi
 if [[ "${GC}" -eq 1 ]]; then
   cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
-  cleanup_stale_session_audit_dirs "${COLIMA_STATE_ROOT}"
-  cleanup_stale_latest_log_pointers "${COLIMA_STATE_ROOT}"
+  cleanup_stale_session_audit_dirs "${WORKCELL_STATE_ROOT}" "${COLIMA_STATE_ROOT}"
+  cleanup_stale_latest_log_pointers "${WORKCELL_STATE_ROOT}" "${COLIMA_STATE_ROOT}"
   echo "Cleaned stale Workcell injection, session-audit, and broken latest-log pointer state."
   exit 0
 fi

@@ -282,7 +282,10 @@ The supported operator inventory is maintained in
 system-design doc explains shape and rationale; it should not be treated as the
 authoritative CLI inventory.
 
-Detached session records are written under the Colima profile state tree as
+Detached session records are written under the Workcell-owned target-state tree
+as
+`~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/<session-id>.json`.
+Compatibility reads still accept older legacy records under
 `~/.colima/<profile>/sessions/<session-id>.json`. The current session record
 schema in [`internal/hostutil/sessions.go`](../internal/hostutil/sessions.go)
 includes:
