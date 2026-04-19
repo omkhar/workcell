@@ -23,11 +23,14 @@ The deterministic phase breakdown lives in
   invariant checks
 - add a narrow trusted `linux/amd64` validation-host lane plus target-aware
   diagnostics before broad non-macOS or cloud support claims
-- define the first cross-platform `compat` target and the first `remote_vm`
-  target explicitly, without claiming Tier 1 Linux or Windows host parity
-  before the same guarantees exist
+- define the support matrix, remote-VM contract prerequisites, and evidence
+  gates that later `compat` and `remote_vm` targets must satisfy, without
+  implying backend shipment or Tier 1 Linux or Windows host parity before the
+  same guarantees exist
 
 ## Medium term
+
+### Session plane
 
 - add pause, resume, checkpoint, and fork flows on the same host-controlled
   session plane
@@ -35,6 +38,9 @@ The deterministic phase breakdown lives in
   instruction bundles, commands, approved MCP packs, and task templates
 - add a lightweight TUI or dashboard backed by the same host-controlled
   session plane rather than a separate execution path
+
+### Deployment reach
+
 - ship the first cross-platform compatibility backend with explicit
   lower-assurance labeling and backend-aware diagnostics
 - deliver the first remote VM backend for the highest-value use cases:

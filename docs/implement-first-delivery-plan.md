@@ -8,17 +8,20 @@ The longer-lived runtime-target and deployment-reach program lives in
 and the deterministic phase breakdown lives in
 [`docs/runtime-target-phase-plan.md`](runtime-target-phase-plan.md).
 Phases 1 and 2 of that phase plan are now implemented in the repository; this
-document remains as the delivered-scope reference for those slices and the
-immediate bridge to later runtime-target work.
+document now defines the immediate bridge into Phase 3 and the prerequisite
+work for later host-compatibility and remote-target phases.
 
 The current repo already includes durable session records plus detached
 host-side session control (`session start|attach|send|stop`) and basic
 observability surfaces (`session list|show|logs|timeline|diff|export`). The
 current repo also stores session, audit, and lock state under Workcell-owned
 target-state roots while preserving compatibility reads for older
-`~/.colima/...` records. The remaining work in this slice is to broaden shared
-auth/bootstrap coverage, expand host-compat validation, and deepen scenario
-coverage as later runtime-target phases land.
+`~/.colima/...` records. The current repo also ships direct staged-auth flows,
+`--auth-status`, and host-side auth explainability on the reviewed policy
+path. The active work in this slice is to complete the shared auth/bootstrap
+path. This document also records the queued validation-host and remote-VM
+contract prerequisites so later phases can start cleanly without pulling
+backend delivery forward into Phase 3.
 
 ## Principles
 
@@ -43,82 +46,109 @@ coverage as later runtime-target phases land.
   verify every changed code path preserves the runtime boundary, does not widen
   credential exposure, and keeps host-side git/control-plane execution explicit
 
-## Active Tracks
+## Phase 3 Exit Ownership
 
-### 1. Session Supervisor Phase 2
+- EM:
+  holds the phase boundary, prevents later validation-host or remote-VM work
+  from being counted as Phase 3 delivery, and blocks support claims that
+  outrun the evidence
+- TL:
+  owns the integrated Phase 3 landing criteria across code, deterministic
+  tests, and launcher/operator behavior
+- contract and docs owner:
+  owns the provider/bootstrap support matrix plus the operator and rollout docs
+  that bound what Phase 3 actually supports
 
-Scope for this delivery slice:
+## Delivered Foundation
 
-- preserve the shipped durable session inventory and detached control surface:
-  `session list`, `session show`, `session logs`, `session timeline`,
-  `session diff`, `session export`, `session start`, `session attach`,
-  `session send`, and `session stop`
-- default the safe path to one worktree per session when the operator opts into
-  orchestrated session flows
-- carry target identity, assurance, workspace mode, and workspace transport
-  through the session surface as the underlying state model evolves
-- keep the detached session path file-backed and host-owned rather than adding
-  same-user local socket trust as a shortcut
-- keep the implementation host-owned and file-backed; do not add same-user
-  local socket trust as a shortcut
+The following foundation is already merged and should now be treated as input
+to the next slice rather than as active delivery work:
 
-Staffing:
+- session inventory, detached control, logs/timeline, diff/export, and richer
+  target-aware session metadata
+- Workcell-owned target-state roots with compatibility reads for older
+  Colima-shaped records
+- direct staged-auth flows, `--auth-status`, policy explainability, and the
+  current secretless and authenticated scenario baseline
 
-- TL: session supervisor lead
-- SWE A: hostutil and launcher metadata plumbing
-- SWE B: shell command surface and scenario coverage
+## Active Phase 3 Track
 
-### 2. Session Observability
-
-Scope for this delivery slice:
-
-- extend the shipped logs, transcript pointers, and command timeline views
-  with clearer live status, branch/worktree, and assurance rendering
-- make the same rendering target-aware so operators can understand which
-  execution shape they are inspecting without guessing from Colima-specific
-  names
-- keep the first operator-facing surfaces CLI-first
-- add a lightweight TUI or dashboard only after the session object and status
-  model stabilize
-- keep the observability path read-only with the same host-owned metadata model
-
-Staffing:
-
-- TL: supervisor UX lead
-- SWE A: host-side session state and status rendering
-- SWE B: shell integration and artifact plumbing
-
-### 3. Runtime Target Foundations, Auth, and Validation Reach
+### 1. Shared Auth and Bootstrap Completion
 
 Scope for this delivery slice:
 
-- define the runtime-target model explicitly:
-  separate target kind, assurance class, and workspace transport in launcher
-  metadata, diagnostics, and session records
-- generalize host-owned state, audit metadata, and detached-session records
-  away from Colima-specific `profile` and `~/.colima/...` assumptions while
-  preserving compatibility reads for existing records
-- keep the shipped auth helpers and explainability surface aligned with new
-  launch modes
-- broaden resolver coverage without turning provider-native auth into the
-  security boundary
-- keep browser or setup handoffs explicit and host-owned where provider
-  onboarding still needs credential bootstrap help
-- define a narrow trusted `linux/amd64` validation-host lane plus phase gates
-  for non-macOS and remote-target evidence
-- define the first cross-platform `compat` target and the first `remote_vm`
-  target without weakening the Tier 1 boundary or overstating Linux and
-  Windows support
+- broaden built-in resolver coverage where the current implementation is still
+  intentionally narrow
+- keep direct staged inputs as the primary supported auth path until broader
+  resolver evidence exists
+- make browser/setup handoffs explicit and host-owned where provider bootstrap
+  still needs operator intervention
+- keep auth selection, explainability, and launch-time diagnostics on one
+  reviewed host-owned path
+- publish an explicit provider/bootstrap support matrix that marks each auth
+  path as repo-required, certification-only, or manual
+- separate deterministic repo-required auth/bootstrap evidence from
+  live-provider certification and manual provider-e2e validation
 
 Staffing:
 
 - TL: auth integrations lead
 - SWE A: resolver metadata and auth-state reasoning
-- SWE B: deployment-target documentation and scenario coverage
+- SWE B: bootstrap handoffs, diagnostics, and scenario coverage
+
+Phase boundary:
+
+- this is the active implementation slice and the only track that should change
+  Phase 3 status from planned to complete
+- the remaining tracks below are prerequisites and follow-on planning surfaces
+  for later deterministic phases, not authority to ship backend delivery in the
+  current slice
+
+## Immediate Follow-On Prerequisites
+
+### 2. Validation Host And Host-Compatibility Matrix
+
+Scope to define before the owning later phase starts:
+
+- define the narrow trusted `linux/amd64` validation-host lane before broader
+  non-macOS or cloud claims
+- express support as `host OS x target kind x assurance class`
+- define a versioned capability and support-matrix artifact that docs and
+  diagnostics both consume
+- add backend-aware diagnostics that fail closed on unsupported host/backend
+  combinations
+- add deterministic fixture tests for unsupported host/backend combinations
+- keep Linux and Windows claims limited to what the validation-host evidence
+  and docs actually prove
+
+Staffing:
+
+- TL: validation-host and rollout lead
+- SWE A: validation-host tooling and diagnostics
+- SWE B: support matrix docs and operator guidance
+
+### 3. Remote VM Contract Preparation
+
+Scope to define before the owning later phase starts:
+
+- define the provider-neutral `remote_vm` contract before any cloud backend
+  ships
+- make remote workspace materialization explicit and auditable
+- define the reviewed brokered-access and remote image/bootstrap model
+- add the shared fake remote target, conformance harness, and fixtures that
+  later cloud adapters must reuse unchanged
+- keep target ordering and backend selection in the longer-lived
+  runtime-target expansion program rather than in this active slice
+
+Staffing:
+
+- TL: remote contract lead
+- SWE A: remote workspace and audit model
+- SWE B: contract docs, fakes, and deterministic evidence
 
 ### 4. Scenario Evidence And Operator Verification
 
-Scope for this delivery slice:
+Scope to expand as each later phase lands:
 
 - expand authenticated, lower-assurance, session-supervisor, migration, and
   remote-workspace scenario coverage as each target-facing phase lands
@@ -132,21 +162,34 @@ Staffing:
 - SWE A: scenario and migration evidence
 - SWE B: operator verification docs and comparison material
 
+## Backend Phase Handoff
+
+Before Phase 6, 7, 8, or 9 begins implementation, assign:
+
+- EM:
+  support-boundary owner for rollout scope, preview/GA decisions, and rollback
+- TL:
+  integration owner for shared harness reuse, deterministic tests, and target
+  behavior
+- contract and docs owner:
+  owner for canonical matrices, rollout docs, and operator verification
+- validation owner:
+  owner for repo-required evidence and certification-lane definitions
+
 ## Sequence
 
-1. build mutable orchestration on top of the shipped inventory and inspection
-   surface rather than replacing it
-2. add worktree-per-session defaults and status surfaces before any dashboard
-   work
-3. refactor state, diagnostics, and auth/bootstrap onto the runtime-target
-   model while preserving session-surface parity
-4. define trusted `linux/amd64` validation hosts and explicit evidence gates
-   before broad non-macOS or remote-target claims
-5. expand authenticated and lower-assurance scenario coverage as each phase
-   lands rather than as a cleanup pass
-6. only then define and prepare the first cross-platform `compat` and
-   `remote_vm` paths against the same host-owned policy model, leaving their
-   actual delivery to the runtime-target expansion program
+1. finish the shared auth/bootstrap path on the shipped host-owned policy and
+   explainability surface, and freeze the provider/bootstrap support matrix for
+   this phase
+2. only after Phase 3 exits green, define trusted `linux/amd64` validation
+   hosts plus an explicit host-compatibility matrix
+3. only after that, define the remote-VM contract and deterministic evidence
+   before any provider-specific backend work
+4. expand authenticated, lower-assurance, and remote-contract coverage as each
+   later phase lands rather than as a cleanup pass
+5. leave actual `compat` and cloud-backend delivery to the later
+   runtime-target program phases once these prerequisites and owner handoffs
+   are done
 
 ## Non-Goals In This Slice
 
@@ -157,4 +200,6 @@ Staffing:
 - secret materialization paths that bypass the reviewed host policy flow
 - automatic backend fallback
 - broad Linux or Windows parity claims
+- selecting or shipping `docker-desktop`, `aws-ec2-ssm`, `gcp-vm`, or
+  `azure-vm` in this slice
 - Kubernetes-backed execution or managed-workstation delivery in this slice
