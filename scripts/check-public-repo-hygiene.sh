@@ -48,7 +48,7 @@ check_public_surfaces() {
           return 1
         }
 
-        return prefix ~ /file:\/\/([^[:space:]\/?#]+)?$/
+        return prefix ~ /(^|[^[:alnum:]+.-])file:\/\/([^[:space:]\/?#]+)?$/
       }
 
       function line_has_disallowed_home_path(line,    rest, prefix, path) {
