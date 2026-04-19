@@ -368,6 +368,49 @@ func TestListSessionRecordsInRootsReadsTargetStateAndLegacyRoots(t *testing.T) {
 	}
 }
 
+func TestListSessionRecordsSupportsLegacyProfileNamedTargets(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeSessionFixture(t, filepath.Join(root, "targets", "sessions", "session-targets.json"), SessionRecord{
+		Version:        1,
+		SessionID:      "session-targets",
+		Profile:        "targets",
+		Agent:          "codex",
+		Mode:           "strict",
+		Status:         "exited",
+		Workspace:      "/tmp/workspace-targets",
+		StartedAt:      "2026-04-08T10:00:00Z",
+		FinishedAt:     "2026-04-08T10:05:00Z",
+		ExitStatus:     "0",
+		FinalAssurance: "managed-mutable",
+	})
+	writeSessionFixture(t, filepath.Join(root, "wcl-one", "sessions", "session-1.json"), SessionRecord{
+		Version:        1,
+		SessionID:      "session-1",
+		Profile:        "wcl-one",
+		Agent:          "claude",
+		Mode:           "development",
+		Status:         "failed",
+		Workspace:      "/tmp/workspace-one",
+		StartedAt:      "2026-04-08T11:00:00Z",
+		FinishedAt:     "2026-04-08T11:03:00Z",
+		ExitStatus:     "17",
+		FinalAssurance: "managed-mutable",
+	})
+
+	records, err := ListSessionRecords(root, SessionListOptions{})
+	if err != nil {
+		t.Fatalf("ListSessionRecords() error = %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("ListSessionRecords() len = %d, want 2", len(records))
+	}
+	if records[0].SessionID != "session-1" || records[1].SessionID != "session-targets" {
+		t.Fatalf("unexpected record set from legacy root with targets dir: %+v", records)
+	}
+}
+
 func TestFindSessionRecordWithPathInRootsPrefersEarlierRootOnDuplicateSessionID(t *testing.T) {
 	t.Parallel()
 

@@ -416,12 +416,17 @@ func sessionStateDirs(root string) ([]string, error) {
 		return nil, fmt.Errorf("%s is not a directory", root)
 	}
 
+	stateDirs := make([]string, 0)
 	targetsRoot := filepath.Join(root, "targets")
 	if targetsInfo, err := os.Stat(targetsRoot); err == nil {
 		if !targetsInfo.IsDir() {
 			return nil, fmt.Errorf("%s is not a directory", targetsRoot)
 		}
-		return targetStateDirs(targetsRoot)
+		targetDirs, err := targetStateDirs(targetsRoot)
+		if err != nil {
+			return nil, err
+		}
+		stateDirs = append(stateDirs, targetDirs...)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -430,7 +435,6 @@ func sessionStateDirs(root string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	stateDirs := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
