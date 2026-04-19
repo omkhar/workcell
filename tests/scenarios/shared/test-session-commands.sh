@@ -460,6 +460,7 @@ if grep -Eq -- "-e WORKCELL_DETACHED_STDIN_PATH=/run/workcell/session-stdin" <<<
   echo "Detached session start kept the detached stdin FIFO under a path that blocks host command injection" >&2
   exit 1
 fi
+custom_state_home="${TMP_DIR}/detached-state-home"
 detached_start_direct_output="$(
   WORKCELL_SESSION_WORKSPACE_MODE=isolated \
     "${ROOT_DIR}/scripts/workcell" \
@@ -570,6 +571,22 @@ grep -q '^target_state_dir='"${TARGET_STATE_DIR}"'$' <<<"${state_path_output}"
 grep -q '^sessions_dir='"${TARGET_STATE_DIR}/sessions"'$' <<<"${state_path_output}"
 grep -q '^audit_log='"${TARGET_STATE_DIR}/workcell.audit.log"'$' <<<"${state_path_output}"
 grep -q '^lock_dir='"${WORKCELL_STATE_ROOT}/locks/local_vm/colima/${PROFILE}.lock"'$' <<<"${state_path_output}"
+
+detached_start_custom_state_output="$(
+  XDG_STATE_HOME="${custom_state_home}" \
+    /bin/bash "${ROOT_DIR}/scripts/workcell" \
+    session start \
+    --session-workspace direct \
+    --agent codex \
+    --mode development \
+    --workspace "${DETACHED_START_WORKSPACE}" \
+    --no-default-injection-policy \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    --dry-run \
+    -- /bin/true 2>&1
+)"
+grep -Fq -- "audit_log=${custom_state_home}/workcell/targets/local_vm/colima/" <<<"${detached_start_custom_state_output}"
 
 mkdir -p "${LEGACY_SESSIONS_DIR}"
 printf '{}' >"${LEGACY_SESSIONS_DIR}/${SESSION_ONE}.json"

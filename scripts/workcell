@@ -185,7 +185,7 @@ HOST_GIT_BIN=""
 HOST_COLIMA_BIN=""
 HOST_DOCKER_BIN=""
 COLIMA_STATE_ROOT="${REAL_HOME}/.colima"
-WORKCELL_STATE_ROOT="${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell"
+WORKCELL_STATE_ROOT="${WORKCELL_STATE_ROOT:-${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell}"
 WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
 PROFILE_PREEXISTED=0
 PROFILE_RUNNING=0
@@ -3971,27 +3971,28 @@ session_main() {
   local rendered=""
   local -a args=()
   local -a lookup_roots=()
+  local -a session_start_env=()
 
   shift || true
   case "${subcommand}" in
     start)
+      session_start_env=(
+        PATH="${TRUSTED_HOST_PATH}"
+        HOME="${REAL_HOME}"
+        TMPDIR="${TMPDIR:-/tmp}"
+        LC_ALL=C
+        LANG=C
+        WORKCELL_SESSION_DETACHED=1
+      )
+      [[ -n "${XDG_STATE_HOME:-}" ]] && session_start_env+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
+      [[ -n "${WORKCELL_STATE_ROOT:-}" ]] && session_start_env+=("WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}")
       if [[ "${#}" -eq 0 ]]; then
         exec env -i \
-          PATH="${TRUSTED_HOST_PATH}" \
-          HOME="${REAL_HOME}" \
-          TMPDIR="${TMPDIR:-/tmp}" \
-          LC_ALL=C \
-          LANG=C \
-          WORKCELL_SESSION_DETACHED=1 \
+          "${session_start_env[@]}" \
           /bin/bash "${BASH_SOURCE[0]}"
       fi
       exec env -i \
-        PATH="${TRUSTED_HOST_PATH}" \
-        HOME="${REAL_HOME}" \
-        TMPDIR="${TMPDIR:-/tmp}" \
-        LC_ALL=C \
-        LANG=C \
-        WORKCELL_SESSION_DETACHED=1 \
+        "${session_start_env[@]}" \
         /bin/bash "${BASH_SOURCE[0]}" "$@"
       ;;
     attach)
