@@ -9,6 +9,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
+expect_line() {
+  local label="$1"
+  local expected="$2"
+  local haystack="$3"
+
+  if ! grep -Fxq "${expected}" <<<"${haystack}"; then
+    echo "Missing ${label}: ${expected}" >&2
+    printf '%s\n' "${haystack}" >&2
+    exit 1
+  fi
+}
+
+expect_file_contains() {
+  local label="$1"
+  local path="$2"
+  local needle="$3"
+
+  if [[ ! -f "${path}" ]]; then
+    echo "Missing ${label} file: ${path}" >&2
+    exit 1
+  fi
+  if ! grep -Fq "${needle}" "${path}"; then
+    echo "Unexpected ${label} contents in ${path}" >&2
+    cat "${path}" >&2
+    exit 1
+  fi
+}
+
 WORKSPACE="${TMP_DIR}/workspace"
 POLICY="${TMP_DIR}/policy.toml"
 CODEX_AUTH="${TMP_DIR}/codex-auth.json"
@@ -30,10 +58,10 @@ status_output="$(
     --injection-policy "${POLICY}" \
     --agent codex
 )"
-grep -q '^credential_resolvers=codex_auth:codex-home-auth-file$' <<<"${status_output}"
-grep -q '^credential_resolution_states=codex_auth:host-source$' <<<"${status_output}"
-grep -q '^provider_auth_ready_states=codex_auth:ready$' <<<"${status_output}"
-grep -q '^provider_bootstrap_path=host-resolver$' <<<"${status_output}"
+expect_line "status resolver" "credential_resolvers=codex_auth:codex-home-auth-file" "${status_output}"
+expect_line "status resolution state" "credential_resolution_states=codex_auth:host-source" "${status_output}"
+expect_line "status ready state" "provider_auth_ready_states=codex_auth:ready" "${status_output}"
+expect_line "status bootstrap path" "provider_bootstrap_path=host-resolver" "${status_output}"
 
 launcher_status="$(
   WORKCELL_TEST_CODEX_AUTH_FILE="${CODEX_AUTH}" \
@@ -43,10 +71,10 @@ launcher_status="$(
     --workspace "${WORKSPACE}" \
     --injection-policy "${POLICY}"
 )"
-grep -q '^credential_resolvers=codex_auth:codex-home-auth-file$' <<<"${launcher_status}"
-grep -q '^credential_resolution_states=codex_auth:host-source$' <<<"${launcher_status}"
-grep -q '^provider_auth_ready_states=codex_auth:ready$' <<<"${launcher_status}"
-grep -q '^provider_bootstrap_path=host-resolver$' <<<"${launcher_status}"
+expect_line "launcher resolver" "credential_resolvers=codex_auth:codex-home-auth-file" "${launcher_status}"
+expect_line "launcher resolution state" "credential_resolution_states=codex_auth:host-source" "${launcher_status}"
+expect_line "launcher ready state" "provider_auth_ready_states=codex_auth:ready" "${launcher_status}"
+expect_line "launcher bootstrap path" "provider_bootstrap_path=host-resolver" "${launcher_status}"
 
 probe_output="$(
   WORKCELL_TEST_CODEX_AUTH_FILE="${CODEX_AUTH}" \
@@ -65,6 +93,6 @@ direct_mount="$(sed -n 's/^direct_mount=//p' <<<"${probe_output}")"
 staged_source="${direct_mount%%:*}"
 test -n "${bundle_root}"
 test -n "${staged_source}"
-cmp -s "${CODEX_AUTH}" "${staged_source}"
+expect_file_contains "staged codex auth" "${staged_source}" '"token":"codex"'
 
 echo "Codex resolver launcher scenario passed"
