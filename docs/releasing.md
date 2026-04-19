@@ -23,6 +23,11 @@ honestly in docs, status reports, and release commentary.
 
 ## Principles
 
+- Treat a release request as implicitly including peer review unless the
+  maintainer explicitly narrows that scope.
+- For release work, peer review means continuing through review findings,
+  validation failures, documentation drift, and hosted workflow failures until
+  no actionable findings remain or a concrete blocker is reported.
 - Review and finish open pull requests before cutting a release.
 - Address actionable PR comments and review feedback as part of release work.
 - Use signed commits and signed tags.
@@ -44,6 +49,8 @@ honestly in docs, status reports, and release commentary.
   pins, and document them in policy or release notes rather than carrying
   unexplained drift.
 - Publish PRs from the host with `./scripts/workcell publish-pr`.
+- For agentic release PR publication and follow-up, use the repo-local
+  `workcell-pr-lifecycle` skill in addition to this release runbook.
 - Wait for `main` to be green before pushing the release tag.
 - Follow the tag-triggered `Release` workflow through completion.
 - Approve the `release` environment only after release preflight and install
