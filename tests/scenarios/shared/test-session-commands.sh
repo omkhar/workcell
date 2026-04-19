@@ -606,6 +606,59 @@ if [[ "${monitor_ready_failure_status}" -eq 0 ]]; then
   exit 1
 fi
 
+detached_summary_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    SESSION_ID="detached-summary"
+    SESSION_META_TARGET_KIND="local_vm"
+    SESSION_META_TARGET_PROVIDER="colima"
+    SESSION_META_TARGET_ID="wcl-detached-summary"
+    SESSION_META_TARGET_ASSURANCE_CLASS="strict"
+    SESSION_META_RUNTIME_API="docker"
+    SESSION_META_WORKSPACE_TRANSPORT="workspace-mount"
+    SESSION_META_WORKSPACE="/tmp/detached-summary"
+    SESSION_META_WORKSPACE_ORIGIN="/tmp/detached-summary"
+    SESSION_META_WORKTREE_PATH="/tmp/detached-summary"
+    SESSION_META_CURRENT_ASSURANCE="managed-mutable"
+    session_git_branch=""
+    ensure_session_meta_git_branch "${session_git_branch}"
+    printf "session_id=%s\n" "${SESSION_ID}"
+    emit_loaded_session_control_summary
+  ' _ "${WORKCELL_FUNCTIONS_COPY}"
+)"
+test "$(grep -c '^git_branch=' <<<"${detached_summary_output}")" -eq 1
+grep -q '^display_git_branch=none$' <<<"${detached_summary_output}"
+grep -q '^git_branch=none$' <<<"${detached_summary_output}"
+
+detached_summary_runtime_branch_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    SESSION_ID="detached-summary-runtime"
+    SESSION_META_TARGET_KIND="local_vm"
+    SESSION_META_TARGET_PROVIDER="colima"
+    SESSION_META_TARGET_ID="wcl-detached-summary-runtime"
+    SESSION_META_TARGET_ASSURANCE_CLASS="strict"
+    SESSION_META_RUNTIME_API="docker"
+    SESSION_META_WORKSPACE_TRANSPORT="workspace-mount"
+    SESSION_META_WORKSPACE="/tmp/detached-summary-runtime"
+    SESSION_META_WORKSPACE_ORIGIN="/tmp/detached-summary-runtime"
+    SESSION_META_WORKTREE_PATH="/tmp/detached-summary-runtime"
+    SESSION_META_GIT_BRANCH="runtime-branch"
+    SESSION_META_CURRENT_ASSURANCE="managed-mutable"
+    session_git_branch="host-branch"
+    ensure_session_meta_git_branch "${session_git_branch}"
+    printf "session_id=%s\n" "${SESSION_ID}"
+    emit_loaded_session_control_summary
+  ' _ "${WORKCELL_FUNCTIONS_COPY}"
+)"
+test "$(grep -c '^git_branch=' <<<"${detached_summary_runtime_branch_output}")" -eq 1
+grep -q '^display_git_branch=runtime-branch$' <<<"${detached_summary_runtime_branch_output}"
+grep -q '^git_branch=runtime-branch$' <<<"${detached_summary_runtime_branch_output}"
+
 monitor_wait_status_output="$(
   bash -lc '
     set -euo pipefail
