@@ -30,12 +30,17 @@ The deterministic phase breakdown lives in
 
 ## Medium term
 
+### Session plane
+
 - add pause, resume, checkpoint, and fork flows on the same host-controlled
   session plane
 - add reviewed team workflow packs at the Workcell layer: versioned
   instruction bundles, commands, approved MCP packs, and task templates
 - add a lightweight TUI or dashboard backed by the same host-controlled
   session plane rather than a separate execution path
+
+### Deployment reach
+
 - ship the first cross-platform compatibility backend with explicit
   lower-assurance labeling and backend-aware diagnostics
 - deliver the first remote VM backend for the highest-value use cases:
