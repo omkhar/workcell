@@ -137,6 +137,12 @@ targets must stay labeled `compat` or another explicitly lower-assurance class.
 - session and audit state are no longer Colima-shaped at the program level
 - session-surface parity is preserved
 
+Current repo status:
+
+- Gate 1 is implemented
+- Gate 2 is implemented
+- later gates remain planning targets until their code and evidence land
+
 ### Gate 3: compatibility target certified
 
 - `docker-desktop` is feature-flagged, explicitly `compat`, and backed by

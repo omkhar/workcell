@@ -41,7 +41,8 @@ These parts are still local to each operator host:
 - Workcell installation and updates
 - `~/.config/workcell/` policy files and included fragments
 - managed credential material referenced by `workcell auth`
-- `~/.colima/<profile>/sessions/` durable session records
+- `~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/`
+  durable session records
 - local launch history, retained debug logs, transcripts, and file traces
 
 If you want team-wide consistency today, distribute reviewed host-side files

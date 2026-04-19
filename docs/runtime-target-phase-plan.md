@@ -14,6 +14,8 @@ Current repo status:
 
 - Phase 0 is implemented in the validation substrate
 - Phase 1 is implemented in the session platform and deterministic evidence
+- Phase 2 is implemented in the target-state migration and Colima
+  compatibility-read path
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract

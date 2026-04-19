@@ -31,8 +31,9 @@ host-side inventory, observability, and detached-control commands:
 - `workcell session stop`
 - `workcell session delete`
 
-Each launched session writes durable metadata under the managed Colima profile
-state instead of relying only on the transient `session-audit.*` directory.
+Each launched session writes durable metadata under the Workcell-owned
+target-state root instead of relying only on the transient `session-audit.*`
+directory.
 
 Detached sessions default to `--session-workspace isolated`, so the detached
 path already points toward worktree-per-session operation on the safe path. The
@@ -53,11 +54,13 @@ Each session record stores the durable host-side view of one launch, including:
 - initial, current, and final assurance state
 - workspace control-plane mode
 
-The durable record lives under:
+The durable record lives under the target-state root, by default:
 
-- `~/.colima/<profile>/sessions/<session_id>.json`
+- `~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/<session_id>.json`
 
-The transient `session-audit.*` directory remains separate and disposable.
+Compatibility reads still accept older legacy records under
+`~/.colima/<profile>/sessions/<session_id>.json`. The transient
+`session-audit.*` directory remains separate and disposable.
 
 ## Why This Shape
 
@@ -70,13 +73,16 @@ That matters because:
 - `--gc` already cleans transient audit dirs
 - durable session inventory should survive the transient session cleanup path
 
-Storing records under `sessions/` instead of inside `session-audit.*` avoids
-confusing retention with ephemeral runtime scratch state.
+Storing records under a Workcell-owned target-state root instead of inside
+`session-audit.*` or the Colima runtime tree avoids confusing durable control
+state with ephemeral runtime scratch state.
 
 ## Audit Relationship
 
 The current implementation adds `session_id` to launch, control, assurance, and
-exit audit records in the profile audit log.
+exit audit records in the target audit log, which by default lives beside the
+session records under
+`~/.local/state/workcell/targets/local_vm/colima/<profile>/workcell.audit.log`.
 
 That allows:
 
@@ -145,8 +151,6 @@ The current slice does not yet attempt to implement:
 
 The remaining near-term work is to:
 
-- decouple session, audit, and lock state from Colima-shaped program-level
-  assumptions while preserving compatibility reads
 - deepen validation coverage for detached-session transitions and
   lower-assurance paths
 - add richer artifact browsing without weakening the host-owned model

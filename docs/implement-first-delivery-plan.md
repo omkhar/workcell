@@ -7,16 +7,18 @@ The longer-lived runtime-target and deployment-reach program lives in
 [`docs/runtime-target-expansion-plan.md`](runtime-target-expansion-plan.md),
 and the deterministic phase breakdown lives in
 [`docs/runtime-target-phase-plan.md`](runtime-target-phase-plan.md).
-Phase 1 of that phase plan is now implemented in the repository; this document
-remains as the delivered-scope reference for that slice and the immediate
-bridge to later runtime-target work.
+Phases 1 and 2 of that phase plan are now implemented in the repository; this
+document remains as the delivered-scope reference for those slices and the
+immediate bridge to later runtime-target work.
 
 The current repo already includes durable session records plus detached
 host-side session control (`session start|attach|send|stop`) and basic
 observability surfaces (`session list|show|logs|timeline|diff|export`). The
-remaining work in this slice is to make those commands feel like one coherent
-session platform with safer default workspace isolation, richer status
-rendering, and deeper validation coverage.
+current repo also stores session, audit, and lock state under Workcell-owned
+target-state roots while preserving compatibility reads for older
+`~/.colima/...` records. The remaining work in this slice is to broaden shared
+auth/bootstrap coverage, expand host-compat validation, and deepen scenario
+coverage as later runtime-target phases land.
 
 ## Principles
 

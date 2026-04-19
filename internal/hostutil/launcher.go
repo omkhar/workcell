@@ -60,37 +60,18 @@ func IsNoMatch(err error) bool {
 	return errors.Is(err, errNoMatch)
 }
 
-func CleanupStaleLatestLogPointers(colimaRoot string) error {
-	root := filepath.Clean(colimaRoot)
-	info, err := os.Stat(root)
+func CleanupStaleLatestLogPointers(stateRoot string) error {
+	stateDirs, err := sessionStateDirs(stateRoot)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
 		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("%s is not a directory", root)
-	}
-
 	uid := uint32(os.Getuid())
 	pointerNames := []string{
 		"workcell.latest-debug-log",
 		"workcell.latest-file-trace-log",
 		"workcell.latest-transcript-log",
 	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		profileDir := filepath.Join(root, entry.Name())
-		if isSymlink(profileDir) {
-			continue
-		}
+	for _, profileDir := range stateDirs {
 		for _, pointerName := range pointerNames {
 			pointerPath := filepath.Join(profileDir, pointerName)
 			info, err := os.Lstat(pointerPath)
@@ -220,33 +201,14 @@ func WriteProfileOwner(ownerPath string, pid int) error {
 	return os.Chmod(ownerPath, 0o600)
 }
 
-func CleanupStaleSessionAuditDirs(colimaRoot string) error {
-	root := filepath.Clean(colimaRoot)
-	info, err := os.Stat(root)
+func CleanupStaleSessionAuditDirs(stateRoot string) error {
+	stateDirs, err := sessionStateDirs(stateRoot)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
 		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("%s is not a directory", root)
-	}
-
 	cutoff := time.Now().Add(-12 * time.Hour)
 	uid := uint32(os.Getuid())
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		profileDir := filepath.Join(root, entry.Name())
-		if isSymlink(profileDir) {
-			continue
-		}
+	for _, profileDir := range stateDirs {
 		candidates, err := os.ReadDir(profileDir)
 		if err != nil {
 			continue

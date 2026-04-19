@@ -48,13 +48,18 @@ cleanup() {
   fi
   rm -f "${WORKCELL_FUNCTIONS_COPY}"
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
+  rm -rf "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets/local_vm/colima/${PROFILE}"
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
 
 COLIMA_ROOT="${REAL_HOME}/.colima"
-SESSIONS_DIR="${COLIMA_ROOT}/${PROFILE}/sessions"
-AUDIT_LOG="${COLIMA_ROOT}/${PROFILE}/workcell.audit.log"
+WORKCELL_STATE_ROOT="${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell"
+TARGET_STATE_DIR="${WORKCELL_STATE_ROOT}/targets/local_vm/colima/${PROFILE}"
+LEGACY_STATE_DIR="${COLIMA_ROOT}/${PROFILE}"
+LEGACY_SESSIONS_DIR="${LEGACY_STATE_DIR}/sessions"
+SESSIONS_DIR="${TARGET_STATE_DIR}/sessions"
+AUDIT_LOG="${TARGET_STATE_DIR}/workcell.audit.log"
 EXPORT_PATH="${TMP_DIR}/session-export.json"
 WORKSPACE_A="${TMP_DIR}/workspace-a"
 WORKSPACE_B="${TMP_DIR}/workspace-b"
@@ -77,7 +82,7 @@ DETACHED_WORKSPACE="${WORKSPACE_A}/.git/session-sandboxes/${DETACHED_SESSION}"
 DETACHED_BRANCH="workcell/session/${DETACHED_SESSION}"
 DETACHED_BACKEND="${TMP_DIR}/detached-session-backend"
 
-mkdir -p "${SESSIONS_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B}"
+mkdir -p "${SESSIONS_DIR}" "${LEGACY_STATE_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B}"
 WORKSPACE_A="$(cd "${WORKSPACE_A}" && pwd -P)"
 WORKSPACE_B="$(cd "${WORKSPACE_B}" && pwd -P)"
 
@@ -455,6 +460,7 @@ if grep -Eq -- "-e WORKCELL_DETACHED_STDIN_PATH=/run/workcell/session-stdin" <<<
   echo "Detached session start kept the detached stdin FIFO under a path that blocks host command injection" >&2
   exit 1
 fi
+custom_state_home="${TMP_DIR}/detached-state-home"
 detached_start_direct_output="$(
   WORKCELL_SESSION_WORKSPACE_MODE=isolated \
     "${ROOT_DIR}/scripts/workcell" \
@@ -549,23 +555,144 @@ grep -q 'To use this workspace on the safe path, create a standard clone at the 
 grep -q 'Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree\.' <<<"${linked_isolated_output}"
 
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
+state_path_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_PROFILE="$2"
+    printf "target_state_dir=%s\n" "$(profile_target_state_dir "${COLIMA_PROFILE}")"
+    printf "sessions_dir=%s\n" "$(profile_sessions_dir_path "${COLIMA_PROFILE}")"
+    printf "audit_log=%s\n" "$(profile_audit_log_path "${COLIMA_PROFILE}")"
+    printf "lock_dir=%s\n" "$(profile_lock_dir_path "${COLIMA_PROFILE}")"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${PROFILE}"
+)"
+grep -q '^target_state_dir='"${TARGET_STATE_DIR}"'$' <<<"${state_path_output}"
+grep -q '^sessions_dir='"${TARGET_STATE_DIR}/sessions"'$' <<<"${state_path_output}"
+grep -q '^audit_log='"${TARGET_STATE_DIR}/workcell.audit.log"'$' <<<"${state_path_output}"
+grep -q '^lock_dir='"${WORKCELL_STATE_ROOT}/locks/local_vm/colima/${PROFILE}.lock"'$' <<<"${state_path_output}"
+
+detached_start_custom_state_output="$(
+  XDG_STATE_HOME="${custom_state_home}" \
+    /bin/bash "${ROOT_DIR}/scripts/workcell" \
+    session start \
+    --session-workspace direct \
+    --agent codex \
+    --mode development \
+    --workspace "${DETACHED_START_WORKSPACE}" \
+    --no-default-injection-policy \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    --dry-run \
+    -- /bin/true 2>&1
+)"
+grep -Fq -- "audit_log=${custom_state_home}/workcell/targets/local_vm/colima/" <<<"${detached_start_custom_state_output}"
+
+mkdir -p "${LEGACY_SESSIONS_DIR}"
+printf '{}' >"${LEGACY_SESSIONS_DIR}/${SESSION_ONE}.json"
+legacy_record_path_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_PROFILE="$2"
+    SESSION_ID="$3"
+    printf "record_path=%s\n" "$(session_record_path_for "${COLIMA_PROFILE}" "${SESSION_ID}")"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${PROFILE}" "${SESSION_ONE}"
+)"
+grep -q '^record_path='"${LEGACY_SESSIONS_DIR}/${SESSION_ONE}.json"'$' <<<"${legacy_record_path_output}"
+rm -f "${LEGACY_SESSIONS_DIR}/${SESSION_ONE}.json"
+
+rm -f "${LEGACY_STATE_DIR}/workcell.latest-transcript-log"
+printf '%s\n' "${DETACHED_TRANSCRIPT_LOG}" >"${LEGACY_STATE_DIR}/workcell.latest-transcript-log"
+legacy_pointer_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_PROFILE="$2"
+    printf "pointer=%s\n" "$(read_latest_log_pointer "${COLIMA_PROFILE}" transcript)"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${PROFILE}"
+)"
+grep -q '^pointer='"${DETACHED_TRANSCRIPT_LOG}"'$' <<<"${legacy_pointer_output}"
+rm -f "${LEGACY_STATE_DIR}/workcell.latest-transcript-log"
+
+legacy_audit_migration_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"
+    COLIMA_STATE_ROOT="${FIXTURE_ROOT}/colima"
+    WORKCELL_STATE_ROOT="${FIXTURE_ROOT}/workcell"
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+    PROFILE_NAME="audit-migration-fixture"
+    LEGACY_LOG="$(legacy_profile_audit_log_path "${PROFILE_NAME}")"
+    TARGET_LOG="$(profile_audit_log_path "${PROFILE_NAME}")"
+    mkdir -p "$(dirname "${LEGACY_LOG}")"
+    printf "legacy-audit-line\n" >"${LEGACY_LOG}"
+    stash_profile_audit_log "${PROFILE_NAME}"
+    rm -f "${LEGACY_LOG}"
+    restore_profile_audit_log "${PROFILE_NAME}"
+    printf "target_log=%s\n" "${TARGET_LOG}"
+    cat "${TARGET_LOG}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${TMP_DIR}/audit-migration-fixture"
+)"
+grep -q '^target_log='"${TMP_DIR}/audit-migration-fixture/workcell/targets/local_vm/colima/audit-migration-fixture/workcell.audit.log"'$' <<<"${legacy_audit_migration_output}"
+grep -q '^legacy-audit-line$' <<<"${legacy_audit_migration_output}"
+
+merged_audit_migration_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"
+    COLIMA_STATE_ROOT="${FIXTURE_ROOT}/colima"
+    WORKCELL_STATE_ROOT="${FIXTURE_ROOT}/workcell"
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+    PROFILE_NAME="merged-audit-migration-fixture"
+    LEGACY_LOG="$(legacy_profile_audit_log_path "${PROFILE_NAME}")"
+    TARGET_LOG="$(profile_audit_log_path "${PROFILE_NAME}")"
+    mkdir -p "$(dirname "${LEGACY_LOG}")" "$(dirname "${TARGET_LOG}")"
+    printf "legacy-audit-line\n" >"${LEGACY_LOG}"
+    printf "target-audit-line\n" >"${TARGET_LOG}"
+    stash_profile_audit_log "${PROFILE_NAME}"
+    restore_profile_audit_log "${PROFILE_NAME}"
+    printf "target_log=%s\n" "${TARGET_LOG}"
+    cat "${TARGET_LOG}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${TMP_DIR}/merged-audit-migration-fixture"
+)"
+grep -q '^target_log='"${TMP_DIR}/merged-audit-migration-fixture/workcell/targets/local_vm/colima/merged-audit-migration-fixture/workcell.audit.log"'$' <<<"${merged_audit_migration_output}"
+grep -q '^legacy-audit-line$' <<<"${merged_audit_migration_output}"
+grep -q '^target-audit-line$' <<<"${merged_audit_migration_output}"
+[[ "$(grep -c '^target-audit-line$' <<<"${merged_audit_migration_output}")" -eq 1 ]] || {
+  echo "audit migration duplicated target history during restore" >&2
+  exit 1
+}
+
 monitor_env_output="$(
   bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
+    XDG_STATE_HOME="$5"
+    WORKCELL_STATE_ROOT="${XDG_STATE_HOME}/workcell"
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
     SESSION_AUDIT_DIR="$2"
     SESSION_RECORD_PATH="$3"
     SESSION_RECORD_WRITTEN=1
     SESSION_RECORD_FINALIZED=0
     write_session_monitor_env_file "$4"
     cat "$4"
-  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}" "${SESSIONS_DIR}/${DETACHED_SESSION}.json" "${DETACHED_STATE_DIR}/session-monitor.env"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}" "${SESSIONS_DIR}/${DETACHED_SESSION}.json" "${DETACHED_STATE_DIR}/session-monitor.env" "${TMP_DIR}/monitor-xdg-state"
 )"
 grep -q '^SESSION_RECORD_PATH=' <<<"${monitor_env_output}"
 grep -q '^SESSION_RECORD_WRITTEN=1$' <<<"${monitor_env_output}"
 grep -q '^SESSION_RECORD_FINALIZED=0$' <<<"${monitor_env_output}"
 grep -q '^SESSION_MONITOR_READY_PATH=' <<<"${monitor_env_output}"
+grep -q '^XDG_STATE_HOME='"${TMP_DIR}/monitor-xdg-state"'$' <<<"${monitor_env_output}"
+grep -q '^WORKCELL_STATE_ROOT='"${TMP_DIR}/monitor-xdg-state/workcell"'$' <<<"${monitor_env_output}"
+grep -q '^WORKCELL_TARGET_STATE_ROOT='"${TMP_DIR}/monitor-xdg-state/workcell/targets"'$' <<<"${monitor_env_output}"
 
 monitor_ready_probe_output="$(
   bash -lc '
