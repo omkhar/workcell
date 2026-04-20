@@ -75,16 +75,6 @@ run_launch_dry_run() {
     >"${TMP_DIR}/launch-${agent}.stdout" 2>"${TMP_DIR}/launch-${agent}.stderr"
 }
 
-support_doctor_output="$("${ROOT_DIR}/scripts/workcell" \
-  --agent codex \
-  --workspace "${WORKSPACE}" \
-  --no-default-injection-policy \
-  --doctor)"
-launch_blocked=0
-if grep -q '^support_matrix_launch=blocked$' <<<"${support_doctor_output}"; then
-  launch_blocked=1
-fi
-
 codex_output="$(run_auth_status codex)"
 grep -Eq '^credential_keys=(codex_auth,github_hosts|github_hosts,codex_auth)$' <<<"${codex_output}"
 grep -q '^provider_auth_ready_states=codex_auth:ready$' <<<"${codex_output}"
@@ -132,27 +122,15 @@ grep -q '^provider_bootstrap_path=direct-staged$' <<<"${gemini_output}"
 grep -q '^provider_bootstrap_support=repo-required$' <<<"${gemini_output}"
 
 for agent in codex claude gemini; do
-  if [[ "${launch_blocked}" -eq 1 ]]; then
-    set +e
-    run_launch_dry_run "${agent}"
-    launch_rc=$?
-    set -e
-    test "${launch_rc}" -eq 2
-    grep -q 'Workcell launch is not supported' "${TMP_DIR}/launch-${agent}.stderr"
-    grep -q 'Supported launch hosts today remain Apple Silicon macOS' "${TMP_DIR}/launch-${agent}.stderr"
-  else
-    run_launch_dry_run "${agent}"
-    grep -q "^profile=.* mode=strict agent=${agent} " "${TMP_DIR}/launch-${agent}.stderr"
-    grep -q '^workspace_control_plane=masked$' "${TMP_DIR}/launch-${agent}.stderr"
-    grep -q '^session_assurance_initial=managed-mutable$' "${TMP_DIR}/launch-${agent}.stderr"
-    grep -q '^execution_path=managed-tier1 audit_log=' "${TMP_DIR}/launch-${agent}.stderr"
-  fi
+  run_launch_dry_run "${agent}"
+  grep -q "^profile=.* mode=strict agent=${agent} " "${TMP_DIR}/launch-${agent}.stderr"
+  grep -q '^workspace_control_plane=masked$' "${TMP_DIR}/launch-${agent}.stderr"
+  grep -q '^session_assurance_initial=managed-mutable$' "${TMP_DIR}/launch-${agent}.stderr"
+  grep -q '^execution_path=managed-tier1 audit_log=' "${TMP_DIR}/launch-${agent}.stderr"
 done
 
-if [[ "${launch_blocked}" -eq 0 ]]; then
-  grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=(codex_auth,github_hosts|github_hosts,codex_auth) ssh_injected=1$' "${TMP_DIR}/launch-codex.stderr"
-  grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=claude_api_key,claude_auth,github_hosts ssh_injected=1$' "${TMP_DIR}/launch-claude.stderr"
-  grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=(gemini_env,github_hosts|github_hosts,gemini_env) ssh_injected=1$' "${TMP_DIR}/launch-gemini.stderr"
-fi
+grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=(codex_auth,github_hosts|github_hosts,codex_auth) ssh_injected=1$' "${TMP_DIR}/launch-codex.stderr"
+grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=claude_api_key,claude_auth,github_hosts ssh_injected=1$' "${TMP_DIR}/launch-claude.stderr"
+grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=(gemini_env,github_hosts|github_hosts,gemini_env) ssh_injected=1$' "${TMP_DIR}/launch-gemini.stderr"
 
 echo "Auth-status and launch scenario passed"
