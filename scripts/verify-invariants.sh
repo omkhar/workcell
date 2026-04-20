@@ -1552,8 +1552,6 @@ if "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   exit 1
 fi
 if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-  # The debug install wrapper injects --rebuild, so strict-mode validation can
-  # reject the request before unsupported-host launch gating runs.
   if ! grep -Eq 'Workcell launch is not supported|strict mode requires --prepare when you explicitly request --rebuild\.' \
     /tmp/workcell-installed-debug-strict-dry-run.out; then
     echo "Expected debug-installed strict dry-run to fail with either the unsupported-host message or the injected --rebuild strict-mode rejection" >&2
