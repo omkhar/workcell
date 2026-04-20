@@ -3895,12 +3895,21 @@ BEGIN {
 
 1;
 EOF
-if ! WORKCELL_PERL_MARKER="${HOST_PERL_MARKER}" \
-  PERL5OPT=-MWorkcellMarker \
-  PERL5LIB="${HOST_PERL_INJECT_DIR}" \
-  "${ROOT_DIR}/scripts/workcell" --agent codex --dry-run >/dev/null 2>&1; then
-  echo "Expected scripts/workcell --dry-run to succeed under a hostile Perl environment" >&2
-  exit 1
+HOSTILE_PERL_DRY_RUN_OUTPUT="$(
+  WORKCELL_PERL_MARKER="${HOST_PERL_MARKER}" \
+    PERL5OPT=-MWorkcellMarker \
+    PERL5LIB="${HOST_PERL_INJECT_DIR}" \
+    "${ROOT_DIR}/scripts/workcell" --agent codex --dry-run 2>&1
+)" || HOSTILE_PERL_DRY_RUN_STATUS=$?
+HOSTILE_PERL_DRY_RUN_STATUS="${HOSTILE_PERL_DRY_RUN_STATUS:-0}"
+if [[ "${HOSTILE_PERL_DRY_RUN_STATUS}" -ne 0 ]]; then
+  if [[ "${HOSTILE_PERL_DRY_RUN_STATUS}" -ne 2 ]] ||
+    [[ "${HOSTILE_PERL_DRY_RUN_OUTPUT}" != *'Workcell launch is not supported'* ]] ||
+    [[ "${HOSTILE_PERL_DRY_RUN_OUTPUT}" != *'trusted-linux-amd64-validator'* ]]; then
+    echo "Expected scripts/workcell --dry-run to succeed or fail closed on the reviewed validation-host lane under a hostile Perl environment" >&2
+    printf '%s\n' "${HOSTILE_PERL_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
 fi
 if [[ -e "${HOST_PERL_MARKER}" ]]; then
   echo "scripts/workcell executed hostile Perl hooks before launcher setup" >&2
