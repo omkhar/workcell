@@ -251,6 +251,17 @@ if grep -q '^support_matrix_launch=blocked$' <<<"${ROOT_STRICT_SUPPORT_OUTPUT}";
   export WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="arm64"
 fi
 
+run_workcell_verify() {
+  local -a cmd=(/usr/bin/env -i PATH="${TRUSTED_HOST_PATH}" BASH_ENV= ENV= WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1)
+  [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS}")
+  [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}")
+  "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "$@"
+}
+
+run_workcell_real_host() {
+  env -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH "${ROOT_DIR}/scripts/workcell" "$@"
+}
+
 delete_verify_colima_profile() {
   local profile_name="$1"
 
@@ -1874,14 +1885,14 @@ cmp -s "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/documents/common
 expected_auth="$(cd "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/../fragments" && pwd -P)/fragment-auth.json"
 [[ "$(jq -r '.credentials.codex_auth.source' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/manifest.json")" == "${expected_auth}" ]]
 
-INJECTION_DOCTOR_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
+INJECTION_DOCTOR_OUTPUT="$(run_workcell_real_host \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
   --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
   --doctor)"
 set +e
-INJECTION_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
+INJECTION_DRY_RUN_OUTPUT="$(run_workcell_real_host \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
@@ -1955,7 +1966,7 @@ printf 'stale-secret\n' >"${STALE_INJECTION_BUNDLE}/stale.txt"
 printf '[{"source":"/tmp/stale-secret","mount_path":"/opt/workcell/host-inputs/credentials/stale"}]\n' >"${STALE_INJECTION_SIDECAR}"
 touch -t 202001010000 "${STALE_INJECTION_BUNDLE}" "${STALE_INJECTION_BUNDLE}/owner.pid" "${STALE_INJECTION_BUNDLE}/stale.txt" "${STALE_INJECTION_SIDECAR}"
 set +e
-"${ROOT_DIR}/scripts/workcell" \
+run_workcell_real_host \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
@@ -4068,7 +4079,7 @@ if "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q "Workspace path does not exist" /tmp/workcell-missing-workspace.out
 grep -q -- '--workspace' /tmp/workcell-missing-workspace.out
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -4113,7 +4124,7 @@ grep -q 'cache_assurance=lower-assurance-persistent-cache' /tmp/workcell-dry-run
 grep -Eq -- "-v .+/workcell/cache/codex/.+/go-mod:/state/cache/go-mod($| )" /tmp/workcell-dry-run-cache-standard.out
 grep -q -- '-e XDG_CACHE_HOME=/state/cache/xdg' /tmp/workcell-dry-run-cache-standard.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -4131,7 +4142,7 @@ grep -q '^provider_native_sandbox_configured=disabled$' /tmp/workcell-inspect.ou
 grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect.out
 grep -q '^provider_native_sandbox_reason=workcell-pinned-off-due-to-bwrap-userns-incompatibility$' /tmp/workcell-inspect.out
 grep -q '^injection_policy=none$' /tmp/workcell-inspect.out
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --cache-profile standard \
   --no-default-injection-policy \
@@ -4198,7 +4209,7 @@ grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}-missing-inspect"'$' /tmp/workcel
 grep -Eq '^workspace=.*/missing-workspace-for-inspect$' /tmp/workcell-inspect-missing.out
 grep -q '^workspace_status=missing$' /tmp/workcell-inspect-missing.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -4212,7 +4223,7 @@ grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor.out
 assert_doctor_missing_host_tools /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 grep -q '^doctor_prepared_image=0$' /tmp/workcell-doctor.out
 assert_doctor_next_for_prepare /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   doctor \
   --agent codex \
   --no-default-injection-policy \
@@ -4226,7 +4237,7 @@ grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor-subcommand.out
 assert_doctor_missing_host_tools /tmp/workcell-doctor-subcommand.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 assert_doctor_next_for_prepare /tmp/workcell-doctor-subcommand.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --workspace "${MISSING_DOCTOR_WORKSPACE}" \
@@ -4251,7 +4262,7 @@ image_tag=workcell:local
 image_id=sha256:stale
 source_date_epoch=0
 EOF
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -4270,7 +4281,7 @@ rm -rf "${STALE_MARKER_DIR}" "${REAL_HOME}/.colima/_lima/colima-${STALE_MARKER_P
 DEBUG_LOG_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.log"
 DEBUG_LOG_PROFILE="${STRICT_PREFLIGHT_PROFILE}-logs"
 rm -rf "$(dirname "${DEBUG_LOG_CAPTURE}")"
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -4335,7 +4346,7 @@ DEBUG_LOG_SYMLINK="${BARRIER_VERIFY_ROOT}/debug/symlink.log"
 rm -f "${DEBUG_LOG_SYMLINK_TARGET}" "${DEBUG_LOG_SYMLINK}"
 printf 'seed\n' >"${DEBUG_LOG_SYMLINK_TARGET}"
 ln -s "${DEBUG_LOG_SYMLINK_TARGET}" "${DEBUG_LOG_SYMLINK}"
-if "${ROOT_DIR}/scripts/workcell" \
+if run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -4361,7 +4372,7 @@ rm -f "${FILE_TRACE_CAPTURE}"
 
 TRANSCRIPT_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.transcript"
 TRANSCRIPT_LOG_PROFILE="${STRICT_PREFLIGHT_PROFILE}-transcript-logs"
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
