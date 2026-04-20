@@ -8,7 +8,6 @@ evidence = [
   "scripts/container-smoke.sh",
   "scripts/verify-invariants.sh",
   "tests/scenarios/shared/test-assurance-dry-run.sh",
-  "tests/scenarios/shared/test-host-support-matrix.sh",
 ]
 docs = [
   "README.md",
@@ -112,7 +111,6 @@ evidence = [
   "tests/scenarios/shared/test-auth-commands.sh",
   "tests/scenarios/shared/test-auth-status.sh",
   "tests/scenarios/shared/test-codex-resolver-launcher.sh",
-  "tests/scenarios/shared/test-host-support-matrix.sh",
   "tests/scenarios/shared/test-agent-launch-smoke.sh",
 ]
 docs = [

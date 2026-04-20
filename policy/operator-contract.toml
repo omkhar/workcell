@@ -6,7 +6,7 @@ support = "supported"
 canonical = "workcell --agent codex --workspace /path/to/repo"
 discoverability = ["top-level-help", "readme"]
 docs = ["README.md", "docs/provider-matrix.md"]
-evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "tests/scenarios/shared/test-host-support-matrix.sh", "scripts/container-smoke.sh"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "scripts/container-smoke.sh"]
 requirements = ["functional.FR-001"]
 target_state = "retain"
 
@@ -16,7 +16,7 @@ support = "supported"
 canonical = "--prepare"
 discoverability = ["top-level-help", "readme", "manpage"]
 docs = ["README.md", "man/workcell.1"]
-evidence = ["tests/scenarios/shared/test-host-support-matrix.sh"]
+evidence = ["scripts/verify-invariants.sh"]
 requirements = ["functional.FR-006"]
 target_state = "retain"
 
@@ -295,7 +295,7 @@ alias_lifecycle = "compatibility-only"
 alias_probes = ["doctor --help"]
 discoverability = ["top-level-help", "readme", "manpage"]
 docs = ["README.md", "man/workcell.1"]
-evidence = ["tests/scenarios/shared/test-host-support-matrix.sh"]
+evidence = ["scripts/verify-invariants.sh"]
 requirements = ["functional.FR-006"]
 target_state = "retain"
 
