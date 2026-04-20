@@ -1486,12 +1486,7 @@ if "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   fi
   exit 1
 fi
-if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-  grep -q 'Workcell launch is not supported' /tmp/workcell-installed-debug-strict-dry-run.out
-  grep -q 'Supported launch hosts today remain Apple Silicon macOS' /tmp/workcell-installed-debug-strict-dry-run.out
-else
-  grep -q 'strict mode requires --prepare when you explicitly request --rebuild.' /tmp/workcell-installed-debug-strict-dry-run.out
-fi
+grep -q 'strict mode requires --prepare when you explicitly request --rebuild.' /tmp/workcell-installed-debug-strict-dry-run.out
 
 if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
