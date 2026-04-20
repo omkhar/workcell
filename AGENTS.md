@@ -22,6 +22,10 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - Peer review means continuing through review, fixes, revalidation, and another
   review pass until no actionable findings remain or a concrete blocker is
   reported.
+- Treat peer review as an open-ended loop, not a single extra pass. If a peer
+  or review surface returns new findings after a fix, keep iterating with that
+  peer or surface until every finding is addressed, explicitly dispositioned,
+  or blocked by a concrete external constraint.
 - Apply that default across repo-local skills, documentation work, CI follow-up,
   publication, merge, and release actions. Do not stop at "implemented" if
   review, checks, or hosted workflows still expose actionable problems.

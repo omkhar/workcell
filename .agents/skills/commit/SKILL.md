@@ -57,6 +57,10 @@ for convenience.
 - When peer review finds an actionable issue, keep iterating through fixes,
   validation, and another review pass until no actionable findings remain or a
   concrete blocker is reported.
+- Treat that review loop as unbounded. If the peer or follow-up review pass
+  finds new issues after a fix, keep iterating with that peer until all
+  findings are resolved, explicitly dispositioned, or blocked by a concrete
+  external constraint.
 
 ## Commit Grouping
 
