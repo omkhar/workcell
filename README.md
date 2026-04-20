@@ -55,7 +55,7 @@ boundary.
 - the real macOS Colima boundary is still a local operator exercise because
   GitHub-hosted Linux runners cannot prove it
 - the canonical host support boundary lives in
-  [docs/host-support-matrix.md](docs/host-support-matrix.md), and
+  [policy/host-support-matrix.tsv](policy/host-support-matrix.tsv), and
   `--doctor` / `--inspect` emit matching `support_matrix_*` lines
 - Workcell does not yet ship a centralized enterprise policy, inventory, or
   analytics plane; team rollout today relies on distributing reviewed
@@ -94,7 +94,7 @@ workcell --agent codex --workspace /path/to/repo
 See [docs/getting-started.md](docs/getting-started.md) for the release install
 path and provider-specific onboarding. For team rollout patterns on today's
 local-first product, see [docs/enterprise-rollout.md](docs/enterprise-rollout.md).
-Use [docs/host-support-matrix.md](docs/host-support-matrix.md) to interpret the
+Use [policy/host-support-matrix.tsv](policy/host-support-matrix.tsv) to interpret the
 host support boundary that `--doctor` and `--inspect` report.
 
 ## Install options

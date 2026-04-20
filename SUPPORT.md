@@ -15,7 +15,7 @@
 - if auth is involved, run `workcell auth status --agent <provider>` and
   `workcell --agent <provider> --auth-status --workspace /path/to/repo`
 - compare the reported `support_matrix_*` lines with
-  [docs/host-support-matrix.md](docs/host-support-matrix.md)
+  [policy/host-support-matrix.tsv](policy/host-support-matrix.tsv)
 - capture the exact command, provider, mode, and host environment
 
 ## Include this context
