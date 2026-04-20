@@ -41,6 +41,10 @@ explicitly narrows that scope. For PR work, peer review means continuing
 through review, fixes, validation, another review pass, and hosted workflow
 follow-through until no actionable findings remain or a concrete blocker is
 reported.
+Treat that as a continuing loop with the same peers and review surfaces. If a
+comment sweep, thread sweep, CI rerun, or follow-up review produces new
+findings after a fix, keep iterating until every finding is resolved,
+explicitly dispositioned, or blocked by a concrete external constraint.
 
 ## Read first
 

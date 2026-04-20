@@ -43,7 +43,7 @@ boundary.
 
 - pre-1.0 and still tightening the public contract
 - Apple Silicon macOS hosts only today; Linux and Windows are not currently
-  supported
+  supported as launch hosts
 - local host-launched runtime first; there is no Workcell-managed cloud or
   remote worker plane today
 - CLI surfaces for Codex, Claude, and Gemini plus host-side detached session
@@ -54,6 +54,9 @@ boundary.
   install/uninstall on Apple Silicon `macos-26` and `macos-15`
 - the real macOS Colima boundary is still a local operator exercise because
   GitHub-hosted Linux runners cannot prove it
+- the canonical host support boundary lives in
+  [policy/host-support-matrix.tsv](policy/host-support-matrix.tsv), and
+  `--doctor` / `--inspect` emit matching `support_matrix_*` lines
 - Workcell does not yet ship a centralized enterprise policy, inventory, or
   analytics plane; team rollout today relies on distributing reviewed
   host-side files
@@ -91,6 +94,8 @@ workcell --agent codex --workspace /path/to/repo
 See [docs/getting-started.md](docs/getting-started.md) for the release install
 path and provider-specific onboarding. For team rollout patterns on today's
 local-first product, see [docs/enterprise-rollout.md](docs/enterprise-rollout.md).
+Use [policy/host-support-matrix.tsv](policy/host-support-matrix.tsv) to interpret the
+host support boundary that `--doctor` and `--inspect` report.
 
 ## Install options
 

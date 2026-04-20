@@ -42,6 +42,10 @@ Treat every user request as implicitly including peer review unless the user
 explicitly narrows that scope. For parity work, peer review means continuing
 through findings, fixes, validation, and another review pass until no
 actionable findings remain or a concrete blocker is reported.
+Treat that as an open-ended peer loop. If a peer, validator, or review surface
+finds new parity issues after a fix, continue re-reviewing with that peer or
+surface until every finding is resolved, explicitly dispositioned, or blocked
+by a concrete external constraint.
 
 ## Read first
 
