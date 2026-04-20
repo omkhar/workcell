@@ -42,12 +42,9 @@ sudo_wrapper_broker_available() {
   [[ -f "${broker_pid_file}" ]] || return 1
   broker_pid="$(head -n1 "${broker_pid_file}" 2>/dev/null || true)"
   [[ "${broker_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
-  if [[ -r "/proc/${broker_pid}/cmdline" ]]; then
-    broker_cmdline="$(tr '\0' ' ' <"/proc/${broker_pid}/cmdline" 2>/dev/null || true)"
-  else
-    broker_cmdline="$(ps -p "${broker_pid}" -o command= 2>/dev/null || true)"
-  fi
-  [[ "${broker_cmdline}" == *"apt-broker.sh"* ]]
+  [[ -r "/proc/${broker_pid}/cmdline" ]] || return 1
+  broker_cmdline="$(tr '\0' ' ' <"/proc/${broker_pid}/cmdline" 2>/dev/null || true)"
+  [[ "${broker_cmdline}" == *"/usr/local/libexec/workcell/apt-broker.sh"* ]]
 }
 
 sudo_wrapper_request_cancel() {

@@ -1510,30 +1510,13 @@ if ! grep -q '^Usage: workcell' /tmp/workcell-installed-debug-help.out; then
   exit 1
 fi
 
-if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
-  --agent codex \
-  --workspace "${ROOT_DIR}" \
-  --doctor >/tmp/workcell-installed-debug-doctor.out 2>&1; then
-  echo "Expected debug-installed ~/.local/bin/workcell --doctor to succeed" >&2
-  cat /tmp/workcell-installed-debug-doctor.out >&2
-  exit 1
-fi
-INSTALLED_DEBUG_LAUNCH_BLOCKED=0
-if grep -q '^support_matrix_launch=blocked$' /tmp/workcell-installed-debug-doctor.out; then
-  INSTALLED_DEBUG_LAUNCH_BLOCKED=1
-fi
-
 if "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-debug-strict-dry-run.out 2>&1; then
-  if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-    echo "Expected debug-installed ~/.local/bin/workcell strict dry-run to fail closed on an unsupported launch host" >&2
-  else
-    echo "Expected debug-installed ~/.local/bin/workcell strict dry-run to surface the injected --rebuild behavior" >&2
-  fi
+  echo "Expected debug-installed ~/.local/bin/workcell strict dry-run to surface the injected --rebuild behavior" >&2
   exit 1
 fi
 grep -q 'strict mode requires --prepare when you explicitly request --rebuild.' /tmp/workcell-installed-debug-strict-dry-run.out
@@ -1545,23 +1528,12 @@ if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-debug-dry-run.out 2>&1; then
-  if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 0 ]]; then
-    echo "Expected debug-installed ~/.local/bin/workcell launch path to succeed through dry-run" >&2
-    cat /tmp/workcell-installed-debug-dry-run.out >&2
-    exit 1
-  fi
-elif [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-  echo "Expected debug-installed ~/.local/bin/workcell launch path to fail closed on an unsupported launch host" >&2
+  echo "Expected debug-installed ~/.local/bin/workcell launch path to succeed through dry-run" >&2
   cat /tmp/workcell-installed-debug-dry-run.out >&2
   exit 1
 fi
 grep -q 'Workcell warning: host-persisted launcher debug stderr capture is enabled' /tmp/workcell-installed-debug-dry-run.out
-if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-  grep -q 'Workcell launch is not supported' /tmp/workcell-installed-debug-dry-run.out
-  grep -q 'Supported launch hosts today remain Apple Silicon macOS' /tmp/workcell-installed-debug-dry-run.out
-else
-  grep -q "debug_log=${INSTALL_VERIFY_HOME}/.config/workcell/debug/latest-debug.log" /tmp/workcell-installed-debug-dry-run.out
-fi
+grep -q "debug_log=${INSTALL_VERIFY_HOME}/.config/workcell/debug/latest-debug.log" /tmp/workcell-installed-debug-dry-run.out
 
 if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --auth-status \
@@ -1602,22 +1574,11 @@ if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-custom-debug-dry-run.out 2>&1; then
-  if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 0 ]]; then
-    echo "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to succeed through dry-run" >&2
-    cat /tmp/workcell-installed-custom-debug-dry-run.out >&2
-    exit 1
-  fi
-elif [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-  echo "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to fail closed on an unsupported launch host" >&2
+  echo "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to succeed through dry-run" >&2
   cat /tmp/workcell-installed-custom-debug-dry-run.out >&2
   exit 1
 fi
-if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-  grep -q 'Workcell launch is not supported' /tmp/workcell-installed-custom-debug-dry-run.out
-  grep -q 'Supported launch hosts today remain Apple Silicon macOS' /tmp/workcell-installed-custom-debug-dry-run.out
-else
-  grep -q "debug_log=${CUSTOM_DEBUG_DIR_REAL}/latest-debug.log" /tmp/workcell-installed-custom-debug-dry-run.out
-fi
+grep -q "debug_log=${CUSTOM_DEBUG_DIR_REAL}/latest-debug.log" /tmp/workcell-installed-custom-debug-dry-run.out
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall-custom-debug.out 2>&1; then
   echo "Expected scripts/uninstall.sh to remove the custom debug installer wrapper cleanly" >&2
   cat /tmp/workcell-uninstall-custom-debug.out >&2
@@ -6478,8 +6439,7 @@ EOF
     DETACHED_SESSION_ID=""
     DETACHED_SESSION_WORKSPACE=""
     DETACHED_SESSION_SOURCE_SENTINEL_PATH=""
-    AUDIT_LOG_TARGET_STATE="${REAL_HOME}/.local/state/workcell/targets/local_vm/colima/${LIVE_DEBUG_PROFILE_NAME}/workcell.audit.log"
-    AUDIT_LOG_LEGACY="${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}/workcell.audit.log"
+    AUDIT_LOG="${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}/workcell.audit.log"
     PACKAGE_MUTATION_AUDIT_COMMAND="$(
       cat <<'EOF'
 for attempt in 1 2 3; do
@@ -6505,14 +6465,6 @@ EOF
       --ack-arbitrary-command \
       -- /bin/bash -lc "${PACKAGE_MUTATION_AUDIT_COMMAND}"; then
       echo "Expected package-mutation audit verification run to succeed" >&2
-      exit 1
-    fi
-    if [[ -f "${AUDIT_LOG_TARGET_STATE}" ]]; then
-      AUDIT_LOG="${AUDIT_LOG_TARGET_STATE}"
-    elif [[ -f "${AUDIT_LOG_LEGACY}" ]]; then
-      AUDIT_LOG="${AUDIT_LOG_LEGACY}"
-    else
-      echo "Expected package-mutation audit verification run to record an audit log" >&2
       exit 1
     fi
     cp "${AUDIT_LOG}" "${AUDIT_SESSION_LOG}"
@@ -6622,8 +6574,7 @@ EOF
     AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
     AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"
     AUDIT_RESTORE_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
-    AUDIT_RESTORE_LEGACY_LOG="${AUDIT_RESTORE_DIR}/workcell.audit.log"
-    AUDIT_RESTORE_TARGET_LOG="${REAL_HOME}/.local/state/workcell/targets/local_vm/colima/${AUDIT_RESTORE_PROFILE_NAME}/workcell.audit.log"
+    AUDIT_RESTORE_LOG="${AUDIT_RESTORE_DIR}/workcell.audit.log"
     mkdir -p "${AUDIT_RESTORE_DIR}" "${AUDIT_RESTORE_LIMA_DIR}"
     printf '%s\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_DIR}/workcell.managed"
     cat >"${AUDIT_RESTORE_LIMA_DIR}/lima.yaml" <<'EOF'
@@ -6634,7 +6585,7 @@ runtime: docker
 vmType: vz
 mountType: virtiofs
 EOF
-    printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_LEGACY_LOG}"
+    printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_LOG}"
     if "${ROOT_DIR}/scripts/workcell" \
       --test-fail-after-profile-refresh \
       --agent codex \
@@ -6647,14 +6598,6 @@ EOF
       exit 1
     fi
     grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-audit-restore.out
-    if [[ -f "${AUDIT_RESTORE_TARGET_LOG}" ]]; then
-      AUDIT_RESTORE_LOG="${AUDIT_RESTORE_TARGET_LOG}"
-    elif [[ -f "${AUDIT_RESTORE_LEGACY_LOG}" ]]; then
-      AUDIT_RESTORE_LOG="${AUDIT_RESTORE_LEGACY_LOG}"
-    else
-      echo "Expected managed-profile refresh test hook to restore the staged audit log" >&2
-      exit 1
-    fi
     grep -q 'timestamp=test event=launch' "${AUDIT_RESTORE_LOG}"
     delete_verify_colima_profile "${AUDIT_RESTORE_PROFILE_NAME}"
 
@@ -6714,19 +6657,13 @@ EOF
     strict_refresh_prepare_status=$?
     set -e
     VERIFY_INVARIANTS_EXPECTED_FAILURE=0
-    if [[ "${strict_refresh_prepare_status}" -ne 0 ]]; then
-      echo "Expected follow-up strict prepare to reuse the refreshed managed profile cleanly, got ${strict_refresh_prepare_status}" >&2
+    if [[ "${strict_refresh_prepare_status}" -ne 2 ]]; then
+      echo "Expected follow-up strict prepare to stop on unmanaged-profile safety preflight, got ${strict_refresh_prepare_status}" >&2
       cat /tmp/workcell-strict-refresh-prepare.out >&2
       exit 1
     fi
-    grep -q 'Prepared runtime image is ready for profile' /tmp/workcell-strict-refresh-prepare.out
-    grep -q 'Launching codex\.' /tmp/workcell-strict-refresh-prepare.out
-    grep -q 'codex-cli ' /tmp/workcell-strict-refresh-prepare.out
-    if grep -q 'Refusing to reuse unmanaged Colima profile' /tmp/workcell-strict-refresh-prepare.out; then
-      echo "Expected follow-up strict prepare to treat the refreshed profile as managed" >&2
-      cat /tmp/workcell-strict-refresh-prepare.out >&2
-      exit 1
-    fi
+    grep -q 'Refusing to reuse unmanaged Colima profile' /tmp/workcell-strict-refresh-prepare.out
+    grep -q -- '--repair-profile' /tmp/workcell-strict-refresh-prepare.out
     delete_verify_colima_profile "${STRICT_REFRESH_PROFILE_NAME}"
   fi
 fi
