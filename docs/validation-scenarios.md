@@ -25,8 +25,6 @@ Use these anchors when checking release-facing claims:
 - lower-assurance mode claims: `shared/assurance-dry-run`
 - local runtime certification smoke: `shared/agent-launch-smoke`
 - host publication handoff and main-only PR-base safeguards: `shared/publish-pr`
-- host support-matrix diagnostics and fail-closed launch gating:
-  `shared/host-support-matrix`
 - host-side session inventory and control plus detached workspace-mode
   remediation: `shared/session-commands`
 - persistent cache-plane contract checks: `shared/assurance-dry-run`
@@ -53,8 +51,7 @@ state:
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
 inspection and explainability, host-side detached session inventory, control,
-logs/timeline, clean-base diff/export behavior, host support-matrix
-explainability and fail-closed gating, and operator-contract parity.
+logs/timeline, clean-base diff/export behavior, and operator-contract parity.
 
 `./scripts/validate-repo.sh` runs the repo-required scenario tier through:
 
@@ -93,7 +90,6 @@ when the repo does not add a dedicated new scenario for each page.
 | `docs/examples/quickstart-claude.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-claude-resolver-launcher.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
 | `docs/examples/quickstart-gemini.md` | `tests/scenarios/shared/test-auth-status.sh` for the staged `gemini_env` path and `tests/scenarios/shared/test-publish-pr-dry-run.sh` for the host-side publication steps; OAuth and `gcloud_adc` remain manual provider-e2e validation paths |
 | `docs/provider-bootstrap-matrix.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-codex-resolver-launcher.sh`, `tests/scenarios/shared/test-claude-resolver-launcher.sh` |
-| `docs/host-support-matrix.md` | `tests/scenarios/shared/test-host-support-matrix.sh`, `scripts/verify-invariants.sh` |
 | `docs/examples/enterprise-claude-setup.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
 
 ## Manual authenticated smoke

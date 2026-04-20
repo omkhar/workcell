@@ -200,7 +200,5 @@ Current repo status:
 - update this document when sequencing, target order, or review gates change
 - update [docs/implement-first-delivery-plan.md](implement-first-delivery-plan.md)
   when the active slice or immediate next slice changes
-- treat phase-owner lanes in the planning docs as distinct Codex-agent roles
-  by default unless the repo or change explicitly records named human owners
 - keep docs, support claims, and automated evidence aligned in the same change
   before new target claims are treated as supported

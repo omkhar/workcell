@@ -136,7 +136,6 @@ shell_files=(
   "${ROOT_DIR}/scripts/lib/scenario_manifest"
   "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh"
-  "${ROOT_DIR}/scripts/generate-host-support-matrix-doc.sh"
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/generate-homebrew-formula.sh"
@@ -158,7 +157,6 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
   "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
-  "${ROOT_DIR}/scripts/verify-host-support-matrix.sh"
   "${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-invariants.sh"
@@ -282,7 +280,6 @@ yamllint -d "{extends: default, rules: {comments: disable, document-start: disab
 
 "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
 "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
-"${ROOT_DIR}/scripts/verify-host-support-matrix.sh"
 "${ROOT_DIR}/scripts/verify-operator-contract.sh"
 "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
 

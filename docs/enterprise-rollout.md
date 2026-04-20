@@ -55,10 +55,7 @@ Workcell to act as a central policy service.
 
 Roll out Workcell only to supported Apple Silicon macOS hosts and treat the
 current GitHub-hosted install matrix as the tested release window, not as proof
-for all macOS variants. Use
-[host-support-matrix.md](host-support-matrix.md) as the canonical support
-boundary, and treat `linux/amd64` only as the reviewed validation-host bridge
-described there rather than as a supported launch host.
+for all macOS variants.
 
 ### 2. Distribute reviewed host-side files
 

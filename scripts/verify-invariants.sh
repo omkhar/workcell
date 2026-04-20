@@ -510,15 +510,6 @@ assert_doctor_next_for_prepare() {
   local file="$1"
   local expected_missing="$2"
 
-  if grep -q '^support_matrix_launch=blocked$' "${file}"; then
-    if ! grep -q '^doctor_recommended_next=use-supported-host$' "${file}"; then
-      echo "Expected ${file} to recommend a supported host when launch support is blocked" >&2
-      cat "${file}" >&2
-      exit 1
-    fi
-    return 0
-  fi
-
   if [[ "${expected_missing}" == "none" ]]; then
     if ! grep -q -- '--prepare' "${file}"; then
       echo "Expected ${file} to recommend --prepare when required host tools are present" >&2
@@ -538,15 +529,6 @@ assert_doctor_next_for_prepare() {
 assert_doctor_next_for_missing_workspace() {
   local file="$1"
   local expected_missing="$2"
-
-  if grep -q '^support_matrix_launch=blocked$' "${file}"; then
-    if ! grep -q '^doctor_recommended_next=use-supported-host$' "${file}"; then
-      echo "Expected ${file} to recommend a supported host when launch support is blocked" >&2
-      cat "${file}" >&2
-      exit 1
-    fi
-    return 0
-  fi
 
   if [[ "${expected_missing}" == "none" ]]; then
     if ! grep -q '^doctor_recommended_next=fix-workspace$' "${file}"; then
@@ -3927,68 +3909,37 @@ grep -q '^doctor_prepared_image=0$' /tmp/workcell-strict-preflight.out
 assert_doctor_missing_host_tools /tmp/workcell-strict-preflight.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 assert_doctor_next_for_prepare /tmp/workcell-strict-preflight.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 
-if grep -q '^support_matrix_launch=blocked$' /tmp/workcell-strict-preflight.out; then
-  if "${ROOT_DIR}/scripts/workcell" \
-    --agent codex \
-    --no-default-injection-policy \
-    --allow-nongit-workspace \
-    --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
-    --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
-    --dry-run >/tmp/workcell-dry-run-no-image.out 2>&1; then
-    echo "Expected strict dry-run to fail closed on an unsupported launch host" >&2
-    cat /tmp/workcell-dry-run-no-image.out >&2
-    exit 1
-  fi
-  grep -q 'Workcell launch is not supported' /tmp/workcell-dry-run-no-image.out
-else
-  if ! "${ROOT_DIR}/scripts/workcell" \
-    --agent codex \
-    --no-default-injection-policy \
-    --allow-nongit-workspace \
-    --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
-    --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
-    --dry-run >/tmp/workcell-dry-run-no-image.out 2>&1; then
-    echo "Expected strict dry-run to work without a prepared image marker" >&2
-    cat /tmp/workcell-dry-run-no-image.out >&2
-    exit 1
-  fi
-  grep -q 'docker run' /tmp/workcell-dry-run-no-image.out
-  grep -q 'cache_profile=off' /tmp/workcell-dry-run-no-image.out
-  grep -q 'cache_assurance=managed-no-persistent-cache' /tmp/workcell-dry-run-no-image.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --dry-run >/tmp/workcell-dry-run-no-image.out 2>&1; then
+  echo "Expected strict dry-run to work without a prepared image marker" >&2
+  cat /tmp/workcell-dry-run-no-image.out >&2
+  exit 1
 fi
+grep -q 'docker run' /tmp/workcell-dry-run-no-image.out
+grep -q 'cache_profile=off' /tmp/workcell-dry-run-no-image.out
+grep -q 'cache_assurance=managed-no-persistent-cache' /tmp/workcell-dry-run-no-image.out
 
-if grep -q '^support_matrix_launch=blocked$' /tmp/workcell-strict-preflight.out; then
-  if "${ROOT_DIR}/scripts/workcell" \
-    --agent codex \
-    --cache-profile standard \
-    --no-default-injection-policy \
-    --allow-nongit-workspace \
-    --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
-    --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
-    --dry-run >/tmp/workcell-dry-run-cache-standard.out 2>&1; then
-    echo "Expected persistent-cache dry-run to fail closed on an unsupported launch host" >&2
-    cat /tmp/workcell-dry-run-cache-standard.out >&2
-    exit 1
-  fi
-  grep -q 'Workcell launch is not supported' /tmp/workcell-dry-run-cache-standard.out
-else
-  if ! "${ROOT_DIR}/scripts/workcell" \
-    --agent codex \
-    --cache-profile standard \
-    --no-default-injection-policy \
-    --allow-nongit-workspace \
-    --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
-    --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
-    --dry-run >/tmp/workcell-dry-run-cache-standard.out 2>&1; then
-    echo "Expected strict dry-run with persistent cache mode to work without a prepared image marker" >&2
-    cat /tmp/workcell-dry-run-cache-standard.out >&2
-    exit 1
-  fi
-  grep -q 'cache_profile=standard' /tmp/workcell-dry-run-cache-standard.out
-  grep -q 'cache_assurance=lower-assurance-persistent-cache' /tmp/workcell-dry-run-cache-standard.out
-  grep -Eq -- "-v .+/workcell/cache/codex/.+/go-mod:/state/cache/go-mod($| )" /tmp/workcell-dry-run-cache-standard.out
-  grep -q -- '-e XDG_CACHE_HOME=/state/cache/xdg' /tmp/workcell-dry-run-cache-standard.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --cache-profile standard \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
+  --dry-run >/tmp/workcell-dry-run-cache-standard.out 2>&1; then
+  echo "Expected strict dry-run with persistent cache mode to work without a prepared image marker" >&2
+  cat /tmp/workcell-dry-run-cache-standard.out >&2
+  exit 1
 fi
+grep -q 'cache_profile=standard' /tmp/workcell-dry-run-cache-standard.out
+grep -q 'cache_assurance=lower-assurance-persistent-cache' /tmp/workcell-dry-run-cache-standard.out
+grep -Eq -- "-v .+/workcell/cache/codex/.+/go-mod:/state/cache/go-mod($| )" /tmp/workcell-dry-run-cache-standard.out
+grep -q -- '-e XDG_CACHE_HOME=/state/cache/xdg' /tmp/workcell-dry-run-cache-standard.out
 
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
@@ -4001,13 +3952,6 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}"'$' /tmp/workcell-inspect.out
-grep -q '^host_os=' /tmp/workcell-inspect.out
-grep -q '^host_arch=' /tmp/workcell-inspect.out
-grep -q '^support_matrix_status=' /tmp/workcell-inspect.out
-grep -q '^support_matrix_launch=' /tmp/workcell-inspect.out
-grep -q '^support_matrix_evidence=' /tmp/workcell-inspect.out
-grep -q '^support_matrix_validation_lane=' /tmp/workcell-inspect.out
-grep -q '^support_matrix_reason=' /tmp/workcell-inspect.out
 grep -q '^workspace_status=marker-only$' /tmp/workcell-inspect.out
 grep -q '^cache_profile=off$' /tmp/workcell-inspect.out
 grep -q '^cache_assurance=managed-no-persistent-cache$' /tmp/workcell-inspect.out
@@ -4093,13 +4037,6 @@ if ! "${ROOT_DIR}/scripts/workcell" \
   exit 1
 fi
 grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor.out
-grep -q '^host_os=' /tmp/workcell-doctor.out
-grep -q '^host_arch=' /tmp/workcell-doctor.out
-grep -q '^support_matrix_status=' /tmp/workcell-doctor.out
-grep -q '^support_matrix_launch=' /tmp/workcell-doctor.out
-grep -q '^support_matrix_evidence=' /tmp/workcell-doctor.out
-grep -q '^support_matrix_validation_lane=' /tmp/workcell-doctor.out
-grep -q '^support_matrix_reason=' /tmp/workcell-doctor.out
 assert_doctor_missing_host_tools /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 grep -q '^doctor_prepared_image=0$' /tmp/workcell-doctor.out
 assert_doctor_next_for_prepare /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
@@ -7620,7 +7557,7 @@ for needle in 'cd "${home}" &&' 'cd / &&' 'LIMA_WORKDIR=/'; do
   fi
 done
 
-for token in '--inspect' 'print_inspect_state' 'provider_native_sandbox_configured' 'provider_native_sandbox_effective' 'provider_native_sandbox_reason' 'support_matrix_status' 'support_matrix_launch' 'support_matrix_validation_lane' 'codex' 'claude' 'gemini'; do
+for token in '--inspect' 'print_inspect_state' 'provider_native_sandbox_configured' 'provider_native_sandbox_effective' 'provider_native_sandbox_reason' 'codex' 'claude' 'gemini'; do
   if ! grep -Fq -- "${token}" "${ROOT_DIR}/scripts/workcell"; then
     echo "Expected workcell to contain --inspect contract token: ${token}" >&2
     exit 1

@@ -15,8 +15,8 @@ title = "Explicit image prepare"
 support = "supported"
 canonical = "--prepare"
 discoverability = ["top-level-help", "readme", "manpage"]
-docs = ["README.md", "man/workcell.1", "docs/host-support-matrix.md"]
-evidence = ["tests/scenarios/shared/test-host-support-matrix.sh", "scripts/verify-invariants.sh"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-host-support-matrix.sh"]
 requirements = ["functional.FR-006"]
 target_state = "retain"
 
@@ -294,8 +294,8 @@ aliases = ["workcell doctor"]
 alias_lifecycle = "compatibility-only"
 alias_probes = ["doctor --help"]
 discoverability = ["top-level-help", "readme", "manpage"]
-docs = ["README.md", "man/workcell.1", "docs/host-support-matrix.md"]
-evidence = ["tests/scenarios/shared/test-host-support-matrix.sh", "scripts/verify-invariants.sh"]
+docs = ["README.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-host-support-matrix.sh"]
 requirements = ["functional.FR-006"]
 target_state = "retain"
 
