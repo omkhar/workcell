@@ -1510,45 +1510,6 @@ if ! grep -q '^Usage: workcell' /tmp/workcell-installed-debug-help.out; then
   exit 1
 fi
 
-assert_installed_debug_blocked_output() {
-  local output_path="$1"
-
-  grep -q 'Workcell launch is not supported' "${output_path}"
-  grep -q 'Supported launch hosts today remain Apple Silicon macOS' "${output_path}"
-}
-
-assert_installed_debug_build_dry_run() {
-  local output_path="$1"
-  local success_context="$2"
-  local expected_debug_log="$3"
-  local blocked_context="$4"
-
-  if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
-    --agent codex \
-    --workspace "${ROOT_DIR}" \
-    --mode build \
-    --allow-control-plane-vcs \
-    --ack-control-plane-vcs \
-    --dry-run >"${output_path}" 2>&1; then
-    [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]] || {
-      echo "${success_context}" >&2
-      cat "${output_path}" >&2
-      exit 1
-    }
-  elif [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-    echo "${blocked_context}" >&2
-    cat "${output_path}" >&2
-    exit 1
-  fi
-
-  grep -q 'Workcell warning: host-persisted launcher debug stderr capture is enabled' "${output_path}"
-  if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-    assert_installed_debug_blocked_output "${output_path}"
-  else
-    grep -q "${expected_debug_log}" "${output_path}"
-  fi
-}
-
 if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
@@ -1558,7 +1519,9 @@ if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   exit 1
 fi
 INSTALLED_DEBUG_LAUNCH_BLOCKED=0
-grep -q '^support_matrix_launch=blocked$' /tmp/workcell-installed-debug-doctor.out && INSTALLED_DEBUG_LAUNCH_BLOCKED=1 || true
+if grep -q '^support_matrix_launch=blocked$' /tmp/workcell-installed-debug-doctor.out; then
+  INSTALLED_DEBUG_LAUNCH_BLOCKED=1
+fi
 
 if "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
@@ -1574,16 +1537,36 @@ if "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   exit 1
 fi
 if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
-  assert_installed_debug_blocked_output /tmp/workcell-installed-debug-strict-dry-run.out
+  grep -q 'Workcell launch is not supported' /tmp/workcell-installed-debug-strict-dry-run.out
+  grep -q 'Supported launch hosts today remain Apple Silicon macOS' /tmp/workcell-installed-debug-strict-dry-run.out
 else
   grep -q 'strict mode requires --prepare when you explicitly request --rebuild.' /tmp/workcell-installed-debug-strict-dry-run.out
 fi
 
-assert_installed_debug_build_dry_run \
-  /tmp/workcell-installed-debug-dry-run.out \
-  "Expected debug-installed ~/.local/bin/workcell launch path to succeed through dry-run" \
-  "debug_log=${INSTALL_VERIFY_HOME}/.config/workcell/debug/latest-debug.log" \
-  "Expected debug-installed ~/.local/bin/workcell launch path to fail closed on an unsupported launch host"
+if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --mode build \
+  --allow-control-plane-vcs \
+  --ack-control-plane-vcs \
+  --dry-run >/tmp/workcell-installed-debug-dry-run.out 2>&1; then
+  if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 0 ]]; then
+    echo "Expected debug-installed ~/.local/bin/workcell launch path to succeed through dry-run" >&2
+    cat /tmp/workcell-installed-debug-dry-run.out >&2
+    exit 1
+  fi
+elif [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  echo "Expected debug-installed ~/.local/bin/workcell launch path to fail closed on an unsupported launch host" >&2
+  cat /tmp/workcell-installed-debug-dry-run.out >&2
+  exit 1
+fi
+grep -q 'Workcell warning: host-persisted launcher debug stderr capture is enabled' /tmp/workcell-installed-debug-dry-run.out
+if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  grep -q 'Workcell launch is not supported' /tmp/workcell-installed-debug-dry-run.out
+  grep -q 'Supported launch hosts today remain Apple Silicon macOS' /tmp/workcell-installed-debug-dry-run.out
+else
+  grep -q "debug_log=${INSTALL_VERIFY_HOME}/.config/workcell/debug/latest-debug.log" /tmp/workcell-installed-debug-dry-run.out
+fi
 
 if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --auth-status \
@@ -1617,11 +1600,29 @@ if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DI
   cat /tmp/workcell-install-custom-debug.out >&2
   exit 1
 fi
-assert_installed_debug_build_dry_run \
-  /tmp/workcell-installed-custom-debug-dry-run.out \
-  "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to succeed through dry-run" \
-  "debug_log=${CUSTOM_DEBUG_DIR_REAL}/latest-debug.log" \
-  "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to fail closed on an unsupported launch host"
+if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --mode build \
+  --allow-control-plane-vcs \
+  --ack-control-plane-vcs \
+  --dry-run >/tmp/workcell-installed-custom-debug-dry-run.out 2>&1; then
+  if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 0 ]]; then
+    echo "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to succeed through dry-run" >&2
+    cat /tmp/workcell-installed-custom-debug-dry-run.out >&2
+    exit 1
+  fi
+elif [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  echo "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to fail closed on an unsupported launch host" >&2
+  cat /tmp/workcell-installed-custom-debug-dry-run.out >&2
+  exit 1
+fi
+if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  grep -q 'Workcell launch is not supported' /tmp/workcell-installed-custom-debug-dry-run.out
+  grep -q 'Supported launch hosts today remain Apple Silicon macOS' /tmp/workcell-installed-custom-debug-dry-run.out
+else
+  grep -q "debug_log=${CUSTOM_DEBUG_DIR_REAL}/latest-debug.log" /tmp/workcell-installed-custom-debug-dry-run.out
+fi
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall-custom-debug.out 2>&1; then
   echo "Expected scripts/uninstall.sh to remove the custom debug installer wrapper cleanly" >&2
   cat /tmp/workcell-uninstall-custom-debug.out >&2
