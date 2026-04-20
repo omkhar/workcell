@@ -6774,7 +6774,7 @@ fi
 
 UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
 mkdir -p "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}"
-if "${ROOT_DIR}/scripts/workcell" \
+if run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${NONGIT_WORKSPACE}" \
