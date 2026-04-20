@@ -16,8 +16,10 @@ Current repo status:
 - Phase 1 is implemented in the session platform and deterministic evidence
 - Phase 2 is implemented in the target-state migration and Colima
   compatibility-read path
-- Phase 3 is the next active slice: shared auth/bootstrap completion on top of
-  the shipped direct staged-auth and explainability surfaces
+- Phase 3 is implemented in the shared auth/bootstrap path, explicit bootstrap
+  explainability, and provider bootstrap support matrix
+- Phase 4 is the next active slice: trusted validation hosts and the
+  host-compatibility matrix
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract
@@ -149,6 +151,21 @@ Complete when:
 - Linux and Windows support claims are limited to what the validation-host
   evidence and docs prove
 
+Phase 4 exit ownership:
+
+- EM:
+  owns the support boundary for the validation-host lane and blocks broader
+  host claims that outrun the evidence
+- TL:
+  owns the integrated validation-host, diagnostics, and fail-closed behavior
+  across the code and fixture surfaces
+- contract and docs owner:
+  owns the canonical support-matrix artifact plus the rollout and operator
+  docs derived from it
+- validation owner:
+  owns repo-required unsupported-combination coverage and the validation-host
+  certification lane that bounds the supported host claims
+
 ## Phase 5: Remote VM control-plane contract
 
 Goal:
@@ -172,8 +189,26 @@ Complete when:
   later cloud adapters can consume them without redefining the contract
 - the remote workspace-materialization, brokered-access, and audit contract is
   documented alongside the tests that prove it
+- the owning docs and validation surfaces point later provider phases at the
+  same canonical fake target and conformance harness rather than allowing
+  provider-specific forks of the contract
 
-## Backend phase exit ownership
+Phase 5 exit ownership:
+
+- EM:
+  owns the remote-VM phase boundary, preview-scope guardrails, and the
+  decision that the shared contract is ready for provider-specific reuse
+- TL:
+  owns the fake remote target, shared conformance harness, and deterministic
+  contract integration
+- contract and docs owner:
+  owns the canonical remote-contract docs, support matrices, and operator
+  guidance that later provider phases must reuse
+- validation owner:
+  owns repo-required remote-contract evidence, certification-lane boundaries,
+  and harness reuse requirements for later provider phases
+
+## Phase 6 through Phase 9 exit ownership
 
 The following owner model applies to Phases 6 through 9:
 

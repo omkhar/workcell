@@ -105,8 +105,8 @@ targets must stay labeled `compat` or another explicitly lower-assurance class.
 - define a narrow trusted `linux/amd64` validation-host lane before broad
   non-macOS claims
 - express support as `host OS x target kind x assurance class`
-- keep one versioned capability and support-matrix artifact that docs,
-  diagnostics, and rollout guidance derive from
+- keep one canonical versioned capability and support-matrix artifact that
+  docs, diagnostics, fixture tests, and rollout guidance derive from
 - do not claim Linux or Windows `strict` parity until the same guarantees are
   proven there
 
@@ -156,6 +156,8 @@ Current repo status:
 - deterministic target-selection, state-routing, and fail-closed behavior are
   proven under repo-required tests
 - rollback to the strict Colima path is documented and operator-verifiable
+- the canonical support matrix and validation-host evidence bound the support
+  claim for each published host combination
 - Linux and Windows support claims remain limited to what the evidence proves
 
 ### Gate 4: first remote VM preview
@@ -166,7 +168,8 @@ Current repo status:
 - the shared remote-VM conformance harness stays authoritative for the preview
 - the support boundary remains preview-only and is reflected in canonical
   matrices plus rollout guidance
-- shared auth/bootstrap and scenario evidence are in place
+- shared auth/bootstrap, validation-host support matrices, and scenario
+  evidence are in place
 
 ### Gate 5: second remote VM on the same contract
 
