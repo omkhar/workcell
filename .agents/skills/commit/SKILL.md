@@ -69,6 +69,9 @@ for convenience.
 - Sign every commit.
 - Use feature branches. Do not push directly to `main` or rewrite history.
 - Treat final GitHub publication as a host-side action.
+- Default remote review units to `main`-based pull requests. Keep non-`main`
+  base PRs draft-only and non-mergeable, and do not treat them as carrying the
+  same repo-owned PR validation guarantees as `main`-based review units.
 - For publish, PR follow-up, or merge work in this repository, use the
   repo-local `workcell-pr-lifecycle` skill. Treat generic GitHub publication
   skills as fallback only when the repo-local lifecycle instructions do not

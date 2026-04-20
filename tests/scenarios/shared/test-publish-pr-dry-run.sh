@@ -129,6 +129,8 @@ worktree_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
 grep -q '^publish_snapshot=worktree$' <<<"${worktree_dry_run}"
 grep -q '^publish_branch=feature/publish-scenario$' <<<"${worktree_dry_run}"
 grep -q '^publish_base=main$' <<<"${worktree_dry_run}"
+grep -q '^publish_base_mode=main$' <<<"${worktree_dry_run}"
+grep -q '^publish_repo_owned_pr_checks_expected=1$' <<<"${worktree_dry_run}"
 grep -q '^publish_draft=1$' <<<"${worktree_dry_run}"
 grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${worktree_dry_run}"
 grep -q -- 'switch --no-guess -c feature/publish-scenario' <<<"${worktree_dry_run}"
@@ -179,6 +181,36 @@ default_branch_rc=$?
 set -e
 test "${default_branch_rc}" -eq 2
 grep -q 'publish-pr refuses the default branch' <<<"${default_branch_output}"
+
+set +e
+unsupported_base_output="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/non-main-base \
+  --base feature/review-stack \
+  --title "Unsupported non-main base" \
+  --commit-message "Unsupported non-main base" \
+  --dry-run 2>&1)"
+unsupported_base_rc=$?
+set -e
+test "${unsupported_base_rc}" -eq 2
+grep -q 'publish-pr only supports --base main by default' <<<"${unsupported_base_output}"
+
+allowed_non_main_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/non-main-base \
+  --base feature/review-stack \
+  --allow-non-main-base \
+  --title "Lower assurance non-main base" \
+  --commit-message "Lower assurance non-main base" \
+  --ready \
+  --dry-run 2>&1)"
+grep -q '^publish_base=feature/review-stack$' <<<"${allowed_non_main_dry_run}"
+grep -q '^publish_base_mode=lower-assurance-non-main$' <<<"${allowed_non_main_dry_run}"
+grep -q '^publish_repo_owned_pr_checks_expected=0$' <<<"${allowed_non_main_dry_run}"
+grep -q '^publish_draft=1$' <<<"${allowed_non_main_dry_run}"
+grep -q 'publish-pr preflight: repo-owned PR checks are not expected for --base feature/review-stack' <<<"${allowed_non_main_dry_run}"
+grep -q 'normal main-based PR validation and merge gating do not apply to that PR shape' <<<"${allowed_non_main_dry_run}"
+grep -q -- "gh pr create --base feature/review-stack --head feature/non-main-base --title Lower\\\\ assurance\\\\ non-main\\\\ base --draft --body ''" <<<"${allowed_non_main_dry_run}"
 
 no_remote_fixture="${TMP_DIR}/publish-pr-no-remote"
 git init -q "${no_remote_fixture}"

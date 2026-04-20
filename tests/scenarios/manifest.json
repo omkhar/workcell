@@ -70,7 +70,7 @@
     },
     {
       "id": "shared/publish-pr",
-      "description": "Host-side publish-pr covers dry-run command rendering plus a signed local publication handoff with repo hooks bypassed",
+      "description": "Host-side publish-pr covers dry-run command rendering, main-only base enforcement, and the explicit lower-assurance non-main draft handoff with repo hooks bypassed",
       "lane": "secretless",
       "platform": "any",
       "manual": false,
