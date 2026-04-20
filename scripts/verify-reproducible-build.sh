@@ -122,7 +122,9 @@ trap cleanup EXIT
 if [[ "${1:-}" == "--self-docker-probe" ]]; then
   require_tool docker
   setup_workcell_trusted_docker_client
-  select_docker_context
+  if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
+    select_docker_context
+  fi
   buildx_cmd version >/dev/null
   echo "verify-reproducible-build-docker-probe-ok"
   exit 0

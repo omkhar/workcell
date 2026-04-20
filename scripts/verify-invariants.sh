@@ -277,8 +277,15 @@ delete_verify_colima_profile() {
   fi
   rm -rf \
     "${REAL_HOME}/.colima/${profile_name}" \
+    "${REAL_HOME}/.local/state/workcell/targets/local_vm/colima/${profile_name}" \
     "${REAL_HOME}/.colima/_lima/colima-${profile_name}" \
     "${REAL_HOME}/.colima/_lima/_disks/colima-${profile_name}"
+}
+
+verify_profile_target_state_dir() {
+  local profile_name="$1"
+
+  printf '%s/.local/state/workcell/targets/local_vm/colima/%s\n' "${REAL_HOME}" "${profile_name}"
 }
 
 cleanup_detached_session_runtime() {
@@ -3461,30 +3468,64 @@ EOF
 
 BUILDER_RECREATE_PROBE_NAME="workcell-verify-builder-recreate-$$"
 BUILDER_RECREATE_OUTPUT="/tmp/workcell-builder-recreate.out"
+BUILDER_RECREATE_STATE_ROOT="${BARRIER_VERIFY_ROOT}/builder-recreate"
+BUILDER_RECREATE_BUILDX="${BUILDER_RECREATE_STATE_ROOT}/docker-buildx"
+mkdir -p "${BUILDER_RECREATE_STATE_ROOT}"
+cat >"${BUILDER_RECREATE_BUILDX}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_root="${WORKCELL_BUILDER_RECREATE_STATE_ROOT:?}"
+builder_file="${state_root}/${BUILDX_BUILDER:-default}.endpoint"
+
+case "${1:-}" in
+  inspect)
+    if [[ ! -f "${builder_file}" ]]; then
+      exit 1
+    fi
+    endpoint="$(cat "${builder_file}")"
+    printf 'Name: %s\n' "${BUILDX_BUILDER:-default}"
+    printf 'Endpoint: %s\n' "${endpoint}"
+    ;;
+  rm)
+    rm -f "${builder_file}"
+    ;;
+  create)
+    printf '%s\n' "${DOCKER_HOST:-}" >"${builder_file}"
+    ;;
+  *)
+    echo "unexpected buildx stub invocation: $*" >&2
+    exit 1
+    ;;
+esac
+EOF
+chmod 0755 "${BUILDER_RECREATE_BUILDX}"
 if ! (
   set -euo pipefail
-  local_probe_docker_host=""
   source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   setup_workcell_trusted_docker_client
-  select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
-  PROBE_DOCKER_CONTEXT_NAME="${DOCKER_CONTEXT_NAME}"
-  buildx_cmd rm --force "${BUILDER_RECREATE_PROBE_NAME}" >/dev/null 2>&1 || true
-  buildx_cmd create --driver docker-container --name "${BUILDER_RECREATE_PROBE_NAME}" --use >/dev/null
-  local_probe_docker_host="$(docker context inspect "${PROBE_DOCKER_CONTEXT_NAME}" --format '{{.Endpoints.docker.Host}}')"
-  DOCKER_CONTEXT_NAME="" DOCKER_HOST="${local_probe_docker_host}" BUILDX_BUILDER="${BUILDER_RECREATE_PROBE_NAME}" \
+  printf 'unix:///tmp/stale-workcell-docker.sock\n' >"${BUILDER_RECREATE_STATE_ROOT}/${BUILDER_RECREATE_PROBE_NAME}.endpoint"
+  DOCKER_CONTEXT_NAME="" \
+    DOCKER_HOST="unix:///tmp/workcell-docker.sock" \
+    BUILDX_BUILDER="${BUILDER_RECREATE_PROBE_NAME}" \
+    WORKCELL_TRUSTED_BUILDX_BIN="${BUILDER_RECREATE_BUILDX}" \
+    WORKCELL_BUILDER_RECREATE_STATE_ROOT="${BUILDER_RECREATE_STATE_ROOT}" \
     ensure_workcell_selected_builder
-  DOCKER_CONTEXT_NAME="" DOCKER_HOST="${local_probe_docker_host}" \
+  DOCKER_CONTEXT_NAME="" \
+    DOCKER_HOST="unix:///tmp/workcell-docker.sock" \
+    BUILDX_BUILDER="${BUILDER_RECREATE_PROBE_NAME}" \
+    WORKCELL_TRUSTED_BUILDX_BIN="${BUILDER_RECREATE_BUILDX}" \
+    WORKCELL_BUILDER_RECREATE_STATE_ROOT="${BUILDER_RECREATE_STATE_ROOT}" \
     buildx_cmd inspect "${BUILDER_RECREATE_PROBE_NAME}" >"${BUILDER_RECREATE_OUTPUT}"
   while IFS= read -r line; do
     case "${line}" in
-      "Endpoint: ${local_probe_docker_host}")
+      'Endpoint: unix:///tmp/workcell-docker.sock')
         matched=1
         break
         ;;
     esac
   done <"${BUILDER_RECREATE_OUTPUT}"
   [[ "${matched:-0}" -eq 1 ]]
-  buildx_cmd rm --force "${BUILDER_RECREATE_PROBE_NAME}" >/dev/null 2>&1 || true
   cleanup_workcell_trusted_docker_client
 ); then
   echo "Expected trusted-docker-client.sh to recreate a stale Buildx builder when the active DOCKER_HOST endpoint differs" >&2
@@ -5133,11 +5174,52 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${profile}" in
+  repo-core)
+    cat <<'JSON'
+{
+  "version": 1,
+  "profile": "repo-core",
+  "lanes": [
+    {"id": "security.yml/actionlint", "status": "local", "local_script": "scripts/check-workflows.sh", "local_order": 10},
+    {"id": "ci.yml/validate", "status": "local", "local_script": "scripts/ci/job-validate.sh", "local_order": 20},
+    {"id": "ci.yml/container-smoke", "status": "local", "local_script": "scripts/container-smoke.sh", "local_order": 40},
+    {"id": "ci.yml/reproducible-build-platform[platform=linux/arm64]", "status": "local", "local_script": "scripts/verify-reproducible-build.sh", "local_order": 45, "matrix": {"platform": "linux/arm64"}}
+  ]
+}
+JSON
+    ;;
   release-preflight)
-    printf '%s\n' '{"version":1,"profile":"release-preflight","lanes":[{"id":"security.yml/actionlint","status":"local","local_script":"scripts/check-workflows.sh","local_order":10},{"id":"ci.yml/pr-shape","status":"local","local_script":"scripts/ci/job-pr-shape.sh","local_order":15},{"id":"ci.yml/validate","status":"local","local_script":"scripts/ci/job-validate.sh","local_order":20},{"id":"docs.yml/spelling-and-manpage","status":"local","local_script":"scripts/ci/job-docs.sh","local_order":30},{"id":"ci.yml/container-smoke","status":"local","local_script":"scripts/container-smoke.sh","local_order":40},{"id":"ci.yml/reproducible-build-platform[platform=linux/arm64]","status":"local","local_script":"scripts/verify-reproducible-build.sh","local_order":45,"matrix":{"platform":"linux/arm64"}},{"id":"pin-hygiene.yml/pinned-inputs","status":"local","local_script":"scripts/ci/job-pin-hygiene.sh","local_order":60}]}'
+    cat <<'JSON'
+{
+  "version": 1,
+  "profile": "release-preflight",
+  "lanes": [
+    {"id": "security.yml/actionlint", "status": "local", "local_script": "scripts/check-workflows.sh", "local_order": 10},
+    {"id": "ci.yml/pr-shape", "status": "local", "local_script": "scripts/ci/job-pr-shape.sh", "local_order": 15},
+    {"id": "ci.yml/validate", "status": "local", "local_script": "scripts/ci/job-validate.sh", "local_order": 20},
+    {"id": "docs.yml/spelling-and-manpage", "status": "local", "local_script": "scripts/ci/job-docs.sh", "local_order": 30},
+    {"id": "ci.yml/container-smoke", "status": "local", "local_script": "scripts/container-smoke.sh", "local_order": 40},
+    {"id": "ci.yml/reproducible-build-platform[platform=linux/arm64]", "status": "local", "local_script": "scripts/verify-reproducible-build.sh", "local_order": 45, "matrix": {"platform": "linux/arm64"}},
+    {"id": "pin-hygiene.yml/pinned-inputs", "status": "local", "local_script": "scripts/ci/job-pin-hygiene.sh", "local_order": 60}
+  ]
+}
+JSON
     ;;
   *)
-    printf '%s\n' '{"version":1,"profile":"pr-parity","lanes":[{"id":"security.yml/actionlint","status":"local","local_script":"scripts/check-workflows.sh","local_order":10},{"id":"ci.yml/pr-shape","status":"local","local_script":"scripts/ci/job-pr-shape.sh","local_order":15},{"id":"ci.yml/validate","status":"local","local_script":"scripts/ci/job-validate.sh","local_order":20},{"id":"docs.yml/spelling-and-manpage","status":"local","local_script":"scripts/ci/job-docs.sh","local_order":30},{"id":"ci.yml/container-smoke","status":"local","local_script":"scripts/container-smoke.sh","local_order":40},{"id":"ci.yml/reproducible-build-platform[platform=linux/arm64]","status":"local","local_script":"scripts/verify-reproducible-build.sh","local_order":45,"matrix":{"platform":"linux/arm64"}}]}'
+    cat <<'JSON'
+{
+  "version": 1,
+  "profile": "pr-parity",
+  "lanes": [
+    {"id": "security.yml/actionlint", "status": "local", "local_script": "scripts/check-workflows.sh", "local_order": 10},
+    {"id": "ci.yml/pr-shape", "status": "local", "local_script": "scripts/ci/job-pr-shape.sh", "local_order": 15},
+    {"id": "ci.yml/validate", "status": "local", "local_script": "scripts/ci/job-validate.sh", "local_order": 20},
+    {"id": "docs.yml/spelling-and-manpage", "status": "local", "local_script": "scripts/ci/job-docs.sh", "local_order": 30},
+    {"id": "ci.yml/container-smoke", "status": "local", "local_script": "scripts/container-smoke.sh", "local_order": 40},
+    {"id": "ci.yml/reproducible-build-platform[platform=linux/arm64]", "status": "local", "local_script": "scripts/verify-reproducible-build.sh", "local_order": 45, "matrix": {"platform": "linux/arm64"}}
+  ]
+}
+JSON
     ;;
 esac
 EOF
@@ -6284,6 +6366,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --mode development \
       --workspace "${ROOT_DIR}" \
       --vm-memory 7 \
+      --vm-disk 80 \
       --no-default-injection-policy \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       -- bash -lc 'git -c safe.directory=/workspace status --short >/tmp/workcell-development-shell-refresh.out && printf "WORKCELL_DEVELOPMENT_REFRESH_OK\n"' \
@@ -6599,7 +6682,7 @@ EOF
     DETACHED_SESSION_ID=""
     DETACHED_SESSION_WORKSPACE=""
     DETACHED_SESSION_SOURCE_SENTINEL_PATH=""
-    AUDIT_LOG="${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}/workcell.audit.log"
+    AUDIT_LOG="$(verify_profile_target_state_dir "${LIVE_DEBUG_PROFILE_NAME}")/workcell.audit.log"
     PACKAGE_MUTATION_AUDIT_COMMAND="$(
       cat <<'EOF'
 for attempt in 1 2 3; do
@@ -6619,6 +6702,8 @@ EOF
       --agent codex \
       --mode build \
       --workspace "${ROOT_DIR}" \
+      --vm-memory 7 \
+      --vm-disk 80 \
       --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
@@ -6656,6 +6741,8 @@ EOF
       --agent codex \
       --mode build \
       --workspace "${ROOT_DIR}" \
+      --vm-memory 7 \
+      --vm-disk 80 \
       --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
@@ -6664,63 +6751,24 @@ EOF
       echo "Expected package-mutation failure propagation verification run to succeed" >&2
       exit 1
     fi
-    APT_BROKER_FIXTURE_ROOT="${BARRIER_VERIFY_ROOT}/workcell-apt-broker-fixture"
-    APT_BROKER_HELPER="${APT_BROKER_FIXTURE_ROOT}/slow-apt-helper.sh"
-    APT_BROKER_RUNTIME_ROOT="${APT_BROKER_FIXTURE_ROOT}/runtime"
-    APT_BROKER_STDOUT="${APT_BROKER_FIXTURE_ROOT}/sudo-wrapper.out"
-    APT_BROKER_STDERR="${APT_BROKER_FIXTURE_ROOT}/sudo-wrapper.err"
-    rm -rf "${APT_BROKER_FIXTURE_ROOT}"
-    mkdir -p "${APT_BROKER_FIXTURE_ROOT}"
-    cat >"${APT_BROKER_HELPER}" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-sleep 11
-printf 'slow-apt-helper-ok\n'
-EOF
-    chmod +x "${APT_BROKER_HELPER}"
-    WORKCELL_APT_BROKER_ROOT="${APT_BROKER_RUNTIME_ROOT}" \
-      WORKCELL_APT_HELPER="${APT_BROKER_HELPER}" \
-      WORKCELL_APT_BROKER_SLEEP_SECONDS=0.05 \
-      /bin/bash "${ROOT_DIR}/runtime/container/apt-broker.sh" >/dev/null 2>&1 &
-    APT_BROKER_PID=$!
-    for _ in $(seq 1 100); do
-      if [[ -f "${APT_BROKER_RUNTIME_ROOT}/pid" ]]; then
-        break
+    for required in \
+      'slow_apt_helper=/tmp/workcell-slow-apt-helper.sh' \
+      '/bin/bash /usr/local/libexec/workcell/apt-broker.sh' \
+      'sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update' \
+      'slow-apt-helper-ok' \
+      'expected sudo-wrapper to wait for a slow apt broker request by default' \
+      'expected default apt broker waits to avoid timing out slow requests'; do
+      if ! grep -Fq -- "${required}" "${ROOT_DIR}/scripts/container-smoke.sh"; then
+        echo "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (${required})" >&2
+        exit 1
       fi
-      sleep 0.1
     done
-    if [[ ! -f "${APT_BROKER_RUNTIME_ROOT}/pid" ]]; then
-      echo "Expected apt broker fixture to publish its pid file" >&2
-      kill "${APT_BROKER_PID}" >/dev/null 2>&1 || true
-      wait "${APT_BROKER_PID}" >/dev/null 2>&1 || true
-      exit 1
-    fi
-    if ! WORKCELL_APT_BROKER_ROOT="${APT_BROKER_RUNTIME_ROOT}" \
-      WORKCELL_APT_BROKER_WAIT_INTERVAL_SECONDS=0.05 \
-      /bin/bash "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh" \
-      -n /usr/local/libexec/workcell/apt-helper.sh apt-get update \
-      >"${APT_BROKER_STDOUT}" 2>"${APT_BROKER_STDERR}"; then
-      echo "Expected sudo-wrapper to wait for a slow apt broker request by default" >&2
-      cat "${APT_BROKER_STDOUT}" >&2 || true
-      cat "${APT_BROKER_STDERR}" >&2 || true
-      kill "${APT_BROKER_PID}" >/dev/null 2>&1 || true
-      wait "${APT_BROKER_PID}" >/dev/null 2>&1 || true
-      exit 1
-    fi
-    grep -q 'slow-apt-helper-ok' "${APT_BROKER_STDOUT}"
-    if grep -q 'Workcell apt broker timed out.' "${APT_BROKER_STDERR}"; then
-      echo "Expected sudo-wrapper default apt broker waits to avoid timing out slow requests" >&2
-      cat "${APT_BROKER_STDERR}" >&2
-      kill "${APT_BROKER_PID}" >/dev/null 2>&1 || true
-      wait "${APT_BROKER_PID}" >/dev/null 2>&1 || true
-      exit 1
-    fi
-    kill "${APT_BROKER_PID}" >/dev/null 2>&1 || true
-    wait "${APT_BROKER_PID}" >/dev/null 2>&1 || true
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
       --workspace "${ROOT_DIR}" \
+      --vm-memory 7 \
+      --vm-disk 80 \
       --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
@@ -6733,9 +6781,10 @@ EOF
     delete_verify_colima_profile "${LIVE_DETACHED_PROFILE_NAME}"
     AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
     AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"
+    AUDIT_RESTORE_STATE_DIR="$(verify_profile_target_state_dir "${AUDIT_RESTORE_PROFILE_NAME}")"
     AUDIT_RESTORE_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
-    AUDIT_RESTORE_LOG="${AUDIT_RESTORE_DIR}/workcell.audit.log"
-    mkdir -p "${AUDIT_RESTORE_DIR}" "${AUDIT_RESTORE_LIMA_DIR}"
+    AUDIT_RESTORE_LOG="${AUDIT_RESTORE_STATE_DIR}/workcell.audit.log"
+    mkdir -p "${AUDIT_RESTORE_DIR}" "${AUDIT_RESTORE_STATE_DIR}" "${AUDIT_RESTORE_LIMA_DIR}"
     printf '%s\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_DIR}/workcell.managed"
     cat >"${AUDIT_RESTORE_LIMA_DIR}/lima.yaml" <<'EOF'
 cpu: 4
@@ -6764,7 +6813,8 @@ EOF
     STRICT_REFRESH_PROFILE_NAME="workcell-strict-refresh-$$"
     delete_verify_colima_profile "${STRICT_REFRESH_PROFILE_NAME}"
     STRICT_REFRESH_DIR="${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}"
-    mkdir -p "${STRICT_REFRESH_DIR}"
+    STRICT_REFRESH_STATE_DIR="$(verify_profile_target_state_dir "${STRICT_REFRESH_PROFILE_NAME}")"
+    mkdir -p "${STRICT_REFRESH_DIR}" "${STRICT_REFRESH_STATE_DIR}"
     printf '%s\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.managed"
     cat >"${STRICT_REFRESH_DIR}/colima.yaml" <<'EOF'
 cpu: 4
@@ -6779,7 +6829,7 @@ image_tag=workcell:local
 image_id=sha256:strict-refresh-fixture
 source_date_epoch=0
 EOF
-    printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.audit.log"
+    printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_STATE_DIR}/workcell.audit.log"
     VERIFY_INVARIANTS_EXPECTED_FAILURE=1
     set +e
     "${ROOT_DIR}/scripts/workcell" \
@@ -6817,13 +6867,23 @@ EOF
     strict_refresh_prepare_status=$?
     set -e
     VERIFY_INVARIANTS_EXPECTED_FAILURE=0
-    if [[ "${strict_refresh_prepare_status}" -ne 2 ]]; then
-      echo "Expected follow-up strict prepare to stop on unmanaged-profile safety preflight, got ${strict_refresh_prepare_status}" >&2
+    if [[ "${strict_refresh_prepare_status}" -ne 0 ]]; then
+      echo "Expected follow-up strict prepare to continue as a fresh managed launch after the refresh cleanup, got ${strict_refresh_prepare_status}" >&2
       cat /tmp/workcell-strict-refresh-prepare.out >&2
       exit 1
     fi
-    grep -q 'Refusing to reuse unmanaged Colima profile' /tmp/workcell-strict-refresh-prepare.out
-    grep -q -- '--repair-profile' /tmp/workcell-strict-refresh-prepare.out
+    if grep -q 'Refusing to reuse unmanaged Colima profile' /tmp/workcell-strict-refresh-prepare.out; then
+      echo "Follow-up strict prepare should not regress into unmanaged-profile safety after the refresh cleanup path." >&2
+      cat /tmp/workcell-strict-refresh-prepare.out >&2
+      exit 1
+    fi
+    if grep -q -- '--repair-profile' /tmp/workcell-strict-refresh-prepare.out; then
+      echo "Follow-up strict prepare should not request --repair-profile after the managed refresh cleanup path." >&2
+      cat /tmp/workcell-strict-refresh-prepare.out >&2
+      exit 1
+    fi
+    grep -q 'prepare=1 seeding the prepared runtime image before launch.' /tmp/workcell-strict-refresh-prepare.out
+    grep -q "Prepared runtime image is ready for profile ${STRICT_REFRESH_PROFILE_NAME}" /tmp/workcell-strict-refresh-prepare.out
     delete_verify_colima_profile "${STRICT_REFRESH_PROFILE_NAME}"
   fi
 fi

@@ -46,6 +46,7 @@ cleanup() {
       "${HOST_DOCKER_BIN}" image rm -f "${CLI_SESSION_FIXTURE_IMAGE}" >/dev/null 2>&1 || true
     fi
   fi
+  cleanup_workcell_trusted_docker_client
   rm -f "${WORKCELL_FUNCTIONS_COPY}"
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
   rm -rf "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets/local_vm/colima/${PROFILE}"
@@ -2009,36 +2010,63 @@ grep -q 'event=exit session_id=detached-lifecycle source=host-stop-fallback exit
 
 HOST_DOCKER_BIN="$(resolve_host_docker_bin || true)"
 if [[ -n "${HOST_DOCKER_BIN}" ]]; then
-  docker_server_arch="$("${HOST_DOCKER_BIN}" version --format '{{.Server.Arch}}')"
-  case "${docker_server_arch}" in
-    amd64 | arm64)
-      fixture_goarch="${docker_server_arch}"
-      ;;
-    x86_64)
-      fixture_goarch="amd64"
-      ;;
-    aarch64)
-      fixture_goarch="arm64"
-      ;;
-    *)
-      echo "Unsupported Docker server architecture for CLI session fixture image: ${docker_server_arch}" >&2
-      exit 1
-      ;;
-  esac
-  mkdir -p "${CLI_SESSION_FIXTURE_BUILD_DIR}"
-  CGO_ENABLED=0 GOOS=linux GOARCH="${fixture_goarch}" \
-    go build -trimpath -ldflags='-s -w' \
-    -o "${CLI_SESSION_FIXTURE_BUILD_DIR}/session-cli-fixture" \
-    "${ROOT_DIR}/tests/fixtures/session-cli"
-  cat >"${CLI_SESSION_FIXTURE_BUILD_DIR}/Dockerfile" <<'EOF'
+  docker_context_candidate=""
+  setup_workcell_trusted_docker_client
+  export WORKCELL_DOCKER_CLIENT_CWD="${ROOT_DIR}"
+  unset DOCKER_HOST
+  unset DOCKER_CONTEXT
+  DOCKER_CONTEXT_NAME=""
+
+  for docker_context_candidate in colima default desktop-linux; do
+    if docker_context_exists "${docker_context_candidate}" && docker_context_is_healthy "${docker_context_candidate}"; then
+      DOCKER_CONTEXT_NAME="${docker_context_candidate}"
+      break
+    fi
+  done
+  if [[ -z "${DOCKER_CONTEXT_NAME}" ]]; then
+    while IFS= read -r docker_context_candidate; do
+      [[ -n "${docker_context_candidate}" ]] || continue
+      if docker_context_exists "${docker_context_candidate}" && docker_context_is_healthy "${docker_context_candidate}"; then
+        DOCKER_CONTEXT_NAME="${docker_context_candidate}"
+        break
+      fi
+    done < <(docker_context_names)
+  fi
+
+  if [[ -n "${DOCKER_CONTEXT_NAME}" ]]; then
+    export DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}"
+
+    docker_server_arch="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" version --format '{{.Server.Arch}}')"
+    case "${docker_server_arch}" in
+      amd64 | arm64)
+        fixture_goarch="${docker_server_arch}"
+        ;;
+      x86_64)
+        fixture_goarch="amd64"
+        ;;
+      aarch64)
+        fixture_goarch="arm64"
+        ;;
+      *)
+        echo "Unsupported Docker server architecture for CLI session fixture image: ${docker_server_arch}" >&2
+        exit 1
+        ;;
+    esac
+    mkdir -p "${CLI_SESSION_FIXTURE_BUILD_DIR}"
+    CGO_ENABLED=0 GOOS=linux GOARCH="${fixture_goarch}" \
+      go build -trimpath -ldflags='-s -w' \
+      -o "${CLI_SESSION_FIXTURE_BUILD_DIR}/session-cli-fixture" \
+      "${ROOT_DIR}/tests/fixtures/session-cli"
+    cat >"${CLI_SESSION_FIXTURE_BUILD_DIR}/Dockerfile" <<'EOF'
 FROM scratch
 COPY session-cli-fixture /session-cli-fixture
 COPY session-cli-fixture /bin/sh
 EOF
-  "${HOST_DOCKER_BIN}" build -t "${CLI_SESSION_FIXTURE_IMAGE}" "${CLI_SESSION_FIXTURE_BUILD_DIR}" >/dev/null
+    run_workcell_docker_client_command \
+      "${HOST_DOCKER_BIN}" build -t "${CLI_SESSION_FIXTURE_IMAGE}" "${CLI_SESSION_FIXTURE_BUILD_DIR}" >/dev/null
 
-  cli_attach_output="$(
-    bash -lc '
+    cli_attach_output="$(
+      bash -lc '
     set -euo pipefail
     ROOT_DIR="$1"
     REAL_HOME="$2"
@@ -2108,11 +2136,11 @@ EOF_JSON
     grep -q "event=attach session_id=${SESSION_ID}" "${AUDIT_LOG}"
     printf "attach_cli_output=%s\n" "${attach_output}"
   ' _ "${ROOT_DIR}" "${REAL_HOME}" "${CLI_SESSION_FIXTURE_IMAGE}" "${HOST_DOCKER_BIN}"
-  )"
-  grep -q '^attach_cli_output=attached-from-container$' <<<"${cli_attach_output}"
+    )"
+    grep -q '^attach_cli_output=attached-from-container$' <<<"${cli_attach_output}"
 
-  cli_lifecycle_output="$(
-    bash -lc '
+    cli_lifecycle_output="$(
+      bash -lc '
     set -euo pipefail
     ROOT_DIR="$1"
     REAL_HOME="$2"
@@ -2291,11 +2319,14 @@ PY
     printf "cli_stop_output=%s\n" "$(tr "\n" "|" <<<"${stop_output}")"
     printf "cli_delete_output=%s\n" "$(tr "\n" "|" <<<"${delete_output}")"
   ' _ "${ROOT_DIR}" "${REAL_HOME}" "${CLI_SESSION_FIXTURE_IMAGE}" "${HOST_DOCKER_BIN}"
-  )"
-  grep -q '^cli_stdin_payload=resume$' <<<"${cli_lifecycle_output}"
-  grep -Eq '^cli_send_output=session_id=cli-life-[0-9]+[|]sent_bytes=7[|]status=running[|]live_status=running[|]control_mode=detached[|]target_kind=local_vm[|]target_provider=colima[|]target_id=wcl-cli-life-[0-9]+[|]target_summary=local_vm/colima/wcl-cli-life-[0-9]+[|]target_assurance_class=strict[|]runtime_api=docker[|]workspace_transport=isolated-worktree-mount[|]workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]workspace_origin=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_worktree=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]worktree_path=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]display_git_branch=none[|]git_branch=[|]assurance=managed-mutable[|]$' <<<"${cli_lifecycle_output}"
-  grep -Eq '^cli_stop_output=session_id=cli-life-[0-9]+[|]stop_requested=1[|]status=exited[|]live_status=stopped[|]control_mode=detached[|]target_kind=local_vm[|]target_provider=colima[|]target_id=wcl-cli-life-[0-9]+[|]target_summary=local_vm/colima/wcl-cli-life-[0-9]+[|]target_assurance_class=strict[|]runtime_api=docker[|]workspace_transport=isolated-worktree-mount[|]workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]workspace_origin=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_worktree=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]worktree_path=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]display_git_branch=none[|]git_branch=[|]assurance=managed-mutable[|]$' <<<"${cli_lifecycle_output}"
-  grep -q '^cli_delete_output=session_id=cli-life-[0-9]\+|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${cli_lifecycle_output}"
+    )"
+    grep -q '^cli_stdin_payload=resume$' <<<"${cli_lifecycle_output}"
+    grep -Eq '^cli_send_output=session_id=cli-life-[0-9]+[|]sent_bytes=7[|]status=running[|]live_status=running[|]control_mode=detached[|]target_kind=local_vm[|]target_provider=colima[|]target_id=wcl-cli-life-[0-9]+[|]target_summary=local_vm/colima/wcl-cli-life-[0-9]+[|]target_assurance_class=strict[|]runtime_api=docker[|]workspace_transport=isolated-worktree-mount[|]workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]workspace_origin=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_worktree=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]worktree_path=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]display_git_branch=none[|]git_branch=[|]assurance=managed-mutable[|]$' <<<"${cli_lifecycle_output}"
+    grep -Eq '^cli_stop_output=session_id=cli-life-[0-9]+[|]stop_requested=1[|]status=exited[|]live_status=stopped[|]control_mode=detached[|]target_kind=local_vm[|]target_provider=colima[|]target_id=wcl-cli-life-[0-9]+[|]target_summary=local_vm/colima/wcl-cli-life-[0-9]+[|]target_assurance_class=strict[|]runtime_api=docker[|]workspace_transport=isolated-worktree-mount[|]workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]workspace_origin=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_worktree=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]worktree_path=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]display_git_branch=none[|]git_branch=[|]assurance=managed-mutable[|]$' <<<"${cli_lifecycle_output}"
+    grep -q '^cli_delete_output=session_id=cli-life-[0-9]\+|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${cli_lifecycle_output}"
+  else
+    echo "Skipping public CLI detached workload integration: no healthy Docker context available" >&2
+  fi
 else
   echo "Skipping public CLI detached workload integration: docker CLI unavailable on PATH" >&2
 fi
