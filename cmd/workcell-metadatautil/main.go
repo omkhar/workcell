@@ -52,6 +52,35 @@ func main() {
 			die(fmt.Errorf("usage: %s check-workflows ROOT_DIR POLICY_PATH", os.Args[0]))
 		}
 		err = metadatautil.CheckWorkflows(os.Args[2], os.Args[3])
+	case "generate-workflow-lane-manifest":
+		if len(os.Args) != 5 {
+			die(fmt.Errorf("usage: %s generate-workflow-lane-manifest ROOT_DIR POLICY_PATH OUTPUT_PATH", os.Args[0]))
+		}
+		err = metadatautil.GenerateWorkflowLaneManifest(os.Args[2], os.Args[3], os.Args[4])
+	case "verify-workflow-lane-manifest":
+		if len(os.Args) != 5 {
+			die(fmt.Errorf("usage: %s verify-workflow-lane-manifest ROOT_DIR POLICY_PATH MANIFEST_PATH", os.Args[0]))
+		}
+		err = metadatautil.VerifyWorkflowLaneManifest(os.Args[2], os.Args[3], os.Args[4])
+	case "plan-workflow-lanes":
+		if len(os.Args) != 4 {
+			die(fmt.Errorf("usage: %s plan-workflow-lanes MANIFEST_PATH CONFIG_JSON_PATH", os.Args[0]))
+		}
+		configPath := os.Args[3]
+		var cfg metadatautil.WorkflowLanePlannerConfig
+		if err := metadatautil.LoadJSONFile(configPath, &cfg); err != nil {
+			die(err)
+		}
+		plan, planErr := metadatautil.PlanWorkflowLanes(os.Args[2], cfg)
+		if planErr != nil {
+			die(planErr)
+		}
+		content, marshalErr := json.MarshalIndent(plan, "", "  ")
+		if marshalErr != nil {
+			die(marshalErr)
+		}
+		fmt.Printf("%s\n", content)
+		return
 	case "fetch-rulesets":
 		if len(os.Args) != 4 {
 			die(fmt.Errorf("usage: %s fetch-rulesets TMP_DIR REPO", os.Args[0]))
