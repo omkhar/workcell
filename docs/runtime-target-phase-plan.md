@@ -153,6 +153,11 @@ Complete when:
 
 Phase 4 exit ownership:
 
+In the current Workcell planning and delivery flow, these ownership lanes are
+meant to be fulfilled by distinct Codex agents or threads unless a change
+explicitly records a different human owner assignment. Treat them as separate
+review and delivery roles, not as one blended reviewer.
+
 - EM:
   owns the support boundary for the validation-host lane and blocks broader
   host claims that outrun the evidence
@@ -195,6 +200,9 @@ Complete when:
 
 Phase 5 exit ownership:
 
+As in Phase 4, these ownership lanes map to distinct Codex agents or threads
+by default unless the change or runbook records explicit human ownership.
+
 - EM:
   owns the remote-VM phase boundary, preview-scope guardrails, and the
   decision that the shared contract is ready for provider-specific reuse
@@ -211,6 +219,10 @@ Phase 5 exit ownership:
 ## Phase 6 through Phase 9 exit ownership
 
 The following owner model applies to Phases 6 through 9:
+
+By default, each lane below is a separate Codex-agent responsibility rather
+than a shared human staffing shorthand. If a future rollout assigns named human
+owners instead, record that explicitly in the phase change or runbook.
 
 - EM:
   owns support-boundary approval, rollout scope, and the final decision that a

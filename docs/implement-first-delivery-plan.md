@@ -49,6 +49,11 @@ without pulling backend delivery forward into Phase 4.
 
 ## Phase 4 Exit Ownership
 
+In this repo's current planning mode, each ownership lane below is intended to
+be a distinct Codex-agent role or thread unless a change explicitly records a
+human owner assignment. The goal is independent review and handoff, not one
+blended owner wearing every hat at once.
+
 - EM:
   holds the phase boundary, prevents later remote-VM work from being counted
   as Phase 4 delivery, and blocks support claims that
@@ -150,6 +155,10 @@ Staffing:
 ## Later Phase Handoff
 
 Before Phase 5, 6, 7, 8, or 9 begins implementation, assign:
+
+- one distinct Codex agent to each lane below by default
+- only replace that with named human owners if the change or runbook records
+  the human assignment explicitly
 
 - EM:
   support-boundary owner for rollout scope, preview/GA decisions, and rollback
