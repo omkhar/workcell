@@ -18,16 +18,14 @@ The deterministic phase breakdown lives in
 - expand end-to-end coverage for authenticated, lower-assurance, and
   session-supervisor transitions so new orchestration features ship with
   invariant checks
-- ship the narrow trusted `linux/amd64` validation-host lane, versioned
-  support matrix, and target-aware diagnostics before broad non-macOS or cloud
-  support claims
-- define the remote-VM contract prerequisites and evidence gates that later
+- define the provider-neutral remote-VM contract, shared fake target, and
+  evidence gates that later
   `compat` and `remote_vm` targets must satisfy, without implying backend
   shipment or Tier 1 Linux or Windows host parity before the same guarantees
   exist
-- keep one canonical machine-readable support matrix and one shared remote-VM
-  conformance harness so later targets cannot fork the support contract by
-  accident
+- keep the shipped canonical host-support matrix and the new shared remote-VM
+  conformance harness authoritative so later targets cannot fork the support
+  contract by accident
 
 ## Medium term
 
