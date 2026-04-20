@@ -1927,17 +1927,17 @@ else
     echo "Expected workcell --dry-run to mount validated credential sources directly into the runtime" >&2
     exit 1
   fi
+
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_CONTAINER_MUTABILITY=ephemeral'* ]]; then
+    echo "Expected workcell --dry-run to default strict mode to ephemeral container mutability" >&2
+    exit 1
+  fi
 fi
 
 "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
 
 if [[ "${INJECTION_DRY_RUN_OUTPUT}" == *"${INJECTION_POLICY_FIXTURE_ROOT}/codex-auth.json"* ]]; then
   echo "Expected workcell --dry-run to redact host credential source paths" >&2
-  exit 1
-fi
-
-if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_CONTAINER_MUTABILITY=ephemeral'* ]]; then
-  echo "Expected workcell --dry-run to default strict mode to ephemeral container mutability" >&2
   exit 1
 fi
 
