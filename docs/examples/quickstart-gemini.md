@@ -91,7 +91,8 @@ workcell auth set \
 ## 6. Publish the result on the host
 
 ```bash
-workcell publish-pr --workspace /path/to/repo --branch feature/my-change \
+./scripts/pre-merge.sh --profile pr-parity
+./scripts/repo-publish-pr.sh --workspace /path/to/repo --branch feature/my-change \
   --title-file /tmp/pr-title.txt --body-file /tmp/pr-body.md \
   --commit-message-file /tmp/commit-message.txt
 ```

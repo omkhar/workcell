@@ -61,8 +61,11 @@ If the task is release-bound, also read:
 
 ## Invariants
 
-- Final GitHub publication is a host-side action. Use `./scripts/workcell
-  publish-pr`; do not normalize direct publication from the Tier 1 session.
+- Final GitHub publication is a host-side action. Use the repo-local
+  `./scripts/repo-publish-pr.sh` wrapper for `main`-based PRs so fresh local
+  parity evidence is enforced before it delegates to
+  `./scripts/workcell publish-pr`; do not normalize direct publication from
+  the Tier 1 session.
 - `main` is the only supported PR base by default. If a lower-assurance
   non-`main` base path exists, keep that PR draft-only, treat it as
   non-mergeable, and do not claim the normal `main`-based repo-owned
@@ -94,9 +97,10 @@ If the task is release-bound, also read:
    intended scope.
 2. Create signed commits using the repo-local `commit` skill.
 3. Run the focused local validation for the change before publication.
-4. Publish with host-side `./scripts/workcell publish-pr` using a draft PR by
-   default and targeting `main` unless an explicit lower-assurance exception is
-   part of the task.
+4. Publish `main`-based PRs with host-side `./scripts/repo-publish-pr.sh`
+   using a draft PR by default. Only fall back to the lower-level
+   `./scripts/workcell publish-pr` path for explicit lower-assurance
+   non-`main` exceptions or other repo-approved special cases.
 5. Follow repo-owned checks to completion.
 6. If a repo-owned check fails:
    - inspect the failing GitHub Actions logs or PR checks

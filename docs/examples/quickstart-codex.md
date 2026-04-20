@@ -122,7 +122,8 @@ workcell --agent codex --mode breakglass --ack-breakglass --workspace /path/to/r
 Prepare the PR metadata, then publish from the host:
 
 ```bash
-workcell publish-pr \
+./scripts/pre-merge.sh --profile pr-parity
+./scripts/repo-publish-pr.sh \
   --workspace /path/to/repo \
   --branch feature/name \
   --title-file /tmp/pr-title.txt \

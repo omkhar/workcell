@@ -10,6 +10,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+compute_worktree_tree_oid() {
+  local repo_root="$1"
+  local tmp_index=""
+  local tree_oid=""
+
+  tmp_index="$(mktemp "${TMPDIR:-/tmp}/workcell-publish-tree.XXXXXX")"
+  rm -f "${tmp_index}"
+  GIT_INDEX_FILE="${tmp_index}" git -C "${repo_root}" read-tree HEAD
+  GIT_INDEX_FILE="${tmp_index}" git -C "${repo_root}" add -A
+  tree_oid="$(GIT_INDEX_FILE="${tmp_index}" git -C "${repo_root}" write-tree)"
+  rm -f "${tmp_index}"
+  printf '%s\n' "${tree_oid}"
+}
+
 FIXTURE="${TMP_DIR}/publish-pr-fixture"
 ORIGIN="${TMP_DIR}/publish-pr-origin.git"
 SSH_SIGNING_KEY="${TMP_DIR}/signing_key"
@@ -169,6 +183,70 @@ if grep -q -- ' add -A ' <<<"${index_dry_run}"; then
   echo "publish-pr index snapshot should not auto-stage the worktree" >&2
   exit 1
 fi
+
+set +e
+missing_parity_output="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \
+  --workspace "${FIXTURE}" \
+  --branch feature/repo-wrapper-missing \
+  --title "Missing parity evidence" \
+  --commit-message "Missing parity evidence" \
+  --dry-run 2>&1)"
+missing_parity_rc=$?
+set -e
+test "${missing_parity_rc}" -eq 2
+grep -q 'Missing local PR-parity evidence' <<<"${missing_parity_output}"
+
+mkdir -p "$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity"
+cat >"$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-parity.json" <<'EOF'
+{
+  "version": 1,
+  "profile": "pr-parity",
+  "base_branch": "main",
+  "tree_oid": "deadbeef"
+}
+EOF
+set +e
+mismatched_parity_output="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \
+  --workspace "${FIXTURE}" \
+  --branch feature/repo-wrapper-mismatch \
+  --title "Mismatched parity evidence" \
+  --commit-message "Mismatched parity evidence" \
+  --dry-run 2>&1)"
+mismatched_parity_rc=$?
+set -e
+test "${mismatched_parity_rc}" -eq 2
+grep -q 'Local PR-parity evidence does not match the tree being published' <<<"${mismatched_parity_output}"
+
+current_tree_oid="$(compute_worktree_tree_oid "${FIXTURE}")"
+cat >"$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-parity.json" <<EOF
+{
+  "version": 1,
+  "profile": "pr-parity",
+  "base_branch": "main",
+  "tree_oid": "${current_tree_oid}"
+}
+EOF
+wrapper_dry_run="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \
+  --workspace "${FIXTURE}" \
+  --branch feature/repo-wrapper-ok \
+  --title "Repo wrapper title" \
+  --commit-message "Repo wrapper commit" \
+  --dry-run)"
+grep -q '^publish_branch=feature/repo-wrapper-ok$' <<<"${wrapper_dry_run}"
+grep -q '^publish_base=main$' <<<"${wrapper_dry_run}"
+grep -q '^publish_snapshot=worktree$' <<<"${wrapper_dry_run}"
+
+rm -f "$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-parity.json"
+override_dry_run="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \
+  --workspace "${FIXTURE}" \
+  --branch feature/repo-wrapper-override \
+  --title "Repo wrapper override" \
+  --commit-message "Repo wrapper override" \
+  --allow-parity-override \
+  --parity-override-reason "manual parity waiver for scenario" \
+  --dry-run 2>&1)"
+grep -q 'repo-publish-pr parity override: manual parity waiver for scenario' <<<"${override_dry_run}"
+grep -q '^publish_branch=feature/repo-wrapper-override$' <<<"${override_dry_run}"
 
 set +e
 default_branch_output="$("${ROOT_DIR}/scripts/workcell" publish-pr \
