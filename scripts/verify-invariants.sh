@@ -1890,7 +1890,12 @@ INJECTION_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
 INJECTION_DRY_RUN_STATUS=$?
 set -e
 
+INJECTION_LAUNCH_BLOCKED=0
 if grep -q '^support_matrix_launch=blocked$' <<<"${INJECTION_DOCTOR_OUTPUT}"; then
+  INJECTION_LAUNCH_BLOCKED=1
+fi
+
+if [[ "${INJECTION_LAUNCH_BLOCKED}" -eq 1 ]]; then
   if [[ "${INJECTION_DRY_RUN_STATUS}" -ne 2 ]]; then
     echo "Expected workcell --dry-run to fail closed for the injection-policy fixture on an unsupported launch host" >&2
     printf '%s\n' "${INJECTION_DRY_RUN_OUTPUT}" >&2
@@ -1949,11 +1954,36 @@ printf '999999\n' >"${STALE_INJECTION_BUNDLE}/owner.pid"
 printf 'stale-secret\n' >"${STALE_INJECTION_BUNDLE}/stale.txt"
 printf '[{"source":"/tmp/stale-secret","mount_path":"/opt/workcell/host-inputs/credentials/stale"}]\n' >"${STALE_INJECTION_SIDECAR}"
 touch -t 202001010000 "${STALE_INJECTION_BUNDLE}" "${STALE_INJECTION_BUNDLE}/owner.pid" "${STALE_INJECTION_BUNDLE}/stale.txt" "${STALE_INJECTION_SIDECAR}"
+set +e
 "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
-  --dry-run >/tmp/workcell-no-policy-dry-run.out
+  --dry-run >/tmp/workcell-no-policy-dry-run.out 2>&1
+NO_POLICY_DRY_RUN_STATUS=$?
+set -e
+
+if [[ "${INJECTION_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  if [[ "${NO_POLICY_DRY_RUN_STATUS}" -ne 2 ]]; then
+    echo "Expected no-policy workcell --dry-run to fail closed on an unsupported launch host" >&2
+    cat /tmp/workcell-no-policy-dry-run.out >&2
+    exit 1
+  fi
+  if ! grep -q 'Workcell launch is not supported' /tmp/workcell-no-policy-dry-run.out; then
+    echo "Expected no-policy workcell --dry-run to explain the blocked launch boundary" >&2
+    cat /tmp/workcell-no-policy-dry-run.out >&2
+    exit 1
+  fi
+  if ! grep -q 'trusted-linux-amd64-validator' /tmp/workcell-no-policy-dry-run.out; then
+    echo "Expected no-policy workcell --dry-run to identify the reviewed validation-host lane" >&2
+    cat /tmp/workcell-no-policy-dry-run.out >&2
+    exit 1
+  fi
+elif [[ "${NO_POLICY_DRY_RUN_STATUS}" -ne 0 ]]; then
+  echo "Expected no-policy workcell --dry-run to succeed on a supported launch host" >&2
+  cat /tmp/workcell-no-policy-dry-run.out >&2
+  exit 1
+fi
 
 if [[ -e "${STALE_INJECTION_BUNDLE}" ]]; then
   echo "Expected startup cleanup to remove dead-owner injection bundles even when no injection policy is active" >&2
