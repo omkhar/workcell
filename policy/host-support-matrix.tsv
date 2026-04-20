@@ -1,0 +1,7 @@
+# Canonical reviewed host support matrix for Workcell launch and validation lanes.
+host_os	host_arch	target_kind	target_provider	target_assurance_class	status	launch	evidence	validation_lane	reason
+macos	arm64	local_vm	colima	strict	supported	allowed	certification-only	none	apple-silicon-macos-reviewed-launch-host
+linux	amd64	local_vm	colima	strict	validation-host-only	blocked	repo-required	trusted-linux-amd64-validator	trusted-linux-amd64-validation-host-only
+linux	arm64	local_vm	colima	strict	unsupported	blocked	none	none	linux-arm64-hosts-not-yet-reviewed
+windows	amd64	local_vm	colima	strict	unsupported	blocked	none	none	windows-hosts-not-yet-reviewed
+windows	arm64	local_vm	colima	strict	unsupported	blocked	none	none	windows-hosts-not-yet-reviewed

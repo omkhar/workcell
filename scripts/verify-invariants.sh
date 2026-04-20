@@ -144,6 +144,43 @@ go_verify_hostutil() {
   run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-hostutil "$@"
 }
 
+detected_verify_host_os() {
+  local host_os=""
+
+  host_os="$(uname -s 2>/dev/null || true)"
+  case "${host_os}" in
+    Darwin)
+      printf 'macos\n'
+      ;;
+    Linux)
+      printf 'linux\n'
+      ;;
+    MINGW* | MSYS* | CYGWIN* | Windows_NT)
+      printf 'windows\n'
+      ;;
+    *)
+      printf '%s\n' "$(printf '%s' "${host_os}" | tr '[:upper:]' '[:lower:]')"
+      ;;
+  esac
+}
+
+detected_verify_host_arch() {
+  local host_arch=""
+
+  host_arch="$(uname -m 2>/dev/null || true)"
+  case "${host_arch}" in
+    arm64 | aarch64)
+      printf 'arm64\n'
+      ;;
+    x86_64 | amd64)
+      printf 'amd64\n'
+      ;;
+    *)
+      printf '%s\n' "$(printf '%s' "${host_arch}" | tr '[:upper:]' '[:lower:]')"
+      ;;
+  esac
+}
+
 HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
@@ -200,6 +237,34 @@ DETACHED_SESSION_ID=""
 DETACHED_SESSION_WORKSPACE=""
 DETACHED_SESSION_SOURCE_SENTINEL_PATH=""
 VERIFY_INVARIANTS_CLEANUP_ACTIVE=0
+ROOT_STRICT_SUPPORT_OUTPUT="$(
+  go_verify_hostutil launcher support-matrix-eval \
+    "${ROOT_DIR}/policy/host-support-matrix.tsv" \
+    "$(detected_verify_host_os)" \
+    "$(detected_verify_host_arch)" \
+    local_vm \
+    colima \
+    strict
+)"
+if grep -q '^support_matrix_launch=blocked$' <<<"${ROOT_STRICT_SUPPORT_OUTPUT}"; then
+  export WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS="macos"
+  export WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="arm64"
+fi
+
+run_workcell_verify() {
+  local -a cmd=(/usr/bin/env -i PATH="${TRUSTED_HOST_PATH}" BASH_ENV= ENV= WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1)
+  while [[ $# -gt 0 ]] && [[ "$1" == *=* ]]; do
+    cmd+=("$1")
+    shift
+  done
+  [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS}")
+  [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}")
+  "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "$@"
+}
+
+run_workcell_real_host() {
+  env -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH "${ROOT_DIR}/scripts/workcell" "$@"
+}
 
 delete_verify_colima_profile() {
   local profile_name="$1"
@@ -1460,16 +1525,42 @@ if ! grep -q '^Usage: workcell' /tmp/workcell-installed-debug-help.out; then
   exit 1
 fi
 
+if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --doctor >/tmp/workcell-installed-debug-doctor.out 2>&1; then
+  echo "Expected debug-installed ~/.local/bin/workcell --doctor to succeed" >&2
+  cat /tmp/workcell-installed-debug-doctor.out >&2
+  exit 1
+fi
+INSTALLED_DEBUG_LAUNCH_BLOCKED=0
+if grep -q '^support_matrix_launch=blocked$' /tmp/workcell-installed-debug-doctor.out; then
+  INSTALLED_DEBUG_LAUNCH_BLOCKED=1
+fi
+
 if "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-debug-strict-dry-run.out 2>&1; then
-  echo "Expected debug-installed ~/.local/bin/workcell strict dry-run to surface the injected --rebuild behavior" >&2
+  if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+    echo "Expected debug-installed ~/.local/bin/workcell strict dry-run to fail closed on an unsupported launch host" >&2
+  else
+    echo "Expected debug-installed ~/.local/bin/workcell strict dry-run to surface the injected --rebuild behavior" >&2
+  fi
   exit 1
 fi
-grep -q 'strict mode requires --prepare when you explicitly request --rebuild.' /tmp/workcell-installed-debug-strict-dry-run.out
+if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  if ! grep -Eq 'Workcell launch is not supported|strict mode requires --prepare when you explicitly request --rebuild\.' \
+    /tmp/workcell-installed-debug-strict-dry-run.out; then
+    echo "Expected debug-installed strict dry-run to fail with either the unsupported-host message or the injected --rebuild strict-mode rejection" >&2
+    cat /tmp/workcell-installed-debug-strict-dry-run.out >&2
+    exit 1
+  fi
+else
+  grep -q 'strict mode requires --prepare when you explicitly request --rebuild.' /tmp/workcell-installed-debug-strict-dry-run.out
+fi
 
 if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
@@ -1478,12 +1569,23 @@ if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-debug-dry-run.out 2>&1; then
-  echo "Expected debug-installed ~/.local/bin/workcell launch path to succeed through dry-run" >&2
+  if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 0 ]]; then
+    echo "Expected debug-installed ~/.local/bin/workcell launch path to succeed through dry-run" >&2
+    cat /tmp/workcell-installed-debug-dry-run.out >&2
+    exit 1
+  fi
+elif [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  echo "Expected debug-installed ~/.local/bin/workcell launch path to fail closed on an unsupported launch host" >&2
   cat /tmp/workcell-installed-debug-dry-run.out >&2
   exit 1
 fi
 grep -q 'Workcell warning: host-persisted launcher debug stderr capture is enabled' /tmp/workcell-installed-debug-dry-run.out
-grep -q "debug_log=${INSTALL_VERIFY_HOME}/.config/workcell/debug/latest-debug.log" /tmp/workcell-installed-debug-dry-run.out
+if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  grep -q 'Workcell launch is not supported' /tmp/workcell-installed-debug-dry-run.out
+  grep -q 'Supported launch hosts today remain Apple Silicon macOS' /tmp/workcell-installed-debug-dry-run.out
+else
+  grep -q "debug_log=${INSTALL_VERIFY_HOME}/.config/workcell/debug/latest-debug.log" /tmp/workcell-installed-debug-dry-run.out
+fi
 
 if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --auth-status \
@@ -1524,11 +1626,22 @@ if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-custom-debug-dry-run.out 2>&1; then
-  echo "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to succeed through dry-run" >&2
+  if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 0 ]]; then
+    echo "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to succeed through dry-run" >&2
+    cat /tmp/workcell-installed-custom-debug-dry-run.out >&2
+    exit 1
+  fi
+elif [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  echo "Expected debug-installed ~/.local/bin/workcell custom debug dir launch path to fail closed on an unsupported launch host" >&2
   cat /tmp/workcell-installed-custom-debug-dry-run.out >&2
   exit 1
 fi
-grep -q "debug_log=${CUSTOM_DEBUG_DIR_REAL}/latest-debug.log" /tmp/workcell-installed-custom-debug-dry-run.out
+if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  grep -q 'Workcell launch is not supported' /tmp/workcell-installed-custom-debug-dry-run.out
+  grep -q 'Supported launch hosts today remain Apple Silicon macOS' /tmp/workcell-installed-custom-debug-dry-run.out
+else
+  grep -q "debug_log=${CUSTOM_DEBUG_DIR_REAL}/latest-debug.log" /tmp/workcell-installed-custom-debug-dry-run.out
+fi
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall-custom-debug.out 2>&1; then
   echo "Expected scripts/uninstall.sh to remove the custom debug installer wrapper cleanly" >&2
   cat /tmp/workcell-uninstall-custom-debug.out >&2
@@ -1774,37 +1887,75 @@ cmp -s "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/documents/common
 expected_auth="$(cd "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/../fragments" && pwd -P)/fragment-auth.json"
 [[ "$(jq -r '.credentials.codex_auth.source' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/manifest.json")" == "${expected_auth}" ]]
 
-INJECTION_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
+INJECTION_DOCTOR_OUTPUT="$(run_workcell_real_host \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
   --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
-  --dry-run)"
+  --doctor)"
+set +e
+INJECTION_DRY_RUN_OUTPUT="$(run_workcell_real_host \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --no-default-injection-policy \
+  --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
+  --dry-run 2>&1)"
+INJECTION_DRY_RUN_STATUS=$?
+set -e
 
-if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json'* ]]; then
-  echo "Expected workcell --dry-run to pass the staged injection manifest into the runtime" >&2
-  exit 1
+INJECTION_LAUNCH_BLOCKED=0
+if grep -q '^support_matrix_launch=blocked$' <<<"${INJECTION_DOCTOR_OUTPUT}"; then
+  INJECTION_LAUNCH_BLOCKED=1
 fi
 
-if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-injections:ro'* ]]; then
-  echo "Expected workcell --dry-run to mount the staged injection bundle read-only" >&2
-  exit 1
-fi
+if [[ "${INJECTION_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  if [[ "${INJECTION_DRY_RUN_STATUS}" -ne 2 ]]; then
+    echo "Expected workcell --dry-run to fail closed for the injection-policy fixture on an unsupported launch host" >&2
+    printf '%s\n' "${INJECTION_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'Workcell launch is not supported'* ]]; then
+    echo "Expected workcell --dry-run to explain the blocked launch boundary for the injection-policy fixture" >&2
+    printf '%s\n' "${INJECTION_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'trusted-linux-amd64-validator'* ]]; then
+    echo "Expected workcell --dry-run to identify the reviewed validation-host lane for the injection-policy fixture" >&2
+    printf '%s\n' "${INJECTION_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
+else
+  if [[ "${INJECTION_DRY_RUN_STATUS}" -ne 0 ]]; then
+    echo "Expected workcell --dry-run to succeed for the injection-policy fixture on a supported launch host" >&2
+    printf '%s\n' "${INJECTION_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
 
-if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/codex-auth.json:ro'* ]]; then
-  echo "Expected workcell --dry-run to mount validated credential sources directly into the runtime" >&2
-  exit 1
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json'* ]]; then
+    echo "Expected workcell --dry-run to pass the staged injection manifest into the runtime" >&2
+    exit 1
+  fi
+
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-injections:ro'* ]]; then
+    echo "Expected workcell --dry-run to mount the staged injection bundle read-only" >&2
+    exit 1
+  fi
+
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/codex-auth.json:ro'* ]]; then
+    echo "Expected workcell --dry-run to mount validated credential sources directly into the runtime" >&2
+    exit 1
+  fi
+
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_CONTAINER_MUTABILITY=ephemeral'* ]]; then
+    echo "Expected workcell --dry-run to default strict mode to ephemeral container mutability" >&2
+    exit 1
+  fi
 fi
 
 "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
 
 if [[ "${INJECTION_DRY_RUN_OUTPUT}" == *"${INJECTION_POLICY_FIXTURE_ROOT}/codex-auth.json"* ]]; then
   echo "Expected workcell --dry-run to redact host credential source paths" >&2
-  exit 1
-fi
-
-if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_CONTAINER_MUTABILITY=ephemeral'* ]]; then
-  echo "Expected workcell --dry-run to default strict mode to ephemeral container mutability" >&2
   exit 1
 fi
 
@@ -1816,11 +1967,36 @@ printf '999999\n' >"${STALE_INJECTION_BUNDLE}/owner.pid"
 printf 'stale-secret\n' >"${STALE_INJECTION_BUNDLE}/stale.txt"
 printf '[{"source":"/tmp/stale-secret","mount_path":"/opt/workcell/host-inputs/credentials/stale"}]\n' >"${STALE_INJECTION_SIDECAR}"
 touch -t 202001010000 "${STALE_INJECTION_BUNDLE}" "${STALE_INJECTION_BUNDLE}/owner.pid" "${STALE_INJECTION_BUNDLE}/stale.txt" "${STALE_INJECTION_SIDECAR}"
-"${ROOT_DIR}/scripts/workcell" \
+set +e
+run_workcell_real_host \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
-  --dry-run >/tmp/workcell-no-policy-dry-run.out
+  --dry-run >/tmp/workcell-no-policy-dry-run.out 2>&1
+NO_POLICY_DRY_RUN_STATUS=$?
+set -e
+
+if [[ "${INJECTION_LAUNCH_BLOCKED}" -eq 1 ]]; then
+  if [[ "${NO_POLICY_DRY_RUN_STATUS}" -ne 2 ]]; then
+    echo "Expected no-policy workcell --dry-run to fail closed on an unsupported launch host" >&2
+    cat /tmp/workcell-no-policy-dry-run.out >&2
+    exit 1
+  fi
+  if ! grep -q 'Workcell launch is not supported' /tmp/workcell-no-policy-dry-run.out; then
+    echo "Expected no-policy workcell --dry-run to explain the blocked launch boundary" >&2
+    cat /tmp/workcell-no-policy-dry-run.out >&2
+    exit 1
+  fi
+  if ! grep -q 'trusted-linux-amd64-validator' /tmp/workcell-no-policy-dry-run.out; then
+    echo "Expected no-policy workcell --dry-run to identify the reviewed validation-host lane" >&2
+    cat /tmp/workcell-no-policy-dry-run.out >&2
+    exit 1
+  fi
+elif [[ "${NO_POLICY_DRY_RUN_STATUS}" -ne 0 ]]; then
+  echo "Expected no-policy workcell --dry-run to succeed on a supported launch host" >&2
+  cat /tmp/workcell-no-policy-dry-run.out >&2
+  exit 1
+fi
 
 if [[ -e "${STALE_INJECTION_BUNDLE}" ]]; then
   echo "Expected startup cleanup to remove dead-owner injection bundles even when no injection policy is active" >&2
@@ -3732,12 +3908,21 @@ BEGIN {
 
 1;
 EOF
-if ! WORKCELL_PERL_MARKER="${HOST_PERL_MARKER}" \
-  PERL5OPT=-MWorkcellMarker \
-  PERL5LIB="${HOST_PERL_INJECT_DIR}" \
-  "${ROOT_DIR}/scripts/workcell" --agent codex --dry-run >/dev/null 2>&1; then
-  echo "Expected scripts/workcell --dry-run to succeed under a hostile Perl environment" >&2
-  exit 1
+HOSTILE_PERL_DRY_RUN_OUTPUT="$(
+  WORKCELL_PERL_MARKER="${HOST_PERL_MARKER}" \
+    PERL5OPT=-MWorkcellMarker \
+    PERL5LIB="${HOST_PERL_INJECT_DIR}" \
+    "${ROOT_DIR}/scripts/workcell" --agent codex --dry-run 2>&1
+)" || HOSTILE_PERL_DRY_RUN_STATUS=$?
+HOSTILE_PERL_DRY_RUN_STATUS="${HOSTILE_PERL_DRY_RUN_STATUS:-0}"
+if [[ "${HOSTILE_PERL_DRY_RUN_STATUS}" -ne 0 ]]; then
+  if [[ "${HOSTILE_PERL_DRY_RUN_STATUS}" -ne 2 ]] ||
+    [[ "${HOSTILE_PERL_DRY_RUN_OUTPUT}" != *'Workcell launch is not supported'* ]] ||
+    [[ "${HOSTILE_PERL_DRY_RUN_OUTPUT}" != *'trusted-linux-amd64-validator'* ]]; then
+    echo "Expected scripts/workcell --dry-run to succeed or fail closed on the reviewed validation-host lane under a hostile Perl environment" >&2
+    printf '%s\n' "${HOSTILE_PERL_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
 fi
 if [[ -e "${HOST_PERL_MARKER}" ]]; then
   echo "scripts/workcell executed hostile Perl hooks before launcher setup" >&2
@@ -3896,7 +4081,7 @@ if "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q "Workspace path does not exist" /tmp/workcell-missing-workspace.out
 grep -q -- '--workspace' /tmp/workcell-missing-workspace.out
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -3909,7 +4094,7 @@ grep -q '^doctor_prepared_image=0$' /tmp/workcell-strict-preflight.out
 assert_doctor_missing_host_tools /tmp/workcell-strict-preflight.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 assert_doctor_next_for_prepare /tmp/workcell-strict-preflight.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -3924,7 +4109,7 @@ grep -q 'docker run' /tmp/workcell-dry-run-no-image.out
 grep -q 'cache_profile=off' /tmp/workcell-dry-run-no-image.out
 grep -q 'cache_assurance=managed-no-persistent-cache' /tmp/workcell-dry-run-no-image.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --cache-profile standard \
   --no-default-injection-policy \
@@ -3941,7 +4126,7 @@ grep -q 'cache_assurance=lower-assurance-persistent-cache' /tmp/workcell-dry-run
 grep -Eq -- "-v .+/workcell/cache/codex/.+/go-mod:/state/cache/go-mod($| )" /tmp/workcell-dry-run-cache-standard.out
 grep -q -- '-e XDG_CACHE_HOME=/state/cache/xdg' /tmp/workcell-dry-run-cache-standard.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -3959,7 +4144,7 @@ grep -q '^provider_native_sandbox_configured=disabled$' /tmp/workcell-inspect.ou
 grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect.out
 grep -q '^provider_native_sandbox_reason=workcell-pinned-off-due-to-bwrap-userns-incompatibility$' /tmp/workcell-inspect.out
 grep -q '^injection_policy=none$' /tmp/workcell-inspect.out
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --cache-profile standard \
   --no-default-injection-policy \
@@ -3973,7 +4158,7 @@ fi
 grep -q '^cache_profile=standard$' /tmp/workcell-inspect-cache-standard.out
 grep -q '^cache_assurance=lower-assurance-persistent-cache$' /tmp/workcell-inspect-cache-standard.out
 grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}"'$' /tmp/workcell-inspect-cache-standard.out
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   inspect \
   --agent codex \
   --no-default-injection-policy \
@@ -3985,7 +4170,7 @@ if ! "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}"'$' /tmp/workcell-inspect-subcommand.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent claude \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -3999,7 +4184,7 @@ grep -q '^provider_native_sandbox_configured=deferred$' /tmp/workcell-inspect-cl
 grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect-claude.out
 grep -q '^provider_native_sandbox_reason=deferred-until-runtime-prereqs-and-validation$' /tmp/workcell-inspect-claude.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent gemini \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -4013,7 +4198,7 @@ grep -q '^provider_native_sandbox_configured=disabled$' /tmp/workcell-inspect-ge
 grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect-gemini.out
 grep -q '^provider_native_sandbox_reason=workcell-pinned-off-until-validated$' /tmp/workcell-inspect-gemini.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-inspect" \
@@ -4026,7 +4211,7 @@ grep -q '^profile='"${STRICT_PREFLIGHT_PROFILE}-missing-inspect"'$' /tmp/workcel
 grep -Eq '^workspace=.*/missing-workspace-for-inspect$' /tmp/workcell-inspect-missing.out
 grep -q '^workspace_status=missing$' /tmp/workcell-inspect-missing.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -4040,7 +4225,7 @@ grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor.out
 assert_doctor_missing_host_tools /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 grep -q '^doctor_prepared_image=0$' /tmp/workcell-doctor.out
 assert_doctor_next_for_prepare /tmp/workcell-doctor.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   doctor \
   --agent codex \
   --no-default-injection-policy \
@@ -4054,7 +4239,7 @@ grep -q '^doctor_profile_state=absent$' /tmp/workcell-doctor-subcommand.out
 assert_doctor_missing_host_tools /tmp/workcell-doctor-subcommand.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 assert_doctor_next_for_prepare /tmp/workcell-doctor-subcommand.out "${EXPECTED_STRICT_DOCTOR_MISSING_HOST_TOOLS}"
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --workspace "${MISSING_DOCTOR_WORKSPACE}" \
@@ -4079,7 +4264,7 @@ image_tag=workcell:local
 image_id=sha256:stale
 source_date_epoch=0
 EOF
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -4098,7 +4283,7 @@ rm -rf "${STALE_MARKER_DIR}" "${REAL_HOME}/.colima/_lima/colima-${STALE_MARKER_P
 DEBUG_LOG_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.log"
 DEBUG_LOG_PROFILE="${STRICT_PREFLIGHT_PROFILE}-logs"
 rm -rf "$(dirname "${DEBUG_LOG_CAPTURE}")"
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -4163,7 +4348,7 @@ DEBUG_LOG_SYMLINK="${BARRIER_VERIFY_ROOT}/debug/symlink.log"
 rm -f "${DEBUG_LOG_SYMLINK_TARGET}" "${DEBUG_LOG_SYMLINK}"
 printf 'seed\n' >"${DEBUG_LOG_SYMLINK_TARGET}"
 ln -s "${DEBUG_LOG_SYMLINK_TARGET}" "${DEBUG_LOG_SYMLINK}"
-if "${ROOT_DIR}/scripts/workcell" \
+if run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -4189,7 +4374,7 @@ rm -f "${FILE_TRACE_CAPTURE}"
 
 TRANSCRIPT_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.transcript"
 TRANSCRIPT_LOG_PROFILE="${STRICT_PREFLIGHT_PROFILE}-transcript-logs"
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -4792,7 +4977,7 @@ EOF
 } | sed "s|__ROOT_DIR__|${ROOT_DIR}|g" >"${COLIMA_PROFILE_STATUS_HARNESS}"
 /bin/bash "${COLIMA_PROFILE_STATUS_HARNESS}"
 rm -f "${COLIMA_PROFILE_STATUS_HARNESS}"
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent gemini \
   --workspace "${ROOT_DIR}" \
   --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
@@ -4805,7 +4990,7 @@ grep -q 'api.github.com:443' /tmp/workcell-gemini-network.stderr
 grep -q 'aiplatform.googleapis.com:443' /tmp/workcell-gemini-network.stderr
 grep -q -- '--add-host accounts.google.com:' /tmp/workcell-gemini-network.stdout
 grep -q -- '--add-host aiplatform.googleapis.com:' /tmp/workcell-gemini-network.stdout
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent gemini \
   --workspace "${ROOT_DIR}" \
   --injection-policy "${AUTH_STATUS_ROOT}/gca-only.toml" \
@@ -4819,7 +5004,7 @@ grep -q 'sts.googleapis.com:443' /tmp/workcell-gemini-gca-network.stderr
 grep -q -- '--add-host accounts.google.com:' /tmp/workcell-gemini-gca-network.stdout
 grep -q -- '--add-host oauth2.googleapis.com:' /tmp/workcell-gemini-gca-network.stdout
 grep -q -- '--add-host sts.googleapis.com:' /tmp/workcell-gemini-gca-network.stdout
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent gemini \
   --workspace "${ROOT_DIR}" \
   --injection-policy "${AUTH_STATUS_ROOT}/vertex-comment.toml" \
@@ -5114,7 +5299,7 @@ if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
 fi
 grep -q -- '--local-include-untracked requires --local-snapshot worktree.' /tmp/workcell-premerge-local-snapshot-invalid.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --prepare \
   --allow-nongit-workspace \
@@ -5127,7 +5312,7 @@ if ! "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q 'docker run' /tmp/workcell-prepare-dry-run.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --prepare-only \
   --allow-nongit-workspace \
@@ -5140,7 +5325,7 @@ if ! "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q '^prepare_only=1 no_session_launch=1$' /tmp/workcell-prepare-only-dry-run.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --mode strict \
   --dry-run >/tmp/workcell-default-autonomy-dry-run.stdout 2>/tmp/workcell-default-autonomy-dry-run.stderr; then
@@ -5161,7 +5346,7 @@ grep -q -- '--cap-drop ALL' /tmp/workcell-default-autonomy-dry-run.stdout
 grep -q -- '--cap-add SETUID' /tmp/workcell-default-autonomy-dry-run.stdout
 grep -q -- '--cap-add SETGID' /tmp/workcell-default-autonomy-dry-run.stdout
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --agent-autonomy prompt \
   --agent-arg --version \
@@ -5181,7 +5366,7 @@ grep -q 'session_assurance_initial=managed-mutable' /tmp/workcell-prompt-autonom
 grep -q 'WORKCELL_AGENT_AUTONOMY=prompt' /tmp/workcell-prompt-autonomy-dry-run.stdout
 grep -q 'workcell:local codex --version' /tmp/workcell-prompt-autonomy-dry-run.stdout
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --codex-rules-mutability session \
   --agent-arg --version \
@@ -5196,7 +5381,7 @@ grep -q 'codex_rules_mutability_effective_initial=session' /tmp/workcell-codex-s
 grep -q 'codex_rules_assurance_effective_initial=lower-assurance-session-rules' /tmp/workcell-codex-session-rules-dry-run.stderr
 grep -q 'WORKCELL_CODEX_RULES_MUTABILITY=session' /tmp/workcell-codex-session-rules-dry-run.stdout
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent claude \
   --agent-arg --version \
   --dry-run >/tmp/workcell-claude-agent-arg-dry-run.stdout 2>/tmp/workcell-claude-agent-arg-dry-run.stderr; then
@@ -5207,7 +5392,7 @@ fi
 grep -q 'agent_autonomy=yolo' /tmp/workcell-claude-agent-arg-dry-run.stderr
 grep -q 'workcell:local claude --version' /tmp/workcell-claude-agent-arg-dry-run.stdout
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent gemini \
   --agent-arg --version \
   --dry-run >/tmp/workcell-gemini-agent-arg-dry-run.stdout 2>/tmp/workcell-gemini-agent-arg-dry-run.stderr; then
@@ -5218,8 +5403,8 @@ fi
 grep -q 'agent_autonomy=yolo' /tmp/workcell-gemini-agent-arg-dry-run.stderr
 grep -q 'workcell:local gemini --version' /tmp/workcell-gemini-agent-arg-dry-run.stdout
 
-DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --dry-run 2>/dev/null)"
-SECOND_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --dry-run 2>/dev/null)"
+DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --mode strict --dry-run 2>/dev/null)"
+SECOND_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --mode strict --dry-run 2>/dev/null)"
 DRY_RUN_CONTAINER_NAME="$(printf '%s\n' "${DRY_RUN_OUTPUT}" | sed -n 's/.*--name \([^ ]*\).*/\1/p' | head -n1)"
 SECOND_DRY_RUN_CONTAINER_NAME="$(printf '%s\n' "${SECOND_DRY_RUN_OUTPUT}" | sed -n 's/.*--name \([^ ]*\).*/\1/p' | head -n1)"
 if [[ -z "${DRY_RUN_CONTAINER_NAME}" ]] || [[ -z "${SECOND_DRY_RUN_CONTAINER_NAME}" ]]; then
@@ -5240,12 +5425,12 @@ printf 'profile = "strict"\n' >"${MASK_VERIFY_WORKSPACE}/.codex/config.toml"
 printf '# nested agent marker\n' >"${MASK_VERIFY_WORKSPACE}/nested/AGENTS.md"
 printf '{\n  "masked": true\n}\n' >"${MASK_VERIFY_WORKSPACE}/nested/.claude/settings.json"
 git init -q "${MASK_VERIFY_WORKSPACE}/.alt"
-MASK_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run 2>/dev/null)"
+MASK_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run 2>/dev/null)"
 SECRET_DRY_RUN_OUTPUT="$(
-  AWS_SECRET_ACCESS_KEY='verify-aws-secret' \
+  run_workcell_verify \
+    AWS_SECRET_ACCESS_KEY='verify-aws-secret' \
     GITHUB_TOKEN='verify-gh-token' \
     SSH_AUTH_SOCK='/tmp/workcell-secret-sock' \
-    "${ROOT_DIR}/scripts/workcell" \
     --agent codex \
     --mode strict \
     --workspace "${MASK_VERIFY_WORKSPACE}" \
@@ -5292,7 +5477,7 @@ if echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "/workspace/nested/AGENTS.md:ro"; 
   exit 1
 fi
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --mode strict \
   --workspace "${MASK_VERIFY_WORKSPACE}" \
@@ -5697,7 +5882,7 @@ remove_tree_safely "${CONFLICT_SHADOW_ROOT}"
 
 mkdir -p "${MASK_VERIFY_WORKSPACE}/symlinked"
 ln -s "${REAL_HOME}/.ssh/config" "${MASK_VERIFY_WORKSPACE}/symlinked/GEMINI.md"
-if "${ROOT_DIR}/scripts/workcell" --agent gemini --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run >/tmp/workcell-symlinked-doc.out 2>&1; then
+if run_workcell_verify --agent gemini --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run >/tmp/workcell-symlinked-doc.out 2>&1; then
   echo "Expected symlinked workspace control docs to be rejected" >&2
   exit 1
 fi
@@ -5720,7 +5905,7 @@ mkdir -p "${SHADOW_SYMLINK_REPO}/.git/modules/demo"
 ln -sf "${SHADOW_SYMLINK_REPO}/external-config" "${SHADOW_SYMLINK_REPO}/.git/modules/demo/config"
 ln -sf "${SHADOW_SYMLINK_REPO}/external-hooks-dir" "${SHADOW_SYMLINK_REPO}/.git/modules/demo/hooks"
 ln -sf "${SHADOW_SYMLINK_REPO}/external-worktrees" "${SHADOW_SYMLINK_REPO}/.git/modules/demo/worktrees"
-SHADOW_SYMLINK_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --workspace "${SHADOW_SYMLINK_REPO}" --dry-run 2>/dev/null)"
+SHADOW_SYMLINK_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --mode strict --workspace "${SHADOW_SYMLINK_REPO}" --dry-run 2>/dev/null)"
 for required in \
   "/workspace/.git/hooks:ro" \
   "/workspace/.git/modules/demo/config:ro" \
@@ -5739,7 +5924,7 @@ for forbidden in "github.com:443" "api.github.com:443" "objects.githubuserconten
   fi
 done
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --mode strict \
   --container-mutability readonly \
@@ -5771,7 +5956,7 @@ if grep -q -- '--cap-add SETGID' /tmp/workcell-resource-tunables.stdout; then
   exit 1
 fi
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${REAL_HOME}" --dry-run >/dev/null 2>&1; then
+if run_workcell_verify --agent codex --workspace "${REAL_HOME}" --dry-run >/dev/null 2>&1; then
   echo "Expected broad workspace rejection for ${REAL_HOME}" >&2
   exit 1
 fi
@@ -5781,7 +5966,7 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --dry-run >/de
   exit 1
 fi
 
-if ! "${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --ack-breakglass --dry-run >/dev/null 2>&1; then
+if ! run_workcell_verify --agent codex --mode breakglass --ack-breakglass --dry-run >/dev/null 2>&1; then
   echo "Expected acknowledged breakglass dry-run to succeed" >&2
   exit 1
 fi
@@ -5791,7 +5976,7 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-arbitrary-command --dry-
   exit 1
 fi
 
-ARBITRARY_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command --dry-run -- bash -lc true 2>/dev/null)"
+ARBITRARY_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command --dry-run -- bash -lc true 2>/dev/null)"
 if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
   echo "Expected acknowledged arbitrary command dry-run to succeed" >&2
   exit 1
@@ -5810,7 +5995,7 @@ if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- 'workcell:local bash -lc tr
   exit 1
 fi
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --mode development \
   --dry-run \
@@ -5870,24 +6055,24 @@ if [[ -e /tmp/workcell-egress-pwned ]]; then
   exit 1
 fi
 
-if [[ -d "${REAL_HOME}/.ssh" ]] && "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.ssh" --dry-run >/dev/null 2>&1; then
+if [[ -d "${REAL_HOME}/.ssh" ]] && run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.ssh" --dry-run >/dev/null 2>&1; then
   echo "Expected sensitive workspace rejection for ${REAL_HOME}/.ssh" >&2
   exit 1
 fi
 
-if [[ -d "${REAL_HOME}/.config" ]] && "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.config" --dry-run >/dev/null 2>&1; then
+if [[ -d "${REAL_HOME}/.config" ]] && run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.config" --dry-run >/dev/null 2>&1; then
   echo "Expected sensitive workspace rejection for ${REAL_HOME}/.config" >&2
   exit 1
 fi
 
 if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
-  if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/Library/Application Support" --dry-run >/dev/null 2>&1; then
+  if run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/Library/Application Support" --dry-run >/dev/null 2>&1; then
     echo "Expected sensitive workspace rejection for ${REAL_HOME}/Library/Application Support" >&2
     exit 1
   fi
   BROWSER_PROFILE_FIXTURE="${REAL_HOME}/Library/Application Support/Google/Chrome/WorkcellVerifyBrowserProfile"
   mkdir -p "${BROWSER_PROFILE_FIXTURE}"
-  if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${BROWSER_PROFILE_FIXTURE}" --dry-run >/dev/null 2>&1; then
+  if run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${BROWSER_PROFILE_FIXTURE}" --dry-run >/dev/null 2>&1; then
     echo "Expected browser-profile workspace rejection for ${BROWSER_PROFILE_FIXTURE}" >&2
     exit 1
   fi
@@ -5904,8 +6089,8 @@ host_tool_exists() {
 }
 
 if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
-  if HOME="${BARRIER_VERIFY_ROOT}/fake-home" \
-    "${ROOT_DIR}/scripts/workcell" \
+  if run_workcell_verify \
+    HOME="${BARRIER_VERIFY_ROOT}/fake-home" \
     --agent codex \
     --allow-nongit-workspace \
     --workspace "${REAL_HOME}/Library/Application Support" \
@@ -5918,17 +6103,17 @@ fi
 NONGIT_WORKSPACE="${BARRIER_VERIFY_ROOT}/nongit-workspace"
 mkdir -p "${NONGIT_WORKSPACE}"
 NONGIT_WORKSPACE="$(cd "${NONGIT_WORKSPACE}" && pwd -P)"
-if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+if run_workcell_verify --agent codex --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
   echo "Expected non-git workspace rejection without explicit opt-in" >&2
   exit 1
 fi
 printf '# marker\n' >"${NONGIT_WORKSPACE}/AGENTS.md"
-if ! "${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+if ! run_workcell_verify --agent codex --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
   echo "Expected marker-based non-git workspace to succeed with explicit opt-in" >&2
   exit 1
 fi
 for agent in claude gemini; do
-  if ! "${ROOT_DIR}/scripts/workcell" --agent "${agent}" --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+  if ! run_workcell_verify --agent "${agent}" --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
     echo "Expected marker-based non-git workspace prepare dry-run to succeed for ${agent}" >&2
     exit 1
   fi
@@ -6587,7 +6772,7 @@ fi
 
 UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
 mkdir -p "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}"
-if "${ROOT_DIR}/scripts/workcell" \
+if run_workcell_verify \
   --agent codex \
   --allow-nongit-workspace \
   --workspace "${NONGIT_WORKSPACE}" \
@@ -6599,7 +6784,7 @@ grep -q "Refusing to reuse unmanaged Colima profile" /tmp/workcell-unmanaged-pro
 grep -q -- '--repair-profile' /tmp/workcell-unmanaged-profile.out
 grep -q "colima delete --profile" /tmp/workcell-unmanaged-profile.out
 
-if ! "${ROOT_DIR}/scripts/workcell" \
+if ! run_workcell_verify \
   --agent codex \
   --repair-profile \
   --allow-nongit-workspace \
@@ -6613,7 +6798,7 @@ fi
 grep -q 'repair_action=delete_unmanaged_profile' /tmp/workcell-repair-profile-dry-run.out
 grep -q 'docker run' /tmp/workcell-repair-profile-dry-run.out
 for agent in claude gemini; do
-  if ! "${ROOT_DIR}/scripts/workcell" \
+  if ! run_workcell_verify \
     --agent "${agent}" \
     --repair-profile \
     --allow-nongit-workspace \
@@ -6673,7 +6858,7 @@ touch "${WORKTREE_MAIN}/tracked.txt"
 git -C "${WORKTREE_MAIN}" add tracked.txt
 git -C "${WORKTREE_MAIN}" commit -q -m init
 git -C "${WORKTREE_MAIN}" worktree add -q -b linked "${WORKTREE_LINKED}"
-if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKTREE_LINKED}" --dry-run >/tmp/workcell-linked-worktree.out 2>&1; then
+if run_workcell_verify --agent codex --workspace "${WORKTREE_LINKED}" --dry-run >/tmp/workcell-linked-worktree.out 2>&1; then
   echo "Expected linked git worktree with external admin state to be rejected" >&2
   exit 1
 fi
@@ -6687,7 +6872,7 @@ REDIRECTED_WORKTREE="${REDIRECTED_ROOT}/outside"
 mkdir -p "${REDIRECTED_WORKTREE}"
 git init -q "${REDIRECTED_REPO}"
 git --git-dir "${REDIRECTED_REPO}/.git" config core.worktree "${REDIRECTED_WORKTREE}"
-if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${REDIRECTED_REPO}" --dry-run >/dev/null 2>&1; then
+if run_workcell_verify --agent codex --workspace "${REDIRECTED_REPO}" --dry-run >/dev/null 2>&1; then
   echo "Expected redirected core.worktree repo to be rejected" >&2
   exit 1
 fi

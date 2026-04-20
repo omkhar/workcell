@@ -25,29 +25,55 @@ scrub_host_process_env() {
 
 scrub_host_process_env
 
-require_supported_macos_host_arch() {
+detected_host_os() {
   local host_os=""
-  local host_arch=""
-  local arm64_capable=""
+
+  # verify-invariants uses a reserved harness-only host override so Linux
+  # validation runners can still exercise launch assembly without weakening the
+  # real operator-facing support boundary.
+  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]]; then
+    printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS}"
+    return 0
+  fi
 
   host_os="$(uname -s 2>/dev/null || true)"
-  [[ "${host_os}" == "Darwin" ]] || return 0
+  case "${host_os}" in
+    Darwin)
+      printf 'macos\n'
+      ;;
+    Linux)
+      printf 'linux\n'
+      ;;
+    MINGW* | MSYS* | CYGWIN* | Windows_NT)
+      printf 'windows\n'
+      ;;
+    *)
+      printf '%s\n' "$(printf '%s' "${host_os}" | tr '[:upper:]' '[:lower:]')"
+      ;;
+  esac
+}
 
-  arm64_capable="$(sysctl -in hw.optional.arm64 2>/dev/null || true)"
-  if [[ "${arm64_capable}" == "1" ]]; then
+detected_host_arch() {
+  local host_arch=""
+
+  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]]; then
+    printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}"
     return 0
   fi
 
   host_arch="$(uname -m 2>/dev/null || true)"
-  if [[ "${host_arch}" == "arm64" || "${host_arch}" == "aarch64" ]]; then
-    return 0
-  fi
-
-  echo "Workcell supports Apple Silicon macOS hosts only. Intel macOS is not supported." >&2
-  exit 1
+  case "${host_arch}" in
+    arm64 | aarch64)
+      printf 'arm64\n'
+      ;;
+    x86_64 | amd64)
+      printf 'amd64\n'
+      ;;
+    *)
+      printf '%s\n' "$(printf '%s' "${host_arch}" | tr '[:upper:]' '[:lower:]')"
+      ;;
+  esac
 }
-
-require_supported_macos_host_arch
 
 resolve_self_path() {
   local source_path="${BASH_SOURCE[0]}"
@@ -187,6 +213,7 @@ HOST_DOCKER_BIN=""
 COLIMA_STATE_ROOT="${REAL_HOME}/.colima"
 WORKCELL_STATE_ROOT="${WORKCELL_STATE_ROOT:-${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell}"
 WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+WORKCELL_HOST_SUPPORT_MATRIX_PATH="${ROOT_DIR}/policy/host-support-matrix.tsv"
 PROFILE_PREEXISTED=0
 PROFILE_RUNNING=0
 PROFILE_VALIDATED=0
@@ -200,6 +227,13 @@ SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
 FINAL_SESSION_ASSURANCE=""
 SESSION_ID=""
 SESSION_RECORD_PATH=""
+SUPPORT_MATRIX_HOST_OS=""
+SUPPORT_MATRIX_HOST_ARCH=""
+SUPPORT_MATRIX_STATUS=""
+SUPPORT_MATRIX_LAUNCH=""
+SUPPORT_MATRIX_EVIDENCE=""
+SUPPORT_MATRIX_VALIDATION_LANE=""
+SUPPORT_MATRIX_REASON=""
 SESSION_RECORD_WRITTEN=0
 SESSION_RECORD_FINALIZED=0
 SESSION_META_RECORD_PATH=""
@@ -1394,6 +1428,79 @@ current_workspace_transport() {
     return 0
   fi
   printf 'workspace-mount\n'
+}
+
+refresh_support_matrix_state() {
+  local line=""
+  local key=""
+  local value=""
+  local metadata=""
+
+  metadata="$(go_hostutil launcher support-matrix-eval \
+    "${WORKCELL_HOST_SUPPORT_MATRIX_PATH}" \
+    "$(detected_host_os)" \
+    "$(detected_host_arch)" \
+    "$(current_target_kind)" \
+    "$(current_target_provider)" \
+    "$(current_target_assurance_class)")"
+
+  SUPPORT_MATRIX_HOST_OS=""
+  SUPPORT_MATRIX_HOST_ARCH=""
+  SUPPORT_MATRIX_STATUS=""
+  SUPPORT_MATRIX_LAUNCH=""
+  SUPPORT_MATRIX_EVIDENCE=""
+  SUPPORT_MATRIX_VALIDATION_LANE=""
+  SUPPORT_MATRIX_REASON=""
+
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "${key}" in
+      host_os) SUPPORT_MATRIX_HOST_OS="${value}" ;;
+      host_arch) SUPPORT_MATRIX_HOST_ARCH="${value}" ;;
+      support_matrix_status) SUPPORT_MATRIX_STATUS="${value}" ;;
+      support_matrix_launch) SUPPORT_MATRIX_LAUNCH="${value}" ;;
+      support_matrix_evidence) SUPPORT_MATRIX_EVIDENCE="${value}" ;;
+      support_matrix_validation_lane) SUPPORT_MATRIX_VALIDATION_LANE="${value}" ;;
+      support_matrix_reason) SUPPORT_MATRIX_REASON="${value}" ;;
+    esac
+  done <<<"${metadata}"
+
+  [[ -n "${SUPPORT_MATRIX_HOST_OS}" ]] || SUPPORT_MATRIX_HOST_OS="$(detected_host_os)"
+  [[ -n "${SUPPORT_MATRIX_HOST_ARCH}" ]] || SUPPORT_MATRIX_HOST_ARCH="$(detected_host_arch)"
+  [[ -n "${SUPPORT_MATRIX_STATUS}" ]] || SUPPORT_MATRIX_STATUS="unsupported"
+  [[ -n "${SUPPORT_MATRIX_LAUNCH}" ]] || SUPPORT_MATRIX_LAUNCH="blocked"
+  [[ -n "${SUPPORT_MATRIX_EVIDENCE}" ]] || SUPPORT_MATRIX_EVIDENCE="none"
+  [[ -n "${SUPPORT_MATRIX_VALIDATION_LANE}" ]] || SUPPORT_MATRIX_VALIDATION_LANE="none"
+  [[ -n "${SUPPORT_MATRIX_REASON}" ]] || SUPPORT_MATRIX_REASON="not-in-reviewed-support-matrix"
+}
+
+print_support_matrix_state() {
+  printf 'host_os=%s\n' "${SUPPORT_MATRIX_HOST_OS}"
+  printf 'host_arch=%s\n' "${SUPPORT_MATRIX_HOST_ARCH}"
+  printf 'support_matrix_status=%s\n' "${SUPPORT_MATRIX_STATUS}"
+  printf 'support_matrix_launch=%s\n' "${SUPPORT_MATRIX_LAUNCH}"
+  printf 'support_matrix_evidence=%s\n' "${SUPPORT_MATRIX_EVIDENCE}"
+  printf 'support_matrix_validation_lane=%s\n' "${SUPPORT_MATRIX_VALIDATION_LANE}"
+  printf 'support_matrix_reason=%s\n' "${SUPPORT_MATRIX_REASON}"
+}
+
+support_matrix_launch_allowed() {
+  [[ "${SUPPORT_MATRIX_LAUNCH}" == "allowed" ]]
+}
+
+fail_for_unsupported_launch_target() {
+  if support_matrix_launch_allowed; then
+    return 0
+  fi
+
+  echo "Workcell launch is not supported for ${SUPPORT_MATRIX_HOST_OS}/${SUPPORT_MATRIX_HOST_ARCH} on target $(current_target_kind)/$(current_target_provider)/$(current_target_assurance_class)." >&2
+  if [[ "${SUPPORT_MATRIX_STATUS}" == "validation-host-only" ]] && [[ "${SUPPORT_MATRIX_VALIDATION_LANE}" != "none" ]]; then
+    echo "This combination is reserved for the reviewed validation-host lane: ${SUPPORT_MATRIX_VALIDATION_LANE}." >&2
+  fi
+  echo "Supported launch hosts today remain Apple Silicon macOS for the reviewed Colima strict path." >&2
+  echo "Run workcell --agent ${AGENT} --doctor --workspace ${WORKSPACE} to inspect the support boundary on this host." >&2
+  exit 2
 }
 
 session_record_matches_attached_workspace_shape() {
@@ -5349,6 +5456,7 @@ print_inspect_state() {
   printf 'target_provider=%s\n' "$(current_target_provider)"
   printf 'target_id=%s\n' "$(current_target_id)"
   printf 'target_assurance_class=%s\n' "$(current_target_assurance_class)"
+  print_support_matrix_state
   printf 'runtime_api=%s\n' "$(current_runtime_api)"
   printf 'workspace_transport=%s\n' "$(current_workspace_transport)"
   printf 'workspace=%s\n' "${WORKSPACE}"
@@ -7773,6 +7881,7 @@ if [[ -n "${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE:-}" ]]; then
 fi
 
 refresh_profile_state "${COLIMA_PROFILE}"
+refresh_support_matrix_state
 
 if [[ "${AUTH_STATUS}" -eq 1 ]]; then
   print_injection_status
@@ -7817,7 +7926,9 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
   printf 'doctor_profile_state=%s\n' "${profile_state}"
   printf 'doctor_workspace_binding=%s\n' "${PROFILE_MARKER_WORKSPACE:-none}"
   printf 'doctor_prepared_image=%s\n' "${prepared_image}"
-  if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
+  if ! support_matrix_launch_allowed; then
+    printf 'doctor_recommended_next=use-supported-host\n'
+  elif [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
     printf 'doctor_recommended_next=install-host-tools\n'
   elif [[ "${workspace_state}" == "missing" ]] || [[ "${workspace_state}" == "not-directory" ]]; then
     printf 'doctor_recommended_next=fix-workspace\n'
@@ -7836,6 +7947,8 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
   fi
   exit 0
 fi
+
+fail_for_unsupported_launch_target
 
 fail_fast_for_missing_gemini_auth "$@"
 
