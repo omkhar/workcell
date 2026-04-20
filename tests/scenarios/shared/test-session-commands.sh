@@ -444,40 +444,35 @@ if grep -q '^support_matrix_launch=blocked$' <<<"${detached_support_doctor_outpu
   detached_launch_blocked=1
 fi
 
+run_detached_start_dry_run() {
+  local workspace_mode="$1"
+  local workspace_path="$2"
+  shift 2
+
+  WORKCELL_SESSION_WORKSPACE_MODE="${workspace_mode}" \
+    "${ROOT_DIR}/scripts/workcell" \
+    session start \
+    --agent codex \
+    --mode development \
+    --workspace "${workspace_path}" \
+    --no-default-injection-policy \
+    --allow-arbitrary-command \
+    --ack-arbitrary-command \
+    "$@" \
+    --dry-run \
+    -- /bin/true
+}
+
 if [[ "${detached_launch_blocked}" -eq 1 ]]; then
   set +e
-  detached_start_blocked_output="$(
-    WORKCELL_SESSION_WORKSPACE_MODE=direct \
-      "${ROOT_DIR}/scripts/workcell" \
-      session start \
-      --agent codex \
-      --mode development \
-      --workspace "${DETACHED_START_WORKSPACE}" \
-      --no-default-injection-policy \
-      --allow-arbitrary-command \
-      --ack-arbitrary-command \
-      --dry-run \
-      -- /bin/true 2>&1 >/dev/null
-  )"
+  detached_start_blocked_output="$(run_detached_start_dry_run direct "${DETACHED_START_WORKSPACE}" 2>&1 >/dev/null)"
   detached_start_blocked_status=$?
   set -e
   test "${detached_start_blocked_status}" -eq 2
   grep -q 'Workcell launch is not supported' <<<"${detached_start_blocked_output}"
   grep -q 'Supported launch hosts today remain Apple Silicon macOS' <<<"${detached_start_blocked_output}"
 else
-  detached_start_default_output="$(
-    WORKCELL_SESSION_WORKSPACE_MODE=direct \
-      "${ROOT_DIR}/scripts/workcell" \
-      session start \
-      --agent codex \
-      --mode development \
-      --workspace "${DETACHED_START_WORKSPACE}" \
-      --no-default-injection-policy \
-      --allow-arbitrary-command \
-      --ack-arbitrary-command \
-      --dry-run \
-      -- /bin/true
-  )"
+  detached_start_default_output="$(run_detached_start_dry_run direct "${DETACHED_START_WORKSPACE}")"
   grep -Fq -- "docker run --init -d -i -t" <<<"${detached_start_default_output}"
   grep -Eq -- "-v ${DETACHED_START_WORKSPACE}/\\.git/workcell-sessions/.+/repo:/workspace($| )" <<<"${detached_start_default_output}"
   grep -Fq -- "-e WORKCELL_DETACHED_STDIN_PATH=/state/tmp/workcell/session-stdin" <<<"${detached_start_default_output}"
@@ -497,38 +492,13 @@ else
 fi
 custom_state_home="${TMP_DIR}/detached-state-home"
 if [[ "${detached_launch_blocked}" -eq 0 ]]; then
-  detached_start_direct_output="$(
-    WORKCELL_SESSION_WORKSPACE_MODE=isolated \
-      "${ROOT_DIR}/scripts/workcell" \
-      session start \
-      --session-workspace direct \
-      --agent codex \
-      --mode development \
-      --workspace "${DETACHED_START_WORKSPACE}" \
-      --no-default-injection-policy \
-      --allow-arbitrary-command \
-      --ack-arbitrary-command \
-      --dry-run \
-      -- /bin/true
-  )"
+  detached_start_direct_output="$(run_detached_start_dry_run isolated "${DETACHED_START_WORKSPACE}" --session-workspace direct)"
   grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_direct_output}"
 
   NONGIT_DETACHED_WORKSPACE="${TMP_DIR}/detached-start-nongit"
   mkdir -p "${NONGIT_DETACHED_WORKSPACE}"
   set +e
-  nongit_isolated_output="$(
-    "${ROOT_DIR}/scripts/workcell" \
-      session start \
-      --session-workspace isolated \
-      --agent codex \
-      --mode development \
-      --workspace "${NONGIT_DETACHED_WORKSPACE}" \
-      --no-default-injection-policy \
-      --allow-arbitrary-command \
-      --ack-arbitrary-command \
-      --dry-run \
-      -- /bin/true 2>&1 >/dev/null
-  )"
+  nongit_isolated_output="$(run_detached_start_dry_run isolated "${NONGIT_DETACHED_WORKSPACE}" --session-workspace isolated 2>&1 >/dev/null)"
   nongit_isolated_status=$?
   set -e
   test "${nongit_isolated_status}" -eq 2
@@ -538,19 +508,7 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
 
   printf 'dirty\n' >>"${DETACHED_START_WORKSPACE}/README.md"
   set +e
-  dirty_isolated_output="$(
-    "${ROOT_DIR}/scripts/workcell" \
-      session start \
-      --session-workspace isolated \
-      --agent codex \
-      --mode development \
-      --workspace "${DETACHED_START_WORKSPACE}" \
-      --no-default-injection-policy \
-      --allow-arbitrary-command \
-      --ack-arbitrary-command \
-      --dry-run \
-      -- /bin/true 2>&1 >/dev/null
-  )"
+  dirty_isolated_output="$(run_detached_start_dry_run isolated "${DETACHED_START_WORKSPACE}" --session-workspace isolated 2>&1 >/dev/null)"
   dirty_isolated_status=$?
   set -e
   test "${dirty_isolated_status}" -eq 2
@@ -569,19 +527,7 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
   git -C "${LINKED_WORKTREE_MAIN}" commit -q -m init
   git -C "${LINKED_WORKTREE_MAIN}" worktree add -q -b linked "${LINKED_WORKTREE_PATH}"
   set +e
-  linked_isolated_output="$(
-    "${ROOT_DIR}/scripts/workcell" \
-      session start \
-      --session-workspace isolated \
-      --agent codex \
-      --mode development \
-      --workspace "${LINKED_WORKTREE_PATH}" \
-      --no-default-injection-policy \
-      --allow-arbitrary-command \
-      --ack-arbitrary-command \
-      --dry-run \
-      -- /bin/true 2>&1 >/dev/null
-  )"
+  linked_isolated_output="$(run_detached_start_dry_run isolated "${LINKED_WORKTREE_PATH}" --session-workspace isolated 2>&1 >/dev/null)"
   linked_isolated_status=$?
   set -e
   test "${linked_isolated_status}" -eq 2
