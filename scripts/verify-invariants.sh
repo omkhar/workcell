@@ -144,6 +144,43 @@ go_verify_hostutil() {
   run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-hostutil "$@"
 }
 
+detected_verify_host_os() {
+  local host_os=""
+
+  host_os="$(uname -s 2>/dev/null || true)"
+  case "${host_os}" in
+    Darwin)
+      printf 'macos\n'
+      ;;
+    Linux)
+      printf 'linux\n'
+      ;;
+    MINGW* | MSYS* | CYGWIN* | Windows_NT)
+      printf 'windows\n'
+      ;;
+    *)
+      printf '%s\n' "$(printf '%s' "${host_os}" | tr '[:upper:]' '[:lower:]')"
+      ;;
+  esac
+}
+
+detected_verify_host_arch() {
+  local host_arch=""
+
+  host_arch="$(uname -m 2>/dev/null || true)"
+  case "${host_arch}" in
+    arm64 | aarch64)
+      printf 'arm64\n'
+      ;;
+    x86_64 | amd64)
+      printf 'amd64\n'
+      ;;
+    *)
+      printf '%s\n' "$(printf '%s' "${host_arch}" | tr '[:upper:]' '[:lower:]')"
+      ;;
+  esac
+}
+
 HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
@@ -200,6 +237,19 @@ DETACHED_SESSION_ID=""
 DETACHED_SESSION_WORKSPACE=""
 DETACHED_SESSION_SOURCE_SENTINEL_PATH=""
 VERIFY_INVARIANTS_CLEANUP_ACTIVE=0
+ROOT_STRICT_SUPPORT_OUTPUT="$(
+  go_verify_hostutil launcher support-matrix-eval \
+    "${ROOT_DIR}/policy/host-support-matrix.tsv" \
+    "$(detected_verify_host_os)" \
+    "$(detected_verify_host_arch)" \
+    local_vm \
+    colima \
+    strict
+)"
+if grep -q '^support_matrix_launch=blocked$' <<<"${ROOT_STRICT_SUPPORT_OUTPUT}"; then
+  export WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS="macos"
+  export WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="arm64"
+fi
 
 delete_verify_colima_profile() {
   local profile_name="$1"
@@ -1813,26 +1863,59 @@ cmp -s "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/documents/common
 expected_auth="$(cd "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/../fragments" && pwd -P)/fragment-auth.json"
 [[ "$(jq -r '.credentials.codex_auth.source' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-nested-includes/manifest.json")" == "${expected_auth}" ]]
 
+INJECTION_DOCTOR_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --workspace "${ROOT_DIR}" \
+  --no-default-injection-policy \
+  --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
+  --doctor)"
+set +e
 INJECTION_DRY_RUN_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
   --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
-  --dry-run)"
+  --dry-run 2>&1)"
+INJECTION_DRY_RUN_STATUS=$?
+set -e
 
-if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json'* ]]; then
-  echo "Expected workcell --dry-run to pass the staged injection manifest into the runtime" >&2
-  exit 1
-fi
+if grep -q '^support_matrix_launch=blocked$' <<<"${INJECTION_DOCTOR_OUTPUT}"; then
+  if [[ "${INJECTION_DRY_RUN_STATUS}" -ne 2 ]]; then
+    echo "Expected workcell --dry-run to fail closed for the injection-policy fixture on an unsupported launch host" >&2
+    printf '%s\n' "${INJECTION_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'Workcell launch is not supported'* ]]; then
+    echo "Expected workcell --dry-run to explain the blocked launch boundary for the injection-policy fixture" >&2
+    printf '%s\n' "${INJECTION_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'trusted-linux-amd64-validator'* ]]; then
+    echo "Expected workcell --dry-run to identify the reviewed validation-host lane for the injection-policy fixture" >&2
+    printf '%s\n' "${INJECTION_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
+else
+  if [[ "${INJECTION_DRY_RUN_STATUS}" -ne 0 ]]; then
+    echo "Expected workcell --dry-run to succeed for the injection-policy fixture on a supported launch host" >&2
+    printf '%s\n' "${INJECTION_DRY_RUN_OUTPUT}" >&2
+    exit 1
+  fi
 
-if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-injections:ro'* ]]; then
-  echo "Expected workcell --dry-run to mount the staged injection bundle read-only" >&2
-  exit 1
-fi
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json'* ]]; then
+    echo "Expected workcell --dry-run to pass the staged injection manifest into the runtime" >&2
+    exit 1
+  fi
 
-if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/codex-auth.json:ro'* ]]; then
-  echo "Expected workcell --dry-run to mount validated credential sources directly into the runtime" >&2
-  exit 1
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-injections:ro'* ]]; then
+    echo "Expected workcell --dry-run to mount the staged injection bundle read-only" >&2
+    exit 1
+  fi
+
+  if [[ "${INJECTION_DRY_RUN_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/codex-auth.json:ro'* ]]; then
+    echo "Expected workcell --dry-run to mount validated credential sources directly into the runtime" >&2
+    exit 1
+  fi
 fi
 
 "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"

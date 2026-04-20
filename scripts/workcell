@@ -28,6 +28,14 @@ scrub_host_process_env
 detected_host_os() {
   local host_os=""
 
+  # verify-invariants uses a reserved harness-only host override so Linux
+  # validation runners can still exercise launch assembly without weakening the
+  # real operator-facing support boundary.
+  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]]; then
+    printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS}"
+    return 0
+  fi
+
   host_os="$(uname -s 2>/dev/null || true)"
   case "${host_os}" in
     Darwin)
@@ -47,6 +55,11 @@ detected_host_os() {
 
 detected_host_arch() {
   local host_arch=""
+
+  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]]; then
+    printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}"
+    return 0
+  fi
 
   host_arch="$(uname -m 2>/dev/null || true)"
   case "${host_arch}" in
