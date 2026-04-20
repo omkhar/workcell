@@ -23,5 +23,6 @@ require_tool zizmor
 zizmor --persona auditor --config "${ROOT_DIR}/.github/zizmor.yml" "${ROOT_DIR}/.github/workflows/"*.yml
 
 run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-metadatautil check-workflows "${ROOT_DIR}" "${POLICY_PATH}"
+"${ROOT_DIR}/scripts/verify-workflow-lanes.sh"
 
 echo "Workcell workflow checks passed."

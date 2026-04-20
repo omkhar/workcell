@@ -535,10 +535,117 @@ func TestPreMergeChecksPinnedUpstreams(t *testing.T) {
 	script := string(content)
 
 	for _, want := range []string{
-		`echo "[pre-merge] pinned upstream refresh check"`,
-		`"${ROOT_DIR}/scripts/update-upstream-pins.sh" --check`,
-		`echo "[pre-merge] GitHub macOS release test runner verification"`,
-		`"${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh" macos-26 macos-15`,
+		`--profile repo-core|pr-parity|release-preflight`,
+		`"${ROOT_DIR}/scripts/ci-plan.sh" "${plan_args[@]}" --format json`,
+		`echo "[pre-merge] release pin hygiene"`,
+		`scripts/ci/job-pin-hygiene.sh)`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
+func TestJobValidatePassesParityProfileIntoValidator(t *testing.T) {
+	t.Parallel()
+
+	jobValidatePath := filepath.Join(repoRoot(t), "scripts", "ci", "job-validate.sh")
+	jobValidateContent, err := os.ReadFile(jobValidatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobValidate := string(jobValidateContent)
+
+	for _, want := range []string{
+		`WORKCELL_VALIDATE_REPO_PROFILE="${PROFILE}"`,
+		`"${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh"`,
+	} {
+		if !strings.Contains(jobValidate, want) {
+			t.Fatalf("%s does not contain %q", jobValidatePath, want)
+		}
+	}
+
+	runValidatePath := filepath.Join(repoRoot(t), "scripts", "ci", "run-validate-in-validator.sh")
+	runValidateContent, err := os.ReadFile(runValidatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runValidate := string(runValidateContent)
+
+	for _, want := range []string{
+		`VALIDATE_PROFILE="${WORKCELL_VALIDATE_REPO_PROFILE:-release-preflight}"`,
+		`-e WORKCELL_VALIDATE_REPO_PROFILE="${VALIDATE_PROFILE}"`,
+		"./scripts/validate-repo.sh",
+	} {
+		if !strings.Contains(runValidate, want) {
+			t.Fatalf("%s does not contain %q", runValidatePath, want)
+		}
+	}
+}
+
+func TestJobValidateReservesReleaseBundleForReleasePreflight(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "ci", "job-validate.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		`SKIP_RELEASE_BUNDLE="${WORKCELL_CI_VALIDATE_SKIP_RELEASE_BUNDLE:-0}"`,
+		`if [[ "${PROFILE}" == "release-preflight" ]] && [[ "${SKIP_RELEASE_BUNDLE}" != "1" ]]; then`,
+		`echo "[ci/validate] release bundle reproducibility"`,
+		`"${ROOT_DIR}/scripts/verify-release-bundle.sh"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
+func TestJobValidateStreamsInstallArtifactsBackToHost(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "ci", "job-validate.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		`bundle_path="${ARTIFACT_DIR}/${bundle_name}"`,
+		`"${ARCHIVE_REF}" | gzip -n -9`,
+		`' >"${bundle_path}"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+
+	if strings.Contains(script, `-v "${ARTIFACT_DIR}:/dist"`) {
+		t.Fatalf("%s should stream install artifacts back to the host instead of relying on a writable /dist bind mount", scriptPath)
+	}
+}
+
+func TestValidateRepoReservesMutationAndCoverageForReleasePreflight(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "validate-repo.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		`VALIDATION_PROFILE="${WORKCELL_VALIDATE_REPO_PROFILE:-release-preflight}"`,
+		`repo-core | pr-parity | release-preflight`,
+		`if [[ "${VALIDATION_PROFILE}" == "release-preflight" ]]; then`,
+		`"${ROOT_DIR}/scripts/run-mutation-tests.sh"`,
+		`"${ROOT_DIR}/scripts/verify-coverage.sh"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)

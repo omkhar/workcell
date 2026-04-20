@@ -206,8 +206,7 @@ func validateCIWorkflowPRShapeFlow(ciWorkflow string) error {
 		"fetch-depth: 0",
 		"WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}",
 		"Check pull request shape",
-		`git fetch --no-tags --prune origin "${WORKCELL_PR_BASE_REF}"`,
-		`./scripts/check-pr-shape.sh --base-ref "origin/${WORKCELL_PR_BASE_REF}" --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0`,
+		`./scripts/ci/job-pr-shape.sh --base "${WORKCELL_PR_BASE_REF}"`,
 		"Skip outside pull requests",
 		`PR shape gate applies only to pull requests.`,
 	} {
@@ -1689,22 +1688,17 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	for _, needle := range []string{
 		"./scripts/verify-github-macos-release-test-runners.sh",
-		"./scripts/verify-upstream-gemini-release.sh",
+		"./scripts/verify-upstream-codex-release.sh",
 		"./scripts/verify-upstream-claude-release.sh",
+		"./scripts/verify-upstream-gemini-release.sh",
+		"./scripts/update-upstream-pins.sh --check",
 	} {
-		if !strings.Contains(ciWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/ci.yml must contain %q", needle)
-		}
 		if !strings.Contains(releaseWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
 		}
 	}
 	for _, needle := range []string{
-		"./scripts/verify-github-macos-release-test-runners.sh",
-		"./scripts/verify-upstream-codex-release.sh",
-		"./scripts/verify-upstream-claude-release.sh",
-		"./scripts/verify-upstream-gemini-release.sh",
-		"./scripts/update-upstream-pins.sh --check",
+		"./scripts/ci/job-pin-hygiene.sh",
 	} {
 		if !strings.Contains(pinHygieneWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/pin-hygiene.yml must contain %q", needle)
