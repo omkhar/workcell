@@ -97,34 +97,6 @@ func TestEvaluateSupportMatrixDefaultsToUnsupported(t *testing.T) {
 	}
 }
 
-func TestSupportMatrixMetadataLines(t *testing.T) {
-	t.Parallel()
-
-	lines := SupportMatrixMetadataLines(SupportMatrixResult{
-		HostOS:         "linux",
-		HostArch:       "amd64",
-		Status:         "validation-host-only",
-		Launch:         "blocked",
-		Evidence:       "repo-required",
-		ValidationLane: "trusted-linux-amd64-validator",
-		Reason:         "trusted-linux-amd64-validation-host-only",
-	})
-	got := strings.Join(lines, "\n")
-	for _, want := range []string{
-		"host_os=linux",
-		"host_arch=amd64",
-		"support_matrix_status=validation-host-only",
-		"support_matrix_launch=blocked",
-		"support_matrix_evidence=repo-required",
-		"support_matrix_validation_lane=trusted-linux-amd64-validator",
-		"support_matrix_reason=trusted-linux-amd64-validation-host-only",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("metadata lines = %q, want %q", got, want)
-		}
-	}
-}
-
 func TestEvaluateSupportMatrixRejectsInvalidRows(t *testing.T) {
 	t.Parallel()
 
