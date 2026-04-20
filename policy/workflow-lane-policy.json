@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "lanes": {
+    "ci.yml/container-smoke": {
+      "profiles": ["repo-core", "pr-parity", "release-preflight"],
+      "authority": "repo-core",
+      "local_mode": "mirrored",
+      "local_script": "scripts/container-smoke.sh",
+      "local_order": 40
+    },
+    "ci.yml/install-verification[runner=macos-15,runner_label=macos-15]": {
+      "authority": "pr-parity",
+      "local_mode": "none",
+      "github_only_reason": "exact hosted macOS install verification remains GitHub-only"
+    },
+    "ci.yml/install-verification[runner=macos-26,runner_label=macos-26]": {
+      "authority": "pr-parity",
+      "local_mode": "none",
+      "github_only_reason": "exact hosted macOS install verification remains GitHub-only"
+    },
+    "ci.yml/pr-shape": {
+      "profiles": ["pr-parity", "release-preflight"],
+      "authority": "pr-parity",
+      "local_mode": "mirrored",
+      "local_script": "scripts/ci/job-pr-shape.sh",
+      "local_order": 5
+    },
+    "ci.yml/reproducible-build": {
+      "authority": "pr-parity",
+      "local_mode": "none",
+      "github_only_reason": "GitHub aggregates per-platform reproducible-build lanes"
+    },
+    "ci.yml/reproducible-build-platform[platform=linux/amd64,platform_name=amd64,runner=ubuntu-latest]": {
+      "profiles": ["repo-core", "pr-parity", "release-preflight"],
+      "authority": "repo-core",
+      "local_mode": "partial",
+      "local_script": "scripts/verify-reproducible-build.sh",
+      "local_order": 45
+    },
+    "ci.yml/reproducible-build-platform[platform=linux/arm64,platform_name=arm64,runner=ubuntu-24.04-arm]": {
+      "profiles": ["repo-core", "pr-parity", "release-preflight"],
+      "authority": "repo-core",
+      "local_mode": "partial",
+      "local_script": "scripts/verify-reproducible-build.sh",
+      "local_order": 45
+    },
+    "ci.yml/validate": {
+      "profiles": ["repo-core", "pr-parity", "release-preflight"],
+      "authority": "repo-core",
+      "local_mode": "mirrored",
+      "local_script": "scripts/ci/job-validate.sh",
+      "local_order": 20
+    },
+    "codeql.yml/analyze[build-mode=autobuild,language=go]": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
+    },
+    "codeql.yml/analyze[build-mode=none,language=javascript-typescript]": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
+    },
+    "codeql.yml/analyze[build-mode=none,language=rust]": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
+    },
+    "docs.yml/spelling-and-manpage": {
+      "profiles": ["pr-parity", "release-preflight"],
+      "authority": "pr-parity",
+      "local_mode": "mirrored",
+      "local_script": "scripts/ci/job-docs.sh",
+      "local_order": 30
+    },
+    "hosted-controls.yml/verify-hosted-controls": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "hosted controls require GitHub-hosted policy state and token-backed audit access"
+    },
+    "pin-hygiene.yml/pinned-inputs": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "mirrored",
+      "local_script": "scripts/ci/job-pin-hygiene.sh",
+      "local_order": 60
+    },
+    "pr-base-policy.yml/pr-base-policy": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "pull_request_target metadata policy remains GitHub-only"
+    },
+    "release.yml/codeql-preflight[build-mode=autobuild,language=go]": {
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release CodeQL remains GitHub-only"
+    },
+    "release.yml/codeql-preflight[build-mode=none,language=javascript-typescript]": {
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release CodeQL remains GitHub-only"
+    },
+    "release.yml/codeql-preflight[build-mode=none,language=rust]": {
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release CodeQL remains GitHub-only"
+    },
+    "release.yml/install-verification[runner=macos-15,runner_label=macos-15]": {
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release install verification uses exact hosted macOS runners"
+    },
+    "release.yml/install-verification[runner=macos-26,runner_label=macos-26]": {
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release install verification uses exact hosted macOS runners"
+    },
+    "release.yml/preflight": {
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release preflight binds hosted controls, artifacts, and release-only permissions"
+    },
+    "release.yml/release": {
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release publication remains GitHub-only"
+    },
+    "scorecard.yml/analysis": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "Scorecard requires GitHub-hosted metadata and SARIF upload paths"
+    },
+    "security.yml/actionlint": {
+      "profiles": ["repo-core", "pr-parity", "release-preflight"],
+      "authority": "repo-core",
+      "local_mode": "mirrored",
+      "local_script": "scripts/check-workflows.sh",
+      "local_order": 10
+    },
+    "security.yml/dependency-review": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "dependency review requires GitHub advisory services"
+    },
+    "security.yml/zizmor": {
+      "profiles": ["repo-core", "pr-parity", "release-preflight"],
+      "authority": "repo-core",
+      "local_mode": "mirrored",
+      "local_script": "scripts/check-workflows.sh",
+      "local_order": 10
+    },
+    "upstream-refresh.yml/refresh": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "upstream refresh mutates repository state and publishes through GitHub"
+    }
+  }
+}
