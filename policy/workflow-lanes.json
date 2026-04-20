@@ -1,0 +1,562 @@
+{
+  "version": 1,
+  "policy": "policy/workflow-lane-policy.json",
+  "lanes": [
+    {
+      "id": "ci.yml/container-smoke",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "container-smoke",
+      "job_name": "Container smoke",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "profiles": [
+        "pr-parity",
+        "release-preflight",
+        "repo-core"
+      ],
+      "authority": "repo-core",
+      "local_mode": "mirrored",
+      "local_script": "scripts/container-smoke.sh",
+      "local_order": 40
+    },
+    {
+      "id": "ci.yml/install-verification[runner=macos-15,runner_label=macos-15]",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "install-verification",
+      "job_name": "Install verification (macos-15)",
+      "matrix": {
+        "runner": "macos-15",
+        "runner_label": "macos-15"
+      },
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
+      "authority": "pr-parity",
+      "local_mode": "none",
+      "github_only_reason": "exact hosted macOS install verification remains GitHub-only"
+    },
+    {
+      "id": "ci.yml/install-verification[runner=macos-26,runner_label=macos-26]",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "install-verification",
+      "job_name": "Install verification (macos-26)",
+      "matrix": {
+        "runner": "macos-26",
+        "runner_label": "macos-26"
+      },
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
+      "authority": "pr-parity",
+      "local_mode": "none",
+      "github_only_reason": "exact hosted macOS install verification remains GitHub-only"
+    },
+    {
+      "id": "ci.yml/pr-shape",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "pr-shape",
+      "job_name": "Pull request shape",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "profiles": [
+        "pr-parity",
+        "release-preflight"
+      ],
+      "authority": "pr-parity",
+      "local_mode": "mirrored",
+      "local_script": "scripts/ci/job-pr-shape.sh",
+      "local_order": 5
+    },
+    {
+      "id": "ci.yml/reproducible-build",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "reproducible-build",
+      "job_name": "Reproducible build",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
+      "authority": "pr-parity",
+      "local_mode": "none",
+      "github_only_reason": "GitHub aggregates per-platform reproducible-build lanes"
+    },
+    {
+      "id": "ci.yml/reproducible-build-platform[platform=linux/amd64,platform_name=amd64,runner=ubuntu-latest]",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "reproducible-build-platform",
+      "job_name": "Reproducible build (amd64)",
+      "matrix": {
+        "platform": "linux/amd64",
+        "platform_name": "amd64",
+        "runner": "ubuntu-latest"
+      },
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
+      "profiles": [
+        "pr-parity",
+        "release-preflight",
+        "repo-core"
+      ],
+      "authority": "repo-core",
+      "local_mode": "partial",
+      "local_script": "scripts/verify-reproducible-build.sh",
+      "local_order": 45
+    },
+    {
+      "id": "ci.yml/reproducible-build-platform[platform=linux/arm64,platform_name=arm64,runner=ubuntu-24.04-arm]",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "reproducible-build-platform",
+      "job_name": "Reproducible build (arm64)",
+      "matrix": {
+        "platform": "linux/arm64",
+        "platform_name": "arm64",
+        "runner": "ubuntu-24.04-arm"
+      },
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
+      "profiles": [
+        "pr-parity",
+        "release-preflight",
+        "repo-core"
+      ],
+      "authority": "repo-core",
+      "local_mode": "partial",
+      "local_script": "scripts/verify-reproducible-build.sh",
+      "local_order": 45
+    },
+    {
+      "id": "ci.yml/validate",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "validate",
+      "job_name": "Validate repository",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "profiles": [
+        "pr-parity",
+        "release-preflight",
+        "repo-core"
+      ],
+      "authority": "repo-core",
+      "local_mode": "mirrored",
+      "local_script": "scripts/ci/job-validate.sh",
+      "local_order": 20
+    },
+    {
+      "id": "codeql.yml/analyze[build-mode=autobuild,language=go]",
+      "workflow_path": ".github/workflows/codeql.yml",
+      "workflow_name": "CodeQL",
+      "job_id": "analyze",
+      "job_name": "Analyze (go)",
+      "matrix": {
+        "build-mode": "autobuild",
+        "language": "go"
+      },
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
+    },
+    {
+      "id": "codeql.yml/analyze[build-mode=none,language=javascript-typescript]",
+      "workflow_path": ".github/workflows/codeql.yml",
+      "workflow_name": "CodeQL",
+      "job_id": "analyze",
+      "job_name": "Analyze (javascript-typescript)",
+      "matrix": {
+        "build-mode": "none",
+        "language": "javascript-typescript"
+      },
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
+    },
+    {
+      "id": "codeql.yml/analyze[build-mode=none,language=rust]",
+      "workflow_path": ".github/workflows/codeql.yml",
+      "workflow_name": "CodeQL",
+      "job_id": "analyze",
+      "job_name": "Analyze (rust)",
+      "matrix": {
+        "build-mode": "none",
+        "language": "rust"
+      },
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
+    },
+    {
+      "id": "docs.yml/spelling-and-manpage",
+      "workflow_path": ".github/workflows/docs.yml",
+      "workflow_name": "Docs",
+      "job_id": "spelling-and-manpage",
+      "job_name": "Spelling and manpage",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "workflow_path_globs": {
+        "pull_request": [
+          ".codespellrc",
+          "AGENTS.md",
+          "CHANGELOG.md",
+          "CODE_OF_CONDUCT.md",
+          "CONTRIBUTING.md",
+          "GOVERNANCE.md",
+          "MAINTAINERS.md",
+          "README.md",
+          "ROADMAP.md",
+          "SECURITY.md",
+          "SUPPORT.md",
+          "adapters/**",
+          "docs/**",
+          "man/**",
+          "policy/**",
+          "runtime/**",
+          "verify/**",
+          "workflows/**"
+        ],
+        "push": [
+          ".codespellrc",
+          "AGENTS.md",
+          "CHANGELOG.md",
+          "CODE_OF_CONDUCT.md",
+          "CONTRIBUTING.md",
+          "GOVERNANCE.md",
+          "MAINTAINERS.md",
+          "README.md",
+          "ROADMAP.md",
+          "SECURITY.md",
+          "SUPPORT.md",
+          "adapters/**",
+          "docs/**",
+          "man/**",
+          "policy/**",
+          "runtime/**",
+          "verify/**",
+          "workflows/**"
+        ]
+      },
+      "profiles": [
+        "pr-parity",
+        "release-preflight"
+      ],
+      "authority": "pr-parity",
+      "local_mode": "mirrored",
+      "local_script": "scripts/ci/job-docs.sh",
+      "local_order": 30
+    },
+    {
+      "id": "hosted-controls.yml/verify-hosted-controls",
+      "workflow_path": ".github/workflows/hosted-controls.yml",
+      "workflow_name": "Hosted controls",
+      "job_id": "verify-hosted-controls",
+      "job_name": "Hosted controls verification",
+      "workflow_events": [
+        "push",
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "hosted controls require GitHub-hosted policy state and token-backed audit access"
+    },
+    {
+      "id": "pin-hygiene.yml/pinned-inputs",
+      "workflow_path": ".github/workflows/pin-hygiene.yml",
+      "workflow_name": "Pin Hygiene",
+      "job_id": "pinned-inputs",
+      "job_name": "Check pinned inputs",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "mirrored",
+      "local_script": "scripts/ci/job-pin-hygiene.sh",
+      "local_order": 60
+    },
+    {
+      "id": "pr-base-policy.yml/pr-base-policy",
+      "workflow_path": ".github/workflows/pr-base-policy.yml",
+      "workflow_name": "PR base policy",
+      "job_id": "pr-base-policy",
+      "job_name": "Allowed PR base",
+      "workflow_events": [
+        "pull_request_target"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "pull_request_target metadata policy remains GitHub-only"
+    },
+    {
+      "id": "release.yml/codeql-preflight[build-mode=autobuild,language=go]",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "codeql-preflight",
+      "job_name": "Release CodeQL (go)",
+      "matrix": {
+        "build-mode": "autobuild",
+        "language": "go"
+      },
+      "workflow_events": [
+        "push"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release CodeQL remains GitHub-only"
+    },
+    {
+      "id": "release.yml/codeql-preflight[build-mode=none,language=javascript-typescript]",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "codeql-preflight",
+      "job_name": "Release CodeQL (javascript-typescript)",
+      "matrix": {
+        "build-mode": "none",
+        "language": "javascript-typescript"
+      },
+      "workflow_events": [
+        "push"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release CodeQL remains GitHub-only"
+    },
+    {
+      "id": "release.yml/codeql-preflight[build-mode=none,language=rust]",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "codeql-preflight",
+      "job_name": "Release CodeQL (rust)",
+      "matrix": {
+        "build-mode": "none",
+        "language": "rust"
+      },
+      "workflow_events": [
+        "push"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release CodeQL remains GitHub-only"
+    },
+    {
+      "id": "release.yml/install-verification[runner=macos-15,runner_label=macos-15]",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "install-verification",
+      "job_name": "Release install verification (macos-15)",
+      "matrix": {
+        "runner": "macos-15",
+        "runner_label": "macos-15"
+      },
+      "workflow_events": [
+        "push"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release install verification uses exact hosted macOS runners"
+    },
+    {
+      "id": "release.yml/install-verification[runner=macos-26,runner_label=macos-26]",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "install-verification",
+      "job_name": "Release install verification (macos-26)",
+      "matrix": {
+        "runner": "macos-26",
+        "runner_label": "macos-26"
+      },
+      "workflow_events": [
+        "push"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release install verification uses exact hosted macOS runners"
+    },
+    {
+      "id": "release.yml/preflight",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "preflight",
+      "job_name": "Release preflight",
+      "workflow_events": [
+        "push"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release preflight binds hosted controls, artifacts, and release-only permissions"
+    },
+    {
+      "id": "release.yml/release",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "release",
+      "job_name": "Publish release artifacts",
+      "workflow_events": [
+        "push"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release publication remains GitHub-only"
+    },
+    {
+      "id": "scorecard.yml/analysis",
+      "workflow_path": ".github/workflows/scorecard.yml",
+      "workflow_name": "Scorecard",
+      "job_id": "analysis",
+      "job_name": "Scorecard analysis",
+      "workflow_events": [
+        "push",
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "Scorecard requires GitHub-hosted metadata and SARIF upload paths"
+    },
+    {
+      "id": "security.yml/actionlint",
+      "workflow_path": ".github/workflows/security.yml",
+      "workflow_name": "Security",
+      "job_id": "actionlint",
+      "job_name": "GitHub Actions lint",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "profiles": [
+        "pr-parity",
+        "release-preflight",
+        "repo-core"
+      ],
+      "authority": "repo-core",
+      "local_mode": "mirrored",
+      "local_script": "scripts/check-workflows.sh",
+      "local_order": 10
+    },
+    {
+      "id": "security.yml/dependency-review",
+      "workflow_path": ".github/workflows/security.yml",
+      "workflow_name": "Security",
+      "job_id": "dependency-review",
+      "job_name": "Dependency review",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "dependency review requires GitHub advisory services"
+    },
+    {
+      "id": "security.yml/zizmor",
+      "workflow_path": ".github/workflows/security.yml",
+      "workflow_name": "Security",
+      "job_id": "zizmor",
+      "job_name": "GitHub Actions security analysis",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "profiles": [
+        "pr-parity",
+        "release-preflight",
+        "repo-core"
+      ],
+      "authority": "repo-core",
+      "local_mode": "mirrored",
+      "local_script": "scripts/check-workflows.sh",
+      "local_order": 10
+    },
+    {
+      "id": "upstream-refresh.yml/refresh",
+      "workflow_path": ".github/workflows/upstream-refresh.yml",
+      "workflow_name": "Upstream refresh",
+      "job_id": "refresh",
+      "job_name": "Refresh pinned upstreams",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "upstream refresh mutates repository state and publishes through GitHub"
+    }
+  ]
+}
