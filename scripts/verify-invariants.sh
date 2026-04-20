@@ -5884,7 +5884,7 @@ remove_tree_safely "${CONFLICT_SHADOW_ROOT}"
 
 mkdir -p "${MASK_VERIFY_WORKSPACE}/symlinked"
 ln -s "${REAL_HOME}/.ssh/config" "${MASK_VERIFY_WORKSPACE}/symlinked/GEMINI.md"
-if "${ROOT_DIR}/scripts/workcell" --agent gemini --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run >/tmp/workcell-symlinked-doc.out 2>&1; then
+if run_workcell_verify --agent gemini --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run >/tmp/workcell-symlinked-doc.out 2>&1; then
   echo "Expected symlinked workspace control docs to be rejected" >&2
   exit 1
 fi
@@ -5958,7 +5958,7 @@ if grep -q -- '--cap-add SETGID' /tmp/workcell-resource-tunables.stdout; then
   exit 1
 fi
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${REAL_HOME}" --dry-run >/dev/null 2>&1; then
+if run_workcell_verify --agent codex --workspace "${REAL_HOME}" --dry-run >/dev/null 2>&1; then
   echo "Expected broad workspace rejection for ${REAL_HOME}" >&2
   exit 1
 fi
@@ -6057,24 +6057,24 @@ if [[ -e /tmp/workcell-egress-pwned ]]; then
   exit 1
 fi
 
-if [[ -d "${REAL_HOME}/.ssh" ]] && "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.ssh" --dry-run >/dev/null 2>&1; then
+if [[ -d "${REAL_HOME}/.ssh" ]] && run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.ssh" --dry-run >/dev/null 2>&1; then
   echo "Expected sensitive workspace rejection for ${REAL_HOME}/.ssh" >&2
   exit 1
 fi
 
-if [[ -d "${REAL_HOME}/.config" ]] && "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.config" --dry-run >/dev/null 2>&1; then
+if [[ -d "${REAL_HOME}/.config" ]] && run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.config" --dry-run >/dev/null 2>&1; then
   echo "Expected sensitive workspace rejection for ${REAL_HOME}/.config" >&2
   exit 1
 fi
 
 if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
-  if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/Library/Application Support" --dry-run >/dev/null 2>&1; then
+  if run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/Library/Application Support" --dry-run >/dev/null 2>&1; then
     echo "Expected sensitive workspace rejection for ${REAL_HOME}/Library/Application Support" >&2
     exit 1
   fi
   BROWSER_PROFILE_FIXTURE="${REAL_HOME}/Library/Application Support/Google/Chrome/WorkcellVerifyBrowserProfile"
   mkdir -p "${BROWSER_PROFILE_FIXTURE}"
-  if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-nongit-workspace --workspace "${BROWSER_PROFILE_FIXTURE}" --dry-run >/dev/null 2>&1; then
+  if run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${BROWSER_PROFILE_FIXTURE}" --dry-run >/dev/null 2>&1; then
     echo "Expected browser-profile workspace rejection for ${BROWSER_PROFILE_FIXTURE}" >&2
     exit 1
   fi
@@ -6091,8 +6091,8 @@ host_tool_exists() {
 }
 
 if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
-  if HOME="${BARRIER_VERIFY_ROOT}/fake-home" \
-    "${ROOT_DIR}/scripts/workcell" \
+  if run_workcell_verify \
+    HOME="${BARRIER_VERIFY_ROOT}/fake-home" \
     --agent codex \
     --allow-nongit-workspace \
     --workspace "${REAL_HOME}/Library/Application Support" \
@@ -6105,7 +6105,7 @@ fi
 NONGIT_WORKSPACE="${BARRIER_VERIFY_ROOT}/nongit-workspace"
 mkdir -p "${NONGIT_WORKSPACE}"
 NONGIT_WORKSPACE="$(cd "${NONGIT_WORKSPACE}" && pwd -P)"
-if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+if run_workcell_verify --agent codex --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
   echo "Expected non-git workspace rejection without explicit opt-in" >&2
   exit 1
 fi
@@ -6860,7 +6860,7 @@ touch "${WORKTREE_MAIN}/tracked.txt"
 git -C "${WORKTREE_MAIN}" add tracked.txt
 git -C "${WORKTREE_MAIN}" commit -q -m init
 git -C "${WORKTREE_MAIN}" worktree add -q -b linked "${WORKTREE_LINKED}"
-if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKTREE_LINKED}" --dry-run >/tmp/workcell-linked-worktree.out 2>&1; then
+if run_workcell_verify --agent codex --workspace "${WORKTREE_LINKED}" --dry-run >/tmp/workcell-linked-worktree.out 2>&1; then
   echo "Expected linked git worktree with external admin state to be rejected" >&2
   exit 1
 fi
@@ -6874,7 +6874,7 @@ REDIRECTED_WORKTREE="${REDIRECTED_ROOT}/outside"
 mkdir -p "${REDIRECTED_WORKTREE}"
 git init -q "${REDIRECTED_REPO}"
 git --git-dir "${REDIRECTED_REPO}/.git" config core.worktree "${REDIRECTED_WORKTREE}"
-if "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${REDIRECTED_REPO}" --dry-run >/dev/null 2>&1; then
+if run_workcell_verify --agent codex --workspace "${REDIRECTED_REPO}" --dry-run >/dev/null 2>&1; then
   echo "Expected redirected core.worktree repo to be rejected" >&2
   exit 1
 fi
