@@ -431,128 +431,165 @@ git -C "${DETACHED_START_WORKSPACE}" init >/dev/null
 printf 'seed\n' >"${DETACHED_START_WORKSPACE}/README.md"
 git -C "${DETACHED_START_WORKSPACE}" add README.md
 git -C "${DETACHED_START_WORKSPACE}" -c user.name='Workcell Test' -c user.email='workcell@example.com' commit -m 'initial' >/dev/null
-detached_start_default_output="$(
-  WORKCELL_SESSION_WORKSPACE_MODE=direct \
-    "${ROOT_DIR}/scripts/workcell" \
-    session start \
+detached_support_doctor_output="$(
+  "${ROOT_DIR}/scripts/workcell" \
     --agent codex \
     --mode development \
     --workspace "${DETACHED_START_WORKSPACE}" \
     --no-default-injection-policy \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    --dry-run \
-    -- /bin/true
+    --doctor
 )"
-grep -Fq -- "docker run --init -d -i -t" <<<"${detached_start_default_output}"
-grep -Eq -- "-v ${DETACHED_START_WORKSPACE}/\\.git/workcell-sessions/.+/repo:/workspace($| )" <<<"${detached_start_default_output}"
-grep -Fq -- "-e WORKCELL_DETACHED_STDIN_PATH=/state/tmp/workcell/session-stdin" <<<"${detached_start_default_output}"
-if grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_default_output}"; then
-  echo "Detached session start honored an inherited workspace-mode env override" >&2
-  exit 1
+detached_launch_blocked=0
+if grep -q '^support_matrix_launch=blocked$' <<<"${detached_support_doctor_output}"; then
+  detached_launch_blocked=1
 fi
-if grep -Fq -- "--entrypoint /bin/true" <<<"${detached_start_default_output}"; then
-  echo "Detached session start should keep arbitrary-command sessions on the managed entrypoint" >&2
-  exit 1
-fi
-grep -Fq -- "workcell:local /bin/true" <<<"${detached_start_default_output}"
-if grep -Eq -- "-e WORKCELL_DETACHED_STDIN_PATH=/run/workcell/session-stdin" <<<"${detached_start_default_output}"; then
-  echo "Detached session start kept the detached stdin FIFO under a path that blocks host command injection" >&2
-  exit 1
+
+if [[ "${detached_launch_blocked}" -eq 1 ]]; then
+  set +e
+  detached_start_blocked_output="$(
+    WORKCELL_SESSION_WORKSPACE_MODE=direct \
+      "${ROOT_DIR}/scripts/workcell" \
+      session start \
+      --agent codex \
+      --mode development \
+      --workspace "${DETACHED_START_WORKSPACE}" \
+      --no-default-injection-policy \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      --dry-run \
+      -- /bin/true 2>&1 >/dev/null
+  )"
+  detached_start_blocked_status=$?
+  set -e
+  test "${detached_start_blocked_status}" -eq 2
+  grep -q 'Workcell launch is not supported' <<<"${detached_start_blocked_output}"
+  grep -q 'Supported launch hosts today remain Apple Silicon macOS' <<<"${detached_start_blocked_output}"
+else
+  detached_start_default_output="$(
+    WORKCELL_SESSION_WORKSPACE_MODE=direct \
+      "${ROOT_DIR}/scripts/workcell" \
+      session start \
+      --agent codex \
+      --mode development \
+      --workspace "${DETACHED_START_WORKSPACE}" \
+      --no-default-injection-policy \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      --dry-run \
+      -- /bin/true
+  )"
+  grep -Fq -- "docker run --init -d -i -t" <<<"${detached_start_default_output}"
+  grep -Eq -- "-v ${DETACHED_START_WORKSPACE}/\\.git/workcell-sessions/.+/repo:/workspace($| )" <<<"${detached_start_default_output}"
+  grep -Fq -- "-e WORKCELL_DETACHED_STDIN_PATH=/state/tmp/workcell/session-stdin" <<<"${detached_start_default_output}"
+  if grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_default_output}"; then
+    echo "Detached session start honored an inherited workspace-mode env override" >&2
+    exit 1
+  fi
+  if grep -Fq -- "--entrypoint /bin/true" <<<"${detached_start_default_output}"; then
+    echo "Detached session start should keep arbitrary-command sessions on the managed entrypoint" >&2
+    exit 1
+  fi
+  grep -Fq -- "workcell:local /bin/true" <<<"${detached_start_default_output}"
+  if grep -Eq -- "-e WORKCELL_DETACHED_STDIN_PATH=/run/workcell/session-stdin" <<<"${detached_start_default_output}"; then
+    echo "Detached session start kept the detached stdin FIFO under a path that blocks host command injection" >&2
+    exit 1
+  fi
 fi
 custom_state_home="${TMP_DIR}/detached-state-home"
-detached_start_direct_output="$(
-  WORKCELL_SESSION_WORKSPACE_MODE=isolated \
+if [[ "${detached_launch_blocked}" -eq 0 ]]; then
+  detached_start_direct_output="$(
+    WORKCELL_SESSION_WORKSPACE_MODE=isolated \
+      "${ROOT_DIR}/scripts/workcell" \
+      session start \
+      --session-workspace direct \
+      --agent codex \
+      --mode development \
+      --workspace "${DETACHED_START_WORKSPACE}" \
+      --no-default-injection-policy \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      --dry-run \
+      -- /bin/true
+  )"
+  grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_direct_output}"
+
+  NONGIT_DETACHED_WORKSPACE="${TMP_DIR}/detached-start-nongit"
+  mkdir -p "${NONGIT_DETACHED_WORKSPACE}"
+  set +e
+  nongit_isolated_output="$(
     "${ROOT_DIR}/scripts/workcell" \
-    session start \
-    --session-workspace direct \
-    --agent codex \
-    --mode development \
-    --workspace "${DETACHED_START_WORKSPACE}" \
-    --no-default-injection-policy \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    --dry-run \
-    -- /bin/true
-)"
-grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_direct_output}"
+      session start \
+      --session-workspace isolated \
+      --agent codex \
+      --mode development \
+      --workspace "${NONGIT_DETACHED_WORKSPACE}" \
+      --no-default-injection-policy \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      --dry-run \
+      -- /bin/true 2>&1 >/dev/null
+  )"
+  nongit_isolated_status=$?
+  set -e
+  test "${nongit_isolated_status}" -eq 2
+  grep -q "Workspace is not a git worktree: ${NONGIT_DETACHED_WORKSPACE}" <<<"${nongit_isolated_output}"
+  grep -q 'Detached session start with --session-workspace isolated requires a git workspace\.' <<<"${nongit_isolated_output}"
+  grep -q 'Next step: rerun with --session-workspace direct if you want to use the current workspace in place\.' <<<"${nongit_isolated_output}"
 
-NONGIT_DETACHED_WORKSPACE="${TMP_DIR}/detached-start-nongit"
-mkdir -p "${NONGIT_DETACHED_WORKSPACE}"
-set +e
-nongit_isolated_output="$(
-  "${ROOT_DIR}/scripts/workcell" \
-    session start \
-    --session-workspace isolated \
-    --agent codex \
-    --mode development \
-    --workspace "${NONGIT_DETACHED_WORKSPACE}" \
-    --no-default-injection-policy \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    --dry-run \
-    -- /bin/true 2>&1 >/dev/null
-)"
-nongit_isolated_status=$?
-set -e
-test "${nongit_isolated_status}" -eq 2
-grep -q "Workspace is not a git worktree: ${NONGIT_DETACHED_WORKSPACE}" <<<"${nongit_isolated_output}"
-grep -q 'Detached session start with --session-workspace isolated requires a git workspace\.' <<<"${nongit_isolated_output}"
-grep -q 'Next step: rerun with --session-workspace direct if you want to use the current workspace in place\.' <<<"${nongit_isolated_output}"
+  printf 'dirty\n' >>"${DETACHED_START_WORKSPACE}/README.md"
+  set +e
+  dirty_isolated_output="$(
+    "${ROOT_DIR}/scripts/workcell" \
+      session start \
+      --session-workspace isolated \
+      --agent codex \
+      --mode development \
+      --workspace "${DETACHED_START_WORKSPACE}" \
+      --no-default-injection-policy \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      --dry-run \
+      -- /bin/true 2>&1 >/dev/null
+  )"
+  dirty_isolated_status=$?
+  set -e
+  test "${dirty_isolated_status}" -eq 2
+  grep -q "session start requires a clean source workspace for isolated session cloning: ${DETACHED_START_WORKSPACE}" <<<"${dirty_isolated_output}"
+  grep -q 'Next step: commit or stash the workspace changes, or rerun with --session-workspace direct to use the current workspace in place\.' <<<"${dirty_isolated_output}"
 
-printf 'dirty\n' >>"${DETACHED_START_WORKSPACE}/README.md"
-set +e
-dirty_isolated_output="$(
-  "${ROOT_DIR}/scripts/workcell" \
-    session start \
-    --session-workspace isolated \
-    --agent codex \
-    --mode development \
-    --workspace "${DETACHED_START_WORKSPACE}" \
-    --no-default-injection-policy \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    --dry-run \
-    -- /bin/true 2>&1 >/dev/null
-)"
-dirty_isolated_status=$?
-set -e
-test "${dirty_isolated_status}" -eq 2
-grep -q "session start requires a clean source workspace for isolated session cloning: ${DETACHED_START_WORKSPACE}" <<<"${dirty_isolated_output}"
-grep -q 'Next step: commit or stash the workspace changes, or rerun with --session-workspace direct to use the current workspace in place\.' <<<"${dirty_isolated_output}"
-
-LINKED_WORKTREE_ROOT="${TMP_DIR}/detached-linked-worktree"
-LINKED_WORKTREE_MAIN="${LINKED_WORKTREE_ROOT}/main"
-LINKED_WORKTREE_PATH="${LINKED_WORKTREE_ROOT}/linked"
-mkdir -p "${LINKED_WORKTREE_ROOT}"
-git init -q "${LINKED_WORKTREE_MAIN}"
-git -C "${LINKED_WORKTREE_MAIN}" config user.name "Workcell Test"
-git -C "${LINKED_WORKTREE_MAIN}" config user.email "workcell@example.com"
-printf 'tracked\n' >"${LINKED_WORKTREE_MAIN}/tracked.txt"
-git -C "${LINKED_WORKTREE_MAIN}" add tracked.txt
-git -C "${LINKED_WORKTREE_MAIN}" commit -q -m init
-git -C "${LINKED_WORKTREE_MAIN}" worktree add -q -b linked "${LINKED_WORKTREE_PATH}"
-set +e
-linked_isolated_output="$(
-  "${ROOT_DIR}/scripts/workcell" \
-    session start \
-    --session-workspace isolated \
-    --agent codex \
-    --mode development \
-    --workspace "${LINKED_WORKTREE_PATH}" \
-    --no-default-injection-policy \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    --dry-run \
-    -- /bin/true 2>&1 >/dev/null
-)"
-linked_isolated_status=$?
-set -e
-test "${linked_isolated_status}" -eq 2
-grep -q "Refusing git workspace with admin state outside the mounted workspace: ${LINKED_WORKTREE_PATH}" <<<"${linked_isolated_output}"
-grep -q 'This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path\.' <<<"${linked_isolated_output}"
-grep -q 'To use this workspace on the safe path, create a standard clone at the same location instead\.' <<<"${linked_isolated_output}"
-grep -q 'Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree\.' <<<"${linked_isolated_output}"
+  LINKED_WORKTREE_ROOT="${TMP_DIR}/detached-linked-worktree"
+  LINKED_WORKTREE_MAIN="${LINKED_WORKTREE_ROOT}/main"
+  LINKED_WORKTREE_PATH="${LINKED_WORKTREE_ROOT}/linked"
+  mkdir -p "${LINKED_WORKTREE_ROOT}"
+  git init -q "${LINKED_WORKTREE_MAIN}"
+  git -C "${LINKED_WORKTREE_MAIN}" config user.name "Workcell Test"
+  git -C "${LINKED_WORKTREE_MAIN}" config user.email "workcell@example.com"
+  printf 'tracked\n' >"${LINKED_WORKTREE_MAIN}/tracked.txt"
+  git -C "${LINKED_WORKTREE_MAIN}" add tracked.txt
+  git -C "${LINKED_WORKTREE_MAIN}" commit -q -m init
+  git -C "${LINKED_WORKTREE_MAIN}" worktree add -q -b linked "${LINKED_WORKTREE_PATH}"
+  set +e
+  linked_isolated_output="$(
+    "${ROOT_DIR}/scripts/workcell" \
+      session start \
+      --session-workspace isolated \
+      --agent codex \
+      --mode development \
+      --workspace "${LINKED_WORKTREE_PATH}" \
+      --no-default-injection-policy \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      --dry-run \
+      -- /bin/true 2>&1 >/dev/null
+  )"
+  linked_isolated_status=$?
+  set -e
+  test "${linked_isolated_status}" -eq 2
+  grep -q "Refusing git workspace with admin state outside the mounted workspace: ${LINKED_WORKTREE_PATH}" <<<"${linked_isolated_output}"
+  grep -q 'This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path\.' <<<"${linked_isolated_output}"
+  grep -q 'To use this workspace on the safe path, create a standard clone at the same location instead\.' <<<"${linked_isolated_output}"
+  grep -q 'Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree\.' <<<"${linked_isolated_output}"
+fi
 
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
 state_path_output="$(
@@ -572,21 +609,23 @@ grep -q '^sessions_dir='"${TARGET_STATE_DIR}/sessions"'$' <<<"${state_path_outpu
 grep -q '^audit_log='"${TARGET_STATE_DIR}/workcell.audit.log"'$' <<<"${state_path_output}"
 grep -q '^lock_dir='"${WORKCELL_STATE_ROOT}/locks/local_vm/colima/${PROFILE}.lock"'$' <<<"${state_path_output}"
 
-detached_start_custom_state_output="$(
-  XDG_STATE_HOME="${custom_state_home}" \
-    /bin/bash "${ROOT_DIR}/scripts/workcell" \
-    session start \
-    --session-workspace direct \
-    --agent codex \
-    --mode development \
-    --workspace "${DETACHED_START_WORKSPACE}" \
-    --no-default-injection-policy \
-    --allow-arbitrary-command \
-    --ack-arbitrary-command \
-    --dry-run \
-    -- /bin/true 2>&1
-)"
-grep -Fq -- "audit_log=${custom_state_home}/workcell/targets/local_vm/colima/" <<<"${detached_start_custom_state_output}"
+if [[ "${detached_launch_blocked}" -eq 0 ]]; then
+  detached_start_custom_state_output="$(
+    XDG_STATE_HOME="${custom_state_home}" \
+      /bin/bash "${ROOT_DIR}/scripts/workcell" \
+      session start \
+      --session-workspace direct \
+      --agent codex \
+      --mode development \
+      --workspace "${DETACHED_START_WORKSPACE}" \
+      --no-default-injection-policy \
+      --allow-arbitrary-command \
+      --ack-arbitrary-command \
+      --dry-run \
+      -- /bin/true 2>&1
+  )"
+  grep -Fq -- "audit_log=${custom_state_home}/workcell/targets/local_vm/colima/" <<<"${detached_start_custom_state_output}"
+fi
 
 mkdir -p "${LEGACY_SESSIONS_DIR}"
 printf '{}' >"${LEGACY_SESSIONS_DIR}/${SESSION_ONE}.json"

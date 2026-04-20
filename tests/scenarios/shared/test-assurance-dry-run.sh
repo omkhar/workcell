@@ -117,6 +117,55 @@ if rc != 0:
 PY
 }
 
+run_dry_run_expect_launch_blocked() {
+  local label="$1"
+  shift
+
+  set +e
+  HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
+    "${ROOT_DIR}/scripts/workcell" \
+    "$@" \
+    --workspace "${WORKSPACE}" \
+    --no-default-injection-policy \
+    --dry-run \
+    >"${TMP_DIR}/${label}.stdout" 2>"${TMP_DIR}/${label}.stderr"
+  local rc=$?
+  set -e
+
+  if [[ "${rc}" -ne 2 ]]; then
+    echo "Expected ${label} to fail closed on an unsupported launch host, got ${rc}" >&2
+    cat "${TMP_DIR}/${label}.stderr" >&2
+    exit 1
+  fi
+
+  grep -q 'Workcell launch is not supported' "${TMP_DIR}/${label}.stderr"
+  grep -q 'Supported launch hosts today remain Apple Silicon macOS' "${TMP_DIR}/${label}.stderr"
+}
+
+support_doctor_output="$(
+  HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
+    "${ROOT_DIR}/scripts/workcell" \
+    --agent codex \
+    --workspace "${WORKSPACE}" \
+    --no-default-injection-policy \
+    --doctor
+)"
+launch_blocked=0
+if grep -q '^support_matrix_launch=blocked$' <<<"${support_doctor_output}"; then
+  launch_blocked=1
+fi
+
+if [[ "${launch_blocked}" -eq 1 ]]; then
+  run_dry_run_expect_launch_blocked "prompt-codex" --agent codex --agent-autonomy prompt --agent-arg --version
+  run_dry_run_expect_launch_blocked "development-codex" --agent codex --mode development --agent-arg --version
+  run_dry_run_expect_launch_blocked "breakglass-codex" --agent codex --mode breakglass --ack-breakglass
+  run_dry_run_expect_launch_blocked "readonly-codex" --agent codex --container-mutability readonly
+  run_dry_run_expect_launch_blocked "arbitrary-command-codex" --agent codex --allow-arbitrary-command --ack-arbitrary-command -- bash -lc true
+  run_dry_run_expect_launch_blocked "control-plane-vcs-codex" --agent codex --allow-control-plane-vcs --ack-control-plane-vcs
+  echo "Assurance dry-run scenario passed"
+  exit 0
+fi
+
 for agent in codex claude gemini; do
   run_dry_run "prompt-${agent}" --agent "${agent}" --agent-autonomy prompt --agent-arg --version
   grep -q "^profile=.* mode=strict agent=${agent} " "${TMP_DIR}/prompt-${agent}.stderr"
