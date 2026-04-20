@@ -335,13 +335,16 @@ launching the runtime. The preferred public form is the option form shown in
 this manual;
 .BR "workcell doctor"
 remains accepted for CLI symmetry.
-When the workspace path is missing or invalid, this reports that first instead
-of recommending
+The output also emits stable
+.B support_matrix_*
+lines for the reviewed host boundary. When the workspace path is missing or
+invalid, this reports that first instead of recommending
 .BR --prepare .
 .TP
 .B --inspect
 Print the derived launch configuration, active assurance labels, injection
-metadata, and latest retained host-log pointers without launching the runtime.
+metadata, host support-matrix fields, and latest retained host-log pointers
+without launching the runtime.
 The preferred public form is the option form shown in this manual;
 .BR "workcell inspect"
 remains accepted for CLI symmetry.

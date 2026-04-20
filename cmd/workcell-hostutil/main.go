@@ -335,6 +335,24 @@ func runLauncher(args []string) error {
 			fmt.Println(line)
 		}
 		return nil
+	case "support-matrix-eval":
+		if len(args) != 7 {
+			return launcherUsage()
+		}
+		result, err := hostutil.EvaluateSupportMatrix(args[1], hostutil.SupportMatrixQuery{
+			HostOS:               args[2],
+			HostArch:             args[3],
+			TargetKind:           args[4],
+			TargetProvider:       args[5],
+			TargetAssuranceClass: args[6],
+		})
+		if err != nil {
+			return err
+		}
+		for _, line := range hostutil.SupportMatrixMetadataLines(result) {
+			fmt.Println(line)
+		}
+		return nil
 	default:
 		return launcherUsage()
 	}
@@ -353,7 +371,7 @@ func releaseUsage() error {
 }
 
 func launcherUsage() error {
-	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|acquire-profile-lock|write-profile-owner|cleanup-stale-session-audit-dirs|session-record-write|session-list|session-show|session-export|session-diff-metadata|session-runtime-metadata|session-timeline|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|resolve-host-output-directory-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints> [args...]")
+	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|acquire-profile-lock|write-profile-owner|cleanup-stale-session-audit-dirs|session-record-write|session-list|session-show|session-export|session-diff-metadata|session-runtime-metadata|session-timeline|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|resolve-host-output-directory-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints|support-matrix-eval> [args...]")
 }
 
 func parseSessionRoots(args []string) ([]string, []string, error) {

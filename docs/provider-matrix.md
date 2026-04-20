@@ -13,7 +13,9 @@ through a native control-plane mapping.
 
 For provider auth maturity and rollout caveats, see
 [docs/injection-policy.md](injection-policy.md) and
-[docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md).
+[docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md). For the
+reviewed host boundary that surrounds those adapters, see
+[docs/host-support-matrix.md](host-support-matrix.md).
 
 ## Tiering rule
 

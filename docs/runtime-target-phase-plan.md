@@ -18,8 +18,9 @@ Current repo status:
   compatibility-read path
 - Phase 3 is implemented in the shared auth/bootstrap path, explicit bootstrap
   explainability, and provider bootstrap support matrix
-- Phase 4 is the next active slice: trusted validation hosts and the
-  host-compatibility matrix
+- Phase 4 is implemented in the trusted validation-host bridge, canonical
+  host-support matrix, and fail-closed host diagnostics
+- Phase 5 is the next active slice: the remote VM control-plane contract
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract

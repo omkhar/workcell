@@ -13,6 +13,64 @@ import (
 	"github.com/omkhar/workcell/internal/hostutil"
 )
 
+func TestRunLauncherSupportMatrixEval(t *testing.T) {
+	matrixPath := filepath.Join(t.TempDir(), "host-support-matrix.tsv")
+	if err := os.WriteFile(matrixPath, []byte(strings.Join([]string{
+		"host_os\thost_arch\ttarget_kind\ttarget_provider\ttarget_assurance_class\tstatus\tlaunch\tevidence\tvalidation_lane\treason",
+		"linux\tamd64\tlocal_vm\tcolima\tstrict\tvalidation-host-only\tblocked\trepo-required\ttrusted-linux-amd64-validator\ttrusted-linux-amd64-validation-host-only",
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = stdout.ReadFrom(r)
+		close(done)
+	}()
+
+	runErr := run([]string{
+		"launcher",
+		"support-matrix-eval",
+		matrixPath,
+		"linux",
+		"amd64",
+		"local_vm",
+		"colima",
+		"strict",
+	})
+	_ = w.Close()
+	<-done
+	_ = r.Close()
+
+	if runErr != nil {
+		t.Fatalf("run() error = %v", runErr)
+	}
+	got := strings.TrimSpace(stdout.String())
+	for _, want := range []string{
+		"host_os=linux",
+		"host_arch=amd64",
+		"support_matrix_status=validation-host-only",
+		"support_matrix_launch=blocked",
+		"support_matrix_evidence=repo-required",
+		"support_matrix_validation_lane=trusted-linux-amd64-validator",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("support-matrix-eval output = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestRunLauncherSessionTimeline(t *testing.T) {
 	colimaRoot := t.TempDir()
 	auditLogPath := filepath.Join(colimaRoot, "wcl-one", "workcell.audit.log")

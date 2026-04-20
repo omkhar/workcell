@@ -113,6 +113,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/host-support-matrix",
+      "description": "Host-side inspect, doctor, and launch gating derive host support status from the canonical support-matrix artifact and keep unsupported combinations fail-closed",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-host-support-matrix.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/session-commands",
       "description": "Host-side session inventory and detached control-plane commands cover durable records plus public CLI attach/send/stop/delete lifecycle handling for running and terminal workloads",
       "lane": "secretless",

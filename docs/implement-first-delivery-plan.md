@@ -7,8 +7,8 @@ The longer-lived runtime-target and deployment-reach program lives in
 [`docs/runtime-target-expansion-plan.md`](runtime-target-expansion-plan.md),
 and the deterministic phase breakdown lives in
 [`docs/runtime-target-phase-plan.md`](runtime-target-phase-plan.md).
-Phases 1 through 3 of that phase plan are now implemented in the repository;
-this document now defines the immediate bridge into Phase 4 and the
+Phases 1 through 4 of that phase plan are now implemented in the repository;
+this document now defines the immediate bridge into Phase 5 and the
 prerequisite work for later remote-target phases.
 
 The current repo already includes durable session records plus detached
@@ -19,10 +19,13 @@ target-state roots while preserving compatibility reads for older
 `~/.colima/...` records. The current repo also ships direct staged-auth flows,
 Codex host-auth reuse on the reviewed resolver path, `--auth-status`,
 credential-level `why` bootstrap summaries, and the provider/bootstrap support
-matrix on the reviewed policy path. The active work in this slice is now the
-validation-host and host-compatibility bridge. This document also records the
-queued remote-VM contract prerequisites so later phases can start cleanly
-without pulling backend delivery forward into Phase 4.
+matrix on the reviewed policy path. The current repo also ships the
+validation-host bridge, canonical host-support matrix artifact, generated host
+support docs, target-aware support diagnostics, and fail-closed launch gating
+for unsupported host and target combinations. The active work in this slice is
+now the remote-VM contract preparation. This document also records the queued
+later backend prerequisites so later phases can start cleanly without pulling
+provider-specific delivery forward into Phase 5.
 
 ## Principles
 
@@ -47,7 +50,7 @@ without pulling backend delivery forward into Phase 4.
   verify every changed code path preserves the runtime boundary, does not widen
   credential exposure, and keeps host-side git/control-plane execution explicit
 
-## Phase 4 Exit Ownership
+## Phase 5 Exit Ownership
 
 In this repo's current planning mode, each ownership lane below is intended to
 be a distinct Codex-agent role or thread unless a change explicitly records a
@@ -55,18 +58,18 @@ human owner assignment. The goal is independent review and handoff, not one
 blended owner wearing every hat at once.
 
 - EM:
-  holds the phase boundary, prevents later remote-VM work from being counted
-  as Phase 4 delivery, and blocks support claims that
-  outrun the evidence
+  holds the remote-VM phase boundary, prevents provider-specific backend work
+  from being counted as Phase 5 delivery, and blocks preview claims that
+  outrun the contract evidence
 - TL:
-  owns the integrated Phase 4 landing criteria across code, deterministic
-  tests, and launcher/operator behavior
+  owns the integrated fake-target, conformance-harness, and deterministic
+  contract landing criteria across code and launcher/operator behavior
 - contract and docs owner:
-  owns the support matrix plus the operator and rollout docs that bound what
-  Phase 4 actually supports
+  owns the canonical remote-contract docs, support matrices, and operator
+  guidance that later provider phases must reuse
 - validation owner:
-  owns the repo-required evidence, validation-host certification lane, and the
-  fail-closed unsupported-combination coverage that Phase 4 depends on
+  owns the repo-required remote-contract evidence, certification-lane
+  boundaries, and harness reuse rules that later provider phases must satisfy
 
 ## Delivered Foundation
 
@@ -80,35 +83,37 @@ to the next slice rather than as active delivery work:
 - direct staged-auth flows, Codex host-auth reuse, `--auth-status`,
   policy/bootstrap explainability, the provider/bootstrap support matrix, and
   the current secretless and authenticated scenario baseline
+- the trusted `linux/amd64` validation-host bridge, canonical
+  `policy/host-support-matrix.tsv` artifact, generated
+  `docs/host-support-matrix.md` rollout doc, and fail-closed host diagnostics
+  on `--inspect`, `--doctor`, and launch
 
-## Active Phase 4 Track
+## Active Phase 5 Track
 
-### 1. Validation Host And Host-Compatibility Matrix
+### 1. Remote VM Contract Preparation
 
 Scope for this delivery slice:
 
-- define the narrow trusted `linux/amd64` validation-host lane before broader
-  non-macOS or cloud claims
-- express support as `host OS x target kind x assurance class`
-- define one canonical versioned capability and support-matrix artifact that
-  docs, diagnostics, fixture tests, and rollout guidance all consume
-- add backend-aware diagnostics that fail closed on unsupported host/backend
-  combinations
-- add deterministic fixture tests for unsupported host/backend combinations
-- keep Linux and Windows claims limited to what the validation-host evidence
-  and docs actually prove
+- define the provider-neutral `remote_vm` contract before any cloud backend
+  ships
+- make remote workspace materialization explicit and auditable
+- define the reviewed brokered-access and remote image/bootstrap model
+- add one canonical shared fake remote target, conformance harness, and
+  fixtures that later cloud adapters must reuse unchanged
+- keep target ordering and backend selection in the longer-lived
+  runtime-target expansion program rather than in this active slice
 
 Staffing:
 
-- TL: validation-host and rollout lead
-- SWE A: validation-host tooling and diagnostics
-- SWE B: support matrix docs and operator guidance
+- TL: remote contract and conformance-harness lead
+- SWE A: remote workspace and audit model
+- SWE B: contract docs, fake target, and deterministic evidence
 - validation owner: repo-required evidence and certification-lane lead
 
 Phase boundary:
 
 - this is the active implementation slice and the only track that should change
-  Phase 4 status from planned to complete
+  Phase 5 status from planned to complete
 - the remaining tracks below are prerequisites and follow-on planning surfaces
   for later deterministic phases, not authority to ship backend delivery in the
   current slice
@@ -154,7 +159,7 @@ Staffing:
 
 ## Later Phase Handoff
 
-Before Phase 5, 6, 7, 8, or 9 begins implementation, assign:
+Before Phase 6, 7, 8, or 9 begins implementation, assign:
 
 - one distinct Codex agent to each lane below by default
 - only replace that with named human owners if the change or runbook records
@@ -174,10 +179,10 @@ Before Phase 5, 6, 7, 8, or 9 begins implementation, assign:
 
 1. treat the completed shared auth/bootstrap path plus the
    provider/bootstrap support matrix as fixed input to the next slice
-2. define trusted `linux/amd64` validation hosts plus an explicit
-   host-compatibility matrix
-3. only after Phase 4 exits green, define the remote-VM contract and
-   deterministic evidence before any provider-specific backend work
+2. treat the completed validation-host bridge and host-support matrix as the
+   fixed support boundary for later host claims
+3. only after Phase 5 exits green, let provider-specific backend work reuse the
+   shared remote-VM contract and deterministic evidence
 4. expand authenticated, lower-assurance, and remote-contract coverage as each
    later phase lands rather than as a cleanup pass
 5. leave actual `compat` and cloud-backend delivery to the later

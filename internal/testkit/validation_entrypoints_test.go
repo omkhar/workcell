@@ -356,7 +356,7 @@ func TestUninstallRemovesWorkcellStateWithoutRequiringGo(t *testing.T) {
 	}
 }
 
-func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
+func TestLauncherAndInstallerHostSupportGuardsStayPinned(t *testing.T) {
 	t.Parallel()
 
 	launcherPath := filepath.Join(repoRoot(t), "scripts", "workcell")
@@ -367,12 +367,23 @@ func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
 	launcher := string(launcherContent)
 
 	for _, want := range []string{
-		"hw.optional.arm64",
-		"Intel macOS is not supported",
-		"require_supported_macos_host_arch",
+		"detected_host_os",
+		"detected_host_arch",
+		"support-matrix-eval",
+		"support_matrix_status",
+		"support_matrix_launch",
+		"fail_for_unsupported_launch_target",
 	} {
 		if !strings.Contains(launcher, want) {
 			t.Fatalf("%s does not contain %q", launcherPath, want)
+		}
+	}
+	for _, unwanted := range []string{
+		"require_supported_macos_host_arch",
+		"Intel macOS is not supported",
+	} {
+		if strings.Contains(launcher, unwanted) {
+			t.Fatalf("%s unexpectedly contains %q", launcherPath, unwanted)
 		}
 	}
 

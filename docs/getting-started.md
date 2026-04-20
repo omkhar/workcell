@@ -107,6 +107,9 @@ workcell --agent codex --inspect --workspace /path/to/repo
 workcell --agent codex --auth-status --workspace /path/to/repo
 ```
 
+`workcell --doctor` and `workcell --inspect` both emit `support_matrix_*` lines
+that map directly to [host-support-matrix.md](host-support-matrix.md).
+
 ## 4. Launch the agent
 
 ```bash
