@@ -130,7 +130,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/apt-broker.sh",
       "runtime_path": "/usr/local/libexec/workcell/apt-broker.sh",
-      "sha256": "b5884449980950b4d1f657e50a0fe3fb5ed1ebc6a80d1ac10382c4d46143c960"
+      "sha256": "c052472a969222253a0f5b200b0a2def1b0de9edd322e9961f1b974a827b1cb4"
     },
     {
       "kind": "runtime-control-plane",
@@ -148,7 +148,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/sudo-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/sudo-wrapper.sh",
-      "sha256": "122c569901830a61820e57cd4da810ef5ba473a4de709d7abbfb68d61238e86a"
+      "sha256": "6f818d7c518692979b5b90fc3718f74bde61866dfa91d7a8592ef8d6fb748520"
     },
     {
       "kind": "runtime-control-plane",

@@ -49,9 +49,12 @@ apt_broker_process_request() {
   local -a broker_env=()
   local status=0
   local helper_pid=0
+  local arg=""
   local env_name=""
   local env_value=""
   local cancel_reason=""
+  local setsid_bin=""
+  local -a helper_command=()
 
   [[ -d "${request_dir}" ]] || return 0
   [[ ! -L "${request_dir}" ]] || return 0
@@ -77,7 +80,9 @@ apt_broker_process_request() {
   [[ ! -e "${claim_path}" ]] || return 0
   [[ ! -e "${status_path}" ]] || return 0
 
-  mapfile -d '' -t command_argv <"${args_file}"
+  while IFS= read -r -d '' arg; do
+    command_argv+=("${arg}")
+  done <"${args_file}"
   ((${#command_argv[@]} > 0)) || return 0
 
   stdout_tmp="$(mktemp "${WORKCELL_APT_BROKER_RESULTS_DIR}/${request_id}.stdout.tmp.XXXXXX")"
@@ -121,9 +126,14 @@ apt_broker_process_request() {
     done <"${env_file}"
   fi
 
+  helper_command=(/usr/bin/env -i "${broker_env[@]}" "${WORKCELL_APT_HELPER}" "${command_argv[@]}")
+  setsid_bin="$(command -v setsid 2>/dev/null || true)"
   set +e
-  /usr/bin/setsid /usr/bin/env -i "${broker_env[@]}" "${WORKCELL_APT_HELPER}" "${command_argv[@]}" \
-    >"${stdout_tmp}" 2>"${stderr_tmp}" &
+  if [[ -n "${setsid_bin}" ]]; then
+    "${setsid_bin}" "${helper_command[@]}" >"${stdout_tmp}" 2>"${stderr_tmp}" &
+  else
+    "${helper_command[@]}" >"${stdout_tmp}" 2>"${stderr_tmp}" &
+  fi
   helper_pid="$!"
   while kill -0 "${helper_pid}" >/dev/null 2>&1; do
     if [[ -f "${cancel_path}" ]] && [[ ! -L "${cancel_path}" ]]; then
