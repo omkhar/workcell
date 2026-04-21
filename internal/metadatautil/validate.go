@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -302,8 +303,14 @@ func validateUpstreamRefreshWorkflow(workflowText string) error {
 		"./scripts/update-upstream-pins.sh --apply",
 		"./scripts/update-upstream-pins.sh --check",
 		"./scripts/check-pinned-inputs.sh",
+		"environment:\n      name: upstream-refresh",
+		"WORKCELL_UPSTREAM_REFRESH_GIT_NAME",
+		"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL",
+		"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT",
 		"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY",
-		"WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID",
+		"gpg --batch --with-colons --list-secret-keys",
+		`if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then`,
+		`git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"`,
 		"git commit -S -F",
 		"gh pr create",
 		"--draft",
@@ -316,7 +323,15 @@ func validateUpstreamRefreshWorkflow(workflowText string) error {
 			return fmt.Errorf(".github/workflows/upstream-refresh.yml must contain %q", needle)
 		}
 	}
+	if strings.Contains(workflowText, "WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID") {
+		return errors.New(".github/workflows/upstream-refresh.yml must not depend on WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID; audit and verify the full fingerprint instead")
+	}
 	return nil
+}
+
+type hostedControlsWorkflowEnvironmentPolicy struct {
+	Variables       map[string]string
+	RequiredSecrets []string
 }
 
 func hostedControlsRepositoryVariables(policy map[string]any, policyPath string) (map[string]any, error) {
@@ -355,6 +370,131 @@ func validateCanonicalHostedControlsRepositoryVariables(policy map[string]any, p
 		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = \"false\"")
 	}
 	return nil
+}
+
+func hostedControlsWorkflowEnvironments(policy map[string]any, policyPath string) (map[string]hostedControlsWorkflowEnvironmentPolicy, error) {
+	rawEnvironments, ok := policy["workflow_environment"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must define workflow_environment as a table of named environment contracts", policyPath)
+	}
+
+	environments := make(map[string]hostedControlsWorkflowEnvironmentPolicy, len(rawEnvironments))
+	for environmentName, rawEntry := range rawEnvironments {
+		if strings.TrimSpace(environmentName) == "" {
+			return nil, fmt.Errorf("%s workflow_environment entries must use non-empty environment names", policyPath)
+		}
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s workflow_environment.%s must be a table", policyPath, environmentName)
+		}
+
+		variables := map[string]string{}
+		if rawVariables, ok := entry["variables"]; ok {
+			variableTable, ok := rawVariables.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("%s workflow_environment.%s.variables must be a table of exact expected values", policyPath, environmentName)
+			}
+			for name, rawValue := range variableTable {
+				value, ok := rawValue.(string)
+				if strings.TrimSpace(name) == "" || !ok || strings.TrimSpace(value) == "" {
+					return nil, fmt.Errorf("%s workflow_environment.%s.variables must map non-empty names to exact string values", policyPath, environmentName)
+				}
+				variables[name] = value
+			}
+		}
+
+		requiredSecrets := []string{}
+		if rawSecrets, ok := entry["required_secrets"]; ok {
+			secrets, present, err := MustStringSlice(rawSecrets)
+			if err != nil {
+				return nil, fmt.Errorf("%s workflow_environment.%s.required_secrets: %w", policyPath, environmentName, err)
+			}
+			if !present {
+				return nil, fmt.Errorf("%s workflow_environment.%s.required_secrets must be an array of secret names", policyPath, environmentName)
+			}
+			for _, secretName := range secrets {
+				if strings.TrimSpace(secretName) == "" {
+					return nil, fmt.Errorf("%s workflow_environment.%s.required_secrets must be an array of non-empty secret names", policyPath, environmentName)
+				}
+			}
+			requiredSecrets = append(requiredSecrets, secrets...)
+			sort.Strings(requiredSecrets)
+		}
+
+		environments[environmentName] = hostedControlsWorkflowEnvironmentPolicy{
+			Variables:       variables,
+			RequiredSecrets: requiredSecrets,
+		}
+	}
+	return environments, nil
+}
+
+func validateCanonicalHostedControlsWorkflowEnvironments(policy map[string]any, policyPath string) error {
+	environments, err := hostedControlsWorkflowEnvironments(policy, policyPath)
+	if err != nil {
+		return err
+	}
+
+	hostedControlsAudit, ok := environments["hosted-controls-audit"]
+	if !ok {
+		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.hosted-controls-audit")
+	}
+	if len(hostedControlsAudit.Variables) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not declare public variables for workflow_environment.hosted-controls-audit")
+	}
+	if len(hostedControlsAudit.RequiredSecrets) != 1 || hostedControlsAudit.RequiredSecrets[0] != "WORKCELL_HOSTED_CONTROLS_TOKEN" {
+		return errors.New("policy/github-hosted-controls.toml must require only WORKCELL_HOSTED_CONTROLS_TOKEN for workflow_environment.hosted-controls-audit")
+	}
+
+	upstreamRefresh, ok := environments["upstream-refresh"]
+	if !ok {
+		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.upstream-refresh")
+	}
+	if len(upstreamRefresh.RequiredSecrets) != 1 || upstreamRefresh.RequiredSecrets[0] != "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY" {
+		return errors.New("policy/github-hosted-controls.toml must require only WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY for workflow_environment.upstream-refresh")
+	}
+	if _, ok := upstreamRefresh.Variables["WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID"]; ok {
+		return errors.New("policy/github-hosted-controls.toml must not declare WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID for workflow_environment.upstream-refresh")
+	}
+	for _, requiredName := range []string{
+		"WORKCELL_UPSTREAM_REFRESH_GIT_NAME",
+		"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL",
+		"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT",
+	} {
+		if value, ok := upstreamRefresh.Variables[requiredName]; !ok || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("policy/github-hosted-controls.toml must declare a non-empty workflow_environment.upstream-refresh.variables.%s value", requiredName)
+		}
+	}
+	if !regexp.MustCompile(`^[A-F0-9]{40}$`).MatchString(upstreamRefresh.Variables["WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT"]) {
+		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.upstream-refresh.variables.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT as a full uppercase 40-hex fingerprint")
+	}
+	return nil
+}
+
+func HostedControlsEnvironmentNames(policyPath string) ([]string, error) {
+	policyText, err := readText(policyPath)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := ParseTOMLSubset(policyText, policyPath)
+	if err != nil {
+		return nil, err
+	}
+	environments, err := hostedControlsWorkflowEnvironments(policy, policyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(environments))
+	for environmentName := range environments {
+		names = append(names, environmentName)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func hostedControlsEnvironmentArtifactName(environmentName string) string {
+	return strings.ReplaceAll(url.QueryEscape(environmentName), "+", "%20")
 }
 
 func FetchGitHubHostedControlsRulesets(tmpDir, repo string) error {
@@ -399,6 +539,10 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	}
 	var actionsVariables map[string]any
 	if err := readJSONFile(filepath.Join(tmpDir, "actions-variables.json"), &actionsVariables); err != nil {
+		return err
+	}
+	var environmentsIndex map[string]any
+	if err := readJSONFile(filepath.Join(tmpDir, "environments.json"), &environmentsIndex); err != nil {
 		return err
 	}
 	var directCollaborators []any
@@ -473,6 +617,10 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		return fmt.Errorf("%s must define required_status_checks.contexts as a non-empty array", policyPath)
 	}
 	expectedRepoVariables, err := hostedControlsRepositoryVariables(policy, policyPath)
+	if err != nil {
+		return err
+	}
+	expectedWorkflowEnvironments, err := hostedControlsWorkflowEnvironments(policy, policyPath)
 	if err != nil {
 		return err
 	}
@@ -695,6 +843,104 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	sort.Strings(wrongRepoVariables)
 	if len(wrongRepoVariables) > 0 {
 		return fmt.Errorf("repository variables on %s do not match policy: %s", repo, strings.Join(wrongRepoVariables, ", "))
+	}
+
+	actualEnvironmentNames := map[string]struct{}{}
+	if environments, ok := environmentsIndex["environments"].([]any); ok {
+		for _, raw := range environments {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _ := entry["name"].(string); name != "" {
+				actualEnvironmentNames[name] = struct{}{}
+			}
+		}
+	}
+	missingWorkflowEnvironments := make([]string, 0)
+	for environmentName := range expectedWorkflowEnvironments {
+		if _, ok := actualEnvironmentNames[environmentName]; !ok {
+			missingWorkflowEnvironments = append(missingWorkflowEnvironments, environmentName)
+		}
+	}
+	sort.Strings(missingWorkflowEnvironments)
+	if len(missingWorkflowEnvironments) > 0 {
+		return fmt.Errorf("workflow environments missing on %s: %s", repo, strings.Join(missingWorkflowEnvironments, ", "))
+	}
+	for environmentName, environmentPolicy := range expectedWorkflowEnvironments {
+		artifactName := hostedControlsEnvironmentArtifactName(environmentName)
+		var environmentMeta map[string]any
+		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s.json", artifactName)), &environmentMeta); err != nil {
+			return fmt.Errorf("read %s environment metadata: %w", environmentName, err)
+		}
+		if actualName, ok := environmentMeta["name"].(string); ok && actualName != "" && actualName != environmentName {
+			return fmt.Errorf("workflow environment metadata for %s on %s resolved to %s", environmentName, repo, actualName)
+		}
+
+		var environmentVariables map[string]any
+		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-variables.json", artifactName)), &environmentVariables); err != nil {
+			return fmt.Errorf("read %s environment variables: %w", environmentName, err)
+		}
+		actualEnvironmentVariables := map[string]any{}
+		if variables, ok := environmentVariables["variables"].([]any); ok {
+			for _, raw := range variables {
+				entry, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				name, _ := entry["name"].(string)
+				if name != "" {
+					actualEnvironmentVariables[name] = entry["value"]
+				}
+			}
+		}
+		missingEnvironmentVariables := make([]string, 0)
+		for name := range environmentPolicy.Variables {
+			if _, ok := actualEnvironmentVariables[name]; !ok {
+				missingEnvironmentVariables = append(missingEnvironmentVariables, name)
+			}
+		}
+		sort.Strings(missingEnvironmentVariables)
+		if len(missingEnvironmentVariables) > 0 {
+			return fmt.Errorf("workflow environment variables missing on %s/%s: %s", repo, environmentName, strings.Join(missingEnvironmentVariables, ", "))
+		}
+		wrongEnvironmentVariables := make([]string, 0)
+		for name, expectedValue := range environmentPolicy.Variables {
+			if actualEnvironmentVariables[name] != expectedValue {
+				wrongEnvironmentVariables = append(wrongEnvironmentVariables, fmt.Sprintf("%s=%#v (expected %#v)", name, actualEnvironmentVariables[name], expectedValue))
+			}
+		}
+		sort.Strings(wrongEnvironmentVariables)
+		if len(wrongEnvironmentVariables) > 0 {
+			return fmt.Errorf("workflow environment variables on %s/%s do not match policy: %s", repo, environmentName, strings.Join(wrongEnvironmentVariables, ", "))
+		}
+
+		var environmentSecrets map[string]any
+		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-secrets.json", artifactName)), &environmentSecrets); err != nil {
+			return fmt.Errorf("read %s environment secrets: %w", environmentName, err)
+		}
+		actualEnvironmentSecrets := map[string]struct{}{}
+		if secrets, ok := environmentSecrets["secrets"].([]any); ok {
+			for _, raw := range secrets {
+				entry, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				if name, _ := entry["name"].(string); name != "" {
+					actualEnvironmentSecrets[name] = struct{}{}
+				}
+			}
+		}
+		missingEnvironmentSecrets := make([]string, 0)
+		for _, name := range environmentPolicy.RequiredSecrets {
+			if _, ok := actualEnvironmentSecrets[name]; !ok {
+				missingEnvironmentSecrets = append(missingEnvironmentSecrets, name)
+			}
+		}
+		sort.Strings(missingEnvironmentSecrets)
+		if len(missingEnvironmentSecrets) > 0 {
+			return fmt.Errorf("workflow environment secrets missing on %s/%s: %s", repo, environmentName, strings.Join(missingEnvironmentSecrets, ", "))
+		}
 	}
 
 	protectionRules, _ := releaseEnv["protection_rules"].([]any)
@@ -1678,6 +1924,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	}
 	for _, needle := range []string{
+		`name: hosted-controls-audit`,
 		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
 		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
 		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "0"`,
@@ -1766,9 +2013,18 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := validateCanonicalHostedControlsRepositoryVariables(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
 		return err
 	}
+	if err := validateCanonicalHostedControlsWorkflowEnvironments(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
+		return err
+	}
 	for _, needle := range []string{
 		"gh api --paginate \"repos/${REPO}/actions/variables?per_page=100\"",
 		"jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}'",
+		"gh api --paginate \"repos/${REPO}/environments?per_page=100\"",
+		`list-hosted-control-environments "${POLICY_PATH}"`,
+		"safe_environment_name=\"${encoded_environment_name}\"",
+		"environment-${safe_environment_name}.json",
+		"repos/${REPO}/environments/${encoded_environment_name}/variables?per_page=100",
+		"repos/${REPO}/environments/${encoded_environment_name}/secrets?per_page=100",
 		`verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"`,
 	} {
 		if !strings.Contains(hostedControlsScript, needle) {

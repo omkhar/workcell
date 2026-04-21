@@ -86,6 +86,18 @@ func main() {
 			die(fmt.Errorf("usage: %s fetch-rulesets TMP_DIR REPO", os.Args[0]))
 		}
 		err = metadatautil.FetchGitHubHostedControlsRulesets(os.Args[2], os.Args[3])
+	case "list-hosted-control-environments":
+		if len(os.Args) != 3 {
+			die(fmt.Errorf("usage: %s list-hosted-control-environments POLICY_PATH", os.Args[0]))
+		}
+		environments, listErr := metadatautil.HostedControlsEnvironmentNames(os.Args[2])
+		if listErr != nil {
+			die(listErr)
+		}
+		for _, environmentName := range environments {
+			fmt.Println(environmentName)
+		}
+		return
 	case "verify-github-hosted-controls":
 		if len(os.Args) != 5 {
 			die(fmt.Errorf("usage: %s verify-github-hosted-controls TMP_DIR REPO POLICY_PATH", os.Args[0]))
