@@ -41,7 +41,8 @@ gh api --paginate "repos/${REPO}/actions/variables?per_page=100" |
 gh api "repos/${REPO}/collaborators?affiliation=direct&per_page=100" >"${TMP_DIR}/collaborators-direct.json"
 gh api "repos/${REPO}/rulesets" >"${TMP_DIR}/rulesets-summary.json"
 "${METADATAUTIL_BIN}" fetch-rulesets "${TMP_DIR}" "${REPO}"
-gh api "repos/${REPO}/environments" >"${TMP_DIR}/environments.json"
+gh api --paginate "repos/${REPO}/environments?per_page=100" |
+  jq -s '{total_count: (map(.total_count // 0) | max // 0), environments: (map(.environments // []) | add)}' >"${TMP_DIR}/environments.json"
 if gh api "repos/${REPO}/environments/release" >"${TMP_DIR}/environment-release.json" 2>/dev/null; then
   :
 else
@@ -51,16 +52,17 @@ fi
 while IFS= read -r environment_name; do
   [[ -n "${environment_name}" ]] || continue
   encoded_environment_name="$(jq -rn --arg value "${environment_name}" '$value | @uri')"
-  if gh api "repos/${REPO}/environments/${encoded_environment_name}" >"${TMP_DIR}/environment-${environment_name}.json" 2>/dev/null; then
+  safe_environment_name="${encoded_environment_name}"
+  if gh api "repos/${REPO}/environments/${encoded_environment_name}" >"${TMP_DIR}/environment-${safe_environment_name}.json" 2>/dev/null; then
     :
   else
     echo "Missing required ${environment_name} environment on ${REPO}" >&2
     exit 1
   fi
   gh api --paginate "repos/${REPO}/environments/${encoded_environment_name}/variables?per_page=100" |
-    jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}' >"${TMP_DIR}/environment-${environment_name}-variables.json"
+    jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}' >"${TMP_DIR}/environment-${safe_environment_name}-variables.json"
   gh api --paginate "repos/${REPO}/environments/${encoded_environment_name}/secrets?per_page=100" |
-    jq -s '{total_count: (map(.total_count // 0) | max // 0), secrets: (map(.secrets // []) | add)}' >"${TMP_DIR}/environment-${environment_name}-secrets.json"
+    jq -s '{total_count: (map(.total_count // 0) | max // 0), secrets: (map(.secrets // []) | add)}' >"${TMP_DIR}/environment-${safe_environment_name}-secrets.json"
 done < <("${METADATAUTIL_BIN}" list-hosted-control-environments "${POLICY_PATH}")
 
 "${METADATAUTIL_BIN}" verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"

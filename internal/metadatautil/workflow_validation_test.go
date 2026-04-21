@@ -1160,3 +1160,11 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValu
 		t.Fatalf("validateCanonicalHostedControlsWorkflowEnvironments() error = %v", err)
 	}
 }
+
+func TestHostedControlsEnvironmentArtifactNameEscapesSlashes(t *testing.T) {
+	t.Parallel()
+
+	if got := hostedControlsEnvironmentArtifactName("prod/us west"); got != "prod%2Fus%20west" {
+		t.Fatalf("hostedControlsEnvironmentArtifactName() = %q, want %q", got, "prod%2Fus%20west")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -492,6 +493,10 @@ func HostedControlsEnvironmentNames(policyPath string) ([]string, error) {
 	return names, nil
 }
 
+func hostedControlsEnvironmentArtifactName(environmentName string) string {
+	return url.PathEscape(environmentName)
+}
+
 func FetchGitHubHostedControlsRulesets(tmpDir, repo string) error {
 	var summary []any
 	if err := readJSONFile(filepath.Join(tmpDir, "rulesets-summary.json"), &summary); err != nil {
@@ -863,8 +868,9 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		return fmt.Errorf("workflow environments missing on %s: %s", repo, strings.Join(missingWorkflowEnvironments, ", "))
 	}
 	for environmentName, environmentPolicy := range expectedWorkflowEnvironments {
+		artifactName := hostedControlsEnvironmentArtifactName(environmentName)
 		var environmentMeta map[string]any
-		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s.json", environmentName)), &environmentMeta); err != nil {
+		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s.json", artifactName)), &environmentMeta); err != nil {
 			return fmt.Errorf("read %s environment metadata: %w", environmentName, err)
 		}
 		if actualName, ok := environmentMeta["name"].(string); ok && actualName != "" && actualName != environmentName {
@@ -872,7 +878,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		}
 
 		var environmentVariables map[string]any
-		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-variables.json", environmentName)), &environmentVariables); err != nil {
+		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-variables.json", artifactName)), &environmentVariables); err != nil {
 			return fmt.Errorf("read %s environment variables: %w", environmentName, err)
 		}
 		actualEnvironmentVariables := map[string]any{}
@@ -910,7 +916,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		}
 
 		var environmentSecrets map[string]any
-		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-secrets.json", environmentName)), &environmentSecrets); err != nil {
+		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-secrets.json", artifactName)), &environmentSecrets); err != nil {
 			return fmt.Errorf("read %s environment secrets: %w", environmentName, err)
 		}
 		actualEnvironmentSecrets := map[string]struct{}{}
@@ -2013,7 +2019,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	for _, needle := range []string{
 		"gh api --paginate \"repos/${REPO}/actions/variables?per_page=100\"",
 		"jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}'",
+		"gh api --paginate \"repos/${REPO}/environments?per_page=100\"",
 		`list-hosted-control-environments "${POLICY_PATH}"`,
+		"safe_environment_name=\"${encoded_environment_name}\"",
+		"environment-${safe_environment_name}.json",
 		"repos/${REPO}/environments/${encoded_environment_name}/variables?per_page=100",
 		"repos/${REPO}/environments/${encoded_environment_name}/secrets?per_page=100",
 		`verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"`,
