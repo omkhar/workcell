@@ -161,7 +161,6 @@ shell_files=(
   "${ROOT_DIR}/scripts/install-workcell.sh"
   "${ROOT_DIR}/scripts/uninstall.sh"
   "${ROOT_DIR}/scripts/pre-merge.sh"
-  "${ROOT_DIR}/scripts/repo-publish-pr.sh"
   "${ROOT_DIR}/scripts/provider-e2e.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
   "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
