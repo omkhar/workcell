@@ -18,8 +18,9 @@ Current repo status:
   compatibility-read path
 - Phase 3 is implemented in the shared auth/bootstrap path, explicit bootstrap
   explainability, and provider bootstrap support matrix
-- Phase 4 is the next active slice: trusted validation hosts and the
-  host-compatibility matrix
+- Phase 4 is implemented in the trusted validation-host lane, canonical
+  host-support matrix, and fail-closed unsupported-combination diagnostics
+- Phase 5 is the next active slice: remote VM control-plane contract
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract
@@ -33,6 +34,12 @@ Each phase is complete only when:
   rather than the repo-required validation path
 - the phase does not overstate host, backend, or assurance support beyond what
   the current evidence proves
+
+Owner-lane default:
+
+- treat `EM`, `TL`, `contract and docs owner`, and `validation owner` as
+  distinct Codex-agent lanes or threads unless a later change or runbook names
+  specific humans explicitly
 
 ## Phase 0: Validation substrate hardening
 
