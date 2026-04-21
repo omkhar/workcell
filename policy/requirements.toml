@@ -176,6 +176,23 @@ docs = [
   "man/workcell.1",
 ]
 
+[functional.FR-010]
+title = "Canonical remote VM contract"
+summary = "Workcell defines a canonical preview-only remote_vm contract with explicit workspace materialization, brokered bootstrap and session lifecycle, and a shared fake target plus conformance harness that later provider adapters must reuse unchanged."
+evidence = [
+  "internal/remotevm/contract_test.go",
+  "internal/remotevm/fake_target_test.go",
+  "internal/remotevm/conformance_test.go",
+]
+docs = [
+  "docs/remote-vm-contract.md",
+  "docs/workcell-system-design.md",
+  "docs/validation-scenarios.md",
+  "docs/runtime-target-phase-plan.md",
+  "docs/implement-first-delivery-plan.md",
+  "ROADMAP.md",
+]
+
 [nonfunctional.NFR-001]
 title = "Bounded VM-plus-container execution"
 summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."

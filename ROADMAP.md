@@ -18,14 +18,12 @@ The deterministic phase breakdown lives in
 - expand end-to-end coverage for authenticated, lower-assurance, and
   session-supervisor transitions so new orchestration features ship with
   invariant checks
-- define the provider-neutral remote-VM contract, shared fake target, and
-  evidence gates that later
-  `compat` and `remote_vm` targets must satisfy, without implying backend
-  shipment or Tier 1 Linux or Windows host parity before the same guarantees
-  exist
-- keep the shipped canonical host-support matrix and the new shared remote-VM
-  conformance harness authoritative so later targets cannot fork the support
-  contract by accident
+- ship the first cross-platform compatibility backend with explicit
+  lower-assurance labeling, deterministic backend-selection and state-routing
+  behavior, and rollback guidance that preserves the strict Colima path
+- keep the shipped canonical host-support matrix and shared remote-VM
+  conformance harness authoritative so later `compat` and `remote_vm` targets
+  cannot fork the support contract by accident
 
 ## Medium term
 
