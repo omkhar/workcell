@@ -322,9 +322,11 @@ material:
 - [`docs/provenance.md`](provenance.md) and [`docs/releasing.md`](releasing.md)
   describe release-time signing, attestation, and publication expectations
 
-Final GitHub publication is intentionally host-side. `workcell publish-pr`
-keeps branch push, commit signing, and PR creation outside the bounded Tier 1
-runtime.
+Final GitHub publication is intentionally host-side. In this repository the
+supported `main`-based PR path goes through `./scripts/repo-publish-pr.sh`,
+which delegates to `workcell publish-pr` after fresh local parity evidence
+exists. That keeps branch push, commit signing, and PR creation outside the
+bounded Tier 1 runtime.
 
 ## End-to-End Flow
 
@@ -361,7 +363,8 @@ The supported publication path remains:
 
 1. run the provider inside Workcell
 2. review the resulting changes
-3. publish from the host with `workcell publish-pr`
+3. run local `pr-parity`, then publish from the host with
+   `./scripts/repo-publish-pr.sh`
 
 This keeps commit signing and repository publication outside the in-container
 runtime boundary.

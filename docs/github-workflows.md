@@ -3,6 +3,20 @@
 Workcell keeps the workflow set narrow and reviewable. GitHub automation should
 reinforce the runtime boundary and release posture, not replace them.
 
+Workcell also keeps a machine-checked lane inventory so local parity and
+GitHub-only behavior do not drift silently:
+
+- [`policy/workflow-lane-policy.json`](../policy/workflow-lane-policy.json)
+  declares each expanded workflow lane's profiles, authority, and local mode
+- [`policy/workflow-lanes.json`](../policy/workflow-lanes.json) is the
+  generated manifest derived from the live workflow YAML plus that policy
+- `./scripts/verify-workflow-lanes.sh` fails if the manifest drifts
+- `./scripts/ci-plan.sh` explains which mirrored lanes apply locally for a
+  given profile, event, labels, and changed files
+
+That inventory underpins the local `./scripts/pre-merge.sh` profiles and the
+repo-local `./scripts/repo-publish-pr.sh` publication gate.
+
 ## Workflow inventory
 
 | Workflow | Purpose |
@@ -73,6 +87,20 @@ passes isolated writable roots, and creates those paths inside the validator
 before repo validation or docs checks run. That contract still holds when the
 caller UID lacks a passwd entry inside the image because the launcher
 synthesizes an isolated writable home for those lanes.
+
+The mirrored local workflow bodies live under `scripts/ci/`:
+
+- `job-pr-shape.sh`
+- `job-validate.sh`
+- `job-docs.sh`
+- `job-pin-hygiene.sh`
+- `build-validator-image.sh`
+- `run-validate-in-validator.sh`
+- `run-docs-in-validator.sh`
+
+GitHub workflow YAML stays responsible for event routing, permissions, runners,
+and hosted-only concerns. The shared scripts keep the mirrorable job logic
+identical between local parity runs and GitHub CI.
 
 ## Hosted controls
 

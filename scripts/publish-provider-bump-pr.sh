@@ -29,7 +29,8 @@ Usage: scripts/publish-provider-bump-pr.sh [--base BRANCH] [--draft] [--now RFC3
 
 Creates a disposable worktree, updates pinned provider versions to the newest
 stable releases older than the configured cool-off, validates the result, and
-publishes a signed pull request through workcell publish-pr.
+publishes a signed pull request through the repo-local parity-enforcing
+publication wrapper.
 
 Run this from a clean worktree. The disposable publication branch is created
 from the latest available tip of the selected base branch, not the caller's
@@ -136,9 +137,7 @@ else
   exit 0
 fi
 
-"${worktree_root}/scripts/validate-repo.sh"
-"${worktree_root}/scripts/container-smoke.sh"
-"${worktree_root}/scripts/verify-invariants.sh"
+"${worktree_root}/scripts/pre-merge.sh" --profile pr-parity --allow-dirty
 
 codex_version="$(
   cd "${worktree_root}"
@@ -167,9 +166,7 @@ cat >"${body_file}" <<EOF
 
 ## Validation
 
-- \`./scripts/validate-repo.sh\`
-- \`./scripts/container-smoke.sh\`
-- \`./scripts/verify-invariants.sh\`
+- \`./scripts/pre-merge.sh --profile pr-parity --allow-dirty\`
 EOF
 
 cat >"${commit_file}" <<EOF
@@ -181,8 +178,7 @@ Bump stable provider pins
 EOF
 
 publish_cmd=(
-  "${ROOT_DIR}/scripts/workcell"
-  publish-pr
+  "${ROOT_DIR}/scripts/repo-publish-pr.sh"
   --workspace "${worktree_root}"
   --branch "${branch_name}"
   --base "${BASE_BRANCH}"

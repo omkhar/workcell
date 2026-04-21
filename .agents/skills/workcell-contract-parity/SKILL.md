@@ -76,6 +76,10 @@ If the change is release-bound, also read:
   `WORKCELL_HELP_BIN` override.
 - Final GitHub publication is host-side and branch-based. Do not normalize
   direct pushes to `main`.
+- In this repository, the parity-enforcing `main`-based publication path is
+  `./scripts/repo-publish-pr.sh`, which delegates to
+  `./scripts/workcell publish-pr` only after fresh local `pr-parity`
+  evidence exists.
 - Anything pushed for review must stay human-reviewable. Keep PRs single-purpose
   and bounded enough that a reviewer can reason about the change without
   juggling multiple independent decisions. Split broad work into sequenced PRs

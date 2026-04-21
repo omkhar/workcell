@@ -64,6 +64,10 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - For publish, PR follow-up, or merge requests in this repository, use the
   repo-local `workcell-pr-lifecycle` skill. Repo-local publication rules
   override generic GitHub publication skills.
+- For `main`-based PR publication in this repository, use the host-side
+  repo-local wrapper `./scripts/repo-publish-pr.sh`. It requires fresh local
+  `pr-parity` evidence before delegating to the lower-level
+  `./scripts/workcell publish-pr` helper.
 - `main` is the only supported PR base by default. Non-`main` base PRs are
   lower-assurance exceptions: keep them draft, do not merge them, and do not
   expect the normal `main`-based repo-owned validation or merge gating for
@@ -98,7 +102,8 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   independent approval or separation of duties unless it actually happened.
 - Review open pull requests, review feedback, and PR comments before cutting a
   release, and address actionable feedback as part of the release workflow.
-- Use host-side `./scripts/workcell publish-pr` for release PR publication.
+- Use host-side `./scripts/repo-publish-pr.sh` for release PR publication
+  after fresh local `pr-parity` evidence exists.
 - Wait for the merged `main` commit to finish required GitHub Actions workflows
   successfully before pushing the signed release tag.
 - After pushing a release tag, follow the `Release` workflow to completion and

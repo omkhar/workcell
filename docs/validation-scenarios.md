@@ -46,7 +46,12 @@ state:
 - `./scripts/verify-invariants.sh`
 - `./scripts/verify-release-bundle.sh`
 - `./scripts/verify-reproducible-build.sh`
-- `./scripts/pre-merge.sh` (builds or reuses the same pinned validator container and can run the local stack from a disposable snapshot)
+- `./scripts/pre-merge.sh` profiles:
+  - `repo-core` for deterministic repo-required validation
+  - `pr-parity` for the local mirror of required `main`-based PR checks
+  - `release-preflight` for the additional mirrored release-facing lanes
+- `./scripts/repo-publish-pr.sh` for `main`-based PR publication after fresh
+  local `pr-parity` evidence exists
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
@@ -118,6 +123,14 @@ GitHub-hosted CI proves:
 
 GitHub-hosted CI does not prove the full macOS Colima boundary. That remains a
 local exercise.
+
+Workcell now also keeps a machine-checked local parity inventory in:
+
+- [`policy/workflow-lane-policy.json`](../policy/workflow-lane-policy.json)
+- [`policy/workflow-lanes.json`](../policy/workflow-lanes.json)
+
+Use `./scripts/ci-plan.sh` to see which mirrored lanes a given local
+`pre-merge` profile will execute and which lanes remain GitHub-only.
 
 ## Credential placement rule
 

@@ -89,7 +89,11 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
    ./scripts/pre-merge.sh
    ```
 
-6. Open a PR against `main`.
+6. Publish against `main` with the repo-local parity wrapper:
+
+   ```bash
+   ./scripts/repo-publish-pr.sh
+   ```
 
 The pre-commit hook blocks unrelated commits when stable provider pin bumps are
 pending and points you at `./scripts/publish-provider-bump-pr.sh`.
@@ -147,27 +151,41 @@ validator container from a disposable snapshot of the current worktree.
 
 ### Full local gate
 
-`./scripts/pre-merge.sh` is the normal pre-PR gate. It covers:
+`./scripts/pre-merge.sh` is the normal local parity entrypoint. It supports
+three explicit profiles:
 
-- pinned-input checks
-- upstream release verification for pinned provider artifacts
-- validator-image rebuild
-- workflow lint
-- repo validation
-- invariant checks
-- host-side `publish-pr` scenario coverage
+- `repo-core`: repo-required deterministic checks
+- `pr-parity` (default): the mirrored local subset of required `main`-based PR
+  workflows plus parity evidence generation for publication
+- `release-preflight`: `pr-parity` plus the extra mirrored release-facing
+  hygiene lanes
+
+The default `pr-parity` profile covers the shared mirrored workflow bodies:
+
+- workflow lint and workflow-lane manifest verification
+- PR shape
+- validator-backed shared validate job
+- docs parity
 - container smoke
-- source-bundle reproducibility
-- runtime-image reproducibility
+- runtime-image reproducibility on locally supported platforms
+
+`release-preflight` adds the mirrored pin-hygiene lane. `repo-core` keeps the
+smaller deterministic subset for repo-owned contract work.
 
 Helpful flags:
 
 ```bash
 ./scripts/pre-merge.sh --allow-dirty
+./scripts/pre-merge.sh --profile repo-core
+./scripts/pre-merge.sh --profile release-preflight
 ./scripts/pre-merge.sh --skip-repro
 ./scripts/pre-merge.sh --skip-release-bundle
 ./scripts/pre-merge.sh --rebuild-validator
 ```
+
+For `main`-based PRs, `./scripts/repo-publish-pr.sh` consumes the fresh
+`pr-parity` evidence emitted by `./scripts/pre-merge.sh` and refuses to publish
+if that evidence does not match the tree being sent for review.
 
 ## Pull requests
 

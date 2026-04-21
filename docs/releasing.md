@@ -48,7 +48,9 @@ honestly in docs, status reports, and release commentary.
 - Review any intentional upstream holdbacks or exceptions before refreshing
   pins, and document them in policy or release notes rather than carrying
   unexplained drift.
-- Publish PRs from the host with `./scripts/workcell publish-pr`.
+- Publish `main`-based release PRs from the host with
+  `./scripts/repo-publish-pr.sh` after fresh local `pr-parity` evidence
+  exists.
 - For agentic release PR publication and follow-up, use the repo-local
   `workcell-pr-lifecycle` skill in addition to this release runbook.
 - Wait for `main` to be green before pushing the release tag.
@@ -354,10 +356,12 @@ git commit -S -m "release: ${VERSION}"
 
 ## 5. Publish the release PR from the host
 
-Prepare and publish the release PR with the host-side helper:
+Prepare and publish the release PR with the host-side helper after running the
+local parity gate:
 
 ```sh
-./scripts/workcell publish-pr
+./scripts/pre-merge.sh --profile pr-parity
+./scripts/repo-publish-pr.sh
 ```
 
 In `review-gated` mode, stop with the first checkpoint packet before running

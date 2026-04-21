@@ -45,7 +45,9 @@ providers = ["claude"]
 - the session gets only the reviewed credentials it needs
 - the macOS Claude resolver can still be recorded separately, but it is
   currently fail-closed until a supported export path exists
-- final publication still stays on the host with `workcell publish-pr`
+- final publication still stays on the host through the repo-local
+  `./scripts/repo-publish-pr.sh` wrapper, which delegates to the lower-level
+  `workcell publish-pr` helper after fresh local parity evidence exists
 
 ## Launch
 

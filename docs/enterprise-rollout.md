@@ -111,7 +111,8 @@ The supported publication path remains:
 
 1. run the provider inside Workcell
 2. review the resulting changes
-3. publish from the host with `workcell publish-pr`
+3. run local `pr-parity`, then publish from the host with
+   `./scripts/repo-publish-pr.sh`
 
 Do not treat in-session git publication as equivalent to the host-side release
 and signing model.
