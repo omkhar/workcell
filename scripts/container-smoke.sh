@@ -1429,14 +1429,14 @@ if sudo -n --preserve-env=PATH /usr/local/libexec/workcell/apt-helper.sh apt-get
   exit 1
 fi
 grep -q "blocked unsupported preserved environment variable: PATH" /tmp/codex-sudo-preserve-path.err
-slow_apt_helper=/tmp/workcell-slow-apt-helper.sh
+slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh
 slow_apt_broker_root=/tmp/workcell-apt-broker
-cat >"${slow_apt_helper}" <<'INNER'
+cat >"${slow_apt_helper}" <<'SLOW_APT_HELPER'
 #!/usr/bin/env bash
 set -euo pipefail
 sleep 11
 printf 'slow-apt-helper-ok\n'
-INNER
+SLOW_APT_HELPER
 chmod +x "${slow_apt_helper}"
 rm -rf "${slow_apt_broker_root}"
 WORKCELL_APT_BROKER_ROOT="${slow_apt_broker_root}" \
