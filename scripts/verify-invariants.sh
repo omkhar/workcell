@@ -5134,37 +5134,10 @@ done
 
 case "${profile}" in
   release-preflight)
-    cat <<'JSON'
-{
-  "version": 1,
-  "profile": "release-preflight",
-  "lanes": [
-    {"id": "security.yml/actionlint", "status": "local", "local_script": "scripts/check-workflows.sh", "local_order": 10},
-    {"id": "ci.yml/pr-shape", "status": "local", "local_script": "scripts/ci/job-pr-shape.sh", "local_order": 15},
-    {"id": "ci.yml/validate", "status": "local", "local_script": "scripts/ci/job-validate.sh", "local_order": 20},
-    {"id": "docs.yml/spelling-and-manpage", "status": "local", "local_script": "scripts/ci/job-docs.sh", "local_order": 30},
-    {"id": "ci.yml/container-smoke", "status": "local", "local_script": "scripts/container-smoke.sh", "local_order": 40},
-    {"id": "ci.yml/reproducible-build-platform[platform=linux/arm64]", "status": "local", "local_script": "scripts/verify-reproducible-build.sh", "local_order": 45, "matrix": {"platform": "linux/arm64"}},
-    {"id": "pin-hygiene.yml/pinned-inputs", "status": "local", "local_script": "scripts/ci/job-pin-hygiene.sh", "local_order": 60}
-  ]
-}
-JSON
+    printf '%s\n' '{"version":1,"profile":"release-preflight","lanes":[{"id":"security.yml/actionlint","status":"local","local_script":"scripts/check-workflows.sh","local_order":10},{"id":"ci.yml/pr-shape","status":"local","local_script":"scripts/ci/job-pr-shape.sh","local_order":15},{"id":"ci.yml/validate","status":"local","local_script":"scripts/ci/job-validate.sh","local_order":20},{"id":"docs.yml/spelling-and-manpage","status":"local","local_script":"scripts/ci/job-docs.sh","local_order":30},{"id":"ci.yml/container-smoke","status":"local","local_script":"scripts/container-smoke.sh","local_order":40},{"id":"ci.yml/reproducible-build-platform[platform=linux/arm64]","status":"local","local_script":"scripts/verify-reproducible-build.sh","local_order":45,"matrix":{"platform":"linux/arm64"}},{"id":"pin-hygiene.yml/pinned-inputs","status":"local","local_script":"scripts/ci/job-pin-hygiene.sh","local_order":60}]}'
     ;;
   *)
-    cat <<'JSON'
-{
-  "version": 1,
-  "profile": "pr-parity",
-  "lanes": [
-    {"id": "security.yml/actionlint", "status": "local", "local_script": "scripts/check-workflows.sh", "local_order": 10},
-    {"id": "ci.yml/pr-shape", "status": "local", "local_script": "scripts/ci/job-pr-shape.sh", "local_order": 15},
-    {"id": "ci.yml/validate", "status": "local", "local_script": "scripts/ci/job-validate.sh", "local_order": 20},
-    {"id": "docs.yml/spelling-and-manpage", "status": "local", "local_script": "scripts/ci/job-docs.sh", "local_order": 30},
-    {"id": "ci.yml/container-smoke", "status": "local", "local_script": "scripts/container-smoke.sh", "local_order": 40},
-    {"id": "ci.yml/reproducible-build-platform[platform=linux/arm64]", "status": "local", "local_script": "scripts/verify-reproducible-build.sh", "local_order": 45, "matrix": {"platform": "linux/arm64"}}
-  ]
-}
-JSON
+    printf '%s\n' '{"version":1,"profile":"pr-parity","lanes":[{"id":"security.yml/actionlint","status":"local","local_script":"scripts/check-workflows.sh","local_order":10},{"id":"ci.yml/pr-shape","status":"local","local_script":"scripts/ci/job-pr-shape.sh","local_order":15},{"id":"ci.yml/validate","status":"local","local_script":"scripts/ci/job-validate.sh","local_order":20},{"id":"docs.yml/spelling-and-manpage","status":"local","local_script":"scripts/ci/job-docs.sh","local_order":30},{"id":"ci.yml/container-smoke","status":"local","local_script":"scripts/container-smoke.sh","local_order":40},{"id":"ci.yml/reproducible-build-platform[platform=linux/arm64]","status":"local","local_script":"scripts/verify-reproducible-build.sh","local_order":45,"matrix":{"platform":"linux/arm64"}}]}'
     ;;
 esac
 EOF
@@ -5283,16 +5256,19 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
 fi
 grep -q 'local validation will run from snapshot (head).' /tmp/workcell-premerge-local-snapshot.out
 grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_DEFAULT_SNAPSHOT_PARENT}" "${PREMERGE_LOG}"
-grep -q 'ci-plan.sh --profile pr-parity --event pull_request --base main --format json' "${PREMERGE_LOG}"
-grep -q 'check-workflows.sh ' "${PREMERGE_LOG}"
-grep -q 'ci/job-pr-shape.sh --base main' "${PREMERGE_LOG}"
-grep -q 'ci/job-validate.sh --profile pr-parity' "${PREMERGE_LOG}"
-grep -q 'ci/job-docs.sh ' "${PREMERGE_LOG}"
-grep -q 'container-smoke.sh ' "${PREMERGE_LOG}"
-grep -q 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64' "${PREMERGE_LOG}"
-grep -q '"profile": "pr-parity"' "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
-grep -q '"base_branch": "main"' "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
-grep -q '"tree_oid": "1111111111111111111111111111111111111111"' "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
+for expected in \
+  'ci-plan.sh --profile pr-parity --event pull_request --base main --format json' \
+  'check-workflows.sh ' \
+  'ci/job-pr-shape.sh --base main' \
+  'ci/job-validate.sh --profile pr-parity' \
+  'ci/job-docs.sh ' \
+  'container-smoke.sh ' \
+  'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64'; do
+  grep -q "${expected}" "${PREMERGE_LOG}"
+done
+for expected in '"profile": "pr-parity"' '"base_branch": "main"' '"tree_oid": "1111111111111111111111111111111111111111"'; do
+  grep -q "${expected}" "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
+done
 
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
@@ -5338,15 +5314,18 @@ fi
 grep -q 'local validation will run from snapshot (worktree).' /tmp/workcell-premerge-local-snapshot.out
 grep -q 'with-validation-snapshot.sh --repo ' "${PREMERGE_LOG}"
 grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_HARNESS_ROOT}/relative-snapshots" "${PREMERGE_LOG}"
-grep -q -- '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --profile release-preflight --local-snapshot worktree --local-include-untracked' "${PREMERGE_LOG}"
-grep -q 'ci-plan.sh --profile release-preflight --event pull_request --base main --format json' "${PREMERGE_LOG}"
-grep -q 'check-workflows.sh ' "${PREMERGE_LOG}"
-grep -q 'ci/job-pr-shape.sh --base main' "${PREMERGE_LOG}"
-grep -q 'ci/job-validate.sh --profile release-preflight' "${PREMERGE_LOG}"
-grep -q 'ci/job-docs.sh ' "${PREMERGE_LOG}"
-grep -q 'ci/job-pin-hygiene.sh ' "${PREMERGE_LOG}"
-grep -q 'container-smoke.sh ' "${PREMERGE_LOG}"
-grep -q 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64' "${PREMERGE_LOG}"
+for expected in \
+  '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --profile release-preflight --local-snapshot worktree --local-include-untracked' \
+  'ci-plan.sh --profile release-preflight --event pull_request --base main --format json' \
+  'check-workflows.sh ' \
+  'ci/job-pr-shape.sh --base main' \
+  'ci/job-validate.sh --profile release-preflight' \
+  'ci/job-docs.sh ' \
+  'ci/job-pin-hygiene.sh ' \
+  'container-smoke.sh ' \
+  'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64'; do
+  grep -q -- "${expected}" "${PREMERGE_LOG}"
+done
 
 FILE_TRACE_SENSITIVITY_HARNESS="$(mktemp)"
 cat >"${FILE_TRACE_SENSITIVITY_HARNESS}" <<EOF
