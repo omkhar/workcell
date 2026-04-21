@@ -80,20 +80,32 @@ jobs:
         env:
           WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
           WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
           WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
         run: |
-          if [[ -z "${WORKCELL_UPSTREAM_REFRESH_GIT_NAME}" || -z "${WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL}" || -z "${WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY}" || -z "${WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID}" ]]; then
-            echo "Configure WORKCELL_UPSTREAM_REFRESH_GIT_NAME, WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL, WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY, and WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID before running upstream-refresh." >&2
+          if [[ -z "${WORKCELL_UPSTREAM_REFRESH_GIT_NAME}" || -z "${WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL}" || -z "${WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY}" || -z "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
+            echo "Configure WORKCELL_UPSTREAM_REFRESH_GIT_NAME, WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL, WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY, and WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT before running upstream-refresh." >&2
             exit 1
           fi
           export GNUPGHOME="${RUNNER_TEMP}/gnupg"
           install -d -m 0700 "${GNUPGHOME}"
           printf '%s' "${WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY}" | gpg --batch --import
-          gpg --batch --list-secret-keys "${WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID}" >/dev/null
+          actual_fingerprint="$(
+            gpg --batch --with-colons --list-secret-keys |
+              awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          if [[ -z "${actual_fingerprint}" ]]; then
+            echo "Unable to resolve a primary secret-key fingerprint after importing WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY." >&2
+            exit 1
+          fi
+          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
+            echo "Imported signing key fingerprint ${actual_fingerprint} does not match audited fingerprint ${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}." >&2
+            exit 1
+          fi
+          gpg --batch --list-secret-keys "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" >/dev/null
           git config user.name "${WORKCELL_UPSTREAM_REFRESH_GIT_NAME}"
           git config user.email "${WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL}"
-          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID}"
+          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
           git config commit.gpgsign true
           git config gpg.program gpg
           echo "GNUPGHOME=${GNUPGHOME}" >> "${GITHUB_ENV}"

@@ -48,5 +48,19 @@ else
   echo "Missing required release environment on ${REPO}" >&2
   exit 1
 fi
+while IFS= read -r environment_name; do
+  [[ -n "${environment_name}" ]] || continue
+  encoded_environment_name="$(jq -rn --arg value "${environment_name}" '$value | @uri')"
+  if gh api "repos/${REPO}/environments/${encoded_environment_name}" >"${TMP_DIR}/environment-${environment_name}.json" 2>/dev/null; then
+    :
+  else
+    echo "Missing required ${environment_name} environment on ${REPO}" >&2
+    exit 1
+  fi
+  gh api --paginate "repos/${REPO}/environments/${encoded_environment_name}/variables?per_page=100" |
+    jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}' >"${TMP_DIR}/environment-${environment_name}-variables.json"
+  gh api --paginate "repos/${REPO}/environments/${encoded_environment_name}/secrets?per_page=100" |
+    jq -s '{total_count: (map(.total_count // 0) | max // 0), secrets: (map(.secrets // []) | add)}' >"${TMP_DIR}/environment-${environment_name}-secrets.json"
+done < <("${METADATAUTIL_BIN}" list-hosted-control-environments "${POLICY_PATH}")
 
 "${METADATAUTIL_BIN}" verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"

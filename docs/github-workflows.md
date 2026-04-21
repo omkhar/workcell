@@ -71,15 +71,22 @@ Other macOS versions are not install-gated today.
 - it runs on a weekday schedule and on manual dispatch
 - it refreshes provider pins, the Linux runtime and validator base images,
   Debian snapshot, Go/Rust/Hadolint toolchains, and release-build helper pins
-- it requires a maintainer-owned GitHub-verified signing key through
-  `WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY` and
-  `WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID`, plus matching
-  `WORKCELL_UPSTREAM_REFRESH_GIT_NAME` and
-  `WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL` repository variables
+- it binds to the `upstream-refresh` GitHub environment and requires the
+  environment-scoped public identity variables
+  `WORKCELL_UPSTREAM_REFRESH_GIT_NAME`,
+  `WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL`, and
+  `WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT`, plus the matching
+  environment secret `WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY`
+- it imports the signing key at runtime and fails closed unless the imported
+  primary secret-key fingerprint exactly matches the audited
+  `WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT` value
 - it opens a draft PR instead of mutating `main`
 - it leaves expensive validation behind the same maintainer approval gate used
   for other public-repo PRs instead of auto-dispatching workflows during
   publication
+- unattended scheduled signing remains a lower-assurance single-maintainer
+  exception until a stronger hosted signing path replaces the exported private
+  key flow
 
 `ci.yml` and `docs.yml` use the same explicit nonroot validator contract when
 they bind-mount the repository: the workflow computes the caller UID/GID,
@@ -113,6 +120,8 @@ reviewed inputs:
 - the `release` environment, with reviewer protection when the GitHub plan
   supports it and an explicitly documented lower-assurance fallback when it
   does not
+- the `hosted-controls-audit` and `upstream-refresh` environments, including
+  their required secrets and the audited public refresh identity
 - GitHub Actions SHA pinning
 - canonical repository variables such as
   `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` and

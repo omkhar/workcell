@@ -100,6 +100,11 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 
 	root := tb.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
+	const (
+		upstreamRefreshName        = "Omkhar Arasaratnam"
+		upstreamRefreshEmail       = "omkhar@gmail.com"
+		upstreamRefreshFingerprint = "90554248C4F7CC086BB745D0DA5A8E9F536C42FD"
+	)
 	policy := strings.Join([]string{
 		"[branch_integrity]",
 		"require_signed_commits = true",
@@ -118,6 +123,17 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		"[repository_variables]",
 		`WORKCELL_ENABLE_GITHUB_ATTESTATIONS = "true"`,
 		`WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"`,
+		"",
+		"[workflow_environment.hosted-controls-audit]",
+		`required_secrets = ["WORKCELL_HOSTED_CONTROLS_TOKEN"]`,
+		"",
+		"[workflow_environment.upstream-refresh]",
+		`required_secrets = ["WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"]`,
+		"",
+		"[workflow_environment.upstream-refresh.variables]",
+		`WORKCELL_UPSTREAM_REFRESH_GIT_NAME = "` + upstreamRefreshName + `"`,
+		`WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL = "` + upstreamRefreshEmail + `"`,
+		`WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT = "` + upstreamRefreshFingerprint + `"`,
 		"",
 	}, "\n")
 	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
@@ -145,6 +161,13 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 				"name":  "WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS",
 				"value": "false",
 			},
+		},
+	}
+	environmentsIndex := map[string]any{
+		"environments": []map[string]any{
+			{"name": "hosted-controls-audit"},
+			{"name": "release"},
+			{"name": "upstream-refresh"},
 		},
 	}
 	branchReviewParameters := map[string]any{
@@ -256,6 +279,7 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		releaseReviewRule["prevent_self_review"] = true
 	}
 	releaseEnv := map[string]any{
+		"name": "release",
 		"protection_rules": []map[string]any{
 			releaseReviewRule,
 			{
@@ -265,6 +289,41 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		},
 		"can_admins_bypass": false,
 	}
+	hostedControlsAuditEnv := map[string]any{
+		"name": "hosted-controls-audit",
+	}
+	hostedControlsAuditVariables := map[string]any{
+		"variables": []map[string]any{},
+	}
+	hostedControlsAuditSecrets := map[string]any{
+		"secrets": []map[string]any{
+			{"name": "WORKCELL_HOSTED_CONTROLS_TOKEN"},
+		},
+	}
+	upstreamRefreshEnv := map[string]any{
+		"name": "upstream-refresh",
+	}
+	upstreamRefreshVariables := map[string]any{
+		"variables": []map[string]any{
+			{
+				"name":  "WORKCELL_UPSTREAM_REFRESH_GIT_NAME",
+				"value": upstreamRefreshName,
+			},
+			{
+				"name":  "WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL",
+				"value": upstreamRefreshEmail,
+			},
+			{
+				"name":  "WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT",
+				"value": upstreamRefreshFingerprint,
+			},
+		},
+	}
+	upstreamRefreshSecrets := map[string]any{
+		"secrets": []map[string]any{
+			{"name": "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
+		},
+	}
 
 	for _, fixture := range []struct {
 		name  string
@@ -273,9 +332,16 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		{"repo.json", repoJSON},
 		{"actions-permissions.json", actionsPermissions},
 		{"actions-variables.json", actionsVariables},
+		{"environments.json", environmentsIndex},
 		{"collaborators-direct.json", directCollaborators},
 		{"rulesets.json", rulesets},
+		{"environment-hosted-controls-audit.json", hostedControlsAuditEnv},
+		{"environment-hosted-controls-audit-variables.json", hostedControlsAuditVariables},
+		{"environment-hosted-controls-audit-secrets.json", hostedControlsAuditSecrets},
 		{"environment-release.json", releaseEnv},
+		{"environment-upstream-refresh.json", upstreamRefreshEnv},
+		{"environment-upstream-refresh-variables.json", upstreamRefreshVariables},
+		{"environment-upstream-refresh-secrets.json", upstreamRefreshSecrets},
 	} {
 		if err := writeJSONFile(filepath.Join(root, fixture.name), fixture.value); err != nil {
 			tb.Fatal(err)
@@ -465,5 +531,55 @@ func TestVerifyGitHubHostedControlsRejectsNonOwnerPublicCollaboratorForBranchRev
 	}
 	if !strings.Contains(err.Error(), "requires the owner to be the only direct collaborator") {
 		t.Fatalf("VerifyGitHubHostedControls() error = %v, want owner-only collaborator rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsMissingUpstreamRefreshSecret(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "environment-upstream-refresh-secrets.json"), func(content string) string {
+		return strings.Replace(content, `"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"`, `"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY_REMOVED"`, 1)
+	})
+
+	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted a missing upstream-refresh private-key secret")
+	}
+	if !strings.Contains(err.Error(), "workflow environment secrets missing on omkhar/workcell/upstream-refresh") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want upstream-refresh secret rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsWrongUpstreamRefreshFingerprint(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "environment-upstream-refresh-variables.json"), func(content string) string {
+		return strings.Replace(content, "90554248C4F7CC086BB745D0DA5A8E9F536C42FD", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 1)
+	})
+
+	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted a mismatched upstream-refresh fingerprint")
+	}
+	if !strings.Contains(err.Error(), "workflow environment variables on omkhar/workcell/upstream-refresh do not match policy") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want upstream-refresh fingerprint rejection", err)
 	}
 }

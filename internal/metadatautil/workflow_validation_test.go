@@ -680,6 +680,8 @@ env:
 
 jobs:
   refresh:
+    environment:
+      name: upstream-refresh
     permissions:
       contents: write
       pull-requests: write
@@ -697,8 +699,19 @@ jobs:
       - run: ./scripts/update-upstream-pins.sh --check
       - run: ./scripts/check-pinned-inputs.sh
       - env:
+          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
+          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
           WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID }}
+        run: |
+          actual_fingerprint="$(
+            gpg --batch --with-colons --list-secret-keys |
+              awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
+            exit 1
+          fi
+          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
       - run: |
           git commit -m "unsigned refresh"
 `
@@ -713,6 +726,121 @@ jobs:
 }
 
 func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
+	t.Parallel()
+	workflow := `name: Upstream refresh
+
+on:
+  workflow_dispatch:
+
+env:
+  WORKCELL_COSIGN_VERSION: v3.0.6
+
+jobs:
+  refresh:
+    environment:
+      name: upstream-refresh
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+      - run: |
+          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
+      - run: ./scripts/update-upstream-pins.sh --apply
+      - run: |
+          ./scripts/update-upstream-pins.sh --check
+          ./scripts/check-pinned-inputs.sh
+      - env:
+          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
+          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
+        run: |
+          actual_fingerprint="$(
+            gpg --batch --with-colons --list-secret-keys |
+              awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
+            exit 1
+          fi
+          git config user.name "${WORKCELL_UPSTREAM_REFRESH_GIT_NAME}"
+          git config user.email "${WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL}"
+          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
+          git commit -S -F "${commit_file}"
+          gh pr create --draft
+`
+
+	if err := validateUpstreamRefreshWorkflow(workflow); err != nil {
+		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v", err)
+	}
+}
+
+func TestValidateUpstreamRefreshWorkflowRejectsDeprecatedKeyIDBinding(t *testing.T) {
+	t.Parallel()
+	workflow := `name: Upstream refresh
+
+on:
+  workflow_dispatch:
+
+env:
+  WORKCELL_COSIGN_VERSION: v3.0.6
+
+jobs:
+  refresh:
+    environment:
+      name: upstream-refresh
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+      - run: |
+          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
+      - run: ./scripts/update-upstream-pins.sh --apply
+      - run: |
+          ./scripts/update-upstream-pins.sh --check
+          ./scripts/check-pinned-inputs.sh
+      - env:
+          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
+          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID }}
+        run: |
+          actual_fingerprint="$(
+            gpg --batch --with-colons --list-secret-keys |
+              awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
+            exit 1
+          fi
+          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
+          git commit -S -F "${commit_file}"
+          gh pr create --draft
+`
+
+	err := validateUpstreamRefreshWorkflow(workflow)
+	if err == nil {
+		t.Fatal("validateUpstreamRefreshWorkflow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID") {
+		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want deprecated key-id rejection", err)
+	}
+}
+
+func TestValidateUpstreamRefreshWorkflowRejectsMissingEnvironmentBinding(t *testing.T) {
 	t.Parallel()
 	workflow := `name: Upstream refresh
 
@@ -742,15 +870,29 @@ jobs:
           ./scripts/update-upstream-pins.sh --check
           ./scripts/check-pinned-inputs.sh
       - env:
+          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
+          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
+          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
           WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID }}
         run: |
+          actual_fingerprint="$(
+            gpg --batch --with-colons --list-secret-keys |
+              awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
+            exit 1
+          fi
+          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
           git commit -S -F "${commit_file}"
           gh pr create --draft
 `
 
-	if err := validateUpstreamRefreshWorkflow(workflow); err != nil {
-		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v", err)
+	err := validateUpstreamRefreshWorkflow(workflow)
+	if err == nil {
+		t.Fatal("validateUpstreamRefreshWorkflow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), `environment:\n      name: upstream-refresh`) {
+		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want upstream-refresh environment binding rejection", err)
 	}
 }
 
@@ -941,5 +1083,80 @@ func TestValidateCanonicalHostedControlsRepositoryVariablesAcceptsCanonicalValue
 
 	if err := validateCanonicalHostedControlsRepositoryVariables(policy, "policy/github-hosted-controls.toml"); err != nil {
 		t.Fatalf("validateCanonicalHostedControlsRepositoryVariables() error = %v", err)
+	}
+}
+
+func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHostedControlsAudit(t *testing.T) {
+	t.Parallel()
+	policy := map[string]any{
+		"workflow_environment": map[string]any{
+			"upstream-refresh": map[string]any{
+				"required_secrets": []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
+				"variables": map[string]any{
+					"WORKCELL_UPSTREAM_REFRESH_GIT_NAME":        "Omkhar Arasaratnam",
+					"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL":       "omkhar@gmail.com",
+					"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT": "90554248C4F7CC086BB745D0DA5A8E9F536C42FD",
+				},
+			},
+		},
+	}
+
+	err := validateCanonicalHostedControlsWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
+	if err == nil {
+		t.Fatal("validateCanonicalHostedControlsWorkflowEnvironments() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "workflow_environment.hosted-controls-audit") {
+		t.Fatalf("validateCanonicalHostedControlsWorkflowEnvironments() error = %v, want hosted-controls-audit rejection", err)
+	}
+}
+
+func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsDeprecatedKeyID(t *testing.T) {
+	t.Parallel()
+	policy := map[string]any{
+		"workflow_environment": map[string]any{
+			"hosted-controls-audit": map[string]any{
+				"required_secrets": []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
+			},
+			"upstream-refresh": map[string]any{
+				"required_secrets": []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
+				"variables": map[string]any{
+					"WORKCELL_UPSTREAM_REFRESH_GIT_NAME":        "Omkhar Arasaratnam",
+					"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL":       "omkhar@gmail.com",
+					"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT": "90554248C4F7CC086BB745D0DA5A8E9F536C42FD",
+					"WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID":      "DA5A8E9F536C42FD",
+				},
+			},
+		},
+	}
+
+	err := validateCanonicalHostedControlsWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
+	if err == nil {
+		t.Fatal("validateCanonicalHostedControlsWorkflowEnvironments() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID") {
+		t.Fatalf("validateCanonicalHostedControlsWorkflowEnvironments() error = %v, want deprecated key-id rejection", err)
+	}
+}
+
+func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValues(t *testing.T) {
+	t.Parallel()
+	policy := map[string]any{
+		"workflow_environment": map[string]any{
+			"hosted-controls-audit": map[string]any{
+				"required_secrets": []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
+			},
+			"upstream-refresh": map[string]any{
+				"required_secrets": []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
+				"variables": map[string]any{
+					"WORKCELL_UPSTREAM_REFRESH_GIT_NAME":        "Omkhar Arasaratnam",
+					"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL":       "omkhar@gmail.com",
+					"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT": "90554248C4F7CC086BB745D0DA5A8E9F536C42FD",
+				},
+			},
+		},
+	}
+
+	if err := validateCanonicalHostedControlsWorkflowEnvironments(policy, "policy/github-hosted-controls.toml"); err != nil {
+		t.Fatalf("validateCanonicalHostedControlsWorkflowEnvironments() error = %v", err)
 	}
 }
