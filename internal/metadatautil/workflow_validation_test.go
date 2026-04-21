@@ -614,6 +614,60 @@ func TestValidateReleaseWorkflowCodeQLFlowAcceptsMatrixJob(t *testing.T) {
 	}
 }
 
+func TestValidateCIWorkflowPRShapeFlowRejectsLegacyInlineShapeGate(t *testing.T) {
+	t.Parallel()
+	workflow := `jobs:
+  pr-shape:
+    name: Pull request shape
+    steps:
+      - uses: actions/checkout@deadbeef
+        with:
+          fetch-depth: 0
+      - name: Check pull request shape
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags --prune origin "${WORKCELL_PR_BASE_REF}"
+          ./scripts/check-pr-shape.sh --base-ref "origin/${WORKCELL_PR_BASE_REF}" --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0
+      - name: Skip outside pull requests
+        if: ${{ github.event_name != 'pull_request' }}
+        run: echo "PR shape gate applies only to pull requests."
+`
+
+	err := validateCIWorkflowPRShapeFlow(workflow)
+	if err == nil {
+		t.Fatal("validateCIWorkflowPRShapeFlow() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "./scripts/ci/job-pr-shape.sh --base") {
+		t.Fatalf("validateCIWorkflowPRShapeFlow() error = %v, want shared job gate", err)
+	}
+}
+
+func TestValidateCIWorkflowPRShapeFlowAcceptsSharedJobGate(t *testing.T) {
+	t.Parallel()
+	workflow := `jobs:
+  pr-shape:
+    name: Pull request shape
+    steps:
+      - uses: actions/checkout@deadbeef
+        with:
+          fetch-depth: 0
+      - name: Check pull request shape
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: ./scripts/ci/job-pr-shape.sh --base "${WORKCELL_PR_BASE_REF}"
+      - name: Skip outside pull requests
+        if: ${{ github.event_name != 'pull_request' }}
+        run: echo "PR shape gate applies only to pull requests."
+`
+
+	if err := validateCIWorkflowPRShapeFlow(workflow); err != nil {
+		t.Fatalf("validateCIWorkflowPRShapeFlow() error = %v", err)
+	}
+}
+
 func TestValidateUpstreamRefreshWorkflowRejectsMissingSignedDraftPRFlow(t *testing.T) {
 	t.Parallel()
 	workflow := `name: Upstream refresh

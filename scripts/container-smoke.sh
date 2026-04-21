@@ -1429,6 +1429,48 @@ if sudo -n --preserve-env=PATH /usr/local/libexec/workcell/apt-helper.sh apt-get
   exit 1
 fi
 grep -q "blocked unsupported preserved environment variable: PATH" /tmp/codex-sudo-preserve-path.err
+slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh
+slow_apt_broker_root=/tmp/workcell-apt-broker
+cat >"${slow_apt_helper}" <<'SLOW_APT_HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+sleep 11
+printf 'slow-apt-helper-ok\n'
+SLOW_APT_HELPER
+chmod +x "${slow_apt_helper}"
+rm -rf "${slow_apt_broker_root}"
+WORKCELL_APT_BROKER_ROOT="${slow_apt_broker_root}" \
+  WORKCELL_APT_HELPER="${slow_apt_helper}" \
+  WORKCELL_APT_BROKER_SLEEP_SECONDS=0.05 \
+  /bin/bash /usr/local/libexec/workcell/apt-broker.sh >/dev/null 2>&1 &
+slow_apt_broker_pid=$!
+trap 'kill "${slow_apt_broker_pid}" >/dev/null 2>&1 || true; wait "${slow_apt_broker_pid}" >/dev/null 2>&1 || true' EXIT
+for _ in $(seq 1 100); do
+  [[ -f "${slow_apt_broker_root}/pid" ]] && break
+  sleep 0.1
+done
+if [[ ! -f "${slow_apt_broker_root}/pid" ]]; then
+  echo "expected slow apt broker fixture to publish its pid file" >&2
+  exit 1
+fi
+if ! WORKCELL_APT_BROKER_ROOT="${slow_apt_broker_root}" \
+  WORKCELL_APT_BROKER_WAIT_INTERVAL_SECONDS=0.05 \
+  sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update \
+  >/tmp/codex-sudo-slow-apt.out 2>/tmp/codex-sudo-slow-apt.err; then
+  echo "expected sudo-wrapper to wait for a slow apt broker request by default" >&2
+  cat /tmp/codex-sudo-slow-apt.out >&2 || true
+  cat /tmp/codex-sudo-slow-apt.err >&2 || true
+  exit 1
+fi
+grep -q "slow-apt-helper-ok" /tmp/codex-sudo-slow-apt.out
+if grep -q "Workcell apt broker timed out." /tmp/codex-sudo-slow-apt.err; then
+  echo "expected default apt broker waits to avoid timing out slow requests" >&2
+  cat /tmp/codex-sudo-slow-apt.err >&2
+  exit 1
+fi
+trap - EXIT
+kill "${slow_apt_broker_pid}" >/dev/null 2>&1 || true
+wait "${slow_apt_broker_pid}" >/dev/null 2>&1 || true
 apt-get --help >/dev/null
 codex --version >/dev/null
 mkdir -p /workspace/exfil
