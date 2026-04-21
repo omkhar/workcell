@@ -6752,7 +6752,7 @@ EOF
       exit 1
     fi
     for required in \
-      'slow_apt_helper=/tmp/workcell-slow-apt-helper.sh' \
+      'slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh' \
       '/bin/bash /usr/local/libexec/workcell/apt-broker.sh' \
       'sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update' \
       'slow-apt-helper-ok' \
