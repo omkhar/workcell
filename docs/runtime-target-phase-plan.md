@@ -20,7 +20,9 @@ Current repo status:
   explainability, and provider bootstrap support matrix
 - Phase 4 is implemented in the trusted validation-host lane, canonical
   host-support matrix, and fail-closed unsupported-combination diagnostics
-- Phase 5 is the next active slice: remote VM control-plane contract
+- Phase 5 is implemented in the canonical remote VM contract, shared fake
+  target, and deterministic conformance harness
+- Phase 6 is the next active slice: Docker Desktop compatibility backend
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract

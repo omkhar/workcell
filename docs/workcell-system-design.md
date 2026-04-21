@@ -261,7 +261,32 @@ Provider integration remains intentionally thin and explicit:
 Workcell keeps one shared boundary and many thin adapters. It does not hide the
 real provider differences behind a fake universal control plane.
 
-### 10. Host-Side Detached Session Plane
+### 10. Runtime Target Taxonomy And Remote VM Contract
+
+The current live safe path is still the strict `local_vm/colima` boundary.
+Phase 5 adds a canonical preview-only `remote_vm` contract in
+[`policy/remote-vm-contract.json`](../policy/remote-vm-contract.json) plus a
+shared fake target and conformance harness in
+[`internal/remotevm`](../internal/remotevm).
+
+That contract fixes the control-plane meanings that later remote providers
+must reuse:
+
+- explicit host-owned remote workspace materialization rather than an implicit
+  live host mount
+- brokered access and bootstrap metadata rather than ambient host socket or
+  credential passthrough
+- `target kind`, `assurance class`, `runtime API`, and `workspace transport`
+  as separate recorded concepts in session and audit state
+- a shared fake target plus deterministic conformance harness that later cloud
+  adapters must pass unchanged instead of redefining contract suites per
+  provider
+
+This does not mean a cloud backend ships today. It means the provider-neutral
+contract is now fixed in-repo before later `remote_vm` adapters try to consume
+it.
+
+### 11. Host-Side Detached Session Plane
 
 Workcell now includes a host-owned detached session plane. The current CLI
 surface includes:
@@ -308,7 +333,7 @@ clean per-session git worktree on the host for supported source workspaces.
 The current session plane is intentionally file-backed and host-owned. It does
 not require a separate daemon, local socket trust, or centralized service.
 
-### 11. Verification and Release Posture
+### 12. Verification and Release Posture
 
 The repository pairs runtime controls with verification and provenance
 material:
