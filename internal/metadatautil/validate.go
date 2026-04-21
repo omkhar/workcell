@@ -494,7 +494,7 @@ func HostedControlsEnvironmentNames(policyPath string) ([]string, error) {
 }
 
 func hostedControlsEnvironmentArtifactName(environmentName string) string {
-	return url.PathEscape(environmentName)
+	return strings.ReplaceAll(url.QueryEscape(environmentName), "+", "%20")
 }
 
 func FetchGitHubHostedControlsRulesets(tmpDir, repo string) error {

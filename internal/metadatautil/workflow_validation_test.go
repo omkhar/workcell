@@ -1168,3 +1168,11 @@ func TestHostedControlsEnvironmentArtifactNameEscapesSlashes(t *testing.T) {
 		t.Fatalf("hostedControlsEnvironmentArtifactName() = %q, want %q", got, "prod%2Fus%20west")
 	}
 }
+
+func TestHostedControlsEnvironmentArtifactNameEscapesReservedCharacters(t *testing.T) {
+	t.Parallel()
+
+	if got := hostedControlsEnvironmentArtifactName("prod+east:blue&green=1"); got != "prod%2Beast%3Ablue%26green%3D1" {
+		t.Fatalf("hostedControlsEnvironmentArtifactName() = %q, want %q", got, "prod%2Beast%3Ablue%26green%3D1")
+	}
+}
