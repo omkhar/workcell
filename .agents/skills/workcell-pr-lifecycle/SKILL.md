@@ -66,6 +66,11 @@ If the task is release-bound, also read:
   parity evidence is enforced before it delegates to
   `./scripts/workcell publish-pr`; do not normalize direct publication from
   the Tier 1 session.
+- Upstream refresh candidate issues and artifacts from
+  `.github/workflows/upstream-refresh.yml` are advisory only. Authoritative
+  upstream refresh publication goes through the repo-local
+  `./scripts/publish-upstream-refresh-pr.sh` helper, which recreates the
+  refresh locally and then calls `./scripts/repo-publish-pr.sh`.
 - `main` is the only supported PR base by default. If a lower-assurance
   non-`main` base path exists, keep that PR draft-only, treat it as
   non-mergeable, and do not claim the normal `main`-based repo-owned

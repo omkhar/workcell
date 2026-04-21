@@ -296,42 +296,53 @@ func validateUpstreamRefreshWorkflow(workflowText string) error {
 	for _, needle := range []string{
 		"name: Upstream refresh",
 		"workflow_dispatch:",
-		"WORKCELL_COSIGN_VERSION",
-		"sigstore/cosign-installer@",
-		"cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}",
-		`sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign`,
 		"./scripts/update-upstream-pins.sh --apply",
 		"./scripts/update-upstream-pins.sh --check",
 		"./scripts/check-pinned-inputs.sh",
 		"environment:\n      name: upstream-refresh",
-		"WORKCELL_UPSTREAM_REFRESH_GIT_NAME",
-		"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL",
-		"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT",
-		"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY",
-		"gpg --batch --with-colons --list-secret-keys",
-		`if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then`,
-		`git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"`,
-		"git commit -S -F",
-		"gh pr create",
-		"--draft",
+		"actions/upload-artifact@",
+		"name: upstream-refresh-candidate",
+		"metadata.json",
+		"gh issue",
 		"persist-credentials: false",
 		"fetch-depth: 0",
-		"contents: write",
-		"pull-requests: write",
+		"contents: read",
+		"issues: write",
+		"pull-requests: read",
 	} {
 		if !strings.Contains(workflowText, needle) {
 			return fmt.Errorf(".github/workflows/upstream-refresh.yml must contain %q", needle)
 		}
 	}
-	if strings.Contains(workflowText, "WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID") {
-		return errors.New(".github/workflows/upstream-refresh.yml must not depend on WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID; audit and verify the full fingerprint instead")
+	for _, forbidden := range []string{
+		"WORKCELL_COSIGN_VERSION",
+		"sigstore/cosign-installer@",
+		"WORKCELL_UPSTREAM_REFRESH_GIT_NAME",
+		"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL",
+		"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT",
+		"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY",
+		"WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID",
+		"gpg --batch --with-colons --list-secret-keys",
+		"git commit -S",
+		"gh pr create",
+		`git push "https://x-access-token:`,
+		"contents: write",
+		"pull-requests: write",
+	} {
+		if strings.Contains(workflowText, forbidden) {
+			return fmt.Errorf(".github/workflows/upstream-refresh.yml must not contain %q", forbidden)
+		}
 	}
 	return nil
 }
 
 type hostedControlsWorkflowEnvironmentPolicy struct {
-	Variables       map[string]string
-	RequiredSecrets []string
+	Variables             map[string]string
+	RequiredSecrets       []string
+	AllowAdminBypass      bool
+	HasAllowAdminBypass   bool
+	DeploymentBranches    []string
+	HasDeploymentBranches bool
 }
 
 func hostedControlsRepositoryVariables(policy map[string]any, policyPath string) (map[string]any, error) {
@@ -421,9 +432,44 @@ func hostedControlsWorkflowEnvironments(policy map[string]any, policyPath string
 			sort.Strings(requiredSecrets)
 		}
 
+		allowAdminBypass := false
+		hasAllowAdminBypass := false
+		if rawAllowAdminBypass, ok := entry["allow_admin_bypass"]; ok {
+			value, ok := rawAllowAdminBypass.(bool)
+			if !ok {
+				return nil, fmt.Errorf("%s workflow_environment.%s.allow_admin_bypass must be a boolean", policyPath, environmentName)
+			}
+			allowAdminBypass = value
+			hasAllowAdminBypass = true
+		}
+
+		deploymentBranches := []string{}
+		hasDeploymentBranches := false
+		if rawDeploymentBranches, ok := entry["deployment_branches"]; ok {
+			branches, present, err := MustStringSlice(rawDeploymentBranches)
+			if err != nil {
+				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_branches: %w", policyPath, environmentName, err)
+			}
+			if !present {
+				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_branches must be an array of branch names", policyPath, environmentName)
+			}
+			for _, branchName := range branches {
+				if strings.TrimSpace(branchName) == "" {
+					return nil, fmt.Errorf("%s workflow_environment.%s.deployment_branches must be an array of non-empty branch names", policyPath, environmentName)
+				}
+			}
+			deploymentBranches = append(deploymentBranches, branches...)
+			sort.Strings(deploymentBranches)
+			hasDeploymentBranches = true
+		}
+
 		environments[environmentName] = hostedControlsWorkflowEnvironmentPolicy{
-			Variables:       variables,
-			RequiredSecrets: requiredSecrets,
+			Variables:             variables,
+			RequiredSecrets:       requiredSecrets,
+			AllowAdminBypass:      allowAdminBypass,
+			HasAllowAdminBypass:   hasAllowAdminBypass,
+			DeploymentBranches:    deploymentBranches,
+			HasDeploymentBranches: hasDeploymentBranches,
 		}
 	}
 	return environments, nil
@@ -445,28 +491,28 @@ func validateCanonicalHostedControlsWorkflowEnvironments(policy map[string]any, 
 	if len(hostedControlsAudit.RequiredSecrets) != 1 || hostedControlsAudit.RequiredSecrets[0] != "WORKCELL_HOSTED_CONTROLS_TOKEN" {
 		return errors.New("policy/github-hosted-controls.toml must require only WORKCELL_HOSTED_CONTROLS_TOKEN for workflow_environment.hosted-controls-audit")
 	}
+	if !hostedControlsAudit.HasAllowAdminBypass || hostedControlsAudit.AllowAdminBypass {
+		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.hosted-controls-audit.allow_admin_bypass = false")
+	}
+	if !hostedControlsAudit.HasDeploymentBranches || len(hostedControlsAudit.DeploymentBranches) != 1 || hostedControlsAudit.DeploymentBranches[0] != "main" {
+		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.hosted-controls-audit.deployment_branches = [\"main\"]")
+	}
 
 	upstreamRefresh, ok := environments["upstream-refresh"]
 	if !ok {
 		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.upstream-refresh")
 	}
-	if len(upstreamRefresh.RequiredSecrets) != 1 || upstreamRefresh.RequiredSecrets[0] != "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY" {
-		return errors.New("policy/github-hosted-controls.toml must require only WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY for workflow_environment.upstream-refresh")
+	if len(upstreamRefresh.RequiredSecrets) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not declare secrets for workflow_environment.upstream-refresh")
 	}
-	if _, ok := upstreamRefresh.Variables["WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID"]; ok {
-		return errors.New("policy/github-hosted-controls.toml must not declare WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID for workflow_environment.upstream-refresh")
+	if len(upstreamRefresh.Variables) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not declare public variables for workflow_environment.upstream-refresh")
 	}
-	for _, requiredName := range []string{
-		"WORKCELL_UPSTREAM_REFRESH_GIT_NAME",
-		"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL",
-		"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT",
-	} {
-		if value, ok := upstreamRefresh.Variables[requiredName]; !ok || strings.TrimSpace(value) == "" {
-			return fmt.Errorf("policy/github-hosted-controls.toml must declare a non-empty workflow_environment.upstream-refresh.variables.%s value", requiredName)
-		}
+	if !upstreamRefresh.HasAllowAdminBypass || upstreamRefresh.AllowAdminBypass {
+		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.upstream-refresh.allow_admin_bypass = false")
 	}
-	if !regexp.MustCompile(`^[A-F0-9]{40}$`).MatchString(upstreamRefresh.Variables["WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT"]) {
-		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.upstream-refresh.variables.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT as a full uppercase 40-hex fingerprint")
+	if !upstreamRefresh.HasDeploymentBranches || len(upstreamRefresh.DeploymentBranches) != 1 || upstreamRefresh.DeploymentBranches[0] != "main" {
+		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.upstream-refresh.deployment_branches = [\"main\"]")
 	}
 	return nil
 }
@@ -526,6 +572,78 @@ func FetchGitHubHostedControlsRulesets(tmpDir, repo string) error {
 		details = append(details, detail)
 	}
 	return writeJSONFile(filepath.Join(tmpDir, "rulesets.json"), details)
+}
+
+func unexpectedEnvironmentVariableNames(actual map[string]any, expected map[string]string) []string {
+	unexpected := make([]string, 0)
+	for name := range actual {
+		if _, ok := expected[name]; !ok {
+			unexpected = append(unexpected, name)
+		}
+	}
+	sort.Strings(unexpected)
+	return unexpected
+}
+
+func unexpectedEnvironmentSecretNames(actual map[string]struct{}, expected []string) []string {
+	expectedSet := make(map[string]struct{}, len(expected))
+	for _, name := range expected {
+		expectedSet[name] = struct{}{}
+	}
+	unexpected := make([]string, 0)
+	for name := range actual {
+		if _, ok := expectedSet[name]; !ok {
+			unexpected = append(unexpected, name)
+		}
+	}
+	sort.Strings(unexpected)
+	return unexpected
+}
+
+func verifyWorkflowEnvironmentDeploymentPolicy(repo, environmentName string, environmentPolicy hostedControlsWorkflowEnvironmentPolicy, environmentMeta, environmentBranchPolicies map[string]any) error {
+	if environmentPolicy.HasAllowAdminBypass {
+		bypass, ok := environmentMeta["can_admins_bypass"].(bool)
+		if !ok || bypass != environmentPolicy.AllowAdminBypass {
+			return fmt.Errorf("workflow environment %s/%s must set can_admins_bypass=%t", repo, environmentName, environmentPolicy.AllowAdminBypass)
+		}
+	}
+	if !environmentPolicy.HasDeploymentBranches {
+		return nil
+	}
+
+	deploymentBranchPolicy, ok := environmentMeta["deployment_branch_policy"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("workflow environment %s/%s must define deployment branch policies", repo, environmentName)
+	}
+	if protectedBranches, _ := deploymentBranchPolicy["protected_branches"].(bool); protectedBranches {
+		return fmt.Errorf("workflow environment %s/%s must not rely on protected-branch deployment policy", repo, environmentName)
+	}
+	if customBranchPolicies, _ := deploymentBranchPolicy["custom_branch_policies"].(bool); !customBranchPolicies {
+		return fmt.Errorf("workflow environment %s/%s must use explicit deployment branch policies", repo, environmentName)
+	}
+
+	actualBranches := make([]string, 0)
+	if branchPolicies, ok := environmentBranchPolicies["branch_policies"].([]any); ok {
+		for _, raw := range branchPolicies {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _ := entry["name"].(string); name != "" {
+				actualBranches = append(actualBranches, name)
+			}
+		}
+	}
+	sort.Strings(actualBranches)
+	if len(actualBranches) != len(environmentPolicy.DeploymentBranches) {
+		return fmt.Errorf("workflow environment %s/%s must restrict deployment branches to %s", repo, environmentName, strings.Join(environmentPolicy.DeploymentBranches, ", "))
+	}
+	for idx, expectedBranch := range environmentPolicy.DeploymentBranches {
+		if actualBranches[idx] != expectedBranch {
+			return fmt.Errorf("workflow environment %s/%s must restrict deployment branches to %s", repo, environmentName, strings.Join(environmentPolicy.DeploymentBranches, ", "))
+		}
+	}
+	return nil
 }
 
 func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
@@ -914,6 +1032,10 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		if len(wrongEnvironmentVariables) > 0 {
 			return fmt.Errorf("workflow environment variables on %s/%s do not match policy: %s", repo, environmentName, strings.Join(wrongEnvironmentVariables, ", "))
 		}
+		unexpectedEnvironmentVariables := unexpectedEnvironmentVariableNames(actualEnvironmentVariables, environmentPolicy.Variables)
+		if len(unexpectedEnvironmentVariables) > 0 {
+			return fmt.Errorf("workflow environment variables on %s/%s include unexpected entries: %s", repo, environmentName, strings.Join(unexpectedEnvironmentVariables, ", "))
+		}
 
 		var environmentSecrets map[string]any
 		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-secrets.json", artifactName)), &environmentSecrets); err != nil {
@@ -940,6 +1062,18 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		sort.Strings(missingEnvironmentSecrets)
 		if len(missingEnvironmentSecrets) > 0 {
 			return fmt.Errorf("workflow environment secrets missing on %s/%s: %s", repo, environmentName, strings.Join(missingEnvironmentSecrets, ", "))
+		}
+		unexpectedEnvironmentSecrets := unexpectedEnvironmentSecretNames(actualEnvironmentSecrets, environmentPolicy.RequiredSecrets)
+		if len(unexpectedEnvironmentSecrets) > 0 {
+			return fmt.Errorf("workflow environment secrets on %s/%s include unexpected entries: %s", repo, environmentName, strings.Join(unexpectedEnvironmentSecrets, ", "))
+		}
+
+		var environmentBranchPolicies map[string]any
+		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-deployment-branch-policies.json", artifactName)), &environmentBranchPolicies); err != nil {
+			return fmt.Errorf("read %s deployment branch policies: %w", environmentName, err)
+		}
+		if err := verifyWorkflowEnvironmentDeploymentPolicy(repo, environmentName, environmentPolicy, environmentMeta, environmentBranchPolicies); err != nil {
+			return err
 		}
 	}
 
@@ -1637,12 +1771,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	upstreamRefreshCosignVersion, err := requireYAMLKey(upstreamRefreshWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/upstream-refresh.yml")
-	if err != nil {
-		return err
-	}
-	if len(map[string]struct{}{ciCosignVersion: {}, releaseCosignVersion: {}, pinHygieneCosignVersion: {}, upstreamRefreshCosignVersion: {}}) != 1 {
-		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
+	if len(map[string]struct{}{ciCosignVersion: {}, releaseCosignVersion: {}, pinHygieneCosignVersion: {}}) != 1 {
+		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, and .github/workflows/pin-hygiene.yml")
 	}
 	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(ciCosignVersion) {
 		return fmt.Errorf("WORKCELL_COSIGN_VERSION must be an exact pinned release, found %q", ciCosignVersion)
@@ -1650,7 +1780,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	for _, workflow := range []struct {
 		text string
 		path string
-	}{{ciWorkflow, ".github/workflows/ci.yml"}, {releaseWorkflow, ".github/workflows/release.yml"}, {pinHygieneWorkflow, ".github/workflows/pin-hygiene.yml"}, {upstreamRefreshWorkflow, ".github/workflows/upstream-refresh.yml"}} {
+	}{{ciWorkflow, ".github/workflows/ci.yml"}, {releaseWorkflow, ".github/workflows/release.yml"}, {pinHygieneWorkflow, ".github/workflows/pin-hygiene.yml"}} {
 		if !strings.Contains(workflow.text, "cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}") {
 			return fmt.Errorf("%s must pin the installed cosign binary release", workflow.path)
 		}
@@ -1667,12 +1797,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	upstreamRefreshCosignInstallerRef, err := requireActionRef(upstreamRefreshWorkflow, "sigstore/cosign-installer", ".github/workflows/upstream-refresh.yml")
-	if err != nil {
-		return err
-	}
-	if len(map[string]struct{}{ciCosignInstallerRef: {}, releaseCosignInstallerRef: {}, pinHygieneCosignInstallerRef: {}, upstreamRefreshCosignInstallerRef: {}}) != 1 {
-		return errors.New("sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
+	if len(map[string]struct{}{ciCosignInstallerRef: {}, releaseCosignInstallerRef: {}, pinHygieneCosignInstallerRef: {}}) != 1 {
+		return errors.New("sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, .github/workflows/release.yml, and .github/workflows/pin-hygiene.yml")
 	}
 	if !strings.Contains(ciWorkflow, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
 		return errors.New(".github/workflows/ci.yml must pin the BuildKit daemon image used by setup-buildx-action")
@@ -1927,7 +2053,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		`name: hosted-controls-audit`,
 		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
 		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
-		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "0"`,
+		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
 	} {
 		if !strings.Contains(hostedControlsWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/hosted-controls.yml must contain %q", needle)

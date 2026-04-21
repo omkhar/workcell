@@ -28,7 +28,7 @@ repo-local `./scripts/repo-publish-pr.sh` publication gate.
 | `codeql.yml` | code scanning for shipped Rust, Go, and JavaScript surfaces |
 | `scorecard.yml` | OpenSSF Scorecard analysis |
 | `pin-hygiene.yml` | scheduled re-validation of pinned inputs plus upstream refresh drift across providers, Linux base images, toolchains, and release-build pins |
-| `upstream-refresh.yml` | scheduled and manual signed refresh PR creation for reviewed upstream pins, followed by maintainer-approved validation from the draft PR |
+| `upstream-refresh.yml` | scheduled and manual candidate generation for reviewed upstream pins, with later signed host-side PR publication |
 | `hosted-controls.yml` | drift detection for GitHub-hosted controls that live outside git |
 | `release.yml` | tagged release preflight, publication, signatures, SBOMs, manifests, and attestations |
 
@@ -66,27 +66,25 @@ Other macOS versions are not install-gated today.
 
 ## Upstream refresh workflow
 
-`upstream-refresh.yml` is the dedicated refresh lane for reviewed upstream pins:
+`upstream-refresh.yml` is the dedicated candidate lane for reviewed upstream pins:
 
 - it runs on a weekday schedule and on manual dispatch
 - it refreshes provider pins, the Linux runtime and validator base images,
   Debian snapshot, Go/Rust/Hadolint toolchains, and release-build helper pins
-- it binds to the `upstream-refresh` GitHub environment and requires the
-  environment-scoped public identity variables
-  `WORKCELL_UPSTREAM_REFRESH_GIT_NAME`,
-  `WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL`, and
-  `WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT`, plus the matching
-  environment secret `WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY`
-- it imports the signing key at runtime and fails closed unless the imported
-  primary secret-key fingerprint exactly matches the audited
-  `WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT` value
-- it opens a draft PR instead of mutating `main`
-- it leaves expensive validation behind the same maintainer approval gate used
-  for other public-repo PRs instead of auto-dispatching workflows during
-  publication
-- unattended scheduled signing remains a lower-assurance single-maintainer
-  exception until a stronger hosted signing path replaces the exported private
-  key flow
+- it binds to the empty `upstream-refresh` GitHub environment as an out-of-tree
+  `main`-only gate with no hosted signing inputs
+- it uploads an advisory candidate bundle containing `patch`, `diffstat`, and
+  `metadata.json`
+- it opens or updates one rolling tracking issue instead of pushing a branch or
+  opening a PR from GitHub Actions
+- the authoritative refresh PR is created later on the host through
+  `./scripts/publish-upstream-refresh-pr.sh`, which recreates the refresh
+  locally, requires exact candidate identity matches when a candidate run is
+  cited, runs `pr-parity`, and then delegates to
+  `./scripts/repo-publish-pr.sh`
+- the candidate artifact and tracking issue are operator signals only; they are
+  not integrity evidence and do not replace the later signed host-side review
+  unit
 
 `ci.yml` and `docs.yml` use the same explicit nonroot validator contract when
 they bind-mount the repository: the workflow computes the caller UID/GID,
@@ -121,7 +119,8 @@ reviewed inputs:
   supports it and an explicitly documented lower-assurance fallback when it
   does not
 - the `hosted-controls-audit` and `upstream-refresh` environments, including
-  their required secrets and the audited public refresh identity
+  their exact secret and variable contents plus their `main`-only branch
+  restriction and disabled admin bypass posture
 - GitHub Actions SHA pinning
 - canonical repository variables such as
   `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` and

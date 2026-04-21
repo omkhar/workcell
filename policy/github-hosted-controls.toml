@@ -73,11 +73,9 @@ WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"
 
 [workflow_environment.hosted-controls-audit]
 required_secrets = ["WORKCELL_HOSTED_CONTROLS_TOKEN"]
+allow_admin_bypass = false
+deployment_branches = ["main"]
 
 [workflow_environment.upstream-refresh]
-required_secrets = ["WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"]
-
-[workflow_environment.upstream-refresh.variables]
-WORKCELL_UPSTREAM_REFRESH_GIT_NAME = "Omkhar Arasaratnam"
-WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL = "omkhar@gmail.com"
-WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT = "90554248C4F7CC086BB745D0DA5A8E9F536C42FD"
+allow_admin_bypass = false
+deployment_branches = ["main"]

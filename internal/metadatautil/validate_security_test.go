@@ -100,11 +100,6 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 
 	root := tb.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
-	const (
-		upstreamRefreshName        = "Omkhar Arasaratnam"
-		upstreamRefreshEmail       = "omkhar@gmail.com"
-		upstreamRefreshFingerprint = "90554248C4F7CC086BB745D0DA5A8E9F536C42FD"
-	)
 	policy := strings.Join([]string{
 		"[branch_integrity]",
 		"require_signed_commits = true",
@@ -126,14 +121,12 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		"",
 		"[workflow_environment.hosted-controls-audit]",
 		`required_secrets = ["WORKCELL_HOSTED_CONTROLS_TOKEN"]`,
+		"allow_admin_bypass = false",
+		`deployment_branches = ["main"]`,
 		"",
 		"[workflow_environment.upstream-refresh]",
-		`required_secrets = ["WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"]`,
-		"",
-		"[workflow_environment.upstream-refresh.variables]",
-		`WORKCELL_UPSTREAM_REFRESH_GIT_NAME = "` + upstreamRefreshName + `"`,
-		`WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL = "` + upstreamRefreshEmail + `"`,
-		`WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT = "` + upstreamRefreshFingerprint + `"`,
+		"allow_admin_bypass = false",
+		`deployment_branches = ["main"]`,
 		"",
 	}, "\n")
 	if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
@@ -291,6 +284,11 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 	}
 	hostedControlsAuditEnv := map[string]any{
 		"name": "hosted-controls-audit",
+		"deployment_branch_policy": map[string]any{
+			"custom_branch_policies": true,
+			"protected_branches":     false,
+		},
+		"can_admins_bypass": false,
 	}
 	hostedControlsAuditVariables := map[string]any{
 		"variables": []map[string]any{},
@@ -302,26 +300,26 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 	}
 	upstreamRefreshEnv := map[string]any{
 		"name": "upstream-refresh",
+		"deployment_branch_policy": map[string]any{
+			"custom_branch_policies": true,
+			"protected_branches":     false,
+		},
+		"can_admins_bypass": false,
 	}
 	upstreamRefreshVariables := map[string]any{
-		"variables": []map[string]any{
-			{
-				"name":  "WORKCELL_UPSTREAM_REFRESH_GIT_NAME",
-				"value": upstreamRefreshName,
-			},
-			{
-				"name":  "WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL",
-				"value": upstreamRefreshEmail,
-			},
-			{
-				"name":  "WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT",
-				"value": upstreamRefreshFingerprint,
-			},
-		},
+		"variables": []map[string]any{},
 	}
 	upstreamRefreshSecrets := map[string]any{
-		"secrets": []map[string]any{
-			{"name": "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
+		"secrets": []map[string]any{},
+	}
+	hostedControlsAuditDeploymentBranches := map[string]any{
+		"branch_policies": []map[string]any{
+			{"name": "main"},
+		},
+	}
+	upstreamRefreshDeploymentBranches := map[string]any{
+		"branch_policies": []map[string]any{
+			{"name": "main"},
 		},
 	}
 
@@ -336,10 +334,12 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		{"collaborators-direct.json", directCollaborators},
 		{"rulesets.json", rulesets},
 		{"environment-hosted-controls-audit.json", hostedControlsAuditEnv},
+		{"environment-hosted-controls-audit-deployment-branch-policies.json", hostedControlsAuditDeploymentBranches},
 		{"environment-hosted-controls-audit-variables.json", hostedControlsAuditVariables},
 		{"environment-hosted-controls-audit-secrets.json", hostedControlsAuditSecrets},
 		{"environment-release.json", releaseEnv},
 		{"environment-upstream-refresh.json", upstreamRefreshEnv},
+		{"environment-upstream-refresh-deployment-branch-policies.json", upstreamRefreshDeploymentBranches},
 		{"environment-upstream-refresh-variables.json", upstreamRefreshVariables},
 		{"environment-upstream-refresh-secrets.json", upstreamRefreshSecrets},
 	} {
@@ -534,7 +534,7 @@ func TestVerifyGitHubHostedControlsRejectsNonOwnerPublicCollaboratorForBranchRev
 	}
 }
 
-func TestVerifyGitHubHostedControlsRejectsMissingUpstreamRefreshSecret(t *testing.T) {
+func TestVerifyGitHubHostedControlsRejectsUnexpectedUpstreamRefreshSecret(t *testing.T) {
 	t.Parallel()
 
 	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
@@ -547,19 +547,19 @@ func TestVerifyGitHubHostedControlsRejectsMissingUpstreamRefreshSecret(t *testin
 	})
 
 	rewriteFile(t, filepath.Join(tmpDir, "environment-upstream-refresh-secrets.json"), func(content string) string {
-		return strings.Replace(content, `"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"`, `"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY_REMOVED"`, 1)
+		return strings.Replace(content, `"secrets": []`, `"secrets": [{"name":"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"}]`, 1)
 	})
 
 	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted a missing upstream-refresh private-key secret")
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted an unexpected upstream-refresh secret")
 	}
-	if !strings.Contains(err.Error(), "workflow environment secrets missing on omkhar/workcell/upstream-refresh") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want upstream-refresh secret rejection", err)
+	if !strings.Contains(err.Error(), "workflow environment secrets on omkhar/workcell/upstream-refresh include unexpected entries") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want unexpected upstream-refresh secret rejection", err)
 	}
 }
 
-func TestVerifyGitHubHostedControlsRejectsWrongUpstreamRefreshFingerprint(t *testing.T) {
+func TestVerifyGitHubHostedControlsRejectsUnexpectedUpstreamRefreshVariable(t *testing.T) {
 	t.Parallel()
 
 	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
@@ -572,14 +572,64 @@ func TestVerifyGitHubHostedControlsRejectsWrongUpstreamRefreshFingerprint(t *tes
 	})
 
 	rewriteFile(t, filepath.Join(tmpDir, "environment-upstream-refresh-variables.json"), func(content string) string {
-		return strings.Replace(content, "90554248C4F7CC086BB745D0DA5A8E9F536C42FD", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 1)
+		return strings.Replace(content, `"variables": []`, `"variables": [{"name":"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL","value":"omkhar@gmail.com"}]`, 1)
 	})
 
 	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted a mismatched upstream-refresh fingerprint")
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted an unexpected upstream-refresh variable")
 	}
-	if !strings.Contains(err.Error(), "workflow environment variables on omkhar/workcell/upstream-refresh do not match policy") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want upstream-refresh fingerprint rejection", err)
+	if !strings.Contains(err.Error(), "workflow environment variables on omkhar/workcell/upstream-refresh include unexpected entries") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want unexpected upstream-refresh variable rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsEnvironmentAdminBypass(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "environment-upstream-refresh.json"), func(content string) string {
+		return strings.Replace(content, `"can_admins_bypass": false`, `"can_admins_bypass": true`, 1)
+	})
+
+	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted administrator bypass on upstream-refresh")
+	}
+	if !strings.Contains(err.Error(), "must set can_admins_bypass=false") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want admin-bypass rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsUnexpectedEnvironmentBranchPolicy(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "environment-upstream-refresh-deployment-branch-policies.json"), func(content string) string {
+		return strings.Replace(content, `"main"`, `"develop"`, 1)
+	})
+
+	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted the wrong deployment branch policy")
+	}
+	if !strings.Contains(err.Error(), "must restrict deployment branches to main") {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want deployment-branch rejection", err)
 	}
 }

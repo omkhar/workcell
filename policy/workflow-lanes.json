@@ -556,7 +556,7 @@
       ],
       "authority": "github-only",
       "local_mode": "none",
-      "github_only_reason": "upstream refresh mutates repository state and publishes through GitHub"
+      "github_only_reason": "upstream refresh candidate generation depends on GitHub-hosted scheduling, artifacts, and issue publication"
     }
   ]
 }

@@ -7,9 +7,6 @@ on:
 
 permissions: {}
 
-env:
-  WORKCELL_COSIGN_VERSION: v3.0.6
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -21,21 +18,14 @@ jobs:
     environment:
       name: upstream-refresh
     permissions:
-      contents: write # Push the signed refresh branch back to the repository.
-      pull-requests: write # Open the draft refresh pull request.
+      contents: read # Read the reviewed tree to compute the candidate bundle.
+      issues: write # Update the rolling tracking issue with the latest candidate status.
+      pull-requests: read # Detect overlapping refresh PRs before generating a candidate.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-        with:
-          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
-
-      - name: Expose cosign in trusted system path
-        run: |
-          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
 
       - name: Refresh pinned upstreams
         run: ./scripts/update-upstream-pins.sh --apply
@@ -75,88 +65,146 @@ jobs:
           fi
           echo "skip=false" >> "${GITHUB_OUTPUT}"
 
-      - name: Configure maintainer signing identity
+      - id: candidate
+        name: Build candidate bundle
         if: steps.changes.outputs.changed == 'true' && steps.existing_pr.outputs.skip != 'true'
-        env:
-          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
-          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
         run: |
-          if [[ -z "${WORKCELL_UPSTREAM_REFRESH_GIT_NAME}" || -z "${WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL}" || -z "${WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY}" || -z "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
-            echo "Configure WORKCELL_UPSTREAM_REFRESH_GIT_NAME, WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL, WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY, and WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT before running upstream-refresh." >&2
-            exit 1
-          fi
-          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
-          install -d -m 0700 "${GNUPGHOME}"
-          printf '%s' "${WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY}" | gpg --batch --import
-          actual_fingerprint="$(
-            gpg --batch --with-colons --list-secret-keys |
-              awk -F: '$1 == "fpr" { print $10; exit }'
-          )"
-          if [[ -z "${actual_fingerprint}" ]]; then
-            echo "Unable to resolve a primary secret-key fingerprint after importing WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY." >&2
-            exit 1
-          fi
-          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
-            echo "Imported signing key fingerprint ${actual_fingerprint} does not match audited fingerprint ${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}." >&2
-            exit 1
-          fi
-          gpg --batch --list-secret-keys "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" >/dev/null
-          git config user.name "${WORKCELL_UPSTREAM_REFRESH_GIT_NAME}"
-          git config user.email "${WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL}"
-          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
-          git config commit.gpgsign true
-          git config gpg.program gpg
-          echo "GNUPGHOME=${GNUPGHOME}" >> "${GITHUB_ENV}"
+          candidate_dir="${RUNNER_TEMP}/upstream-refresh-candidate"
+          mkdir -p "${candidate_dir}"
 
-      - id: publish
-        name: Commit and publish refresh branch
-        if: steps.changes.outputs.changed == 'true' && steps.existing_pr.outputs.skip != 'true'
+          git diff --binary --full-index --patch --no-ext-diff --no-color > "${candidate_dir}/patch"
+          git diff --stat --no-color > "${candidate_dir}/diffstat"
+
+          tmp_index="$(mktemp "${RUNNER_TEMP}/upstream-refresh-index.XXXXXX")"
+          rm -f "${tmp_index}"
+          trap 'rm -f "${tmp_index}"' EXIT
+          GIT_INDEX_FILE="${tmp_index}" git read-tree HEAD
+          GIT_INDEX_FILE="${tmp_index}" git add -A
+          tree_oid="$(GIT_INDEX_FILE="${tmp_index}" git write-tree)"
+          rm -f "${tmp_index}"
+          trap - EXIT
+
+          patch_sha256="$(shasum -a 256 "${candidate_dir}/patch" | awk '{print $1}')"
+          changed_files_json="$(git diff --name-only | jq -R . | jq -s .)"
+          jq -n \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg workflow "upstream-refresh" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg artifact_name "upstream-refresh-candidate" \
+            --arg base_ref "${GITHUB_REF}" \
+            --arg base_sha "$(git rev-parse HEAD)" \
+            --arg patch_sha256 "${patch_sha256}" \
+            --arg tree_oid "${tree_oid}" \
+            --argjson changed_files "${changed_files_json}" \
+            '{
+              version: 1,
+              repository: $repository,
+              workflow: $workflow,
+              run_id: (env.GITHUB_RUN_ID | tonumber),
+              run_url: $run_url,
+              artifact_name: $artifact_name,
+              base_ref: $base_ref,
+              base_sha: $base_sha,
+              patch_sha256: $patch_sha256,
+              tree_oid: $tree_oid,
+              changed_files: $changed_files
+            }' > "${candidate_dir}/metadata.json"
+
+          echo "dir=${candidate_dir}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload candidate artifact
+        if: steps.candidate.outputs.dir != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-refresh-candidate
+          if-no-files-found: error
+          path: |
+            ${{ steps.candidate.outputs.dir }}/patch
+            ${{ steps.candidate.outputs.dir }}/diffstat
+            ${{ steps.candidate.outputs.dir }}/metadata.json
+
+      - name: Update tracking issue
         env:
           GH_TOKEN: ${{ github.token }}
+          REFRESH_CHANGED: ${{ steps.changes.outputs.changed }}
+          REFRESH_SKIP: ${{ steps.existing_pr.outputs.skip }}
+          REFRESH_EXISTING_PR_URL: ${{ steps.existing_pr.outputs.url }}
+          CANDIDATE_DIR: ${{ steps.candidate.outputs.dir }}
         run: |
-          branch_name="codex/upstream-refresh-$(date -u +%Y%m%d%H%M%S)"
-          title="Refresh pinned upstreams"
-          body_file="$(mktemp "${RUNNER_TEMP}/workcell-upstream-refresh-body.XXXXXX.md")"
-          commit_file="$(mktemp "${RUNNER_TEMP}/workcell-upstream-refresh-commit.XXXXXX.txt")"
-          git checkout -b "${branch_name}"
-          git add -A
-          {
-            printf '%s\n\n' "${title}"
-            printf '%s\n' '- refresh provider pins and Linux base/toolchain inputs'
-            printf '%s\n' '- refresh release-build helper versions and image digests'
-          } > "${commit_file}"
-          git commit -S -F "${commit_file}"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${branch_name}"
-          {
-            echo "## Summary"
-            echo
-            echo "- refresh provider pins and Linux base/toolchain inputs from reviewed upstream metadata"
-            echo "- refresh release-build helper versions, image digests, and workflow-managed install tools"
-            echo
-            echo "## Validation"
-            echo
-            echo "- \`ci.yml\`"
-            echo "- \`docs.yml\`"
-            echo "- \`security.yml\`"
-            echo "- \`codeql.yml\`"
-            echo
-            echo "Maintainers approve any expensive refresh validation from the draft PR rather than auto-dispatching it during publication."
-            echo
-            echo "## Diffstat"
-            echo
-            echo '```'
-            git diff --stat HEAD^ HEAD
-            echo '```'
-          } > "${body_file}"
-          pr_url="$(
-            gh pr create \
-              --base main \
-              --head "${branch_name}" \
-              --title "${title}" \
-              --body-file "${body_file}" \
-              --draft
+          tracking_label="upstream-refresh-candidate"
+          tracking_title="Upstream refresh candidate"
+          issue_body="$(mktemp "${RUNNER_TEMP}/workcell-upstream-refresh-issue.XXXXXX.md")"
+
+          if [[ "$(gh label list --json name --jq 'map(select(.name == "upstream-refresh-candidate")) | length')" == "0" ]]; then
+            gh label create "${tracking_label}" --color "0E8A16" --description "Latest upstream refresh candidate tracking issue"
+          fi
+
+          if [[ "${REFRESH_CHANGED}" != 'true' ]]; then
+            {
+              echo "## Latest result"
+              echo
+              echo "No upstream refresh changes were detected."
+              echo
+              echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo "- base ref: ${GITHUB_REF}"
+              echo "- base sha: $(git rev-parse HEAD)"
+            } > "${issue_body}"
+          elif [[ "${REFRESH_SKIP}" == 'true' ]]; then
+            {
+              echo "## Latest result"
+              echo
+              echo "Skipped candidate publication because a refresh PR is already open:"
+              echo "${REFRESH_EXISTING_PR_URL}"
+              echo
+              echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo "- base ref: ${GITHUB_REF}"
+              echo "- base sha: $(git rev-parse HEAD)"
+            } > "${issue_body}"
+          else
+            metadata_path="${CANDIDATE_DIR}/metadata.json"
+            diffstat_path="${CANDIDATE_DIR}/diffstat"
+            {
+              echo "## Latest candidate"
+              echo
+              echo "- run: $(jq -r '.run_url' "${metadata_path}")"
+              echo "- artifact: \`$(jq -r '.artifact_name' "${metadata_path}")\`"
+              echo "- base ref: \`$(jq -r '.base_ref' "${metadata_path}")\`"
+              echo "- base sha: \`$(jq -r '.base_sha' "${metadata_path}")\`"
+              echo "- patch sha256: \`$(jq -r '.patch_sha256' "${metadata_path}")\`"
+              echo "- tree oid: \`$(jq -r '.tree_oid' "${metadata_path}")\`"
+              echo
+              echo "## Changed files"
+              echo
+              jq -r '.changed_files[] | "- `" + . + "`"' "${metadata_path}"
+              echo
+              echo "## Diffstat"
+              echo
+              echo '```'
+              cat "${diffstat_path}"
+              echo '```'
+            } > "${issue_body}"
+          fi
+
+          issues_json="$(
+            gh issue list \
+              --state all \
+              --label "${tracking_label}" \
+              --limit 10 \
+              --json number,state
           )"
-          echo "branch=${branch_name}" >> "${GITHUB_OUTPUT}"
-          echo "url=${pr_url}" >> "${GITHUB_OUTPUT}"
+          issue_count="$(jq 'length' <<<"${issues_json}")"
+          if [[ "${issue_count}" -gt 1 ]]; then
+            echo "Expected at most one ${tracking_label} issue, found ${issue_count}." >&2
+            exit 1
+          fi
+          if [[ "${issue_count}" -eq 0 ]]; then
+            gh issue create --title "${tracking_title}" --body-file "${issue_body}" --label "${tracking_label}" >/dev/null
+            exit 0
+          fi
+
+          issue_number="$(jq -r '.[0].number' <<<"${issues_json}")"
+          issue_state="$(jq -r '.[0].state | ascii_downcase' <<<"${issues_json}")"
+          if [[ "${issue_state}" == "closed" ]]; then
+            gh issue reopen "${issue_number}" >/dev/null
+          fi
+          gh issue edit "${issue_number}" --title "${tracking_title}" --body-file "${issue_body}" --add-label "${tracking_label}" >/dev/null
