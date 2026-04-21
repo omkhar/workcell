@@ -169,6 +169,7 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		`${ROOT_DIR}/scripts/update-upstream-pins.sh`,
 		`${ROOT_DIR}/scripts/update-provider-pins.sh`,
 		`${ROOT_DIR}/scripts/publish-provider-bump-pr.sh`,
+		`${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh`,
 		`${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh`,
 		`${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh`,
 	} {
@@ -481,6 +482,32 @@ func TestPublishProviderBumpPRRequiresCleanWorktree(t *testing.T) {
 		`git -C "${ROOT_DIR}" fetch origin "${BASE_BRANCH}"`,
 		`refs/remotes/origin/${BASE_BRANCH}`,
 		`worktree add --detach "${worktree_root}" "${base_ref}"`,
+		`requires a clean worktree`,
+		`Commit, stash, or discard local changes first`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
+func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "publish-upstream-refresh-pr.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	for _, want := range []string{
+		`git -C "${ROOT_DIR}" status --short`,
+		`git -C "${ROOT_DIR}" fetch origin "${BASE_BRANCH}"`,
+		`refs/remotes/origin/${BASE_BRANCH}`,
+		`gh run download "${RUN_ID}" --repo "${REPO}" --name upstream-refresh-candidate`,
+		`Candidate patch digest mismatch`,
+		`Candidate tree OID mismatch`,
 		`requires a clean worktree`,
 		`Commit, stash, or discard local changes first`,
 	} {

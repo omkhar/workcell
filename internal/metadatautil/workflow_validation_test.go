@@ -668,60 +668,49 @@ func TestValidateCIWorkflowPRShapeFlowAcceptsSharedJobGate(t *testing.T) {
 	}
 }
 
-func TestValidateUpstreamRefreshWorkflowRejectsMissingSignedDraftPRFlow(t *testing.T) {
+func TestValidateUpstreamRefreshWorkflowRejectsGitHubSidePRPublication(t *testing.T) {
 	t.Parallel()
 	workflow := `name: Upstream refresh
 
 on:
   workflow_dispatch:
 
-env:
-  WORKCELL_COSIGN_VERSION: v3.0.6
-
 jobs:
   refresh:
     environment:
       name: upstream-refresh
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
-        with:
-          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
-      - run: |
-          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
-      - run: ./scripts/update-upstream-pins.sh --check
-      - run: ./scripts/check-pinned-inputs.sh
-      - env:
-          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
-          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
-        run: |
-          actual_fingerprint="$(
-            gpg --batch --with-colons --list-secret-keys |
-              awk -F: '$1 == "fpr" { print $10; exit }'
-          )"
-          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
-            exit 1
-          fi
-          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
       - run: |
-          git commit -m "unsigned refresh"
+          ./scripts/update-upstream-pins.sh --check
+          ./scripts/check-pinned-inputs.sh
+      - run: |
+          jq -n '{version:1}' > metadata.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-refresh-candidate
+          path: metadata.json
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit 1 --body "candidate"
+          gh pr create --draft
 `
 
 	err := validateUpstreamRefreshWorkflow(workflow)
 	if err == nil {
 		t.Fatal("validateUpstreamRefreshWorkflow() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "git commit -S -F") {
-		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want missing signed draft PR guard", err)
+	if !strings.Contains(err.Error(), `gh pr create`) {
+		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want GitHub-side PR publication rejection", err)
 	}
 }
 
@@ -732,48 +721,33 @@ func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
 on:
   workflow_dispatch:
 
-env:
-  WORKCELL_COSIGN_VERSION: v3.0.6
-
 jobs:
   refresh:
     environment:
       name: upstream-refresh
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
-        with:
-          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
-      - run: |
-          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
       - run: |
           ./scripts/update-upstream-pins.sh --check
           ./scripts/check-pinned-inputs.sh
+      - run: |
+          jq -n '{version:1}' > metadata.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-refresh-candidate
+          path: metadata.json
       - env:
-          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
-          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          actual_fingerprint="$(
-            gpg --batch --with-colons --list-secret-keys |
-              awk -F: '$1 == "fpr" { print $10; exit }'
-          )"
-          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
-            exit 1
-          fi
-          git config user.name "${WORKCELL_UPSTREAM_REFRESH_GIT_NAME}"
-          git config user.email "${WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL}"
-          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
-          git commit -S -F "${commit_file}"
-          gh pr create --draft
+          gh issue create --title "Upstream refresh candidate" --body "metadata.json"
 `
 
 	if err := validateUpstreamRefreshWorkflow(workflow); err != nil {
@@ -781,62 +755,48 @@ jobs:
 	}
 }
 
-func TestValidateUpstreamRefreshWorkflowRejectsDeprecatedKeyIDBinding(t *testing.T) {
+func TestValidateUpstreamRefreshWorkflowRejectsHostedSigningInputs(t *testing.T) {
 	t.Parallel()
 	workflow := `name: Upstream refresh
 
 on:
   workflow_dispatch:
 
-env:
-  WORKCELL_COSIGN_VERSION: v3.0.6
-
 jobs:
   refresh:
     environment:
       name: upstream-refresh
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
-        with:
-          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
-      - run: |
-          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
       - run: |
           ./scripts/update-upstream-pins.sh --check
           ./scripts/check-pinned-inputs.sh
+      - run: |
+          jq -n '{version:1}' > metadata.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-refresh-candidate
+          path: metadata.json
       - env:
-          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
-          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
           WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID }}
         run: |
-          actual_fingerprint="$(
-            gpg --batch --with-colons --list-secret-keys |
-              awk -F: '$1 == "fpr" { print $10; exit }'
-          )"
-          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
-            exit 1
-          fi
-          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
-          git commit -S -F "${commit_file}"
-          gh pr create --draft
+          gh issue create --title "Upstream refresh candidate" --body "metadata.json"
 `
 
 	err := validateUpstreamRefreshWorkflow(workflow)
 	if err == nil {
 		t.Fatal("validateUpstreamRefreshWorkflow() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID") {
-		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want deprecated key-id rejection", err)
+	if !strings.Contains(err.Error(), "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY") {
+		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want hosted signing input rejection", err)
 	}
 }
 
@@ -847,44 +807,31 @@ func TestValidateUpstreamRefreshWorkflowRejectsMissingEnvironmentBinding(t *test
 on:
   workflow_dispatch:
 
-env:
-  WORKCELL_COSIGN_VERSION: v3.0.6
-
 jobs:
   refresh:
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
-        with:
-          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
-      - run: |
-          sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
       - run: |
           ./scripts/update-upstream-pins.sh --check
           ./scripts/check-pinned-inputs.sh
+      - run: |
+          jq -n '{version:1}' > metadata.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-refresh-candidate
+          path: metadata.json
       - env:
-          WORKCELL_UPSTREAM_REFRESH_GIT_NAME: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_NAME }}
-          WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT: ${{ vars.WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT }}
-          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          actual_fingerprint="$(
-            gpg --batch --with-colons --list-secret-keys |
-              awk -F: '$1 == "fpr" { print $10; exit }'
-          )"
-          if [[ "${actual_fingerprint}" != "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}" ]]; then
-            exit 1
-          fi
-          git config user.signingkey "${WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT}"
-          git commit -S -F "${commit_file}"
-          gh pr create --draft
+          gh issue create --title "Upstream refresh candidate" --body "metadata.json"
 `
 
 	err := validateUpstreamRefreshWorkflow(workflow)
@@ -1091,12 +1038,8 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHosted
 	policy := map[string]any{
 		"workflow_environment": map[string]any{
 			"upstream-refresh": map[string]any{
-				"required_secrets": []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
-				"variables": map[string]any{
-					"WORKCELL_UPSTREAM_REFRESH_GIT_NAME":        "Omkhar Arasaratnam",
-					"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL":       "omkhar@gmail.com",
-					"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT": "90554248C4F7CC086BB745D0DA5A8E9F536C42FD",
-				},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
 			},
 		},
 	}
@@ -1110,21 +1053,19 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHosted
 	}
 }
 
-func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsDeprecatedKeyID(t *testing.T) {
+func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUpstreamRefreshSecrets(t *testing.T) {
 	t.Parallel()
 	policy := map[string]any{
 		"workflow_environment": map[string]any{
 			"hosted-controls-audit": map[string]any{
-				"required_secrets": []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
+				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
 			},
 			"upstream-refresh": map[string]any{
-				"required_secrets": []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
-				"variables": map[string]any{
-					"WORKCELL_UPSTREAM_REFRESH_GIT_NAME":        "Omkhar Arasaratnam",
-					"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL":       "omkhar@gmail.com",
-					"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT": "90554248C4F7CC086BB745D0DA5A8E9F536C42FD",
-					"WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID":      "DA5A8E9F536C42FD",
-				},
+				"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
 			},
 		},
 	}
@@ -1133,8 +1074,8 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsDeprecatedKey
 	if err == nil {
 		t.Fatal("validateCanonicalHostedControlsWorkflowEnvironments() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID") {
-		t.Fatalf("validateCanonicalHostedControlsWorkflowEnvironments() error = %v, want deprecated key-id rejection", err)
+	if !strings.Contains(err.Error(), "must not declare secrets") {
+		t.Fatalf("validateCanonicalHostedControlsWorkflowEnvironments() error = %v, want upstream-refresh secret rejection", err)
 	}
 }
 
@@ -1143,15 +1084,13 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValu
 	policy := map[string]any{
 		"workflow_environment": map[string]any{
 			"hosted-controls-audit": map[string]any{
-				"required_secrets": []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
+				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
 			},
 			"upstream-refresh": map[string]any{
-				"required_secrets": []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
-				"variables": map[string]any{
-					"WORKCELL_UPSTREAM_REFRESH_GIT_NAME":        "Omkhar Arasaratnam",
-					"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL":       "omkhar@gmail.com",
-					"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT": "90554248C4F7CC086BB745D0DA5A8E9F536C42FD",
-				},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
 			},
 		},
 	}

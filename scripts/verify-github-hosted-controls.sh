@@ -59,6 +59,8 @@ while IFS= read -r environment_name; do
     echo "Missing required ${environment_name} environment on ${REPO}" >&2
     exit 1
   fi
+  gh api --paginate "repos/${REPO}/environments/${encoded_environment_name}/deployment-branch-policies?per_page=100" |
+    jq -s '{total_count: (map(.total_count // 0) | max // 0), branch_policies: (map(.branch_policies // []) | add)}' >"${TMP_DIR}/environment-${safe_environment_name}-deployment-branch-policies.json"
   gh api --paginate "repos/${REPO}/environments/${encoded_environment_name}/variables?per_page=100" |
     jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}' >"${TMP_DIR}/environment-${safe_environment_name}-variables.json"
   gh api --paginate "repos/${REPO}/environments/${encoded_environment_name}/secrets?per_page=100" |

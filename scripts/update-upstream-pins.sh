@@ -27,7 +27,6 @@ CI_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/ci.yml"
 PIN_HYGIENE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/pin-hygiene.yml"
 RELEASE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/release.yml"
 SECURITY_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/security.yml"
-UPSTREAM_REFRESH_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/upstream-refresh.yml"
 
 mode="summary"
 
@@ -316,7 +315,6 @@ current_buildx_version="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_BUI
 current_cosign_version="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_COSIGN_VERSION)"
 current_qemu_image="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_QEMU_IMAGE)"
 current_syft_version="$(extract_yaml_scalar "${RELEASE_WORKFLOW_PATH}" WORKCELL_SYFT_VERSION)"
-current_upstream_refresh_cosign_version="$(extract_yaml_scalar "${UPSTREAM_REFRESH_WORKFLOW_PATH}" WORKCELL_COSIGN_VERSION)"
 current_actionlint_version="$(extract_actionlint_env_value "${SECURITY_WORKFLOW_PATH}" ACTIONLINT_VERSION)"
 current_actionlint_sha="$(extract_actionlint_env_value "${SECURITY_WORKFLOW_PATH}" ACTIONLINT_SHA256)"
 
@@ -370,7 +368,6 @@ for current_target_pair in \
   "${current_buildkit_image}|${target_buildkit_image}" \
   "${current_buildx_version}|${target_buildx_version}" \
   "${current_cosign_version}|${target_cosign_version}" \
-  "${current_upstream_refresh_cosign_version}|${target_cosign_version}" \
   "${current_qemu_image}|${target_qemu_image}" \
   "${current_syft_version}|${target_syft_version}" \
   "${current_actionlint_version}|${target_actionlint_version}" \
@@ -466,8 +463,6 @@ replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  W
 replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_QEMU_IMAGE:' "  WORKCELL_QEMU_IMAGE: ${target_qemu_image}"
 
 replace_line_with_prefix "${PIN_HYGIENE_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"
-replace_line_with_prefix "${UPSTREAM_REFRESH_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"
-
 replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  WORKCELL_BUILDKIT_IMAGE: ${target_buildkit_image}"
 replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
 replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"

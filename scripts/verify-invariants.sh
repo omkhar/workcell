@@ -190,6 +190,7 @@ HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
+  "${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh"
   "${ROOT_DIR}/scripts/update-upstream-pins.sh"
   "${ROOT_DIR}/scripts/update-provider-pins.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"

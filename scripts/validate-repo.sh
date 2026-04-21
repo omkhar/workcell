@@ -164,6 +164,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/provider-e2e.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
   "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
+  "${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh"
   "${ROOT_DIR}/scripts/run-hosted-controls-audit.sh"
   "${ROOT_DIR}/scripts/run-mutation-tests.sh"
   "${ROOT_DIR}/scripts/update-upstream-pins.sh"
