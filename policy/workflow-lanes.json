@@ -516,6 +516,7 @@
       "job_name": "Dependency review",
       "workflow_events": [
         "pull_request",
+        "push",
         "workflow_dispatch"
       ],
       "authority": "github-only",
