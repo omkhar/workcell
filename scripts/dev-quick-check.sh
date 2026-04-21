@@ -37,7 +37,6 @@ shell_files=(
   "${ROOT_DIR}/scripts/install-workcell.sh"
   "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
   "${ROOT_DIR}/scripts/provider-e2e.sh"
-  "${ROOT_DIR}/scripts/repo-publish-pr.sh"
   "${ROOT_DIR}/scripts/uninstall.sh"
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/ci/build-validator-image.sh"
