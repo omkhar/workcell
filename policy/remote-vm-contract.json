@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "target_kind": "remote_vm",
+  "target_provider": "fake-remote",
+  "target_assurance_class": "compat",
+  "support_boundary": "preview-only",
+  "runtime_api": "brokered",
+  "workspace_transport": "remote-materialization",
+  "access_model": "brokered",
+  "workspace_materialization": {
+    "mode": "explicit",
+    "manifest_name": "materialization.json",
+    "workspace_dir": "workspace",
+    "excluded_paths": [
+      ".git"
+    ]
+  },
+  "bootstrap": {
+    "manifest_name": "bootstrap.json"
+  },
+  "session": {
+    "workspace_control_plane": "host-brokered",
+    "start_status": "running",
+    "final_status": "exited",
+    "assurance": "compat-preview-brokered"
+  },
+  "required_audit_events": [
+    "workspace_materialized",
+    "bootstrap_ready",
+    "session_started",
+    "session_finished"
+  ]
+}
