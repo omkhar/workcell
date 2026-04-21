@@ -2885,11 +2885,24 @@ if ! grep -Fq "CARGO_TARGET_DIR=\"\${CARGO_TARGET_DIR:-\${XDG_CACHE_HOME}/cargo-
   exit 1
 fi
 
+for dispatch_check in \
+  "${ROOT_DIR}/.github/workflows/ci.yml:./scripts/ci/job-validate.sh --profile pr-parity" \
+  "${ROOT_DIR}/.github/workflows/docs.yml:./scripts/ci/job-docs.sh" \
+  "${ROOT_DIR}/scripts/pre-merge.sh:scripts/ci/job-validate.sh" \
+  "${ROOT_DIR}/scripts/pre-merge.sh:scripts/ci/job-docs.sh"; do
+  dispatch_file="${dispatch_check%%:*}"
+  dispatch_required="${dispatch_check#*:}"
+  if ! grep -Fq -- "${dispatch_required}" "${dispatch_file}"; then
+    echo "Expected ${dispatch_file} to dispatch validator parity through the shared CI entrypoints (${dispatch_required})" >&2
+    exit 1
+  fi
+done
+
 for caller in \
-  "${ROOT_DIR}/.github/workflows/ci.yml" \
-  "${ROOT_DIR}/.github/workflows/docs.yml" \
-  "${ROOT_DIR}/.github/workflows/release.yml" \
-  "${ROOT_DIR}/scripts/pre-merge.sh"; do
+  "${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh" \
+  "${ROOT_DIR}/scripts/ci/run-docs-in-validator.sh" \
+  "${ROOT_DIR}/scripts/ci/job-validate.sh" \
+  "${ROOT_DIR}/.github/workflows/release.yml"; do
   for required in \
     "validator_uid=\"\$(id -u)\"" \
     "validator_gid=\"\$(id -g)\"" \
@@ -5053,8 +5066,9 @@ fi
 rm -rf "${PREMERGE_HARNESS_ROOT}"
 mkdir -p \
   "${PREMERGE_HARNESS_ROOT}/scripts" \
-  "${PREMERGE_HARNESS_ROOT}/tests/scenarios/shared" \
+  "${PREMERGE_HARNESS_ROOT}/scripts/ci" \
   "${PREMERGE_HARNESS_ROOT}/tools/validator" \
+  "${PREMERGE_HARNESS_ROOT}/.git" \
   "${PREMERGE_FAKEBIN}" \
   "${PREMERGE_DEFAULT_HOME}"
 install -m 0755 "${ROOT_DIR}/scripts/pre-merge.sh" "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh"
@@ -5077,26 +5091,21 @@ chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/with-validation-snapshot.sh"
 cat >"${PREMERGE_HARNESS_ROOT}/tools/validator/Dockerfile" <<'EOF'
 FROM scratch
 EOF
-for stub in \
-  check-pinned-inputs.sh \
-  update-upstream-pins.sh \
-  update-provider-pins.sh \
-  verify-github-macos-release-test-runners.sh \
-  verify-upstream-codex-release.sh \
-  verify-upstream-claude-release.sh \
-  verify-upstream-gemini-release.sh \
-  check-workflows.sh \
-  validate-repo.sh \
-  verify-invariants.sh \
-  container-smoke.sh \
-  verify-release-bundle.sh \
-  verify-reproducible-build.sh; do
+for stub in check-workflows.sh container-smoke.sh; do
   cat >"${PREMERGE_HARNESS_ROOT}/scripts/${stub}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
 EOF
   chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/${stub}"
+done
+for stub in job-validate.sh job-docs.sh job-pin-hygiene.sh job-pr-shape.sh; do
+  cat >"${PREMERGE_HARNESS_ROOT}/scripts/ci/${stub}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'ci/%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
+EOF
+  chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/ci/${stub}"
 done
 cat >"${PREMERGE_HARNESS_ROOT}/scripts/verify-reproducible-build.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -5105,12 +5114,34 @@ printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
 printf 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=%s\n' "${WORKCELL_REPRO_PLATFORMS-}" >>"${PREMERGE_LOG}"
 EOF
 chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/verify-reproducible-build.sh"
-cat >"${PREMERGE_HARNESS_ROOT}/tests/scenarios/shared/test-publish-pr-dry-run.sh" <<'EOF'
+cat >"${PREMERGE_HARNESS_ROOT}/scripts/ci-plan.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
+printf 'ci-plan.sh %s\n' "$*" >>"${PREMERGE_LOG}"
+
+profile="pr-parity"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile)
+      profile="${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+case "${profile}" in
+  release-preflight)
+    printf '%s\n' '{"version":1,"profile":"release-preflight","lanes":[{"id":"security.yml/actionlint","status":"local","local_script":"scripts/check-workflows.sh","local_order":10},{"id":"ci.yml/pr-shape","status":"local","local_script":"scripts/ci/job-pr-shape.sh","local_order":15},{"id":"ci.yml/validate","status":"local","local_script":"scripts/ci/job-validate.sh","local_order":20},{"id":"docs.yml/spelling-and-manpage","status":"local","local_script":"scripts/ci/job-docs.sh","local_order":30},{"id":"ci.yml/container-smoke","status":"local","local_script":"scripts/container-smoke.sh","local_order":40},{"id":"ci.yml/reproducible-build-platform[platform=linux/arm64]","status":"local","local_script":"scripts/verify-reproducible-build.sh","local_order":45,"matrix":{"platform":"linux/arm64"}},{"id":"pin-hygiene.yml/pinned-inputs","status":"local","local_script":"scripts/ci/job-pin-hygiene.sh","local_order":60}]}'
+    ;;
+  *)
+    printf '%s\n' '{"version":1,"profile":"pr-parity","lanes":[{"id":"security.yml/actionlint","status":"local","local_script":"scripts/check-workflows.sh","local_order":10},{"id":"ci.yml/pr-shape","status":"local","local_script":"scripts/ci/job-pr-shape.sh","local_order":15},{"id":"ci.yml/validate","status":"local","local_script":"scripts/ci/job-validate.sh","local_order":20},{"id":"docs.yml/spelling-and-manpage","status":"local","local_script":"scripts/ci/job-docs.sh","local_order":30},{"id":"ci.yml/container-smoke","status":"local","local_script":"scripts/container-smoke.sh","local_order":40},{"id":"ci.yml/reproducible-build-platform[platform=linux/arm64]","status":"local","local_script":"scripts/verify-reproducible-build.sh","local_order":45,"matrix":{"platform":"linux/arm64"}}]}'
+    ;;
+esac
 EOF
-chmod 0755 "${PREMERGE_HARNESS_ROOT}/tests/scenarios/shared/test-publish-pr-dry-run.sh"
+chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/ci-plan.sh"
 cat >"${PREMERGE_FAKEBIN}/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -5124,6 +5155,19 @@ case "${1-}" in
     ;;
   log)
     printf '%s\n' "${WORKCELL_FAKE_GIT_EPOCH:-1700000000}"
+    ;;
+  rev-parse)
+    if [[ "${2-}" == "--absolute-git-dir" ]]; then
+      printf '%s/.git\n' "${WORKCELL_FAKE_GIT_ROOT}"
+    else
+      echo "unexpected rev-parse invocation: $*" >&2
+      exit 1
+    fi
+    ;;
+  read-tree)
+    ;;
+  write-tree)
+    printf '%s\n' "${WORKCELL_FAKE_GIT_TREE_OID:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeef}"
     ;;
   archive)
     tar -C "${WORKCELL_FAKE_GIT_ROOT}" -cf - scripts tests tools
@@ -5202,6 +5246,7 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  WORKCELL_FAKE_GIT_TREE_OID='1111111111111111111111111111111111111111' \
   WORKCELL_VALIDATION_SNAPSHOT_PARENT='' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
   --local-snapshot head >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
@@ -5211,9 +5256,19 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
 fi
 grep -q 'local validation will run from snapshot (head).' /tmp/workcell-premerge-local-snapshot.out
 grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_DEFAULT_SNAPSHOT_PARENT}" "${PREMERGE_LOG}"
-grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
-grep -q 'verify-github-macos-release-test-runners.sh macos-26 macos-15' "${PREMERGE_LOG}"
-grep -q 'update-upstream-pins.sh --check' "${PREMERGE_LOG}"
+for expected in \
+  'ci-plan.sh --profile pr-parity --event pull_request --base main --format json' \
+  'check-workflows.sh ' \
+  'ci/job-pr-shape.sh --base main' \
+  'ci/job-validate.sh --profile pr-parity' \
+  'ci/job-docs.sh ' \
+  'container-smoke.sh ' \
+  'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64'; do
+  grep -q "${expected}" "${PREMERGE_LOG}"
+done
+for expected in '"profile": "pr-parity"' '"base_branch": "main"' '"tree_oid": "1111111111111111111111111111111111111111"'; do
+  grep -q "${expected}" "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
+done
 
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
@@ -5246,9 +5301,10 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  WORKCELL_FAKE_GIT_TREE_OID='2222222222222222222222222222222222222222' \
   WORKCELL_VALIDATION_SNAPSHOT_PARENT='relative-snapshots' \
-  WORKCELL_PREMERGE_REPRO_PLATFORMS='linux/arm64' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --profile release-preflight \
   --local-snapshot worktree \
   --local-include-untracked >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
   echo "Expected local snapshot pre-merge harness to succeed" >&2
@@ -5258,16 +5314,18 @@ fi
 grep -q 'local validation will run from snapshot (worktree).' /tmp/workcell-premerge-local-snapshot.out
 grep -q 'with-validation-snapshot.sh --repo ' "${PREMERGE_LOG}"
 grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_HARNESS_ROOT}/relative-snapshots" "${PREMERGE_LOG}"
-grep -q -- '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --local-snapshot worktree --local-include-untracked' "${PREMERGE_LOG}"
-grep -q 'check-pinned-inputs.sh ' "${PREMERGE_LOG}"
-grep -q 'verify-github-macos-release-test-runners.sh macos-26 macos-15' "${PREMERGE_LOG}"
-grep -q 'update-upstream-pins.sh --check' "${PREMERGE_LOG}"
-grep -q 'test-publish-pr-dry-run.sh ' "${PREMERGE_LOG}"
-grep -q 'verify-reproducible-build.sh ' "${PREMERGE_LOG}"
-grep -q 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64' "${PREMERGE_LOG}"
-grep -q 'local_premerge_repro_platforms()' "${ROOT_DIR}/scripts/pre-merge.sh"
-grep -q 'WORKCELL_PREMERGE_REPRO_PLATFORMS' "${ROOT_DIR}/scripts/pre-merge.sh"
-grep -Fq "WORKCELL_REPRO_PLATFORMS=\"\${PREMERGE_REPRO_PLATFORMS}\"" "${ROOT_DIR}/scripts/pre-merge.sh"
+for expected in \
+  '--mode worktree --include-untracked -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --profile release-preflight --local-snapshot worktree --local-include-untracked' \
+  'ci-plan.sh --profile release-preflight --event pull_request --base main --format json' \
+  'check-workflows.sh ' \
+  'ci/job-pr-shape.sh --base main' \
+  'ci/job-validate.sh --profile release-preflight' \
+  'ci/job-docs.sh ' \
+  'ci/job-pin-hygiene.sh ' \
+  'container-smoke.sh ' \
+  'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64'; do
+  grep -q -- "${expected}" "${PREMERGE_LOG}"
+done
 
 FILE_TRACE_SENSITIVITY_HARNESS="$(mktemp)"
 cat >"${FILE_TRACE_SENSITIVITY_HARNESS}" <<EOF

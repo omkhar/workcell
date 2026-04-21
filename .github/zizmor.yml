@@ -1,1 +1,4 @@
-rules: {}
+rules:
+  dangerous-triggers:
+    ignore:
+      - pr-base-policy.yml

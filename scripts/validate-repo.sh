@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKIP_HEAVY_HOST_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
+VALIDATION_PROFILE="${WORKCELL_VALIDATE_REPO_PROFILE:-release-preflight}"
 
 HOME="${HOME:-/tmp/workcell-home}"
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
@@ -37,6 +38,14 @@ require_tool cargo
 require_tool rustfmt
 require_tool git
 require_cargo_subcommand clippy
+
+case "${VALIDATION_PROFILE}" in
+  repo-core | pr-parity | release-preflight) ;;
+  *)
+    echo "Unsupported validate-repo profile: ${VALIDATION_PROFILE}" >&2
+    exit 2
+    ;;
+esac
 
 METADATAUTIL_BIN=""
 BUILD_CACHE_DIR="${ROOT_DIR}/.workcell-build-cache"
@@ -118,8 +127,16 @@ shell_files=(
   "${ROOT_DIR}/scripts/check-pr-shape.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/build-and-test.sh"
+  "${ROOT_DIR}/scripts/ci-plan.sh"
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/check-workflows.sh"
+  "${ROOT_DIR}/scripts/ci/build-validator-image.sh"
+  "${ROOT_DIR}/scripts/ci/job-docs.sh"
+  "${ROOT_DIR}/scripts/ci/job-pin-hygiene.sh"
+  "${ROOT_DIR}/scripts/ci/job-pr-shape.sh"
+  "${ROOT_DIR}/scripts/ci/job-validate.sh"
+  "${ROOT_DIR}/scripts/ci/run-docs-in-validator.sh"
+  "${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh"
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/dev-quick-check.sh"
@@ -161,6 +178,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-invariants.sh"
   "${ROOT_DIR}/scripts/verify-operator-contract.sh"
+  "${ROOT_DIR}/scripts/verify-workflow-lanes.sh"
   "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
@@ -345,8 +363,10 @@ fi
   cargo test --locked --offline
 )
 
-"${ROOT_DIR}/scripts/run-mutation-tests.sh"
-"${ROOT_DIR}/scripts/verify-coverage.sh"
+if [[ "${VALIDATION_PROFILE}" == "release-preflight" ]]; then
+  "${ROOT_DIR}/scripts/run-mutation-tests.sh"
+  "${ROOT_DIR}/scripts/verify-coverage.sh"
+fi
 
 # Pre-build hostutil so scenario tests skip `go run` overhead on every invocation
 mkdir -p "${BUILD_CACHE_DIR}"

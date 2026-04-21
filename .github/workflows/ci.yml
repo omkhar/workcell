@@ -43,10 +43,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         env:
           WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags --prune origin "${WORKCELL_PR_BASE_REF}"
-          ./scripts/check-pr-shape.sh --base-ref "origin/${WORKCELL_PR_BASE_REF}" --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0
+        run: ./scripts/ci/job-pr-shape.sh --base "${WORKCELL_PR_BASE_REF}"
 
       - name: Skip outside pull requests
         if: ${{ github.event_name != 'pull_request' }}
@@ -63,15 +60,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check pinned input policy
-        run: ./scripts/check-pinned-inputs.sh
-
-      - name: Verify GitHub macOS release test runners
-        run: ./scripts/verify-github-macos-release-test-runners.sh macos-26 macos-15
-
-      - name: Verify build input manifest determinism
-        run: ./scripts/verify-build-input-manifest.sh
-
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
@@ -80,114 +68,20 @@ jobs:
         run: |
           sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
 
-      - name: Verify upstream Codex release
-        run: ./scripts/verify-upstream-codex-release.sh
-
-      - name: Verify upstream Claude release
-        run: ./scripts/verify-upstream-claude-release.sh
-
-      - name: Verify upstream Gemini release
-        run: ./scripts/verify-upstream-gemini-release.sh
-
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
         with:
           cache-binary: true
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
           version: ${{ env.WORKCELL_BUILDX_VERSION }}
 
-      - name: Build validation tool image
-        run: |
-          docker buildx build \
-            -f tools/validator/Dockerfile \
-            -t "workcell-validator:${GITHUB_SHA}" \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max \
-            --load \
-            .
-
       - name: Validate repository
-        run: |
-          set -euo pipefail
-          validator_uid="$(id -u)"
-          validator_gid="$(id -g)"
-          validator_home="/tmp/workcell-home-${validator_uid}"
-          validator_cache="${validator_home}/.cache"
-          validator_tmp="${validator_home}/.tmp"
-          docker run --rm \
-            --user "${validator_uid}:${validator_gid}" \
-            --entrypoint /bin/bash \
-            -v "${PWD}:/workspace" \
-            -w /workspace \
-            -e HOME="${validator_home}" \
-            -e XDG_CACHE_HOME="${validator_cache}" \
-            -e GOCACHE="${validator_cache}/go-build" \
-            -e GOMODCACHE="${validator_cache}/go-mod" \
-            -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
-            -e TMPDIR="${validator_tmp}" \
-            "workcell-validator:${GITHUB_SHA}" \
-            -lc '
-              set -euo pipefail
-              mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
-              ./scripts/validate-repo.sh
-            '
-
-      - name: Verify host launcher invariants
-        run: ./scripts/verify-invariants.sh
-
-      - name: Verify release bundle reproducibility
         env:
-          WORKCELL_RELEASE_BUNDLE_NAME: workcell-${{ github.sha }}.tar.gz
-          WORKCELL_RELEASE_BUNDLE_PREFIX: workcell-${{ github.sha }}
-          WORKCELL_RELEASE_BUNDLE_REF: ${{ github.sha }}
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
-        run: ./scripts/verify-release-bundle.sh
-
-      - name: Build CI release install artifacts
-        env:
+          WORKCELL_VALIDATOR_BUILDX_CACHE_MODE: gha
+          WORKCELL_CI_INSTALL_ARTIFACT_DIR: dist/release-install
+          WORKCELL_CI_ARCHIVE_REF: ${{ github.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          source_date_epoch="$(git log -1 --pretty=%ct "${GITHUB_SHA}")"
-          validator_uid="$(id -u)"
-          validator_gid="$(id -g)"
-          validator_home="/tmp/workcell-home-${validator_uid}"
-          validator_cache="${validator_home}/.cache"
-          validator_tmp="${validator_home}/.tmp"
-          mkdir -p dist/release-install
-          bundle="workcell-ci-${GITHUB_SHA}.tar.gz"
-          docker run --rm \
-            --user "${validator_uid}:${validator_gid}" \
-            --entrypoint /bin/bash \
-            -v "${PWD}:/workspace" \
-            -v "${PWD}/dist/release-install:/dist" \
-            -w /workspace \
-            -e HOME="${validator_home}" \
-            -e XDG_CACHE_HOME="${validator_cache}" \
-            -e TMPDIR="${validator_tmp}" \
-            -e SOURCE_DATE_EPOCH="${source_date_epoch}" \
-            -e ARCHIVE_REF="${GITHUB_SHA}" \
-            -e BUNDLE_NAME="${bundle}" \
-            -e BUNDLE_PREFIX="workcell-ci-${GITHUB_SHA}/" \
-            "workcell-validator:${GITHUB_SHA}" \
-            -lc '
-              set -euo pipefail
-              mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${TMPDIR}"
-              bundle_tar="/dist/${BUNDLE_NAME%.tar.gz}.tar"
-              git -c safe.directory=/workspace archive \
-                --format=tar \
-                --mtime="@${SOURCE_DATE_EPOCH}" \
-                --prefix="${BUNDLE_PREFIX}" \
-                -o "${bundle_tar}" \
-                "${ARCHIVE_REF}"
-              gzip -n -9 < "${bundle_tar}" > "/dist/${BUNDLE_NAME}"
-              rm -f "${bundle_tar}"
-            '
-          bundle_sha="$(sha256sum "dist/release-install/${bundle}" | awk '{print $1}')"
-          ./scripts/generate-homebrew-formula.sh \
-            "ci-${GITHUB_SHA}" \
-            "${bundle_sha}" \
-            dist/release-install/workcell.rb \
-            --repository "${GITHUB_REPOSITORY}"
+        run: ./scripts/ci/job-validate.sh --profile pr-parity
 
       - name: Upload CI release install artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

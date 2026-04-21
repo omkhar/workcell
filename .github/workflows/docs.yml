@@ -68,58 +68,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check pinned input policy
-        run: ./scripts/check-pinned-inputs.sh
-
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
         with:
           cache-binary: true
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
           version: ${{ env.WORKCELL_BUILDX_VERSION }}
 
-      - name: Build validation tool image
-        run: |
-          docker buildx build \
-            -f tools/validator/Dockerfile \
-            -t "workcell-validator:${GITHUB_SHA}" \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max \
-            --load \
-            .
-
       - name: Check docs spelling and manpage
-        run: |
-          set -euo pipefail
-          validator_uid="$(id -u)"
-          validator_gid="$(id -g)"
-          validator_home="/tmp/workcell-home-${validator_uid}"
-          validator_cache="${validator_home}/.cache"
-          validator_tmp="${validator_home}/.tmp"
-          docker run --rm \
-            --user "${validator_uid}:${validator_gid}" \
-            --entrypoint /bin/bash \
-            -v "${PWD}:/workspace" \
-            -w /workspace \
-            -e HOME="${validator_home}" \
-            -e XDG_CACHE_HOME="${validator_cache}" \
-            -e GOCACHE="${validator_cache}/go-build" \
-            -e GOMODCACHE="${validator_cache}/go-mod" \
-            -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
-            -e TMPDIR="${validator_tmp}" \
-            "workcell-validator:${GITHUB_SHA}" \
-            -lc '
-              set -euo pipefail
-              mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
-              mapfile -d "" doc_files < <(
-                find /workspace \
-                  -path /workspace/.git -prune -o \
-                  -path /workspace/dist -prune -o \
-                  -path /workspace/tmp -prune -o \
-                  -path /workspace/runtime/container/providers/node_modules -prune -o \
-                  -path /workspace/runtime/container/rust/vendor -prune -o \
-                  -path /workspace/runtime/container/rust/target -prune -o \
-                  -type f \( -name "*.md" -o -name "*.txt" -o -name "*.1" \) -print0 | sort -z
-              )
-              codespell --config /workspace/.codespellrc "${doc_files[@]}"
-              mandoc -Tlint /workspace/man/workcell.1 >/dev/null
-            '
+        env:
+          WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
+          WORKCELL_VALIDATOR_BUILDX_CACHE_MODE: gha
+        run: ./scripts/ci/job-docs.sh

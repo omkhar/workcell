@@ -25,12 +25,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check pinned input policy
-        run: ./scripts/check-pinned-inputs.sh
-
-      - name: Verify GitHub macOS release test runners
-        run: ./scripts/verify-github-macos-release-test-runners.sh macos-26 macos-15
-
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
@@ -39,14 +33,5 @@ jobs:
         run: |
           sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
 
-      - name: Verify upstream Codex release
-        run: ./scripts/verify-upstream-codex-release.sh
-
-      - name: Verify upstream Claude release
-        run: ./scripts/verify-upstream-claude-release.sh
-
-      - name: Verify upstream Gemini release
-        run: ./scripts/verify-upstream-gemini-release.sh
-
-      - name: Check pinned upstream refresh status
-        run: ./scripts/update-upstream-pins.sh --check
+      - name: Check pinned upstream hygiene
+        run: ./scripts/ci/job-pin-hygiene.sh

@@ -535,10 +535,10 @@ func TestPreMergeChecksPinnedUpstreams(t *testing.T) {
 	script := string(content)
 
 	for _, want := range []string{
-		`echo "[pre-merge] pinned upstream refresh check"`,
-		`"${ROOT_DIR}/scripts/update-upstream-pins.sh" --check`,
-		`echo "[pre-merge] GitHub macOS release test runner verification"`,
-		`"${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh" macos-26 macos-15`,
+		`--profile repo-core|pr-parity|release-preflight`,
+		`"${ROOT_DIR}/scripts/ci-plan.sh" "${plan_args[@]}" --format json`,
+		`echo "[pre-merge] release pin hygiene"`,
+		`scripts/ci/job-pin-hygiene.sh)`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
