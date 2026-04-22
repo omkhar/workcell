@@ -1488,6 +1488,10 @@ profile_docker_transport_available() {
       [[ -n "${socket_path}" ]] && [[ -e "${socket_path}" ]]
       ;;
     docker-desktop)
+      if [[ -z "${HOST_DOCKER_BIN:-}" ]]; then
+        HOST_DOCKER_BIN="$(resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)" || return 1
+        sanitize_host_docker_env
+      fi
       context_name="$(target_id_for_profile_state "${profile}")"
       [[ -n "${context_name}" ]] &&
         docker_context_exists "${context_name}" &&
@@ -4144,15 +4148,19 @@ session_delete_main() {
   fi
 
   if [[ -n "${SESSION_META_CONTAINER_NAME}" ]]; then
-    HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-    sanitize_host_docker_env
-    if profile_docker_transport_available "${SESSION_META_PROFILE}"; then
-      if ! container_state="$(session_container_state_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"; then
-        echo "session delete could not inspect the recorded session container: ${session_id}" >&2
-        exit 1
-      fi
+    if [[ "${record_only}" -eq 1 ]]; then
+      container_state="stopped"
     else
-      unavailable+=("container")
+      if profile_docker_transport_available "${SESSION_META_PROFILE}"; then
+        HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+        sanitize_host_docker_env
+        if ! container_state="$(session_container_state_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"; then
+          echo "session delete could not inspect the recorded session container: ${session_id}" >&2
+          exit 1
+        fi
+      else
+        unavailable+=("container")
+      fi
     fi
     if [[ "${record_only}" -eq 0 ]] && [[ "${#unavailable[@]}" -gt 0 ]]; then
       echo "session delete could not confirm cleanup of the recorded session container: ${session_id}" >&2

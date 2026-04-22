@@ -306,36 +306,26 @@ This is intended only for lower-assurance boundary debugging and is recorded in
 the host audit log as a downgraded path.
 .TP
 .B --target colima|docker-desktop
-Select the runtime target to launch. The default is
-.BR colima ,
-which maps to the reviewed strict
-.B local_vm/colima
-path. Use
-.B docker-desktop
-to select the explicit lower-assurance
-.B local_compat/docker-desktop/compat
-path. Workcell does not silently fall back between targets.
+Select the runtime target to launch. The default is colima, which maps to the
+reviewed strict local_vm/colima path. Use docker-desktop for the explicit
+lower-assurance local_compat/docker-desktop/compat path. Workcell does not
+silently fall back between targets.
 .TP
 .B --colima-profile NAME
-Override the derived Workcell profile name for the
-.B colima
-target. This option is rejected for
-.BR --target docker-desktop .
+Override the derived Workcell profile name for the colima target. This option
+is rejected for --target docker-desktop.
 .TP
 .B --vm-cpu COUNT
-Set an explicit CPU count for the dedicated Colima VM.
-This option is rejected for
-.BR --target docker-desktop .
+Set an explicit CPU count for the dedicated Colima VM. This option is rejected
+for --target docker-desktop.
 .TP
 .B --vm-memory GIB
-Set an explicit memory size in GiB for the dedicated Colima VM.
-This option is rejected for
-.BR --target docker-desktop .
+Set an explicit memory size in GiB for the dedicated Colima VM. This option is
+rejected for --target docker-desktop.
 .TP
 .B --vm-disk GIB
-Set an explicit disk size in GiB for the dedicated Colima VM.
-This option is rejected for
-.BR --target docker-desktop .
+Set an explicit disk size in GiB for the dedicated Colima VM. This option is
+rejected for --target docker-desktop.
 .TP
 .B --rebuild
 Rebuild the runtime image before launch.

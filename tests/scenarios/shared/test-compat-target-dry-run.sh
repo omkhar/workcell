@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-compat-target-scenario.XXXXXX")"
-
 cleanup() {
   chmod -R u+w "${TMP_DIR}" 2>/dev/null || true
   rm -rf "${TMP_DIR}"
@@ -18,7 +17,6 @@ printf 'scenario workspace\n' >"${WORKSPACE}/README.md"
 
 resolve_host_docker_optional() {
   local candidate=""
-
   for candidate in \
     /opt/homebrew/bin/docker \
     /usr/local/bin/docker \
@@ -34,7 +32,6 @@ resolve_host_docker_optional() {
 
 docker_desktop_missing_state() {
   local docker_bin=""
-
   if ! docker_bin="$(resolve_host_docker_optional)"; then
     printf 'docker\n'
     return 0
@@ -52,7 +49,6 @@ run_with_support_override() {
   local host_os="$2"
   local host_arch="$3"
   shift 3
-
   HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
     WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1 \
     WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS="${host_os}" \
@@ -70,7 +66,6 @@ run_with_support_override_expect_failure() {
   local host_os="$3"
   local host_arch="$4"
   shift 4
-
   set +e
   HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
     WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1 \
@@ -83,7 +78,6 @@ run_with_support_override_expect_failure() {
     >"${TMP_DIR}/${label}.stdout" 2>"${TMP_DIR}/${label}.stderr"
   local rc=$?
   set -e
-
   if [[ "${rc}" -ne "${expected_rc}" ]]; then
     echo "Unexpected exit code for ${label}: ${rc} (expected ${expected_rc})" >&2
     cat "${TMP_DIR}/${label}.stderr" >&2
@@ -133,6 +127,18 @@ run_with_support_override \
   --dry-run
 grep -q '^target_kind=local_compat target_provider=docker-desktop target_id=desktop-linux target_assurance_class=compat runtime_api=docker workspace_transport=workspace-mount$' "${TMP_DIR}/compat-dry-run-supported.stderr"
 grep -Eq '^execution_path=managed-tier1 audit_log=.*/targets/local_compat/docker-desktop/wcl-workspace-[a-f0-9]+/workcell\.audit\.log$' "${TMP_DIR}/compat-dry-run-supported.stderr"
+
+if [[ "${EXPECTED_ALLOWED_MISSING}" == "none" ]]; then
+  PATH="/usr/bin:/bin:/usr/sbin:/sbin" run_with_support_override \
+    "compat-dry-run-supported-no-path-docker" \
+    macos \
+    arm64 \
+    --target docker-desktop \
+    --agent codex \
+    --dry-run
+  grep -q '^target_kind=local_compat target_provider=docker-desktop target_id=desktop-linux target_assurance_class=compat runtime_api=docker workspace_transport=workspace-mount$' "${TMP_DIR}/compat-dry-run-supported-no-path-docker.stderr"
+  grep -Eq '^execution_path=managed-tier1 audit_log=.*/targets/local_compat/docker-desktop/wcl-workspace-[a-f0-9]+/workcell\.audit\.log$' "${TMP_DIR}/compat-dry-run-supported-no-path-docker.stderr"
+fi
 
 run_with_support_override \
   "compat-doctor-blocked" \

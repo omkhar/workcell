@@ -1714,6 +1714,7 @@ session_delete_cleanup_output="$(
     TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
     SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
     mkdir -p "${PROFILE_DIR}/sessions"
+    : >"${RECORD_FILE}"
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
     cat >"${RECORD_PATH}" <<EOF_JSON
@@ -1795,11 +1796,14 @@ session_delete_compat_output="$(
     cat >"${RECORD_PATH}" <<EOF_JSON
 {"version":1,"session_id":"detached-fixture","profile":"wcl-detached-fixture","target_kind":"local_compat","target_provider":"docker-desktop","target_id":"desktop-linux","agent":"codex","mode":"strict","status":"exited","live_status":"stopped","workspace":"/tmp/detached-fixture-workspace","container_name":"workcell-session-fixture","started_at":"2026-04-08T14:00:00Z","finished_at":"2026-04-08T14:05:00Z","exit_status":"0","initial_assurance":"managed-mutable","final_assurance":"managed-mutable","workspace_control_plane":"masked"}
 EOF_JSON
-    HOST_DOCKER_BIN="/bin/false"
-    resolve_host_tool() { printf "/bin/false\n"; }
+    FAKE_DOCKER_BIN="${FIXTURE_ROOT}/fake-docker"
+    printf "#!/bin/sh\nexit 0\n" >"${FAKE_DOCKER_BIN}"
+    chmod 0755 "${FAKE_DOCKER_BIN}"
+    resolve_host_tool() { printf "%s\n" "${FAKE_DOCKER_BIN}"; }
+    resolve_host_tool_optional() { printf "%s\n" "${FAKE_DOCKER_BIN}"; }
     sanitize_host_docker_env() { :; }
-    docker_context_exists() { return 0; }
-    docker_context_is_healthy() { return 0; }
+    docker_context_exists() { [[ "${HOST_DOCKER_BIN:-}" == "${FAKE_DOCKER_BIN}" ]]; }
+    docker_context_is_healthy() { [[ "${HOST_DOCKER_BIN:-}" == "${FAKE_DOCKER_BIN}" ]]; }
     profile_docker_socket_path() { printf "unexpected-profile-socket-lookup\n" >>"${RECORD_FILE}"; return 99; }
     revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
     run_profile_docker_command() {
@@ -1835,7 +1839,7 @@ session_delete_record_only_output="$(
     TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
     SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
     mkdir -p "${PROFILE_DIR}/sessions"
-    : >"${PROFILE_DIR}/docker.sock"
+    : >"${RECORD_FILE}"
     mkdir -p "${SESSION_AUDIT_DIR}"
     cat >"${RECORD_PATH}" <<EOF_JSON
 {
@@ -1854,9 +1858,14 @@ EOF_JSON
     printf "debug\n" >"${DEBUG_LOG}"
     printf "trace\n" >"${FILE_TRACE_LOG}"
     printf "transcript\n" >"${TRANSCRIPT_LOG}"
-    HOST_DOCKER_BIN="/bin/false"
-    resolve_host_tool() { printf "/bin/false\n"; }
-    sanitize_host_docker_env() { :; }
+    resolve_host_tool() {
+      printf "unexpected-docker-resolution\n" >>"${RECORD_FILE}"
+      return 99
+    }
+    sanitize_host_docker_env() {
+      printf "unexpected-docker-sanitize\n" >>"${RECORD_FILE}"
+      return 99
+    }
     revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
     load_session_runtime_metadata() {
       SESSION_META_PROFILE="wcl-detached-fixture"
@@ -1869,17 +1878,8 @@ EOF_JSON
       SESSION_META_TRANSCRIPT_LOG_PATH="${TRANSCRIPT_LOG}"
     }
     run_profile_docker_command() {
-      local profile="$1"
-      shift
-      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
-      case "$1" in
-        inspect)
-          printf "stopped\n"
-          ;;
-        *)
-          return 1
-          ;;
-      esac
+      printf "unexpected-docker-command|%s\n" "$*" >>"${RECORD_FILE}"
+      return 99
     }
     session_delete_main --id detached-fixture --record-only
     test ! -e "${RECORD_PATH}"
@@ -1893,8 +1893,9 @@ grep -q '^deleted=1$' <<<"${session_delete_record_only_output}"
 grep -q '^record_only=1$' <<<"${session_delete_record_only_output}"
 grep -q '^removed=record$' <<<"${session_delete_record_only_output}"
 grep -q '^kept=container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_record_only_output}"
-if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_RECORD_ONLY_RECORD}"; then
-  echo "session delete --record-only unexpectedly removed a container" >&2
+grep -q '^unavailable=none$' <<<"${session_delete_record_only_output}"
+if [[ -s "${SESSION_DELETE_RECORD_ONLY_RECORD}" ]]; then
+  echo "session delete --record-only unexpectedly touched Docker resolution or transport" >&2
   exit 1
 fi
 

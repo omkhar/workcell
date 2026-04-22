@@ -223,16 +223,16 @@ ensure_workcell_trusted_buildx() {
 
 docker_context_exists() {
   local context_name="$1"
-  run_workcell_docker_client_command docker context inspect "${context_name}" >/dev/null 2>&1
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN:-docker}" context inspect "${context_name}" >/dev/null 2>&1
 }
 
 docker_context_is_healthy() {
   local context_name="$1"
-  run_workcell_docker_client_command docker --context "${context_name}" info >/dev/null 2>&1
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN:-docker}" --context "${context_name}" info >/dev/null 2>&1
 }
 
 docker_context_names() {
-  run_workcell_docker_client_command docker context ls --format '{{.Name}}' 2>/dev/null || true
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN:-docker}" context ls --format '{{.Name}}' 2>/dev/null || true
 }
 
 select_workcell_docker_context() {
