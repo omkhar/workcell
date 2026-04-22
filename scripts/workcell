@@ -260,6 +260,7 @@ INJECTION_SSH_ENABLED=0
 INJECTION_SECRET_COPY_TARGETS=""
 PROFILE_LOCK_DIR=""
 NO_SPINNER=0
+TARGET_BACKEND="colima"
 
 session_lookup_root_args() {
   printf '%s\n' "--root=${WORKCELL_STATE_ROOT}" "--root=${COLIMA_STATE_ROOT}"
@@ -278,6 +279,8 @@ Options:
   --agent codex|claude|gemini   Provider to run (required)
   --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
   --agent-arg VALUE             Additional provider argv to append (repeatable)
+  --target colima|docker-desktop
+                                Runtime target to launch (default: colima)
   --cache-profile off|standard  Opt-in persistent non-secret cache plane (default: off)
   --codex-rules-mutability readonly|session
                                 Codex execpolicy session mutability (default: readonly)
@@ -327,6 +330,8 @@ Workflows:
     workcell --agent codex --workspace /path/to/repo
     workcell --agent claude --workspace /path/to/repo
     workcell --agent gemini --workspace /path/to/repo
+  Preview Docker Desktop compatibility target:
+    workcell --target docker-desktop --agent codex --workspace /path/to/repo
   Managed development command lane:
     workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
     workcell --agent claude --mode development --workspace /path/to/repo -- bash -lc 'rg TODO'
@@ -549,6 +554,21 @@ validate_colima_profile_name() {
   esac
 }
 
+validate_target_backend_name() {
+  case "$1" in
+    colima | docker-desktop) ;;
+    *)
+      echo "Unsupported target backend: $1" >&2
+      echo "Use --target colima or --target docker-desktop." >&2
+      exit 2
+      ;;
+  esac
+}
+
+docker_desktop_context_name() {
+  printf 'desktop-linux\n'
+}
+
 profile_dir() {
   local profile="$1"
 
@@ -556,11 +576,54 @@ profile_dir() {
   printf '%s/%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
-profile_target_state_dir() {
+target_kind_for_profile_state() {
   local profile="$1"
 
+  if [[ -n "${SESSION_META_PROFILE:-}" ]] &&
+    [[ "${SESSION_META_PROFILE}" == "${profile}" ]] &&
+    [[ -n "${SESSION_META_TARGET_KIND:-}" ]]; then
+    printf '%s\n' "${SESSION_META_TARGET_KIND}"
+    return 0
+  fi
+
+  printf '%s\n' "$(current_target_kind)"
+}
+
+target_provider_for_profile_state() {
+  local profile="$1"
+
+  if [[ -n "${SESSION_META_PROFILE:-}" ]] &&
+    [[ "${SESSION_META_PROFILE}" == "${profile}" ]] &&
+    [[ -n "${SESSION_META_TARGET_PROVIDER:-}" ]]; then
+    printf '%s\n' "${SESSION_META_TARGET_PROVIDER}"
+    return 0
+  fi
+
+  printf '%s\n' "$(current_target_provider)"
+}
+
+target_id_for_profile_state() {
+  local profile="$1"
+
+  if [[ -n "${SESSION_META_PROFILE:-}" ]] &&
+    [[ "${SESSION_META_PROFILE}" == "${profile}" ]] &&
+    [[ -n "${SESSION_META_TARGET_ID:-}" ]]; then
+    printf '%s\n' "${SESSION_META_TARGET_ID}"
+    return 0
+  fi
+
+  printf '%s\n' "$(current_target_id)"
+}
+
+profile_target_state_dir() {
+  local profile="$1"
+  local target_kind=""
+  local target_provider=""
+
   validate_colima_profile_name "${profile}"
-  printf '%s/local_vm/colima/%s\n' "${WORKCELL_TARGET_STATE_ROOT}" "${profile}"
+  target_kind="$(target_kind_for_profile_state "${profile}")"
+  target_provider="$(target_provider_for_profile_state "${profile}")"
+  printf '%s/%s/%s/%s\n' "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
 profile_lima_dir() {
@@ -580,20 +643,31 @@ profile_disk_dir() {
 remove_profile_state_dirs() {
   local profile="$1"
 
-  rm -rf \
-    "$(profile_dir "${profile}")" \
-    "$(profile_lima_dir "${profile}")" \
-    "$(profile_disk_dir "${profile}")"
+  rm -rf "$(profile_target_state_dir "${profile}")"
+  if [[ "$(target_provider_for_profile_state "${profile}")" == "colima" ]]; then
+    rm -rf \
+      "$(profile_dir "${profile}")" \
+      "$(profile_lima_dir "${profile}")" \
+      "$(profile_disk_dir "${profile}")"
+  fi
 }
 
 profile_state_dirs_exist() {
   local profile="$1"
   local path=""
+  local -a paths=()
 
-  for path in \
-    "$(profile_dir "${profile}")" \
-    "$(profile_lima_dir "${profile}")" \
-    "$(profile_disk_dir "${profile}")"; do
+  paths=(
+    "$(profile_target_state_dir "${profile}")"
+  )
+  if [[ "$(target_provider_for_profile_state "${profile}")" == "colima" ]]; then
+    paths+=(
+      "$(profile_dir "${profile}")"
+      "$(profile_lima_dir "${profile}")"
+      "$(profile_disk_dir "${profile}")"
+    )
+  fi
+  for path in "${paths[@]}"; do
     if [[ -e "${path}" ]]; then
       return 0
     fi
@@ -856,6 +930,42 @@ sanitize_host_docker_env() {
   setup_workcell_trusted_docker_client
 }
 
+prepare_optional_target_docker_client() {
+  if ! HOST_DOCKER_BIN="$(resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"; then
+    return 1
+  fi
+  sanitize_host_docker_env
+  if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
+    DOCKER_CONTEXT_NAME="$(docker_desktop_context_name)"
+    if ! docker_context_exists "${DOCKER_CONTEXT_NAME}" || ! docker_context_is_healthy "${DOCKER_CONTEXT_NAME}"; then
+      return 1
+    fi
+    export DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}"
+    unset DOCKER_HOST
+  fi
+  return 0
+}
+
+prepare_current_target_docker_client() {
+  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+  sanitize_host_docker_env
+  case "${TARGET_BACKEND}" in
+    colima)
+      return 0
+      ;;
+    docker-desktop)
+      DOCKER_CONTEXT_NAME="$(docker_desktop_context_name)"
+      if ! docker_context_exists "${DOCKER_CONTEXT_NAME}" || ! docker_context_is_healthy "${DOCKER_CONTEXT_NAME}"; then
+        echo "Docker Desktop target requires a healthy docker context named ${DOCKER_CONTEXT_NAME}." >&2
+        echo "Enable Docker Desktop and make sure the ${DOCKER_CONTEXT_NAME} context is available before retrying." >&2
+        exit 2
+      fi
+      export DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}"
+      unset DOCKER_HOST
+      ;;
+  esac
+}
+
 CONTROL_PLANE_SHADOW_ROOT=""
 INJECTION_BUNDLE_ROOT=""
 DIRECT_MOUNT_SPEC_PATH=""
@@ -967,22 +1077,98 @@ cleanup() {
 
 trap 'cleanup "$?"' EXIT
 
-profile_marker_path() {
+profile_metadata_dir() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s\n' "$(profile_target_state_dir "${profile}")"
+}
+
+legacy_profile_marker_path() {
   local profile="$1"
 
   validate_colima_profile_name "${profile}"
   printf '%s/workcell.managed\n' "$(profile_dir "${profile}")"
 }
 
-profile_image_marker_path() {
+profile_marker_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/workcell.managed\n' "$(profile_metadata_dir "${profile}")"
+}
+
+legacy_profile_image_marker_path() {
   local profile="$1"
 
   validate_colima_profile_name "${profile}"
   printf '%s/workcell.image-ready\n' "$(profile_dir "${profile}")"
 }
 
+profile_image_marker_path() {
+  local profile="$1"
+
+  validate_colima_profile_name "${profile}"
+  printf '%s/workcell.image-ready\n' "$(profile_metadata_dir "${profile}")"
+}
+
+profile_marker_read_path() {
+  local profile="$1"
+  local marker_path=""
+  local legacy_path=""
+
+  marker_path="$(profile_marker_path "${profile}")"
+  if [[ -f "${marker_path}" ]]; then
+    printf '%s\n' "${marker_path}"
+    return 0
+  fi
+
+  if [[ "$(target_provider_for_profile_state "${profile}")" == "colima" ]]; then
+    legacy_path="$(legacy_profile_marker_path "${profile}")"
+    if [[ -f "${legacy_path}" ]]; then
+      printf '%s\n' "${legacy_path}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+profile_image_marker_read_path() {
+  local profile="$1"
+  local marker_path=""
+  local legacy_path=""
+
+  marker_path="$(profile_image_marker_path "${profile}")"
+  if [[ -f "${marker_path}" ]]; then
+    printf '%s\n' "${marker_path}"
+    return 0
+  fi
+
+  if [[ "$(target_provider_for_profile_state "${profile}")" == "colima" ]]; then
+    legacy_path="$(legacy_profile_image_marker_path "${profile}")"
+    if [[ -f "${legacy_path}" ]]; then
+      printf '%s\n' "${legacy_path}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+profile_marker_exists() {
+  profile_marker_read_path "$1" >/dev/null 2>&1
+}
+
+profile_image_marker_exists() {
+  profile_image_marker_read_path "$1" >/dev/null 2>&1
+}
+
 profile_runtime_image_cache_dir() {
-  printf '%s/runtime-image-cache\n' "${COLIMA_STATE_ROOT}"
+  printf '%s/runtime-image-cache/%s/%s\n' \
+    "${WORKCELL_STATE_ROOT}" \
+    "$(current_target_kind)" \
+    "$(current_target_provider)"
 }
 
 profile_runtime_image_cache_path() {
@@ -1005,13 +1191,43 @@ refresh_profile_state() {
   PROFILE_PREEXISTED=0
   PROFILE_MARKER_WORKSPACE=""
 
-  if [[ -d "$(profile_dir "${profile}")" ]]; then
+  if profile_metadata_dir_has_substantive_state "${profile}"; then
+    PROFILE_PREEXISTED=1
+  elif [[ "$(current_target_provider)" == "colima" ]] && [[ -d "$(profile_dir "${profile}")" ]]; then
     PROFILE_PREEXISTED=1
   fi
 
-  if [[ -f "$(profile_marker_path "${profile}")" ]]; then
+  if profile_marker_read_path "${profile}" >/dev/null; then
     PROFILE_MARKER_WORKSPACE="$(read_profile_marker_workspace "${profile}" || true)"
   fi
+}
+
+profile_metadata_dir_has_substantive_state() {
+  local profile="$1"
+  local metadata_dir=""
+  local path=""
+  local base=""
+
+  metadata_dir="$(profile_metadata_dir "${profile}")"
+  [[ -d "${metadata_dir}" ]] || return 1
+
+  for path in "${metadata_dir}"/* "${metadata_dir}"/.*; do
+    [[ -e "${path}" ]] || continue
+    base="$(basename "${path}")"
+    case "${base}" in
+      . | ..)
+        continue
+        ;;
+      workcell.audit.log | workcell.latest-debug-log | workcell.latest-file-trace-log | workcell.latest-transcript-log | session-audit.*)
+        continue
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
 }
 
 profile_image_marker_value() {
@@ -1020,7 +1236,7 @@ profile_image_marker_value() {
   local marker_path=""
 
   [[ "${key}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
-  marker_path="$(profile_image_marker_path "${profile}")"
+  marker_path="$(profile_image_marker_read_path "${profile}")" || return 1
   [[ -f "${marker_path}" ]] || return 1
   sed -n "s/^${key}=//p" "${marker_path}" | head -n1
 }
@@ -1070,9 +1286,13 @@ generate_session_id() {
 
 profile_lock_dir_path() {
   local profile="$1"
+  local target_kind=""
+  local target_provider=""
 
   validate_colima_profile_name "${profile}"
-  printf '%s/locks/local_vm/colima/%s.lock\n' "${WORKCELL_STATE_ROOT}" "${profile}"
+  target_kind="$(target_kind_for_profile_state "${profile}")"
+  target_provider="$(target_provider_for_profile_state "${profile}")"
+  printf '%s/locks/%s/%s/%s.lock\n' "${WORKCELL_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
 profile_latest_log_pointer_path() {
@@ -1227,16 +1447,60 @@ profile_docker_socket_path() {
   local profile="$1"
 
   validate_colima_profile_name "${profile}"
+  [[ "$(target_provider_for_profile_state "${profile}")" == "colima" ]] || return 1
   printf '%s/%s/docker.sock\n' "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 run_profile_docker_command() {
   local profile="$1"
   local socket_path=""
+  local provider=""
+  local context_name=""
 
   shift
-  socket_path="$(profile_docker_socket_path "${profile}")"
-  run_workcell_docker_client_command env DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" "$@"
+  provider="$(target_provider_for_profile_state "${profile}")"
+  case "${provider}" in
+    colima)
+      socket_path="$(profile_docker_socket_path "${profile}")"
+      run_workcell_docker_client_command env DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" "$@"
+      ;;
+    docker-desktop)
+      context_name="$(target_id_for_profile_state "${profile}")"
+      run_workcell_docker_client_command env DOCKER_CONTEXT="${context_name}" "${HOST_DOCKER_BIN}" "$@"
+      ;;
+    *)
+      echo "Unsupported target provider for Docker command routing: ${provider}" >&2
+      return 1
+      ;;
+  esac
+}
+
+profile_docker_transport_available() {
+  local profile="$1"
+  local provider=""
+  local socket_path=""
+  local context_name=""
+
+  provider="$(target_provider_for_profile_state "${profile}")"
+  case "${provider}" in
+    colima)
+      socket_path="$(profile_docker_socket_path "${profile}" || true)"
+      [[ -n "${socket_path}" ]] && [[ -e "${socket_path}" ]]
+      ;;
+    docker-desktop)
+      if [[ -z "${HOST_DOCKER_BIN:-}" ]]; then
+        HOST_DOCKER_BIN="$(resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)" || return 1
+        sanitize_host_docker_env
+      fi
+      context_name="$(target_id_for_profile_state "${profile}")"
+      [[ -n "${context_name}" ]] &&
+        docker_context_exists "${context_name}" &&
+        docker_context_is_healthy "${context_name}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 append_session_control_audit_record() {
@@ -1402,19 +1666,40 @@ emit_loaded_session_control_summary() {
 }
 
 current_target_kind() {
-  printf 'local_vm\n'
+  case "${TARGET_BACKEND}" in
+    colima)
+      printf 'local_vm\n'
+      ;;
+    docker-desktop)
+      printf 'local_compat\n'
+      ;;
+  esac
 }
 
 current_target_provider() {
-  printf 'colima\n'
+  printf '%s\n' "${TARGET_BACKEND}"
 }
 
 current_target_id() {
-  printf '%s\n' "${COLIMA_PROFILE}"
+  case "${TARGET_BACKEND}" in
+    colima)
+      printf '%s\n' "${COLIMA_PROFILE}"
+      ;;
+    docker-desktop)
+      docker_desktop_context_name
+      ;;
+  esac
 }
 
 current_target_assurance_class() {
-  printf 'strict\n'
+  case "${TARGET_BACKEND}" in
+    colima)
+      printf 'strict\n'
+      ;;
+    docker-desktop)
+      printf 'compat\n'
+      ;;
+  esac
 }
 
 current_runtime_api() {
@@ -1498,7 +1783,11 @@ fail_for_unsupported_launch_target() {
   if [[ "${SUPPORT_MATRIX_STATUS}" == "validation-host-only" ]] && [[ "${SUPPORT_MATRIX_VALIDATION_LANE}" != "none" ]]; then
     echo "This combination is reserved for the reviewed validation-host lane: ${SUPPORT_MATRIX_VALIDATION_LANE}." >&2
   fi
-  echo "Supported launch hosts today remain Apple Silicon macOS for the reviewed Colima strict path." >&2
+  if [[ "$(current_target_provider)" == "colima" ]]; then
+    echo "Supported launch hosts today remain Apple Silicon macOS for the reviewed Colima strict path." >&2
+  else
+    echo "The Docker Desktop target remains a lower-assurance compat path and is only supported where the published host matrix allows it." >&2
+  fi
   echo "Run workcell --agent ${AGENT} --doctor --workspace ${WORKSPACE} to inspect the support boundary on this host." >&2
   exit 2
 }
@@ -1774,6 +2063,11 @@ write_session_monitor_env_file() {
     SESSION_AUDIT_STATE_FILE
     SESSION_FILE_TRACE_CONTAINER_FILE
     SESSION_ID
+    SESSION_META_PROFILE
+    SESSION_META_TARGET_KIND
+    SESSION_META_TARGET_PROVIDER
+    SESSION_META_TARGET_ID
+    SESSION_META_TARGET_ASSURANCE_CLASS
     SESSION_RECORD_PATH
     SESSION_RECORD_WRITTEN
     SESSION_RECORD_FINALIZED
@@ -1990,7 +2284,7 @@ restore_profile_audit_log() {
 
 read_profile_marker_workspace() {
   local marker_path
-  marker_path="$(profile_marker_path "$1")"
+  marker_path="$(profile_marker_read_path "$1")" || return 1
   [[ -f "${marker_path}" ]] || return 1
   tr -d '\n' <"${marker_path}"
 }
@@ -2509,10 +2803,21 @@ current_image_id() {
 current_profile_image_id() {
   local profile="$1"
   local socket_path=""
+  local provider=""
+  local context_name=""
 
-  socket_path="${COLIMA_STATE_ROOT}/${profile}/docker.sock"
-  [[ -S "${socket_path}" ]] || return 0
-  run_workcell_docker_client_command env DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
+  provider="$(target_provider_for_profile_state "${profile}")"
+  case "${provider}" in
+    colima)
+      socket_path="${COLIMA_STATE_ROOT}/${profile}/docker.sock"
+      [[ -S "${socket_path}" ]] || return 0
+      run_workcell_docker_client_command env DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
+      ;;
+    docker-desktop)
+      context_name="$(target_id_for_profile_state "${profile}")"
+      run_workcell_docker_client_command env DOCKER_CONTEXT="${context_name}" "${HOST_DOCKER_BIN}" image inspect "${IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true
+      ;;
+  esac
 }
 
 remember_profile_runtime_image_for_refresh() {
@@ -3323,6 +3628,7 @@ start_detached_session_monitor() {
   SESSION_MONITOR_ENV_PATH="$(session_monitor_state_path "${SESSION_AUDIT_DIR}")"
   SESSION_MONITOR_READY_PATH="$(session_monitor_ready_path "${SESSION_AUDIT_DIR}")"
   rm -f "${SESSION_MONITOR_READY_PATH}"
+  load_session_runtime_metadata "${SESSION_ID}"
   write_session_monitor_env_file "${SESSION_MONITOR_ENV_PATH}"
   if [[ -n "${DEBUG_LOG_PATH}" ]]; then
     monitor_stderr="${DEBUG_LOG_PATH}"
@@ -3771,7 +4077,6 @@ session_delete_main() {
   local record_only=0
   local dry_run=0
   local container_state="missing"
-  local docker_socket_path=""
   local debug_log_path=""
   local file_trace_log_path=""
   local transcript_log_path=""
@@ -3843,16 +4148,19 @@ session_delete_main() {
   fi
 
   if [[ -n "${SESSION_META_CONTAINER_NAME}" ]]; then
-    docker_socket_path="$(profile_docker_socket_path "${SESSION_META_PROFILE}")"
-    if [[ -e "${docker_socket_path}" ]]; then
-      HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-      sanitize_host_docker_env
-      if ! container_state="$(session_container_state_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"; then
-        echo "session delete could not inspect the recorded session container: ${session_id}" >&2
-        exit 1
-      fi
+    if [[ "${record_only}" -eq 1 ]]; then
+      container_state="stopped"
     else
-      unavailable+=("container")
+      if profile_docker_transport_available "${SESSION_META_PROFILE}"; then
+        HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+        sanitize_host_docker_env
+        if ! container_state="$(session_container_state_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"; then
+          echo "session delete could not inspect the recorded session container: ${session_id}" >&2
+          exit 1
+        fi
+      else
+        unavailable+=("container")
+      fi
     fi
     if [[ "${record_only}" -eq 0 ]] && [[ "${#unavailable[@]}" -gt 0 ]]; then
       echo "session delete could not confirm cleanup of the recorded session container: ${session_id}" >&2
@@ -4116,6 +4424,9 @@ session_monitor_main() {
   source "${state_file}"
   if [[ -n "${WORKCELL_STATE_ROOT:-}" ]]; then
     WORKCELL_TARGET_STATE_ROOT="${WORKCELL_TARGET_STATE_ROOT:-${WORKCELL_STATE_ROOT}/targets}"
+  fi
+  if [[ -n "${SESSION_ID:-}" ]] && [[ -z "${SESSION_META_TARGET_PROVIDER:-}" ]]; then
+    load_session_runtime_metadata "${SESSION_ID}"
   fi
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
   sanitize_host_docker_env
@@ -5090,6 +5401,7 @@ build_recommended_command() {
   [[ "${include_prepare}" -eq 1 ]] && cmd+=(--prepare)
   [[ "${include_repair}" -eq 1 ]] && cmd+=(--repair-profile)
   cmd+=(--agent "${AGENT}")
+  [[ "${TARGET_BACKEND}" != "colima" ]] && cmd+=(--target "${TARGET_BACKEND}")
   [[ "${AGENT_AUTONOMY}" != "yolo" ]] && cmd+=(--agent-autonomy "${AGENT_AUTONOMY}")
   [[ "${CACHE_PROFILE}" != "off" ]] && cmd+=(--cache-profile "${CACHE_PROFILE}")
   if ! container_mutability_is_default_for_mode "${target_mutability}" "${target_mode}"; then
@@ -5111,10 +5423,12 @@ build_recommended_command() {
   if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
     cmd+=(--allow-control-plane-vcs --ack-control-plane-vcs)
   fi
-  [[ "${COLIMA_PROFILE_EXPLICIT:-0}" -eq 1 ]] && [[ -n "${COLIMA_PROFILE}" ]] && cmd+=(--colima-profile "${COLIMA_PROFILE}")
-  [[ -n "${VM_CPU_OVERRIDE}" ]] && cmd+=(--vm-cpu "${VM_CPU_OVERRIDE}")
-  [[ -n "${VM_MEMORY_OVERRIDE}" ]] && cmd+=(--vm-memory "${VM_MEMORY_OVERRIDE}")
-  [[ -n "${VM_DISK_OVERRIDE}" ]] && cmd+=(--vm-disk "${VM_DISK_OVERRIDE}")
+  if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    [[ "${COLIMA_PROFILE_EXPLICIT:-0}" -eq 1 ]] && [[ -n "${COLIMA_PROFILE}" ]] && cmd+=(--colima-profile "${COLIMA_PROFILE}")
+    [[ -n "${VM_CPU_OVERRIDE}" ]] && cmd+=(--vm-cpu "${VM_CPU_OVERRIDE}")
+    [[ -n "${VM_MEMORY_OVERRIDE}" ]] && cmd+=(--vm-memory "${VM_MEMORY_OVERRIDE}")
+    [[ -n "${VM_DISK_OVERRIDE}" ]] && cmd+=(--vm-disk "${VM_DISK_OVERRIDE}")
+  fi
   if ((${#AGENT_ARGS[@]} > 0)); then
     local agent_arg
     for agent_arg in "${AGENT_ARGS[@]}"; do
@@ -5447,10 +5761,14 @@ print_inspect_state() {
   local latest_debug_log=""
   local latest_file_trace_log=""
   local latest_transcript_log=""
+  local profile_dir_value="none"
 
   latest_debug_log="$(read_latest_log_pointer "${COLIMA_PROFILE}" debug || true)"
   latest_file_trace_log="$(read_latest_log_pointer "${COLIMA_PROFILE}" file-trace || true)"
   latest_transcript_log="$(read_latest_log_pointer "${COLIMA_PROFILE}" transcript || true)"
+  if [[ "$(current_target_provider)" == "colima" ]]; then
+    profile_dir_value="$(profile_dir "${COLIMA_PROFILE}")"
+  fi
   printf 'profile=%s\n' "${COLIMA_PROFILE}"
   printf 'target_kind=%s\n' "$(current_target_kind)"
   printf 'target_provider=%s\n' "$(current_target_provider)"
@@ -5475,7 +5793,7 @@ print_inspect_state() {
   printf 'provider_native_sandbox_effective=%s\n' "$(provider_native_sandbox_effective)"
   printf 'provider_native_sandbox_reason=%s\n' "$(provider_native_sandbox_reason)"
   printf 'log_level=%s\n' "${LOG_LEVEL}"
-  printf 'profile_dir=%s\n' "$(profile_dir "${COLIMA_PROFILE}")"
+  printf 'profile_dir=%s\n' "${profile_dir_value}"
   printf 'target_state_dir=%s\n' "$(profile_target_state_dir "${COLIMA_PROFILE}")"
   printf 'profile_marker=%s\n' "$(profile_marker_path "${COLIMA_PROFILE}")"
   printf 'image_marker=%s\n' "$(profile_image_marker_path "${COLIMA_PROFILE}")"
@@ -6243,16 +6561,23 @@ run_runtime_image_build_with_retries() {
     codex_release_url="$(resolve_codex_release_url || true)"
     if [[ "${attempt}" -gt 1 ]]; then
       echo "Retrying the runtime image build for profile ${COLIMA_PROFILE} (attempt ${attempt}/${max_attempts})." >&2
-      start_managed_profile || build_status=$?
-      if [[ "${build_status}" -eq 0 ]] &&
-        ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
-        refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after a failed runtime image build." || return 2
-        start_managed_profile || build_status=$?
-        if [[ "${build_status}" -eq 0 ]] &&
-          ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
-          build_status=2
-        fi
-      fi
+      case "${TARGET_BACKEND}" in
+        colima)
+          start_managed_profile || build_status=$?
+          if [[ "${build_status}" -eq 0 ]] &&
+            ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
+            refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after a failed runtime image build." || return 2
+            start_managed_profile || build_status=$?
+            if [[ "${build_status}" -eq 0 ]] &&
+              ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
+              build_status=2
+            fi
+          fi
+          ;;
+        docker-desktop)
+          prepare_current_target_docker_client || build_status=$?
+          ;;
+      esac
       if [[ "${build_status}" -ne 0 ]]; then
         if [[ "${attempt}" -ge "${max_attempts}" ]]; then
           return "${build_status}"
@@ -6261,9 +6586,8 @@ run_runtime_image_build_with_retries() {
         attempt=$((attempt + 1))
         continue
       fi
-      export DOCKER_HOST="unix://${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/docker.sock"
       validate_runtime_security_posture
-      if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+      if [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
         "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
       fi
     fi
@@ -6616,9 +6940,23 @@ resolve_host_tool_optional() {
 
 missing_launch_host_tools_csv() {
   local -a missing=()
+  local docker_bin=""
 
-  resolve_host_tool_optional colima /opt/homebrew/bin/colima /usr/local/bin/colima >/dev/null || missing+=(colima)
-  resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker >/dev/null || missing+=(docker)
+  if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    resolve_host_tool_optional colima /opt/homebrew/bin/colima /usr/local/bin/colima >/dev/null || missing+=(colima)
+  fi
+  if docker_bin="$(resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"; then
+    if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
+      HOST_DOCKER_BIN="${docker_bin}"
+      sanitize_host_docker_env
+      if ! docker_context_exists "$(docker_desktop_context_name)" ||
+        ! docker_context_is_healthy "$(docker_desktop_context_name)"; then
+        missing+=(docker-desktop-context)
+      fi
+    fi
+  else
+    missing+=(docker)
+  fi
 
   if ((${#missing[@]} == 0)); then
     printf 'none\n'
@@ -7517,6 +7855,10 @@ while [[ $# -gt 0 ]]; do
       AGENT="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
+    --target)
+      TARGET_BACKEND="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
     --agent-autonomy)
       AGENT_AUTONOMY="$(option_value_or_die "$1" "${2-}")"
       shift 2
@@ -7689,11 +8031,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+validate_target_backend_name "${TARGET_BACKEND}"
 validate_agent_autonomy_name "${AGENT_AUTONOMY}"
 validate_cache_profile_name "${CACHE_PROFILE}"
 validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
 validate_log_level_name "${LOG_LEVEL}"
 validate_session_workspace_mode "${SESSION_WORKSPACE_MODE}"
+if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
+  if [[ "${COLIMA_PROFILE_EXPLICIT:-0}" -eq 1 ]]; then
+    echo "--colima-profile only supports --target colima." >&2
+    exit 2
+  fi
+  if [[ -n "${VM_CPU_OVERRIDE}" ]] || [[ -n "${VM_MEMORY_OVERRIDE}" ]] || [[ -n "${VM_DISK_OVERRIDE}" ]]; then
+    echo "--vm-cpu, --vm-memory, and --vm-disk only support --target colima." >&2
+    exit 2
+  fi
+  if [[ "${REPAIR_PROFILE}" -eq 1 ]]; then
+    echo "--repair-profile only supports --target colima." >&2
+    exit 2
+  fi
+fi
 if [[ "${SESSION_DETACHED}" -eq 0 ]] && [[ -n "${SESSION_WORKSPACE_MODE}" ]]; then
   echo "--session-workspace applies only to workcell session start." >&2
   exit 2
@@ -7858,9 +8215,7 @@ cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
 prepare_injection_bundle "${AGENT}" "${MODE}"
 
 IMAGE_TAG="workcell:local"
-PROFILE_DIR="$(profile_dir "${COLIMA_PROFILE}")"
 PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
-PROFILE_IMAGE_MARKER="$(profile_image_marker_path "${COLIMA_PROFILE}")"
 PROFILE_PREEXISTED=0
 PROFILE_MARKER_WORKSPACE=""
 BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
@@ -7900,6 +8255,10 @@ if [[ -z "${SESSION_SOURCE_WORKSPACE}" ]]; then
   SESSION_SOURCE_WORKSPACE="${WORKSPACE}"
 fi
 
+if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
+  prepare_optional_target_docker_client || true
+fi
+
 if [[ "${INSPECT}" -eq 1 ]]; then
   print_inspect_state \
     "$(profile_image_marker_value "${COLIMA_PROFILE}" image_id || true)" \
@@ -7911,8 +8270,12 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
   local_current_image_id="$(current_profile_image_id "${COLIMA_PROFILE}")"
   workspace_state="$(workspace_status "${WORKSPACE}")"
   profile_state="absent"
-  if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
-    profile_state="unmanaged"
+  if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && ! profile_marker_exists "${COLIMA_PROFILE}"; then
+    if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+      profile_state="unmanaged"
+    else
+      profile_state="metadata-missing"
+    fi
   elif [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
     profile_state="managed"
   fi
@@ -7939,6 +8302,8 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
     else
       build_recommended_command 0 1 "${MODE}"
     fi
+  elif [[ "${profile_state}" == "metadata-missing" ]]; then
+    printf 'doctor_recommended_next=clear-target-state\n'
   elif [[ "${MODE}" == "strict" ]] && [[ "${prepared_image}" -eq 0 ]]; then
     printf 'doctor_recommended_next='
     build_recommended_command 1 0 "${MODE}"
@@ -7953,13 +8318,16 @@ fail_for_unsupported_launch_target
 fail_fast_for_missing_gemini_auth "$@"
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
-  export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+  if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    export COLIMA_HOME="${COLIMA_STATE_ROOT}"
+  fi
   acquire_profile_lock "${COLIMA_PROFILE}"
   # Another launch may have created or repaired the profile while we waited.
   refresh_profile_state "${COLIMA_PROFILE}"
 fi
 
-if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
+if [[ "${TARGET_BACKEND}" == "colima" ]] &&
+  [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && ! profile_marker_exists "${COLIMA_PROFILE}"; then
   if [[ "${REPAIR_PROFILE}" -eq 1 ]]; then
     delete_unmanaged_profile "${COLIMA_PROFILE}"
     PROFILE_PREEXISTED=0
@@ -7976,7 +8344,7 @@ if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
     echo "Manual cleanup, if you prefer to inspect and delete it yourself:" >&2
     printf '  colima delete --profile %q --force\n' "${COLIMA_PROFILE}" >&2
     printf '  rm -rf %q %q %q\n' \
-      "${PROFILE_DIR}" \
+      "$(profile_dir "${COLIMA_PROFILE}")" \
       "$(profile_lima_dir "${COLIMA_PROFILE}")" \
       "$(profile_disk_dir "${COLIMA_PROFILE}")" >&2
     exit 2
@@ -7984,26 +8352,34 @@ if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ ! -f "${PROFILE_MARKER}" ]]; then
 fi
 
 if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ -z "${PROFILE_MARKER_WORKSPACE}" ]]; then
-  echo "Refusing to reuse managed Colima profile without a recorded workspace binding: ${COLIMA_PROFILE}" >&2
+  if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    echo "Refusing to reuse managed Colima profile without a recorded workspace binding: ${COLIMA_PROFILE}" >&2
+  else
+    echo "Refusing to reuse ${TARGET_BACKEND} target state without a recorded workspace binding: ${COLIMA_PROFILE}" >&2
+    echo "Clear $(profile_target_state_dir "${COLIMA_PROFILE}") and retry so Workcell can recreate the reviewed target state." >&2
+  fi
   exit 2
 fi
 
 if [[ -n "${PROFILE_MARKER_WORKSPACE}" ]] && [[ "${PROFILE_MARKER_WORKSPACE}" != "${PROFILE_WORKSPACE_ROOT}" ]]; then
-  echo "Refusing to reuse Colima profile ${COLIMA_PROFILE} for a different workspace." >&2
+  if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    echo "Refusing to reuse Colima profile ${COLIMA_PROFILE} for a different workspace." >&2
+  else
+    echo "Refusing to reuse ${TARGET_BACKEND} target state ${COLIMA_PROFILE} for a different workspace." >&2
+  fi
   echo "Recorded workspace: ${PROFILE_MARKER_WORKSPACE}" >&2
   echo "Requested workspace: ${PROFILE_WORKSPACE_ROOT}" >&2
   exit 2
 fi
 
-if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
+if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && ! profile_image_marker_exists "${COLIMA_PROFILE}"; then
   announce_strict_auto_prepare \
     "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." \
     "This is expected on the first launch for a workspace or after profile cleanup."
 fi
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
-  HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-  sanitize_host_docker_env
+  prepare_current_target_docker_client
 fi
 
 ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(credential_extra_endpoints) $(provider_auth_recovery_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS:-}")"
@@ -8209,7 +8585,7 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
   exit 0
 fi
 
-if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
+if [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
   profile_config_path="$(profile_colima_config_path "${COLIMA_PROFILE}")"
   lima_config_path="${COLIMA_STATE_ROOT}/_lima/colima-${COLIMA_PROFILE}/lima.yaml"
   profile_status=""
@@ -8228,7 +8604,7 @@ if [[ "${PROFILE_PREEXISTED}" -eq 1 ]]; then
   fi
 fi
 
-if [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && [[ ! -f "${PROFILE_IMAGE_MARKER}" ]]; then
+if [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -eq 0 ]] && ! profile_image_marker_exists "${COLIMA_PROFILE}"; then
   announce_strict_auto_prepare \
     "No prepared runtime image is recorded for strict mode on profile ${COLIMA_PROFILE}." \
     "This is expected on the first launch for a workspace or after profile cleanup."
@@ -8236,17 +8612,19 @@ fi
 
 maybe_fail_after_profile_refresh_for_tests
 
-start_managed_profile
-if ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}"; then
-  if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ "${PROFILE_WAS_REFRESHED}" -eq 0 ]]; then
-    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view." || exit 2
-    start_managed_profile
-    validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}" || exit 2
-  else
-    exit 2
+if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+  start_managed_profile
+  if ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}"; then
+    if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ "${PROFILE_WAS_REFRESHED}" -eq 0 ]]; then
+      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view." || exit 2
+      start_managed_profile
+      validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}" || exit 2
+    else
+      exit 2
+    fi
   fi
 fi
-mkdir -p "${PROFILE_DIR}"
+mkdir -p "$(profile_target_state_dir "${COLIMA_PROFILE}")"
 restore_profile_audit_log "${COLIMA_PROFILE}"
 ensure_session_audit_state
 printf '%s\n' "${PROFILE_WORKSPACE_ROOT}" >"${PROFILE_MARKER}"
@@ -8255,14 +8633,20 @@ write_latest_log_pointer "${COLIMA_PROFILE}" debug "${DEBUG_LOG_PATH}"
 write_latest_log_pointer "${COLIMA_PROFILE}" file-trace "${FILE_TRACE_LOG_PATH}"
 write_latest_log_pointer "${COLIMA_PROFILE}" transcript "${AUDIT_TRANSCRIPT_PATH}"
 
-export DOCKER_HOST="unix://${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/docker.sock"
+if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+  export DOCKER_HOST="unix://${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/docker.sock"
+else
+  unset DOCKER_HOST
+fi
 validate_runtime_security_posture
 
 restore_runtime_egress() {
-  if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
-    "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
-  else
-    "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
+  if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+      "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
+    else
+      "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
+    fi
   fi
 }
 
@@ -8306,8 +8690,10 @@ if [[ "${NETWORK_POLICY}" == "allowlist" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; t
   fi
   BOOTSTRAP_APPLIED=1
   printf 'bootstrap_policy=allowlist endpoints=%s\n' "${BOOTSTRAP_ENDPOINTS}" >&2
-  "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
-elif [[ "${NETWORK_POLICY}" != "allowlist" ]]; then
+  if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
+  fi
+elif [[ "${NETWORK_POLICY}" != "allowlist" ]] && [[ "${TARGET_BACKEND}" == "colima" ]]; then
   "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
 fi
 

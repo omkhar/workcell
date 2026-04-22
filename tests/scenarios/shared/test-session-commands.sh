@@ -668,6 +668,11 @@ monitor_env_output="$(
     SESSION_RECORD_PATH="$3"
     SESSION_RECORD_WRITTEN=1
     SESSION_RECORD_FINALIZED=0
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_TARGET_KIND="local_compat"
+    SESSION_META_TARGET_PROVIDER="docker-desktop"
+    SESSION_META_TARGET_ID="desktop-linux"
+    SESSION_META_TARGET_ASSURANCE_CLASS="compat"
     write_session_monitor_env_file "$4"
     cat "$4"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}" "${SESSIONS_DIR}/${DETACHED_SESSION}.json" "${DETACHED_STATE_DIR}/session-monitor.env" "${TMP_DIR}/monitor-xdg-state"
@@ -675,6 +680,11 @@ monitor_env_output="$(
 grep -q '^SESSION_RECORD_PATH=' <<<"${monitor_env_output}"
 grep -q '^SESSION_RECORD_WRITTEN=1$' <<<"${monitor_env_output}"
 grep -q '^SESSION_RECORD_FINALIZED=0$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_PROFILE=wcl-detached-fixture$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_TARGET_KIND=local_compat$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_TARGET_PROVIDER=docker-desktop$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_TARGET_ID=desktop-linux$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_TARGET_ASSURANCE_CLASS=compat$' <<<"${monitor_env_output}"
 grep -q '^SESSION_MONITOR_READY_PATH=' <<<"${monitor_env_output}"
 grep -q '^XDG_STATE_HOME='"${TMP_DIR}/monitor-xdg-state"'$' <<<"${monitor_env_output}"
 grep -q '^WORKCELL_STATE_ROOT='"${TMP_DIR}/monitor-xdg-state/workcell"'$' <<<"${monitor_env_output}"
@@ -802,6 +812,112 @@ monitor_wait_status_output="$(
 grep -q '^wait_status=0$' <<<"${monitor_wait_status_output}"
 grep -q '^wcl-detached-fixture|wait workcell-session-fixture$' "${DETACHED_STATE_DIR}/session-monitor-wait.record"
 grep -q '^wcl-detached-fixture|inspect --format {{.State.ExitCode}} workcell-session-fixture$' "${DETACHED_STATE_DIR}/session-monitor-wait.record"
+
+bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"
+    RECORD_FILE="$3"
+    PROFILE_NAME="wcl-detached-desktop-fixture"
+    SESSION_ID="detached-desktop-provider"
+    STATE_FILE="${FIXTURE_ROOT}/session-monitor.env"
+    WORKCELL_STATE_ROOT="${FIXTURE_ROOT}/workcell"
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+    COLIMA_STATE_ROOT="${FIXTURE_ROOT}/colima"
+    COLIMA_PROFILE="${PROFILE_NAME}"
+    CONTAINER_NAME="workcell-session-desktop"
+    SESSION_AUDIT_DIR="${FIXTURE_ROOT}/audit"
+    mkdir -p "${WORKCELL_STATE_ROOT}/targets/local_compat/docker-desktop/${PROFILE_NAME}/sessions" "${SESSION_AUDIT_DIR}"
+    cat >"${WORKCELL_STATE_ROOT}/targets/local_compat/docker-desktop/${PROFILE_NAME}/sessions/${SESSION_ID}.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "${SESSION_ID}",
+  "profile": "${PROFILE_NAME}",
+  "target_kind": "local_compat",
+  "target_provider": "docker-desktop",
+  "target_id": "desktop-linux",
+  "target_assurance_class": "compat",
+  "runtime_api": "docker",
+  "workspace_transport": "workspace-mount",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${FIXTURE_ROOT}/workspace",
+  "workspace_origin": "${FIXTURE_ROOT}/workspace",
+  "workspace_root": "${FIXTURE_ROOT}/workspace",
+  "worktree_path": "${FIXTURE_ROOT}/workspace",
+  "container_name": "${CONTAINER_NAME}",
+  "session_audit_dir": "${SESSION_AUDIT_DIR}",
+  "live_status": "running",
+  "started_at": "2026-04-22T14:00:00Z",
+  "current_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF_JSON
+    cat >"${STATE_FILE}" <<EOF_STATE
+SESSION_ID=${SESSION_ID}
+COLIMA_PROFILE=${PROFILE_NAME}
+CONTAINER_NAME=${CONTAINER_NAME}
+EXECUTION_PATH=managed-tier1
+SESSION_AUDIT_DIR=${SESSION_AUDIT_DIR}
+WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}
+WORKCELL_TARGET_STATE_ROOT=${WORKCELL_TARGET_STATE_ROOT}
+COLIMA_STATE_ROOT=${COLIMA_STATE_ROOT}
+EOF_STATE
+    resolve_host_tool() { printf "/usr/bin/true\n"; }
+    sanitize_host_docker_env() { :; }
+    capture_session_audit_state() { :; }
+    capture_session_file_trace() { :; }
+    finalize_session_audit() { :; }
+    run_workcell_docker_client_command() {
+      printf "%s\n" "$*" >>"${RECORD_FILE}"
+      case "$*" in
+        *" wait "*) return 1 ;;
+        *" inspect --format {{.State.ExitCode}} "*) printf "0\n" ;;
+        *" rm -f "*) return 0 ;;
+      esac
+      return 0
+    }
+    session_monitor_main --state-file "${STATE_FILE}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/session-monitor-provider" "${DETACHED_STATE_DIR}/session-monitor-provider.record" >/dev/null
+grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true wait workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
+grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true inspect --format {{.State.ExitCode}} workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
+grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true rm -f workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
+
+docker_sandbox_reuse_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"
+    export TMPDIR="${FIXTURE_ROOT}/tmp"
+    mkdir -p "${TMPDIR}" "${FIXTURE_ROOT}/real-home/.docker/contexts" "${FIXTURE_ROOT}/real-home/.docker/buildx"
+    resolve_workcell_real_home() { printf "%s\n" "${FIXTURE_ROOT}/real-home"; }
+    resolve_host_tool_optional() { printf "/usr/bin/true\n"; }
+    resolve_host_tool() { printf "/usr/bin/true\n"; }
+    docker_context_exists() { return 0; }
+    docker_context_is_healthy() { return 0; }
+    TARGET_BACKEND="docker-desktop"
+    prepare_optional_target_docker_client
+    first_root="${WORKCELL_DOCKER_SANDBOX_ROOT}"
+    prepare_current_target_docker_client
+    second_root="${WORKCELL_DOCKER_SANDBOX_ROOT}"
+    printf "first_root=%s\n" "${first_root}"
+    printf "second_root=%s\n" "${second_root}"
+    printf "sandbox_count=%s\n" "$(find "${TMPDIR}" -maxdepth 1 -type d -name "workcell-docker.*" | wc -l | tr -d " ")"
+    cleanup_workcell_trusted_docker_client
+    test ! -e "${first_root}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/docker-sandbox-reuse"
+)"
+grep -q '^first_root=.*/workcell-docker\.' <<<"${docker_sandbox_reuse_output}"
+grep -q '^second_root=.*/workcell-docker\.' <<<"${docker_sandbox_reuse_output}"
+first_root="$(awk -F= '/^first_root=/{print $2}' <<<"${docker_sandbox_reuse_output}")"
+second_root="$(awk -F= '/^second_root=/{print $2}' <<<"${docker_sandbox_reuse_output}")"
+test "${first_root}" = "${second_root}"
+grep -q '^sandbox_count=1$' <<<"${docker_sandbox_reuse_output}"
 
 START_PROFILE_RETRY_RECORD="${DETACHED_STATE_DIR}/start-profile-retry.record"
 start_profile_retry_output="$(
@@ -1598,6 +1714,7 @@ session_delete_cleanup_output="$(
     TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
     SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
     mkdir -p "${PROFILE_DIR}/sessions"
+    : >"${RECORD_FILE}"
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
     cat >"${RECORD_PATH}" <<EOF_JSON
@@ -1664,6 +1781,48 @@ grep -q '^unavailable=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^transport|wcl-detached-fixture|inspect --format ' "${SESSION_DELETE_CLEANUP_RECORD}"
 grep -q '^transport|wcl-detached-fixture|rm -f workcell-session-fixture$' "${SESSION_DELETE_CLEANUP_RECORD}"
 
+SESSION_DELETE_COMPAT_RECORD="${DETACHED_STATE_DIR}/session-delete.compat.record"
+SESSION_DELETE_COMPAT_ROOT="${DETACHED_STATE_DIR}/session-delete.compat.root"
+session_delete_compat_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"; RECORD_FILE="$3"
+    WORKCELL_STATE_ROOT="${FIXTURE_ROOT}/workcell"; WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+    PROFILE_DIR="${FIXTURE_ROOT}/workcell/targets/local_compat/docker-desktop/wcl-detached-fixture"
+    RECORD_PATH="${PROFILE_DIR}/sessions/detached-fixture.json"
+    mkdir -p "${PROFILE_DIR}/sessions"
+    cat >"${RECORD_PATH}" <<EOF_JSON
+{"version":1,"session_id":"detached-fixture","profile":"wcl-detached-fixture","target_kind":"local_compat","target_provider":"docker-desktop","target_id":"desktop-linux","agent":"codex","mode":"strict","status":"exited","live_status":"stopped","workspace":"/tmp/detached-fixture-workspace","container_name":"workcell-session-fixture","started_at":"2026-04-08T14:00:00Z","finished_at":"2026-04-08T14:05:00Z","exit_status":"0","initial_assurance":"managed-mutable","final_assurance":"managed-mutable","workspace_control_plane":"masked"}
+EOF_JSON
+    FAKE_DOCKER_BIN="${FIXTURE_ROOT}/fake-docker"
+    printf "#!/bin/sh\nexit 0\n" >"${FAKE_DOCKER_BIN}"
+    chmod 0755 "${FAKE_DOCKER_BIN}"
+    resolve_host_tool() { printf "%s\n" "${FAKE_DOCKER_BIN}"; }
+    resolve_host_tool_optional() { printf "%s\n" "${FAKE_DOCKER_BIN}"; }
+    sanitize_host_docker_env() { :; }
+    docker_context_exists() { [[ "${HOST_DOCKER_BIN:-}" == "${FAKE_DOCKER_BIN}" ]]; }
+    docker_context_is_healthy() { [[ "${HOST_DOCKER_BIN:-}" == "${FAKE_DOCKER_BIN}" ]]; }
+    profile_docker_socket_path() { printf "unexpected-profile-socket-lookup\n" >>"${RECORD_FILE}"; return 99; }
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    run_profile_docker_command() {
+      local profile="$1"; shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; *) return 1 ;; esac
+    }
+    session_delete_main --id detached-fixture
+    test ! -e "${RECORD_PATH}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_COMPAT_ROOT}" "${SESSION_DELETE_COMPAT_RECORD}"
+)"
+grep -q '^deleted=1$' <<<"${session_delete_compat_output}"
+grep -q '^transport|wcl-detached-fixture|inspect --format ' "${SESSION_DELETE_COMPAT_RECORD}"
+grep -q '^transport|wcl-detached-fixture|rm -f workcell-session-fixture$' "${SESSION_DELETE_COMPAT_RECORD}"
+if grep -q '^unexpected-profile-socket-lookup$' "${SESSION_DELETE_COMPAT_RECORD}"; then
+  echo "session delete unexpectedly consulted the Colima socket path for a docker-desktop record" >&2
+  exit 1
+fi
+
 SESSION_DELETE_RECORD_ONLY_RECORD="${DETACHED_STATE_DIR}/session-delete.record-only.record"
 SESSION_DELETE_RECORD_ONLY_ROOT="${DETACHED_STATE_DIR}/session-delete.record-only.root"
 session_delete_record_only_output="$(
@@ -1680,7 +1839,7 @@ session_delete_record_only_output="$(
     TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
     SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
     mkdir -p "${PROFILE_DIR}/sessions"
-    : >"${PROFILE_DIR}/docker.sock"
+    : >"${RECORD_FILE}"
     mkdir -p "${SESSION_AUDIT_DIR}"
     cat >"${RECORD_PATH}" <<EOF_JSON
 {
@@ -1699,9 +1858,14 @@ EOF_JSON
     printf "debug\n" >"${DEBUG_LOG}"
     printf "trace\n" >"${FILE_TRACE_LOG}"
     printf "transcript\n" >"${TRANSCRIPT_LOG}"
-    HOST_DOCKER_BIN="/bin/false"
-    resolve_host_tool() { printf "/bin/false\n"; }
-    sanitize_host_docker_env() { :; }
+    resolve_host_tool() {
+      printf "unexpected-docker-resolution\n" >>"${RECORD_FILE}"
+      return 99
+    }
+    sanitize_host_docker_env() {
+      printf "unexpected-docker-sanitize\n" >>"${RECORD_FILE}"
+      return 99
+    }
     revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
     load_session_runtime_metadata() {
       SESSION_META_PROFILE="wcl-detached-fixture"
@@ -1714,17 +1878,8 @@ EOF_JSON
       SESSION_META_TRANSCRIPT_LOG_PATH="${TRANSCRIPT_LOG}"
     }
     run_profile_docker_command() {
-      local profile="$1"
-      shift
-      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
-      case "$1" in
-        inspect)
-          printf "stopped\n"
-          ;;
-        *)
-          return 1
-          ;;
-      esac
+      printf "unexpected-docker-command|%s\n" "$*" >>"${RECORD_FILE}"
+      return 99
     }
     session_delete_main --id detached-fixture --record-only
     test ! -e "${RECORD_PATH}"
@@ -1738,8 +1893,9 @@ grep -q '^deleted=1$' <<<"${session_delete_record_only_output}"
 grep -q '^record_only=1$' <<<"${session_delete_record_only_output}"
 grep -q '^removed=record$' <<<"${session_delete_record_only_output}"
 grep -q '^kept=container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_record_only_output}"
-if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_RECORD_ONLY_RECORD}"; then
-  echo "session delete --record-only unexpectedly removed a container" >&2
+grep -q '^unavailable=none$' <<<"${session_delete_record_only_output}"
+if [[ -s "${SESSION_DELETE_RECORD_ONLY_RECORD}" ]]; then
+  echo "session delete --record-only unexpectedly touched Docker resolution or transport" >&2
   exit 1
 fi
 

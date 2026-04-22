@@ -6,7 +6,7 @@ support = "supported"
 canonical = "workcell --agent codex --workspace /path/to/repo"
 discoverability = ["top-level-help", "readme"]
 docs = ["README.md", "docs/provider-matrix.md"]
-evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "scripts/container-smoke.sh"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "tests/scenarios/shared/test-compat-target-dry-run.sh", "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh", "scripts/container-smoke.sh"]
 requirements = ["functional.FR-001"]
 target_state = "retain"
 
@@ -26,7 +26,7 @@ support = "supported"
 canonical = "--prepare-only"
 discoverability = ["top-level-help", "readme", "manpage"]
 docs = ["README.md", "man/workcell.1"]
-evidence = ["tests/scenarios/shared/test-agent-launch-smoke.sh", "scripts/verify-invariants.sh"]
+evidence = ["tests/scenarios/shared/test-agent-launch-smoke.sh", "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh", "scripts/verify-invariants.sh"]
 requirements = ["functional.FR-006"]
 target_state = "retain"
 
@@ -38,6 +38,16 @@ discoverability = ["top-level-help", "manpage"]
 docs = ["man/workcell.1", "docs/validation-scenarios.md"]
 evidence = ["scripts/verify-invariants.sh"]
 requirements = ["functional.FR-006"]
+target_state = "retain"
+
+[workflows.launch_target_backend]
+title = "Managed runtime target selection"
+support = "supported"
+canonical = "--target colima|docker-desktop"
+discoverability = ["top-level-help", "readme", "manpage"]
+docs = ["README.md", "man/workcell.1", "docs/validation-scenarios.md"]
+evidence = ["tests/scenarios/shared/test-compat-target-dry-run.sh", "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh"]
+requirements = ["functional.FR-011"]
 target_state = "retain"
 
 [workflows.publish_pr]

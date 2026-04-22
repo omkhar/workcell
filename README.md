@@ -269,9 +269,12 @@ Other defaults that matter:
 
 Useful operator flows:
 
+Use `--target colima|docker-desktop` to select the managed runtime backend.
+
 ```bash
 workcell --agent codex --prepare --workspace /path/to/repo
 workcell --agent codex --prepare-only --workspace /path/to/repo
+workcell --target docker-desktop --agent codex --workspace /path/to/repo
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell session list
 workcell session list --verbose

@@ -305,17 +305,27 @@ Launch the runtime image with a direct container entrypoint after
 This is intended only for lower-assurance boundary debugging and is recorded in
 the host audit log as a downgraded path.
 .TP
+.B --target colima|docker-desktop
+Select the runtime target to launch. The default is colima, which maps to the
+reviewed strict local_vm/colima path. Use docker-desktop for the explicit
+lower-assurance local_compat/docker-desktop/compat path. Workcell does not
+silently fall back between targets.
+.TP
 .B --colima-profile NAME
-Override the derived Colima profile name.
+Override the derived Workcell profile name for the colima target. This option
+is rejected for --target docker-desktop.
 .TP
 .B --vm-cpu COUNT
-Set an explicit CPU count for the dedicated Colima VM.
+Set an explicit CPU count for the dedicated Colima VM. This option is rejected
+for --target docker-desktop.
 .TP
 .B --vm-memory GIB
-Set an explicit memory size in GiB for the dedicated Colima VM.
+Set an explicit memory size in GiB for the dedicated Colima VM. This option is
+rejected for --target docker-desktop.
 .TP
 .B --vm-disk GIB
-Set an explicit disk size in GiB for the dedicated Colima VM.
+Set an explicit disk size in GiB for the dedicated Colima VM. This option is
+rejected for --target docker-desktop.
 .TP
 .B --rebuild
 Rebuild the runtime image before launch.
@@ -351,7 +361,7 @@ remains accepted for CLI symmetry.
 .TP
 .B --logs audit|debug|file-trace|transcript
 Print the latest retained log of the selected type for the derived or explicit
-Colima profile and exit. Also available as
+target state and exit. Also available as
 .BR "workcell logs audit|debug|file-trace|transcript" .
 .TP
 .B --auth-status
@@ -464,7 +474,7 @@ of its contents into per-session runtime state unless
 .B --no-default-injection-policy
 is set.
 .TP
-.I ~/.local/state/workcell/targets/local_vm/colima/PROFILE/workcell.audit.log
+.I ~/.local/state/workcell/targets/TARGET_KIND/TARGET_PROVIDER/PROFILE/workcell.audit.log
 Durable host-side metadata audit log written by the managed launcher for real
 runs.
 .SH SESSION INJECTIONS

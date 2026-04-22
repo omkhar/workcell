@@ -23,6 +23,7 @@ Use these anchors when checking release-facing claims:
   `shared/auth-commands`, `shared/auth-status`,
   `shared/claude-resolver-launcher`, `shared/codex-resolver-launcher`
 - lower-assurance mode claims: `shared/assurance-dry-run`
+- compat target selection and fail-closed diagnostics: `shared/compat-target-dry-run`
 - local runtime certification smoke: `shared/agent-launch-smoke`
 - host publication handoff and main-only PR-base safeguards: `shared/publish-pr`
 - host-side session inventory and control plus detached workspace-mode
@@ -61,9 +62,7 @@ They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
 inspection and explainability, host-side detached session inventory, control,
 logs/timeline, clean-base diff/export behavior, and operator-contract parity.
-They also now carry the canonical preview-only `remote_vm` contract through
-the deterministic `internal/remotevm` fake target and shared conformance
-harness.
+They also now carry the canonical preview-only `remote_vm` contract through the deterministic `internal/remotevm` fake target and shared conformance harness, plus the explicit `docker-desktop` compat target through deterministic backend-selection, state-root-routing, and fail-closed diagnostics.
 
 `./scripts/validate-repo.sh` runs the repo-required scenario tier through:
 
@@ -84,6 +83,7 @@ Today that certification tier includes:
 
 - `shared/agent-launch-smoke` for local macOS Colima prepare-only and
   provider-version smoke on the managed path
+- `shared/docker-desktop-launch-smoke` for the explicit `local_compat/docker-desktop/compat` path on healthy macOS Docker Desktop hosts
 
 Certification smoke is where local boundary proof belongs. It should stay
 available and documented, but it must not be the reason repo validation fails

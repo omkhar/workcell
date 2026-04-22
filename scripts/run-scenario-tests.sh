@@ -138,7 +138,7 @@ run_scenario() {
     return 2
   fi
 
-  if bash "${full_test_path}"; then
+  if bash "${full_test_path}" </dev/null; then
     echo "PASS ${scenario_id}"
     return 0
   else
