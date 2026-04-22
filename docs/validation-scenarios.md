@@ -89,6 +89,11 @@ Certification smoke is where local boundary proof belongs. It should stay
 available and documented, but it must not be the reason repo validation fails
 on a machine that lacks the live runtime prerequisites.
 
+When a change introduces or materially changes a supported end-to-end
+workflow, backend, support-tier claim, or certification-only validation path,
+this certification tier becomes a pre-signing gate: complete the relevant live
+smoke successfully before signing the commit that claims the new support.
+
 ## Documentation example coverage
 
 Release-facing examples are expected to map to existing automated evidence even
