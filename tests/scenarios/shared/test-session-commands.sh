@@ -813,8 +813,7 @@ grep -q '^wait_status=0$' <<<"${monitor_wait_status_output}"
 grep -q '^wcl-detached-fixture|wait workcell-session-fixture$' "${DETACHED_STATE_DIR}/session-monitor-wait.record"
 grep -q '^wcl-detached-fixture|inspect --format {{.State.ExitCode}} workcell-session-fixture$' "${DETACHED_STATE_DIR}/session-monitor-wait.record"
 
-monitor_provider_backfill_output="$(
-  bash -lc '
+bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -883,8 +882,7 @@ EOF_STATE
       return 0
     }
     session_monitor_main --state-file "${STATE_FILE}"
-  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/session-monitor-provider" "${DETACHED_STATE_DIR}/session-monitor-provider.record"
-)"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/session-monitor-provider" "${DETACHED_STATE_DIR}/session-monitor-provider.record" >/dev/null
 grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true wait workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
 grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true inspect --format {{.State.ExitCode}} workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
 grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true rm -f workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
