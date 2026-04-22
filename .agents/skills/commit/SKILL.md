@@ -71,6 +71,10 @@ for convenience.
   opportunistic cleanup, and behavior changes into one remote review unit.
   Split broad work before pushing.
 - Sign every commit.
+- Before signing a commit that introduces or materially changes a supported
+  end-to-end workflow, backend, support-tier claim, or certification-only
+  validation path, run the relevant live certification successfully. Do not
+  sign a support-claim commit while planning to gather certification later.
 - Use feature branches. Do not push directly to `main` or rewrite history.
 - Treat final GitHub publication as a host-side action.
 - Default remote review units to `main`-based pull requests. Keep non-`main`

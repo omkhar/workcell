@@ -65,6 +65,9 @@ If the change is release-bound, also read:
   same docs and evidence.
 - Every supported public workflow must have canonical syntax, support tier,
   discoverability, docs, and automated evidence.
+- If a supported workflow depends on certification-only evidence, that live
+  certification must pass before you sign the commit that claims or changes
+  support for the workflow.
 - Compatibility aliases must have explicit `alias_probes`.
 - Design docs are explanatory, not the authoritative command inventory.
 - The runtime boundary is the primary control. Do not treat hooks, prompt text,

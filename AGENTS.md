@@ -34,6 +34,11 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 
 - Sign every commit. Do not create or rewrite commits in this repository
   without a verified signature from the maintainer identity.
+- Before signing a commit that introduces or materially changes a supported
+  end-to-end workflow, backend, support-tier claim, or certification-only
+  validation path, run the relevant live end-to-end certification
+  successfully. Do not sign "implementation first, certification later"
+  commits for that class of change.
 - Treat final GitHub publication as a host-side action. Prepare branch,
   signed commit message, and PR metadata inside Workcell, then use
   `workcell publish-pr` on the host rather than publishing directly from the
