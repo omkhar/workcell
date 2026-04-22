@@ -272,6 +272,7 @@ Useful operator flows:
 ```bash
 workcell --agent codex --prepare --workspace /path/to/repo
 workcell --agent codex --prepare-only --workspace /path/to/repo
+workcell --target docker-desktop --agent codex --workspace /path/to/repo
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell session list
 workcell session list --verbose
@@ -306,6 +307,14 @@ workcell publish-pr --workspace /path/to/repo --branch feature/name \
   --body-file /tmp/pr-body.md \
   --commit-message-file /tmp/commit-message.txt
 ```
+
+Use `--target colima|docker-desktop` to select the managed runtime backend
+explicitly.
+`--target docker-desktop` selects the explicit lower-assurance
+`local_compat/docker-desktop/compat` backend. It never falls back silently to
+the strict Colima path. See
+[docs/docker-desktop-compat.md](docs/docker-desktop-compat.md) for the current
+reviewed host matrix plus enable, disable, and rollback guidance.
 
 `workcell session list --verbose` adds target, workspace transport, git branch,
 and worktree columns without changing the default compact inventory view.
@@ -355,6 +364,7 @@ See [docs/provenance.md](docs/provenance.md) and
 | Security invariants | [docs/invariants.md](docs/invariants.md) |
 | Threat model | [docs/threat-model.md](docs/threat-model.md) |
 | Provider matrix | [docs/provider-matrix.md](docs/provider-matrix.md) |
+| Docker Desktop compat | [docs/docker-desktop-compat.md](docs/docker-desktop-compat.md) |
 | Adapter control planes | [docs/adapter-control-planes.md](docs/adapter-control-planes.md) |
 | Injection policy | [docs/injection-policy.md](docs/injection-policy.md) |
 | Validation coverage | [docs/validation-scenarios.md](docs/validation-scenarios.md) |

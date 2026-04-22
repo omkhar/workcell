@@ -25,6 +25,18 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/docker-desktop-launch-smoke",
+      "description": "macOS secretless smoke prepares and launches the explicit Docker Desktop compat target against the real runtime and version probes each provider",
+      "lane": "secretless",
+      "platform": "macos",
+      "validation_tier": "certification",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-docker-desktop-launch-smoke.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/auth-commands",
       "description": "Host-side auth commands manage explicit policy-backed credential inputs without launching the runtime",
       "lane": "secretless",
@@ -110,6 +122,17 @@
       "providers": ["codex", "claude", "gemini"],
       "persona": "developer",
       "test_file": "shared/test-assurance-dry-run.sh",
+      "requires_credentials": false
+    },
+    {
+      "id": "shared/compat-target-dry-run",
+      "description": "Docker Desktop compatibility target selection keeps target metadata and state roots explicit, and fails closed when the reviewed host matrix blocks the selected target",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-compat-target-dry-run.sh",
       "requires_credentials": false
     },
     {

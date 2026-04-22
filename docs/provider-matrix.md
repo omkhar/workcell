@@ -15,6 +15,21 @@ For provider auth maturity and rollout caveats, see
 [docs/injection-policy.md](injection-policy.md) and
 [docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md).
 
+## Runtime target support
+
+Workcell's provider adapters run on top of explicit runtime targets. Current
+local targets are:
+
+- `local_vm/colima/strict`: the default reviewed launch path
+- `local_compat/docker-desktop/compat`: an explicit lower-assurance
+  compatibility backend selected with `--target docker-desktop`
+
+There is no automatic fallback between these targets. If the selected backend
+is unsupported or unhealthy, Workcell fails closed and reports the boundary in
+`--doctor`, `--inspect`, and launch diagnostics. See
+[docs/docker-desktop-compat.md](docker-desktop-compat.md) for the current
+reviewed host matrix and rollback guidance.
+
 ## Tiering rule
 
 - Tier 1: provider CLI runs fully inside the bounded runtime
