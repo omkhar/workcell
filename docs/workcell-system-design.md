@@ -15,12 +15,9 @@ current architecture is:
 
 1. a trusted host control plane in [`scripts/workcell`](../scripts/workcell)
    prepares and validates each session
-2. a dedicated Colima VM provides the primary strict machine boundary on
-   supported Apple Silicon macOS hosts, while an explicit Docker Desktop
-   compatibility target reuses the host-owned control plane without claiming
-   the same VM boundary
-3. a hardened container inside the selected target runtime provides the agent
-   execution environment
+2. a dedicated Colima VM provides the primary machine boundary on supported
+   Apple Silicon macOS hosts
+3. a hardened container inside that VM provides the agent execution runtime
 4. thin provider adapters seed provider-native homes and configuration without
    pretending provider config is the security boundary
 5. host-side policy rendering, control-plane masking, and explicit injection
@@ -111,16 +108,10 @@ validation and rendering into typed code.
 
 ### 3. Runtime Boundary and Profiles
 
-The current local runtime model has two explicit target classes:
+The supported safe path is two-tier:
 
-1. `local_vm/colima/strict`: dedicated Colima VM on the host plus a hardened
-   agent container inside that VM
-2. `local_compat/docker-desktop/compat`: host-owned compatibility target that
-   reuses the same hardened container and control plane without claiming the
-   same VM boundary
-
-There is no silent fallback between these targets. Backend selection is an
-explicit operator choice, and unsupported or unhealthy targets fail closed.
+1. a dedicated Colima VM on the host
+2. a hardened agent container inside that VM
 
 The container launch path applies controls such as:
 
@@ -272,9 +263,8 @@ real provider differences behind a fake universal control plane.
 
 ### 10. Runtime Target Taxonomy And Remote VM Contract
 
-The current live local targets are the strict `local_vm/colima` boundary and
-the explicit lower-assurance `local_compat/docker-desktop` path. Phase 5 adds
-a canonical preview-only `remote_vm` contract in
+The current live safe path is still the strict `local_vm/colima` boundary.
+Phase 5 adds a canonical preview-only `remote_vm` contract in
 [`policy/remote-vm-contract.json`](../policy/remote-vm-contract.json) plus a
 shared fake target and conformance harness in
 [`internal/remotevm`](../internal/remotevm).
@@ -320,11 +310,7 @@ authoritative CLI inventory.
 
 Detached session records are written under the Workcell-owned target-state tree
 as
-`~/.local/state/workcell/targets/<target-kind>/<target-provider>/<profile>/sessions/<session-id>.json`.
-For the default strict path that means
 `~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/<session-id>.json`.
-For the Docker Desktop compatibility path that means
-`~/.local/state/workcell/targets/local_compat/docker-desktop/<profile>/sessions/<session-id>.json`.
 Compatibility reads still accept older legacy records under
 `~/.colima/<profile>/sessions/<session-id>.json`. The current session record
 schema in [`internal/hostutil/sessions.go`](../internal/hostutil/sessions.go)

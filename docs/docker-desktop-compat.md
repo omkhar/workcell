@@ -30,15 +30,10 @@ silently falling back to another backend.
 
 ## Enable
 
-Use the explicit target flag:
+Use the explicit target flag for either launch or image preparation:
 
 ```bash
 workcell --target docker-desktop --agent codex --workspace /path/to/repo
-```
-
-You can also prepare the runtime image without launching:
-
-```bash
 workcell --target docker-desktop --prepare-only --agent codex --workspace /path/to/repo
 ```
 
