@@ -30,6 +30,19 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   publication, merge, and release actions. Do not stop at "implemented" if
   review, checks, or hosted workflows still expose actionable problems.
 
+## Continuous improvement default
+
+- Treat repeated friction, user correction, recurring CI churn, or manual
+  workaround as a signal that the repo-local instructions should improve.
+- When a task exposes a durable gap in `AGENTS.md`, a repo-local skill,
+  runbook, validator, or publication workflow, capture that improvement in a
+  versioned repo-local change instead of relying on conversational memory.
+- Prefer explicit, reviewable skill and runbook updates over implicit habits.
+- If the improvement would muddy the active review unit, cut it as a separate
+  follow-on commit or PR rather than leaving the lesson unversioned.
+- Do not claim the skills "learn automatically." In this repository, skill
+  adaptation must happen through committed, reviewable instruction updates.
+
 ## Mandatory rules
 
 - Sign every commit. Do not create or rewrite commits in this repository
