@@ -15,7 +15,6 @@ docs = [
   "README.md",
   "docs/invariants.md",
   "docs/provider-matrix.md",
-  "docs/docker-desktop-compat.md",
   "docs/examples/quickstart-codex.md",
   "docs/examples/quickstart-claude.md",
   "docs/examples/quickstart-gemini.md",
@@ -208,7 +207,6 @@ evidence = [
 docs = [
   "README.md",
   "man/workcell.1",
-  "docs/docker-desktop-compat.md",
   "docs/validation-scenarios.md",
   "docs/workcell-system-design.md",
   "docs/runtime-target-phase-plan.md",

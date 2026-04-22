@@ -308,14 +308,6 @@ workcell publish-pr --workspace /path/to/repo --branch feature/name \
   --commit-message-file /tmp/commit-message.txt
 ```
 
-Use `--target colima|docker-desktop` to select the managed runtime backend
-explicitly.
-`--target docker-desktop` selects the explicit lower-assurance
-`local_compat/docker-desktop/compat` backend. It never falls back silently to
-the strict Colima path. See
-[docs/docker-desktop-compat.md](docs/docker-desktop-compat.md) for the current
-reviewed host matrix plus enable, disable, and rollback guidance.
-
 `workcell session list --verbose` adds target, workspace transport, git branch,
 and worktree columns without changing the default compact inventory view.
 `workcell session show --text` renders stable key=value lines for the same
@@ -364,7 +356,6 @@ See [docs/provenance.md](docs/provenance.md) and
 | Security invariants | [docs/invariants.md](docs/invariants.md) |
 | Threat model | [docs/threat-model.md](docs/threat-model.md) |
 | Provider matrix | [docs/provider-matrix.md](docs/provider-matrix.md) |
-| Docker Desktop compat | [docs/docker-desktop-compat.md](docs/docker-desktop-compat.md) |
 | Adapter control planes | [docs/adapter-control-planes.md](docs/adapter-control-planes.md) |
 | Injection policy | [docs/injection-policy.md](docs/injection-policy.md) |
 | Validation coverage | [docs/validation-scenarios.md](docs/validation-scenarios.md) |
