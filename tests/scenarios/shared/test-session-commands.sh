@@ -668,6 +668,11 @@ monitor_env_output="$(
     SESSION_RECORD_PATH="$3"
     SESSION_RECORD_WRITTEN=1
     SESSION_RECORD_FINALIZED=0
+    SESSION_META_PROFILE="wcl-detached-fixture"
+    SESSION_META_TARGET_KIND="local_compat"
+    SESSION_META_TARGET_PROVIDER="docker-desktop"
+    SESSION_META_TARGET_ID="desktop-linux"
+    SESSION_META_TARGET_ASSURANCE_CLASS="compat"
     write_session_monitor_env_file "$4"
     cat "$4"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}" "${SESSIONS_DIR}/${DETACHED_SESSION}.json" "${DETACHED_STATE_DIR}/session-monitor.env" "${TMP_DIR}/monitor-xdg-state"
@@ -675,6 +680,11 @@ monitor_env_output="$(
 grep -q '^SESSION_RECORD_PATH=' <<<"${monitor_env_output}"
 grep -q '^SESSION_RECORD_WRITTEN=1$' <<<"${monitor_env_output}"
 grep -q '^SESSION_RECORD_FINALIZED=0$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_PROFILE=wcl-detached-fixture$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_TARGET_KIND=local_compat$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_TARGET_PROVIDER=docker-desktop$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_TARGET_ID=desktop-linux$' <<<"${monitor_env_output}"
+grep -q '^SESSION_META_TARGET_ASSURANCE_CLASS=compat$' <<<"${monitor_env_output}"
 grep -q '^SESSION_MONITOR_READY_PATH=' <<<"${monitor_env_output}"
 grep -q '^XDG_STATE_HOME='"${TMP_DIR}/monitor-xdg-state"'$' <<<"${monitor_env_output}"
 grep -q '^WORKCELL_STATE_ROOT='"${TMP_DIR}/monitor-xdg-state/workcell"'$' <<<"${monitor_env_output}"
@@ -802,6 +812,83 @@ monitor_wait_status_output="$(
 grep -q '^wait_status=0$' <<<"${monitor_wait_status_output}"
 grep -q '^wcl-detached-fixture|wait workcell-session-fixture$' "${DETACHED_STATE_DIR}/session-monitor-wait.record"
 grep -q '^wcl-detached-fixture|inspect --format {{.State.ExitCode}} workcell-session-fixture$' "${DETACHED_STATE_DIR}/session-monitor-wait.record"
+
+monitor_provider_backfill_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"
+    RECORD_FILE="$3"
+    PROFILE_NAME="wcl-detached-desktop-fixture"
+    SESSION_ID="detached-desktop-provider"
+    STATE_FILE="${FIXTURE_ROOT}/session-monitor.env"
+    WORKCELL_STATE_ROOT="${FIXTURE_ROOT}/workcell"
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+    COLIMA_STATE_ROOT="${FIXTURE_ROOT}/colima"
+    COLIMA_PROFILE="${PROFILE_NAME}"
+    CONTAINER_NAME="workcell-session-desktop"
+    SESSION_AUDIT_DIR="${FIXTURE_ROOT}/audit"
+    mkdir -p "${WORKCELL_STATE_ROOT}/targets/local_compat/docker-desktop/${PROFILE_NAME}/sessions" "${SESSION_AUDIT_DIR}"
+    cat >"${WORKCELL_STATE_ROOT}/targets/local_compat/docker-desktop/${PROFILE_NAME}/sessions/${SESSION_ID}.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "${SESSION_ID}",
+  "profile": "${PROFILE_NAME}",
+  "target_kind": "local_compat",
+  "target_provider": "docker-desktop",
+  "target_id": "desktop-linux",
+  "target_assurance_class": "compat",
+  "runtime_api": "docker",
+  "workspace_transport": "workspace-mount",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "ui": "cli",
+  "execution_path": "managed-tier1",
+  "workspace": "${FIXTURE_ROOT}/workspace",
+  "workspace_origin": "${FIXTURE_ROOT}/workspace",
+  "workspace_root": "${FIXTURE_ROOT}/workspace",
+  "worktree_path": "${FIXTURE_ROOT}/workspace",
+  "container_name": "${CONTAINER_NAME}",
+  "session_audit_dir": "${SESSION_AUDIT_DIR}",
+  "live_status": "running",
+  "started_at": "2026-04-22T14:00:00Z",
+  "current_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF_JSON
+    cat >"${STATE_FILE}" <<EOF_STATE
+SESSION_ID=${SESSION_ID}
+COLIMA_PROFILE=${PROFILE_NAME}
+CONTAINER_NAME=${CONTAINER_NAME}
+EXECUTION_PATH=managed-tier1
+SESSION_AUDIT_DIR=${SESSION_AUDIT_DIR}
+WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}
+WORKCELL_TARGET_STATE_ROOT=${WORKCELL_TARGET_STATE_ROOT}
+COLIMA_STATE_ROOT=${COLIMA_STATE_ROOT}
+EOF_STATE
+    resolve_host_tool() { printf "/usr/bin/true\n"; }
+    sanitize_host_docker_env() { :; }
+    capture_session_audit_state() { :; }
+    capture_session_file_trace() { :; }
+    finalize_session_audit() { :; }
+    run_workcell_docker_client_command() {
+      printf "%s\n" "$*" >>"${RECORD_FILE}"
+      case "$*" in
+        *" wait "*) return 1 ;;
+        *" inspect --format {{.State.ExitCode}} "*) printf "0\n" ;;
+        *" rm -f "*) return 0 ;;
+      esac
+      return 0
+    }
+    session_monitor_main --state-file "${STATE_FILE}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/session-monitor-provider" "${DETACHED_STATE_DIR}/session-monitor-provider.record"
+)"
+test -z "${monitor_provider_backfill_output}"
+grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true wait workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
+grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true inspect --format {{.State.ExitCode}} workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
+grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true rm -f workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
 
 START_PROFILE_RETRY_RECORD="${DETACHED_STATE_DIR}/start-profile-retry.record"
 start_profile_retry_output="$(

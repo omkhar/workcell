@@ -2035,6 +2035,11 @@ write_session_monitor_env_file() {
     SESSION_AUDIT_STATE_FILE
     SESSION_FILE_TRACE_CONTAINER_FILE
     SESSION_ID
+    SESSION_META_PROFILE
+    SESSION_META_TARGET_KIND
+    SESSION_META_TARGET_PROVIDER
+    SESSION_META_TARGET_ID
+    SESSION_META_TARGET_ASSURANCE_CLASS
     SESSION_RECORD_PATH
     SESSION_RECORD_WRITTEN
     SESSION_RECORD_FINALIZED
@@ -3595,6 +3600,7 @@ start_detached_session_monitor() {
   SESSION_MONITOR_ENV_PATH="$(session_monitor_state_path "${SESSION_AUDIT_DIR}")"
   SESSION_MONITOR_READY_PATH="$(session_monitor_ready_path "${SESSION_AUDIT_DIR}")"
   rm -f "${SESSION_MONITOR_READY_PATH}"
+  load_session_runtime_metadata "${SESSION_ID}"
   write_session_monitor_env_file "${SESSION_MONITOR_ENV_PATH}"
   if [[ -n "${DEBUG_LOG_PATH}" ]]; then
     monitor_stderr="${DEBUG_LOG_PATH}"
@@ -4388,6 +4394,9 @@ session_monitor_main() {
   source "${state_file}"
   if [[ -n "${WORKCELL_STATE_ROOT:-}" ]]; then
     WORKCELL_TARGET_STATE_ROOT="${WORKCELL_TARGET_STATE_ROOT:-${WORKCELL_STATE_ROOT}/targets}"
+  fi
+  if [[ -n "${SESSION_ID:-}" ]] && [[ -z "${SESSION_META_TARGET_PROVIDER:-}" ]]; then
+    load_session_runtime_metadata "${SESSION_ID}"
   fi
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
   sanitize_host_docker_env
