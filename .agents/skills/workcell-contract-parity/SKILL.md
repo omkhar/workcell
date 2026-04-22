@@ -46,6 +46,10 @@ Treat that as an open-ended peer loop. If a peer, validator, or review surface
 finds new parity issues after a fix, continue re-reviewing with that peer or
 surface until every finding is resolved, explicitly dispositioned, or blocked
 by a concrete external constraint.
+Treat repeated docs confusion, support-boundary ambiguity, or validator churn
+as a signal to improve the repo-local contract surfaces themselves. When a
+durable parity lesson appears, version it in the relevant skill, contract, or
+docs rather than keeping it only in working memory.
 
 ## Read first
 
@@ -127,6 +131,9 @@ If the change is release-bound, also read:
    finishing.
 9. Re-review the affected contract surfaces after fixes land and before calling
    the task done. Do not stop while actionable findings remain.
+10. If the task exposed a reusable parity or operator-guidance gap, update the
+    relevant repo-local instruction surface in the same change stream or in a
+    separate follow-on review unit.
 
 ## Validation
 

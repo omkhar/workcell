@@ -61,6 +61,10 @@ for convenience.
   finds new issues after a fix, keep iterating with that peer until all
   findings are resolved, explicitly dispositioned, or blocked by a concrete
   external constraint.
+- Treat repeated user correction, recurring review friction, or repeated CI
+  surprises as a signal to improve the repo-local instructions. When a durable
+  gap is exposed, update the relevant repo-local skill, `AGENTS.md`, or
+  runbook in a reviewable change rather than relying on ad hoc memory.
 
 ## Commit Grouping
 
@@ -104,6 +108,9 @@ for convenience.
   detritus before finalizing the change.
 - If commit hooks are bypassed, rerun the equivalent validations manually and
   record the reason in the working notes or final report.
+- If a task teaches a reusable lesson about commit sizing, validation,
+  publication, or follow-up discipline, capture that lesson in the repo-local
+  instructions in the same change stream or in a separate follow-on PR.
 
 ## Notation Justification in Commit Messages
 

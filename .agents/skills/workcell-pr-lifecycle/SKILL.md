@@ -45,6 +45,10 @@ Treat that as a continuing loop with the same peers and review surfaces. If a
 comment sweep, thread sweep, CI rerun, or follow-up review produces new
 findings after a fix, keep iterating until every finding is resolved,
 explicitly dispositioned, or blocked by a concrete external constraint.
+Treat repeated PR friction, publication fallbacks, or hosted-check surprises as
+signals that the repo-local lifecycle instructions should improve. When a
+durable process lesson appears, capture it in a versioned repo-local update
+instead of leaving it as an unwritten workaround.
 
 ## Read first
 
@@ -129,6 +133,9 @@ If the task is release-bound, also read:
 11. If merge is part of the task, repeat the review sweep immediately before
     merge, merge, then follow merged `main` workflows until repo-owned lanes
     are green.
+11. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
+    update the relevant repo-local instructions in the same change stream or a
+    separate follow-on PR.
 
 ## Validation
 
