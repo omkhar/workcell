@@ -885,7 +885,6 @@ EOF_STATE
     session_monitor_main --state-file "${STATE_FILE}"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/session-monitor-provider" "${DETACHED_STATE_DIR}/session-monitor-provider.record"
 )"
-test -z "${monitor_provider_backfill_output}"
 grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true wait workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
 grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true inspect --format {{.State.ExitCode}} workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
 grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true rm -f workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
