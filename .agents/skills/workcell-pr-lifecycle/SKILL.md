@@ -133,7 +133,7 @@ If the task is release-bound, also read:
 11. If merge is part of the task, repeat the review sweep immediately before
     merge, merge, then follow merged `main` workflows until repo-owned lanes
     are green.
-11. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
+12. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
     update the relevant repo-local instructions in the same change stream or a
     separate follow-on PR.
 
