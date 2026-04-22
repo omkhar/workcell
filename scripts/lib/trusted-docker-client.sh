@@ -169,6 +169,21 @@ select_workcell_trusted_buildx() {
 setup_workcell_trusted_docker_client() {
   local real_home
 
+  # Launch, inspect, and doctor flows can all sanitize the host Docker
+  # environment more than once in a single process. Reuse the in-process
+  # sandbox instead of allocating a fresh tmpdir each time.
+  if [[ -n "${WORKCELL_DOCKER_SANDBOX_ROOT:-}" ]] &&
+    [[ -d "${WORKCELL_DOCKER_SANDBOX_ROOT}" ]] &&
+    [[ -n "${WORKCELL_DOCKER_HOME:-}" ]] &&
+    [[ -d "${WORKCELL_DOCKER_HOME}" ]] &&
+    [[ -n "${WORKCELL_DOCKER_CONFIG:-}" ]] &&
+    [[ -d "${WORKCELL_DOCKER_CONFIG}" ]]; then
+    export HOME="${WORKCELL_DOCKER_HOME}"
+    export DOCKER_CONFIG="${WORKCELL_DOCKER_CONFIG}"
+    unset DOCKER_CLI_PLUGIN_EXTRA_DIRS
+    return 0
+  fi
+
   real_home="$(resolve_workcell_real_home)"
   WORKCELL_DOCKER_SANDBOX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker.XXXXXX")"
   WORKCELL_DOCKER_HOME="${WORKCELL_DOCKER_SANDBOX_ROOT}/home"
@@ -190,6 +205,9 @@ cleanup_workcell_trusted_docker_client() {
     chmod -R u+w "${WORKCELL_DOCKER_SANDBOX_ROOT}" 2>/dev/null || true
     rm -rf "${WORKCELL_DOCKER_SANDBOX_ROOT}"
   fi
+  unset WORKCELL_DOCKER_SANDBOX_ROOT
+  unset WORKCELL_DOCKER_HOME
+  unset WORKCELL_DOCKER_CONFIG
 }
 
 ensure_workcell_trusted_buildx() {

@@ -887,6 +887,38 @@ grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true wait workcell-session-d
 grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true inspect --format {{.State.ExitCode}} workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
 grep -q '^env DOCKER_CONTEXT=desktop-linux /usr/bin/true rm -f workcell-session-desktop$' "${DETACHED_STATE_DIR}/session-monitor-provider.record"
 
+docker_sandbox_reuse_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"
+    export TMPDIR="${FIXTURE_ROOT}/tmp"
+    mkdir -p "${TMPDIR}" "${FIXTURE_ROOT}/real-home/.docker/contexts" "${FIXTURE_ROOT}/real-home/.docker/buildx"
+    resolve_workcell_real_home() { printf "%s\n" "${FIXTURE_ROOT}/real-home"; }
+    resolve_host_tool_optional() { printf "/usr/bin/true\n"; }
+    resolve_host_tool() { printf "/usr/bin/true\n"; }
+    docker_context_exists() { return 0; }
+    docker_context_is_healthy() { return 0; }
+    TARGET_BACKEND="docker-desktop"
+    prepare_optional_target_docker_client
+    first_root="${WORKCELL_DOCKER_SANDBOX_ROOT}"
+    prepare_current_target_docker_client
+    second_root="${WORKCELL_DOCKER_SANDBOX_ROOT}"
+    printf "first_root=%s\n" "${first_root}"
+    printf "second_root=%s\n" "${second_root}"
+    printf "sandbox_count=%s\n" "$(find "${TMPDIR}" -maxdepth 1 -type d -name "workcell-docker.*" | wc -l | tr -d " ")"
+    cleanup_workcell_trusted_docker_client
+    test ! -e "${first_root}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/docker-sandbox-reuse"
+)"
+grep -q '^first_root=.*/workcell-docker\.' <<<"${docker_sandbox_reuse_output}"
+grep -q '^second_root=.*/workcell-docker\.' <<<"${docker_sandbox_reuse_output}"
+first_root="$(awk -F= '/^first_root=/{print $2}' <<<"${docker_sandbox_reuse_output}")"
+second_root="$(awk -F= '/^second_root=/{print $2}' <<<"${docker_sandbox_reuse_output}")"
+test "${first_root}" = "${second_root}"
+grep -q '^sandbox_count=1$' <<<"${docker_sandbox_reuse_output}"
+
 START_PROFILE_RETRY_RECORD="${DETACHED_STATE_DIR}/start-profile-retry.record"
 start_profile_retry_output="$(
   bash -lc '
