@@ -1780,6 +1780,45 @@ grep -q '^unavailable=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^transport|wcl-detached-fixture|inspect --format ' "${SESSION_DELETE_CLEANUP_RECORD}"
 grep -q '^transport|wcl-detached-fixture|rm -f workcell-session-fixture$' "${SESSION_DELETE_CLEANUP_RECORD}"
 
+SESSION_DELETE_COMPAT_RECORD="${DETACHED_STATE_DIR}/session-delete.compat.record"
+SESSION_DELETE_COMPAT_ROOT="${DETACHED_STATE_DIR}/session-delete.compat.root"
+session_delete_compat_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"; RECORD_FILE="$3"
+    WORKCELL_STATE_ROOT="${FIXTURE_ROOT}/workcell"; WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+    PROFILE_DIR="${FIXTURE_ROOT}/workcell/targets/local_compat/docker-desktop/wcl-detached-fixture"
+    RECORD_PATH="${PROFILE_DIR}/sessions/detached-fixture.json"
+    mkdir -p "${PROFILE_DIR}/sessions"
+    cat >"${RECORD_PATH}" <<EOF_JSON
+{"version":1,"session_id":"detached-fixture","profile":"wcl-detached-fixture","target_kind":"local_compat","target_provider":"docker-desktop","target_id":"desktop-linux","agent":"codex","mode":"strict","status":"exited","live_status":"stopped","workspace":"/tmp/detached-fixture-workspace","container_name":"workcell-session-fixture","started_at":"2026-04-08T14:00:00Z","finished_at":"2026-04-08T14:05:00Z","exit_status":"0","initial_assurance":"managed-mutable","final_assurance":"managed-mutable","workspace_control_plane":"masked"}
+EOF_JSON
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    docker_context_exists() { return 0; }
+    docker_context_is_healthy() { return 0; }
+    profile_docker_socket_path() { printf "unexpected-profile-socket-lookup\n" >>"${RECORD_FILE}"; return 99; }
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    run_profile_docker_command() {
+      local profile="$1"; shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; *) return 1 ;; esac
+    }
+    session_delete_main --id detached-fixture
+    test ! -e "${RECORD_PATH}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_COMPAT_ROOT}" "${SESSION_DELETE_COMPAT_RECORD}"
+)"
+grep -q '^deleted=1$' <<<"${session_delete_compat_output}"
+grep -q '^transport|wcl-detached-fixture|inspect --format ' "${SESSION_DELETE_COMPAT_RECORD}"
+grep -q '^transport|wcl-detached-fixture|rm -f workcell-session-fixture$' "${SESSION_DELETE_COMPAT_RECORD}"
+if grep -q '^unexpected-profile-socket-lookup$' "${SESSION_DELETE_COMPAT_RECORD}"; then
+  echo "session delete unexpectedly consulted the Colima socket path for a docker-desktop record" >&2
+  exit 1
+fi
+
 SESSION_DELETE_RECORD_ONLY_RECORD="${DETACHED_STATE_DIR}/session-delete.record-only.record"
 SESSION_DELETE_RECORD_ONLY_ROOT="${DETACHED_STATE_DIR}/session-delete.record-only.root"
 session_delete_record_only_output="$(

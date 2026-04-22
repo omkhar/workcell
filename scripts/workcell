@@ -1475,6 +1475,30 @@ run_profile_docker_command() {
   esac
 }
 
+profile_docker_transport_available() {
+  local profile="$1"
+  local provider=""
+  local socket_path=""
+  local context_name=""
+
+  provider="$(target_provider_for_profile_state "${profile}")"
+  case "${provider}" in
+    colima)
+      socket_path="$(profile_docker_socket_path "${profile}" || true)"
+      [[ -n "${socket_path}" ]] && [[ -e "${socket_path}" ]]
+      ;;
+    docker-desktop)
+      context_name="$(target_id_for_profile_state "${profile}")"
+      [[ -n "${context_name}" ]] &&
+        docker_context_exists "${context_name}" &&
+        docker_context_is_healthy "${context_name}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 append_session_control_audit_record() {
   local profile="$1"
   local session_id="$2"
@@ -4049,7 +4073,6 @@ session_delete_main() {
   local record_only=0
   local dry_run=0
   local container_state="missing"
-  local docker_socket_path=""
   local debug_log_path=""
   local file_trace_log_path=""
   local transcript_log_path=""
@@ -4121,10 +4144,9 @@ session_delete_main() {
   fi
 
   if [[ -n "${SESSION_META_CONTAINER_NAME}" ]]; then
-    docker_socket_path="$(profile_docker_socket_path "${SESSION_META_PROFILE}")"
-    if [[ -e "${docker_socket_path}" ]]; then
-      HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
-      sanitize_host_docker_env
+    HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
+    sanitize_host_docker_env
+    if profile_docker_transport_available "${SESSION_META_PROFILE}"; then
       if ! container_state="$(session_container_state_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"; then
         echo "session delete could not inspect the recorded session container: ${session_id}" >&2
         exit 1
