@@ -18,9 +18,8 @@ The deterministic phase breakdown lives in
 - expand end-to-end coverage for authenticated, lower-assurance, and
   session-supervisor transitions so new orchestration features ship with
   invariant checks
-- ship the first cross-platform compatibility backend with explicit
-  lower-assurance labeling, deterministic backend-selection and state-routing
-  behavior, and rollback guidance that preserves the strict Colima path
+- ship the first remote VM backend for the highest-value use cases on top of
+  the canonical preview contract and shared conformance harness
 - keep the shipped canonical host-support matrix and shared remote-VM
   conformance harness authoritative so later `compat` and `remote_vm` targets
   cannot fork the support contract by accident
@@ -38,8 +37,6 @@ The deterministic phase breakdown lives in
 
 ### Deployment reach
 
-- ship the first cross-platform compatibility backend with explicit
-  lower-assurance labeling and backend-aware diagnostics
 - deliver the first remote VM backend for the highest-value use cases:
   secure ephemeral repro and PR environments, standardized onboarding
   environments, and sandboxed agent workspaces in the operator's own account

@@ -8,10 +8,16 @@ REAL_HOME="$(cd "${HOME}" && pwd -P)"
 AUTH_ROOT="${TMP_DIR}/auth"
 WORKSPACE="${TMP_DIR}/workspace"
 TARGET_STATE_DIR=""
+PROFILE_NAME=""
 
 cleanup() {
   local status=$?
   local file=""
+  local builder_name=""
+  local builder_container_prefix=""
+  local builder_resource=""
+  local -a builder_containers=()
+  local -a builder_volumes=()
 
   if [[ "${status}" -ne 0 ]]; then
     for file in \
@@ -24,6 +30,28 @@ cleanup() {
       [[ -f "${TMP_DIR}/${file}" ]] || continue
       printf -- '--- %s ---\n' "${file}" >&2
       cat "${TMP_DIR}/${file}" >&2
+    done
+  fi
+  if [[ -n "${PROFILE_NAME}" ]]; then
+    builder_name="workcell-runtime-${PROFILE_NAME//[^[:alnum:]_.-]/-}"
+    builder_container_prefix="buildx_buildkit_${builder_name}"
+    builder_containers=("${builder_container_prefix}" "${builder_container_prefix}0")
+    builder_volumes=("${builder_container_prefix}_state" "${builder_container_prefix}0_state")
+    for ((cleanup_attempt = 1; cleanup_attempt <= 5; cleanup_attempt++)); do
+      docker --context desktop-linux buildx rm --force "${builder_name}" >/dev/null 2>&1 || true
+      for builder_resource in "${builder_containers[@]}"; do
+        docker --context desktop-linux rm -f "${builder_resource}" >/dev/null 2>&1 || true
+      done
+      for builder_resource in "${builder_volumes[@]}"; do
+        docker --context desktop-linux volume rm "${builder_resource}" >/dev/null 2>&1 || true
+      done
+      if ! docker --context desktop-linux ps -a --format '{{.Names}}' | grep -Fxq "${builder_container_prefix}" &&
+        ! docker --context desktop-linux ps -a --format '{{.Names}}' | grep -Fxq "${builder_container_prefix}0" &&
+        ! docker --context desktop-linux volume ls --format '{{.Name}}' | grep -Fxq "${builder_container_prefix}_state" &&
+        ! docker --context desktop-linux volume ls --format '{{.Name}}' | grep -Fxq "${builder_container_prefix}0_state"; then
+        break
+      fi
+      sleep 1
     done
   fi
   if [[ -n "${TARGET_STATE_DIR}" ]] && [[ "${TARGET_STATE_DIR}" == "${REAL_HOME}/.local/state/workcell/targets/local_compat/docker-desktop/"* ]]; then
@@ -127,6 +155,8 @@ run_agent_version_smoke() {
 }
 
 inspect_target_state
+PROFILE_NAME="$(sed -n 's/^profile=//p' "${TMP_DIR}/inspect.stdout")"
+[[ -n "${PROFILE_NAME}" ]]
 TARGET_STATE_DIR="$(sed -n 's/^target_state_dir=//p' "${TMP_DIR}/inspect.stdout")"
 [[ -n "${TARGET_STATE_DIR}" ]]
 [[ "${TARGET_STATE_DIR}" == "${REAL_HOME}/.local/state/workcell/targets/local_compat/docker-desktop/"* ]]

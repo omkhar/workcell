@@ -22,7 +22,9 @@ Current repo status:
   host-support matrix, and fail-closed unsupported-combination diagnostics
 - Phase 5 is implemented in the canonical remote VM contract, shared fake
   target, and deterministic conformance harness
-- Phase 6 is the next active slice: Docker Desktop compatibility backend
+- Phase 6 is implemented in the Docker Desktop compatibility backend,
+  deterministic compat diagnostics, and live certification smoke
+- Phase 7 is the next active slice: AWS remote VM backend
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract
@@ -263,6 +265,23 @@ Complete when:
   diagnostics that define the supported combinations
 - the owning EM, TL, contract/docs owner, and validation owner approve the
   enablement, rollback path, and support boundary for the phase
+
+Phase 6 completion record:
+
+- repo-required deterministic evidence is green via
+  `tests/scenarios/shared/test-compat-target-dry-run.sh`
+- live certification evidence is green via
+  `tests/scenarios/shared/test-docker-desktop-launch-smoke.sh` on a healthy
+  Apple Silicon macOS Docker Desktop host
+- the support boundary remains explicit as
+  `local_compat/docker-desktop/compat`; Linux and Windows Docker Desktop
+  combinations remain blocked in the host-support matrix
+- rollback remains the explicit strict Colima path; there is no silent backend
+  fallback
+- in the current single-maintainer operating mode, the EM, TL, contract/docs,
+  and validation owner approvals are recorded together in this completion
+  update; this is an explicit phase-approval packet, not a claim of
+  independent human review
 
 ## Phase 7: AWS remote VM backend
 
