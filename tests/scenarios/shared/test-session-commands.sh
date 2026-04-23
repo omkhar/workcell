@@ -2604,6 +2604,49 @@ grep -q '^wcl-cache-fixture|image save -o ' "${RUNTIME_IMAGE_CACHE_RECORD}"
 grep -q '^wcl-cache-fixture|image load -i ' "${RUNTIME_IMAGE_CACHE_RECORD}"
 grep -q '^marker=sha256:cached-runtime-image$' "${RUNTIME_IMAGE_CACHE_RECORD}"
 
+runtime_image_cache_prune_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    WORKCELL_STATE_ROOT="$2"
+    WORKCELL_RUNTIME_IMAGE_CACHE_MAX_BYTES=3000
+    WORKCELL_RUNTIME_IMAGE_CACHE_KEEP_RECENT=1
+    WORKCELL_RUNTIME_IMAGE_CACHE_STALE_MINUTES=0
+    validate_colima_profile_name() { :; }
+    current_target_kind() { printf "local_vm\n"; }
+    current_target_provider() { printf "colima\n"; }
+    cache_dir="$(profile_runtime_image_cache_dir)"
+    mkdir -p "${cache_dir}"
+    make_cache_entry() {
+      local name="$1"
+      local timestamp="$2"
+      head -c 2048 /dev/zero >"${cache_dir}/${name}.tar"
+      printf "image_id=sha256:%s\nsource_date_epoch=0\n" "${name}" >"${cache_dir}/${name}.env"
+      touch -t "${timestamp}" "${cache_dir}/${name}.tar" "${cache_dir}/${name}.env"
+    }
+    make_cache_entry old-one 202001010000
+    make_cache_entry old-two 202001020000
+    make_cache_entry newest 202001030000
+    printf "orphan\n" >"${cache_dir}/orphan-tar.tar"
+    printf "orphan\n" >"${cache_dir}/orphan-env.env"
+    touch -t 202001010000 "${cache_dir}/orphan-tar.tar" "${cache_dir}/orphan-env.env"
+    prune_runtime_image_cache_dir "${cache_dir}"
+    printf "old_one_exists=%s\n" "$([[ -e "${cache_dir}/old-one.tar" ]] && printf 1 || printf 0)"
+    printf "old_two_exists=%s\n" "$([[ -e "${cache_dir}/old-two.tar" ]] && printf 1 || printf 0)"
+    printf "newest_exists=%s\n" "$([[ -e "${cache_dir}/newest.tar" ]] && printf 1 || printf 0)"
+    printf "orphan_tar_exists=%s\n" "$([[ -e "${cache_dir}/orphan-tar.tar" ]] && printf 1 || printf 0)"
+    printf "orphan_env_exists=%s\n" "$([[ -e "${cache_dir}/orphan-env.env" ]] && printf 1 || printf 0)"
+  ' _ \
+    "${WORKCELL_FUNCTIONS_COPY}" \
+    "${TMP_DIR}/runtime-image-cache-prune-state"
+)"
+grep -q '^old_one_exists=0$' <<<"${runtime_image_cache_prune_output}"
+grep -q '^old_two_exists=0$' <<<"${runtime_image_cache_prune_output}"
+grep -q '^newest_exists=1$' <<<"${runtime_image_cache_prune_output}"
+grep -q '^orphan_tar_exists=0$' <<<"${runtime_image_cache_prune_output}"
+grep -q '^orphan_env_exists=0$' <<<"${runtime_image_cache_prune_output}"
+
 DETACHED_CAPTURE_STATE_FILE="${DETACHED_STATE_DIR}/captured-session-assurance"
 DETACHED_CAPTURE_FILE_TRACE_LOG="${DETACHED_STATE_DIR}/captured-session.file-trace.log"
 DETACHED_CAPTURE_AUDIT_SOURCE="${DETACHED_STATE_DIR}/container-session-assurance"

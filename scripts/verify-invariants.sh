@@ -2479,6 +2479,12 @@ if ! rg -q -- '--self-docker-probe' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
+if ! rg -q 'prune_runtime_image_cache_dir' "${ROOT_DIR}/scripts/workcell" ||
+  ! rg -q 'cleanup_workcell_temp_root' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell --gc to cover bounded runtime-image cache and Workcell-owned temp cleanup" >&2
+  exit 1
+fi
+
 if ! rg -q -- '--self-staging-probe' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell to expose a hidden staging probe for invariant testing" >&2
   exit 1
@@ -2806,6 +2812,18 @@ if ! rg -q 'BUILDX_BUILDER="workcell-release-' "${ROOT_DIR}/scripts/verify-relea
   exit 1
 fi
 
+if ! rg -q 'WORKCELL_KEEP_VALIDATOR_IMAGE' "${ROOT_DIR}/scripts/build-and-test.sh" ||
+  ! rg -q 'cleanup_workcell_validator_image' "${ROOT_DIR}/scripts/ci/job-validate.sh" ||
+  ! rg -q 'cleanup_workcell_validator_image' "${ROOT_DIR}/scripts/ci/job-docs.sh"; then
+  echo "Expected local validator lanes to remove disposable validator images unless explicitly retained" >&2
+  exit 1
+fi
+
+if ! rg -q 'WORKCELL_REPRO_OWNS_BUILDER' "${ROOT_DIR}/scripts/verify-reproducible-build.sh"; then
+  echo "Expected reproducible-build validation to remove its default Workcell-owned Buildx builder on exit" >&2
+  exit 1
+fi
+
 if ! rg -q 'buildx_expected_endpoints\(\)' "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"; then
   echo "Expected trusted-docker-client.sh to compute accepted Buildx endpoints from the active Docker context or host" >&2
   exit 1
@@ -2893,8 +2911,9 @@ for required in \
   fi
 done
 
-if ! grep -Fq "CARGO_TARGET_DIR=\"\${CARGO_TARGET_DIR:-\${XDG_CACHE_HOME}/cargo-target}\"" "${ROOT_DIR}/scripts/validate-repo.sh"; then
-  echo "Expected scripts/validate-repo.sh to externalize Cargo target writes away from the mounted workspace" >&2
+if ! grep -Fq "WORKCELL_VALIDATE_CACHE_HOME=\"\${WORKCELL_VALIDATE_CACHE_HOME:-\${XDG_CACHE_HOME}/workcell/validate}\"" "${ROOT_DIR}/scripts/validate-repo.sh" ||
+  ! grep -Fq "CARGO_TARGET_DIR=\"\${CARGO_TARGET_DIR:-\${WORKCELL_VALIDATE_CACHE_HOME}/cargo-target}\"" "${ROOT_DIR}/scripts/validate-repo.sh"; then
+  echo "Expected scripts/validate-repo.sh to externalize Cargo target writes under the Workcell-owned validation cache" >&2
   exit 1
 fi
 
@@ -5078,6 +5097,14 @@ grep -q -- '--add-host aiplatform.googleapis.com:' /tmp/workcell-gemini-vertex-c
 grep -q -- '--add-host us-central1-aiplatform.googleapis.com:' /tmp/workcell-gemini-vertex-comment.stdout
 
 BROKEN_DEBUG_POINTER_PROFILE="${STRICT_PREFLIGHT_PROFILE}-broken-debug-pointer"
+GC_TEMP_FIXTURE="/tmp/workcell-provider-e2e.verify-gc.$$"
+GC_TEMP_TREE_FIXTURE="/tmp/workcell-provider-e2e.verify-gc-tree.$$"
+printf 'stale\n' >"${GC_TEMP_FIXTURE}"
+touch -t 202001010000 "${GC_TEMP_FIXTURE}"
+mkdir -p "${GC_TEMP_TREE_FIXTURE}/nested"
+printf 'readonly stale\n' >"${GC_TEMP_TREE_FIXTURE}/nested/file"
+chmod a-w "${GC_TEMP_TREE_FIXTURE}/nested/file" "${GC_TEMP_TREE_FIXTURE}/nested" "${GC_TEMP_TREE_FIXTURE}"
+touch -t 202001010000 "${GC_TEMP_TREE_FIXTURE}/nested/file" "${GC_TEMP_TREE_FIXTURE}/nested" "${GC_TEMP_TREE_FIXTURE}"
 mkdir -p "${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}"
 printf '%s\n' "${BARRIER_VERIFY_ROOT}/missing-debug.log" >"${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}/workcell.latest-debug-log"
 if "${ROOT_DIR}/scripts/workcell" \
@@ -5094,8 +5121,10 @@ if ! "${ROOT_DIR}/scripts/workcell" --gc --workspace "${BARRIER_VERIFY_ROOT}/mis
   echo "Expected --gc to succeed" >&2
   exit 1
 fi
-grep -q 'Cleaned stale Workcell injection, session-audit, and broken latest-log pointer state.' /tmp/workcell-gc.out
+grep -q 'Cleaned stale Workcell injection, session-audit, broken latest-log pointer, runtime-cache, build-cache, and temp state.' /tmp/workcell-gc.out
 test ! -f "${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}/workcell.latest-debug-log"
+test ! -e "${GC_TEMP_FIXTURE}"
+test ! -e "${GC_TEMP_TREE_FIXTURE}"
 if ! "${ROOT_DIR}/scripts/workcell" gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc-subcommand.out 2>&1; then
   echo "Expected gc subcommand alias to succeed" >&2
   exit 1

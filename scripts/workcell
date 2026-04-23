@@ -303,7 +303,7 @@ Options:
   --logs audit|debug|file-trace|transcript
                                 Print the latest retained log of the selected type
   --auth-status                 Print selected injection/auth posture and exit
-  --gc                          Clean stale Workcell temp state and exit
+  --gc                          Clean stale Workcell temp/cache state and exit
   --prepare                     Seed or refresh the prepared runtime image before launch
   --prepare-only                Seed or refresh the prepared runtime image, then exit without launching
   --repair-profile              Delete a conflicting unmanaged Colima profile before launch
@@ -1183,6 +1183,182 @@ profile_runtime_image_cache_metadata_path() {
 
   validate_colima_profile_name "${profile}"
   printf '%s/%s.env\n' "$(profile_runtime_image_cache_dir)" "${profile}"
+}
+
+workcell_nonnegative_integer_or_default() {
+  local value="$1"
+  local default_value="$2"
+
+  if [[ "${value}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${value}"
+  else
+    printf '%s\n' "${default_value}"
+  fi
+}
+
+workcell_path_mtime_epoch() {
+  local path="$1"
+  local stat_output=""
+
+  if stat_output="$(stat -f '%m' "${path}" 2>/dev/null)" && [[ "${stat_output}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${stat_output}"
+    return 0
+  fi
+  if stat_output="$(stat -c '%Y' "${path}" 2>/dev/null)" && [[ "${stat_output}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${stat_output}"
+    return 0
+  fi
+  printf '0\n'
+}
+
+workcell_path_size_bytes() {
+  local path="$1"
+  local stat_output=""
+
+  if stat_output="$(stat -f '%z' "${path}" 2>/dev/null)" && [[ "${stat_output}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${stat_output}"
+    return 0
+  fi
+  if stat_output="$(stat -c '%s' "${path}" 2>/dev/null)" && [[ "${stat_output}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${stat_output}"
+    return 0
+  fi
+  printf '0\n'
+}
+
+workcell_path_is_stale_minutes() {
+  local path="$1"
+  local stale_minutes="$2"
+  local now_epoch=""
+  local path_epoch=""
+  local max_age_seconds=0
+
+  stale_minutes="$(workcell_nonnegative_integer_or_default "${stale_minutes}" 60)"
+  if [[ "${stale_minutes}" -eq 0 ]]; then
+    return 0
+  fi
+  now_epoch="$(date +%s)"
+  path_epoch="$(workcell_path_mtime_epoch "${path}")"
+  [[ "${path_epoch}" =~ ^[0-9]+$ ]] || return 1
+  max_age_seconds=$((stale_minutes * 60))
+  [[ $((now_epoch - path_epoch)) -ge "${max_age_seconds}" ]]
+}
+
+make_workcell_tree_user_writable() {
+  local target_path="$1"
+
+  [[ -e "${target_path}" || -L "${target_path}" ]] || return 0
+  if [[ -L "${target_path}" ]]; then
+    chmod -h u+w "${target_path}" 2>/dev/null || chmod u+w "${target_path}" 2>/dev/null || true
+    return 0
+  fi
+
+  if command -v chflags >/dev/null 2>&1; then
+    chflags -R nouchg,noschg "${target_path}" 2>/dev/null || true
+  fi
+  find -P "${target_path}" -type d -exec chmod u+rwx {} + 2>/dev/null || true
+  find -P "${target_path}" -type f -exec chmod u+rw {} + 2>/dev/null || true
+  chmod u+rwx "${target_path}" 2>/dev/null || true
+}
+
+runtime_image_cache_max_bytes() {
+  workcell_nonnegative_integer_or_default "${WORKCELL_RUNTIME_IMAGE_CACHE_MAX_BYTES:-2147483648}" 2147483648
+}
+
+runtime_image_cache_keep_recent() {
+  workcell_nonnegative_integer_or_default "${WORKCELL_RUNTIME_IMAGE_CACHE_KEEP_RECENT:-1}" 1
+}
+
+runtime_image_cache_stale_minutes() {
+  workcell_nonnegative_integer_or_default "${WORKCELL_RUNTIME_IMAGE_CACHE_STALE_MINUTES:-60}" 60
+}
+
+cleanup_runtime_image_cache_orphans() {
+  local cache_dir="$1"
+  local stale_minutes="$2"
+  local path=""
+  local pair_path=""
+
+  [[ -d "${cache_dir}" ]] || return 0
+  while IFS= read -r -d '' path; do
+    pair_path="${path%.tar}.env"
+    if [[ ! -f "${pair_path}" ]] && workcell_path_is_stale_minutes "${path}" "${stale_minutes}"; then
+      rm -f "${path}"
+    fi
+  done < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.tar' -print0 2>/dev/null)
+
+  while IFS= read -r -d '' path; do
+    pair_path="${path%.env}.tar"
+    if [[ ! -f "${pair_path}" ]] && workcell_path_is_stale_minutes "${path}" "${stale_minutes}"; then
+      rm -f "${path}"
+    fi
+  done < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.env' -print0 2>/dev/null)
+}
+
+prune_runtime_image_cache_dir() {
+  local cache_dir="$1"
+  local max_bytes="${2:-}"
+  local keep_recent="${3:-}"
+  local stale_minutes="${4:-}"
+  local path=""
+  local size=""
+  local mtime=""
+  local total_bytes=0
+  local index=0
+  local entry=""
+  local -a entries=()
+  local -a sorted_entries=()
+
+  [[ -d "${cache_dir}" ]] || return 0
+  max_bytes="$(workcell_nonnegative_integer_or_default "${max_bytes:-$(runtime_image_cache_max_bytes)}" "$(runtime_image_cache_max_bytes)")"
+  keep_recent="$(workcell_nonnegative_integer_or_default "${keep_recent:-$(runtime_image_cache_keep_recent)}" "$(runtime_image_cache_keep_recent)")"
+  stale_minutes="$(workcell_nonnegative_integer_or_default "${stale_minutes:-$(runtime_image_cache_stale_minutes)}" "$(runtime_image_cache_stale_minutes)")"
+
+  cleanup_runtime_image_cache_orphans "${cache_dir}" "${stale_minutes}"
+
+  while IFS= read -r -d '' path; do
+    size="$(workcell_path_size_bytes "${path}")"
+    mtime="$(workcell_path_mtime_epoch "${path}")"
+    [[ "${size}" =~ ^[0-9]+$ ]] || size=0
+    [[ "${mtime}" =~ ^[0-9]+$ ]] || mtime=0
+    entries+=("${mtime}|${size}|${path}")
+    total_bytes=$((total_bytes + size))
+  done < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.tar' -print0 2>/dev/null)
+
+  ((${#entries[@]} > 0)) || return 0
+  while IFS= read -r entry; do
+    sorted_entries+=("${entry}")
+  done < <(printf '%s\n' "${entries[@]}" | sort -t '|' -k1,1nr)
+  for entry in "${sorted_entries[@]}"; do
+    index=$((index + 1))
+    entry="${entry#*|}"
+    size="${entry%%|*}"
+    path="${entry#*|}"
+    if [[ "${index}" -le "${keep_recent}" ]]; then
+      continue
+    fi
+    if [[ "${total_bytes}" -le "${max_bytes}" ]]; then
+      break
+    fi
+    rm -f "${path}" "${path%.tar}.env"
+    total_bytes=$((total_bytes - size))
+  done
+}
+
+prune_runtime_image_caches() {
+  local cache_root="${WORKCELL_STATE_ROOT}/runtime-image-cache"
+  local cache_dir=""
+  local max_bytes=""
+  local keep_recent=""
+  local stale_minutes=""
+
+  [[ -d "${cache_root}" ]] || return 0
+  max_bytes="$(runtime_image_cache_max_bytes)"
+  keep_recent="$(runtime_image_cache_keep_recent)"
+  stale_minutes="$(runtime_image_cache_stale_minutes)"
+  while IFS= read -r -d '' cache_dir; do
+    prune_runtime_image_cache_dir "${cache_dir}" "${max_bytes}" "${keep_recent}" "${stale_minutes}"
+  done < <(find "${cache_root}" -mindepth 2 -maxdepth 2 -type d -print0 2>/dev/null)
 }
 
 refresh_profile_state() {
@@ -2898,6 +3074,7 @@ cache_profile_runtime_image() {
   chmod 0600 "${tmp_cache}" "${tmp_metadata}" 2>/dev/null || true
   mv "${tmp_cache}" "${cache_path}"
   mv "${tmp_metadata}" "${metadata_path}"
+  prune_runtime_image_cache_dir "${cache_dir}"
 }
 
 restore_profile_runtime_image_cache() {
@@ -5208,6 +5385,74 @@ cleanup_stale_injection_bundles() {
   local bundle_parent="$1"
 
   go_hostutil launcher cleanup-stale-injection-bundles "${bundle_parent}"
+}
+
+cleanup_workcell_temp_root() {
+  local temp_root="$1"
+  local stale_minutes="${2:-}"
+  local candidate=""
+  local pattern=""
+  local -a patterns=(
+    "workcell-docker.*"
+    "workcell-audit-log.*"
+    "workcell-audit-merged.*"
+    "workcell-*.log.*"
+    "workcell-*.failed.*"
+    "workcell-provider-e2e.*"
+    "workcell-repro.*"
+    "workcell-ci-install.*"
+    "workcell-session-scenario.*"
+    "workcell-agent-launch-scenario.*"
+    "workcell-verify-safe-remove.*"
+    "workcell-*.out"
+    "workcell-*.stdout"
+    "workcell-*.stderr"
+    "workcell-*.err"
+  )
+  local nullglob_was_set=0
+
+  [[ -d "${temp_root}" ]] || return 0
+  stale_minutes="$(workcell_nonnegative_integer_or_default "${stale_minutes:-${WORKCELL_GC_STALE_MINUTES:-60}}" 60)"
+
+  if shopt -q nullglob; then
+    nullglob_was_set=1
+  fi
+  shopt -s nullglob
+
+  for pattern in "${patterns[@]}"; do
+    for candidate in "${temp_root}"/${pattern}; do
+      [[ -O "${candidate}" ]] || continue
+      workcell_path_is_stale_minutes "${candidate}" "${stale_minutes}" || continue
+      make_workcell_tree_user_writable "${candidate}"
+      rm -rf "${candidate}"
+    done
+  done
+
+  if [[ "${nullglob_was_set}" -eq 0 ]]; then
+    shopt -u nullglob
+  fi
+}
+
+cleanup_workcell_cache_root() {
+  local cache_root=""
+  local stale_minutes="${2:-}"
+
+  cache_root="$1"
+  [[ -d "${cache_root}" ]] || return 0
+  stale_minutes="$(workcell_nonnegative_integer_or_default "${stale_minutes:-${WORKCELL_GC_STALE_MINUTES:-60}}" 60)"
+  workcell_path_is_stale_minutes "${cache_root}" "${stale_minutes}" || return 0
+  make_workcell_tree_user_writable "${cache_root}"
+  rm -rf "${cache_root}"
+}
+
+cleanup_workcell_cache_roots() {
+  local stale_minutes="${1:-}"
+
+  cleanup_workcell_cache_root "${REAL_HOME}/Library/Caches/workcell" "${stale_minutes}"
+  cleanup_workcell_cache_root "${REAL_HOME}/.cache/workcell" "${stale_minutes}"
+  if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+    cleanup_workcell_cache_root "${XDG_CACHE_HOME}/workcell" "${stale_minutes}"
+  fi
 }
 
 prepare_injection_direct_mounts() {
@@ -8103,7 +8348,12 @@ if [[ "${GC}" -eq 1 ]]; then
   cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
   cleanup_stale_session_audit_dirs "${WORKCELL_STATE_ROOT}" "${COLIMA_STATE_ROOT}"
   cleanup_stale_latest_log_pointers "${WORKCELL_STATE_ROOT}" "${COLIMA_STATE_ROOT}"
-  echo "Cleaned stale Workcell injection, session-audit, and broken latest-log pointer state."
+  prune_runtime_image_caches
+  cleanup_workcell_temp_root "/tmp"
+  cleanup_workcell_temp_root "${TMPDIR:-/tmp}"
+  cleanup_workcell_temp_root "${WORKCELL_STATE_ROOT}/tmp"
+  cleanup_workcell_cache_roots ""
+  echo "Cleaned stale Workcell injection, session-audit, broken latest-log pointer, runtime-cache, build-cache, and temp state."
   exit 0
 fi
 declare -a PROVIDER_ARGS=()

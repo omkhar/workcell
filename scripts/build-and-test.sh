@@ -12,6 +12,7 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     PATH="${TRUSTED_HOST_PATH}" \
     HOME="${HOME:-/tmp}" \
     TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_KEEP_VALIDATOR_IMAGE="${WORKCELL_KEEP_VALIDATOR_IMAGE:-0}" \
     WORKCELL_SANITIZED_ENTRYPOINT=1 \
     /bin/bash -p "$0" "$@"
 fi
@@ -26,6 +27,17 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 USE_DOCKER=0
+VALIDATOR_IMAGE_TAG=""
+
+cleanup() {
+  if [[ "${USE_DOCKER}" -eq 1 ]] &&
+    [[ "${WORKCELL_KEEP_VALIDATOR_IMAGE:-0}" != "1" ]] &&
+    [[ -n "${VALIDATOR_IMAGE_TAG:-}" ]] &&
+    command -v docker >/dev/null 2>&1; then
+    docker image rm -f "${VALIDATOR_IMAGE_TAG}" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
 
 default_snapshot_parent() {
   local raw_parent=""
@@ -147,7 +159,8 @@ done
 "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
 
 if [[ "${USE_DOCKER}" -eq 1 ]]; then
-  IMAGE_TAG="workcell-validator:local"
+  IMAGE_TAG="workcell-validator:local-$(cksum "${ROOT_DIR}/tools/validator/Dockerfile" | awk '{print $1}')-$$"
+  VALIDATOR_IMAGE_TAG="${IMAGE_TAG}"
 
   if ! command -v docker &>/dev/null; then
     echo "ERROR: --docker requires Docker. Install Docker Desktop or colima." >&2

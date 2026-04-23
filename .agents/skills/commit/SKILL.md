@@ -106,6 +106,10 @@ for convenience.
   justify why it must remain.
 - Remove machine-specific details from public repo surfaces and clean repo
   detritus before finalizing the change.
+- Treat Workcell-owned validation residue as part of repo detritus. Before
+  signing after local validation churn, run `./scripts/workcell --gc` or a
+  narrower cleanup path and confirm the worktree is not relying on leftover
+  temp files, validator images, or runtime-cache debris.
 - If commit hooks are bypassed, rerun the equivalent validations manually and
   record the reason in the working notes or final report.
 - If a task teaches a reusable lesson about commit sizing, validation,

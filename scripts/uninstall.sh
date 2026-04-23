@@ -14,10 +14,11 @@ Remove Workcell-owned local install links and managed host state:
   - ~/.local/bin/workcell
   - ~/.local/share/man/man1/workcell.1
   - ~/.local/state/workcell
+  - Workcell-owned build cache roots
   - ~/.colima/workcell-* profiles, matching _lima dirs, matching _lima/_disks dirs, and Workcell locks
   - ~/Library/Caches/colima/workcell-host-inputs
   - ~/Library/Caches/colima/workcell-shadow
-  - /tmp/workcell-docker.* and /tmp/workcell-*.log.*
+  - /tmp/workcell-docker.*, /tmp/workcell-provider-e2e.*, and /tmp/workcell-*.log/failed scratch
 
 Preserved on purpose:
   - ~/.config/workcell/*
@@ -82,6 +83,8 @@ MAN_PATH="${REAL_HOME}/.local/share/man/man1/workcell.1"
 STATE_ROOT="${REAL_HOME}/.local/state/workcell"
 INJECTION_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
 SHADOW_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
+MACOS_CACHE_ROOT="${REAL_HOME}/Library/Caches/workcell"
+XDG_WORKCELL_CACHE_ROOT="${XDG_CACHE_HOME:-${REAL_HOME}/.cache}/workcell"
 
 declare -a PROFILE_NAMES=()
 declare -a TEMP_ROOTS=()
@@ -331,6 +334,13 @@ cleanup_temp_root() {
     "workcell-audit-log.*"
     "workcell-audit-merged.*"
     "workcell-*.log.*"
+    "workcell-*.failed.*"
+    "workcell-provider-e2e.*"
+    "workcell-repro.*"
+    "workcell-ci-install.*"
+    "workcell-session-scenario.*"
+    "workcell-agent-launch-scenario.*"
+    "workcell-verify-safe-remove.*"
   )
   local pattern=""
   local nullglob_was_set=0
@@ -370,6 +380,8 @@ remove_workcell_symlink "${MAN_PATH}" "man/workcell.1" "man page"
 remove_path "${STATE_ROOT}"
 remove_path "${INJECTION_ROOT}"
 remove_path "${SHADOW_ROOT}"
+remove_path "${MACOS_CACHE_ROOT}"
+remove_path "${XDG_WORKCELL_CACHE_ROOT}"
 
 append_unique_temp_root "/tmp"
 append_unique_temp_root "${TMPDIR:-}"
