@@ -113,27 +113,31 @@ If the task is release-bound, also read:
    support-claim or backend changes.
 3. Create signed commits using the repo-local `commit` skill.
 4. Run the focused local validation for the change before publication.
-5. Publish `main`-based PRs with host-side `./scripts/repo-publish-pr.sh`
+5. If validation, CI follow-up, or failed live runs created Workcell-owned
+   residue, run `./scripts/workcell --gc` or the narrow cleanup path before
+   publication. Do not leave temp roots, validator images, or over-budget
+   runtime-cache debris for later turns.
+6. Publish `main`-based PRs with host-side `./scripts/repo-publish-pr.sh`
    using a draft PR by default. Only fall back to the lower-level
    `./scripts/workcell publish-pr` path for explicit lower-assurance
    non-`main` exceptions or other repo-approved special cases.
-6. Follow repo-owned checks to completion.
-7. If a repo-owned check fails:
+7. Follow repo-owned checks to completion.
+8. If a repo-owned check fails:
    - inspect the failing GitHub Actions logs or PR checks
    - fix the underlying issue locally
    - rerun the smallest local validation that proves the fix
    - push the signed follow-up commit host-side to the existing branch
    - continue following checks until green
-8. Sweep top-level comments, inline comments, unresolved threads, and async
+9. Sweep top-level comments, inline comments, unresolved threads, and async
    reviewer feedback.
-9. When checks are green and no actionable findings remain, mark the PR ready
+10. When checks are green and no actionable findings remain, mark the PR ready
    unless the user explicitly asked to keep it draft. Do not mark non-`main`
    base PRs ready; they stay lower-assurance draft-only review units.
-10. After marking ready, re-check checks and review surfaces again.
-11. If merge is part of the task, repeat the review sweep immediately before
+11. After marking ready, re-check checks and review surfaces again.
+12. If merge is part of the task, repeat the review sweep immediately before
     merge, merge, then follow merged `main` workflows until repo-owned lanes
     are green.
-12. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
+13. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
     update the relevant repo-local instructions in the same change stream or a
     separate follow-on PR.
 

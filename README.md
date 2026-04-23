@@ -295,6 +295,7 @@ workcell why --agent codex --mode strict --credential codex_auth
 workcell --agent codex --doctor --workspace /path/to/repo
 workcell --agent codex --inspect --workspace /path/to/repo
 workcell --agent codex --auth-status --workspace /path/to/repo
+workcell --gc
 ./scripts/update-upstream-pins.sh --check
 ./scripts/publish-provider-bump-pr.sh
 workcell --logs audit --colima-profile wcl-...
@@ -315,6 +316,10 @@ and worktree columns without changing the default compact inventory view.
 `workcell session show --text` renders stable key=value lines for the same
 target-aware record, and `workcell session start|send|stop` emit stable
 key=value summaries so host-side detached control stays scriptable.
+`workcell --gc` removes stale Workcell-owned temp scratch, disposable
+session-audit directories, broken latest-log pointers, and over-budget runtime
+image cache entries without deleting durable session records. It also removes
+stale regenerateable Workcell build cache entries.
 
 ## Release posture
 

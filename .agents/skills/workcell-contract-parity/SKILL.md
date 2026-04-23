@@ -100,6 +100,9 @@ If the change is release-bound, also read:
   repo-level dead-code check green.
 - Public-repo hygiene is part of correctness. Remove machine-specific details
   from public repo surfaces and clean repo detritus before finishing a change.
+- Cleanup semantics are part of the operator contract. If `workcell --gc`,
+  uninstall, validator parity, or cache-retention behavior changes, update the
+  manpage/help text and focused evidence in the same review unit.
 - Re-check PR comments and review threads after CI turns green and immediately
   before merge.
 - Treat newly surfaced review findings, docs drift, or parity regressions as

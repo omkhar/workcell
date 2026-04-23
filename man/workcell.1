@@ -374,9 +374,11 @@ manual;
 remains accepted for CLI symmetry.
 .TP
 .B --gc
-Remove stale host-side session audit and injection-bundle directories plus
-broken latest-log pointers from managed profile state and exit. Also available
-as
+Remove stale host-side session audit and injection-bundle directories, broken
+latest-log pointers, Workcell-owned temp scratch, and over-budget runtime image
+cache entries from managed profile state and exit. Stale regenerateable
+Workcell build cache entries are also removed. Durable session records are
+not garbage-collected. Also available as
 .BR "workcell gc" .
 .TP
 .B publish-pr

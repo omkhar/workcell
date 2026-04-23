@@ -16,6 +16,17 @@ cleanup_workcell_ci_docker() {
   cleanup_workcell_trusted_docker_client
 }
 
+cleanup_workcell_validator_image() {
+  local image="$1"
+
+  [[ -n "${image}" ]] || return 0
+  [[ "${WORKCELL_KEEP_VALIDATOR_IMAGE:-0}" != "1" ]] || return 0
+  if [[ -z "${DOCKER_CONTEXT_NAME:-}" ]]; then
+    setup_workcell_ci_docker >/dev/null 2>&1 || return 0
+  fi
+  workcell_ci_docker image rm -f "${image}" >/dev/null 2>&1 || true
+}
+
 workcell_ci_docker() {
   if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
     docker --context "${DOCKER_CONTEXT_NAME}" "$@"

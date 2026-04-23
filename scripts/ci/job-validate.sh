@@ -6,6 +6,7 @@ source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 source "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
 PROFILE="${WORKCELL_CI_VALIDATE_PROFILE:-pr-parity}"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-}"
+VALIDATOR_IMAGE_INPUT="${WORKCELL_VALIDATOR_IMAGE:-}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 ARCHIVE_REF="${WORKCELL_CI_ARCHIVE_REF:-$(git -C "${ROOT_DIR}" rev-parse HEAD 2>/dev/null || printf 'HEAD')}"
 REPOSITORY_NAME="${GITHUB_REPOSITORY:-workcell/local}"
@@ -61,6 +62,9 @@ else
 fi
 
 cleanup() {
+  if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then
+    cleanup_workcell_validator_image "${VALIDATOR_IMAGE:-}"
+  fi
   cleanup_workcell_ci_docker
   if [[ "${KEEP_ARTIFACT_DIR}" -eq 0 ]]; then
     rm -rf "${ARTIFACT_DIR}"

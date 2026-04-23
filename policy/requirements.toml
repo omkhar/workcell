@@ -115,6 +115,7 @@ evidence = [
   "tests/scenarios/shared/test-codex-resolver-launcher.sh",
   "tests/scenarios/shared/test-agent-launch-smoke.sh",
   "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh",
+  "tests/scenarios/shared/test-session-commands.sh",
 ]
 docs = [
   "README.md",

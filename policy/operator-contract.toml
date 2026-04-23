@@ -164,8 +164,8 @@ target_state = "retain"
 title = "Session command surface"
 support = "supported"
 canonical = "workcell session"
-discoverability = ["top-level-help", "manpage"]
-docs = ["man/workcell.1"]
+discoverability = ["top-level-help", "readme", "manpage"]
+docs = ["README.md", "man/workcell.1"]
 evidence = ["tests/scenarios/shared/test-session-commands.sh"]
 requirements = ["functional.FR-007"]
 target_state = "retain"
@@ -349,7 +349,7 @@ requirements = ["functional.FR-006"]
 target_state = "retain"
 
 [workflows.launch_gc]
-title = "Clean stale local state"
+title = "Clean stale local state and bounded caches"
 support = "supported"
 canonical = "--gc"
 aliases = ["workcell gc"]
@@ -357,7 +357,7 @@ alias_lifecycle = "compatibility-only"
 alias_probes = ["gc --help"]
 discoverability = ["top-level-help", "manpage"]
 docs = ["man/workcell.1"]
-evidence = ["scripts/verify-invariants.sh"]
+evidence = ["scripts/verify-invariants.sh", "tests/scenarios/shared/test-session-commands.sh"]
 requirements = ["functional.FR-006"]
 target_state = "retain"
 

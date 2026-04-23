@@ -70,7 +70,8 @@ That matters because:
 
 - the host launcher already owns the trusted control plane
 - the transient container should stay disposable
-- `--gc` already cleans transient audit dirs
+- `--gc` already cleans transient audit dirs, Workcell-owned temp scratch, and
+  bounded runtime-image cache residue
 - durable session inventory should survive the transient session cleanup path
 
 Storing records under a Workcell-owned target-state root instead of inside
@@ -176,7 +177,8 @@ clients, and enterprise inventory belong in [ROADMAP.md](../ROADMAP.md).
 
 ## Residual Risks
 
-- There is no retention policy yet for durable session records.
+- Durable session records intentionally survive `--gc`; operators delete them
+  with `workcell session delete` when their audit value ends.
 - Aborted launches rely on host cleanup logic to mark the record as aborted.
 - Detached-session control exists, but there is still no queue, pause/resume,
   or centralized session administration plane.

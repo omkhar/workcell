@@ -34,6 +34,7 @@ OCI_EXPORT_A=""
 OCI_EXPORT_B=""
 REPRO_REFERENCE_MANIFEST=""
 WORKCELL_DOCKER_SANDBOX_ROOT=""
+WORKCELL_REPRO_OWNS_BUILDER=0
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
@@ -113,6 +114,9 @@ prune_repro_builder_cache() {
 }
 
 cleanup() {
+  if [[ "${WORKCELL_REPRO_OWNS_BUILDER:-0}" -eq 1 ]] && [[ -n "${BUILDX_BUILDER:-}" ]]; then
+    buildx_cmd rm --force "${BUILDX_BUILDER}" >/dev/null 2>&1 || true
+  fi
   cleanup_workcell_trusted_docker_client
   rm -rf "${OCI_EXPORT_ROOT}"
 }
@@ -137,6 +141,7 @@ select_docker_context
 if [[ -z "${BUILDX_BUILDER:-}" ]]; then
   safe_builder_context="${DOCKER_CONTEXT_NAME//[^[:alnum:]_.-]/-}"
   BUILDX_BUILDER="workcell-repro-${safe_builder_context}"
+  WORKCELL_REPRO_OWNS_BUILDER=1
 fi
 ensure_workcell_selected_builder
 buildx_cmd inspect --bootstrap >/dev/null
