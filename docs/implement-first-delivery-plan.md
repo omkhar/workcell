@@ -7,8 +7,8 @@ The longer-lived runtime-target and deployment-reach program lives in
 [`docs/runtime-target-expansion-plan.md`](runtime-target-expansion-plan.md),
 and the deterministic phase breakdown lives in
 [`docs/runtime-target-phase-plan.md`](runtime-target-phase-plan.md).
-Phases 1 through 5 of that phase plan are now implemented in the repository;
-this document now defines the immediate bridge into Phase 6 and the
+Phases 1 through 6 of that phase plan are now implemented in the repository;
+this document now defines the immediate bridge into Phase 7 and the
 prerequisite work for later backend phases.
 
 The current repo already includes durable session records plus detached
@@ -23,11 +23,14 @@ matrix on the reviewed policy path. The current repo also ships the trusted
 validation-host lane, canonical host-support matrix, and fail-closed
 unsupported-combination diagnostics from Phase 4. The current repo now also
 ships the canonical preview-only remote-VM contract, shared fake target, and
-deterministic conformance harness from Phase 5. The active work in this slice
-is now the first cross-platform `compat` backend. This document also records
-the queued scenario-evidence and later-backend prerequisites so later phases
-can start cleanly without pulling raw remote-provider delivery forward into
-Phase 6.
+deterministic conformance harness from Phase 5. The current repo now also
+ships the first cross-platform `compat` backend through the explicit
+`local_compat/docker-desktop/compat` path, deterministic backend selection and
+fail-closed diagnostics, and live Docker Desktop certification smoke from
+Phase 6. The active work in this slice is now the first cloud `remote_vm`
+backend. This document also records the queued scenario-evidence and
+later-backend prerequisites so later phases can start cleanly without pulling
+additional provider breadth forward into Phase 7.
 
 ## Principles
 
@@ -58,20 +61,20 @@ Owner-lane default:
   distinct Codex-agent lanes or threads unless a later change or runbook names
   specific humans explicitly
 
-## Phase 6 Exit Ownership
+## Phase 7 Exit Ownership
 
 - EM:
-  holds the `compat` support boundary, rollback approval, and the decision
-  that the first cross-platform backend is ready to move forward
+  holds the preview support boundary, rollout gate, and the decision that the
+  first cloud backend is ready to move forward
 - TL:
-  owns `docker-desktop` integration, deterministic backend selection, and
-  rollback readiness on the shared target model
+  owns `aws-ec2-ssm` integration, deterministic contract reuse, and rollback
+  readiness on the shared target model
 - contract and docs owner:
-  owns explicit `compat` labeling, the canonical matrices, and operator
+  owns preview-boundary labeling, the canonical matrices, and operator
   guidance for enable, disable, and rollback
 - validation owner:
-  owns repo-required backend-selection, state-routing, and fail-closed
-  evidence plus the validation-host certification lane that bounds host claims
+  owns repo-required remote-contract reuse evidence plus the live AWS
+  certification lane that bounds support claims
 
 ## Delivered Foundation
 
@@ -89,40 +92,42 @@ to the next slice rather than as active delivery work:
   fail-closed unsupported-combination diagnostics from Phase 4
 - the canonical preview-only remote-VM contract, shared fake target, and
   deterministic conformance harness from Phase 5
+- the explicit `local_compat/docker-desktop/compat` backend plus deterministic
+  backend-selection, fail-closed diagnostics, rollback guidance, and live
+  Docker Desktop certification smoke from Phase 6
 
-## Active Phase 6 Track
+## Active Phase 7 Track
 
-### 1. Docker Desktop Compatibility Backend
+### 1. AWS Remote VM Preview Backend
 
 Scope for this delivery slice:
 
-- ship the first cross-platform `compat` backend without blurring it into the
-  current strict Colima boundary
-- feature-flag `docker-desktop` and keep it explicitly lower assurance than
-  the strict path
-- make backend selection, state-root routing, and unsupported-combination
-  diagnostics deterministic on top of the completed target model
-- require host-matrix certification evidence plus explicit enable, disable,
-  and rollback guidance in the same slice
-- keep raw `remote_vm` providers and managed-workstation delivery out of this
-  active slice
+- ship the first cloud `remote_vm` backend on top of the completed canonical
+  remote-contract harness without redefining the contract
+- keep the rollout preview-only and audited, with explicit brokered access and
+  no inbound public SSH requirement on the supported path
+- reuse the canonical support matrices, host-support boundaries, and provider
+  bootstrap surfaces rather than introducing provider-specific forks
+- require deterministic harness reuse plus live AWS certification evidence and
+  explicit enable, disable, and rollback guidance in the same slice
+- keep second-provider and managed-workstation delivery out of this active
+  slice
 
 Staffing:
 
-- EM: compat support-boundary owner
-- TL: compat backend lead
-- SWE A: backend selection and state routing
-- SWE B: compat docs, rollback guidance, and deterministic evidence
-- validation owner: repo-required selection and fail-closed evidence plus
-  certification-lane lead
+- EM: preview support-boundary owner
+- TL: AWS backend lead
+- SWE A: remote contract integration and audited lifecycle wiring
+- SWE B: preview docs, rollback guidance, and deterministic evidence
+- validation owner: shared harness reuse evidence plus certification-lane lead
 
 Phase boundary:
 
 - this is the active implementation slice and the only track that should change
-  Phase 6 status from planned to complete
+  Phase 7 status from planned to complete
 - the remaining tracks below are prerequisites and follow-on planning surfaces
-  for later deterministic phases, not authority to ship raw remote VM
-  providers in the current slice
+  for later deterministic phases, not authority to ship additional cloud or
+  managed-workstation targets in the current slice
 
 ## Immediate Follow-On Prerequisites
 
@@ -144,7 +149,7 @@ Staffing:
 
 ## Later Phase Handoff
 
-Before Phase 7, 8, or 9 begins implementation, assign distinct owner lanes:
+Before Phase 8 or 9 begins implementation, assign distinct owner lanes:
 
 - EM:
   support-boundary owner for rollout scope, preview/GA decisions, and rollback
@@ -162,8 +167,8 @@ Before Phase 7, 8, or 9 begins implementation, assign distinct owner lanes:
    provider/bootstrap support matrix and completed Phase 4 host-support
    surfaces plus the completed Phase 5 remote-contract harness as fixed input
    to the next slice
-2. ship the first `compat` backend before any raw remote-VM provider adapter
-   work
+2. ship the first cloud `remote_vm` backend before any second-provider or
+   managed-workstation delivery work
 3. expand authenticated, lower-assurance, and target-contract coverage as each
    later phase lands rather than as a cleanup pass
 4. leave later raw `remote_vm` and managed-workstation delivery to the later
@@ -179,5 +184,5 @@ Before Phase 7, 8, or 9 begins implementation, assign distinct owner lanes:
 - secret materialization paths that bypass the reviewed host policy flow
 - automatic backend fallback
 - broad Linux or Windows parity claims
-- selecting or shipping `aws-ec2-ssm`, `gcp-vm`, or `azure-vm` in this slice
+- selecting or shipping `gcp-vm` or `azure-vm` in this slice
 - Kubernetes-backed execution or managed-workstation delivery in this slice
