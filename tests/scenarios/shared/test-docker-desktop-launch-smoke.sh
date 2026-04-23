@@ -2,16 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TMP_DIR="${TMPDIR:-/tmp}/workcell-docker-desktop-launch-scenario"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker-desktop-launch-scenario.XXXXXX")"
 
 REAL_HOME="$(cd "${HOME}" && pwd -P)"
 AUTH_ROOT="${TMP_DIR}/auth"
 WORKSPACE="${TMP_DIR}/workspace"
 TARGET_STATE_DIR=""
 PROFILE_NAME=""
-
-rm -rf "${TMP_DIR}"
-mkdir -p "${TMP_DIR}"
 
 cleanup() {
   local status=$?
