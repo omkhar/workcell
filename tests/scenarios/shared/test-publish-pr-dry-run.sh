@@ -236,6 +236,26 @@ grep -q '^publish_branch=feature/repo-wrapper-ok$' <<<"${wrapper_dry_run}"
 grep -q '^publish_base=main$' <<<"${wrapper_dry_run}"
 grep -q '^publish_snapshot=worktree$' <<<"${wrapper_dry_run}"
 
+POISON_BIN="${TMP_DIR}/poison-bin"
+POISON_MARKER="${TMP_DIR}/poisoned-tool.marker"
+mkdir -p "${POISON_BIN}"
+for tool in bash dirname git jq; do
+  cat >"${POISON_BIN}/${tool}" <<EOF
+#!/bin/sh
+printf '%s\n' '${tool}' >>'${POISON_MARKER}'
+exit 99
+EOF
+  chmod +x "${POISON_BIN}/${tool}"
+done
+poisoned_wrapper_dry_run="$(PATH="${POISON_BIN}:${PATH}" "${ROOT_DIR}/scripts/repo-publish-pr.sh" \
+  --workspace "${FIXTURE}" \
+  --branch feature/repo-wrapper-poisoned-path \
+  --title "Repo wrapper poisoned PATH" \
+  --commit-message "Repo wrapper poisoned PATH" \
+  --dry-run)"
+grep -q '^publish_branch=feature/repo-wrapper-poisoned-path$' <<<"${poisoned_wrapper_dry_run}"
+test ! -e "${POISON_MARKER}"
+
 rm -f "$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-parity.json"
 override_dry_run="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \
   --workspace "${FIXTURE}" \

@@ -61,6 +61,19 @@ func writePolicy(tb testing.TB, path, content string) {
 	}
 }
 
+func writeCodexHomeAuth(tb testing.TB, home, content string) string {
+	tb.Helper()
+	path := filepath.Join(home, ".codex", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		tb.Fatal(err)
+	}
+	writePolicy(tb, path, content)
+	if err := os.Chmod(path, 0o600); err != nil {
+		tb.Fatal(err)
+	}
+	return path
+}
+
 func readJSON(tb testing.TB, path string) map[string]any {
 	tb.Helper()
 	data, err := os.ReadFile(path)
@@ -278,11 +291,7 @@ func TestRunLaunchModeAcceptsTestExportFile(t *testing.T) {
 func TestRunMetadataModeMarksCodexHomeResolverReadyWhenHostFileExists(t *testing.T) {
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
-	codexAuthPath := filepath.Join(root, "codex-auth.json")
-	writePolicy(t, codexAuthPath, "{\"token\":\"codex\"}\n")
-	if err := os.Chmod(codexAuthPath, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeCodexHomeAuth(t, root, "{\"token\":\"codex\"}\n")
 	writePolicy(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"[credentials.codex_auth]",
@@ -303,7 +312,7 @@ func TestRunMetadataModeMarksCodexHomeResolverReadyWhenHostFileExists(t *testing
 		"--output-policy", filepath.Join(outputRoot, "resolved-policy.toml"),
 		"--output-metadata", filepath.Join(outputRoot, "resolver-metadata.json"),
 		"--output-root", outputRoot,
-	}, map[string]string{testCodexAuthFileEnv: codexAuthPath})
+	}, map[string]string{"HOME": root})
 	if code != 0 {
 		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
 	}
@@ -331,11 +340,7 @@ func TestRunMetadataModeMarksCodexHomeResolverReadyWhenHostFileExists(t *testing
 func TestRunLaunchModeMaterializesCodexHomeResolver(t *testing.T) {
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "policy.toml")
-	codexAuthPath := filepath.Join(root, "codex-auth.json")
-	writePolicy(t, codexAuthPath, "{\"token\":\"codex\"}\n")
-	if err := os.Chmod(codexAuthPath, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeCodexHomeAuth(t, root, "{\"token\":\"codex\"}\n")
 	writePolicy(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"[credentials.codex_auth]",
@@ -356,7 +361,7 @@ func TestRunLaunchModeMaterializesCodexHomeResolver(t *testing.T) {
 		"--output-policy", filepath.Join(outputRoot, "resolved-policy.toml"),
 		"--output-metadata", filepath.Join(outputRoot, "resolver-metadata.json"),
 		"--output-root", outputRoot,
-	}, map[string]string{testCodexAuthFileEnv: codexAuthPath})
+	}, map[string]string{"HOME": root})
 	if code != 0 {
 		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
 	}
@@ -371,6 +376,56 @@ func TestRunLaunchModeMaterializesCodexHomeResolver(t *testing.T) {
 	}
 	assertSnapshotEqual(t, filepath.Join(resolvedOutputRoot, "resolved", "credentials", "codex_auth.json"), fileSnapshot{
 		data: []byte("{\"token\":\"codex\"}\n"),
+		mode: 0o600,
+	})
+}
+
+func TestRunCodexHomeResolverIgnoresLegacyTestOverrideEnv(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	attackerAuthPath := filepath.Join(root, "attacker-secret")
+	writePolicy(t, attackerAuthPath, "unexpected secret\n")
+	if err := os.Chmod(attackerAuthPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writePolicy(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.codex_auth]",
+		`resolver = "codex-home-auth-file"`,
+		`materialization = "ephemeral"`,
+	}, "\n")+"\n")
+
+	outputRoot := filepath.Join(root, "out")
+	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runResolveCredentialSources(t, []string{
+		"--policy", policyPath,
+		"--agent", "codex",
+		"--mode", "strict",
+		"--resolution-mode", "metadata",
+		"--output-policy", filepath.Join(outputRoot, "resolved-policy.toml"),
+		"--output-metadata", filepath.Join(outputRoot, "resolver-metadata.json"),
+		"--output-root", outputRoot,
+	}, map[string]string{
+		"HOME":                          filepath.Join(root, "empty-home"),
+		"WORKCELL_TEST_CODEX_AUTH_FILE": attackerAuthPath,
+	})
+	if code != 0 {
+		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+
+	resolvedOutputRoot, err := filepath.EvalSymlinks(outputRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := readJSON(t, filepath.Join(resolvedOutputRoot, "resolver-metadata.json"))
+	if got := metadata["credential_resolution_states"].(map[string]any)["codex_auth"]; got != "configured-only" {
+		t.Fatalf("credential_resolution_states.codex_auth = %v, want configured-only", got)
+	}
+	assertSnapshotEqual(t, filepath.Join(resolvedOutputRoot, "resolved", "credentials", "codex_auth.json"), fileSnapshot{
+		data: []byte("{\"resolver\": \"codex-home-auth-file\", \"workcell\": \"metadata-only\"}\n"),
 		mode: 0o600,
 	})
 }

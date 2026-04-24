@@ -2193,22 +2193,78 @@ func isSafePullRequestTargetWorkflow(workflowText, workflowPath string) error {
 	if !strings.Contains(workflowText, "kusari-inspector suppress") {
 		return fmt.Errorf("%s must document the reviewed Kusari suppression for pull_request_target", workflowPath)
 	}
-	if !regexp.MustCompile(`(?m)^permissions:\s*\{\}\s*$`).MatchString(workflowText) {
+	root, err := parseWorkflowRoot(workflowText, workflowPath)
+	if err != nil {
+		return err
+	}
+	permissionsNodes := yamlMappingValues(root, "permissions")
+	if len(permissionsNodes) != 1 || permissionsNodes[0].Kind != yaml.MappingNode || len(permissionsNodes[0].Content) != 0 {
 		return fmt.Errorf("%s must keep top-level permissions: {}", workflowPath)
 	}
-	if regexp.MustCompile(`(?m)^[[:space:]]{2,}permissions:`).MatchString(workflowText) {
-		return fmt.Errorf("%s must not grant job-level permissions under pull_request_target", workflowPath)
+	jobsNodes := yamlMappingValues(root, "jobs")
+	if len(jobsNodes) != 1 || jobsNodes[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("%s must define pull_request_target jobs as a mapping", workflowPath)
 	}
-	if regexp.MustCompile(`(?m)^[[:space:]]{4,}uses:\s+`).MatchString(workflowText) {
-		return fmt.Errorf("%s must not call reusable workflows under pull_request_target", workflowPath)
-	}
-	if strings.Contains(workflowText, "actions/checkout@") {
-		return fmt.Errorf("%s must not checkout repository contents when using pull_request_target", workflowPath)
-	}
-	if regexp.MustCompile(`(?m)^\s*-\s+uses:\s+`).MatchString(workflowText) {
-		return fmt.Errorf("%s must not use external actions when using pull_request_target", workflowPath)
+	for i := 1; i < len(jobsNodes[0].Content); i += 2 {
+		job := jobsNodes[0].Content[i]
+		if job.Kind != yaml.MappingNode {
+			return fmt.Errorf("%s must define pull_request_target jobs as mapping nodes", workflowPath)
+		}
+		if len(yamlMappingValues(job, "permissions")) > 0 {
+			return fmt.Errorf("%s must not grant job-level permissions under pull_request_target", workflowPath)
+		}
+		if len(yamlMappingValues(job, "uses")) > 0 {
+			return fmt.Errorf("%s must not call reusable workflows under pull_request_target", workflowPath)
+		}
+		for _, steps := range yamlMappingValues(job, "steps") {
+			if steps.Kind != yaml.SequenceNode {
+				return fmt.Errorf("%s must define pull_request_target steps as a sequence", workflowPath)
+			}
+			for _, step := range steps.Content {
+				if step.Kind != yaml.MappingNode {
+					return fmt.Errorf("%s must define pull_request_target steps as mapping nodes", workflowPath)
+				}
+				for _, uses := range yamlMappingValues(step, "uses") {
+					if strings.HasPrefix(yamlScalarValue(uses), "actions/checkout@") {
+						return fmt.Errorf("%s must not checkout repository contents when using pull_request_target", workflowPath)
+					}
+					return fmt.Errorf("%s must not use external actions when using pull_request_target", workflowPath)
+				}
+			}
+		}
 	}
 	return nil
+}
+
+func parseWorkflowRoot(workflowText, workflowPath string) (*yaml.Node, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return nil, fmt.Errorf("%s: parse workflow YAML: %w", workflowPath, err)
+	}
+	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("%s must be a YAML mapping", workflowPath)
+	}
+	return document.Content[0], nil
+}
+
+func yamlMappingValues(mapping *yaml.Node, key string) []*yaml.Node {
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+	values := []*yaml.Node{}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Kind == yaml.ScalarNode && mapping.Content[i].Value == key {
+			values = append(values, mapping.Content[i+1])
+		}
+	}
+	return values
+}
+
+func yamlScalarValue(node *yaml.Node) string {
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return strings.TrimSpace(node.Value)
 }
 
 func mustGlob(pattern string) []string {

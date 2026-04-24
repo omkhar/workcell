@@ -328,6 +328,30 @@ jobs:
 	}
 }
 
+func TestSafePullRequestTargetWorkflowRejectsInlineJobLevelPermissions(t *testing.T) {
+	t.Parallel()
+
+	workflow := `name: PR base policy
+
+on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target exception.
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs: { pr-base-policy: { name: Allowed PR base, runs-on: ubuntu-latest, permissions: { contents: write }, steps: [ { run: true } ] } }
+`
+	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	if err == nil {
+		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted inline job-level permissions under pull_request_target")
+	}
+	if !strings.Contains(err.Error(), "must not grant job-level permissions") {
+		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
+	}
+}
+
 func TestSafePullRequestTargetWorkflowRejectsReusableWorkflowCalls(t *testing.T) {
 	t.Parallel()
 
@@ -351,6 +375,78 @@ jobs:
 	}
 	if !strings.Contains(err.Error(), "must not call reusable workflows") {
 		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
+	}
+}
+
+func TestSafePullRequestTargetWorkflowRejectsInlineReusableWorkflowCalls(t *testing.T) {
+	t.Parallel()
+
+	workflow := `name: PR base policy
+
+on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target exception.
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs: { pr-base-policy: { uses: ./.github/workflows/reusable.yml } }
+`
+	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	if err == nil {
+		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted inline reusable workflow invocation under pull_request_target")
+	}
+	if !strings.Contains(err.Error(), "must not call reusable workflows") {
+		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
+	}
+}
+
+func TestSafePullRequestTargetWorkflowRejectsInlineStepUses(t *testing.T) {
+	t.Parallel()
+
+	workflow := `name: PR base policy
+
+on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target exception.
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs: { pr-base-policy: { name: Allowed PR base, runs-on: ubuntu-latest, steps: [ { uses: evil/action@0123456789012345678901234567890123456789 } ] } }
+`
+	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	if err == nil {
+		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted inline external action under pull_request_target")
+	}
+	if !strings.Contains(err.Error(), "must not use external actions") {
+		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want external action rejection", err)
+	}
+}
+
+func TestSafePullRequestTargetWorkflowRejectsInlineCheckout(t *testing.T) {
+	t.Parallel()
+
+	workflow := `name: PR base policy
+
+on:
+  # kusari-inspector suppress: trusted metadata-only pull_request_target exception.
+  pull_request_target:
+    types:
+      - opened
+
+permissions: {}
+
+jobs: { pr-base-policy: { name: Allowed PR base, runs-on: ubuntu-latest, steps: [ { uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd } ] } }
+`
+	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	if err == nil {
+		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted inline checkout under pull_request_target")
+	}
+	if !strings.Contains(err.Error(), "must not checkout repository contents") {
+		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
 	}
 }
 

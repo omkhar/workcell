@@ -156,6 +156,36 @@ func TestWorkcellBootstrapResolvesRealHomeBeforeGoHostutil(t *testing.T) {
 	}
 }
 
+func TestWorkcellRejectsHarnessOnlyCredentialResolverEnvBeforeBundlePreparation(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	prepareIndex := strings.LastIndex(script, `prepare_injection_bundle "${AGENT}" "${MODE}"`)
+	if prepareIndex == -1 {
+		t.Fatalf("%s must prepare the injection bundle through prepare_injection_bundle", scriptPath)
+	}
+	for _, name := range []string{
+		"WORKCELL_TEST_CODEX_AUTH_FILE",
+		"WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE",
+	} {
+		checkIndex := strings.Index(script, `if [[ -n "${`+name+`:-}" ]]; then`)
+		if checkIndex == -1 {
+			t.Fatalf("%s must reject harness-only env var %s", scriptPath, name)
+		}
+		if checkIndex > prepareIndex {
+			t.Fatalf("%s must reject harness-only env var %s before preparing the injection bundle", scriptPath, name)
+		}
+		if strings.Contains(script, name+"=${"+name+"}") {
+			t.Fatalf("%s must not forward caller-controlled %s into host credential resolution", scriptPath, name)
+		}
+	}
+}
+
 func TestEnsureGoRunEnvFallsBackToPerUserCacheWithoutHome(t *testing.T) {
 	t.Parallel()
 
