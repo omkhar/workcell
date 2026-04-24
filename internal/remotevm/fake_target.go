@@ -140,7 +140,7 @@ func (f FakeTarget) MaterializeWorkspace(_ context.Context, req MaterializeReque
 	if strings.TrimSpace(req.SourceWorkspace) == "" {
 		return MaterializeResult{}, fmt.Errorf("source workspace is required")
 	}
-	targetRoot := targetRoot(req.StateRoot, req.TargetID)
+	targetRoot := targetRoot(req.StateRoot, f.Contract.TargetProvider, req.TargetID)
 	materializationRoot := filepath.Join(targetRoot, "materializations", req.MaterializationID)
 	workspaceRoot := filepath.Join(materializationRoot, f.Contract.WorkspaceMaterialization.WorkspaceDir)
 	manifestPath := filepath.Join(materializationRoot, f.Contract.WorkspaceMaterialization.ManifestName)
@@ -191,7 +191,7 @@ func (f FakeTarget) BootstrapTarget(_ context.Context, req BootstrapRequest) (Bo
 	if strings.TrimSpace(req.ImageRef) == "" {
 		return BootstrapResult{}, fmt.Errorf("image ref is required")
 	}
-	targetRoot := targetRoot(req.StateRoot, req.TargetID)
+	targetRoot := targetRoot(req.StateRoot, f.Contract.TargetProvider, req.TargetID)
 	bootstrapRoot := filepath.Join(targetRoot, "bootstrap")
 	if err := os.MkdirAll(bootstrapRoot, 0o755); err != nil {
 		return BootstrapResult{}, err
@@ -336,8 +336,8 @@ func (f FakeTarget) FinishSession(_ context.Context, req FinishSessionRequest) (
 	return SessionResult{Record: record, RecordPath: req.Started.RecordPath, AuditLogPath: req.Started.AuditLogPath}, nil
 }
 
-func targetRoot(stateRoot, targetID string) string {
-	return filepath.Join(stateRoot, "targets", TargetKind, CanonicalProvider, targetID)
+func targetRoot(stateRoot, targetProvider, targetID string) string {
+	return filepath.Join(stateRoot, "targets", TargetKind, targetProvider, targetID)
 }
 
 func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]WorkspaceEntry, error) {

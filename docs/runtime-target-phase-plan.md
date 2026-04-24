@@ -24,7 +24,9 @@ Current repo status:
   target, and deterministic conformance harness
 - Phase 6 is implemented in the Docker Desktop compatibility backend,
   deterministic compat diagnostics, and live certification smoke
-- Phase 7 is the next active slice: AWS remote VM backend
+- Phase 7 is implemented in the AWS EC2 SSM preview backend, deterministic
+  broker-plan diagnostics, and live AWS SSM certification smoke
+- Phase 8 is the next active slice: GCP remote VM backend
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract
@@ -298,6 +300,14 @@ Deliverables:
 - explicit remote workspace materialization on the reviewed host-owned model
 - no inbound public SSH requirement on the supported path
 
+Current implementation note:
+
+- deterministic `aws-ec2-ssm` target selection, support-matrix diagnostics,
+  rollout docs, and shared remote-VM conformance reuse are now versioned
+  in-repo
+- live AWS smoke remains a certification-only gate and is now versioned in
+  `tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh`
+
 Complete when:
 
 - deterministic adapter suites and the shared remote-VM conformance harness
@@ -311,6 +321,28 @@ Complete when:
 - live AWS smoke remains certification-only
 - the owning EM, TL, contract/docs owner, and validation owner approve the
   preview boundary, matrices, and evidence for the phase
+
+Phase 7 completion record:
+
+- repo-required deterministic evidence is green via
+  `tests/scenarios/shared/test-aws-remote-vm-dry-run.sh` and the shared
+  `internal/remotevm` conformance tests
+- live certification evidence is green via
+  `tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh` on a reviewed
+  SSM-managed Amazon Linux 2023 EC2 target
+- the support boundary remains explicit as
+  `remote_vm/aws-ec2-ssm/compat`; live launch remains blocked outside the
+  certification lane
+- the reviewed live path uses AWS Systems Manager Session Manager, requires no
+  inbound security-group rules, and keeps remote workspace materialization as
+  an explicit host-auditable broker plan
+- rollback remains explicit: stop using `--target aws-ec2-ssm`, return to
+  `--target colima`, and clear Workcell-owned AWS preview target state if
+  needed
+- in the current single-maintainer operating mode, the EM, TL, contract/docs,
+  and validation owner approvals are recorded together in this completion
+  update; this is an explicit phase-approval packet, not a claim of
+  independent human review
 
 ## Phase 8: GCP remote VM backend
 

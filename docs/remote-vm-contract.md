@@ -18,7 +18,9 @@ The contract is implemented and exercised through:
 The canonical preview-only contract is:
 
 - `target_kind = remote_vm`
-- `target_provider = fake-remote`
+- `target_provider = fake-remote` in the policy artifact, with provider-specific
+  adapters such as `aws-ec2-ssm` reusing the same contract values apart from
+  the provider name itself
 - `target_assurance_class = compat`
 - `support_boundary = preview-only`
 - `runtime_api = brokered`
@@ -43,7 +45,10 @@ That root contains:
 
 The canonical contract excludes `.git` from the materialized workspace and
 records the materialized tree in the manifest instead of treating a live host
-mount as the remote target.
+mount as the remote target. Provider-specific adapters reuse the same layout
+under their own provider root, for example:
+
+`targets/remote_vm/aws-ec2-ssm/<target-id>/materializations/<materialization-id>/`
 
 ## Bootstrap And Session Lifecycle
 
@@ -81,6 +86,13 @@ interface and pass the shared
 [`remotevm.RunConformance`](../internal/remotevm/conformance.go) harness
 without redefining a provider-specific contract suite.
 
-That reuse rule is the main Phase 5 boundary: provider work starts only after
-this provider-neutral contract is fixed, documented, and proven
+The first provider-specific preview adapter is now
+`remote_vm/aws-ec2-ssm/compat`. Its typed contract stays on the shared
+control-plane meanings, adds broker metadata through
+[`internal/remotevm/aws_target.go`](../internal/remotevm/aws_target.go), and
+keeps live launch behind the separate certification-only rollout described in
+[docs/aws-ec2-ssm-preview.md](aws-ec2-ssm-preview.md).
+
+That reuse rule was the Phase 5 boundary: provider work started only after
+this provider-neutral contract was fixed, documented, and proven
 deterministically in-repo.

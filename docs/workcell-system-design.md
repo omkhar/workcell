@@ -263,8 +263,8 @@ real provider differences behind a fake universal control plane.
 
 ### 10. Runtime Target Taxonomy And Remote VM Contract
 
-The current live safe path is still the strict `local_vm/colima` boundary.
-Phase 5 adds a canonical preview-only `remote_vm` contract in
+The current strongest live safe path is still the strict `local_vm/colima`
+boundary. Phase 5 adds a canonical preview-only `remote_vm` contract in
 [`policy/remote-vm-contract.json`](../policy/remote-vm-contract.json) plus a
 shared fake target and conformance harness in
 [`internal/remotevm`](../internal/remotevm).
@@ -282,9 +282,11 @@ must reuse:
   adapters must pass unchanged instead of redefining contract suites per
   provider
 
-This does not mean a cloud backend ships today. It means the provider-neutral
-contract is now fixed in-repo before later `remote_vm` adapters try to consume
-it.
+The first provider-specific consumer is now the preview-only
+`remote_vm/aws-ec2-ssm/compat` path. Its deterministic repo-required evidence
+stays at dry-run diagnostics and shared conformance reuse, while live AWS use
+remains a separate certification-only gate with brokered Session Manager
+access and no inbound public SSH.
 
 ### 11. Host-Side Detached Session Plane
 
@@ -400,7 +402,9 @@ The current architecture is intentionally narrower than the longer-term
 roadmap:
 
 - Apple Silicon macOS hosts only
-- no Workcell-managed cloud or remote worker plane today
+- no generally supported Workcell-managed cloud or remote worker plane today;
+  only the preview-only `remote_vm/aws-ec2-ssm/compat` broker plan exists, and
+  its live path remains certification-only
 - no centralized enterprise policy, session administration, or analytics plane
 - no queue, pause/resume, checkpoint, or fork model yet on the session plane
 - GUI and IDE surfaces are lower assurance unless they act only as clients to

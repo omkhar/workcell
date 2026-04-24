@@ -279,8 +279,9 @@ Options:
   --agent codex|claude|gemini   Provider to run (required)
   --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
   --agent-arg VALUE             Additional provider argv to append (repeatable)
-  --target colima|docker-desktop
+  --target colima|docker-desktop|aws-ec2-ssm
                                 Runtime target to launch (default: colima)
+  --target-id ID                Explicit remote target identifier for preview backends
   --cache-profile off|standard  Opt-in persistent non-secret cache plane (default: off)
   --codex-rules-mutability readonly|session
                                 Codex execpolicy session mutability (default: readonly)
@@ -332,6 +333,8 @@ Workflows:
     workcell --agent gemini --workspace /path/to/repo
   Preview Docker Desktop compatibility target:
     workcell --target docker-desktop --agent codex --workspace /path/to/repo
+  Preview AWS remote VM broker plan:
+    workcell --target aws-ec2-ssm --target-id i-1234567890abcdef0 --agent codex --workspace /path/to/repo --dry-run
   Managed development command lane:
     workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
     workcell --agent claude --mode development --workspace /path/to/repo -- bash -lc 'rg TODO'
@@ -537,29 +540,38 @@ validate_session_workspace_mode() {
   esac
 }
 
-validate_colima_profile_name() {
-  local profile="$1"
+validate_state_key_name() {
+  local label="$1"
+  local value="$2"
 
-  if [[ ! "${profile}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
-    echo "Invalid Colima profile name: ${profile}" >&2
+  if [[ ! "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+    echo "Invalid ${label}: ${value}" >&2
     echo "Use only letters, numbers, '.', '_', or '-' and do not include path separators." >&2
     exit 2
   fi
 
-  case "${profile}" in
+  case "${value}" in
     . | ..)
-      echo "Invalid Colima profile name: ${profile}" >&2
+      echo "Invalid ${label}: ${value}" >&2
       exit 2
       ;;
   esac
 }
 
+validate_colima_profile_name() {
+  validate_state_key_name "Colima profile name" "$1"
+}
+
+validate_target_id_name() {
+  validate_state_key_name "target id" "$1"
+}
+
 validate_target_backend_name() {
   case "$1" in
-    colima | docker-desktop) ;;
+    colima | docker-desktop | aws-ec2-ssm) ;;
     *)
       echo "Unsupported target backend: $1" >&2
-      echo "Use --target colima or --target docker-desktop." >&2
+      echo "Use --target colima, --target docker-desktop, or --target aws-ec2-ssm." >&2
       exit 2
       ;;
   esac
@@ -962,6 +974,9 @@ prepare_current_target_docker_client() {
       fi
       export DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}"
       unset DOCKER_HOST
+      ;;
+    aws-ec2-ssm)
+      return 0
       ;;
   esac
 }
@@ -1849,6 +1864,9 @@ current_target_kind() {
     docker-desktop)
       printf 'local_compat\n'
       ;;
+    aws-ec2-ssm)
+      printf 'remote_vm\n'
+      ;;
   esac
 }
 
@@ -1864,6 +1882,9 @@ current_target_id() {
     docker-desktop)
       docker_desktop_context_name
       ;;
+    aws-ec2-ssm)
+      printf '%s\n' "${COLIMA_PROFILE}"
+      ;;
   esac
 }
 
@@ -1875,14 +1896,28 @@ current_target_assurance_class() {
     docker-desktop)
       printf 'compat\n'
       ;;
+    aws-ec2-ssm)
+      printf 'compat\n'
+      ;;
   esac
 }
 
 current_runtime_api() {
-  printf 'docker\n'
+  case "${TARGET_BACKEND}" in
+    aws-ec2-ssm)
+      printf 'brokered\n'
+      ;;
+    *)
+      printf 'docker\n'
+      ;;
+  esac
 }
 
 current_workspace_transport() {
+  if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]]; then
+    printf 'remote-materialization\n'
+    return 0
+  fi
   if [[ -n "${SESSION_SOURCE_WORKSPACE:-}" ]] && [[ -n "${WORKSPACE:-}" ]] &&
     [[ "${SESSION_SOURCE_WORKSPACE}" != "${WORKSPACE}" ]]; then
     printf 'isolated-worktree-mount\n'
@@ -1950,8 +1985,51 @@ support_matrix_launch_allowed() {
   [[ "${SUPPORT_MATRIX_LAUNCH}" == "allowed" ]]
 }
 
+preview_remote_vm_dry_run_allowed() {
+  [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]] &&
+    [[ "${DRY_RUN}" -eq 1 ]] &&
+    [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]]
+}
+
+emit_preview_remote_vm_dry_run() {
+  printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
+    "${COLIMA_PROFILE}" "${MODE}" "${AGENT}" "${UI}" "${WORKSPACE}" >&2
+  printf 'target_kind=%s target_provider=%s target_id=%s target_assurance_class=%s runtime_api=%s workspace_transport=%s\n' \
+    "$(current_target_kind)" \
+    "$(current_target_provider)" \
+    "$(current_target_id)" \
+    "$(current_target_assurance_class)" \
+    "$(current_runtime_api)" \
+    "$(current_workspace_transport)" >&2
+  printf 'agent_autonomy=%s\n' "${AGENT_AUTONOMY}" >&2
+  printf 'cache_profile=%s\n' "${CACHE_PROFILE}" >&2
+  printf 'cache_assurance=%s\n' "$(cache_assurance)" >&2
+  printf 'autonomy_assurance=%s\n' "$(autonomy_assurance)" >&2
+  printf 'observability_assurance=%s\n' "$(observability_assurance)" >&2
+  printf 'codex_rules_mutability_configured=%s\n' "${CODEX_RULES_MUTABILITY}" >&2
+  printf 'codex_rules_assurance_configured=%s\n' "$(codex_rules_assurance)" >&2
+  printf 'codex_rules_mutability_effective_initial=%s\n' "$(codex_rules_effective_mutability_initial)" >&2
+  printf 'codex_rules_assurance_effective_initial=%s\n' "$(codex_rules_effective_assurance_initial)" >&2
+  printf 'provider_native_sandbox_configured=%s effective=%s reason=%s\n' \
+    "$(provider_native_sandbox_configured)" \
+    "$(provider_native_sandbox_effective)" \
+    "$(provider_native_sandbox_reason)" >&2
+  printf 'session_assurance_initial=%s\n' "$(session_assurance_initial)" >&2
+  if [[ -n "${INJECTION_POLICY_SHA256}" ]]; then
+    printf 'injection_policy_sha256=%s credential_keys=%s ssh_injected=%s\n' \
+      "${INJECTION_POLICY_SHA256}" "${INJECTION_CREDENTIAL_KEYS:-none}" "${INJECTION_SSH_ENABLED}" >&2
+  fi
+  printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
+  printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
+  printf 'remote_access_model=brokered remote_broker=aws-ssm-session-manager inbound_public_ssh=blocked live_smoke=certification-only\n' >&2
+  printf 'remote_workspace_materialization=explicit reviewed_host_copy=1\n' >&2
+  printf 'execution_path=remote-preview-broker-plan audit_log=%s rollout_doc=docs/aws-ec2-ssm-preview.md\n' "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
+  printf 'remote-preview-plan target=aws-ec2-ssm broker=aws-ssm-session-manager target_id=%s launch_gate=certification-only workspace=%s\n' \
+    "$(current_target_id)" "${WORKSPACE}"
+}
+
 fail_for_unsupported_launch_target() {
-  if support_matrix_launch_allowed; then
+  if support_matrix_launch_allowed || preview_remote_vm_dry_run_allowed; then
     return 0
   fi
 
@@ -1961,6 +2039,9 @@ fail_for_unsupported_launch_target() {
   fi
   if [[ "$(current_target_provider)" == "colima" ]]; then
     echo "Supported launch hosts today remain Apple Silicon macOS for the reviewed Colima strict path." >&2
+  elif [[ "$(current_target_provider)" == "aws-ec2-ssm" ]]; then
+    echo "The AWS remote VM target is a preview-only brokered path. Repo-required dry-run diagnostics are supported, but live launch remains certification-only and must use audited SSM access without inbound public SSH." >&2
+    echo "Use --dry-run to inspect the reviewed broker plan, then follow docs/aws-ec2-ssm-preview.md for the certification path." >&2
   else
     echo "The Docker Desktop target remains a lower-assurance compat path and is only supported where the published host matrix allows it." >&2
   fi
@@ -5647,6 +5728,7 @@ build_recommended_command() {
   [[ "${include_repair}" -eq 1 ]] && cmd+=(--repair-profile)
   cmd+=(--agent "${AGENT}")
   [[ "${TARGET_BACKEND}" != "colima" ]] && cmd+=(--target "${TARGET_BACKEND}")
+  [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]] && [[ -n "${TARGET_ID_OVERRIDE}" ]] && cmd+=(--target-id "${TARGET_ID_OVERRIDE}")
   [[ "${AGENT_AUTONOMY}" != "yolo" ]] && cmd+=(--agent-autonomy "${AGENT_AUTONOMY}")
   [[ "${CACHE_PROFILE}" != "off" ]] && cmd+=(--cache-profile "${CACHE_PROFILE}")
   if ! container_mutability_is_default_for_mode "${target_mutability}" "${target_mode}"; then
@@ -7096,6 +7178,8 @@ is_trusted_host_tool_path() {
     /sbin
     /usr/local/bin
     /usr/local/Cellar
+    /usr/local/aws-cli
+    /usr/local/sessionmanagerplugin/bin
     /opt/homebrew/bin
     /opt/homebrew/Cellar
     /Applications/Docker.app/Contents/Resources/bin
@@ -7190,17 +7274,22 @@ missing_launch_host_tools_csv() {
   if [[ "${TARGET_BACKEND}" == "colima" ]]; then
     resolve_host_tool_optional colima /opt/homebrew/bin/colima /usr/local/bin/colima >/dev/null || missing+=(colima)
   fi
-  if docker_bin="$(resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"; then
-    if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
-      HOST_DOCKER_BIN="${docker_bin}"
-      sanitize_host_docker_env
-      if ! docker_context_exists "$(docker_desktop_context_name)" ||
-        ! docker_context_is_healthy "$(docker_desktop_context_name)"; then
-        missing+=(docker-desktop-context)
-      fi
-    fi
+  if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]]; then
+    resolve_host_tool_optional aws /opt/homebrew/bin/aws /usr/local/bin/aws /usr/local/aws-cli/aws >/dev/null || missing+=(aws)
+    resolve_host_tool_optional session-manager-plugin /usr/local/bin/session-manager-plugin /usr/local/sessionmanagerplugin/bin/session-manager-plugin >/dev/null || missing+=(session-manager-plugin)
   else
-    missing+=(docker)
+    if docker_bin="$(resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"; then
+      if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
+        HOST_DOCKER_BIN="${docker_bin}"
+        sanitize_host_docker_env
+        if ! docker_context_exists "$(docker_desktop_context_name)" ||
+          ! docker_context_is_healthy "$(docker_desktop_context_name)"; then
+          missing+=(docker-desktop-context)
+        fi
+      fi
+    else
+      missing+=(docker)
+    fi
   fi
 
   if ((${#missing[@]} == 0)); then
@@ -7232,6 +7321,17 @@ provider_endpoints() {
       ;;
     *)
       return 1
+      ;;
+  esac
+}
+
+target_broker_endpoints() {
+  case "$1" in
+    aws-ec2-ssm)
+      echo "ec2.amazonaws.com:443 ssm.amazonaws.com:443 ssmmessages.amazonaws.com:443 ec2messages.amazonaws.com:443"
+      ;;
+    *)
+      return 0
       ;;
   esac
 }
@@ -7981,6 +8081,7 @@ AUDIT_TRANSCRIPT_PATH=""
 WORKSPACE="$(pwd -P)"
 COLIMA_PROFILE=""
 COLIMA_PROFILE_EXPLICIT=0
+TARGET_ID_OVERRIDE=""
 INJECTION_POLICY=""
 USE_DEFAULT_INJECTION_POLICY=1
 VM_CPU_OVERRIDE=""
@@ -8102,6 +8203,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --target)
       TARGET_BACKEND="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
+    --target-id)
+      TARGET_ID_OVERRIDE="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
     --agent-autonomy)
@@ -8282,7 +8387,14 @@ validate_cache_profile_name "${CACHE_PROFILE}"
 validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
 validate_log_level_name "${LOG_LEVEL}"
 validate_session_workspace_mode "${SESSION_WORKSPACE_MODE}"
-if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
+if [[ "${TARGET_BACKEND}" != "aws-ec2-ssm" ]] && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
+  echo "--target-id only supports --target aws-ec2-ssm." >&2
+  exit 2
+fi
+if [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
+  validate_target_id_name "${TARGET_ID_OVERRIDE}"
+fi
+if [[ "${TARGET_BACKEND}" != "colima" ]]; then
   if [[ "${COLIMA_PROFILE_EXPLICIT:-0}" -eq 1 ]]; then
     echo "--colima-profile only supports --target colima." >&2
     exit 2
@@ -8295,6 +8407,10 @@ if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
     echo "--repair-profile only supports --target colima." >&2
     exit 2
   fi
+fi
+if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]] && [[ "${PREPARE}" -eq 1 ]]; then
+  echo "--prepare and --prepare-only do not apply to --target aws-ec2-ssm." >&2
+  exit 2
 fi
 if [[ "${SESSION_DETACHED}" -eq 0 ]] && [[ -n "${SESSION_WORKSPACE_MODE}" ]]; then
   echo "--session-workspace applies only to workcell session start." >&2
@@ -8453,7 +8569,11 @@ HOST_TOOL_MISSING_CSV="$(missing_launch_host_tools_csv)"
 HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
 HOST_DOCKER_BIN="docker"
 if [[ -z "${COLIMA_PROFILE}" ]]; then
-  COLIMA_PROFILE="$(derive_profile_name "${WORKSPACE}")"
+  if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]] && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
+    COLIMA_PROFILE="${TARGET_ID_OVERRIDE}"
+  else
+    COLIMA_PROFILE="$(derive_profile_name "${WORKSPACE}")"
+  fi
 fi
 validate_colima_profile_name "${COLIMA_PROFILE}"
 if [[ -n "${LOGS_KIND}" ]]; then
@@ -8540,6 +8660,14 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
   printf 'doctor_workspace_binding=%s\n' "${PROFILE_MARKER_WORKSPACE:-none}"
   printf 'doctor_prepared_image=%s\n' "${prepared_image}"
   if ! support_matrix_launch_allowed; then
+    if [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]] && [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]]; then
+      if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
+        printf 'doctor_recommended_next=install-host-tools\n'
+      else
+        printf 'doctor_recommended_next=review-aws-preview-rollout\n'
+      fi
+      exit 0
+    fi
     printf 'doctor_recommended_next=use-supported-host\n'
   elif [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
     printf 'doctor_recommended_next=install-host-tools\n'
@@ -8628,13 +8756,16 @@ if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -e
     "This is expected on the first launch for a workspace or after profile cleanup."
 fi
 
+ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(target_broker_endpoints "${TARGET_BACKEND}") $(credential_extra_endpoints) $(provider_auth_recovery_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS:-}")"
+if [[ "${TARGET_BACKEND}" != "aws-ec2-ssm" ]] && [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
+  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:443")"
+fi
+if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]]; then
+  emit_preview_remote_vm_dry_run
+  exit 0
+fi
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   prepare_current_target_docker_client
-fi
-
-ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(credential_extra_endpoints) $(provider_auth_recovery_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS:-}")"
-if [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
-  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:443")"
 fi
 WORKSPACE_SHADOW_SOURCE="${WORKSPACE}"
 if [[ "${SESSION_DETACHED}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)" == "isolated" ]]; then

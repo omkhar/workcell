@@ -46,3 +46,27 @@ func TestFakeTargetMaterializeWorkspaceCopiesFixtureAndExcludesDotGit(t *testing
 		t.Fatalf("len(result.Manifest.Entries) = %d, want %d", got, want)
 	}
 }
+
+func TestFakeTargetUsesProviderSpecificStateRoots(t *testing.T) {
+	t.Parallel()
+
+	target, err := NewAWSEC2SSMTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := target.MaterializeWorkspace(context.Background(), MaterializeRequest{
+		StateRoot:         t.TempDir(),
+		TargetID:          "i-1234567890abcdef0",
+		MaterializationID: "fixture-materialization",
+		SourceWorkspace:   filepath.Join("testdata", "source-workspace"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := filepath.Base(filepath.Dir(result.TargetRoot)); got != AWSEC2SSMProvider {
+		t.Fatalf("provider state root = %q, want %q", got, AWSEC2SSMProvider)
+	}
+	if got := filepath.Base(result.TargetRoot); got != "i-1234567890abcdef0" {
+		t.Fatalf("target root leaf = %q, want %q", got, "i-1234567890abcdef0")
+	}
+}

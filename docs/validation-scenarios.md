@@ -24,6 +24,8 @@ Use these anchors when checking release-facing claims:
   `shared/claude-resolver-launcher`, `shared/codex-resolver-launcher`
 - lower-assurance mode claims: `shared/assurance-dry-run`
 - compat target selection and fail-closed diagnostics: `shared/compat-target-dry-run`
+- preview AWS remote VM diagnostics and certification gate:
+  `shared/aws-remote-vm-dry-run`, `shared/aws-ec2-ssm-launch-smoke`
 - local runtime certification smoke: `shared/agent-launch-smoke`
 - host publication handoff and main-only PR-base safeguards: `shared/publish-pr`
 - host-side session inventory and control plus detached workspace-mode
@@ -62,7 +64,7 @@ They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
 inspection and explainability, host-side detached session inventory, control,
 logs/timeline, clean-base diff/export behavior, and operator-contract parity.
-They also now carry the canonical preview-only `remote_vm` contract through the deterministic `internal/remotevm` fake target and shared conformance harness, plus the explicit `docker-desktop` compat target through deterministic backend-selection, state-root-routing, and fail-closed diagnostics.
+They also now carry the canonical preview-only `remote_vm` contract through the deterministic `internal/remotevm` fake target and shared conformance harness, the explicit `docker-desktop` compat target through deterministic backend-selection, state-root-routing, and fail-closed diagnostics, and the preview-only `aws-ec2-ssm` remote VM target through deterministic broker-plan diagnostics and fail-closed live gating.
 
 `./scripts/validate-repo.sh` runs the repo-required scenario tier through:
 
@@ -84,6 +86,15 @@ Today that certification tier includes:
 - `shared/agent-launch-smoke` for local macOS Colima prepare-only and
   provider-version smoke on the managed path
 - `shared/docker-desktop-launch-smoke` for the explicit `local_compat/docker-desktop/compat` path on healthy macOS Docker Desktop hosts
+- `shared/aws-ec2-ssm-launch-smoke` for the credentialed
+  `remote_vm/aws-ec2-ssm/compat` preview boundary against a reviewed
+  SSM-managed EC2 target
+
+AWS remote VM live smoke remains certification-only as well, but it is
+currently a provider-e2e preview gate documented in
+[`docs/aws-ec2-ssm-preview.md`](aws-ec2-ssm-preview.md) rather than a
+repo-required scenario. Set `WORKCELL_AWS_EC2_SSM_TARGET_ID` and
+`WORKCELL_AWS_EC2_SSM_REGION` before running that smoke.
 
 Certification smoke is where local boundary proof belongs. It should stay
 available and documented, but it must not be the reason repo validation fails

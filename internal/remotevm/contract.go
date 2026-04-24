@@ -72,10 +72,17 @@ type SessionSpec struct {
 }
 
 func DefaultContract() Contract {
+	return DefaultContractForProvider(CanonicalProvider)
+}
+
+func DefaultContractForProvider(provider string) Contract {
+	if strings.TrimSpace(provider) == "" {
+		provider = CanonicalProvider
+	}
 	return Contract{
 		Version:              1,
 		TargetKind:           TargetKind,
-		TargetProvider:       CanonicalProvider,
+		TargetProvider:       provider,
 		TargetAssuranceClass: AssuranceClass,
 		SupportBoundary:      SupportBoundary,
 		RuntimeAPI:           RuntimeAPI,
@@ -124,13 +131,15 @@ func (c Contract) Validate() error {
 	if c.Version != 1 {
 		return fmt.Errorf("unsupported remote-vm contract version %d", c.Version)
 	}
+	if strings.TrimSpace(c.TargetProvider) == "" {
+		return fmt.Errorf("target_provider may not be empty")
+	}
 	for _, field := range []struct {
 		name  string
 		value string
 		want  string
 	}{
 		{name: "target_kind", value: c.TargetKind, want: TargetKind},
-		{name: "target_provider", value: c.TargetProvider, want: CanonicalProvider},
 		{name: "target_assurance_class", value: c.TargetAssuranceClass, want: AssuranceClass},
 		{name: "support_boundary", value: c.SupportBoundary, want: SupportBoundary},
 		{name: "runtime_api", value: c.RuntimeAPI, want: RuntimeAPI},

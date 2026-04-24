@@ -175,7 +175,7 @@ func parseSupportMatrixEntry(path string, lineNo int, fields []string) (SupportM
 	}
 
 	switch entry.Status {
-	case "supported", "validation-host-only", "unsupported":
+	case "supported", "validation-host-only", "preview-only", "unsupported":
 	default:
 		return SupportMatrixResult{}, fmt.Errorf("%s:%d: unsupported status %q", path, lineNo, entry.Status)
 	}
@@ -192,8 +192,11 @@ func parseSupportMatrixEntry(path string, lineNo int, fields []string) (SupportM
 	if entry.ValidationLane == "none" && entry.Status == "validation-host-only" {
 		return SupportMatrixResult{}, fmt.Errorf("%s:%d: validation-host-only rows must name a validation_lane", path, lineNo)
 	}
-	if entry.ValidationLane != "none" && entry.Status == "supported" {
+	if entry.ValidationLane != "none" && (entry.Status == "supported" || entry.Status == "preview-only") {
 		return SupportMatrixResult{}, fmt.Errorf("%s:%d: supported launch rows must not set a validation-only lane", path, lineNo)
+	}
+	if entry.Status == "preview-only" && entry.Launch != "blocked" {
+		return SupportMatrixResult{}, fmt.Errorf("%s:%d: preview-only rows must set launch=blocked", path, lineNo)
 	}
 	return entry, nil
 }

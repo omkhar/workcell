@@ -136,6 +136,29 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/aws-remote-vm-dry-run",
+      "description": "AWS remote VM preview target selection keeps the brokered target metadata, support boundary, and certification-only live gate explicit while allowing deterministic dry-run planning",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-aws-remote-vm-dry-run.sh",
+      "requires_credentials": false
+    },
+    {
+      "id": "shared/aws-ec2-ssm-launch-smoke",
+      "description": "AWS EC2 SSM certification smoke proves a reviewed target is SSM-online, has no inbound security-group rules, uses AmazonSSMManagedInstanceCore, and matches the Workcell preview broker plan",
+      "lane": "provider-e2e",
+      "platform": "macos",
+      "validation_tier": "certification",
+      "manual": false,
+      "providers": ["codex"],
+      "persona": "validation-owner",
+      "test_file": "shared/test-aws-ec2-ssm-launch-smoke.sh",
+      "requires_credentials": true
+    },
+    {
       "id": "shared/session-commands",
       "description": "Host-side session inventory and detached control-plane commands cover durable records plus public CLI attach/send/stop/delete lifecycle handling for running and terminal workloads",
       "lane": "secretless",
