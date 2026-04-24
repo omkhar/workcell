@@ -20,6 +20,9 @@ The deterministic phase breakdown lives in
   invariant checks
 - use the shipped AWS and GCP remote VM preview backends to harden rollout,
   certification, and operator recovery paths before broadening support
+- start the managed-workstation contract and discovery slice next because users
+  have prioritized workstation-shaped environments; keep Azure VM queued as the
+  following raw remote VM provider lane
 - keep the shipped canonical host-support matrix and shared remote-VM
   conformance harness authoritative so later `compat` and `remote_vm` targets
   cannot fork the support contract by accident
@@ -42,8 +45,8 @@ The deterministic phase breakdown lives in
   workspaces in the operator's own account
 - keep any additional cloud provider work on the same remote VM contract with
   limited provider-specific delta
-- keep managed workstations as a separate discovery track rather than treating
-  them as the same class as raw remote VMs
+- define managed workstations as a separate target kind and discovery track
+  before any provider-specific managed-workstation backend ships
 - improve comparison material and use-case guidance for teams evaluating
   Workcell in cloud, hybrid, and regulated development workflows
 - make release assets and operator verification flows easier to consume
@@ -52,7 +55,8 @@ The deterministic phase breakdown lives in
 
 - expand remote VM support across the major providers through thin provider
   adapters on the same host-owned control-plane model:
-  `AWS` first, `GCP` second, and `Azure` demand-gated third
+  `AWS` first, `GCP` second, and `Azure` after the managed-workstation
+  contract slice
 - add explicit Linux and Windows support only where the same boundary
   guarantees, validation coverage, and operator story can be stated honestly;
   until then, keep those paths labeled `compat`

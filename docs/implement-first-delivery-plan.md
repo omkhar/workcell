@@ -7,10 +7,10 @@ The longer-lived runtime-target and deployment-reach program lives in
 [`docs/runtime-target-expansion-plan.md`](runtime-target-expansion-plan.md),
 and the deterministic phase breakdown lives in
 [`docs/runtime-target-phase-plan.md`](runtime-target-phase-plan.md).
-Phases 1 through 8 of that phase plan are now implemented in the repository;
+Phases 1 through 9 of that phase plan are now implemented in the repository;
 this document now records the delivered bridge into the cloud `remote_vm`
-preview backends and the prerequisite handoff pattern for later backend
-phases.
+preview backends, the later-expansion decision gate, and the prerequisite
+handoff pattern for the managed-workstation contract slice.
 
 The current repo already includes durable session records plus detached
 host-side session control (`session start|attach|send|stop`) and basic
@@ -100,6 +100,9 @@ to the next slice rather than as active delivery work:
   `remote_vm/gcp-vm/compat` backends plus deterministic broker-plan
   diagnostics, shared conformance reuse, rollback guidance, and
   certification-only live smoke lanes from Phases 7 and 8
+- the Phase 9 expansion decision that funds managed workstation contract and
+  discovery next, while deferring `azure-vm` to the following raw `remote_vm`
+  provider lane
 
 ## Delivered Phase 7 And 8 Track
 
@@ -132,27 +135,74 @@ Phase boundary:
   for later deterministic phases, not authority to ship demand-gated cloud or
   managed-workstation targets in the current slice
 
-## Immediate Follow-On Prerequisites
+## Delivered Phase 9 Decision Gate
 
-### 2. Scenario Evidence And Operator Verification
+### 2. Later Expansion Decision
 
-Scope to expand as each later phase lands:
+Decision:
 
-- expand authenticated, lower-assurance, session-supervisor, migration, and
-  remote-workspace scenario coverage as each target-facing phase lands
-- treat comparison material and operator verification flows as delivery
-  criteria, not post-hoc documentation cleanup
-- keep the first operator-facing rollout guidance CLI-first and host-owned
+- managed workstation contract and discovery is the next funded lane
+- `azure-vm` remains the next raw `remote_vm` provider lane after the
+  managed-workstation contract slice
+
+Rationale:
+
+- users have prioritized workstation-shaped environments over another raw VM
+  provider
+- AWS and GCP preview backends already exercise the shared raw remote-VM
+  contract enough to keep Azure as a follow-on rather than immediate work
+- managed workstations have a distinct lifecycle and trust model, so Workcell
+  must define a `managed_workstation` target contract before any provider
+  implementation claims support
+
+Owner-lane record:
+
+- EM:
+  owns the support-boundary decision, preview/GA scope, and rollback posture
+  for the managed-workstation track
+- TL:
+  owns the target contract, target-kind separation, and any shared harness
+  reuse
+- contract and docs owner:
+  owns canonical matrices, rollout docs, comparison material, and operator
+  verification
+- validation owner:
+  owns deterministic evidence, fake-target or fixture strategy, and any
+  certification-only live smoke boundary
+
+Phase boundary:
+
+- Phase 9 records the decision only; it does not ship `azure-vm`, a
+  managed-workstation backend, or a new support claim
+- in the current single-maintainer operating mode, these approvals are recorded
+  as distinct Codex-agent owner lanes, not as a claim of independent human
+  approval
+
+## Immediate Follow-On Slice
+
+### 3. Managed Workstation Contract And Discovery
+
+Scope:
+
+- define a provider-neutral `managed_workstation` target kind before
+  provider-specific implementation
+- compare managed workstations against `local_vm`, `local_compat`, and
+  `remote_vm` so support boundaries stay honest
+- identify the first managed-workstation provider lane and the deterministic
+  evidence needed before any support claim
+- keep `azure-vm` explicitly queued as the next raw `remote_vm` provider lane
 
 Staffing:
 
-- TL: validation and contract lead
-- SWE A: scenario and migration evidence
+- EM: managed-workstation support-boundary owner
+- TL: managed-workstation target-contract lead
+- SWE A: lifecycle, workspace, identity, and audit model comparison
 - SWE B: operator verification docs and comparison material
+- validation owner: deterministic evidence and certification-lane lead
 
 ## Later Phase Handoff
 
-Before Phase 9 begins implementation, assign distinct owner lanes:
+Before Phase 10 begins implementation, assign distinct owner lanes:
 
 - EM:
   support-boundary owner for rollout scope, preview/GA decisions, and rollback
@@ -170,7 +220,8 @@ Before Phase 9 begins implementation, assign distinct owner lanes:
    provider/bootstrap support matrix and completed Phase 4 host-support
    surfaces plus the completed Phase 5 remote-contract harness as fixed input
    to the next slice
-2. ship cloud `remote_vm` backends before any managed-workstation delivery work
+2. treat the Phase 9 decision as fixed input: managed workstation contract and
+   discovery is next; `azure-vm` follows as the next raw `remote_vm` lane
 3. expand authenticated, lower-assurance, and target-contract coverage as each
    later phase lands rather than as a cleanup pass
 4. leave later raw `remote_vm` and managed-workstation delivery to the later
@@ -186,5 +237,7 @@ Before Phase 9 begins implementation, assign distinct owner lanes:
 - secret materialization paths that bypass the reviewed host policy flow
 - automatic backend fallback
 - broad Linux or Windows parity claims
-- selecting or shipping `azure-vm` in this slice
-- Kubernetes-backed execution or managed-workstation delivery in this slice
+- shipping `azure-vm` in the managed-workstation contract slice
+- shipping a managed-workstation backend before the target contract, support
+  boundary, and evidence model are recorded
+- Kubernetes-backed execution in this slice
