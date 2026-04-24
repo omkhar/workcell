@@ -150,7 +150,7 @@
       "id": "shared/aws-ec2-ssm-launch-smoke",
       "description": "AWS EC2 SSM certification smoke proves a reviewed target is SSM-online, has no inbound security-group rules, uses AmazonSSMManagedInstanceCore, and matches the Workcell preview broker plan",
       "lane": "provider-e2e",
-      "platform": "any",
+      "platform": "macos",
       "validation_tier": "certification",
       "manual": false,
       "providers": ["codex"],
