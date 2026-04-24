@@ -66,6 +66,34 @@ func TestEvaluateSupportMatrixReturnsValidationHostLane(t *testing.T) {
 	}
 }
 
+func TestEvaluateSupportMatrixReturnsPreviewOnlyRow(t *testing.T) {
+	t.Parallel()
+
+	path := writeSupportMatrixFixture(t)
+	result, err := EvaluateSupportMatrix(path, SupportMatrixQuery{
+		HostOS:               "macos",
+		HostArch:             "arm64",
+		TargetKind:           "remote_vm",
+		TargetProvider:       "aws-ec2-ssm",
+		TargetAssuranceClass: "compat",
+	})
+	if err != nil {
+		t.Fatalf("EvaluateSupportMatrix() error = %v", err)
+	}
+	if result.Status != "preview-only" {
+		t.Fatalf("status = %q, want preview-only", result.Status)
+	}
+	if result.Launch != "blocked" {
+		t.Fatalf("launch = %q, want blocked", result.Launch)
+	}
+	if result.Evidence != "certification-only" {
+		t.Fatalf("evidence = %q, want certification-only", result.Evidence)
+	}
+	if result.ValidationLane != "none" {
+		t.Fatalf("validation_lane = %q, want none", result.ValidationLane)
+	}
+}
+
 func TestEvaluateSupportMatrixDefaultsToUnsupported(t *testing.T) {
 	t.Parallel()
 
@@ -130,6 +158,7 @@ func writeSupportMatrixFixture(t *testing.T) string {
 		"# reviewed host support matrix fixture",
 		"host_os\thost_arch\ttarget_kind\ttarget_provider\ttarget_assurance_class\tstatus\tlaunch\tevidence\tvalidation_lane\treason",
 		"macos\tarm64\tlocal_vm\tcolima\tstrict\tsupported\tallowed\tcertification-only\tnone\tapple-silicon-macos-reviewed-launch-host",
+		"macos\tarm64\tremote_vm\taws-ec2-ssm\tcompat\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-aws-ec2-ssm-preview-certification-only",
 		"linux\tamd64\tlocal_vm\tcolima\tstrict\tvalidation-host-only\tblocked\trepo-required\ttrusted-linux-amd64-validator\ttrusted-linux-amd64-validation-host-only",
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

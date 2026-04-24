@@ -114,7 +114,7 @@ func RunConformance(ctx context.Context, target ConformanceTarget, contract Cont
 	if len(records) != 1 {
 		return ConformanceResult{}, fmt.Errorf("ListSessionRecordsInRoots() len = %d, want 1", len(records))
 	}
-	if got := hostutil.SessionTargetSummary(records[0]); got != "remote_vm/fake-remote/"+c.TargetID {
+	if got := hostutil.SessionTargetSummary(records[0]); got != fmt.Sprintf("%s/%s/%s", contract.TargetKind, contract.TargetProvider, c.TargetID) {
 		return ConformanceResult{}, fmt.Errorf("SessionTargetSummary() = %q", got)
 	}
 	exported, err := hostutil.ExportSessionRecordInRoots([]string{c.StateRoot}, c.SessionID)

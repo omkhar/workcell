@@ -35,3 +35,21 @@ func TestDefaultContractValidates(t *testing.T) {
 		t.Fatalf("DefaultContract().Validate() error = %v", err)
 	}
 }
+
+func TestDefaultContractForProviderPreservesSharedContract(t *testing.T) {
+	t.Parallel()
+
+	got := DefaultContractForProvider(AWSEC2SSMProvider)
+	if err := got.Validate(); err != nil {
+		t.Fatalf("DefaultContractForProvider(%q).Validate() error = %v", AWSEC2SSMProvider, err)
+	}
+	if got.TargetProvider != AWSEC2SSMProvider {
+		t.Fatalf("target_provider = %q, want %q", got.TargetProvider, AWSEC2SSMProvider)
+	}
+	if got.TargetKind != TargetKind {
+		t.Fatalf("target_kind = %q, want %q", got.TargetKind, TargetKind)
+	}
+	if got.RuntimeAPI != RuntimeAPI {
+		t.Fatalf("runtime_api = %q, want %q", got.RuntimeAPI, RuntimeAPI)
+	}
+}

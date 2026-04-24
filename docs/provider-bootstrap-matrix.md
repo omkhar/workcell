@@ -43,6 +43,15 @@ the evidence explicitly says otherwise.
 | Gemini | direct staged `gemini_projects` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-status.sh` | reviewed Gemini project registry input |
 | Gemini | direct staged `gcloud_adc` supplement | `vertex-supplement` | `manual` | `scripts/verify-invariants.sh`, `docs/examples/gemini-vertex-setup.md` | supplemental Vertex input only; not a standalone Gemini auth mode |
 
+## Remote Target Bootstrap
+
+Preview remote targets also carry an explicit host-side bootstrap contract.
+Today that matrix is:
+
+| Target | Bootstrap path | Support | Evidence | Notes |
+|---|---|---|---|---|
+| `remote_vm/aws-ec2-ssm/compat` | reviewed broker plan via `workcell --target aws-ec2-ssm --dry-run` | `repo-required` for diagnostics, `certification-only` for live smoke | `tests/scenarios/shared/test-aws-remote-vm-dry-run.sh`, `tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh`, `internal/remotevm/conformance_test.go`, `docs/aws-ec2-ssm-preview.md` | requires `aws`, `session-manager-plugin`, brokered Session Manager access, and no inbound public SSH on the supported path |
+
 ## Handoff Meanings
 
 The bootstrap summary fields also report the remaining operator handoff:

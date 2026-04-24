@@ -204,6 +204,28 @@ workflows = ["launch_target_backend"]
 evidence = ["tests/scenarios/shared/test-compat-target-dry-run.sh", "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh"]
 docs = ["README.md", "man/workcell.1", "docs/validation-scenarios.md", "docs/workcell-system-design.md", "docs/runtime-target-phase-plan.md", "docs/implement-first-delivery-plan.md"]
 
+[functional.FR-012]
+title = "Preview AWS remote VM target"
+summary = "Workcell exposes the preview-only aws-ec2-ssm remote_vm target with explicit brokered-access diagnostics, remote-materialization state reporting, provider-specific conformance reuse, and a certification-only live gate that keeps inbound public SSH out of the supported path."
+workflows = ["launch_target_backend"]
+evidence = [
+  "tests/scenarios/shared/test-aws-remote-vm-dry-run.sh",
+  "tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh",
+  "internal/remotevm/contract_test.go",
+  "internal/remotevm/fake_target_test.go",
+  "internal/remotevm/conformance_test.go",
+]
+docs = [
+  "README.md",
+  "man/workcell.1",
+  "docs/aws-ec2-ssm-preview.md",
+  "docs/remote-vm-contract.md",
+  "docs/validation-scenarios.md",
+  "docs/provider-bootstrap-matrix.md",
+  "docs/workcell-system-design.md",
+  "docs/runtime-target-phase-plan.md",
+]
+
 [nonfunctional.NFR-001]
 title = "Bounded VM-plus-container execution"
 summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."

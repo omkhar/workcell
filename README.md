@@ -44,8 +44,9 @@ boundary.
 - pre-1.0 and still tightening the public contract
 - Apple Silicon macOS hosts only today; Linux and Windows are not currently
   supported as launch hosts
-- local host-launched runtime first; there is no Workcell-managed cloud or
-  remote worker plane today
+- local host-launched runtime first; the only cloud-facing path today is the
+  preview-only `remote_vm/aws-ec2-ssm/compat` broker plan, and its live smoke
+  remains certification-only
 - CLI surfaces for Codex, Claude, and Gemini plus host-side detached session
   control and inspection commands
 - GitHub-hosted CI verifies repo shape, reproducibility, release posture, and
@@ -269,12 +270,14 @@ Other defaults that matter:
 
 Useful operator flows:
 
-Use `--target colima|docker-desktop` to select the managed runtime backend.
+Use `--target colima|docker-desktop|aws-ec2-ssm` to select the managed runtime
+backend.
 
 ```bash
 workcell --agent codex --prepare --workspace /path/to/repo
 workcell --agent codex --prepare-only --workspace /path/to/repo
 workcell --target docker-desktop --agent codex --workspace /path/to/repo
+workcell --target aws-ec2-ssm --target-id i-1234567890abcdef0 --agent codex --workspace /path/to/repo --dry-run
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell session list
 workcell session list --verbose
@@ -310,6 +313,9 @@ workcell publish-pr --workspace /path/to/repo --branch feature/name \
   --body-file /tmp/pr-body.md \
   --commit-message-file /tmp/commit-message.txt
 ```
+
+For the preview-only AWS remote VM broker path and its certification gate, see
+[docs/aws-ec2-ssm-preview.md](docs/aws-ec2-ssm-preview.md).
 
 `workcell session list --verbose` adds target, workspace transport, git branch,
 and worktree columns without changing the default compact inventory view.
