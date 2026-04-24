@@ -521,9 +521,12 @@ func TestSetCodexResolverAndStatusWhenHostCacheExists(t *testing.T) {
 	root := t.TempDir()
 	policyPath := filepath.Join(root, "injection-policy.toml")
 	managedRoot := filepath.Join(root, "credentials")
-	codexAuthPath := filepath.Join(root, "codex-auth.json")
+	codexAuthPath := filepath.Join(root, ".codex", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(codexAuthPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, codexAuthPath, "{\"token\":\"codex\"}\n", 0o600)
-	t.Setenv("WORKCELL_TEST_CODEX_AUTH_FILE", codexAuthPath)
+	t.Setenv("HOME", root)
 
 	got := runAuthPolicy("init", "--policy", policyPath, "--managed-root", managedRoot)
 	if got.code != 0 {

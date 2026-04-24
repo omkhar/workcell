@@ -131,17 +131,23 @@ func (f FakeTarget) MaterializeWorkspace(_ context.Context, req MaterializeReque
 	if strings.TrimSpace(req.StateRoot) == "" {
 		return MaterializeResult{}, fmt.Errorf("state root is required")
 	}
-	if strings.TrimSpace(req.TargetID) == "" {
-		return MaterializeResult{}, fmt.Errorf("target id is required")
+	targetProvider, err := statePathSegment("target provider", f.Contract.TargetProvider)
+	if err != nil {
+		return MaterializeResult{}, err
 	}
-	if strings.TrimSpace(req.MaterializationID) == "" {
-		return MaterializeResult{}, fmt.Errorf("materialization id is required")
+	targetID, err := statePathSegment("target id", req.TargetID)
+	if err != nil {
+		return MaterializeResult{}, err
+	}
+	materializationID, err := statePathSegment("materialization id", req.MaterializationID)
+	if err != nil {
+		return MaterializeResult{}, err
 	}
 	if strings.TrimSpace(req.SourceWorkspace) == "" {
 		return MaterializeResult{}, fmt.Errorf("source workspace is required")
 	}
-	targetRoot := targetRoot(req.StateRoot, f.Contract.TargetProvider, req.TargetID)
-	materializationRoot := filepath.Join(targetRoot, "materializations", req.MaterializationID)
+	targetRoot := targetRoot(req.StateRoot, targetProvider, targetID)
+	materializationRoot := filepath.Join(targetRoot, "materializations", materializationID)
 	workspaceRoot := filepath.Join(materializationRoot, f.Contract.WorkspaceMaterialization.WorkspaceDir)
 	manifestPath := filepath.Join(materializationRoot, f.Contract.WorkspaceMaterialization.ManifestName)
 	if err := os.RemoveAll(materializationRoot); err != nil {
@@ -158,10 +164,10 @@ func (f FakeTarget) MaterializeWorkspace(_ context.Context, req MaterializeReque
 		Version:               1,
 		TargetKind:            f.Contract.TargetKind,
 		TargetProvider:        f.Contract.TargetProvider,
-		TargetID:              req.TargetID,
+		TargetID:              targetID,
 		WorkspaceTransport:    f.Contract.WorkspaceTransport,
 		SourceWorkspace:       req.SourceWorkspace,
-		MaterializationID:     req.MaterializationID,
+		MaterializationID:     materializationID,
 		MaterializedWorkspace: workspaceRoot,
 		ExcludedPaths:         append([]string(nil), f.Contract.WorkspaceMaterialization.ExcludedPaths...),
 		Entries:               entries,
@@ -182,8 +188,13 @@ func (f FakeTarget) BootstrapTarget(_ context.Context, req BootstrapRequest) (Bo
 	if strings.TrimSpace(req.StateRoot) == "" {
 		return BootstrapResult{}, fmt.Errorf("state root is required")
 	}
-	if strings.TrimSpace(req.TargetID) == "" {
-		return BootstrapResult{}, fmt.Errorf("target id is required")
+	targetProvider, err := statePathSegment("target provider", f.Contract.TargetProvider)
+	if err != nil {
+		return BootstrapResult{}, err
+	}
+	targetID, err := statePathSegment("target id", req.TargetID)
+	if err != nil {
+		return BootstrapResult{}, err
 	}
 	if strings.TrimSpace(req.BootstrapID) == "" {
 		return BootstrapResult{}, fmt.Errorf("bootstrap id is required")
@@ -191,7 +202,7 @@ func (f FakeTarget) BootstrapTarget(_ context.Context, req BootstrapRequest) (Bo
 	if strings.TrimSpace(req.ImageRef) == "" {
 		return BootstrapResult{}, fmt.Errorf("image ref is required")
 	}
-	targetRoot := targetRoot(req.StateRoot, f.Contract.TargetProvider, req.TargetID)
+	targetRoot := targetRoot(req.StateRoot, targetProvider, targetID)
 	bootstrapRoot := filepath.Join(targetRoot, "bootstrap")
 	if err := os.MkdirAll(bootstrapRoot, 0o755); err != nil {
 		return BootstrapResult{}, err
@@ -201,7 +212,7 @@ func (f FakeTarget) BootstrapTarget(_ context.Context, req BootstrapRequest) (Bo
 		Version:              1,
 		TargetKind:           f.Contract.TargetKind,
 		TargetProvider:       f.Contract.TargetProvider,
-		TargetID:             req.TargetID,
+		TargetID:             targetID,
 		TargetAssuranceClass: f.Contract.TargetAssuranceClass,
 		SupportBoundary:      f.Contract.SupportBoundary,
 		RuntimeAPI:           f.Contract.RuntimeAPI,
@@ -221,8 +232,9 @@ func (f FakeTarget) BootstrapTarget(_ context.Context, req BootstrapRequest) (Bo
 }
 
 func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (SessionResult, error) {
-	if strings.TrimSpace(req.SessionID) == "" {
-		return SessionResult{}, fmt.Errorf("session id is required")
+	sessionID, err := statePathSegment("session id", req.SessionID)
+	if err != nil {
+		return SessionResult{}, err
 	}
 	if strings.TrimSpace(req.Agent) == "" {
 		return SessionResult{}, fmt.Errorf("agent is required")
@@ -239,10 +251,10 @@ func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (Se
 	if _, err := os.Stat(req.Bootstrap.ManifestPath); err != nil {
 		return SessionResult{}, err
 	}
-	recordPath := filepath.Join(req.Bootstrap.TargetRoot, "sessions", req.SessionID+".json")
+	recordPath := filepath.Join(req.Bootstrap.TargetRoot, "sessions", sessionID+".json")
 	record := hostutil.SessionRecord{
 		Version:               1,
-		SessionID:             req.SessionID,
+		SessionID:             sessionID,
 		Profile:               req.Bootstrap.Manifest.TargetID,
 		TargetKind:            f.Contract.TargetKind,
 		TargetProvider:        f.Contract.TargetProvider,
@@ -290,15 +302,15 @@ func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (Se
 		return SessionResult{}, err
 	}
 	for _, line := range []string{
-		fmt.Sprintf("ts=%s session_id=%s event=workspace_materialized target_kind=%s target_provider=%s target_id=%s workspace_transport=%s materialization_id=%s workspace_origin=%s workspace=%s", req.StartedAt, req.SessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Bootstrap.Manifest.TargetID, f.Contract.WorkspaceTransport, req.Materialization.Manifest.MaterializationID, req.Materialization.Manifest.SourceWorkspace, req.Materialization.MaterializedWorkspace),
-		fmt.Sprintf("ts=%s session_id=%s event=bootstrap_ready target_kind=%s target_provider=%s target_id=%s runtime_api=%s access_model=%s bootstrap_id=%s image_ref=%s", req.StartedAt, req.SessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Bootstrap.Manifest.TargetID, f.Contract.RuntimeAPI, f.Contract.AccessModel, req.Bootstrap.Manifest.BootstrapID, req.Bootstrap.Manifest.ImageRef),
-		fmt.Sprintf("ts=%s session_id=%s event=session_started target_kind=%s target_provider=%s target_id=%s status=%s workspace_control_plane=%s", req.StartedAt, req.SessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Bootstrap.Manifest.TargetID, f.Contract.Session.StartStatus, f.Contract.Session.WorkspaceControlPlane),
+		fmt.Sprintf("ts=%s session_id=%s event=workspace_materialized target_kind=%s target_provider=%s target_id=%s workspace_transport=%s materialization_id=%s workspace_origin=%s workspace=%s", req.StartedAt, sessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Bootstrap.Manifest.TargetID, f.Contract.WorkspaceTransport, req.Materialization.Manifest.MaterializationID, req.Materialization.Manifest.SourceWorkspace, req.Materialization.MaterializedWorkspace),
+		fmt.Sprintf("ts=%s session_id=%s event=bootstrap_ready target_kind=%s target_provider=%s target_id=%s runtime_api=%s access_model=%s bootstrap_id=%s image_ref=%s", req.StartedAt, sessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Bootstrap.Manifest.TargetID, f.Contract.RuntimeAPI, f.Contract.AccessModel, req.Bootstrap.Manifest.BootstrapID, req.Bootstrap.Manifest.ImageRef),
+		fmt.Sprintf("ts=%s session_id=%s event=session_started target_kind=%s target_provider=%s target_id=%s status=%s workspace_control_plane=%s", req.StartedAt, sessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Bootstrap.Manifest.TargetID, f.Contract.Session.StartStatus, f.Contract.Session.WorkspaceControlPlane),
 	} {
 		if err := appendAuditLine(req.Bootstrap.AuditLogPath, line); err != nil {
 			return SessionResult{}, err
 		}
 	}
-	record, err := hostutil.ReadSessionRecord(recordPath)
+	record, err = hostutil.ReadSessionRecord(recordPath)
 	if err != nil {
 		return SessionResult{}, err
 	}
@@ -338,6 +350,19 @@ func (f FakeTarget) FinishSession(_ context.Context, req FinishSessionRequest) (
 
 func targetRoot(stateRoot, targetProvider, targetID string) string {
 	return filepath.Join(stateRoot, "targets", TargetKind, targetProvider, targetID)
+}
+
+func statePathSegment(label, value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("%s is required", label)
+	}
+	if strings.TrimSpace(value) != value {
+		return "", fmt.Errorf("%s must not contain leading or trailing whitespace", label)
+	}
+	if value == "." || value == ".." || filepath.IsAbs(value) || strings.ContainsAny(value, `/\`) {
+		return "", fmt.Errorf("%s must be a single path segment", label)
+	}
+	return value, nil
 }
 
 func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]WorkspaceEntry, error) {

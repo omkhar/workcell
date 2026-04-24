@@ -5599,6 +5599,8 @@ prepare_injection_bundle() {
   local metadata=""
   local resolver_metadata=""
   local synthetic_claude_export=""
+  local synthetic_codex_home=""
+  local synthetic_codex_auth=""
   local -a resolver_cmd=()
   local -a resolver_env=()
 
@@ -5656,8 +5658,20 @@ prepare_injection_bundle() {
     --output-metadata "${resolver_metadata_path}"
     --output-root "${INJECTION_BUNDLE_ROOT}"
   )
-  if [[ -n "${WORKCELL_TEST_CODEX_AUTH_FILE:-}" ]]; then
-    resolver_env+=("WORKCELL_TEST_CODEX_AUTH_FILE=${WORKCELL_TEST_CODEX_AUTH_FILE}")
+  if [[ "${SELF_STAGING_PROBE_SYNTHETIC_CODEX_AUTH}" == "1" ]]; then
+    synthetic_codex_home="${INJECTION_BUNDLE_ROOT}/self-staging-probe-codex-home"
+    synthetic_codex_auth="${synthetic_codex_home}/.codex/auth.json"
+    mkdir -p "$(dirname "${synthetic_codex_auth}")"
+    umask 077
+    printf '{"token":"codex"}\n' >"${synthetic_codex_auth}"
+    ensure_go_run_env
+    resolver_env+=(
+      "HOME=${synthetic_codex_home}"
+      "WORKCELL_GO_CACHE_ROOT=${WORKCELL_GO_CACHE_ROOT}"
+      "GOPATH=${GOPATH}"
+      "GOMODCACHE=${GOMODCACHE}"
+      "GOCACHE=${GOCACHE}"
+    )
   fi
   if [[ "${SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT}" == "1" ]]; then
     synthetic_claude_export="${INJECTION_BUNDLE_ROOT}/self-staging-probe-claude-export.json"
@@ -5854,18 +5868,6 @@ provider_auth_recovery_extra_endpoints() {
 }
 
 run_clean_host_policy_command() {
-  local -a policy_env=()
-
-  if [[ -n "${WORKCELL_TEST_CODEX_AUTH_FILE:-}" ]]; then
-    policy_env+=("WORKCELL_TEST_CODEX_AUTH_FILE=${WORKCELL_TEST_CODEX_AUTH_FILE}")
-  fi
-  if [[ -n "${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE:-}" ]]; then
-    policy_env+=("WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE=${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE}")
-  fi
-  if [[ "${#policy_env[@]}" -gt 0 ]]; then
-    run_clean_host_command env "${policy_env[@]}" "$@"
-    return 0
-  fi
   run_clean_host_command "$@"
 }
 
@@ -8106,6 +8108,7 @@ ACK_CONTROL_PLANE_VCS=0
 ACK_ARBITRARY_COMMAND=0
 TEST_FAIL_AFTER_PROFILE_REFRESH=0
 SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT=0
+SELF_STAGING_PROBE_SYNTHETIC_CODEX_AUTH=0
 declare -a AGENT_ARGS=()
 declare -a NORMALIZED_ARGS=()
 
@@ -8118,6 +8121,7 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
   ALLOW_CONTROL_PLANE_VCS="${5:-0}"
   PRESERVE_STAGING_PROBE_ARTIFACTS="${6:-0}"
   SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT="${7:-0}"
+  SELF_STAGING_PROBE_SYNTHETIC_CODEX_AUTH="${8:-0}"
 
   [[ -n "${AGENT}" ]] || {
     echo "--self-staging-probe requires AGENT WORKSPACE INJECTION_POLICY [MODE]" >&2
@@ -8140,6 +8144,13 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
     0 | 1) ;;
     *)
       echo "--self-staging-probe synthetic Claude export flag must be 0 or 1" >&2
+      exit 2
+      ;;
+  esac
+  case "${SELF_STAGING_PROBE_SYNTHETIC_CODEX_AUTH}" in
+    0 | 1) ;;
+    *)
+      echo "--self-staging-probe synthetic Codex auth flag must be 0 or 1" >&2
       exit 2
       ;;
   esac
@@ -8581,6 +8592,14 @@ if [[ -n "${LOGS_KIND}" ]]; then
   exit 0
 fi
 validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${ALLOW_CONTROL_PLANE_VCS}" "${ACK_CONTROL_PLANE_VCS}" "${REBUILD}" "${PREPARE}"
+if [[ -n "${WORKCELL_TEST_CODEX_AUTH_FILE:-}" ]]; then
+  echo "WORKCELL_TEST_CODEX_AUTH_FILE is reserved for the Workcell test harness." >&2
+  exit 2
+fi
+if [[ -n "${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE:-}" ]]; then
+  echo "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE is reserved for the Workcell test harness." >&2
+  exit 2
+fi
 cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
 prepare_injection_bundle "${AGENT}" "${MODE}"
 
@@ -8600,11 +8619,6 @@ if [[ -n "${WORKCELL_EGRESS_HELPER:-}" ]]; then
   echo "WORKCELL_EGRESS_HELPER is reserved for the Workcell test harness." >&2
   exit 2
 fi
-if [[ -n "${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE:-}" ]]; then
-  echo "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE is reserved for the Workcell test harness." >&2
-  exit 2
-fi
-
 refresh_profile_state "${COLIMA_PROFILE}"
 refresh_support_matrix_state
 

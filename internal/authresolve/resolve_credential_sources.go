@@ -22,7 +22,6 @@ import (
 )
 
 const testClaudeExportEnv = "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE"
-const testCodexAuthFileEnv = "WORKCELL_TEST_CODEX_AUTH_FILE"
 
 var (
 	supportedAgents = map[string]struct{}{
@@ -535,9 +534,6 @@ func findCodexHomeAuthFile() (string, bool, error) {
 }
 
 func codexHomeAuthFilePath() string {
-	if override := os.Getenv(testCodexAuthFileEnv); override != "" {
-		return expandHostPath(override, cwd())
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return filepath.Join(".codex", "auth.json")

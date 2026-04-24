@@ -1,4 +1,6 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+# shellcheck source=scripts/lib/trusted-entrypoint.sh
+source "$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && /bin/pwd)/lib/trusted-entrypoint.sh"
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -7,6 +9,8 @@ BASE_BRANCH="main"
 SNAPSHOT="worktree"
 ALLOW_PARITY_OVERRIDE=0
 PARITY_OVERRIDE_REASON=""
+HOST_GIT_BIN=""
+HOST_JQ_BIN=""
 PASSTHROUGH_ARGS=()
 
 usage() {
@@ -44,6 +48,22 @@ resolve_workspace() {
   )
 }
 
+resolve_fixed_host_tool() {
+  local name="$1"
+  shift
+  local candidate=""
+
+  for candidate in "$@"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Missing trusted host tool: ${name}" >&2
+  exit 1
+}
+
 compute_snapshot_tree() {
   local workspace="$1"
   local snapshot_mode="$2"
@@ -52,7 +72,7 @@ compute_snapshot_tree() {
 
   case "${snapshot_mode}" in
     index)
-      git -C "${workspace}" write-tree
+      "${HOST_GIT_BIN}" -C "${workspace}" write-tree
       return 0
       ;;
     worktree) ;;
@@ -65,9 +85,9 @@ compute_snapshot_tree() {
   tmp_index="$(mktemp "${TMPDIR:-/tmp}/workcell-publish-index.XXXXXX")"
   rm -f "${tmp_index}"
   trap 'rm -f "${tmp_index}"' RETURN
-  GIT_INDEX_FILE="${tmp_index}" git -C "${workspace}" read-tree HEAD
-  GIT_INDEX_FILE="${tmp_index}" git -C "${workspace}" add -A
-  tree_oid="$(GIT_INDEX_FILE="${tmp_index}" git -C "${workspace}" write-tree)"
+  GIT_INDEX_FILE="${tmp_index}" "${HOST_GIT_BIN}" -C "${workspace}" read-tree HEAD
+  GIT_INDEX_FILE="${tmp_index}" "${HOST_GIT_BIN}" -C "${workspace}" add -A
+  tree_oid="$(GIT_INDEX_FILE="${tmp_index}" "${HOST_GIT_BIN}" -C "${workspace}" write-tree)"
   rm -f "${tmp_index}"
   trap - RETURN
   printf '%s\n' "${tree_oid}"
@@ -81,7 +101,7 @@ verify_pr_parity_evidence() {
   local evidence_path=""
   local expected_tree=""
 
-  evidence_dir="$(git -C "${workspace}" rev-parse --absolute-git-dir)/workcell-parity"
+  evidence_dir="$("${HOST_GIT_BIN}" -C "${workspace}" rev-parse --absolute-git-dir)/workcell-parity"
   evidence_path="${evidence_dir}/pr-parity.json"
   if [[ ! -f "${evidence_path}" ]]; then
     echo "Missing local PR-parity evidence for ${workspace}." >&2
@@ -90,7 +110,7 @@ verify_pr_parity_evidence() {
   fi
   expected_tree="$(compute_snapshot_tree "${workspace}" "${snapshot_mode}")"
 
-  jq -e \
+  "${HOST_JQ_BIN}" -e \
     --arg base "${base_branch}" \
     --arg tree_oid "${expected_tree}" \
     '
@@ -153,6 +173,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+HOST_GIT_BIN="$(resolve_fixed_host_tool git /opt/homebrew/bin/git /usr/local/bin/git /usr/bin/git /bin/git)"
+HOST_JQ_BIN="$(resolve_fixed_host_tool jq /opt/homebrew/bin/jq /usr/local/bin/jq /usr/bin/jq /bin/jq)"
 WORKSPACE="$(resolve_workspace "${WORKSPACE}")"
 
 if [[ "${ALLOW_PARITY_OVERRIDE}" -eq 1 ]]; then
