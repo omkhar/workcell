@@ -69,12 +69,17 @@ targets must stay labeled `compat` or another explicitly lower-assurance class.
 
 - `aws-ec2-ssm` is the first `remote_vm` target
 - `gcp-vm` is the second `remote_vm` target on the same control-plane contract
-- `azure-vm` is demand-gated and follows only after the first two remote VM
-  targets stabilize
+- `azure-vm` is deferred, not rejected; it follows as the next raw `remote_vm`
+  provider lane after the managed-workstation contract and discovery slice
 
 ### Managed workstation targets
 
-- `gcp-cloud-workstations` stays a later managed-workstation track
+- managed workstation contract and discovery is the next funded lane because
+  users have prioritized workstation-shaped environments over another raw VM
+  provider
+- `gcp-cloud-workstations` remains a candidate managed-workstation provider
+  track, but provider-specific enablement must wait until the
+  `managed_workstation` target contract is recorded
 - other managed-workstation candidates are evaluated separately from the raw
   remote VM program
 
@@ -118,9 +123,14 @@ targets must stay labeled `compat` or another explicitly lower-assurance class.
 - add `docker-desktop` as the first `compat` target
 - add `aws-ec2-ssm` as the first `remote_vm` target
 - add `gcp-vm` as the second `remote_vm` target
+- define managed workstations as the next funded product-mode track before
+  shipping any managed-workstation backend
+- return to `azure-vm` as the following raw `remote_vm` provider lane after the
+  managed-workstation contract and discovery slice
 - require later cloud adapters to pass the shared remote-VM conformance harness
   rather than redefining contract suites per provider
-- keep `azure-vm` and managed workstations behind later decision gates
+- keep both managed-workstation backends and `azure-vm` behind their recorded
+  support-boundary and evidence gates
 
 ### 6. Scenario evidence and operator verification
 
@@ -150,7 +160,8 @@ Current repo status:
 - Gate 3 is implemented
 - Gate 4 is implemented
 - Gate 5 is implemented
-- Gate 6 is the next active slice
+- Gate 6 is implemented
+- Gate 7 is the next active slice
 
 ### Gate 3: compatibility target certified
 
@@ -185,6 +196,24 @@ Current repo status:
 
 - demand and support load justify whether `azure-vm` or managed workstations
   become funded follow-on work
+
+Current decision:
+
+- managed workstation contract and discovery is funded next because users have
+  prioritized workstation-shaped environments
+- `azure-vm` is deferred to the following raw `remote_vm` provider lane and
+  remains on the same remote-VM contract rather than being rejected
+- managed workstations stay separate from raw remote VMs and must record a
+  distinct lifecycle, trust model, support boundary, and validation strategy
+
+### Gate 7: managed workstation contract and discovery
+
+- define the provider-neutral `managed_workstation` target contract before any
+  managed-workstation backend ships
+- record the first provider-specific managed-workstation lane and its
+  certification boundary
+- preserve `azure-vm` as the next raw `remote_vm` follow-on after the
+  managed-workstation contract slice
 
 ## Program Non-Goals
 

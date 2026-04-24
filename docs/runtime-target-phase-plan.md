@@ -28,7 +28,10 @@ Current repo status:
   broker-plan diagnostics, and live AWS SSM certification smoke
 - Phase 8 is implemented in the GCP VM preview backend, deterministic IAP
   broker-plan diagnostics, and live GCP IAP certification smoke
-- Phase 9 is the next active slice: later expansion decision gate
+- Phase 9 is implemented as the later expansion decision gate: managed
+  workstations are the next funded lane, and Azure VM follows after that as the
+  next raw `remote_vm` lane
+- Phase 10 is the next active slice: managed workstation contract and discovery
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract
@@ -416,3 +419,55 @@ Complete when:
   deferred rather than implied
 - the owning EM, TL, contract/docs owner, and validation owner record the
   decision and its support-load implications in the planning surfaces
+
+Phase 9 completion record:
+
+- decision: fund managed workstation contract and discovery next, then return
+  to `azure-vm` as the following raw `remote_vm` provider lane
+- rationale: users have prioritized workstation-shaped environments over
+  another raw VM provider, while the shipped AWS and GCP remote VM previews are
+  enough evidence to defer the third raw VM adapter without weakening the
+  current remote-VM contract
+- support-load implication: managed workstations must remain a separate
+  `managed_workstation` target kind with their own lifecycle, identity,
+  workspace, policy, audit, and certification boundaries rather than being
+  folded into `remote_vm`
+- Azure implication: `azure-vm` is deferred, not rejected; it remains the next
+  raw `remote_vm` adapter once the managed-workstation contract slice has
+  recorded its support boundary and evidence model
+- owner-lane record: EM approves the user-demand-driven prioritization and
+  owns preview/GA support boundaries; TL owns the managed-workstation target
+  contract and any shared-harness reuse; contract/docs owner owns distinct
+  target-kind, matrix, rollout, and operator-verification surfaces; validation
+  owner owns deterministic evidence and any later certification-only live smoke
+  gates
+- in the current single-maintainer operating mode, these approvals are recorded
+  as distinct Codex-agent owner lanes, not as a claim of independent human
+  approval
+
+## Phase 10: Managed workstation contract and discovery
+
+Goal:
+
+- define the managed-workstation target contract before any provider-specific
+  managed-workstation backend ships
+
+Deliverables:
+
+- provider-neutral `managed_workstation` contract covering lifecycle,
+  workspace materialization, identity, policy, audit, and operator recovery
+- comparison against the existing `local_vm`, `local_compat`, and `remote_vm`
+  target kinds so support claims stay bounded
+- deterministic fake target and conformance expectations if the target kind is
+  implementable without live provider state
+- explicit discovery outcome for the first managed-workstation provider lane
+  and for the later `azure-vm` raw remote VM follow-on
+
+Complete when:
+
+- managed workstations have a documented contract, support boundary, and
+  evidence model distinct from raw remote VMs
+- any provider-specific follow-on implementation is named with its rollout and
+  certification gates
+- `azure-vm` remains explicitly deferred to the next raw `remote_vm` lane
+  rather than being silently dropped
