@@ -16,18 +16,43 @@ mkdir -p "${HOME_DIR}/.config" "${WORKSPACE}"
 git -C "${WORKSPACE}" init -q
 printf 'scenario workspace\n' >"${WORKSPACE}/README.md"
 
+is_trusted_host_tool_path() {
+  local candidate="$1"
+  case "${candidate}" in
+    /usr/bin | /usr/bin/* | /bin | /bin/* | /usr/sbin | /usr/sbin/* | /sbin | /sbin/* | /usr/local/bin | /usr/local/bin/* | /usr/local/Cellar | /usr/local/Cellar/* | /usr/local/Caskroom/google-cloud-sdk | /usr/local/Caskroom/google-cloud-sdk/* | /usr/local/google-cloud-sdk | /usr/local/google-cloud-sdk/* | /usr/local/share/google-cloud-sdk | /usr/local/share/google-cloud-sdk/* | /opt/homebrew/bin | /opt/homebrew/bin/* | /opt/homebrew/Cellar | /opt/homebrew/Cellar/* | /opt/homebrew/Caskroom/google-cloud-sdk | /opt/homebrew/Caskroom/google-cloud-sdk/* | /opt/homebrew/share/google-cloud-sdk | /opt/homebrew/share/google-cloud-sdk/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+canonicalize_host_tool_path() {
+  local candidate="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "${candidate}"
+    return
+  fi
+  if command -v perl >/dev/null 2>&1; then
+    perl -MCwd=abs_path -e 'print abs_path($ARGV[0]) || $ARGV[0], "\n"' "${candidate}"
+    return
+  fi
+  printf '%s\n' "${candidate}"
+}
+
 resolve_host_tool_optional() {
   local candidate=""
+  local canonical_candidate=""
   local name="$1"
   shift
   for candidate in "$@" "$(command -v "${name}" 2>/dev/null || true)"; do
     [[ -n "${candidate}" ]] || continue
     [[ -x "${candidate}" ]] || continue
-    case "${candidate}" in
-      /usr/bin/* | /usr/local/bin/* | /usr/local/Caskroom/google-cloud-sdk/* | /usr/local/google-cloud-sdk/* | /usr/local/share/google-cloud-sdk/* | /opt/homebrew/bin/* | /opt/homebrew/Caskroom/google-cloud-sdk/* | /opt/homebrew/share/google-cloud-sdk/*) ;;
-      *) continue ;;
-    esac
-    printf '%s\n' "${candidate}"
+    canonical_candidate="$(canonicalize_host_tool_path "${candidate}")"
+    is_trusted_host_tool_path "${candidate}" || continue
+    is_trusted_host_tool_path "${canonical_candidate}" || continue
+    printf '%s\n' "${canonical_candidate}"
     return 0
   done
   return 1
