@@ -15,6 +15,12 @@ Releases.
   support-matrix coverage, rollout docs, and a certification-only live smoke
   lane
 
+### Changed
+
+- record the Phase 9 later-expansion decision to fund managed workstation
+  contract and discovery next, while deferring `azure-vm` to the following raw
+  `remote_vm` provider lane
+
 ## v0.10.3 - 2026-04-17
 
 ### Changed
