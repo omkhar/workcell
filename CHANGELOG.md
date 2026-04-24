@@ -8,6 +8,13 @@ Releases.
 
 ## Unreleased
 
+### Added
+
+- add the preview-only `remote_vm/gcp-vm/compat` backend with deterministic
+  IAP broker-plan diagnostics, shared remote-VM conformance reuse, canonical
+  support-matrix coverage, rollout docs, and a certification-only live smoke
+  lane
+
 ## v0.10.3 - 2026-04-17
 
 ### Changed

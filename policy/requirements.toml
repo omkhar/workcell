@@ -226,6 +226,28 @@ docs = [
   "docs/runtime-target-phase-plan.md",
 ]
 
+[functional.FR-013]
+title = "Preview GCP remote VM target"
+summary = "Workcell exposes the preview-only gcp-vm remote_vm target with explicit brokered IAP diagnostics, remote-materialization state reporting, provider-specific conformance reuse, and a certification-only live gate that keeps inbound public SSH out of the supported path."
+workflows = ["launch_target_backend"]
+evidence = [
+  "tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh",
+  "tests/scenarios/shared/test-gcp-vm-launch-smoke.sh",
+  "internal/remotevm/contract_test.go",
+  "internal/remotevm/fake_target_test.go",
+  "internal/remotevm/conformance_test.go",
+]
+docs = [
+  "README.md",
+  "man/workcell.1",
+  "docs/gcp-vm-preview.md",
+  "docs/remote-vm-contract.md",
+  "docs/validation-scenarios.md",
+  "docs/provider-bootstrap-matrix.md",
+  "docs/workcell-system-design.md",
+  "docs/runtime-target-phase-plan.md",
+]
+
 [nonfunctional.NFR-001]
 title = "Bounded VM-plus-container execution"
 summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."

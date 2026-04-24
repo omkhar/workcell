@@ -148,7 +148,9 @@ Current repo status:
 - Gate 1 is implemented
 - Gate 2 is implemented
 - Gate 3 is implemented
-- Gate 4 is the next active slice
+- Gate 4 is implemented
+- Gate 5 is implemented
+- Gate 6 is the next active slice
 
 ### Gate 3: compatibility target certified
 

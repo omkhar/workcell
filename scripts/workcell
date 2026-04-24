@@ -279,7 +279,7 @@ Options:
   --agent codex|claude|gemini   Provider to run (required)
   --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
   --agent-arg VALUE             Additional provider argv to append (repeatable)
-  --target colima|docker-desktop|aws-ec2-ssm
+  --target colima|docker-desktop|aws-ec2-ssm|gcp-vm
                                 Runtime target to launch (default: colima)
   --target-id ID                Explicit remote target identifier for preview backends
   --cache-profile off|standard  Opt-in persistent non-secret cache plane (default: off)
@@ -335,6 +335,8 @@ Workflows:
     workcell --target docker-desktop --agent codex --workspace /path/to/repo
   Preview AWS remote VM broker plan:
     workcell --target aws-ec2-ssm --target-id i-1234567890abcdef0 --agent codex --workspace /path/to/repo --dry-run
+  Preview GCP remote VM broker plan:
+    workcell --target gcp-vm --target-id workcell-phase8-cert --agent codex --workspace /path/to/repo --dry-run
   Managed development command lane:
     workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
     workcell --agent claude --mode development --workspace /path/to/repo -- bash -lc 'rg TODO'
@@ -568,10 +570,10 @@ validate_target_id_name() {
 
 validate_target_backend_name() {
   case "$1" in
-    colima | docker-desktop | aws-ec2-ssm) ;;
+    colima | docker-desktop | aws-ec2-ssm | gcp-vm) ;;
     *)
       echo "Unsupported target backend: $1" >&2
-      echo "Use --target colima, --target docker-desktop, or --target aws-ec2-ssm." >&2
+      echo "Use --target colima, --target docker-desktop, --target aws-ec2-ssm, or --target gcp-vm." >&2
       exit 2
       ;;
   esac
@@ -975,7 +977,7 @@ prepare_current_target_docker_client() {
       export DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}"
       unset DOCKER_HOST
       ;;
-    aws-ec2-ssm)
+    aws-ec2-ssm | gcp-vm)
       return 0
       ;;
   esac
@@ -1864,8 +1866,61 @@ current_target_kind() {
     docker-desktop)
       printf 'local_compat\n'
       ;;
-    aws-ec2-ssm)
+    aws-ec2-ssm | gcp-vm)
       printf 'remote_vm\n'
+      ;;
+  esac
+}
+
+target_backend_is_remote_vm_preview() {
+  case "$1" in
+    aws-ec2-ssm | gcp-vm)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+preview_remote_vm_broker() {
+  case "$1" in
+    aws-ec2-ssm)
+      printf 'aws-ssm-session-manager\n'
+      ;;
+    gcp-vm)
+      printf 'gcp-iap-ssh\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+preview_remote_vm_rollout_doc() {
+  case "$1" in
+    aws-ec2-ssm)
+      printf 'docs/aws-ec2-ssm-preview.md\n'
+      ;;
+    gcp-vm)
+      printf 'docs/gcp-vm-preview.md\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+preview_remote_vm_rollout_action() {
+  case "$1" in
+    aws-ec2-ssm)
+      printf 'review-aws-preview-rollout\n'
+      ;;
+    gcp-vm)
+      printf 'review-gcp-preview-rollout\n'
+      ;;
+    *)
+      return 1
       ;;
   esac
 }
@@ -1882,7 +1937,7 @@ current_target_id() {
     docker-desktop)
       docker_desktop_context_name
       ;;
-    aws-ec2-ssm)
+    aws-ec2-ssm | gcp-vm)
       printf '%s\n' "${COLIMA_PROFILE}"
       ;;
   esac
@@ -1896,25 +1951,22 @@ current_target_assurance_class() {
     docker-desktop)
       printf 'compat\n'
       ;;
-    aws-ec2-ssm)
+    aws-ec2-ssm | gcp-vm)
       printf 'compat\n'
       ;;
   esac
 }
 
 current_runtime_api() {
-  case "${TARGET_BACKEND}" in
-    aws-ec2-ssm)
-      printf 'brokered\n'
-      ;;
-    *)
-      printf 'docker\n'
-      ;;
-  esac
+  if target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
+    printf 'brokered\n'
+    return 0
+  fi
+  printf 'docker\n'
 }
 
 current_workspace_transport() {
-  if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]]; then
+  if target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
     printf 'remote-materialization\n'
     return 0
   fi
@@ -1986,7 +2038,7 @@ support_matrix_launch_allowed() {
 }
 
 preview_remote_vm_dry_run_allowed() {
-  [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]] &&
+  target_backend_is_remote_vm_preview "${TARGET_BACKEND}" &&
     [[ "${DRY_RUN}" -eq 1 ]] &&
     [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]]
 }
@@ -2021,11 +2073,17 @@ emit_preview_remote_vm_dry_run() {
   fi
   printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
   printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
-  printf 'remote_access_model=brokered remote_broker=aws-ssm-session-manager inbound_public_ssh=blocked live_smoke=certification-only\n' >&2
+  printf 'remote_access_model=brokered remote_broker=%s inbound_public_ssh=blocked live_smoke=certification-only\n' \
+    "$(preview_remote_vm_broker "${TARGET_BACKEND}")" >&2
   printf 'remote_workspace_materialization=explicit reviewed_host_copy=1\n' >&2
-  printf 'execution_path=remote-preview-broker-plan audit_log=%s rollout_doc=docs/aws-ec2-ssm-preview.md\n' "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
-  printf 'remote-preview-plan target=aws-ec2-ssm broker=aws-ssm-session-manager target_id=%s launch_gate=certification-only workspace=%s\n' \
-    "$(current_target_id)" "${WORKSPACE}"
+  printf 'execution_path=remote-preview-broker-plan audit_log=%s rollout_doc=%s\n' \
+    "$(profile_audit_log_path "${COLIMA_PROFILE}")" \
+    "$(preview_remote_vm_rollout_doc "${TARGET_BACKEND}")" >&2
+  printf 'remote-preview-plan target=%s broker=%s target_id=%s launch_gate=certification-only workspace=%s\n' \
+    "$(current_target_provider)" \
+    "$(preview_remote_vm_broker "${TARGET_BACKEND}")" \
+    "$(current_target_id)" \
+    "${WORKSPACE}"
 }
 
 fail_for_unsupported_launch_target() {
@@ -2042,6 +2100,9 @@ fail_for_unsupported_launch_target() {
   elif [[ "$(current_target_provider)" == "aws-ec2-ssm" ]]; then
     echo "The AWS remote VM target is a preview-only brokered path. Repo-required dry-run diagnostics are supported, but live launch remains certification-only and must use audited SSM access without inbound public SSH." >&2
     echo "Use --dry-run to inspect the reviewed broker plan, then follow docs/aws-ec2-ssm-preview.md for the certification path." >&2
+  elif [[ "$(current_target_provider)" == "gcp-vm" ]]; then
+    echo "The GCP remote VM target is a preview-only brokered path. Repo-required dry-run diagnostics are supported, but live launch remains certification-only and must use audited IAP access without inbound public SSH." >&2
+    echo "Use --dry-run to inspect the reviewed broker plan, then follow docs/gcp-vm-preview.md for the certification path." >&2
   else
     echo "The Docker Desktop target remains a lower-assurance compat path and is only supported where the published host matrix allows it." >&2
   fi
@@ -5742,7 +5803,7 @@ build_recommended_command() {
   [[ "${include_repair}" -eq 1 ]] && cmd+=(--repair-profile)
   cmd+=(--agent "${AGENT}")
   [[ "${TARGET_BACKEND}" != "colima" ]] && cmd+=(--target "${TARGET_BACKEND}")
-  [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]] && [[ -n "${TARGET_ID_OVERRIDE}" ]] && cmd+=(--target-id "${TARGET_ID_OVERRIDE}")
+  target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ -n "${TARGET_ID_OVERRIDE}" ]] && cmd+=(--target-id "${TARGET_ID_OVERRIDE}")
   [[ "${AGENT_AUTONOMY}" != "yolo" ]] && cmd+=(--agent-autonomy "${AGENT_AUTONOMY}")
   [[ "${CACHE_PROFILE}" != "off" ]] && cmd+=(--cache-profile "${CACHE_PROFILE}")
   if ! container_mutability_is_default_for_mode "${target_mutability}" "${target_mode}"; then
@@ -7181,9 +7242,14 @@ is_trusted_host_tool_path() {
     /usr/local/bin
     /usr/local/Cellar
     /usr/local/aws-cli
+    /usr/local/Caskroom/google-cloud-sdk
+    /usr/local/google-cloud-sdk
+    /usr/local/share/google-cloud-sdk
     /usr/local/sessionmanagerplugin/bin
     /opt/homebrew/bin
     /opt/homebrew/Cellar
+    /opt/homebrew/Caskroom/google-cloud-sdk
+    /opt/homebrew/share/google-cloud-sdk
     /Applications/Docker.app/Contents/Resources/bin
   )
   local prefix
@@ -7279,6 +7345,8 @@ missing_launch_host_tools_csv() {
   if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]]; then
     resolve_host_tool_optional aws /opt/homebrew/bin/aws /usr/local/bin/aws /usr/local/aws-cli/aws >/dev/null || missing+=(aws)
     resolve_host_tool_optional session-manager-plugin /usr/local/bin/session-manager-plugin /usr/local/sessionmanagerplugin/bin/session-manager-plugin >/dev/null || missing+=(session-manager-plugin)
+  elif [[ "${TARGET_BACKEND}" == "gcp-vm" ]]; then
+    resolve_host_tool_optional gcloud /opt/homebrew/bin/gcloud /usr/local/bin/gcloud /usr/bin/gcloud >/dev/null || missing+=(gcloud)
   else
     if docker_bin="$(resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"; then
       if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
@@ -7331,6 +7399,9 @@ target_broker_endpoints() {
   case "$1" in
     aws-ec2-ssm)
       echo "ec2.amazonaws.com:443 ssm.amazonaws.com:443 ssmmessages.amazonaws.com:443 ec2messages.amazonaws.com:443"
+      ;;
+    gcp-vm)
+      echo "compute.googleapis.com:443 iap.googleapis.com:443 oslogin.googleapis.com:443"
       ;;
     *)
       return 0
@@ -8398,8 +8469,8 @@ validate_cache_profile_name "${CACHE_PROFILE}"
 validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
 validate_log_level_name "${LOG_LEVEL}"
 validate_session_workspace_mode "${SESSION_WORKSPACE_MODE}"
-if [[ "${TARGET_BACKEND}" != "aws-ec2-ssm" ]] && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
-  echo "--target-id only supports --target aws-ec2-ssm." >&2
+if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
+  echo "--target-id only supports --target aws-ec2-ssm or --target gcp-vm." >&2
   exit 2
 fi
 if [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
@@ -8419,8 +8490,8 @@ if [[ "${TARGET_BACKEND}" != "colima" ]]; then
     exit 2
   fi
 fi
-if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]] && [[ "${PREPARE}" -eq 1 ]]; then
-  echo "--prepare and --prepare-only do not apply to --target aws-ec2-ssm." >&2
+if target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ "${PREPARE}" -eq 1 ]]; then
+  echo "--prepare and --prepare-only do not apply to remote VM preview targets." >&2
   exit 2
 fi
 if [[ "${SESSION_DETACHED}" -eq 0 ]] && [[ -n "${SESSION_WORKSPACE_MODE}" ]]; then
@@ -8580,7 +8651,7 @@ HOST_TOOL_MISSING_CSV="$(missing_launch_host_tools_csv)"
 HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
 HOST_DOCKER_BIN="docker"
 if [[ -z "${COLIMA_PROFILE}" ]]; then
-  if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]] && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
+  if target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
     COLIMA_PROFILE="${TARGET_ID_OVERRIDE}"
   else
     COLIMA_PROFILE="$(derive_profile_name "${WORKSPACE}")"
@@ -8674,11 +8745,11 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
   printf 'doctor_workspace_binding=%s\n' "${PROFILE_MARKER_WORKSPACE:-none}"
   printf 'doctor_prepared_image=%s\n' "${prepared_image}"
   if ! support_matrix_launch_allowed; then
-    if [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]] && [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]]; then
+    if [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]] && target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
       if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
         printf 'doctor_recommended_next=install-host-tools\n'
       else
-        printf 'doctor_recommended_next=review-aws-preview-rollout\n'
+        printf 'doctor_recommended_next=%s\n' "$(preview_remote_vm_rollout_action "${TARGET_BACKEND}")"
       fi
       exit 0
     fi
@@ -8771,10 +8842,10 @@ if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${MODE}" == "strict" ]] && [[ "${PREPARE}" -e
 fi
 
 ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(target_broker_endpoints "${TARGET_BACKEND}") $(credential_extra_endpoints) $(provider_auth_recovery_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS:-}")"
-if [[ "${TARGET_BACKEND}" != "aws-ec2-ssm" ]] && [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
+if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
   ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:443")"
 fi
-if [[ "${TARGET_BACKEND}" == "aws-ec2-ssm" ]]; then
+if target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
   emit_preview_remote_vm_dry_run
   exit 0
 fi

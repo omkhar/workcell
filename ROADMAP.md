@@ -18,8 +18,8 @@ The deterministic phase breakdown lives in
 - expand end-to-end coverage for authenticated, lower-assurance, and
   session-supervisor transitions so new orchestration features ship with
   invariant checks
-- ship the first remote VM backend for the highest-value use cases on top of
-  the canonical preview contract and shared conformance harness
+- use the shipped AWS and GCP remote VM preview backends to harden rollout,
+  certification, and operator recovery paths before broadening support
 - keep the shipped canonical host-support matrix and shared remote-VM
   conformance harness authoritative so later `compat` and `remote_vm` targets
   cannot fork the support contract by accident
@@ -37,11 +37,11 @@ The deterministic phase breakdown lives in
 
 ### Deployment reach
 
-- deliver the first remote VM backend for the highest-value use cases:
-  secure ephemeral repro and PR environments, standardized onboarding
-  environments, and sandboxed agent workspaces in the operator's own account
-- reuse the same remote VM contract for the second cloud provider with limited
-  provider-specific delta
+- refine remote VM preview use cases such as secure ephemeral repro and PR
+  environments, standardized onboarding environments, and sandboxed agent
+  workspaces in the operator's own account
+- keep any additional cloud provider work on the same remote VM contract with
+  limited provider-specific delta
 - keep managed workstations as a separate discovery track rather than treating
   them as the same class as raw remote VMs
 - improve comparison material and use-case guidance for teams evaluating

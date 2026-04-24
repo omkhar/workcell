@@ -26,7 +26,9 @@ Current repo status:
   deterministic compat diagnostics, and live certification smoke
 - Phase 7 is implemented in the AWS EC2 SSM preview backend, deterministic
   broker-plan diagnostics, and live AWS SSM certification smoke
-- Phase 8 is the next active slice: GCP remote VM backend
+- Phase 8 is implemented in the GCP VM preview backend, deterministic IAP
+  broker-plan diagnostics, and live GCP IAP certification smoke
+- Phase 9 is the next active slice: later expansion decision gate
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract
@@ -356,6 +358,13 @@ Deliverables:
 - parity on lifecycle, audit, and workspace materialization semantics
 - reuse of the unchanged shared remote-VM conformance harness
 
+Current implementation note:
+
+- deterministic `gcp-vm` target selection, support-matrix diagnostics, rollout
+  docs, and shared remote-VM conformance reuse are now versioned in-repo
+- live GCP smoke remains a certification-only gate and is now versioned in
+  `tests/scenarios/shared/test-gcp-vm-launch-smoke.sh`
+
 Complete when:
 
 - deterministic adapter suites and the shared remote-VM conformance harness
@@ -367,6 +376,27 @@ Complete when:
 - live GCP smoke remains certification-only
 - the owning EM, TL, contract/docs owner, and validation owner approve the
   support boundary, matrices, and evidence for the phase
+
+Phase 8 completion record:
+
+- repo-required deterministic evidence is green via
+  `tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh` and the shared
+  `internal/remotevm` conformance tests
+- live certification evidence is isolated in
+  `tests/scenarios/shared/test-gcp-vm-launch-smoke.sh` and remains outside the
+  repo-required validation lane
+- the support boundary remains explicit as `remote_vm/gcp-vm/compat`; live
+  launch remains blocked outside the certification lane
+- the reviewed live path uses Google Cloud IAP SSH, requires no external NAT IP
+  on the reviewed VM, and keeps remote workspace materialization as an
+  explicit host-auditable broker plan
+- rollback remains explicit: stop using `--target gcp-vm`, return to
+  `--target colima`, and clear Workcell-owned GCP preview target state if
+  needed
+- in the current single-maintainer operating mode, the EM, TL, contract/docs,
+  and validation owner approvals are recorded together in this completion
+  update; this is an explicit phase-approval packet, not a claim of
+  independent human review
 
 ## Phase 9: Later expansion decision gate
 

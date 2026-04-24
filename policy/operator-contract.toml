@@ -43,11 +43,11 @@ target_state = "retain"
 [workflows.launch_target_backend]
 title = "Managed runtime target selection"
 support = "supported"
-canonical = "--target colima|docker-desktop|aws-ec2-ssm"
+canonical = "--target colima|docker-desktop|aws-ec2-ssm|gcp-vm"
 discoverability = ["top-level-help", "readme", "manpage"]
-docs = ["README.md", "man/workcell.1", "docs/validation-scenarios.md", "docs/aws-ec2-ssm-preview.md", "docs/remote-vm-contract.md", "docs/provider-bootstrap-matrix.md"]
-evidence = ["tests/scenarios/shared/test-compat-target-dry-run.sh", "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh", "tests/scenarios/shared/test-aws-remote-vm-dry-run.sh", "tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh"]
-requirements = ["functional.FR-011", "functional.FR-012"]
+docs = ["README.md", "man/workcell.1", "docs/validation-scenarios.md", "docs/aws-ec2-ssm-preview.md", "docs/gcp-vm-preview.md", "docs/remote-vm-contract.md", "docs/provider-bootstrap-matrix.md"]
+evidence = ["tests/scenarios/shared/test-compat-target-dry-run.sh", "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh", "tests/scenarios/shared/test-aws-remote-vm-dry-run.sh", "tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh", "tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh", "tests/scenarios/shared/test-gcp-vm-launch-smoke.sh"]
+requirements = ["functional.FR-011", "functional.FR-012", "functional.FR-013"]
 target_state = "retain"
 
 [workflows.publish_pr]
