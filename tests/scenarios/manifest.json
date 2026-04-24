@@ -159,6 +159,29 @@
       "requires_credentials": true
     },
     {
+      "id": "shared/gcp-remote-vm-dry-run",
+      "description": "GCP remote VM preview target selection keeps brokered IAP target metadata, support boundary, and certification-only live gate explicit while allowing deterministic dry-run planning",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-gcp-remote-vm-dry-run.sh",
+      "requires_credentials": false
+    },
+    {
+      "id": "shared/gcp-vm-launch-smoke",
+      "description": "GCP VM certification smoke proves a reviewed target is running without an external NAT IP, uses the Workcell preview broker plan, and accepts audited IAP SSH access",
+      "lane": "provider-e2e",
+      "platform": "macos",
+      "validation_tier": "certification",
+      "manual": false,
+      "providers": ["codex"],
+      "persona": "validation-owner",
+      "test_file": "shared/test-gcp-vm-launch-smoke.sh",
+      "requires_credentials": true
+    },
+    {
       "id": "shared/session-commands",
       "description": "Host-side session inventory and detached control-plane commands cover durable records plus public CLI attach/send/stop/delete lifecycle handling for running and terminal workloads",
       "lane": "secretless",

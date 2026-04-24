@@ -26,6 +26,8 @@ Use these anchors when checking release-facing claims:
 - compat target selection and fail-closed diagnostics: `shared/compat-target-dry-run`
 - preview AWS remote VM diagnostics and certification gate:
   `shared/aws-remote-vm-dry-run`, `shared/aws-ec2-ssm-launch-smoke`
+- preview GCP remote VM diagnostics and certification gate:
+  `shared/gcp-remote-vm-dry-run`, `shared/gcp-vm-launch-smoke`
 - local runtime certification smoke: `shared/agent-launch-smoke`
 - host publication handoff and main-only PR-base safeguards: `shared/publish-pr`
 - host-side session inventory and control plus detached workspace-mode
@@ -64,7 +66,7 @@ They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
 inspection and explainability, host-side detached session inventory, control,
 logs/timeline, clean-base diff/export behavior, and operator-contract parity.
-They also now carry the canonical preview-only `remote_vm` contract through the deterministic `internal/remotevm` fake target and shared conformance harness, the explicit `docker-desktop` compat target through deterministic backend-selection, state-root-routing, and fail-closed diagnostics, and the preview-only `aws-ec2-ssm` remote VM target through deterministic broker-plan diagnostics and fail-closed live gating.
+They also now carry the canonical preview-only `remote_vm` contract through the deterministic `internal/remotevm` fake target and shared conformance harness, the explicit `docker-desktop` compat target through deterministic backend-selection, state-root-routing, and fail-closed diagnostics, and the preview-only `aws-ec2-ssm` and `gcp-vm` remote VM targets through deterministic broker-plan diagnostics and fail-closed live gating.
 
 `./scripts/validate-repo.sh` runs the repo-required scenario tier through:
 
@@ -89,12 +91,18 @@ Today that certification tier includes:
 - `shared/aws-ec2-ssm-launch-smoke` for the credentialed
   `remote_vm/aws-ec2-ssm/compat` preview boundary against a reviewed
   SSM-managed EC2 target
+- `shared/gcp-vm-launch-smoke` for the credentialed
+  `remote_vm/gcp-vm/compat` preview boundary against a reviewed
+  IAP-reachable Compute Engine target without an external NAT IP
 
-AWS remote VM live smoke remains certification-only as well, but it is
-currently a provider-e2e preview gate documented in
-[`docs/aws-ec2-ssm-preview.md`](aws-ec2-ssm-preview.md) rather than a
-repo-required scenario. Set `WORKCELL_AWS_EC2_SSM_TARGET_ID` and
-`WORKCELL_AWS_EC2_SSM_REGION` before running that smoke.
+Remote VM live smoke remains certification-only as well, but it is currently a
+provider-e2e preview gate documented in
+[`docs/aws-ec2-ssm-preview.md`](aws-ec2-ssm-preview.md) and
+[`docs/gcp-vm-preview.md`](gcp-vm-preview.md) rather than a repo-required
+scenario. Set `WORKCELL_AWS_EC2_SSM_TARGET_ID` and
+`WORKCELL_AWS_EC2_SSM_REGION` before running the AWS smoke. Set
+`WORKCELL_GCP_VM_TARGET_ID`, `WORKCELL_GCP_VM_ZONE`, and
+`WORKCELL_GCP_VM_PROJECT` before running the GCP smoke.
 
 Certification smoke is where local boundary proof belongs. It should stay
 available and documented, but it must not be the reason repo validation fails

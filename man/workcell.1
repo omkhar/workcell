@@ -305,17 +305,22 @@ Launch the runtime image with a direct container entrypoint after
 This is intended only for lower-assurance boundary debugging and is recorded in
 the host audit log as a downgraded path.
 .TP
-.B --target colima|docker-desktop|aws-ec2-ssm
+.B --target colima|docker-desktop|aws-ec2-ssm|gcp-vm
 Select the runtime target to launch. The default is colima, which maps to the
 reviewed strict local_vm/colima path. Use docker-desktop for the explicit
 lower-assurance local_compat/docker-desktop/compat path. Use aws-ec2-ssm for
 the preview-only remote_vm/aws-ec2-ssm/compat brokered plan; live use remains
 certification-only and does not allow inbound public SSH on the reviewed path.
+Use gcp-vm for the preview-only remote_vm/gcp-vm/compat IAP brokered plan; live
+use remains certification-only and does not allow inbound public SSH on the
+reviewed path.
 Workcell does not silently fall back between targets.
 .TP
 .B --target-id ID
 Set an explicit remote target identifier for preview backends such as
-.BR aws-ec2-ssm .
+.BR aws-ec2-ssm
+or
+.BR gcp-vm .
 This option is rejected unless the selected target supports remote target ids.
 .TP
 .B --colima-profile NAME

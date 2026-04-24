@@ -58,6 +58,30 @@ func TestRunConformanceWithAWSEC2SSMTarget(t *testing.T) {
 	}
 }
 
+func TestRunConformanceWithGCPVMTarget(t *testing.T) {
+	t.Parallel()
+
+	target, err := NewGCPVMTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	caseSpec := DefaultConformanceCase(t.TempDir(), filepath.Join("testdata", "source-workspace"))
+	caseSpec.TargetID = "workcell-phase8-cert"
+	result, err := RunConformance(context.Background(), target, DefaultGCPVMContract(), caseSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.Exported.Session.TargetProvider, GCPVMProvider; got != want {
+		t.Fatalf("exported session target_provider = %q, want %q", got, want)
+	}
+	if got, want := hostutil.SessionTargetSummary(result.Exported.Session), "remote_vm/gcp-vm/"+caseSpec.TargetID; got != want {
+		t.Fatalf("target summary = %q, want %q", got, want)
+	}
+	if got, want := filepath.Base(filepath.Dir(result.Materialization.TargetRoot)), GCPVMProvider; got != want {
+		t.Fatalf("materialization provider root = %q, want %q", got, want)
+	}
+}
+
 func TestDefaultAWSEC2SSMBrokeredAccessPlan(t *testing.T) {
 	t.Parallel()
 
@@ -73,5 +97,23 @@ func TestDefaultAWSEC2SSMBrokeredAccessPlan(t *testing.T) {
 	}
 	if plan.LiveSmokeValidation != AWSCertificationLane {
 		t.Fatalf("live_smoke_validation = %q, want %q", plan.LiveSmokeValidation, AWSCertificationLane)
+	}
+}
+
+func TestDefaultGCPBrokeredAccessPlan(t *testing.T) {
+	t.Parallel()
+
+	plan := DefaultGCPBrokeredAccessPlan("workcell-phase8-cert")
+	if plan.TargetProvider != GCPVMProvider {
+		t.Fatalf("target_provider = %q, want %q", plan.TargetProvider, GCPVMProvider)
+	}
+	if plan.Broker != GCPIAPBroker {
+		t.Fatalf("broker = %q, want %q", plan.Broker, GCPIAPBroker)
+	}
+	if plan.InboundPublicSSH {
+		t.Fatal("InboundPublicSSH = true, want false")
+	}
+	if plan.LiveSmokeValidation != GCPCertificationLane {
+		t.Fatalf("live_smoke_validation = %q, want %q", plan.LiveSmokeValidation, GCPCertificationLane)
 	}
 }

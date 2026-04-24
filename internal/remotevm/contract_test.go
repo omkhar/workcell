@@ -39,17 +39,24 @@ func TestDefaultContractValidates(t *testing.T) {
 func TestDefaultContractForProviderPreservesSharedContract(t *testing.T) {
 	t.Parallel()
 
-	got := DefaultContractForProvider(AWSEC2SSMProvider)
-	if err := got.Validate(); err != nil {
-		t.Fatalf("DefaultContractForProvider(%q).Validate() error = %v", AWSEC2SSMProvider, err)
-	}
-	if got.TargetProvider != AWSEC2SSMProvider {
-		t.Fatalf("target_provider = %q, want %q", got.TargetProvider, AWSEC2SSMProvider)
-	}
-	if got.TargetKind != TargetKind {
-		t.Fatalf("target_kind = %q, want %q", got.TargetKind, TargetKind)
-	}
-	if got.RuntimeAPI != RuntimeAPI {
-		t.Fatalf("runtime_api = %q, want %q", got.RuntimeAPI, RuntimeAPI)
+	for _, provider := range []string{AWSEC2SSMProvider, GCPVMProvider} {
+		provider := provider
+		t.Run(provider, func(t *testing.T) {
+			t.Parallel()
+
+			got := DefaultContractForProvider(provider)
+			if err := got.Validate(); err != nil {
+				t.Fatalf("DefaultContractForProvider(%q).Validate() error = %v", provider, err)
+			}
+			if got.TargetProvider != provider {
+				t.Fatalf("target_provider = %q, want %q", got.TargetProvider, provider)
+			}
+			if got.TargetKind != TargetKind {
+				t.Fatalf("target_kind = %q, want %q", got.TargetKind, TargetKind)
+			}
+			if got.RuntimeAPI != RuntimeAPI {
+				t.Fatalf("runtime_api = %q, want %q", got.RuntimeAPI, RuntimeAPI)
+			}
+		})
 	}
 }

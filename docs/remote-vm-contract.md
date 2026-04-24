@@ -18,9 +18,9 @@ The contract is implemented and exercised through:
 The canonical preview-only contract is:
 
 - `target_kind = remote_vm`
-- `target_provider = fake-remote` in the policy artifact, with provider-specific
-  adapters such as `aws-ec2-ssm` reusing the same contract values apart from
-  the provider name itself
+- `target_provider = fake-remote` in the policy artifact, with
+  provider-specific adapters such as `aws-ec2-ssm` and `gcp-vm` reusing the
+  same contract values apart from the provider name itself
 - `target_assurance_class = compat`
 - `support_boundary = preview-only`
 - `runtime_api = brokered`
@@ -49,6 +49,8 @@ mount as the remote target. Provider-specific adapters reuse the same layout
 under their own provider root, for example:
 
 `targets/remote_vm/aws-ec2-ssm/<target-id>/materializations/<materialization-id>/`
+
+`targets/remote_vm/gcp-vm/<target-id>/materializations/<materialization-id>/`
 
 ## Bootstrap And Session Lifecycle
 
@@ -86,12 +88,18 @@ interface and pass the shared
 [`remotevm.RunConformance`](../internal/remotevm/conformance.go) harness
 without redefining a provider-specific contract suite.
 
-The first provider-specific preview adapter is now
+The first provider-specific preview adapter is
 `remote_vm/aws-ec2-ssm/compat`. Its typed contract stays on the shared
 control-plane meanings, adds broker metadata through
 [`internal/remotevm/aws_target.go`](../internal/remotevm/aws_target.go), and
 keeps live launch behind the separate certification-only rollout described in
 [docs/aws-ec2-ssm-preview.md](aws-ec2-ssm-preview.md).
+
+The second provider-specific preview adapter is `remote_vm/gcp-vm/compat`. It
+reuses the same conformance harness, adds IAP broker metadata through
+[`internal/remotevm/gcp_target.go`](../internal/remotevm/gcp_target.go), and
+keeps live launch behind the separate certification-only rollout described in
+[docs/gcp-vm-preview.md](gcp-vm-preview.md).
 
 That reuse rule was the Phase 5 boundary: provider work started only after
 this provider-neutral contract was fixed, documented, and proven

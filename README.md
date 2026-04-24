@@ -44,9 +44,10 @@ boundary.
 - pre-1.0 and still tightening the public contract
 - Apple Silicon macOS hosts only today; Linux and Windows are not currently
   supported as launch hosts
-- local host-launched runtime first; the only cloud-facing path today is the
-  preview-only `remote_vm/aws-ec2-ssm/compat` broker plan, and its live smoke
-  remains certification-only
+- local host-launched runtime first; cloud-facing paths today are the
+  preview-only `remote_vm/aws-ec2-ssm/compat` and
+  `remote_vm/gcp-vm/compat` broker plans, and their live smokes remain
+  certification-only
 - CLI surfaces for Codex, Claude, and Gemini plus host-side detached session
   control and inspection commands
 - GitHub-hosted CI verifies repo shape, reproducibility, release posture, and
@@ -270,14 +271,15 @@ Other defaults that matter:
 
 Useful operator flows:
 
-Use `--target colima|docker-desktop|aws-ec2-ssm` to select the managed runtime
-backend.
+Use `--target colima|docker-desktop|aws-ec2-ssm|gcp-vm` to select the managed
+runtime backend.
 
 ```bash
 workcell --agent codex --prepare --workspace /path/to/repo
 workcell --agent codex --prepare-only --workspace /path/to/repo
 workcell --target docker-desktop --agent codex --workspace /path/to/repo
 workcell --target aws-ec2-ssm --target-id i-1234567890abcdef0 --agent codex --workspace /path/to/repo --dry-run
+workcell --target gcp-vm --target-id workcell-phase8-cert --agent codex --workspace /path/to/repo --dry-run
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell session list
 workcell session list --verbose
@@ -314,8 +316,9 @@ workcell publish-pr --workspace /path/to/repo --branch feature/name \
   --commit-message-file /tmp/commit-message.txt
 ```
 
-For the preview-only AWS remote VM broker path and its certification gate, see
-[docs/aws-ec2-ssm-preview.md](docs/aws-ec2-ssm-preview.md).
+For the preview-only AWS and GCP remote VM broker paths and their certification
+gates, see [docs/aws-ec2-ssm-preview.md](docs/aws-ec2-ssm-preview.md) and
+[docs/gcp-vm-preview.md](docs/gcp-vm-preview.md).
 
 `workcell session list --verbose` adds target, workspace transport, git branch,
 and worktree columns without changing the default compact inventory view.

@@ -51,6 +51,7 @@ Today that matrix is:
 | Target | Bootstrap path | Support | Evidence | Notes |
 |---|---|---|---|---|
 | `remote_vm/aws-ec2-ssm/compat` | reviewed broker plan via `workcell --target aws-ec2-ssm --dry-run` | `repo-required` for diagnostics, `certification-only` for live smoke | `tests/scenarios/shared/test-aws-remote-vm-dry-run.sh`, `tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh`, `internal/remotevm/conformance_test.go`, `docs/aws-ec2-ssm-preview.md` | requires `aws`, `session-manager-plugin`, brokered Session Manager access, and no inbound public SSH on the supported path |
+| `remote_vm/gcp-vm/compat` | reviewed broker plan via `workcell --target gcp-vm --dry-run` | `repo-required` for diagnostics, `certification-only` for live smoke | `tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh`, `tests/scenarios/shared/test-gcp-vm-launch-smoke.sh`, `internal/remotevm/conformance_test.go`, `docs/gcp-vm-preview.md` | requires `gcloud`, brokered IAP access, a VM without an external NAT IP, and no inbound public SSH on the supported path |
 
 ## Handoff Meanings
 

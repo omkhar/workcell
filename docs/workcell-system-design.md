@@ -282,11 +282,12 @@ must reuse:
   adapters must pass unchanged instead of redefining contract suites per
   provider
 
-The first provider-specific consumer is now the preview-only
-`remote_vm/aws-ec2-ssm/compat` path. Its deterministic repo-required evidence
-stays at dry-run diagnostics and shared conformance reuse, while live AWS use
-remains a separate certification-only gate with brokered Session Manager
-access and no inbound public SSH.
+The first provider-specific consumer is the preview-only
+`remote_vm/aws-ec2-ssm/compat` path. The second is the preview-only
+`remote_vm/gcp-vm/compat` path. Their deterministic repo-required evidence
+stays at dry-run diagnostics and shared conformance reuse, while live cloud use
+remains separate certification-only gates with brokered SSM or IAP access and
+no inbound public SSH.
 
 ### 11. Host-Side Detached Session Plane
 
@@ -403,8 +404,9 @@ roadmap:
 
 - Apple Silicon macOS hosts only
 - no generally supported Workcell-managed cloud or remote worker plane today;
-  only the preview-only `remote_vm/aws-ec2-ssm/compat` broker plan exists, and
-  its live path remains certification-only
+  only the preview-only `remote_vm/aws-ec2-ssm/compat` and
+  `remote_vm/gcp-vm/compat` broker plans exist, and their live paths remain
+  certification-only
 - no centralized enterprise policy, session administration, or analytics plane
 - no queue, pause/resume, checkpoint, or fork model yet on the session plane
 - GUI and IDE surfaces are lower assurance unless they act only as clients to
