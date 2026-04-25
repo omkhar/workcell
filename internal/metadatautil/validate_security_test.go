@@ -123,6 +123,7 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		`required_secrets = ["WORKCELL_HOSTED_CONTROLS_TOKEN"]`,
 		"allow_admin_bypass = false",
 		`deployment_branches = ["main"]`,
+		`deployment_tags = ["v*"]`,
 		"",
 		"[workflow_environment.upstream-refresh]",
 		"allow_admin_bypass = false",
@@ -314,12 +315,13 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 	}
 	hostedControlsAuditDeploymentBranches := map[string]any{
 		"branch_policies": []map[string]any{
-			{"name": "main"},
+			{"name": "main", "type": "branch"},
+			{"name": "v*", "type": "tag"},
 		},
 	}
 	upstreamRefreshDeploymentBranches := map[string]any{
 		"branch_policies": []map[string]any{
-			{"name": "main"},
+			{"name": "main", "type": "branch"},
 		},
 	}
 

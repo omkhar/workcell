@@ -119,8 +119,11 @@ reviewed inputs:
   supports it and an explicitly documented lower-assurance fallback when it
   does not
 - the `hosted-controls-audit` and `upstream-refresh` environments, including
-  their exact secret and variable contents plus their `main`-only branch
-  restriction and disabled admin bypass posture
+  their exact secret and variable contents plus their disabled admin bypass
+  posture
+- `hosted-controls-audit` permits the `main` branch and protected `v*` release
+  tags so scheduled/main audits and tag-triggered release preflight both use a
+  dedicated environment gate for `WORKCELL_HOSTED_CONTROLS_TOKEN`
 - GitHub Actions SHA pinning
 - canonical repository variables such as
   `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` and

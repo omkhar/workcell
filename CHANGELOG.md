@@ -8,6 +8,12 @@ Releases.
 
 ## Unreleased
 
+### Fixed
+
+- allow protected `v*` release tags to enter the dedicated
+  `hosted-controls-audit` environment so release preflight can run
+  hosted-controls verification without bypassing the environment secret gate.
+
 ## v0.10.4 - 2026-04-25
 
 ### Added
