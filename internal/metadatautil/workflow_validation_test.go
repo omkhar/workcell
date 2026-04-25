@@ -1157,6 +1157,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUps
 				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
 				"allow_admin_bypass":  false,
 				"deployment_branches": []any{"main"},
+				"deployment_tags":     []any{"v*"},
 			},
 			"upstream-refresh": map[string]any{
 				"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
@@ -1183,6 +1184,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValu
 				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
 				"allow_admin_bypass":  false,
 				"deployment_branches": []any{"main"},
+				"deployment_tags":     []any{"v*"},
 			},
 			"upstream-refresh": map[string]any{
 				"allow_admin_bypass":  false,

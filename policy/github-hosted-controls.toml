@@ -75,6 +75,7 @@ WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"
 required_secrets = ["WORKCELL_HOSTED_CONTROLS_TOKEN"]
 allow_admin_bypass = false
 deployment_branches = ["main"]
+deployment_tags = ["v*"]
 
 [workflow_environment.upstream-refresh]
 allow_admin_bypass = false

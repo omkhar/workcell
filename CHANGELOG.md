@@ -10,9 +10,9 @@ Releases.
 
 ### Fixed
 
-- keep tag-triggered release preflight off the `main`-only
-  `hosted-controls-audit` environment while preserving required hosted-controls
-  verification through the repository token.
+- allow protected `v*` release tags to enter the dedicated
+  `hosted-controls-audit` environment so release preflight can run
+  hosted-controls verification without bypassing the environment secret gate.
 
 ## v0.10.4 - 2026-04-25
 

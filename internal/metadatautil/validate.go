@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -343,6 +344,8 @@ type hostedControlsWorkflowEnvironmentPolicy struct {
 	HasAllowAdminBypass   bool
 	DeploymentBranches    []string
 	HasDeploymentBranches bool
+	DeploymentTags        []string
+	HasDeploymentTags     bool
 }
 
 func hostedControlsRepositoryVariables(policy map[string]any, policyPath string) (map[string]any, error) {
@@ -462,6 +465,25 @@ func hostedControlsWorkflowEnvironments(policy map[string]any, policyPath string
 			sort.Strings(deploymentBranches)
 			hasDeploymentBranches = true
 		}
+		deploymentTags := []string{}
+		hasDeploymentTags := false
+		if rawDeploymentTags, ok := entry["deployment_tags"]; ok {
+			tags, present, err := MustStringSlice(rawDeploymentTags)
+			if err != nil {
+				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_tags: %w", policyPath, environmentName, err)
+			}
+			if !present {
+				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_tags must be an array of tag patterns", policyPath, environmentName)
+			}
+			for _, tagPattern := range tags {
+				if strings.TrimSpace(tagPattern) == "" {
+					return nil, fmt.Errorf("%s workflow_environment.%s.deployment_tags must be an array of non-empty tag patterns", policyPath, environmentName)
+				}
+			}
+			deploymentTags = append(deploymentTags, tags...)
+			sort.Strings(deploymentTags)
+			hasDeploymentTags = true
+		}
 
 		environments[environmentName] = hostedControlsWorkflowEnvironmentPolicy{
 			Variables:             variables,
@@ -470,6 +492,8 @@ func hostedControlsWorkflowEnvironments(policy map[string]any, policyPath string
 			HasAllowAdminBypass:   hasAllowAdminBypass,
 			DeploymentBranches:    deploymentBranches,
 			HasDeploymentBranches: hasDeploymentBranches,
+			DeploymentTags:        deploymentTags,
+			HasDeploymentTags:     hasDeploymentTags,
 		}
 	}
 	return environments, nil
@@ -497,6 +521,9 @@ func validateCanonicalHostedControlsWorkflowEnvironments(policy map[string]any, 
 	if !hostedControlsAudit.HasDeploymentBranches || len(hostedControlsAudit.DeploymentBranches) != 1 || hostedControlsAudit.DeploymentBranches[0] != "main" {
 		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.hosted-controls-audit.deployment_branches = [\"main\"]")
 	}
+	if !hostedControlsAudit.HasDeploymentTags || len(hostedControlsAudit.DeploymentTags) != 1 || hostedControlsAudit.DeploymentTags[0] != "v*" {
+		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.hosted-controls-audit.deployment_tags = [\"v*\"]")
+	}
 
 	upstreamRefresh, ok := environments["upstream-refresh"]
 	if !ok {
@@ -513,6 +540,9 @@ func validateCanonicalHostedControlsWorkflowEnvironments(policy map[string]any, 
 	}
 	if !upstreamRefresh.HasDeploymentBranches || len(upstreamRefresh.DeploymentBranches) != 1 || upstreamRefresh.DeploymentBranches[0] != "main" {
 		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.upstream-refresh.deployment_branches = [\"main\"]")
+	}
+	if upstreamRefresh.HasDeploymentTags || len(upstreamRefresh.DeploymentTags) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not set workflow_environment.upstream-refresh.deployment_tags")
 	}
 	return nil
 }
@@ -607,7 +637,7 @@ func verifyWorkflowEnvironmentDeploymentPolicy(repo, environmentName string, env
 			return fmt.Errorf("workflow environment %s/%s must set can_admins_bypass=%t", repo, environmentName, environmentPolicy.AllowAdminBypass)
 		}
 	}
-	if !environmentPolicy.HasDeploymentBranches {
+	if !environmentPolicy.HasDeploymentBranches && !environmentPolicy.HasDeploymentTags {
 		return nil
 	}
 
@@ -623,6 +653,7 @@ func verifyWorkflowEnvironmentDeploymentPolicy(repo, environmentName string, env
 	}
 
 	actualBranches := make([]string, 0)
+	actualTags := make([]string, 0)
 	if branchPolicies, ok := environmentBranchPolicies["branch_policies"].([]any); ok {
 		for _, raw := range branchPolicies {
 			entry, ok := raw.(map[string]any)
@@ -630,18 +661,22 @@ func verifyWorkflowEnvironmentDeploymentPolicy(repo, environmentName string, env
 				continue
 			}
 			if name, _ := entry["name"].(string); name != "" {
-				actualBranches = append(actualBranches, name)
+				switch typ, _ := entry["type"].(string); typ {
+				case "", "branch":
+					actualBranches = append(actualBranches, name)
+				case "tag":
+					actualTags = append(actualTags, name)
+				}
 			}
 		}
 	}
 	sort.Strings(actualBranches)
-	if len(actualBranches) != len(environmentPolicy.DeploymentBranches) {
+	sort.Strings(actualTags)
+	if !slices.Equal(actualBranches, environmentPolicy.DeploymentBranches) {
 		return fmt.Errorf("workflow environment %s/%s must restrict deployment branches to %s", repo, environmentName, strings.Join(environmentPolicy.DeploymentBranches, ", "))
 	}
-	for idx, expectedBranch := range environmentPolicy.DeploymentBranches {
-		if actualBranches[idx] != expectedBranch {
-			return fmt.Errorf("workflow environment %s/%s must restrict deployment branches to %s", repo, environmentName, strings.Join(environmentPolicy.DeploymentBranches, ", "))
-		}
+	if !slices.Equal(actualTags, environmentPolicy.DeploymentTags) {
+		return fmt.Errorf("workflow environment %s/%s must restrict deployment tags to %s", repo, environmentName, strings.Join(environmentPolicy.DeploymentTags, ", "))
 	}
 	return nil
 }
@@ -2043,8 +2078,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
 		}
 	}
-	if strings.Contains(releaseWorkflow, "environment:\n      name: hosted-controls-audit") {
-		return errors.New(".github/workflows/release.yml must not bind tag-triggered release preflight to the main-only hosted-controls-audit environment")
+	if !strings.Contains(releaseWorkflow, "environment:\n      name: hosted-controls-audit") {
+		return errors.New(".github/workflows/release.yml release preflight must bind to the hosted-controls-audit environment")
 	}
 	if err := validateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
 		return err
