@@ -39,4 +39,4 @@ Paste any error output here. Redact tokens, keys, and personal paths.
 
 If this bug could expose secrets, allow a sandbox escape, or bypass signing
 or provenance checks, please use the [private vulnerability reporting
-process](../SECURITY.md) instead of opening a public issue.
+process](../../SECURITY.md) instead of opening a public issue.
