@@ -49,8 +49,10 @@ require_tool curl
 require_tool grep
 require_tool sort
 
-runner_images_readme="$(curl -fsSL "${RUNNER_IMAGES_README_URL}")"
-docs_page="$(curl -fsSL "${GITHUB_HOSTED_RUNNERS_DOCS_URL}")"
+runner_images_readme="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+  "${RUNNER_IMAGES_README_URL}")"
+docs_page="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+  "${GITHUB_HOSTED_RUNNERS_DOCS_URL}")"
 
 runner_rows=""
 
