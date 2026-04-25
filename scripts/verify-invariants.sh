@@ -5750,6 +5750,7 @@ test "${PUBLISH_PR_INDEX_FETCH_LINE}" -lt "${PUBLISH_PR_INDEX_SHAPE_LINE}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
 
 git -C "${PUBLISH_PR_FIXTURE}" reset -q --hard HEAD
+git -C "${PUBLISH_PR_FIXTURE}" clean -qfd
 git -C "${PUBLISH_PR_FIXTURE}" switch -q -c feature/publish-existing-commits
 printf 'existing branch\n' >"${PUBLISH_PR_FIXTURE}/existing-branch.txt"
 git -C "${PUBLISH_PR_FIXTURE}" add existing-branch.txt
@@ -5820,6 +5821,7 @@ if "${ROOT_DIR}/scripts/workcell" publish-pr \
 fi
 grep -q 'publish-pr only supports --base main by default' /tmp/workcell-publish-pr-non-main-base.out
 
+printf 'lower assurance non-main base\n' >"${PUBLISH_PR_FIXTURE}/tracked.txt"
 PUBLISH_PR_NON_MAIN_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${PUBLISH_PR_FIXTURE}" \
   --branch feature/publish-non-main-base \
