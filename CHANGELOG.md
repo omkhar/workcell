@@ -8,6 +8,8 @@ Releases.
 
 ## Unreleased
 
+## v0.10.5 - 2026-04-25
+
 ### Fixed
 
 - allow protected `v*` release tags to enter the dedicated
