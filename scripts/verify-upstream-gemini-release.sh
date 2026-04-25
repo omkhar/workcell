@@ -32,7 +32,8 @@ verify_registry_package() {
   local expected_integrity="$6"
   local metadata_path="${TMPDIR:-/tmp}/workcell-${registry_path##*/}-${version}.json"
 
-  curl -fsSL "https://registry.npmjs.org/${registry_path}/${version}" -o "${metadata_path}"
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+    "https://registry.npmjs.org/${registry_path}/${version}" -o "${metadata_path}"
 
   local actual_version actual_resolved actual_integrity
   actual_version="$(jq -r '.version' "${metadata_path}")"

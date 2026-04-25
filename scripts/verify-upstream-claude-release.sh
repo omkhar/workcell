@@ -37,7 +37,8 @@ verify_asset() {
   local binary_path="${work_dir}/claude"
 
   mkdir -p "${work_dir}"
-  curl -fsSL "${CLAUDE_RELEASE_ROOT}/${CLAUDE_VERSION}/${platform}/claude" -o "${binary_path}"
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+    "${CLAUDE_RELEASE_ROOT}/${CLAUDE_VERSION}/${platform}/claude" -o "${binary_path}"
   echo "${expected_sha}  ${binary_path}" | sha256sum -c - >/dev/null
 }
 
@@ -51,7 +52,8 @@ require_tool go
 require_tool sha256sum
 
 CLAUDE_VERSION="$(extract_claude_version)"
-curl -fsSL "${CLAUDE_RELEASE_ROOT}/${CLAUDE_VERSION}/manifest.json" -o "${MANIFEST_PATH}"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+  "${CLAUDE_RELEASE_ROOT}/${CLAUDE_VERSION}/manifest.json" -o "${MANIFEST_PATH}"
 
 (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil manifest-version "${MANIFEST_PATH}" "${CLAUDE_VERSION}")
 

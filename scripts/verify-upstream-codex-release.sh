@@ -39,8 +39,10 @@ verify_asset() {
   local work_dir="${TMP_ROOT}/${target_arch}"
 
   mkdir -p "${work_dir}"
-  curl -fsSL "${asset_root}/${tarball_name}" -o "${work_dir}/${tarball_name}"
-  curl -fsSL "${asset_root}/${bundle_name}" -o "${work_dir}/${bundle_name}"
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+    "${asset_root}/${tarball_name}" -o "${work_dir}/${tarball_name}"
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+    "${asset_root}/${bundle_name}" -o "${work_dir}/${bundle_name}"
 
   echo "${codex_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null
   tar -xzf "${work_dir}/${tarball_name}" -C "${work_dir}"
