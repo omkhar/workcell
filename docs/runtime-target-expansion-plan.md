@@ -59,11 +59,15 @@ targets must stay labeled `compat` or another explicitly lower-assurance class.
 
 - `colima` remains the strict macOS default
 
-### First cross-platform compatibility target
+### First compatibility target with cross-platform ambition
 
-- `docker-desktop` is the first cross-platform `compat` target on macOS, Linux,
-  and Windows
-- it must stay explicitly lower assurance than the current Colima path
+- `docker-desktop` is the first `compat` target with a cross-platform
+  expansion path, but the current supported row is limited to macOS arm64 in
+  the canonical support matrix
+- Linux and Windows Docker Desktop rows remain blocked until host-expansion
+  gates promote them with scenario evidence and operator verification material
+- every supported `docker-desktop` row must stay explicitly lower assurance
+  than the current Colima path
 
 ### Remote VM targets
 

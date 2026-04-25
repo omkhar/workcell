@@ -2764,6 +2764,15 @@ if HOME="${PRECOMMIT_FIXTURE_ROOT}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-com
 fi
 grep -q 'Pinned upstream updates are available' /tmp/workcell-precommit.out
 grep -q 'update-upstream-pins.sh --apply' /tmp/workcell-precommit.out
+if ! WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT=1 HOME="${PRECOMMIT_FIXTURE_ROOT}" \
+  "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit-skip.out 2>&1; then
+  echo "Expected repo pre-commit hook to honor explicit upstream refresh skip after sanitization" >&2
+  exit 1
+fi
+if grep -q 'Pinned upstream updates are available' /tmp/workcell-precommit-skip.out; then
+  echo "Expected repo pre-commit hook skip to avoid the pinned upstream update gate" >&2
+  exit 1
+fi
 
 cat >"${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh" <<'EOF'
 #!/bin/bash

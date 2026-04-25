@@ -331,7 +331,7 @@ Workflows:
     workcell --agent codex --workspace /path/to/repo
     workcell --agent claude --workspace /path/to/repo
     workcell --agent gemini --workspace /path/to/repo
-  Preview Docker Desktop compatibility target:
+  Docker Desktop compatibility target (macOS lower-assurance compat):
     workcell --target docker-desktop --agent codex --workspace /path/to/repo
   Preview AWS remote VM broker plan:
     workcell --target aws-ec2-ssm --target-id i-1234567890abcdef0 --agent codex --workspace /path/to/repo --dry-run
@@ -6536,7 +6536,7 @@ normalize_cli_aliases() {
         exit 0
       fi
       if [[ ${#NORMALIZED_ARGS[@]} -lt 2 ]]; then
-        echo "workcell logs requires a log kind: audit, debug, or transcript." >&2
+        echo "workcell logs requires a log kind: audit, debug, file-trace, or transcript." >&2
         usage >&2
         exit 2
       fi

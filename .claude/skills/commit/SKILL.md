@@ -5,7 +5,24 @@ description: Risk-Aware Commit Notation. Use when creating git commits to determ
 
 # Risk-Aware Commit Notation
 
-All commits in this repo must use Risk-Aware Commit Notation (based on [Arlo's Commit Notation](https://github.com/RefactoringCombos/ArlosCommitNotation)), a risk-based notation where the first characters of every commit message encode risk level and intention.
+All commits in this repo use Risk-Aware Commit Notation. The first characters of
+the subject encode risk level and intention.
+
+## Standing priorities
+
+Always prefer, in order:
+
+1. Simplicity
+2. Correctness
+3. Linting and clean validation
+4. Appropriate test coverage
+5. Security
+6. Performance
+7. Current idiomatic correctness
+
+These priorities apply only inside the repo invariants. Do not trade away the
+runtime boundary, explicit security guarantees, or host-side publication rules
+for convenience.
 
 ## Format
 
@@ -35,12 +52,69 @@ All commits in this repo must use Risk-Aware Commit Notation (based on [Arlo's C
 - Features/bugfixes exceeding 8 lines of code (including tests) default to highest risk level.
 - Safe refactoring (`.r`) requires provable refactoring via automated tools or test-supported procedural refactoring.
 - Choose the risk level honestly. If you haven't verified invariants, use `!` or `@`.
+- Treat every user request as implicitly including peer review unless the user
+  explicitly narrows that scope.
+- When peer review finds an actionable issue, keep iterating through fixes,
+  validation, and another review pass until no actionable findings remain or a
+  concrete blocker is reported.
+- Treat that review loop as unbounded. If the peer or follow-up review pass
+  finds new issues after a fix, keep iterating with that peer until all
+  findings are resolved, explicitly dispositioned, or blocked by a concrete
+  external constraint.
+- Treat repeated user correction, recurring review friction, or repeated CI
+  surprises as a signal to improve the repo-local instructions. When a durable
+  gap is exposed, update the relevant repo-local skill, `AGENTS.md`, or
+  runbook in a reviewable change rather than relying on ad hoc memory.
 
 ## Commit Grouping
 
-- **One intention per commit.** Do not mix refactoring, features, bugfixes, or documentation in a single commit. If a task requires both refactoring and a feature change, split them into separate commits (refactoring first, then the feature).
-- **Minimize risk per commit.** Break work into the smallest commits that each achieve the lowest possible risk level. For example, extract a safe refactoring (`.r`) as its own commit before making a risky feature change (`!F`), rather than bundling both into one `!F` commit.
-- **Prefer many small safe commits over fewer risky ones.** A sequence like `.r` then `.r` then `^F` is better than a single `!F` that includes the refactoring.
+- One intention per commit.
+- Minimize risk per commit.
+- Prefer small safe commits over fewer risky ones.
+- Keep the eventual PR human-reviewable. Do not bundle unrelated fixes,
+  opportunistic cleanup, and behavior changes into one remote review unit.
+  Split broad work before pushing.
+- Sign every commit.
+- Before signing a commit that introduces or materially changes a supported
+  end-to-end workflow, backend, support-tier claim, or certification-only
+  validation path, run the relevant live certification successfully. Do not
+  sign a support-claim commit while planning to gather certification later.
+- Use feature branches. Do not push directly to `main` or rewrite history.
+- Treat final GitHub publication as a host-side action.
+- Default remote review units to `main`-based pull requests. Keep non-`main`
+  base PRs draft-only and non-mergeable, and do not treat them as carrying the
+  same repo-owned PR validation guarantees as `main`-based review units.
+- For publish, PR follow-up, or merge work in this repository, use the
+  repo-local `workcell-pr-lifecycle` skill. Treat generic GitHub publication
+  skills as fallback only when the repo-local lifecycle instructions do not
+  cover the need.
+- Do not accept failing repo-owned tests, checks, or workflows as "good
+  enough." If a lane fails because of the change or a hosted-control drift
+  uncovered during the task, keep working until it is fixed or the guarantee is
+  explicitly changed in the same review unit.
+- If the task includes merging, do not stop at PR-green. Follow the merged
+  `main` workflows and fix any repo-owned failures they surface before calling
+  the work complete.
+- If the task includes publication, review comments, or follow-up CI, do not
+  stop at the first green run. Re-check review surfaces and continue until no
+  actionable findings remain.
+- When a commit changes a user-visible Workcell workflow, support tier, help
+  surface, repo-local operator docs, contract entry, or validation evidence,
+  land the matching contract/help/doc/test updates in the same change stream
+  unless the commit message explains the staged exception and why it is safe.
+- Remove dead code when it is discovered as part of the change, or explicitly
+  justify why it must remain.
+- Remove machine-specific details from public repo surfaces and clean repo
+  detritus before finalizing the change.
+- Treat Workcell-owned validation residue as part of repo detritus. Before
+  signing after local validation churn, run `./scripts/workcell --gc` or a
+  narrower cleanup path and confirm the worktree is not relying on leftover
+  temp files, validator images, or runtime-cache debris.
+- If commit hooks are bypassed, rerun the equivalent validations manually and
+  record the reason in the working notes or final report.
+- If a task teaches a reusable lesson about commit sizing, validation,
+  publication, or follow-up discipline, capture that lesson in the repo-local
+  instructions in the same change stream or in a separate follow-on PR.
 
 ## Notation Justification in Commit Messages
 
@@ -56,10 +130,3 @@ Examples:
 - `^b Update call sites for new signature (compiles and tests green; supporting change for ^F above)`
 - `!F Add experimental diff parser (no tests yet; user-visible feature)`
 - `.r Extract helper, no behavior change (automated rename; internal restructure)`
-
-## Examples
-
-- `.r Style: reformat line wrapping in scm_policy_checker.py`
-- `!F Add new endpoint for policy evaluation`
-- `^B Fix cache invalidation on prompt change (regression test added)`
-- `.d Update README with setup instructions`

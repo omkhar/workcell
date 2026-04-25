@@ -34,7 +34,9 @@
 - the wrapper prints the selected Colima profile, runtime profile, and
   workspace path
 - the wrapper prints the selected network policy and allowlist
-- `strict` rejects cold image builds and explicit rebuild requests
+- `strict` auto-prepares the reviewed runtime image when missing or stale, while
+  explicit rebuild requests must be paired with `--prepare` so refresh remains
+  operator-visible
 - `build` prints any temporary bootstrap allowlist before rebuilding the
   runtime image
 - the wrapper prints the execution path and durable host audit-log location
