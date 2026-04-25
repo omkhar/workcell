@@ -1,7 +1,7 @@
 # Node.js LTS base image (v22 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:22-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:22-trixie-slim@sha256:76043ed3132293c26b960ede4358d3c8ba424ee64662cd2d56318b76fcc51c4c
+ARG NODE_BASE_IMAGE=node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
@@ -10,8 +10,8 @@ ARG SOURCE_DATE_EPOCH=0
 # Debian snapshot date for apt sources. Pinned for reproducibility.
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
-ARG DEBIAN_SNAPSHOT=20260418T000000Z
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.95.0-slim-trixie@sha256:275c320a57d0d8b6ab09454ab6d1660d70c745fb3cc85adbefad881b69a212cc
+ARG DEBIAN_SNAPSHOT=20260425T000000Z
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.95.0-slim-trixie@sha256:81099830a1e1d244607b9a7a30f3ff6ecadc52134a933b4635faba24f52840c9
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -176,7 +176,7 @@ ARG CLAUDE_VERSION=2.1.108
 # manually, resolve the eligible stable version, verify the GitHub release
 # asset digests for both Linux tarballs, and refresh the CODEX_SHA256 values
 # for arm64 and amd64 below.
-ARG CODEX_VERSION=0.121.0
+ARG CODEX_VERSION=0.125.0
 ARG CODEX_RELEASE_URL=
 ARG RUST_VERSION=1.95.0
 ARG TARGETARCH
@@ -280,11 +280,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-gnu"; \
-      CODEX_SHA256="9ce5edd5524898ad2e95b59f278977e312726e0587957d1f10ee389070fe5034"; \
+      CODEX_SHA256="2d076527fd7578656f1b8790650adc9344a7429980b3998941156ab6a06156e6"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-gnu"; \
-      CODEX_SHA256="f053ac81e9c6769920f9ee3566abad47ab0856eb7ee792428681664ece113430"; \
+      CODEX_SHA256="522bc0b9b8ab31f3a8f1fc4878abd4e83b116a6c1bcfc7717d2fe036f54cd4be"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \

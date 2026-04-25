@@ -8,18 +8,54 @@ Releases.
 
 ## Unreleased
 
+## v0.10.4 - 2026-04-25
+
 ### Added
 
+- add the canonical remote-VM contract harness and planning docs for target
+  backend expansion
+- add Docker Desktop compatibility-target support with live certification
+  evidence and enforce end-to-end certification before signing future
+  support-claim commits
+- add preview AWS EC2 SSM and GCP IAP remote-VM target backends, including
+  support-matrix coverage, certification-only live smoke lanes, and operator
+  setup guidance
 - add the preview-only `remote_vm/gcp-vm/compat` backend with deterministic
   IAP broker-plan diagnostics, shared remote-VM conformance reuse, canonical
   support-matrix coverage, rollout docs, and a certification-only live smoke
   lane
+- add local and hosted PR-parity gates, workflow lane manifests, lane-planning
+  tooling, and publication wrappers so review branches exercise the same
+  evidence expected by GitHub CI
 
 ### Changed
 
+- refresh release-time upstream pins for Codex CLI `0.125.0`, Syft `v1.43.0`,
+  the `20260425T000000Z` Debian snapshot, and current reviewed runtime and
+  validator base-image digests
+- rewrite the adoption roadmap around enterprise and open-source platform
+  phases, prioritizing managed workstation discovery before the Azure raw-VM
+  lane and moving cross-platform host support earlier in the plan
+- clarify repo-local peer-review, PR lifecycle, release, and commit skills so
+  review loops continue through fixes, validation, and re-review until no
+  actionable findings remain
+- replace direct upstream-refresh PR publication with candidate-only hosted
+  output and a repo-local recreation path guarded by hosted-controls parity
 - record the Phase 9 later-expansion decision to fund managed workstation
   contract and discovery next, while deferring `azure-vm` to the following raw
   `remote_vm` provider lane
+
+### Fixed
+
+- align release-facing docs, operator-contract evidence, and the pre-commit
+  hook so local contract checks no longer diverge from `validate-repo`
+- bound Workcell cleanup and garbage-collection behavior so local validation,
+  certification, and failed test runs remove owned residue instead of leaving
+  stale temp roots, runtime cache, or build cache state
+- canonicalize GCP dry-run host-tool detection and restore isolated Docker
+  Desktop smoke workspaces used by certification validation
+- remediate the reviewed security finding set across host/runtime boundaries
+  and preserve one-off proof-backed closure evidence in the release scope
 
 ## v0.10.3 - 2026-04-17
 
