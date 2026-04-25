@@ -187,4 +187,8 @@ elif [[ "${BASE_BRANCH}" == "main" ]]; then
   verify_pr_parity_evidence "${WORKSPACE}" "${SNAPSHOT}" "${BASE_BRANCH}"
 fi
 
+if [[ "${#PASSTHROUGH_ARGS[@]}" -eq 0 ]]; then
+  exec "${ROOT_DIR}/scripts/workcell" publish-pr --workspace "${WORKSPACE}"
+fi
+
 exec "${ROOT_DIR}/scripts/workcell" publish-pr --workspace "${WORKSPACE}" "${PASSTHROUGH_ARGS[@]}"

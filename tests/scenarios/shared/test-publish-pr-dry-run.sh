@@ -106,6 +106,34 @@ git -C "${FIXTURE}" switch -q main
 git -C "${FIXTURE}" reset -q --hard origin/main
 git -C "${FIXTURE}" branch -D feature/pr-shape-safe >/dev/null
 
+git -C "${FIXTURE}" switch -q -c feature/existing-signed-branch
+printf 'existing branch\n' >"${FIXTURE}/existing-branch.txt"
+git -C "${FIXTURE}" add existing-branch.txt
+git -C "${FIXTURE}" commit -q -m "existing branch fixture"
+existing_branch_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/existing-signed-branch \
+  --title "Existing branch title" \
+  --commit-message "Unused existing branch commit" \
+  --dry-run)"
+grep -q '^publish_existing_commits=1$' <<<"${existing_branch_dry_run}"
+grep -q '^publish_branch=feature/existing-signed-branch$' <<<"${existing_branch_dry_run}"
+if grep -q -- ' add -A ' <<<"${existing_branch_dry_run}"; then
+  echo "publish-pr existing branch mode should not stage the worktree" >&2
+  exit 1
+fi
+if grep -q -- ' commit --no-verify -S -F ' <<<"${existing_branch_dry_run}"; then
+  echo "publish-pr existing branch mode should not create another commit" >&2
+  exit 1
+fi
+grep -q -- ' fetch --no-tags --prune origin main' <<<"${existing_branch_dry_run}"
+grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${existing_branch_dry_run}"
+grep -q -- ' push --no-verify -u origin feature/existing-signed-branch ' <<<"${existing_branch_dry_run}"
+grep -q -- 'gh pr create --base main --head feature/existing-signed-branch --title Existing\\ branch\\ title --draft' <<<"${existing_branch_dry_run}"
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" branch -D feature/existing-signed-branch >/dev/null
+
 cat >"${FIXTURE}/.git/hooks/pre-commit" <<EOF
 #!/bin/sh
 printf 'pre-commit\n' >"${HOOK_MARKER_DIR}/pre-commit"
