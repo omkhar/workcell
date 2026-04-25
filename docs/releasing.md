@@ -361,7 +361,11 @@ local parity gate:
 
 ```sh
 ./scripts/pre-merge.sh --profile pr-parity
-./scripts/repo-publish-pr.sh
+./scripts/repo-publish-pr.sh \
+  --branch "${RELEASE_BRANCH}" \
+  --title "${RELEASE_TITLE}" \
+  --body "Prepare ${VERSION} release." \
+  --commit-message "release: ${VERSION}"
 ```
 
 In `review-gated` mode, stop with the first checkpoint packet before running

@@ -5687,6 +5687,7 @@ git -C "${PUBLISH_PR_FIXTURE}" remote add origin https://github.com/example/work
 printf 'base\n' >"${PUBLISH_PR_FIXTURE}/tracked.txt"
 git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
 git -C "${PUBLISH_PR_FIXTURE}" commit -q -m init
+PUBLISH_PR_FIXTURE_DEFAULT_BRANCH="$(git -C "${PUBLISH_PR_FIXTURE}" branch --show-current)"
 printf 'worktree\n' >"${PUBLISH_PR_FIXTURE}/tracked.txt"
 cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/pr-title.txt"
 Verify PR title
@@ -5747,6 +5748,31 @@ test -n "${PUBLISH_PR_INDEX_FETCH_LINE}"
 test -n "${PUBLISH_PR_INDEX_SHAPE_LINE}"
 test "${PUBLISH_PR_INDEX_FETCH_LINE}" -lt "${PUBLISH_PR_INDEX_SHAPE_LINE}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${PUBLISH_PR_INDEX_DRY_RUN}"
+
+git -C "${PUBLISH_PR_FIXTURE}" reset -q --hard HEAD
+git -C "${PUBLISH_PR_FIXTURE}" switch -q -c feature/publish-existing-commits
+printf 'existing branch\n' >"${PUBLISH_PR_FIXTURE}/existing-branch.txt"
+git -C "${PUBLISH_PR_FIXTURE}" add existing-branch.txt
+git -C "${PUBLISH_PR_FIXTURE}" commit -q -m "existing branch fixture"
+PUBLISH_PR_EXISTING_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-existing-commits \
+  --title "Existing publish branch" \
+  --commit-message "Unused existing publish commit" \
+  --dry-run)"
+grep -q '^publish_existing_commits=1$' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
+if grep -q -- ' add -A ' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"; then
+  echo "publish-pr existing branch mode should not stage the worktree" >&2
+  exit 1
+fi
+if grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"; then
+  echo "publish-pr existing branch mode should not create another commit" >&2
+  exit 1
+fi
+grep -q -- ' push --no-verify -u origin feature/publish-existing-commits ' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
+grep -q -- 'gh pr create --base main --head feature/publish-existing-commits --title Existing\\ publish\\ branch --draft' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
+git -C "${PUBLISH_PR_FIXTURE}" switch -q "${PUBLISH_PR_FIXTURE_DEFAULT_BRANCH}"
+git -C "${PUBLISH_PR_FIXTURE}" branch -D feature/publish-existing-commits >/dev/null
 
 if "${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${PUBLISH_PR_FIXTURE}" \

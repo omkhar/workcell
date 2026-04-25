@@ -3567,6 +3567,7 @@ publish_pr_main() {
   local pr_url=""
   local shape_base_ref=""
   local publish_base_mode="main"
+  local publish_existing_commits=0
   local repo_owned_pr_checks_expected="1"
   local -a cleanup_files=()
   local -a branch_cmd=()
@@ -3696,14 +3697,23 @@ publish_pr_main() {
     ready=0
   fi
 
+  current_branch="$(publish_pr_current_branch "${resolved_workspace}")"
   if [[ "${snapshot}" == "worktree" ]]; then
     if ! publish_pr_has_worktree_changes "${resolved_workspace}"; then
-      echo "publish-pr found no workspace changes to publish in ${resolved_workspace}." >&2
-      exit 2
+      if [[ "${current_branch}" == "${branch}" ]] || publish_pr_branch_exists "${resolved_workspace}" "${branch}"; then
+        publish_existing_commits=1
+      else
+        echo "publish-pr found no workspace changes to publish in ${resolved_workspace}." >&2
+        exit 2
+      fi
     fi
   elif ! publish_pr_has_staged_changes "${resolved_workspace}"; then
-    echo "publish-pr found no staged changes to publish in ${resolved_workspace}." >&2
-    exit 2
+    if [[ "${current_branch}" == "${branch}" ]] || publish_pr_branch_exists "${resolved_workspace}" "${branch}"; then
+      publish_existing_commits=1
+    else
+      echo "publish-pr found no staged changes to publish in ${resolved_workspace}." >&2
+      exit 2
+    fi
   fi
   if [[ -n "${commit_message_file}" ]]; then
     resolved_commit_message_file="$(resolve_existing_file_or_die "${commit_message_file}" "commit-message")"
@@ -3715,7 +3725,6 @@ publish_pr_main() {
   fi
   trap 'if ((${#cleanup_files[@]} > 0)); then rm -f "${cleanup_files[@]}"; fi' RETURN
 
-  current_branch="$(publish_pr_current_branch "${resolved_workspace}")"
   publish_git_cmd=("${HOST_GIT_BIN}" -c core.hooksPath=/dev/null -C "${resolved_workspace}")
   if [[ "${current_branch}" == "${branch}" ]]; then
     branch_cmd=("${publish_git_cmd[@]}" switch --no-guess "${branch}")
@@ -3747,13 +3756,16 @@ publish_pr_main() {
     printf 'publish_branch=%s\n' "${branch}"
     printf 'publish_base=%s\n' "${base}"
     printf 'publish_base_mode=%s\n' "${publish_base_mode}"
+    printf 'publish_existing_commits=%s\n' "${publish_existing_commits}"
     printf 'publish_repo_owned_pr_checks_expected=%s\n' "${repo_owned_pr_checks_expected}"
     printf 'publish_draft=%s\n' "$([[ "${ready}" -eq 0 ]] && printf '1' || printf '0')"
     emit_command "${branch_cmd[@]}"
-    if [[ "${snapshot}" == "worktree" ]]; then
+    if [[ "${snapshot}" == "worktree" ]] && [[ "${publish_existing_commits}" -eq 0 ]]; then
       emit_command "${add_cmd[@]}"
     fi
-    emit_command "${commit_cmd[@]}"
+    if [[ "${publish_existing_commits}" -eq 0 ]]; then
+      emit_command "${commit_cmd[@]}"
+    fi
     emit_command "${fetch_base_cmd[@]}"
     emit_command "${shape_cmd[@]}"
     emit_command "${push_cmd[@]}"
@@ -3762,15 +3774,27 @@ publish_pr_main() {
   fi
 
   run_publish_host_command_in_dir "${resolved_workspace}" "${branch_cmd[@]}"
-  if [[ "${snapshot}" == "worktree" ]]; then
-    run_publish_host_command_in_dir "${resolved_workspace}" "${add_cmd[@]}"
+  if [[ "${publish_existing_commits}" -eq 1 ]]; then
+    if publish_pr_has_worktree_changes "${resolved_workspace}"; then
+      echo "publish-pr existing-branch mode requires a clean worktree in ${resolved_workspace}." >&2
+      exit 2
+    fi
+  else
+    if [[ "${snapshot}" == "worktree" ]]; then
+      run_publish_host_command_in_dir "${resolved_workspace}" "${add_cmd[@]}"
+    fi
+    if ! publish_pr_has_staged_changes "${resolved_workspace}"; then
+      echo "publish-pr found no staged changes to commit in ${resolved_workspace}." >&2
+      exit 2
+    fi
+    run_publish_host_command_in_dir "${resolved_workspace}" "${commit_cmd[@]}"
   fi
-  if ! publish_pr_has_staged_changes "${resolved_workspace}"; then
-    echo "publish-pr found no staged changes to commit in ${resolved_workspace}." >&2
+  run_publish_host_command_in_dir "${resolved_workspace}" "${fetch_base_cmd[@]}"
+  if [[ "${publish_existing_commits}" -eq 1 ]] &&
+    [[ "$(run_publish_host_command_in_dir "${resolved_workspace}" "${HOST_GIT_BIN}" rev-list --count "${shape_base_ref}..HEAD")" == "0" ]]; then
+    echo "publish-pr existing branch has no commits ahead of ${base}: ${branch}" >&2
     exit 2
   fi
-  run_publish_host_command_in_dir "${resolved_workspace}" "${commit_cmd[@]}"
-  run_publish_host_command_in_dir "${resolved_workspace}" "${fetch_base_cmd[@]}"
   run_publish_host_command_in_dir "${resolved_workspace}" "${shape_cmd[@]}"
   run_publish_host_command_in_dir "${resolved_workspace}" "${push_cmd[@]}"
   pr_url="$(run_publish_host_command_in_dir "${resolved_workspace}" "${pr_cmd[@]}")"
