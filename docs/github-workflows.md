@@ -121,6 +121,10 @@ reviewed inputs:
 - the `hosted-controls-audit` and `upstream-refresh` environments, including
   their exact secret and variable contents plus their `main`-only branch
   restriction and disabled admin bypass posture
+- tag-triggered release preflight runs the same hosted-controls audit without
+  binding to the `main`-only `hosted-controls-audit` environment; it requires
+  the repository-level `WORKCELL_HOSTED_CONTROLS_TOKEN` secret and fails closed
+  when that token is unavailable
 - GitHub Actions SHA pinning
 - canonical repository variables such as
   `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` and

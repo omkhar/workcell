@@ -2037,10 +2037,14 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	for _, needle := range []string{
 		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
 		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
+		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
 	} {
 		if !strings.Contains(releaseWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
 		}
+	}
+	if strings.Contains(releaseWorkflow, "environment:\n      name: hosted-controls-audit") {
+		return errors.New(".github/workflows/release.yml must not bind tag-triggered release preflight to the main-only hosted-controls-audit environment")
 	}
 	if err := validateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
 		return err

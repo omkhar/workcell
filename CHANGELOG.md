@@ -8,6 +8,12 @@ Releases.
 
 ## Unreleased
 
+### Fixed
+
+- keep tag-triggered release preflight off the `main`-only
+  `hosted-controls-audit` environment while preserving required hosted-controls
+  verification through the repository token.
+
 ## v0.10.4 - 2026-04-25
 
 ### Added
