@@ -49,6 +49,8 @@ Releases.
 
 - align release-facing docs, operator-contract evidence, and the pre-commit
   hook so local contract checks no longer diverge from `validate-repo`
+- fix the repo-local PR publication wrapper on macOS Bash when no passthrough
+  arguments are needed, preserving the parity-enforced release publication path
 - bound Workcell cleanup and garbage-collection behavior so local validation,
   certification, and failed test runs remove owned residue instead of leaving
   stale temp roots, runtime cache, or build cache state
