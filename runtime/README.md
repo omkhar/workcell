@@ -35,8 +35,9 @@ contract.
 - `build`: explicit build and image-preparation lane
 - `breakglass`: explicit higher-trust lane
 
-`strict` expects a prepared runtime image. Interactive repo work and dependency
-egress belong to `development` or `build`.
+`strict` runs from the reviewed prepared runtime image and auto-prepares it when
+missing or stale. Interactive repo work and dependency egress belong to
+`development` or `build`.
 
 ## Main entrypoints
 
