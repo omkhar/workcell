@@ -10,7 +10,7 @@ ARG SOURCE_DATE_EPOCH=0
 # Debian snapshot date for apt sources. Pinned for reproducibility.
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
-ARG DEBIAN_SNAPSHOT=20260425T000000Z
+ARG DEBIAN_SNAPSHOT=20260502T000000Z
 ARG RUST_TOOLCHAIN_IMAGE=rust:1.95.0-slim-trixie@sha256:81099830a1e1d244607b9a7a30f3ff6ecadc52134a933b4635faba24f52840c9
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain

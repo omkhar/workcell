@@ -3,6 +3,10 @@ cooloff_hours = 12
 
 [provider.codex]
 channel = "stable"
+# Reviewed holdback: newer Codex npm stable releases currently lack the GNU
+# Linux release assets that the runtime verifier consumes. Revisit this ceiling
+# when the runtime switches to the reviewed musl artifact path.
+max_version = "0.125.0"
 
 [provider.claude]
 channel = "stable"

@@ -190,7 +190,6 @@ jobs:
 
   reproducible-build-platform:
     name: Reproducible build (${{ matrix.platform_name }})
-    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'approved-heavy-ci') }}
     runs-on: ${{ matrix.runner }}
     needs: validate
     permissions:
@@ -223,9 +222,15 @@ jobs:
 
   reproducible-build:
     name: Reproducible build
-    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'approved-heavy-ci') }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     needs: reproducible-build-platform
     steps:
       - name: Confirm per-platform reproducible builds passed
-        run: true
+        env:
+          REPRO_BUILD_RESULT: ${{ needs.reproducible-build-platform.result }}
+        run: |
+          if [[ "${REPRO_BUILD_RESULT}" != "success" ]]; then
+            echo "Expected per-platform reproducible builds to succeed, got ${REPRO_BUILD_RESULT}" >&2
+            exit 1
+          fi

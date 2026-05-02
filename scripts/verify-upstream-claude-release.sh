@@ -29,6 +29,20 @@ extract_claude_sha() {
   (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil extract-claude-sha "${DOCKERFILE_PATH}" "${target_arch}")
 }
 
+download_large_asset() {
+  local url="$1"
+  local output="$2"
+
+  curl -fsSL \
+    --retry 5 \
+    --retry-all-errors \
+    --retry-delay 5 \
+    --connect-timeout 20 \
+    --speed-limit 1024 \
+    --speed-time 60 \
+    "${url}" -o "${output}"
+}
+
 verify_asset() {
   local target_arch="$1"
   local platform="$2"
@@ -37,8 +51,7 @@ verify_asset() {
   local binary_path="${work_dir}/claude"
 
   mkdir -p "${work_dir}"
-  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-    "${CLAUDE_RELEASE_ROOT}/${CLAUDE_VERSION}/${platform}/claude" -o "${binary_path}"
+  download_large_asset "${CLAUDE_RELEASE_ROOT}/${CLAUDE_VERSION}/${platform}/claude" "${binary_path}"
   echo "${expected_sha}  ${binary_path}" | sha256sum -c - >/dev/null
 }
 

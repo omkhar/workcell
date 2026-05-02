@@ -31,7 +31,7 @@ the refresh locally from the latest selected base branch, verifies the
 candidate identity exactly, runs local PR-parity validation, and publishes a
 signed draft PR through the repo-local parity-enforcing publication wrapper.
 
-Run this from a clean worktree. The disposable publication branch is created
+Run this from a clean worktree. The disposable publication workspace is created
 from the latest available tip of the selected base branch, not the caller's
 current feature branch HEAD.
 EOF
@@ -145,6 +145,11 @@ fi
 REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 base_ref="$(resolve_base_ref)"
 base_sha="$(git -C "${ROOT_DIR}" rev-parse "${base_ref}")"
+origin_url="$(git -C "${ROOT_DIR}" remote get-url origin 2>/dev/null || true)"
+if [[ -z "${origin_url}" ]]; then
+  echo "scripts/publish-upstream-refresh-pr.sh requires an origin remote for publication." >&2
+  exit 2
+fi
 
 run_json="$(gh api "repos/${REPO}/actions/runs/${RUN_ID}")"
 run_conclusion="$(jq -r '.conclusion // ""' <<<"${run_json}")"
@@ -172,8 +177,7 @@ body_file="$(mktemp "${TMPDIR:-/tmp}/workcell-upstream-refresh-body.XXXXXX.md")"
 commit_file="$(mktemp "${TMPDIR:-/tmp}/workcell-upstream-refresh-commit.XXXXXX.txt")"
 
 cleanup() {
-  git -C "${ROOT_DIR}" worktree remove --force "${worktree_root}" >/dev/null 2>&1 || true
-  git -C "${ROOT_DIR}" worktree prune >/dev/null 2>&1 || true
+  rm -rf "${worktree_root}"
   rm -rf "${artifact_root}"
   rm -f "${title_file}" "${body_file}" "${commit_file}" "${local_patch_path:-}"
 }
@@ -251,7 +255,10 @@ if [[ -n "${existing_pr_url}" ]]; then
   exit 2
 fi
 
-git -C "${ROOT_DIR}" worktree add --detach "${worktree_root}" "${base_ref}" >/dev/null
+git clone --no-hardlinks --no-checkout "${ROOT_DIR}" "${worktree_root}" >/dev/null
+git -C "${worktree_root}" remote set-url origin "${origin_url}"
+git -C "${worktree_root}" fetch --no-tags origin "${BASE_BRANCH}" >/dev/null
+git -C "${worktree_root}" checkout --detach "${base_sha}" >/dev/null
 
 "${worktree_root}/scripts/update-upstream-pins.sh" --apply
 if git -C "${worktree_root}" diff --quiet --exit-code; then

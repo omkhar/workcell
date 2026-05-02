@@ -59,9 +59,15 @@ jobs:
           install -m 0755 actionlint "${RUNNER_TEMP}/bin/actionlint"
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
 
-      - name: Run actionlint
+      - name: Install zizmor
+        env:
+          ZIZMOR_VERSION: 1.23.1
         run: |
-          actionlint
+          python3 -m pip install --disable-pip-version-check --user "zizmor==${ZIZMOR_VERSION}"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+
+      - name: Run workflow contract checks
+        run: ./scripts/check-workflows.sh
 
   zizmor:
     name: GitHub Actions security analysis

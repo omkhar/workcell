@@ -771,6 +771,9 @@ func TestValidateUpstreamRefreshWorkflowRejectsGitHubSidePRPublication(t *testin
 on:
   workflow_dispatch:
 
+env:
+  WORKCELL_COSIGN_VERSION: v3.0.6
+
 jobs:
   refresh:
     environment:
@@ -784,6 +787,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+      - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
       - run: |
           ./scripts/update-upstream-pins.sh --check
@@ -817,6 +824,9 @@ func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
 on:
   workflow_dispatch:
 
+env:
+  WORKCELL_COSIGN_VERSION: v3.0.6
+
 jobs:
   refresh:
     environment:
@@ -830,6 +840,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+      - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
       - run: |
           ./scripts/update-upstream-pins.sh --check
@@ -858,6 +872,9 @@ func TestValidateUpstreamRefreshWorkflowRejectsHostedSigningInputs(t *testing.T)
 on:
   workflow_dispatch:
 
+env:
+  WORKCELL_COSIGN_VERSION: v3.0.6
+
 jobs:
   refresh:
     environment:
@@ -871,6 +888,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+      - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
       - run: |
           ./scripts/update-upstream-pins.sh --check
@@ -903,6 +924,9 @@ func TestValidateUpstreamRefreshWorkflowRejectsMissingEnvironmentBinding(t *test
 on:
   workflow_dispatch:
 
+env:
+  WORKCELL_COSIGN_VERSION: v3.0.6
+
 jobs:
   refresh:
     permissions:
@@ -914,6 +938,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+      - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - run: ./scripts/update-upstream-pins.sh --apply
       - run: |
           ./scripts/update-upstream-pins.sh --check

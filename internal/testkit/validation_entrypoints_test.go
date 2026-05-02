@@ -510,6 +510,12 @@ func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 		`Candidate tree OID mismatch`,
 		`requires a clean worktree`,
 		`Commit, stash, or discard local changes first`,
+		`requires an origin remote`,
+		`rm -rf "${worktree_root}"`,
+		`git clone --no-hardlinks --no-checkout "${ROOT_DIR}" "${worktree_root}"`,
+		`git -C "${worktree_root}" remote set-url origin "${origin_url}"`,
+		`git -C "${worktree_root}" fetch --no-tags origin "${BASE_BRANCH}"`,
+		`git -C "${worktree_root}" checkout --detach "${base_sha}"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
@@ -544,6 +550,9 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 		"https://snapshot.debian.org/archive/debian/",
 		"https://snapshot.debian.org/archive/debian-security/",
 		"scripts/check-pinned-inputs.sh",
+		"UPSTREAM_REFRESH_WORKFLOW_PATH",
+		"current_upstream_refresh_cosign_version",
+		"upstream-refresh-cosign-version",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
