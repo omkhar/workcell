@@ -136,7 +136,7 @@ if [[ "${AUTO_CHANGED_FILES}" -eq 1 ]]; then
   done < <(collect_changed_files_from_git)
 fi
 
-tmp_config="$(mktemp "${TMPDIR:-/tmp}/workcell-ci-plan.XXXXXX.json")"
+tmp_config="$(mktemp "${TMPDIR:-/tmp}/workcell-ci-plan.XXXXXX")"
 trap 'rm -f "${tmp_config}"' EXIT
 
 labels_json="$(json_array_from_values "${LABELS[@]}")"

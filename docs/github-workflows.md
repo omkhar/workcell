@@ -11,8 +11,9 @@ GitHub-only behavior do not drift silently:
 - [`policy/workflow-lanes.json`](../policy/workflow-lanes.json) is the
   generated manifest derived from the live workflow YAML plus that policy
 - `./scripts/verify-workflow-lanes.sh` fails if the manifest drifts
-- `./scripts/ci-plan.sh` explains which mirrored lanes apply locally for a
-  given profile, event, labels, and changed files
+- `./scripts/ci-plan.sh` explains which mirrored lanes apply locally and which
+  selected lanes remain GitHub-only for a given profile, event, labels, and
+  changed files
 
 That inventory underpins the local `./scripts/pre-merge.sh` profiles and the
 repo-local `./scripts/repo-publish-pr.sh` publication gate.
@@ -24,7 +25,7 @@ repo-local `./scripts/repo-publish-pr.sh` publication gate.
 | `ci.yml` | repository validation, smoke, reproducibility, pin verification, upstream release re-verification, and continuous package install/uninstall verification on pushes and PRs |
 | `pr-base-policy.yml` | trusted base-branch guard that keeps `main` as the supported ready-PR base and leaves non-`main` PR bases as draft-only lower-assurance review units |
 | `docs.yml` | fast spelling and manpage feedback for docs-only changes |
-| `security.yml` | workflow lint, dependency review, and `zizmor` |
+| `security.yml` | repo-owned workflow contract checks, dependency review, and `zizmor` |
 | `codeql.yml` | code scanning for shipped Rust, Go, and JavaScript surfaces |
 | `scorecard.yml` | OpenSSF Scorecard analysis |
 | `pin-hygiene.yml` | scheduled re-validation of pinned inputs plus upstream refresh drift across providers, Linux base images, toolchains, and release-build pins |
@@ -69,6 +70,8 @@ Other macOS versions are not install-gated today.
 `upstream-refresh.yml` is the dedicated candidate lane for reviewed upstream pins:
 
 - it runs on a weekday schedule and on manual dispatch
+- it installs the same pinned Cosign verifier release used by CI, release, and
+  pin-hygiene before provider release verification paths run
 - it refreshes provider pins, the Linux runtime and validator base images,
   Debian snapshot, Go/Rust/Hadolint toolchains, and release-build helper pins
 - it binds to the empty `upstream-refresh` GitHub environment as an out-of-tree
@@ -85,6 +88,13 @@ Other macOS versions are not install-gated today.
 - the candidate artifact and tracking issue are operator signals only; they are
   not integrity evidence and do not replace the later signed host-side review
   unit
+
+## Required reproducibility
+
+`ci.yml` keeps the branch-protected `Reproducible build` context tied to the
+actual platform checks. The native amd64 and arm64 reproducible-build lanes run
+for pull requests, and the aggregate required context fails unless the
+per-platform matrix succeeds.
 
 `ci.yml` and `docs.yml` use the same explicit nonroot validator contract when
 they bind-mount the repository: the workflow computes the caller UID/GID,

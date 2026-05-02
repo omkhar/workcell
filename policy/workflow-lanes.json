@@ -41,6 +41,9 @@
       "required_labels": [
         "approved-heavy-ci"
       ],
+      "profiles": [
+        "pr-parity"
+      ],
       "authority": "pr-parity",
       "local_mode": "none",
       "github_only_reason": "exact hosted macOS install verification remains GitHub-only"
@@ -62,6 +65,9 @@
       ],
       "required_labels": [
         "approved-heavy-ci"
+      ],
+      "profiles": [
+        "pr-parity"
       ],
       "authority": "pr-parity",
       "local_mode": "none",
@@ -98,8 +104,8 @@
         "push",
         "workflow_dispatch"
       ],
-      "required_labels": [
-        "approved-heavy-ci"
+      "profiles": [
+        "pr-parity"
       ],
       "authority": "pr-parity",
       "local_mode": "none",
@@ -120,9 +126,6 @@
         "pull_request",
         "push",
         "workflow_dispatch"
-      ],
-      "required_labels": [
-        "approved-heavy-ci"
       ],
       "profiles": [
         "pr-parity",
@@ -149,9 +152,6 @@
         "pull_request",
         "push",
         "workflow_dispatch"
-      ],
-      "required_labels": [
-        "approved-heavy-ci"
       ],
       "profiles": [
         "pr-parity",
@@ -203,6 +203,9 @@
       "required_labels": [
         "approved-heavy-ci"
       ],
+      "profiles": [
+        "pr-parity"
+      ],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
@@ -226,6 +229,9 @@
       "required_labels": [
         "approved-heavy-ci"
       ],
+      "profiles": [
+        "pr-parity"
+      ],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
@@ -248,6 +254,9 @@
       ],
       "required_labels": [
         "approved-heavy-ci"
+      ],
+      "profiles": [
+        "pr-parity"
       ],
       "authority": "github-only",
       "local_mode": "none",
@@ -326,6 +335,9 @@
         "schedule",
         "workflow_dispatch"
       ],
+      "profiles": [
+        "release-preflight"
+      ],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "hosted controls require GitHub-hosted policy state and token-backed audit access"
@@ -357,6 +369,9 @@
       "workflow_events": [
         "pull_request_target"
       ],
+      "profiles": [
+        "pr-parity"
+      ],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "pull_request_target metadata policy remains GitHub-only"
@@ -373,6 +388,9 @@
       },
       "workflow_events": [
         "push"
+      ],
+      "profiles": [
+        "release-preflight"
       ],
       "authority": "release-only",
       "local_mode": "none",
@@ -391,6 +409,9 @@
       "workflow_events": [
         "push"
       ],
+      "profiles": [
+        "release-preflight"
+      ],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release CodeQL remains GitHub-only"
@@ -407,6 +428,9 @@
       },
       "workflow_events": [
         "push"
+      ],
+      "profiles": [
+        "release-preflight"
       ],
       "authority": "release-only",
       "local_mode": "none",
@@ -425,6 +449,9 @@
       "workflow_events": [
         "push"
       ],
+      "profiles": [
+        "release-preflight"
+      ],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release install verification uses exact hosted macOS runners"
@@ -442,6 +469,9 @@
       "workflow_events": [
         "push"
       ],
+      "profiles": [
+        "release-preflight"
+      ],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release install verification uses exact hosted macOS runners"
@@ -455,6 +485,9 @@
       "workflow_events": [
         "push"
       ],
+      "profiles": [
+        "release-preflight"
+      ],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release preflight binds hosted controls, artifacts, and release-only permissions"
@@ -467,6 +500,9 @@
       "job_name": "Publish release artifacts",
       "workflow_events": [
         "push"
+      ],
+      "profiles": [
+        "release-preflight"
       ],
       "authority": "release-only",
       "local_mode": "none",
@@ -482,6 +518,9 @@
         "push",
         "schedule",
         "workflow_dispatch"
+      ],
+      "profiles": [
+        "release-preflight"
       ],
       "authority": "github-only",
       "local_mode": "none",
@@ -518,6 +557,9 @@
         "pull_request",
         "push",
         "workflow_dispatch"
+      ],
+      "profiles": [
+        "pr-parity"
       ],
       "authority": "github-only",
       "local_mode": "none",

@@ -7,6 +7,9 @@ on:
 
 permissions: {}
 
+env:
+  WORKCELL_COSIGN_VERSION: v3.0.6
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -26,6 +29,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+        with:
+          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+
+      - name: Expose cosign in trusted system path
+        run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
 
       - name: Refresh pinned upstreams
         run: ./scripts/update-upstream-pins.sh --apply

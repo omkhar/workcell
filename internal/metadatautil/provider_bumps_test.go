@@ -163,6 +163,202 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
 	}
 }
 
+func TestSelectCodexStableHonorsMaxVersionAndReportsSkippedRelease(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/codex-registry":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "dist-tags": {"latest": "0.128.0"},
+  "time": {
+    "created": "2026-01-01T00:00:00Z",
+    "0.125.0": "2026-04-01T00:00:00Z",
+    "0.128.0": "2026-04-10T00:00:00Z"
+  }
+}`))
+		case "/codex-release/rust-v0.125.0":
+			http.Error(w, "unchanged current release should not be fetched", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cutoff := time.Date(2026, time.April, 12, 0, 0, 0, 0, time.UTC)
+	selection, err := selectCodexStable("0.125.0", cutoff, "0.125.0", ProviderBumpSources{
+		CodexRegistryURL:      server.URL + "/codex-registry",
+		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
+	}, server.Client())
+	if err != nil {
+		t.Fatalf("selectCodexStable() error = %v", err)
+	}
+	if selection.TargetVersion != "0.125.0" {
+		t.Fatalf("Codex target = %q, want 0.125.0", selection.TargetVersion)
+	}
+	if selection.Changed {
+		t.Fatal("Codex selection should hold at the configured ceiling")
+	}
+	if len(selection.SkippedReleases) != 1 {
+		t.Fatalf("SkippedReleases length = %d, want 1", len(selection.SkippedReleases))
+	}
+	if skipped := selection.SkippedReleases[0]; skipped.Version != "0.128.0" || !strings.Contains(skipped.Reason, "max_version 0.125.0") {
+		t.Fatalf("SkippedReleases[0] = %#v, want 0.128.0 max_version holdback", skipped)
+	}
+}
+
+func TestSelectCodexStableSkipsMissingGNUReleaseAssetsAndSelectsNextCompatible(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/codex-registry":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "dist-tags": {"latest": "0.129.0"},
+  "time": {
+    "created": "2026-01-01T00:00:00Z",
+    "0.125.0": "2026-04-01T00:00:00Z",
+    "0.128.0": "2026-04-08T00:00:00Z",
+    "0.129.0": "2026-04-09T00:00:00Z"
+  }
+}`))
+		case "/codex-release/rust-v0.129.0":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "tag_name": "rust-v0.129.0",
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "codex-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}`))
+		case "/codex-release/rust-v0.128.0":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "tag_name": "rust-v0.128.0",
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7"
+    },
+    {
+      "name": "codex-x86_64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"
+    }
+  ]
+}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cutoff := time.Date(2026, time.April, 12, 0, 0, 0, 0, time.UTC)
+	selection, err := selectCodexStable("0.125.0", cutoff, "", ProviderBumpSources{
+		CodexRegistryURL:      server.URL + "/codex-registry",
+		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
+	}, server.Client())
+	if err != nil {
+		t.Fatalf("selectCodexStable() error = %v", err)
+	}
+	if selection.TargetVersion != "0.128.0" {
+		t.Fatalf("Codex target = %q, want 0.128.0", selection.TargetVersion)
+	}
+	if !selection.Changed {
+		t.Fatal("Codex selection should advance to the next compatible release")
+	}
+	if got := selection.Checksums["amd64"]; got != "526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b" {
+		t.Fatalf("Codex amd64 checksum = %q", got)
+	}
+	if len(selection.SkippedReleases) != 1 {
+		t.Fatalf("SkippedReleases length = %d, want 1", len(selection.SkippedReleases))
+	}
+	if skipped := selection.SkippedReleases[0]; skipped.Version != "0.129.0" || !strings.Contains(skipped.Reason, "missing supported GNU Linux release assets") {
+		t.Fatalf("SkippedReleases[0] = %#v, want missing GNU asset skip", skipped)
+	}
+}
+
+func TestSelectCodexStableRejectsUnavailableReleaseMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/codex-registry":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "dist-tags": {"latest": "0.128.0"},
+  "time": {
+    "created": "2026-01-01T00:00:00Z",
+    "0.125.0": "2026-04-01T00:00:00Z",
+    "0.128.0": "2026-04-08T00:00:00Z"
+  }
+}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cutoff := time.Date(2026, time.April, 12, 0, 0, 0, 0, time.UTC)
+	_, err := selectCodexStable("0.125.0", cutoff, "", ProviderBumpSources{
+		CodexRegistryURL:      server.URL + "/codex-registry",
+		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
+	}, server.Client())
+	if err == nil {
+		t.Fatal("selectCodexStable() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "unexpected status 404") {
+		t.Fatalf("selectCodexStable() error = %v, want release metadata failure", err)
+	}
+}
+
+func TestSelectCodexStableRejectsMalformedReleaseDigest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/codex-registry":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "dist-tags": {"latest": "0.128.0"},
+  "time": {
+    "created": "2026-01-01T00:00:00Z",
+    "0.125.0": "2026-04-01T00:00:00Z",
+    "0.128.0": "2026-04-08T00:00:00Z"
+  }
+}`))
+		case "/codex-release/rust-v0.128.0":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "tag_name": "rust-v0.128.0",
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:not-a-digest"
+    },
+    {
+      "name": "codex-x86_64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"
+    }
+  ]
+}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cutoff := time.Date(2026, time.April, 12, 0, 0, 0, 0, time.UTC)
+	_, err := selectCodexStable("0.125.0", cutoff, "", ProviderBumpSources{
+		CodexRegistryURL:      server.URL + "/codex-registry",
+		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
+	}, server.Client())
+	if err == nil {
+		t.Fatal("selectCodexStable() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "invalid GNU Linux asset metadata") {
+		t.Fatalf("selectCodexStable() error = %v, want malformed digest rejection", err)
+	}
+}
+
 func TestCheckProviderBumpPolicyRejectsPrereleaseCodexPin(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")
@@ -190,6 +386,38 @@ func TestCheckProviderBumpPolicyRejectsPrereleaseCodexPin(t *testing.T) {
 		t.Fatal("CheckProviderBumpPolicy() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "stable Codex pin") {
+		t.Fatalf("CheckProviderBumpPolicy() error = %v", err)
+	}
+}
+
+func TestCheckProviderBumpPolicyRejectsCodexVersionAboveConfiguredCeiling(t *testing.T) {
+	root := t.TempDir()
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	packageJSONPath := filepath.Join(root, "package.json")
+	policyPath := filepath.Join(root, "provider-bumps.toml")
+
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.92\nARG CODEX_VERSION=0.128.0\n")
+	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
+	mustWriteText(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"cooloff_hours = 72",
+		"",
+		"[provider.codex]",
+		`channel = "stable"`,
+		`max_version = "0.125.0"`,
+		"",
+		"[provider.claude]",
+		`channel = "stable"`,
+		"",
+		"[provider.gemini]",
+		`channel = "stable"`,
+	}, "\n")+"\n")
+
+	err := CheckProviderBumpPolicy(policyPath, dockerfilePath, packageJSONPath)
+	if err == nil {
+		t.Fatal("CheckProviderBumpPolicy() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "requires Codex <= 0.125.0") {
 		t.Fatalf("CheckProviderBumpPolicy() error = %v", err)
 	}
 }
@@ -1214,6 +1442,60 @@ func TestApplyProviderBumpPlanRejectsClaudeTargetAboveConfiguredCeiling(t *testi
 		t.Fatal("ApplyProviderBumpPlan() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "requires Claude <= 2.1.104") {
+		t.Fatalf("ApplyProviderBumpPlan() error = %v", err)
+	}
+}
+
+func TestApplyProviderBumpPlanRejectsCodexTargetAboveConfiguredCeiling(t *testing.T) {
+	root := t.TempDir()
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	packageJSONPath := filepath.Join(root, "package.json")
+	policyPath := filepath.Join(root, "provider-bumps.toml")
+	planPath := filepath.Join(root, "plan.json")
+
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.125.0\n")
+	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
+	mustWriteText(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"cooloff_hours = 12",
+		"",
+		"[provider.codex]",
+		`channel = "stable"`,
+		`max_version = "0.125.0"`,
+		"",
+		"[provider.claude]",
+		`channel = "stable"`,
+		"",
+		"[provider.gemini]",
+		`channel = "stable"`,
+	}, "\n")+"\n")
+
+	plan := ProviderBumpPlan{
+		Providers: map[string]ProviderBumpSelection{
+			"claude": {
+				TargetVersion: "2.1.104",
+			},
+			"codex": {
+				TargetVersion: "0.128.0",
+			},
+			"gemini": {
+				TargetVersion: "0.36.0",
+			},
+		},
+	}
+	content, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, packageJSONPath)
+	if err == nil {
+		t.Fatal("ApplyProviderBumpPlan() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "requires Codex <= 0.125.0") {
 		t.Fatalf("ApplyProviderBumpPlan() error = %v", err)
 	}
 }

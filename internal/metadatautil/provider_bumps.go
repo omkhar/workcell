@@ -6,6 +6,7 @@ package metadatautil
 import (
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,7 @@ const (
 )
 
 var (
+	errReleaseAssetNotFound       = errors.New("release asset not found")
 	stableVersionPattern          = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 	geminiDependencyPattern       = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
 	claudeVersionLinePattern      = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
@@ -60,12 +62,19 @@ type ProviderBumpPlan struct {
 }
 
 type ProviderBumpSelection struct {
-	Channel        string            `json:"channel"`
-	CurrentVersion string            `json:"current_version"`
-	TargetVersion  string            `json:"target_version"`
-	PublishedAt    string            `json:"published_at,omitempty"`
-	Changed        bool              `json:"changed"`
-	Checksums      map[string]string `json:"checksums,omitempty"`
+	Channel         string                       `json:"channel"`
+	CurrentVersion  string                       `json:"current_version"`
+	TargetVersion   string                       `json:"target_version"`
+	PublishedAt     string                       `json:"published_at,omitempty"`
+	Changed         bool                         `json:"changed"`
+	Checksums       map[string]string            `json:"checksums,omitempty"`
+	SkippedReleases []ProviderBumpSkippedRelease `json:"skipped_releases,omitempty"`
+}
+
+type ProviderBumpSkippedRelease struct {
+	Version     string `json:"version"`
+	PublishedAt string `json:"published_at,omitempty"`
+	Reason      string `json:"reason"`
 }
 
 type ProviderBumpSources struct {
@@ -202,18 +211,11 @@ func CheckProviderBumpPolicy(policyPath, dockerfilePath, providersPackageJSONPat
 	if policy.Providers["gemini"].Channel == "stable" && !stableVersionPattern.MatchString(geminiVersion) {
 		return fmt.Errorf("%s requires a stable Gemini pin, found %q in %s", policyPath, geminiVersion, providersPackageJSONPath)
 	}
-	if maxVersion := policy.Providers["claude"].MaxVersion; maxVersion != "" {
-		current, ok := parseStableVersion(claudeVersion)
-		if !ok {
-			return fmt.Errorf("%s requires a stable Claude pin, found %q in %s", policyPath, claudeVersion, dockerfilePath)
-		}
-		maxAllowed, ok := parseStableVersion(maxVersion)
-		if !ok {
-			return fmt.Errorf("%s must pin provider.claude.max_version to an exact stable version", policyPath)
-		}
-		if compareStableVersions(current, maxAllowed) > 0 {
-			return fmt.Errorf("%s requires Claude <= %s, found %q in %s", policyPath, maxVersion, claudeVersion, dockerfilePath)
-		}
+	if err := enforceProviderMaxVersion(policyPath, "codex", "Codex", codexVersion, policy.Providers["codex"].MaxVersion, dockerfilePath); err != nil {
+		return err
+	}
+	if err := enforceProviderMaxVersion(policyPath, "claude", "Claude", claudeVersion, policy.Providers["claude"].MaxVersion, dockerfilePath); err != nil {
+		return err
 	}
 	return nil
 }
@@ -241,7 +243,7 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 		return nil, err
 	}
 
-	codexSelection, err := selectCodexStable(codexCurrent, cutoff, sources, client)
+	codexSelection, err := selectCodexStable(codexCurrent, cutoff, policy.Providers["codex"].MaxVersion, sources, client)
 	if err != nil {
 		return nil, err
 	}
@@ -315,18 +317,11 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 		if err != nil {
 			return err
 		}
-		if maxVersion := policy.Providers["claude"].MaxVersion; maxVersion != "" {
-			plannedClaude, ok := parseStableVersion(claudePlan.TargetVersion)
-			if !ok {
-				return fmt.Errorf("%s contains a non-stable Claude target version %q", planPath, claudePlan.TargetVersion)
-			}
-			maxAllowed, ok := parseStableVersion(maxVersion)
-			if !ok {
-				return fmt.Errorf("%s must pin provider.claude.max_version to an exact stable version", policyPath)
-			}
-			if compareStableVersions(plannedClaude, maxAllowed) > 0 {
-				return fmt.Errorf("%s requires Claude <= %s, found %q in %s", policyPath, maxVersion, claudePlan.TargetVersion, planPath)
-			}
+		if err := enforceProviderMaxVersion(policyPath, "codex", "Codex", codexPlan.TargetVersion, policy.Providers["codex"].MaxVersion, planPath); err != nil {
+			return err
+		}
+		if err := enforceProviderMaxVersion(policyPath, "claude", "Claude", claudePlan.TargetVersion, policy.Providers["claude"].MaxVersion, planPath); err != nil {
+			return err
 		}
 	}
 
@@ -376,53 +371,87 @@ func extractGeminiVersion(providersPackageJSONPath string) (string, error) {
 	return version, nil
 }
 
-func selectCodexStable(currentVersion string, cutoff time.Time, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
-	version, publishedAt, err := selectNewestStableFromRegistry(sources.CodexRegistryURL, cutoff, client)
+func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
+	candidates, skipped, err := stableCandidatesFromRegistry(sources.CodexRegistryURL, cutoff, maxVersion, client)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
-	if version == "" {
+	current, hasCurrentVersion := parseStableVersion(currentVersion)
+	maxAllowed, hasMaxVersion := parseStableVersion(maxVersion)
+	if maxVersion != "" && !hasMaxVersion {
+		return ProviderBumpSelection{}, fmt.Errorf("provider.codex.max_version must be an exact stable version, found %q", maxVersion)
+	}
+	if hasCurrentVersion && hasMaxVersion && compareStableVersions(current, maxAllowed) > 0 {
+		return ProviderBumpSelection{}, fmt.Errorf("current Codex version %s exceeds provider.codex.max_version %s", currentVersion, maxVersion)
+	}
+	currentSelection := func(publishedAt time.Time) ProviderBumpSelection {
+		selection := ProviderBumpSelection{
+			Channel:         "stable",
+			CurrentVersion:  currentVersion,
+			TargetVersion:   currentVersion,
+			SkippedReleases: skipped,
+		}
+		if !publishedAt.IsZero() {
+			selection.PublishedAt = publishedAt.Format(time.RFC3339)
+		}
+		return selection
+	}
+	if len(candidates) == 0 {
+		return currentSelection(time.Time{}), nil
+	}
+	for _, candidate := range candidates {
+		if hasCurrentVersion && compareStableVersions(candidate, current) < 0 {
+			break
+		}
+		if candidate.Raw == currentVersion {
+			return currentSelection(candidate.Source), nil
+		}
+		releaseURL := fmt.Sprintf(sources.CodexReleaseAPIURLFmt, candidate.Raw)
+		var release codexReleaseMetadata
+		if err := fetchJSON(client, releaseURL, &release); err != nil {
+			return ProviderBumpSelection{}, err
+		}
+		if release.Prerelease {
+			skipped = appendSkippedProviderRelease(skipped, candidate, "GitHub release is marked prerelease")
+			continue
+		}
+		armDigest, armErr := releaseAssetDigest(release, "codex-aarch64-unknown-linux-gnu.tar.gz")
+		amdDigest, amdErr := releaseAssetDigest(release, "codex-x86_64-unknown-linux-gnu.tar.gz")
+		if armErr != nil || amdErr != nil {
+			if (armErr == nil || errors.Is(armErr, errReleaseAssetNotFound)) && (amdErr == nil || errors.Is(amdErr, errReleaseAssetNotFound)) {
+				reasons := make([]string, 0, 2)
+				if armErr != nil {
+					reasons = append(reasons, armErr.Error())
+				}
+				if amdErr != nil {
+					reasons = append(reasons, amdErr.Error())
+				}
+				skipped = appendSkippedProviderRelease(skipped, candidate, "missing supported GNU Linux release assets: "+strings.Join(reasons, "; "))
+				continue
+			}
+			reasons := make([]string, 0, 2)
+			if armErr != nil {
+				reasons = append(reasons, armErr.Error())
+			}
+			if amdErr != nil {
+				reasons = append(reasons, amdErr.Error())
+			}
+			return ProviderBumpSelection{}, fmt.Errorf("codex release %s has invalid GNU Linux asset metadata: %s", candidate.Raw, strings.Join(reasons, "; "))
+		}
 		return ProviderBumpSelection{
-			Channel:        "stable",
-			CurrentVersion: currentVersion,
-			TargetVersion:  currentVersion,
+			Channel:         "stable",
+			CurrentVersion:  currentVersion,
+			TargetVersion:   candidate.Raw,
+			PublishedAt:     candidate.Source.Format(time.RFC3339),
+			Changed:         candidate.Raw != currentVersion,
+			SkippedReleases: skipped,
+			Checksums: map[string]string{
+				"arm64": armDigest,
+				"amd64": amdDigest,
+			},
 		}, nil
 	}
-	if version == currentVersion {
-		return ProviderBumpSelection{
-			Channel:        "stable",
-			CurrentVersion: currentVersion,
-			TargetVersion:  version,
-			PublishedAt:    publishedAt.Format(time.RFC3339),
-		}, nil
-	}
-	releaseURL := fmt.Sprintf(sources.CodexReleaseAPIURLFmt, version)
-	var release codexReleaseMetadata
-	if err := fetchJSON(client, releaseURL, &release); err != nil {
-		return ProviderBumpSelection{}, err
-	}
-	if release.Prerelease {
-		return ProviderBumpSelection{}, fmt.Errorf("codex stable candidate %s unexpectedly resolved to a prerelease", version)
-	}
-	armDigest, err := releaseAssetDigest(release, "codex-aarch64-unknown-linux-gnu.tar.gz")
-	if err != nil {
-		return ProviderBumpSelection{}, err
-	}
-	amdDigest, err := releaseAssetDigest(release, "codex-x86_64-unknown-linux-gnu.tar.gz")
-	if err != nil {
-		return ProviderBumpSelection{}, err
-	}
-	return ProviderBumpSelection{
-		Channel:        "stable",
-		CurrentVersion: currentVersion,
-		TargetVersion:  version,
-		PublishedAt:    publishedAt.Format(time.RFC3339),
-		Changed:        version != currentVersion,
-		Checksums: map[string]string{
-			"arm64": armDigest,
-			"amd64": amdDigest,
-		},
-	}, nil
+	return currentSelection(time.Time{}), nil
 }
 
 func selectGeminiStable(currentVersion string, cutoff time.Time, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
@@ -575,16 +604,32 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 }
 
 func selectNewestStableFromRegistry(registryURL string, cutoff time.Time, client *http.Client) (string, time.Time, error) {
+	candidates, _, err := stableCandidatesFromRegistry(registryURL, cutoff, "", client)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if len(candidates) == 0 {
+		return "", time.Time{}, nil
+	}
+	return candidates[0].Raw, candidates[0].Source, nil
+}
+
+func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersion string, client *http.Client) ([]stableVersion, []ProviderBumpSkippedRelease, error) {
 	var metadata npmRegistryMetadata
 	if err := fetchJSON(client, registryURL, &metadata); err != nil {
-		return "", time.Time{}, err
+		return nil, nil, err
 	}
 	latestRaw := metadata.DistTags["latest"]
 	latestVersion, ok := parseStableVersion(latestRaw)
 	if !ok {
-		return "", time.Time{}, fmt.Errorf("%s dist-tags.latest must resolve to a stable version, found %q", registryURL, latestRaw)
+		return nil, nil, fmt.Errorf("%s dist-tags.latest must resolve to a stable version, found %q", registryURL, latestRaw)
+	}
+	maxAllowed, hasMaxVersion := parseStableVersion(maxVersion)
+	if maxVersion != "" && !hasMaxVersion {
+		return nil, nil, fmt.Errorf("max_version must be an exact stable version, found %q", maxVersion)
 	}
 	candidates := make([]stableVersion, 0, len(metadata.Time))
+	skipped := make([]ProviderBumpSkippedRelease, 0)
 	for rawVersion, publishedRaw := range metadata.Time {
 		version, ok := parseStableVersion(rawVersion)
 		if !ok {
@@ -595,19 +640,39 @@ func selectNewestStableFromRegistry(registryURL string, cutoff time.Time, client
 		}
 		publishedAt, err := time.Parse(time.RFC3339, publishedRaw)
 		if err != nil {
-			return "", time.Time{}, fmt.Errorf("parse publish time for %s: %w", rawVersion, err)
+			return nil, nil, fmt.Errorf("parse publish time for %s: %w", rawVersion, err)
+		}
+		version.Source = publishedAt.UTC()
+		if hasMaxVersion && compareStableVersions(version, maxAllowed) > 0 {
+			skipped = appendSkippedProviderRelease(skipped, version, fmt.Sprintf("exceeds configured max_version %s", maxVersion))
+			continue
 		}
 		if publishedAt.After(cutoff) {
 			continue
 		}
-		version.Source = publishedAt.UTC()
 		candidates = append(candidates, version)
 	}
-	if len(candidates) == 0 {
-		return "", time.Time{}, nil
-	}
 	sortStableVersionsDesc(candidates)
-	return candidates[0].Raw, candidates[0].Source, nil
+	sort.Slice(skipped, func(i, j int) bool {
+		left, leftOK := parseStableVersion(skipped[i].Version)
+		right, rightOK := parseStableVersion(skipped[j].Version)
+		if leftOK && rightOK {
+			return compareStableVersions(left, right) > 0
+		}
+		return skipped[i].Version > skipped[j].Version
+	})
+	return candidates, skipped, nil
+}
+
+func appendSkippedProviderRelease(skipped []ProviderBumpSkippedRelease, version stableVersion, reason string) []ProviderBumpSkippedRelease {
+	entry := ProviderBumpSkippedRelease{
+		Version: version.Raw,
+		Reason:  reason,
+	}
+	if !version.Source.IsZero() {
+		entry.PublishedAt = version.Source.Format(time.RFC3339)
+	}
+	return append(skipped, entry)
 }
 
 func releaseAssetDigest(release codexReleaseMetadata, assetName string) (string, error) {
@@ -621,7 +686,7 @@ func releaseAssetDigest(release codexReleaseMetadata, assetName string) (string,
 		}
 		return digest, nil
 	}
-	return "", fmt.Errorf("release asset %s not found", assetName)
+	return "", fmt.Errorf("%w: %s", errReleaseAssetNotFound, assetName)
 }
 
 func parseStableVersion(raw string) (stableVersion, bool) {
@@ -640,6 +705,24 @@ func sortStableVersionsDesc(versions []stableVersion) {
 	sort.Slice(versions, func(i, j int) bool {
 		return compareStableVersions(versions[i], versions[j]) > 0
 	})
+}
+
+func enforceProviderMaxVersion(policyPath, providerID, displayName, version, maxVersion, sourcePath string) error {
+	if maxVersion == "" {
+		return nil
+	}
+	current, ok := parseStableVersion(version)
+	if !ok {
+		return fmt.Errorf("%s requires a stable %s pin, found %q in %s", policyPath, displayName, version, sourcePath)
+	}
+	maxAllowed, ok := parseStableVersion(maxVersion)
+	if !ok {
+		return fmt.Errorf("%s must pin provider.%s.max_version to an exact stable version", policyPath, providerID)
+	}
+	if compareStableVersions(current, maxAllowed) > 0 {
+		return fmt.Errorf("%s requires %s <= %s, found %q in %s", policyPath, displayName, maxVersion, version, sourcePath)
+	}
+	return nil
 }
 
 func compareStableVersions(left, right stableVersion) int {

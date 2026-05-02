@@ -128,14 +128,35 @@ fi
 
 print_summary() {
   jq -r '
-    "Provider bump policy: " + (.cooloff_hours|tostring) + "h cool-off (cutoff " + .cutoff + ")",
+    . as $plan |
+    "Provider bump policy: " + ($plan.cooloff_hours|tostring) + "h cool-off (cutoff " + $plan.cutoff + ")",
     (
-      .providers
+      $plan.providers
       | to_entries
       | sort_by(.key)
       | .[]
       | "  " + .key + ": " + .value.current_version + " -> " + .value.target_version +
-        (if .value.changed then " (update available, published " + .value.published_at + ")" else " (up to date)" end)
+        (
+          if .value.changed then
+            " (update available, published " + .value.published_at + ")"
+          elif ((.value.skipped_releases // []) | length) > 0 then
+            " (held, current pin unchanged)"
+          else
+            " (up to date)"
+          end
+        )
+    ),
+    (
+      $plan.providers
+      | to_entries
+      | sort_by(.key)
+      | .[]
+      | .key as $provider
+      | (.value.skipped_releases // [])
+      | .[]
+      | "    skipped " + $provider + " " + .version +
+        (if (.published_at // "") != "" then " (published " + .published_at + ")" else "" end) +
+        ": " + .reason
     )
   ' <<<"${plan_json}"
 }
@@ -155,6 +176,7 @@ else
     print_summary
     exit 0
   fi
+  print_summary
   echo "No eligible stable provider pin updates found."
   exit 0
 fi

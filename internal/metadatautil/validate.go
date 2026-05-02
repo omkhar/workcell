@@ -310,14 +310,16 @@ func validateUpstreamRefreshWorkflow(workflowText string) error {
 		"contents: read",
 		"issues: write",
 		"pull-requests: read",
+		"WORKCELL_COSIGN_VERSION:",
+		"sigstore/cosign-installer@",
+		"cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}",
+		`sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign`,
 	} {
 		if !strings.Contains(workflowText, needle) {
 			return fmt.Errorf(".github/workflows/upstream-refresh.yml must contain %q", needle)
 		}
 	}
 	for _, forbidden := range []string{
-		"WORKCELL_COSIGN_VERSION",
-		"sigstore/cosign-installer@",
 		"WORKCELL_UPSTREAM_REFRESH_GIT_NAME",
 		"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL",
 		"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT",
@@ -1806,8 +1808,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if len(map[string]struct{}{ciCosignVersion: {}, releaseCosignVersion: {}, pinHygieneCosignVersion: {}}) != 1 {
-		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, and .github/workflows/pin-hygiene.yml")
+	upstreamRefreshCosignVersion, err := requireYAMLKey(upstreamRefreshWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/upstream-refresh.yml")
+	if err != nil {
+		return err
+	}
+	if len(map[string]struct{}{ciCosignVersion: {}, releaseCosignVersion: {}, pinHygieneCosignVersion: {}, upstreamRefreshCosignVersion: {}}) != 1 {
+		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
 	}
 	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(ciCosignVersion) {
 		return fmt.Errorf("WORKCELL_COSIGN_VERSION must be an exact pinned release, found %q", ciCosignVersion)
@@ -1815,7 +1821,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	for _, workflow := range []struct {
 		text string
 		path string
-	}{{ciWorkflow, ".github/workflows/ci.yml"}, {releaseWorkflow, ".github/workflows/release.yml"}, {pinHygieneWorkflow, ".github/workflows/pin-hygiene.yml"}} {
+	}{{ciWorkflow, ".github/workflows/ci.yml"}, {releaseWorkflow, ".github/workflows/release.yml"}, {pinHygieneWorkflow, ".github/workflows/pin-hygiene.yml"}, {upstreamRefreshWorkflow, ".github/workflows/upstream-refresh.yml"}} {
 		if !strings.Contains(workflow.text, "cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}") {
 			return fmt.Errorf("%s must pin the installed cosign binary release", workflow.path)
 		}
@@ -1832,8 +1838,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if len(map[string]struct{}{ciCosignInstallerRef: {}, releaseCosignInstallerRef: {}, pinHygieneCosignInstallerRef: {}}) != 1 {
-		return errors.New("sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, .github/workflows/release.yml, and .github/workflows/pin-hygiene.yml")
+	upstreamRefreshCosignInstallerRef, err := requireActionRef(upstreamRefreshWorkflow, "sigstore/cosign-installer", ".github/workflows/upstream-refresh.yml")
+	if err != nil {
+		return err
+	}
+	if len(map[string]struct{}{ciCosignInstallerRef: {}, releaseCosignInstallerRef: {}, pinHygieneCosignInstallerRef: {}, upstreamRefreshCosignInstallerRef: {}}) != 1 {
+		return errors.New("sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
 	}
 	if !strings.Contains(ciWorkflow, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
 		return errors.New(".github/workflows/ci.yml must pin the BuildKit daemon image used by setup-buildx-action")
@@ -1976,6 +1986,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		"github.event_name == 'workflow_dispatch' && github.ref_name != 'main'",
 		"base-ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/main' || '' }}",
 		"head-ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || '' }}",
+		"ZIZMOR_VERSION: 1.23.1",
+		`python3 -m pip install --disable-pip-version-check --user "zizmor==${ZIZMOR_VERSION}"`,
+		"./scripts/check-workflows.sh",
 	} {
 		if !strings.Contains(securityWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/security.yml must contain %q", needle)

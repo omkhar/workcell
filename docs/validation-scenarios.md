@@ -161,7 +161,7 @@ Workcell now also keeps a machine-checked local parity inventory in:
 - [`policy/workflow-lanes.json`](../policy/workflow-lanes.json)
 
 Use `./scripts/ci-plan.sh` to see which mirrored lanes a given local
-`pre-merge` profile will execute and which lanes remain GitHub-only.
+`pre-merge` profile will execute and which selected lanes remain GitHub-only.
 
 ## Credential placement rule
 

@@ -9,11 +9,13 @@
       "local_order": 40
     },
     "ci.yml/install-verification[runner=macos-15,runner_label=macos-15]": {
+      "profiles": ["pr-parity"],
       "authority": "pr-parity",
       "local_mode": "none",
       "github_only_reason": "exact hosted macOS install verification remains GitHub-only"
     },
     "ci.yml/install-verification[runner=macos-26,runner_label=macos-26]": {
+      "profiles": ["pr-parity"],
       "authority": "pr-parity",
       "local_mode": "none",
       "github_only_reason": "exact hosted macOS install verification remains GitHub-only"
@@ -26,6 +28,7 @@
       "local_order": 5
     },
     "ci.yml/reproducible-build": {
+      "profiles": ["pr-parity"],
       "authority": "pr-parity",
       "local_mode": "none",
       "github_only_reason": "GitHub aggregates per-platform reproducible-build lanes"
@@ -52,16 +55,19 @@
       "local_order": 20
     },
     "codeql.yml/analyze[build-mode=autobuild,language=go]": {
+      "profiles": ["pr-parity"],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
     },
     "codeql.yml/analyze[build-mode=none,language=javascript-typescript]": {
+      "profiles": ["pr-parity"],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
     },
     "codeql.yml/analyze[build-mode=none,language=rust]": {
+      "profiles": ["pr-parity"],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
@@ -74,6 +80,7 @@
       "local_order": 30
     },
     "hosted-controls.yml/verify-hosted-controls": {
+      "profiles": ["release-preflight"],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "hosted controls require GitHub-hosted policy state and token-backed audit access"
@@ -86,46 +93,55 @@
       "local_order": 60
     },
     "pr-base-policy.yml/pr-base-policy": {
+      "profiles": ["pr-parity"],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "pull_request_target metadata policy remains GitHub-only"
     },
     "release.yml/codeql-preflight[build-mode=autobuild,language=go]": {
+      "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release CodeQL remains GitHub-only"
     },
     "release.yml/codeql-preflight[build-mode=none,language=javascript-typescript]": {
+      "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release CodeQL remains GitHub-only"
     },
     "release.yml/codeql-preflight[build-mode=none,language=rust]": {
+      "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release CodeQL remains GitHub-only"
     },
     "release.yml/install-verification[runner=macos-15,runner_label=macos-15]": {
+      "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release install verification uses exact hosted macOS runners"
     },
     "release.yml/install-verification[runner=macos-26,runner_label=macos-26]": {
+      "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release install verification uses exact hosted macOS runners"
     },
     "release.yml/preflight": {
+      "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release preflight binds hosted controls, artifacts, and release-only permissions"
     },
     "release.yml/release": {
+      "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release publication remains GitHub-only"
     },
     "scorecard.yml/analysis": {
+      "profiles": ["release-preflight"],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "Scorecard requires GitHub-hosted metadata and SARIF upload paths"
@@ -138,6 +154,7 @@
       "local_order": 10
     },
     "security.yml/dependency-review": {
+      "profiles": ["pr-parity"],
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "dependency review requires GitHub advisory services"

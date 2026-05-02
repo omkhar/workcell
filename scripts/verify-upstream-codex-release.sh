@@ -29,6 +29,20 @@ extract_codex_sha() {
   (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil extract-codex-sha "${DOCKERFILE_PATH}" "${target_arch}")
 }
 
+download_large_asset() {
+  local url="$1"
+  local output="$2"
+
+  curl -fsSL \
+    --retry 5 \
+    --retry-all-errors \
+    --retry-delay 5 \
+    --connect-timeout 20 \
+    --speed-limit 1024 \
+    --speed-time 60 \
+    "${url}" -o "${output}"
+}
+
 verify_asset() {
   local target_arch="$1"
   local codex_arch="$2"
@@ -39,10 +53,8 @@ verify_asset() {
   local work_dir="${TMP_ROOT}/${target_arch}"
 
   mkdir -p "${work_dir}"
-  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-    "${asset_root}/${tarball_name}" -o "${work_dir}/${tarball_name}"
-  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-    "${asset_root}/${bundle_name}" -o "${work_dir}/${bundle_name}"
+  download_large_asset "${asset_root}/${tarball_name}" "${work_dir}/${tarball_name}"
+  download_large_asset "${asset_root}/${bundle_name}" "${work_dir}/${bundle_name}"
 
   echo "${codex_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null
   tar -xzf "${work_dir}/${tarball_name}" -C "${work_dir}"
