@@ -26,8 +26,12 @@ compute_worktree_tree_oid() {
 
 FIXTURE="${TMP_DIR}/publish-pr-fixture"
 ORIGIN="${TMP_DIR}/publish-pr-origin.git"
+SHA256_FIXTURE="${TMP_DIR}/publish-pr-sha256-fixture"
 SSH_SIGNING_KEY="${TMP_DIR}/signing_key"
 ALLOWED_SIGNERS="${TMP_DIR}/allowed_signers"
+WORKSPACE_SIGNING_KEY="${TMP_DIR}/workspace_signing_key"
+WORKSPACE_ALLOWED_SIGNERS="${TMP_DIR}/workspace_allowed_signers"
+HOST_XDG_CONFIG_HOME="${TMP_DIR}/host-xdg-config"
 UNTRUSTED_GH_STUB="${TMP_DIR}/gh-stub"
 GH_LOG="${TMP_DIR}/gh.log"
 HOOK_MARKER_DIR="${TMP_DIR}/hook-markers"
@@ -52,19 +56,48 @@ if [[ -z "${TRUSTED_BIN_DIR}" ]]; then
 fi
 TRUSTED_GH_STUB="${TRUSTED_BIN_DIR}/workcell-gh-scenario-${RANDOM}-$$"
 
-mkdir -p "${FIXTURE}" "${HOOK_MARKER_DIR}"
+mkdir -p "${FIXTURE}" "${HOOK_MARKER_DIR}" "${HOST_XDG_CONFIG_HOME}/git"
 git init -q --bare "${ORIGIN}"
 git init -q "${FIXTURE}"
 git -C "${FIXTURE}" config user.name "Workcell Scenario"
 git -C "${FIXTURE}" config user.email "workcell-scenario@example.com"
 ssh-keygen -q -t ed25519 -N '' -f "${SSH_SIGNING_KEY}" >/dev/null
+ssh-keygen -q -t ed25519 -N '' -f "${WORKSPACE_SIGNING_KEY}" >/dev/null
 printf 'workcell-scenario@example.com ' >"${ALLOWED_SIGNERS}"
 cat "${SSH_SIGNING_KEY}.pub" >>"${ALLOWED_SIGNERS}"
+printf 'workcell-scenario@example.com ' >"${WORKSPACE_ALLOWED_SIGNERS}"
+cat "${WORKSPACE_SIGNING_KEY}.pub" >>"${WORKSPACE_ALLOWED_SIGNERS}"
+cat >"${HOST_XDG_CONFIG_HOME}/git/config" <<EOF
+[gpg]
+	format = ssh
+[gpg "ssh"]
+	allowedSignersFile = ${ALLOWED_SIGNERS}
+EOF
 git -C "${FIXTURE}" config gpg.format ssh
 git -C "${FIXTURE}" config user.signingkey "${SSH_SIGNING_KEY}"
 git -C "${FIXTURE}" config gpg.ssh.allowedSignersFile "${ALLOWED_SIGNERS}"
 git -C "${FIXTURE}" config commit.gpgsign true
 git -C "${FIXTURE}" remote add origin "${ORIGIN}"
+
+if git init -q --object-format=sha256 "${SHA256_FIXTURE}" >/dev/null 2>&1; then
+  git -C "${SHA256_FIXTURE}" config user.name "Workcell Scenario"
+  git -C "${SHA256_FIXTURE}" config user.email "workcell-scenario@example.com"
+  git -C "${SHA256_FIXTURE}" config gpg.format ssh
+  git -C "${SHA256_FIXTURE}" config user.signingkey "${SSH_SIGNING_KEY}"
+  git -C "${SHA256_FIXTURE}" config commit.gpgsign true
+  printf 'base\n' >"${SHA256_FIXTURE}/tracked.txt"
+  git -C "${SHA256_FIXTURE}" add tracked.txt
+  git -C "${SHA256_FIXTURE}" commit -q -m init
+  printf 'signed sha256\n' >"${SHA256_FIXTURE}/signed.txt"
+  git -C "${SHA256_FIXTURE}" add signed.txt
+  git -C "${SHA256_FIXTURE}" commit -q -m "signed sha256 fixture"
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" "${ROOT_DIR}/scripts/check-publish-commit-signatures.sh" \
+    --repo-root "${SHA256_FIXTURE}" \
+    --base-ref HEAD~1 \
+    --head-ref HEAD >/dev/null
+else
+  echo "Skipping publish-pr SHA-256 signature fixture: git lacks SHA-256 object-format support"
+fi
 
 printf 'base\n' >"${FIXTURE}/tracked.txt"
 git -C "${FIXTURE}" add tracked.txt
@@ -126,7 +159,8 @@ if grep -q -- ' commit --no-verify -S -F ' <<<"${existing_branch_dry_run}"; then
   echo "publish-pr existing branch mode should not create another commit" >&2
   exit 1
 fi
-grep -q -- ' fetch --no-tags --prune origin main' <<<"${existing_branch_dry_run}"
+grep -q -- ' fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main' <<<"${existing_branch_dry_run}"
+grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${existing_branch_dry_run}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${existing_branch_dry_run}"
 grep -q -- ' push --no-verify -u origin feature/existing-signed-branch ' <<<"${existing_branch_dry_run}"
 grep -q -- 'gh pr create --base main --head feature/existing-signed-branch --title Existing\\ branch\\ title --draft' <<<"${existing_branch_dry_run}"
@@ -178,11 +212,15 @@ grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${worktree_dry_run}"
 grep -q -- 'switch --no-guess -c feature/publish-scenario' <<<"${worktree_dry_run}"
 grep -q -- ' add -A ' <<<"${worktree_dry_run}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${worktree_dry_run}"
-worktree_fetch_line="$(grep -n -- ' fetch --no-tags --prune origin main' <<<"${worktree_dry_run}" | cut -d: -f1)"
+worktree_fetch_line="$(grep -n -- ' fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main' <<<"${worktree_dry_run}" | cut -d: -f1)"
+worktree_signature_line="$(grep -n -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${worktree_dry_run}" | cut -d: -f1)"
 worktree_shape_line="$(grep -n -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${worktree_dry_run}" | cut -d: -f1)"
 test -n "${worktree_fetch_line}"
+test -n "${worktree_signature_line}"
 test -n "${worktree_shape_line}"
-test "${worktree_fetch_line}" -lt "${worktree_shape_line}"
+test "${worktree_fetch_line}" -lt "${worktree_signature_line}"
+test "${worktree_signature_line}" -lt "${worktree_shape_line}"
+grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${worktree_dry_run}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${worktree_dry_run}"
 grep -q -- ' push --no-verify -u origin feature/publish-scenario ' <<<"${worktree_dry_run}"
 grep -q -- 'gh pr create --base main --head feature/publish-scenario --title Scenario\\ PR\\ title --draft --body-file' <<<"${worktree_dry_run}"
@@ -201,11 +239,15 @@ grep -q '^publish_branch=feature/publish-index$' <<<"${index_dry_run}"
 grep -q -- ' -c core.hooksPath=/dev/null -C ' <<<"${index_dry_run}"
 grep -q -- 'switch --no-guess -c feature/publish-index' <<<"${index_dry_run}"
 grep -q -- ' commit --no-verify -S -F ' <<<"${index_dry_run}"
-index_fetch_line="$(grep -n -- ' fetch --no-tags --prune origin main' <<<"${index_dry_run}" | cut -d: -f1)"
+index_fetch_line="$(grep -n -- ' fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main' <<<"${index_dry_run}" | cut -d: -f1)"
+index_signature_line="$(grep -n -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${index_dry_run}" | cut -d: -f1)"
 index_shape_line="$(grep -n -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${index_dry_run}" | cut -d: -f1)"
 test -n "${index_fetch_line}"
+test -n "${index_signature_line}"
 test -n "${index_shape_line}"
-test "${index_fetch_line}" -lt "${index_shape_line}"
+test "${index_fetch_line}" -lt "${index_signature_line}"
+test "${index_signature_line}" -lt "${index_shape_line}"
+grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${index_dry_run}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${index_dry_run}"
 if grep -q -- ' add -A ' <<<"${index_dry_run}"; then
   echo "publish-pr index snapshot should not auto-stage the worktree" >&2
@@ -406,8 +448,161 @@ printf 'https://example.invalid/pr/123\n'
 EOF
 chmod +x "${TRUSTED_GH_STUB}"
 
+git -C "${FIXTURE}" switch -C main >/dev/null
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" switch -q -c feature/workspace-local-signer
+git -C "${FIXTURE}" config user.signingkey "${WORKSPACE_SIGNING_KEY}"
+git -C "${FIXTURE}" config gpg.ssh.allowedSignersFile "${WORKSPACE_ALLOWED_SIGNERS}"
+printf 'workspace local signer\n' >"${FIXTURE}/workspace-local-signer.txt"
+git -C "${FIXTURE}" add workspace-local-signer.txt
+git -C "${FIXTURE}" commit -q --no-verify -m "workspace local signer fixture"
+git -C "${FIXTURE}" verify-commit HEAD >/dev/null 2>&1
+rm -f "${GH_LOG}"
+set +e
+workspace_local_signer_output="$(XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/workspace-local-signer \
+  --gh-bin "${TRUSTED_GH_STUB}" \
+  --title "Workspace local signer branch" \
+  --commit-message "Unused workspace local signer branch commit" \
+  2>&1)"
+workspace_local_signer_rc=$?
+set -e
+test "${workspace_local_signer_rc}" -eq 2
+grep -q 'publish-pr requires verifiable signed commits' <<<"${workspace_local_signer_output}"
+test ! -e "${GH_LOG}"
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/workspace-local-signer; then
+  echo "publish-pr should not trust a workspace-local signer config" >&2
+  exit 1
+fi
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" branch -D feature/workspace-local-signer >/dev/null
+git -C "${FIXTURE}" config user.signingkey "${SSH_SIGNING_KEY}"
+git -C "${FIXTURE}" config gpg.ssh.allowedSignersFile "${ALLOWED_SIGNERS}"
+
+git -C "${FIXTURE}" switch -q -c feature/poisoned-fetch
+printf 'poisoned fetch unsigned ancestor\n' >"${FIXTURE}/poisoned-fetch-unsigned.txt"
+git -C "${FIXTURE}" add poisoned-fetch-unsigned.txt
+git -C "${FIXTURE}" -c commit.gpgsign=false commit -q --no-verify --no-gpg-sign -m "poisoned fetch unsigned ancestor"
+printf 'poisoned fetch signed descendant\n' >"${FIXTURE}/poisoned-fetch-signed.txt"
+git -C "${FIXTURE}" add poisoned-fetch-signed.txt
+git -C "${FIXTURE}" commit -q --no-verify -m "poisoned fetch signed descendant"
+git -C "${FIXTURE}" config remote.origin.fetch '+refs/heads/main:refs/remotes/origin/not-main'
+git -C "${FIXTURE}" update-ref refs/remotes/origin/main HEAD~1
+rm -f "${GH_LOG}"
+set +e
+poisoned_fetch_output="$(XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/poisoned-fetch \
+  --gh-bin "${TRUSTED_GH_STUB}" \
+  --title "Poisoned fetch branch" \
+  --commit-message "Unused poisoned fetch branch commit" \
+  2>&1)"
+poisoned_fetch_rc=$?
+set -e
+test "${poisoned_fetch_rc}" -eq 2
+grep -q 'publish-pr requires verifiable signed commits' <<<"${poisoned_fetch_output}"
+test ! -e "${GH_LOG}"
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/poisoned-fetch; then
+  echo "publish-pr should not trust a poisoned remote fetch refspec" >&2
+  exit 1
+fi
+git -C "${FIXTURE}" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" branch -D feature/poisoned-fetch >/dev/null
+
+git -C "${FIXTURE}" switch -q -c feature/replace-ref
+printf 'replace ref unsigned ancestor\n' >"${FIXTURE}/replace-ref-unsigned.txt"
+git -C "${FIXTURE}" add replace-ref-unsigned.txt
+git -C "${FIXTURE}" -c commit.gpgsign=false commit -q --no-verify --no-gpg-sign -m "replace ref unsigned ancestor"
+printf 'replace ref signed descendant\n' >"${FIXTURE}/replace-ref-signed.txt"
+git -C "${FIXTURE}" add replace-ref-signed.txt
+git -C "${FIXTURE}" commit -q --no-verify -m "replace ref signed descendant"
+replace_tree="$(git -C "${FIXTURE}" show -s --format=%T HEAD)"
+replacement_commit="$(git -C "${FIXTURE}" commit-tree -S "${replace_tree}" -p origin/main -m "replacement signed descendant")"
+git -C "${FIXTURE}" replace HEAD "${replacement_commit}"
+rm -f "${GH_LOG}"
+set +e
+replace_ref_output="$(XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/replace-ref \
+  --gh-bin "${TRUSTED_GH_STUB}" \
+  --title "Replace ref branch" \
+  --commit-message "Unused replace ref branch commit" \
+  2>&1)"
+replace_ref_rc=$?
+set -e
+test "${replace_ref_rc}" -eq 2
+grep -q 'publish-pr requires verifiable signed commits' <<<"${replace_ref_output}"
+test ! -e "${GH_LOG}"
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/replace-ref; then
+  echo "publish-pr should ignore local replace refs during signature checks" >&2
+  exit 1
+fi
+git -C "${FIXTURE}" replace -d "$(git -C "${FIXTURE}" rev-parse HEAD)" >/dev/null
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" branch -D feature/replace-ref >/dev/null
+
+git -C "${FIXTURE}" switch -q -c feature/unsigned-existing
+printf 'unsigned existing\n' >"${FIXTURE}/unsigned-existing.txt"
+git -C "${FIXTURE}" add unsigned-existing.txt
+git -C "${FIXTURE}" -c commit.gpgsign=false commit -q --no-verify --no-gpg-sign -m "unsigned existing fixture"
+rm -f "${GH_LOG}"
+set +e
+unsigned_existing_output="$(XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/unsigned-existing \
+  --gh-bin "${TRUSTED_GH_STUB}" \
+  --title "Unsigned existing branch" \
+  --commit-message "Unused unsigned existing branch commit" \
+  2>&1)"
+unsigned_existing_rc=$?
+set -e
+test "${unsigned_existing_rc}" -eq 2
+grep -q 'publish-pr requires verifiable signed commits' <<<"${unsigned_existing_output}"
+test ! -e "${GH_LOG}"
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/unsigned-existing; then
+  echo "publish-pr should not push an unsigned existing branch" >&2
+  exit 1
+fi
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" branch -D feature/unsigned-existing >/dev/null
+
+git -C "${FIXTURE}" switch -q -c feature/unsigned-ancestor
+printf 'unsigned ancestor\n' >"${FIXTURE}/unsigned-ancestor.txt"
+git -C "${FIXTURE}" add unsigned-ancestor.txt
+git -C "${FIXTURE}" -c commit.gpgsign=false commit -q --no-verify --no-gpg-sign -m "unsigned ancestor fixture"
+printf 'signed descendant\n' >"${FIXTURE}/signed-descendant.txt"
+rm -f "${GH_LOG}"
+set +e
+unsigned_ancestor_output="$(XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/unsigned-ancestor \
+  --gh-bin "${TRUSTED_GH_STUB}" \
+  --title "Unsigned ancestor branch" \
+  --commit-message "Signed descendant fixture" \
+  2>&1)"
+unsigned_ancestor_rc=$?
+set -e
+test "${unsigned_ancestor_rc}" -eq 2
+grep -q 'publish-pr requires verifiable signed commits' <<<"${unsigned_ancestor_output}"
+git -C "${FIXTURE}" verify-commit HEAD >/dev/null 2>&1
+test ! -e "${GH_LOG}"
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/unsigned-ancestor; then
+  echo "publish-pr should not push a branch with an unsigned ancestor" >&2
+  exit 1
+fi
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" branch -D feature/unsigned-ancestor >/dev/null
+
+printf 'live publish\n' >"${FIXTURE}/tracked.txt"
 publish_output="$(
-  "${ROOT_DIR}/scripts/workcell" publish-pr \
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
     --workspace "${FIXTURE}" \
     --branch feature/publish-live \
     --gh-bin "${TRUSTED_GH_STUB}" \
@@ -436,7 +631,7 @@ for index in $(seq 1 26); do
 done
 
 set +e
-broad_output="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+broad_output="$(XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${FIXTURE}" \
   --branch feature/publish-too-broad \
   --gh-bin "${TRUSTED_GH_STUB}" \
@@ -458,7 +653,7 @@ git -C "${FIXTURE}" reset -q --hard origin/main
 printf '\x00\x01binary\n' >"${FIXTURE}/artifact.bin"
 
 set +e
-binary_output="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+binary_output="$(XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${FIXTURE}" \
   --branch feature/publish-binary \
   --gh-bin "${TRUSTED_GH_STUB}" \

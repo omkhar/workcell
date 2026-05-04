@@ -133,6 +133,18 @@ repo published GitHub attestations for that release:
 gh attestation verify workcell-VERSION.tar.gz --repo omkhar/workcell
 ```
 
+## Host-side PR publication
+
+Release and publication changes enter review through host-side PR publication,
+not from inside the Tier 1 runtime. The supported `main`-based path uses
+`./scripts/repo-publish-pr.sh`, which verifies fresh local PR-parity evidence
+before delegating to `workcell publish-pr`.
+
+`workcell publish-pr` signs any new commit it creates and verifies every
+commit in the branch range being published before push or PR creation. The
+signature check uses host Git signing trust and ignores workspace-local signer
+configuration, stale tracking refs, and replacement refs as trust shortcuts.
+
 ## Scope note
 
 Release provenance proves how the published artifacts were built and signed. It

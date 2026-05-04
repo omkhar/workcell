@@ -476,6 +476,7 @@ func ManifestVersion(manifestPath, expectedVersion string) error {
 func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 	hostArtifacts := []string{
 		"scripts/workcell",
+		"scripts/check-publish-commit-signatures.sh",
 		"scripts/lib/extract_direct_mounts",
 		"scripts/lib/render_injection_bundle",
 		"scripts/lib/trusted-docker-client.sh",
