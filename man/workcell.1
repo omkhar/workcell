@@ -396,7 +396,8 @@ not garbage-collected. Also available as
 .B publish-pr
 Prepare a host-side publication flow for the mounted workspace: switch to or
 create a feature branch, optionally stage the worktree, create a signed commit,
-push it, and open a GitHub pull request using host Git and GitHub CLI state.
+verify every commit being published, push it, and open a GitHub pull request
+using host Git and GitHub CLI state.
 The supported base branch is
 .BR main ;
 non-main bases remain an explicit lower-assurance draft-only escape hatch.

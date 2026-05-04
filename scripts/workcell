@@ -3338,8 +3338,8 @@ Notes:
   - publish-pr preflights whether repo-owned PR checks are expected for the
     chosen base and surfaces the effective validation mode in dry-run output.
   - Host-side git commands explicitly bypass repo hooks during publication
-    because workspace hook content is untrusted; signed commits remain
-    mandatory.
+    because workspace hook content is untrusted; new commits are signed and
+    every commit being published must verify against host signing trust.
   - The default snapshot is worktree, which stages the current tracked and
     untracked workspace changes with `git add -A` before committing.
 EOF
@@ -3574,6 +3574,7 @@ publish_pr_main() {
   local -a add_cmd=()
   local -a commit_cmd=()
   local -a fetch_base_cmd=()
+  local -a signature_cmd=()
   local -a shape_cmd=()
   local -a push_cmd=()
   local -a pr_cmd=()
@@ -3736,8 +3737,9 @@ publish_pr_main() {
 
   add_cmd=("${publish_git_cmd[@]}" add -A)
   commit_cmd=("${publish_git_cmd[@]}" commit --no-verify -S -F "${resolved_commit_message_file}")
-  fetch_base_cmd=("${publish_git_cmd[@]}" fetch --no-tags --prune origin "${base}")
   shape_base_ref="refs/remotes/origin/${base}"
+  fetch_base_cmd=("${publish_git_cmd[@]}" fetch --no-tags --prune origin "+refs/heads/${base}:${shape_base_ref}")
+  signature_cmd=(/bin/bash "${ROOT_DIR}/scripts/check-publish-commit-signatures.sh" --repo-root "${resolved_workspace}" --base-ref "${shape_base_ref}" --head-ref HEAD --git-bin "${HOST_GIT_BIN}")
   shape_cmd=(/bin/bash "${ROOT_DIR}/scripts/check-pr-shape.sh" --repo-root "${resolved_workspace}" --base-ref "${shape_base_ref}" --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0)
   push_cmd=("${publish_git_cmd[@]}" push --no-verify -u origin "${branch}")
   pr_cmd=("${HOST_GH_BIN}" pr create --base "${base}" --head "${branch}" --title "${title_text}")
@@ -3767,6 +3769,7 @@ publish_pr_main() {
       emit_command "${commit_cmd[@]}"
     fi
     emit_command "${fetch_base_cmd[@]}"
+    emit_command "${signature_cmd[@]}"
     emit_command "${shape_cmd[@]}"
     emit_command "${push_cmd[@]}"
     emit_command "${pr_cmd[@]}"
@@ -3790,11 +3793,7 @@ publish_pr_main() {
     run_publish_host_command_in_dir "${resolved_workspace}" "${commit_cmd[@]}"
   fi
   run_publish_host_command_in_dir "${resolved_workspace}" "${fetch_base_cmd[@]}"
-  if [[ "${publish_existing_commits}" -eq 1 ]] &&
-    [[ "$(run_publish_host_command_in_dir "${resolved_workspace}" "${HOST_GIT_BIN}" rev-list --count "${shape_base_ref}..HEAD")" == "0" ]]; then
-    echo "publish-pr existing branch has no commits ahead of ${base}: ${branch}" >&2
-    exit 2
-  fi
+  run_publish_host_command_in_dir "${resolved_workspace}" "${signature_cmd[@]}"
   run_publish_host_command_in_dir "${resolved_workspace}" "${shape_cmd[@]}"
   run_publish_host_command_in_dir "${resolved_workspace}" "${push_cmd[@]}"
   pr_url="$(run_publish_host_command_in_dir "${resolved_workspace}" "${pr_cmd[@]}")"
