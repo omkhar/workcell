@@ -101,12 +101,26 @@ option_value_or_die() {
   printf '%s\n' "${value}"
 }
 
-resolve_commit_or_die() {
+resolve_object_or_die() {
   local repo_root="$1"
   local ref="$2"
+  local object=""
+
+  object="$(run_clean_host_command_in_dir "${repo_root}" "${HOST_GIT_BIN}" rev-parse --verify --quiet "${ref}" || true)"
+  if [[ -z "${object}" ]]; then
+    echo "Unable to resolve object for ref: ${ref}" >&2
+    exit 2
+  fi
+  printf '%s\n' "${object}"
+}
+
+resolve_verification_commit_or_die() {
+  local git_dir="$1"
+  local object="$2"
+  local ref="$3"
   local commit=""
 
-  commit="$(run_clean_host_command_in_dir "${repo_root}" "${HOST_GIT_BIN}" rev-parse --verify --quiet "${ref}^{commit}" || true)"
+  commit="$(run_clean_host_command_in_dir "${verify_root}" "${HOST_GIT_BIN}" --no-replace-objects --git-dir "${git_dir}" rev-parse --verify --quiet "${object}^{commit}" || true)"
   if [[ -z "${commit}" ]]; then
     echo "Unable to resolve commit for ref: ${ref}" >&2
     exit 2
@@ -190,14 +204,16 @@ if ! run_clean_host_command_in_dir "${REPO_ROOT}" "${HOST_GIT_BIN}" rev-parse --
   exit 2
 fi
 
-base_commit="$(resolve_commit_or_die "${REPO_ROOT}" "${BASE_REF}")"
-head_commit="$(resolve_commit_or_die "${REPO_ROOT}" "${HEAD_REF}")"
+base_object="$(resolve_object_or_die "${REPO_ROOT}" "${BASE_REF}")"
+head_object="$(resolve_object_or_die "${REPO_ROOT}" "${HEAD_REF}")"
 object_dir="$(resolve_object_dir_or_die "${REPO_ROOT}")"
 object_format="$(run_clean_host_command_in_dir "${REPO_ROOT}" "${HOST_GIT_BIN}" --no-replace-objects rev-parse --show-object-format)"
 verify_root="$(mktemp -d "${TMPDIR:-/tmp}/workcell-publish-signatures.XXXXXX")"
 verify_log="${verify_root}/verify-commit.err"
 commit_count=0
 verification_git_dir=""
+base_commit=""
+head_commit=""
 
 cleanup() {
   rm -rf "${verify_root}"
@@ -208,6 +224,8 @@ run_clean_host_command_in_dir "${verify_root}" "${HOST_GIT_BIN}" init -q --objec
 verification_git_dir="${verify_root}/.git"
 mkdir -p "${verification_git_dir}/objects/info"
 printf '%s\n' "${object_dir}" >"${verification_git_dir}/objects/info/alternates"
+base_commit="$(resolve_verification_commit_or_die "${verification_git_dir}" "${base_object}" "${BASE_REF}")"
+head_commit="$(resolve_verification_commit_or_die "${verification_git_dir}" "${head_object}" "${HEAD_REF}")"
 
 while IFS= read -r commit; do
   [[ -n "${commit}" ]] || continue
@@ -219,7 +237,7 @@ while IFS= read -r commit; do
     fi
     exit 2
   fi
-done < <(run_clean_host_command_in_dir "${REPO_ROOT}" "${HOST_GIT_BIN}" --no-replace-objects rev-list --reverse "${base_commit}..${head_commit}")
+done < <(run_clean_host_command_in_dir "${verify_root}" "${HOST_GIT_BIN}" --no-replace-objects --git-dir "${verification_git_dir}" rev-list --reverse "${base_commit}..${head_commit}")
 
 if ((commit_count == 0)); then
   echo "publish-pr found no commits ahead of ${BASE_REF}: ${HEAD_REF}" >&2

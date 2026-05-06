@@ -6,7 +6,7 @@
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
-      "sha256": "00b0d9c2174cd7d8a7708d2d6c2ed80df5fbd2993239c75e0fac792f962c0b25"
+      "sha256": "8c79f6a37251e007026ac111994d2e171940a695152b8d9462f423d5f52779e8"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts",

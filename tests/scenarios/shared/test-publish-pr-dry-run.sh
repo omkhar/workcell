@@ -546,6 +546,40 @@ git -C "${FIXTURE}" switch -q main
 git -C "${FIXTURE}" reset -q --hard origin/main
 git -C "${FIXTURE}" branch -D feature/replace-ref >/dev/null
 
+git -C "${FIXTURE}" switch -q -c feature/graft-ref
+printf 'graft ref unsigned ancestor\n' >"${FIXTURE}/graft-ref-unsigned.txt"
+git -C "${FIXTURE}" add graft-ref-unsigned.txt
+git -C "${FIXTURE}" -c commit.gpgsign=false commit -q --no-verify --no-gpg-sign -m "graft ref unsigned ancestor"
+printf 'graft ref signed descendant\n' >"${FIXTURE}/graft-ref-signed.txt"
+git -C "${FIXTURE}" add graft-ref-signed.txt
+git -C "${FIXTURE}" commit -q --no-verify -m "graft ref signed descendant"
+graft_head="$(git -C "${FIXTURE}" rev-parse HEAD)"
+graft_parent="$(git -C "${FIXTURE}" rev-parse origin/main)"
+graft_file="$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/info/grafts"
+printf '%s %s\n' "${graft_head}" "${graft_parent}" >"${graft_file}"
+rm -f "${GH_LOG}"
+set +e
+graft_ref_output="$(XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/graft-ref \
+  --gh-bin "${TRUSTED_GH_STUB}" \
+  --title "Graft ref branch" \
+  --commit-message "Unused graft ref branch commit" \
+  2>&1)"
+graft_ref_rc=$?
+set -e
+test "${graft_ref_rc}" -eq 2
+grep -q 'publish-pr requires verifiable signed commits' <<<"${graft_ref_output}"
+test ! -e "${GH_LOG}"
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/graft-ref; then
+  echo "publish-pr should ignore workspace grafts during signature checks" >&2
+  exit 1
+fi
+rm -f "${graft_file}"
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+git -C "${FIXTURE}" branch -D feature/graft-ref >/dev/null
+
 git -C "${FIXTURE}" switch -q -c feature/unsigned-existing
 printf 'unsigned existing\n' >"${FIXTURE}/unsigned-existing.txt"
 git -C "${FIXTURE}" add unsigned-existing.txt
