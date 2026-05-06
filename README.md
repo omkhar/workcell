@@ -21,8 +21,8 @@ boundary.
   mounts
 - keep provider adapters native: one shared boundary, thin provider-specific
   control-plane mapping
-- keep publication on the host: signed commits and GitHub publication stay out
-  of Tier 1
+- keep publication on the host: signed commits, signed-range verification, and
+  GitHub publication stay out of Tier 1
 - keep verification paths nonroot by default: runtime and validator images
   default to a named unprivileged `workcell` user, while repo-mounted
   validation lanes pass explicit caller UID/GID and isolated writable state,
@@ -254,12 +254,13 @@ Other defaults that matter:
 
 - Workcell launches the selected provider directly inside the bounded runtime
 - there is no separate "start a container, then attach the agent" step
-- `publish-pr` runs on the host so signed commits and GitHub publication stay
-  outside the Tier 1 container, and it blocks over-broad branch diffs before
-  push so published PRs stay reviewable; `main` is the only supported PR base
-  by default, and non-`main` bases remain an explicit lower-assurance draft-only
-  escape hatch with an explicit preflight warning that repo-owned PR checks are
-  not expected for that base
+- `publish-pr` runs on the host so signed commits, signed-range verification,
+  and GitHub publication stay outside the Tier 1 container, and it blocks
+  unsigned publish ranges and over-broad branch diffs before push so published
+  PRs stay reviewable; `main` is the only supported PR base by default, and
+  non-`main` bases remain an explicit lower-assurance draft-only escape hatch
+  with an explicit preflight warning that repo-owned PR checks are not expected
+  for that base
 - completed and aborted launches are recorded as durable host-side session
   records that you can inspect with `workcell session ...`
 - `workcell session diff` compares the current workspace against the clean git
