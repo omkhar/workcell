@@ -1965,6 +1965,20 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if securityActionlintSHAMatch[1] != releaseActionlintSHAMatch[1] {
 		return errors.New("ACTIONLINT_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
 	}
+	_, securityZizmorVersionMatch, err := requireRegex(securityWorkflow, `(?m)^\s*ZIZMOR_VERSION:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$`, "security zizmor version", ".github/workflows/security.yml")
+	if err != nil {
+		return err
+	}
+	if _, _, err := requireRegex(securityWorkflow, `(?m)^\s*ZIZMOR_SHA256:\s*([0-9a-f]{64})\s*$`, "security zizmor sha", ".github/workflows/security.yml"); err != nil {
+		return err
+	}
+	_, securityZizmorActionVersionMatch, err := requireRegex(securityWorkflow, `(?m)^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$`, "security zizmor action version", ".github/workflows/security.yml")
+	if err != nil {
+		return err
+	}
+	if securityZizmorVersionMatch[1] != securityZizmorActionVersionMatch[1] {
+		return errors.New("ZIZMOR_VERSION must match the zizmor-action version in .github/workflows/security.yml")
+	}
 	for _, workflow := range []struct {
 		text string
 		path string
@@ -1986,8 +2000,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		"github.event_name == 'workflow_dispatch' && github.ref_name != 'main'",
 		"base-ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/main' || '' }}",
 		"head-ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || '' }}",
-		"ZIZMOR_VERSION: 1.23.1",
-		`python3 -m pip install --disable-pip-version-check --user "zizmor==${ZIZMOR_VERSION}"`,
+		"https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz",
+		`echo "${ZIZMOR_SHA256}  zizmor.tar.gz" | sha256sum -c -`,
+		`tar -xzf zizmor.tar.gz -C "${RUNNER_TEMP}/bin" zizmor`,
 		"./scripts/check-workflows.sh",
 	} {
 		if !strings.Contains(securityWorkflow, needle) {
