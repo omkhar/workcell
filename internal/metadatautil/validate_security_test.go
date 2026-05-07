@@ -408,6 +408,42 @@ func TestCheckPinnedInputsRejectsInvalidValidatorToolDigests(t *testing.T) {
 	}
 }
 
+func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
+	rewriteFile(t, securityWorkflowPath, func(content string) string {
+		return strings.Replace(content, "ZIZMOR_SHA256: a8000f3c683319a523d3b20df0e75457ba591f049cfcbfa98966631b56733c03", "ZIZMOR_SHA256: deadbeef", 1)
+	})
+
+	err := CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("CheckPinnedInputs() unexpectedly accepted a non-sha256 zizmor digest")
+	}
+	if !strings.Contains(err.Error(), "security zizmor sha") {
+		t.Fatalf("CheckPinnedInputs() error = %v, want zizmor digest rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsZizmorVersionMismatch(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
+	rewriteFile(t, securityWorkflowPath, func(content string) string {
+		return strings.Replace(content, "version: 1.24.1", "version: 1.24.0", 1)
+	})
+
+	err := CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("CheckPinnedInputs() unexpectedly accepted mismatched zizmor versions")
+	}
+	if !strings.Contains(err.Error(), "ZIZMOR_VERSION must match") {
+		t.Fatalf("CheckPinnedInputs() error = %v, want zizmor version mismatch rejection", err)
+	}
+}
+
 func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForBranchReview(t *testing.T) {
 	t.Parallel()
 

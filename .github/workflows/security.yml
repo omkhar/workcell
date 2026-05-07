@@ -61,10 +61,19 @@ jobs:
 
       - name: Install zizmor
         env:
-          ZIZMOR_VERSION: 1.23.1
+          ZIZMOR_SHA256: a8000f3c683319a523d3b20df0e75457ba591f049cfcbfa98966631b56733c03
+          ZIZMOR_VERSION: 1.24.1
         run: |
-          python3 -m pip install --disable-pip-version-check --user "zizmor==${ZIZMOR_VERSION}"
-          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          curl -fsSL \
+            --max-time 60 \
+            --connect-timeout 15 \
+            -o zizmor.tar.gz \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA256}  zizmor.tar.gz" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/bin"
+          tar -xzf zizmor.tar.gz -C "${RUNNER_TEMP}/bin" zizmor
+          chmod 0755 "${RUNNER_TEMP}/bin/zizmor"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
 
       - name: Run workflow contract checks
         run: ./scripts/check-workflows.sh
@@ -87,7 +96,7 @@ jobs:
           advanced-security: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_ZIZMOR_SARIF == 'true' }}
           inputs: .github/workflows
           persona: auditor
-          version: 1.23.1
+          version: 1.24.1
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_ZIZMOR_SARIF == 'true' }}
