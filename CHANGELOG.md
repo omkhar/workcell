@@ -8,6 +8,17 @@ Releases.
 
 ## Unreleased
 
+### Added
+
+- record Phase 10 through Phase 12 execution with a managed-workstation
+  contract, enterprise evidence baseline, host-expansion readiness gate, and
+  requirements traceability without adding new support claims.
+
+### Changed
+
+- add a repo-local quality loop for roadmap and contract work so changes keep
+  code, docs, validation, and support claims tight before review completion.
+
 ## v0.10.5 - 2026-04-25
 
 ### Fixed

@@ -37,6 +37,10 @@ Use these anchors when checking release-facing claims:
   `internal/remotevm/contract_test.go`,
   `internal/remotevm/fake_target_test.go`,
   `internal/remotevm/conformance_test.go`
+- roadmap gate and evidence-map traceability for managed workstations,
+  enterprise evidence, and host expansion:
+  `scripts/verify-requirements-coverage.sh`,
+  `scripts/verify-operator-contract.sh`
 - Claude hook coverage: `claude-swe/hook-parametric`
 - supported GitHub-hosted macOS release window:
   `scripts/verify-github-macos-release-test-runners.sh`
@@ -66,7 +70,14 @@ They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
 inspection and explainability, host-side detached session inventory, control,
 logs/timeline, clean-base diff/export behavior, and operator-contract parity.
-They also now carry the canonical preview-only `remote_vm` contract through the deterministic `internal/remotevm` fake target and shared conformance harness, the explicit `docker-desktop` compat target through deterministic backend-selection, state-root-routing, and fail-closed diagnostics, and the preview-only `aws-ec2-ssm` and `gcp-vm` remote VM targets through deterministic broker-plan diagnostics and fail-closed live gating.
+They also now carry the canonical preview-only `remote_vm` contract through the
+deterministic `internal/remotevm` fake target and shared conformance harness,
+the explicit `docker-desktop` compat target through deterministic
+backend-selection, state-root-routing, and fail-closed diagnostics, and the
+preview-only `aws-ec2-ssm` and `gcp-vm` remote VM targets through deterministic
+broker-plan diagnostics and fail-closed live gating. Planning gates for managed
+workstations, enterprise evidence, and host expansion are covered as
+requirements and documentation traceability, not as runtime support scenarios.
 
 `./scripts/validate-repo.sh` runs the repo-required scenario tier through:
 

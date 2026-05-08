@@ -380,6 +380,9 @@ See [docs/provenance.md](docs/provenance.md) and
 | Scenario gaps | [docs/scenario-gaps.md](docs/scenario-gaps.md) |
 | Use-case coverage | [docs/use-case-matrix.md](docs/use-case-matrix.md) |
 | Session supervisor design | [docs/workcell-session-supervisor-design.md](docs/workcell-session-supervisor-design.md) |
+| Managed workstation contract | [docs/managed-workstation-contract.md](docs/managed-workstation-contract.md) |
+| Enterprise evidence baseline | [docs/enterprise-evidence-baseline.md](docs/enterprise-evidence-baseline.md) |
+| Host expansion readiness | [docs/host-expansion-readiness.md](docs/host-expansion-readiness.md) |
 | Provenance and signing | [docs/provenance.md](docs/provenance.md) |
 | GitHub automation | [docs/github-workflows.md](docs/github-workflows.md) |
 

@@ -165,7 +165,11 @@ Current repo status:
 - Gate 4 is implemented
 - Gate 5 is implemented
 - Gate 6 is implemented
-- Gate 7 is the next active slice
+- Gate 7 is implemented
+- Gate 8 is implemented
+- Gate 9 is implemented
+- the next active slice is the Linux `amd64` `local_compat` certification
+  candidate from the roadmap
 
 ### Gate 3: compatibility target certified
 
@@ -218,6 +222,43 @@ Current decision:
   certification boundary
 - preserve `azure-vm` as the next raw `remote_vm` follow-on after the
   managed-workstation contract slice
+
+Current gate record:
+
+- [`docs/managed-workstation-contract.md`](managed-workstation-contract.md)
+  records the contract, support boundary, evidence model, and
+  `gcp-cloud-workstations` discovery lane
+- no managed-workstation backend or support claim is promoted by this gate
+
+### Gate 8: enterprise evidence baseline
+
+- publish an enterprise evidence map that links architecture, threat model,
+  support boundaries, provenance, SBOM, release signing, audit retention, and
+  validation evidence to current repo-local sources
+- keep SOC 2 and ISO 27001 mappings as evaluation aids, not certification claims
+- keep current gaps explicit so evidence language does not outrun support
+
+Current gate record:
+
+- [`docs/enterprise-evidence-baseline.md`](enterprise-evidence-baseline.md)
+  records the Phase 11 evidence map
+- no centralized enterprise administration, compliance certification, or broader
+  host support claim is promoted by this gate
+
+### Gate 9: host-expansion readiness
+
+- define support tiers and promotion rules for Linux and Windows host candidates
+- require support-matrix rows, docs, diagnostics, rollback guidance, and
+  certification evidence to land together for any host promotion
+- keep unsupported host combinations fail-closed with no automatic backend
+  fallback
+
+Current gate record:
+
+- [`docs/host-expansion-readiness.md`](host-expansion-readiness.md) records the
+  Phase 12 readiness model
+- Linux and Windows operator hosts remain unsupported until later promotion
+  changes satisfy the gate
 
 ## Program Non-Goals
 

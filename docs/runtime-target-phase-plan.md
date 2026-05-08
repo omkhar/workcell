@@ -31,7 +31,11 @@ Current repo status:
 - Phase 9 is implemented as the later expansion decision gate: managed
   workstations are the next funded lane, and Azure VM follows after that as the
   next raw `remote_vm` lane
-- Phase 10 is the next active slice: managed workstation contract and discovery
+- Phase 10 is implemented as the managed workstation contract and discovery gate
+- Phase 11 is implemented as the enterprise evidence baseline
+- Phase 12 is implemented as the host-expansion readiness gate
+- Phase 13 is the next active slice: Linux `amd64` `local_compat` certification
+  candidate
 - later phases remain planning targets until their code and evidence land
 
 ## Phase Completion Contract
@@ -471,3 +475,80 @@ Complete when:
   certification gates
 - `azure-vm` remains explicitly deferred to the next raw `remote_vm` lane
   rather than being silently dropped
+
+Phase 10 completion record:
+
+- the provider-neutral contract, lifecycle, identity, policy, audit, recovery,
+  and evidence expectations are recorded in
+  [`docs/managed-workstation-contract.md`](managed-workstation-contract.md)
+- `gcp-cloud-workstations` is named as the first managed-workstation discovery
+  lane
+- no provider backend, `--target` value, host-support matrix promotion, or new
+  support claim is shipped in this phase
+- `azure-vm` remains explicitly queued as the next raw `remote_vm` provider lane
+
+## Phase 11: Enterprise evidence baseline
+
+Goal:
+
+- produce the buyer-facing evidence packet needed for enterprise and regulated
+  evaluation without claiming external certification
+
+Deliverables:
+
+- architecture and data-flow evidence map
+- threat model, known gaps, support boundaries, and non-protections index
+- SBOM, provenance, reproducibility, release signing, and vulnerability-handling
+  summary
+- audit schema and retention expectations
+- SOC 2 and ISO 27001 control mappings as evaluation aids only
+
+Complete when:
+
+- the evidence baseline links to current repo-local source-of-truth docs
+- the baseline clearly distinguishes current evidence from roadmap gaps
+- control mappings avoid certification or compliance claims
+
+Phase 11 completion record:
+
+- [`docs/enterprise-evidence-baseline.md`](enterprise-evidence-baseline.md)
+  records the evidence packet, audit retention posture, known gaps, and control
+  mapping aids
+- no centralized policy, inventory, analytics, Linux, Windows, or managed
+  workstation support claim is shipped in this phase
+
+## Phase 12: Host-expansion readiness gate
+
+Goal:
+
+- define how Linux and Windows host candidates can be promoted without creating
+  premature support claims
+
+Deliverables:
+
+- support-tier definitions for `strict`, `compat`, `preview`, certification
+  candidate, experimental, and unsupported host states
+- packaging, install, uninstall, upgrade, rollback, and certification-host
+  scoping for Linux `amd64`, Linux `arm64`, Raspberry Pi, Windows WSL2, and
+  native Windows
+- evidence separation between CI-proven, locally mirrored, and
+  certification-only lanes
+- support-matrix promotion criteria and fail-closed diagnostic expectations
+
+Complete when:
+
+- current support rows remain unchanged unless promoted by evidence in the same
+  change
+- Linux and Windows operator-host support remains blocked by default
+- promotion criteria require docs, diagnostics, rollback, support-matrix rows,
+  and certification evidence to land together
+
+Phase 12 completion record:
+
+- [`docs/host-expansion-readiness.md`](host-expansion-readiness.md) records the
+  support tiers, candidate scope, promotion criteria, and fail-closed diagnostic
+  expectations
+- Phase 13 is the next active slice and may evaluate a narrow Linux `amd64`
+  `local_compat` certification candidate
+- no Linux, Windows, Linux `arm64`, Raspberry Pi, or strict non-macOS support
+  claim is shipped in this phase

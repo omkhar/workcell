@@ -11,6 +11,9 @@ Workcell is local-first today:
 
 The current rollout model is to distribute reviewed host-side files and let
 operators launch Workcell locally inside the shared VM-plus-container boundary.
+Use [enterprise-evidence-baseline.md](enterprise-evidence-baseline.md) as the
+current evidence map for architecture, support boundaries, audit retention,
+release provenance, and evaluation-only control mappings.
 
 ## Traceability note
 
@@ -146,6 +149,7 @@ Those are roadmap items, not part of the supported contract today.
 - [Getting started](getting-started.md)
 - [Injection policy](injection-policy.md)
 - [Provider matrix](provider-matrix.md)
+- [Enterprise evidence baseline](enterprise-evidence-baseline.md)
 - [Requirements validation](requirements-validation.md)
 - [Validation scenarios](validation-scenarios.md)
 - [Roadmap](../ROADMAP.md)
