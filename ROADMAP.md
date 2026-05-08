@@ -50,6 +50,9 @@ The deterministic phase breakdown lives in
   blocked until promoted through the host-expansion gates below.
 - `linux/arm64`, Raspberry Pi, and Windows are not support claims. They are
   planning targets with explicit readiness and certification gates.
+- Phases 10 through 12 are now implemented as contract, evidence, and readiness
+  gates. They do not add a managed-workstation backend, Linux support, Windows
+  support, or any new launch target.
 
 ## Next Ten Phases
 
@@ -57,6 +60,11 @@ The deterministic phase breakdown lives in
 
 Define `managed_workstation` as a first-class target kind before any
 provider-specific backend ships.
+
+Status: implemented as a contract and discovery gate in
+[`docs/managed-workstation-contract.md`](docs/managed-workstation-contract.md).
+The first provider discovery lane is `gcp-cloud-workstations`; no provider
+backend or support claim is shipped in this phase.
 
 Exit gates:
 
@@ -73,6 +81,11 @@ Exit gates:
 Produce the buyer-facing evidence packet needed for enterprise and regulated
 adoption.
 
+Status: implemented as an evidence map in
+[`docs/enterprise-evidence-baseline.md`](docs/enterprise-evidence-baseline.md).
+The map is an evaluation aid, not a SOC 2, ISO 27001, or similar certification
+claim.
+
 Exit gates:
 
 - architecture and data-flow diagrams exist
@@ -88,6 +101,11 @@ Exit gates:
 Define how Linux and Windows can be promoted without creating premature
 support claims.
 
+Status: implemented as a readiness gate in
+[`docs/host-expansion-readiness.md`](docs/host-expansion-readiness.md). The
+current support matrix remains unchanged; Linux and Windows operator hosts stay
+blocked until later promotion changes land with evidence.
+
 Exit gates:
 
 - Linux and Windows support tiers are defined separately for `strict`,
@@ -100,7 +118,7 @@ Exit gates:
 - support-matrix promotion criteria and fail-closed diagnostics are specified
 - the gate creates no Linux or Windows operator-host support claim by itself
 
-### Phase 13: Linux `amd64 local_compat` Certification Candidate
+### Phase 13: Linux `amd64` `local_compat` Certification Candidate
 
 Move Linux earlier than the old late-roadmap position, but only as a narrow
 candidate for lower-assurance operator-host support.

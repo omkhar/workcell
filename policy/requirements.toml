@@ -323,3 +323,40 @@ docs = [
   "docs/validation-scenarios.md",
   "docs/enterprise-rollout.md",
 ]
+
+[nonfunctional.NFR-007]
+title = "Target expansion gate discipline"
+summary = "Workcell records managed-workstation and host-expansion gates with explicit support boundaries, evidence expectations, and no backend or host support promotion until proof lands in the same change."
+evidence = [
+  "scripts/verify-requirements-coverage.sh",
+  "scripts/verify-operator-contract.sh",
+  "internal/metadatautil/requirements_test.go",
+]
+docs = [
+  "ROADMAP.md",
+  "docs/runtime-target-phase-plan.md",
+  "docs/runtime-target-expansion-plan.md",
+  "docs/implement-first-delivery-plan.md",
+  "docs/managed-workstation-contract.md",
+  "docs/host-expansion-readiness.md",
+  "docs/validation-scenarios.md",
+]
+
+[nonfunctional.NFR-008]
+title = "Enterprise evidence baseline"
+summary = "Workcell keeps a public enterprise evidence map that links current architecture, support boundaries, audit posture, provenance, release signing, SBOM, and validation evidence without claiming external certification."
+evidence = [
+  "scripts/verify-requirements-coverage.sh",
+  "scripts/verify-release-bundle.sh",
+  "scripts/verify-github-hosted-controls.sh",
+  "scripts/verify-invariants.sh",
+]
+docs = [
+  "docs/enterprise-evidence-baseline.md",
+  "docs/enterprise-rollout.md",
+  "docs/workcell-system-design.md",
+  "docs/threat-model.md",
+  "docs/provenance.md",
+  "docs/github-workflows.md",
+  "docs/requirements-validation.md",
+]

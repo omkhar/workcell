@@ -34,6 +34,15 @@ These priorities apply only inside the repo invariants. Do not trade away the
 runtime boundary, explicit security guarantees, or host-side publication rules
 for convenience.
 
+Keep a continuous quality loop during parity work:
+
+- inspect the existing contract surface before changing it
+- choose the smallest maintainable update that preserves support boundaries
+- reject vague support language, speculative abstractions, duplicated docs, dead
+  code, and unproven evidence claims during implementation
+- re-review changed docs, policies, tests, validators, and help text after each
+  fix before moving to the next work unit
+
 Docs review is repo-local. Keep Workcell docs, help text, manpages, policies,
 and validators aligned inside this repository. Do not treat external docs as
 the source of truth for repo behavior.

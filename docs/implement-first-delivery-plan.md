@@ -7,10 +7,11 @@ The longer-lived runtime-target and deployment-reach program lives in
 [`docs/runtime-target-expansion-plan.md`](runtime-target-expansion-plan.md),
 and the deterministic phase breakdown lives in
 [`docs/runtime-target-phase-plan.md`](runtime-target-phase-plan.md).
-Phases 1 through 9 of that phase plan are now implemented in the repository;
+Phases 1 through 12 of that phase plan are now implemented in the repository;
 this document now records the delivered bridge into the cloud `remote_vm`
-preview backends, the later-expansion decision gate, and the prerequisite
-handoff pattern for the managed-workstation contract slice.
+preview backends, the later-expansion decision gate, the managed-workstation
+contract gate, the enterprise evidence baseline, and the host-expansion
+readiness gate.
 
 The current repo already includes durable session records plus detached
 host-side session control (`session start|attach|send|stop`) and basic
@@ -103,6 +104,10 @@ to the next slice rather than as active delivery work:
 - the Phase 9 expansion decision that funds managed workstation contract and
   discovery next, while deferring `azure-vm` to the following raw `remote_vm`
   provider lane
+- the provider-neutral `managed_workstation` contract and
+  `gcp-cloud-workstations` discovery lane from Phase 10
+- the enterprise evidence baseline from Phase 11
+- the host-expansion readiness gate from Phase 12
 
 ## Delivered Phase 7 And 8 Track
 
@@ -178,7 +183,7 @@ Phase boundary:
   as distinct Codex-agent owner lanes, not as a claim of independent human
   approval
 
-## Immediate Follow-On Slice
+## Delivered Phase 10 Through 12 Track
 
 ### 3. Managed Workstation Contract And Discovery
 
@@ -200,9 +205,39 @@ Staffing:
 - SWE B: operator verification docs and comparison material
 - validation owner: deterministic evidence and certification-lane lead
 
+### 4. Enterprise Evidence Baseline
+
+Scope:
+
+- collect architecture, threat model, support-boundary, provenance, audit, and
+  validation evidence into one enterprise evaluation map
+- keep SOC 2 and ISO 27001 references as evaluation aids rather than compliance
+  claims
+- keep centralized policy, inventory, analytics, Linux, Windows, and
+  managed-workstation support as explicit gaps
+
+### 5. Host-Expansion Readiness Gate
+
+Scope:
+
+- define Linux and Windows support tiers before any host promotion
+- record packaging, rollback, certification, support-matrix, and fail-closed
+  diagnostic criteria
+- keep the current host-support matrix unchanged until a later phase lands
+  promotion evidence in the same change
+
+Completion record:
+
+- [`docs/managed-workstation-contract.md`](managed-workstation-contract.md)
+  defines the managed-workstation target kind before any provider backend ships
+- [`docs/enterprise-evidence-baseline.md`](enterprise-evidence-baseline.md)
+  records the buyer-facing evidence map and control-mapping aids
+- [`docs/host-expansion-readiness.md`](host-expansion-readiness.md) defines the
+  Linux and Windows promotion gate without changing support claims
+
 ## Later Phase Handoff
 
-Before Phase 10 begins implementation, assign distinct owner lanes:
+Before Phase 13 begins implementation, assign distinct owner lanes:
 
 - EM:
   support-boundary owner for rollout scope, preview/GA decisions, and rollback
@@ -221,12 +256,15 @@ Before Phase 10 begins implementation, assign distinct owner lanes:
    surfaces plus the completed Phase 5 remote-contract harness as fixed input
    to the next slice
 2. treat the Phase 9 decision as fixed input: managed workstation contract and
-   discovery is next; `azure-vm` follows as the next raw `remote_vm` lane
+   discovery was funded before the next raw `remote_vm` lane, and `azure-vm`
+   remains queued after the managed-workstation contract gate
 3. expand authenticated, lower-assurance, and target-contract coverage as each
    later phase lands rather than as a cleanup pass
-4. leave later raw `remote_vm` and managed-workstation delivery to the later
-   runtime-target program phases once these prerequisites and owner handoffs
-   are done
+4. treat Phase 10 through 12 docs as fixed gates for managed-workstation,
+   enterprise-evidence, and host-expansion work
+5. leave later raw `remote_vm`, managed-workstation provider delivery, and host
+   promotion to later runtime-target program phases once these prerequisites and
+   owner handoffs are done
 
 ## Non-Goals In This Slice
 

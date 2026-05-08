@@ -43,6 +43,22 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - Do not claim the skills "learn automatically." In this repository, skill
   adaptation must happen through committed, reviewable instruction updates.
 
+## Quality loop default
+
+- Treat code quality and maintainability as a continuous gate, not a final
+  cleanup pass.
+- Before changing behavior or docs, inspect existing patterns and choose the
+  smallest design that preserves the repository invariants.
+- During implementation, remove speculative abstraction, vague support language,
+  duplicated logic, dead code, hidden magic, and unproven claims before they
+  become review burden.
+- After implementation, re-review changed code, docs, policies, tests, and
+  validators for simplicity, security, maintainability, and contract parity
+  before moving to the next work unit.
+- If validation or review exposes a recurring quality gap, fix the repo-local
+  instruction, runbook, or validator in a reviewable change rather than relying
+  on conversational memory.
+
 ## Mandatory rules
 
 - Sign every commit. Do not create or rewrite commits in this repository
