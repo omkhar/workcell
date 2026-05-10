@@ -5602,13 +5602,13 @@ fi
 
 MASK_VERIFY_WORKSPACE="${BARRIER_VERIFY_ROOT}/mask-workspace"
 mkdir -p "${MASK_VERIFY_WORKSPACE}/nested/.claude"
-git init -q "${MASK_VERIFY_WORKSPACE}"
+git init -q -b master "${MASK_VERIFY_WORKSPACE}"
 printf '# root agent marker\n' >"${MASK_VERIFY_WORKSPACE}/AGENTS.md"
 mkdir -p "${MASK_VERIFY_WORKSPACE}/.codex"
 printf 'profile = "strict"\n' >"${MASK_VERIFY_WORKSPACE}/.codex/config.toml"
 printf '# nested agent marker\n' >"${MASK_VERIFY_WORKSPACE}/nested/AGENTS.md"
 printf '{\n  "masked": true\n}\n' >"${MASK_VERIFY_WORKSPACE}/nested/.claude/settings.json"
-git init -q "${MASK_VERIFY_WORKSPACE}/.alt"
+git init -q -b master "${MASK_VERIFY_WORKSPACE}/.alt"
 MASK_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run 2>/dev/null)"
 SECRET_DRY_RUN_OUTPUT="$(
   run_workcell_verify \
@@ -5680,7 +5680,7 @@ grep -q -- "${MASK_VERIFY_WORKSPACE}/AGENTS.md:/workspace/AGENTS.md:ro" /tmp/wor
 
 PUBLISH_PR_FIXTURE="${BARRIER_VERIFY_ROOT}/publish-pr-fixture"
 mkdir -p "${PUBLISH_PR_FIXTURE}"
-git init -q "${PUBLISH_PR_FIXTURE}"
+git init -q -b master "${PUBLISH_PR_FIXTURE}"
 git -C "${PUBLISH_PR_FIXTURE}" config user.name "Workcell Verify"
 git -C "${PUBLISH_PR_FIXTURE}" config user.email "workcell-verify@example.com"
 git -C "${PUBLISH_PR_FIXTURE}" remote add origin https://github.com/example/workcell-publish-fixture.git
@@ -5989,7 +5989,7 @@ fi
 
 BUILDVCS_FIXTURE="${BARRIER_VERIFY_ROOT}/buildvcs-fixture"
 mkdir -p "${BUILDVCS_FIXTURE}"
-git init -q "${BUILDVCS_FIXTURE}"
+git init -q -b master "${BUILDVCS_FIXTURE}"
 cat <<'EOF' >"${BUILDVCS_FIXTURE}/go.mod"
 module example.com/workcell/buildvcsfixture
 
@@ -6019,7 +6019,7 @@ fi
 
 MASK_SNAPSHOT_WORKSPACE="${BARRIER_VERIFY_ROOT}/mask-snapshot-workspace"
 mkdir -p "${MASK_SNAPSHOT_WORKSPACE}/.claude"
-git init -q "${MASK_SNAPSHOT_WORKSPACE}"
+git init -q -b master "${MASK_SNAPSHOT_WORKSPACE}"
 git -C "${MASK_SNAPSHOT_WORKSPACE}" config user.name "Workcell Verify"
 git -C "${MASK_SNAPSHOT_WORKSPACE}" config user.email "workcell-verify@example.com"
 cat <<'EOF' >"${MASK_SNAPSHOT_WORKSPACE}/AGENTS.md"
@@ -6057,7 +6057,7 @@ grep -q '"tracked": true' "${MASK_SNAPSHOT_ROOT}/dirs/.claude/settings.json"
 remove_tree_safely "${MASK_SNAPSHOT_ROOT}"
 
 CONFLICT_SHADOW_REPO="${BARRIER_VERIFY_ROOT}/conflict-shadow-repo"
-git init -q "${CONFLICT_SHADOW_REPO}"
+git init -q -b master "${CONFLICT_SHADOW_REPO}"
 git -C "${CONFLICT_SHADOW_REPO}" config user.name "Workcell Verify"
 git -C "${CONFLICT_SHADOW_REPO}" config user.email "workcell-verify@example.com"
 mkdir -p "${CONFLICT_SHADOW_REPO}/.claude"
@@ -6110,7 +6110,7 @@ fi
 grep -q 'Workcell refuses symlinked workspace control files' /tmp/workcell-symlinked-doc.out
 
 SHADOW_SYMLINK_REPO="${BARRIER_VERIFY_ROOT}/shadow-symlink-repo"
-git init -q "${SHADOW_SYMLINK_REPO}"
+git init -q -b master "${SHADOW_SYMLINK_REPO}"
 git -C "${SHADOW_SYMLINK_REPO}" config user.name "Workcell Verify"
 git -C "${SHADOW_SYMLINK_REPO}" config user.email "workcell-verify@example.com"
 touch "${SHADOW_SYMLINK_REPO}/tracked.txt"
@@ -7050,7 +7050,7 @@ WORKTREE_ROOT="${BARRIER_VERIFY_ROOT}/worktree-root"
 WORKTREE_MAIN="${WORKTREE_ROOT}/main"
 WORKTREE_LINKED="${WORKTREE_ROOT}/linked"
 mkdir -p "${WORKTREE_ROOT}"
-git init -q "${WORKTREE_MAIN}"
+git init -q -b master "${WORKTREE_MAIN}"
 git -C "${WORKTREE_MAIN}" config user.name "Workcell Verify"
 git -C "${WORKTREE_MAIN}" config user.email "workcell-verify@example.com"
 touch "${WORKTREE_MAIN}/tracked.txt"
@@ -7069,7 +7069,7 @@ REDIRECTED_ROOT="${BARRIER_VERIFY_ROOT}/redirected-root"
 REDIRECTED_REPO="${REDIRECTED_ROOT}/repo"
 REDIRECTED_WORKTREE="${REDIRECTED_ROOT}/outside"
 mkdir -p "${REDIRECTED_WORKTREE}"
-git init -q "${REDIRECTED_REPO}"
+git init -q -b master "${REDIRECTED_REPO}"
 git --git-dir "${REDIRECTED_REPO}/.git" config core.worktree "${REDIRECTED_WORKTREE}"
 if run_workcell_verify --agent codex --workspace "${REDIRECTED_REPO}" --dry-run >/dev/null 2>&1; then
   echo "Expected redirected core.worktree repo to be rejected" >&2
