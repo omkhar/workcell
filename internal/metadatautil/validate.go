@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -593,13 +594,15 @@ func FetchGitHubHostedControlsRulesets(tmpDir, repo string) error {
 		}
 		rulesetID := strconv.FormatInt(int64(idValue), 10)
 		cmd := exec.Command("gh", "api", fmt.Sprintf("repos/%s/rulesets/%s", repo, rulesetID))
-		output, err := cmd.CombinedOutput()
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		output, err := cmd.Output()
 		if err != nil {
-			return fmt.Errorf("gh api repos/%s/rulesets/%s: %w", repo, rulesetID, err)
+			return fmt.Errorf("gh api repos/%s/rulesets/%s: %w (stderr: %s)", repo, rulesetID, err, strings.TrimSpace(stderr.String()))
 		}
 		var detail any
 		if err := json.Unmarshal(output, &detail); err != nil {
-			return err
+			return fmt.Errorf("gh api repos/%s/rulesets/%s: parse JSON: %w", repo, rulesetID, err)
 		}
 		details = append(details, detail)
 	}
