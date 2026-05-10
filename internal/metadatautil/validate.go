@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -97,7 +96,7 @@ func CheckWorkflows(rootDir, policyPath string) error {
 			missing = append(missing, expected)
 		}
 	}
-	sort.Strings(missing)
+	slices.Sort(missing)
 	if len(missing) > 0 {
 		return fmt.Errorf(
 			"workflow jobs are missing required status-check names from %s: %s",
@@ -435,7 +434,7 @@ func hostedControlsWorkflowEnvironments(policy map[string]any, policyPath string
 				}
 			}
 			requiredSecrets = append(requiredSecrets, secrets...)
-			sort.Strings(requiredSecrets)
+			slices.Sort(requiredSecrets)
 		}
 
 		allowAdminBypass := false
@@ -465,7 +464,7 @@ func hostedControlsWorkflowEnvironments(policy map[string]any, policyPath string
 				}
 			}
 			deploymentBranches = append(deploymentBranches, branches...)
-			sort.Strings(deploymentBranches)
+			slices.Sort(deploymentBranches)
 			hasDeploymentBranches = true
 		}
 		deploymentTags := []string{}
@@ -484,7 +483,7 @@ func hostedControlsWorkflowEnvironments(policy map[string]any, policyPath string
 				}
 			}
 			deploymentTags = append(deploymentTags, tags...)
-			sort.Strings(deploymentTags)
+			slices.Sort(deploymentTags)
 			hasDeploymentTags = true
 		}
 
@@ -568,7 +567,7 @@ func HostedControlsEnvironmentNames(policyPath string) ([]string, error) {
 	for environmentName := range environments {
 		names = append(names, environmentName)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names, nil
 }
 
@@ -616,7 +615,7 @@ func unexpectedEnvironmentVariableNames(actual map[string]any, expected map[stri
 			unexpected = append(unexpected, name)
 		}
 	}
-	sort.Strings(unexpected)
+	slices.Sort(unexpected)
 	return unexpected
 }
 
@@ -631,7 +630,7 @@ func unexpectedEnvironmentSecretNames(actual map[string]struct{}, expected []str
 			unexpected = append(unexpected, name)
 		}
 	}
-	sort.Strings(unexpected)
+	slices.Sort(unexpected)
 	return unexpected
 }
 
@@ -675,8 +674,8 @@ func verifyWorkflowEnvironmentDeploymentPolicy(repo, environmentName string, env
 			}
 		}
 	}
-	sort.Strings(actualBranches)
-	sort.Strings(actualTags)
+	slices.Sort(actualBranches)
+	slices.Sort(actualTags)
 	if !slices.Equal(actualBranches, environmentPolicy.DeploymentBranches) {
 		return fmt.Errorf("workflow environment %s/%s must restrict deployment branches to %s", repo, environmentName, strings.Join(environmentPolicy.DeploymentBranches, ", "))
 	}
@@ -964,7 +963,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 			missingStatus = append(missingStatus, expected)
 		}
 	}
-	sort.Strings(missingStatus)
+	slices.Sort(missingStatus)
 	if len(missingStatus) > 0 {
 		return fmt.Errorf("default-branch status-check ruleset on %s is missing required contexts: %s", repo, strings.Join(missingStatus, ", "))
 	}
@@ -988,7 +987,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 			missingRepoVariables = append(missingRepoVariables, name)
 		}
 	}
-	sort.Strings(missingRepoVariables)
+	slices.Sort(missingRepoVariables)
 	if len(missingRepoVariables) > 0 {
 		return fmt.Errorf("repository variables missing on %s: %s", repo, strings.Join(missingRepoVariables, ", "))
 	}
@@ -998,7 +997,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 			wrongRepoVariables = append(wrongRepoVariables, fmt.Sprintf("%s=%#v (expected %#v)", name, actualRepoVariables[name], expectedValue))
 		}
 	}
-	sort.Strings(wrongRepoVariables)
+	slices.Sort(wrongRepoVariables)
 	if len(wrongRepoVariables) > 0 {
 		return fmt.Errorf("repository variables on %s do not match policy: %s", repo, strings.Join(wrongRepoVariables, ", "))
 	}
@@ -1021,7 +1020,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 			missingWorkflowEnvironments = append(missingWorkflowEnvironments, environmentName)
 		}
 	}
-	sort.Strings(missingWorkflowEnvironments)
+	slices.Sort(missingWorkflowEnvironments)
 	if len(missingWorkflowEnvironments) > 0 {
 		return fmt.Errorf("workflow environments missing on %s: %s", repo, strings.Join(missingWorkflowEnvironments, ", "))
 	}
@@ -1058,7 +1057,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 				missingEnvironmentVariables = append(missingEnvironmentVariables, name)
 			}
 		}
-		sort.Strings(missingEnvironmentVariables)
+		slices.Sort(missingEnvironmentVariables)
 		if len(missingEnvironmentVariables) > 0 {
 			return fmt.Errorf("workflow environment variables missing on %s/%s: %s", repo, environmentName, strings.Join(missingEnvironmentVariables, ", "))
 		}
@@ -1068,7 +1067,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 				wrongEnvironmentVariables = append(wrongEnvironmentVariables, fmt.Sprintf("%s=%#v (expected %#v)", name, actualEnvironmentVariables[name], expectedValue))
 			}
 		}
-		sort.Strings(wrongEnvironmentVariables)
+		slices.Sort(wrongEnvironmentVariables)
 		if len(wrongEnvironmentVariables) > 0 {
 			return fmt.Errorf("workflow environment variables on %s/%s do not match policy: %s", repo, environmentName, strings.Join(wrongEnvironmentVariables, ", "))
 		}
@@ -1099,7 +1098,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 				missingEnvironmentSecrets = append(missingEnvironmentSecrets, name)
 			}
 		}
-		sort.Strings(missingEnvironmentSecrets)
+		slices.Sort(missingEnvironmentSecrets)
 		if len(missingEnvironmentSecrets) > 0 {
 			return fmt.Errorf("workflow environment secrets missing on %s/%s: %s", repo, environmentName, strings.Join(missingEnvironmentSecrets, ", "))
 		}

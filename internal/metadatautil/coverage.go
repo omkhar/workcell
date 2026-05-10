@@ -10,7 +10,7 @@ import (
 	"errors"
 	"io"
 	"os"
-	"sort"
+	"slices"
 )
 
 func CoveragePercent(reportPath string) (float64, error) {
@@ -92,7 +92,7 @@ func CoverageExecutables(messagePath string) ([]string, error) {
 	if len(executables) == 0 {
 		return nil, errors.New("unable to locate instrumented Rust test executables for coverage")
 	}
-	sort.Strings(executables)
+	slices.Sort(executables)
 	unique := executables[:0]
 	var last string
 	for i, executable := range executables {

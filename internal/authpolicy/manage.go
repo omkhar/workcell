@@ -11,7 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/authresolve"
@@ -998,7 +998,7 @@ func explainReadyStates(policy map[string]any, policyBase string, agent string, 
 	for key := range relevant {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	for _, key := range keys {
 		if _, ok := credentials[key]; !ok {
@@ -1807,7 +1807,7 @@ func renderMap(value map[string]string) string {
 	for key := range value {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
 		parts = append(parts, key+":"+value[key])
@@ -1980,7 +1980,7 @@ func selectedCredentials(policy map[string]any, agent string, mode string) (map[
 	for key := range relevant {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	for _, key := range keys {
 		raw, ok := credentials[key]
 		if !ok {

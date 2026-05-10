@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -995,7 +996,7 @@ func validateAllowedKeys(table map[string]any, allowed map[string]struct{}, labe
 			unknown = append(unknown, key)
 		}
 	}
-	sort.Strings(unknown)
+	slices.Sort(unknown)
 	if len(unknown) > 0 {
 		return fmt.Errorf("%s contains unsupported keys: %s", label, strings.Join(unknown, ", "))
 	}
@@ -2004,7 +2005,7 @@ func secretCopyTargets(renderedCopies []map[string]any) []string {
 			}
 		}
 	}
-	sort.Strings(targets)
+	slices.Sort(targets)
 	return targets
 }
 
@@ -2013,7 +2014,7 @@ func sortedStringKeys(values map[string]string) []string {
 	for key := range values {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -2022,7 +2023,7 @@ func sortedStringKeysMap(values map[string]map[string]string) []string {
 	for key := range values {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -2031,7 +2032,7 @@ func sortedSetKeys(values map[string]struct{}) []string {
 	for key := range values {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
