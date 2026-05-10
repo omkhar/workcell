@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -26,6 +27,16 @@ const (
 	defaultProviderBumpClaudeBucketURL    = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819?prefix=claude-code-releases/&delimiter=/"
 	defaultProviderBumpClaudeReleaseRoot  = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
 	providerBumpUserAgent                 = "workcell-provider-bump/1.0"
+	// providerBumpHTTPTimeout caps every upstream metadata fetch (npm
+	// registry, GitHub release API, GCS bucket listing) end-to-end.
+	providerBumpHTTPTimeout = 30 * time.Second
+	// providerBumpMaxJSONBytes / providerBumpMaxXMLBytes cap the success-path
+	// response body so a misbehaving or hostile upstream cannot OOM the
+	// caller (upstream-refresh, hosted-controls audit, release preflight).
+	// The error path already wraps in LimitReader(4096); these mirror that
+	// pattern for the success path.
+	providerBumpMaxJSONBytes = 4 << 20 // 4 MiB
+	providerBumpMaxXMLBytes  = 1 << 20 // 1 MiB
 )
 
 var (
@@ -226,7 +237,7 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 		return nil, err
 	}
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: providerBumpHTTPTimeout}
 	}
 	cutoff := now.UTC().Add(-time.Duration(policy.CooloffHours) * time.Hour)
 
@@ -736,7 +747,9 @@ func compareStableVersions(left, right stableVersion) int {
 }
 
 func fetchJSON(client *http.Client, targetURL string, target any) error {
-	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), providerBumpHTTPTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return fmt.Errorf("fetch %s: %w", targetURL, err)
 	}
@@ -750,14 +763,16 @@ func fetchJSON(client *http.Client, targetURL string, target any) error {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("fetch %s: unexpected status %d: %s", targetURL, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, providerBumpMaxJSONBytes)).Decode(target); err != nil {
 		return fmt.Errorf("decode %s: %w", targetURL, err)
 	}
 	return nil
 }
 
 func fetchXML(client *http.Client, targetURL string, target any) error {
-	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), providerBumpHTTPTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return fmt.Errorf("fetch %s: %w", targetURL, err)
 	}
@@ -771,7 +786,7 @@ func fetchXML(client *http.Client, targetURL string, target any) error {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("fetch %s: unexpected status %d: %s", targetURL, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	if err := xml.NewDecoder(resp.Body).Decode(target); err != nil {
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, providerBumpMaxXMLBytes)).Decode(target); err != nil {
 		return fmt.Errorf("decode %s: %w", targetURL, err)
 	}
 	return nil
