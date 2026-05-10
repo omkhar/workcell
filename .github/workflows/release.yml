@@ -94,6 +94,36 @@ jobs:
               ;;
           esac
 
+      - name: Require main checks green for tagged commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # Per AGENTS.md ("Wait for the merged main commit to finish required
+          # GitHub Actions workflows successfully before pushing the signed
+          # release tag"), block release publication if check-runs on the
+          # tagged commit show failures or unfinished work.  Tag-ancestry
+          # alone is not enough: a tag pushed before main CI completes, or
+          # against a red main, must not produce a release.
+          failed="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+            --paginate \
+            --jq '.check_runs[] | select(.status == "completed" and (.conclusion | IN("failure","cancelled","timed_out","action_required"))) | "\(.name) (\(.conclusion))"' \
+            2>/dev/null || true)"
+          if [[ -n "${failed}" ]]; then
+            echo "Tagged commit ${GITHUB_SHA} has failed required checks:" >&2
+            printf '%s\n' "${failed}" >&2
+            exit 1
+          fi
+          pending="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+            --paginate \
+            --jq '.check_runs[] | select(.status != "completed") | .name' \
+            2>/dev/null || true)"
+          if [[ -n "${pending}" ]]; then
+            echo "Tagged commit ${GITHUB_SHA} has check-runs not yet completed:" >&2
+            printf '%s\n' "${pending}" >&2
+            echo "Wait for main checks to finish before re-running this release." >&2
+            exit 1
+          fi
+
       - name: Validate release tag name
         run: |
           [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
