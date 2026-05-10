@@ -25,6 +25,7 @@ jobs:
   pr-base-policy:
     name: Allowed PR base
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
       WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       WORKCELL_PR_IS_DRAFT: ${{ github.event.pull_request.draft }}

@@ -18,6 +18,7 @@ jobs:
   verify-hosted-controls:
     name: Hosted controls verification
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment:
       name: hosted-controls-audit
     permissions:

@@ -28,6 +28,7 @@ jobs:
     name: Analyze (${{ matrix.language }})
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'approved-heavy-ci')) && (!github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       actions: read # Read workflow metadata required by the CodeQL action helpers.
       contents: read
