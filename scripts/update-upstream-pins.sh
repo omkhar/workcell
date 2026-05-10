@@ -349,9 +349,7 @@ target_qemu_image="tonistiigi/binfmt:${target_qemu_tag}@$(docker_image_digest "t
 
 provider_summary="$("${ROOT_DIR}/scripts/update-provider-pins.sh")"
 provider_check_status=0
-if ! "${ROOT_DIR}/scripts/update-provider-pins.sh" --check >/dev/null 2>&1; then
-  provider_check_status=$?
-fi
+"${ROOT_DIR}/scripts/update-provider-pins.sh" --check >/dev/null 2>&1 || provider_check_status=$?
 if [[ "${provider_check_status}" -ne 0 && "${provider_check_status}" -ne 1 ]]; then
   echo "Unable to compute provider bump status." >&2
   exit "${provider_check_status}"
