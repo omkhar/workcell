@@ -18,6 +18,7 @@ jobs:
   refresh:
     name: Refresh pinned upstreams
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment:
       name: upstream-refresh
     permissions:

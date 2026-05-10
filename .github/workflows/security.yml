@@ -20,6 +20,7 @@ jobs:
     name: Dependency review
     if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref_name != 'main')) && (!github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_DEPENDENCY_REVIEW == 'true') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -36,6 +37,7 @@ jobs:
   actionlint:
     name: GitHub Actions lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -81,6 +83,7 @@ jobs:
   zizmor:
     name: GitHub Actions security analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       actions: read # Read workflow metadata required while emitting Zizmor SARIF.
       contents: read

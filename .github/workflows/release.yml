@@ -25,6 +25,7 @@ jobs:
   codeql-preflight:
     name: Release CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       actions: read # Read workflow metadata required by CodeQL helper actions.
       contents: read
@@ -59,6 +60,7 @@ jobs:
   preflight:
     name: Release preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment:
       name: hosted-controls-audit
     permissions:
@@ -355,6 +357,7 @@ jobs:
   install-verification:
     name: Release install verification (${{ matrix.runner_label }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     needs:
       - preflight
     permissions:
@@ -437,6 +440,7 @@ jobs:
   release:
     name: Publish release artifacts
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs:
       - codeql-preflight
       - preflight

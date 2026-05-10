@@ -61,6 +61,7 @@ jobs:
   spelling-and-manpage:
     name: Spelling and manpage
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
