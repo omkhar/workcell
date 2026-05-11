@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package hostutil
+package supportmatrix
 
 import (
 	"bufio"
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-type SupportMatrixQuery struct {
+type Query struct {
 	HostOS               string
 	HostArch             string
 	TargetKind           string
@@ -18,7 +18,7 @@ type SupportMatrixQuery struct {
 	TargetAssuranceClass string
 }
 
-type SupportMatrixResult struct {
+type Result struct {
 	HostOS               string
 	HostArch             string
 	TargetKind           string
@@ -31,7 +31,7 @@ type SupportMatrixResult struct {
 	Reason               string
 }
 
-var supportMatrixColumns = []string{
+var columns = []string{
 	"host_os",
 	"host_arch",
 	"target_kind",
@@ -44,9 +44,9 @@ var supportMatrixColumns = []string{
 	"reason",
 }
 
-func EvaluateSupportMatrix(path string, query SupportMatrixQuery) (SupportMatrixResult, error) {
-	query = normalizeSupportMatrixQuery(query)
-	result := defaultSupportMatrixResult(query)
+func Evaluate(path string, query Query) (Result, error) {
+	query = normalizeQuery(query)
+	result := defaultResult(query)
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -65,13 +65,13 @@ func EvaluateSupportMatrix(path string, query SupportMatrixQuery) (SupportMatrix
 		}
 		fields := strings.Split(line, "\t")
 		if !headerSeen {
-			if err := validateSupportMatrixHeader(path, lineNo, fields); err != nil {
+			if err := validateHeader(path, lineNo, fields); err != nil {
 				return result, err
 			}
 			headerSeen = true
 			continue
 		}
-		entry, err := parseSupportMatrixEntry(path, lineNo, fields)
+		entry, err := parseEntry(path, lineNo, fields)
 		if err != nil {
 			return result, err
 		}
@@ -88,7 +88,7 @@ func EvaluateSupportMatrix(path string, query SupportMatrixQuery) (SupportMatrix
 	return result, nil
 }
 
-func SupportMatrixMetadataLines(result SupportMatrixResult) []string {
+func MetadataLines(result Result) []string {
 	return []string{
 		fmt.Sprintf("host_os=%s", result.HostOS),
 		fmt.Sprintf("host_arch=%s", result.HostArch),
@@ -100,7 +100,7 @@ func SupportMatrixMetadataLines(result SupportMatrixResult) []string {
 	}
 }
 
-func normalizeSupportMatrixQuery(query SupportMatrixQuery) SupportMatrixQuery {
+func normalizeQuery(query Query) Query {
 	query.HostOS = strings.TrimSpace(query.HostOS)
 	query.HostArch = strings.TrimSpace(query.HostArch)
 	query.TargetKind = strings.TrimSpace(query.TargetKind)
@@ -109,8 +109,8 @@ func normalizeSupportMatrixQuery(query SupportMatrixQuery) SupportMatrixQuery {
 	return query
 }
 
-func defaultSupportMatrixResult(query SupportMatrixQuery) SupportMatrixResult {
-	return SupportMatrixResult{
+func defaultResult(query Query) Result {
+	return Result{
 		HostOS:               query.HostOS,
 		HostArch:             query.HostArch,
 		TargetKind:           query.TargetKind,
@@ -124,11 +124,11 @@ func defaultSupportMatrixResult(query SupportMatrixQuery) SupportMatrixResult {
 	}
 }
 
-func validateSupportMatrixHeader(path string, lineNo int, fields []string) error {
-	if len(fields) != len(supportMatrixColumns) {
-		return fmt.Errorf("%s:%d: expected %d tab-separated columns in header, got %d", path, lineNo, len(supportMatrixColumns), len(fields))
+func validateHeader(path string, lineNo int, fields []string) error {
+	if len(fields) != len(columns) {
+		return fmt.Errorf("%s:%d: expected %d tab-separated columns in header, got %d", path, lineNo, len(columns), len(fields))
 	}
-	for idx, want := range supportMatrixColumns {
+	for idx, want := range columns {
 		if fields[idx] != want {
 			return fmt.Errorf("%s:%d: header column %d must be %q, got %q", path, lineNo, idx+1, want, fields[idx])
 		}
@@ -136,12 +136,12 @@ func validateSupportMatrixHeader(path string, lineNo int, fields []string) error
 	return nil
 }
 
-func parseSupportMatrixEntry(path string, lineNo int, fields []string) (SupportMatrixResult, error) {
-	if len(fields) != len(supportMatrixColumns) {
-		return SupportMatrixResult{}, fmt.Errorf("%s:%d: expected %d tab-separated columns, got %d", path, lineNo, len(supportMatrixColumns), len(fields))
+func parseEntry(path string, lineNo int, fields []string) (Result, error) {
+	if len(fields) != len(columns) {
+		return Result{}, fmt.Errorf("%s:%d: expected %d tab-separated columns, got %d", path, lineNo, len(columns), len(fields))
 	}
 
-	entry := SupportMatrixResult{
+	entry := Result{
 		HostOS:               strings.TrimSpace(fields[0]),
 		HostArch:             strings.TrimSpace(fields[1]),
 		TargetKind:           strings.TrimSpace(fields[2]),
@@ -170,38 +170,38 @@ func parseSupportMatrixEntry(path string, lineNo int, fields []string) (SupportM
 		{name: "reason", value: entry.Reason},
 	} {
 		if pair.value == "" {
-			return SupportMatrixResult{}, fmt.Errorf("%s:%d: %s may not be empty", path, lineNo, pair.name)
+			return Result{}, fmt.Errorf("%s:%d: %s may not be empty", path, lineNo, pair.name)
 		}
 	}
 
 	switch entry.Status {
 	case "supported", "validation-host-only", "preview-only", "unsupported":
 	default:
-		return SupportMatrixResult{}, fmt.Errorf("%s:%d: unsupported status %q", path, lineNo, entry.Status)
+		return Result{}, fmt.Errorf("%s:%d: unsupported status %q", path, lineNo, entry.Status)
 	}
 	switch entry.Launch {
 	case "allowed", "blocked":
 	default:
-		return SupportMatrixResult{}, fmt.Errorf("%s:%d: unsupported launch value %q", path, lineNo, entry.Launch)
+		return Result{}, fmt.Errorf("%s:%d: unsupported launch value %q", path, lineNo, entry.Launch)
 	}
 	switch entry.Evidence {
 	case "repo-required", "certification-only", "manual-only", "none":
 	default:
-		return SupportMatrixResult{}, fmt.Errorf("%s:%d: unsupported evidence value %q", path, lineNo, entry.Evidence)
+		return Result{}, fmt.Errorf("%s:%d: unsupported evidence value %q", path, lineNo, entry.Evidence)
 	}
 	if entry.ValidationLane == "none" && entry.Status == "validation-host-only" {
-		return SupportMatrixResult{}, fmt.Errorf("%s:%d: validation-host-only rows must name a validation_lane", path, lineNo)
+		return Result{}, fmt.Errorf("%s:%d: validation-host-only rows must name a validation_lane", path, lineNo)
 	}
 	if entry.ValidationLane != "none" && (entry.Status == "supported" || entry.Status == "preview-only") {
-		return SupportMatrixResult{}, fmt.Errorf("%s:%d: supported launch rows must not set a validation-only lane", path, lineNo)
+		return Result{}, fmt.Errorf("%s:%d: supported launch rows must not set a validation-only lane", path, lineNo)
 	}
 	if entry.Status == "preview-only" && entry.Launch != "blocked" {
-		return SupportMatrixResult{}, fmt.Errorf("%s:%d: preview-only rows must set launch=blocked", path, lineNo)
+		return Result{}, fmt.Errorf("%s:%d: preview-only rows must set launch=blocked", path, lineNo)
 	}
 	return entry, nil
 }
 
-func (entry SupportMatrixResult) matches(query SupportMatrixQuery) bool {
+func (entry Result) matches(query Query) bool {
 	return entry.HostOS == query.HostOS &&
 		entry.HostArch == query.HostArch &&
 		entry.TargetKind == query.TargetKind &&

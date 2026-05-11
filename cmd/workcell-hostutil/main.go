@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/host/release"
+	"github.com/omkhar/workcell/internal/host/supportmatrix"
 	"github.com/omkhar/workcell/internal/hostutil"
 )
 
@@ -340,7 +341,7 @@ func runLauncher(args []string) error {
 		if len(args) != 7 {
 			return launcherUsage()
 		}
-		result, err := hostutil.EvaluateSupportMatrix(args[1], hostutil.SupportMatrixQuery{
+		result, err := supportmatrix.Evaluate(args[1], supportmatrix.Query{
 			HostOS:               args[2],
 			HostArch:             args[3],
 			TargetKind:           args[4],
@@ -350,7 +351,7 @@ func runLauncher(args []string) error {
 		if err != nil {
 			return err
 		}
-		for _, line := range hostutil.SupportMatrixMetadataLines(result) {
+		for _, line := range supportmatrix.MetadataLines(result) {
 			fmt.Println(line)
 		}
 		return nil
