@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-// DirectMount mirrors the JSON shape emitted by the Python helper.
+// DirectMount is the JSON shape this binary emits for each direct mount.
 type DirectMount struct {
 	Source    string `json:"source"`
 	MountPath string `json:"mount_path"`
@@ -38,11 +38,11 @@ func RequireDirectMount(entry map[string]any, label string) (DirectMount, error)
 
 // RunExtractDirectMounts reproduces the legacy extract_direct_mounts helper.
 func RunExtractDirectMounts(manifestPath, mountSpecPath string) error {
-	resolvedManifestPath, err := resolvePathLikePython(manifestPath)
+	resolvedManifestPath, err := resolveAbsPath(manifestPath)
 	if err != nil {
 		return err
 	}
-	resolvedMountSpecPath, err := resolvePathLikePython(mountSpecPath)
+	resolvedMountSpecPath, err := resolveAbsPath(mountSpecPath)
 	if err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func expandUserPath(raw string) (string, error) {
 	return raw, nil
 }
 
-func resolvePathLikePython(raw string) (string, error) {
+func resolveAbsPath(raw string) (string, error) {
 	expanded, err := expandUserPath(raw)
 	if err != nil {
 		return "", err

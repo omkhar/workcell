@@ -22,16 +22,24 @@ type mutationCase struct {
 	command      commandSpec
 }
 
+// goCmd builds a commandSpec that invokes the host `go` binary with the
+// given argv tail. The mutation table previously inlined a four-line
+// commandSpec literal at each site; this helper compresses each to a
+// single line.
+func goCmd(args ...string) commandSpec {
+	return commandSpec{
+		Path: "go",
+		Args: args,
+	}
+}
+
 var goHelperMutations = []mutationCase{
 	{
 		relativePath: "internal/injection/render_injection_bundle.go",
 		original:     `if targetIsReserved(candidate) {`,
 		replacement:  `if false && targetIsReserved(candidate) {`,
 		label:        "reserved target protection",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/injection"},
-		},
+		command:      goCmd("test", "./internal/injection"),
 	},
 	{
 		relativePath: "internal/injection/render_injection_bundle.go",
@@ -49,101 +57,71 @@ var goHelperMutations = []mutationCase{
 			`		"claude_api_key",`,
 			`		// "claude_mcp",`,
 		}, "\n"),
-		label: "claude mcp credential support",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/injection"},
-		},
+		label:   "claude mcp credential support",
+		command: goCmd("test", "./internal/injection"),
 	},
 	{
 		relativePath: "internal/injection/render_injection_bundle.go",
 		original:     `if info.Mode().Perm()&0o077 != 0 {`,
 		replacement:  `if false && info.Mode().Perm()&0o077 != 0 {`,
 		label:        "secret permission hygiene",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/injection"},
-		},
+		command:      goCmd("test", "./internal/injection"),
 	},
 	{
 		relativePath: "internal/transcript/transcript.go",
 		original:     `if !isTerminal(stdin) || !isTerminal(stdout) {`,
 		replacement:  `if false && (!isTerminal(stdin) || !isTerminal(stdout)) {`,
 		label:        "interactive terminal requirement",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/transcript"},
-		},
+		command:      goCmd("test", "./internal/transcript"),
 	},
 	{
 		relativePath: "internal/injection/extract_direct_mounts.go",
 		original:     `delete(entry, "source")`,
 		replacement:  `// delete(entry, "source")`,
 		label:        "manifest source stripping",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/injection"},
-		},
+		command:      goCmd("test", "./internal/injection"),
 	},
 	{
 		relativePath: "internal/injection/render_injection_bundle.go",
 		original:     `"forwardagent":        {},`,
 		replacement:  `// "forwardagent":        {},`,
 		label:        "forwardagent ssh directive blocking",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/injection"},
-		},
+		command:      goCmd("test", "./internal/injection"),
 	},
 	{
 		relativePath: "internal/injection/render_injection_bundle.go",
 		original:     `"sendenv":             {},`,
 		replacement:  `// "sendenv":             {},`,
 		label:        "sendenv ssh directive blocking",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/injection"},
-		},
+		command:      goCmd("test", "./internal/injection"),
 	},
 	{
 		relativePath: "internal/metadatautil/operator_contract.go",
 		original:     `if isPublicWorkflowTier(workflow.Support) && len(workflow.Evidence) == 0 {`,
 		replacement:  `if false && isPublicWorkflowTier(workflow.Support) && len(workflow.Evidence) == 0 {`,
 		label:        "workflow evidence requirement",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"},
-		},
+		command:      goCmd("test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"),
 	},
 	{
 		relativePath: "internal/metadatautil/operator_contract.go",
 		original:     `if _, ok := requirementPaths[canonicalPath]; !ok {`,
 		replacement:  `if _, ok := requirementPaths[canonicalPath]; false && !ok {`,
 		label:        "workflow requirement path parity",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"},
-		},
+		command:      goCmd("test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"),
 	},
 	{
 		relativePath: "internal/metadatautil/operator_contract.go",
 		original:     `if len(aliasProbes) == 0 {`,
 		replacement:  `if false && len(aliasProbes) == 0 {`,
 		label:        "alias probe requirement",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"},
-		},
+		command:      goCmd("test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"),
 	},
 	{
 		relativePath: "internal/metadatautil/operator_contract.go",
 		original:     `if !strings.Contains(output, workflow.Canonical) {`,
 		replacement:  `if false && !strings.Contains(output, workflow.Canonical) {`,
 		label:        "alias probe canonical parity",
-		command: commandSpec{
-			Path: "go",
-			Args: []string{"test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"},
-		},
+		command:      goCmd("test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"),
 	},
 }
 

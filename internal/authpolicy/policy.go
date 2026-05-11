@@ -143,11 +143,11 @@ func expandUserPath(raw string) (string, error) {
 }
 
 func requirePathWithin(root string, candidate string, label string) error {
-	resolvedRoot, err := resolvePathLikePython(root)
+	resolvedRoot, err := resolveAbsPath(root)
 	if err != nil {
 		return err
 	}
-	resolvedCandidate, err := resolvePathLikePython(candidate)
+	resolvedCandidate, err := resolveAbsPath(candidate)
 	if err != nil {
 		return err
 	}
@@ -1014,7 +1014,7 @@ func requireSecretFile(source string, label string) (string, error) {
 	return source, nil
 }
 
-func resolvePathLikePython(raw string) (string, error) {
+func resolveAbsPath(raw string) (string, error) {
 	expanded, err := expandUserPath(raw)
 	if err != nil {
 		return "", err
@@ -1054,8 +1054,8 @@ func resolvePathLikePython(raw string) (string, error) {
 }
 
 func pathsEquivalent(left string, right string) bool {
-	leftResolved, errLeft := resolvePathLikePython(left)
-	rightResolved, errRight := resolvePathLikePython(right)
+	leftResolved, errLeft := resolveAbsPath(left)
+	rightResolved, errRight := resolveAbsPath(right)
 	if errLeft != nil || errRight != nil {
 		return left == right
 	}
