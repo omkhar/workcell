@@ -7990,4 +7990,8 @@ for scenario_script_basename in \
   fi
 done
 
+# Concrete control-plane lockstep invariant: every policy/ file must be
+# mentioned in a user-facing doc surface so additions stay operator-visible.
+"${ROOT_DIR}/verify/invariants/control-plane-lockstep.sh"
+
 echo "Workcell invariant verification passed."
