@@ -48,3 +48,13 @@ Security fixes are applied to `main`. There are no long-lived release branches.
 We follow a coordinated disclosure model. Please allow a reasonable fix window
 before public disclosure. We will notify you when a fix is ready and work with
 you on timing.
+
+## Past security reviews
+
+Closed-finding evidence and assurance artifacts from past reviews live under
+[docs/security/](docs/security/):
+
+- [2026-04-24 validation summary](docs/security/security-findings-2026-04-24-validation.md)
+- [2026-04-24 PoC matrix](docs/security/security-findings-2026-04-24-poc-matrix.md)
+- [2026-04-24 mutation results](docs/security/security-findings-2026-04-24-mutation-results.md)
+- [2026-04-24 verification CSV](docs/security/security-findings-2026-04-24-verification.csv)
