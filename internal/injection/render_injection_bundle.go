@@ -21,6 +21,7 @@ import (
 	"syscall"
 
 	"github.com/omkhar/workcell/internal/providerid"
+	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
 const (
@@ -959,37 +960,7 @@ func splitTOMLArray(raw string) []string {
 	return items
 }
 
-func stripComment(line string) string {
-	escaped := false
-	quoteChar := rune(0)
-	var result strings.Builder
-	for _, char := range line {
-		if escaped {
-			result.WriteRune(char)
-			escaped = false
-			continue
-		}
-		if char == '\\' && quoteChar == '"' {
-			result.WriteRune(char)
-			escaped = true
-			continue
-		}
-		if char == '"' || char == '\'' {
-			if quoteChar == 0 {
-				quoteChar = char
-			} else if quoteChar == char {
-				quoteChar = 0
-			}
-			result.WriteRune(char)
-			continue
-		}
-		if char == '#' && quoteChar == 0 {
-			break
-		}
-		result.WriteRune(char)
-	}
-	return strings.TrimSpace(result.String())
-}
+var stripComment = tomlsubset.StripComment
 
 func validateAllowedKeys(table map[string]any, allowed map[string]struct{}, label string) error {
 	unknown := make([]string, 0)

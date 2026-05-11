@@ -20,6 +20,7 @@ import (
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
+	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
 const testClaudeExportEnv = "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE"
@@ -1284,38 +1285,7 @@ func parseStringArray(raw string) ([]string, error) {
 	return values, nil
 }
 
-func stripComment(line string) string {
-	escaped := false
-	quoteChar := byte(0)
-	result := make([]byte, 0, len(line))
-	for i := 0; i < len(line); i++ {
-		ch := line[i]
-		if escaped {
-			result = append(result, ch)
-			escaped = false
-			continue
-		}
-		if ch == '\\' && quoteChar == '"' {
-			result = append(result, ch)
-			escaped = true
-			continue
-		}
-		if ch == '"' || ch == '\'' {
-			if quoteChar == 0 {
-				quoteChar = ch
-			} else if quoteChar == ch {
-				quoteChar = 0
-			}
-			result = append(result, ch)
-			continue
-		}
-		if ch == '#' && quoteChar == 0 {
-			break
-		}
-		result = append(result, ch)
-	}
-	return strings.TrimSpace(string(result))
-}
+var stripComment = tomlsubset.StripComment
 
 func validateAllowedKeys(table map[string]any, allowed map[string]struct{}, label string) error {
 	unknown := make([]string, 0)
