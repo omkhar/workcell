@@ -314,7 +314,7 @@ jobs:
           advanced-security: false
           inputs: .github/workflows
           persona: auditor
-          version: 1.23.1
+          version: 1.24.1
 
       - name: Run container smoke
         run: ./scripts/container-smoke.sh

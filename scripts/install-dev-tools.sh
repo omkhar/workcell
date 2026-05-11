@@ -72,6 +72,33 @@ if ! command -v npm &>/dev/null; then
   append_unique_brew node
   append_unique_apt nodejs npm
 fi
+if ! command -v actionlint &>/dev/null; then
+  missing+=(actionlint)
+  append_unique_brew actionlint
+  append_unique_apt actionlint
+fi
+if ! command -v zizmor &>/dev/null; then
+  missing+=(zizmor)
+  append_unique_brew zizmor
+  # Linux distros do not ship zizmor in apt yet; surface as manual install.
+  append_unique_apt zizmor
+fi
+if ! command -v hadolint &>/dev/null; then
+  missing+=(hadolint)
+  append_unique_brew hadolint
+  append_unique_apt hadolint
+fi
+if ! command -v cosign &>/dev/null; then
+  missing+=(cosign)
+  append_unique_brew cosign
+  append_unique_apt cosign
+fi
+if ! command -v syft &>/dev/null; then
+  missing+=(syft)
+  append_unique_brew syft
+  # syft isn't packaged in apt repos by default; manual fallback.
+  append_unique_apt syft
+fi
 
 if [[ ${#missing[@]} -gt 0 ]]; then
   case "$(uname -s)" in
