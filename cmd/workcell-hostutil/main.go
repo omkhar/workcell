@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/host/release"
 	"github.com/omkhar/workcell/internal/hostutil"
 )
 
@@ -85,17 +86,17 @@ func runRelease(args []string) error {
 		if len(args) != 3 {
 			return releaseUsage()
 		}
-		return hostutil.WriteGitHubReleaseCreatePayload(args[1], args[2])
+		return release.WriteGitHubReleaseCreatePayload(args[1], args[2])
 	case "metadata":
 		if len(args) < 4 {
 			return releaseUsage()
 		}
-		return hostutil.WriteGitHubReleaseMetadata(args[1], args[3:], args[2])
+		return release.WriteGitHubReleaseMetadata(args[1], args[3:], args[2])
 	case "encode-name":
 		if len(args) != 2 {
 			return releaseUsage()
 		}
-		fmt.Println(hostutil.EncodeReleaseAssetName(args[1]))
+		fmt.Println(release.EncodeReleaseAssetName(args[1]))
 		return nil
 	case "bundle-manifest":
 		if len(args) != 8 {
@@ -105,7 +106,7 @@ func runRelease(args []string) error {
 		if err != nil {
 			return fmt.Errorf("parse source_date_epoch: %w", err)
 		}
-		return hostutil.WriteReleaseBundleManifest(args[1], args[2], args[3], args[4], sourceDateEpoch, args[6], args[7])
+		return release.WriteReleaseBundleManifest(args[1], args[2], args[3], args[4], sourceDateEpoch, args[6], args[7])
 	default:
 		return releaseUsage()
 	}
