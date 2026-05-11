@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/host/release"
+	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
 	"github.com/omkhar/workcell/internal/hostutil"
 )
@@ -210,7 +211,7 @@ func runLauncher(args []string) error {
 			}
 			updates[key] = value
 		}
-		return hostutil.WriteSessionRecord(args[1], updates)
+		return sessions.WriteSessionRecord(args[1], updates)
 	case "session-list":
 		return runLauncherSessionList(args[1:])
 	case "session-show":
@@ -408,7 +409,7 @@ func runLauncherSessionList(args []string) error {
 
 	format := "lines"
 	verbose := false
-	opts := hostutil.SessionListOptions{}
+	opts := sessions.SessionListOptions{}
 	for _, arg := range rest {
 		switch {
 		case arg == "--json":
@@ -427,7 +428,7 @@ func runLauncherSessionList(args []string) error {
 		return fmt.Errorf("session-list accepts either --json or --verbose, not both")
 	}
 
-	records, err := hostutil.ListSessionRecordsInRoots(roots, opts)
+	records, err := sessions.ListSessionRecordsInRoots(roots, opts)
 	if err != nil {
 		return err
 	}
@@ -445,19 +446,19 @@ func runLauncherSessionList(args []string) error {
 				"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				record.SessionID,
 				record.Status,
-				hostutil.SessionDisplayLiveStatus(record),
-				hostutil.SessionControlMode(record),
+				sessions.SessionDisplayLiveStatus(record),
+				sessions.SessionControlMode(record),
 				record.Agent,
 				record.Mode,
 				record.Profile,
-				hostutil.SessionTargetSummary(record),
+				sessions.SessionTargetSummary(record),
 				record.TargetAssuranceClass,
 				record.WorkspaceTransport,
-				hostutil.SessionDisplayGitBranch(record),
-				hostutil.SessionDisplayWorktree(record),
+				sessions.SessionDisplayGitBranch(record),
+				sessions.SessionDisplayWorktree(record),
 				record.StartedAt,
-				hostutil.SessionAssuranceSummary(record),
-				hostutil.SessionDisplayWorkspace(record),
+				sessions.SessionAssuranceSummary(record),
+				sessions.SessionDisplayWorkspace(record),
 			)
 			continue
 		}
@@ -465,14 +466,14 @@ func runLauncherSessionList(args []string) error {
 			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			record.SessionID,
 			record.Status,
-			hostutil.SessionDisplayLiveStatus(record),
-			hostutil.SessionControlMode(record),
+			sessions.SessionDisplayLiveStatus(record),
+			sessions.SessionControlMode(record),
 			record.Agent,
 			record.Mode,
 			record.Profile,
 			record.StartedAt,
-			hostutil.SessionAssuranceSummary(record),
-			hostutil.SessionDisplayWorkspace(record),
+			sessions.SessionAssuranceSummary(record),
+			sessions.SessionDisplayWorkspace(record),
 		)
 	}
 	return nil
@@ -494,12 +495,12 @@ func runLauncherSessionShow(args []string) error {
 		}
 		format = "text"
 	}
-	record, err := hostutil.FindSessionRecordInRoots(roots, rest[0])
+	record, err := sessions.FindSessionRecordInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}
 	if format == "text" {
-		for _, line := range hostutil.SessionShowLines(record) {
+		for _, line := range sessions.SessionShowLines(record) {
 			fmt.Println(line)
 		}
 		return nil
@@ -521,7 +522,7 @@ func runLauncherSessionExport(args []string) error {
 		return launcherUsage()
 	}
 
-	exported, err := hostutil.ExportSessionRecordInRoots(roots, rest[0])
+	exported, err := sessions.ExportSessionRecordInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}
@@ -542,11 +543,11 @@ func runLauncherSessionDiffMetadata(args []string) error {
 		return launcherUsage()
 	}
 
-	record, err := hostutil.FindSessionRecordInRoots(roots, rest[0])
+	record, err := sessions.FindSessionRecordInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}
-	for _, line := range hostutil.SessionDiffMetadataLines(record) {
+	for _, line := range sessions.SessionDiffMetadataLines(record) {
 		fmt.Println(line)
 	}
 	return nil
@@ -561,11 +562,11 @@ func runLauncherSessionRuntimeMetadata(args []string) error {
 		return launcherUsage()
 	}
 
-	record, recordPath, err := hostutil.FindSessionRecordWithPathInRoots(roots, rest[0])
+	record, recordPath, err := sessions.FindSessionRecordWithPathInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}
-	for _, line := range hostutil.SessionRuntimeMetadataLines(record) {
+	for _, line := range sessions.SessionRuntimeMetadataLines(record) {
 		fmt.Println(line)
 	}
 	fmt.Printf("record_path=%s\n", recordPath)
@@ -581,7 +582,7 @@ func runLauncherSessionTimeline(args []string) error {
 		return launcherUsage()
 	}
 
-	lines, err := hostutil.SessionTimelineRecordsInRoots(roots, rest[0])
+	lines, err := sessions.SessionTimelineRecordsInRoots(roots, rest[0])
 	if err != nil {
 		return err
 	}

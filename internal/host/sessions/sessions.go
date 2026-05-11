@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package hostutil
+package sessions
 
 import (
 	"bytes"
@@ -401,6 +401,22 @@ func ReadSessionRecord(path string) (SessionRecord, error) {
 		return SessionRecord{}, err
 	}
 	return record, nil
+}
+
+func isSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeSymlink != 0
+}
+
+// StateDirs lists the per-profile state directories under root. Exported
+// so internal/hostutil/launcher.go can iterate them when cleaning stale
+// session log pointers and audit dirs; the cleanup helpers themselves
+// stay in launcher because they touch broader launcher state.
+func StateDirs(root string) ([]string, error) {
+	return sessionStateDirs(root)
 }
 
 func sessionStateDirs(root string) ([]string, error) {

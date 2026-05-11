@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/omkhar/workcell/internal/hostutil"
+	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/providerid"
 )
 
@@ -35,7 +35,7 @@ type ConformanceResult struct {
 	Bootstrap       BootstrapResult
 	Started         SessionResult
 	Finished        SessionResult
-	Exported        hostutil.SessionExport
+	Exported        sessions.SessionExport
 }
 
 func DefaultConformanceCase(stateRoot, sourceWorkspace string) ConformanceCase {
@@ -108,17 +108,17 @@ func RunConformance(ctx context.Context, target ConformanceTarget, contract Cont
 	if err := validateFinishedSession(contract, finished, c); err != nil {
 		return ConformanceResult{}, err
 	}
-	records, err := hostutil.ListSessionRecordsInRoots([]string{c.StateRoot}, hostutil.SessionListOptions{})
+	records, err := sessions.ListSessionRecordsInRoots([]string{c.StateRoot}, sessions.SessionListOptions{})
 	if err != nil {
 		return ConformanceResult{}, err
 	}
 	if len(records) != 1 {
 		return ConformanceResult{}, fmt.Errorf("ListSessionRecordsInRoots() len = %d, want 1", len(records))
 	}
-	if got := hostutil.SessionTargetSummary(records[0]); got != fmt.Sprintf("%s/%s/%s", contract.TargetKind, contract.TargetProvider, c.TargetID) {
+	if got := sessions.SessionTargetSummary(records[0]); got != fmt.Sprintf("%s/%s/%s", contract.TargetKind, contract.TargetProvider, c.TargetID) {
 		return ConformanceResult{}, fmt.Errorf("SessionTargetSummary() = %q", got)
 	}
-	exported, err := hostutil.ExportSessionRecordInRoots([]string{c.StateRoot}, c.SessionID)
+	exported, err := sessions.ExportSessionRecordInRoots([]string{c.StateRoot}, c.SessionID)
 	if err != nil {
 		return ConformanceResult{}, err
 	}

@@ -23,6 +23,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
 var codexVersionPattern = regexp.MustCompile(`(?m)^\s*ARG CODEX_VERSION=(.+)$`)
@@ -62,7 +64,7 @@ func IsNoMatch(err error) bool {
 }
 
 func CleanupStaleLatestLogPointers(stateRoot string) error {
-	stateDirs, err := sessionStateDirs(stateRoot)
+	stateDirs, err := sessions.StateDirs(stateRoot)
 	if err != nil {
 		return err
 	}
@@ -206,7 +208,7 @@ func WriteProfileOwner(ownerPath string, pid int) error {
 }
 
 func CleanupStaleSessionAuditDirs(stateRoot string) error {
-	stateDirs, err := sessionStateDirs(stateRoot)
+	stateDirs, err := sessions.StateDirs(stateRoot)
 	if err != nil {
 		return err
 	}

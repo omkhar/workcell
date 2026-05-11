@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/omkhar/workcell/internal/hostutil"
+	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
 func TestRunConformanceWithFakeTarget(t *testing.T) {
@@ -29,7 +29,7 @@ func TestRunConformanceWithFakeTarget(t *testing.T) {
 	if got, want := result.Exported.Session.WorkspaceTransport, "remote-materialization"; got != want {
 		t.Fatalf("exported session workspace_transport = %q, want %q", got, want)
 	}
-	if got, want := hostutil.SessionTargetSummary(result.Exported.Session), "remote_vm/fake-remote/"+caseSpec.TargetID; got != want {
+	if got, want := sessions.SessionTargetSummary(result.Exported.Session), "remote_vm/fake-remote/"+caseSpec.TargetID; got != want {
 		t.Fatalf("target summary = %q, want %q", got, want)
 	}
 }
@@ -50,7 +50,7 @@ func TestRunConformanceWithAWSEC2SSMTarget(t *testing.T) {
 	if got, want := result.Exported.Session.TargetProvider, AWSEC2SSMProvider; got != want {
 		t.Fatalf("exported session target_provider = %q, want %q", got, want)
 	}
-	if got, want := hostutil.SessionTargetSummary(result.Exported.Session), "remote_vm/aws-ec2-ssm/"+caseSpec.TargetID; got != want {
+	if got, want := sessions.SessionTargetSummary(result.Exported.Session), "remote_vm/aws-ec2-ssm/"+caseSpec.TargetID; got != want {
 		t.Fatalf("target summary = %q, want %q", got, want)
 	}
 	if got, want := filepath.Base(filepath.Dir(result.Materialization.TargetRoot)), AWSEC2SSMProvider; got != want {
@@ -74,7 +74,7 @@ func TestRunConformanceWithGCPVMTarget(t *testing.T) {
 	if got, want := result.Exported.Session.TargetProvider, GCPVMProvider; got != want {
 		t.Fatalf("exported session target_provider = %q, want %q", got, want)
 	}
-	if got, want := hostutil.SessionTargetSummary(result.Exported.Session), "remote_vm/gcp-vm/"+caseSpec.TargetID; got != want {
+	if got, want := sessions.SessionTargetSummary(result.Exported.Session), "remote_vm/gcp-vm/"+caseSpec.TargetID; got != want {
 		t.Fatalf("target summary = %q, want %q", got, want)
 	}
 	if got, want := filepath.Base(filepath.Dir(result.Materialization.TargetRoot)), GCPVMProvider; got != want {
