@@ -1,16 +1,6 @@
 #!/bin/bash -p
-readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
-if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
-  exec /usr/bin/env -i \
-    PATH="${TRUSTED_HOST_PATH}" \
-    HOME="${HOME:-/tmp}" \
-    TMPDIR="${TMPDIR:-/tmp}" \
-    WORKCELL_CONTROL_PLANE_ROOT="${WORKCELL_CONTROL_PLANE_ROOT-}" \
-    WORKCELL_SANITIZED_ENTRYPOINT=1 \
-    /bin/bash -p "$0" "$@"
-fi
-set -euo pipefail
-export PATH="${TRUSTED_HOST_PATH}"
+# shellcheck source=scripts/lib/trusted-entrypoint.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
@@ -19,13 +9,6 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
 fi
 
 OUTPUT_PATH="${1:-}"
-
-require_tool() {
-  command -v "$1" >/dev/null 2>&1 || {
-    echo "Missing required tool: $1" >&2
-    exit 1
-  }
-}
 
 resolve_go_bin() {
   local candidate
