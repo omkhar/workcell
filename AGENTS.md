@@ -81,8 +81,16 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - Keep host mounts minimal. Never mount `$HOME`, host keychains, or host
   credential stores.
 - Never pass through host sockets or auth state including `docker.sock`,
-  `ssh-agent`, GPG agent sockets, launchd sockets, host `~/.codex`, or git
-  credential-helper state.
+  `ssh-agent`, GPG agent sockets, launchd sockets, host `~/.codex`,
+  `~/.claude`, `~/.gemini`, `~/.config/gh`, `~/.config/op`, host
+  Keychains, AWS credential state, or git credential-helper state. The
+  conflict-free subset (`docker.sock`, `SSH_AUTH_SOCK`, `/.ssh`,
+  `/.aws`, `Library/Keychains`, `.gnupg`, `.git-credentials`) lives in
+  `policy/forbidden-host-paths.toml` and is enforced by
+  `scripts/verify-invariants.sh` against the dry-run docker invocation;
+  the provider-state directories above (host `~/.codex`, etc.) need a
+  host-side `-v` mount-source check that the policy file deliberately
+  omits today.
 - Keep `breakglass` paths explicit, narrow, and separately documented.
 - Require explicit operator acknowledgement for `breakglass` or equivalent
   higher-trust paths.
