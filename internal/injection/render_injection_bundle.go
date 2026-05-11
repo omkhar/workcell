@@ -125,11 +125,11 @@ func ValidateRenderAgentMode(agent, mode string) error {
 }
 
 func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadata string) error {
-	resolvedPolicyPath, err := resolvePathLikePython(policyPath)
+	resolvedPolicyPath, err := resolveAbsPath(policyPath)
 	if err != nil {
 		return err
 	}
-	resolvedOutputRoot, err := resolvePathLikePython(outputRoot)
+	resolvedOutputRoot, err := resolveAbsPath(outputRoot)
 	if err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 }
 
 func loadPolicyBundle(policyPath Path) (map[string]any, []PolicySource, error) {
-	resolvedPolicyPath, err := resolvePathLikePython(policyPath.String())
+	resolvedPolicyPath, err := resolveAbsPath(policyPath.String())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -221,7 +221,7 @@ func loadPolicyBundle(policyPath Path) (map[string]any, []PolicySource, error) {
 }
 
 func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Path, loadedPaths map[string]struct{}) (map[string]any, []PolicySource, error) {
-	resolvedPolicyPath, err := resolvePathLikePython(policyPath.String())
+	resolvedPolicyPath, err := resolveAbsPath(policyPath.String())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -306,7 +306,7 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 }
 
 func loadPolicyMetadataOverride(rawPath string) (string, []PolicySource, error) {
-	resolved, err := resolvePathLikePython(rawPath)
+	resolved, err := resolveAbsPath(rawPath)
 	if err != nil {
 		return "", nil, err
 	}

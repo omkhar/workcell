@@ -107,7 +107,7 @@ var (
 	}()
 )
 
-// PolicySource mirrors the metadata emitted by the Python helper.
+// PolicySource is the per-policy-file metadata this resolver emits.
 type PolicySource struct {
 	Path   string `json:"path"`
 	Sha256 string `json:"sha256"`
