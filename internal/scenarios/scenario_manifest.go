@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -290,7 +291,14 @@ func ScenarioShellTests(scenarioRoot string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if info, err := os.Stat(absRoot); err != nil || !info.IsDir() {
+	info, err := os.Stat(absRoot)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []string{}, nil
+		}
+		return nil, fmt.Errorf("stat scenario root %s: %w", absRoot, err)
+	}
+	if !info.IsDir() {
 		return []string{}, nil
 	}
 
@@ -349,8 +357,14 @@ func VerifyCoverage(scenarioRoot, manifestPath string) error {
 	slices.Sort(keys)
 	for _, testFile := range keys {
 		info, err := root.Stat(filepath.FromSlash(testFile))
-		if err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("missing test file: tests/scenarios/%s", testFile)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("missing test file: tests/scenarios/%s", testFile)
+			}
+			return fmt.Errorf("stat tests/scenarios/%s: %w", testFile, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("tests/scenarios/%s must be a regular file", testFile)
 		}
 	}
 

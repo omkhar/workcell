@@ -226,18 +226,20 @@ func runGoHelperMutations(repoRoot string) error {
 	close(results)
 
 	var failures []string
+	var harnessErrors []error
 	for r := range results {
 		if r.err != nil {
-			return r.err
+			harnessErrors = append(harnessErrors, fmt.Errorf("%s: %w", r.label, r.err))
+			continue
 		}
 		if r.pass {
 			failures = append(failures, r.label)
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("go helper mutation coverage did not catch: %s", strings.Join(failures, ", "))
+		harnessErrors = append(harnessErrors, fmt.Errorf("go helper mutation coverage did not catch: %s", strings.Join(failures, ", ")))
 	}
-	return nil
+	return errors.Join(harnessErrors...)
 }
 
 // runRustGuardMutations runs all Rust mutation cases in parallel. Each case
@@ -292,18 +294,20 @@ func runRustGuardMutations(repoRoot string) error {
 	close(results)
 
 	var failures []string
+	var harnessErrors []error
 	for r := range results {
 		if r.err != nil {
-			return r.err
+			harnessErrors = append(harnessErrors, fmt.Errorf("%s: %w", r.label, r.err))
+			continue
 		}
 		if r.pass {
 			failures = append(failures, r.label)
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("rust mutation coverage did not catch: %s", strings.Join(failures, ", "))
+		harnessErrors = append(harnessErrors, fmt.Errorf("rust mutation coverage did not catch: %s", strings.Join(failures, ", ")))
 	}
-	return nil
+	return errors.Join(harnessErrors...)
 }
 
 type commandSpec struct {

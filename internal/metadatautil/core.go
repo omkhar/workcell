@@ -133,7 +133,7 @@ func ensureTrackedRegularFile(rootDir, repoPath string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("missing control-plane artifact: %s", repoPath)
 		}
-		return fmt.Errorf("control-plane artifact must be a regular file: %s", repoPath)
+		return fmt.Errorf("checking control-plane artifact %s: %w", repoPath, err)
 	}
 	return nil
 }
