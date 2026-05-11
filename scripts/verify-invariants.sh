@@ -6198,10 +6198,22 @@ if ! run_workcell_verify --agent codex --mode breakglass "--ack-breakglass=${ACK
   exit 1
 fi
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --ack-breakglass=1999-01-01 --dry-run >/dev/null 2>&1; then
-  echo "Expected --ack-breakglass with a stale date to be rejected" >&2
+ACK_BREAKGLASS_STALE_STDERR_FILE="$(mktemp -t workcell-stale-breakglass.XXXXXX)"
+ACK_BREAKGLASS_STALE_EXIT=0
+"${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --ack-breakglass=1999-01-01 --dry-run >/dev/null 2>"${ACK_BREAKGLASS_STALE_STDERR_FILE}" || ACK_BREAKGLASS_STALE_EXIT=$?
+if [[ "${ACK_BREAKGLASS_STALE_EXIT}" -ne 2 ]]; then
+  echo "Expected --ack-breakglass=1999-01-01 to exit 2, got ${ACK_BREAKGLASS_STALE_EXIT}" >&2
+  cat "${ACK_BREAKGLASS_STALE_STDERR_FILE}" >&2
+  rm -f "${ACK_BREAKGLASS_STALE_STDERR_FILE}"
   exit 1
 fi
+if ! grep -q -- '--ack-breakglass=1999-01-01 does not match today' "${ACK_BREAKGLASS_STALE_STDERR_FILE}"; then
+  echo "Expected --ack-breakglass=1999-01-01 stderr to name the stale-date error" >&2
+  cat "${ACK_BREAKGLASS_STALE_STDERR_FILE}" >&2
+  rm -f "${ACK_BREAKGLASS_STALE_STDERR_FILE}"
+  exit 1
+fi
+rm -f "${ACK_BREAKGLASS_STALE_STDERR_FILE}"
 
 ACK_BREAKGLASS_BARE_OUTPUT="$(run_workcell_verify --agent codex --mode breakglass --ack-breakglass --dry-run 2>&1 >/dev/null || true)"
 if ! grep -q -- '--ack-breakglass accepted without a date acknowledgement' <<<"${ACK_BREAKGLASS_BARE_OUTPUT}"; then
@@ -6219,10 +6231,22 @@ if ! run_workcell_verify --agent codex --prepare --allow-arbitrary-command "--ac
   exit 1
 fi
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command=1999-01-01 --dry-run -- bash -lc true >/dev/null 2>&1; then
-  echo "Expected --ack-arbitrary-command with a stale date to be rejected" >&2
+ACK_ARBITRARY_STALE_STDERR_FILE="$(mktemp -t workcell-stale-arbitrary.XXXXXX)"
+ACK_ARBITRARY_STALE_EXIT=0
+"${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command=1999-01-01 --dry-run -- bash -lc true >/dev/null 2>"${ACK_ARBITRARY_STALE_STDERR_FILE}" || ACK_ARBITRARY_STALE_EXIT=$?
+if [[ "${ACK_ARBITRARY_STALE_EXIT}" -ne 2 ]]; then
+  echo "Expected --ack-arbitrary-command=1999-01-01 to exit 2, got ${ACK_ARBITRARY_STALE_EXIT}" >&2
+  cat "${ACK_ARBITRARY_STALE_STDERR_FILE}" >&2
+  rm -f "${ACK_ARBITRARY_STALE_STDERR_FILE}"
   exit 1
 fi
+if ! grep -q -- '--ack-arbitrary-command=1999-01-01 does not match today' "${ACK_ARBITRARY_STALE_STDERR_FILE}"; then
+  echo "Expected --ack-arbitrary-command=1999-01-01 stderr to name the stale-date error" >&2
+  cat "${ACK_ARBITRARY_STALE_STDERR_FILE}" >&2
+  rm -f "${ACK_ARBITRARY_STALE_STDERR_FILE}"
+  exit 1
+fi
+rm -f "${ACK_ARBITRARY_STALE_STDERR_FILE}"
 
 ARBITRARY_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command --dry-run -- bash -lc true 2>/dev/null)"
 if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
