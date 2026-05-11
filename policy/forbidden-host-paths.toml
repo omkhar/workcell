@@ -1,0 +1,35 @@
+# Host-side substrings that must never appear in a managed-mode dry-run of
+# `scripts/workcell`. Each substring represents leakage of host secret
+# state, an auth broker socket, or a credential helper that would
+# undermine the workcell trust boundary if it reached the container.
+#
+# These are intentionally restricted to substrings that have no legitimate
+# in-container counterpart: a bare `/.codex` would also match the
+# container path `/state/agent-home/.codex`, so provider-specific state
+# directories are deliberately excluded here. A future change can add a
+# host-side `-v` mount-source check to cover those without conflicting
+# with the in-container paths.
+#
+# AGENTS.md sources the canonical narrative ("Keep host mounts minimal";
+# "Never pass through host sockets or auth state"); this file is the
+# machine-checked enumeration that scripts/verify-invariants.sh
+# (forbidden_host_paths section) reads. Anything added here MUST also be
+# called out in the AGENTS.md narrative — verify-invariants.sh enforces
+# that lockstep.
+
+[forbidden_host_paths]
+
+# Container / host auth brokers.
+docker_socket = "docker.sock"
+ssh_agent     = "SSH_AUTH_SOCK"
+
+# Generic SSH / cloud credential stores.
+ssh_state = "/.ssh"
+aws_state = "/.aws"
+
+# OS-level secret stores.
+mac_keychains = "Library/Keychains"
+gpg_state     = ".gnupg"
+
+# Git credential helper state files.
+git_credentials_file = ".git-credentials"

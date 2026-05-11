@@ -5621,9 +5621,37 @@ SECRET_DRY_RUN_OUTPUT="$(
     --dry-run 2>/dev/null
 )"
 
-for forbidden in "docker.sock" "SSH_AUTH_SOCK" "/.ssh" "/.aws" "Library/Keychains" ".gnupg"; do
-  if echo "${DRY_RUN_OUTPUT}" | grep -q "${forbidden}"; then
+FORBIDDEN_HOST_PATHS_FILE="${ROOT_DIR}/policy/forbidden-host-paths.toml"
+if [[ ! -f "${FORBIDDEN_HOST_PATHS_FILE}" ]]; then
+  echo "Missing forbidden host paths policy: ${FORBIDDEN_HOST_PATHS_FILE}" >&2
+  exit 1
+fi
+
+mapfile -t FORBIDDEN_HOST_PATHS < <(
+  awk '
+    /^[[:space:]]*\[forbidden_host_paths\][[:space:]]*$/ { in_section = 1; next }
+    /^[[:space:]]*\[/ { in_section = 0 }
+    in_section && /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*=[[:space:]]*"/ {
+      value = $0
+      sub(/^[^=]*=[[:space:]]*"/, "", value)
+      sub(/"[[:space:]]*(#.*)?$/, "", value)
+      if (value != "") print value
+    }
+  ' "${FORBIDDEN_HOST_PATHS_FILE}"
+)
+
+if [[ "${#FORBIDDEN_HOST_PATHS[@]}" -eq 0 ]]; then
+  echo "Expected ${FORBIDDEN_HOST_PATHS_FILE} to enumerate forbidden_host_paths entries" >&2
+  exit 1
+fi
+
+for forbidden in "${FORBIDDEN_HOST_PATHS[@]}"; do
+  # grep -F so regex metacharacters in policy entries (e.g. the `.` in
+  # `docker.sock` or `.gnupg`) match literally; otherwise a future entry
+  # with `.` could false-positive on any character.
+  if echo "${DRY_RUN_OUTPUT}" | grep -Fq -- "${forbidden}"; then
     echo "Unexpected host exposure in dry-run output: ${forbidden}" >&2
+    echo "Forbidden by policy/forbidden-host-paths.toml" >&2
     exit 1
   fi
 done
