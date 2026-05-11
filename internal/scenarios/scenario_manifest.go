@@ -14,12 +14,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/providerid"
 )
 
 var (
 	validLanes           = map[string]struct{}{"secretless": {}, "provider-e2e": {}}
 	validPlatforms       = map[string]struct{}{"any": {}, "linux": {}, "macos": {}}
-	validProviders       = map[string]struct{}{"codex": {}, "claude": {}, "gemini": {}}
+	validProviders       = map[string]struct{}{providerid.Codex: {}, providerid.Claude: {}, providerid.Gemini: {}}
 	validValidationTiers = map[string]struct{}{"repo-required": {}, "certification": {}}
 	personaPrefix        = "^[a-z][a-z0-9-]*$"
 )

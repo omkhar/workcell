@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/hostutil"
+	"github.com/omkhar/workcell/internal/providerid"
 )
 
 type ConformanceCase struct {
@@ -44,7 +45,7 @@ func DefaultConformanceCase(stateRoot, sourceWorkspace string) ConformanceCase {
 		MaterializationID: "fixture-materialization",
 		BootstrapID:       "fixture-bootstrap",
 		SessionID:         "fixture-session",
-		Agent:             "codex",
+		Agent:             providerid.Codex,
 		Mode:              "strict",
 		ImageRef:          "workcell-remotevm:test",
 		StartedAt:         "2026-04-21T00:00:00Z",

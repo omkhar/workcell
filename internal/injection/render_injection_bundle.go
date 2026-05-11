@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/omkhar/workcell/internal/providerid"
 )
 
 const (
@@ -29,9 +31,9 @@ const (
 
 var (
 	supportedAgents = map[string]struct{}{
-		"codex":  {},
-		"claude": {},
-		"gemini": {},
+		providerid.Codex:  {},
+		providerid.Claude: {},
+		providerid.Gemini: {},
 	}
 	supportedModes = map[string]struct{}{
 		"strict":      {},
@@ -111,15 +113,15 @@ var (
 		"github_config":   directMountRoot + "/credentials/github-config.yml",
 	}
 	agentScopedCredentialKeys = map[string]map[string]struct{}{
-		"codex": {
+		providerid.Codex: {
 			"codex_auth": {},
 		},
-		"claude": {
+		providerid.Claude: {
 			"claude_api_key": {},
 			"claude_auth":    {},
 			"claude_mcp":     {},
 		},
-		"gemini": {
+		providerid.Gemini: {
 			"gemini_env":      {},
 			"gemini_oauth":    {},
 			"gemini_projects": {},
@@ -415,7 +417,7 @@ func renderDocuments(policy map[string]any, outputRoot, policyDir Path) (map[str
 	if !ok {
 		return nil, errors.New("documents must be a TOML table")
 	}
-	if err := validateAllowedKeys(documents, mapKeysSet([]string{"common", "codex", "claude", "gemini"}), "documents"); err != nil {
+	if err := validateAllowedKeys(documents, mapKeysSet([]string{"common", providerid.Codex, providerid.Claude, providerid.Gemini}), "documents"); err != nil {
 		return nil, err
 	}
 
@@ -425,9 +427,9 @@ func renderDocuments(policy map[string]any, outputRoot, policyDir Path) (map[str
 		relpath string
 	}{
 		{"common", "documents/common.md"},
-		{"codex", "documents/codex.md"},
-		{"claude", "documents/claude.md"},
-		{"gemini", "documents/gemini.md"},
+		{providerid.Codex, "documents/codex.md"},
+		{providerid.Claude, "documents/claude.md"},
+		{providerid.Gemini, "documents/gemini.md"},
 	}
 	for _, item := range ordered {
 		rawValue, ok := documents[item.key]

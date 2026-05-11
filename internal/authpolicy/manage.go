@@ -15,26 +15,27 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/authresolve"
+	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
 )
 
 var (
 	canonicalCredentialDestinations = map[string][2]string{
-		"codex_auth":      {"codex", "auth.json"},
-		"claude_api_key":  {"claude", "api-key.txt"},
-		"claude_mcp":      {"claude", "mcp.json"},
-		"gemini_env":      {"gemini", "gemini.env"},
-		"gemini_oauth":    {"gemini", "oauth_creds.json"},
-		"gemini_projects": {"gemini", "projects.json"},
-		"gcloud_adc":      {"gemini", "gcloud-adc.json"},
+		"codex_auth":      {providerid.Codex, "auth.json"},
+		"claude_api_key":  {providerid.Claude, "api-key.txt"},
+		"claude_mcp":      {providerid.Claude, "mcp.json"},
+		"gemini_env":      {providerid.Gemini, "gemini.env"},
+		"gemini_oauth":    {providerid.Gemini, "oauth_creds.json"},
+		"gemini_projects": {providerid.Gemini, "projects.json"},
+		"gcloud_adc":      {providerid.Gemini, "gcloud-adc.json"},
 		"github_hosts":    {"shared", "github-hosts.yml"},
 		"github_config":   {"shared", "github-config.yml"},
 	}
 	statusOrder = map[string][]string{
-		"codex":  {"codex_auth"},
-		"claude": {"claude_api_key", "claude_auth"},
-		"gemini": {"gemini_env", "gemini_oauth"},
+		providerid.Codex:  {"codex_auth"},
+		providerid.Claude: {"claude_api_key", "claude_auth"},
+		providerid.Gemini: {"gemini_env", "gemini_oauth"},
 	}
 	entryAllowedKeys = map[string]struct{}{
 		"source":          {},
@@ -417,7 +418,7 @@ func commandInit(policyPath string, managedRoot string) error {
 	if err := writeManagedRootMarker(managedRoot); err != nil {
 		return err
 	}
-	for _, name := range []string{"codex", "claude", "gemini", "shared"} {
+	for _, name := range []string{providerid.Codex, providerid.Claude, providerid.Gemini, "shared"} {
 		path := filepath.Join(managedRoot, name)
 		if err := validateManagedPath(managedRoot, path, "managed_root/"+name); err != nil {
 			return err
@@ -1062,7 +1063,7 @@ func credentialStateIsReady(state string) bool {
 
 func summarizeBootstrap(agent string, selected map[string]any, inputKinds, resolvers, resolutionStates, providerReadyStates map[string]string) bootstrapSummary {
 	switch agent {
-	case "codex":
+	case providerid.Codex:
 		if readiness, ok := providerReadyStates["codex_auth"]; ok {
 			if credentialStateIsReady(readiness) {
 				if inputKinds["codex_auth"] == "resolver" {
@@ -1096,7 +1097,7 @@ func summarizeBootstrap(agent string, selected map[string]any, inputKinds, resol
 			}
 		}
 		return defaultBootstrapSummary(agent)
-	case "claude":
+	case providerid.Claude:
 		for _, key := range []string{"claude_api_key", "claude_auth"} {
 			if credentialStateIsReady(providerReadyStates[key]) {
 				return bootstrapSummary{
@@ -1120,7 +1121,7 @@ func summarizeBootstrap(agent string, selected map[string]any, inputKinds, resol
 			}
 		}
 		return defaultBootstrapSummary(agent)
-	case "gemini":
+	case providerid.Gemini:
 		for _, key := range []string{"gemini_env", "gemini_oauth"} {
 			if credentialStateIsReady(providerReadyStates[key]) {
 				return bootstrapSummary{
@@ -1151,7 +1152,7 @@ func summarizeBootstrap(agent string, selected map[string]any, inputKinds, resol
 
 func defaultBootstrapSummary(agent string) bootstrapSummary {
 	switch agent {
-	case "codex":
+	case providerid.Codex:
 		return bootstrapSummary{
 			state:    "not-configured",
 			path:     "direct-staged",
@@ -1160,7 +1161,7 @@ func defaultBootstrapSummary(agent string) bootstrapSummary {
 			doc:      "docs/examples/quickstart-codex.md",
 			nextStep: "stage-reviewed-codex-auth",
 		}
-	case "claude":
+	case providerid.Claude:
 		return bootstrapSummary{
 			state:    "not-configured",
 			path:     "direct-staged",
@@ -1169,7 +1170,7 @@ func defaultBootstrapSummary(agent string) bootstrapSummary {
 			doc:      "docs/examples/quickstart-claude.md",
 			nextStep: "stage-reviewed-claude-auth-or-api-key",
 		}
-	case "gemini":
+	case providerid.Gemini:
 		return bootstrapSummary{
 			state:    "not-configured",
 			path:     "direct-staged",
