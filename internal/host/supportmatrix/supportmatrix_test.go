@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package hostutil
+package supportmatrix
 
 import (
 	"os"
@@ -10,11 +10,11 @@ import (
 	"testing"
 )
 
-func TestEvaluateSupportMatrixMatchesReviewedRow(t *testing.T) {
+func TestEvaluateMatchesReviewedRow(t *testing.T) {
 	t.Parallel()
 
 	path := writeSupportMatrixFixture(t)
-	result, err := EvaluateSupportMatrix(path, SupportMatrixQuery{
+	result, err := Evaluate(path, Query{
 		HostOS:               "macos",
 		HostArch:             "arm64",
 		TargetKind:           "local_vm",
@@ -22,7 +22,7 @@ func TestEvaluateSupportMatrixMatchesReviewedRow(t *testing.T) {
 		TargetAssuranceClass: "strict",
 	})
 	if err != nil {
-		t.Fatalf("EvaluateSupportMatrix() error = %v", err)
+		t.Fatalf("Evaluate() error = %v", err)
 	}
 	if result.Status != "supported" {
 		t.Fatalf("status = %q, want supported", result.Status)
@@ -38,11 +38,11 @@ func TestEvaluateSupportMatrixMatchesReviewedRow(t *testing.T) {
 	}
 }
 
-func TestEvaluateSupportMatrixReturnsValidationHostLane(t *testing.T) {
+func TestEvaluateReturnsValidationHostLane(t *testing.T) {
 	t.Parallel()
 
 	path := writeSupportMatrixFixture(t)
-	result, err := EvaluateSupportMatrix(path, SupportMatrixQuery{
+	result, err := Evaluate(path, Query{
 		HostOS:               "linux",
 		HostArch:             "amd64",
 		TargetKind:           "local_vm",
@@ -50,7 +50,7 @@ func TestEvaluateSupportMatrixReturnsValidationHostLane(t *testing.T) {
 		TargetAssuranceClass: "strict",
 	})
 	if err != nil {
-		t.Fatalf("EvaluateSupportMatrix() error = %v", err)
+		t.Fatalf("Evaluate() error = %v", err)
 	}
 	if result.Status != "validation-host-only" {
 		t.Fatalf("status = %q, want validation-host-only", result.Status)
@@ -66,7 +66,7 @@ func TestEvaluateSupportMatrixReturnsValidationHostLane(t *testing.T) {
 	}
 }
 
-func TestEvaluateSupportMatrixReturnsPreviewOnlyRow(t *testing.T) {
+func TestEvaluateReturnsPreviewOnlyRow(t *testing.T) {
 	t.Parallel()
 
 	path := writeSupportMatrixFixture(t)
@@ -75,7 +75,7 @@ func TestEvaluateSupportMatrixReturnsPreviewOnlyRow(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			t.Parallel()
 
-			result, err := EvaluateSupportMatrix(path, SupportMatrixQuery{
+			result, err := Evaluate(path, Query{
 				HostOS:               "macos",
 				HostArch:             "arm64",
 				TargetKind:           "remote_vm",
@@ -83,7 +83,7 @@ func TestEvaluateSupportMatrixReturnsPreviewOnlyRow(t *testing.T) {
 				TargetAssuranceClass: "compat",
 			})
 			if err != nil {
-				t.Fatalf("EvaluateSupportMatrix() error = %v", err)
+				t.Fatalf("Evaluate() error = %v", err)
 			}
 			if result.Status != "preview-only" {
 				t.Fatalf("status = %q, want preview-only", result.Status)
@@ -101,11 +101,11 @@ func TestEvaluateSupportMatrixReturnsPreviewOnlyRow(t *testing.T) {
 	}
 }
 
-func TestEvaluateSupportMatrixDefaultsToUnsupported(t *testing.T) {
+func TestEvaluateDefaultsToUnsupported(t *testing.T) {
 	t.Parallel()
 
 	path := writeSupportMatrixFixture(t)
-	result, err := EvaluateSupportMatrix(path, SupportMatrixQuery{
+	result, err := Evaluate(path, Query{
 		HostOS:               "windows",
 		HostArch:             "amd64",
 		TargetKind:           "local_vm",
@@ -113,7 +113,7 @@ func TestEvaluateSupportMatrixDefaultsToUnsupported(t *testing.T) {
 		TargetAssuranceClass: "strict",
 	})
 	if err != nil {
-		t.Fatalf("EvaluateSupportMatrix() error = %v", err)
+		t.Fatalf("Evaluate() error = %v", err)
 	}
 	if result.Status != "unsupported" {
 		t.Fatalf("status = %q, want unsupported", result.Status)
@@ -132,7 +132,7 @@ func TestEvaluateSupportMatrixDefaultsToUnsupported(t *testing.T) {
 	}
 }
 
-func TestEvaluateSupportMatrixRejectsInvalidRows(t *testing.T) {
+func TestEvaluateRejectsInvalidRows(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -144,7 +144,7 @@ func TestEvaluateSupportMatrixRejectsInvalidRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := EvaluateSupportMatrix(path, SupportMatrixQuery{
+	_, err := Evaluate(path, Query{
 		HostOS:               "linux",
 		HostArch:             "amd64",
 		TargetKind:           "local_vm",
@@ -152,7 +152,7 @@ func TestEvaluateSupportMatrixRejectsInvalidRows(t *testing.T) {
 		TargetAssuranceClass: "strict",
 	})
 	if err == nil || !strings.Contains(err.Error(), "validation-host-only rows must name a validation_lane") {
-		t.Fatalf("EvaluateSupportMatrix() error = %v, want validation-lane rejection", err)
+		t.Fatalf("Evaluate() error = %v, want validation-lane rejection", err)
 	}
 }
 
