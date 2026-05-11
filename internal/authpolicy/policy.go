@@ -19,6 +19,7 @@ import (
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
+	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
 var (
@@ -231,38 +232,7 @@ func selectedFor(values any, current string, label string, allowedValues map[str
 	return false, nil
 }
 
-func stripComment(line string) string {
-	escaped := false
-	quoteChar := byte(0)
-	result := make([]byte, 0, len(line))
-	for i := 0; i < len(line); i++ {
-		ch := line[i]
-		if escaped {
-			result = append(result, ch)
-			escaped = false
-			continue
-		}
-		if ch == '\\' && quoteChar == '"' {
-			result = append(result, ch)
-			escaped = true
-			continue
-		}
-		if ch == '"' || ch == '\'' {
-			if quoteChar == 0 {
-				quoteChar = ch
-			} else if quoteChar == ch {
-				quoteChar = 0
-			}
-			result = append(result, ch)
-			continue
-		}
-		if ch == '#' && quoteChar == 0 {
-			break
-		}
-		result = append(result, ch)
-	}
-	return strings.TrimSpace(string(result))
-}
+var stripComment = tomlsubset.StripComment
 
 func parseValue(raw string, policyPath string, lineno int) (any, error) {
 	value := strings.TrimSpace(raw)

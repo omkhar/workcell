@@ -21,6 +21,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/secretfile"
+	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
 var SupportedAgents = map[string]struct{}{
@@ -204,37 +205,11 @@ func SelectedFor(values any, current string, label string, allowedValues map[str
 	return contains(items, current), nil
 }
 
+// StripComment delegates to internal/tomlsubset; kept as an exported
+// name for backward compatibility with prior callers (none outside
+// this package currently).
 func StripComment(line string) string {
-	escaped := false
-	quoteChar := byte(0)
-	result := make([]byte, 0, len(line))
-	for i := 0; i < len(line); i++ {
-		char := line[i]
-		if escaped {
-			result = append(result, char)
-			escaped = false
-			continue
-		}
-		if char == '\\' && quoteChar == '"' {
-			result = append(result, char)
-			escaped = true
-			continue
-		}
-		if char == '"' || char == '\'' {
-			if quoteChar == 0 {
-				quoteChar = char
-			} else if quoteChar == char {
-				quoteChar = 0
-			}
-			result = append(result, char)
-			continue
-		}
-		if char == '#' && quoteChar == 0 {
-			break
-		}
-		result = append(result, char)
-	}
-	return strings.TrimSpace(string(result))
+	return tomlsubset.StripComment(line)
 }
 
 func ParseValue(raw string, policyPath string, lineno int) (any, error) {

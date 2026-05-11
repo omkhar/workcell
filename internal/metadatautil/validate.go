@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omkhar/workcell/internal/tomlsubset"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1448,7 +1449,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 		lines := strings.Split(text, "\n")
 		for _, line := range lines {
-			line = stripComment(line)
+			line = tomlsubset.StripComment(line)
 			lower := strings.ToLower(line)
 			for _, fragment := range disallowedFragments {
 				if strings.Contains(lower, fragment) {
