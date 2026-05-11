@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omkhar/workcell/internal/hostutil"
+	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
 type WorkspaceEntry struct {
@@ -98,7 +98,7 @@ type FinishSessionRequest struct {
 }
 
 type SessionResult struct {
-	Record       hostutil.SessionRecord
+	Record       sessions.SessionRecord
 	RecordPath   string
 	AuditLogPath string
 }
@@ -252,7 +252,7 @@ func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (Se
 		return SessionResult{}, err
 	}
 	recordPath := filepath.Join(req.Bootstrap.TargetRoot, "sessions", sessionID+".json")
-	record := hostutil.SessionRecord{
+	record := sessions.SessionRecord{
 		Version:               1,
 		SessionID:             sessionID,
 		Profile:               req.Bootstrap.Manifest.TargetID,
@@ -276,7 +276,7 @@ func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (Se
 		CurrentAssurance:      f.Contract.Session.Assurance,
 		WorkspaceControlPlane: f.Contract.Session.WorkspaceControlPlane,
 	}
-	if err := hostutil.WriteSessionRecord(recordPath, map[string]string{
+	if err := sessions.WriteSessionRecord(recordPath, map[string]string{
 		"session_id":              record.SessionID,
 		"profile":                 record.Profile,
 		"target_kind":             record.TargetKind,
@@ -310,7 +310,7 @@ func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (Se
 			return SessionResult{}, err
 		}
 	}
-	record, err = hostutil.ReadSessionRecord(recordPath)
+	record, err = sessions.ReadSessionRecord(recordPath)
 	if err != nil {
 		return SessionResult{}, err
 	}
@@ -327,7 +327,7 @@ func (f FakeTarget) FinishSession(_ context.Context, req FinishSessionRequest) (
 	if req.Started.RecordPath == "" {
 		return SessionResult{}, fmt.Errorf("started session record path is required")
 	}
-	if err := hostutil.WriteSessionRecord(req.Started.RecordPath, map[string]string{
+	if err := sessions.WriteSessionRecord(req.Started.RecordPath, map[string]string{
 		"status":            f.Contract.Session.FinalStatus,
 		"live_status":       "stopped",
 		"observed_at":       req.FinishedAt,
@@ -341,7 +341,7 @@ func (f FakeTarget) FinishSession(_ context.Context, req FinishSessionRequest) (
 	if err := appendAuditLine(req.Started.AuditLogPath, fmt.Sprintf("ts=%s session_id=%s event=session_finished target_kind=%s target_provider=%s target_id=%s status=%s exit_status=%s", req.FinishedAt, req.Started.Record.SessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Started.Record.TargetID, f.Contract.Session.FinalStatus, req.ExitStatus)); err != nil {
 		return SessionResult{}, err
 	}
-	record, err := hostutil.ReadSessionRecord(req.Started.RecordPath)
+	record, err := sessions.ReadSessionRecord(req.Started.RecordPath)
 	if err != nil {
 		return SessionResult{}, err
 	}

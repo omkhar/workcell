@@ -145,7 +145,7 @@ workflows = [
 ]
 evidence = [
   "tests/scenarios/shared/test-session-commands.sh",
-  "internal/hostutil/sessions_test.go",
+  "internal/host/sessions/sessions_test.go",
 ]
 docs = [
   "README.md",

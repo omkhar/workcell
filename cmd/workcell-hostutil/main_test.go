@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/hostutil"
 )
 
@@ -28,7 +29,7 @@ func TestRunLauncherSessionTimeline(t *testing.T) {
 	}
 
 	sessionPath := filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json")
-	if err := hostutil.WriteSessionRecord(sessionPath, map[string]string{
+	if err := sessions.WriteSessionRecord(sessionPath, map[string]string{
 		"session_id":      "session-1",
 		"profile":         "wcl-one",
 		"agent":           "codex",
@@ -82,7 +83,7 @@ func TestRunLauncherSessionTimeline(t *testing.T) {
 func TestRunLauncherSessionRuntimeMetadata(t *testing.T) {
 	colimaRoot := t.TempDir()
 	sessionPath := filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json")
-	if err := hostutil.WriteSessionRecord(sessionPath, map[string]string{
+	if err := sessions.WriteSessionRecord(sessionPath, map[string]string{
 		"session_id":          "session-1",
 		"profile":             "wcl-one",
 		"agent":               "codex",
@@ -153,7 +154,7 @@ func TestRunLauncherSessionRuntimeMetadataSupportsMultipleRoots(t *testing.T) {
 	stateRoot := t.TempDir()
 	legacyRoot := t.TempDir()
 	sessionPath := filepath.Join(stateRoot, "targets", "local_vm", "colima", "wcl-one", "sessions", "session-1.json")
-	if err := hostutil.WriteSessionRecord(sessionPath, map[string]string{
+	if err := sessions.WriteSessionRecord(sessionPath, map[string]string{
 		"session_id":        "session-1",
 		"profile":           "wcl-one",
 		"agent":             "codex",
@@ -208,7 +209,7 @@ func TestRunLauncherSessionRuntimeMetadataSupportsMultipleRoots(t *testing.T) {
 
 func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 	colimaRoot := t.TempDir()
-	if err := hostutil.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json"), map[string]string{
+	if err := sessions.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json"), map[string]string{
 		"session_id":        "session-1",
 		"profile":           "wcl-one",
 		"agent":             "codex",
@@ -225,7 +226,7 @@ func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := hostutil.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-two", "sessions", "session-2.json"), map[string]string{
+	if err := sessions.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-two", "sessions", "session-2.json"), map[string]string{
 		"session_id":        "session-2",
 		"profile":           "wcl-two",
 		"agent":             "claude",
@@ -281,7 +282,7 @@ func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 
 func TestRunLauncherSessionListVerboseShowsTargetMetadata(t *testing.T) {
 	colimaRoot := t.TempDir()
-	if err := hostutil.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json"), map[string]string{
+	if err := sessions.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json"), map[string]string{
 		"session_id":        "session-1",
 		"profile":           "wcl-one",
 		"agent":             "codex",
@@ -331,7 +332,7 @@ func TestRunLauncherSessionListVerboseShowsTargetMetadata(t *testing.T) {
 func TestRunLauncherSessionShowText(t *testing.T) {
 	colimaRoot := t.TempDir()
 	sessionPath := filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json")
-	if err := hostutil.WriteSessionRecord(sessionPath, map[string]string{
+	if err := sessions.WriteSessionRecord(sessionPath, map[string]string{
 		"session_id":              "session-1",
 		"profile":                 "wcl-one",
 		"agent":                   "codex",
