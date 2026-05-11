@@ -8,8 +8,8 @@ the strongest local boundary claim still depends on local Colima validation.
 
 - Workcell installed with `./scripts/install.sh`
 - a repo you want to mount as the workspace
-- a reviewed Claude auth export, a reviewed Claude API key file, or an
-  experimental macOS resolver config
+- a reviewed Claude auth export, a reviewed Claude API key file, or a
+  fail-closed macOS resolver scaffold config (manual support tier today)
 
 ## 1. Create or update the injection policy
 
@@ -78,8 +78,8 @@ workcell --agent claude --auth-status --workspace /path/to/repo
 `workcell auth status` reports the host policy view. `--auth-status` reports the
 staged launch view after selector evaluation and resolver preprocessing.
 
-If you configured only `claude_auth` via the experimental macOS resolver, expect
-`credential_resolution_states=claude_auth:configured-only` and
+If you configured only `claude_auth` via the fail-closed macOS resolver
+scaffold, expect `credential_resolution_states=claude_auth:configured-only` and
 `provider_auth_mode=none` until a supported export path exists. The bootstrap
 summary will also report `provider_bootstrap_path=host-export-scaffold` and
 `provider_bootstrap_support=manual`.
