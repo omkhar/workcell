@@ -3716,6 +3716,10 @@ publish_pr_main() {
       exit 2
     fi
   fi
+  # Register the RETURN trap before writing into the temp file so a
+  # printf/chmod failure (set -e) cannot exit before the trap is armed and
+  # leak the commit message file.
+  trap 'if ((${#cleanup_files[@]} > 0)); then rm -f "${cleanup_files[@]}"; fi' RETURN
   if [[ -n "${commit_message_file}" ]]; then
     resolved_commit_message_file="$(resolve_existing_file_or_die "${commit_message_file}" "commit-message")"
   else
@@ -3724,7 +3728,6 @@ publish_pr_main() {
     printf '%s' "${commit_message_text}" >"${resolved_commit_message_file}"
     chmod 0600 "${resolved_commit_message_file}" 2>/dev/null || true
   fi
-  trap 'if ((${#cleanup_files[@]} > 0)); then rm -f "${cleanup_files[@]}"; fi' RETURN
 
   publish_git_cmd=("${HOST_GIT_BIN}" -c core.hooksPath=/dev/null -C "${resolved_workspace}")
   if [[ "${current_branch}" == "${branch}" ]]; then
