@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package hostutil
+package launcher
 
 import (
 	"os"
@@ -15,7 +15,7 @@ func CanonicalizePath(path string) (string, error) {
 }
 
 func CanonicalizePathFrom(path, base string) (string, error) {
-	expanded, err := expandUser(path)
+	expanded, err := pathutil.ExpandUserPathBestEffort(path)
 	if err != nil {
 		return "", err
 	}
@@ -47,6 +47,9 @@ func RealHome() (string, error) {
 	return CanonicalizePath(home)
 }
 
-func expandUser(path string) (string, error) {
-	return pathutil.ExpandUserPathBestEffort(path)
+func CanonicalizeToolPath(candidate string) (string, error) {
+	if candidate == "" {
+		return "", nil
+	}
+	return CanonicalizePath(candidate)
 }

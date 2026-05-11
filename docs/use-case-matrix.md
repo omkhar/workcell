@@ -20,7 +20,7 @@ Workcell workflows.
 | repo control-plane masking and provider-home re-seeding | tested | invariants and smoke |
 | repo-mounted validator and release-helper runs stay nonroot with explicit caller identity and isolated writable state | tested | CI, release preflight, `scripts/pre-merge.sh`, and invariant checks |
 | prompt-autonomy downgrade labeling | tested for Codex, partial elsewhere | invariants plus provider-specific coverage |
-| host-side session inventory, detached session control, delete, log and timeline views, clean-base diff, and audit export | tested | `tests/scenarios/shared/test-session-commands.sh`, `internal/hostutil/sessions_test.go`, `cmd/workcell-hostutil/main_test.go` |
+| host-side session inventory, detached session control, delete, log and timeline views, clean-base diff, and audit export | tested | `tests/scenarios/shared/test-session-commands.sh`, `internal/host/sessions/sessions_test.go`, `cmd/workcell-hostutil/main_test.go` |
 | detached-session isolated workspace preflight and direct-workspace remediation | tested | `tests/scenarios/shared/test-session-commands.sh` |
 | opt-in persistent cache plane (`--cache-profile standard`) | tested | `tests/scenarios/shared/test-assurance-dry-run.sh`, `scripts/verify-invariants.sh` |
 | bundle installer plus uninstall helper on the supported GitHub-hosted macOS matrix | tested | `scripts/verify-invariants.sh`, CI, tagged release install verification |

@@ -16,7 +16,6 @@ import (
 	"github.com/omkhar/workcell/internal/host/release"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
-	"github.com/omkhar/workcell/internal/hostutil"
 )
 
 func main() {
@@ -53,7 +52,7 @@ func runPath(args []string) error {
 		if len(args) != 1 {
 			return pathUsage()
 		}
-		home, err := hostutil.RealHome()
+		home, err := launcher.RealHome()
 		if err != nil {
 			return err
 		}
@@ -69,7 +68,7 @@ func runPath(args []string) error {
 		if len(pathArgs) != 1 {
 			return pathUsage()
 		}
-		resolved, err := hostutil.CanonicalizePathFrom(pathArgs[0], base)
+		resolved, err := launcher.CanonicalizePathFrom(pathArgs[0], base)
 		if err != nil {
 			return err
 		}
@@ -301,7 +300,7 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		value, err := hostutil.ExtractCodexVersion(args[1])
+		value, err := launcher.ExtractCodexVersion(args[1])
 		if err != nil {
 			return err
 		}
@@ -311,12 +310,12 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		return hostutil.ValidateSecurityOptions(args[1])
+		return launcher.ValidateSecurityOptions(args[1])
 	case "canonicalize-tool-path":
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		value, err := hostutil.CanonicalizeToolPath(args[1])
+		value, err := launcher.CanonicalizeToolPath(args[1])
 		if err != nil {
 			return err
 		}
@@ -326,13 +325,13 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		fmt.Println(hostutil.DedupeEndpointList(args[1]))
+		fmt.Println(launcher.DedupeEndpointList(args[1]))
 		return nil
 	case "resolve-endpoints":
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		lines, err := hostutil.ResolveEndpoints(args[1])
+		lines, err := launcher.ResolveEndpoints(args[1])
 		if err != nil {
 			return err
 		}

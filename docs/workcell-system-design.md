@@ -96,8 +96,11 @@ packages under [`internal/`](../internal):
   resolution and preprocessing
 - [`internal/injection`](../internal/injection): staged injection bundle
   rendering and validation
-- [`internal/hostutil`](../internal/hostutil): session records, timeline/export
-  helpers, and host utility subcommands
+- [`internal/host/launcher`](../internal/host/launcher), [`internal/host/sessions`](../internal/host/sessions),
+  [`internal/host/hoststate`](../internal/host/hoststate), [`internal/host/release`](../internal/host/release),
+  [`internal/host/supportmatrix`](../internal/host/supportmatrix): host-side
+  utility subpackages (path canonicalization, colima/profile-lock, session
+  records, mount/audit state, GitHub release helpers, support matrix)
 - [`internal/metadatautil`](../internal/metadatautil): metadata and validation
   helpers used by repo checks and release posture
 - [`internal/runtimeutil`](../internal/runtimeutil): runtime-related utility
@@ -316,7 +319,7 @@ as
 `~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/<session-id>.json`.
 Compatibility reads still accept older legacy records under
 `~/.colima/<profile>/sessions/<session-id>.json`. The current session record
-schema in [`internal/hostutil/sessions.go`](../internal/hostutil/sessions.go)
+schema in [`internal/host/sessions/sessions.go`](../internal/host/sessions/sessions.go)
 includes:
 
 - session identity, profile, target kind, target provider, target id,

@@ -412,9 +412,9 @@ func isSymlink(path string) bool {
 }
 
 // StateDirs lists the per-profile state directories under root. Exported
-// so internal/hostutil/launcher.go can iterate them when cleaning stale
+// so internal/host/hoststate can iterate them when cleaning stale
 // session log pointers and audit dirs; the cleanup helpers themselves
-// stay in launcher because they touch broader launcher state.
+// live in hoststate because they touch broader launcher state.
 func StateDirs(root string) ([]string, error) {
 	return sessionStateDirs(root)
 }

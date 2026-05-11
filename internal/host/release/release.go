@@ -3,7 +3,7 @@
 
 // Package release carries the GitHub-release helpers the
 // workcell-hostutil binary uses when assembling and uploading a
-// release. The functions previously lived in internal/hostutil
+// release. The functions previously lived in internal/host/launcher
 // alongside path canonicalization and session helpers; they were
 // split out to keep the per-concern boundaries cleaner, matching the
 // /sethify Run-1 plan to break the hostutil god-package into focused
