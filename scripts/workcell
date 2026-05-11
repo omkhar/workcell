@@ -309,8 +309,14 @@ Options:
   --prepare-only                Seed or refresh the prepared runtime image, then exit without launching
   --repair-profile              Delete a conflicting unmanaged Colima profile before launch
                                 (implies --prepare on strict)
-  --ack-breakglass              Required with --mode breakglass
-  --ack-arbitrary-command       Required with --allow-arbitrary-command
+  --ack-breakglass[=YYYY-MM-DD] Required with --mode breakglass; bare form
+                                accepted with a deprecation warning, the
+                                dated form requires today's UTC date
+  --ack-arbitrary-command[=YYYY-MM-DD]
+                                Required with --allow-arbitrary-command;
+                                bare form accepted with a deprecation
+                                warning, the dated form requires today's
+                                UTC date
   --workspace PATH              Workspace to mount (default: current directory)
   --session-workspace direct|isolated
                                 Detached session workspace flow for session start
@@ -5864,10 +5870,18 @@ build_recommended_command() {
     done
   fi
   if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
-    cmd+=(--allow-arbitrary-command --ack-arbitrary-command)
+    if [[ -n "${ACK_ARBITRARY_COMMAND_TOKEN}" ]]; then
+      cmd+=(--allow-arbitrary-command "--ack-arbitrary-command=${ACK_ARBITRARY_COMMAND_TOKEN}")
+    else
+      cmd+=(--allow-arbitrary-command --ack-arbitrary-command)
+    fi
   fi
   if [[ "${ACK_BREAKGLASS}" -eq 1 ]]; then
-    cmd+=(--ack-breakglass)
+    if [[ -n "${ACK_BREAKGLASS_TOKEN}" ]]; then
+      cmd+=("--ack-breakglass=${ACK_BREAKGLASS_TOKEN}")
+    else
+      cmd+=(--ack-breakglass)
+    fi
   fi
   if [[ "${REBUILD}" -eq 1 ]]; then
     cmd+=(--rebuild)
@@ -6442,26 +6456,51 @@ validate_workspace() {
   exit 2
 }
 
+validate_ack_token() {
+  local flag_name="$1"
+  local token="$2"
+  local today
+
+  if [[ -z "${token}" ]]; then
+    echo "Warning: ${flag_name} accepted without a date acknowledgement; prefer ${flag_name}=YYYY-MM-DD (today's UTC date)." >&2
+    return 0
+  fi
+  today="$(date -u +%Y-%m-%d)"
+  if [[ "${token}" != "${today}" ]]; then
+    echo "${flag_name}=${token} does not match today's UTC date (${today})." >&2
+    echo "Re-issue with ${flag_name}=${today} when you still intend to bypass the boundary." >&2
+    exit 2
+  fi
+}
+
 validate_mode_requirements() {
   local mode="$1"
   local ack_breakglass="$2"
-  local allow_arbitrary_command="$3"
-  local ack_arbitrary_command="$4"
-  local allow_control_plane_vcs="$5"
-  local ack_control_plane_vcs="$6"
-  local rebuild="$7"
-  local prepare="$8"
+  local ack_breakglass_token="$3"
+  local allow_arbitrary_command="$4"
+  local ack_arbitrary_command="$5"
+  local ack_arbitrary_command_token="$6"
+  local allow_control_plane_vcs="$7"
+  local ack_control_plane_vcs="$8"
+  local rebuild="$9"
+  local prepare="${10}"
 
   if [[ "${mode}" == "breakglass" ]] && [[ "${ack_breakglass}" -eq 0 ]]; then
     echo "breakglass mode requires --ack-breakglass." >&2
     echo "Use it only when you intentionally want to disable the normal Workcell policy boundary." >&2
     exit 2
   fi
+  if [[ "${ack_breakglass}" -eq 1 ]]; then
+    validate_ack_token "--ack-breakglass" "${ack_breakglass_token}"
+  fi
 
   if [[ "${allow_arbitrary_command}" -eq 1 ]] && [[ "${ack_arbitrary_command}" -eq 0 ]]; then
     echo "arbitrary command mode requires --ack-arbitrary-command." >&2
     echo "Use it only for lower-assurance boundary debugging when you intentionally want to bypass provider command mediation." >&2
     exit 2
+  fi
+  if [[ "${ack_arbitrary_command}" -eq 1 ]]; then
+    validate_ack_token "--ack-arbitrary-command" "${ack_arbitrary_command_token}"
   fi
 
   if [[ "${allow_control_plane_vcs}" -eq 1 ]] && [[ "${ack_control_plane_vcs}" -eq 0 ]]; then
@@ -8201,8 +8240,10 @@ ALLOW_NONGIT_WORKSPACE=0
 ALLOW_CONTROL_PLANE_VCS=0
 ALLOW_ARBITRARY_COMMAND=0
 ACK_BREAKGLASS=0
+ACK_BREAKGLASS_TOKEN=""
 ACK_CONTROL_PLANE_VCS=0
 ACK_ARBITRARY_COMMAND=0
+ACK_ARBITRARY_COMMAND_TOKEN=""
 TEST_FAIL_AFTER_PROFILE_REFRESH=0
 SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT=0
 SELF_STAGING_PROBE_SYNTHETIC_CODEX_AUTH=0
@@ -8459,12 +8500,22 @@ while [[ $# -gt 0 ]]; do
       ACK_BREAKGLASS=1
       shift
       ;;
+    --ack-breakglass=*)
+      ACK_BREAKGLASS=1
+      ACK_BREAKGLASS_TOKEN="${1#*=}"
+      shift
+      ;;
     --ack-control-plane-vcs)
       ACK_CONTROL_PLANE_VCS=1
       shift
       ;;
     --ack-arbitrary-command)
       ACK_ARBITRARY_COMMAND=1
+      shift
+      ;;
+    --ack-arbitrary-command=*)
+      ACK_ARBITRARY_COMMAND=1
+      ACK_ARBITRARY_COMMAND_TOKEN="${1#*=}"
       shift
       ;;
     --rebuild)
@@ -8688,7 +8739,7 @@ if [[ -n "${LOGS_KIND}" ]]; then
   show_requested_logs
   exit 0
 fi
-validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${ALLOW_CONTROL_PLANE_VCS}" "${ACK_CONTROL_PLANE_VCS}" "${REBUILD}" "${PREPARE}"
+validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ACK_BREAKGLASS_TOKEN}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND_TOKEN}" "${ALLOW_CONTROL_PLANE_VCS}" "${ACK_CONTROL_PLANE_VCS}" "${REBUILD}" "${PREPARE}"
 if [[ -n "${WORKCELL_TEST_CODEX_AUTH_FILE:-}" ]]; then
   echo "WORKCELL_TEST_CODEX_AUTH_FILE is reserved for the Workcell test harness." >&2
   exit 2

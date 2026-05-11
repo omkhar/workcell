@@ -6192,8 +6192,35 @@ if ! run_workcell_verify --agent codex --mode breakglass --ack-breakglass --dry-
   exit 1
 fi
 
+ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
+if ! run_workcell_verify --agent codex --mode breakglass "--ack-breakglass=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run >/dev/null 2>&1; then
+  echo "Expected dated --ack-breakglass=${ACK_BREAKGLASS_TODAY_UTC} dry-run to succeed" >&2
+  exit 1
+fi
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --ack-breakglass=1999-01-01 --dry-run >/dev/null 2>&1; then
+  echo "Expected --ack-breakglass with a stale date to be rejected" >&2
+  exit 1
+fi
+
+ACK_BREAKGLASS_BARE_OUTPUT="$(run_workcell_verify --agent codex --mode breakglass --ack-breakglass --dry-run 2>&1 >/dev/null || true)"
+if ! grep -q -- '--ack-breakglass accepted without a date acknowledgement' <<<"${ACK_BREAKGLASS_BARE_OUTPUT}"; then
+  echo "Expected bare --ack-breakglass to print a deprecation warning" >&2
+  exit 1
+fi
+
 if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-arbitrary-command --dry-run >/dev/null 2>&1; then
   echo "Expected arbitrary command acknowledgement requirement" >&2
+  exit 1
+fi
+
+if ! run_workcell_verify --agent codex --prepare --allow-arbitrary-command "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run -- bash -lc true >/dev/null 2>&1; then
+  echo "Expected dated --ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC} dry-run to succeed" >&2
+  exit 1
+fi
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command=1999-01-01 --dry-run -- bash -lc true >/dev/null 2>&1; then
+  echo "Expected --ack-arbitrary-command with a stale date to be rejected" >&2
   exit 1
 fi
 
