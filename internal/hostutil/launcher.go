@@ -5,6 +5,7 @@ package hostutil
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -65,7 +66,7 @@ func CleanupStaleLatestLogPointers(stateRoot string) error {
 	if err != nil {
 		return err
 	}
-	uid := uint32(os.Getuid())
+	uid, uidOK := currentUID()
 	pointerNames := []string{
 		"workcell.latest-debug-log",
 		"workcell.latest-file-trace-log",
@@ -81,7 +82,8 @@ func CleanupStaleLatestLogPointers(stateRoot string) error {
 			if info.Mode()&os.ModeSymlink != 0 {
 				continue
 			}
-			if statUID(info) != uid {
+			fileUID, ok := statUID(info)
+			if !uidOK || !ok || fileUID != uid {
 				continue
 			}
 			content, err := os.ReadFile(pointerPath)
@@ -99,7 +101,9 @@ func CleanupStaleLatestLogPointers(stateRoot string) error {
 				continue
 			}
 			if _, err := os.Stat(target); err != nil {
-				_ = os.Remove(pointerPath)
+				if errors.Is(err, os.ErrNotExist) {
+					_ = os.Remove(pointerPath)
+				}
 			}
 		}
 	}
@@ -207,7 +211,10 @@ func CleanupStaleSessionAuditDirs(stateRoot string) error {
 		return err
 	}
 	cutoff := time.Now().Add(-12 * time.Hour)
-	uid := uint32(os.Getuid())
+	uid, uidOK := currentUID()
+	if !uidOK {
+		return nil
+	}
 	for _, profileDir := range stateDirs {
 		candidates, err := os.ReadDir(profileDir)
 		if err != nil {
@@ -222,7 +229,8 @@ func CleanupStaleSessionAuditDirs(stateRoot string) error {
 			if err != nil {
 				continue
 			}
-			if statUID(info) != uid || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			fileUID, ok := statUID(info)
+			if !ok || fileUID != uid || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 				continue
 			}
 			if info.ModTime().After(cutoff) {
@@ -278,7 +286,8 @@ func resolveHostOutputCandidate(raw string, allowExistingDir bool) (string, erro
 		current = filepath.Dir(current)
 	}
 
-	if info, err := os.Stat(target); err == nil {
+	info, err := os.Stat(target)
+	if err == nil {
 		if allowExistingDir {
 			if info.IsDir() {
 				return target, nil
@@ -289,6 +298,9 @@ func resolveHostOutputCandidate(raw string, allowExistingDir bool) (string, erro
 			return target, nil
 		}
 		return "", fmt.Errorf("host output path must be a regular file or a new file path: %s", target)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("stat host output candidate %s: %w", target, err)
 	}
 	return target, nil
 }
@@ -315,7 +327,10 @@ func CleanupStaleInjectionBundles(bundleParent string) error {
 	}
 
 	cutoff := time.Now().Add(-12 * time.Hour)
-	uid := uint32(os.Getuid())
+	uid, uidOK := currentUID()
+	if !uidOK {
+		return nil
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return err
@@ -328,10 +343,15 @@ func CleanupStaleInjectionBundles(bundleParent string) error {
 			if err != nil {
 				continue
 			}
-			if statUID(info) != uid || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			fileUID, ok := statUID(info)
+			if !ok || fileUID != uid || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 				continue
 			}
-			if live, err := injectionBundleIsLive(path, cutoff); err == nil && live {
+			// Only remove on confirmed not-live. Surface other errors
+			// (corrupted owner.json, transient ps failure) by keeping
+			// the bundle - safer than wiping an active session.
+			live, liveErr := injectionBundleIsLive(path, cutoff)
+			if liveErr != nil || live {
 				continue
 			}
 			_ = os.RemoveAll(path)
@@ -354,7 +374,8 @@ func CleanupStaleInjectionBundles(bundleParent string) error {
 		if err != nil {
 			continue
 		}
-		if statUID(info) != uid || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		fileUID, ok := statUID(info)
+		if !ok || fileUID != uid || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
 		bundleDir := filepath.Join(root, strings.TrimSuffix(name, ".mounts.json"))
@@ -468,7 +489,9 @@ func ResolveEndpoints(raw string) ([]string, error) {
 		if isNumericHost(host) {
 			continue
 		}
-		addrs, err := net.DefaultResolver.LookupIPAddr(nilContext{}, host)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		cancel()
 		if err != nil {
 			continue
 		}
@@ -532,9 +555,20 @@ func processStartTime(pid int) (string, error) {
 	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		// `ps -p PID` exits non-zero with empty output when the
+		// process does not exist. Distinguish that from other failures
+		// (PATH issue, permissions, transient ps error) so callers can
+		// decide whether the process is definitively gone vs unknown.
+		if exitErr, ok := err.(*exec.ExitError); ok && len(strings.TrimSpace(string(output))) == 0 && len(exitErr.Stderr) == 0 {
+			return "", processGoneErr{pid: pid}
+		}
 		return "", err
 	}
-	return strings.TrimSpace(string(output)), nil
+	trimmed := strings.TrimSpace(string(output))
+	if trimmed == "" {
+		return "", processGoneErr{pid: pid}
+	}
+	return trimmed, nil
 }
 
 func injectionBundleIsLive(bundlePath string, cutoff time.Time) (bool, error) {
@@ -556,14 +590,24 @@ func injectionBundleIsLive(bundlePath string, cutoff time.Time) (bool, error) {
 		Started string `json:"started"`
 	}
 	if err := json.Unmarshal(content, &owner); err != nil {
-		return false, nil
+		// Corrupted owner.json - safer to treat as live and refuse
+		// deletion than risk wiping an active bundle on transient
+		// metadata corruption.
+		return true, fmt.Errorf("parse owner.json at %s: %w", ownerMetaPath, err)
 	}
 	if owner.PID <= 0 || owner.Started == "" {
 		return false, nil
 	}
 	started, err := processStartTime(owner.PID)
 	if err != nil {
-		return false, nil
+		// processStartTime distinguishes ESRCH ("process gone") from
+		// other errors via processNotFound. If the process is
+		// definitively gone, the bundle is dead. Anything else is a
+		// transient lookup failure - keep the bundle.
+		if processNotFound(err) {
+			return false, nil
+		}
+		return true, fmt.Errorf("process start time for pid %d: %w", owner.PID, err)
 	}
 	return started == owner.Started, nil
 }
@@ -626,18 +670,32 @@ func boolTo01(value any) string {
 	return "0"
 }
 
-type nilContext struct{}
-
-func (nilContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (nilContext) Done() <-chan struct{}       { return nil }
-func (nilContext) Err() error                  { return nil }
-func (nilContext) Value(key any) any           { return nil }
-
-func statUID(info os.FileInfo) uint32 {
+func statUID(info os.FileInfo) (uint32, bool) {
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		return stat.Uid
+		return stat.Uid, true
 	}
-	return ^uint32(0)
+	return 0, false
+}
+
+func currentUID() (uint32, bool) {
+	uid := os.Getuid()
+	if uid < 0 {
+		return 0, false
+	}
+	return uint32(uid), true
+}
+
+type processGoneErr struct {
+	pid int
+}
+
+func (e processGoneErr) Error() string {
+	return fmt.Sprintf("process %d not found", e.pid)
+}
+
+func processNotFound(err error) bool {
+	var gone processGoneErr
+	return errors.As(err, &gone)
 }
 
 func isSymlink(path string) bool {
