@@ -20,6 +20,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/omkhar/workcell/internal/adapters"
+	"github.com/omkhar/workcell/internal/adapters/gemini"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
@@ -67,79 +69,13 @@ var (
 		"setenv":              {},
 		"userknownhostsfile":  {},
 	}
-	reservedTargets = []string{
-		"/state/agent-home/.codex",
-		"/state/agent-home/.claude",
-		"/state/agent-home/.config/claude-code",
-		"/state/agent-home/.gemini",
-		"/state/agent-home/.config/gcloud",
-		"/state/agent-home/.config/gh",
-		"/state/agent-home/.codex/AGENTS.md",
-		"/state/agent-home/.codex/auth.json",
-		"/state/agent-home/.codex/config.toml",
-		"/state/agent-home/.codex/managed_config.toml",
-		"/state/agent-home/.codex/requirements.toml",
-		"/state/agent-home/.codex/agents",
-		"/state/agent-home/.codex/rules",
-		"/state/agent-home/.codex/mcp",
-		"/state/agent-home/.claude/settings.json",
-		"/state/agent-home/.claude/CLAUDE.md",
-		"/state/agent-home/.claude/.claude.json",
-		"/state/agent-home/.claude.json",
-		"/state/agent-home/.claude/.credentials.json",
-		"/state/agent-home/.claude/workcell",
-		"/state/agent-home/.config/claude-code/auth.json",
-		"/state/agent-home/.mcp.json",
-		"/state/agent-home/.gemini/settings.json",
-		"/state/agent-home/.gemini/GEMINI.md",
-		"/state/agent-home/.gemini/.env",
-		"/state/agent-home/.gemini/oauth_creds.json",
-		"/state/agent-home/.gemini/projects.json",
-		"/state/agent-home/.gemini/trustedFolders.json",
-		"/state/agent-home/.config/gcloud/application_default_credentials.json",
-		"/state/agent-home/.config/gh/config.yml",
-		"/state/agent-home/.config/gh/hosts.yml",
-		"/state/agent-home/.ssh",
-	}
-	credentialContainerPaths = map[string]string{
-		"codex_auth":      directMountRoot + "/credentials/codex-auth.json",
-		"claude_auth":     directMountRoot + "/credentials/claude-auth.json",
-		"claude_api_key":  directMountRoot + "/credentials/claude-api-key.txt",
-		"claude_mcp":      directMountRoot + "/credentials/claude-mcp.json",
-		"gemini_env":      directMountRoot + "/credentials/gemini.env",
-		"gemini_oauth":    directMountRoot + "/credentials/gemini-oauth.json",
-		"gemini_projects": directMountRoot + "/credentials/gemini-projects.json",
-		"gcloud_adc":      directMountRoot + "/credentials/gcloud-adc.json",
-		"github_hosts":    directMountRoot + "/credentials/github-hosts.yml",
-		"github_config":   directMountRoot + "/credentials/github-config.yml",
-	}
-	agentScopedCredentialKeys = map[string]map[string]struct{}{
-		providerid.Codex: {
-			"codex_auth": {},
-		},
-		providerid.Claude: {
-			"claude_api_key": {},
-			"claude_auth":    {},
-			"claude_mcp":     {},
-		},
-		providerid.Gemini: {
-			"gemini_env":      {},
-			"gemini_oauth":    {},
-			"gemini_projects": {},
-			"gcloud_adc":      {},
-		},
-	}
-	sharedCredentialKeys = map[string]struct{}{
-		"github_hosts":  {},
-		"github_config": {},
-	}
-	googleAuthEndpoints = []string{
-		"accounts.google.com:443",
-		"oauth2.googleapis.com:443",
-		"sts.googleapis.com:443",
-	}
-	vertexEndpoint    = "aiplatform.googleapis.com:443"
-	geminiProjectKeys = []string{
+	reservedTargets           = adapters.ReservedTargets()
+	credentialContainerPaths  = adapters.CredentialContainerPaths()
+	agentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
+	sharedCredentialKeys      = adapters.SharedCredentialKeys()
+	googleAuthEndpoints       = gemini.GoogleAuthEndpoints
+	vertexEndpoint            = "aiplatform.googleapis.com:443"
+	geminiProjectKeys         = []string{
 		"GOOGLE_CLOUD_PROJECT",
 		"GOOGLE_CLOUD_PROJECT_ID",
 	}
