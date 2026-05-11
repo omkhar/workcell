@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
@@ -124,7 +125,7 @@ func runLauncher(args []string) error {
 		if len(args) != 1 {
 			return launcherUsage()
 		}
-		value, err := hostutil.RandomHex(4)
+		value, err := launcher.RandomHex(4)
 		if err != nil {
 			return err
 		}
@@ -138,9 +139,9 @@ func runLauncher(args []string) error {
 		if err != nil {
 			return err
 		}
-		status, statusErr := hostutil.ColimaProfileStatus(input, args[1])
+		status, statusErr := launcher.ColimaProfileStatus(input, args[1])
 		if statusErr != nil {
-			if hostutil.IsNoMatch(statusErr) {
+			if launcher.IsNoMatch(statusErr) {
 				fmt.Fprintln(os.Stderr, statusErr)
 				os.Exit(3)
 			}
@@ -157,7 +158,7 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		stale, err := hostutil.ProfileLockIsStale(args[1])
+		stale, err := launcher.ProfileLockIsStale(args[1])
 		if err != nil {
 			return err
 		}
@@ -175,7 +176,7 @@ func runLauncher(args []string) error {
 		if err != nil {
 			return fmt.Errorf("parse pid: %w", err)
 		}
-		acquired, err := hostutil.AcquireProfileLock(args[1], pid)
+		acquired, err := launcher.AcquireProfileLock(args[1], pid)
 		if err != nil {
 			return err
 		}
@@ -193,7 +194,7 @@ func runLauncher(args []string) error {
 		if err != nil {
 			return fmt.Errorf("parse pid: %w", err)
 		}
-		return hostutil.WriteProfileOwner(args[1], pid)
+		return launcher.WriteProfileOwner(args[1], pid)
 	case "cleanup-stale-session-audit-dirs":
 		if len(args) != 2 {
 			return launcherUsage()

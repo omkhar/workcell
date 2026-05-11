@@ -4,9 +4,7 @@
 package hostutil
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,54 +12,19 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
 var codexVersionPattern = regexp.MustCompile(`(?m)^\s*ARG CODEX_VERSION=(.+)$`)
-
-func RandomHex(n int) (string, error) {
-	if n <= 0 {
-		return "", errors.New("random hex size must be positive")
-	}
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(buf), nil
-}
-
-func ColimaProfileStatus(listJSON []byte, profile string) (string, error) {
-	records, err := decodeJSONObjectSequence(listJSON)
-	if err != nil {
-		return "", err
-	}
-	for _, record := range records {
-		name, _ := record["name"].(string)
-		if name != profile {
-			continue
-		}
-		status, _ := record["status"].(string)
-		if status == "" {
-			return "", errors.New("profile status missing status field")
-		}
-		return status, nil
-	}
-	return "", errNoMatch
-}
-
-func IsNoMatch(err error) bool {
-	return errors.Is(err, errNoMatch)
-}
 
 func CleanupStaleLatestLogPointers(stateRoot string) error {
 	stateDirs, err := sessions.StateDirs(stateRoot)
@@ -110,101 +73,6 @@ func CleanupStaleLatestLogPointers(stateRoot string) error {
 		}
 	}
 	return nil
-}
-
-func ProfileLockIsStale(lockDir string) (bool, error) {
-	ownerPath := filepath.Join(lockDir, "owner.json")
-	content, err := os.ReadFile(ownerPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return true, nil
-		}
-		return false, err
-	}
-
-	var owner struct {
-		PID     int    `json:"pid"`
-		Started string `json:"started"`
-	}
-	if err := json.Unmarshal(content, &owner); err != nil {
-		return false, fmt.Errorf("parse profile lock owner metadata: %w", err)
-	}
-	if owner.PID <= 0 || owner.Started == "" {
-		return false, fmt.Errorf("profile lock owner metadata is incomplete: %s", ownerPath)
-	}
-
-	if err := syscall.Kill(owner.PID, 0); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
-			return true, nil
-		}
-		return false, err
-	}
-
-	observed, err := processStartTime(owner.PID)
-	if err != nil {
-		if killErr := syscall.Kill(owner.PID, 0); killErr != nil {
-			if errors.Is(killErr, syscall.ESRCH) {
-				return true, nil
-			}
-			return false, killErr
-		}
-		return false, err
-	}
-	return observed != owner.Started, nil
-}
-
-func AcquireProfileLock(lockDir string, pid int) (bool, error) {
-	parentDir := filepath.Dir(lockDir)
-	if err := os.MkdirAll(parentDir, 0o755); err != nil {
-		return false, err
-	}
-
-	tempDir, err := os.MkdirTemp(parentDir, filepath.Base(lockDir)+".pending.")
-	if err != nil {
-		return false, err
-	}
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.RemoveAll(tempDir)
-		}
-	}()
-
-	if err := WriteProfileOwner(filepath.Join(tempDir, "owner.json"), pid); err != nil {
-		return false, err
-	}
-	if err := os.Rename(tempDir, lockDir); err != nil {
-		if errors.Is(err, os.ErrExist) || errors.Is(err, syscall.EEXIST) || errors.Is(err, syscall.ENOTEMPTY) {
-			return false, nil
-		}
-		return false, err
-	}
-
-	cleanup = false
-	return true, nil
-}
-
-func WriteProfileOwner(ownerPath string, pid int) error {
-	started, err := processStartTime(pid)
-	if err != nil {
-		return err
-	}
-	payload := map[string]any{
-		"pid":     pid,
-		"started": started,
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(ownerPath), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(ownerPath, data, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(ownerPath, 0o600)
 }
 
 func CleanupStaleSessionAuditDirs(stateRoot string) error {
@@ -522,57 +390,6 @@ func ResolveEndpoints(raw string) ([]string, error) {
 	return results, nil
 }
 
-var errNoMatch = errors.New("not found")
-
-func decodeJSONObjectSequence(raw []byte) ([]map[string]any, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 {
-		return nil, errNoMatch
-	}
-
-	if trimmed[0] == '[' {
-		var records []map[string]any
-		if err := json.Unmarshal(trimmed, &records); err != nil {
-			return nil, err
-		}
-		return records, nil
-	}
-
-	var records []map[string]any
-	for _, line := range bytes.Split(trimmed, []byte{'\n'}) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var record map[string]any
-		if err := json.Unmarshal(line, &record); err != nil {
-			return nil, err
-		}
-		records = append(records, record)
-	}
-	return records, nil
-}
-
-func processStartTime(pid int) (string, error) {
-	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// `ps -p PID` exits non-zero with empty output when the
-		// process does not exist. Distinguish that from other failures
-		// (PATH issue, permissions, transient ps error) so callers can
-		// decide whether the process is definitively gone vs unknown.
-		if exitErr, ok := err.(*exec.ExitError); ok && len(strings.TrimSpace(string(output))) == 0 && len(exitErr.Stderr) == 0 {
-			return "", processGoneErr{pid: pid}
-		}
-		return "", err
-	}
-	trimmed := strings.TrimSpace(string(output))
-	if trimmed == "" {
-		return "", processGoneErr{pid: pid}
-	}
-	return trimmed, nil
-}
-
 func injectionBundleIsLive(bundlePath string, cutoff time.Time) (bool, error) {
 	ownerMetaPath := filepath.Join(bundlePath, "owner.json")
 	content, err := os.ReadFile(ownerMetaPath)
@@ -600,13 +417,13 @@ func injectionBundleIsLive(bundlePath string, cutoff time.Time) (bool, error) {
 	if owner.PID <= 0 || owner.Started == "" {
 		return false, nil
 	}
-	started, err := processStartTime(owner.PID)
+	started, err := launcher.ProcessStartTime(owner.PID)
 	if err != nil {
-		// processStartTime distinguishes ESRCH ("process gone") from
-		// other errors via processNotFound. If the process is
-		// definitively gone, the bundle is dead. Anything else is a
+		// launcher.ProcessStartTime distinguishes ESRCH ("process gone")
+		// from other errors via launcher.IsProcessGone. If the process
+		// is definitively gone, the bundle is dead. Anything else is a
 		// transient lookup failure - keep the bundle.
-		if processNotFound(err) {
+		if launcher.IsProcessGone(err) {
 			return false, nil
 		}
 		return true, fmt.Errorf("process start time for pid %d: %w", owner.PID, err)
@@ -685,19 +502,6 @@ func currentUID() (uint32, bool) {
 		return 0, false
 	}
 	return uint32(uid), true
-}
-
-type processGoneErr struct {
-	pid int
-}
-
-func (e processGoneErr) Error() string {
-	return fmt.Sprintf("process %d not found", e.pid)
-}
-
-func processNotFound(err error) bool {
-	var gone processGoneErr
-	return errors.As(err, &gone)
 }
 
 func isSymlink(path string) bool {
