@@ -237,9 +237,18 @@ func validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error 
 	if !strings.Contains(releaseWorkflow, "ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}") {
 		return errors.New(".github/workflows/release.yml must gate GitHub attestations on public visibility or an explicit private-repo capability flag")
 	}
-	const attestGuard = "if: env.ENABLE_GITHUB_ATTESTATIONS == 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'"
+	if !strings.Contains(releaseWorkflow, "RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}") {
+		return errors.New(".github/workflows/release.yml must expose RELEASE_NO_ATTEST as an explicit opt-out env var sourced from vars.WORKCELL_RELEASE_NO_ATTEST")
+	}
+	if !strings.Contains(releaseWorkflow, "name: Confirm attestation environment policy") {
+		return errors.New(".github/workflows/release.yml must include the fail-closed attestation preflight step")
+	}
+	if !regexp.MustCompile(`(?ms)name: Confirm attestation environment policy.*?ENABLE_GITHUB_ATTESTATIONS_SUPPORTED.*?!= "true".*?exit 1`).MatchString(releaseWorkflow) {
+		return errors.New(".github/workflows/release.yml must keep the fail-closed attestation preflight script body (must `exit 1` when ENABLE_GITHUB_ATTESTATIONS_SUPPORTED is not 'true' and RELEASE_NO_ATTEST is not 'true')")
+	}
+	const attestGuard = "if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'"
 	attestStepRE := regexp.MustCompile(`(?m)^\s*-\s+uses:\s+actions/attest@`)
-	guardedAttestStepRE := regexp.MustCompile(`(?ms)^\s*-\s+uses:\s+actions/attest@[^\n]+\n\s+if:\s+env\.ENABLE_GITHUB_ATTESTATIONS == 'true' && env\.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'\n`)
+	guardedAttestStepRE := regexp.MustCompile(`(?ms)^\s*-\s+uses:\s+actions/attest@[^\n]+\n\s+if:\s+env\.RELEASE_NO_ATTEST != 'true' && env\.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'\n`)
 	totalAttestSteps := len(attestStepRE.FindAllString(releaseWorkflow, -1))
 	if totalAttestSteps != 10 {
 		return errors.New(".github/workflows/release.yml must keep exactly ten reviewed GitHub attestation steps")
@@ -365,7 +374,7 @@ func hostedControlsRepositoryVariables(policy map[string]any, policyPath string)
 		}
 	}
 	for _, requiredName := range []string{
-		"WORKCELL_ENABLE_GITHUB_ATTESTATIONS",
+		"WORKCELL_RELEASE_NO_ATTEST",
 		"WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS",
 	} {
 		if _, ok := expectedRepoVariables[requiredName]; !ok {
@@ -380,8 +389,8 @@ func validateCanonicalHostedControlsRepositoryVariables(policy map[string]any, p
 	if err != nil {
 		return err
 	}
-	if value, _ := repositoryVariables["WORKCELL_ENABLE_GITHUB_ATTESTATIONS"].(string); value != "true" {
-		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_ENABLE_GITHUB_ATTESTATIONS = \"true\"")
+	if value, _ := repositoryVariables["WORKCELL_RELEASE_NO_ATTEST"].(string); value != "false" {
+		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_RELEASE_NO_ATTEST = \"false\"")
 	}
 	if value, _ := repositoryVariables["WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS"].(string); value != "false" {
 		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = \"false\"")
@@ -2060,7 +2069,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		"docker buildx imagetools inspect --raw",
 		"{{json .Manifest}}",
 		"vnd.docker.reference.type",
-		"ENABLE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS || 'false' }}",
+		"RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}",
 		"actions/attest@",
 		"Verify release bundle matches preflight",
 		"Verify control-plane manifest matches preflight",
