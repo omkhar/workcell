@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/sessions"
-	"github.com/omkhar/workcell/internal/hostutil"
 )
 
 func TestRunLauncherSessionTimeline(t *testing.T) {
@@ -405,7 +405,7 @@ func TestResolveHostOutputDirectoryCandidateRejectsRegularFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := hostutil.ResolveHostOutputDirectoryCandidate(filePath)
+	_, err := hoststate.ResolveHostOutputDirectoryCandidate(filePath)
 	if err == nil {
 		t.Fatal("ResolveHostOutputDirectoryCandidate unexpectedly accepted a regular file")
 	}

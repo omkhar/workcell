@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omkhar/workcell/internal/hostutil"
+	"github.com/omkhar/workcell/internal/host/hoststate"
 )
 
 type fileSnapshot struct {
@@ -161,7 +161,7 @@ func TestRunMetadataModeWritesPlaceholderAndMetadata(t *testing.T) {
 		mode: 0o600,
 	})
 
-	lines, err := hostutil.ResolverMetadataLines(filepath.Join(resolvedOutputRoot, "resolver-metadata.json"))
+	lines, err := hoststate.ResolverMetadataLines(filepath.Join(resolvedOutputRoot, "resolver-metadata.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

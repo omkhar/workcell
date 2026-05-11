@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
 	"github.com/omkhar/workcell/internal/host/sessions"
@@ -153,7 +154,7 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		return hostutil.CleanupStaleLatestLogPointers(args[1])
+		return hoststate.CleanupStaleLatestLogPointers(args[1])
 	case "profile-lock-is-stale":
 		if len(args) != 2 {
 			return launcherUsage()
@@ -199,7 +200,7 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		return hostutil.CleanupStaleSessionAuditDirs(args[1])
+		return hoststate.CleanupStaleSessionAuditDirs(args[1])
 	case "session-record-write":
 		if len(args) < 3 {
 			return launcherUsage()
@@ -229,19 +230,19 @@ func runLauncher(args []string) error {
 		if len(args) < 3 {
 			return launcherUsage()
 		}
-		fmt.Println(hostutil.AuditRecordDigest(args[1], args[2], args[3:]))
+		fmt.Println(hoststate.AuditRecordDigest(args[1], args[2], args[3:]))
 		return nil
 	case "direct-mount-cache-key":
 		if len(args) != 3 {
 			return launcherUsage()
 		}
-		fmt.Println(hostutil.DirectMountCacheKey(args[1], args[2]))
+		fmt.Println(hoststate.DirectMountCacheKey(args[1], args[2]))
 		return nil
 	case "resolve-host-output-candidate":
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		value, err := hostutil.ResolveHostOutputCandidate(args[1])
+		value, err := hoststate.ResolveHostOutputCandidate(args[1])
 		if err != nil {
 			return err
 		}
@@ -251,7 +252,7 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		value, err := hostutil.ResolveHostOutputDirectoryCandidate(args[1])
+		value, err := hoststate.ResolveHostOutputDirectoryCandidate(args[1])
 		if err != nil {
 			return err
 		}
@@ -261,12 +262,12 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		return hostutil.CleanupStaleInjectionBundles(args[1])
+		return hoststate.CleanupStaleInjectionBundles(args[1])
 	case "manifest-metadata":
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		lines, err := hostutil.ManifestMetadataLines(args[1])
+		lines, err := hoststate.ManifestMetadataLines(args[1])
 		if err != nil {
 			return err
 		}
@@ -278,7 +279,7 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		lines, err := hostutil.ResolverMetadataLines(args[1])
+		lines, err := hoststate.ResolverMetadataLines(args[1])
 		if err != nil {
 			return err
 		}
@@ -290,7 +291,7 @@ func runLauncher(args []string) error {
 		if len(args) != 2 {
 			return launcherUsage()
 		}
-		value, err := hostutil.WorkspaceCacheKey(args[1])
+		value, err := hoststate.WorkspaceCacheKey(args[1])
 		if err != nil {
 			return err
 		}
