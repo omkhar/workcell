@@ -163,7 +163,12 @@ func spawnPTYReal(command []string, stdin, stdout *os.File, stdinRead, masterRea
 				if isRetryableIOError(readErr) {
 					continue
 				}
-				if errors.Is(readErr, io.EOF) {
+				// Treat EIO from a closed master fd the same as EOF so a
+				// child-exit-then-master-read race terminates cleanly,
+				// matching the Linux side. macOS surfaces this rarely
+				// but the symmetry keeps the closing semantics aligned
+				// across kernels.
+				if errors.Is(readErr, io.EOF) || errors.Is(readErr, syscall.EIO) {
 					break
 				}
 				loopErr = readErr

@@ -1,3 +1,8 @@
+# Deliberate floor: any moderate-or-higher advisory in runtime or
+# development scope fails the PR check. Low-severity advisories are
+# allowed to land because dependabot still surfaces them in the
+# dashboard, and tightening below moderate would generate enough churn
+# to bury the genuine signal.
 fail-on-severity: moderate
 fail-on-scopes:
   - runtime

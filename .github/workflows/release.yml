@@ -501,7 +501,11 @@ jobs:
       - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          # Use repository_owner instead of github.actor: any maintainer
+          # can tag a release; the ghcr push always targets the
+          # ghcr.io/<owner> namespace, so the login user should be
+          # owner-scoped rather than actor-scoped.
+          username: ${{ github.repository_owner }}
           password: ${{ github.token }}
 
       - name: Build validation tool image

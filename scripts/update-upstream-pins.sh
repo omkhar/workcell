@@ -284,6 +284,7 @@ target_zizmor_sha="$(
   curl -fsSL \
     --max-time 60 \
     --connect-timeout 15 \
+    --max-filesize 209715200 \
     "${target_zizmor_url}" |
     shasum -a 256 |
     awk '{ print $1 }'
