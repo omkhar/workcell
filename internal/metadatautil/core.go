@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/providerid"
 )
 
 var (
@@ -648,7 +650,7 @@ func ControlPlaneParityRows(manifestPath string) ([]string, error) {
 	}
 
 	rows := make([]string, 0, 4)
-	for _, provider := range []string{"codex", "claude", "gemini"} {
+	for _, provider := range []string{providerid.Codex, providerid.Claude, providerid.Gemini} {
 		prefix := "/opt/workcell/adapters/" + provider + "/"
 		for runtimePath := range runtimePaths {
 			if strings.HasPrefix(runtimePath, prefix) {
@@ -870,11 +872,11 @@ func GenerateBuildInputManifest(
 			"dockerfile_sha256": sha256HexString(dockerfile),
 			"node_base_image":   nodeBaseImage,
 			"debian_snapshot":   debianSnapshot,
-			"claude": map[string]any{
+			providerid.Claude: map[string]any{
 				"version": claudeVersion,
 				"assets":  claudeAssets,
 			},
-			"codex": map[string]any{
+			providerid.Codex: map[string]any{
 				"version": codexVersion,
 				"assets":  codexAssets,
 			},

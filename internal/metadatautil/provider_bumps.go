@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/omkhar/workcell/internal/providerid"
 )
 
 const (
@@ -157,7 +158,7 @@ func LoadProviderBumpPolicy(policyPath string) (ProviderBumpPolicy, error) {
 	if policy.CooloffHours <= 0 {
 		return ProviderBumpPolicy{}, fmt.Errorf("%s must set a positive cooloff_hours", policyPath)
 	}
-	requiredProviders := []string{"claude", "codex", "gemini"}
+	requiredProviders := []string{providerid.Claude, providerid.Codex, providerid.Gemini}
 	for _, provider := range requiredProviders {
 		spec, ok := policy.Providers[provider]
 		if !ok {
@@ -176,7 +177,7 @@ func LoadProviderBumpPolicy(policyPath string) (ProviderBumpPolicy, error) {
 			if !ok {
 				return ProviderBumpPolicy{}, fmt.Errorf("%s must pin provider.%s.approved_version to an exact stable version", policyPath, provider)
 			}
-			if provider != "claude" {
+			if provider != providerid.Claude {
 				return ProviderBumpPolicy{}, fmt.Errorf("%s only supports provider.claude.approved_version today", policyPath)
 			}
 			if spec.MaxVersion != "" {
@@ -213,19 +214,19 @@ func CheckProviderBumpPolicy(policyPath, dockerfilePath, providersPackageJSONPat
 	if err != nil {
 		return err
 	}
-	if policy.Providers["codex"].Channel == "stable" && !stableVersionPattern.MatchString(codexVersion) {
+	if policy.Providers[providerid.Codex].Channel == "stable" && !stableVersionPattern.MatchString(codexVersion) {
 		return fmt.Errorf("%s requires a stable Codex pin, found %q in %s", policyPath, codexVersion, dockerfilePath)
 	}
-	if policy.Providers["claude"].Channel == "stable" && !stableVersionPattern.MatchString(claudeVersion) {
+	if policy.Providers[providerid.Claude].Channel == "stable" && !stableVersionPattern.MatchString(claudeVersion) {
 		return fmt.Errorf("%s requires a stable Claude pin, found %q in %s", policyPath, claudeVersion, dockerfilePath)
 	}
-	if policy.Providers["gemini"].Channel == "stable" && !stableVersionPattern.MatchString(geminiVersion) {
+	if policy.Providers[providerid.Gemini].Channel == "stable" && !stableVersionPattern.MatchString(geminiVersion) {
 		return fmt.Errorf("%s requires a stable Gemini pin, found %q in %s", policyPath, geminiVersion, providersPackageJSONPath)
 	}
-	if err := enforceProviderMaxVersion(policyPath, "codex", "Codex", codexVersion, policy.Providers["codex"].MaxVersion, dockerfilePath); err != nil {
+	if err := enforceProviderMaxVersion(policyPath, providerid.Codex, "Codex", codexVersion, policy.Providers[providerid.Codex].MaxVersion, dockerfilePath); err != nil {
 		return err
 	}
-	if err := enforceProviderMaxVersion(policyPath, "claude", "Claude", claudeVersion, policy.Providers["claude"].MaxVersion, dockerfilePath); err != nil {
+	if err := enforceProviderMaxVersion(policyPath, providerid.Claude, "Claude", claudeVersion, policy.Providers[providerid.Claude].MaxVersion, dockerfilePath); err != nil {
 		return err
 	}
 	return nil
@@ -254,15 +255,15 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 		return nil, err
 	}
 
-	codexSelection, err := selectCodexStable(codexCurrent, cutoff, policy.Providers["codex"].MaxVersion, sources, client)
+	codexSelection, err := selectCodexStable(codexCurrent, cutoff, policy.Providers[providerid.Codex].MaxVersion, sources, client)
 	if err != nil {
 		return nil, err
 	}
 	claudeSelection, err := selectClaudeStable(
 		claudeCurrent,
 		cutoff,
-		policy.Providers["claude"].MaxVersion,
-		policy.Providers["claude"].ApprovedVersion,
+		policy.Providers[providerid.Claude].MaxVersion,
+		policy.Providers[providerid.Claude].ApprovedVersion,
 		sources,
 		client,
 	)
@@ -280,9 +281,9 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 		CooloffHours: policy.CooloffHours,
 		HasChanges:   codexSelection.Changed || claudeSelection.Changed || geminiSelection.Changed,
 		Providers: map[string]ProviderBumpSelection{
-			"codex":  codexSelection,
-			"claude": claudeSelection,
-			"gemini": geminiSelection,
+			providerid.Codex:  codexSelection,
+			providerid.Claude: claudeSelection,
+			providerid.Gemini: geminiSelection,
 		},
 	}
 	return plan, nil
@@ -302,15 +303,15 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	if err != nil {
 		return err
 	}
-	codexPlan, ok := plan.Providers["codex"]
+	codexPlan, ok := plan.Providers[providerid.Codex]
 	if !ok {
 		return fmt.Errorf("%s does not contain a codex provider plan", planPath)
 	}
-	claudePlan, ok := plan.Providers["claude"]
+	claudePlan, ok := plan.Providers[providerid.Claude]
 	if !ok {
 		return fmt.Errorf("%s does not contain a claude provider plan", planPath)
 	}
-	geminiPlan, ok := plan.Providers["gemini"]
+	geminiPlan, ok := plan.Providers[providerid.Gemini]
 	if !ok {
 		return fmt.Errorf("%s does not contain a gemini provider plan", planPath)
 	}
@@ -328,10 +329,10 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 		if err != nil {
 			return err
 		}
-		if err := enforceProviderMaxVersion(policyPath, "codex", "Codex", codexPlan.TargetVersion, policy.Providers["codex"].MaxVersion, planPath); err != nil {
+		if err := enforceProviderMaxVersion(policyPath, providerid.Codex, "Codex", codexPlan.TargetVersion, policy.Providers[providerid.Codex].MaxVersion, planPath); err != nil {
 			return err
 		}
-		if err := enforceProviderMaxVersion(policyPath, "claude", "Claude", claudePlan.TargetVersion, policy.Providers["claude"].MaxVersion, planPath); err != nil {
+		if err := enforceProviderMaxVersion(policyPath, providerid.Claude, "Claude", claudePlan.TargetVersion, policy.Providers[providerid.Claude].MaxVersion, planPath); err != nil {
 			return err
 		}
 	}

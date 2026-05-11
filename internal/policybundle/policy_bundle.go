@@ -19,13 +19,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/secretfile"
 )
 
 var SupportedAgents = map[string]struct{}{
-	"codex":  {},
-	"claude": {},
-	"gemini": {},
+	providerid.Codex:  {},
+	providerid.Claude: {},
+	providerid.Gemini: {},
 }
 
 var SupportedModes = map[string]struct{}{
@@ -49,15 +50,15 @@ var CredentialKeys = map[string]struct{}{
 }
 
 var AgentScopedCredentialKeys = map[string]map[string]struct{}{
-	"codex": {
+	providerid.Codex: {
 		"codex_auth": {},
 	},
-	"claude": {
+	providerid.Claude: {
 		"claude_api_key": {},
 		"claude_auth":    {},
 		"claude_mcp":     {},
 	},
-	"gemini": {
+	providerid.Gemini: {
 		"gemini_env":      {},
 		"gemini_oauth":    {},
 		"gemini_projects": {},
@@ -782,7 +783,7 @@ func RenderPolicyTOML(policy map[string]any) (string, error) {
 	if documents, ok := asStringMap(policy["documents"]); ok && len(documents) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, "[documents]")
-		for _, key := range []string{"common", "codex", "claude", "gemini"} {
+		for _, key := range []string{"common", providerid.Codex, providerid.Claude, providerid.Gemini} {
 			if value, ok := documents[key]; ok {
 				rendered, err := RenderTOMLValue(value)
 				if err != nil {
