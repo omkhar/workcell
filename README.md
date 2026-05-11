@@ -5,11 +5,10 @@
 [![Security](https://github.com/omkhar/workcell/actions/workflows/security.yml/badge.svg)](https://github.com/omkhar/workcell/actions/workflows/security.yml)
 
 Workcell runs coding agents inside a bounded local runtime on Apple Silicon
-macOS: a dedicated Colima VM plus a hardened container inside that VM. It
-supports
-Codex, Claude Code, and Gemini through thin provider adapters that seed each
-provider's native control plane without pretending provider config is the
-security boundary.
+macOS: a dedicated Colima VM plus a hardened container inside that VM. It ships
+Tier 1 adapters for Codex, Claude Code, and Gemini that seed each provider's
+native control plane without pretending provider config is the security
+boundary.
 
 This project is for teams that want local agent velocity without turning the
 host home directory, keychain, provider state, or local sockets into the trust
@@ -166,6 +165,7 @@ Use the host-side auth helpers instead of hand-editing the common case:
 workcell auth init
 workcell auth set --agent codex --credential codex_auth --source /path/to/auth.json
 workcell auth status --agent codex
+workcell auth unset --agent codex --credential codex_auth
 workcell policy validate
 workcell why --agent codex --mode strict --credential codex_auth
 workcell --agent codex --auth-status --workspace /path/to/repo
@@ -404,8 +404,13 @@ See [docs/provenance.md](docs/provenance.md) and
 - `runtime/`: VM and container boundary implementation
 - `policy/`: shared contract layer and hosted-control policy
 - `adapters/`: provider-native baselines for Codex, Claude, and Gemini
+- `cmd/`: host-side and runtime-side Go entrypoints (the `workcell-*` binaries)
+- `internal/`: shared Go packages backing the `cmd/` binaries
 - `scripts/`: launcher, validation, release, audit, and bootstrap entrypoints
 - `verify/`: invariant-oriented verification material
+- `man/`: workcell.1 manpage
+- `tests/`: scenario manifests and fixtures
+- `tools/`: developer tooling (markdownlint, validator image)
 - `docs/`: user-facing design, quickstarts, install, and release docs
 - `workflows/`: implementation notes such as adapter porting guidance
 

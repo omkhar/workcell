@@ -136,8 +136,13 @@ boundary, trust model, or provider adapters, mention it in the body.
 
 `./scripts/dev-quick-check.sh` is the normal edit loop. It covers:
 
-- shell lint and format checks
-- Rust fmt, clippy, and tests
+- shell lint and format checks (`shellcheck`, `shfmt`)
+- Dockerfile lint via `hadolint`
+- Go formatting (`gofmt -l`), `go vet ./...`, and `go test ./...`
+- Rust fmt, clippy, and tests inside `runtime/container/rust/`
+- Dead-code check (`scripts/check-dead-code.sh`)
+- Public repo hygiene check (`scripts/check-public-repo-hygiene.sh`)
+- Requirements coverage and operator-contract verification
 
 For fuller repo validation without the entire pre-merge stack, use:
 

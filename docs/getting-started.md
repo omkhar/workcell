@@ -91,6 +91,12 @@ Check the host-side view at any time:
 workcell auth status --agent codex
 ```
 
+To roll back a credential entry from the host policy, use:
+
+```bash
+workcell auth unset --agent codex --credential codex_auth
+```
+
 That output, `workcell --auth-status`, and `workcell why` all include bootstrap
 summary fields. Use
 [docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md) to interpret

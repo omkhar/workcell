@@ -1,4 +1,4 @@
-.TH WORKCELL 1 "2026-04-14" "Workcell" "User Commands"
+.TH WORKCELL 1 "2026-04-25" "Workcell" "User Commands"
 .SH NAME
 workcell \- bounded runtime launcher for coding agents
 .SH SYNOPSIS
@@ -400,7 +400,9 @@ verify every commit being published, push it, and open a GitHub pull request
 using host Git and GitHub CLI state.
 The supported base branch is
 .BR main ;
-non-main bases remain an explicit lower-assurance draft-only escape hatch.
+non-main bases remain an explicit lower-assurance draft-only escape hatch
+selected via
+.BR --allow-non-main-base .
 Dry-run output reports whether repo-owned PR checks are expected for the chosen
 base.
 Use
@@ -408,6 +410,15 @@ Use
 to pin an explicit host GitHub CLI binary when needed, or use
 .BR "workcell publish-pr --help"
 for the full option set.
+.TP
+.B --allow-non-main-base
+Explicit publish-pr opt-in for using a non-
+.BR main
+base branch. The resulting pull request stays draft-only and does not receive
+repo-owned PR validation or merge gating. Pair with
+.B --base BRANCH
+to name the target. This is the only supported way to publish against a
+stacked-review or feature-branch base.
 .TP
 .B -h, --help
 Show usage information.
