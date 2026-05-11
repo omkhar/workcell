@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package hostutil
+package launcher
 
 import (
 	"context"
@@ -39,13 +39,6 @@ func ValidateSecurityOptions(raw string) error {
 		}
 	}
 	return errors.New("managed runtime requires Docker seccomp support to stay active")
-}
-
-func CanonicalizeToolPath(candidate string) (string, error) {
-	if candidate == "" {
-		return "", nil
-	}
-	return CanonicalizePath(candidate)
 }
 
 func DedupeEndpointList(raw string) string {
