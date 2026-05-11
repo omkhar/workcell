@@ -116,7 +116,7 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		`contexts = ["Allowed PR base", "Validate repository"]`,
 		"",
 		"[repository_variables]",
-		`WORKCELL_ENABLE_GITHUB_ATTESTATIONS = "true"`,
+		`WORKCELL_RELEASE_NO_ATTEST = "false"`,
 		`WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"`,
 		"",
 		"[workflow_environment.hosted-controls-audit]",
@@ -148,8 +148,8 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 	actionsVariables := map[string]any{
 		"variables": []map[string]any{
 			{
-				"name":  "WORKCELL_ENABLE_GITHUB_ATTESTATIONS",
-				"value": "true",
+				"name":  "WORKCELL_RELEASE_NO_ATTEST",
+				"value": "false",
 			},
 			{
 				"name":  "WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS",

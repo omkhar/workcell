@@ -63,12 +63,18 @@ immutable_github_releases = true
 
 [repository_variables]
 # The canonical Workcell repository always requests GitHub-native attestations
-# when the platform supports them. Public repos support that path on all
-# current plans; private/internal repos need explicit hosted-control approval
-# because GitHub only supports them on Enterprise Cloud. Forks can loosen this
+# when the platform supports them. Release attestations are now fail-closed:
+# every release attests its artifacts unless WORKCELL_RELEASE_NO_ATTEST is
+# explicitly set to "true". The hosted-controls policy pins it to "false" so
+# that setting the bypass on the repo cannot silently disable all
+# actions/attest steps while validation still reports green.
+#
+# Public repos support attestations on all current plans;
+# private/internal repos need explicit hosted-control approval because
+# GitHub only supports them on Enterprise Cloud. Forks can loosen this
 # policy, but the upstream repo treats both variables as part of the reviewed
 # control plane so publication posture cannot silently drift.
-WORKCELL_ENABLE_GITHUB_ATTESTATIONS = "true"
+WORKCELL_RELEASE_NO_ATTEST = "false"
 WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"
 
 [workflow_environment.hosted-controls-audit]
