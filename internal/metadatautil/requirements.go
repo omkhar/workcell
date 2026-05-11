@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -46,7 +46,7 @@ func ValidateRequirements(rootDir, requirementsPath string) error {
 		for id := range rawTable {
 			ids = append(ids, id)
 		}
-		sort.Strings(ids)
+		slices.Sort(ids)
 		for _, id := range ids {
 			if !strings.HasPrefix(id, prefix) {
 				return fmt.Errorf("%s requirement %s must use prefix %s", requirementsPath, id, prefix)
@@ -206,7 +206,7 @@ func requiredReleaseFacingDocs(rootDir string) ([]string, error) {
 	entries, err := os.ReadDir(examplesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			sort.Strings(requiredDocs)
+			slices.Sort(requiredDocs)
 			return requiredDocs, nil
 		}
 		return nil, err
@@ -217,7 +217,7 @@ func requiredReleaseFacingDocs(rootDir string) ([]string, error) {
 		}
 		requiredDocs = append(requiredDocs, filepath.ToSlash(filepath.Join("docs", "examples", entry.Name())))
 	}
-	sort.Strings(requiredDocs)
+	slices.Sort(requiredDocs)
 	return requiredDocs, nil
 }
 

@@ -13,7 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -435,7 +435,7 @@ func selectedCredentialKeys(agent string) []string {
 	for key := range agentScopedCredentialKeys[agent] {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -778,7 +778,7 @@ func sortedKeys(value map[string]any) []string {
 	for key := range value {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -1323,7 +1323,7 @@ func validateAllowedKeys(table map[string]any, allowed map[string]struct{}, labe
 			unknown = append(unknown, key)
 		}
 	}
-	sort.Strings(unknown)
+	slices.Sort(unknown)
 	if len(unknown) > 0 {
 		return fmt.Errorf("%s contains unsupported keys: %s", label, strings.Join(unknown, ", "))
 	}

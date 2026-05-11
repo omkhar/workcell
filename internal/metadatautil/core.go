@@ -14,7 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -196,7 +196,7 @@ func gitTrackedFiles(rootDir string) ([]string, bool, error) {
 			tracked = append(tracked, path)
 		}
 	}
-	sort.Strings(tracked)
+	slices.Sort(tracked)
 	return tracked, true, nil
 }
 
@@ -213,7 +213,7 @@ func gitTrackedSubset(rootDir string, paths []string, requireTracked bool) ([]st
 		seen[path] = struct{}{}
 		unique = append(unique, path)
 	}
-	sort.Strings(unique)
+	slices.Sort(unique)
 
 	if !gitInsideWorkTree(rootDir) {
 		return unique, nil
@@ -299,7 +299,7 @@ func walkFiles(rootDir, relativeRoot string, excludeParts ...string) ([]string, 
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths, nil
 }
 
@@ -350,7 +350,7 @@ func walkRepoFiles(rootDir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths, nil
 }
 
@@ -922,6 +922,6 @@ func sortedKeys(values map[string]any) []string {
 	for key := range values {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }

@@ -9,7 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -77,7 +77,7 @@ func ValidateOperatorContract(rootDir, contractPath, requirementsPath string) er
 	for workflowID := range contract.Workflows {
 		workflowIDs = append(workflowIDs, workflowID)
 	}
-	sort.Strings(workflowIDs)
+	slices.Sort(workflowIDs)
 
 	for _, workflowID := range workflowIDs {
 		workflow := contract.Workflows[workflowID]
@@ -403,7 +403,7 @@ func loadOperatorSurfaces(rootDir string, contract operatorContract) (map[string
 	for surface := range requested {
 		keys = append(keys, surface)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	for _, surface := range keys {
 		content, err := renderDiscoverabilitySurface(rootDir, surface)
 		if err != nil {

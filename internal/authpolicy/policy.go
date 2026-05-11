@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -206,7 +207,7 @@ func validateAllowedKeys(table map[string]any, allowedKeys map[string]struct{}, 
 			unknown = append(unknown, key)
 		}
 	}
-	sort.Strings(unknown)
+	slices.Sort(unknown)
 	if len(unknown) > 0 {
 		return die(fmt.Sprintf("%s contains unsupported keys: %s", label, strings.Join(unknown, ", ")))
 	}
@@ -969,7 +970,7 @@ func renderPolicyTOML(policy map[string]any) (string, error) {
 				extras = append(extras, key)
 			}
 		}
-		sort.Strings(extras)
+		slices.Sort(extras)
 		for _, key := range extras {
 			rendered, err := renderTOMLValue(ssh[key])
 			if err != nil {
@@ -1003,7 +1004,7 @@ func renderPolicyTOML(policy map[string]any) (string, error) {
 				}
 				extras = append(extras, key)
 			}
-			sort.Strings(extras)
+			slices.Sort(extras)
 			for _, key := range extras {
 				rendered, err := renderTOMLValue(entryMap[key])
 				if err != nil {
@@ -1095,6 +1096,6 @@ func sortedKeys(value map[string]any) []string {
 	for key := range value {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }

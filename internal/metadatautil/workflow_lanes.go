@@ -270,7 +270,7 @@ func buildWorkflowLaneManifest(rootDir, policyPath string) (WorkflowLaneManifest
 	if err != nil {
 		return WorkflowLaneManifest{}, err
 	}
-	sort.Strings(workflowPaths)
+	slices.Sort(workflowPaths)
 
 	derived := make([]WorkflowLaneManifestEntry, 0)
 	seenPolicy := map[string]struct{}{}
@@ -373,7 +373,7 @@ func expandWorkflowLaneManifestEntries(rootDir, workflowPath string, policy map[
 	for jobID := range document.Jobs {
 		jobIDs = append(jobIDs, jobID)
 	}
-	sort.Strings(jobIDs)
+	slices.Sort(jobIDs)
 
 	var lanes []WorkflowLaneManifestEntry
 	for _, jobID := range jobIDs {
@@ -433,7 +433,7 @@ func workflowLaneID(workflowBase, jobID string, matrix map[string]string) string
 	for key := range matrix {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
 		parts = append(parts, fmt.Sprintf("%s=%s", key, matrix[key]))
@@ -482,14 +482,14 @@ func workflowLaneEvents(raw any) ([]string, map[string][]string, error) {
 				}
 				globs = append(globs, pathText)
 			}
-			sort.Strings(globs)
+			slices.Sort(globs)
 			pathGlobs[key] = globs
 		}
 	case nil:
 	default:
 		return nil, nil, fmt.Errorf("workflow on stanza uses unsupported type %T", raw)
 	}
-	sort.Strings(events)
+	slices.Sort(events)
 	return uniqueSortedStrings(events), pathGlobs, nil
 }
 
@@ -571,7 +571,7 @@ func uniqueSortedStrings(values []string) []string {
 		seen[value] = struct{}{}
 		result = append(result, value)
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	if len(result) == 0 {
 		return nil
 	}

@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -97,6 +97,6 @@ func ScanCredentialPatterns(rootDir string) error {
 		return nil
 	}
 
-	sort.Strings(findings)
+	slices.Sort(findings)
 	return fmt.Errorf("%s\nFound %d possible credential(s) in tests/ or docs/examples/", strings.Join(findings, "\n"), len(findings))
 }

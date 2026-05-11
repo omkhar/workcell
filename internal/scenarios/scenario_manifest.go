@@ -11,7 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -262,7 +262,7 @@ func sortedKeys(values map[string]struct{}) []string {
 	for key := range values {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -316,7 +316,7 @@ func ScenarioShellTests(scenarioRoot string) ([]string, error) {
 		return nil, err
 	}
 
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths, nil
 }
 
@@ -346,7 +346,7 @@ func VerifyCoverage(scenarioRoot, manifestPath string) error {
 	for key := range manifestTestFiles {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	for _, testFile := range keys {
 		info, err := root.Stat(filepath.FromSlash(testFile))
 		if err != nil || !info.Mode().IsRegular() {
