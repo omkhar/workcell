@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -158,10 +159,19 @@ func compareReproducibleBuildReportToManifest(report reproducibleBuildReport, ma
 			))
 		}
 	}
+	// Sort platform keys before walking so the reported "Unexpected
+	// platform digest entry" lines are deterministic across runs.
+	// Otherwise the error message order depends on Go's randomized map
+	// iteration and diffing CI failures gets noisy.
+	unexpectedPlatforms := make([]string, 0, len(manifest.Platforms))
 	for platform := range manifest.Platforms {
 		if _, ok := expectedPlatforms[platform]; !ok {
-			problems = append(problems, fmt.Sprintf("Unexpected platform digest entry in reproducible build manifest: %s", platform))
+			unexpectedPlatforms = append(unexpectedPlatforms, platform)
 		}
+	}
+	slices.Sort(unexpectedPlatforms)
+	for _, platform := range unexpectedPlatforms {
+		problems = append(problems, fmt.Sprintf("Unexpected platform digest entry in reproducible build manifest: %s", platform))
 	}
 	if report.subjectDigest != manifest.OCISubjectDigest {
 		problems = append(problems, fmt.Sprintf(

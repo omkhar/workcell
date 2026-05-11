@@ -120,7 +120,10 @@ copy_workcell_docker_state_tree() {
   fi
 
   mkdir -p "${destination_dir}"
-  cp -R "${source_dir}/." "${destination_dir}/"
+  # -P preserves symlinks as-is instead of dereferencing them. Hostile or
+  # accidental symlinks under ~/.docker/contexts therefore cannot escape
+  # into the sandbox root via cp -R's default symlink-follow behaviour.
+  cp -RP "${source_dir}/." "${destination_dir}/"
 }
 
 sanitize_workcell_docker_buildx_state() {

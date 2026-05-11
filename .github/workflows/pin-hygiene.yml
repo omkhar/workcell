@@ -1,5 +1,10 @@
 name: Pin Hygiene
 
+# This workflow is the WEEKLY-CRON pin-hygiene lane only.  The
+# per-pull-request pin enforcement runs inside ci.yml::validate via
+# scripts/ci/job-pin-hygiene.sh and scripts/check-pinned-inputs.sh.  Do
+# not assume this file gates PRs - it only catches scheduled drift.
+
 on:
   schedule:
     - cron: "0 14 * * 2"
