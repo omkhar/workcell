@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -18,336 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 	"gopkg.in/yaml.v3"
 )
-
-type workflowDocument struct {
-	Jobs map[string]workflowJob `yaml:"jobs"`
-}
-
-type workflowJob struct {
-	Name string `yaml:"name"`
-}
-
-func collectWorkflowJobNames(content []byte) ([]string, error) {
-	var document workflowDocument
-	if err := yaml.Unmarshal(content, &document); err != nil {
-		return nil, err
-	}
-
-	names := make([]string, 0, len(document.Jobs))
-	for _, job := range document.Jobs {
-		name := strings.TrimSpace(job.Name)
-		if name == "" {
-			continue
-		}
-		names = append(names, name)
-	}
-	return names, nil
-}
-
-func CheckWorkflows(rootDir, policyPath string) error {
-	if err := ensureWorkflowTools(rootDir); err != nil {
-		return err
-	}
-
-	policyText, err := readText(policyPath)
-	if err != nil {
-		return err
-	}
-	policy, err := ParseTOMLSubset(policyText, policyPath)
-	if err != nil {
-		return err
-	}
-
-	contexts, err := requireStringSliceTable(policy, "required_status_checks", "contexts", policyPath)
-	if err != nil {
-		return err
-	}
-	requiredJobNames := append([]string{}, contexts...)
-	if len(requiredJobNames) == 0 {
-		return fmt.Errorf("%s must define at least one required status-check context", policyPath)
-	}
-
-	workflowDir := filepath.Join(rootDir, ".github", "workflows")
-	workflowPaths, err := filepath.Glob(filepath.Join(workflowDir, "*.yml"))
-	if err != nil {
-		return err
-	}
-
-	jobNames := map[string]struct{}{}
-	for _, path := range workflowPaths {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		names, err := collectWorkflowJobNames(content)
-		if err != nil {
-			return fmt.Errorf("%s: parse workflow job names: %w", path, err)
-		}
-		for _, name := range names {
-			jobNames[name] = struct{}{}
-		}
-	}
-
-	missing := make([]string, 0)
-	for _, expected := range requiredJobNames {
-		if _, ok := jobNames[expected]; !ok {
-			missing = append(missing, expected)
-		}
-	}
-	slices.Sort(missing)
-	if len(missing) > 0 {
-		return fmt.Errorf(
-			"workflow jobs are missing required status-check names from %s: %s",
-			policyPath,
-			strings.Join(missing, ", "),
-		)
-	}
-
-	codeqlWorkflowPath := filepath.Join(workflowDir, "codeql.yml")
-	codeqlWorkflow, err := readText(codeqlWorkflowPath)
-	if err != nil {
-		return err
-	}
-	if err := validateCodeQLWorkflow(codeqlWorkflow, codeqlWorkflowPath); err != nil {
-		return err
-	}
-
-	releaseWorkflowPath := filepath.Join(workflowDir, "release.yml")
-	releaseWorkflow, err := readText(releaseWorkflowPath)
-	if err != nil {
-		return err
-	}
-	if err := validateReleaseWorkflowCodeQLFlow(releaseWorkflow); err != nil {
-		return err
-	}
-	return nil
-}
-
-func ensureWorkflowTools(rootDir string) error {
-	actionlintPath, err := exec.LookPath("actionlint")
-	if err != nil {
-		return fmt.Errorf("actionlint is required for workflow validation: %w", err)
-	}
-	zizmorPath, err := exec.LookPath("zizmor")
-	if err != nil {
-		return fmt.Errorf("zizmor is required for workflow validation: %w", err)
-	}
-
-	actionlintCmd := exec.Command(actionlintPath)
-	actionlintCmd.Dir = rootDir
-	if output, err := actionlintCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("actionlint failed: %w\n%s", err, strings.TrimSpace(string(output)))
-	}
-
-	workflowPaths, err := filepath.Glob(filepath.Join(rootDir, ".github", "workflows", "*.yml"))
-	if err != nil {
-		return err
-	}
-	zizmorArgs := []string{
-		"--persona", "auditor",
-		"--config", filepath.Join(rootDir, ".github", "zizmor.yml"),
-	}
-	zizmorArgs = append(zizmorArgs, workflowPaths...)
-	zizmorCmd := exec.Command(
-		zizmorPath,
-		zizmorArgs...,
-	)
-	zizmorCmd.Dir = rootDir
-	if output, err := zizmorCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("zizmor failed: %w\n%s", err, strings.TrimSpace(string(output)))
-	}
-	return nil
-}
-
-func validateCodeQLWorkflow(codeqlWorkflow, workflowPath string) error {
-	if regexp.MustCompile(`(?s)- language: go\s+build-mode: none`).MatchString(codeqlWorkflow) {
-		return fmt.Errorf("%s must not configure Go CodeQL with build-mode: none", workflowPath)
-	}
-	for _, needle := range []string{
-		"- language: rust",
-		"build-mode: none",
-		"- language: javascript-typescript",
-		"- language: go",
-		"build-mode: autobuild",
-		"github/codeql-action/init@",
-		"github/codeql-action/autobuild@",
-		"github/codeql-action/analyze@",
-	} {
-		if !strings.Contains(codeqlWorkflow, needle) {
-			return fmt.Errorf("%s must contain %q", workflowPath, needle)
-		}
-	}
-	return nil
-}
-
-func validateReleaseWorkflowCodeQLFlow(releaseWorkflow string) error {
-	for _, needle := range []string{
-		"name: Release CodeQL (${{ matrix.language }})",
-		"- language: rust",
-		"- language: javascript-typescript",
-		"- language: go",
-		"build-mode: autobuild",
-		"github/codeql-action/autobuild@",
-		"- codeql-preflight",
-	} {
-		if !strings.Contains(releaseWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
-		}
-	}
-	if regexp.MustCompile(`(?s)- language: go\s+build-mode: none`).MatchString(releaseWorkflow) {
-		return errors.New(".github/workflows/release.yml must not configure Go CodeQL with build-mode: none")
-	}
-	return nil
-}
-
-func validateCIWorkflowPRShapeFlow(ciWorkflow string) error {
-	for _, needle := range []string{
-		"name: Pull request shape",
-		"fetch-depth: 0",
-		"WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}",
-		"Check pull request shape",
-		`./scripts/ci/job-pr-shape.sh --base "${WORKCELL_PR_BASE_REF}"`,
-		"Skip outside pull requests",
-		`PR shape gate applies only to pull requests.`,
-	} {
-		if !strings.Contains(ciWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/ci.yml must contain %q", needle)
-		}
-	}
-	return nil
-}
-
-func validateReleaseWorkflowControlPlaneFlow(releaseWorkflow string) error {
-	if !strings.Contains(releaseWorkflow, "dist/workcell-control-plane-preflight.json") {
-		return errors.New(".github/workflows/release.yml must keep the reviewed control-plane manifest flow")
-	}
-	if !strings.Contains(releaseWorkflow, "run: ./scripts/generate-control-plane-manifest.sh dist/workcell-control-plane.json") {
-		return errors.New(".github/workflows/release.yml must regenerate the published control-plane manifest under dist/workcell-control-plane.json")
-	}
-	if !regexp.MustCompile(`(?s)Verify control-plane manifest matches preflight.*?cmp -s \\\s+dist/workcell-control-plane\.json \\\s+dist/preflight/workcell-control-plane-preflight\.json`).MatchString(releaseWorkflow) {
-		return errors.New(".github/workflows/release.yml must verify the published control-plane manifest against the preflight artifact")
-	}
-	return nil
-}
-
-func validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error {
-	if !strings.Contains(releaseWorkflow, "ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}") {
-		return errors.New(".github/workflows/release.yml must gate GitHub attestations on public visibility or an explicit private-repo capability flag")
-	}
-	if !strings.Contains(releaseWorkflow, "RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}") {
-		return errors.New(".github/workflows/release.yml must expose RELEASE_NO_ATTEST as an explicit opt-out env var sourced from vars.WORKCELL_RELEASE_NO_ATTEST")
-	}
-	if !strings.Contains(releaseWorkflow, "name: Confirm attestation environment policy") {
-		return errors.New(".github/workflows/release.yml must include the fail-closed attestation preflight step")
-	}
-	if !regexp.MustCompile(`(?ms)name: Confirm attestation environment policy.*?ENABLE_GITHUB_ATTESTATIONS_SUPPORTED.*?!= "true".*?exit 1`).MatchString(releaseWorkflow) {
-		return errors.New(".github/workflows/release.yml must keep the fail-closed attestation preflight script body (must `exit 1` when ENABLE_GITHUB_ATTESTATIONS_SUPPORTED is not 'true' and RELEASE_NO_ATTEST is not 'true')")
-	}
-	const attestGuard = "if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'"
-	attestStepRE := regexp.MustCompile(`(?m)^\s*-\s+uses:\s+actions/attest@`)
-	guardedAttestStepRE := regexp.MustCompile(`(?ms)^\s*-\s+uses:\s+actions/attest@[^\n]+\n\s+if:\s+env\.RELEASE_NO_ATTEST != 'true' && env\.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'\n`)
-	totalAttestSteps := len(attestStepRE.FindAllString(releaseWorkflow, -1))
-	if totalAttestSteps != 10 {
-		return errors.New(".github/workflows/release.yml must keep exactly ten reviewed GitHub attestation steps")
-	}
-	if len(guardedAttestStepRE.FindAllString(releaseWorkflow, -1)) != totalAttestSteps {
-		return fmt.Errorf(".github/workflows/release.yml must guard every actions/attest step with %q", attestGuard)
-	}
-	for _, needle := range []string{
-		"subject-name: ${{ env.IMAGE_NAME }}",
-		"sbom-path: dist/workcell-image.spdx.json",
-		"subject-path: dist/${{ env.BUNDLE_NAME }}",
-		"sbom-path: dist/workcell-source.spdx.json",
-		"subject-path: dist/workcell.rb",
-		"subject-path: dist/workcell-image.digest",
-		"subject-path: dist/workcell-build-inputs.json",
-		"subject-path: dist/workcell-control-plane.json",
-		"subject-path: dist/workcell-builder-environment.json",
-		"subject-path: dist/SHA256SUMS",
-	} {
-		if !strings.Contains(releaseWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
-		}
-	}
-	return nil
-}
-
-func validateMacOSInstallVerificationFlow(workflowText, workflowPath, artifactName, jobName string) error {
-	for _, needle := range []string{
-		fmt.Sprintf("name: %s", artifactName),
-		jobName,
-		"macos-26",
-		"macos-15",
-		"actions/upload-artifact@",
-		"actions/download-artifact@",
-		`"${bundle_dir}/scripts/install.sh"`,
-		`"${bundle_dir}/scripts/uninstall.sh"`,
-		"brew tap-new",
-		"brew --repo",
-		"brew install \"${tap_name}/workcell\"",
-		"brew uninstall --force \"${tap_name}/workcell\"",
-		"brew list --versions workcell",
-	} {
-		if !strings.Contains(workflowText, needle) {
-			return fmt.Errorf("%s must contain %q", workflowPath, needle)
-		}
-	}
-
-	if !strings.Contains(workflowText, "find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz'") {
-		return fmt.Errorf("%s must resolve the reviewed install-candidate bundle from the artifact download", workflowPath)
-	}
-
-	return nil
-}
-
-func validateUpstreamRefreshWorkflow(workflowText string) error {
-	for _, needle := range []string{
-		"name: Upstream refresh",
-		"workflow_dispatch:",
-		"./scripts/update-upstream-pins.sh --apply",
-		"./scripts/update-upstream-pins.sh --check",
-		"./scripts/check-pinned-inputs.sh",
-		"environment:\n      name: upstream-refresh",
-		"actions/upload-artifact@",
-		"name: upstream-refresh-candidate",
-		"metadata.json",
-		"gh issue",
-		"persist-credentials: false",
-		"fetch-depth: 0",
-		"contents: read",
-		"issues: write",
-		"pull-requests: read",
-		"WORKCELL_COSIGN_VERSION:",
-		"sigstore/cosign-installer@",
-		"cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}",
-		`sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign`,
-	} {
-		if !strings.Contains(workflowText, needle) {
-			return fmt.Errorf(".github/workflows/upstream-refresh.yml must contain %q", needle)
-		}
-	}
-	for _, forbidden := range []string{
-		"WORKCELL_UPSTREAM_REFRESH_GIT_NAME",
-		"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL",
-		"WORKCELL_UPSTREAM_REFRESH_GPG_FINGERPRINT",
-		"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY",
-		"WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID",
-		"gpg --batch --with-colons --list-secret-keys",
-		"git commit -S",
-		"gh pr create",
-		`git push "https://x-access-token:`,
-		"contents: write",
-		"pull-requests: write",
-	} {
-		if strings.Contains(workflowText, forbidden) {
-			return fmt.Errorf(".github/workflows/upstream-refresh.yml must not contain %q", forbidden)
-		}
-	}
-	return nil
-}
 
 type hostedControlsWorkflowEnvironmentPolicy struct {
 	Variables             map[string]string
@@ -1926,10 +1599,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if strings.Contains(ciWorkflow, "docker/setup-qemu-action@") {
 		return errors.New(".github/workflows/ci.yml must not configure QEMU in CI now that arm64 reproducible builds use a native runner")
 	}
-	if err := validateCIWorkflowPRShapeFlow(ciWorkflow); err != nil {
+	if err := workflows.ValidateCIWorkflowPRShapeFlow(ciWorkflow); err != nil {
 		return err
 	}
-	if err := validateMacOSInstallVerificationFlow(ciWorkflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
+	if err := workflows.ValidateMacOSInstallVerificationFlow(ciWorkflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
 		return err
 	}
 	if !strings.Contains(releaseWorkflow, "cache-binary: false") {
@@ -2091,13 +1764,13 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		!strings.Contains(releaseWorkflow, "dist/workcell-image.spdx.sigstore.json") {
 		return errors.New(".github/workflows/release.yml must publish direct signature bundles for release artifacts")
 	}
-	if err := validateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
+	if err := workflows.ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
 		return err
 	}
-	if err := validateMacOSInstallVerificationFlow(releaseWorkflow, ".github/workflows/release.yml", "workcell-release-install-candidate", "name: Release install verification (${{ matrix.runner_label }})"); err != nil {
+	if err := workflows.ValidateMacOSInstallVerificationFlow(releaseWorkflow, ".github/workflows/release.yml", "workcell-release-install-candidate", "name: Release install verification (${{ matrix.runner_label }})"); err != nil {
 		return err
 	}
-	if err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
+	if err := workflows.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
 		return err
 	}
 	if strings.Contains(releaseWorkflow, "steps.build.outputs.digest") {
@@ -2121,7 +1794,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if !strings.Contains(releaseWorkflow, "environment:\n      name: hosted-controls-audit") {
 		return errors.New(".github/workflows/release.yml release preflight must bind to the hosted-controls-audit environment")
 	}
-	if err := validateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
+	if err := workflows.ValidateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
 		return err
 	}
 	hostedControlsWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "hosted-controls.yml"))

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/metadatautil"
+	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 )
 
 func die(err error) {
@@ -51,7 +52,7 @@ func main() {
 		if len(os.Args) != 4 {
 			die(fmt.Errorf("usage: %s check-workflows ROOT_DIR POLICY_PATH", os.Args[0]))
 		}
-		err = metadatautil.CheckWorkflows(os.Args[2], os.Args[3])
+		err = workflows.CheckWorkflows(os.Args[2], os.Args[3])
 	case "generate-workflow-lane-manifest":
 		if len(os.Args) != 5 {
 			die(fmt.Errorf("usage: %s generate-workflow-lane-manifest ROOT_DIR POLICY_PATH OUTPUT_PATH", os.Args[0]))

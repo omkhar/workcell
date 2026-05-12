@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 )
 
 func installWorkflowToolStubs(t *testing.T, root string) {
@@ -194,8 +196,8 @@ contexts = [
 		t.Fatalf("WriteFile(policy.toml) error = %v", err)
 	}
 
-	if err := CheckWorkflows(root, policyPath); err != nil {
-		t.Fatalf("CheckWorkflows() error = %v", err)
+	if err := workflows.CheckWorkflows(root, policyPath); err != nil {
+		t.Fatalf("workflows.CheckWorkflows() error = %v", err)
 	}
 }
 
@@ -234,12 +236,12 @@ contexts = [
 		t.Fatalf("WriteFile(policy.toml) error = %v", err)
 	}
 
-	err := CheckWorkflows(root, policyPath)
+	err := workflows.CheckWorkflows(root, policyPath)
 	if err == nil {
-		t.Fatal("CheckWorkflows() unexpectedly succeeded")
+		t.Fatal("workflows.CheckWorkflows() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "Validate repository") {
-		t.Fatalf("CheckWorkflows() error = %v, want missing Validate repository", err)
+		t.Fatalf("workflows.CheckWorkflows() error = %v, want missing Validate repository", err)
 	}
 }
 
@@ -497,12 +499,12 @@ func TestValidateReleaseWorkflowControlPlaneFlowRejectsMissingCanonicalArtifact(
             dist/preflight/workcell-control-plane-preflight.json
 `
 
-	err := validateReleaseWorkflowControlPlaneFlow(releaseWorkflow)
+	err := workflows.ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow)
 	if err == nil {
-		t.Fatal("validateReleaseWorkflowControlPlaneFlow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateReleaseWorkflowControlPlaneFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "dist/workcell-control-plane.json") {
-		t.Fatalf("validateReleaseWorkflowControlPlaneFlow() error = %v, want canonical control-plane artifact path", err)
+		t.Fatalf("workflows.ValidateReleaseWorkflowControlPlaneFlow() error = %v, want canonical control-plane artifact path", err)
 	}
 }
 
@@ -525,8 +527,8 @@ func TestValidateReleaseWorkflowControlPlaneFlowAcceptsCanonicalArtifact(t *test
             dist/preflight/workcell-control-plane-preflight.json
 `
 
-	if err := validateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
-		t.Fatalf("validateReleaseWorkflowControlPlaneFlow() error = %v", err)
+	if err := workflows.ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
+		t.Fatalf("workflows.ValidateReleaseWorkflowControlPlaneFlow() error = %v", err)
 	}
 }
 
@@ -563,12 +565,12 @@ func TestValidateMacOSInstallVerificationFlowRejectsMissingBundleUninstall(t *te
           brew list --versions workcell
 `
 
-	err := validateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})")
+	err := workflows.ValidateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})")
 	if err == nil {
-		t.Fatal("validateMacOSInstallVerificationFlow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateMacOSInstallVerificationFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "scripts/uninstall.sh") {
-		t.Fatalf("validateMacOSInstallVerificationFlow() error = %v, want missing bundle uninstall check", err)
+		t.Fatalf("workflows.ValidateMacOSInstallVerificationFlow() error = %v, want missing bundle uninstall check", err)
 	}
 }
 
@@ -601,8 +603,8 @@ func TestValidateMacOSInstallVerificationFlowAcceptsCanonicalFlow(t *testing.T) 
           brew list --versions workcell
 `
 
-	if err := validateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
-		t.Fatalf("validateMacOSInstallVerificationFlow() error = %v", err)
+	if err := workflows.ValidateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
+		t.Fatalf("workflows.ValidateMacOSInstallVerificationFlow() error = %v", err)
 	}
 }
 
@@ -624,12 +626,12 @@ func TestValidateCodeQLWorkflowRejectsGoBuildlessMode(t *testing.T) {
       - uses: github/codeql-action/analyze@deadbeef
 `
 
-	err := validateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml")
+	err := workflows.ValidateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml")
 	if err == nil {
-		t.Fatal("validateCodeQLWorkflow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateCodeQLWorkflow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "build-mode: none") {
-		t.Fatalf("validateCodeQLWorkflow() error = %v, want go build-mode rejection", err)
+		t.Fatalf("workflows.ValidateCodeQLWorkflow() error = %v, want go build-mode rejection", err)
 	}
 }
 
@@ -652,8 +654,8 @@ func TestValidateCodeQLWorkflowAcceptsGoAutobuild(t *testing.T) {
       - uses: github/codeql-action/analyze@deadbeef
 `
 
-	if err := validateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml"); err != nil {
-		t.Fatalf("validateCodeQLWorkflow() error = %v", err)
+	if err := workflows.ValidateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml"); err != nil {
+		t.Fatalf("workflows.ValidateCodeQLWorkflow() error = %v", err)
 	}
 }
 
@@ -670,12 +672,12 @@ func TestValidateReleaseWorkflowCodeQLFlowRejectsMissingGoAutobuild(t *testing.T
       - preflight
 `
 
-	err := validateReleaseWorkflowCodeQLFlow(workflow)
+	err := workflows.ValidateReleaseWorkflowCodeQLFlow(workflow)
 	if err == nil {
-		t.Fatal("validateReleaseWorkflowCodeQLFlow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateReleaseWorkflowCodeQLFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "Release CodeQL") {
-		t.Fatalf("validateReleaseWorkflowCodeQLFlow() error = %v, want missing release CodeQL job", err)
+		t.Fatalf("workflows.ValidateReleaseWorkflowCodeQLFlow() error = %v, want missing release CodeQL job", err)
 	}
 }
 
@@ -705,8 +707,8 @@ func TestValidateReleaseWorkflowCodeQLFlowAcceptsMatrixJob(t *testing.T) {
       - install-verification
 `
 
-	if err := validateReleaseWorkflowCodeQLFlow(workflow); err != nil {
-		t.Fatalf("validateReleaseWorkflowCodeQLFlow() error = %v", err)
+	if err := workflows.ValidateReleaseWorkflowCodeQLFlow(workflow); err != nil {
+		t.Fatalf("workflows.ValidateReleaseWorkflowCodeQLFlow() error = %v", err)
 	}
 }
 
@@ -731,12 +733,12 @@ func TestValidateCIWorkflowPRShapeFlowRejectsLegacyInlineShapeGate(t *testing.T)
         run: echo "PR shape gate applies only to pull requests."
 `
 
-	err := validateCIWorkflowPRShapeFlow(workflow)
+	err := workflows.ValidateCIWorkflowPRShapeFlow(workflow)
 	if err == nil {
-		t.Fatal("validateCIWorkflowPRShapeFlow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateCIWorkflowPRShapeFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "./scripts/ci/job-pr-shape.sh --base") {
-		t.Fatalf("validateCIWorkflowPRShapeFlow() error = %v, want shared job gate", err)
+		t.Fatalf("workflows.ValidateCIWorkflowPRShapeFlow() error = %v, want shared job gate", err)
 	}
 }
 
@@ -759,8 +761,8 @@ func TestValidateCIWorkflowPRShapeFlowAcceptsSharedJobGate(t *testing.T) {
         run: echo "PR shape gate applies only to pull requests."
 `
 
-	if err := validateCIWorkflowPRShapeFlow(workflow); err != nil {
-		t.Fatalf("validateCIWorkflowPRShapeFlow() error = %v", err)
+	if err := workflows.ValidateCIWorkflowPRShapeFlow(workflow); err != nil {
+		t.Fatalf("workflows.ValidateCIWorkflowPRShapeFlow() error = %v", err)
 	}
 }
 
@@ -808,12 +810,12 @@ jobs:
           gh pr create --draft
 `
 
-	err := validateUpstreamRefreshWorkflow(workflow)
+	err := workflows.ValidateUpstreamRefreshWorkflow(workflow)
 	if err == nil {
-		t.Fatal("validateUpstreamRefreshWorkflow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), `gh pr create`) {
-		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want GitHub-side PR publication rejection", err)
+		t.Fatalf("workflows.ValidateUpstreamRefreshWorkflow() error = %v, want GitHub-side PR publication rejection", err)
 	}
 }
 
@@ -860,8 +862,8 @@ jobs:
           gh issue create --title "Upstream refresh candidate" --body "metadata.json"
 `
 
-	if err := validateUpstreamRefreshWorkflow(workflow); err != nil {
-		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v", err)
+	if err := workflows.ValidateUpstreamRefreshWorkflow(workflow); err != nil {
+		t.Fatalf("workflows.ValidateUpstreamRefreshWorkflow() error = %v", err)
 	}
 }
 
@@ -908,12 +910,12 @@ jobs:
           gh issue create --title "Upstream refresh candidate" --body "metadata.json"
 `
 
-	err := validateUpstreamRefreshWorkflow(workflow)
+	err := workflows.ValidateUpstreamRefreshWorkflow(workflow)
 	if err == nil {
-		t.Fatal("validateUpstreamRefreshWorkflow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY") {
-		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want hosted signing input rejection", err)
+		t.Fatalf("workflows.ValidateUpstreamRefreshWorkflow() error = %v, want hosted signing input rejection", err)
 	}
 }
 
@@ -958,12 +960,12 @@ jobs:
           gh issue create --title "Upstream refresh candidate" --body "metadata.json"
 `
 
-	err := validateUpstreamRefreshWorkflow(workflow)
+	err := workflows.ValidateUpstreamRefreshWorkflow(workflow)
 	if err == nil {
-		t.Fatal("validateUpstreamRefreshWorkflow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), `environment:\n      name: upstream-refresh`) {
-		t.Fatalf("validateUpstreamRefreshWorkflow() error = %v, want upstream-refresh environment binding rejection", err)
+		t.Fatalf("workflows.ValidateUpstreamRefreshWorkflow() error = %v, want upstream-refresh environment binding rejection", err)
 	}
 }
 
@@ -986,12 +988,12 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingSupportGuard(
           subject-name: ${{ env.IMAGE_NAME }}
 `
 
-	err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
+	err := workflows.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
 	if err == nil {
-		t.Fatal("validateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "public visibility or an explicit private-repo capability flag") {
-		t.Fatalf("validateReleaseWorkflowGitHubAttestationFlow() error = %v, want support guard failure", err)
+		t.Fatalf("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want support guard failure", err)
 	}
 }
 
@@ -1050,12 +1052,12 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedAttestStep(
           subject-path: dist/SHA256SUMS
 `
 
-	err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
+	err := workflows.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
 	if err == nil {
-		t.Fatal("validateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
+		t.Fatal("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "guard every actions/attest step") {
-		t.Fatalf("validateReleaseWorkflowGitHubAttestationFlow() error = %v, want unguarded attestation failure", err)
+		t.Fatalf("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want unguarded attestation failure", err)
 	}
 }
 
@@ -1114,8 +1116,8 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowAcceptsSupportGuard(t *test
           subject-path: dist/SHA256SUMS
 `
 
-	if err := validateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
-		t.Fatalf("validateReleaseWorkflowGitHubAttestationFlow() error = %v", err)
+	if err := workflows.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
+		t.Fatalf("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v", err)
 	}
 }
 
