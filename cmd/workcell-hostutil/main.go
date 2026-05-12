@@ -16,6 +16,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/release"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
+	"github.com/omkhar/workcell/internal/sessionctl"
 )
 
 func main() {
@@ -132,6 +133,7 @@ type launcherSubcommand struct {
 // avoids a Go initialization cycle.
 func launcherSubcommands() []launcherSubcommand {
 	return []launcherSubcommand{
+		{"session-usage", 0, 0, cmdLauncherSessionUsage},
 		{"session-suffix", 0, 0, cmdLauncherSessionSuffix},
 		{"colima-status", 1, 1, cmdLauncherColimaStatus},
 		{"cleanup-stale-log-pointers", 1, 1, cmdLauncherCleanupStaleLogPointers},
@@ -182,6 +184,11 @@ func runLauncher(args []string) error {
 		return sub.handler(rest)
 	}
 	return launcherUsage()
+}
+
+func cmdLauncherSessionUsage(_ []string) error {
+	fmt.Print(sessionctl.UsageText())
+	return nil
 }
 
 func cmdLauncherSessionSuffix(_ []string) error {
