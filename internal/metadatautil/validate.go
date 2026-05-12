@@ -4,320 +4,22 @@
 package metadatautil
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
 	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 	"gopkg.in/yaml.v3"
 )
 
-type hostedControlsWorkflowEnvironmentPolicy struct {
-	Variables             map[string]string
-	RequiredSecrets       []string
-	AllowAdminBypass      bool
-	HasAllowAdminBypass   bool
-	DeploymentBranches    []string
-	HasDeploymentBranches bool
-	DeploymentTags        []string
-	HasDeploymentTags     bool
-}
-
-func hostedControlsRepositoryVariables(policy map[string]any, policyPath string) (map[string]any, error) {
-	expectedRepoVariables, ok := policy["repository_variables"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("%s must define repository_variables as a table of exact expected values", policyPath)
-	}
-	for name, value := range expectedRepoVariables {
-		if strings.TrimSpace(name) == "" {
-			return nil, fmt.Errorf("%s repository_variables entries must map non-empty names to exact string values", policyPath)
-		}
-		if _, ok := value.(string); !ok {
-			return nil, fmt.Errorf("%s repository_variables entries must map non-empty names to exact string values", policyPath)
-		}
-	}
-	for _, requiredName := range []string{
-		"WORKCELL_RELEASE_NO_ATTEST",
-		"WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS",
-	} {
-		if _, ok := expectedRepoVariables[requiredName]; !ok {
-			return nil, fmt.Errorf("%s must declare %s in repository_variables", policyPath, requiredName)
-		}
-	}
-	return expectedRepoVariables, nil
-}
-
-func validateCanonicalHostedControlsRepositoryVariables(policy map[string]any, policyPath string) error {
-	repositoryVariables, err := hostedControlsRepositoryVariables(policy, policyPath)
-	if err != nil {
-		return err
-	}
-	if value, _ := repositoryVariables["WORKCELL_RELEASE_NO_ATTEST"].(string); value != "false" {
-		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_RELEASE_NO_ATTEST = \"false\"")
-	}
-	if value, _ := repositoryVariables["WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS"].(string); value != "false" {
-		return errors.New("policy/github-hosted-controls.toml must require WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = \"false\"")
-	}
-	return nil
-}
-
-func hostedControlsWorkflowEnvironments(policy map[string]any, policyPath string) (map[string]hostedControlsWorkflowEnvironmentPolicy, error) {
-	rawEnvironments, ok := policy["workflow_environment"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("%s must define workflow_environment as a table of named environment contracts", policyPath)
-	}
-
-	environments := make(map[string]hostedControlsWorkflowEnvironmentPolicy, len(rawEnvironments))
-	for environmentName, rawEntry := range rawEnvironments {
-		if strings.TrimSpace(environmentName) == "" {
-			return nil, fmt.Errorf("%s workflow_environment entries must use non-empty environment names", policyPath)
-		}
-		entry, ok := rawEntry.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("%s workflow_environment.%s must be a table", policyPath, environmentName)
-		}
-
-		variables := map[string]string{}
-		if rawVariables, ok := entry["variables"]; ok {
-			variableTable, ok := rawVariables.(map[string]any)
-			if !ok {
-				return nil, fmt.Errorf("%s workflow_environment.%s.variables must be a table of exact expected values", policyPath, environmentName)
-			}
-			for name, rawValue := range variableTable {
-				value, ok := rawValue.(string)
-				if strings.TrimSpace(name) == "" || !ok || strings.TrimSpace(value) == "" {
-					return nil, fmt.Errorf("%s workflow_environment.%s.variables must map non-empty names to exact string values", policyPath, environmentName)
-				}
-				variables[name] = value
-			}
-		}
-
-		requiredSecrets := []string{}
-		if rawSecrets, ok := entry["required_secrets"]; ok {
-			secrets, present, err := MustStringSlice(rawSecrets)
-			if err != nil {
-				return nil, fmt.Errorf("%s workflow_environment.%s.required_secrets: %w", policyPath, environmentName, err)
-			}
-			if !present {
-				return nil, fmt.Errorf("%s workflow_environment.%s.required_secrets must be an array of secret names", policyPath, environmentName)
-			}
-			for _, secretName := range secrets {
-				if strings.TrimSpace(secretName) == "" {
-					return nil, fmt.Errorf("%s workflow_environment.%s.required_secrets must be an array of non-empty secret names", policyPath, environmentName)
-				}
-			}
-			requiredSecrets = append(requiredSecrets, secrets...)
-			slices.Sort(requiredSecrets)
-		}
-
-		allowAdminBypass := false
-		hasAllowAdminBypass := false
-		if rawAllowAdminBypass, ok := entry["allow_admin_bypass"]; ok {
-			value, ok := rawAllowAdminBypass.(bool)
-			if !ok {
-				return nil, fmt.Errorf("%s workflow_environment.%s.allow_admin_bypass must be a boolean", policyPath, environmentName)
-			}
-			allowAdminBypass = value
-			hasAllowAdminBypass = true
-		}
-
-		deploymentBranches := []string{}
-		hasDeploymentBranches := false
-		if rawDeploymentBranches, ok := entry["deployment_branches"]; ok {
-			branches, present, err := MustStringSlice(rawDeploymentBranches)
-			if err != nil {
-				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_branches: %w", policyPath, environmentName, err)
-			}
-			if !present {
-				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_branches must be an array of branch names", policyPath, environmentName)
-			}
-			for _, branchName := range branches {
-				if strings.TrimSpace(branchName) == "" {
-					return nil, fmt.Errorf("%s workflow_environment.%s.deployment_branches must be an array of non-empty branch names", policyPath, environmentName)
-				}
-			}
-			deploymentBranches = append(deploymentBranches, branches...)
-			slices.Sort(deploymentBranches)
-			hasDeploymentBranches = true
-		}
-		deploymentTags := []string{}
-		hasDeploymentTags := false
-		if rawDeploymentTags, ok := entry["deployment_tags"]; ok {
-			tags, present, err := MustStringSlice(rawDeploymentTags)
-			if err != nil {
-				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_tags: %w", policyPath, environmentName, err)
-			}
-			if !present {
-				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_tags must be an array of tag patterns", policyPath, environmentName)
-			}
-			for _, tagPattern := range tags {
-				if strings.TrimSpace(tagPattern) == "" {
-					return nil, fmt.Errorf("%s workflow_environment.%s.deployment_tags must be an array of non-empty tag patterns", policyPath, environmentName)
-				}
-			}
-			deploymentTags = append(deploymentTags, tags...)
-			slices.Sort(deploymentTags)
-			hasDeploymentTags = true
-		}
-
-		environments[environmentName] = hostedControlsWorkflowEnvironmentPolicy{
-			Variables:             variables,
-			RequiredSecrets:       requiredSecrets,
-			AllowAdminBypass:      allowAdminBypass,
-			HasAllowAdminBypass:   hasAllowAdminBypass,
-			DeploymentBranches:    deploymentBranches,
-			HasDeploymentBranches: hasDeploymentBranches,
-			DeploymentTags:        deploymentTags,
-			HasDeploymentTags:     hasDeploymentTags,
-		}
-	}
-	return environments, nil
-}
-
-func validateCanonicalHostedControlsWorkflowEnvironments(policy map[string]any, policyPath string) error {
-	environments, err := hostedControlsWorkflowEnvironments(policy, policyPath)
-	if err != nil {
-		return err
-	}
-
-	hostedControlsAudit, ok := environments["hosted-controls-audit"]
-	if !ok {
-		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.hosted-controls-audit")
-	}
-	if len(hostedControlsAudit.Variables) != 0 {
-		return errors.New("policy/github-hosted-controls.toml must not declare public variables for workflow_environment.hosted-controls-audit")
-	}
-	if len(hostedControlsAudit.RequiredSecrets) != 1 || hostedControlsAudit.RequiredSecrets[0] != "WORKCELL_HOSTED_CONTROLS_TOKEN" {
-		return errors.New("policy/github-hosted-controls.toml must require only WORKCELL_HOSTED_CONTROLS_TOKEN for workflow_environment.hosted-controls-audit")
-	}
-	if !hostedControlsAudit.HasAllowAdminBypass || hostedControlsAudit.AllowAdminBypass {
-		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.hosted-controls-audit.allow_admin_bypass = false")
-	}
-	if !hostedControlsAudit.HasDeploymentBranches || len(hostedControlsAudit.DeploymentBranches) != 1 || hostedControlsAudit.DeploymentBranches[0] != "main" {
-		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.hosted-controls-audit.deployment_branches = [\"main\"]")
-	}
-	if !hostedControlsAudit.HasDeploymentTags || len(hostedControlsAudit.DeploymentTags) != 1 || hostedControlsAudit.DeploymentTags[0] != "v*" {
-		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.hosted-controls-audit.deployment_tags = [\"v*\"]")
-	}
-
-	upstreamRefresh, ok := environments["upstream-refresh"]
-	if !ok {
-		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.upstream-refresh")
-	}
-	if len(upstreamRefresh.RequiredSecrets) != 0 {
-		return errors.New("policy/github-hosted-controls.toml must not declare secrets for workflow_environment.upstream-refresh")
-	}
-	if len(upstreamRefresh.Variables) != 0 {
-		return errors.New("policy/github-hosted-controls.toml must not declare public variables for workflow_environment.upstream-refresh")
-	}
-	if !upstreamRefresh.HasAllowAdminBypass || upstreamRefresh.AllowAdminBypass {
-		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.upstream-refresh.allow_admin_bypass = false")
-	}
-	if !upstreamRefresh.HasDeploymentBranches || len(upstreamRefresh.DeploymentBranches) != 1 || upstreamRefresh.DeploymentBranches[0] != "main" {
-		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.upstream-refresh.deployment_branches = [\"main\"]")
-	}
-	if upstreamRefresh.HasDeploymentTags || len(upstreamRefresh.DeploymentTags) != 0 {
-		return errors.New("policy/github-hosted-controls.toml must not set workflow_environment.upstream-refresh.deployment_tags")
-	}
-	return nil
-}
-
-func HostedControlsEnvironmentNames(policyPath string) ([]string, error) {
-	policyText, err := readText(policyPath)
-	if err != nil {
-		return nil, err
-	}
-	policy, err := ParseTOMLSubset(policyText, policyPath)
-	if err != nil {
-		return nil, err
-	}
-	environments, err := hostedControlsWorkflowEnvironments(policy, policyPath)
-	if err != nil {
-		return nil, err
-	}
-
-	names := make([]string, 0, len(environments))
-	for environmentName := range environments {
-		names = append(names, environmentName)
-	}
-	slices.Sort(names)
-	return names, nil
-}
-
-func hostedControlsEnvironmentArtifactName(environmentName string) string {
-	return strings.ReplaceAll(url.QueryEscape(environmentName), "+", "%20")
-}
-
-func FetchGitHubHostedControlsRulesets(tmpDir, repo string) error {
-	var summary []any
-	if err := readJSONFile(filepath.Join(tmpDir, "rulesets-summary.json"), &summary); err != nil {
-		return err
-	}
-
-	details := make([]any, 0, len(summary))
-	for _, raw := range summary {
-		entry, ok := raw.(map[string]any)
-		if !ok {
-			return fmt.Errorf("unexpected ruleset summary entry: %v", raw)
-		}
-		idValue, ok := entry["id"].(float64)
-		if !ok {
-			return fmt.Errorf("unexpected ruleset summary id: %v", entry)
-		}
-		rulesetID := strconv.FormatInt(int64(idValue), 10)
-		cmd := exec.Command("gh", "api", fmt.Sprintf("repos/%s/rulesets/%s", repo, rulesetID))
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		output, err := cmd.Output()
-		if err != nil {
-			return fmt.Errorf("gh api repos/%s/rulesets/%s: %w (stderr: %s)", repo, rulesetID, err, strings.TrimSpace(stderr.String()))
-		}
-		var detail any
-		if err := json.Unmarshal(output, &detail); err != nil {
-			return fmt.Errorf("gh api repos/%s/rulesets/%s: parse JSON: %w", repo, rulesetID, err)
-		}
-		details = append(details, detail)
-	}
-	return writeJSONFile(filepath.Join(tmpDir, "rulesets.json"), details)
-}
-
-func unexpectedEnvironmentVariableNames(actual map[string]any, expected map[string]string) []string {
-	unexpected := make([]string, 0)
-	for name := range actual {
-		if _, ok := expected[name]; !ok {
-			unexpected = append(unexpected, name)
-		}
-	}
-	slices.Sort(unexpected)
-	return unexpected
-}
-
-func unexpectedEnvironmentSecretNames(actual map[string]struct{}, expected []string) []string {
-	expectedSet := make(map[string]struct{}, len(expected))
-	for _, name := range expected {
-		expectedSet[name] = struct{}{}
-	}
-	unexpected := make([]string, 0)
-	for name := range actual {
-		if _, ok := expectedSet[name]; !ok {
-			unexpected = append(unexpected, name)
-		}
-	}
-	slices.Sort(unexpected)
-	return unexpected
-}
-
-func verifyWorkflowEnvironmentDeploymentPolicy(repo, environmentName string, environmentPolicy hostedControlsWorkflowEnvironmentPolicy, environmentMeta, environmentBranchPolicies map[string]any) error {
+func verifyWorkflowEnvironmentDeploymentPolicy(repo, environmentName string, environmentPolicy hostedcontrols.WorkflowEnvironmentPolicy, environmentMeta, environmentBranchPolicies map[string]any) error {
 	if environmentPolicy.HasAllowAdminBypass {
 		bypass, ok := environmentMeta["can_admins_bypass"].(bool)
 		if !ok || bypass != environmentPolicy.AllowAdminBypass {
@@ -456,11 +158,11 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	if len(expectedContexts) == 0 {
 		return fmt.Errorf("%s must define required_status_checks.contexts as a non-empty array", policyPath)
 	}
-	expectedRepoVariables, err := hostedControlsRepositoryVariables(policy, policyPath)
+	expectedRepoVariables, err := hostedcontrols.RepositoryVariables(policy, policyPath)
 	if err != nil {
 		return err
 	}
-	expectedWorkflowEnvironments, err := hostedControlsWorkflowEnvironments(policy, policyPath)
+	expectedWorkflowEnvironments, err := hostedcontrols.WorkflowEnvironments(policy, policyPath)
 	if err != nil {
 		return err
 	}
@@ -708,7 +410,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		return fmt.Errorf("workflow environments missing on %s: %s", repo, strings.Join(missingWorkflowEnvironments, ", "))
 	}
 	for environmentName, environmentPolicy := range expectedWorkflowEnvironments {
-		artifactName := hostedControlsEnvironmentArtifactName(environmentName)
+		artifactName := hostedcontrols.EnvironmentArtifactName(environmentName)
 		var environmentMeta map[string]any
 		if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s.json", artifactName)), &environmentMeta); err != nil {
 			return fmt.Errorf("read %s environment metadata: %w", environmentName, err)
@@ -754,7 +456,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		if len(wrongEnvironmentVariables) > 0 {
 			return fmt.Errorf("workflow environment variables on %s/%s do not match policy: %s", repo, environmentName, strings.Join(wrongEnvironmentVariables, ", "))
 		}
-		unexpectedEnvironmentVariables := unexpectedEnvironmentVariableNames(actualEnvironmentVariables, environmentPolicy.Variables)
+		unexpectedEnvironmentVariables := hostedcontrols.UnexpectedEnvironmentVariableNames(actualEnvironmentVariables, environmentPolicy.Variables)
 		if len(unexpectedEnvironmentVariables) > 0 {
 			return fmt.Errorf("workflow environment variables on %s/%s include unexpected entries: %s", repo, environmentName, strings.Join(unexpectedEnvironmentVariables, ", "))
 		}
@@ -785,7 +487,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		if len(missingEnvironmentSecrets) > 0 {
 			return fmt.Errorf("workflow environment secrets missing on %s/%s: %s", repo, environmentName, strings.Join(missingEnvironmentSecrets, ", "))
 		}
-		unexpectedEnvironmentSecrets := unexpectedEnvironmentSecretNames(actualEnvironmentSecrets, environmentPolicy.RequiredSecrets)
+		unexpectedEnvironmentSecrets := hostedcontrols.UnexpectedEnvironmentSecretNames(actualEnvironmentSecrets, environmentPolicy.RequiredSecrets)
 		if len(unexpectedEnvironmentSecrets) > 0 {
 			return fmt.Errorf("workflow environment secrets on %s/%s include unexpected entries: %s", repo, environmentName, strings.Join(unexpectedEnvironmentSecrets, ", "))
 		}
@@ -1888,10 +1590,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if releaseMode != "review-gated" && releaseMode != "single-owner-public" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
 		return errors.New("policy/github-hosted-controls.toml must set release_environment.mode to 'review-gated', 'single-owner-public', 'single-owner-private', or 'plan-limited-private'")
 	}
-	if err := validateCanonicalHostedControlsRepositoryVariables(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
+	if err := hostedcontrols.ValidateCanonicalRepositoryVariables(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
 		return err
 	}
-	if err := validateCanonicalHostedControlsWorkflowEnvironments(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
+	if err := hostedcontrols.ValidateCanonicalWorkflowEnvironments(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
 		return err
 	}
 	for _, needle := range []string{
