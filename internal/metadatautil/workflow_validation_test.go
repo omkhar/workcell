@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
 	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 )
 
@@ -1129,12 +1130,12 @@ func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsMissingPrivate
 		},
 	}
 
-	err := validateCanonicalHostedControlsRepositoryVariables(policy, "policy/github-hosted-controls.toml")
+	err := hostedcontrols.ValidateCanonicalRepositoryVariables(policy, "policy/github-hosted-controls.toml")
 	if err == nil {
-		t.Fatal("validateCanonicalHostedControlsRepositoryVariables() unexpectedly succeeded")
+		t.Fatal("hostedcontrols.ValidateCanonicalRepositoryVariables() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS") {
-		t.Fatalf("validateCanonicalHostedControlsRepositoryVariables() error = %v, want missing private attestation flag", err)
+		t.Fatalf("hostedcontrols.ValidateCanonicalRepositoryVariables() error = %v, want missing private attestation flag", err)
 	}
 }
 
@@ -1147,12 +1148,12 @@ func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsWrongPrivateAt
 		},
 	}
 
-	err := validateCanonicalHostedControlsRepositoryVariables(policy, "policy/github-hosted-controls.toml")
+	err := hostedcontrols.ValidateCanonicalRepositoryVariables(policy, "policy/github-hosted-controls.toml")
 	if err == nil {
-		t.Fatal("validateCanonicalHostedControlsRepositoryVariables() unexpectedly succeeded")
+		t.Fatal("hostedcontrols.ValidateCanonicalRepositoryVariables() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"`) {
-		t.Fatalf("validateCanonicalHostedControlsRepositoryVariables() error = %v, want private attestation value failure", err)
+		t.Fatalf("hostedcontrols.ValidateCanonicalRepositoryVariables() error = %v, want private attestation value failure", err)
 	}
 }
 
@@ -1165,8 +1166,8 @@ func TestValidateCanonicalHostedControlsRepositoryVariablesAcceptsCanonicalValue
 		},
 	}
 
-	if err := validateCanonicalHostedControlsRepositoryVariables(policy, "policy/github-hosted-controls.toml"); err != nil {
-		t.Fatalf("validateCanonicalHostedControlsRepositoryVariables() error = %v", err)
+	if err := hostedcontrols.ValidateCanonicalRepositoryVariables(policy, "policy/github-hosted-controls.toml"); err != nil {
+		t.Fatalf("hostedcontrols.ValidateCanonicalRepositoryVariables() error = %v", err)
 	}
 }
 
@@ -1181,12 +1182,12 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHosted
 		},
 	}
 
-	err := validateCanonicalHostedControlsWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
+	err := hostedcontrols.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
 	if err == nil {
-		t.Fatal("validateCanonicalHostedControlsWorkflowEnvironments() unexpectedly succeeded")
+		t.Fatal("hostedcontrols.ValidateCanonicalWorkflowEnvironments() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "workflow_environment.hosted-controls-audit") {
-		t.Fatalf("validateCanonicalHostedControlsWorkflowEnvironments() error = %v, want hosted-controls-audit rejection", err)
+		t.Fatalf("hostedcontrols.ValidateCanonicalWorkflowEnvironments() error = %v, want hosted-controls-audit rejection", err)
 	}
 }
 
@@ -1208,12 +1209,12 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUps
 		},
 	}
 
-	err := validateCanonicalHostedControlsWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
+	err := hostedcontrols.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
 	if err == nil {
-		t.Fatal("validateCanonicalHostedControlsWorkflowEnvironments() unexpectedly succeeded")
+		t.Fatal("hostedcontrols.ValidateCanonicalWorkflowEnvironments() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "must not declare secrets") {
-		t.Fatalf("validateCanonicalHostedControlsWorkflowEnvironments() error = %v, want upstream-refresh secret rejection", err)
+		t.Fatalf("hostedcontrols.ValidateCanonicalWorkflowEnvironments() error = %v, want upstream-refresh secret rejection", err)
 	}
 }
 
@@ -1234,23 +1235,23 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValu
 		},
 	}
 
-	if err := validateCanonicalHostedControlsWorkflowEnvironments(policy, "policy/github-hosted-controls.toml"); err != nil {
-		t.Fatalf("validateCanonicalHostedControlsWorkflowEnvironments() error = %v", err)
+	if err := hostedcontrols.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml"); err != nil {
+		t.Fatalf("hostedcontrols.ValidateCanonicalWorkflowEnvironments() error = %v", err)
 	}
 }
 
 func TestHostedControlsEnvironmentArtifactNameEscapesSlashes(t *testing.T) {
 	t.Parallel()
 
-	if got := hostedControlsEnvironmentArtifactName("prod/us west"); got != "prod%2Fus%20west" {
-		t.Fatalf("hostedControlsEnvironmentArtifactName() = %q, want %q", got, "prod%2Fus%20west")
+	if got := hostedcontrols.EnvironmentArtifactName("prod/us west"); got != "prod%2Fus%20west" {
+		t.Fatalf("hostedcontrols.EnvironmentArtifactName() = %q, want %q", got, "prod%2Fus%20west")
 	}
 }
 
 func TestHostedControlsEnvironmentArtifactNameEscapesReservedCharacters(t *testing.T) {
 	t.Parallel()
 
-	if got := hostedControlsEnvironmentArtifactName("prod+east:blue&green=1"); got != "prod%2Beast%3Ablue%26green%3D1" {
-		t.Fatalf("hostedControlsEnvironmentArtifactName() = %q, want %q", got, "prod%2Beast%3Ablue%26green%3D1")
+	if got := hostedcontrols.EnvironmentArtifactName("prod+east:blue&green=1"); got != "prod%2Beast%3Ablue%26green%3D1" {
+		t.Fatalf("hostedcontrols.EnvironmentArtifactName() = %q, want %q", got, "prod%2Beast%3Ablue%26green%3D1")
 	}
 }

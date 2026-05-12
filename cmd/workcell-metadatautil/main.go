@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/metadatautil"
+	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
 	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 )
 
@@ -86,12 +87,12 @@ func main() {
 		if len(os.Args) != 4 {
 			die(fmt.Errorf("usage: %s fetch-rulesets TMP_DIR REPO", os.Args[0]))
 		}
-		err = metadatautil.FetchGitHubHostedControlsRulesets(os.Args[2], os.Args[3])
+		err = hostedcontrols.FetchRulesets(os.Args[2], os.Args[3])
 	case "list-hosted-control-environments":
 		if len(os.Args) != 3 {
 			die(fmt.Errorf("usage: %s list-hosted-control-environments POLICY_PATH", os.Args[0]))
 		}
-		environments, listErr := metadatautil.HostedControlsEnvironmentNames(os.Args[2])
+		environments, listErr := hostedcontrols.EnvironmentNames(os.Args[2])
 		if listErr != nil {
 			die(listErr)
 		}
