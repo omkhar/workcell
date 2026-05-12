@@ -12,6 +12,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/metadatautil"
 	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
+	"github.com/omkhar/workcell/internal/metadatautil/pinnedinputs"
 	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 )
 
@@ -222,7 +223,7 @@ func main() {
 		if convErr != nil {
 			die(convErr)
 		}
-		err = metadatautil.CheckPinnedInputs(metadatautil.PinnedInputsConfig{
+		err = pinnedinputs.CheckPinnedInputs(pinnedinputs.PinnedInputsConfig{
 			RuntimeDockerfilePath:    os.Args[2],
 			ValidatorDockerfilePath:  os.Args[3],
 			ProvidersPackageJSONPath: os.Args[4],

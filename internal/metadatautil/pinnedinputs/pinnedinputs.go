@@ -1,27 +1,77 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package metadatautil
+package pinnedinputs
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/omkhar/workcell/internal/metadatautil"
 	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
 	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 	"gopkg.in/yaml.v3"
 )
 
-// VerifyGitHubHostedControls is re-exported for in-package tests so the
-// existing TestVerifyGitHubHostedControls* assertions stay unchanged.
-// The implementation lives in internal/metadatautil/hostedcontrols.
-var VerifyGitHubHostedControls = hostedcontrols.VerifyGitHubHostedControls
+var (
+	workflowPermissionsRE = regexp.MustCompile(`(?m)^permissions:\s+\{\}$`)
+	aptInstallPattern     = regexp.MustCompile(`apt-get install -y --no-install-recommends(?s:(.*?))&&`)
+)
+
+type PinnedInputsConfig struct {
+	RuntimeDockerfilePath    string
+	ValidatorDockerfilePath  string
+	ProvidersPackageJSONPath string
+	ProvidersPackageLockPath string
+	WorkflowsDir             string
+	CIWorkflowPath           string
+	ReleaseWorkflowPath      string
+	PinHygieneWorkflowPath   string
+	CodeownersPath           string
+	CodexRequirementsPath    string
+	CodexMCPConfigPath       string
+	HostedControlsPolicyPath string
+	HostedControlsScriptPath string
+	ProviderBumpPolicyPath   string
+	MaxDebianSnapshotAgeDays int
+}
+
+var hexDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func isHexDigest(value string) bool {
+	return hexDigestPattern.MatchString(value)
+}
+
+func readText(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+func mustStringSlice(value any) ([]string, bool, error) {
+	raw, ok := value.([]any)
+	if !ok {
+		return nil, false, nil
+	}
+	result := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s, ok := item.(string)
+		if !ok {
+			return nil, false, errors.New("array value must contain only strings")
+		}
+		result = append(result, s)
+	}
+	return result, true, nil
+}
 
 func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
@@ -102,7 +152,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := json.Unmarshal([]byte(providersPackageLockText), &providersPackageLock); err != nil {
 		return err
 	}
-	hostedControlsPolicy, err := ParseTOMLSubset(hostedControlsPolicyText, cfg.HostedControlsPolicyPath)
+	hostedControlsPolicy, err := tomlsubset.Parse(hostedControlsPolicyText, cfg.HostedControlsPolicyPath)
 	if err != nil {
 		return err
 	}
@@ -325,7 +375,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requireNoRegistryBootstrapMCP(codexMCPConfigText, cfg.CodexMCPConfigPath); err != nil {
 		return err
 	}
-	if err := CheckProviderBumpPolicy(cfg.ProviderBumpPolicyPath, cfg.RuntimeDockerfilePath, cfg.ProvidersPackageJSONPath); err != nil {
+	if err := metadatautil.CheckProviderBumpPolicy(cfg.ProviderBumpPolicyPath, cfg.RuntimeDockerfilePath, cfg.ProvidersPackageJSONPath); err != nil {
 		return err
 	}
 	if _, _, err := requireRegex(runtimeDockerfile, `curl -fsSL "https://storage\.googleapis\.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/\$\{CLAUDE_VERSION\}/\$\{CLAUDE_PLATFORM\}/claude"`, "Claude native release download URL", cfg.RuntimeDockerfilePath); err != nil {
@@ -991,7 +1041,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 			return fmt.Errorf("workflow-level empty permissions declaration missing in %s", workflowPath)
 		}
 		if strings.Contains(workflowText, "pull_request_target") {
-			if err := isSafePullRequestTargetWorkflow(workflowText, workflowPath); err != nil {
+			if err := IsSafePullRequestTargetWorkflow(workflowText, workflowPath); err != nil {
 				return err
 			}
 		}
@@ -1054,7 +1104,7 @@ func requireStringSliceTable(root map[string]any, tableName, key, sourcePath str
 	if !ok {
 		return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
 	}
-	values, ok, err := MustStringSlice(table[key])
+	values, ok, err := mustStringSlice(table[key])
 	if err != nil {
 		return nil, err
 	}
@@ -1069,7 +1119,7 @@ func requireStringSliceTable(root map[string]any, tableName, key, sourcePath str
 	return values, nil
 }
 
-func isSafePullRequestTargetWorkflow(workflowText, workflowPath string) error {
+func IsSafePullRequestTargetWorkflow(workflowText, workflowPath string) error {
 	if filepath.Base(workflowPath) != "pr-base-policy.yml" {
 		return fmt.Errorf("%s must not contain pull_request_target triggers", workflowPath)
 	}

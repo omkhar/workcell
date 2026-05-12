@@ -1,15 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package metadatautil
+package metadatautil_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
+	"github.com/omkhar/workcell/internal/metadatautil/pinnedinputs"
 )
+
+func writeJSONFile(path string, value any) error {
+	content, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	content = append(content, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, content, 0o644)
+}
 
 func metadatautilRepoRoot(tb testing.TB) string {
 	tb.Helper()
@@ -36,7 +52,7 @@ func copyFixtureFile(tb testing.TB, srcRoot, dstRoot, relativePath string) {
 	}
 }
 
-func writePinnedInputsFixture(tb testing.TB) PinnedInputsConfig {
+func writePinnedInputsFixture(tb testing.TB) pinnedinputs.PinnedInputsConfig {
 	tb.Helper()
 
 	srcRoot := metadatautilRepoRoot(tb)
@@ -65,7 +81,7 @@ func writePinnedInputsFixture(tb testing.TB) PinnedInputsConfig {
 		copyFixtureFile(tb, srcRoot, dstRoot, relativePath)
 	}
 
-	return PinnedInputsConfig{
+	return pinnedinputs.PinnedInputsConfig{
 		RuntimeDockerfilePath:    filepath.Join(dstRoot, "runtime", "container", "Dockerfile"),
 		ValidatorDockerfilePath:  filepath.Join(dstRoot, "tools", "validator", "Dockerfile"),
 		ProvidersPackageJSONPath: filepath.Join(dstRoot, "runtime", "container", "providers", "package.json"),
@@ -361,12 +377,12 @@ func TestCheckPinnedInputsRejectsUnpinnedRustupVersion(t *testing.T) {
 		return strings.Replace(content, "ARG RUSTUP_VERSION=", "ARG RUSTUP_VERSION=stable-", 1)
 	})
 
-	err := CheckPinnedInputs(cfg)
+	err := pinnedinputs.CheckPinnedInputs(cfg)
 	if err == nil {
-		t.Fatal("CheckPinnedInputs() unexpectedly accepted a non-release rustup version")
+		t.Fatal("pinnedinputs.CheckPinnedInputs() unexpectedly accepted a non-release rustup version")
 	}
 	if !strings.Contains(err.Error(), "RUSTUP_VERSION") {
-		t.Fatalf("CheckPinnedInputs() error = %v, want rustup version rejection", err)
+		t.Fatalf("pinnedinputs.CheckPinnedInputs() error = %v, want rustup version rejection", err)
 	}
 }
 
@@ -379,12 +395,12 @@ func TestCheckPinnedInputsRejectsInvalidRustupDigest(t *testing.T) {
 		return strings.Replace(content, "ARG RUSTUP_INIT_LINUX_ARM64_SHA256=", "ARG RUSTUP_INIT_LINUX_ARM64_SHA256=feedface", 1)
 	})
 
-	err := CheckPinnedInputs(cfg)
+	err := pinnedinputs.CheckPinnedInputs(cfg)
 	if err == nil {
-		t.Fatal("CheckPinnedInputs() unexpectedly accepted a non-sha256 rustup digest")
+		t.Fatal("pinnedinputs.CheckPinnedInputs() unexpectedly accepted a non-sha256 rustup digest")
 	}
 	if !strings.Contains(err.Error(), "RUSTUP_INIT_LINUX") {
-		t.Fatalf("CheckPinnedInputs() error = %v, want rustup digest rejection", err)
+		t.Fatalf("pinnedinputs.CheckPinnedInputs() error = %v, want rustup digest rejection", err)
 	}
 }
 
@@ -399,12 +415,12 @@ func TestCheckPinnedInputsRejectsInvalidValidatorToolDigests(t *testing.T) {
 		return strings.Replace(content, "ARG HADOLINT_LINUX_ARM64_SHA256=", "ARG HADOLINT_LINUX_ARM64_SHA256=feedface", 1)
 	})
 
-	err := CheckPinnedInputs(cfg)
+	err := pinnedinputs.CheckPinnedInputs(cfg)
 	if err == nil {
-		t.Fatal("CheckPinnedInputs() unexpectedly accepted a non-sha256 validator tool digest")
+		t.Fatal("pinnedinputs.CheckPinnedInputs() unexpectedly accepted a non-sha256 validator tool digest")
 	}
 	if !strings.Contains(err.Error(), "_SHA256") {
-		t.Fatalf("CheckPinnedInputs() error = %v, want validator tool digest rejection", err)
+		t.Fatalf("pinnedinputs.CheckPinnedInputs() error = %v, want validator tool digest rejection", err)
 	}
 }
 
@@ -417,12 +433,12 @@ func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
 		return strings.Replace(content, "ZIZMOR_SHA256: a8000f3c683319a523d3b20df0e75457ba591f049cfcbfa98966631b56733c03", "ZIZMOR_SHA256: deadbeef", 1)
 	})
 
-	err := CheckPinnedInputs(cfg)
+	err := pinnedinputs.CheckPinnedInputs(cfg)
 	if err == nil {
-		t.Fatal("CheckPinnedInputs() unexpectedly accepted a non-sha256 zizmor digest")
+		t.Fatal("pinnedinputs.CheckPinnedInputs() unexpectedly accepted a non-sha256 zizmor digest")
 	}
 	if !strings.Contains(err.Error(), "security zizmor sha") {
-		t.Fatalf("CheckPinnedInputs() error = %v, want zizmor digest rejection", err)
+		t.Fatalf("pinnedinputs.CheckPinnedInputs() error = %v, want zizmor digest rejection", err)
 	}
 }
 
@@ -435,12 +451,12 @@ func TestCheckPinnedInputsRejectsZizmorVersionMismatch(t *testing.T) {
 		return strings.Replace(content, "version: 1.24.1", "version: 1.24.0", 1)
 	})
 
-	err := CheckPinnedInputs(cfg)
+	err := pinnedinputs.CheckPinnedInputs(cfg)
 	if err == nil {
-		t.Fatal("CheckPinnedInputs() unexpectedly accepted mismatched zizmor versions")
+		t.Fatal("pinnedinputs.CheckPinnedInputs() unexpectedly accepted mismatched zizmor versions")
 	}
 	if !strings.Contains(err.Error(), "ZIZMOR_VERSION must match") {
-		t.Fatalf("CheckPinnedInputs() error = %v, want zizmor version mismatch rejection", err)
+		t.Fatalf("pinnedinputs.CheckPinnedInputs() error = %v, want zizmor version mismatch rejection", err)
 	}
 }
 
@@ -462,12 +478,12 @@ func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForBranchRevie
 		},
 	})
 
-	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	err := hostedcontrols.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted extra collaborators in single-owner-public-pr mode")
+		t.Fatal("hostedcontrols.VerifyGitHubHostedControls() unexpectedly accepted extra collaborators in single-owner-public-pr mode")
 	}
 	if !strings.Contains(err.Error(), "requires exactly one direct collaborator") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want collaborator-count rejection", err)
+		t.Fatalf("hostedcontrols.VerifyGitHubHostedControls() error = %v, want collaborator-count rejection", err)
 	}
 }
 
@@ -489,12 +505,12 @@ func TestVerifyGitHubHostedControlsRejectsApprovalGatedMode(t *testing.T) {
 		},
 	})
 
-	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	err := hostedcontrols.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted approval-gated mode")
+		t.Fatal("hostedcontrols.VerifyGitHubHostedControls() unexpectedly accepted approval-gated mode")
 	}
 	if !strings.Contains(err.Error(), "must set branch_review.mode to 'review-gated', 'single-owner-public-pr', or 'single-owner-private-pr'") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want unsupported-mode rejection", err)
+		t.Fatalf("hostedcontrols.VerifyGitHubHostedControls() error = %v, want unsupported-mode rejection", err)
 	}
 }
 
@@ -515,12 +531,12 @@ func TestVerifyGitHubHostedControlsRejectsReviewGatedRulesetWithoutCodeOwnerRevi
 		return strings.Replace(content, `"require_code_owner_review":true`, `"require_code_owner_review":false`, 1)
 	})
 
-	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	err := hostedcontrols.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted review-gated rules without code owner review")
+		t.Fatal("hostedcontrols.VerifyGitHubHostedControls() unexpectedly accepted review-gated rules without code owner review")
 	}
 	if !strings.Contains(err.Error(), "must require code owner review") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want code-owner rejection", err)
+		t.Fatalf("hostedcontrols.VerifyGitHubHostedControls() error = %v, want code-owner rejection", err)
 	}
 }
 
@@ -542,12 +558,12 @@ func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForReleaseEnv(
 		},
 	})
 
-	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	err := hostedcontrols.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted extra collaborators in single-owner-public release mode")
+		t.Fatal("hostedcontrols.VerifyGitHubHostedControls() unexpectedly accepted extra collaborators in single-owner-public release mode")
 	}
 	if !strings.Contains(err.Error(), "requires exactly one direct collaborator") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want collaborator-count rejection", err)
+		t.Fatalf("hostedcontrols.VerifyGitHubHostedControls() error = %v, want collaborator-count rejection", err)
 	}
 }
 
@@ -563,12 +579,12 @@ func TestVerifyGitHubHostedControlsRejectsNonOwnerPublicCollaboratorForBranchRev
 		},
 	})
 
-	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	err := hostedcontrols.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted a non-owner collaborator in single-owner-public-pr mode")
+		t.Fatal("hostedcontrols.VerifyGitHubHostedControls() unexpectedly accepted a non-owner collaborator in single-owner-public-pr mode")
 	}
 	if !strings.Contains(err.Error(), "requires the owner to be the only direct collaborator") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want owner-only collaborator rejection", err)
+		t.Fatalf("hostedcontrols.VerifyGitHubHostedControls() error = %v, want owner-only collaborator rejection", err)
 	}
 }
 
@@ -588,12 +604,12 @@ func TestVerifyGitHubHostedControlsRejectsUnexpectedUpstreamRefreshSecret(t *tes
 		return strings.Replace(content, `"secrets": []`, `"secrets": [{"name":"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"}]`, 1)
 	})
 
-	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	err := hostedcontrols.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted an unexpected upstream-refresh secret")
+		t.Fatal("hostedcontrols.VerifyGitHubHostedControls() unexpectedly accepted an unexpected upstream-refresh secret")
 	}
 	if !strings.Contains(err.Error(), "workflow environment secrets on omkhar/workcell/upstream-refresh include unexpected entries") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want unexpected upstream-refresh secret rejection", err)
+		t.Fatalf("hostedcontrols.VerifyGitHubHostedControls() error = %v, want unexpected upstream-refresh secret rejection", err)
 	}
 }
 
@@ -613,12 +629,12 @@ func TestVerifyGitHubHostedControlsRejectsUnexpectedUpstreamRefreshVariable(t *t
 		return strings.Replace(content, `"variables": []`, `"variables": [{"name":"WORKCELL_UPSTREAM_REFRESH_GIT_EMAIL","value":"omkhar@gmail.com"}]`, 1)
 	})
 
-	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	err := hostedcontrols.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted an unexpected upstream-refresh variable")
+		t.Fatal("hostedcontrols.VerifyGitHubHostedControls() unexpectedly accepted an unexpected upstream-refresh variable")
 	}
 	if !strings.Contains(err.Error(), "workflow environment variables on omkhar/workcell/upstream-refresh include unexpected entries") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want unexpected upstream-refresh variable rejection", err)
+		t.Fatalf("hostedcontrols.VerifyGitHubHostedControls() error = %v, want unexpected upstream-refresh variable rejection", err)
 	}
 }
 
@@ -638,12 +654,12 @@ func TestVerifyGitHubHostedControlsRejectsEnvironmentAdminBypass(t *testing.T) {
 		return strings.Replace(content, `"can_admins_bypass": false`, `"can_admins_bypass": true`, 1)
 	})
 
-	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	err := hostedcontrols.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted administrator bypass on upstream-refresh")
+		t.Fatal("hostedcontrols.VerifyGitHubHostedControls() unexpectedly accepted administrator bypass on upstream-refresh")
 	}
 	if !strings.Contains(err.Error(), "must set can_admins_bypass=false") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want admin-bypass rejection", err)
+		t.Fatalf("hostedcontrols.VerifyGitHubHostedControls() error = %v, want admin-bypass rejection", err)
 	}
 }
 
@@ -663,11 +679,11 @@ func TestVerifyGitHubHostedControlsRejectsUnexpectedEnvironmentBranchPolicy(t *t
 		return strings.Replace(content, `"main"`, `"develop"`, 1)
 	})
 
-	err := VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	err := hostedcontrols.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("VerifyGitHubHostedControls() unexpectedly accepted the wrong deployment branch policy")
+		t.Fatal("hostedcontrols.VerifyGitHubHostedControls() unexpectedly accepted the wrong deployment branch policy")
 	}
 	if !strings.Contains(err.Error(), "must restrict deployment branches to main") {
-		t.Fatalf("VerifyGitHubHostedControls() error = %v, want deployment-branch rejection", err)
+		t.Fatalf("hostedcontrols.VerifyGitHubHostedControls() error = %v, want deployment-branch rejection", err)
 	}
 }

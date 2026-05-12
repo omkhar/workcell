@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package metadatautil
+package metadatautil_test
 
 import (
 	"os"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
+	"github.com/omkhar/workcell/internal/metadatautil/pinnedinputs"
 	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 )
 
@@ -266,8 +267,8 @@ jobs:
     steps:
       - run: true
 `
-	if err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml"); err != nil {
-		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v", err)
+	if err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml"); err != nil {
+		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v", err)
 	}
 }
 
@@ -291,12 +292,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 `
-	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted checkout under pull_request_target")
+		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted checkout under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not checkout repository contents") {
-		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
+		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
 	}
 }
 
@@ -322,12 +323,12 @@ jobs:
     steps:
       - run: true
 `
-	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted job-level permissions under pull_request_target")
+		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted job-level permissions under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not grant job-level permissions") {
-		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
+		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
 	}
 }
 
@@ -346,12 +347,12 @@ permissions: {}
 
 jobs: { pr-base-policy: { name: Allowed PR base, runs-on: ubuntu-latest, permissions: { contents: write }, steps: [ { run: true } ] } }
 `
-	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted inline job-level permissions under pull_request_target")
+		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline job-level permissions under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not grant job-level permissions") {
-		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
+		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
 	}
 }
 
@@ -372,12 +373,12 @@ jobs:
   pr-base-policy:
     uses: ./.github/workflows/reusable.yml
 `
-	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted reusable workflow invocation under pull_request_target")
+		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted reusable workflow invocation under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not call reusable workflows") {
-		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
+		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
 	}
 }
 
@@ -396,12 +397,12 @@ permissions: {}
 
 jobs: { pr-base-policy: { uses: ./.github/workflows/reusable.yml } }
 `
-	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted inline reusable workflow invocation under pull_request_target")
+		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline reusable workflow invocation under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not call reusable workflows") {
-		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
+		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
 	}
 }
 
@@ -420,12 +421,12 @@ permissions: {}
 
 jobs: { pr-base-policy: { name: Allowed PR base, runs-on: ubuntu-latest, steps: [ { uses: evil/action@0123456789012345678901234567890123456789 } ] } }
 `
-	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted inline external action under pull_request_target")
+		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline external action under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not use external actions") {
-		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want external action rejection", err)
+		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want external action rejection", err)
 	}
 }
 
@@ -444,12 +445,12 @@ permissions: {}
 
 jobs: { pr-base-policy: { name: Allowed PR base, runs-on: ubuntu-latest, steps: [ { uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd } ] } }
 `
-	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted inline checkout under pull_request_target")
+		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline checkout under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not checkout repository contents") {
-		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
+		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
 	}
 }
 
@@ -472,12 +473,12 @@ jobs:
     steps:
       - run: true
 `
-	err := isSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("isSafePullRequestTargetWorkflow() unexpectedly accepted a pull_request_target workflow without a Kusari suppression comment")
+		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted a pull_request_target workflow without a Kusari suppression comment")
 	}
 	if !strings.Contains(err.Error(), "must document the reviewed Kusari suppression") {
-		t.Fatalf("isSafePullRequestTargetWorkflow() error = %v, want Kusari suppression rejection", err)
+		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want Kusari suppression rejection", err)
 	}
 }
 
