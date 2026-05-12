@@ -21,33 +21,13 @@ import (
 )
 
 var (
-	hexDigestPattern      = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	workflowPermissionsRE = regexp.MustCompile(`(?m)^permissions:\s+\{\}$`)
-	aptInstallPattern     = regexp.MustCompile(`apt-get install -y --no-install-recommends(?s:(.*?))&&`)
+	hexDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 type ControlPlaneArtifact struct {
 	Kind        string
 	RepoPath    string
 	RuntimePath string
-}
-
-type PinnedInputsConfig struct {
-	RuntimeDockerfilePath    string
-	ValidatorDockerfilePath  string
-	ProvidersPackageJSONPath string
-	ProvidersPackageLockPath string
-	WorkflowsDir             string
-	CIWorkflowPath           string
-	ReleaseWorkflowPath      string
-	PinHygieneWorkflowPath   string
-	CodeownersPath           string
-	CodexRequirementsPath    string
-	CodexMCPConfigPath       string
-	HostedControlsPolicyPath string
-	HostedControlsScriptPath string
-	ProviderBumpPolicyPath   string
-	MaxDebianSnapshotAgeDays int
 }
 
 func readText(path string) (string, error) {
