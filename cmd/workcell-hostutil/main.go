@@ -311,6 +311,11 @@ func runLauncher(args []string) error {
 			return launcherUsage()
 		}
 		return launcher.ValidateSecurityOptions(args[1])
+	case "validate-container-security-options":
+		if len(args) != 2 {
+			return launcherUsage()
+		}
+		return launcher.ValidateContainerSecurityOptions(args[1])
 	case "canonicalize-tool-path":
 		if len(args) != 2 {
 			return launcherUsage()
@@ -375,7 +380,7 @@ func releaseUsage() error {
 }
 
 func launcherUsage() error {
-	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|acquire-profile-lock|write-profile-owner|cleanup-stale-session-audit-dirs|session-record-write|session-list|session-show|session-export|session-diff-metadata|session-runtime-metadata|session-timeline|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|resolve-host-output-directory-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints|support-matrix-eval> [args...]")
+	return fmt.Errorf("usage: workcell-hostutil launcher <session-suffix|colima-status|cleanup-stale-log-pointers|profile-lock-is-stale|acquire-profile-lock|write-profile-owner|cleanup-stale-session-audit-dirs|session-record-write|session-list|session-show|session-export|session-diff-metadata|session-runtime-metadata|session-timeline|audit-digest|direct-mount-cache-key|resolve-host-output-candidate|resolve-host-output-directory-candidate|cleanup-stale-injection-bundles|manifest-metadata|resolver-metadata|workspace-cache-key|extract-codex-version|validate-security-options|validate-container-security-options|canonicalize-tool-path|dedupe-endpoints|resolve-endpoints|support-matrix-eval> [args...]")
 }
 
 func parseSessionRoots(args []string) ([]string, []string, error) {
