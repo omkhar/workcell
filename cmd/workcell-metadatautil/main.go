@@ -104,7 +104,7 @@ func main() {
 		if len(os.Args) != 5 {
 			die(fmt.Errorf("usage: %s verify-github-hosted-controls TMP_DIR REPO POLICY_PATH", os.Args[0]))
 		}
-		err = metadatautil.VerifyGitHubHostedControls(os.Args[2], os.Args[3], os.Args[4])
+		err = hostedcontrols.VerifyGitHubHostedControls(os.Args[2], os.Args[3], os.Args[4])
 	case "extract-dockerfile-arg":
 		if len(os.Args) != 4 {
 			die(fmt.Errorf("usage: %s extract-dockerfile-arg DOCKERFILE_PATH ARG_NAME", os.Args[0]))
