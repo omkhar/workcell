@@ -1286,67 +1286,11 @@ EOF
   chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/${required_tool}"
 done
 
-cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/uname"
-#!/bin/bash
-set -euo pipefail
-case "${1:-}" in
-  -s)
-    printf 'Darwin\n'
-    ;;
-  -m)
-    printf 'arm64\n'
-    ;;
-  *)
-    printf 'Darwin\n'
-    ;;
-esac
-EOF
-chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/uname"
-
-cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/dirname"
-#!/bin/bash
-set -euo pipefail
-exec /usr/bin/dirname "$@"
-EOF
-chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/dirname"
-
-cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/basename"
-#!/bin/bash
-set -euo pipefail
-exec /usr/bin/basename "$@"
-EOF
-chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/basename"
-
-cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/sysctl"
-#!/bin/bash
-set -euo pipefail
-if [[ "${1:-}" == "-in" ]] && [[ "${2:-}" == "hw.optional.arm64" ]]; then
-  printf '1\n'
-  exit 0
-fi
-exit 1
-EOF
-chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/sysctl"
-
-cat <<'EOF' >"${INSTALL_DEPS_VERIFY_BIN}/brew"
-#!/bin/bash
-set -euo pipefail
-if [[ "${1:-}" != "install" ]]; then
-  echo "Expected only brew install during installer dependency bootstrap" >&2
-  exit 1
-fi
-shift
-printf 'install %s\n' "$*" >"${INSTALL_DEPS_LOG}"
-for pkg in "$@"; do
-  cat <<'EOFAKE' >"${INSTALL_DEPS_FAKEBIN}/${pkg}"
-#!/bin/bash
-set -euo pipefail
-exit 0
-EOFAKE
-  chmod 0755 "${INSTALL_DEPS_FAKEBIN}/${pkg}"
+for mock_tool in uname dirname basename sysctl brew; do
+  install -m 0755 \
+    "${ROOT_DIR}/verify/invariants/harnesses/install-deps/${mock_tool}.sh" \
+    "${INSTALL_DEPS_VERIFY_BIN}/${mock_tool}"
 done
-EOF
-chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/brew"
 
 if ! env -i \
   HOME="${INSTALL_DEPS_VERIFY_HOME}" \
