@@ -21,317 +21,333 @@ func die(err error) {
 	os.Exit(1)
 }
 
+// subcommand describes one workcell-metadatautil subcommand.  minArgs
+// and maxArgs count only the args that follow the subcommand name; a
+// maxArgs of -1 means unbounded.
+type subcommand struct {
+	name    string
+	usage   string
+	minArgs int
+	maxArgs int
+	handler func(args []string) error
+}
+
+func subcommands() []subcommand {
+	return []subcommand{
+		{"generate-control-plane-manifest", "ROOT_DIR OUTPUT_PATH", 2, 2, cmdGenerateControlPlaneManifest},
+		{"verify-control-plane-manifest", "MANIFEST_PATH", 1, 1, cmdVerifyControlPlaneManifest},
+		{"verify-control-plane-parity", "MANIFEST_PATH", 1, 1, cmdVerifyControlPlaneParity},
+		{"check-workflows", "ROOT_DIR POLICY_PATH", 2, 2, cmdCheckWorkflows},
+		{"generate-workflow-lane-manifest", "ROOT_DIR POLICY_PATH OUTPUT_PATH", 3, 3, cmdGenerateWorkflowLaneManifest},
+		{"verify-workflow-lane-manifest", "ROOT_DIR POLICY_PATH MANIFEST_PATH", 3, 3, cmdVerifyWorkflowLaneManifest},
+		{"plan-workflow-lanes", "MANIFEST_PATH CONFIG_JSON_PATH", 2, 2, cmdPlanWorkflowLanes},
+		{"fetch-rulesets", "TMP_DIR REPO", 2, 2, cmdFetchRulesets},
+		{"list-hosted-control-environments", "POLICY_PATH", 1, 1, cmdListHostedControlEnvironments},
+		{"verify-github-hosted-controls", "TMP_DIR REPO POLICY_PATH", 3, 3, cmdVerifyGitHubHostedControls},
+		{"extract-dockerfile-arg", "DOCKERFILE_PATH ARG_NAME", 2, 2, cmdExtractDockerfileArg},
+		{"extract-claude-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractClaudeSHA},
+		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
+		{"manifest-checksum", "MANIFEST_PATH PLATFORM", 2, 2, cmdManifestChecksum},
+		{"manifest-version", "MANIFEST_PATH EXPECTED_VERSION", 2, 2, cmdManifestVersion},
+		{"check-provider-bump-policy", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 3, 3, cmdCheckProviderBumpPolicy},
+		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON [NOW_RFC3339]", 3, 4, cmdProviderBumpPlan},
+		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 4, 4, cmdApplyProviderBumpPlan},
+		{"generate-build-input-manifest", "DOCKERFILE PACKAGE_JSON PACKAGE_LOCK OUTPUT BUILD_REF SOURCE_DATE_EPOCH REQUIRE_TRACKED", 7, 7, cmdGenerateBuildInputManifest},
+		{"generate-builder-environment-manifest", "OUTPUT BUILDKIT_IMAGE BUILDX_VERSION_TARGET COSIGN_VERSION_TARGET QEMU_IMAGE SYFT_VERSION_TARGET BUILDX_VERSION BUILDX_INSPECT DOCKER_VERSION_JSON QEMU_VERSION COSIGN_VERSION CURL_VERSION GIT_VERSION GZIP_VERSION SYFT_VERSION TAR_VERSION", 16, 16, cmdGenerateBuilderEnvironmentManifest},
+		{"check-pinned-inputs", "DOCKERFILE VALIDATOR_DOCKERFILE PROVIDERS_PACKAGE_JSON PROVIDERS_PACKAGE_LOCK WORKFLOWS_DIR CI_WORKFLOW RELEASE_WORKFLOW PIN_HYGIENE_WORKFLOW CODEOWNERS CODEX_REQUIREMENTS CODEX_MCP_CONFIG HOSTED_CONTROLS_POLICY HOSTED_CONTROLS_SCRIPT PROVIDER_BUMP_POLICY MAX_DEBIAN_SNAPSHOT_AGE_DAYS", 15, 15, cmdCheckPinnedInputs},
+		{"verify-reproducible-build", "OCI_EXPORT_A OCI_EXPORT_B REPRO_PLATFORMS REPRO_MANIFEST_PATH SOURCE_DATE_EPOCH", 5, 5, cmdVerifyReproducibleBuild},
+		{"generate-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", 4, 4, cmdGenerateReproducibleBuildManifest},
+		{"verify-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", 3, 3, cmdVerifyReproducibleBuildManifest},
+		{"canonicalize-path", "PATH", 1, 1, cmdCanonicalizePath},
+		{"coverage-percent", "REPORT_PATH MINIMUM LABEL", 3, 3, cmdCoveragePercent},
+		{"coverage-executables", "MESSAGE_PATH", 1, 1, cmdCoverageExecutables},
+		{"validate-json", "FILE [FILE...]", 1, -1, cmdValidateJSON},
+		{"validate-toml", "FILE [FILE...]", 1, -1, cmdValidateTOML},
+		{"validate-requirements", "ROOT_DIR REQUIREMENTS_PATH", 2, 2, cmdValidateRequirements},
+		{"validate-operator-contract", "ROOT_DIR CONTRACT_PATH REQUIREMENTS_PATH", 3, 3, cmdValidateOperatorContract},
+		{"scan-credential-patterns", "ROOT_DIR", 1, 1, cmdScanCredentialPatterns},
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
-		die(fmt.Errorf("usage: %s <command> [args...]", os.Args[0]))
+		die(rootUsageError(""))
 	}
-
-	var err error
-	switch os.Args[1] {
-	case "generate-control-plane-manifest":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s generate-control-plane-manifest ROOT_DIR OUTPUT_PATH", os.Args[0]))
+	for _, sub := range subcommands() {
+		if sub.name != os.Args[1] {
+			continue
 		}
-		err = metadatautil.GenerateControlPlaneManifest(os.Args[2], os.Args[3])
-	case "verify-control-plane-manifest":
-		if len(os.Args) != 3 {
-			die(fmt.Errorf("usage: %s verify-control-plane-manifest MANIFEST_PATH", os.Args[0]))
+		args := os.Args[2:]
+		if len(args) < sub.minArgs || (sub.maxArgs >= 0 && len(args) > sub.maxArgs) {
+			die(fmt.Errorf("usage: %s %s %s", os.Args[0], sub.name, sub.usage))
 		}
-		err = metadatautil.ValidateControlPlaneManifest(os.Args[2])
-	case "verify-control-plane-parity":
-		if len(os.Args) != 3 {
-			die(fmt.Errorf("usage: %s verify-control-plane-parity MANIFEST_PATH", os.Args[0]))
-		}
-		rows, rowErr := metadatautil.ControlPlaneParityRows(os.Args[2])
-		if rowErr != nil {
-			die(rowErr)
-		}
-		for _, row := range rows {
-			fmt.Println(row)
-		}
-		return
-	case "check-workflows":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s check-workflows ROOT_DIR POLICY_PATH", os.Args[0]))
-		}
-		err = workflows.CheckWorkflows(os.Args[2], os.Args[3])
-	case "generate-workflow-lane-manifest":
-		if len(os.Args) != 5 {
-			die(fmt.Errorf("usage: %s generate-workflow-lane-manifest ROOT_DIR POLICY_PATH OUTPUT_PATH", os.Args[0]))
-		}
-		err = metadatautil.GenerateWorkflowLaneManifest(os.Args[2], os.Args[3], os.Args[4])
-	case "verify-workflow-lane-manifest":
-		if len(os.Args) != 5 {
-			die(fmt.Errorf("usage: %s verify-workflow-lane-manifest ROOT_DIR POLICY_PATH MANIFEST_PATH", os.Args[0]))
-		}
-		err = metadatautil.VerifyWorkflowLaneManifest(os.Args[2], os.Args[3], os.Args[4])
-	case "plan-workflow-lanes":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s plan-workflow-lanes MANIFEST_PATH CONFIG_JSON_PATH", os.Args[0]))
-		}
-		configPath := os.Args[3]
-		var cfg metadatautil.WorkflowLanePlannerConfig
-		if err := metadatautil.LoadJSONFile(configPath, &cfg); err != nil {
+		if err := sub.handler(args); err != nil {
 			die(err)
 		}
-		plan, planErr := metadatautil.PlanWorkflowLanes(os.Args[2], cfg)
-		if planErr != nil {
-			die(planErr)
-		}
-		content, marshalErr := json.MarshalIndent(plan, "", "  ")
-		if marshalErr != nil {
-			die(marshalErr)
-		}
-		fmt.Printf("%s\n", content)
 		return
-	case "fetch-rulesets":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s fetch-rulesets TMP_DIR REPO", os.Args[0]))
-		}
-		err = hostedcontrols.FetchRulesets(os.Args[2], os.Args[3])
-	case "list-hosted-control-environments":
-		if len(os.Args) != 3 {
-			die(fmt.Errorf("usage: %s list-hosted-control-environments POLICY_PATH", os.Args[0]))
-		}
-		environments, listErr := hostedcontrols.EnvironmentNames(os.Args[2])
-		if listErr != nil {
-			die(listErr)
-		}
-		for _, environmentName := range environments {
-			fmt.Println(environmentName)
-		}
-		return
-	case "verify-github-hosted-controls":
-		if len(os.Args) != 5 {
-			die(fmt.Errorf("usage: %s verify-github-hosted-controls TMP_DIR REPO POLICY_PATH", os.Args[0]))
-		}
-		err = hostedcontrols.VerifyGitHubHostedControls(os.Args[2], os.Args[3], os.Args[4])
-	case "extract-dockerfile-arg":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s extract-dockerfile-arg DOCKERFILE_PATH ARG_NAME", os.Args[0]))
-		}
-		value, extractErr := metadatautil.ExtractDockerfileArg(os.Args[2], os.Args[3])
-		if extractErr != nil {
-			die(extractErr)
-		}
-		fmt.Println(value)
-		return
-	case "extract-claude-sha":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s extract-claude-sha DOCKERFILE_PATH TARGET_ARCH", os.Args[0]))
-		}
-		value, extractErr := metadatautil.ExtractClaudeSHA(os.Args[2], os.Args[3])
-		if extractErr != nil {
-			die(extractErr)
-		}
-		fmt.Println(value)
-		return
-	case "extract-codex-sha":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s extract-codex-sha DOCKERFILE_PATH TARGET_ARCH", os.Args[0]))
-		}
-		value, extractErr := metadatautil.ExtractCodexSHA(os.Args[2], os.Args[3])
-		if extractErr != nil {
-			die(extractErr)
-		}
-		fmt.Println(value)
-		return
-	case "manifest-checksum":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s manifest-checksum MANIFEST_PATH PLATFORM", os.Args[0]))
-		}
-		value, extractErr := metadatautil.ManifestChecksum(os.Args[2], os.Args[3])
-		if extractErr != nil {
-			die(extractErr)
-		}
-		fmt.Println(value)
-		return
-	case "manifest-version":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s manifest-version MANIFEST_PATH EXPECTED_VERSION", os.Args[0]))
-		}
-		err = metadatautil.ManifestVersion(os.Args[2], os.Args[3])
-	case "check-provider-bump-policy":
-		if len(os.Args) != 5 {
-			die(fmt.Errorf("usage: %s check-provider-bump-policy POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", os.Args[0]))
-		}
-		err = metadatautil.CheckProviderBumpPolicy(os.Args[2], os.Args[3], os.Args[4])
-	case "provider-bump-plan":
-		if len(os.Args) != 5 && len(os.Args) != 6 {
-			die(fmt.Errorf("usage: %s provider-bump-plan POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON [NOW_RFC3339]", os.Args[0]))
-		}
-		now := time.Now().UTC()
-		if len(os.Args) == 6 {
-			parsedNow, parseErr := time.Parse(time.RFC3339, os.Args[5])
-			if parseErr != nil {
-				die(parseErr)
-			}
-			now = parsedNow.UTC()
-		}
-		plan, planErr := metadatautil.PlanProviderBumps(os.Args[2], os.Args[3], os.Args[4], now, metadatautil.DefaultProviderBumpSources(), nil)
-		if planErr != nil {
-			die(planErr)
-		}
-		content, marshalErr := json.MarshalIndent(plan, "", "  ")
-		if marshalErr != nil {
-			die(marshalErr)
-		}
-		fmt.Printf("%s\n", content)
-		return
-	case "apply-provider-bump-plan":
-		if len(os.Args) != 6 {
-			die(fmt.Errorf("usage: %s apply-provider-bump-plan PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", os.Args[0]))
-		}
-		err = metadatautil.ApplyProviderBumpPlan(os.Args[2], os.Args[3], os.Args[4], os.Args[5])
-	case "generate-build-input-manifest":
-		if len(os.Args) != 9 {
-			die(fmt.Errorf("usage: %s generate-build-input-manifest DOCKERFILE PACKAGE_JSON PACKAGE_LOCK OUTPUT BUILD_REF SOURCE_DATE_EPOCH REQUIRE_TRACKED", os.Args[0]))
-		}
-		sourceEpoch, convErr := strconv.ParseInt(os.Args[7], 10, 64)
-		if convErr != nil {
-			die(convErr)
-		}
-		requireTracked := os.Args[8] == "1"
-		err = metadatautil.GenerateBuildInputManifest(os.Args[2], os.Args[3], os.Args[4], os.Args[5], os.Args[6], sourceEpoch, requireTracked)
-	case "generate-builder-environment-manifest":
-		if len(os.Args) != 18 {
-			die(fmt.Errorf("usage: %s generate-builder-environment-manifest OUTPUT BUILDKIT_IMAGE BUILDX_VERSION_TARGET COSIGN_VERSION_TARGET QEMU_IMAGE SYFT_VERSION_TARGET BUILDX_VERSION BUILDX_INSPECT DOCKER_VERSION_JSON QEMU_VERSION COSIGN_VERSION CURL_VERSION GIT_VERSION GZIP_VERSION SYFT_VERSION TAR_VERSION", os.Args[0]))
-		}
-		err = metadatautil.GenerateBuilderEnvironmentManifest(
-			os.Args[2],
-			os.Args[3],
-			os.Args[4],
-			os.Args[5],
-			os.Args[6],
-			os.Args[7],
-			os.Args[8],
-			os.Args[9],
-			os.Args[10],
-			os.Args[11],
-			os.Args[12],
-			os.Args[13],
-			os.Args[14],
-			os.Args[15],
-			os.Args[16],
-			os.Args[17],
-		)
-	case "check-pinned-inputs":
-		if len(os.Args) != 17 {
-			die(fmt.Errorf("usage: %s check-pinned-inputs DOCKERFILE VALIDATOR_DOCKERFILE PROVIDERS_PACKAGE_JSON PROVIDERS_PACKAGE_LOCK WORKFLOWS_DIR CI_WORKFLOW RELEASE_WORKFLOW PIN_HYGIENE_WORKFLOW CODEOWNERS CODEX_REQUIREMENTS CODEX_MCP_CONFIG HOSTED_CONTROLS_POLICY HOSTED_CONTROLS_SCRIPT PROVIDER_BUMP_POLICY MAX_DEBIAN_SNAPSHOT_AGE_DAYS", os.Args[0]))
-		}
-		maxAge, convErr := strconv.Atoi(os.Args[16])
-		if convErr != nil {
-			die(convErr)
-		}
-		err = pinnedinputs.CheckPinnedInputs(pinnedinputs.PinnedInputsConfig{
-			RuntimeDockerfilePath:    os.Args[2],
-			ValidatorDockerfilePath:  os.Args[3],
-			ProvidersPackageJSONPath: os.Args[4],
-			ProvidersPackageLockPath: os.Args[5],
-			WorkflowsDir:             os.Args[6],
-			CIWorkflowPath:           os.Args[7],
-			ReleaseWorkflowPath:      os.Args[8],
-			PinHygieneWorkflowPath:   os.Args[9],
-			CodeownersPath:           os.Args[10],
-			CodexRequirementsPath:    os.Args[11],
-			CodexMCPConfigPath:       os.Args[12],
-			HostedControlsPolicyPath: os.Args[13],
-			HostedControlsScriptPath: os.Args[14],
-			ProviderBumpPolicyPath:   os.Args[15],
-			MaxDebianSnapshotAgeDays: maxAge,
-		})
-	case "verify-reproducible-build":
-		if len(os.Args) != 7 {
-			die(fmt.Errorf("usage: %s verify-reproducible-build OCI_EXPORT_A OCI_EXPORT_B REPRO_PLATFORMS REPRO_MANIFEST_PATH SOURCE_DATE_EPOCH", os.Args[0]))
-		}
-		sourceEpoch, convErr := strconv.ParseInt(os.Args[6], 10, 64)
-		if convErr != nil {
-			die(convErr)
-		}
-		err = metadatautil.VerifyReproducibleBuild(os.Args[2], os.Args[3], os.Args[4], os.Args[5], sourceEpoch)
-	case "generate-reproducible-build-manifest":
-		if len(os.Args) != 6 {
-			die(fmt.Errorf("usage: %s generate-reproducible-build-manifest OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", os.Args[0]))
-		}
-		sourceEpoch, convErr := strconv.ParseInt(os.Args[5], 10, 64)
-		if convErr != nil {
-			die(convErr)
-		}
-		err = metadatautil.GenerateReproducibleBuildManifest(os.Args[2], os.Args[3], os.Args[4], sourceEpoch)
-	case "verify-reproducible-build-manifest":
-		if len(os.Args) != 5 {
-			die(fmt.Errorf("usage: %s verify-reproducible-build-manifest OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", os.Args[0]))
-		}
-		err = metadatautil.VerifyReproducibleBuildManifest(os.Args[2], os.Args[3], os.Args[4])
-	case "canonicalize-path":
-		if len(os.Args) != 3 {
-			die(fmt.Errorf("usage: %s canonicalize-path PATH", os.Args[0]))
-		}
-		value, canonErr := metadatautil.CanonicalizePath(os.Args[2])
-		if canonErr != nil {
-			die(canonErr)
-		}
-		fmt.Println(value)
-		return
-	case "coverage-percent":
-		if len(os.Args) != 5 {
-			die(fmt.Errorf("usage: %s coverage-percent REPORT_PATH MINIMUM LABEL", os.Args[0]))
-		}
-		minimum, convErr := strconv.ParseFloat(os.Args[3], 64)
-		if convErr != nil {
-			die(convErr)
-		}
-		percent, percentErr := metadatautil.CoveragePercent(os.Args[2])
-		if percentErr != nil {
-			die(percentErr)
-		}
-		if percent < minimum {
-			die(fmt.Errorf("%s is %.2f%%, below the required %.2f%%", os.Args[4], percent, minimum))
-		}
-		fmt.Printf("%s: %.2f%%\n", os.Args[4], percent)
-		return
-	case "coverage-executables":
-		if len(os.Args) != 3 {
-			die(fmt.Errorf("usage: %s coverage-executables MESSAGE_PATH", os.Args[0]))
-		}
-		executables, execErr := metadatautil.CoverageExecutables(os.Args[2])
-		if execErr != nil {
-			die(execErr)
-		}
-		for _, executable := range executables {
-			fmt.Println(executable)
-		}
-		return
-	case "validate-json":
-		if len(os.Args) < 3 {
-			die(fmt.Errorf("usage: %s validate-json FILE [FILE...]", os.Args[0]))
-		}
-		err = metadatautil.ValidateJSONFiles(os.Args[2:])
-	case "validate-toml":
-		if len(os.Args) < 3 {
-			die(fmt.Errorf("usage: %s validate-toml FILE [FILE...]", os.Args[0]))
-		}
-		err = metadatautil.ValidateTOMLFiles(os.Args[2:])
-	case "validate-requirements":
-		if len(os.Args) != 4 {
-			die(fmt.Errorf("usage: %s validate-requirements ROOT_DIR REQUIREMENTS_PATH", os.Args[0]))
-		}
-		err = metadatautil.ValidateRequirements(os.Args[2], os.Args[3])
-	case "validate-operator-contract":
-		if len(os.Args) != 5 {
-			die(fmt.Errorf("usage: %s validate-operator-contract ROOT_DIR CONTRACT_PATH REQUIREMENTS_PATH", os.Args[0]))
-		}
-		err = metadatautil.ValidateOperatorContract(os.Args[2], os.Args[3], os.Args[4])
-	case "scan-credential-patterns":
-		if len(os.Args) != 3 {
-			die(fmt.Errorf("usage: %s scan-credential-patterns ROOT_DIR", os.Args[0]))
-		}
-		err = metadatautil.ScanCredentialPatterns(os.Args[2])
-	default:
-		die(fmt.Errorf("unknown command: %s", os.Args[1]))
 	}
+	die(rootUsageError(os.Args[1]))
+}
 
-	if err != nil {
-		die(err)
+func rootUsageError(badCommand string) error {
+	names := make([]string, 0, len(subcommands()))
+	for _, sub := range subcommands() {
+		names = append(names, sub.name)
 	}
+	if badCommand == "" {
+		return fmt.Errorf("usage: %s <command> [args...]", os.Args[0])
+	}
+	return fmt.Errorf("unknown command: %s", badCommand)
+}
+
+func cmdGenerateControlPlaneManifest(args []string) error {
+	return metadatautil.GenerateControlPlaneManifest(args[0], args[1])
+}
+
+func cmdVerifyControlPlaneManifest(args []string) error {
+	return metadatautil.ValidateControlPlaneManifest(args[0])
+}
+
+func cmdVerifyControlPlaneParity(args []string) error {
+	rows, err := metadatautil.ControlPlaneParityRows(args[0])
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		fmt.Println(row)
+	}
+	return nil
+}
+
+func cmdCheckWorkflows(args []string) error {
+	return workflows.CheckWorkflows(args[0], args[1])
+}
+
+func cmdGenerateWorkflowLaneManifest(args []string) error {
+	return metadatautil.GenerateWorkflowLaneManifest(args[0], args[1], args[2])
+}
+
+func cmdVerifyWorkflowLaneManifest(args []string) error {
+	return metadatautil.VerifyWorkflowLaneManifest(args[0], args[1], args[2])
+}
+
+func cmdPlanWorkflowLanes(args []string) error {
+	var cfg metadatautil.WorkflowLanePlannerConfig
+	if err := metadatautil.LoadJSONFile(args[1], &cfg); err != nil {
+		return err
+	}
+	plan, err := metadatautil.PlanWorkflowLanes(args[0], cfg)
+	if err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", content)
+	return nil
+}
+
+func cmdFetchRulesets(args []string) error {
+	return hostedcontrols.FetchRulesets(args[0], args[1])
+}
+
+func cmdListHostedControlEnvironments(args []string) error {
+	environments, err := hostedcontrols.EnvironmentNames(args[0])
+	if err != nil {
+		return err
+	}
+	for _, environmentName := range environments {
+		fmt.Println(environmentName)
+	}
+	return nil
+}
+
+func cmdVerifyGitHubHostedControls(args []string) error {
+	return hostedcontrols.VerifyGitHubHostedControls(args[0], args[1], args[2])
+}
+
+func cmdExtractDockerfileArg(args []string) error {
+	value, err := metadatautil.ExtractDockerfileArg(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func cmdExtractClaudeSHA(args []string) error {
+	value, err := metadatautil.ExtractClaudeSHA(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func cmdExtractCodexSHA(args []string) error {
+	value, err := metadatautil.ExtractCodexSHA(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func cmdManifestChecksum(args []string) error {
+	value, err := metadatautil.ManifestChecksum(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func cmdManifestVersion(args []string) error {
+	return metadatautil.ManifestVersion(args[0], args[1])
+}
+
+func cmdCheckProviderBumpPolicy(args []string) error {
+	return metadatautil.CheckProviderBumpPolicy(args[0], args[1], args[2])
+}
+
+func cmdProviderBumpPlan(args []string) error {
+	now := time.Now().UTC()
+	if len(args) == 4 {
+		parsed, err := time.Parse(time.RFC3339, args[3])
+		if err != nil {
+			return err
+		}
+		now = parsed.UTC()
+	}
+	plan, err := metadatautil.PlanProviderBumps(args[0], args[1], args[2], now, metadatautil.DefaultProviderBumpSources(), nil)
+	if err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", content)
+	return nil
+}
+
+func cmdApplyProviderBumpPlan(args []string) error {
+	return metadatautil.ApplyProviderBumpPlan(args[0], args[1], args[2], args[3])
+}
+
+func cmdGenerateBuildInputManifest(args []string) error {
+	sourceEpoch, err := strconv.ParseInt(args[5], 10, 64)
+	if err != nil {
+		return err
+	}
+	requireTracked := args[6] == "1"
+	return metadatautil.GenerateBuildInputManifest(args[0], args[1], args[2], args[3], args[4], sourceEpoch, requireTracked)
+}
+
+func cmdGenerateBuilderEnvironmentManifest(args []string) error {
+	return metadatautil.GenerateBuilderEnvironmentManifest(
+		args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
+		args[8], args[9], args[10], args[11], args[12], args[13], args[14], args[15],
+	)
+}
+
+func cmdCheckPinnedInputs(args []string) error {
+	maxAge, err := strconv.Atoi(args[14])
+	if err != nil {
+		return err
+	}
+	return pinnedinputs.CheckPinnedInputs(pinnedinputs.PinnedInputsConfig{
+		RuntimeDockerfilePath:    args[0],
+		ValidatorDockerfilePath:  args[1],
+		ProvidersPackageJSONPath: args[2],
+		ProvidersPackageLockPath: args[3],
+		WorkflowsDir:             args[4],
+		CIWorkflowPath:           args[5],
+		ReleaseWorkflowPath:      args[6],
+		PinHygieneWorkflowPath:   args[7],
+		CodeownersPath:           args[8],
+		CodexRequirementsPath:    args[9],
+		CodexMCPConfigPath:       args[10],
+		HostedControlsPolicyPath: args[11],
+		HostedControlsScriptPath: args[12],
+		ProviderBumpPolicyPath:   args[13],
+		MaxDebianSnapshotAgeDays: maxAge,
+	})
+}
+
+func cmdVerifyReproducibleBuild(args []string) error {
+	sourceEpoch, err := strconv.ParseInt(args[4], 10, 64)
+	if err != nil {
+		return err
+	}
+	return metadatautil.VerifyReproducibleBuild(args[0], args[1], args[2], args[3], sourceEpoch)
+}
+
+func cmdGenerateReproducibleBuildManifest(args []string) error {
+	sourceEpoch, err := strconv.ParseInt(args[3], 10, 64)
+	if err != nil {
+		return err
+	}
+	return metadatautil.GenerateReproducibleBuildManifest(args[0], args[1], args[2], sourceEpoch)
+}
+
+func cmdVerifyReproducibleBuildManifest(args []string) error {
+	return metadatautil.VerifyReproducibleBuildManifest(args[0], args[1], args[2])
+}
+
+func cmdCanonicalizePath(args []string) error {
+	value, err := metadatautil.CanonicalizePath(args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func cmdCoveragePercent(args []string) error {
+	minimum, err := strconv.ParseFloat(args[1], 64)
+	if err != nil {
+		return err
+	}
+	percent, err := metadatautil.CoveragePercent(args[0])
+	if err != nil {
+		return err
+	}
+	if percent < minimum {
+		return fmt.Errorf("%s is %.2f%%, below the required %.2f%%", args[2], percent, minimum)
+	}
+	fmt.Printf("%s: %.2f%%\n", args[2], percent)
+	return nil
+}
+
+func cmdCoverageExecutables(args []string) error {
+	executables, err := metadatautil.CoverageExecutables(args[0])
+	if err != nil {
+		return err
+	}
+	for _, executable := range executables {
+		fmt.Println(executable)
+	}
+	return nil
+}
+
+func cmdValidateJSON(args []string) error {
+	return metadatautil.ValidateJSONFiles(args)
+}
+
+func cmdValidateTOML(args []string) error {
+	return metadatautil.ValidateTOMLFiles(args)
+}
+
+func cmdValidateRequirements(args []string) error {
+	return metadatautil.ValidateRequirements(args[0], args[1])
+}
+
+func cmdValidateOperatorContract(args []string) error {
+	return metadatautil.ValidateOperatorContract(args[0], args[1], args[2])
+}
+
+func cmdScanCredentialPatterns(args []string) error {
+	return metadatautil.ScanCredentialPatterns(args[0])
 }
