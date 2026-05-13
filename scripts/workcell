@@ -764,67 +764,51 @@ terminate_process_tree_by_pid() {
 run_host_colima_with_timeout() {
   local timeout_seconds="$1"
   shift
-  local pid=""
-  local status=0
-  local timed_out=0
-  local deadline=0
 
-  if [[ "${timeout_seconds}" -le 0 ]]; then
-    run_host_colima "$@"
-    return $?
+  [[ "$#" -gt 0 ]] || return 0
+  if [[ -z "${HOST_COLIMA_BIN:-}" ]]; then
+    HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
   fi
-
-  run_host_colima "$@" &
-  pid=$!
-  deadline=$((SECONDS + timeout_seconds))
-  while kill -0 "${pid}" >/dev/null 2>&1; do
-    sleep 1
-    if ! kill -0 "${pid}" >/dev/null 2>&1; then
-      break
-    fi
-    if ((SECONDS >= deadline)); then
-      timed_out=1
-      terminate_process_tree_by_pid "${pid}"
-      break
-    fi
-  done
-  if wait "${pid}"; then
-    :
-  else
-    status=$?
-  fi
-  if ((timed_out == 1)); then
-    return 124
-  fi
-  return "${status}"
+  go_hostutil launcher run-host-colima-with-timeout "${timeout_seconds}" \
+    --colima-bin="${HOST_COLIMA_BIN}" \
+    --real-home="${REAL_HOME:-}" \
+    --colima-home="${COLIMA_STATE_ROOT:-}" \
+    --cwd="${WORKCELL_HOST_COMMAND_CWD:-${REAL_HOME:-/}}" \
+    -- "$@"
 }
 
 colima_profile_status() {
   local profile="$1"
   local list_output=""
-  local status_output=""
-  local status_error=""
-  local status_error_path=""
 
   if ! list_output="$(run_host_colima list --json 2>/dev/null)"; then
     return 1
   fi
   [[ -n "${list_output}" ]] || return 3
 
-  status_error_path="$(mktemp "${TMPDIR:-/tmp}/workcell-colima-status.XXXXXX")"
-  if status_output="$(printf '%s' "${list_output}" | go_hostutil launcher colima-status "${profile}" 2>"${status_error_path}")"; then
-    rm -f "${status_error_path}"
+  # The colima-status subcommand exits 0 with the profile status on
+  # stdout, 3 when the profile is absent from the list, and 1 for any
+  # other parse error.  go run wraps the child binary's non-zero exit
+  # status as "exit status N\n" on its own stderr while itself exiting
+  # 1, so the bash side reconstructs the original exit code from that
+  # trailer to preserve the contract verify-invariants depends on.
+  local stderr_capture status_output rc trailer
+  stderr_capture="$(mktemp)"
+  status_output="$(printf '%s' "${list_output}" | go_hostutil launcher colima-status "${profile}" 2>"${stderr_capture}")"
+  rc=$?
+  if ((rc != 0)); then
+    trailer="$(tail -n1 "${stderr_capture}" 2>/dev/null || true)"
+    case "${trailer}" in
+      "exit status "[0-9]*)
+        rc="${trailer##* }"
+        ;;
+    esac
+  fi
+  rm -f "${stderr_capture}"
+  if ((rc == 0)) && [[ -n "${status_output}" ]]; then
     printf '%s\n' "${status_output}"
-    return 0
   fi
-
-  status_error="$(cat "${status_error_path}" 2>/dev/null || true)"
-  rm -f "${status_error_path}"
-  if printf '%s\n' "${status_error}" | grep -Fq -- 'not found'; then
-    return 3
-  fi
-
-  return 1
+  return "${rc}"
 }
 
 profile_process_pids() {
@@ -6691,21 +6675,12 @@ validate_colima_profile_config() {
 validate_colima_profile() {
   local profile="$1"
   local workspace="$2"
-  local status
+  local status=""
 
   status="$(run_host_colima status --profile "${profile}" 2>&1)"
-  echo "${status}" | grep -q "Virtualization.Framework" || {
-    echo "Colima profile ${profile} is not using Virtualization.Framework." >&2
+  if ! printf '%s' "${status}" | go_hostutil launcher validate-colima-status "${profile}"; then
     return 1
-  }
-  echo "${status}" | grep -q "mountType: virtiofs" || {
-    echo "Colima profile ${profile} is not using virtiofs." >&2
-    return 1
-  }
-  echo "${status}" | grep -q "runtime: docker" || {
-    echo "Colima profile ${profile} is not using Docker runtime." >&2
-    return 1
-  }
+  fi
 
   if ! validate_colima_profile_config "${profile}" "${workspace}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
     return 1
