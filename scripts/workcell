@@ -3920,69 +3920,67 @@ mark_detached_session_running() {
 }
 
 session_attach_main() {
+  local plan=""
   local session_id=""
   local no_stdin=0
+  local profile=""
+  local container_name=""
   local attach_status=0
+  local stdin_mode=""
+  local line=""
+  local key=""
+  local value=""
   local -a attach_args=()
+  local -a lookup_roots=()
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --id)
-        session_id="$(option_value_or_die "$1" "${2-}")"
-        shift 2
-        ;;
-      --no-stdin)
-        no_stdin=1
-        shift
-        ;;
-      -h | --help)
-        session_usage
-        exit 0
-        ;;
-      *)
-        echo "Unsupported workcell session attach option: $1" >&2
-        session_usage >&2
-        exit 2
-        ;;
+  while IFS= read -r line; do
+    lookup_roots+=("${line}")
+  done < <(session_lookup_root_args)
+  set +e
+  plan="$(go_hostutil launcher session-attach-cli "${lookup_roots[@]}" "$@")"
+  attach_status="$?"
+  set -e
+  if [[ "${attach_status}" -ne 0 ]]; then
+    exit "${attach_status}"
+  fi
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "${key}" in
+      session_id) session_id="${value}" ;;
+      no_stdin) no_stdin="${value}" ;;
+      profile) profile="${value}" ;;
+      container_name) container_name="${value}" ;;
     esac
-  done
-  [[ -n "${session_id}" ]] || {
-    echo "workcell session attach requires --id." >&2
-    exit 2
-  }
+  done <<<"${plan}"
+  [[ -n "${session_id}" ]] || exit 0
 
   load_session_runtime_metadata "${session_id}"
-  [[ -n "${SESSION_META_PROFILE}" ]] || {
-    echo "session attach record is missing a profile: ${session_id}" >&2
-    exit 1
-  }
-  session_require_detached_runtime_metadata "attach" "${session_id}" 1 || exit 1
-  [[ -n "${SESSION_META_CONTAINER_NAME}" ]] || {
-    echo "session attach record is missing a container name: ${session_id}" >&2
-    exit 1
-  }
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
   sanitize_host_docker_env
   session_require_live_detached_container "attach" "${session_id}" 1 || exit 1
 
   if [[ "${no_stdin}" -eq 1 ]]; then
     attach_args+=(--no-stdin)
+    stdin_mode="disabled"
+  else
+    stdin_mode="interactive"
   fi
-  append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "attach-attempt" \
+  append_session_control_audit_record "${profile}" "${session_id}" "attach-attempt" \
     "source=host-cli" \
-    "stdin_mode=$([[ "${no_stdin}" -eq 1 ]] && printf 'disabled' || printf 'interactive')" \
-    "container_name=${SESSION_META_CONTAINER_NAME}"
+    "stdin_mode=${stdin_mode}" \
+    "container_name=${container_name}"
   set +e
-  run_profile_docker_command "${SESSION_META_PROFILE}" attach "${attach_args[@]}" "${SESSION_META_CONTAINER_NAME}"
+  run_profile_docker_command "${profile}" attach "${attach_args[@]}" "${container_name}"
   attach_status="$?"
   set -e
   if [[ "${attach_status}" -ne 0 ]]; then
     exit "${attach_status}"
   fi
-  append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "attach" \
+  append_session_control_audit_record "${profile}" "${session_id}" "attach" \
     "source=host-cli" \
-    "stdin_mode=$([[ "${no_stdin}" -eq 1 ]] && printf 'disabled' || printf 'interactive')" \
-    "container_name=${SESSION_META_CONTAINER_NAME}"
+    "stdin_mode=${stdin_mode}" \
+    "container_name=${container_name}"
   exit 0
 }
 
