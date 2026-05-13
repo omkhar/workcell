@@ -25,12 +25,25 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		var ec *authpolicy.ExitCodeError
-		if errors.As(err, &ec) {
-			if msg := ec.Error(); msg != "" {
+		// Both authpolicy and publishpr translations carry their bash
+		// exit-code contract through a typed ExitCodeError. The two
+		// types are intentionally distinct because their messages also
+		// differ (auth/policy v. publish-pr), but the dispatch here
+		// stays uniform: surface the embedded message (if any) on
+		// stderr and exit with the typed Code.
+		var authEC *authpolicy.ExitCodeError
+		if errors.As(err, &authEC) {
+			if msg := authEC.Error(); msg != "" {
 				fmt.Fprintln(os.Stderr, msg)
 			}
-			os.Exit(ec.Code)
+			os.Exit(authEC.Code)
+		}
+		var publishEC *publishpr.ExitCodeError
+		if errors.As(err, &publishEC) {
+			if msg := publishEC.Error(); msg != "" {
+				fmt.Fprintln(os.Stderr, msg)
+			}
+			os.Exit(publishEC.Code)
 		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -193,6 +206,7 @@ func launcherSubcommands() []launcherSubcommand {
 		// PR 23.4 — injection bundle preparation moved into Go.
 		{"injection-stage-direct-mounts", 2, 2, cmdLauncherInjectionStageDirectMounts},
 		{"injection-prepare-bundle", 0, -1, cmdLauncherInjectionPrepareBundle},
+		{"publish-pr-cli", 0, -1, cmdLauncherPublishPRCli},
 	}
 }
 
@@ -251,6 +265,10 @@ func cmdLauncherPolicyCli(args []string) error {
 		os.Exit(2)
 	}
 	return err
+}
+
+func cmdLauncherPublishPRCli(args []string) error {
+	return publishpr.PublishPRMain(args, os.Stdin, os.Stdout, os.Stderr)
 }
 
 func cmdLauncherSessionTimelineCli(args []string) error {
