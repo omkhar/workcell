@@ -109,6 +109,42 @@ func TestValidateLogsKindNameRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestConsumeRootArgsStripsLeadingRootFlags(t *testing.T) {
+	t.Parallel()
+
+	roots, rest := consumeRootArgs([]string{"--root=/a", "--root=/b", "--id", "x"})
+	if len(roots) != 2 || roots[0] != "/a" || roots[1] != "/b" {
+		t.Fatalf("consumeRootArgs roots = %v, want [/a /b]", roots)
+	}
+	if len(rest) != 2 || rest[0] != "--id" || rest[1] != "x" {
+		t.Fatalf("consumeRootArgs rest = %v, want [--id x]", rest)
+	}
+}
+
+func TestConsumeRootArgsDropsEmptyRoots(t *testing.T) {
+	t.Parallel()
+
+	roots, rest := consumeRootArgs([]string{"--root=", "--root=/b", "--id", "x"})
+	if len(roots) != 1 || roots[0] != "/b" {
+		t.Fatalf("consumeRootArgs roots = %v, want [/b]", roots)
+	}
+	if len(rest) != 2 || rest[0] != "--id" {
+		t.Fatalf("consumeRootArgs rest = %v, want [--id x]", rest)
+	}
+}
+
+func TestConsumeRootArgsLeavesTrailingFlagsAlone(t *testing.T) {
+	t.Parallel()
+
+	roots, rest := consumeRootArgs([]string{"--id", "x", "--root=/late"})
+	if len(roots) != 0 {
+		t.Fatalf("consumeRootArgs roots = %v, want empty (only strips leading --root=)", roots)
+	}
+	if len(rest) != 3 {
+		t.Fatalf("consumeRootArgs rest = %v, want untouched", rest)
+	}
+}
+
 func TestLogPathForKindMapsAllKnown(t *testing.T) {
 	t.Parallel()
 

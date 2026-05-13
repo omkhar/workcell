@@ -22,7 +22,8 @@ import (
 // and pass both to sessions.SessionTimelineRecordsInRoots so legacy
 // records continue to resolve.
 func TimelineMain(args []string) error {
-	sessionID, showHelp, err := parseTimelineArgs(args)
+	roots, rest := consumeRootArgs(args)
+	sessionID, showHelp, err := parseTimelineArgs(rest)
 	if err != nil {
 		return err
 	}
@@ -34,7 +35,9 @@ func TimelineMain(args []string) error {
 		return errors.New("workcell session timeline requires --id.")
 	}
 
-	roots := lookupRoots()
+	if len(roots) == 0 {
+		roots = lookupRoots()
+	}
 	lines, err := sessions.SessionTimelineRecordsInRoots(roots, sessionID)
 	if err != nil {
 		return err
