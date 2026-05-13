@@ -5201,10 +5201,6 @@ auth_main() {
   esac
 }
 
-policy_usage() {
-  go_hostutil launcher policy-usage
-}
-
 policy_main() {
   go_hostutil launcher policy-cli "$@"
   exit $?
