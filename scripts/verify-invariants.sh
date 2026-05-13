@@ -2458,22 +2458,7 @@ WORKCELL_COLIMA_TIMEOUT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-colima-timeout-
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_host_colima_with_timeout
   printf '\n'
-  cat <<'EOF'
-run_host_colima() {
-  sleep 60
-}
-
-start_epoch="$(date +%s)"
-if run_host_colima_with_timeout 1 delete --profile timeout-fixture; then
-  echo "Expected run_host_colima_with_timeout to time out for a hung colima command" >&2
-  exit 1
-else
-  status=$?
-fi
-elapsed=$(( $(date +%s) - start_epoch ))
-[[ "${status}" -eq 124 ]]
-[[ "${elapsed}" -lt 15 ]]
-EOF
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-colima-timeout.sh"
 } >"${WORKCELL_COLIMA_TIMEOUT_HARNESS}"
 bash "${WORKCELL_COLIMA_TIMEOUT_HARNESS}"
 
@@ -2486,39 +2471,7 @@ WORKCELL_REFRESH_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-refresh-harness.sh"
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" refresh_managed_profile
   printf '\n'
-  cat <<'EOF'
-ROOT="$(mktemp -d)"
-COLIMA_PROFILE="refresh-fixture"
-PROFILE_WAS_REFRESHED=0
-PROFILE_PREEXISTED=1
-PROFILE_MARKER_WORKSPACE="bound"
-PROFILE_RUNNING=1
-
-stash_profile_audit_log() { :; }
-remember_profile_runtime_image_for_refresh() { :; }
-reap_stale_profile_processes() { :; }
-run_host_colima_with_timeout() { return 124; }
-validate_colima_profile_name() { :; }
-target_provider_for_profile_state() { printf 'colima\n'; }
-profile_target_state_dir() { printf '%s/state-%s\n' "${ROOT}" "$1"; }
-profile_dir() { printf '%s/profile-%s\n' "${ROOT}" "$1"; }
-profile_lima_dir() { printf '%s/lima-%s\n' "${ROOT}" "$1"; }
-profile_disk_dir() { printf '%s/disk-%s\n' "${ROOT}" "$1"; }
-profile_process_pids() { return 1; }
-
-PROFILE_DIR="$(profile_dir "${COLIMA_PROFILE}")"
-PROFILE_STATE_DIR="$(profile_target_state_dir "${COLIMA_PROFILE}")"
-mkdir -p "${PROFILE_STATE_DIR}" "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")" "$(profile_disk_dir "${COLIMA_PROFILE}")"
-refresh_managed_profile "refreshing fixture profile"
-[[ ! -e "${PROFILE_STATE_DIR}" ]]
-[[ ! -e "${PROFILE_DIR}" ]]
-[[ ! -e "$(profile_lima_dir "${COLIMA_PROFILE}")" ]]
-[[ ! -e "$(profile_disk_dir "${COLIMA_PROFILE}")" ]]
-[[ "${PROFILE_WAS_REFRESHED}" -eq 1 ]]
-[[ "${PROFILE_PREEXISTED}" -eq 0 ]]
-[[ -z "${PROFILE_MARKER_WORKSPACE}" ]]
-[[ "${PROFILE_RUNNING}" -eq 0 ]]
-EOF
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-refresh.sh"
 } >"${WORKCELL_REFRESH_HARNESS}"
 bash "${WORKCELL_REFRESH_HARNESS}"
 
@@ -2527,35 +2480,7 @@ WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harnes
   printf 'set -euo pipefail\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" start_managed_profile
   printf '\n'
-  cat <<'EOF'
-COLIMA_PROFILE="start-retry-fixture"
-WORKSPACE="/tmp/workspace"
-COLIMA_CPU=4
-COLIMA_MEMORY=8
-COLIMA_DISK=60
-PROFILE_RUNNING=0
-RUN_COUNT=0
-REFRESH_COUNT=0
-
-maybe_reap_stale_profile_processes() { :; }
-reap_stale_profile_processes() { :; }
-run_command_with_debug_log() {
-  RUN_COUNT=$((RUN_COUNT + 1))
-  if [[ "${RUN_COUNT}" -eq 1 ]]; then
-    return 124
-  fi
-  return 0
-}
-refresh_managed_profile() {
-  REFRESH_COUNT=$((REFRESH_COUNT + 1))
-  return 0
-}
-
-start_managed_profile
-[[ "${RUN_COUNT}" -eq 2 ]]
-[[ "${REFRESH_COUNT}" -eq 1 ]]
-[[ "${PROFILE_RUNNING}" -eq 1 ]]
-EOF
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-start-retry.sh"
 } >"${WORKCELL_START_RETRY_HARNESS}"
 bash "${WORKCELL_START_RETRY_HARNESS}"
 
@@ -2564,39 +2489,7 @@ WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-ti
   printf 'set -euo pipefail\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" start_managed_profile
   printf '\n'
-  cat <<'EOF'
-COLIMA_PROFILE="start-timeout-cleanup-fixture"
-WORKSPACE="/tmp/workspace"
-COLIMA_CPU=4
-COLIMA_MEMORY=8
-COLIMA_DISK=60
-PROFILE_RUNNING=0
-RUN_COUNT=0
-REFRESH_COUNT=0
-FINAL_STATUS=0
-
-maybe_reap_stale_profile_processes() { :; }
-reap_stale_profile_processes() { :; }
-run_command_with_debug_log() {
-  RUN_COUNT=$((RUN_COUNT + 1))
-  return 124
-}
-refresh_managed_profile() {
-  REFRESH_COUNT=$((REFRESH_COUNT + 1))
-  return 0
-}
-
-if start_managed_profile; then
-  echo "Expected repeated Colima start timeouts to fail" >&2
-  exit 1
-else
-  FINAL_STATUS=$?
-fi
-[[ "${RUN_COUNT}" -eq 2 ]]
-[[ "${REFRESH_COUNT}" -eq 2 ]]
-[[ "${FINAL_STATUS}" -eq 124 ]]
-[[ "${PROFILE_RUNNING}" -eq 0 ]]
-EOF
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-start-timeout-cleanup.sh"
 } >"${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 bash "${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 
@@ -4852,39 +4745,7 @@ rm -f "${GEMINI_AUTH_FAILURE_HARNESS}"
 PROFILE_PROCESS_MATCH_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" profile_process_pids
-  cat <<'EOF'
-set -euo pipefail
-
-HARNESS_BIN="$(mktemp -d)"
-trap 'rm -rf "${HARNESS_BIN}"' EXIT
-
-cat >"${HARNESS_BIN}/pgrep" <<'PGREP'
-#!/bin/sh
-printf '49909\n49991\n60000\n'
-PGREP
-cat >"${HARNESS_BIN}/ps" <<'PS'
-#!/bin/sh
-case "$2" in
-  49909)
-    printf '%s\n' '/opt/homebrew/bin/limactl hostagent --pidfile /Users/omkharanarasaratnam/.colima/_lima/colima-workcell-workcell-ac42b1dc/ha.pid --socket /Users/omkharanarasaratnam/.colima/_lima/colima-workcell-workcell-ac42b1dc/ha.sock --guestagent /opt/homebrew/share/lima/lima-guestagent.Linux-aarch64.gz colima-workcell-workcell-ac42b1dc'
-    ;;
-  49991)
-    printf '%s\n' 'ssh: /Users/omkharanarasaratnam/.colima/_lima/colima-workcell-workcell-ac42b1dc/ssh.sock [mux]'
-    ;;
-  60000)
-    printf '%s\n' '/opt/homebrew/bin/limactl hostagent --pidfile /Users/omkharanarasaratnam/.colima/_lima/colima-other/ha.pid --socket /Users/omkharanarasaratnam/.colima/_lima/colima-other/ha.sock colima-other'
-    ;;
-esac
-PS
-chmod +x "${HARNESS_BIN}/pgrep" "${HARNESS_BIN}/ps"
-
-PATH="${HARNESS_BIN}:${PATH}"
-matched="$(profile_process_pids workcell-workcell-ac42b1dc | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
-if [[ "${matched}" != "49909 49991" ]]; then
-  echo "Expected profile_process_pids to return the stale hostagent and ssh mux, got: ${matched}" >&2
-  exit 1
-fi
-EOF
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/profile-process-match.sh"
 } >"${PROFILE_PROCESS_MATCH_HARNESS}"
 /bin/bash "${PROFILE_PROCESS_MATCH_HARNESS}"
 rm -f "${PROFILE_PROCESS_MATCH_HARNESS}"
@@ -4892,120 +4753,7 @@ COLIMA_PROFILE_STATUS_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_profile_status
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" maybe_reap_stale_profile_processes
-  cat <<'EOF'
-set -euo pipefail
-
-ROOT_DIR="__ROOT_DIR__"
-TRUSTED_HOST_PATH="${PATH}"
-
-# Match scripts/workcell's scrubbed repo-root go_hostutil invocation.
-source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
-
-go_hostutil() {
-  local host_go_bin=""
-
-  ensure_go_run_env
-  host_go_bin="$(resolve_go_bin)"
-  (
-    cd "${ROOT_DIR}" &&
-      env -i \
-        PATH="${TRUSTED_HOST_PATH}" \
-        HOME=/tmp \
-        LC_ALL=C \
-        LANG=C \
-        GOPATH="${GOPATH}" \
-        GOMODCACHE="${GOMODCACHE}" \
-        GOCACHE="${GOCACHE}" \
-        "${host_go_bin}" run ./cmd/workcell-hostutil "$@"
-  )
-}
-
-run_host_colima() {
-  cat <<'JSON'
-{"name":"default","status":"Running"}
-{"name":"workcell-workcell-ac42b1dc","status":"Stopped"}
-{"name":"workcell-other","status":"Running"}
-JSON
-}
-
-reap_stale_profile_processes() {
-  printf 'reaped:%s\n' "$1"
-}
-
-profile_process_pids() {
-  case "$1" in
-    workcell-stale)
-      printf '%s\n' 49909
-      ;;
-    workcell-empty-list)
-      printf '%s\n' 49919
-      ;;
-    workcell-parse-failure)
-      printf '%s\n' 49991
-      ;;
-  esac
-}
-
-status="$(colima_profile_status workcell-workcell-ac42b1dc)"
-if [[ "${status}" != "Stopped" ]]; then
-  echo "Expected colima_profile_status to return Stopped for the matching profile, got: ${status}" >&2
-  exit 1
-fi
-
-status="$(colima_profile_status workcell-other)"
-if [[ "${status}" != "Running" ]]; then
-  echo "Expected colima_profile_status to return Running for the matching profile, got: ${status}" >&2
-  exit 1
-fi
-
-missing_status_rc=0
-if colima_profile_status does-not-exist >/tmp/workcell-colima-profile-status-missing.out 2>&1; then
-  echo "Expected colima_profile_status to fail for a missing profile" >&2
-  exit 1
-else
-  missing_status_rc=$?
-fi
-if ((missing_status_rc != 3)); then
-  echo "Expected colima_profile_status to return exit status 3 for a missing profile, got: ${missing_status_rc}" >&2
-  exit 1
-fi
-
-reaped="$(maybe_reap_stale_profile_processes workcell-workcell-ac42b1dc)"
-if [[ "${reaped}" != "reaped:workcell-workcell-ac42b1dc" ]]; then
-  echo "Expected maybe_reap_stale_profile_processes to reap only explicit Stopped profiles, got: ${reaped}" >&2
-  exit 1
-fi
-
-if [[ -n "$(maybe_reap_stale_profile_processes workcell-other)" ]]; then
-  echo "Expected maybe_reap_stale_profile_processes to ignore Running profiles" >&2
-  exit 1
-fi
-
-reaped="$(maybe_reap_stale_profile_processes workcell-stale)"
-if [[ "${reaped}" != "reaped:workcell-stale" ]]; then
-  echo "Expected maybe_reap_stale_profile_processes to reap missing profiles that still have orphaned processes, got: ${reaped}" >&2
-  exit 1
-fi
-
-run_host_colima() {
-  return 0
-}
-
-reaped="$(maybe_reap_stale_profile_processes workcell-empty-list)"
-if [[ "${reaped}" != "reaped:workcell-empty-list" ]]; then
-  echo "Expected maybe_reap_stale_profile_processes to reap orphaned processes when colima list returns an empty profile set, got: ${reaped}" >&2
-  exit 1
-fi
-
-run_host_colima() {
-  printf '%s\n' '{not-json'
-}
-
-if [[ -n "$(maybe_reap_stale_profile_processes workcell-parse-failure)" ]]; then
-  echo "Expected maybe_reap_stale_profile_processes to ignore parse failures instead of reaping live profiles blindly" >&2
-  exit 1
-fi
-EOF
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/colima-profile-status.sh"
 } | sed "s|__ROOT_DIR__|${ROOT_DIR}|g" >"${COLIMA_PROFILE_STATUS_HARNESS}"
 /bin/bash "${COLIMA_PROFILE_STATUS_HARNESS}"
 rm -f "${COLIMA_PROFILE_STATUS_HARNESS}"
