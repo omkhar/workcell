@@ -4954,10 +4954,6 @@ session_main() {
   esac
 }
 
-auth_usage() {
-  go_hostutil launcher auth-usage
-}
-
 default_injection_policy_path() {
   printf '%s/.config/workcell/injection-policy.toml\n' "${REAL_HOME}"
 }
