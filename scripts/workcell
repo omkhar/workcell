@@ -4635,36 +4635,8 @@ session_logs_main() {
 }
 
 session_timeline_main() {
-  local session_id=""
-  local -a lookup_roots=()
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --id)
-        session_id="$(option_value_or_die "$1" "${2-}")"
-        shift 2
-        ;;
-      -h | --help)
-        session_usage
-        exit 0
-        ;;
-      *)
-        echo "Unsupported workcell session timeline option: $1" >&2
-        session_usage >&2
-        exit 2
-        ;;
-    esac
-  done
-  [[ -n "${session_id}" ]] || {
-    echo "workcell session timeline requires --id." >&2
-    exit 2
-  }
-
-  while IFS= read -r root; do
-    lookup_roots+=("${root}")
-  done < <(session_lookup_root_args)
-  go_hostutil launcher session-timeline "${lookup_roots[@]}" "${session_id}"
-  exit 0
+  go_hostutil launcher session-timeline-cli "$@"
+  exit $?
 }
 
 session_monitor_main() {
