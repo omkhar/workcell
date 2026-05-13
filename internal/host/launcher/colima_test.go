@@ -96,7 +96,9 @@ func TestRunHostColimaForwardsArgsAndPropagatesExitCode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX /bin/sh helpers")
 	}
-	t.Parallel()
+	// Intentionally serial: writes-then-execs a script on disk. Running
+	// these in parallel races against the Linux kernel's ETXTBSY check
+	// when concurrent goroutines exec freshly-written executables.
 	dir := t.TempDir()
 	fake := writeFakeColima(t, dir, `#!/bin/sh
 echo "argc=$#"
@@ -125,7 +127,7 @@ func TestRunHostColimaFallsBackToRootWhenCWDMissing(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX /bin/sh helpers")
 	}
-	t.Parallel()
+	// Serial — see ETXTBSY note on TestRunHostColimaForwardsArgsAndPropagatesExitCode.
 	dir := t.TempDir()
 	fake := writeFakeColima(t, dir, `#!/bin/sh
 pwd
@@ -150,7 +152,7 @@ func TestRunHostColimaWithTimeoutNoTimeoutDelegates(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX /bin/sh helpers")
 	}
-	t.Parallel()
+	// Serial — see ETXTBSY note on TestRunHostColimaForwardsArgsAndPropagatesExitCode.
 	dir := t.TempDir()
 	fake := writeFakeColima(t, dir, `#!/bin/sh
 exit 11
@@ -172,7 +174,7 @@ func TestRunHostColimaWithTimeoutKillsRunawayChild(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX /bin/sh helpers")
 	}
-	t.Parallel()
+	// Serial — see ETXTBSY note on TestRunHostColimaForwardsArgsAndPropagatesExitCode.
 	dir := t.TempDir()
 	fake := writeFakeColima(t, dir, `#!/bin/sh
 # Sleep well past the test deadline to force the timeout path.
@@ -200,7 +202,7 @@ func TestRunHostColimaWithTimeoutReturnsExitCodeWhenFastEnough(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX /bin/sh helpers")
 	}
-	t.Parallel()
+	// Serial — see ETXTBSY note on TestRunHostColimaForwardsArgsAndPropagatesExitCode.
 	dir := t.TempDir()
 	fake := writeFakeColima(t, dir, `#!/bin/sh
 exit 0
