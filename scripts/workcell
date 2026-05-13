@@ -5095,6 +5095,37 @@ prepare_injection_bundle() {
   INJECTION_SSH_CONFIG_ASSURANCE="off"
   INJECTION_SECRET_COPY_TARGETS=""
 
+  local stdout_capture stderr_capture rc trailer
+  stdout_capture="$(mktemp)"
+  stderr_capture="$(mktemp)"
+  rc=0
+  go_hostutil launcher injection-prepare-bundle \
+    "--agent=${agent}" \
+    "--mode=${mode}" \
+    "--policy=${INJECTION_POLICY:-}" \
+    "--use-default-policy=${USE_DEFAULT_INJECTION_POLICY:-0}" \
+    "--auth-status=${AUTH_STATUS:-0}" \
+    "--doctor=${DOCTOR:-0}" \
+    "--inspect=${INSPECT:-0}" \
+    "--dry-run=${DRY_RUN:-0}" \
+    "--synthetic-codex-auth=${synthetic_codex}" \
+    "--synthetic-claude-export=${synthetic_claude}" \
+    "--real-home=${REAL_HOME}" \
+    "--pid=$$" >"${stdout_capture}" 2>"${stderr_capture}" || rc=$?
+  if ((rc != 0)); then
+    # go run swallows the child's non-zero exit and emits "exit status N"
+    # on stderr; recover the original code so the bash CLI surface matches
+    # the pre-translation contract callers (and the resolver-launcher
+    # scenarios) depend on.
+    trailer="$(tail -n1 "${stderr_capture}" 2>/dev/null || true)"
+    case "${trailer}" in
+      "exit status "[0-9]*)
+        rc="${trailer##* }"
+        sed -i.bak -e '$d' "${stderr_capture}" 2>/dev/null && rm -f "${stderr_capture}.bak"
+        ;;
+    esac
+  fi
+  cat "${stderr_capture}" >&2 || true
   while IFS='=' read -r key value; do
     [[ -n "${key}" ]] || continue
     case "${key}" in
@@ -5115,19 +5146,9 @@ prepare_injection_bundle() {
       INJECTION_SSH_CONFIG_ASSURANCE) INJECTION_SSH_CONFIG_ASSURANCE="${value}" ;;
       INJECTION_SECRET_COPY_TARGETS) INJECTION_SECRET_COPY_TARGETS="${value}" ;;
     esac
-  done < <(go_hostutil launcher injection-prepare-bundle \
-    "--agent=${agent}" \
-    "--mode=${mode}" \
-    "--policy=${INJECTION_POLICY:-}" \
-    "--use-default-policy=${USE_DEFAULT_INJECTION_POLICY:-0}" \
-    "--auth-status=${AUTH_STATUS:-0}" \
-    "--doctor=${DOCTOR:-0}" \
-    "--inspect=${INSPECT:-0}" \
-    "--dry-run=${DRY_RUN:-0}" \
-    "--synthetic-codex-auth=${synthetic_codex}" \
-    "--synthetic-claude-export=${synthetic_claude}" \
-    "--real-home=${REAL_HOME}" \
-    "--pid=$$")
+  done <"${stdout_capture}"
+  rm -f "${stdout_capture}" "${stderr_capture}"
+  return "${rc}"
 }
 
 build_recommended_command() {
