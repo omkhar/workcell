@@ -796,7 +796,7 @@ colima_profile_status() {
   stderr_capture="$(mktemp)"
   status_output="$(printf '%s' "${list_output}" | go_hostutil launcher colima-status "${profile}" 2>"${stderr_capture}")"
   rc=$?
-  if (( rc != 0 )); then
+  if ((rc != 0)); then
     trailer="$(tail -n1 "${stderr_capture}" 2>/dev/null || true)"
     case "${trailer}" in
       "exit status "[0-9]*)
@@ -805,7 +805,7 @@ colima_profile_status() {
     esac
   fi
   rm -f "${stderr_capture}"
-  if (( rc == 0 )) && [[ -n "${status_output}" ]]; then
+  if ((rc == 0)) && [[ -n "${status_output}" ]]; then
     printf '%s\n' "${status_output}"
   fi
   return "${rc}"
