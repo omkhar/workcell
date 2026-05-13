@@ -156,6 +156,9 @@ func launcherSubcommands() []launcherSubcommand {
 		{"colima-status", 1, 1, cmdLauncherColimaStatus},
 		{"validate-colima-status", 1, 1, cmdLauncherValidateColimaStatus},
 		{"run-host-colima-with-timeout", 1, -1, cmdLauncherRunHostColimaWithTimeout},
+		{"docker-desktop-context-name", 0, 0, cmdLauncherDockerDesktopContextName},
+		{"route-profile-docker-command", 1, -1, cmdLauncherRouteProfileDockerCommand},
+		{"prepare-current-docker-client-plan", 1, -1, cmdLauncherPrepareCurrentDockerClientPlan},
 		{"cleanup-stale-log-pointers", 1, 1, cmdLauncherCleanupStaleLogPointers},
 		{"profile-lock-is-stale", 1, 1, cmdLauncherProfileLockIsStale},
 		{"acquire-profile-lock", 2, 2, cmdLauncherAcquireProfileLock},
@@ -355,6 +358,92 @@ func parseColimaInvocationArgs(args []string) (int, launcher.HostColimaInvocatio
 		rest = rest[1:]
 	}
 	return timeoutSeconds, inv, rest, nil
+}
+
+func cmdLauncherDockerDesktopContextName(_ []string) error {
+	fmt.Println(launcher.DockerDesktopContextName)
+	return nil
+}
+
+// cmdLauncherRouteProfileDockerCommand implements the
+// `route-profile-docker-command` launcher subcommand.  The bash caller
+// passes the provider via --provider and, depending on the provider,
+// either --socket-path (colima) or --context-name (docker-desktop).
+// On success the env-prefix tokens are emitted to stdout one per line
+// so the bash shim can capture them into an array with `mapfile`.  An
+// unsupported provider exits with status 1 after printing the bash
+// "Unsupported target provider for Docker command routing" diagnostic
+// to stderr.
+func cmdLauncherRouteProfileDockerCommand(args []string) error {
+	var provider, socketPath, contextName string
+	for _, arg := range args {
+		switch {
+		case strings.HasPrefix(arg, "--provider="):
+			provider = strings.TrimPrefix(arg, "--provider=")
+		case strings.HasPrefix(arg, "--socket-path="):
+			socketPath = strings.TrimPrefix(arg, "--socket-path=")
+		case strings.HasPrefix(arg, "--context-name="):
+			contextName = strings.TrimPrefix(arg, "--context-name=")
+		default:
+			return launcherUsage()
+		}
+	}
+	route, err := launcher.RouteProfileDockerCommand(provider, socketPath, contextName)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+	for _, token := range route.EnvPrefix {
+		fmt.Println(token)
+	}
+	return nil
+}
+
+// cmdLauncherPrepareCurrentDockerClientPlan implements the
+// `prepare-current-docker-client-plan` launcher subcommand.  Required
+// arg: --backend=BACKEND.  Optional: --context-name=NAME,
+// --context-exists=0|1, --context-healthy=0|1 (consulted only for
+// docker-desktop).  On success it prints `mode=...` (and, for
+// docker-desktop, `context=NAME`) on stdout.  When the docker-desktop
+// context check fails the helper exits with status 2 after writing the
+// two-line bash diagnostic to stderr, matching the original `exit 2`
+// in scripts/workcell.
+func cmdLauncherPrepareCurrentDockerClientPlan(args []string) error {
+	var backend, contextName string
+	contextExists := false
+	contextHealthy := false
+	for _, arg := range args {
+		switch {
+		case strings.HasPrefix(arg, "--backend="):
+			backend = strings.TrimPrefix(arg, "--backend=")
+		case strings.HasPrefix(arg, "--context-name="):
+			contextName = strings.TrimPrefix(arg, "--context-name=")
+		case arg == "--context-exists=1":
+			contextExists = true
+		case arg == "--context-exists=0":
+			contextExists = false
+		case arg == "--context-healthy=1":
+			contextHealthy = true
+		case arg == "--context-healthy=0":
+			contextHealthy = false
+		default:
+			return launcherUsage()
+		}
+	}
+	plan, err := launcher.PrepareCurrentDockerClientPlan(backend, contextName, contextExists, contextHealthy)
+	if err != nil {
+		var planErr *launcher.PrepareDockerClientPlanError
+		if errors.As(err, &planErr) {
+			fmt.Fprintln(os.Stderr, planErr.Error())
+			os.Exit(2)
+		}
+		return err
+	}
+	fmt.Printf("mode=%s\n", plan.Mode)
+	if plan.ContextName != "" {
+		fmt.Printf("context=%s\n", plan.ContextName)
+	}
+	return nil
 }
 
 func cmdLauncherCleanupStaleLogPointers(args []string) error {

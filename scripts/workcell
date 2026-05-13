@@ -926,22 +926,65 @@ prepare_optional_target_docker_client() {
 prepare_current_target_docker_client() {
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
   sanitize_host_docker_env
-  case "${TARGET_BACKEND}" in
-    colima)
+
+  local desktop_context=""
+  local context_exists_flag="0"
+  local context_healthy_flag="0"
+  if [[ "${TARGET_BACKEND:-}" == "docker-desktop" ]]; then
+    desktop_context="$(docker_desktop_context_name)"
+    docker_context_exists "${desktop_context}" && context_exists_flag="1"
+    docker_context_is_healthy "${desktop_context}" && context_healthy_flag="1"
+  fi
+
+  # Delegate the case-statement that historically lived in this body to
+  # the Go translation in internal/host/launcher/dockerclient.go.  go run
+  # wraps non-zero exit status as a trailer on stderr; we extract it so
+  # the bash side can continue to exit 2 when the docker-desktop context
+  # check fails, exactly as the original case-block did.
+  local plan_stderr plan_output rc trailer
+  plan_stderr="$(mktemp)"
+  plan_output="$(go_hostutil launcher prepare-current-docker-client-plan \
+    --backend="${TARGET_BACKEND:-}" \
+    --context-name="${desktop_context}" \
+    "--context-exists=${context_exists_flag}" \
+    "--context-healthy=${context_healthy_flag}" 2>"${plan_stderr}")"
+  rc=$?
+  if ((rc != 0)); then
+    trailer="$(tail -n1 "${plan_stderr}" 2>/dev/null || true)"
+    case "${trailer}" in
+      "exit status "[0-9]*)
+        rc="${trailer##* }"
+        # Strip the trailer line so the bash diagnostic remains the
+        # only thing emitted to stderr.
+        sed -i.bak '$d' "${plan_stderr}" 2>/dev/null || true
+        rm -f "${plan_stderr}.bak"
+        ;;
+    esac
+    cat "${plan_stderr}" >&2
+    rm -f "${plan_stderr}"
+    exit "${rc}"
+  fi
+  rm -f "${plan_stderr}"
+
+  local plan_mode="" plan_context=""
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      mode) plan_mode="${value}" ;;
+      context) plan_context="${value}" ;;
+    esac
+  done <<<"${plan_output}"
+
+  case "${plan_mode}" in
+    noop)
       return 0
       ;;
     docker-desktop)
-      DOCKER_CONTEXT_NAME="$(docker_desktop_context_name)"
-      if ! docker_context_exists "${DOCKER_CONTEXT_NAME}" || ! docker_context_is_healthy "${DOCKER_CONTEXT_NAME}"; then
-        echo "Docker Desktop target requires a healthy docker context named ${DOCKER_CONTEXT_NAME}." >&2
-        echo "Enable Docker Desktop and make sure the ${DOCKER_CONTEXT_NAME} context is available before retrying." >&2
-        exit 2
-      fi
-      export DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}"
+      export DOCKER_CONTEXT="${plan_context}"
       unset DOCKER_HOST
       ;;
-    aws-ec2-ssm | gcp-vm)
-      return 0
+    *)
+      echo "prepare_current_target_docker_client: unexpected plan mode '${plan_mode}'" >&2
+      exit 1
       ;;
   esac
 }
@@ -1614,17 +1657,44 @@ run_profile_docker_command() {
   case "${provider}" in
     colima)
       socket_path="$(profile_docker_socket_path "${profile}")"
-      run_workcell_docker_client_command env DOCKER_HOST="unix://${socket_path}" "${HOST_DOCKER_BIN}" "$@"
       ;;
     docker-desktop)
       context_name="$(target_id_for_profile_state "${profile}")"
-      run_workcell_docker_client_command env DOCKER_CONTEXT="${context_name}" "${HOST_DOCKER_BIN}" "$@"
-      ;;
-    *)
-      echo "Unsupported target provider for Docker command routing: ${provider}" >&2
-      return 1
       ;;
   esac
+
+  # Delegate the env-prefix decision to the Go translation; on
+  # unsupported providers the helper emits the original bash
+  # diagnostic to its stderr and exits 1, which we surface here.
+  local route_stderr route_output rc trailer
+  route_stderr="$(mktemp)"
+  route_output="$(go_hostutil launcher route-profile-docker-command \
+    "--provider=${provider}" \
+    "--socket-path=${socket_path}" \
+    "--context-name=${context_name}" 2>"${route_stderr}")"
+  rc=$?
+  if ((rc != 0)); then
+    trailer="$(tail -n1 "${route_stderr}" 2>/dev/null || true)"
+    case "${trailer}" in
+      "exit status "[0-9]*)
+        rc="${trailer##* }"
+        sed -i.bak '$d' "${route_stderr}" 2>/dev/null || true
+        rm -f "${route_stderr}.bak"
+        ;;
+    esac
+    cat "${route_stderr}" >&2
+    rm -f "${route_stderr}"
+    return "${rc}"
+  fi
+  rm -f "${route_stderr}"
+
+  local -a env_prefix=()
+  while IFS= read -r token; do
+    [[ -n "${token}" ]] || continue
+    env_prefix+=("${token}")
+  done <<<"${route_output}"
+
+  run_workcell_docker_client_command "${env_prefix[@]}" "${HOST_DOCKER_BIN}" "$@"
 }
 
 profile_docker_transport_available() {
