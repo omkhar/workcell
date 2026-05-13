@@ -138,6 +138,8 @@ func launcherSubcommands() []launcherSubcommand {
 		{"session-logs-cli", 0, -1, cmdLauncherSessionLogsCli},
 		{"session-suffix", 0, 0, cmdLauncherSessionSuffix},
 		{"colima-status", 1, 1, cmdLauncherColimaStatus},
+		{"validate-colima-status", 1, 1, cmdLauncherValidateColimaStatus},
+		{"run-host-colima-with-timeout", 1, -1, cmdLauncherRunHostColimaWithTimeout},
 		{"cleanup-stale-log-pointers", 1, 1, cmdLauncherCleanupStaleLogPointers},
 		{"profile-lock-is-stale", 1, 1, cmdLauncherProfileLockIsStale},
 		{"acquire-profile-lock", 2, 2, cmdLauncherAcquireProfileLock},
@@ -225,6 +227,77 @@ func cmdLauncherColimaStatus(args []string) error {
 	}
 	fmt.Println(status)
 	return nil
+}
+
+func cmdLauncherValidateColimaStatus(args []string) error {
+	statusBytes, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return err
+	}
+	return launcher.ValidateColimaStatusOutput(string(statusBytes), args[0])
+}
+
+func cmdLauncherRunHostColimaWithTimeout(args []string) error {
+	timeoutSeconds, inv, colimaArgs, err := parseColimaInvocationArgs(args)
+	if err != nil {
+		return err
+	}
+	inv.Args = colimaArgs
+	code, runErr := launcher.RunHostColimaWithTimeout(timeoutSeconds, inv)
+	if runErr != nil {
+		return runErr
+	}
+	if code != 0 {
+		os.Exit(code)
+	}
+	return nil
+}
+
+// parseColimaInvocationArgs decodes the `run-host-colima-with-timeout`
+// argument vector.  The expected shape is:
+//
+//	<seconds> [--colima-bin=PATH] [--real-home=DIR] [--colima-home=DIR] [--cwd=DIR] -- COLIMA_ARGS...
+//
+// All flags are optional; values fall back to the matching environment
+// variables (HOST_COLIMA_BIN, REAL_HOME, COLIMA_STATE_ROOT,
+// WORKCELL_HOST_COMMAND_CWD) so callers can pick whichever style is
+// most convenient.
+func parseColimaInvocationArgs(args []string) (int, launcher.HostColimaInvocation, []string, error) {
+	if len(args) == 0 {
+		return 0, launcher.HostColimaInvocation{}, nil, launcherUsage()
+	}
+	timeoutSeconds, err := strconv.Atoi(args[0])
+	if err != nil {
+		return 0, launcher.HostColimaInvocation{}, nil, fmt.Errorf("parse timeout seconds: %w", err)
+	}
+	rest := args[1:]
+	inv := launcher.HostColimaInvocation{
+		ColimaBin:  os.Getenv("HOST_COLIMA_BIN"),
+		RealHome:   os.Getenv("REAL_HOME"),
+		ColimaHome: os.Getenv("COLIMA_STATE_ROOT"),
+		CWD:        os.Getenv("WORKCELL_HOST_COMMAND_CWD"),
+	}
+	for len(rest) > 0 {
+		arg := rest[0]
+		if arg == "--" {
+			rest = rest[1:]
+			break
+		}
+		switch {
+		case strings.HasPrefix(arg, "--colima-bin="):
+			inv.ColimaBin = strings.TrimPrefix(arg, "--colima-bin=")
+		case strings.HasPrefix(arg, "--real-home="):
+			inv.RealHome = strings.TrimPrefix(arg, "--real-home=")
+		case strings.HasPrefix(arg, "--colima-home="):
+			inv.ColimaHome = strings.TrimPrefix(arg, "--colima-home=")
+		case strings.HasPrefix(arg, "--cwd="):
+			inv.CWD = strings.TrimPrefix(arg, "--cwd=")
+		default:
+			return 0, launcher.HostColimaInvocation{}, nil, launcherUsage()
+		}
+		rest = rest[1:]
+	}
+	return timeoutSeconds, inv, rest, nil
 }
 
 func cmdLauncherCleanupStaleLogPointers(args []string) error {
