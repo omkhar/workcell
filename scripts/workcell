@@ -4105,50 +4105,45 @@ session_send_main() {
 }
 
 session_stop_main() {
+  local plan=""
   local session_id=""
   local force=0
+  local profile=""
+  local container_name=""
+  local stop_cli_status=0
   local record_path=""
   local stop_status=0
   local stop_exit_status=""
   local container_state=""
   local current_live_status=""
+  local line=""
+  local key=""
+  local value=""
+  local -a lookup_roots=()
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --id)
-        session_id="$(option_value_or_die "$1" "${2-}")"
-        shift 2
-        ;;
-      --force)
-        force=1
-        shift
-        ;;
-      -h | --help)
-        session_usage
-        exit 0
-        ;;
-      *)
-        echo "Unsupported workcell session stop option: $1" >&2
-        session_usage >&2
-        exit 2
-        ;;
+  while IFS= read -r line; do
+    lookup_roots+=("${line}")
+  done < <(session_lookup_root_args)
+  set +e
+  plan="$(go_hostutil launcher session-stop-cli "${lookup_roots[@]}" "$@")"
+  stop_cli_status="$?"
+  set -e
+  if [[ "${stop_cli_status}" -ne 0 ]]; then
+    exit "${stop_cli_status}"
+  fi
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "${key}" in
+      session_id) session_id="${value}" ;;
+      force) force="${value}" ;;
+      profile) profile="${value}" ;;
+      container_name) container_name="${value}" ;;
     esac
-  done
-  [[ -n "${session_id}" ]] || {
-    echo "workcell session stop requires --id." >&2
-    exit 2
-  }
+  done <<<"${plan}"
+  [[ -n "${session_id}" ]] || exit 0
 
   load_session_runtime_metadata "${session_id}"
-  [[ -n "${SESSION_META_PROFILE}" ]] || {
-    echo "session stop record is missing a profile: ${session_id}" >&2
-    exit 1
-  }
-  session_require_detached_runtime_metadata "stop" "${session_id}" 1 || exit 1
-  [[ -n "${SESSION_META_CONTAINER_NAME}" ]] || {
-    echo "session stop record is missing a container name: ${session_id}" >&2
-    exit 1
-  }
   HOST_DOCKER_BIN="$(resolve_host_tool docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"
   sanitize_host_docker_env
   current_live_status="${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}"
