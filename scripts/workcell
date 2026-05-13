@@ -4946,60 +4946,9 @@ auth_main() {
   exit "${rc}"
 }
 
-policy_usage() {
-  go_hostutil launcher policy-usage
-}
-
 policy_main() {
-  local subcommand="${1:-}"
-  local policy_path=""
-  local -a policy_cmd=()
-
-  if [[ "${subcommand}" == "-h" ]] || [[ "${subcommand}" == "--help" ]] || [[ "${subcommand}" == "help" ]]; then
-    policy_usage
-    exit 0
-  fi
-  [[ -n "${subcommand}" ]] || {
-    policy_usage >&2
-    exit 2
-  }
-  shift
-
-  policy_path="$(default_injection_policy_path)"
-  case "${subcommand}" in
-    show | validate | diff)
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --injection-policy)
-            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          -h | --help)
-            policy_usage
-            exit 0
-            ;;
-          *)
-            echo "Unsupported workcell policy ${subcommand} option: $1" >&2
-            policy_usage >&2
-            exit 2
-            ;;
-        esac
-      done
-      policy_path="$(resolve_host_path "${policy_path}")"
-      policy_cmd=(
-        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
-        "${subcommand}"
-        --policy "${policy_path}"
-      )
-      run_clean_host_command "${policy_cmd[@]}"
-      exit 0
-      ;;
-    *)
-      echo "Unsupported workcell policy command: ${subcommand}" >&2
-      policy_usage >&2
-      exit 2
-      ;;
-  esac
+  go_hostutil launcher policy-cli "$@"
+  exit $?
 }
 
 why_usage() {
