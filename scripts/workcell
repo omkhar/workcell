@@ -3544,6 +3544,10 @@ publish_pr_main() {
   # to recover the original code (same pattern auth_main uses post
   # PR 23.2), then strip that trailer so the user-visible stderr stays
   # byte-identical to the legacy bash function.
+  # Host-hooks-disable contract: every host-side git command runs
+  # `-c core.hooksPath=/dev/null`, and host-side commit/push pass
+  # `--no-verify`; enforced in publishpr.PublishPRMain and the
+  # scripts/verify-invariants.sh static scan.
   local stderr_file=""
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-publish-pr-stderr.XXXXXX")"
   trap 'rm -f "${stderr_file}"' RETURN
