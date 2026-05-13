@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,13 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		var ec *authpolicy.ExitCodeError
+		if errors.As(err, &ec) {
+			if msg := ec.Error(); msg != "" {
+				fmt.Fprintln(os.Stderr, msg)
+			}
+			os.Exit(ec.Code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -136,6 +144,7 @@ type launcherSubcommand struct {
 func launcherSubcommands() []launcherSubcommand {
 	return []launcherSubcommand{
 		{"session-usage", 0, 0, cmdLauncherSessionUsage},
+		{"auth-cli", 0, -1, cmdLauncherAuthCli},
 		{"auth-usage", 0, 0, cmdLauncherAuthUsage},
 		{"policy-usage", 0, 0, cmdLauncherPolicyUsage},
 		{"session-timeline-cli", 0, -1, cmdLauncherSessionTimelineCli},
@@ -201,6 +210,10 @@ func cmdLauncherSessionUsage(_ []string) error {
 func cmdLauncherAuthUsage(_ []string) error {
 	fmt.Print(authpolicy.AuthUsageText())
 	return nil
+}
+
+func cmdLauncherAuthCli(args []string) error {
+	return authpolicy.AuthMain(args)
 }
 
 func cmdLauncherPolicyUsage(_ []string) error {
