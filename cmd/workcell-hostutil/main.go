@@ -17,6 +17,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/release"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
+	"github.com/omkhar/workcell/internal/publishpr"
 	"github.com/omkhar/workcell/internal/sessionctl"
 )
 
@@ -170,6 +171,7 @@ func launcherSubcommands() []launcherSubcommand {
 		{"dedupe-endpoints", 1, 1, cmdLauncherDedupeEndpoints},
 		{"resolve-endpoints", 1, 1, cmdLauncherResolveEndpoints},
 		{"support-matrix-eval", 6, 6, cmdLauncherSupportMatrixEval},
+		{"publish-pr-usage", 0, 0, cmdLauncherPublishPRUsage},
 	}
 }
 
@@ -205,6 +207,11 @@ func cmdLauncherAuthUsage(_ []string) error {
 
 func cmdLauncherPolicyUsage(_ []string) error {
 	fmt.Print(authpolicy.PolicyUsageText())
+	return nil
+}
+
+func cmdLauncherPublishPRUsage(_ []string) error {
+	fmt.Print(publishpr.UsageText())
 	return nil
 }
 

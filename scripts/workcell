@@ -3294,45 +3294,7 @@ resolve_existing_directory_or_die() {
 }
 
 publish_pr_usage() {
-  cat <<'EOF'
-Usage: workcell publish-pr [options]
-
-Options:
-  --workspace PATH              Workspace to publish (default: current directory)
-  --branch NAME                 Feature branch to create or switch to (required)
-  --base NAME                   Base branch for the PR (default: main)
-  --allow-non-main-base         Allow a lower-assurance draft PR against a non-main base
-  --gh-bin PATH                 Host GitHub CLI to use for PR creation
-  --snapshot index|worktree     Publish the current index or stage the worktree (default: worktree)
-  --title TEXT                  PR title
-  --title-file PATH             Read the PR title from PATH
-  --body TEXT                   PR body (default: empty)
-  --body-file PATH              Read the PR body from PATH
-  --commit-message TEXT         Commit message to sign and publish
-  --commit-message-file PATH    Read the commit message from PATH
-  --ready                       Create a ready PR instead of a draft PR
-  --dry-run                     Print the planned host commands and exit
-  -h, --help                    Show this help text
-
-Notes:
-  - publish-pr runs on the host, not inside the Workcell container.
-  - It uses the host Git and GitHub CLI configuration so maintainer signing
-    and publication stay outside the Tier 1 container boundary.
-  - It blocks over-broad branch diffs before push so published PRs stay
-    reviewable by a human without juggling unrelated concerns.
-  - By default publish-pr only supports --base main because repo-owned PR
-    workflows and hosted controls only cover main-based review units.
-  - --allow-non-main-base is an explicit lower-assurance escape hatch: the PR
-    stays draft-only and the normal main-based PR validation and merge gating
-    do not apply to that PR shape.
-  - publish-pr preflights whether repo-owned PR checks are expected for the
-    chosen base and surfaces the effective validation mode in dry-run output.
-  - Host-side git commands explicitly bypass repo hooks during publication
-    because workspace hook content is untrusted; new commits are signed and
-    every commit being published must verify against host signing trust.
-  - The default snapshot is worktree, which stages the current tracked and
-    untracked workspace changes with `git add -A` before committing.
-EOF
+  go_hostutil launcher publish-pr-usage
 }
 
 resolve_existing_file_or_die() {
