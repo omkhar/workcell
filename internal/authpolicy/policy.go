@@ -232,225 +232,142 @@ func selectedFor(values any, current string, label string, allowedValues map[str
 	return false, nil
 }
 
-var stripComment = tomlsubset.StripComment
-
-func parseValue(raw string, policyPath string, lineno int) (any, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return nil, die(fmt.Sprintf("%s:%d: expected a value", policyPath, lineno))
-	}
-	switch value {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	}
-	if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
-		parsed, err := strconv.Unquote(value)
-		if err != nil {
-			return nil, err
-		}
-		return parsed, nil
-	}
-	if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
-		parsed, err := parseSingleQuoted(value)
-		if err != nil {
-			return nil, err
-		}
-		return parsed, nil
-	}
-	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
-		parsed, err := parseStringArray(value, policyPath, lineno)
-		if err != nil {
-			return nil, err
-		}
-		return parsed, nil
-	}
-	if isDigits(value) {
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return nil, err
-		}
-		return n, nil
-	}
-	return nil, die(fmt.Sprintf("%s:%d: unsupported TOML value; use quoted strings, booleans, integers, or arrays of strings", policyPath, lineno))
-}
-
-func isDigits(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-func parseSingleQuoted(value string) (string, error) {
-	if len(value) < 2 || value[0] != '\'' || value[len(value)-1] != '\'' {
-		return "", fmt.Errorf("invalid quoted string: %s", value)
-	}
-	inner := value[1 : len(value)-1]
-	replacer := strings.NewReplacer(`\\`, `\`, `\'`, `'`, `\n`, "\n", `\t`, "\t", `\r`, "\r")
-	return replacer.Replace(inner), nil
-}
-
-func parseStringArray(value string, policyPath string, lineno int) ([]any, error) {
-	inner := strings.TrimSpace(value[1 : len(value)-1])
-	if inner == "" {
-		return []any{}, nil
-	}
-	items := make([]string, 0)
-	var current strings.Builder
-	quoteChar := byte(0)
-	escaped := false
-	for i := 0; i < len(inner); i++ {
-		ch := inner[i]
-		if quoteChar != 0 {
-			current.WriteByte(ch)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if ch == '\\' && quoteChar == '"' {
-				escaped = true
-				continue
-			}
-			if ch == quoteChar {
-				quoteChar = 0
-			}
-			continue
-		}
-		if ch == '\'' || ch == '"' {
-			quoteChar = ch
-			current.WriteByte(ch)
-			continue
-		}
-		if ch == ',' {
-			token := strings.TrimSpace(current.String())
-			current.Reset()
-			if token == "" {
-				continue
-			}
-			parsed, err := parseValue(token, policyPath, lineno)
-			if err != nil {
-				return nil, err
-			}
-			s, ok := parsed.(string)
-			if !ok {
-				return nil, die(fmt.Sprintf("%s:%d: only arrays of strings are supported", policyPath, lineno))
-			}
-			items = append(items, s)
-			continue
-		}
-		current.WriteByte(ch)
-	}
-	if quoteChar != 0 {
-		return nil, die(fmt.Sprintf("%s:%d: only arrays of strings are supported", policyPath, lineno))
-	}
-	token := strings.TrimSpace(current.String())
-	if token != "" {
-		parsed, err := parseValue(token, policyPath, lineno)
-		if err != nil {
-			return nil, err
-		}
-		s, ok := parsed.(string)
-		if !ok {
-			return nil, die(fmt.Sprintf("%s:%d: only arrays of strings are supported", policyPath, lineno))
-		}
-		items = append(items, s)
-	}
-	for _, item := range items {
-		if item == "" {
-			return nil, die(fmt.Sprintf("%s:%d: only arrays of strings are supported", policyPath, lineno))
-		}
-	}
-	result := make([]any, 0, len(items))
-	for _, item := range items {
-		result = append(result, item)
-	}
-	return result, nil
-}
-
+// parseTOMLSubset parses an injection-policy TOML file via the shared
+// tomlsubset.ParseDocument API and reshapes the result into the
+// map[string]any tree the rest of authpolicy consumes.  Injection policy
+// allows one specific array-of-tables construct ([[copies]]) which the
+// shared strict parser rejects, so we strip those blocks out and parse
+// each entry separately through tomlsubset.Parse before reassembling.
 func parseTOMLSubset(content string, policyPath string) (map[string]any, error) {
-	root := map[string]any{}
-	current := root
-	seenTables := map[string]struct{}{}
+	subsetContent, copiesEntries, err := extractCopiesBlocks(content, policyPath)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := tomlsubset.ParseDocument(subsetContent, policyPath)
+	if err != nil {
+		return nil, die(err.Error())
+	}
+	root, err := documentToPolicyMap(doc, policyPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(copiesEntries) > 0 {
+		copies := make([]any, 0, len(copiesEntries))
+		for _, entry := range copiesEntries {
+			copies = append(copies, entry)
+		}
+		root["copies"] = copies
+	}
+	return root, nil
+}
+
+// extractCopiesBlocks scans content for `[[copies]]` headers, parses each
+// following key/value block as a single TOML subset table via
+// tomlsubset.Parse, and returns the remaining content with those blocks
+// elided plus the parsed entries in declaration order.  Any other
+// [[array-of-table]] header is rejected here so the caller-visible error
+// message matches the legacy parser.
+func extractCopiesBlocks(content, policyPath string) (string, []map[string]any, error) {
+	var (
+		kept    strings.Builder
+		entries []map[string]any
+	)
 	lines := strings.Split(content, "\n")
-	for lineno, rawLine := range lines {
-		line := stripComment(rawLine)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "[[") && strings.HasSuffix(line, "]]") {
-			tableName := strings.TrimSpace(line[2 : len(line)-2])
+	for idx := 0; idx < len(lines); idx++ {
+		rawLine := lines[idx]
+		stripped := tomlsubset.StripComment(rawLine)
+		if strings.HasPrefix(stripped, "[[") && strings.HasSuffix(stripped, "]]") {
+			tableName := strings.TrimSpace(stripped[2 : len(stripped)-2])
 			if tableName != "copies" {
-				return nil, die(fmt.Sprintf("%s:%d: unsupported array-of-table [%s]", policyPath, lineno+1, tableName))
+				return "", nil, die(fmt.Sprintf("%s:%d: unsupported array-of-table [%s]", policyPath, idx+1, tableName))
 			}
-			rawCopies, _ := root["copies"].([]any)
-			entry := map[string]any{}
-			rawCopies = append(rawCopies, entry)
-			root["copies"] = rawCopies
-			current = entry
+			block, consumed, err := readCopiesBlock(lines, idx+1, policyPath)
+			if err != nil {
+				return "", nil, err
+			}
+			entries = append(entries, block)
+			idx = consumed - 1
+			// Emit a blank line so downstream line numbers stay roughly
+			// aligned for diagnostic output.
+			kept.WriteByte('\n')
 			continue
 		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			tableName := strings.TrimSpace(line[1 : len(line)-1])
-			if _, seen := seenTables[tableName]; seen {
-				return nil, die(fmt.Sprintf("%s:%d: duplicate table [%s]", policyPath, lineno+1, tableName))
+		kept.WriteString(rawLine)
+		kept.WriteByte('\n')
+	}
+	result := kept.String()
+	if strings.HasSuffix(result, "\n") {
+		result = result[:len(result)-1]
+	}
+	return result, entries, nil
+}
+
+// readCopiesBlock consumes lines starting at idx until the next [header]
+// (single or double-bracketed) or end of input, parses the collected
+// `key = value` pairs as a one-off TOML subset table, and returns the
+// parsed entry plus the next unconsumed line index.
+func readCopiesBlock(lines []string, idx int, policyPath string) (map[string]any, int, error) {
+	var block strings.Builder
+	end := idx
+	for end < len(lines) {
+		stripped := tomlsubset.StripComment(lines[end])
+		if strings.HasPrefix(stripped, "[") {
+			break
+		}
+		block.WriteString(lines[end])
+		block.WriteByte('\n')
+		end++
+	}
+	parsed, err := tomlsubset.Parse(block.String(), policyPath)
+	if err != nil {
+		return nil, end, die(err.Error())
+	}
+	return parsed, end, nil
+}
+
+// documentToPolicyMap converts a tomlsubset.Document into the
+// nested-map shape the rest of authpolicy expects.  Only the
+// `documents`, `ssh`, `credentials`, and `credentials.<name>` tables get
+// special structural treatment; any other table name is rejected to
+// preserve the strict subset semantics of the legacy parser.
+func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[string]any, error) {
+	root := map[string]any{}
+	for _, pair := range doc.TopLevel.Pairs {
+		root[pair.Key] = pair.Value
+	}
+	for _, table := range doc.Tables {
+		name := table.Name
+		if strings.HasPrefix(name, "credentials.") {
+			credentialKey := strings.SplitN(name, ".", 2)[1]
+			if _, ok := CredentialKeys[credentialKey]; !ok {
+				return nil, die(fmt.Sprintf("%s:%d: unsupported credentials table [%s]", policyPath, table.Line, name))
 			}
-			seenTables[tableName] = struct{}{}
-			if strings.HasPrefix(tableName, "credentials.") {
-				credentialKey := strings.SplitN(tableName, ".", 2)[1]
-				if _, ok := CredentialKeys[credentialKey]; !ok {
-					return nil, die(fmt.Sprintf("%s:%d: unsupported credentials table [%s]", policyPath, lineno+1, tableName))
-				}
-				rawCredentials, _ := root["credentials"].(map[string]any)
-				if rawCredentials == nil {
-					rawCredentials = map[string]any{}
-					root["credentials"] = rawCredentials
-				}
-				entry, _ := rawCredentials[credentialKey].(map[string]any)
-				if entry == nil {
-					entry = map[string]any{}
-					rawCredentials[credentialKey] = entry
-				}
-				current = entry
-				continue
+			credentials, _ := root["credentials"].(map[string]any)
+			if credentials == nil {
+				credentials = map[string]any{}
+				root["credentials"] = credentials
 			}
-			if tableName != "documents" && tableName != "ssh" && tableName != "credentials" {
-				return nil, die(fmt.Sprintf("%s:%d: unsupported table [%s]", policyPath, lineno+1, tableName))
+			entry, _ := credentials[credentialKey].(map[string]any)
+			if entry == nil {
+				entry = map[string]any{}
+				credentials[credentialKey] = entry
 			}
-			table, _ := root[tableName].(map[string]any)
-			if table == nil {
-				table = map[string]any{}
-				root[tableName] = table
+			for _, pair := range table.Pairs {
+				entry[pair.Key] = pair.Value
 			}
-			current = table
 			continue
 		}
-		if !strings.Contains(line, "=") {
-			return nil, die(fmt.Sprintf("%s:%d: expected key = value", policyPath, lineno+1))
+		if name != "documents" && name != "ssh" && name != "credentials" {
+			return nil, die(fmt.Sprintf("%s:%d: unsupported table [%s]", policyPath, table.Line, name))
 		}
-		parts := strings.SplitN(line, "=", 2)
-		key := strings.TrimSpace(parts[0])
-		value := parts[1]
-		if key == "" {
-			return nil, die(fmt.Sprintf("%s:%d: empty key", policyPath, lineno+1))
+		target, _ := root[name].(map[string]any)
+		if target == nil {
+			target = map[string]any{}
+			root[name] = target
 		}
-		if strings.Contains(key, ".") {
-			return nil, die(fmt.Sprintf("%s:%d: dotted TOML keys are not supported; use explicit [table] headers instead", policyPath, lineno+1))
+		for _, pair := range table.Pairs {
+			target[pair.Key] = pair.Value
 		}
-		if _, exists := current[key]; exists {
-			return nil, die(fmt.Sprintf("%s:%d: duplicate key: %s", policyPath, lineno+1, key))
-		}
-		parsed, err := parseValue(value, policyPath, lineno+1)
-		if err != nil {
-			return nil, err
-		}
-		current[key] = parsed
 	}
 	return root, nil
 }
