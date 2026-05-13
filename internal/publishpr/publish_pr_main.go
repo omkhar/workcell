@@ -296,7 +296,7 @@ func readFileString(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(data), nil
+	return strings.TrimRight(string(data), "\n"), nil
 }
 
 // PreflightInputs reconciles parsed CLI flags into the resolved values
