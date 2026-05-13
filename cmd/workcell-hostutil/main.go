@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/authpolicy"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
@@ -135,6 +136,8 @@ type launcherSubcommand struct {
 func launcherSubcommands() []launcherSubcommand {
 	return []launcherSubcommand{
 		{"session-usage", 0, 0, cmdLauncherSessionUsage},
+		{"auth-usage", 0, 0, cmdLauncherAuthUsage},
+		{"policy-usage", 0, 0, cmdLauncherPolicyUsage},
 		{"session-timeline-cli", 0, -1, cmdLauncherSessionTimelineCli},
 		{"session-logs-cli", 0, -1, cmdLauncherSessionLogsCli},
 		{"session-suffix", 0, 0, cmdLauncherSessionSuffix},
@@ -192,6 +195,16 @@ func runLauncher(args []string) error {
 
 func cmdLauncherSessionUsage(_ []string) error {
 	fmt.Print(sessionctl.UsageText())
+	return nil
+}
+
+func cmdLauncherAuthUsage(_ []string) error {
+	fmt.Print(authpolicy.AuthUsageText())
+	return nil
+}
+
+func cmdLauncherPolicyUsage(_ []string) error {
+	fmt.Print(authpolicy.PolicyUsageText())
 	return nil
 }
 
