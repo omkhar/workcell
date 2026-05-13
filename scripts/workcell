@@ -592,8 +592,7 @@ docker_desktop_context_name() {
 profile_dir() {
   local profile="$1"
 
-  validate_colima_profile_name "${profile}"
-  printf '%s/%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
+  go_hostutil launcher profile-path dir "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 target_kind_for_profile_state() {
@@ -640,24 +639,22 @@ profile_target_state_dir() {
   local target_kind=""
   local target_provider=""
 
-  validate_colima_profile_name "${profile}"
   target_kind="$(target_kind_for_profile_state "${profile}")"
   target_provider="$(target_provider_for_profile_state "${profile}")"
-  printf '%s/%s/%s/%s\n' "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
+  go_hostutil launcher profile-path target-state-dir \
+    "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
 profile_lima_dir() {
   local profile="$1"
 
-  validate_colima_profile_name "${profile}"
-  printf '%s/_lima/colima-%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
+  go_hostutil launcher profile-path lima-dir "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 profile_disk_dir() {
   local profile="$1"
 
-  validate_colima_profile_name "${profile}"
-  printf '%s/_lima/_disks/colima-%s\n' "${COLIMA_STATE_ROOT}" "${profile}"
+  go_hostutil launcher profile-path disk-dir "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 remove_profile_state_dirs() {
@@ -698,23 +695,8 @@ profile_state_dirs_exist() {
 
 profile_colima_config_path() {
   local profile="$1"
-  local candidate=""
-  local -a candidates=()
 
-  candidates=(
-    "$(profile_dir "${profile}")/colima.yaml"
-    "$(profile_lima_dir "${profile}")/colima.yaml"
-    "$(profile_lima_dir "${profile}")/lima.yaml"
-  )
-
-  for candidate in "${candidates[@]}"; do
-    if [[ -f "${candidate}" ]]; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  done
-
-  printf '%s\n' "${candidates[0]}"
+  go_hostutil launcher profile-path colima-config "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 run_host_colima() {
@@ -1437,30 +1419,36 @@ profile_runtime_image_cache_value() {
 
 profile_audit_log_path() {
   local profile="$1"
+  local target_kind=""
+  local target_provider=""
 
-  validate_colima_profile_name "${profile}"
-  printf '%s/workcell.audit.log\n' "$(profile_target_state_dir "${profile}")"
+  target_kind="$(target_kind_for_profile_state "${profile}")"
+  target_provider="$(target_provider_for_profile_state "${profile}")"
+  go_hostutil launcher profile-path audit-log \
+    "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
 legacy_profile_audit_log_path() {
   local profile="$1"
 
-  validate_colima_profile_name "${profile}"
-  printf '%s/workcell.audit.log\n' "$(profile_dir "${profile}")"
+  go_hostutil launcher profile-path legacy-audit-log "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 profile_sessions_dir_path() {
   local profile="$1"
+  local target_kind=""
+  local target_provider=""
 
-  validate_colima_profile_name "${profile}"
-  printf '%s/sessions\n' "$(profile_target_state_dir "${profile}")"
+  target_kind="$(target_kind_for_profile_state "${profile}")"
+  target_provider="$(target_provider_for_profile_state "${profile}")"
+  go_hostutil launcher profile-path sessions-dir \
+    "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
 legacy_profile_sessions_dir_path() {
   local profile="$1"
 
-  validate_colima_profile_name "${profile}"
-  printf '%s/sessions\n' "$(profile_dir "${profile}")"
+  go_hostutil launcher profile-path legacy-sessions-dir "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 generate_session_id() {
@@ -1472,40 +1460,30 @@ profile_lock_dir_path() {
   local target_kind=""
   local target_provider=""
 
-  validate_colima_profile_name "${profile}"
   target_kind="$(target_kind_for_profile_state "${profile}")"
   target_provider="$(target_provider_for_profile_state "${profile}")"
-  printf '%s/locks/%s/%s/%s.lock\n' "${WORKCELL_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
+  go_hostutil launcher profile-path lock-dir \
+    "${WORKCELL_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
 profile_latest_log_pointer_path() {
   local profile="$1"
   local kind="$2"
+  local target_kind=""
+  local target_provider=""
 
-  validate_colima_profile_name "${profile}"
-  case "${kind}" in
-    debug | file-trace | transcript) ;;
-    *)
-      echo "Unsupported latest log pointer kind: ${kind}" >&2
-      exit 2
-      ;;
-  esac
-  printf '%s/workcell.latest-%s-log\n' "$(profile_target_state_dir "${profile}")" "${kind}"
+  target_kind="$(target_kind_for_profile_state "${profile}")"
+  target_provider="$(target_provider_for_profile_state "${profile}")"
+  go_hostutil launcher profile-path latest-log-pointer \
+    "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}" "${kind}"
 }
 
 legacy_profile_latest_log_pointer_path() {
   local profile="$1"
   local kind="$2"
 
-  validate_colima_profile_name "${profile}"
-  case "${kind}" in
-    debug | file-trace | transcript) ;;
-    *)
-      echo "Unsupported latest log pointer kind: ${kind}" >&2
-      exit 2
-      ;;
-  esac
-  printf '%s/workcell.latest-%s-log\n' "$(profile_dir "${profile}")" "${kind}"
+  go_hostutil launcher profile-path legacy-latest-log-pointer \
+    "${COLIMA_STATE_ROOT}" "${profile}" "${kind}"
 }
 
 write_latest_log_pointer() {
