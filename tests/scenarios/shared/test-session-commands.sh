@@ -1496,12 +1496,32 @@ if grep -Eq '^audit\|wcl-detached-fixture\|detached-fixture\|attach\|' "${SESSIO
 fi
 
 SESSION_STOP_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.stopped.record"
+SESSION_STOP_STOPPED_STATE_ROOT="${DETACHED_STATE_DIR}/session-stop.stopped.state-root"
+mkdir -p "${SESSION_STOP_STOPPED_STATE_ROOT}/wcl-detached-fixture/sessions"
+cat >"${SESSION_STOP_STOPPED_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "monitor_pid": "4242",
+  "session_audit_dir": "/tmp/detached-fixture-audit",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
 set +e
 bash -lc '
   set -euo pipefail
   source "$1"
   trap - EXIT
   RECORD_FILE="$2"
+  WORKCELL_STATE_ROOT="$3"
+  COLIMA_STATE_ROOT="$3"
   HOST_DOCKER_BIN="/bin/false"
   resolve_host_tool() { printf "/bin/false\n"; }
   sanitize_host_docker_env() { :; }
@@ -1532,7 +1552,7 @@ bash -lc '
     esac
   }
   session_stop_main --id detached-fixture
-' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_STOPPED_RECORD}" >/dev/null 2>&1
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_STOPPED_RECORD}" "${SESSION_STOP_STOPPED_STATE_ROOT}" >/dev/null 2>&1
 session_stop_stopped_status=$?
 set -e
 if [[ "${session_stop_stopped_status}" -eq 0 ]]; then
@@ -1546,7 +1566,25 @@ fi
 
 SESSION_STOP_DEAD_MONITOR_RECORD="${DETACHED_STATE_DIR}/session-stop.dead-monitor.record"
 SESSION_STOP_DEAD_MONITOR_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.dead-monitor.audit"
+SESSION_STOP_DEAD_MONITOR_STATE_ROOT="${DETACHED_STATE_DIR}/session-stop.dead-monitor.state-root"
 mkdir -p "${SESSION_STOP_DEAD_MONITOR_AUDIT_DIR}"
+mkdir -p "${SESSION_STOP_DEAD_MONITOR_STATE_ROOT}/wcl-detached-fixture/sessions"
+cat >"${SESSION_STOP_DEAD_MONITOR_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "monitor_pid": "4242",
+  "session_audit_dir": "${SESSION_STOP_DEAD_MONITOR_AUDIT_DIR}",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
 stop_dead_monitor_output="$(
   bash -lc '
     set -euo pipefail
@@ -1554,6 +1592,8 @@ stop_dead_monitor_output="$(
     trap - EXIT
     RECORD_FILE="$2"
     AUDIT_DIR="$3"
+    WORKCELL_STATE_ROOT="$4"
+    COLIMA_STATE_ROOT="$4"
     HOST_DOCKER_BIN="/bin/false"
     LOAD_COUNT=0
     resolve_host_tool() { printf "/bin/false\n"; }
@@ -1600,7 +1640,7 @@ stop_dead_monitor_output="$(
     else
       printf "marker=cleared\n"
     fi
-  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_DEAD_MONITOR_RECORD}" "${SESSION_STOP_DEAD_MONITOR_AUDIT_DIR}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_DEAD_MONITOR_RECORD}" "${SESSION_STOP_DEAD_MONITOR_AUDIT_DIR}" "${SESSION_STOP_DEAD_MONITOR_STATE_ROOT}"
 )"
 grep -q '^session_id=detached-fixture$' <<<"${stop_dead_monitor_output}"
 grep -q '^stop_requested=1$' <<<"${stop_dead_monitor_output}"
@@ -1611,7 +1651,25 @@ grep -q '^record|.*/detached-fixture\.json|status=exited|live_status=stopped|obs
 
 SESSION_STOP_ALREADY_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.already-stopped.record"
 SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped.audit"
+SESSION_STOP_ALREADY_STOPPED_STATE_ROOT="${DETACHED_STATE_DIR}/session-stop.already-stopped.state-root"
 mkdir -p "${SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR}"
+mkdir -p "${SESSION_STOP_ALREADY_STOPPED_STATE_ROOT}/wcl-detached-fixture/sessions"
+cat >"${SESSION_STOP_ALREADY_STOPPED_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "stopping",
+  "live_status": "stopping",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "monitor_pid": "4242",
+  "session_audit_dir": "${SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR}",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
 stop_already_stopped_output="$(
   bash -lc '
     set -euo pipefail
@@ -1619,6 +1677,8 @@ stop_already_stopped_output="$(
     trap - EXIT
     RECORD_FILE="$2"
     AUDIT_DIR="$3"
+    WORKCELL_STATE_ROOT="$4"
+    COLIMA_STATE_ROOT="$4"
     HOST_DOCKER_BIN="/bin/false"
     resolve_host_tool() { printf "/bin/false\n"; }
     sanitize_host_docker_env() { :; }
@@ -1660,7 +1720,7 @@ stop_already_stopped_output="$(
     else
       printf "marker=cleared\n"
     fi
-  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_ALREADY_STOPPED_RECORD}" "${SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_ALREADY_STOPPED_RECORD}" "${SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR}" "${SESSION_STOP_ALREADY_STOPPED_STATE_ROOT}"
 )"
 grep -q '^session_id=detached-fixture$' <<<"${stop_already_stopped_output}"
 grep -q '^stop_requested=1$' <<<"${stop_already_stopped_output}"
@@ -1675,7 +1735,25 @@ fi
 
 SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD="${DETACHED_STATE_DIR}/session-stop.already-stopped-running.record"
 SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped-running.audit"
+SESSION_STOP_ALREADY_STOPPED_RUNNING_STATE_ROOT="${DETACHED_STATE_DIR}/session-stop.already-stopped-running.state-root"
 mkdir -p "${SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR}"
+mkdir -p "${SESSION_STOP_ALREADY_STOPPED_RUNNING_STATE_ROOT}/wcl-detached-fixture/sessions"
+cat >"${SESSION_STOP_ALREADY_STOPPED_RUNNING_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "monitor_pid": "4242",
+  "session_audit_dir": "${SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR}",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
 stop_already_stopped_running_output="$(
   bash -lc '
     set -euo pipefail
@@ -1683,6 +1761,8 @@ stop_already_stopped_running_output="$(
     trap - EXIT
     RECORD_FILE="$2"
     AUDIT_DIR="$3"
+    WORKCELL_STATE_ROOT="$4"
+    COLIMA_STATE_ROOT="$4"
     HOST_DOCKER_BIN="/bin/false"
     resolve_host_tool() { printf "/bin/false\n"; }
     sanitize_host_docker_env() { :; }
@@ -1724,7 +1804,7 @@ stop_already_stopped_running_output="$(
     else
       printf "marker=cleared\n"
     fi
-  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD}" "${SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_ALREADY_STOPPED_RUNNING_RECORD}" "${SESSION_STOP_ALREADY_STOPPED_RUNNING_AUDIT_DIR}" "${SESSION_STOP_ALREADY_STOPPED_RUNNING_STATE_ROOT}"
 )"
 grep -q '^session_id=detached-fixture$' <<<"${stop_already_stopped_running_output}"
 grep -q '^stop_requested=1$' <<<"${stop_already_stopped_running_output}"
