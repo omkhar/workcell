@@ -4967,238 +4967,31 @@ default_managed_credentials_root() {
 }
 
 auth_main() {
-  local subcommand="${1:-}"
-  local policy_path=""
-  local policy_path_explicit=0
-  local managed_root=""
-  local agent=""
-  local credential=""
-  local source_path=""
-  local source_base=""
-  local resolver_name=""
-  local mode="strict"
-  local ack_host_resolver=0
-  local -a auth_cmd=()
-
-  if [[ "${subcommand}" == "-h" ]] || [[ "${subcommand}" == "--help" ]] || [[ "${subcommand}" == "help" ]]; then
-    auth_usage
-    exit 0
+  # Invoke the in-process auth-cli launcher and translate the launcher's
+  # exit code back to the bash auth_main contract (2 for usage failures,
+  # 1 for runtime failures). go run swallows the child's non-zero exit
+  # and always exits 1 itself, so we sniff its "exit status N" trailer
+  # on stderr to recover the original code, then strip that trailer so
+  # the user-visible stderr stays byte-identical to the legacy bash.
+  local stderr_file=""
+  stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-auth-stderr.XXXXXX")"
+  trap 'rm -f "${stderr_file}"' RETURN
+  local rc=0
+  go_hostutil launcher auth-cli "--base=$(pwd -P)" "$@" 2>"${stderr_file}" || rc=$?
+  local stderr_capture=""
+  stderr_capture="$(cat "${stderr_file}")"
+  rm -f "${stderr_file}"
+  trap - RETURN
+  if [[ ${rc} -eq 1 ]] && [[ "${stderr_capture}" == *"exit status 2" ]]; then
+    rc=2
   fi
-  [[ -n "${subcommand}" ]] || {
-    auth_usage >&2
-    exit 2
-  }
-  shift
-
-  policy_path="$(default_injection_policy_path)"
-  managed_root="$(default_managed_credentials_root)"
-
-  case "${subcommand}" in
-    init)
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --injection-policy)
-            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
-            policy_path_explicit=1
-            shift 2
-            ;;
-          --managed-root)
-            managed_root="$(raw_option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          -h | --help)
-            auth_usage
-            exit 0
-            ;;
-          *)
-            echo "Unsupported workcell auth init option: $1" >&2
-            auth_usage >&2
-            exit 2
-            ;;
-        esac
-      done
-      policy_path="$(resolve_host_path "${policy_path}")"
-      managed_root="$(resolve_host_path "${managed_root}")"
-      auth_cmd=(
-        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
-        init
-        --policy "${policy_path}"
-        --managed-root "${managed_root}"
-      )
-      run_clean_host_policy_command "${auth_cmd[@]}"
-      exit 0
-      ;;
-    set)
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --injection-policy)
-            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
-            policy_path_explicit=1
-            shift 2
-            ;;
-          --managed-root)
-            managed_root="$(raw_option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          --agent)
-            agent="$(option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          --credential)
-            credential="$(option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          --source)
-            source_path="$(raw_option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          --resolver)
-            resolver_name="$(option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          --ack-host-resolver)
-            ack_host_resolver=1
-            shift
-            ;;
-          -h | --help)
-            auth_usage
-            exit 0
-            ;;
-          *)
-            echo "Unsupported workcell auth set option: $1" >&2
-            auth_usage >&2
-            exit 2
-            ;;
-        esac
-      done
-      [[ -n "${agent}" ]] || {
-        echo "workcell auth set requires --agent." >&2
-        exit 2
-      }
-      [[ -n "${credential}" ]] || {
-        echo "workcell auth set requires --credential." >&2
-        exit 2
-      }
-      if [[ -n "${resolver_name}" ]] && [[ "${ack_host_resolver}" -ne 1 ]]; then
-        echo "workcell auth set requires --ack-host-resolver with --resolver." >&2
-        exit 2
-      fi
-      policy_path="$(resolve_host_path "${policy_path}")"
-      managed_root="$(resolve_host_path "${managed_root}")"
-      auth_cmd=(
-        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
-        set
-        --policy "${policy_path}"
-        --managed-root "${managed_root}"
-        --agent "${agent}"
-        --credential "${credential}"
-      )
-      if [[ -n "${source_path}" ]]; then
-        source_base="$(pwd -P)"
-        auth_cmd+=(--source "${source_path}" --source-base "${source_base}")
-      fi
-      if [[ -n "${resolver_name}" ]]; then
-        auth_cmd+=(--resolver "${resolver_name}" --ack-host-resolver)
-      fi
-      run_clean_host_command "${auth_cmd[@]}"
-      exit 0
-      ;;
-    unset)
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --injection-policy)
-            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          --managed-root)
-            managed_root="$(raw_option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          --credential)
-            credential="$(option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          -h | --help)
-            auth_usage
-            exit 0
-            ;;
-          *)
-            echo "Unsupported workcell auth unset option: $1" >&2
-            auth_usage >&2
-            exit 2
-            ;;
-        esac
-      done
-      [[ -n "${credential}" ]] || {
-        echo "workcell auth unset requires --credential." >&2
-        exit 2
-      }
-      policy_path="$(resolve_host_path "${policy_path}")"
-      managed_root="$(resolve_host_path "${managed_root}")"
-      auth_cmd=(
-        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
-        unset
-        --policy "${policy_path}"
-        --managed-root "${managed_root}"
-        --credential "${credential}"
-      )
-      run_clean_host_command "${auth_cmd[@]}"
-      exit 0
-      ;;
-    status)
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --injection-policy)
-            policy_path="$(raw_option_value_or_die "$1" "${2-}")"
-            policy_path_explicit=1
-            shift 2
-            ;;
-          --agent)
-            agent="$(option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          --mode)
-            mode="$(option_value_or_die "$1" "${2-}")"
-            shift 2
-            ;;
-          --workspace)
-            raw_option_value_or_die "$1" "${2-}" >/dev/null
-            shift 2
-            ;;
-          -h | --help)
-            auth_usage
-            exit 0
-            ;;
-          *)
-            echo "Unsupported workcell auth status option: $1" >&2
-            auth_usage >&2
-            exit 2
-            ;;
-        esac
-      done
-      policy_path="$(resolve_host_path "${policy_path}")"
-      if [[ "${policy_path_explicit}" -eq 1 ]] && [[ ! -f "${policy_path}" ]]; then
-        echo "Injection policy file does not exist: ${policy_path}" >&2
-        exit 2
-      fi
-      auth_cmd=(
-        "${ROOT_DIR}/scripts/lib/manage_injection_policy"
-        status
-        --policy "${policy_path}"
-        --mode "${mode}"
-      )
-      if [[ -n "${agent}" ]]; then
-        auth_cmd+=(--agent "${agent}")
-      fi
-      run_clean_host_policy_command "${auth_cmd[@]}"
-      exit 0
-      ;;
-    *)
-      echo "Unsupported workcell auth command: ${subcommand}" >&2
-      auth_usage >&2
-      exit 2
-      ;;
-  esac
+  if [[ "${stderr_capture}" == *$'\nexit status '* ]]; then
+    stderr_capture="${stderr_capture%$'\n'exit status *}"
+  fi
+  if [[ -n "${stderr_capture}" ]]; then
+    printf '%s\n' "${stderr_capture}" >&2
+  fi
+  exit "${rc}"
 }
 
 policy_usage() {
