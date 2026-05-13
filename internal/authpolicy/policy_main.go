@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/omkhar/workcell/internal/host/launcher"
 )
@@ -98,25 +97,9 @@ func parsePolicyMainArgs(subcommand string, args []string, stdout, stderr io.Wri
 		}
 	}
 	if policyPath == "" {
-		def, derr := defaultInjectionPolicyPath()
-		if derr != nil {
-			return "", false, derr
-		}
-		policyPath = def
+		policyPath = defaultInjectionPolicyPath()
 	}
 	return policyPath, false, nil
-}
-
-// defaultInjectionPolicyPath mirrors scripts/workcell's
-// default_injection_policy_path: ${REAL_HOME}/.config/workcell/
-// injection-policy.toml.  REAL_HOME is the canonicalized user home as
-// produced by launcher.RealHome().
-func defaultInjectionPolicyPath() (string, error) {
-	home, err := launcher.RealHome()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".config", "workcell", "injection-policy.toml"), nil
 }
 
 // usageError marks errors that should produce a usage-style (exit 2)
