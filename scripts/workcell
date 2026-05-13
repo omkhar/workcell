@@ -198,15 +198,6 @@ go_colimautil() {
     "${HOST_GO_BIN}" run ./cmd/workcell-colimautil "$@"
 }
 
-go_runtimeutil() {
-  ensure_go_run_env
-  run_clean_host_command_in_dir "${ROOT_DIR}" env \
-    GOPATH="${GOPATH}" \
-    GOMODCACHE="${GOMODCACHE}" \
-    GOCACHE="${GOCACHE}" \
-    "${HOST_GO_BIN}" run ./cmd/workcell-runtimeutil "$@"
-}
-
 HOST_GIT_BIN=""
 HOST_COLIMA_BIN=""
 HOST_DOCKER_BIN=""
@@ -5069,195 +5060,74 @@ cleanup_workcell_cache_roots() {
   fi
 }
 
-prepare_injection_direct_mounts() {
-  local mount_spec_path="$1"
-  local host_source=""
-  local mount_path=""
-  local staged_root=""
-  local staged_source=""
-  local entry_hash=""
-
-  DIRECT_SOURCE_MOUNTS=()
-  [[ -f "${mount_spec_path}" ]] || return 0
-  [[ -n "${INJECTION_BUNDLE_ROOT}" ]] || {
-    echo "Direct input staging requires an injection bundle root." >&2
-    exit 2
-  }
-  staged_root="${INJECTION_BUNDLE_ROOT}/direct-mounts"
-  mkdir -p "${staged_root}"
-
-  while IFS=$'\t' read -r host_source mount_path; do
-    [[ -n "${host_source}" ]] || continue
-
-    if [[ "${host_source}" != /* ]] || [[ ! -e "${host_source}" ]] ||
-      { [[ ! -f "${host_source}" ]] && [[ ! -d "${host_source}" ]]; }; then
-      echo "Direct input source is missing, not absolute, or not a regular file/directory: ${host_source}" >&2
-      exit 2
-    fi
-
-    case "${mount_path}" in
-      /opt/workcell/host-inputs/*) ;;
-      *)
-        echo "Direct input mount path is outside the managed host-input root: ${mount_path}" >&2
-        exit 2
-        ;;
-    esac
-
-    entry_hash="$(go_hostutil launcher direct-mount-cache-key "${host_source}" "${mount_path}")"
-    staged_source="${staged_root}/${entry_hash}"
-    rm -rf "${staged_source}"
-    if [[ -d "${host_source}" ]]; then
-      mkdir -p "${staged_source}"
-      cp -R "${host_source}/." "${staged_source}"
-    else
-      mkdir -p "$(dirname "${staged_source}")"
-      cp -f "${host_source}" "${staged_source}"
-    fi
-    chmod -R go-rwx "${staged_source}" 2>/dev/null || true
-
-    DIRECT_SOURCE_MOUNTS+=(-v "${staged_source}:${mount_path}:ro")
-  done < <(go_runtimeutil list-direct-mounts "${mount_spec_path}")
-}
-
 prepare_injection_bundle() {
+  # PR 23.4 shim: the full pipeline (resolver, renderer, direct-mount
+  # extraction + staging, metadata fan-out) now runs in-process inside the
+  # workcell-hostutil launcher subcommand.  Bash imports the resulting
+  # variables via a single "while read" loop.
   local agent="$1"
   local mode="$2"
-  local policy_path="${INJECTION_POLICY}"
-  local bundle_parent=""
-  local default_policy_path=""
-  local resolved_policy_path=""
-  local resolver_metadata_path=""
-  local resolution_mode="launch"
-  local manifest_path=""
-  local metadata=""
-  local resolver_metadata=""
-  local synthetic_claude_export=""
-  local synthetic_codex_home=""
-  local synthetic_codex_auth=""
-  local -a resolver_cmd=()
-  local -a resolver_env=()
+  local key=""
+  local value=""
+  local synthetic_codex="0"
+  local synthetic_claude="0"
 
-  if [[ -z "${policy_path}" ]] && [[ "${USE_DEFAULT_INJECTION_POLICY}" -eq 1 ]]; then
-    default_policy_path="$(default_injection_policy_path)"
-    if [[ -f "${default_policy_path}" ]]; then
-      policy_path="${default_policy_path}"
-    fi
-  fi
+  case "${SELF_STAGING_PROBE_SYNTHETIC_CODEX_AUTH:-0}" in
+    1 | true) synthetic_codex="1" ;;
+  esac
+  case "${SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT:-0}" in
+    1 | true) synthetic_claude="1" ;;
+  esac
 
-  bundle_parent="$(default_injection_bundle_parent)"
-  mkdir -p "${bundle_parent}"
-  chmod 0700 "${bundle_parent}" 2>/dev/null || true
-  cleanup_stale_injection_bundles "${bundle_parent}"
+  DIRECT_SOURCE_MOUNTS=()
+  INJECTION_BUNDLE_ROOT=""
+  DIRECT_MOUNT_SPEC_PATH=""
+  INJECTION_POLICY_SHA256=""
+  INJECTION_CREDENTIAL_KEYS=""
+  INJECTION_CREDENTIAL_INPUT_KINDS=""
+  INJECTION_CREDENTIAL_RESOLVERS=""
+  INJECTION_CREDENTIAL_MATERIALIZATION=""
+  INJECTION_CREDENTIAL_RESOLUTION_STATES=""
+  INJECTION_PROVIDER_AUTH_READY_STATES=""
+  INJECTION_SHARED_AUTH_READY_STATES=""
+  INJECTION_EXTRA_ENDPOINTS=""
+  INJECTION_SSH_ENABLED=0
+  INJECTION_SSH_CONFIG_ASSURANCE="off"
+  INJECTION_SECRET_COPY_TARGETS=""
 
-  if [[ -z "${policy_path}" ]]; then
-    INJECTION_POLICY_SHA256=""
-    INJECTION_CREDENTIAL_KEYS=""
-    INJECTION_CREDENTIAL_INPUT_KINDS=""
-    INJECTION_CREDENTIAL_RESOLVERS=""
-    INJECTION_CREDENTIAL_MATERIALIZATION=""
-    INJECTION_CREDENTIAL_RESOLUTION_STATES=""
-    INJECTION_PROVIDER_AUTH_READY_STATES=""
-    INJECTION_SHARED_AUTH_READY_STATES=""
-    INJECTION_EXTRA_ENDPOINTS=""
-    INJECTION_SSH_ENABLED=0
-    INJECTION_SSH_CONFIG_ASSURANCE="off"
-    INJECTION_SECRET_COPY_TARGETS=""
-    return 0
-  fi
-
-  policy_path="$(resolve_host_path "${policy_path}")"
-  if [[ ! -f "${policy_path}" ]]; then
-    echo "Injection policy file does not exist: ${policy_path}" >&2
-    exit 2
-  fi
-
-  INJECTION_BUNDLE_ROOT="$(mktemp -d "${bundle_parent%/}/workcell-injections.XXXXXX")"
-  INJECTION_BUNDLE_ROOT="$(resolve_host_path "${INJECTION_BUNDLE_ROOT}")"
-  chmod 0700 "${INJECTION_BUNDLE_ROOT}"
-  go_hostutil launcher write-profile-owner "${INJECTION_BUNDLE_ROOT}/owner.json" "$$"
-
-  if [[ "${AUTH_STATUS}" -eq 1 ]] || [[ "${DOCTOR}" -eq 1 ]] || [[ "${INSPECT}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
-    resolution_mode="metadata"
-  fi
-  resolved_policy_path="${INJECTION_BUNDLE_ROOT}/resolved-policy.toml"
-  resolver_metadata_path="${INJECTION_BUNDLE_ROOT}/resolver-metadata.json"
-  resolver_cmd=(
-    "${ROOT_DIR}/scripts/lib/resolve_credential_sources"
-    --policy "${policy_path}"
-    --agent "${agent}"
-    --mode "${mode}"
-    --resolution-mode "${resolution_mode}"
-    --output-policy "${resolved_policy_path}"
-    --output-metadata "${resolver_metadata_path}"
-    --output-root "${INJECTION_BUNDLE_ROOT}"
-  )
-  if [[ "${SELF_STAGING_PROBE_SYNTHETIC_CODEX_AUTH}" == "1" ]]; then
-    synthetic_codex_home="${INJECTION_BUNDLE_ROOT}/self-staging-probe-codex-home"
-    synthetic_codex_auth="${synthetic_codex_home}/.codex/auth.json"
-    mkdir -p "$(dirname "${synthetic_codex_auth}")"
-    umask 077
-    printf '{"token":"codex"}\n' >"${synthetic_codex_auth}"
-    ensure_go_run_env
-    resolver_env+=(
-      "HOME=${synthetic_codex_home}"
-      "WORKCELL_GO_CACHE_ROOT=${WORKCELL_GO_CACHE_ROOT}"
-      "GOPATH=${GOPATH}"
-      "GOMODCACHE=${GOMODCACHE}"
-      "GOCACHE=${GOCACHE}"
-    )
-  fi
-  if [[ "${SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT}" == "1" ]]; then
-    synthetic_claude_export="${INJECTION_BUNDLE_ROOT}/self-staging-probe-claude-export.json"
-    umask 077
-    printf '{"token":"claude"}\n' >"${synthetic_claude_export}"
-    resolver_env+=("WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE=${synthetic_claude_export}")
-  fi
-  if [[ "${#resolver_env[@]}" -gt 0 ]]; then
-    run_clean_host_command env "${resolver_env[@]}" "${resolver_cmd[@]}" >/dev/null
-  else
-    run_clean_host_command "${resolver_cmd[@]}" >/dev/null
-  fi
-
-  manifest_path="$(run_clean_host_command \
-    "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
-    --policy "${resolved_policy_path}" \
-    --policy-metadata "${resolver_metadata_path}" \
-    --agent "${agent}" \
-    --mode "${mode}" \
-    --output-root "${INJECTION_BUNDLE_ROOT}")"
-  manifest_path="${manifest_path//$'\n'/}"
-
-  if [[ "${manifest_path}" != "${INJECTION_BUNDLE_ROOT}/manifest.json" ]]; then
-    echo "Unexpected injection manifest path from renderer: ${manifest_path}" >&2
-    exit 2
-  fi
-
-  if [[ ! -f "${manifest_path}" ]]; then
-    echo "Injection manifest was not rendered: ${manifest_path}" >&2
-    exit 2
-  fi
-
-  DIRECT_MOUNT_SPEC_PATH="${INJECTION_BUNDLE_ROOT}.mounts.json"
-  DIRECT_MOUNT_SPEC_PATH="$(resolve_host_path "${DIRECT_MOUNT_SPEC_PATH}")"
-  run_clean_host_command \
-    "${ROOT_DIR}/scripts/lib/extract_direct_mounts" \
-    --manifest "${manifest_path}" \
-    --mount-spec "${DIRECT_MOUNT_SPEC_PATH}" >/dev/null
-  prepare_injection_direct_mounts "${DIRECT_MOUNT_SPEC_PATH}"
-  metadata="$(go_hostutil launcher manifest-metadata "${manifest_path}")"
-  INJECTION_POLICY_SHA256="$(printf '%s\n' "${metadata}" | sed -n '1p')"
-  INJECTION_CREDENTIAL_KEYS="$(printf '%s\n' "${metadata}" | sed -n '2p')"
-  INJECTION_EXTRA_ENDPOINTS="$(printf '%s\n' "${metadata}" | sed -n '3p')"
-  INJECTION_SSH_ENABLED="$(printf '%s\n' "${metadata}" | sed -n '4p')"
-  INJECTION_SSH_CONFIG_ASSURANCE="$(printf '%s\n' "${metadata}" | sed -n '5p')"
-  INJECTION_SECRET_COPY_TARGETS="$(printf '%s\n' "${metadata}" | sed -n '6p')"
-  resolver_metadata="$(go_hostutil launcher resolver-metadata "${resolver_metadata_path}")"
-  INJECTION_CREDENTIAL_INPUT_KINDS="$(printf '%s\n' "${resolver_metadata}" | sed -n '1p')"
-  INJECTION_CREDENTIAL_RESOLVERS="$(printf '%s\n' "${resolver_metadata}" | sed -n '2p')"
-  INJECTION_CREDENTIAL_MATERIALIZATION="$(printf '%s\n' "${resolver_metadata}" | sed -n '3p')"
-  INJECTION_CREDENTIAL_RESOLUTION_STATES="$(printf '%s\n' "${resolver_metadata}" | sed -n '4p')"
-  INJECTION_PROVIDER_AUTH_READY_STATES="$(printf '%s\n' "${resolver_metadata}" | sed -n '5p')"
-  INJECTION_SHARED_AUTH_READY_STATES="$(printf '%s\n' "${resolver_metadata}" | sed -n '6p')"
+  while IFS='=' read -r key value; do
+    [[ -n "${key}" ]] || continue
+    case "${key}" in
+      INJECTION_BUNDLE_ROOT) INJECTION_BUNDLE_ROOT="${value}" ;;
+      DIRECT_MOUNT_SPEC_PATH) DIRECT_MOUNT_SPEC_PATH="${value}" ;;
+      DIRECT_SOURCE_MOUNTS_COUNT) ;;
+      DIRECT_SOURCE_MOUNTS_*) DIRECT_SOURCE_MOUNTS+=("${value}") ;;
+      INJECTION_POLICY_SHA256) INJECTION_POLICY_SHA256="${value}" ;;
+      INJECTION_CREDENTIAL_KEYS) INJECTION_CREDENTIAL_KEYS="${value}" ;;
+      INJECTION_CREDENTIAL_INPUT_KINDS) INJECTION_CREDENTIAL_INPUT_KINDS="${value}" ;;
+      INJECTION_CREDENTIAL_RESOLVERS) INJECTION_CREDENTIAL_RESOLVERS="${value}" ;;
+      INJECTION_CREDENTIAL_MATERIALIZATION) INJECTION_CREDENTIAL_MATERIALIZATION="${value}" ;;
+      INJECTION_CREDENTIAL_RESOLUTION_STATES) INJECTION_CREDENTIAL_RESOLUTION_STATES="${value}" ;;
+      INJECTION_PROVIDER_AUTH_READY_STATES) INJECTION_PROVIDER_AUTH_READY_STATES="${value}" ;;
+      INJECTION_SHARED_AUTH_READY_STATES) INJECTION_SHARED_AUTH_READY_STATES="${value}" ;;
+      INJECTION_EXTRA_ENDPOINTS) INJECTION_EXTRA_ENDPOINTS="${value}" ;;
+      INJECTION_SSH_ENABLED) INJECTION_SSH_ENABLED="${value}" ;;
+      INJECTION_SSH_CONFIG_ASSURANCE) INJECTION_SSH_CONFIG_ASSURANCE="${value}" ;;
+      INJECTION_SECRET_COPY_TARGETS) INJECTION_SECRET_COPY_TARGETS="${value}" ;;
+    esac
+  done < <(go_hostutil launcher injection-prepare-bundle \
+    "--agent=${agent}" \
+    "--mode=${mode}" \
+    "--policy=${INJECTION_POLICY:-}" \
+    "--use-default-policy=${USE_DEFAULT_INJECTION_POLICY:-0}" \
+    "--auth-status=${AUTH_STATUS:-0}" \
+    "--doctor=${DOCTOR:-0}" \
+    "--inspect=${INSPECT:-0}" \
+    "--dry-run=${DRY_RUN:-0}" \
+    "--synthetic-codex-auth=${synthetic_codex}" \
+    "--synthetic-claude-export=${synthetic_claude}" \
+    "--real-home=${REAL_HOME}" \
+    "--pid=$$")
 }
 
 build_recommended_command() {

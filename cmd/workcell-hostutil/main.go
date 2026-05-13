@@ -18,6 +18,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/release"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
+	"github.com/omkhar/workcell/internal/injection"
 	"github.com/omkhar/workcell/internal/publishpr"
 	"github.com/omkhar/workcell/internal/sessionctl"
 )
@@ -184,6 +185,9 @@ func launcherSubcommands() []launcherSubcommand {
 		{"support-matrix-eval", 6, 6, cmdLauncherSupportMatrixEval},
 		{"publish-pr-usage", 0, 0, cmdLauncherPublishPRUsage},
 		{"profile-path", 1, -1, cmdLauncherProfilePath},
+		// PR 23.4 — injection bundle preparation moved into Go.
+		{"injection-stage-direct-mounts", 2, 2, cmdLauncherInjectionStageDirectMounts},
+		{"injection-prepare-bundle", 0, -1, cmdLauncherInjectionPrepareBundle},
 	}
 }
 
@@ -645,6 +649,85 @@ func dispatchProfilePath(kind string, args []string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown profile-path kind: %s", kind)
 	}
+}
+
+// cmdLauncherInjectionStageDirectMounts is the launcher subcommand entry
+// point for the PR 23.4 Go translation of prepare_injection_direct_mounts.
+// It accepts BUNDLE_ROOT and MOUNT_SPEC_PATH and prints one "-v" argument
+// pair per output line so bash can split it back into the DIRECT_SOURCE_MOUNTS
+// array.
+func cmdLauncherInjectionStageDirectMounts(args []string) error {
+	dockerArgs, err := injection.StageDirectMounts(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	for _, arg := range dockerArgs {
+		fmt.Println(arg)
+	}
+	return nil
+}
+
+// cmdLauncherInjectionPrepareBundle is the launcher subcommand entry point
+// for the PR 23.4 Go translation of prepare_injection_bundle.  It reads the
+// bash globals from CLI flags, executes the full pipeline in-process, and
+// prints KEY=VALUE lines (one per bash global) so the shim can re-export
+// them via a read loop.
+func cmdLauncherInjectionPrepareBundle(args []string) error {
+	opts, err := parsePrepareBundleArgs(args)
+	if err != nil {
+		return err
+	}
+	result, err := injection.PrepareBundle(*opts)
+	if err != nil {
+		return err
+	}
+	fmt.Print(injection.FormatBundleResultForShell(result))
+	return nil
+}
+
+func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, error) {
+	opts := &injection.PrepareBundleOptions{ProcessPID: os.Getpid()}
+	for _, arg := range args {
+		key, value, ok := strings.Cut(arg, "=")
+		if !ok {
+			return nil, fmt.Errorf("expected KEY=VALUE, got %q", arg)
+		}
+		switch key {
+		case "--agent":
+			opts.Agent = value
+		case "--mode":
+			opts.Mode = value
+		case "--policy":
+			opts.PolicyPath = value
+		case "--use-default-policy":
+			opts.UseDefaultPolicy = value == "1" || value == "true"
+		case "--auth-status":
+			opts.AuthStatus = value == "1" || value == "true"
+		case "--doctor":
+			opts.Doctor = value == "1" || value == "true"
+		case "--inspect":
+			opts.Inspect = value == "1" || value == "true"
+		case "--dry-run":
+			opts.DryRun = value == "1" || value == "true"
+		case "--synthetic-codex-auth":
+			opts.SelfStagingProbeSyntheticCodexAuth = value == "1" || value == "true"
+		case "--synthetic-claude-export":
+			opts.SelfStagingProbeSyntheticClaudeExport = value == "1" || value == "true"
+		case "--real-home":
+			opts.RealHome = value
+		case "--bundle-parent":
+			opts.BundleParentOverride = value
+		case "--pid":
+			pid, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid --pid: %v", err)
+			}
+			opts.ProcessPID = pid
+		default:
+			return nil, fmt.Errorf("unknown flag: %s", key)
+		}
+	}
+	return opts, nil
 }
 
 func usage() error {
