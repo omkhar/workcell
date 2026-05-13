@@ -152,6 +152,7 @@ func launcherSubcommands() []launcherSubcommand {
 		{"session-timeline-cli", 0, -1, cmdLauncherSessionTimelineCli},
 		{"session-logs-cli", 0, -1, cmdLauncherSessionLogsCli},
 		{"session-attach-cli", 0, -1, cmdLauncherSessionAttachCli},
+		{"session-send-cli", 0, -1, cmdLauncherSessionSendCli},
 		{"session-stop-cli", 0, -1, cmdLauncherSessionStopCli},
 		{"session-suffix", 0, 0, cmdLauncherSessionSuffix},
 		{"colima-status", 1, 1, cmdLauncherColimaStatus},
@@ -262,6 +263,10 @@ func cmdLauncherSessionLogsCli(args []string) error {
 
 func cmdLauncherSessionAttachCli(args []string) error {
 	return sessionctl.AttachMain(args)
+}
+
+func cmdLauncherSessionSendCli(args []string) error {
+	return sessionctl.SendMain(args)
 }
 
 func cmdLauncherSessionStopCli(args []string) error {

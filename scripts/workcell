@@ -4008,6 +4008,8 @@ session_attach_main() {
 }
 
 session_send_main() {
+  local plan=""
+  local send_main_status=0
   local session_id=""
   local message=""
   local append_newline=1
@@ -4016,40 +4018,31 @@ session_send_main() {
   local runtime_uid=""
   local runtime_gid=""
   local send_status=0
+  local line=""
+  local key=""
+  local value=""
+  local -a lookup_roots=()
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --id)
-        session_id="$(option_value_or_die "$1" "${2-}")"
-        shift 2
-        ;;
-      --message)
-        message="$(raw_option_value_or_die "$1" "${2-}")"
-        shift 2
-        ;;
-      --no-newline)
-        append_newline=0
-        shift
-        ;;
-      -h | --help)
-        session_usage
-        exit 0
-        ;;
-      *)
-        echo "Unsupported workcell session send option: $1" >&2
-        session_usage >&2
-        exit 2
-        ;;
+  while IFS= read -r line; do
+    lookup_roots+=("${line}")
+  done < <(session_lookup_root_args)
+  set +e
+  plan="$(go_hostutil launcher session-send-cli "${lookup_roots[@]}" "$@")"
+  send_main_status="$?"
+  set -e
+  if [[ "${send_main_status}" -ne 0 ]]; then
+    exit "${send_main_status}"
+  fi
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "${key}" in
+      session_id) session_id="${value}" ;;
+      message) message="${value}" ;;
+      append_newline) append_newline="${value}" ;;
     esac
-  done
-  [[ -n "${session_id}" ]] || {
-    echo "workcell session send requires --id." >&2
-    exit 2
-  }
-  [[ -n "${message}" ]] || {
-    echo "workcell session send requires --message." >&2
-    exit 2
-  }
+  done <<<"${plan}"
+  [[ -n "${session_id}" ]] || exit 0
 
   if [[ "${append_newline}" -eq 1 ]]; then
     payload="${message}"$'\n'
