@@ -137,6 +137,7 @@ func launcherSubcommands() []launcherSubcommand {
 		{"session-usage", 0, 0, cmdLauncherSessionUsage},
 		{"auth-usage", 0, 0, cmdLauncherAuthUsage},
 		{"policy-usage", 0, 0, cmdLauncherPolicyUsage},
+		{"policy-cli", 0, -1, cmdLauncherPolicyCli},
 		{"session-timeline-cli", 0, -1, cmdLauncherSessionTimelineCli},
 		{"session-logs-cli", 0, -1, cmdLauncherSessionLogsCli},
 		{"session-suffix", 0, 0, cmdLauncherSessionSuffix},
@@ -204,6 +205,19 @@ func cmdLauncherAuthUsage(_ []string) error {
 func cmdLauncherPolicyUsage(_ []string) error {
 	fmt.Print(authpolicy.PolicyUsageText())
 	return nil
+}
+
+// cmdLauncherPolicyCli is the launcher entry point for the Go
+// translation of scripts/workcell's policy_main bash function.  Usage
+// errors (missing/unknown subcommand, unknown option) exit with code 2
+// to match the bash CLI surface; all other errors propagate to main()
+// for the default exit-1 path.
+func cmdLauncherPolicyCli(args []string) error {
+	err := authpolicy.PolicyMain(args)
+	if authpolicy.IsPolicyMainUsageError(err) {
+		os.Exit(2)
+	}
+	return err
 }
 
 func cmdLauncherSessionTimelineCli(args []string) error {
