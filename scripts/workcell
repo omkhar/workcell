@@ -766,13 +766,13 @@ run_host_colima_with_timeout() {
   shift
 
   [[ "$#" -gt 0 ]] || return 0
-  if [[ -z "${HOST_COLIMA_BIN}" ]]; then
+  if [[ -z "${HOST_COLIMA_BIN:-}" ]]; then
     HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
   fi
   go_hostutil launcher run-host-colima-with-timeout "${timeout_seconds}" \
     --colima-bin="${HOST_COLIMA_BIN}" \
-    --real-home="${REAL_HOME}" \
-    --colima-home="${COLIMA_STATE_ROOT}" \
+    --real-home="${REAL_HOME:-}" \
+    --colima-home="${COLIMA_STATE_ROOT:-}" \
     --cwd="${WORKCELL_HOST_COMMAND_CWD:-${REAL_HOME:-/}}" \
     -- "$@"
 }
