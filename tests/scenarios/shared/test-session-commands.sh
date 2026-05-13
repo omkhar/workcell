@@ -1355,12 +1355,32 @@ if [[ -f "${SESSION_SEND_DEAD_MONITOR_RECORD}" ]] && grep -q . "${SESSION_SEND_D
 fi
 
 SESSION_ATTACH_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-attach.stopped.record"
+SESSION_ATTACH_STOPPED_STATE_ROOT="${DETACHED_STATE_DIR}/session-attach.stopped.state-root"
+mkdir -p "${SESSION_ATTACH_STOPPED_STATE_ROOT}/wcl-detached-fixture/sessions"
+cat >"${SESSION_ATTACH_STOPPED_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "monitor_pid": "4242",
+  "session_audit_dir": "/tmp/detached-fixture-audit",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
 set +e
 bash -lc '
   set -euo pipefail
   source "$1"
   trap - EXIT
   RECORD_FILE="$2"
+  WORKCELL_STATE_ROOT="$3"
+  COLIMA_STATE_ROOT="$3"
   HOST_DOCKER_BIN="/bin/false"
   resolve_host_tool() { printf "/bin/false\n"; }
   sanitize_host_docker_env() { :; }
@@ -1388,7 +1408,7 @@ bash -lc '
     esac
   }
   session_attach_main --id detached-fixture
-' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_ATTACH_STOPPED_RECORD}" >/dev/null 2>&1
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_ATTACH_STOPPED_RECORD}" "${SESSION_ATTACH_STOPPED_STATE_ROOT}" >/dev/null 2>&1
 session_attach_stopped_status=$?
 set -e
 if [[ "${session_attach_stopped_status}" -eq 0 ]]; then
@@ -1405,12 +1425,32 @@ if [[ -f "${SESSION_ATTACH_STOPPED_RECORD}" ]] && grep -q 'attach ' "${SESSION_A
 fi
 
 SESSION_ATTACH_FAILURE_RECORD="${DETACHED_STATE_DIR}/session-attach.failure.record"
+SESSION_ATTACH_FAILURE_STATE_ROOT="${DETACHED_STATE_DIR}/session-attach.failure.state-root"
+mkdir -p "${SESSION_ATTACH_FAILURE_STATE_ROOT}/wcl-detached-fixture/sessions"
+cat >"${SESSION_ATTACH_FAILURE_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "detached-fixture",
+  "profile": "wcl-detached-fixture",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "live_status": "running",
+  "workspace": "/tmp/detached-fixture-workspace",
+  "container_name": "workcell-session-fixture",
+  "monitor_pid": "4242",
+  "session_audit_dir": "/tmp/detached-fixture-audit",
+  "started_at": "2026-04-08T14:00:00Z"
+}
+EOF_JSON
 set +e
 bash -lc '
   set -euo pipefail
   source "$1"
   trap - EXIT
   RECORD_FILE="$2"
+  WORKCELL_STATE_ROOT="$3"
+  COLIMA_STATE_ROOT="$3"
   HOST_DOCKER_BIN="/bin/false"
   resolve_host_tool() { printf "/bin/false\n"; }
   sanitize_host_docker_env() { :; }
@@ -1442,7 +1482,7 @@ bash -lc '
     esac
   }
   session_attach_main --id detached-fixture --no-stdin
-' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_ATTACH_FAILURE_RECORD}" >/dev/null 2>&1
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_ATTACH_FAILURE_RECORD}" "${SESSION_ATTACH_FAILURE_STATE_ROOT}" >/dev/null 2>&1
 session_attach_failure_status=$?
 set -e
 if [[ "${session_attach_failure_status}" -ne 23 ]]; then
