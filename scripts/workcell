@@ -788,8 +788,27 @@ colima_profile_status() {
 
   # The colima-status subcommand exits 0 with the profile status on
   # stdout, 3 when the profile is absent from the list, and 1 for any
-  # other parse error.  Propagate its exit code directly.
-  printf '%s' "${list_output}" | go_hostutil launcher colima-status "${profile}" 2>/dev/null
+  # other parse error.  go run wraps the child binary's non-zero exit
+  # status as "exit status N\n" on its own stderr while itself exiting
+  # 1, so the bash side reconstructs the original exit code from that
+  # trailer to preserve the contract verify-invariants depends on.
+  local stderr_capture status_output rc trailer
+  stderr_capture="$(mktemp)"
+  status_output="$(printf '%s' "${list_output}" | go_hostutil launcher colima-status "${profile}" 2>"${stderr_capture}")"
+  rc=$?
+  if (( rc != 0 )); then
+    trailer="$(tail -n1 "${stderr_capture}" 2>/dev/null || true)"
+    case "${trailer}" in
+      "exit status "[0-9]*)
+        rc="${trailer##* }"
+        ;;
+    esac
+  fi
+  rm -f "${stderr_capture}"
+  if (( rc == 0 )) && [[ -n "${status_output}" ]]; then
+    printf '%s\n' "${status_output}"
+  fi
+  return "${rc}"
 }
 
 profile_process_pids() {
