@@ -4958,10 +4958,6 @@ default_injection_policy_path() {
   printf '%s/.config/workcell/injection-policy.toml\n' "${REAL_HOME}"
 }
 
-default_managed_credentials_root() {
-  printf '%s/.config/workcell/credentials\n' "${REAL_HOME}"
-}
-
 auth_main() {
   # Invoke the in-process auth-cli launcher and translate the launcher's
   # exit code back to the bash auth_main contract (2 for usage failures,
