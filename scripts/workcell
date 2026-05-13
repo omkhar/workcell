@@ -4576,66 +4576,20 @@ session_delete_main() {
 }
 
 session_logs_main() {
-  local session_id=""
-  local kind=""
-  local log_path=""
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --id)
-        session_id="$(option_value_or_die "$1" "${2-}")"
-        shift 2
-        ;;
-      --kind)
-        kind="$(option_value_or_die "$1" "${2-}")"
-        shift 2
-        ;;
-      -h | --help)
-        session_usage
-        exit 0
-        ;;
-      *)
-        echo "Unsupported workcell session logs option: $1" >&2
-        session_usage >&2
-        exit 2
-        ;;
-    esac
-  done
-  [[ -n "${session_id}" ]] || {
-    echo "workcell session logs requires --id." >&2
-    exit 2
-  }
-  [[ -n "${kind}" ]] || {
-    echo "workcell session logs requires --kind." >&2
-    exit 2
-  }
-  validate_logs_kind_name "${kind}"
-
-  load_session_runtime_metadata "${session_id}"
-  case "${kind}" in
-    audit) log_path="${SESSION_META_AUDIT_LOG_PATH}" ;;
-    debug) log_path="${SESSION_META_DEBUG_LOG_PATH}" ;;
-    file-trace) log_path="${SESSION_META_FILE_TRACE_LOG_PATH}" ;;
-    transcript) log_path="${SESSION_META_TRANSCRIPT_LOG_PATH}" ;;
-  esac
-
-  if [[ -z "${log_path}" ]]; then
-    echo "No ${kind} log is recorded for session ${session_id}." >&2
-    exit 2
-  fi
-  if ! log_path="$(revalidate_recorded_host_output_path "${log_path}")"; then
-    exit 2
-  fi
-  if [[ ! -f "${log_path}" ]]; then
-    echo "No ${kind} log is recorded for session ${session_id}." >&2
-    exit 2
-  fi
-  cat "${log_path}"
-  exit 0
+  local -a lookup_roots=()
+  while IFS= read -r root; do
+    lookup_roots+=("${root}")
+  done < <(session_lookup_root_args)
+  go_hostutil launcher session-logs-cli "${lookup_roots[@]}" "$@"
+  exit $?
 }
 
 session_timeline_main() {
-  go_hostutil launcher session-timeline-cli "$@"
+  local -a lookup_roots=()
+  while IFS= read -r root; do
+    lookup_roots+=("${root}")
+  done < <(session_lookup_root_args)
+  go_hostutil launcher session-timeline-cli "${lookup_roots[@]}" "$@"
   exit $?
 }
 

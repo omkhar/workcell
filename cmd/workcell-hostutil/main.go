@@ -135,6 +135,7 @@ func launcherSubcommands() []launcherSubcommand {
 	return []launcherSubcommand{
 		{"session-usage", 0, 0, cmdLauncherSessionUsage},
 		{"session-timeline-cli", 0, -1, cmdLauncherSessionTimelineCli},
+		{"session-logs-cli", 0, -1, cmdLauncherSessionLogsCli},
 		{"session-suffix", 0, 0, cmdLauncherSessionSuffix},
 		{"colima-status", 1, 1, cmdLauncherColimaStatus},
 		{"cleanup-stale-log-pointers", 1, 1, cmdLauncherCleanupStaleLogPointers},
@@ -194,6 +195,10 @@ func cmdLauncherSessionUsage(_ []string) error {
 
 func cmdLauncherSessionTimelineCli(args []string) error {
 	return sessionctl.TimelineMain(args)
+}
+
+func cmdLauncherSessionLogsCli(args []string) error {
+	return sessionctl.LogsMain(args)
 }
 
 func cmdLauncherSessionSuffix(_ []string) error {
