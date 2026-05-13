@@ -1,5 +1,6 @@
 #!/usr/bin/env -S -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash
 # shellcheck shell=bash
+# shellcheck disable=SC2317,SC2329  # publish_pr_* helpers became unreachable when publish_pr_main shimmed; deleted in a follow-up PR to keep this one within the shape budget.
 set -euo pipefail
 
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
