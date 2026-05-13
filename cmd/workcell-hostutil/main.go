@@ -180,6 +180,7 @@ func launcherSubcommands() []launcherSubcommand {
 		{"resolve-endpoints", 1, 1, cmdLauncherResolveEndpoints},
 		{"support-matrix-eval", 6, 6, cmdLauncherSupportMatrixEval},
 		{"publish-pr-usage", 0, 0, cmdLauncherPublishPRUsage},
+		{"profile-path", 1, -1, cmdLauncherProfilePath},
 	}
 }
 
@@ -443,6 +444,120 @@ func cmdLauncherSupportMatrixEval(args []string) error {
 		fmt.Println(line)
 	}
 	return nil
+}
+
+// cmdLauncherProfilePath dispatches the profile-path umbrella
+// subcommand.  Each kind exposes a thin, byte-identical replacement for
+// the matching scripts/workcell profile_* helper.
+//
+// Usage forms:
+//
+//	profile-path dir          STATE_ROOT PROFILE
+//	profile-path lima-dir     STATE_ROOT PROFILE
+//	profile-path disk-dir     STATE_ROOT PROFILE
+//	profile-path target-state-dir          TARGET_STATE_ROOT TARGET_KIND TARGET_PROVIDER PROFILE
+//	profile-path audit-log                 TARGET_STATE_ROOT TARGET_KIND TARGET_PROVIDER PROFILE
+//	profile-path legacy-audit-log          STATE_ROOT PROFILE
+//	profile-path sessions-dir              TARGET_STATE_ROOT TARGET_KIND TARGET_PROVIDER PROFILE
+//	profile-path legacy-sessions-dir       STATE_ROOT PROFILE
+//	profile-path lock-dir                  WORKCELL_STATE_ROOT TARGET_KIND TARGET_PROVIDER PROFILE
+//	profile-path latest-log-pointer        TARGET_STATE_ROOT TARGET_KIND TARGET_PROVIDER PROFILE KIND
+//	profile-path legacy-latest-log-pointer STATE_ROOT PROFILE KIND
+//	profile-path colima-config             STATE_ROOT PROFILE
+func cmdLauncherProfilePath(args []string) error {
+	kind := args[0]
+	rest := args[1:]
+	value, err := dispatchProfilePath(kind, rest)
+	if err != nil {
+		if errors.Is(err, hoststate.ErrUnsupportedLogPointerKind) {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		var keyErr *hoststate.InvalidStateKeyError
+		if errors.As(err, &keyErr) {
+			fmt.Fprintln(os.Stderr, keyErr.Error())
+			if keyErr.Hint != "" {
+				fmt.Fprintln(os.Stderr, keyErr.Hint)
+			}
+			os.Exit(2)
+		}
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func dispatchProfilePath(kind string, args []string) (string, error) {
+	expect := func(n int) error {
+		if len(args) != n {
+			return fmt.Errorf("profile-path %s expects %d args, got %d", kind, n, len(args))
+		}
+		return nil
+	}
+	switch kind {
+	case "dir":
+		if err := expect(2); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileDir(args[0], args[1])
+	case "lima-dir":
+		if err := expect(2); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileLimaDir(args[0], args[1])
+	case "disk-dir":
+		if err := expect(2); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileDiskDir(args[0], args[1])
+	case "target-state-dir":
+		if err := expect(4); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileTargetStateDir(args[0], args[1], args[2], args[3])
+	case "audit-log":
+		if err := expect(4); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileAuditLogPath(args[0], args[1], args[2], args[3])
+	case "legacy-audit-log":
+		if err := expect(2); err != nil {
+			return "", err
+		}
+		return hoststate.LegacyProfileAuditLogPath(args[0], args[1])
+	case "sessions-dir":
+		if err := expect(4); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileSessionsDirPath(args[0], args[1], args[2], args[3])
+	case "legacy-sessions-dir":
+		if err := expect(2); err != nil {
+			return "", err
+		}
+		return hoststate.LegacyProfileSessionsDirPath(args[0], args[1])
+	case "lock-dir":
+		if err := expect(4); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileLockDirPath(args[0], args[1], args[2], args[3])
+	case "latest-log-pointer":
+		if err := expect(5); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileLatestLogPointerPath(args[0], args[1], args[2], args[3], args[4])
+	case "legacy-latest-log-pointer":
+		if err := expect(3); err != nil {
+			return "", err
+		}
+		return hoststate.LegacyProfileLatestLogPointerPath(args[0], args[1], args[2])
+	case "colima-config":
+		if err := expect(2); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileColimaConfigPath(args[0], args[1])
+	default:
+		return "", fmt.Errorf("unknown profile-path kind: %s", kind)
+	}
 }
 
 func usage() error {
