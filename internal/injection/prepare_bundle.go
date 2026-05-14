@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/host/hoststate"
@@ -275,20 +276,14 @@ func installSyntheticProbeEnv(bundleRoot string, syntheticCodex, syntheticClaude
 }
 
 // writeFile0600 writes data to path with mode 0o600 (matching the bash
-// "umask 077" + printf > path sequence for synthetic probes).
+// "umask 077" + printf > path sequence for synthetic probes).  The
+// parent directory is created with 0o700 — the synthetic probe inputs
+// MUST NOT be readable by other users on the host.
 func writeFile0600(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return os.WriteFile(path, data, 0o600)
 }
 
 // devNull discards writes; we use it where bash redirected ">/dev/null".
@@ -297,31 +292,34 @@ type devNull struct{}
 func (devNull) Write(p []byte) (int, error) { return len(p), nil }
 
 // FormatBundleResultForShell emits the result as one KEY=VALUE line per
-// variable, in a format that bash can re-import via "while read".  Array
-// values use a NUL byte separator within the value and are tagged with a
-// leading "\0" so the shim can split on \0 rather than parsing quoting.
+// variable, in a format that bash can re-import via "while read".  The
+// DirectSourceMounts slice is emitted as a count followed by per-index
+// keyed lines (DIRECT_SOURCE_MOUNTS_COUNT=N then
+// DIRECT_SOURCE_MOUNTS_0=val, DIRECT_SOURCE_MOUNTS_1=val, ...) so the
+// shim can rebuild the bash array without needing to parse any in-line
+// separator.
 func FormatBundleResultForShell(result *PrepareBundleResult) string {
 	if result == nil {
 		return ""
 	}
-	var out string
-	out += "INJECTION_BUNDLE_ROOT=" + result.InjectionBundleRoot + "\n"
-	out += "DIRECT_MOUNT_SPEC_PATH=" + result.DirectMountSpecPath + "\n"
-	out += "DIRECT_SOURCE_MOUNTS_COUNT=" + strconv.Itoa(len(result.DirectSourceMounts)) + "\n"
+	var b strings.Builder
+	fmt.Fprintf(&b, "INJECTION_BUNDLE_ROOT=%s\n", result.InjectionBundleRoot)
+	fmt.Fprintf(&b, "DIRECT_MOUNT_SPEC_PATH=%s\n", result.DirectMountSpecPath)
+	fmt.Fprintf(&b, "DIRECT_SOURCE_MOUNTS_COUNT=%s\n", strconv.Itoa(len(result.DirectSourceMounts)))
 	for i, arg := range result.DirectSourceMounts {
-		out += "DIRECT_SOURCE_MOUNTS_" + strconv.Itoa(i) + "=" + arg + "\n"
+		fmt.Fprintf(&b, "DIRECT_SOURCE_MOUNTS_%d=%s\n", i, arg)
 	}
-	out += "INJECTION_POLICY_SHA256=" + result.InjectionPolicySHA256 + "\n"
-	out += "INJECTION_CREDENTIAL_KEYS=" + result.InjectionCredentialKeys + "\n"
-	out += "INJECTION_CREDENTIAL_INPUT_KINDS=" + result.InjectionCredentialInputKinds + "\n"
-	out += "INJECTION_CREDENTIAL_RESOLVERS=" + result.InjectionCredentialResolvers + "\n"
-	out += "INJECTION_CREDENTIAL_MATERIALIZATION=" + result.InjectionCredentialMaterialization + "\n"
-	out += "INJECTION_CREDENTIAL_RESOLUTION_STATES=" + result.InjectionCredentialResolutionStates + "\n"
-	out += "INJECTION_PROVIDER_AUTH_READY_STATES=" + result.InjectionProviderAuthReadyStates + "\n"
-	out += "INJECTION_SHARED_AUTH_READY_STATES=" + result.InjectionSharedAuthReadyStates + "\n"
-	out += "INJECTION_EXTRA_ENDPOINTS=" + result.InjectionExtraEndpoints + "\n"
-	out += "INJECTION_SSH_ENABLED=" + result.InjectionSSHEnabled + "\n"
-	out += "INJECTION_SSH_CONFIG_ASSURANCE=" + result.InjectionSSHConfigAssurance + "\n"
-	out += "INJECTION_SECRET_COPY_TARGETS=" + result.InjectionSecretCopyTargets + "\n"
-	return out
+	fmt.Fprintf(&b, "INJECTION_POLICY_SHA256=%s\n", result.InjectionPolicySHA256)
+	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_KEYS=%s\n", result.InjectionCredentialKeys)
+	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_INPUT_KINDS=%s\n", result.InjectionCredentialInputKinds)
+	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_RESOLVERS=%s\n", result.InjectionCredentialResolvers)
+	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_MATERIALIZATION=%s\n", result.InjectionCredentialMaterialization)
+	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_RESOLUTION_STATES=%s\n", result.InjectionCredentialResolutionStates)
+	fmt.Fprintf(&b, "INJECTION_PROVIDER_AUTH_READY_STATES=%s\n", result.InjectionProviderAuthReadyStates)
+	fmt.Fprintf(&b, "INJECTION_SHARED_AUTH_READY_STATES=%s\n", result.InjectionSharedAuthReadyStates)
+	fmt.Fprintf(&b, "INJECTION_EXTRA_ENDPOINTS=%s\n", result.InjectionExtraEndpoints)
+	fmt.Fprintf(&b, "INJECTION_SSH_ENABLED=%s\n", result.InjectionSSHEnabled)
+	fmt.Fprintf(&b, "INJECTION_SSH_CONFIG_ASSURANCE=%s\n", result.InjectionSSHConfigAssurance)
+	fmt.Fprintf(&b, "INJECTION_SECRET_COPY_TARGETS=%s\n", result.InjectionSecretCopyTargets)
+	return b.String()
 }

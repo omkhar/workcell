@@ -10,6 +10,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/host/stateroot"
 )
 
 // AttachMain implements the validation half of `workcell session attach
@@ -40,14 +41,15 @@ import (
 //	container_name=<container>
 //
 // State-root forwarding mirrors LogsMain/TimelineMain: leading
-// --root=PATH args are consumed via consumeRootArgs because go_hostutil
-// scrubs WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT from the environment.
+// --root=PATH args are consumed via stateroot.ConsumeRootArgs because
+// go_hostutil scrubs WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT from the
+// environment.
 func AttachMain(args []string) error {
 	return attachMain(args, os.Stdout, os.Stderr)
 }
 
 func attachMain(args []string, stdout, stderr io.Writer) error {
-	roots, rest := consumeRootArgs(args)
+	roots, rest := stateroot.ConsumeRootArgs(args)
 	sessionID, noStdin, showHelp, err := parseAttachArgs(rest)
 	if err != nil {
 		return err
@@ -67,7 +69,7 @@ func attachMain(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if len(roots) == 0 {
-		roots = lookupRoots()
+		roots = stateroot.LookupRoots()
 	}
 	record, err := sessions.FindSessionRecordInRoots(roots, sessionID)
 	if err != nil {

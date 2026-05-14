@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,10 +134,21 @@ func stageDirectMountEntry(hostSource, stagedSource string) error {
 	return copyFileWithMode(hostSource, stagedSource, info.Mode().Perm())
 }
 
-// copyDirContents mirrors "cp -R src/. dst": recurses into src and writes
-// every entry under dst, preserving the relative directory structure and
-// per-file modes.  Symlinks are dereferenced (matching bash cp -R semantics
-// when the source has no special suppression flag).
+// copyDirContents mirrors "cp -R src/. dst" with one cautious-staging
+// divergence: symlinks under src are skipped with a log warning rather
+// than being dereferenced.  The legacy bash helper relied on `cp -R`
+// which would have followed the link target, but a symlink inside a
+// host-input source can escape the staging root entirely
+// (e.g. `~/.aws/credentials -> /etc/passwd`) and surface arbitrary
+// host files inside the container.  Skipping matches the cautious-
+// staging discipline applied elsewhere in injection: validate strictly
+// and refuse anything that cannot be vouched for.  The warning gives
+// the operator enough signal to notice that an expected file did not
+// land in the container.
+//
+// We use entry.Type() / entry.Info() from WalkDir's DirEntry to avoid a
+// second Stat per file (entry.Type() returns the lstat-derived mode
+// bits, and Info() is the cached fs.FileInfo for the entry).
 func copyDirContents(src, dst string) error {
 	return filepath.WalkDir(src, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -149,8 +161,13 @@ func copyDirContents(src, dst string) error {
 		if rel == "." {
 			return nil
 		}
+		mode := entry.Type()
+		if mode&fs.ModeSymlink != 0 {
+			log.Printf("workcell injection: skipping symlink under host-input source: %s", current)
+			return nil
+		}
 		target := filepath.Join(dst, rel)
-		info, err := os.Stat(current) // follows symlinks, matching cp -R default
+		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
@@ -193,14 +210,16 @@ func copyFileWithMode(src, dst string, mode os.FileMode) error {
 // chmodRecursiveGoNoAccess strips group/other rwx bits from every entry under
 // root, mirroring "chmod -R go-rwx".  Errors are returned to the caller; the
 // bash original masked them with "|| true", which the caller can mimic.
+//
+// Uses entry.Info() from the DirEntry to avoid a second Stat per file.
 func chmodRecursiveGoNoAccess(root string) error {
 	return filepath.WalkDir(root, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		info, statErr := os.Stat(current)
-		if statErr != nil {
-			return statErr
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return infoErr
 		}
 		return os.Chmod(current, info.Mode().Perm()&^0o077)
 	})

@@ -5,38 +5,23 @@ package launcher
 
 import (
 	"os"
-	"path/filepath"
 
 	"github.com/omkhar/workcell/internal/pathutil"
 )
 
+// CanonicalizePath is a thin wrapper around pathutil.CanonicalizePath
+// in best-effort mode (the launcher historically used the lenient
+// ~user fallback).  New code should call pathutil.CanonicalizePath
+// directly.
 func CanonicalizePath(path string) (string, error) {
 	return CanonicalizePathFrom(path, "")
 }
 
+// CanonicalizePathFrom is a thin wrapper around pathutil.CanonicalizePath
+// that anchors relative inputs against base (falling back to the
+// process cwd when base is empty).
 func CanonicalizePathFrom(path, base string) (string, error) {
-	expanded, err := pathutil.ExpandUserPathBestEffort(path)
-	if err != nil {
-		return "", err
-	}
-
-	if !filepath.IsAbs(expanded) {
-		switch {
-		case base == "":
-			base, err = os.Getwd()
-			if err != nil {
-				return "", err
-			}
-		case !filepath.IsAbs(base):
-			base, err = filepath.Abs(base)
-			if err != nil {
-				return "", err
-			}
-		}
-		expanded = filepath.Join(base, expanded)
-	}
-
-	return pathutil.ResolveBestEffort(filepath.Clean(expanded))
+	return pathutil.CanonicalizePath(path, pathutil.Options{Base: base})
 }
 
 func RealHome() (string, error) {

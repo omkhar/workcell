@@ -471,8 +471,10 @@ func cmdLauncherRouteProfileDockerCommand(args []string) error {
 	}
 	route, err := launcher.RouteProfileDockerCommand(provider, socketPath, contextName)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
+		// Return an ExitCodeError so main()'s single typed handler
+		// emits the diagnostic and the right exit code; no direct
+		// os.Exit calls outside main().
+		return &cliexit.ExitCodeError{Code: 1, Message: err.Error()}
 	}
 	for _, token := range route.EnvPrefix {
 		fmt.Println(token)
@@ -515,8 +517,11 @@ func cmdLauncherPrepareCurrentDockerClientPlan(args []string) error {
 	if err != nil {
 		var planErr *launcher.PrepareDockerClientPlanError
 		if errors.As(err, &planErr) {
-			fmt.Fprintln(os.Stderr, planErr.Error())
-			os.Exit(2)
+			// Bash original exits 2 on docker-desktop context
+			// failures; route through ExitCodeError so main() can
+			// own the exit while the rest of the helper stays in
+			// Go-error idiom.
+			return &cliexit.ExitCodeError{Code: 2, Message: planErr.Error()}
 		}
 		return err
 	}

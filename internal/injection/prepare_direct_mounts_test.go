@@ -186,6 +186,90 @@ func TestStageDirectMountsStagesDirectoryRecursively(t *testing.T) {
 	}
 }
 
+// TestStageDirectMountsSkipsSymlinkToFile pins the cautious-staging
+// rule: a regular-file symlink under a directory source must NOT be
+// dereferenced into the staged tree (otherwise an attacker-controlled
+// link like `~/.aws/credentials -> /etc/passwd` would surface host
+// files inside the container).  The staged tree should still contain
+// the legitimate sibling file alongside the dropped link.
+func TestStageDirectMountsSkipsSymlinkToFile(t *testing.T) {
+	bundleRoot := t.TempDir()
+	sourceDir := filepath.Join(bundleRoot, "src-dir")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	realFile := filepath.Join(sourceDir, "real.txt")
+	if err := os.WriteFile(realFile, []byte("real"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	linkPath := filepath.Join(sourceDir, "link.txt")
+	if err := os.Symlink("/etc/hosts", linkPath); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	mountPath := "/opt/workcell/host-inputs/configs"
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{
+		{"source": sourceDir, "mount_path": mountPath},
+	})
+
+	if _, err := StageDirectMounts(bundleRoot, specPath); err != nil {
+		t.Fatalf("StageDirectMounts: %v", err)
+	}
+	hash := hoststate.DirectMountCacheKey(sourceDir, mountPath)
+	stagedRoot := filepath.Join(bundleRoot, "direct-mounts", hash)
+	stagedReal := filepath.Join(stagedRoot, "real.txt")
+	if data, err := os.ReadFile(stagedReal); err != nil || string(data) != "real" {
+		t.Fatalf("expected real.txt staged with content 'real', got data=%q err=%v", string(data), err)
+	}
+	stagedLink := filepath.Join(stagedRoot, "link.txt")
+	if _, err := os.Lstat(stagedLink); err == nil {
+		t.Fatalf("symlink should have been skipped, but staged entry exists at %s", stagedLink)
+	}
+}
+
+// TestStageDirectMountsSkipsSymlinkToDir pins the same cautious-
+// staging rule for directory-targeting symlinks: a symlinked
+// subdirectory must NOT be recursively followed into the staged
+// tree.  Without this guard, a link like `inside/secrets -> /etc`
+// would copy every file under /etc into the container.
+func TestStageDirectMountsSkipsSymlinkToDir(t *testing.T) {
+	bundleRoot := t.TempDir()
+	sourceDir := filepath.Join(bundleRoot, "src-dir")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	realSub := filepath.Join(sourceDir, "real-sub")
+	if err := os.MkdirAll(realSub, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(realSub, "keep.txt"), []byte("keep"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	linkedDir := filepath.Join(sourceDir, "link-sub")
+	if err := os.Symlink("/etc", linkedDir); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	mountPath := "/opt/workcell/host-inputs/configs"
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{
+		{"source": sourceDir, "mount_path": mountPath},
+	})
+
+	if _, err := StageDirectMounts(bundleRoot, specPath); err != nil {
+		t.Fatalf("StageDirectMounts: %v", err)
+	}
+	hash := hoststate.DirectMountCacheKey(sourceDir, mountPath)
+	stagedRoot := filepath.Join(bundleRoot, "direct-mounts", hash)
+	stagedKeep := filepath.Join(stagedRoot, "real-sub", "keep.txt")
+	if data, err := os.ReadFile(stagedKeep); err != nil || string(data) != "keep" {
+		t.Fatalf("expected real-sub/keep.txt staged with content 'keep', got data=%q err=%v", string(data), err)
+	}
+	stagedLink := filepath.Join(stagedRoot, "link-sub")
+	if _, err := os.Lstat(stagedLink); err == nil {
+		t.Fatalf("symlinked dir should have been skipped, but staged entry exists at %s", stagedLink)
+	}
+}
+
 func TestStageDirectMountsStripsGroupOtherPermissions(t *testing.T) {
 	bundleRoot := t.TempDir()
 	sourceFile := filepath.Join(bundleRoot, "src.txt")

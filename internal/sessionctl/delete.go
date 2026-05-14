@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/host/stateroot"
 )
 
 // DeleteMain implements the option-parsing half of `workcell session
@@ -46,17 +47,17 @@ import (
 // the bash CLI surface.
 //
 // State-root forwarding mirrors SendMain/AttachMain/LogsMain: leading
-// --root=PATH args are consumed via consumeRootArgs because go_hostutil
-// scrubs WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT from the environment.
-// The Go side does not currently use those roots, but the bash shim
-// keeps prepending them so the contract stays consistent with sibling
-// session-* subcommands.
+// --root=PATH args are consumed via stateroot.ConsumeRootArgs because
+// go_hostutil scrubs WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT from the
+// environment.  The Go side does not currently use those roots, but
+// the bash shim keeps prepending them so the contract stays consistent
+// with sibling session-* subcommands.
 func DeleteMain(args []string) error {
 	return deleteMain(args, os.Stdout, os.Stderr)
 }
 
 func deleteMain(args []string, stdout, stderr io.Writer) error {
-	_, rest := consumeRootArgs(args)
+	_, rest := stateroot.ConsumeRootArgs(args)
 	sessionID, recordOnly, dryRun, showHelp, err := parseDeleteArgs(rest)
 	if err != nil {
 		return err
