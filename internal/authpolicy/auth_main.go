@@ -10,26 +10,16 @@ import (
 	"os"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/launcher"
 )
 
-// ExitCodeError carries a non-zero exit code that the workcell-hostutil
-// main wrapper should surface via os.Exit. AuthMain returns this so the
-// bash shim sees the original auth_main exit-code contract (2 for usage
-// failures, 1 for runtime failures).
-type ExitCodeError struct {
-	Code    int
-	Message string
-}
-
-func (e *ExitCodeError) Error() string { return e.Message }
-
 func exit2(format string, args ...any) error {
-	return &ExitCodeError{Code: 2, Message: fmt.Sprintf(format, args...)}
+	return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf(format, args...)}
 }
 
 func exit1(format string, args ...any) error {
-	return &ExitCodeError{Code: 1, Message: fmt.Sprintf(format, args...)}
+	return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf(format, args...)}
 }
 
 // AuthMain implements `workcell auth <subcommand>`, the Go translation
@@ -61,7 +51,7 @@ func authMain(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "":
 		fmt.Fprint(stderr, AuthUsageText())
-		return &ExitCodeError{Code: 2, Message: ""}
+		return &cliexit.ExitCodeError{Code: 2, Message: ""}
 	}
 	rest = rest[1:]
 
@@ -80,7 +70,7 @@ func authMain(args []string, stdout, stderr io.Writer) error {
 	default:
 		fmt.Fprintf(stderr, "Unsupported workcell auth command: %s\n", subcommand)
 		fmt.Fprint(stderr, AuthUsageText())
-		return &ExitCodeError{Code: 2, Message: ""}
+		return &cliexit.ExitCodeError{Code: 2, Message: ""}
 	}
 }
 
@@ -153,7 +143,7 @@ func authInit(args []string, base, policyPath, managedRoot string, stdout, stder
 		default:
 			fmt.Fprintf(stderr, "Unsupported workcell auth init option: %s\n", args[i])
 			fmt.Fprint(stderr, AuthUsageText())
-			return &ExitCodeError{Code: 2, Message: ""}
+			return &cliexit.ExitCodeError{Code: 2, Message: ""}
 		}
 	}
 	resolvedPolicy, err := resolveHostPath(policyPath, base)
@@ -231,7 +221,7 @@ func authSet(args []string, base, policyPath, managedRoot string, stdout, stderr
 		default:
 			fmt.Fprintf(stderr, "Unsupported workcell auth set option: %s\n", args[i])
 			fmt.Fprint(stderr, AuthUsageText())
-			return &ExitCodeError{Code: 2, Message: ""}
+			return &cliexit.ExitCodeError{Code: 2, Message: ""}
 		}
 	}
 	if agent == "" {
@@ -304,7 +294,7 @@ func authUnset(args []string, base, policyPath, managedRoot string, stdout, stde
 		default:
 			fmt.Fprintf(stderr, "Unsupported workcell auth unset option: %s\n", args[i])
 			fmt.Fprint(stderr, AuthUsageText())
-			return &ExitCodeError{Code: 2, Message: ""}
+			return &cliexit.ExitCodeError{Code: 2, Message: ""}
 		}
 	}
 	if credential == "" {
@@ -368,7 +358,7 @@ func authStatus(args []string, base, policyPath string, stdout, stderr io.Writer
 		default:
 			fmt.Fprintf(stderr, "Unsupported workcell auth status option: %s\n", args[i])
 			fmt.Fprint(stderr, AuthUsageText())
-			return &ExitCodeError{Code: 2, Message: ""}
+			return &cliexit.ExitCodeError{Code: 2, Message: ""}
 		}
 	}
 	resolvedPolicy, err := resolveHostPath(policyPath, base)
@@ -417,7 +407,7 @@ func runManagePolicy(args []string, stdout, stderr io.Writer) error {
 	if code == 0 {
 		return nil
 	}
-	return &ExitCodeError{Code: code, Message: ""}
+	return &cliexit.ExitCodeError{Code: code, Message: ""}
 }
 
 // authMainBuffer is used by tests that need stdout captured separately

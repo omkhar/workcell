@@ -123,3 +123,48 @@ func TestFormatBundleResultForShellNilSafe(t *testing.T) {
 		t.Fatalf("expected empty string for nil result, got %q", got)
 	}
 }
+
+// TestInstallSyntheticProbeEnvRestoresHomeOnPartialFailure pins the
+// HOME-leak fix.  When the synthetic Claude branch fails after the
+// synthetic Codex branch has already pointed HOME at the bundle's
+// codex-home, the returned cleanup must restore the caller's HOME.
+// The previous code returned a no-op shadow on the error path and
+// the calling Go process inherited the test-only HOME.
+func TestInstallSyntheticProbeEnvRestoresHomeOnPartialFailure(t *testing.T) {
+	// t.Setenv saves and restores HOME at the testing harness level so a
+	// regression in this test cannot leak HOME beyond the test boundary.
+	originalHome := "/tmp/installSyntheticProbeEnv-original"
+	t.Setenv("HOME", originalHome)
+
+	bundleRoot := t.TempDir()
+	// Make the synthetic Claude export path collide with an existing
+	// directory at the same name so writeFile0600's os.OpenFile call
+	// fails: writeFile0600 first MkdirAll's the parent (the bundle root,
+	// already a directory), then OpenFile the leaf, which here is a
+	// pre-created directory so OpenFile returns EISDIR.
+	syntheticClaudePath := filepath.Join(bundleRoot, "self-staging-probe-claude-export.json")
+	if err := os.MkdirAll(syntheticClaudePath, 0o700); err != nil {
+		t.Fatalf("seed collision directory: %v", err)
+	}
+
+	cleanup, err := installSyntheticProbeEnv(bundleRoot, true, true)
+	if cleanup == nil {
+		t.Fatal("installSyntheticProbeEnv returned nil cleanup; callers cannot defer it")
+	}
+	defer cleanup()
+	if err == nil {
+		t.Fatal("installSyntheticProbeEnv did not surface the synthetic-claude write failure")
+	}
+	// Before defer fires, HOME is still pointing at the synthetic codex
+	// home — confirm so we can be sure the post-cleanup assertion is
+	// meaningful.
+	if got := os.Getenv("HOME"); got == originalHome {
+		t.Fatalf("HOME was unexpectedly already restored before cleanup ran: got %q", got)
+	}
+	// Now run cleanup explicitly so we can assert restoration; defer
+	// still runs after the test but is a safety net.
+	cleanup()
+	if got := os.Getenv("HOME"); got != originalHome {
+		t.Fatalf("installSyntheticProbeEnv leaked HOME on partial failure: got %q, want %q", got, originalHome)
+	}
+}

@@ -143,15 +143,18 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 	// Stage synthetic probe inputs (test-only) before invoking the resolver,
 	// matching the env-var contract the bash helper installed for the child
 	// process.  The vars are restored unconditionally so concurrent callers
-	// in the same Go process do not leak state.
+	// in the same Go process do not leak state.  Defer the restore BEFORE
+	// checking err: installSyntheticProbeEnv may fail after it has already
+	// pointed HOME at the synthetic codex home (e.g. the synthetic Claude
+	// export branch fails), and we still owe the caller a clean HOME.
 	restoreEnv, err := installSyntheticProbeEnv(bundleRoot,
 		opts.SelfStagingProbeSyntheticCodexAuth,
 		opts.SelfStagingProbeSyntheticClaudeExport,
 	)
+	defer restoreEnv()
 	if err != nil {
 		return nil, err
 	}
-	defer restoreEnv()
 
 	resolverArgs := []string{
 		"--policy", canonicalPolicy,
@@ -220,10 +223,18 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 
 // installSyntheticProbeEnv mirrors the bash branches that stage synthetic
 // credential exports for the self-staging probes.  It returns a restore
-// callback the caller MUST defer; otherwise the calling Go process inherits
-// the test-only env vars.
+// callback the caller MUST defer BEFORE checking the error; otherwise the
+// calling Go process inherits the test-only env vars (specifically HOME)
+// on partial failure.  The returned callback is always non-nil and always
+// safe to call exactly once.
+//
+// Failure model: every os.Setenv/os.MkdirAll/writeFile0600 call may
+// happen after we've already pointed HOME at the synthetic codex home,
+// so the partial-state cleanup MUST always be the canonical restore
+// callback (not the no-op `func(){}` shadow that an earlier draft of
+// this helper used).  See prepare_bundle_test.go::TestPrepareBundleRestoresHOMEOnPartialFailure
+// for the regression that motivated this contract.
 func installSyntheticProbeEnv(bundleRoot string, syntheticCodex, syntheticClaude bool) (func(), error) {
-	restore := func() {}
 	originalHome, hadHome := os.LookupEnv("HOME")
 	originalExport, hadExport := os.LookupEnv("WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE")
 
@@ -242,22 +253,22 @@ func installSyntheticProbeEnv(bundleRoot string, syntheticCodex, syntheticClaude
 		syntheticCodexHome := filepath.Join(bundleRoot, "self-staging-probe-codex-home")
 		syntheticCodexAuth := filepath.Join(syntheticCodexHome, ".codex", "auth.json")
 		if err := os.MkdirAll(filepath.Dir(syntheticCodexAuth), 0o700); err != nil {
-			return restore, err
+			return cleanup, err
 		}
 		if err := writeFile0600(syntheticCodexAuth, []byte("{\"token\":\"codex\"}\n")); err != nil {
-			return restore, err
+			return cleanup, err
 		}
 		if err := os.Setenv("HOME", syntheticCodexHome); err != nil {
-			return restore, err
+			return cleanup, err
 		}
 	}
 	if syntheticClaude {
 		syntheticClaudeExport := filepath.Join(bundleRoot, "self-staging-probe-claude-export.json")
 		if err := writeFile0600(syntheticClaudeExport, []byte("{\"token\":\"claude\"}\n")); err != nil {
-			return restore, err
+			return cleanup, err
 		}
 		if err := os.Setenv("WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE", syntheticClaudeExport); err != nil {
-			return restore, err
+			return cleanup, err
 		}
 	}
 	return cleanup, nil

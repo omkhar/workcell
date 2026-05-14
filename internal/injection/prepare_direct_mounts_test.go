@@ -87,6 +87,35 @@ func TestStageDirectMountsRejectsMountPathOutsideHostInputs(t *testing.T) {
 	}
 }
 
+// TestStageDirectMountsRejectsTraversalOutOfHostInputs pins the
+// filepath.Clean guard: a `..` segment in the mount path must not let
+// an attacker escape the managed host-input root.  Without the Clean
+// normalisation, strings.HasPrefix("/opt/workcell/host-inputs/../etc/foo",
+// "/opt/workcell/host-inputs/") returns true and the mount would be
+// staged into the container at `/opt/etc/foo`.
+func TestStageDirectMountsRejectsTraversalOutOfHostInputs(t *testing.T) {
+	bundleRoot := t.TempDir()
+	sourceFile := filepath.Join(bundleRoot, "source.txt")
+	if err := os.WriteFile(sourceFile, []byte("hello"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	for _, mount := range []string{
+		"/opt/workcell/host-inputs/../etc/foo",
+		"/opt/workcell/host-inputs",          // exact root, no trailing slash
+		"/opt/workcell/host-inputs/./../etc", // mixed `.` and `..`
+		"/opt/workcell/host-inputs/.",        // dot-only suffix collapses to the root
+	} {
+		specPath := filepath.Join(bundleRoot, "spec.json")
+		writeMountSpec(t, specPath, []map[string]any{
+			{"source": sourceFile, "mount_path": mount},
+		})
+		_, err := StageDirectMounts(bundleRoot, specPath)
+		if err == nil || !strings.Contains(err.Error(), "outside the managed host-input root") {
+			t.Fatalf("expected outside-host-input error for mount=%q, got %v", mount, err)
+		}
+	}
+}
+
 func TestStageDirectMountsStagesFileAndReturnsDockerArgs(t *testing.T) {
 	bundleRoot := t.TempDir()
 	sourceFile := filepath.Join(bundleRoot, "src", "secret.json")

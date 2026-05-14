@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func TestResolveSessionSubcommandAcceptsCanonical(t *testing.T) {
@@ -61,7 +61,7 @@ func TestResolveSessionSubcommandRejectsUnknown(t *testing.T) {
 	if err == nil {
 		t.Fatalf("resolveSessionSubcommand accepted unknown subcommand, returned %q", got)
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("resolveSessionSubcommand err = %v, want ExitCodeError", err)
 	}
@@ -143,7 +143,7 @@ func TestDispatchMainRejectsUnknownSubcommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("dispatchMain accepted unknown subcommand")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) || ec.Code != 2 {
 		t.Fatalf("dispatchMain error = %v, want ExitCodeError{Code:2}", err)
 	}

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 // runAuthMain wraps authMain to capture stdout/stderr separately for
@@ -18,7 +20,7 @@ func runAuthMain(args []string) (stdout string, stderr string, code int, errStr 
 	err := authMain(args, &out, &errBuf)
 	code = 0
 	if err != nil {
-		var ec *ExitCodeError
+		var ec *cliexit.ExitCodeError
 		if errors.As(err, &ec) {
 			code = ec.Code
 		} else {
@@ -254,11 +256,11 @@ func TestAuthMainInitEndToEnd(t *testing.T) {
 
 func TestAuthMainExitCodeErrorImplementsError(t *testing.T) {
 	t.Parallel()
-	err := &ExitCodeError{Code: 2, Message: "hello"}
+	err := &cliexit.ExitCodeError{Code: 2, Message: "hello"}
 	if err.Error() != "hello" {
 		t.Fatalf("Error() = %q", err.Error())
 	}
-	var asErr *ExitCodeError
+	var asErr *cliexit.ExitCodeError
 	if !errors.As(error(err), &asErr) {
 		t.Fatal("errors.As failed to unwrap ExitCodeError")
 	}

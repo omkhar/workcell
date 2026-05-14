@@ -6,10 +6,11 @@ package sessionctl
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func TestParseDeleteArgsRequiresIDValue(t *testing.T) {
@@ -19,7 +20,7 @@ func TestParseDeleteArgsRequiresIDValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseDeleteArgs accepted --id without a value")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("parseDeleteArgs err = %v, want ExitCodeError", err)
 	}
@@ -47,7 +48,7 @@ func TestParseDeleteArgsRejectsUnknownFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseDeleteArgs accepted unknown flag")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("parseDeleteArgs err = %v, want ExitCodeError", err)
 	}
@@ -146,11 +147,11 @@ func TestDeleteMainRequiresID(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := deleteMain([]string{}, &buf)
+	err := deleteMain([]string{}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("deleteMain accepted call without --id")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("deleteMain err = %v, want ExitCodeError", err)
 	}
@@ -165,12 +166,12 @@ func TestDeleteMainRequiresID(t *testing.T) {
 func TestDeleteMainHelpPrintsUsage(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-	if err := deleteMain([]string{"--help"}, &buf); err != nil {
+	var stderr bytes.Buffer
+	if err := deleteMain([]string{"--help"}, io.Discard, &stderr); err != nil {
 		t.Fatalf("deleteMain(--help) error = %v", err)
 	}
-	if !strings.Contains(buf.String(), "Usage: workcell session") {
-		t.Fatalf("deleteMain(--help) output = %q, want usage banner", buf.String())
+	if !strings.Contains(stderr.String(), "Usage: workcell session") {
+		t.Fatalf("deleteMain(--help) stderr = %q, want usage banner", stderr.String())
 	}
 }
 
@@ -178,7 +179,7 @@ func TestDeleteMainEmitsPlan(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	if err := deleteMain([]string{"--id", "session-1"}, &buf); err != nil {
+	if err := deleteMain([]string{"--id", "session-1"}, &buf, io.Discard); err != nil {
 		t.Fatalf("deleteMain error = %v", err)
 	}
 	out := buf.String()
@@ -198,7 +199,7 @@ func TestDeleteMainPropagatesRecordOnly(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--id", "session-1", "--record-only"}
-	if err := deleteMain(args, &buf); err != nil {
+	if err := deleteMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("deleteMain error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "record_only=1\n") {
@@ -214,7 +215,7 @@ func TestDeleteMainPropagatesDryRun(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--id", "session-1", "--dry-run"}
-	if err := deleteMain(args, &buf); err != nil {
+	if err := deleteMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("deleteMain error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "dry_run=1\n") {
@@ -230,7 +231,7 @@ func TestDeleteMainPropagatesBothToggles(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--id", "session-1", "--record-only", "--dry-run"}
-	if err := deleteMain(args, &buf); err != nil {
+	if err := deleteMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("deleteMain error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "record_only=1\n") {
@@ -249,7 +250,7 @@ func TestDeleteMainStripsRootArgs(t *testing.T) {
 	// session_lookup_root_args output.
 	var buf bytes.Buffer
 	args := []string{"--root=/tmp/state-1", "--root=", "--id", "session-1", "--dry-run"}
-	if err := deleteMain(args, &buf); err != nil {
+	if err := deleteMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("deleteMain error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "session_id=session-1\n") {
@@ -264,11 +265,11 @@ func TestDeleteMainRejectsUnknownOption(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := deleteMain([]string{"--bogus"}, &buf)
+	err := deleteMain([]string{"--bogus"}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("deleteMain accepted unknown option")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) || ec.Code != 2 {
 		t.Fatalf("deleteMain error = %v, want ExitCodeError{Code:2}", err)
 	}
