@@ -166,6 +166,8 @@ func launcherSubcommands() []launcherSubcommand {
 		{"session-logs-cli", 0, -1, cmdLauncherSessionLogsCli},
 		{"session-attach-cli", 0, -1, cmdLauncherSessionAttachCli},
 		{"session-delete-cli", 0, -1, cmdLauncherSessionDeleteCli},
+		{"session-dispatcher-cli", 0, -1, cmdLauncherSessionDispatcherCli},
+		{"session-monitor-cli", 0, -1, cmdLauncherSessionMonitorCli},
 		{"session-send-cli", 0, -1, cmdLauncherSessionSendCli},
 		{"session-stop-cli", 0, -1, cmdLauncherSessionStopCli},
 		{"session-suffix", 0, 0, cmdLauncherSessionSuffix},
@@ -286,6 +288,14 @@ func cmdLauncherSessionAttachCli(args []string) error {
 
 func cmdLauncherSessionDeleteCli(args []string) error {
 	return sessionctl.DeleteMain(args)
+}
+
+func cmdLauncherSessionDispatcherCli(args []string) error {
+	return sessionctl.DispatchMain(args)
+}
+
+func cmdLauncherSessionMonitorCli(args []string) error {
+	return sessionctl.MonitorMain(args)
 }
 
 func cmdLauncherSessionSendCli(args []string) error {

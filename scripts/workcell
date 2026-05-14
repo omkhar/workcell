@@ -4341,29 +4341,29 @@ session_timeline_main() {
 }
 
 session_monitor_main() {
+  local plan=""
+  local monitor_cli_status=0
   local state_file=""
   local wait_status=""
+  local line=""
+  local key=""
+  local value=""
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --state-file)
-        state_file="$(option_value_or_die "$1" "${2-}")"
-        shift 2
-        ;;
-      *)
-        echo "Unsupported workcell session monitor option: $1" >&2
-        exit 2
-        ;;
+  set +e
+  plan="$(go_hostutil launcher session-monitor-cli "$@")"
+  monitor_cli_status="$?"
+  set -e
+  if [[ "${monitor_cli_status}" -ne 0 ]]; then
+    exit "${monitor_cli_status}"
+  fi
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "${key}" in
+      state_file) state_file="${value}" ;;
     esac
-  done
-  [[ -n "${state_file}" ]] || {
-    echo "workcell session monitor requires --state-file." >&2
-    exit 2
-  }
-  [[ -f "${state_file}" ]] || {
-    echo "Missing detached session monitor state file: ${state_file}" >&2
-    exit 2
-  }
+  done <<<"${plan}"
+  [[ -n "${state_file}" ]] || exit 0
 
   # shellcheck disable=SC1090
   source "${state_file}"
@@ -4396,6 +4396,9 @@ session_monitor_main() {
 
 session_main() {
   local subcommand="${1:-}"
+  local plan=""
+  local dispatch_cli_status=0
+  local route=""
   local workspace=""
   local profile=""
   local emit_json=0
@@ -4409,12 +4412,30 @@ session_main() {
   local git_head=""
   local git_base=""
   local rendered=""
+  local line=""
+  local key=""
+  local value=""
   local -a args=()
   local -a lookup_roots=()
   local -a session_start_env=()
 
   shift || true
-  case "${subcommand}" in
+  set +e
+  plan="$(go_hostutil launcher session-dispatcher-cli "${subcommand}")"
+  dispatch_cli_status="$?"
+  set -e
+  if [[ "${dispatch_cli_status}" -ne 0 ]]; then
+    session_usage >&2
+    exit "${dispatch_cli_status}"
+  fi
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "${key}" in
+      subcommand) route="${value}" ;;
+    esac
+  done <<<"${plan}"
+  case "${route}" in
     start)
       session_start_env=(
         PATH="${TRUSTED_HOST_PATH}"
@@ -4689,14 +4710,9 @@ session_main() {
     monitor)
       session_monitor_main "$@"
       ;;
-    "" | -h | --help)
+    usage)
       session_usage
       exit 0
-      ;;
-    *)
-      echo "Unsupported workcell session command: ${subcommand}" >&2
-      session_usage >&2
-      exit 2
       ;;
   esac
 }
