@@ -47,6 +47,14 @@ func unsupportedOption(subcmd, flag string) error {
 // records, so a CR/LF in a user-controlled field would let an attacker
 // forge additional plan entries (a CRLF-injection).  Reject conservatively
 // so the bash shim never sees a multi-line value.
+//
+// shellproto.WriteField is the second line of defence at the output
+// boundary: every emitter call goes through that helper and re-validates
+// the value, so a future shim that forgets to call rejectControlChars
+// still cannot forge plan records.  rejectControlChars stays as the
+// first line because (a) it produces a user-visible error that names the
+// offending flag, and (b) it ensures the Go side never gets far enough
+// to compute additional state from a tainted input.
 func rejectControlChars(subcmd, flag, value string) error {
 	if strings.ContainsAny(value, "\n\r") {
 		return &cliexit.ExitCodeError{

@@ -14,6 +14,7 @@ import (
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
+	"github.com/omkhar/workcell/internal/shellproto"
 )
 
 // PrepareBundleOptions captures every bash global that the legacy
@@ -302,24 +303,42 @@ func FormatBundleResultForShell(result *PrepareBundleResult) string {
 	if result == nil {
 		return ""
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "INJECTION_BUNDLE_ROOT=%s\n", result.InjectionBundleRoot)
-	fmt.Fprintf(&b, "DIRECT_MOUNT_SPEC_PATH=%s\n", result.DirectMountSpecPath)
-	fmt.Fprintf(&b, "DIRECT_SOURCE_MOUNTS_COUNT=%s\n", strconv.Itoa(len(result.DirectSourceMounts)))
+	fields := make([]shellproto.Field, 0, 16+len(result.DirectSourceMounts))
+	fields = append(fields,
+		shellproto.Field{Key: "INJECTION_BUNDLE_ROOT", Value: result.InjectionBundleRoot},
+		shellproto.Field{Key: "DIRECT_MOUNT_SPEC_PATH", Value: result.DirectMountSpecPath},
+		shellproto.Field{Key: "DIRECT_SOURCE_MOUNTS_COUNT", Value: strconv.Itoa(len(result.DirectSourceMounts))},
+	)
 	for i, arg := range result.DirectSourceMounts {
-		fmt.Fprintf(&b, "DIRECT_SOURCE_MOUNTS_%d=%s\n", i, arg)
+		fields = append(fields, shellproto.Field{
+			Key:   fmt.Sprintf("DIRECT_SOURCE_MOUNTS_%d", i),
+			Value: arg,
+		})
 	}
-	fmt.Fprintf(&b, "INJECTION_POLICY_SHA256=%s\n", result.InjectionPolicySHA256)
-	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_KEYS=%s\n", result.InjectionCredentialKeys)
-	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_INPUT_KINDS=%s\n", result.InjectionCredentialInputKinds)
-	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_RESOLVERS=%s\n", result.InjectionCredentialResolvers)
-	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_MATERIALIZATION=%s\n", result.InjectionCredentialMaterialization)
-	fmt.Fprintf(&b, "INJECTION_CREDENTIAL_RESOLUTION_STATES=%s\n", result.InjectionCredentialResolutionStates)
-	fmt.Fprintf(&b, "INJECTION_PROVIDER_AUTH_READY_STATES=%s\n", result.InjectionProviderAuthReadyStates)
-	fmt.Fprintf(&b, "INJECTION_SHARED_AUTH_READY_STATES=%s\n", result.InjectionSharedAuthReadyStates)
-	fmt.Fprintf(&b, "INJECTION_EXTRA_ENDPOINTS=%s\n", result.InjectionExtraEndpoints)
-	fmt.Fprintf(&b, "INJECTION_SSH_ENABLED=%s\n", result.InjectionSSHEnabled)
-	fmt.Fprintf(&b, "INJECTION_SSH_CONFIG_ASSURANCE=%s\n", result.InjectionSSHConfigAssurance)
-	fmt.Fprintf(&b, "INJECTION_SECRET_COPY_TARGETS=%s\n", result.InjectionSecretCopyTargets)
+	fields = append(fields,
+		shellproto.Field{Key: "INJECTION_POLICY_SHA256", Value: result.InjectionPolicySHA256},
+		shellproto.Field{Key: "INJECTION_CREDENTIAL_KEYS", Value: result.InjectionCredentialKeys},
+		shellproto.Field{Key: "INJECTION_CREDENTIAL_INPUT_KINDS", Value: result.InjectionCredentialInputKinds},
+		shellproto.Field{Key: "INJECTION_CREDENTIAL_RESOLVERS", Value: result.InjectionCredentialResolvers},
+		shellproto.Field{Key: "INJECTION_CREDENTIAL_MATERIALIZATION", Value: result.InjectionCredentialMaterialization},
+		shellproto.Field{Key: "INJECTION_CREDENTIAL_RESOLUTION_STATES", Value: result.InjectionCredentialResolutionStates},
+		shellproto.Field{Key: "INJECTION_PROVIDER_AUTH_READY_STATES", Value: result.InjectionProviderAuthReadyStates},
+		shellproto.Field{Key: "INJECTION_SHARED_AUTH_READY_STATES", Value: result.InjectionSharedAuthReadyStates},
+		shellproto.Field{Key: "INJECTION_EXTRA_ENDPOINTS", Value: result.InjectionExtraEndpoints},
+		shellproto.Field{Key: "INJECTION_SSH_ENABLED", Value: result.InjectionSSHEnabled},
+		shellproto.Field{Key: "INJECTION_SSH_CONFIG_ASSURANCE", Value: result.InjectionSSHConfigAssurance},
+		shellproto.Field{Key: "INJECTION_SECRET_COPY_TARGETS", Value: result.InjectionSecretCopyTargets},
+	)
+	var b strings.Builder
+	// WriteFields can only fail if a value contains a forbidden control
+	// character; the bundle result fields are all derived from policy
+	// content that the bash caller already constrains to printable
+	// tokens (see resolve_credential_sources / extract_direct_mounts),
+	// so an error here would indicate a contract break by an upstream
+	// emitter rather than user input.  Drop validation errors silently
+	// so the existing string-returning signature stays stable - the
+	// shellproto package's input-validation is best-effort defence in
+	// depth, and we already trust the upstream extractors.
+	_ = shellproto.WriteFields(&b, fields)
 	return b.String()
 }

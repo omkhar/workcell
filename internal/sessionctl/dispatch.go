@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/shellproto"
 )
 
 // DispatchMain implements the subcommand-routing half of
@@ -55,8 +56,7 @@ func dispatchMain(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "subcommand=%s\n", resolved)
-	return nil
+	return shellproto.WriteField(stdout, "subcommand", resolved)
 }
 
 // CanonicalSubcommands returns the ordered list of user-facing

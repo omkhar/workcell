@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/stateroot"
+	"github.com/omkhar/workcell/internal/shellproto"
 )
 
 // DeleteMain implements the option-parsing half of `workcell session
@@ -84,10 +86,11 @@ func deleteMain(args []string, stdout, stderr io.Writer) error {
 	if dryRun {
 		dryRunFlag = 1
 	}
-	fmt.Fprintf(stdout, "session_id=%s\n", sessionID)
-	fmt.Fprintf(stdout, "record_only=%d\n", recordOnlyFlag)
-	fmt.Fprintf(stdout, "dry_run=%d\n", dryRunFlag)
-	return nil
+	return shellproto.WriteFields(stdout, []shellproto.Field{
+		{Key: "session_id", Value: sessionID},
+		{Key: "record_only", Value: strconv.Itoa(recordOnlyFlag)},
+		{Key: "dry_run", Value: strconv.Itoa(dryRunFlag)},
+	})
 }
 
 // parseDeleteArgs walks the bash session_delete_main option loop.

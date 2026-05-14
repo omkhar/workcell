@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/stateroot"
+	"github.com/omkhar/workcell/internal/shellproto"
 )
 
 // SendMain implements the option-parsing half of `workcell session send
@@ -82,10 +84,11 @@ func sendMain(args []string, stdout, stderr io.Writer) error {
 	if appendNewline {
 		appendFlag = 1
 	}
-	fmt.Fprintf(stdout, "session_id=%s\n", sessionID)
-	fmt.Fprintf(stdout, "message=%s\n", message)
-	fmt.Fprintf(stdout, "append_newline=%d\n", appendFlag)
-	return nil
+	return shellproto.WriteFields(stdout, []shellproto.Field{
+		{Key: "session_id", Value: sessionID},
+		{Key: "message", Value: message},
+		{Key: "append_newline", Value: strconv.Itoa(appendFlag)},
+	})
 }
 
 // parseSendArgs walks the bash session_send_main option loop.
