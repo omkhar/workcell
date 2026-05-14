@@ -59,20 +59,15 @@ func dispatchMain(args []string, stdout io.Writer) error {
 	return nil
 }
 
-// resolveSessionSubcommand mirrors the session_main case branches.  The
-// empty-string, -h, and --help cases all collapse to the canonical
-// `usage` token so the bash shim has a single branch to handle the
-// usage printout.  Every other recognised subcommand returns its own
-// canonical token.  Anything else returns an ExitCodeError with the
-// bash "Unsupported workcell session command: <name>" diagnostic and
-// code 2.
-func resolveSessionSubcommand(subcommand string) (string, error) {
-	switch subcommand {
-	case "":
-		return "usage", nil
-	case "-h", "--help":
-		return "usage", nil
-	case "start",
+// CanonicalSubcommands returns the ordered list of user-facing
+// `workcell session` subcommand tokens.  The order matches the bash
+// session_main case statement in scripts/workcell so usage prose, the
+// bash dispatcher, and the Go dispatcher all agree on a single
+// authoritative ordering.  A fresh slice is returned on every call so
+// callers may mutate it freely.
+func CanonicalSubcommands() []string {
+	return []string{
+		"start",
 		"attach",
 		"send",
 		"stop",
@@ -83,12 +78,30 @@ func resolveSessionSubcommand(subcommand string) (string, error) {
 		"timeline",
 		"diff",
 		"export",
-		"monitor":
-		return subcommand, nil
-	default:
-		return "", &cliexit.ExitCodeError{
-			Code:    2,
-			Message: fmt.Sprintf("Unsupported workcell session command: %s", subcommand),
+		"monitor",
+	}
+}
+
+// resolveSessionSubcommand mirrors the session_main case branches.  The
+// empty-string, -h, and --help cases all collapse to the canonical
+// `usage` token so the bash shim has a single branch to handle the
+// usage printout.  Every other recognised subcommand returns its own
+// canonical token (consumed from CanonicalSubcommands so the ordered
+// list has one source of truth).  Anything else returns an
+// ExitCodeError with the bash "Unsupported workcell session command:
+// <name>" diagnostic and code 2.
+func resolveSessionSubcommand(subcommand string) (string, error) {
+	switch subcommand {
+	case "", "-h", "--help":
+		return "usage", nil
+	}
+	for _, name := range CanonicalSubcommands() {
+		if subcommand == name {
+			return subcommand, nil
 		}
+	}
+	return "", &cliexit.ExitCodeError{
+		Code:    2,
+		Message: fmt.Sprintf("Unsupported workcell session command: %s", subcommand),
 	}
 }
