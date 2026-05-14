@@ -4093,6 +4093,8 @@ session_delete_resolve_dir_artifact() {
 }
 
 session_delete_main() {
+  local plan=""
+  local delete_cli_status=0
   local session_id=""
   local record_path=""
   local current_live_status=""
@@ -4108,41 +4110,36 @@ session_delete_main() {
   local remove_session_audit_dir=0
   local remove_transcript_log=0
   local session_audit_dir=""
+  local line=""
+  local key=""
+  local value=""
   local -a removed=()
   local -a kept=()
   local -a missing=()
   local -a unavailable=()
   local -a planned_remove=()
+  local -a lookup_roots=()
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --id)
-        session_id="$(option_value_or_die "$1" "${2-}")"
-        shift 2
-        ;;
-      --record-only)
-        record_only=1
-        shift
-        ;;
-      --dry-run)
-        dry_run=1
-        shift
-        ;;
-      -h | --help)
-        session_usage
-        exit 0
-        ;;
-      *)
-        echo "Unsupported workcell session delete option: $1" >&2
-        session_usage >&2
-        exit 2
-        ;;
+  while IFS= read -r line; do
+    lookup_roots+=("${line}")
+  done < <(session_lookup_root_args)
+  set +e
+  plan="$(go_hostutil launcher session-delete-cli "${lookup_roots[@]}" "$@")"
+  delete_cli_status="$?"
+  set -e
+  if [[ "${delete_cli_status}" -ne 0 ]]; then
+    exit "${delete_cli_status}"
+  fi
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "${key}" in
+      session_id) session_id="${value}" ;;
+      record_only) record_only="${value}" ;;
+      dry_run) dry_run="${value}" ;;
     esac
-  done
-  [[ -n "${session_id}" ]] || {
-    echo "workcell session delete requires --id." >&2
-    exit 2
-  }
+  done <<<"${plan}"
+  [[ -n "${session_id}" ]] || exit 0
 
   load_session_runtime_metadata "${session_id}"
   [[ -n "${SESSION_META_PROFILE}" ]] || {
