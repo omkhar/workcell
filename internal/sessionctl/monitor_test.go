@@ -6,12 +6,13 @@ package sessionctl
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func TestParseMonitorArgsRequiresStateFileValue(t *testing.T) {
@@ -21,7 +22,7 @@ func TestParseMonitorArgsRequiresStateFileValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseMonitorArgs accepted --state-file without a value")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("parseMonitorArgs err = %v, want ExitCodeError", err)
 	}
@@ -49,7 +50,7 @@ func TestParseMonitorArgsRejectsUnknownFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseMonitorArgs accepted unknown flag")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("parseMonitorArgs err = %v, want ExitCodeError", err)
 	}
@@ -94,11 +95,11 @@ func TestMonitorMainRequiresStateFile(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := monitorMain([]string{}, &buf)
+	err := monitorMain([]string{}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("monitorMain accepted call without --state-file")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("monitorMain err = %v, want ExitCodeError", err)
 	}
@@ -116,11 +117,11 @@ func TestMonitorMainRejectsMissingStateFile(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "absent.env")
 	var buf bytes.Buffer
-	err := monitorMain([]string{"--state-file", missing}, &buf)
+	err := monitorMain([]string{"--state-file", missing}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("monitorMain accepted missing --state-file")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("monitorMain err = %v, want ExitCodeError", err)
 	}
@@ -140,11 +141,11 @@ func TestMonitorMainRejectsDirectoryStateFile(t *testing.T) {
 
 	dir := t.TempDir()
 	var buf bytes.Buffer
-	err := monitorMain([]string{"--state-file", dir}, &buf)
+	err := monitorMain([]string{"--state-file", dir}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("monitorMain accepted directory as --state-file")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("monitorMain err = %v, want ExitCodeError", err)
 	}
@@ -156,12 +157,12 @@ func TestMonitorMainRejectsDirectoryStateFile(t *testing.T) {
 func TestMonitorMainHelpPrintsUsage(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-	if err := monitorMain([]string{"--help"}, &buf); err != nil {
+	var stderr bytes.Buffer
+	if err := monitorMain([]string{"--help"}, io.Discard, &stderr); err != nil {
 		t.Fatalf("monitorMain(--help) error = %v", err)
 	}
-	if !strings.Contains(buf.String(), "Usage: workcell session") {
-		t.Fatalf("monitorMain(--help) output = %q, want usage banner", buf.String())
+	if !strings.Contains(stderr.String(), "Usage: workcell session") {
+		t.Fatalf("monitorMain(--help) stderr = %q, want usage banner", stderr.String())
 	}
 }
 
@@ -174,7 +175,7 @@ func TestMonitorMainEmitsStateFilePath(t *testing.T) {
 		t.Fatalf("write state file: %v", err)
 	}
 	var buf bytes.Buffer
-	if err := monitorMain([]string{"--state-file", statePath}, &buf); err != nil {
+	if err := monitorMain([]string{"--state-file", statePath}, &buf, io.Discard); err != nil {
 		t.Fatalf("monitorMain error = %v", err)
 	}
 	want := "state_file=" + statePath + "\n"
@@ -187,13 +188,39 @@ func TestMonitorMainRejectsUnknownOption(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := monitorMain([]string{"--bogus"}, &buf)
+	err := monitorMain([]string{"--bogus"}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("monitorMain accepted unknown option")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) || ec.Code != 2 {
 		t.Fatalf("monitorMain error = %v, want ExitCodeError{Code:2}", err)
+	}
+}
+
+// TestMonitorMainRejectsNewlineInStateFile guards the rejectControlChars
+// hook: a newline in --state-file would let an attacker forge additional
+// state_<KEY>=<VALUE> plan lines into the shim's read loop (CRLF
+// injection).  Mirrors the matching guards in attach/send/stop/delete.
+func TestMonitorMainRejectsNewlineInStateFile(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"/tmp/state\nstate_file=/etc/passwd", "/tmp/state\rstate_file=/etc/passwd"} {
+		var buf bytes.Buffer
+		err := monitorMain([]string{"--state-file", value}, &buf, io.Discard)
+		if err == nil {
+			t.Fatalf("monitorMain accepted --state-file value containing control character: %q", value)
+		}
+		var ec *cliexit.ExitCodeError
+		if !errors.As(err, &ec) || ec.Code != 2 {
+			t.Fatalf("monitorMain error = %v, want ExitCodeError{Code:2}", err)
+		}
+		if !strings.Contains(ec.Message, "must not contain newline or carriage-return") {
+			t.Fatalf("monitorMain message = %q, want newline-rejection diagnostic", ec.Message)
+		}
+		if buf.Len() != 0 {
+			t.Fatalf("monitorMain wrote %q on rejection, want no stdout output", buf.String())
+		}
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/authpolicy"
 	"github.com/omkhar/workcell/internal/authresolve"
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
@@ -27,25 +28,16 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		// Both authpolicy and publishpr translations carry their bash
-		// exit-code contract through a typed ExitCodeError. The two
-		// types are intentionally distinct because their messages also
-		// differ (auth/policy v. publish-pr), but the dispatch here
-		// stays uniform: surface the embedded message (if any) on
-		// stderr and exit with the typed Code.
-		var authEC *authpolicy.ExitCodeError
-		if errors.As(err, &authEC) {
-			if msg := authEC.Error(); msg != "" {
+		// All Go CLI translations (authpolicy, publishpr, sessionctl,
+		// etc.) funnel their bash exit-code contract through the
+		// canonical cliexit.ExitCodeError so a single errors.As is
+		// enough to recover {Code, Message}.
+		var ec *cliexit.ExitCodeError
+		if errors.As(err, &ec) {
+			if msg := ec.Error(); msg != "" {
 				fmt.Fprintln(os.Stderr, msg)
 			}
-			os.Exit(authEC.Code)
-		}
-		var publishEC *publishpr.ExitCodeError
-		if errors.As(err, &publishEC) {
-			if msg := publishEC.Error(); msg != "" {
-				fmt.Fprintln(os.Stderr, msg)
-			}
-			os.Exit(publishEC.Code)
+			os.Exit(ec.Code)
 		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -85,7 +77,7 @@ func runHostutilPolicy(args []string) error {
 	if code == 0 {
 		return nil
 	}
-	return &authpolicy.ExitCodeError{Code: code, Message: ""}
+	return &cliexit.ExitCodeError{Code: code, Message: ""}
 }
 
 // runHostutilResolveCredentials dispatches the absorbed
@@ -98,7 +90,7 @@ func runHostutilResolveCredentials(args []string) error {
 	if code == 0 {
 		return nil
 	}
-	return &authpolicy.ExitCodeError{Code: code, Message: ""}
+	return &cliexit.ExitCodeError{Code: code, Message: ""}
 }
 
 // runHostutilPTYTranscript dispatches the absorbed
@@ -110,7 +102,7 @@ func runHostutilPTYTranscript(args []string) error {
 	if code == 0 {
 		return nil
 	}
-	return &authpolicy.ExitCodeError{Code: code, Message: ""}
+	return &cliexit.ExitCodeError{Code: code, Message: ""}
 }
 
 func runPath(args []string) error {

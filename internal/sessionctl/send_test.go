@@ -6,10 +6,11 @@ package sessionctl
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func TestParseSendArgsRequiresIDValue(t *testing.T) {
@@ -152,14 +153,14 @@ func TestSendMainRequiresID(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := sendMain([]string{"--message", "hello"}, &buf)
+	err := sendMain([]string{"--message", "hello"}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("sendMain accepted call without --id")
 	}
 	if !strings.Contains(err.Error(), "workcell session send requires --id.") {
 		t.Fatalf("sendMain error = %v, want canonical require-id message", err)
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) || ec.Code != 2 {
 		t.Fatalf("sendMain error = %v, want ExitCodeError{Code:2}", err)
 	}
@@ -169,14 +170,14 @@ func TestSendMainRequiresMessage(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := sendMain([]string{"--id", "session-1"}, &buf)
+	err := sendMain([]string{"--id", "session-1"}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("sendMain accepted call without --message")
 	}
 	if !strings.Contains(err.Error(), "workcell session send requires --message.") {
 		t.Fatalf("sendMain error = %v, want canonical require-message message", err)
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) || ec.Code != 2 {
 		t.Fatalf("sendMain error = %v, want ExitCodeError{Code:2}", err)
 	}
@@ -185,12 +186,12 @@ func TestSendMainRequiresMessage(t *testing.T) {
 func TestSendMainHelpPrintsUsage(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-	if err := sendMain([]string{"--help"}, &buf); err != nil {
+	var stderr bytes.Buffer
+	if err := sendMain([]string{"--help"}, io.Discard, &stderr); err != nil {
 		t.Fatalf("sendMain(--help) error = %v", err)
 	}
-	if !strings.Contains(buf.String(), "Usage: workcell session") {
-		t.Fatalf("sendMain(--help) output = %q, want usage banner", buf.String())
+	if !strings.Contains(stderr.String(), "Usage: workcell session") {
+		t.Fatalf("sendMain(--help) stderr = %q, want usage banner", stderr.String())
 	}
 }
 
@@ -199,7 +200,7 @@ func TestSendMainEmitsPlan(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--id", "session-1", "--message", "hello world"}
-	if err := sendMain(args, &buf); err != nil {
+	if err := sendMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("sendMain error = %v", err)
 	}
 	out := buf.String()
@@ -219,7 +220,7 @@ func TestSendMainPropagatesNoNewline(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--id", "session-1", "--message", "hello", "--no-newline"}
-	if err := sendMain(args, &buf); err != nil {
+	if err := sendMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("sendMain error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "append_newline=0\n") {
@@ -235,7 +236,7 @@ func TestSendMainStripsRootArgs(t *testing.T) {
 	// session_lookup_root_args output.
 	var buf bytes.Buffer
 	args := []string{"--root=/tmp/state-1", "--root=", "--id", "session-1", "--message", "beta"}
-	if err := sendMain(args, &buf); err != nil {
+	if err := sendMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("sendMain error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "session_id=session-1\n") {
@@ -250,11 +251,11 @@ func TestSendMainRejectsUnknownOption(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := sendMain([]string{"--bogus"}, &buf)
+	err := sendMain([]string{"--bogus"}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("sendMain accepted unknown option")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) || ec.Code != 2 {
 		t.Fatalf("sendMain error = %v, want ExitCodeError{Code:2}", err)
 	}

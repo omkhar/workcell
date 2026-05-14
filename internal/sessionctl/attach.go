@@ -4,11 +4,11 @@
 package sessionctl
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
@@ -43,21 +43,27 @@ import (
 // --root=PATH args are consumed via consumeRootArgs because go_hostutil
 // scrubs WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT from the environment.
 func AttachMain(args []string) error {
-	return attachMain(args, os.Stdout)
+	return attachMain(args, os.Stdout, os.Stderr)
 }
 
-func attachMain(args []string, stdout io.Writer) error {
+func attachMain(args []string, stdout, stderr io.Writer) error {
 	roots, rest := consumeRootArgs(args)
 	sessionID, noStdin, showHelp, err := parseAttachArgs(rest)
 	if err != nil {
 		return err
 	}
 	if showHelp {
-		fmt.Fprint(stdout, UsageText())
+		// Usage banner goes to stderr so the bash shim, which captures
+		// stdout into `$plan`, surfaces it to the user instead of
+		// swallowing it.
+		fmt.Fprint(stderr, UsageText())
 		return nil
 	}
 	if sessionID == "" {
-		return errors.New("workcell session attach requires --id.")
+		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session attach requires --id."}
+	}
+	if err := rejectControlChars("session attach", "--id", sessionID); err != nil {
+		return err
 	}
 
 	if len(roots) == 0 {
@@ -72,7 +78,7 @@ func attachMain(args []string, stdout io.Writer) error {
 		return fmt.Errorf("session attach record is missing a profile: %s", sessionID)
 	}
 	if !sessionIsDetached(record) {
-		return fmt.Errorf("session attach only works for detached sessions started with 'workcell session start': %s\nUse 'workcell session list' to check the control column; attached records are not stoppable.", sessionID)
+		return fmt.Errorf("session attach only works for detached sessions started with 'workcell session start': %s\nUse 'workcell session list' to check the control column; attached records are not attachable.", sessionID)
 	}
 	if record.ContainerName == "" {
 		return fmt.Errorf("session attach record is missing a container name: %s", sessionID)
@@ -93,17 +99,18 @@ func parseAttachArgs(args []string) (sessionID string, noStdin, showHelp bool, e
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			if i+1 >= len(args) || args[i+1] == "" {
-				return "", false, false, fmt.Errorf("--id requires a non-empty value")
+			v, ni, perr := optionValueOrError(args, i, "--id")
+			if perr != nil {
+				return "", false, false, perr
 			}
-			sessionID = args[i+1]
-			i++
+			sessionID = v
+			i = ni
 		case "--no-stdin":
 			noStdin = true
 		case "-h", "--help":
 			showHelp = true
 		default:
-			return "", false, false, fmt.Errorf("Unsupported workcell session attach option: %s", args[i])
+			return "", false, false, unsupportedOption("session attach", args[i])
 		}
 	}
 	return sessionID, noStdin, showHelp, nil

@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 // DeleteMain implements the option-parsing half of `workcell session
@@ -52,21 +52,27 @@ import (
 // keeps prepending them so the contract stays consistent with sibling
 // session-* subcommands.
 func DeleteMain(args []string) error {
-	return deleteMain(args, os.Stdout)
+	return deleteMain(args, os.Stdout, os.Stderr)
 }
 
-func deleteMain(args []string, stdout io.Writer) error {
+func deleteMain(args []string, stdout, stderr io.Writer) error {
 	_, rest := consumeRootArgs(args)
 	sessionID, recordOnly, dryRun, showHelp, err := parseDeleteArgs(rest)
 	if err != nil {
 		return err
 	}
 	if showHelp {
-		fmt.Fprint(stdout, UsageText())
+		// Usage banner goes to stderr so the bash shim, which captures
+		// stdout into `$plan`, surfaces it to the user instead of
+		// swallowing it.
+		fmt.Fprint(stderr, UsageText())
 		return nil
 	}
 	if sessionID == "" {
-		return &authpolicy.ExitCodeError{Code: 2, Message: "workcell session delete requires --id."}
+		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session delete requires --id."}
+	}
+	if err := rejectControlChars("session delete", "--id", sessionID); err != nil {
+		return err
 	}
 
 	recordOnlyFlag := 0
@@ -99,14 +105,12 @@ func parseDeleteArgs(args []string) (sessionID string, recordOnly, dryRun, showH
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			if i+1 >= len(args) || args[i+1] == "" {
-				return "", false, false, false, &authpolicy.ExitCodeError{
-					Code:    2,
-					Message: "Option --id requires a value.",
-				}
+			v, ni, perr := optionValueOrError(args, i, "--id")
+			if perr != nil {
+				return "", false, false, false, perr
 			}
-			sessionID = args[i+1]
-			i++
+			sessionID = v
+			i = ni
 		case "--record-only":
 			recordOnly = true
 		case "--dry-run":
@@ -114,10 +118,7 @@ func parseDeleteArgs(args []string) (sessionID string, recordOnly, dryRun, showH
 		case "-h", "--help":
 			showHelp = true
 		default:
-			return "", false, false, false, &authpolicy.ExitCodeError{
-				Code:    2,
-				Message: fmt.Sprintf("Unsupported workcell session delete option: %s", args[i]),
-			}
+			return "", false, false, false, unsupportedOption("session delete", args[i])
 		}
 	}
 	return sessionID, recordOnly, dryRun, showHelp, nil

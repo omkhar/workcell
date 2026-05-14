@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 // MonitorMain implements the option-parsing and state-file validation
@@ -54,25 +54,40 @@ import (
 // byte-for-byte so the docker-desktop provider monitor test grep keeps
 // matching.
 func MonitorMain(args []string) error {
-	return monitorMain(args, os.Stdout)
+	return monitorMain(args, os.Stdout, os.Stderr)
 }
 
-func monitorMain(args []string, stdout io.Writer) error {
-	statePath, showHelp, err := parseMonitorArgs(args)
+func monitorMain(args []string, stdout, stderr io.Writer) error {
+	// State-root forwarding mirrors the other session_*_main shims:
+	// leading --root=PATH args are consumed here because the shared
+	// scripts/lib/sessionctl-shim.sh helper always prepends
+	// session_lookup_root_args output before forwarding to go_hostutil.
+	// MonitorMain itself does not need the roots (it operates only on
+	// the explicit --state-file path the bash detached-start writer
+	// produced), but the contract stays consistent with the rest of
+	// the session_* dispatch surface.
+	_, rest := consumeRootArgs(args)
+	statePath, showHelp, err := parseMonitorArgs(rest)
 	if err != nil {
 		return err
 	}
 	if showHelp {
-		fmt.Fprint(stdout, UsageText())
+		// Usage banner goes to stderr so the bash shim, which captures
+		// stdout into `$plan`, surfaces it to the user instead of
+		// swallowing it.
+		fmt.Fprint(stderr, UsageText())
 		return nil
 	}
 	if statePath == "" {
-		return &authpolicy.ExitCodeError{Code: 2, Message: "workcell session monitor requires --state-file."}
+		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session monitor requires --state-file."}
+	}
+	if err := rejectControlChars("session monitor", "--state-file", statePath); err != nil {
+		return err
 	}
 
 	info, err := os.Stat(statePath)
 	if err != nil || info.IsDir() {
-		return &authpolicy.ExitCodeError{
+		return &cliexit.ExitCodeError{
 			Code:    2,
 			Message: fmt.Sprintf("Missing detached session monitor state file: %s", statePath),
 		}
@@ -98,21 +113,16 @@ func parseMonitorArgs(args []string) (statePath string, showHelp bool, err error
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--state-file":
-			if i+1 >= len(args) || args[i+1] == "" {
-				return "", false, &authpolicy.ExitCodeError{
-					Code:    2,
-					Message: "Option --state-file requires a value.",
-				}
+			v, ni, perr := optionValueOrError(args, i, "--state-file")
+			if perr != nil {
+				return "", false, perr
 			}
-			statePath = args[i+1]
-			i++
+			statePath = v
+			i = ni
 		case "-h", "--help":
 			showHelp = true
 		default:
-			return "", false, &authpolicy.ExitCodeError{
-				Code:    2,
-				Message: fmt.Sprintf("Unsupported workcell session monitor option: %s", args[i]),
-			}
+			return "", false, unsupportedOption("session monitor", args[i])
 		}
 	}
 	return statePath, showHelp, nil

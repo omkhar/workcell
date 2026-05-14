@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 // PublishPRMain is the in-process entry point invoked by the launcher
@@ -80,10 +82,10 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	}
 
 	if !workspaceIsGitWorkTree(ctx, resolvedWorkspace) {
-		return &ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires a git worktree: %s", resolvedWorkspace)}
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires a git worktree: %s", resolvedWorkspace)}
 	}
 	if !hasRemoteOrigin(ctx, resolvedWorkspace) {
-		return &ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires an origin remote in %s.", resolvedWorkspace)}
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires an origin remote in %s.", resolvedWorkspace)}
 	}
 
 	for _, line := range preflight.LowerAssuranceNotice {
@@ -106,7 +108,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 			if opts.Snapshot != "worktree" {
 				missing = "staged"
 			}
-			return &ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr found no %s changes to publish in %s.", missing, resolvedWorkspace)}
+			return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr found no %s changes to publish in %s.", missing, resolvedWorkspace)}
 		}
 	}
 
@@ -198,7 +200,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	}
 	if publishExistingCommits == 1 {
 		if hasWorktreeChanges(ctx, resolvedWorkspace) {
-			return &ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr existing-branch mode requires a clean worktree in %s.", resolvedWorkspace)}
+			return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr existing-branch mode requires a clean worktree in %s.", resolvedWorkspace)}
 		}
 	} else {
 		if opts.Snapshot == "worktree" {
@@ -207,7 +209,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 			}
 		}
 		if !hasStagedChanges(ctx, resolvedWorkspace) {
-			return &ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr found no staged changes to commit in %s.", resolvedWorkspace)}
+			return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr found no staged changes to commit in %s.", resolvedWorkspace)}
 		}
 		if err := run(commitCmd, nil); err != nil {
 			return err
@@ -257,16 +259,16 @@ func resolveOrStageCommitMessage(ctx *BashContext, opts *Options, preflight *Pre
 	}
 	tmp, mkErr := os.CreateTemp(tmpDir, "workcell-publish-commit.*")
 	if mkErr != nil {
-		return "", noop, &ExitCodeError{Code: 1, Message: fmt.Sprintf("publish-pr could not allocate a commit-message temp file: %v", mkErr)}
+		return "", noop, &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("publish-pr could not allocate a commit-message temp file: %v", mkErr)}
 	}
 	if _, wErr := tmp.WriteString(preflight.CommitMessageText); wErr != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmp.Name())
-		return "", noop, &ExitCodeError{Code: 1, Message: fmt.Sprintf("publish-pr could not write commit message: %v", wErr)}
+		return "", noop, &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("publish-pr could not write commit message: %v", wErr)}
 	}
 	if cErr := tmp.Close(); cErr != nil {
 		_ = os.Remove(tmp.Name())
-		return "", noop, &ExitCodeError{Code: 1, Message: fmt.Sprintf("publish-pr could not close commit message temp file: %v", cErr)}
+		return "", noop, &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("publish-pr could not close commit message temp file: %v", cErr)}
 	}
 	_ = os.Chmod(tmp.Name(), 0o600)
 	name := tmp.Name()

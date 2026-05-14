@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 // DispatchMain implements the subcommand-routing half of
@@ -86,7 +86,7 @@ func resolveSessionSubcommand(subcommand string) (string, error) {
 		"monitor":
 		return subcommand, nil
 	default:
-		return "", &authpolicy.ExitCodeError{
+		return "", &cliexit.ExitCodeError{
 			Code:    2,
 			Message: fmt.Sprintf("Unsupported workcell session command: %s", subcommand),
 		}

@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 // BashContext carries the scripts/workcell publish_pr_main globals
@@ -109,7 +111,7 @@ func ResolveHostTool(ctx *BashContext, name string, required bool, candidates []
 		}
 	}
 	if required {
-		return "", &ExitCodeError{Code: 1, Message: fmt.Sprintf("Missing trusted host tool: %s", name)}
+		return "", &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("Missing trusted host tool: %s", name)}
 	}
 	return "", nil
 }
@@ -160,14 +162,14 @@ func lookPathIn(trustedPath, name string) string {
 func ResolveExistingExecutableOrDie(ctx *BashContext, rawPath, label string) (string, error) {
 	info, err := os.Stat(rawPath)
 	if err != nil || info.IsDir() {
-		return "", &ExitCodeError{Code: 2, Message: fmt.Sprintf("%s file does not exist: %s", label, rawPath)}
+		return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("%s file does not exist: %s", label, rawPath)}
 	}
 	if info.Mode().Perm()&0o111 == 0 {
-		return "", &ExitCodeError{Code: 2, Message: fmt.Sprintf("%s file is not executable: %s", label, rawPath)}
+		return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("%s file is not executable: %s", label, rawPath)}
 	}
 	canonical := CanonicalizeHostToolPath(rawPath)
 	if canonical == "" || !IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx) {
-		return "", &ExitCodeError{Code: 2, Message: fmt.Sprintf("%s must point to a trusted host executable path: %s", label, rawPath)}
+		return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("%s must point to a trusted host executable path: %s", label, rawPath)}
 	}
 	return canonical, nil
 }
@@ -287,7 +289,7 @@ func RunPublishHostCommandInDir(dir string, env *PublishEnv, args []string, stdi
 		env.Home = "/"
 	}
 	if !isDir(dir) {
-		return &ExitCodeError{Code: 2, Message: fmt.Sprintf("Missing host working directory: %s", dir)}
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("Missing host working directory: %s", dir)}
 	}
 	envv := []string{
 		"PATH=" + env.Path,
@@ -308,7 +310,7 @@ func RunPublishHostCommandInDir(dir string, env *PublishEnv, args []string, stdi
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return &ExitCodeError{Code: exitErr.ExitCode()}
+			return &cliexit.ExitCodeError{Code: exitErr.ExitCode()}
 		}
 		return err
 	}
@@ -358,10 +360,10 @@ func resolveExistingDirectoryOrDie(ctx *BashContext, rawPath string) (string, er
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return "", &ExitCodeError{Code: 2, Message: fmt.Sprintf("Workspace path does not exist: %s\nResolve it to an existing directory, then rerun with --workspace %s", rawPath, resolved)}
+		return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("Workspace path does not exist: %s\nResolve it to an existing directory, then rerun with --workspace %s", rawPath, resolved)}
 	}
 	if !info.IsDir() {
-		return "", &ExitCodeError{Code: 2, Message: fmt.Sprintf("Workspace path is not a directory: %s", resolved)}
+		return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("Workspace path is not a directory: %s", resolved)}
 	}
 	return resolved, nil
 }
@@ -378,7 +380,7 @@ func resolveExistingFileOrDie(ctx *BashContext, rawPath, label string) (string, 
 	}
 	info, err := os.Stat(resolved)
 	if err != nil || info.IsDir() {
-		return "", &ExitCodeError{Code: 2, Message: fmt.Sprintf("%s file does not exist: %s", label, rawPath)}
+		return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("%s file does not exist: %s", label, rawPath)}
 	}
 	return resolved, nil
 }

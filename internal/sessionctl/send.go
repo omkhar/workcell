@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 // SendMain implements the option-parsing half of `workcell session send
@@ -48,24 +48,33 @@ import (
 // session-* subcommands and so a future tightening of SendMain that
 // does need on-disk lookup will not require a shim change.
 func SendMain(args []string) error {
-	return sendMain(args, os.Stdout)
+	return sendMain(args, os.Stdout, os.Stderr)
 }
 
-func sendMain(args []string, stdout io.Writer) error {
+func sendMain(args []string, stdout, stderr io.Writer) error {
 	_, rest := consumeRootArgs(args)
 	sessionID, message, appendNewline, showHelp, err := parseSendArgs(rest)
 	if err != nil {
 		return err
 	}
 	if showHelp {
-		fmt.Fprint(stdout, UsageText())
+		// Usage banner goes to stderr so the bash shim, which captures
+		// stdout into `$plan`, surfaces it to the user instead of
+		// swallowing it.
+		fmt.Fprint(stderr, UsageText())
 		return nil
 	}
 	if sessionID == "" {
-		return &authpolicy.ExitCodeError{Code: 2, Message: "workcell session send requires --id."}
+		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session send requires --id."}
 	}
 	if message == "" {
-		return &authpolicy.ExitCodeError{Code: 2, Message: "workcell session send requires --message."}
+		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session send requires --message."}
+	}
+	if err := rejectControlChars("session send", "--id", sessionID); err != nil {
+		return err
+	}
+	if err := rejectControlChars("session send", "--message", message); err != nil {
+		return err
 	}
 
 	appendFlag := 0
@@ -117,10 +126,7 @@ func parseSendArgs(args []string) (sessionID, message string, appendNewline, sho
 		case "-h", "--help":
 			showHelp = true
 		default:
-			return "", "", false, false, &authpolicy.ExitCodeError{
-				Code:    2,
-				Message: fmt.Sprintf("Unsupported workcell session send option: %s", args[i]),
-			}
+			return "", "", false, false, unsupportedOption("session send", args[i])
 		}
 	}
 	return sessionID, message, appendNewline, showHelp, nil
@@ -133,24 +139,27 @@ func parseSendArgs(args []string) (sessionID, message string, appendNewline, sho
 // raw_option_value_or_die: only empty is rejected.
 //
 // The exit-2 wrapping matches the bash CLI contract that usage errors
-// flow back as exit status 2.
+// flow back as exit status 2.  This helper is intentionally separate
+// from the shared optionValueOrError because parseSendArgs needs the
+// raw/strict distinction; sibling parse functions only ever need the
+// "non-empty" check.
 func optionValueForSend(args []string, i int, raw bool) (string, error) {
 	option := args[i]
 	if i+1 >= len(args) {
-		return "", &authpolicy.ExitCodeError{
+		return "", &cliexit.ExitCodeError{
 			Code:    2,
 			Message: fmt.Sprintf("Option %s requires a value.", option),
 		}
 	}
 	value := args[i+1]
 	if value == "" {
-		return "", &authpolicy.ExitCodeError{
+		return "", &cliexit.ExitCodeError{
 			Code:    2,
 			Message: fmt.Sprintf("Option %s requires a value.", option),
 		}
 	}
 	if !raw && strings.HasPrefix(value, "--") {
-		return "", &authpolicy.ExitCodeError{
+		return "", &cliexit.ExitCodeError{
 			Code:    2,
 			Message: fmt.Sprintf("Option %s requires a value.", option),
 		}

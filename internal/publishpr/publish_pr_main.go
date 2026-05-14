@@ -4,28 +4,23 @@
 package publishpr
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
-// ExitCodeError carries a non-zero exit code that the workcell-hostutil
-// main wrapper surfaces via os.Exit. The bash publish_pr_main exits 2
-// for usage / validation failures and 1 for runtime failures; the Go
-// translation preserves that contract through this error type so a
-// future bash shim can recover the exit code byte-identically the way
-// the auth_main translation does.
-type ExitCodeError struct {
-	Code    int
-	Message string
-}
-
-func (e *ExitCodeError) Error() string { return e.Message }
+// ExitCodeError is kept as a package-local type alias for cliexit.ExitCodeError
+// so existing publishpr-internal test code that references the local name
+// continues to compile. Production code should reference cliexit.ExitCodeError
+// directly; this alias is a compatibility shim slated for removal in the
+// follow-up sessionctl/publishpr type-sweep.
+type ExitCodeError = cliexit.ExitCodeError
 
 func exit2(format string, args ...any) error {
-	return &ExitCodeError{Code: 2, Message: fmt.Sprintf(format, args...)}
+	return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf(format, args...)}
 }
 
 // Options carries the parsed flag set for `workcell publish-pr`.
@@ -383,14 +378,9 @@ func WriteUsage(w io.Writer) {
 	fmt.Fprint(w, UsageText())
 }
 
-// IsExitCodeError reports whether err is an *ExitCodeError. Callers in
-// cmd/workcell-hostutil/main.go use errors.As to extract the Code so
-// the bash shim contract survives; this helper keeps that lookup
-// readable.
-func IsExitCodeError(err error) (*ExitCodeError, bool) {
-	var ec *ExitCodeError
-	if errors.As(err, &ec) {
-		return ec, true
-	}
-	return nil, false
+// IsExitCodeError reports whether err is a *cliexit.ExitCodeError. It
+// forwards to cliexit.IsExitCodeError and is preserved here for source
+// compatibility with the existing publishpr callers and tests.
+func IsExitCodeError(err error) (*cliexit.ExitCodeError, bool) {
+	return cliexit.IsExitCodeError(err)
 }

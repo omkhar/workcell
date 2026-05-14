@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
@@ -52,21 +52,27 @@ import (
 // go_hostutil scrubs WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT from the
 // environment.
 func StopMain(args []string) error {
-	return stopMain(args, os.Stdout)
+	return stopMain(args, os.Stdout, os.Stderr)
 }
 
-func stopMain(args []string, stdout io.Writer) error {
+func stopMain(args []string, stdout, stderr io.Writer) error {
 	roots, rest := consumeRootArgs(args)
 	sessionID, force, showHelp, err := parseStopArgs(rest)
 	if err != nil {
 		return err
 	}
 	if showHelp {
-		fmt.Fprint(stdout, UsageText())
+		// Usage banner goes to stderr so the bash shim, which captures
+		// stdout into `$plan`, surfaces it to the user instead of
+		// swallowing it.
+		fmt.Fprint(stderr, UsageText())
 		return nil
 	}
 	if sessionID == "" {
-		return &authpolicy.ExitCodeError{Code: 2, Message: "workcell session stop requires --id."}
+		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session stop requires --id."}
+	}
+	if err := rejectControlChars("session stop", "--id", sessionID); err != nil {
+		return err
 	}
 
 	if len(roots) == 0 {
@@ -114,23 +120,18 @@ func parseStopArgs(args []string) (sessionID string, force, showHelp bool, err e
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			if i+1 >= len(args) || args[i+1] == "" {
-				return "", false, false, &authpolicy.ExitCodeError{
-					Code:    2,
-					Message: "Option --id requires a value.",
-				}
+			v, ni, perr := optionValueOrError(args, i, "--id")
+			if perr != nil {
+				return "", false, false, perr
 			}
-			sessionID = args[i+1]
-			i++
+			sessionID = v
+			i = ni
 		case "--force":
 			force = true
 		case "-h", "--help":
 			showHelp = true
 		default:
-			return "", false, false, &authpolicy.ExitCodeError{
-				Code:    2,
-				Message: fmt.Sprintf("Unsupported workcell session stop option: %s", args[i]),
-			}
+			return "", false, false, unsupportedOption("session stop", args[i])
 		}
 	}
 	return sessionID, force, showHelp, nil

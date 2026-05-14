@@ -75,15 +75,40 @@ func StageDirectMounts(bundleRoot, mountSpecPath string) ([]string, error) {
 // validateDirectMount mirrors the bash entry validation: source must be an
 // absolute path that points at a regular file or directory, and the mount
 // path must be inside /opt/workcell/host-inputs/.
+//
+// Both inputs are normalised via filepath.Clean before the prefix check so
+// a `..` segment cannot escape the managed host-input root.  Concretely,
+// `strings.HasPrefix("/opt/workcell/host-inputs/../etc/foo", "/opt/workcell/host-inputs/")`
+// returns true on raw strings — filepath.Clean collapses the `..` first so
+// the resulting `/opt/etc/foo` fails the prefix test, matching the bash
+// invariant that the container only sees content explicitly staged under
+// the host-inputs root.
+//
+// The prefix is re-checked against `cleaned + "/"` to handle the edge case
+// where the cleaned mount path is exactly the host-input root (no trailing
+// slash); HasPrefix on the bare path would let an attacker mount the root
+// itself, which has no defensible meaning for a per-entry direct mount.
 func validateDirectMount(hostSource, mountPath string) error {
 	if !filepath.IsAbs(hostSource) {
 		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", hostSource)
 	}
-	info, err := os.Stat(hostSource)
+	cleanedSource := filepath.Clean(hostSource)
+	if !filepath.IsAbs(cleanedSource) {
+		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", hostSource)
+	}
+	info, err := os.Stat(cleanedSource)
 	if err != nil || !(info.Mode().IsRegular() || info.IsDir()) {
 		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", hostSource)
 	}
-	if !strings.HasPrefix(mountPath, hostInputMountPrefix) {
+	// filepath.Clean strips trailing slashes, so the cleaned form of a
+	// legal entry is `/opt/workcell/host-inputs/<leaf>`.  Checking the
+	// cleaned path directly against the prefix (which still has a
+	// trailing slash) rejects both `/opt/workcell/host-inputs/../etc/foo`
+	// (cleans to `/opt/etc/foo`) and the bare root
+	// `/opt/workcell/host-inputs` (no trailing component) — both of
+	// which the old raw-string HasPrefix accepted.
+	cleanedMount := filepath.Clean(mountPath)
+	if !strings.HasPrefix(cleanedMount, hostInputMountPrefix) {
 		return fmt.Errorf("Direct input mount path is outside the managed host-input root: %s", mountPath)
 	}
 	return nil

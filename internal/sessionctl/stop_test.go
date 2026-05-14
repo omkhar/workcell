@@ -6,12 +6,13 @@ package sessionctl
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func TestParseStopArgsRequiresIDValue(t *testing.T) {
@@ -21,7 +22,7 @@ func TestParseStopArgsRequiresIDValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseStopArgs accepted --id without a value")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("parseStopArgs err = %v, want ExitCodeError", err)
 	}
@@ -49,7 +50,7 @@ func TestParseStopArgsRejectsUnknownFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseStopArgs accepted unknown flag")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("parseStopArgs err = %v, want ExitCodeError", err)
 	}
@@ -115,11 +116,11 @@ func TestStopMainRequiresID(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := stopMain([]string{}, &buf)
+	err := stopMain([]string{}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("stopMain accepted call without --id")
 	}
-	var ec *authpolicy.ExitCodeError
+	var ec *cliexit.ExitCodeError
 	if !errors.As(err, &ec) {
 		t.Fatalf("stopMain err = %v, want ExitCodeError", err)
 	}
@@ -134,12 +135,12 @@ func TestStopMainRequiresID(t *testing.T) {
 func TestStopMainHelpPrintsUsage(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-	if err := stopMain([]string{"--help"}, &buf); err != nil {
+	var stderr bytes.Buffer
+	if err := stopMain([]string{"--help"}, io.Discard, &stderr); err != nil {
 		t.Fatalf("stopMain(--help) error = %v", err)
 	}
-	if !strings.Contains(buf.String(), "Usage: workcell session") {
-		t.Fatalf("stopMain(--help) output = %q, want usage banner", buf.String())
+	if !strings.Contains(stderr.String(), "Usage: workcell session") {
+		t.Fatalf("stopMain(--help) stderr = %q, want usage banner", stderr.String())
 	}
 }
 
@@ -156,7 +157,7 @@ func TestStopMainEmitsPlanFromRecord(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--root=" + root, "--id", "fixture-1"}
-	if err := stopMain(args, &buf); err != nil {
+	if err := stopMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("stopMain error = %v", err)
 	}
 	out := buf.String()
@@ -185,7 +186,7 @@ func TestStopMainPropagatesForce(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--root=" + root, "--id", "fixture-1", "--force"}
-	if err := stopMain(args, &buf); err != nil {
+	if err := stopMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("stopMain error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "force=1\n") {
@@ -205,7 +206,7 @@ func TestStopMainRejectsAttachedSession(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--root=" + root, "--id", "fixture-attached"}
-	err := stopMain(args, &buf)
+	err := stopMain(args, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("stopMain accepted an attached session")
 	}
@@ -229,7 +230,7 @@ func TestStopMainRejectsMissingContainerName(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--root=" + root, "--id", "fixture-bad"}
-	err := stopMain(args, &buf)
+	err := stopMain(args, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("stopMain accepted record missing container_name")
 	}

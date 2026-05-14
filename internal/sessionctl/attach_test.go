@@ -5,6 +5,7 @@ package sessionctl
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,8 +19,8 @@ func TestParseAttachArgsRequiresIDValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseAttachArgs accepted --id without a value")
 	}
-	if !strings.Contains(err.Error(), "non-empty") {
-		t.Fatalf("parseAttachArgs error = %v, want non-empty rejection", err)
+	if !strings.Contains(err.Error(), "Option --id requires a value.") {
+		t.Fatalf("parseAttachArgs error = %v, want canonical require-value message", err)
 	}
 }
 
@@ -98,7 +99,7 @@ func TestAttachMainRequiresID(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	err := attachMain([]string{}, &buf)
+	err := attachMain([]string{}, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("attachMain accepted call without --id")
 	}
@@ -110,12 +111,12 @@ func TestAttachMainRequiresID(t *testing.T) {
 func TestAttachMainHelpPrintsUsage(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-	if err := attachMain([]string{"--help"}, &buf); err != nil {
+	var stderr bytes.Buffer
+	if err := attachMain([]string{"--help"}, io.Discard, &stderr); err != nil {
 		t.Fatalf("attachMain(--help) error = %v", err)
 	}
-	if !strings.Contains(buf.String(), "Usage: workcell session") {
-		t.Fatalf("attachMain(--help) output = %q, want usage banner", buf.String())
+	if !strings.Contains(stderr.String(), "Usage: workcell session") {
+		t.Fatalf("attachMain(--help) stderr = %q, want usage banner", stderr.String())
 	}
 }
 
@@ -132,7 +133,7 @@ func TestAttachMainEmitsPlanFromRecord(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--root=" + root, "--id", "fixture-1"}
-	if err := attachMain(args, &buf); err != nil {
+	if err := attachMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("attachMain error = %v", err)
 	}
 	out := buf.String()
@@ -161,7 +162,7 @@ func TestAttachMainPropagatesNoStdin(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--root=" + root, "--id", "fixture-1", "--no-stdin"}
-	if err := attachMain(args, &buf); err != nil {
+	if err := attachMain(args, &buf, io.Discard); err != nil {
 		t.Fatalf("attachMain error = %v", err)
 	}
 	if !strings.Contains(buf.String(), "no_stdin=1\n") {
@@ -181,7 +182,7 @@ func TestAttachMainRejectsAttachedSession(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--root=" + root, "--id", "fixture-attached"}
-	err := attachMain(args, &buf)
+	err := attachMain(args, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("attachMain accepted an attached session")
 	}
@@ -202,7 +203,7 @@ func TestAttachMainRejectsMissingContainerName(t *testing.T) {
 
 	var buf bytes.Buffer
 	args := []string{"--root=" + root, "--id", "fixture-bad"}
-	err := attachMain(args, &buf)
+	err := attachMain(args, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("attachMain accepted record missing container_name")
 	}
