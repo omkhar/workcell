@@ -70,28 +70,4 @@ func TestParseTimelineArgsHandlesHelp(t *testing.T) {
 	}
 }
 
-func TestLookupRootsReadsEnv(t *testing.T) {
-	t.Setenv("WORKCELL_STATE_ROOT", "/tmp/wc")
-	t.Setenv("COLIMA_STATE_ROOT", "/tmp/colima")
-
-	got := lookupRoots()
-	want := []string{"/tmp/wc", "/tmp/colima"}
-	if len(got) != len(want) {
-		t.Fatalf("lookupRoots() = %v, want %v", got, want)
-	}
-	for i, root := range got {
-		if root != want[i] {
-			t.Fatalf("lookupRoots()[%d] = %q, want %q", i, root, want[i])
-		}
-	}
-}
-
-func TestLookupRootsSkipsEmpty(t *testing.T) {
-	t.Setenv("WORKCELL_STATE_ROOT", "/tmp/wc")
-	t.Setenv("COLIMA_STATE_ROOT", "")
-
-	got := lookupRoots()
-	if len(got) != 1 || got[0] != "/tmp/wc" {
-		t.Fatalf("lookupRoots() = %v, want [/tmp/wc]", got)
-	}
-}
+// LookupRoots tests live under internal/host/stateroot now.

@@ -9,17 +9,15 @@ import (
 	"github.com/omkhar/workcell/internal/pathutil"
 )
 
-func expandUserPath(raw string) (string, error) {
+// CanonicalizePath is a thin wrapper around pathutil.CanonicalizePath
+// using best-effort semantics, preserving the metadatautil contract:
+// the empty input is rejected explicitly here (the legacy helper did
+// this before delegating to pathutil); ~user lookups that fail return
+// the raw input unchanged.  New code should call
+// pathutil.CanonicalizePath directly.
+func CanonicalizePath(raw string) (string, error) {
 	if raw == "" {
 		return "", errors.New("empty path")
 	}
-	return pathutil.ExpandUserPathBestEffort(raw)
-}
-
-func CanonicalizePath(raw string) (string, error) {
-	expanded, err := expandUserPath(raw)
-	if err != nil {
-		return "", err
-	}
-	return pathutil.CanonicalizeExpandedPath(expanded)
+	return pathutil.CanonicalizePath(raw, pathutil.Options{})
 }

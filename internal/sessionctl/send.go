@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/host/stateroot"
 )
 
 // SendMain implements the option-parsing half of `workcell session send
@@ -52,7 +53,7 @@ func SendMain(args []string) error {
 }
 
 func sendMain(args []string, stdout, stderr io.Writer) error {
-	_, rest := consumeRootArgs(args)
+	_, rest := stateroot.ConsumeRootArgs(args)
 	sessionID, message, appendNewline, showHelp, err := parseSendArgs(rest)
 	if err != nil {
 		return err

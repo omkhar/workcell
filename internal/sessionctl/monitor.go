@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/host/stateroot"
 )
 
 // MonitorMain implements the option-parsing and state-file validation
@@ -66,7 +67,7 @@ func monitorMain(args []string, stdout, stderr io.Writer) error {
 	// the explicit --state-file path the bash detached-start writer
 	// produced), but the contract stays consistent with the rest of
 	// the session_* dispatch surface.
-	_, rest := consumeRootArgs(args)
+	_, rest := stateroot.ConsumeRootArgs(args)
 	statePath, showHelp, err := parseMonitorArgs(rest)
 	if err != nil {
 		return err

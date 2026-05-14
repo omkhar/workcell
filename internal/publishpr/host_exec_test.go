@@ -95,7 +95,6 @@ func TestParseBashContextFlagsConsumesPrefix(t *testing.T) {
 		"--bash-trusted-host-path=/usr/bin:/bin",
 		"--bash-host-git-bin=/opt/homebrew/bin/git",
 		"--bash-host-gh-bin=/opt/homebrew/bin/gh",
-		"--bash-workcell-self-path=/r/scripts/workcell",
 		"--branch", "feature/x",
 		"--title", "T",
 	}

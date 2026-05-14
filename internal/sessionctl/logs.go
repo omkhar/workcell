@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/host/stateroot"
 )
 
 // LogsMain implements `workcell session logs --id SESSION_ID --kind KIND`,
@@ -24,7 +24,7 @@ func LogsMain(args []string) error {
 }
 
 func logsMain(args []string, stdout io.Writer) error {
-	roots, rest := consumeRootArgs(args)
+	roots, rest := stateroot.ConsumeRootArgs(args)
 	sessionID, kind, showHelp, err := parseLogsArgs(rest)
 	if err != nil {
 		return err
@@ -44,7 +44,7 @@ func logsMain(args []string, stdout io.Writer) error {
 	}
 
 	if len(roots) == 0 {
-		roots = lookupRoots()
+		roots = stateroot.LookupRoots()
 	}
 	record, err := sessions.FindSessionRecordInRoots(roots, sessionID)
 	if err != nil {
@@ -102,19 +102,6 @@ func validateLogsKindName(kind string) error {
 		return nil
 	}
 	return fmt.Errorf("Unsupported log kind: %s\nUse --logs audit, --logs debug, --logs file-trace, or --logs transcript.", kind)
-}
-
-// consumeRootArgs strips any leading --root=PATH arguments. Empty values
-// are dropped to mirror scripts/workcell's session_lookup_root_args,
-// which emits --root= even when one of the env vars is unset.
-func consumeRootArgs(args []string) (roots, rest []string) {
-	for len(args) > 0 && strings.HasPrefix(args[0], "--root=") {
-		if v := strings.TrimPrefix(args[0], "--root="); v != "" {
-			roots = append(roots, v)
-		}
-		args = args[1:]
-	}
-	return roots, args
 }
 
 func logPathForKind(record sessions.SessionRecord, kind string) string {

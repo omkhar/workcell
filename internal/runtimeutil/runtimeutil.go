@@ -23,12 +23,12 @@ type DirectMount struct {
 	MountPath string `json:"mount_path"`
 }
 
+// CanonicalizePath is a thin wrapper around pathutil.CanonicalizePath
+// with the Strict option set, preserving the runtimeutil contract
+// (empty path rejected; unknown ~user errors).  New code should call
+// pathutil.CanonicalizePath directly.
 func CanonicalizePath(raw string) (string, error) {
-	expanded, err := expandUserPath(raw)
-	if err != nil {
-		return "", err
-	}
-	return pathutil.CanonicalizeExpandedPath(expanded)
+	return pathutil.CanonicalizePath(raw, pathutil.Options{Strict: true})
 }
 
 func ResolveIPs(host string) ([]string, error) {
@@ -143,11 +143,4 @@ func RewriteBundleCredentialOverride(manifestPath, mountSpecPath, credentialKey,
 	}
 	data = append(data, '\n')
 	return rootio.WriteFileAtomic(manifestRoot, manifestName, data, 0o600, ".workcell-manifest-")
-}
-
-func expandUserPath(raw string) (string, error) {
-	if raw == "" {
-		return "", errors.New("empty path")
-	}
-	return pathutil.ExpandUserPathStrict(raw)
 }

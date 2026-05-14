@@ -6,9 +6,9 @@ package sessionctl
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/host/stateroot"
 )
 
 // TimelineMain implements `workcell session timeline --id SESSION_ID`,
@@ -22,7 +22,7 @@ import (
 // and pass both to sessions.SessionTimelineRecordsInRoots so legacy
 // records continue to resolve.
 func TimelineMain(args []string) error {
-	roots, rest := consumeRootArgs(args)
+	roots, rest := stateroot.ConsumeRootArgs(args)
 	sessionID, showHelp, err := parseTimelineArgs(rest)
 	if err != nil {
 		return err
@@ -36,7 +36,7 @@ func TimelineMain(args []string) error {
 	}
 
 	if len(roots) == 0 {
-		roots = lookupRoots()
+		roots = stateroot.LookupRoots()
 	}
 	lines, err := sessions.SessionTimelineRecordsInRoots(roots, sessionID)
 	if err != nil {
@@ -64,17 +64,4 @@ func parseTimelineArgs(args []string) (sessionID string, showHelp bool, err erro
 		}
 	}
 	return sessionID, showHelp, nil
-}
-
-// lookupRoots mirrors scripts/workcell's session_lookup_root_args: emit
-// the workcell state root and the colima state root in that order.
-// Empty values are skipped so the caller never receives a bogus path.
-func lookupRoots() []string {
-	roots := make([]string, 0, 2)
-	for _, name := range []string{"WORKCELL_STATE_ROOT", "COLIMA_STATE_ROOT"} {
-		if v := os.Getenv(name); v != "" {
-			roots = append(roots, v)
-		}
-	}
-	return roots
 }

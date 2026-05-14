@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
@@ -122,7 +123,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 
 	publishGitCmd := []string{ctx.HostGitBin, "-c", "core.hooksPath=/dev/null", "-C", resolvedWorkspace}
 	clone := func(extra ...string) []string {
-		return append(append([]string{}, publishGitCmd...), extra...)
+		return slices.Concat(publishGitCmd, extra)
 	}
 
 	var branchCmd []string
@@ -299,16 +300,17 @@ func parseBashContextFlags(args []string) (*BashContext, []string) {
 			ctx.HostGitBin = value
 		case "--bash-host-gh-bin":
 			ctx.HostGhBin = value
-		case "--bash-workcell-self-path":
-			ctx.WorkcellSelfPath = value
 		default:
 			return ctx, args
 		}
 		args = args[1:]
 	}
-	if ctx.TrustedHostPath == "" {
-		ctx.TrustedHostPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
-	}
+	// scripts/workcell::publish_pr_main always forwards
+	// --bash-trusted-host-path=${TRUSTED_HOST_PATH}; the legacy
+	// hard-coded fallback table here was never reachable from the
+	// real entrypoint and has been removed (W9).  Tests that exercise
+	// parseBashContextFlags directly MUST set --bash-trusted-host-path
+	// explicitly.
 	if ctx.RealHome == "" {
 		if home, ok := os.LookupEnv("HOME"); ok {
 			ctx.RealHome = home

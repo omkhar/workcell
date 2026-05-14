@@ -5,6 +5,7 @@ package publishpr
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,13 +22,12 @@ import (
 // these as --bash-* flags because `go_hostutil` runs the Go binary
 // under `env -i` and would otherwise lose them.
 type BashContext struct {
-	RootDir          string
-	WorkspaceRoot    string
-	RealHome         string
-	TrustedHostPath  string
-	HostGitBin       string
-	HostGhBin        string
-	WorkcellSelfPath string
+	RootDir         string
+	WorkspaceRoot   string
+	RealHome        string
+	TrustedHostPath string
+	HostGitBin      string
+	HostGhBin       string
 }
 
 // trustedHostToolPrefixes mirrors the 14-entry allowlist embedded in
@@ -309,7 +309,8 @@ func RunPublishHostCommandInDir(dir string, env *PublishEnv, args []string, stdi
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			return &cliexit.ExitCodeError{Code: exitErr.ExitCode()}
 		}
 		return err
@@ -388,6 +389,14 @@ func resolveExistingFileOrDie(ctx *BashContext, rawPath, label string) (string, 
 // runCleanGit invokes the workspace-safe git form
 // (run_workspace_safe_git_command_in_dir) and returns the captured
 // stdout with trailing newlines trimmed the way `$(...)` does in bash.
+//
+// Hooks-disable contract: every host-side git command run from this
+// helper passes `-c core.hooksPath=/dev/null` (and host-side
+// commit/push pass `--no-verify`).  The matching bash side is the
+// "Host-hooks-disable contract" block in scripts/workcell::publish_pr_main;
+// scripts/verify-invariants.sh enforces both sides via a static scan,
+// so any change here MUST mirror the bash block to keep the invariant
+// scan green.
 func runCleanGit(ctx *BashContext, dir string, args []string) (string, error) {
 	full := append([]string{
 		"env",

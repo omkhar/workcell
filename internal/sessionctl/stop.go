@@ -10,6 +10,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/host/stateroot"
 )
 
 // StopMain implements the option-parsing and record-validation half of
@@ -56,7 +57,7 @@ func StopMain(args []string) error {
 }
 
 func stopMain(args []string, stdout, stderr io.Writer) error {
-	roots, rest := consumeRootArgs(args)
+	roots, rest := stateroot.ConsumeRootArgs(args)
 	sessionID, force, showHelp, err := parseStopArgs(rest)
 	if err != nil {
 		return err
@@ -76,7 +77,7 @@ func stopMain(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if len(roots) == 0 {
-		roots = lookupRoots()
+		roots = stateroot.LookupRoots()
 	}
 	record, err := sessions.FindSessionRecordInRoots(roots, sessionID)
 	if err != nil {
