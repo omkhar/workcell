@@ -105,6 +105,8 @@ source "${ROOT_DIR}/runtime/container/assurance.sh"
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/sessionctl-shim.sh"
 resolve_fixed_host_tool() {
   local name="$1"
   shift
@@ -3733,13 +3735,9 @@ session_attach_main() {
   local key=""
   local value=""
   local -a attach_args=()
-  local -a lookup_roots=()
 
-  while IFS= read -r line; do
-    lookup_roots+=("${line}")
-  done < <(session_lookup_root_args)
   set +e
-  plan="$(go_hostutil launcher session-attach-cli "${lookup_roots[@]}" "$@")"
+  plan="$(session_run_cli_with_roots session-attach-cli "$@")"
   attach_status="$?"
   set -e
   if [[ "${attach_status}" -ne 0 ]]; then
@@ -3788,7 +3786,7 @@ session_attach_main() {
 
 session_send_main() {
   local plan=""
-  local send_main_status=0
+  local send_cli_status=0
   local session_id=""
   local message=""
   local append_newline=1
@@ -3800,17 +3798,13 @@ session_send_main() {
   local line=""
   local key=""
   local value=""
-  local -a lookup_roots=()
 
-  while IFS= read -r line; do
-    lookup_roots+=("${line}")
-  done < <(session_lookup_root_args)
   set +e
-  plan="$(go_hostutil launcher session-send-cli "${lookup_roots[@]}" "$@")"
-  send_main_status="$?"
+  plan="$(session_run_cli_with_roots session-send-cli "$@")"
+  send_cli_status="$?"
   set -e
-  if [[ "${send_main_status}" -ne 0 ]]; then
-    exit "${send_main_status}"
+  if [[ "${send_cli_status}" -ne 0 ]]; then
+    exit "${send_cli_status}"
   fi
   while IFS= read -r line; do
     key="${line%%=*}"
@@ -3891,13 +3885,9 @@ session_stop_main() {
   local line=""
   local key=""
   local value=""
-  local -a lookup_roots=()
 
-  while IFS= read -r line; do
-    lookup_roots+=("${line}")
-  done < <(session_lookup_root_args)
   set +e
-  plan="$(go_hostutil launcher session-stop-cli "${lookup_roots[@]}" "$@")"
+  plan="$(session_run_cli_with_roots session-stop-cli "$@")"
   stop_cli_status="$?"
   set -e
   if [[ "${stop_cli_status}" -ne 0 ]]; then
@@ -4118,13 +4108,9 @@ session_delete_main() {
   local -a missing=()
   local -a unavailable=()
   local -a planned_remove=()
-  local -a lookup_roots=()
 
-  while IFS= read -r line; do
-    lookup_roots+=("${line}")
-  done < <(session_lookup_root_args)
   set +e
-  plan="$(go_hostutil launcher session-delete-cli "${lookup_roots[@]}" "$@")"
+  plan="$(session_run_cli_with_roots session-delete-cli "$@")"
   delete_cli_status="$?"
   set -e
   if [[ "${delete_cli_status}" -ne 0 ]]; then
@@ -4350,7 +4336,7 @@ session_monitor_main() {
   local value=""
 
   set +e
-  plan="$(go_hostutil launcher session-monitor-cli "$@")"
+  plan="$(session_run_cli_with_roots session-monitor-cli "$@")"
   monitor_cli_status="$?"
   set -e
   if [[ "${monitor_cli_status}" -ne 0 ]]; then
@@ -4421,7 +4407,7 @@ session_main() {
 
   shift || true
   set +e
-  plan="$(go_hostutil launcher session-dispatcher-cli "${subcommand}")"
+  plan="$(go_hostutil launcher session-dispatch-cli "${subcommand}")"
   dispatch_cli_status="$?"
   set -e
   if [[ "${dispatch_cli_status}" -ne 0 ]]; then
