@@ -12,6 +12,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/stateroot"
+	"github.com/omkhar/workcell/internal/shellproto"
 )
 
 // MonitorMain implements the option-parsing and state-file validation
@@ -94,8 +95,7 @@ func monitorMain(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	fmt.Fprintf(stdout, "state_file=%s\n", statePath)
-	return nil
+	return shellproto.WriteField(stdout, "state_file", statePath)
 }
 
 // parseMonitorArgs walks the bash session_monitor_main option loop.

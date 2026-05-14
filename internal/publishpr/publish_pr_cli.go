@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/shellproto"
 )
 
 // PublishPRMain is the in-process entry point invoked by the launcher
@@ -226,26 +228,35 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		return err
 	}
 	prURL := strings.TrimRight(prOut.String(), "\n")
-	fmt.Fprintf(stdout, "publish_branch=%s\n", opts.Branch)
-	fmt.Fprintf(stdout, "publish_base=%s\n", opts.Base)
-	fmt.Fprintf(stdout, "publish_pr_url=%s\n", prURL)
-	fmt.Fprintf(stdout, "publish_snapshot=%s\n", opts.Snapshot)
-	return nil
+	return shellproto.WriteFields(stdout, []shellproto.Field{
+		{Key: "publish_branch", Value: opts.Branch},
+		{Key: "publish_base", Value: opts.Base},
+		{Key: "publish_pr_url", Value: prURL},
+		{Key: "publish_snapshot", Value: opts.Snapshot},
+	})
 }
 
 func emitDryRunHeader(stdout io.Writer, opts *Options, preflight *PreflightInputs, resolvedWorkspace string, publishExistingCommits int, draft bool) {
-	fmt.Fprintf(stdout, "publish_workspace=%s\n", resolvedWorkspace)
-	fmt.Fprintf(stdout, "publish_snapshot=%s\n", opts.Snapshot)
-	fmt.Fprintf(stdout, "publish_branch=%s\n", opts.Branch)
-	fmt.Fprintf(stdout, "publish_base=%s\n", opts.Base)
-	fmt.Fprintf(stdout, "publish_base_mode=%s\n", preflight.PublishBaseMode)
-	fmt.Fprintf(stdout, "publish_existing_commits=%d\n", publishExistingCommits)
-	fmt.Fprintf(stdout, "publish_repo_owned_pr_checks_expected=%s\n", preflight.RepoOwnedPRChecksExpected)
+	draftFlag := "0"
 	if draft {
-		fmt.Fprint(stdout, "publish_draft=1\n")
-	} else {
-		fmt.Fprint(stdout, "publish_draft=0\n")
+		draftFlag = "1"
 	}
+	// WriteFields can only fail if a value contains a forbidden control
+	// character; every value here originates either from a tightly
+	// validated CLI flag (publish_branch_name / publish_base_name) or
+	// from a constant.  Drop validation errors silently to preserve the
+	// void-returning signature - the input boundary has already
+	// rejected anything that could break the bash parser.
+	_ = shellproto.WriteFields(stdout, []shellproto.Field{
+		{Key: "publish_workspace", Value: resolvedWorkspace},
+		{Key: "publish_snapshot", Value: opts.Snapshot},
+		{Key: "publish_branch", Value: opts.Branch},
+		{Key: "publish_base", Value: opts.Base},
+		{Key: "publish_base_mode", Value: preflight.PublishBaseMode},
+		{Key: "publish_existing_commits", Value: strconv.Itoa(publishExistingCommits)},
+		{Key: "publish_repo_owned_pr_checks_expected", Value: preflight.RepoOwnedPRChecksExpected},
+		{Key: "publish_draft", Value: draftFlag},
+	})
 }
 
 func resolveOrStageCommitMessage(ctx *BashContext, opts *Options, preflight *PreflightInputs) (string, func(), error) {

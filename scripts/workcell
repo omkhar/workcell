@@ -106,6 +106,8 @@ source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 # shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/shellproto.sh"
+# shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/sessionctl-shim.sh"
 resolve_fixed_host_tool() {
   local name="$1"
@@ -3744,9 +3746,6 @@ session_attach_main() {
   local container_name=""
   local attach_status=0
   local stdin_mode=""
-  local line=""
-  local key=""
-  local value=""
   local -a attach_args=()
 
   set +e
@@ -3756,16 +3755,10 @@ session_attach_main() {
   if [[ "${attach_status}" -ne 0 ]]; then
     exit "${attach_status}"
   fi
-  while IFS= read -r line; do
-    key="${line%%=*}"
-    value="${line#*=}"
-    case "${key}" in
-      session_id) session_id="${value}" ;;
-      no_stdin) no_stdin="${value}" ;;
-      profile) profile="${value}" ;;
-      container_name) container_name="${value}" ;;
-    esac
-  done <<<"${plan}"
+  session_id="$(shellproto_field "${plan}" session_id)"
+  no_stdin="$(shellproto_field "${plan}" no_stdin 0)"
+  profile="$(shellproto_field "${plan}" profile)"
+  container_name="$(shellproto_field "${plan}" container_name)"
   [[ -n "${session_id}" ]] || exit 0
 
   load_session_runtime_metadata "${session_id}"
@@ -3808,9 +3801,6 @@ session_send_main() {
   local runtime_uid=""
   local runtime_gid=""
   local send_status=0
-  local line=""
-  local key=""
-  local value=""
 
   set +e
   plan="$(session_run_cli_with_roots session-send-cli "$@")"
@@ -3819,15 +3809,9 @@ session_send_main() {
   if [[ "${send_cli_status}" -ne 0 ]]; then
     exit "${send_cli_status}"
   fi
-  while IFS= read -r line; do
-    key="${line%%=*}"
-    value="${line#*=}"
-    case "${key}" in
-      session_id) session_id="${value}" ;;
-      message) message="${value}" ;;
-      append_newline) append_newline="${value}" ;;
-    esac
-  done <<<"${plan}"
+  session_id="$(shellproto_field "${plan}" session_id)"
+  message="$(shellproto_field "${plan}" message)"
+  append_newline="$(shellproto_field "${plan}" append_newline 1)"
   [[ -n "${session_id}" ]] || exit 0
 
   if [[ "${append_newline}" -eq 1 ]]; then
@@ -3895,9 +3879,6 @@ session_stop_main() {
   local stop_exit_status=""
   local container_state=""
   local current_live_status=""
-  local line=""
-  local key=""
-  local value=""
 
   set +e
   plan="$(session_run_cli_with_roots session-stop-cli "$@")"
@@ -3906,16 +3887,10 @@ session_stop_main() {
   if [[ "${stop_cli_status}" -ne 0 ]]; then
     exit "${stop_cli_status}"
   fi
-  while IFS= read -r line; do
-    key="${line%%=*}"
-    value="${line#*=}"
-    case "${key}" in
-      session_id) session_id="${value}" ;;
-      force) force="${value}" ;;
-      profile) profile="${value}" ;;
-      container_name) container_name="${value}" ;;
-    esac
-  done <<<"${plan}"
+  session_id="$(shellproto_field "${plan}" session_id)"
+  force="$(shellproto_field "${plan}" force 0)"
+  profile="$(shellproto_field "${plan}" profile)"
+  container_name="$(shellproto_field "${plan}" container_name)"
   [[ -n "${session_id}" ]] || exit 0
 
   load_session_runtime_metadata "${session_id}"
@@ -4113,9 +4088,6 @@ session_delete_main() {
   local remove_session_audit_dir=0
   local remove_transcript_log=0
   local session_audit_dir=""
-  local line=""
-  local key=""
-  local value=""
   local -a removed=()
   local -a kept=()
   local -a missing=()
@@ -4129,15 +4101,9 @@ session_delete_main() {
   if [[ "${delete_cli_status}" -ne 0 ]]; then
     exit "${delete_cli_status}"
   fi
-  while IFS= read -r line; do
-    key="${line%%=*}"
-    value="${line#*=}"
-    case "${key}" in
-      session_id) session_id="${value}" ;;
-      record_only) record_only="${value}" ;;
-      dry_run) dry_run="${value}" ;;
-    esac
-  done <<<"${plan}"
+  session_id="$(shellproto_field "${plan}" session_id)"
+  record_only="$(shellproto_field "${plan}" record_only 0)"
+  dry_run="$(shellproto_field "${plan}" dry_run 0)"
   [[ -n "${session_id}" ]] || exit 0
 
   load_session_runtime_metadata "${session_id}"
@@ -4344,9 +4310,6 @@ session_monitor_main() {
   local monitor_cli_status=0
   local state_file=""
   local wait_status=""
-  local line=""
-  local key=""
-  local value=""
 
   set +e
   plan="$(session_run_cli_with_roots session-monitor-cli "$@")"
@@ -4355,13 +4318,7 @@ session_monitor_main() {
   if [[ "${monitor_cli_status}" -ne 0 ]]; then
     exit "${monitor_cli_status}"
   fi
-  while IFS= read -r line; do
-    key="${line%%=*}"
-    value="${line#*=}"
-    case "${key}" in
-      state_file) state_file="${value}" ;;
-    esac
-  done <<<"${plan}"
+  state_file="$(shellproto_field "${plan}" state_file)"
   [[ -n "${state_file}" ]] || exit 0
 
   # shellcheck disable=SC1090
@@ -4411,9 +4368,6 @@ session_main() {
   local git_head=""
   local git_base=""
   local rendered=""
-  local line=""
-  local key=""
-  local value=""
   local -a args=()
   local -a lookup_roots=()
   local -a session_start_env=()
@@ -4427,13 +4381,7 @@ session_main() {
     session_usage >&2
     exit "${dispatch_cli_status}"
   fi
-  while IFS= read -r line; do
-    key="${line%%=*}"
-    value="${line#*=}"
-    case "${key}" in
-      subcommand) route="${value}" ;;
-    esac
-  done <<<"${plan}"
+  route="$(shellproto_field "${plan}" subcommand)"
   case "${route}" in
     start)
       session_start_env=(
@@ -4606,22 +4554,10 @@ session_main() {
         lookup_roots+=("${root}")
       done < <(session_lookup_root_args)
       metadata="$(go_hostutil launcher session-diff-metadata "${lookup_roots[@]}" "${session_id}")"
-      while IFS= read -r line; do
-        case "${line%%=*}" in
-          workspace)
-            workspace="${line#*=}"
-            ;;
-          git_branch)
-            git_branch="${line#*=}"
-            ;;
-          git_head)
-            git_head="${line#*=}"
-            ;;
-          git_base)
-            git_base="${line#*=}"
-            ;;
-        esac
-      done <<<"${metadata}"
+      workspace="$(shellproto_field "${metadata}" workspace)"
+      git_branch="$(shellproto_field "${metadata}" git_branch)"
+      git_head="$(shellproto_field "${metadata}" git_head)"
+      git_base="$(shellproto_field "${metadata}" git_base)"
       [[ -n "${workspace}" ]] || {
         echo "session diff record is missing a workspace path: ${session_id}" >&2
         exit 1

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/stateroot"
+	"github.com/omkhar/workcell/internal/shellproto"
 )
 
 // AttachMain implements the validation half of `workcell session attach
@@ -90,11 +92,12 @@ func attachMain(args []string, stdout, stderr io.Writer) error {
 	if noStdin {
 		noStdinFlag = 1
 	}
-	fmt.Fprintf(stdout, "session_id=%s\n", record.SessionID)
-	fmt.Fprintf(stdout, "no_stdin=%d\n", noStdinFlag)
-	fmt.Fprintf(stdout, "profile=%s\n", record.Profile)
-	fmt.Fprintf(stdout, "container_name=%s\n", record.ContainerName)
-	return nil
+	return shellproto.WriteFields(stdout, []shellproto.Field{
+		{Key: "session_id", Value: record.SessionID},
+		{Key: "no_stdin", Value: strconv.Itoa(noStdinFlag)},
+		{Key: "profile", Value: record.Profile},
+		{Key: "container_name", Value: record.ContainerName},
+	})
 }
 
 func parseAttachArgs(args []string) (sessionID string, noStdin, showHelp bool, err error) {
