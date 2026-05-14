@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -14,6 +16,9 @@ import (
 	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
 	"github.com/omkhar/workcell/internal/metadatautil/pinnedinputs"
 	"github.com/omkhar/workcell/internal/metadatautil/workflows"
+	"github.com/omkhar/workcell/internal/mutation"
+	"github.com/omkhar/workcell/internal/paritytree"
+	"github.com/omkhar/workcell/internal/scenarios"
 )
 
 func die(err error) {
@@ -66,12 +71,26 @@ func subcommands() []subcommand {
 		{"validate-requirements", "ROOT_DIR REQUIREMENTS_PATH", 2, 2, cmdValidateRequirements},
 		{"validate-operator-contract", "ROOT_DIR CONTRACT_PATH REQUIREMENTS_PATH", 3, 3, cmdValidateOperatorContract},
 		{"scan-credential-patterns", "ROOT_DIR", 1, 1, cmdScanCredentialPatterns},
+		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
+		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
+		// scenario-manifest is dispatched in main() because it has its
+		// own exit-code contract; this row exists only so rootUsageError
+		// lists it in the help text.
+		{"scenario-manifest", "<list-tsv|verify-coverage> ARGS...", 0, -1, cmdScenarioManifestPlaceholder},
 	}
 }
 
 func main() {
 	if len(os.Args) < 2 {
 		die(rootUsageError(""))
+	}
+	// scenario-manifest preserves the bash contract of distinct exit
+	// codes for usage (2) vs. runtime (1) errors that
+	// scenarios.Run encodes; we forward through it directly rather
+	// than collapsing into the generic error-then-die path used by
+	// the other subcommands.
+	if os.Args[1] == "scenario-manifest" {
+		os.Exit(scenarios.Run("workcell-metadatautil scenario-manifest", os.Args[2:], os.Stdout, os.Stderr))
 	}
 	for _, sub := range subcommands() {
 		if sub.name != os.Args[1] {
@@ -350,4 +369,39 @@ func cmdValidateOperatorContract(args []string) error {
 
 func cmdScanCredentialPatterns(args []string) error {
 	return metadatautil.ScanCredentialPatterns(args[0])
+}
+
+// cmdRunMutationTests absorbs the former workcell-run-mutation-tests
+// binary.  Like that binary, the repo root is recovered from the
+// source path of this file via runtime.Caller — the resulting path
+// (cmd/workcell-metadatautil/main.go → cmd/workcell-metadatautil →
+// cmd → repo root) is two `..` segments up, identical to the
+// original.
+func cmdRunMutationTests(_ []string) error {
+	root, err := metadatautilRepoRoot()
+	if err != nil {
+		return err
+	}
+	return mutation.Run(root)
+}
+
+func metadatautilRepoRoot() (string, error) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("unable to locate repo root")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..")), nil
+}
+
+// cmdTreeCompare absorbs the former workcell-tree-compare binary.
+func cmdTreeCompare(args []string) error {
+	return paritytree.CompareDirectoryTrees(args[0], args[1])
+}
+
+// cmdScenarioManifestPlaceholder exists only to keep
+// scenario-manifest visible in the rootUsageError help text; main()
+// dispatches the real scenarios.Run before this handler is
+// consulted.
+func cmdScenarioManifestPlaceholder(_ []string) error {
+	return fmt.Errorf("scenario-manifest is dispatched in main(); this handler should be unreachable")
 }

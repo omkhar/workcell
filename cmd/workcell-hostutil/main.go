@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/authpolicy"
+	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
@@ -21,6 +22,7 @@ import (
 	"github.com/omkhar/workcell/internal/injection"
 	"github.com/omkhar/workcell/internal/publishpr"
 	"github.com/omkhar/workcell/internal/sessionctl"
+	"github.com/omkhar/workcell/internal/transcript"
 )
 
 func main() {
@@ -62,9 +64,53 @@ func run(args []string) error {
 		return runRelease(args[1:])
 	case "launcher":
 		return runLauncher(args[1:])
+	case "policy":
+		return runHostutilPolicy(args[1:])
+	case "resolve-credentials":
+		return runHostutilResolveCredentials(args[1:])
+	case "pty-transcript":
+		return runHostutilPTYTranscript(args[1:])
 	default:
 		return usage()
 	}
+}
+
+// runHostutilPolicy dispatches the absorbed workcell-manage-injection-policy
+// CLI surface. The previous standalone binary deferred to
+// authpolicy.Run; we keep the same contract here so callers
+// (scripts/lib/manage_injection_policy) see identical stdout/stderr and
+// exit codes.
+func runHostutilPolicy(args []string) error {
+	code := authpolicy.Run("workcell-hostutil policy", args, os.Stdout, os.Stderr)
+	if code == 0 {
+		return nil
+	}
+	return &authpolicy.ExitCodeError{Code: code, Message: ""}
+}
+
+// runHostutilResolveCredentials dispatches the absorbed
+// workcell-resolve-credential-sources CLI surface.  authresolve.Run
+// already writes stdout/stderr and returns the bash-shaped exit code;
+// we wrap it in an ExitCodeError so main()'s typed handler can
+// preserve the contract.
+func runHostutilResolveCredentials(args []string) error {
+	code := authresolve.Run(args, os.Stdout, os.Stderr)
+	if code == 0 {
+		return nil
+	}
+	return &authpolicy.ExitCodeError{Code: code, Message: ""}
+}
+
+// runHostutilPTYTranscript dispatches the absorbed
+// workcell-pty-transcript CLI surface.  transcript.Run wants the
+// raw *os.File for stdin/stdout (it tees PTY output and stamps
+// timestamps), so we forward os.Stdin/os.Stdout directly.
+func runHostutilPTYTranscript(args []string) error {
+	code := transcript.Run("workcell-hostutil pty-transcript", os.Stdin, os.Stdout, os.Stderr, args)
+	if code == 0 {
+		return nil
+	}
+	return &authpolicy.ExitCodeError{Code: code, Message: ""}
 }
 
 func runPath(args []string) error {
@@ -863,7 +909,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 }
 
 func usage() error {
-	return fmt.Errorf("usage: workcell-hostutil <path|release> [args...]")
+	return fmt.Errorf("usage: workcell-hostutil <path|release|launcher|policy|resolve-credentials|pty-transcript> [args...]")
 }
 
 func pathUsage() error {

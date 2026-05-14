@@ -10,11 +10,11 @@
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts",
-      "sha256": "c7845ce20cca15add76f015cff2257c8b2263352414db787e38eb5040f537b62"
+      "sha256": "b7dc19f58db225fb695b87ada176c65be9b13edc5ecf43138eda8d01aa6eb879"
     },
     {
       "repo_path": "scripts/lib/render_injection_bundle",
-      "sha256": "3fc8c51037893b74d2790a9ed0f1a8e64f311887210f482d25ecb964407c8d56"
+      "sha256": "f1057951d6f65e12d82a7bc2b5002afde5664670d8f4ed7d9bc289bbec5f5901"
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
