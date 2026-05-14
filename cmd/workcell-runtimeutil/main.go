@@ -4,10 +4,12 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/omkhar/workcell/internal/injection"
 	"github.com/omkhar/workcell/internal/runtimeutil"
 )
 
@@ -69,6 +71,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 			return 0
 		}
+	case "extract-direct-mounts":
+		return runExtractDirectMounts(args[1:], stderr)
+	case "render-injection-bundle":
+		return runRenderInjectionBundle(args[1:], stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return 2
@@ -76,4 +82,60 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	fmt.Fprintln(stderr, err)
 	return 1
+}
+
+// runExtractDirectMounts absorbs the former workcell-extract-direct-mounts
+// binary.  The flag set name carries through to error messages so
+// callers see the same surface they did before; only the program
+// prefix changes.
+func runExtractDirectMounts(args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("workcell-runtimeutil extract-direct-mounts", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	manifestPath := fs.String("manifest", "", "")
+	mountSpecPath := fs.String("mount-spec", "", "")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if *manifestPath == "" || *mountSpecPath == "" {
+		fmt.Fprintln(stderr, "both --manifest and --mount-spec are required")
+		return 2
+	}
+	if err := injection.RunExtractDirectMounts(*manifestPath, *mountSpecPath); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
+// runRenderInjectionBundle absorbs the former
+// workcell-render-injection-bundle binary.  The agent/mode
+// validation is delegated to injection.ValidateRenderAgentMode so
+// the bash contract of "exit 2 on bad flags, exit 1 on render
+// failure" is preserved.
+func runRenderInjectionBundle(args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("workcell-runtimeutil render-injection-bundle", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	policyPath := fs.String("policy", "", "")
+	agent := fs.String("agent", "", "")
+	mode := fs.String("mode", "", "")
+	outputRoot := fs.String("output-root", "", "")
+	policyMetadata := fs.String("policy-metadata", "", "")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if *policyPath == "" || *agent == "" || *mode == "" || *outputRoot == "" {
+		fmt.Fprintln(stderr, "policy, agent, mode, and output-root are required")
+		return 2
+	}
+	if err := injection.ValidateRenderAgentMode(*agent, *mode); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if err := injection.RunRenderInjectionBundle(*policyPath, *agent, *mode, *outputRoot, *policyMetadata); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
 }
