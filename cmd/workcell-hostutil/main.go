@@ -68,9 +68,13 @@ func run(args []string) error {
 }
 
 // runHostutilPolicy dispatches the absorbed workcell-manage-injection-policy
-// CLI surface. The previous standalone binary deferred to
-// authpolicy.Run; we keep the same contract here so callers
-// (scripts/lib/manage_injection_policy) see identical stdout/stderr and
+// CLI surface (scripts/lib/manage_injection_policy callers). This is the
+// **manage injection-policy** path: it edits the on-disk injection-policy
+// TOML files. Not to be confused with `workcell-hostutil launcher
+// policy-cli` below, which is the **`workcell policy <subcommand>`** Go
+// translation of the bash policy_main user-shell command (init/show/...).
+// The previous standalone binary deferred to authpolicy.Run; we keep
+// the same contract here so callers see identical stdout/stderr and
 // exit codes.
 func runHostutilPolicy(args []string) error {
 	code := authpolicy.Run("workcell-hostutil policy", args, os.Stdout, os.Stderr)
@@ -296,10 +300,14 @@ func cmdLauncherPublishPRUsage(_ []string) error {
 }
 
 // cmdLauncherPolicyCli is the launcher entry point for the Go
-// translation of scripts/workcell's policy_main bash function.  Usage
-// errors (missing/unknown subcommand, unknown option) exit with code 2
-// to match the bash CLI surface; all other errors propagate to main()
-// for the default exit-1 path.
+// translation of scripts/workcell's policy_main bash function — the
+// **user-facing `workcell policy <subcommand>`** surface (init, show,
+// etc.). Not to be confused with `workcell-hostutil policy` (above),
+// which is the **manage-injection-policy** TOML-editing surface
+// absorbed from the former workcell-manage-injection-policy binary.
+// Usage errors (missing/unknown subcommand, unknown option) exit with
+// code 2 to match the bash CLI surface; all other errors propagate to
+// main() for the default exit-1 path.
 func cmdLauncherPolicyCli(args []string) error {
 	err := authpolicy.PolicyMain(args)
 	if authpolicy.IsPolicyMainUsageError(err) {

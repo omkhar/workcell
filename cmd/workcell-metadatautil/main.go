@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
+// Package main is the workcell-metadatautil umbrella binary — a CI
+// helper grab-bag (control-plane manifests, scenario-manifest, mutation
+// tests, tree-compare, coverage tooling, JSON/TOML validation, etc.).
+//
+// Calling convention: subcommands here use positional argv that
+// matches their bash predecessor's argv shape (most are 3-15
+// positional args; usage is shown in the subcommand table). The
+// scenario-manifest subcommand is special-cased in main() because it
+// preserves the bash contract of distinct usage (exit 2) vs.
+// runtime (exit 1) error codes that scenarios.Run encodes.
 package main
 
 import (
@@ -73,12 +83,14 @@ func subcommands() []subcommand {
 		{"scan-credential-patterns", "ROOT_DIR", 1, 1, cmdScanCredentialPatterns},
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
-		// scenario-manifest is dispatched in main() because it has its
-		// own exit-code contract; this row exists only so rootUsageError
-		// lists it in the help text.
-		{"scenario-manifest", "<list-tsv|verify-coverage> ARGS...", 0, -1, cmdScenarioManifestPlaceholder},
 	}
 }
+
+// scenario-manifest is intentionally dispatched in main() rather than
+// listed here because it preserves the bash contract of distinct
+// usage (2) vs. runtime (1) exit codes that scenarios.Run encodes.
+// Help/error output mentions it via the special-case branches in
+// main() and rootUsageError.
 
 func main() {
 	if len(os.Args) < 2 {
@@ -385,6 +397,13 @@ func cmdRunMutationTests(_ []string) error {
 	return mutation.Run(root)
 }
 
+// metadatautilRepoRoot returns the repo root by walking two `..`
+// segments up from this source file's path. This ties correctness to
+// the source-tree layout: moving cmd/workcell-metadatautil/main.go
+// (or building+installing the binary outside the repo) breaks it.
+// The original workcell-run-mutation-tests standalone binary had the
+// same shape; preserved here for parity. A more robust fix would
+// take repo-root as an explicit argv arg.
 func metadatautilRepoRoot() (string, error) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -396,12 +415,4 @@ func metadatautilRepoRoot() (string, error) {
 // cmdTreeCompare absorbs the former workcell-tree-compare binary.
 func cmdTreeCompare(args []string) error {
 	return paritytree.CompareDirectoryTrees(args[0], args[1])
-}
-
-// cmdScenarioManifestPlaceholder exists only to keep
-// scenario-manifest visible in the rootUsageError help text; main()
-// dispatches the real scenarios.Run before this handler is
-// consulted.
-func cmdScenarioManifestPlaceholder(_ []string) error {
-	return fmt.Errorf("scenario-manifest is dispatched in main(); this handler should be unreachable")
 }

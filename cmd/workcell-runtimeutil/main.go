@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
+// Package main is the workcell-runtimeutil umbrella binary.
+//
+// Calling convention: subcommands here preserve the calling shape of
+// their bash predecessors. Subcommands absorbed from binaries that
+// used the Go `flag` package keep flag-style arguments
+// (extract-direct-mounts --manifest=..., render-injection-bundle
+// --agent=...); subcommands absorbed from bash functions or positional
+// CLIs keep positional argv (canonicalize-path PATH, resolve-ips,
+// rewrite-bundle-credential-source, list-direct-mounts). Mixed-shape
+// dispatch is intentional and matches the bash callers in
+// scripts/workcell / scripts/lib/*.
 package main
 
 import (
