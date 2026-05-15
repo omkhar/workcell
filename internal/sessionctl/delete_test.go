@@ -274,3 +274,27 @@ func TestDeleteMainRejectsUnknownOption(t *testing.T) {
 		t.Fatalf("deleteMain error = %v, want ExitCodeError{Code:2}", err)
 	}
 }
+
+// TestDeleteMainRejectsNewlineInID — sibling guard to
+// monitor_test.go's TestMonitorMainRejectsNewlineInStateFile.
+func TestDeleteMainRejectsNewlineInID(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"session-1\nsession_id=other", "session-1\rsession_id=other"} {
+		var buf bytes.Buffer
+		err := deleteMain([]string{"--id", value}, &buf, io.Discard)
+		if err == nil {
+			t.Fatalf("deleteMain accepted --id value containing control character: %q", value)
+		}
+		var ec *cliexit.ExitCodeError
+		if !errors.As(err, &ec) || ec.Code != 2 {
+			t.Fatalf("deleteMain error = %v, want ExitCodeError{Code:2}", err)
+		}
+		if !strings.Contains(ec.Message, "must not contain newline or carriage-return") {
+			t.Fatalf("deleteMain message = %q, want newline-rejection diagnostic", ec.Message)
+		}
+		if buf.Len() != 0 {
+			t.Fatalf("deleteMain wrote %q on rejection, want no stdout output", buf.String())
+		}
+	}
+}

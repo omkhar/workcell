@@ -6,6 +6,8 @@ package sessionctl
 import (
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func TestParseTimelineArgsRequiresIDValue(t *testing.T) {
@@ -15,8 +17,12 @@ func TestParseTimelineArgsRequiresIDValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseTimelineArgs accepted --id without a value")
 	}
-	if !strings.Contains(err.Error(), "non-empty") {
-		t.Fatalf("parseTimelineArgs error = %v, want non-empty rejection", err)
+	if !strings.Contains(err.Error(), "requires a value") {
+		t.Fatalf("parseTimelineArgs error = %v, want requires-a-value rejection", err)
+	}
+	ec, ok := cliexit.IsExitCodeError(err)
+	if !ok || ec.Code != 2 {
+		t.Fatalf("parseTimelineArgs error = %v, want *cliexit.ExitCodeError{Code:2}", err)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func TestParseArgsAppliesDefaults(t *testing.T) {
@@ -75,7 +77,7 @@ func TestParseArgsAcceptsAllSupportedFlags(t *testing.T) {
 func TestParseArgsRejectsUnsupportedOption(t *testing.T) {
 	t.Parallel()
 	_, err := ParseArgs([]string{"--bogus"})
-	ec, ok := IsExitCodeError(err)
+	ec, ok := cliexit.IsExitCodeError(err)
 	if !ok {
 		t.Fatalf("ParseArgs() err = %v, want ExitCodeError", err)
 	}
@@ -108,7 +110,7 @@ func TestParseArgsRejectsMissingOptionValue(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := ParseArgs(tc.args)
-			ec, ok := IsExitCodeError(err)
+			ec, ok := cliexit.IsExitCodeError(err)
 			if !ok {
 				t.Fatalf("ParseArgs(%v) err = %v, want ExitCodeError", tc.args, err)
 			}
@@ -179,7 +181,7 @@ func TestValidateSnapshotName(t *testing.T) {
 		}
 	}
 	err := ValidateSnapshotName("rebased")
-	ec, ok := IsExitCodeError(err)
+	ec, ok := cliexit.IsExitCodeError(err)
 	if !ok {
 		t.Fatalf("err = %v, want ExitCodeError", err)
 	}
@@ -214,7 +216,7 @@ func TestValidateBranchName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := ValidateBranchName(tc.branch, tc.checkRefFormat)
-			ec, ok := IsExitCodeError(err)
+			ec, ok := cliexit.IsExitCodeError(err)
 			if !ok {
 				t.Fatalf("err = %v, want ExitCodeError", err)
 			}
@@ -253,7 +255,7 @@ func TestValidateBaseName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := ValidateBaseName(tc.base, tc.allowNonMain, tc.checkRefFormat)
-			ec, ok := IsExitCodeError(err)
+			ec, ok := cliexit.IsExitCodeError(err)
 			if !ok {
 				t.Fatalf("err = %v, want ExitCodeError", err)
 			}
@@ -300,7 +302,7 @@ func TestLoadTextArg(t *testing.T) {
 	t.Run("inline-and-file-both-set", func(t *testing.T) {
 		t.Parallel()
 		_, err := LoadTextArg("inline", "ok", "title", true, reader)
-		ec, ok := IsExitCodeError(err)
+		ec, ok := cliexit.IsExitCodeError(err)
 		if !ok || ec.Code != 2 {
 			t.Fatalf("err = %v, want ExitCodeError{Code=2}", err)
 		}
@@ -323,7 +325,7 @@ func TestLoadTextArg(t *testing.T) {
 	t.Run("file-missing-reports-label", func(t *testing.T) {
 		t.Parallel()
 		_, err := LoadTextArg("", "missing", "body", false, reader)
-		ec, ok := IsExitCodeError(err)
+		ec, ok := cliexit.IsExitCodeError(err)
 		if !ok {
 			t.Fatalf("err = %v, want ExitCodeError", err)
 		}
@@ -357,7 +359,7 @@ func TestLoadTextArg(t *testing.T) {
 	t.Run("required-empty-fails", func(t *testing.T) {
 		t.Parallel()
 		_, err := LoadTextArg("", "", "title", true, reader)
-		ec, ok := IsExitCodeError(err)
+		ec, ok := cliexit.IsExitCodeError(err)
 		if !ok || ec.Code != 2 {
 			t.Fatalf("err = %v, want ExitCodeError{Code=2}", err)
 		}
@@ -456,7 +458,7 @@ func TestPreflightRejectsEmptyTitleAndCommit(t *testing.T) {
 		CommitMessage: "commit",
 	}
 	_, err := Preflight(emptyTitleOpts, func(string) bool { return true }, nil)
-	ec, ok := IsExitCodeError(err)
+	ec, ok := cliexit.IsExitCodeError(err)
 	if !ok {
 		t.Fatalf("err = %v, want ExitCodeError", err)
 	}
@@ -471,7 +473,7 @@ func TestPreflightRejectsEmptyTitleAndCommit(t *testing.T) {
 		Title:    "T",
 	}
 	_, err = Preflight(emptyCommitOpts, func(string) bool { return true }, nil)
-	ec, ok = IsExitCodeError(err)
+	ec, ok = cliexit.IsExitCodeError(err)
 	if !ok {
 		t.Fatalf("err = %v, want ExitCodeError", err)
 	}
@@ -491,7 +493,7 @@ func TestPreflightPropagatesValidatorErrors(t *testing.T) {
 		CommitMessage: "C",
 	}
 	_, err := Preflight(bad, func(string) bool { return true }, nil)
-	ec, ok := IsExitCodeError(err)
+	ec, ok := cliexit.IsExitCodeError(err)
 	if !ok {
 		t.Fatalf("err = %v, want ExitCodeError", err)
 	}
@@ -503,7 +505,7 @@ func TestPreflightPropagatesValidatorErrors(t *testing.T) {
 func TestPreflightRejectsNilOptions(t *testing.T) {
 	t.Parallel()
 	_, err := Preflight(nil, nil, nil)
-	ec, ok := IsExitCodeError(err)
+	ec, ok := cliexit.IsExitCodeError(err)
 	if !ok {
 		t.Fatalf("err = %v, want ExitCodeError", err)
 	}
@@ -523,17 +525,17 @@ func TestWriteUsageMatchesUsageText(t *testing.T) {
 
 func TestIsExitCodeErrorWraps(t *testing.T) {
 	t.Parallel()
-	base := &ExitCodeError{Code: 7, Message: "boom"}
+	base := &cliexit.ExitCodeError{Code: 7, Message: "boom"}
 	wrapped := wrapErrForTest(base)
-	got, ok := IsExitCodeError(wrapped)
+	got, ok := cliexit.IsExitCodeError(wrapped)
 	if !ok {
-		t.Fatalf("IsExitCodeError(wrapped) = false, want true")
+		t.Fatalf("cliexit.IsExitCodeError(wrapped) = false, want true")
 	}
 	if got.Code != 7 || got.Message != "boom" {
 		t.Errorf("unwrapped = %+v, want {Code:7 Message:boom}", got)
 	}
-	if _, ok := IsExitCodeError(errors.New("plain")); ok {
-		t.Errorf("IsExitCodeError(plain) = true, want false")
+	if _, ok := cliexit.IsExitCodeError(errors.New("plain")); ok {
+		t.Errorf("cliexit.IsExitCodeError(plain) = true, want false")
 	}
 }
 

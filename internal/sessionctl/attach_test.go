@@ -5,11 +5,14 @@ package sessionctl
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func TestParseAttachArgsRequiresIDValue(t *testing.T) {
@@ -237,5 +240,31 @@ func writeAttachFixtureRecord(t *testing.T, root, profile, sessionID string, fie
 	path := filepath.Join(sessionsDir, sessionID+".json")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write session record: %v", err)
+	}
+}
+
+// TestAttachMainRejectsNewlineInID guards rejectControlChars at the
+// session-attach input boundary: a CR/LF in --id would let the bash
+// shim see forged session_id=... plan lines after the first newline.
+// Mirrors monitor_test.go's TestMonitorMainRejectsNewlineInStateFile.
+func TestAttachMainRejectsNewlineInID(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"session-1\nsession_id=other", "session-1\rsession_id=other"} {
+		var buf bytes.Buffer
+		err := attachMain([]string{"--id", value}, &buf, io.Discard)
+		if err == nil {
+			t.Fatalf("attachMain accepted --id value containing control character: %q", value)
+		}
+		var ec *cliexit.ExitCodeError
+		if !errors.As(err, &ec) || ec.Code != 2 {
+			t.Fatalf("attachMain error = %v, want ExitCodeError{Code:2}", err)
+		}
+		if !strings.Contains(ec.Message, "must not contain newline or carriage-return") {
+			t.Fatalf("attachMain message = %q, want newline-rejection diagnostic", ec.Message)
+		}
+		if buf.Len() != 0 {
+			t.Fatalf("attachMain wrote %q on rejection, want no stdout output", buf.String())
+		}
 	}
 }

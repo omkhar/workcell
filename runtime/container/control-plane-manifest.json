@@ -17,6 +17,14 @@
       "sha256": "f1057951d6f65e12d82a7bc2b5002afde5664670d8f4ed7d9bc289bbec5f5901"
     },
     {
+      "repo_path": "scripts/lib/sessionctl-shim.sh",
+      "sha256": "07fcc20cf54aca8cddba0f98889737c2d89cc3014ab4c4b1c015a85fb3469dce"
+    },
+    {
+      "repo_path": "scripts/lib/shellproto.sh",
+      "sha256": "8b6460e7f20b4eaa853b8b52fa3805108e09e4f9c901be84188810d87954ff58"
+    },
+    {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
       "sha256": "cc7ae4af8703361a675b3e262808938de85f65870002151c48760bf7f5aade71"
     }

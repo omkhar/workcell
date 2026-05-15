@@ -4,9 +4,9 @@
 package sessionctl
 
 import (
-	"errors"
 	"fmt"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/stateroot"
 )
@@ -32,7 +32,7 @@ func TimelineMain(args []string) error {
 		return nil
 	}
 	if sessionID == "" {
-		return errors.New("workcell session timeline requires --id.")
+		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session timeline requires --id."}
 	}
 
 	if len(roots) == 0 {
@@ -52,15 +52,16 @@ func parseTimelineArgs(args []string) (sessionID string, showHelp bool, err erro
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			if i+1 >= len(args) || args[i+1] == "" {
-				return "", false, fmt.Errorf("--id requires a non-empty value")
+			value, next, perr := optionValueOrError(args, i, "--id")
+			if perr != nil {
+				return "", false, perr
 			}
-			sessionID = args[i+1]
-			i++
+			sessionID = value
+			i = next
 		case "-h", "--help":
 			showHelp = true
 		default:
-			return "", false, fmt.Errorf("Unsupported workcell session timeline option: %s", args[i])
+			return "", false, unsupportedOption("session timeline", args[i])
 		}
 	}
 	return sessionID, showHelp, nil

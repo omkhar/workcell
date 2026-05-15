@@ -1,4 +1,5 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
+# shellcheck shell=bash
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Omkhar Arasaratnam
 #
