@@ -425,6 +425,9 @@ func cmdRunMutationTests(_ []string) error {
 // The original workcell-run-mutation-tests standalone binary had the
 // same shape; preserved here for parity. A more robust fix would
 // take repo-root as an explicit argv arg.
+//
+// TODO(workcell-citools-repo-root): take repo-root as an explicit
+// argv arg so this helper stops depending on runtime.Caller layout.
 func metadatautilRepoRoot() (string, error) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {

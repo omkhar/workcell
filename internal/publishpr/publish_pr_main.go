@@ -23,21 +23,58 @@ func exit2(format string, args ...any) error {
 // because the bash function rejects both being set; LoadTextArg
 // reconciles them later when the caller is ready to read the body.
 type Options struct {
-	Workspace         string
-	Branch            string
-	Base              string
-	AllowNonMainBase  bool
-	GhBin             string
-	Snapshot          string
-	Title             string
-	TitleFile         string
-	Body              string
-	BodyFile          string
-	CommitMessage     string
+	// Workspace is the host-side worktree to operate on; defaults to
+	// the process CWD.  Must resolve to an existing directory; rejected
+	// otherwise by resolveExistingDirectoryOrDie.
+	Workspace string
+	// Branch is the publish branch name; required (rejected when empty),
+	// must pass `git check-ref-format --branch`, and must not be the
+	// default branch (main/master).
+	Branch string
+	// Base is the target branch for the PR; defaults to "main".  Must
+	// pass `git check-ref-format --branch`; non-main values require
+	// AllowNonMainBase.
+	Base string
+	// AllowNonMainBase waives the main-only Base check, downgrading the
+	// run to the lower-assurance draft path.
+	AllowNonMainBase bool
+	// GhBin is an optional explicit path to the host `gh` binary; when
+	// non-empty it must point to a trusted executable
+	// (IsTrustedHostToolPath).
+	GhBin string
+	// Snapshot selects which working-tree slice to publish; must be
+	// "worktree" or "index" (or "staged" — same as "index"); rejected
+	// otherwise by ValidateSnapshotName.  Defaults to "worktree".
+	Snapshot string
+	// Title is the inline PR title.  Mutually exclusive with TitleFile;
+	// one of the two MUST yield a non-empty value at Preflight.
+	Title string
+	// TitleFile is a host-path whose trimmed contents become the PR
+	// title.  Mutually exclusive with Title.
+	TitleFile string
+	// Body is the inline PR body.  Mutually exclusive with BodyFile;
+	// both may be empty (PR body is optional).
+	Body string
+	// BodyFile is a host-path whose trimmed contents become the PR body.
+	// Mutually exclusive with Body.
+	BodyFile string
+	// CommitMessage is the inline commit message used for the publish
+	// commit.  Mutually exclusive with CommitMessageFile; one of the
+	// two MUST yield a non-empty value at Preflight.
+	CommitMessage string
+	// CommitMessageFile is a host-path whose trimmed contents become
+	// the commit message.  Mutually exclusive with CommitMessage.
 	CommitMessageFile string
-	Ready             bool
-	DryRun            bool
-	HelpRequested     bool
+	// Ready, when true, flips the gh PR off draft (publish_pr_main's
+	// `--ready` flag).
+	Ready bool
+	// DryRun, when true, prints the planned host commands instead of
+	// executing them; output shape is asserted by
+	// tests/scenarios/shared/test-publish-pr-dry-run.sh.
+	DryRun bool
+	// HelpRequested is set when ParseArgs encountered -h / --help and
+	// short-circuited; callers should emit UsageText and exit 0.
+	HelpRequested bool
 }
 
 // DefaultOptions returns an Options populated with the same defaults
@@ -295,13 +332,29 @@ func readFileString(path string) (string, error) {
 // pure-Go function keeps the validator boundary self-contained and
 // gives the upcoming 24.2b execution PR a typed handoff.
 type PreflightInputs struct {
-	TitleText                 string
-	BodyText                  string
-	CommitMessageText         string
-	PublishBaseMode           string
+	// TitleText is the resolved, non-empty PR title (LoadTextArg of
+	// Title/TitleFile).
+	TitleText string
+	// BodyText is the resolved PR body; may be empty (PR body is
+	// optional).
+	BodyText string
+	// CommitMessageText is the resolved, non-empty commit message
+	// (LoadTextArg of CommitMessage/CommitMessageFile).
+	CommitMessageText string
+	// PublishBaseMode is "main" for the standard run and
+	// "lower-assurance" when --allow-non-main-base downgraded the run.
+	PublishBaseMode string
+	// RepoOwnedPRChecksExpected mirrors publish_pr_repo_owned_checks_expected:
+	// "1" when the resolved base is main, "0" otherwise.  Kept as a
+	// string because the dry-run scenario greps for the literal
+	// `publish_repo_owned_pr_checks_expected=1|0`.
 	RepoOwnedPRChecksExpected string
-	Ready                     bool
-	LowerAssuranceNotice      []string // stderr lines to emit when downgrading the run
+	// Ready propagates Options.Ready so the host execution layer can
+	// flip the gh PR off draft without re-parsing the option vector.
+	Ready bool
+	// LowerAssuranceNotice carries stderr lines to emit when the run
+	// has been downgraded (non-main base).  Empty for standard runs.
+	LowerAssuranceNotice []string
 }
 
 // Preflight applies the bash validators + text-arg loading + base-mode

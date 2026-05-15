@@ -56,3 +56,60 @@ shellproto_field() {
   done <<<"${plan}"
   printf '%s' "${default_value}"
 }
+
+# shellproto_assign_globals <plan> <key1:var1> <key2:var2> ...
+#
+#   Walks the multi-line plan in $1 once and, for each KEY=VALUE line
+#   whose KEY matches one of the supplied <key>:<var> pairs, assigns
+#   VALUE to the named shell variable.  This replaces the
+#   `while IFS=...; case ${key} in ... esac; done <<<"${plan}"` shape
+#   that the larger bash multi-key parsers in scripts/workcell used to
+#   carry by hand; centralising the loop here avoids per-call drift
+#   (e.g. one site forgetting the *=* skip, another mis-handling values
+#   that contain '=').
+#
+#   Empty values are accepted: `key=\n` clears the named variable.
+#   Lines without '=' are skipped silently (forward-compat with
+#   future header rows).  Only the first occurrence of a key wins,
+#   matching the Go side's WriteFields contract.
+#
+#   Variables that never appear in the plan are left at their existing
+#   value; the caller is expected to pre-clear them when a clean slate
+#   is required.
+#
+# Typical use:
+#
+#   shellproto_assign_globals "${plan}" \
+#     session_id:SESSION_META_ID \
+#     profile:SESSION_META_PROFILE
+shellproto_assign_globals() {
+  local plan="$1"
+  shift
+  local pair key var line lk lv i
+  local -a pair_keys=()
+  local -a pair_vars=()
+  local -a pair_seen=()
+  for pair in "$@"; do
+    pair_keys+=("${pair%%:*}")
+    pair_vars+=("${pair#*:}")
+    pair_seen+=("0")
+  done
+  while IFS= read -r line; do
+    if [[ "${line}" != *=* ]]; then
+      continue
+    fi
+    lk="${line%%=*}"
+    lv="${line#*=}"
+    i=0
+    while [[ "${i}" -lt "${#pair_keys[@]}" ]]; do
+      key="${pair_keys[i]}"
+      var="${pair_vars[i]}"
+      if [[ "${pair_seen[i]}" == "0" && "${lk}" == "${key}" ]]; then
+        printf -v "${var}" '%s' "${lv}"
+        pair_seen[i]="1"
+        break
+      fi
+      i=$((i + 1))
+    done
+  done <<<"${plan}"
+}

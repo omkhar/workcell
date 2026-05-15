@@ -43,8 +43,9 @@ import (
 //	append_newline=0|1
 //
 // State-root forwarding mirrors AttachMain/LogsMain: leading
-// --root=PATH args are consumed via consumeRootArgs because go_hostutil
-// scrubs WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT from the environment.
+// --root=PATH args are consumed via stateroot.ConsumeRootArgs because
+// go_hostutil scrubs WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT from the
+// environment.
 // The Go side does not currently use those roots, but the bash shim
 // keeps prepending them so the contract stays consistent with sibling
 // session-* subcommands and so a future tightening of SendMain that

@@ -22,19 +22,46 @@ import (
 // prepare_injection_bundle helper consumed.  The bash caller supplies these
 // via command-line flags on the launcher subcommand.
 type PrepareBundleOptions struct {
-	Agent                                 string
-	Mode                                  string
-	PolicyPath                            string
-	UseDefaultPolicy                      bool
-	AuthStatus                            bool
-	Doctor                                bool
-	Inspect                               bool
-	DryRun                                bool
-	SelfStagingProbeSyntheticCodexAuth    bool
+	// Agent is the target agent name (e.g. "claude", "codex"); required.
+	Agent string
+	// Mode is the agent execution mode (e.g. "auto", "manual"); required.
+	Mode string
+	// PolicyPath is an explicit injection-policy TOML path.  When empty
+	// and UseDefaultPolicy is true, the default
+	// DefaultInjectionPolicyPath is consulted.
+	PolicyPath string
+	// UseDefaultPolicy enables the implicit per-user policy fallback
+	// when PolicyPath is empty.
+	UseDefaultPolicy bool
+	// AuthStatus, when true, runs the auth-status diagnostic path
+	// (no bundle materialization).
+	AuthStatus bool
+	// Doctor, when true, runs the doctor diagnostic path.
+	Doctor bool
+	// Inspect, when true, runs the inspect diagnostic path.
+	Inspect bool
+	// DryRun, when true, plans the bundle without writing any files.
+	DryRun bool
+	// SelfStagingProbeSyntheticCodexAuth is a test-only flag that
+	// stages a synthetic ~/.codex/auth.json credential to exercise the
+	// self-staging probe code path.  Production callers MUST leave
+	// this false.
+	SelfStagingProbeSyntheticCodexAuth bool
+	// SelfStagingProbeSyntheticClaudeExport is a test-only flag that
+	// stages a synthetic Claude keychain export to exercise the
+	// self-staging probe code path.  Production callers MUST leave
+	// this false.
 	SelfStagingProbeSyntheticClaudeExport bool
-	RealHome                              string
-	ProcessPID                            int
-	BundleParentOverride                  string // optional; bash currently always supplies the default
+	// RealHome is the real host HOME, used to derive the default
+	// policy and bundle parent paths.  Required.
+	RealHome string
+	// ProcessPID is the launching process PID; used to namespace the
+	// per-run bundle directory under the cache parent.
+	ProcessPID int
+	// BundleParentOverride is an optional bundle parent directory.
+	// Empty in production (the bash caller always supplies the
+	// default); tests use this to redirect into a t.TempDir.
+	BundleParentOverride string
 }
 
 // PrepareBundleResult is the byte-for-byte translation of the env-var state
@@ -42,21 +69,51 @@ type PrepareBundleOptions struct {
 // INJECTION_* / DIRECT_* shell variable so the bash shim can re-export the
 // values verbatim.
 type PrepareBundleResult struct {
-	InjectionBundleRoot                 string
-	DirectMountSpecPath                 string
-	DirectSourceMounts                  []string
-	InjectionPolicySHA256               string
-	InjectionCredentialKeys             string
-	InjectionCredentialInputKinds       string
-	InjectionCredentialResolvers        string
-	InjectionCredentialMaterialization  string
+	// InjectionBundleRoot is the absolute path to the per-run bundle
+	// staging directory (INJECTION_BUNDLE_ROOT).
+	InjectionBundleRoot string
+	// DirectMountSpecPath is the path to the direct-mount spec file
+	// (DIRECT_MOUNT_SPEC_PATH).
+	DirectMountSpecPath string
+	// DirectSourceMounts is the list of resolved source-mount paths
+	// (DIRECT_SOURCE_MOUNTS, one per line in bash).
+	DirectSourceMounts []string
+	// InjectionPolicySHA256 is the SHA-256 of the policy file consumed
+	// for this run (INJECTION_POLICY_SHA256).
+	InjectionPolicySHA256 string
+	// InjectionCredentialKeys is the newline-joined list of credential
+	// keys the policy materialized (INJECTION_CREDENTIAL_KEYS).
+	InjectionCredentialKeys string
+	// InjectionCredentialInputKinds carries the per-credential input
+	// kind classification (INJECTION_CREDENTIAL_INPUT_KINDS).
+	InjectionCredentialInputKinds string
+	// InjectionCredentialResolvers carries the per-credential resolver
+	// names (INJECTION_CREDENTIAL_RESOLVERS).
+	InjectionCredentialResolvers string
+	// InjectionCredentialMaterialization carries the per-credential
+	// materialization mode (INJECTION_CREDENTIAL_MATERIALIZATION).
+	InjectionCredentialMaterialization string
+	// InjectionCredentialResolutionStates carries the per-credential
+	// resolution-state token (INJECTION_CREDENTIAL_RESOLUTION_STATES).
 	InjectionCredentialResolutionStates string
-	InjectionProviderAuthReadyStates    string
-	InjectionSharedAuthReadyStates      string
-	InjectionExtraEndpoints             string
-	InjectionSSHEnabled                 string
-	InjectionSSHConfigAssurance         string
-	InjectionSecretCopyTargets          string
+	// InjectionProviderAuthReadyStates carries the provider-auth
+	// readiness state lines (INJECTION_PROVIDER_AUTH_READY_STATES).
+	InjectionProviderAuthReadyStates string
+	// InjectionSharedAuthReadyStates carries the shared-auth readiness
+	// state lines (INJECTION_SHARED_AUTH_READY_STATES).
+	InjectionSharedAuthReadyStates string
+	// InjectionExtraEndpoints carries any additional endpoint URLs the
+	// policy declared (INJECTION_EXTRA_ENDPOINTS).
+	InjectionExtraEndpoints string
+	// InjectionSSHEnabled is "1" when the policy enables SSH
+	// passthrough, "0" otherwise (INJECTION_SSH_ENABLED).
+	InjectionSSHEnabled string
+	// InjectionSSHConfigAssurance carries the SSH config assurance
+	// level marker (INJECTION_SSH_CONFIG_ASSURANCE).
+	InjectionSSHConfigAssurance string
+	// InjectionSecretCopyTargets carries the secret-copy target paths
+	// (INJECTION_SECRET_COPY_TARGETS).
+	InjectionSecretCopyTargets string
 }
 
 // DefaultInjectionPolicyPath returns the path the bash helper would have
@@ -242,7 +299,7 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 // happen after we've already pointed HOME at the synthetic codex home,
 // so the partial-state cleanup MUST always be the canonical restore
 // callback (not the no-op `func(){}` shadow that an earlier draft of
-// this helper used).  See prepare_bundle_test.go::TestPrepareBundleRestoresHOMEOnPartialFailure
+// this helper used).  See prepare_bundle_test.go::TestInstallSyntheticProbeEnvRestoresHomeOnPartialFailure
 // for the regression that motivated this contract.
 func installSyntheticProbeEnv(bundleRoot string, syntheticCodex, syntheticClaude bool) (func(), error) {
 	originalHome, hadHome := os.LookupEnv("HOME")

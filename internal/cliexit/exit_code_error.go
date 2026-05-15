@@ -21,7 +21,7 @@ type ExitCodeError struct {
 func (e *ExitCodeError) Error() string { return e.Message }
 
 // IsExitCodeError reports whether err is or wraps an *ExitCodeError.
-// If so, the returned non-nil pointer is the concrete value.
+// If so, the returned non-nil pointer is the unwrapped `*ExitCodeError`.
 func IsExitCodeError(err error) (*ExitCodeError, bool) {
 	var ec *ExitCodeError
 	if errors.As(err, &ec) {

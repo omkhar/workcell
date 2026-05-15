@@ -5,11 +5,11 @@
 // `workcell session <cmd>` user interface that historically lived in
 // scripts/workcell as the session_* bash functions.
 //
-// Each user-facing subcommand has a matching `<verb>Main` entry point
-// in this package (AttachMain, SendMain, StopMain, DeleteMain,
-// MonitorMain, TimelineMain, LogsMain) plus a private `<verb>Main`
-// helper that accepts injected stdout/stderr writers for tests.  These
-// functions own:
+// Each user-facing subcommand has a matching `<Verb>Main` exported
+// entry point in this package (AttachMain, SendMain, StopMain,
+// DeleteMain, MonitorMain, TimelineMain, LogsMain) plus a private
+// `<verb>Main` helper that accepts injected stdout/stderr writers for
+// tests.  These functions own:
 //
 //   - Up-front option parsing (--id, --message, --no-newline, etc.)
 //     mirroring the bash option_value_or_die / raw_option_value_or_die

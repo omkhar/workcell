@@ -10,10 +10,19 @@ import (
 	"strings"
 )
 
+// ExpandUserPathBestEffort expands `~`, `~/...`, and `~user`/`~user/...`
+// references via os.UserHomeDir or user.Lookup.  When a `~user` lookup
+// fails (unknown user or empty home), it returns the input verbatim
+// rather than an error.  Use this when callers can tolerate an
+// unexpanded fallback (e.g. logging or display paths).
 func ExpandUserPathBestEffort(raw string) (string, error) {
 	return expandUserPath(raw, false)
 }
 
+// ExpandUserPathStrict behaves like ExpandUserPathBestEffort but
+// surfaces user.Lookup failures (or empty home directories) as errors
+// instead of returning the input verbatim.  Use this when an
+// unexpanded path would be a correctness bug.
 func ExpandUserPathStrict(raw string) (string, error) {
 	return expandUserPath(raw, true)
 }
@@ -45,6 +54,10 @@ func ExpandUserPathHomeOnly(raw string) string {
 	return raw
 }
 
+// CanonicalizeExpandedPath returns an absolute, symlink-resolved form
+// of the input.  Relative inputs are first made absolute via filepath.Abs
+// against the process CWD; the result is then passed through
+// ResolveBestEffort so missing trailing components do not cause failure.
 func CanonicalizeExpandedPath(path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		abs, err := filepath.Abs(path)
@@ -56,6 +69,11 @@ func CanonicalizeExpandedPath(path string) (string, error) {
 	return ResolveBestEffort(filepath.Clean(path))
 }
 
+// ResolveBestEffort walks up the path until it finds an existing
+// ancestor, evaluates its symlinks, then re-joins the missing suffix.
+// This matches the "canonicalize what exists, accept the rest verbatim"
+// shape that scripts/workcell uses when staging not-yet-created bundle
+// directories.
 func ResolveBestEffort(path string) (string, error) {
 	if path == string(filepath.Separator) {
 		return path, nil

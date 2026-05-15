@@ -307,7 +307,7 @@ func cmdLauncherPublishPRUsage(_ []string) error {
 func cmdLauncherPolicyCli(args []string) error {
 	err := authpolicy.PolicyMain(args)
 	if authpolicy.IsPolicyMainUsageError(err) {
-		os.Exit(2)
+		return &cliexit.ExitCodeError{Code: 2}
 	}
 	return err
 }
@@ -365,8 +365,7 @@ func cmdLauncherColimaStatus(args []string) error {
 	status, statusErr := launcher.ColimaProfileStatus(input, args[0])
 	if statusErr != nil {
 		if launcher.IsNoMatch(statusErr) {
-			fmt.Fprintln(os.Stderr, statusErr)
-			os.Exit(3)
+			return &cliexit.ExitCodeError{Code: 3, Message: statusErr.Error()}
 		}
 		return statusErr
 	}
@@ -393,7 +392,7 @@ func cmdLauncherRunHostColimaWithTimeout(args []string) error {
 		return runErr
 	}
 	if code != 0 {
-		os.Exit(code)
+		return &cliexit.ExitCodeError{Code: code}
 	}
 	return nil
 }
@@ -740,16 +739,15 @@ func cmdLauncherProfilePath(args []string) error {
 	value, err := dispatchProfilePath(kind, rest)
 	if err != nil {
 		if errors.Is(err, hoststate.ErrUnsupportedLogPointerKind) {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
+			return &cliexit.ExitCodeError{Code: 2, Message: err.Error()}
 		}
 		var keyErr *hoststate.InvalidStateKeyError
 		if errors.As(err, &keyErr) {
-			fmt.Fprintln(os.Stderr, keyErr.Error())
+			msg := keyErr.Error()
 			if keyErr.Hint != "" {
-				fmt.Fprintln(os.Stderr, keyErr.Hint)
+				msg = msg + "\n" + keyErr.Hint
 			}
-			os.Exit(2)
+			return &cliexit.ExitCodeError{Code: 2, Message: msg}
 		}
 		return err
 	}

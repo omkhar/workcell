@@ -22,12 +22,27 @@ import (
 // these as --bash-* flags because `go_hostutil` runs the Go binary
 // under `env -i` and would otherwise lose them.
 type BashContext struct {
-	RootDir         string
-	WorkspaceRoot   string
-	RealHome        string
+	// RootDir is the workcell repo root (ROOT_DIR in bash); used to
+	// exclude in-repo paths from the trusted-host-tool allowlist.
+	RootDir string
+	// WorkspaceRoot is the user-supplied --workspace (WORKSPACE in
+	// bash); used as the base for relative paths and excluded from
+	// the trusted-host-tool allowlist.
+	WorkspaceRoot string
+	// RealHome is the real (non-sandbox) host HOME (REAL_HOME in bash);
+	// re-exported to child processes that need access to the user's
+	// gh/ssh config.
+	RealHome string
+	// TrustedHostPath is the allow-listed PATH used for binary lookups
+	// (TRUSTED_HOST_PATH in bash); re-applied inside every env -i
+	// child invocation.
 	TrustedHostPath string
-	HostGitBin      string
-	HostGhBin       string
+	// HostGitBin is the resolved trusted path to `git`
+	// (HOST_GIT_BIN in bash); used for every git invocation.
+	HostGitBin string
+	// HostGhBin is the resolved trusted path to `gh`
+	// (HOST_GH_BIN in bash); used for the final PR-create step.
+	HostGhBin string
 }
 
 // trustedHostToolPrefixes mirrors the allowlist embedded in
@@ -190,8 +205,8 @@ func EmitCommand(w io.Writer, args []string) {
 // characters; never wrap the whole token in single quotes when only
 // printable characters are present; use ANSI-C `$'...'` only for non-
 // printable bytes. The empty string becomes a pair of bare ASCII
-// single-quote characters (the literal form `if s == "" { return ... }`
-// below uses). The dry-run scenario
+// single-quote characters (the two-character literal returned at
+// line ~199 below by the `if s == ""` branch). The dry-run scenario
 // in tests/scenarios/shared/test-publish-pr-dry-run.sh greps for the
 // exact backslash form, so any divergence surfaces there.
 func bashQuote(s string) string {

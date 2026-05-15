@@ -193,6 +193,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/shellproto-lib",
+      "description": "Sources scripts/lib/shellproto.sh and exercises shellproto_field and shellproto_assign_globals against canonical fixtures (key with embedded '=', missing key, first-occurrence-wins, empty plan)",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-shellproto-lib.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "claude-swe/hook-parametric",
       "description": "Claude guard-bash.sh blocks all commands in the fixture file",
       "lane": "secretless",
