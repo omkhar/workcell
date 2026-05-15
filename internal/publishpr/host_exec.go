@@ -30,7 +30,7 @@ type BashContext struct {
 	HostGhBin       string
 }
 
-// trustedHostToolPrefixes mirrors the 14-entry allowlist embedded in
+// trustedHostToolPrefixes mirrors the allowlist embedded in
 // scripts/workcell is_trusted_host_tool_path(). Any change here must
 // stay in lockstep with that bash table.
 var trustedHostToolPrefixes = []string{
@@ -189,7 +189,9 @@ func EmitCommand(w io.Writer, args []string) {
 // scripts/workcell runs under) emits it: always backslash-escape unsafe
 // characters; never wrap the whole token in single quotes when only
 // printable characters are present; use ANSI-C `$'...'` only for non-
-// printable bytes. The empty string becomes `”`. The dry-run scenario
+// printable bytes. The empty string becomes a pair of bare ASCII
+// single-quote characters (the literal form `if s == "" { return ... }`
+// below uses). The dry-run scenario
 // in tests/scenarios/shared/test-publish-pr-dry-run.sh greps for the
 // exact backslash form, so any divergence surfaces there.
 func bashQuote(s string) string {

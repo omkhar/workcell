@@ -11,12 +11,16 @@ import (
 )
 
 func TestDockerDesktopContextNameConstant(t *testing.T) {
+	t.Parallel()
+
 	if DockerDesktopContextName != "desktop-linux" {
 		t.Fatalf("DockerDesktopContextName = %q, want desktop-linux", DockerDesktopContextName)
 	}
 }
 
 func TestRouteProfileDockerCommand(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name        string
 		provider    string
@@ -67,6 +71,8 @@ func TestRouteProfileDockerCommand(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := RouteProfileDockerCommand(tc.provider, tc.socketPath, tc.contextName)
 			if tc.wantErr != "" {
 				if err == nil {
@@ -88,6 +94,8 @@ func TestRouteProfileDockerCommand(t *testing.T) {
 }
 
 func TestPrepareCurrentDockerClientPlan(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name           string
 		backend        string
@@ -140,6 +148,8 @@ func TestPrepareCurrentDockerClientPlan(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			plan, err := PrepareCurrentDockerClientPlan(tc.backend, tc.contextName, tc.contextExists, tc.contextHealthy)
 			if tc.wantPlanErr {
 				var planErr *PrepareDockerClientPlanError
