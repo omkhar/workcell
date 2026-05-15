@@ -96,7 +96,7 @@ func die(message string) error {
 }
 
 func expandHostPath(raw string, base string) (string, error) {
-	expanded, err := expandUserPath(raw)
+	expanded, err := pathutil.ExpandUserPathStrictRequireNonEmpty(raw)
 	if err != nil {
 		return "", err
 	}
@@ -104,18 +104,6 @@ func expandHostPath(raw string, base string) (string, error) {
 		expanded = filepath.Join(base, expanded)
 	}
 	return filepath.Abs(expanded)
-}
-
-// expandUserPath is a thin wrapper around pathutil.ExpandUserPathStrict
-// that preserves the "empty raw input is an error" rule the bash
-// caller's input-validation layer relied on.  All other tilde-expansion
-// semantics (including the ~user lookup) live in the shared pathutil
-// helper so we have a single Go owner of the expansion rules.
-func expandUserPath(raw string) (string, error) {
-	if raw == "" {
-		return "", fmt.Errorf("empty path")
-	}
-	return pathutil.ExpandUserPathStrict(raw)
 }
 
 func requirePathWithin(root string, candidate string, label string) error {
@@ -908,7 +896,7 @@ func requireSecretFile(source string, label string) (string, error) {
 }
 
 func resolveAbsPath(raw string) (string, error) {
-	expanded, err := expandUserPath(raw)
+	expanded, err := pathutil.ExpandUserPathStrictRequireNonEmpty(raw)
 	if err != nil {
 		return "", err
 	}

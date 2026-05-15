@@ -430,7 +430,7 @@ func Usage(program string) string {
 // entry point.  Diagnostics go to stderr exactly as the bash original
 // did; the returned error is either nil or a *cliexit.ExitCodeError
 // whose Code is the bash exit-code contract.  The metadatautil wrapper
-// recovers Code via errors.As and forwards it to os.Exit.
+// recovers Code via cliexit.IsExitCodeError and forwards it to os.Exit.
 func Run(program string, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, Usage(program))

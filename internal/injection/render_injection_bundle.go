@@ -22,6 +22,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/adapters"
 	"github.com/omkhar/workcell/internal/adapters/gemini"
+	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
@@ -1083,7 +1084,7 @@ func validateSourcePath(raw any, label string, base Path) (Path, error) {
 }
 
 func expandHostPath(raw string, base Path) (Path, error) {
-	expanded, err := expandUserPath(raw)
+	expanded, err := pathutil.ExpandUserPathStrictRequireNonEmpty(raw)
 	if err != nil {
 		return Path(""), err
 	}

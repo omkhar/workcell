@@ -745,7 +745,7 @@ func cmdLauncherProfilePath(args []string) error {
 		if errors.As(err, &keyErr) {
 			msg := keyErr.Error()
 			if keyErr.Hint != "" {
-				msg = msg + "\n" + keyErr.Hint
+				msg = fmt.Sprintf("%s\n%s", msg, keyErr.Hint)
 			}
 			return &cliexit.ExitCodeError{Code: 2, Message: msg}
 		}
@@ -876,7 +876,11 @@ func cmdLauncherInjectionPrepareBundle(args []string) error {
 // which strips the process env via env -i.  Each non-empty value is
 // emitted on its own line as a ready-to-consume `--root=PATH` token.
 func cmdLauncherLookupStateRoots(args []string) error {
-	for _, line := range stateroot.FormatRootArgs(args[0], args[1]) {
+	lines, err := stateroot.FormatRootArgs(args[0], args[1])
+	if err != nil {
+		return &cliexit.ExitCodeError{Code: 2, Message: err.Error()}
+	}
+	for _, line := range lines {
 		fmt.Println(line)
 	}
 	return nil
