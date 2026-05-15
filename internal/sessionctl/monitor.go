@@ -137,8 +137,7 @@ func parseMonitorArgs(args []string) (statePath string, showHelp bool, err error
 // monitor uses (the state file is written from scripts/workcell with no
 // shell metacharacters).
 //
-// The function is exposed for the launcher's monitor subcommand entry
-// point in cmd/workcell-hostutil and for tests in this package.
+// The function is exposed for tests in this package.
 func MonitorStateEntries(path string) ([]MonitorStateEntry, error) {
 	f, err := os.Open(path)
 	if err != nil {

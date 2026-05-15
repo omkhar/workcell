@@ -3,22 +3,33 @@
 
 // Package publishpr carries the `workcell publish-pr` user interface
 // that historically lived in scripts/workcell as the publish_pr_*
-// bash functions. The decomposition is intentionally staged across
-// the /sethify PR 24 chain:
+// bash functions.  The package owns four concerns:
 //
-//   - PR 24.1 (landed): UsageText() — the help banner.
-//   - PR 24.2a (this file's home): ParseArgs, the validators
-//     (ValidateSnapshotName, ValidateBranchName, ValidateBaseName),
-//     LoadTextArg, RepoOwnedChecksExpected, and Preflight. These are
-//     pure-Go translations of the argument parsing + validation +
-//     text-arg loading section of publish_pr_main and carry no host
-//     filesystem or process side effects.
-//   - PR 24.2b (next): the host execution layer that drives git/gh,
-//     emits the dry-run command list, and wires `workcell-hostutil
-//     launcher publish-pr-cli` so scripts/workcell publish_pr_main
-//     becomes a thin shim.
+//   - UsageText: the help banner emitted on -h / --help and on usage
+//     errors.
 //
-// Host-side git and GitHub CLI invocation stays outside this package
-// for now (different concern: that is host-side process control, this
-// package is the host-side CLI surface text and validation).
+//   - Argument parsing and validation: ParseArgs walks the publish-pr
+//     option vector with the same diagnostics the bash function did;
+//     ValidateSnapshotName, ValidateBranchName, and ValidateBaseName
+//     mirror the validate_publish_* bash helpers; LoadTextArg reconciles
+//     inline vs --*-file inputs; Preflight bundles the validators with
+//     base-mode downgrade and text-arg loading into one pass.
+//     RepoOwnedChecksExpected mirrors publish_pr_repo_owned_checks_expected
+//     so the dry-run output keeps byte-identical literals.
+//
+//   - Host execution layer: BashContext + RunPublishHostCommandInDir +
+//     the resolved git/gh wrappers (runCleanGit, etc.) drive the host-
+//     side process control under the env -i sandbox.  IsTrustedHostToolPath,
+//     CanonicalizeHostToolPath, ResolveHostTool, and
+//     ResolveExistingExecutableOrDie own the trusted-PATH allowlist
+//     that scripts/workcell::is_trusted_host_tool_path enforces.
+//
+//   - Dry-run emission: EmitCommand + bashQuote replicate the
+//     `printf %q` shape that
+//     tests/scenarios/shared/test-publish-pr-dry-run.sh greps for.
+//
+// PublishPRMain wires the four concerns together as the launcher entry
+// point for `workcell-hostutil launcher publish-pr-cli`; scripts/workcell
+// publish_pr_main is the thin shim that forwards bash-side globals as
+// --bash-* flags.
 package publishpr

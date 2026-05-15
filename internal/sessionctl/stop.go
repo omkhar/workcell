@@ -51,7 +51,7 @@ import (
 // default exit-1 path.
 //
 // State-root forwarding mirrors AttachMain/LogsMain: leading
-// --root=PATH args are consumed via consumeRootArgs because
+// --root=PATH args are consumed via stateroot.ConsumeRootArgs because
 // go_hostutil scrubs WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT from the
 // environment.
 func StopMain(args []string) error {

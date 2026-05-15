@@ -1771,9 +1771,7 @@ session_runtime_metadata() {
 
 load_session_runtime_metadata() {
   local session_id="$1"
-  local line=""
-  local key=""
-  local value=""
+  local plan=""
 
   SESSION_META_PROFILE=""
   SESSION_META_RECORD_PATH=""
@@ -1798,34 +1796,30 @@ load_session_runtime_metadata() {
   SESSION_META_FILE_TRACE_LOG_PATH=""
   SESSION_META_TRANSCRIPT_LOG_PATH=""
 
-  while IFS= read -r line; do
-    key="${line%%=*}"
-    value="${line#*=}"
-    case "${key}" in
-      record_path) SESSION_META_RECORD_PATH="${value}" ;;
-      profile) SESSION_META_PROFILE="${value}" ;;
-      target_kind) SESSION_META_TARGET_KIND="${value}" ;;
-      target_provider) SESSION_META_TARGET_PROVIDER="${value}" ;;
-      target_id) SESSION_META_TARGET_ID="${value}" ;;
-      target_assurance_class) SESSION_META_TARGET_ASSURANCE_CLASS="${value}" ;;
-      runtime_api) SESSION_META_RUNTIME_API="${value}" ;;
-      workspace_transport) SESSION_META_WORKSPACE_TRANSPORT="${value}" ;;
-      workspace) SESSION_META_WORKSPACE="${value}" ;;
-      workspace_origin) SESSION_META_WORKSPACE_ORIGIN="${value}" ;;
-      worktree_path) SESSION_META_WORKTREE_PATH="${value}" ;;
-      git_branch) SESSION_META_GIT_BRANCH="${value}" ;;
-      container_name) SESSION_META_CONTAINER_NAME="${value}" ;;
-      monitor_pid) SESSION_META_MONITOR_PID="${value}" ;;
-      status) SESSION_META_STATUS="${value}" ;;
-      live_status) SESSION_META_LIVE_STATUS="${value}" ;;
-      current_assurance) SESSION_META_CURRENT_ASSURANCE="${value}" ;;
-      session_audit_dir) SESSION_META_SESSION_AUDIT_DIR="${value}" ;;
-      audit_log_path) SESSION_META_AUDIT_LOG_PATH="${value}" ;;
-      debug_log_path) SESSION_META_DEBUG_LOG_PATH="${value}" ;;
-      file_trace_log_path) SESSION_META_FILE_TRACE_LOG_PATH="${value}" ;;
-      transcript_log_path) SESSION_META_TRANSCRIPT_LOG_PATH="${value}" ;;
-    esac
-  done < <(session_runtime_metadata "${session_id}")
+  plan="$(session_runtime_metadata "${session_id}")"
+  shellproto_assign_globals "${plan}" \
+    record_path:SESSION_META_RECORD_PATH \
+    profile:SESSION_META_PROFILE \
+    target_kind:SESSION_META_TARGET_KIND \
+    target_provider:SESSION_META_TARGET_PROVIDER \
+    target_id:SESSION_META_TARGET_ID \
+    target_assurance_class:SESSION_META_TARGET_ASSURANCE_CLASS \
+    runtime_api:SESSION_META_RUNTIME_API \
+    workspace_transport:SESSION_META_WORKSPACE_TRANSPORT \
+    workspace:SESSION_META_WORKSPACE \
+    workspace_origin:SESSION_META_WORKSPACE_ORIGIN \
+    worktree_path:SESSION_META_WORKTREE_PATH \
+    git_branch:SESSION_META_GIT_BRANCH \
+    container_name:SESSION_META_CONTAINER_NAME \
+    monitor_pid:SESSION_META_MONITOR_PID \
+    status:SESSION_META_STATUS \
+    live_status:SESSION_META_LIVE_STATUS \
+    current_assurance:SESSION_META_CURRENT_ASSURANCE \
+    session_audit_dir:SESSION_META_SESSION_AUDIT_DIR \
+    audit_log_path:SESSION_META_AUDIT_LOG_PATH \
+    debug_log_path:SESSION_META_DEBUG_LOG_PATH \
+    file_trace_log_path:SESSION_META_FILE_TRACE_LOG_PATH \
+    transcript_log_path:SESSION_META_TRANSCRIPT_LOG_PATH
 }
 
 session_meta_target_summary() {
@@ -2021,9 +2015,6 @@ current_workspace_transport() {
 }
 
 refresh_support_matrix_state() {
-  local line=""
-  local key=""
-  local value=""
   local metadata=""
 
   metadata="$(go_hostutil launcher support-matrix-eval \
@@ -2042,19 +2033,14 @@ refresh_support_matrix_state() {
   SUPPORT_MATRIX_VALIDATION_LANE=""
   SUPPORT_MATRIX_REASON=""
 
-  while IFS= read -r line; do
-    key="${line%%=*}"
-    value="${line#*=}"
-    case "${key}" in
-      host_os) SUPPORT_MATRIX_HOST_OS="${value}" ;;
-      host_arch) SUPPORT_MATRIX_HOST_ARCH="${value}" ;;
-      support_matrix_status) SUPPORT_MATRIX_STATUS="${value}" ;;
-      support_matrix_launch) SUPPORT_MATRIX_LAUNCH="${value}" ;;
-      support_matrix_evidence) SUPPORT_MATRIX_EVIDENCE="${value}" ;;
-      support_matrix_validation_lane) SUPPORT_MATRIX_VALIDATION_LANE="${value}" ;;
-      support_matrix_reason) SUPPORT_MATRIX_REASON="${value}" ;;
-    esac
-  done <<<"${metadata}"
+  shellproto_assign_globals "${metadata}" \
+    host_os:SUPPORT_MATRIX_HOST_OS \
+    host_arch:SUPPORT_MATRIX_HOST_ARCH \
+    support_matrix_status:SUPPORT_MATRIX_STATUS \
+    support_matrix_launch:SUPPORT_MATRIX_LAUNCH \
+    support_matrix_evidence:SUPPORT_MATRIX_EVIDENCE \
+    support_matrix_validation_lane:SUPPORT_MATRIX_VALIDATION_LANE \
+    support_matrix_reason:SUPPORT_MATRIX_REASON
 
   [[ -n "${SUPPORT_MATRIX_HOST_OS}" ]] || SUPPORT_MATRIX_HOST_OS="$(detected_host_os)"
   [[ -n "${SUPPORT_MATRIX_HOST_ARCH}" ]] || SUPPORT_MATRIX_HOST_ARCH="$(detected_host_arch)"
@@ -2966,24 +2952,16 @@ write_session_record_initial() {
   local git_branch=""
   local git_head=""
   local git_base=""
+  local git_plan=""
 
   [[ -n "${SESSION_ID}" ]] || SESSION_ID="$(generate_session_id)"
   sessions_dir="$(profile_sessions_dir_path "${profile}")"
   mkdir -p "${sessions_dir}"
   SESSION_RECORD_PATH="${sessions_dir}/${SESSION_ID}.json"
-  while IFS= read -r line; do
-    case "${line%%=*}" in
-      git_branch)
-        git_branch="${line#*=}"
-        ;;
-      git_head)
-        git_head="${line#*=}"
-        ;;
-      git_base)
-        git_base="${line#*=}"
-        ;;
-    esac
-  done < <(session_git_metadata_lines "${WORKSPACE}")
+  git_plan="$(session_git_metadata_lines "${WORKSPACE}")"
+  git_branch="$(shellproto_field "${git_plan}" git_branch)"
+  git_head="$(shellproto_field "${git_plan}" git_head)"
+  git_base="$(shellproto_field "${git_plan}" git_base)"
   write_session_record "${SESSION_RECORD_PATH}" \
     "session_id=${SESSION_ID}" \
     "profile=${profile}" \
