@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/providerid"
 )
 
@@ -425,36 +426,41 @@ func Usage(program string) string {
 	)
 }
 
-func Run(program string, args []string, stdout, stderr io.Writer) int {
+// Run is the Go translation of the bash workcell-scenario-manifest
+// entry point.  Diagnostics go to stderr exactly as the bash original
+// did; the returned error is either nil or a *cliexit.ExitCodeError
+// whose Code is the bash exit-code contract.  The metadatautil wrapper
+// recovers Code via errors.As and forwards it to os.Exit.
+func Run(program string, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, Usage(program))
-		return 2
+		return &cliexit.ExitCodeError{Code: 2}
 	}
 
 	switch args[0] {
 	case "list-tsv":
 		if len(args) != 2 {
 			fmt.Fprintln(stderr, Usage(program))
-			return 2
+			return &cliexit.ExitCodeError{Code: 2}
 		}
 		if err := ListTSV(args[1], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
-			return 1
+			return &cliexit.ExitCodeError{Code: 1}
 		}
-		return 0
+		return nil
 	case "verify-coverage":
 		if len(args) != 3 {
 			fmt.Fprintln(stderr, Usage(program))
-			return 2
+			return &cliexit.ExitCodeError{Code: 2}
 		}
 		if err := VerifyCoverage(args[1], args[2]); err != nil {
 			fmt.Fprintln(stderr, err)
-			return 1
+			return &cliexit.ExitCodeError{Code: 1}
 		}
-		return 0
+		return nil
 	default:
 		fmt.Fprintln(stderr, Usage(program))
 		fmt.Fprintf(stderr, "%s: unsupported command: %s\n", program, args[0])
-		return 2
+		return &cliexit.ExitCodeError{Code: 2}
 	}
 }

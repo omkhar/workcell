@@ -175,7 +175,9 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	}
 
 	if opts.DryRun {
-		emitDryRunHeader(stdout, opts, preflight, resolvedWorkspace, publishExistingCommits, draft)
+		if err := emitDryRunHeader(stdout, opts, preflight, resolvedWorkspace, publishExistingCommits, draft); err != nil {
+			return err
+		}
 		EmitCommand(stdout, branchCmd)
 		if opts.Snapshot == "worktree" && publishExistingCommits == 0 {
 			EmitCommand(stdout, addCmd)
@@ -236,18 +238,20 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	})
 }
 
-func emitDryRunHeader(stdout io.Writer, opts *Options, preflight *PreflightInputs, resolvedWorkspace string, publishExistingCommits int, draft bool) {
+// emitDryRunHeader writes the publish-pr dry-run KEY=VALUE plan header.
+// Fail-closed at the shellproto boundary: if any value contains a
+// forbidden control character we return the error rather than emit a
+// partial header.  Every value here originates from a tightly
+// validated CLI flag or a constant, so this should be impossible in
+// practice — but returning the error is the right shape so a future
+// regression that smuggles in a newline cannot silently corrupt the
+// bash-side plan re-import loop.
+func emitDryRunHeader(stdout io.Writer, opts *Options, preflight *PreflightInputs, resolvedWorkspace string, publishExistingCommits int, draft bool) error {
 	draftFlag := "0"
 	if draft {
 		draftFlag = "1"
 	}
-	// WriteFields can only fail if a value contains a forbidden control
-	// character; every value here originates either from a tightly
-	// validated CLI flag (publish_branch_name / publish_base_name) or
-	// from a constant.  Drop validation errors silently to preserve the
-	// void-returning signature - the input boundary has already
-	// rejected anything that could break the bash parser.
-	_ = shellproto.WriteFields(stdout, []shellproto.Field{
+	return shellproto.WriteFields(stdout, []shellproto.Field{
 		{Key: "publish_workspace", Value: resolvedWorkspace},
 		{Key: "publish_snapshot", Value: opts.Snapshot},
 		{Key: "publish_branch", Value: opts.Branch},

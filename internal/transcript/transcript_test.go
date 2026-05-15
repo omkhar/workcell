@@ -15,7 +15,23 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
+
+// runForTest invokes Run and recovers the bash exit-code contract from
+// the *cliexit.ExitCodeError the package returns.  Lets the existing
+// `code := Run(...); if code != N` test assertions stay as-is.
+func runForTest(program string, stdin, stdout *os.File, stderr io.Writer, args []string) int {
+	err := Run(program, stdin, stdout, stderr, args)
+	if err == nil {
+		return 0
+	}
+	if ec, ok := cliexit.IsExitCodeError(err); ok {
+		return ec.Code
+	}
+	return 1
+}
 
 func TestExitCodeFromWaitStatus(t *testing.T) {
 	t.Parallel()
@@ -86,7 +102,7 @@ func TestRunStripsSeparatorRecordsTranscriptAndReturnsExitCode(t *testing.T) {
 
 	logPath := filepath.Join(t.TempDir(), "transcript.log")
 	var stderr bytes.Buffer
-	code := Run("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", logPath, "--", "fake-agent", "--version"})
+	code := runForTest("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", logPath, "--", "fake-agent", "--version"})
 	if code != 7 {
 		t.Fatalf("Run() = %d, want 7", code)
 	}
@@ -119,7 +135,7 @@ func TestRunRequiresCommandAfterSeparator(t *testing.T) {
 	isTerminal = func(*os.File) bool { return true }
 
 	var stderr bytes.Buffer
-	code := Run("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "--"})
+	code := runForTest("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "--"})
 	if code != 2 {
 		t.Fatalf("Run() = %d, want 2", code)
 	}
@@ -134,7 +150,7 @@ func TestRunRequiresInteractiveTerminal(t *testing.T) {
 	isTerminal = func(*os.File) bool { return false }
 
 	var stderr bytes.Buffer
-	code := Run("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "echo"})
+	code := runForTest("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "echo"})
 	if code != 2 {
 		t.Fatalf("Run() = %d, want 2", code)
 	}
@@ -162,7 +178,7 @@ func TestRunHandlesSpawnErrorsWithoutTracebacks(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	code := Run("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "missing-agent"})
+	code := runForTest("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "missing-agent"})
 	if code != 127 {
 		t.Fatalf("Run() = %d, want 127", code)
 	}
@@ -206,7 +222,7 @@ func TestRunFailsWhenTranscriptPersistenceFails(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	code := Run("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "--", "fake-agent"})
+	code := runForTest("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "--", "fake-agent"})
 	if code != 1 {
 		t.Fatalf("Run() = %d, want 1", code)
 	}
@@ -252,7 +268,7 @@ func TestRunPropagatesTranscriptPersistenceFailureFromStdinRead(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	code := Run("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "--", "fake-agent"})
+	code := runForTest("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "--", "fake-agent"})
 	if code != 1 {
 		t.Fatalf("Run() = %d, want 1", code)
 	}
@@ -297,7 +313,7 @@ func TestRunPropagatesTranscriptPersistenceFailureFromMasterRead(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	code := Run("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "--", "fake-agent"})
+	code := runForTest("pty_transcript", os.Stdin, os.Stdout, &stderr, []string{"--log", filepath.Join(t.TempDir(), "transcript.log"), "--", "fake-agent"})
 	if code != 1 {
 		t.Fatalf("Run() = %d, want 1", code)
 	}

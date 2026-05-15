@@ -18,6 +18,33 @@ func ExpandUserPathStrict(raw string) (string, error) {
 	return expandUserPath(raw, true)
 }
 
+// ExpandUserPathHomeOnly expands `~` and `~/...` to the current user's
+// home directory and returns any other input verbatim — it never
+// consults user.Lookup.  This is the launcher-side variant: pointer
+// files read under WORKCELL_STATE_ROOT may legitimately reference paths
+// like `~/Library/...` but a `~someotheruser` reference would force a
+// host-level lookup, which the launcher deliberately avoids so a
+// hostile (or just non-existent) pointer cannot poke at the OS user
+// database.  Errors from os.UserHomeDir are surfaced as nil-result
+// rather than a returned error so the call site can keep its
+// best-effort fallback shape.
+func ExpandUserPathHomeOnly(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if raw == "~" || strings.HasPrefix(raw, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return raw
+		}
+		if raw == "~" {
+			return home
+		}
+		return filepath.Join(home, raw[2:])
+	}
+	return raw
+}
+
 func CanonicalizeExpandedPath(path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		abs, err := filepath.Abs(path)

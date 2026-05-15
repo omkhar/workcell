@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -16,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
@@ -106,40 +106,16 @@ func expandHostPath(raw string, base string) (string, error) {
 	return filepath.Abs(expanded)
 }
 
+// expandUserPath is a thin wrapper around pathutil.ExpandUserPathStrict
+// that preserves the "empty raw input is an error" rule the bash
+// caller's input-validation layer relied on.  All other tilde-expansion
+// semantics (including the ~user lookup) live in the shared pathutil
+// helper so we have a single Go owner of the expansion rules.
 func expandUserPath(raw string) (string, error) {
-	switch {
-	case raw == "":
+	if raw == "" {
 		return "", fmt.Errorf("empty path")
-	case raw == "~":
-		return os.UserHomeDir()
-	case strings.HasPrefix(raw, "~/"):
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, raw[2:]), nil
-	case strings.HasPrefix(raw, "~"):
-		slash := strings.IndexByte(raw, '/')
-		userName := raw[1:]
-		remainder := ""
-		if slash >= 0 {
-			userName = raw[1:slash]
-			remainder = raw[slash+1:]
-		}
-		if userName == "" {
-			return os.UserHomeDir()
-		}
-		usr, err := user.Lookup(userName)
-		if err != nil {
-			return "", err
-		}
-		if remainder == "" {
-			return usr.HomeDir, nil
-		}
-		return filepath.Join(usr.HomeDir, remainder), nil
-	default:
-		return raw, nil
 	}
+	return pathutil.ExpandUserPathStrict(raw)
 }
 
 func requirePathWithin(root string, candidate string, label string) error {

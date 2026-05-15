@@ -430,19 +430,12 @@ func currentUID() (uint32, bool) {
 	return uint32(uid), true
 }
 
+// expandUserPathForLauncher is a thin alias for
+// pathutil.ExpandUserPathHomeOnly that keeps the call-site idiomatic.
+// The launcher deliberately uses the "no `~user` lookup" variant so a
+// pointer file under WORKCELL_STATE_ROOT cannot force os/user database
+// queries; all other tilde-expansion semantics live in the shared
+// pathutil helper.
 func expandUserPathForLauncher(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	if raw == "~" || strings.HasPrefix(raw, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return raw
-		}
-		if raw == "~" {
-			return home
-		}
-		return filepath.Join(home, raw[2:])
-	}
-	return raw
+	return pathutil.ExpandUserPathHomeOnly(raw)
 }

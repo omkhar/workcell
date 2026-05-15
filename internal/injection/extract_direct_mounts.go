@@ -8,11 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"slices"
 	"sort"
-	"strings"
+
+	"github.com/omkhar/workcell/internal/pathutil"
 )
 
 // DirectMount is the JSON shape this binary emits for each direct mount.
@@ -216,48 +216,16 @@ func sortedMapKeys(values map[string]any) []string {
 	return keys
 }
 
+// expandUserPath is a thin wrapper around pathutil.ExpandUserPathStrict
+// that preserves the "empty raw input is an error" rule the bash
+// caller's input-validation layer relied on.  All other tilde-expansion
+// semantics live in the shared pathutil helper so we have a single Go
+// owner of the expansion rules.
 func expandUserPath(raw string) (string, error) {
 	if raw == "" {
 		return "", errors.New("empty path")
 	}
-	if raw == "~" || strings.HasPrefix(raw, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		if raw == "~" {
-			return home, nil
-		}
-		return filepath.Join(home, raw[2:]), nil
-	}
-	if strings.HasPrefix(raw, "~") {
-		slash := strings.IndexByte(raw, '/')
-		userName := raw[1:]
-		remainder := ""
-		if slash >= 0 {
-			userName = raw[1:slash]
-			remainder = raw[slash+1:]
-		}
-		home := ""
-		if userName == "" {
-			var err error
-			home, err = os.UserHomeDir()
-			if err != nil {
-				return "", err
-			}
-		} else {
-			usr, err := user.Lookup(userName)
-			if err != nil {
-				return "", err
-			}
-			home = usr.HomeDir
-		}
-		if remainder == "" {
-			return home, nil
-		}
-		return filepath.Join(home, remainder), nil
-	}
-	return raw, nil
+	return pathutil.ExpandUserPathStrict(raw)
 }
 
 func resolveAbsPath(raw string) (string, error) {

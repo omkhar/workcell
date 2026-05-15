@@ -401,13 +401,10 @@ func nextValue(args []string, i int, strict bool) (string, error) {
 // invocation of scripts/lib/manage_injection_policy. The cwd-based home
 // isolation that run_clean_host_command provides is unnecessary here
 // because Run does not exec subprocesses; it only reads files via paths
-// the caller already canonicalised.
+// the caller already canonicalised.  Run returns a *cliexit.ExitCodeError
+// directly, so we propagate it untouched.
 func runManagePolicy(args []string, stdout, stderr io.Writer) error {
-	code := Run("workcell-manage-injection-policy", args, stdout, stderr)
-	if code == 0 {
-		return nil
-	}
-	return &cliexit.ExitCodeError{Code: code, Message: ""}
+	return Run("workcell-manage-injection-policy", args, stdout, stderr)
 }
 
 // authMainBuffer is used by tests that need stdout captured separately

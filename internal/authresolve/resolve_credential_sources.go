@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
@@ -123,18 +124,23 @@ type config struct {
 	outputRoot     string
 }
 
-// Run executes the resolve-credential-sources workflow.
-func Run(args []string, stdout, stderr io.Writer) int {
+// Run executes the resolve-credential-sources workflow.  Diagnostics
+// land on stderr exactly as the bash predecessor wrote them, and the
+// returned error is either nil or a *cliexit.ExitCodeError carrying
+// the bash exit-code contract.  The hostutil wrapper recovers Code via
+// errors.As and propagates it to os.Exit, keeping a single typed
+// channel for every translated bash main in this repo.
+func Run(args []string, stdout, stderr io.Writer) error {
 	cfg, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return 2
+		return &cliexit.ExitCodeError{Code: 2}
 	}
 	if err := run(cfg); err != nil {
 		fmt.Fprintln(stderr, err)
-		return 1
+		return &cliexit.ExitCodeError{Code: 1}
 	}
-	return 0
+	return nil
 }
 
 func parseArgs(args []string) (config, error) {

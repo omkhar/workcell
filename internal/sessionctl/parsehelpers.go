@@ -15,19 +15,46 @@ import (
 // with Code 2 if the value is missing or empty.  This mirrors the bash
 // option_value_or_die helper for the simple "next token is the value"
 // case shared across parseStopArgs, parseDeleteArgs, parseMonitorArgs,
-// and parseAttachArgs.
+// parseAttachArgs, parseTimelineArgs, and parseSendArgs (--message).
 //
-// parseSendArgs has its own helper because it needs the raw/strict
-// distinction (raw_option_value_or_die for --message vs option_value_or_die
-// for --id).
+// parseSendArgs additionally rejects `--`-prefixed values for --id to
+// mirror the bash strict variant; for that mode call
+// optionValueOrErrorStrict, which is the same helper with the
+// `--`-prefix check enabled.
 func optionValueOrError(args []string, i int, flag string) (string, int, error) {
-	if i+1 >= len(args) || args[i+1] == "" {
+	return optionValueOrErrorMode(args, i, flag, false)
+}
+
+// optionValueOrErrorStrict is the strict variant: it additionally
+// rejects values starting with `--` so the operator's missing-value
+// gets caught when the next flag is consumed.  Used by parseSendArgs
+// for --id (bash option_value_or_die contract); parseSendArgs --message
+// keeps the raw mode so payloads may legitimately begin with `--`.
+func optionValueOrErrorStrict(args []string, i int, flag string) (string, int, error) {
+	return optionValueOrErrorMode(args, i, flag, true)
+}
+
+func optionValueOrErrorMode(args []string, i int, flag string, rejectDashDash bool) (string, int, error) {
+	if i+1 >= len(args) {
 		return "", i, &cliexit.ExitCodeError{
 			Code:    2,
 			Message: fmt.Sprintf("Option %s requires a value.", flag),
 		}
 	}
-	return args[i+1], i + 1, nil
+	value := args[i+1]
+	if value == "" {
+		return "", i, &cliexit.ExitCodeError{
+			Code:    2,
+			Message: fmt.Sprintf("Option %s requires a value.", flag),
+		}
+	}
+	if rejectDashDash && strings.HasPrefix(value, "--") {
+		return "", i, &cliexit.ExitCodeError{
+			Code:    2,
+			Message: fmt.Sprintf("Option %s requires a value.", flag),
+		}
+	}
+	return value, i + 1, nil
 }
 
 // unsupportedOption returns the exit-2 error for an unknown flag.  subcmd

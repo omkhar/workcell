@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 )
 
@@ -26,8 +27,21 @@ func runResolveCredentialSources(tb testing.TB, args []string, env map[string]st
 	for key, value := range env {
 		tb.Setenv(key, value)
 	}
-	code := Run(args, &stdout, &stderr)
-	return code, stdout.String(), stderr.String()
+	err := Run(args, &stdout, &stderr)
+	return exitCodeFromRunErr(err), stdout.String(), stderr.String()
+}
+
+// exitCodeFromRunErr extracts the bash exit-code contract from the
+// typed error Run returns so existing `code != 0` assertions keep
+// working without churn.
+func exitCodeFromRunErr(err error) int {
+	if err == nil {
+		return 0
+	}
+	if ec, ok := cliexit.IsExitCodeError(err); ok {
+		return ec.Code
+	}
+	return 1
 }
 
 func snapshotFile(tb testing.TB, path string) fileSnapshot {

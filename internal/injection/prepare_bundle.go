@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/authresolve"
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/shellproto"
@@ -167,8 +168,15 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 		"--output-metadata", resolverMetadataPath,
 		"--output-root", bundleRoot,
 	}
-	if rc := authresolve.Run(resolverArgs, devNull{}, os.Stderr); rc != 0 {
-		return nil, fmt.Errorf("resolve_credential_sources exited %d", rc)
+	if runErr := authresolve.Run(resolverArgs, devNull{}, os.Stderr); runErr != nil {
+		// authresolve.Run returns *cliexit.ExitCodeError; lift the Code
+		// into the diagnostic so the existing exit-status message stays
+		// byte-identical.
+		code := 1
+		if ec, ok := cliexit.IsExitCodeError(runErr); ok {
+			code = ec.Code
+		}
+		return nil, fmt.Errorf("resolve_credential_sources exited %d", code)
 	}
 
 	if err := RunRenderInjectionBundle(resolvedPolicyPath, opts.Agent, opts.Mode, bundleRoot, resolverMetadataPath); err != nil {
@@ -299,9 +307,16 @@ func (devNull) Write(p []byte) (int, error) { return len(p), nil }
 // DIRECT_SOURCE_MOUNTS_0=val, DIRECT_SOURCE_MOUNTS_1=val, ...) so the
 // shim can rebuild the bash array without needing to parse any in-line
 // separator.
-func FormatBundleResultForShell(result *PrepareBundleResult) string {
+//
+// Fail-closed: if any field value contains a forbidden control
+// character (newline or carriage return) the function returns an error
+// and emits NOTHING — the caller MUST surface the error so the bash
+// shim never re-imports a partial plan with a smuggled-in extra KEY=
+// line.  Upstream extractors already constrain values to printable
+// tokens, so this should only fire if a contract break slips in.
+func FormatBundleResultForShell(result *PrepareBundleResult) (string, error) {
 	if result == nil {
-		return ""
+		return "", nil
 	}
 	fields := make([]shellproto.Field, 0, 16+len(result.DirectSourceMounts))
 	fields = append(fields,
@@ -330,15 +345,10 @@ func FormatBundleResultForShell(result *PrepareBundleResult) string {
 		shellproto.Field{Key: "INJECTION_SECRET_COPY_TARGETS", Value: result.InjectionSecretCopyTargets},
 	)
 	var b strings.Builder
-	// WriteFields can only fail if a value contains a forbidden control
-	// character; the bundle result fields are all derived from policy
-	// content that the bash caller already constrains to printable
-	// tokens (see resolve_credential_sources / extract_direct_mounts),
-	// so an error here would indicate a contract break by an upstream
-	// emitter rather than user input.  Drop validation errors silently
-	// so the existing string-returning signature stays stable - the
-	// shellproto package's input-validation is best-effort defence in
-	// depth, and we already trust the upstream extractors.
-	_ = shellproto.WriteFields(&b, fields)
-	return b.String()
+	if err := shellproto.WriteFields(&b, fields); err != nil {
+		// Drop the partial buffer on the floor: the bash shim
+		// MUST NOT see a half-emitted plan.
+		return "", fmt.Errorf("format bundle result for shell: %w", err)
+	}
+	return b.String(), nil
 }

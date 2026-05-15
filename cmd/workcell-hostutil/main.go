@@ -19,6 +19,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
 	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/host/stateroot"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
 	"github.com/omkhar/workcell/internal/injection"
 	"github.com/omkhar/workcell/internal/publishpr"
@@ -73,40 +74,29 @@ func run(args []string) error {
 // TOML files. Not to be confused with `workcell-hostutil launcher
 // policy-cli` below, which is the **`workcell policy <subcommand>`** Go
 // translation of the bash policy_main user-shell command (init/show/...).
-// The previous standalone binary deferred to authpolicy.Run; we keep
-// the same contract here so callers see identical stdout/stderr and
-// exit codes.
+// authpolicy.Run returns a *cliexit.ExitCodeError directly, so we can
+// propagate it without re-wrapping; main()'s typed handler preserves
+// the stdout/stderr/exit-code contract.
 func runHostutilPolicy(args []string) error {
-	code := authpolicy.Run("workcell-hostutil policy", args, os.Stdout, os.Stderr)
-	if code == 0 {
-		return nil
-	}
-	return &cliexit.ExitCodeError{Code: code, Message: ""}
+	return authpolicy.Run("workcell-hostutil policy", args, os.Stdout, os.Stderr)
 }
 
 // runHostutilResolveCredentials dispatches the absorbed
 // workcell-resolve-credential-sources CLI surface.  authresolve.Run
-// already writes stdout/stderr and returns the bash-shaped exit code;
-// we wrap it in an ExitCodeError so main()'s typed handler can
-// preserve the contract.
+// writes diagnostics to stderr and returns a *cliexit.ExitCodeError
+// directly, so we can propagate it untouched and let main()'s typed
+// handler preserve the bash exit-code contract.
 func runHostutilResolveCredentials(args []string) error {
-	code := authresolve.Run(args, os.Stdout, os.Stderr)
-	if code == 0 {
-		return nil
-	}
-	return &cliexit.ExitCodeError{Code: code, Message: ""}
+	return authresolve.Run(args, os.Stdout, os.Stderr)
 }
 
 // runHostutilPTYTranscript dispatches the absorbed
 // workcell-pty-transcript CLI surface.  transcript.Run wants the
 // raw *os.File for stdin/stdout (it tees PTY output and stamps
-// timestamps), so we forward os.Stdin/os.Stdout directly.
+// timestamps), so we forward os.Stdin/os.Stdout directly.  Run returns
+// a *cliexit.ExitCodeError directly, so we propagate it untouched.
 func runHostutilPTYTranscript(args []string) error {
-	code := transcript.Run("workcell-hostutil pty-transcript", os.Stdin, os.Stdout, os.Stderr, args)
-	if code == 0 {
-		return nil
-	}
-	return &cliexit.ExitCodeError{Code: code, Message: ""}
+	return transcript.Run("workcell-hostutil pty-transcript", os.Stdin, os.Stdout, os.Stderr, args)
 }
 
 func runPath(args []string) error {
@@ -252,6 +242,12 @@ func launcherSubcommands() []launcherSubcommand {
 		{"injection-stage-direct-mounts", 2, 2, cmdLauncherInjectionStageDirectMounts},
 		{"injection-prepare-bundle", 0, -1, cmdLauncherInjectionPrepareBundle},
 		{"publish-pr-cli", 0, -1, cmdLauncherPublishPRCli},
+		// lookup-state-roots takes the two state-root values as
+		// positional args (in WORKCELL,COLIMA order) so the bash shim
+		// does not need to leak them through env -i to the cleaned
+		// host process; bash forwards `${WORKCELL_STATE_ROOT:-} ${COLIMA_STATE_ROOT:-}`
+		// directly on the command line.
+		{"lookup-state-roots", 2, 2, cmdLauncherLookupStateRoots},
 	}
 }
 
@@ -854,7 +850,9 @@ func cmdLauncherInjectionStageDirectMounts(args []string) error {
 // for the PR 23.4 Go translation of prepare_injection_bundle.  It reads the
 // bash globals from CLI flags, executes the full pipeline in-process, and
 // prints KEY=VALUE lines (one per bash global) so the shim can re-export
-// them via a read loop.
+// them via a read loop.  FormatBundleResultForShell is fail-closed: if
+// any value carries a forbidden control char we propagate the error and
+// emit nothing so bash never re-imports a partial plan.
 func cmdLauncherInjectionPrepareBundle(args []string) error {
 	opts, err := parsePrepareBundleArgs(args)
 	if err != nil {
@@ -864,7 +862,25 @@ func cmdLauncherInjectionPrepareBundle(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Print(injection.FormatBundleResultForShell(result))
+	formatted, err := injection.FormatBundleResultForShell(result)
+	if err != nil {
+		return err
+	}
+	fmt.Print(formatted)
+	return nil
+}
+
+// cmdLauncherLookupStateRoots is the launcher subcommand entry point
+// that scripts/workcell::session_lookup_root_args shells out to so the
+// bash↔Go state-root contract has a single Go owner.  The two roots
+// arrive as positional args in (workcell, colima) order rather than as
+// env vars because go_hostutil routes through run_clean_host_command,
+// which strips the process env via env -i.  Each non-empty value is
+// emitted on its own line as a ready-to-consume `--root=PATH` token.
+func cmdLauncherLookupStateRoots(args []string) error {
+	for _, line := range stateroot.FormatRootArgs(args[0], args[1]) {
+		fmt.Println(line)
+	}
 	return nil
 }
 

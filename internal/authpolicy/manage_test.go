@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 type runResult struct {
@@ -20,8 +22,22 @@ type runResult struct {
 func runAuthPolicy(args ...string) runResult {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run("workcell", args, &stdout, &stderr)
-	return runResult{code: code, stdout: stdout.String(), stderr: stderr.String()}
+	err := Run("workcell", args, &stdout, &stderr)
+	return runResult{code: exitCodeFromRunErr(err), stdout: stdout.String(), stderr: stderr.String()}
+}
+
+// exitCodeFromRunErr extracts the bash exit-code contract out of the
+// typed error Run now returns.  Tests previously asserted on the int
+// return; routing it through *cliexit.ExitCodeError preserves those
+// assertions verbatim.
+func exitCodeFromRunErr(err error) int {
+	if err == nil {
+		return 0
+	}
+	if ec, ok := cliexit.IsExitCodeError(err); ok {
+		return ec.Code
+	}
+	return 1
 }
 
 func writeFile(tb testing.TB, path, content string, mode os.FileMode) {
