@@ -152,6 +152,8 @@ shell_files=(
   "${ROOT_DIR}/scripts/lib/render_injection_bundle"
   "${ROOT_DIR}/scripts/lib/resolve_credential_sources"
   "${ROOT_DIR}/scripts/lib/scenario_manifest"
+  "${ROOT_DIR}/scripts/lib/sessionctl-shim.sh"
+  "${ROOT_DIR}/scripts/lib/shellproto.sh"
   "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
   "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh"
   "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh"

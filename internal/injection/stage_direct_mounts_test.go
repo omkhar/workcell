@@ -295,3 +295,32 @@ func TestStageDirectMountsStripsGroupOtherPermissions(t *testing.T) {
 		t.Fatalf("expected group/other bits cleared, got %o", info.Mode().Perm())
 	}
 }
+
+// TestStageDirectMountsRejectsSymlinkedSource — round-2 sethify Sec-symlink-source.
+// A symlinked top-level mount source dereferences through every
+// subsequent stat/open and would leak the target's content into the
+// staged bundle (cf. /etc/passwd / ~/.ssh/* escape class).
+// validateDirectMount must reject the link up front, mirroring the
+// symlink skip that copyDirContents already does for entries it
+// encounters inside a directory source.
+func TestStageDirectMountsRejectsSymlinkedSource(t *testing.T) {
+	bundleRoot := t.TempDir()
+	// Real target file (would otherwise be valid mount content).
+	realFile := filepath.Join(bundleRoot, "real.txt")
+	if err := os.WriteFile(realFile, []byte("real-content"), 0o600); err != nil {
+		t.Fatalf("WriteFile real: %v", err)
+	}
+	// Symlink that points at it; this is what the spec references.
+	linkSource := filepath.Join(bundleRoot, "link.txt")
+	if err := os.Symlink(realFile, linkSource); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{
+		{"source": linkSource, "mount_path": "/opt/workcell/host-inputs/x"},
+	})
+	_, err := StageDirectMounts(bundleRoot, specPath)
+	if err == nil || !strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("expected symlink-rejection error, got %v", err)
+	}
+}

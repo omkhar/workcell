@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/stateroot"
@@ -34,10 +35,10 @@ func logsMain(args []string, stdout io.Writer) error {
 		return nil
 	}
 	if sessionID == "" {
-		return errors.New("workcell session logs requires --id.")
+		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session logs requires --id."}
 	}
 	if kind == "" {
-		return errors.New("workcell session logs requires --kind.")
+		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session logs requires --kind."}
 	}
 	if err := validateLogsKindName(kind); err != nil {
 		return err
@@ -53,18 +54,18 @@ func logsMain(args []string, stdout io.Writer) error {
 
 	logPath := logPathForKind(record, kind)
 	if logPath == "" {
-		return fmt.Errorf("No %s log is recorded for session %s.", kind, sessionID)
+		return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("No %s log is recorded for session %s.", kind, sessionID)}
 	}
 
 	resolved, err := hoststate.ResolveHostOutputCandidate(logPath)
 	if err != nil || resolved != logPath {
-		return fmt.Errorf("Workcell blocked host output path after launch: %s", logPath)
+		return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("Workcell blocked host output path after launch: %s", logPath)}
 	}
 
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("No %s log is recorded for session %s.", kind, sessionID)
+			return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("No %s log is recorded for session %s.", kind, sessionID)}
 		}
 		return err
 	}
@@ -76,21 +77,23 @@ func parseLogsArgs(args []string) (sessionID, kind string, showHelp bool, err er
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			if i+1 >= len(args) || args[i+1] == "" {
-				return "", "", false, fmt.Errorf("--id requires a non-empty value")
+			value, next, perr := optionValueOrError(args, i, "--id")
+			if perr != nil {
+				return "", "", false, perr
 			}
-			sessionID = args[i+1]
-			i++
+			sessionID = value
+			i = next
 		case "--kind":
-			if i+1 >= len(args) || args[i+1] == "" {
-				return "", "", false, fmt.Errorf("--kind requires a non-empty value")
+			value, next, perr := optionValueOrError(args, i, "--kind")
+			if perr != nil {
+				return "", "", false, perr
 			}
-			kind = args[i+1]
-			i++
+			kind = value
+			i = next
 		case "-h", "--help":
 			showHelp = true
 		default:
-			return "", "", false, fmt.Errorf("Unsupported workcell session logs option: %s", args[i])
+			return "", "", false, unsupportedOption("session logs", args[i])
 		}
 	}
 	return sessionID, kind, showHelp, nil
@@ -101,7 +104,7 @@ func validateLogsKindName(kind string) error {
 	case "audit", "debug", "file-trace", "transcript":
 		return nil
 	}
-	return fmt.Errorf("Unsupported log kind: %s\nUse --logs audit, --logs debug, --logs file-trace, or --logs transcript.", kind)
+	return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("Unsupported log kind: %s\nUse --logs audit, --logs debug, --logs file-trace, or --logs transcript.", kind)}
 }
 
 func logPathForKind(record sessions.SessionRecord, kind string) string {

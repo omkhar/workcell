@@ -1269,6 +1269,16 @@ if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${RO
   exit 1
 fi
 
+if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/shellproto\.sh"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to source the shellproto helper" >&2
+  exit 1
+fi
+
+if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/sessionctl-shim\.sh"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to source the sessionctl shim helper" >&2
+  exit 1
+fi
+
 INSTALL_DEPS_VERIFY_BIN="${BARRIER_VERIFY_ROOT}/install-deps-bin"
 INSTALL_DEPS_LOG="${BARRIER_VERIFY_ROOT}/install-deps-brew.log"
 INSTALL_DEPS_VERIFY_HOME="$(mktemp -d "${BARRIER_VERIFY_ROOT}/install-deps-home.XXXXXX")"

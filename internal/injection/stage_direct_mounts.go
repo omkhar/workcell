@@ -97,6 +97,15 @@ func validateDirectMount(hostSource, mountPath string) error {
 	if !filepath.IsAbs(cleanedSource) {
 		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", hostSource)
 	}
+	// Reject symlinked sources up front: a symlink under
+	// /opt/workcell/host-inputs/ that points at /etc/passwd would
+	// dereference through every subsequent stat/open and leak the
+	// target's content into the staged bundle. copyDirContents already
+	// skips symlinks encountered inside a directory source; this
+	// closes the matching escape for the top-level source itself.
+	if lstatInfo, lerr := os.Lstat(cleanedSource); lerr == nil && lstatInfo.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("Direct input source must not be a symbolic link: %s", hostSource)
+	}
 	info, err := os.Stat(cleanedSource)
 	if err != nil || !(info.Mode().IsRegular() || info.IsDir()) {
 		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", hostSource)

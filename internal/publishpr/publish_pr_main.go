@@ -12,13 +12,6 @@ import (
 	"github.com/omkhar/workcell/internal/cliexit"
 )
 
-// ExitCodeError is kept as a package-local type alias for cliexit.ExitCodeError
-// so existing publishpr-internal test code that references the local name
-// continues to compile. Production code should reference cliexit.ExitCodeError
-// directly; this alias is a compatibility shim slated for removal in the
-// follow-up sessionctl/publishpr type-sweep.
-type ExitCodeError = cliexit.ExitCodeError
-
 func exit2(format string, args ...any) error {
 	return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf(format, args...)}
 }
@@ -376,11 +369,4 @@ func Preflight(opts *Options, checkRefFormat CheckRefFormatFunc, fileReader func
 // UsageText())" pattern.
 func WriteUsage(w io.Writer) {
 	fmt.Fprint(w, UsageText())
-}
-
-// IsExitCodeError reports whether err is a *cliexit.ExitCodeError. It
-// forwards to cliexit.IsExitCodeError and is preserved here for source
-// compatibility with the existing publishpr callers and tests.
-func IsExitCodeError(err error) (*cliexit.ExitCodeError, bool) {
-	return cliexit.IsExitCodeError(err)
 }

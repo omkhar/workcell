@@ -19,7 +19,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/omkhar/workcell/internal/metadatautil"
@@ -121,14 +123,25 @@ func main() {
 }
 
 func rootUsageError(badCommand string) error {
-	names := make([]string, 0, len(subcommands()))
+	names := make([]string, 0, len(subcommands())+1)
 	for _, sub := range subcommands() {
 		names = append(names, sub.name)
 	}
-	if badCommand == "" {
-		return fmt.Errorf("usage: %s <command> [args...]", os.Args[0])
+	// scenario-manifest is dispatched directly in main() and so is not
+	// part of the subcommands() table, but it is still a known command
+	// for help/error output purposes.
+	names = append(names, "scenario-manifest")
+	sort.Strings(names)
+	var lines strings.Builder
+	for _, name := range names {
+		lines.WriteString("  ")
+		lines.WriteString(name)
+		lines.WriteString("\n")
 	}
-	return fmt.Errorf("unknown command: %s", badCommand)
+	if badCommand == "" {
+		return fmt.Errorf("usage: %s <command> [args...]\n\nCommands:\n%s", os.Args[0], lines.String())
+	}
+	return fmt.Errorf("unknown command: %s\n\nKnown commands:\n%s", badCommand, lines.String())
 }
 
 func cmdGenerateControlPlaneManifest(args []string) error {

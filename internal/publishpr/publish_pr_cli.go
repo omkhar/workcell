@@ -33,7 +33,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		// branch (unsupported option); ParseArgs error messages start
 		// with "Unsupported publish-pr option:" in that case, so we
 		// gate the usage echo on the prefix to stay byte-identical.
-		if ec, ok := IsExitCodeError(err); ok && strings.HasPrefix(ec.Message, "Unsupported publish-pr option:") {
+		if ec, ok := cliexit.IsExitCodeError(err); ok && strings.HasPrefix(ec.Message, "Unsupported publish-pr option:") {
 			WriteUsage(stderr)
 		}
 		return err

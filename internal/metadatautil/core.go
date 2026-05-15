@@ -461,6 +461,8 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		"scripts/check-publish-commit-signatures.sh",
 		"scripts/lib/extract_direct_mounts",
 		"scripts/lib/render_injection_bundle",
+		"scripts/lib/sessionctl-shim.sh",
+		"scripts/lib/shellproto.sh",
 		"scripts/lib/trusted-docker-client.sh",
 	}
 	runtimeArtifacts := []ControlPlaneArtifact{

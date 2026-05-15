@@ -260,3 +260,43 @@ func TestSendMainRejectsUnknownOption(t *testing.T) {
 		t.Fatalf("sendMain error = %v, want ExitCodeError{Code:2}", err)
 	}
 }
+
+// TestSendMainRejectsControlCharsInUserInputs guards rejectControlChars
+// at the session-send input boundary for the two user-controlled
+// fields (--id and --message). A CR/LF in either would let the bash
+// shim see forged plan lines after the first newline.
+func TestSendMainRejectsControlCharsInUserInputs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"id-newline", []string{"--id", "session-1\nsession_id=other", "--message", "ok"}},
+		{"id-cr", []string{"--id", "session-1\rsession_id=other", "--message", "ok"}},
+		{"message-newline", []string{"--id", "session-1", "--message", "hello\nsession_id=other"}},
+		{"message-cr", []string{"--id", "session-1", "--message", "hello\rsession_id=other"}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			err := sendMain(tc.args, &buf, io.Discard)
+			if err == nil {
+				t.Fatalf("sendMain accepted control-char value: %v", tc.args)
+			}
+			var ec *cliexit.ExitCodeError
+			if !errors.As(err, &ec) || ec.Code != 2 {
+				t.Fatalf("sendMain error = %v, want ExitCodeError{Code:2}", err)
+			}
+			if !strings.Contains(ec.Message, "must not contain newline or carriage-return") {
+				t.Fatalf("sendMain message = %q, want newline-rejection diagnostic", ec.Message)
+			}
+			if buf.Len() != 0 {
+				t.Fatalf("sendMain wrote %q on rejection, want no stdout output", buf.String())
+			}
+		})
+	}
+}
