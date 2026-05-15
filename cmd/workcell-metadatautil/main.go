@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/metadatautil"
 	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
 	"github.com/omkhar/workcell/internal/metadatautil/pinnedinputs"
@@ -100,11 +101,18 @@ func main() {
 	}
 	// scenario-manifest preserves the bash contract of distinct exit
 	// codes for usage (2) vs. runtime (1) errors that
-	// scenarios.Run encodes; we forward through it directly rather
-	// than collapsing into the generic error-then-die path used by
-	// the other subcommands.
+	// scenarios.Run encodes; scenarios.Run already wrote the
+	// diagnostic to stderr and returns a *cliexit.ExitCodeError, so we
+	// forward Code straight through to os.Exit instead of routing it
+	// through die() (which would double-print the message).
 	if os.Args[1] == "scenario-manifest" {
-		os.Exit(scenarios.Run("workcell-metadatautil scenario-manifest", os.Args[2:], os.Stdout, os.Stderr))
+		if err := scenarios.Run("workcell-metadatautil scenario-manifest", os.Args[2:], os.Stdout, os.Stderr); err != nil {
+			if ec, ok := cliexit.IsExitCodeError(err); ok {
+				os.Exit(ec.Code)
+			}
+			die(err)
+		}
+		return
 	}
 	for _, sub := range subcommands() {
 		if sub.name != os.Args[1] {

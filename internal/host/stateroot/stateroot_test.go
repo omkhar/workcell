@@ -66,3 +66,58 @@ func TestLookupRootsSkipsEmpty(t *testing.T) {
 		t.Fatalf("LookupRoots() = %v, want [/tmp/wc]", got)
 	}
 }
+
+func TestFormattedRootArgsEmitsRootFlagPerNonEmptyEnv(t *testing.T) {
+	t.Setenv("WORKCELL_STATE_ROOT", "/tmp/wc")
+	t.Setenv("COLIMA_STATE_ROOT", "/tmp/colima")
+
+	got := FormattedRootArgs()
+	want := []string{"--root=/tmp/wc", "--root=/tmp/colima"}
+	if len(got) != len(want) {
+		t.Fatalf("FormattedRootArgs() = %v, want %v", got, want)
+	}
+	for i, line := range got {
+		if line != want[i] {
+			t.Fatalf("FormattedRootArgs()[%d] = %q, want %q", i, line, want[i])
+		}
+	}
+}
+
+func TestFormattedRootArgsSkipsEmpty(t *testing.T) {
+	t.Setenv("WORKCELL_STATE_ROOT", "")
+	t.Setenv("COLIMA_STATE_ROOT", "/tmp/colima")
+
+	got := FormattedRootArgs()
+	if len(got) != 1 || got[0] != "--root=/tmp/colima" {
+		t.Fatalf("FormattedRootArgs() = %v, want [--root=/tmp/colima]", got)
+	}
+}
+
+func TestFormatRootArgsEmitsBothInWorkcellThenColimaOrder(t *testing.T) {
+	t.Parallel()
+
+	got := FormatRootArgs("/tmp/wc", "/tmp/colima")
+	want := []string{"--root=/tmp/wc", "--root=/tmp/colima"}
+	if len(got) != len(want) {
+		t.Fatalf("FormatRootArgs() = %v, want %v", got, want)
+	}
+	for i, line := range got {
+		if line != want[i] {
+			t.Fatalf("FormatRootArgs()[%d] = %q, want %q", i, line, want[i])
+		}
+	}
+}
+
+func TestFormatRootArgsSkipsEmpty(t *testing.T) {
+	t.Parallel()
+
+	if got := FormatRootArgs("", "/tmp/colima"); len(got) != 1 || got[0] != "--root=/tmp/colima" {
+		t.Fatalf("FormatRootArgs(empty,/tmp/colima) = %v, want [--root=/tmp/colima]", got)
+	}
+	if got := FormatRootArgs("/tmp/wc", ""); len(got) != 1 || got[0] != "--root=/tmp/wc" {
+		t.Fatalf("FormatRootArgs(/tmp/wc,empty) = %v, want [--root=/tmp/wc]", got)
+	}
+	if got := FormatRootArgs("", ""); len(got) != 0 {
+		t.Fatalf("FormatRootArgs(empty,empty) = %v, want []", got)
+	}
+}

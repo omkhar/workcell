@@ -97,7 +97,10 @@ func TestFormatBundleResultForShellEmitsExpectedKeys(t *testing.T) {
 		InjectionSSHConfigAssurance:         "on",
 		InjectionSecretCopyTargets:          "claude_oauth",
 	}
-	output := FormatBundleResultForShell(result)
+	output, err := FormatBundleResultForShell(result)
+	if err != nil {
+		t.Fatalf("FormatBundleResultForShell err = %v, want nil", err)
+	}
 	for _, expected := range []string{
 		"INJECTION_BUNDLE_ROOT=/tmp/bundle",
 		"DIRECT_MOUNT_SPEC_PATH=/tmp/bundle.mounts.json",
@@ -119,8 +122,37 @@ func TestFormatBundleResultForShellEmitsExpectedKeys(t *testing.T) {
 }
 
 func TestFormatBundleResultForShellNilSafe(t *testing.T) {
-	if got := FormatBundleResultForShell(nil); got != "" {
+	got, err := FormatBundleResultForShell(nil)
+	if err != nil {
+		t.Fatalf("FormatBundleResultForShell(nil) err = %v, want nil", err)
+	}
+	if got != "" {
 		t.Fatalf("expected empty string for nil result, got %q", got)
+	}
+}
+
+// TestFormatBundleResultForShellRejectsControlChars pins the
+// fail-closed contract: when an upstream extractor smuggles a newline
+// into a field value, FormatBundleResultForShell must return an error
+// and emit NOTHING.  A partial KEY=VALUE plan would let the bash shim
+// re-import a forged second record (e.g. `INJECTION_SSH_ENABLED=1`)
+// and confuse the launcher; the shellproto.WriteFields contract
+// already validates each value at the emit boundary, so this test
+// only needs to assert that we surface that error to the caller
+// instead of dropping it on the floor.
+func TestFormatBundleResultForShellRejectsControlChars(t *testing.T) {
+	t.Parallel()
+
+	result := &PrepareBundleResult{
+		InjectionBundleRoot: "/tmp/bundle\nINJECTION_SSH_ENABLED=1",
+		DirectMountSpecPath: "/tmp/bundle.mounts.json",
+	}
+	got, err := FormatBundleResultForShell(result)
+	if err == nil {
+		t.Fatalf("FormatBundleResultForShell err = nil, want error for newline-containing field; got output %q", got)
+	}
+	if got != "" {
+		t.Fatalf("FormatBundleResultForShell output = %q, want empty on error", got)
 	}
 }
 

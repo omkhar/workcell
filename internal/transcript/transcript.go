@@ -14,6 +14,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 type ReadFunc func(fd int) ([]byte, error)
@@ -48,7 +50,12 @@ var (
 	writeAtFD           = writeAtFDReal
 )
 
-func Run(program string, stdin, stdout *os.File, stderr io.Writer, args []string) int {
+// Run is the Go translation of the bash workcell-pty-transcript entry
+// point.  Diagnostics land on stderr exactly as the original did; the
+// returned error is either nil (exit 0) or a *cliexit.ExitCodeError
+// whose Code carries the bash exit-code contract.  The hostutil wrapper
+// recovers Code via errors.As and propagates it to os.Exit.
+func Run(program string, stdin, stdout *os.File, stderr io.Writer, args []string) error {
 	fs := flag.NewFlagSet(program, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var logPath string
@@ -59,12 +66,12 @@ func Run(program string, stdin, stdout *os.File, stderr io.Writer, args []string
 
 	if err := fs.Parse(args); err != nil {
 		fs.Usage()
-		return 2
+		return &cliexit.ExitCodeError{Code: 2}
 	}
 	if logPath == "" {
 		fs.Usage()
 		fmt.Fprintln(stderr, "--log is required")
-		return 2
+		return &cliexit.ExitCodeError{Code: 2}
 	}
 
 	command := fs.Args()
@@ -73,17 +80,17 @@ func Run(program string, stdin, stdout *os.File, stderr io.Writer, args []string
 	}
 	if len(command) == 0 {
 		fmt.Fprintf(stderr, "%s requires a command after --\n", program)
-		return 2
+		return &cliexit.ExitCodeError{Code: 2}
 	}
 	if !isTerminal(stdin) || !isTerminal(stdout) {
 		fmt.Fprintf(stderr, "%s requires an interactive terminal\n", program)
-		return 2
+		return &cliexit.ExitCodeError{Code: 2}
 	}
 
 	logFile, err := openLogFile(logPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return 1
+		return &cliexit.ExitCodeError{Code: 1}
 	}
 	defer logFile.Close()
 
@@ -108,12 +115,12 @@ func Run(program string, stdin, stdout *os.File, stderr io.Writer, args []string
 		}
 		return nil
 	}
-	reportPersistErr := func() int {
+	reportPersistErr := func() error {
 		if persistErr == nil {
-			return 0
+			return nil
 		}
 		fmt.Fprintf(stderr, "%s failed to persist transcript: %s\n", program, persistErr)
-		return 1
+		return &cliexit.ExitCodeError{Code: 1}
 	}
 
 	startedAt := pythonTimestamp(time.Now())
@@ -147,10 +154,13 @@ func Run(program string, stdin, stdout *os.File, stderr io.Writer, args []string
 
 	finishedAt := pythonTimestamp(time.Now())
 	_ = writeLog(renderFooter(finishedAt, exitCode, waitStatus, spawnErr))
-	if code := reportPersistErr(); code != 0 {
-		return code
+	if err := reportPersistErr(); err != nil {
+		return err
 	}
-	return exitCode
+	if exitCode == 0 {
+		return nil
+	}
+	return &cliexit.ExitCodeError{Code: exitCode}
 }
 
 func isInteractiveTerminal(file *os.File) bool {

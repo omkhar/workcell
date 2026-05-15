@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/stateroot"
@@ -93,13 +92,13 @@ func sendMain(args []string, stdout, stderr io.Writer) error {
 
 // parseSendArgs walks the bash session_send_main option loop.
 //
-// --id mirrors option_value_or_die: the value must be non-empty and
-// must not start with `--` (catches a missing value swallowed by the
-// next flag, e.g. `--id --message foo`).
+// --id uses the strict optionValueOrErrorStrict helper: the value must
+// be non-empty and must not start with `--` (catches a missing value
+// swallowed by the next flag, e.g. `--id --message foo`).
 //
-// --message mirrors raw_option_value_or_die: the value must only be
-// non-empty so the operator can legitimately send a payload that starts
-// with `--`.
+// --message uses the raw optionValueOrError helper: the value must
+// only be non-empty so the operator can legitimately send a payload
+// that starts with `--`.
 //
 // --no-newline is a boolean toggle.
 //
@@ -112,19 +111,19 @@ func parseSendArgs(args []string) (sessionID, message string, appendNewline, sho
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			v, perr := optionValueForSend(args, i, false)
+			v, ni, perr := optionValueOrErrorStrict(args, i, "--id")
 			if perr != nil {
 				return "", "", false, false, perr
 			}
 			sessionID = v
-			i++
+			i = ni
 		case "--message":
-			v, perr := optionValueForSend(args, i, true)
+			v, ni, perr := optionValueOrError(args, i, "--message")
 			if perr != nil {
 				return "", "", false, false, perr
 			}
 			message = v
-			i++
+			i = ni
 		case "--no-newline":
 			appendNewline = false
 		case "-h", "--help":
@@ -134,39 +133,4 @@ func parseSendArgs(args []string) (sessionID, message string, appendNewline, sho
 		}
 	}
 	return sessionID, message, appendNewline, showHelp, nil
-}
-
-// optionValueForSend returns the value following args[i].  When raw is
-// false, the value mirrors option_value_or_die: empty or `--`-prefixed
-// values are rejected (so the missing-value case is caught when the
-// next flag is consumed).  When raw is true, the value mirrors
-// raw_option_value_or_die: only empty is rejected.
-//
-// The exit-2 wrapping matches the bash CLI contract that usage errors
-// flow back as exit status 2.  This helper is intentionally separate
-// from the shared optionValueOrError because parseSendArgs needs the
-// raw/strict distinction; sibling parse functions only ever need the
-// "non-empty" check.
-func optionValueForSend(args []string, i int, raw bool) (string, error) {
-	option := args[i]
-	if i+1 >= len(args) {
-		return "", &cliexit.ExitCodeError{
-			Code:    2,
-			Message: fmt.Sprintf("Option %s requires a value.", option),
-		}
-	}
-	value := args[i+1]
-	if value == "" {
-		return "", &cliexit.ExitCodeError{
-			Code:    2,
-			Message: fmt.Sprintf("Option %s requires a value.", option),
-		}
-	}
-	if !raw && strings.HasPrefix(value, "--") {
-		return "", &cliexit.ExitCodeError{
-			Code:    2,
-			Message: fmt.Sprintf("Option %s requires a value.", option),
-		}
-	}
-	return value, nil
 }

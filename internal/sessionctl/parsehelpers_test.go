@@ -51,6 +51,49 @@ func TestOptionValueOrErrorRejectsAtEndOfArgs(t *testing.T) {
 	}
 }
 
+func TestOptionValueOrErrorAcceptsDashDashPrefixedValue(t *testing.T) {
+	t.Parallel()
+
+	// optionValueOrError is the raw mode: --message values may
+	// legitimately begin with `--` (the operator is sending a
+	// payload), so only the non-empty check fires.
+	value, next, err := optionValueOrError([]string{"--message", "--hello"}, 0, "--message")
+	if err != nil {
+		t.Fatalf("optionValueOrError err = %v, want nil", err)
+	}
+	if value != "--hello" || next != 1 {
+		t.Fatalf("value=%q next=%d, want --hello 1", value, next)
+	}
+}
+
+func TestOptionValueOrErrorStrictRejectsDashDashPrefixedValue(t *testing.T) {
+	t.Parallel()
+
+	// optionValueOrErrorStrict is the bash option_value_or_die
+	// contract: a `--`-prefixed next token is treated as the missing
+	// value swallowed by the next flag.
+	_, _, err := optionValueOrErrorStrict([]string{"--id", "--message"}, 0, "--id")
+	ec, ok := cliexit.IsExitCodeError(err)
+	if !ok || ec.Code != 2 {
+		t.Fatalf("err = %v, want *cliexit.ExitCodeError{Code:2}", err)
+	}
+	if !strings.Contains(ec.Message, "--id") {
+		t.Errorf("Message = %q, want substring '--id'", ec.Message)
+	}
+}
+
+func TestOptionValueOrErrorStrictAcceptsPlainValue(t *testing.T) {
+	t.Parallel()
+
+	value, next, err := optionValueOrErrorStrict([]string{"--id", "session-1"}, 0, "--id")
+	if err != nil {
+		t.Fatalf("optionValueOrErrorStrict err = %v, want nil", err)
+	}
+	if value != "session-1" || next != 1 {
+		t.Fatalf("value=%q next=%d, want session-1 1", value, next)
+	}
+}
+
 func TestUnsupportedOptionBuildsMessageAndExit2(t *testing.T) {
 	t.Parallel()
 

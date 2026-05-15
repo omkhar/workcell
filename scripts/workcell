@@ -259,7 +259,15 @@ NO_SPINNER=0
 TARGET_BACKEND="colima"
 
 session_lookup_root_args() {
-  printf '%s\n' "--root=${WORKCELL_STATE_ROOT}" "--root=${COLIMA_STATE_ROOT}"
+  # Single Go owner: internal/host/stateroot.FormatRootArgs prints one
+  # --root=PATH line per non-empty argument, in that fixed order, with
+  # the skip-empty rule living in exactly one place (the Go helper).
+  # The two roots are forwarded on argv (rather than via env) because
+  # go_hostutil routes through run_clean_host_command, whose env -i
+  # would otherwise strip them.
+  go_hostutil launcher lookup-state-roots \
+    "${WORKCELL_STATE_ROOT:-}" \
+    "${COLIMA_STATE_ROOT:-}"
 }
 
 usage() {

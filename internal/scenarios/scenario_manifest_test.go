@@ -10,7 +10,22 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
+
+// exitCodeFromRunErr extracts the bash exit-code contract out of the
+// typed error Run returns so existing `code != 0` assertions keep
+// working without churn.
+func exitCodeFromRunErr(err error) int {
+	if err == nil {
+		return 0
+	}
+	if ec, ok := cliexit.IsExitCodeError(err); ok {
+		return ec.Code
+	}
+	return 1
+}
 
 func writeManifest(tb testing.TB, root string, payload any) string {
 	tb.Helper()
@@ -50,8 +65,8 @@ type runResult struct {
 func runGo(program string, args []string) runResult {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run(program, args, &stdout, &stderr)
-	return runResult{code: code, stdout: stdout.String(), stderr: stderr.String()}
+	err := Run(program, args, &stdout, &stderr)
+	return runResult{code: exitCodeFromRunErr(err), stdout: stdout.String(), stderr: stderr.String()}
 }
 
 func TestLoadScenariosAndListTSV(t *testing.T) {
