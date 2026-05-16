@@ -418,7 +418,7 @@ func Preflight(opts *Options, checkRefFormat CheckRefFormatFunc, fileReader func
 // WriteUsage writes the canonical publish-pr help text to w. It is the
 // shared helper for both the success path (-h / --help on stdout) and
 // the failure path (unsupported option on stderr) so the future
-// launcher wrapper does not duplicate the "fmt.Fprint(stdout/stderr,
+// helper wrapper does not duplicate the "fmt.Fprint(stdout/stderr,
 // UsageText())" pattern.
 func WriteUsage(w io.Writer) {
 	fmt.Fprint(w, UsageText())

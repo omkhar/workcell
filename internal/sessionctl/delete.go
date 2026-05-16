@@ -104,7 +104,7 @@ func deleteMain(args []string, stdout, stderr io.Writer) error {
 //
 // Unknown options return an Unsupported-style error matching the bash
 // branch so the user-visible stderr stays byte-identical, wrapped in
-// an ExitCodeError so the launcher exits 2.
+// an ExitCodeError so the helper exits 2.
 func parseDeleteArgs(args []string) (sessionID string, recordOnly, dryRun, showHelp bool, err error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {

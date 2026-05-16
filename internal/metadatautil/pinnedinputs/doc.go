@@ -5,6 +5,6 @@
 // pull-request-target / YAML helpers that used to live in
 // internal/metadatautil/validate.go. The parent metadatautil package
 // keeps a thin var shim so existing in-package tests and external
-// callers (cmd/workcell-metadatautil) continue to compile against
+// callers (cmd/workcell-citools) continue to compile against
 // metadatautil.CheckPinnedInputs and metadatautil.PinnedInputsConfig.
 package pinnedinputs

@@ -73,7 +73,7 @@ func attachMain(args []string, stdout, stderr io.Writer) error {
 	if len(roots) == 0 {
 		envRoots, lookupErr := stateroot.LookupRoots()
 		if lookupErr != nil {
-			return &cliexit.ExitCodeError{Code: 2, Message: lookupErr.Error()}
+			return lookupErr
 		}
 		roots = envRoots
 	}

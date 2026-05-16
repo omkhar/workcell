@@ -14,7 +14,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
-func TestRunLauncherSessionTimeline(t *testing.T) {
+func TestRunHelperSessionTimeline(t *testing.T) {
 	colimaRoot := t.TempDir()
 	auditLogPath := filepath.Join(colimaRoot, "wcl-one", "workcell.audit.log")
 	if err := os.MkdirAll(filepath.Dir(auditLogPath), 0o755); err != nil {
@@ -80,7 +80,7 @@ func TestRunLauncherSessionTimeline(t *testing.T) {
 	}
 }
 
-func TestRunLauncherSessionRuntimeMetadata(t *testing.T) {
+func TestRunHelperSessionRuntimeMetadata(t *testing.T) {
 	colimaRoot := t.TempDir()
 	sessionPath := filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json")
 	if err := sessions.WriteSessionRecord(sessionPath, map[string]string{
@@ -150,7 +150,7 @@ func TestRunLauncherSessionRuntimeMetadata(t *testing.T) {
 	}
 }
 
-func TestRunLauncherSessionRuntimeMetadataSupportsMultipleRoots(t *testing.T) {
+func TestRunHelperSessionRuntimeMetadataSupportsMultipleRoots(t *testing.T) {
 	stateRoot := t.TempDir()
 	legacyRoot := t.TempDir()
 	sessionPath := filepath.Join(stateRoot, "targets", "local_vm", "colima", "wcl-one", "sessions", "session-1.json")
@@ -207,7 +207,7 @@ func TestRunLauncherSessionRuntimeMetadataSupportsMultipleRoots(t *testing.T) {
 	}
 }
 
-func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
+func TestRunHelperSessionListShowsLiveStatusAndControl(t *testing.T) {
 	colimaRoot := t.TempDir()
 	if err := sessions.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json"), map[string]string{
 		"session_id":        "session-1",
@@ -280,7 +280,7 @@ func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 	}
 }
 
-func TestRunLauncherSessionListVerboseShowsTargetMetadata(t *testing.T) {
+func TestRunHelperSessionListVerboseShowsTargetMetadata(t *testing.T) {
 	colimaRoot := t.TempDir()
 	if err := sessions.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json"), map[string]string{
 		"session_id":        "session-1",
@@ -329,7 +329,7 @@ func TestRunLauncherSessionListVerboseShowsTargetMetadata(t *testing.T) {
 	}
 }
 
-func TestRunLauncherSessionShowText(t *testing.T) {
+func TestRunHelperSessionShowText(t *testing.T) {
 	colimaRoot := t.TempDir()
 	sessionPath := filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json")
 	if err := sessions.WriteSessionRecord(sessionPath, map[string]string{

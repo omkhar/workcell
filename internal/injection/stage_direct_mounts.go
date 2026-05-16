@@ -129,8 +129,12 @@ func validateDirectMount(hostSource, mountPath string) error {
 	// link (`parent-link -> ../etc`) is not flagged. Component-walk
 	// with target-shape inspection catches both absolute and
 	// relative-escape attacks while preserving the macOS system path.
-	if err := rejectSymlinkInPath(cleanedSource); err != nil {
-		return err
+	offender, inspectErr := findUnsafeSymlinkInPathChain(cleanedSource)
+	if inspectErr != nil {
+		return fmt.Errorf("Direct input source could not be inspected: %s: %v", cleanedSource, inspectErr)
+	}
+	if offender != "" {
+		return fmt.Errorf("Direct input source must not be a symbolic link: %s", cleanedSource)
 	}
 	info, err := os.Stat(cleanedSource)
 	if err != nil || !(info.Mode().IsRegular() || info.IsDir()) {
@@ -148,99 +152,6 @@ func validateDirectMount(hostSource, mountPath string) error {
 		return fmt.Errorf("Direct input mount path is outside the managed host-input root: %s", mountPath)
 	}
 	return nil
-}
-
-// rejectSymlinkInPath walks every component of cleanedSource from the
-// filesystem root down to (and including) the leaf, Lstat'ing each
-// step. Any symlink whose target does not match the "safe relative
-// system" shape — relative path, no `..` segments, no absolute target —
-// is rejected with the same "must not be a symbolic link" diagnostic
-// FIX-8 used for the leaf case.
-//
-// The safe-shape rule accepts the macOS system symlinks
-// (`/var -> private/var`, `/etc -> private/etc`, `/tmp -> private/tmp`),
-// which production host-inputs paths and `t.TempDir()` traversals
-// rely on. It rejects:
-//   - any link with an absolute target (the canonical attack pattern
-//     `parent-link -> /etc`),
-//   - any link whose target contains a `..` segment (the relative
-//     sideways/upward escape `parent-link -> ../../etc`).
-//
-// Errors other than os.ErrNotExist abort the walk: a transient I/O
-// failure on Lstat must not silently skip the symlink check. ENOENT
-// is allowed to propagate so the downstream os.Stat surfaces the
-// canonical "missing, not absolute, or not a regular file/directory"
-// diagnostic.
-//
-// TOCTOU note: filepath component Lstat'ing leaves a window between
-// the walk completing and the subsequent os.Stat/os.Open in
-// stageDirectMountEntry. A complete TOCTOU-free defense would hold an
-// open file descriptor on each directory and stage from there, which
-// would require restructuring stageDirectMountEntry. The current walk
-// closes the *static* symlink-planting hole; an attacker would still
-// need to win a sub-millisecond race to swap a component after the
-// check but before the copy, and they would need write access to a
-// host-input source path — already a privileged position.
-func rejectSymlinkInPath(cleanedSource string) error {
-	// Walk components: split on `/` and join progressively, Lstat'ing
-	// each intermediate path. cleanedSource is guaranteed absolute and
-	// clean by validateDirectMount, so the first byte is `/`.
-	parts := strings.Split(cleanedSource, string(filepath.Separator))
-	current := string(filepath.Separator)
-	for _, part := range parts {
-		if part == "" {
-			continue // leading slash split yields an empty leading element
-		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				// Allow the downstream os.Stat to produce the canonical
-				// "missing, not absolute, or not a regular file/directory"
-				// diagnostic for the leaf — but the *intermediate*
-				// component being missing is also a real "not found"
-				// case the existing Stat will catch.
-				return nil
-			}
-			return fmt.Errorf("Direct input source could not be inspected: %s: %v", cleanedSource, err)
-		}
-		if info.Mode()&fs.ModeSymlink == 0 {
-			continue
-		}
-		// Component is a symlink: read its target and apply the
-		// safe-shape rule.
-		target, rerr := os.Readlink(current)
-		if rerr != nil {
-			return fmt.Errorf("Direct input source could not be inspected: %s: %v", cleanedSource, rerr)
-		}
-		if !symlinkTargetIsSafeRelativeSystem(target) {
-			return fmt.Errorf("Direct input source must not be a symbolic link: %s", cleanedSource)
-		}
-	}
-	return nil
-}
-
-// symlinkTargetIsSafeRelativeSystem returns true when target is a
-// relative path with no `..` segments and no leading `/`. This is the
-// shape macOS uses for `/var -> private/var`, `/etc -> private/etc`,
-// `/tmp -> private/tmp` and is *not* the shape an attacker would plant
-// to escape the host-inputs staging tree (those almost always use an
-// absolute target or `..`-laden relative target).
-func symlinkTargetIsSafeRelativeSystem(target string) bool {
-	if target == "" {
-		return false
-	}
-	if filepath.IsAbs(target) {
-		return false
-	}
-	// Split on `/` (symlink target is a POSIX path; filepath.Separator
-	// is `/` on Unix). Reject any `..` segment.
-	for _, seg := range strings.Split(target, "/") {
-		if seg == ".." {
-			return false
-		}
-	}
-	return true
 }
 
 // stageDirectMountEntry copies a host source into stagedSource, replicating

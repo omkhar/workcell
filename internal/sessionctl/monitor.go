@@ -105,11 +105,11 @@ func monitorMain(args []string, stdout, stderr io.Writer) error {
 // -h / --help mark help output for the caller.  Bash session_monitor_main
 // does not document -h/--help today but every other session_*_main shim
 // accepts the flag pair so we add it here for symmetry with the rest of
-// the package and so the launcher subcommand has a documented exit path.
+// the package and so the helper subcommand has a documented exit path.
 //
 // Unknown options return an Unsupported-style error matching the bash
 // branch so the user-visible stderr stays byte-identical, wrapped in an
-// ExitCodeError so the launcher exits 2.
+// ExitCodeError so the helper exits 2.
 func parseMonitorArgs(args []string) (statePath string, showHelp bool, err error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {

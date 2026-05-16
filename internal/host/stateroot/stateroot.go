@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 // ConsumeRootArgs strips any leading --root=PATH arguments and
@@ -46,17 +48,27 @@ var envVarNames = []string{"WORKCELL_STATE_ROOT", "COLIMA_STATE_ROOT"}
 // order, skipping unset/empty values so the caller never receives a
 // bogus path.  Returns a fresh slice each call.
 //
-// Returns an error if either env var contains newline, carriage-return,
-// or NUL — those would let an attacker-controlled env propagate the
-// same forged-record injection that FormatRootArgs defends against on
-// the argv-driven path. The check stays symmetric across both helpers
-// so any future plan-emission consumer of LookupRoots inherits the
-// same input-boundary defense.
-func LookupRoots() ([]string, error) {
+// Returns a *cliexit.ExitCodeError (Code 2) if either env var contains
+// newline, carriage-return, or NUL — those would let an
+// attacker-controlled env propagate the same forged-record injection
+// that FormatRootArgs defends against on the argv-driven path. The
+// check stays symmetric across both helpers so any future
+// plan-emission consumer of LookupRoots inherits the same
+// input-boundary defense.
+//
+// The typed return lets sessionctl callers propagate the error
+// directly without re-wrapping in a cliexit.ExitCodeError — the typed
+// pointer's nil-comparison is safe (no nil-interface-containing-nil-
+// pointer gotcha) because the function never returns a typed nil
+// pointer wrapped in an error interface.
+func LookupRoots() ([]string, *cliexit.ExitCodeError) {
 	for _, name := range envVarNames {
 		v := os.Getenv(name)
 		if strings.ContainsAny(v, "\n\r\x00") {
-			return nil, fmt.Errorf("%s must not contain newline, carriage-return, or NUL", name)
+			return nil, &cliexit.ExitCodeError{
+				Code:    2,
+				Message: fmt.Sprintf("%s must not contain newline, carriage-return, or NUL", name),
+			}
 		}
 	}
 	roots := make([]string, 0, len(envVarNames))
