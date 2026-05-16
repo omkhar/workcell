@@ -4,9 +4,9 @@
 package pathutil
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -17,8 +17,8 @@ func TestCanonicalizePathStrictRejectsEmpty(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty strict path")
 	}
-	if !strings.Contains(err.Error(), "empty path") {
-		t.Fatalf("error %q does not mention empty path", err.Error())
+	if !errors.Is(err, ErrEmptyPath) {
+		t.Fatalf("error %q is not ErrEmptyPath", err.Error())
 	}
 }
 

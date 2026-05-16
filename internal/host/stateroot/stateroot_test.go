@@ -3,7 +3,10 @@
 
 package stateroot
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 func TestConsumeRootArgsStripsLeadingRootFlags(t *testing.T) {
 	t.Parallel()
@@ -45,7 +48,10 @@ func TestLookupRootsReadsEnv(t *testing.T) {
 	t.Setenv("WORKCELL_STATE_ROOT", "/tmp/wc")
 	t.Setenv("COLIMA_STATE_ROOT", "/tmp/colima")
 
-	got := LookupRoots()
+	got, err := LookupRoots()
+	if err != nil {
+		t.Fatalf("LookupRoots err = %v, want nil", err)
+	}
 	want := []string{"/tmp/wc", "/tmp/colima"}
 	if len(got) != len(want) {
 		t.Fatalf("LookupRoots() = %v, want %v", got, want)
@@ -61,9 +67,35 @@ func TestLookupRootsSkipsEmpty(t *testing.T) {
 	t.Setenv("WORKCELL_STATE_ROOT", "/tmp/wc")
 	t.Setenv("COLIMA_STATE_ROOT", "")
 
-	got := LookupRoots()
+	got, err := LookupRoots()
+	if err != nil {
+		t.Fatalf("LookupRoots err = %v, want nil", err)
+	}
 	if len(got) != 1 || got[0] != "/tmp/wc" {
 		t.Fatalf("LookupRoots() = %v, want [/tmp/wc]", got)
+	}
+}
+
+func TestLookupRootsRejectsControlChars(t *testing.T) {
+	// NUL bytes are rejected by os.Setenv itself, so this test only
+	// covers \n and \r — the bytes that survive process boundaries
+	// and still break the bash `while read` loop. FormatRootArgs's
+	// argv path covers NUL via TestFormatRootArgsRejectsControlChars.
+	for _, root := range []string{"\n", "\r", "/tmp/wc\nsmuggled"} {
+		t.Run("workcell="+strconv.Quote(root), func(t *testing.T) {
+			t.Setenv("WORKCELL_STATE_ROOT", root)
+			t.Setenv("COLIMA_STATE_ROOT", "")
+			if _, err := LookupRoots(); err == nil {
+				t.Errorf("LookupRoots accepted control char in WORKCELL_STATE_ROOT")
+			}
+		})
+		t.Run("colima="+strconv.Quote(root), func(t *testing.T) {
+			t.Setenv("WORKCELL_STATE_ROOT", "")
+			t.Setenv("COLIMA_STATE_ROOT", root)
+			if _, err := LookupRoots(); err == nil {
+				t.Errorf("LookupRoots accepted control char in COLIMA_STATE_ROOT")
+			}
+		})
 	}
 }
 
