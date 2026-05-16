@@ -220,7 +220,7 @@ INSTALL_VERIFY_HOME="$(mktemp -d)"
 ROOT_DRY_RUN_PROFILE_NAME="$(
   workspace="$(cd "${ROOT_DIR}" && pwd -P)"
   slug="$(printf '%s' "${workspace##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^$/workspace/' | cut -c1-10)"
-  digest="$(go_verify_hostutil launcher workspace-cache-key "${workspace}" | cut -c1-8)"
+  digest="$(go_verify_hostutil helper workspace-cache-key "${workspace}" | cut -c1-8)"
   printf 'wcl-%s-%s\n' "${slug}" "${digest}"
 )"
 ROOT_DRY_RUN_PROFILE_DIR="${REAL_HOME}/.colima/${ROOT_DRY_RUN_PROFILE_NAME}"
@@ -239,7 +239,7 @@ DETACHED_SESSION_WORKSPACE=""
 DETACHED_SESSION_SOURCE_SENTINEL_PATH=""
 VERIFY_INVARIANTS_CLEANUP_ACTIVE=0
 ROOT_STRICT_SUPPORT_OUTPUT="$(
-  go_verify_hostutil launcher support-matrix-eval \
+  go_verify_hostutil helper support-matrix-eval \
     "${ROOT_DIR}/policy/host-support-matrix.tsv" \
     "$(detected_verify_host_os)" \
     "$(detected_verify_host_arch)" \
@@ -5191,24 +5191,24 @@ grep -q -- '--cap-add SETUID' /tmp/workcell-default-autonomy-dry-run.stdout
 grep -q -- '--cap-add SETGID' /tmp/workcell-default-autonomy-dry-run.stdout
 grep -q -- '--security-opt no-new-privileges:true' /tmp/workcell-default-autonomy-dry-run.stdout
 
-if ! go_verify_hostutil launcher validate-security-options '["name=apparmor","name=seccomp,profile=builtin","name=cgroupns"]' >/dev/null; then
+if ! go_verify_hostutil helper validate-security-options '["name=apparmor","name=seccomp,profile=builtin","name=cgroupns"]' >/dev/null; then
   echo "Expected launcher validate-security-options to accept canonical AppArmor+seccomp daemon options" >&2
   exit 1
 fi
-if go_verify_hostutil launcher validate-security-options '["name=cgroupns"]' >/dev/null 2>&1; then
+if go_verify_hostutil helper validate-security-options '["name=cgroupns"]' >/dev/null 2>&1; then
   echo "Expected launcher validate-security-options to reject daemon options missing seccomp/MAC" >&2
   exit 1
 fi
-if ! go_verify_hostutil launcher validate-container-security-options '["no-new-privileges:true"]' >/dev/null; then
+if ! go_verify_hostutil helper validate-container-security-options '["no-new-privileges:true"]' >/dev/null; then
   echo "Expected launcher validate-container-security-options to accept canonical HostConfig.SecurityOpt" >&2
   exit 1
 fi
-if go_verify_hostutil launcher validate-container-security-options '["no-new-privileges:true","seccomp=unconfined"]' >/dev/null 2>&1; then
+if go_verify_hostutil helper validate-container-security-options '["no-new-privileges:true","seccomp=unconfined"]' >/dev/null 2>&1; then
   echo "Expected launcher validate-container-security-options to reject seccomp=unconfined" >&2
   exit 1
 fi
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "validate_runtime_security_posture" "go_hostutil launcher validate-security-options"; then
-  echo "Expected validate_runtime_security_posture to validate daemon SecurityOptions through the launcher subcommand" >&2
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "validate_runtime_security_posture" "go_hostutil helper validate-security-options"; then
+  echo "Expected validate_runtime_security_posture to validate daemon SecurityOptions through the helper subcommand" >&2
   exit 1
 fi
 
@@ -7427,7 +7427,7 @@ fi
 
 if ! sed -n '/^acquire_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | awk '
   $0 == "  while true; do" && state == 0 { state = 1; next }
-  $0 == "    if ! acquired_state=\"$(go_hostutil launcher acquire-profile-lock \"${lock_dir}\" \"$$\")\"; then" && state == 1 { state = 2; next }
+  $0 == "    if ! acquired_state=\"$(go_hostutil helper acquire-profile-lock \"${lock_dir}\" \"$$\")\"; then" && state == 1 { state = 2; next }
   $0 == "      echo \"Failed to create managed runtime lock for profile ${profile}.\" >&2" && state == 2 { state = 3; next }
   $0 == "      return 1" && state == 3 { state = 4; next }
   $0 == "    fi" && state == 4 { state = 5; next }

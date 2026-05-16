@@ -28,8 +28,8 @@
 //     `printf %q` shape that
 //     tests/scenarios/shared/test-publish-pr-dry-run.sh greps for.
 //
-// PublishPRMain wires the four concerns together as the launcher entry
-// point for `workcell-hostutil launcher publish-pr-cli`; scripts/workcell
-// publish_pr_main is the thin shim that forwards bash-side globals as
-// --bash-* flags.
+// PublishPRMain wires the four concerns together as the entry point
+// for the top-level `workcell-hostutil publish-pr-cli` subcommand;
+// scripts/workcell publish_pr_main is the thin shim that forwards
+// bash-side globals as --bash-* flags.
 package publishpr

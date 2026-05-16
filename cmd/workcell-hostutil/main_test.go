@@ -62,7 +62,7 @@ func TestRunLauncherSessionTimeline(t *testing.T) {
 		close(done)
 	}()
 
-	runErr := run([]string{"launcher", "session-timeline", colimaRoot, "session-1"})
+	runErr := run([]string{"helper", "session-timeline", colimaRoot, "session-1"})
 	_ = w.Close()
 	<-done
 	_ = r.Close()
@@ -124,7 +124,7 @@ func TestRunLauncherSessionRuntimeMetadata(t *testing.T) {
 		close(done)
 	}()
 
-	runErr := run([]string{"launcher", "session-runtime-metadata", colimaRoot, "session-1"})
+	runErr := run([]string{"helper", "session-runtime-metadata", colimaRoot, "session-1"})
 	_ = w.Close()
 	<-done
 	_ = r.Close()
@@ -185,7 +185,7 @@ func TestRunLauncherSessionRuntimeMetadataSupportsMultipleRoots(t *testing.T) {
 	}()
 
 	runErr := run([]string{
-		"launcher",
+		"helper",
 		"session-runtime-metadata",
 		"--root=" + stateRoot,
 		"--root=" + legacyRoot,
@@ -260,7 +260,7 @@ func TestRunLauncherSessionListShowsLiveStatusAndControl(t *testing.T) {
 		close(done)
 	}()
 
-	runErr := run([]string{"launcher", "session-list", colimaRoot})
+	runErr := run([]string{"helper", "session-list", colimaRoot})
 	_ = w.Close()
 	<-done
 	_ = r.Close()
@@ -314,7 +314,7 @@ func TestRunLauncherSessionListVerboseShowsTargetMetadata(t *testing.T) {
 		close(done)
 	}()
 
-	runErr := run([]string{"launcher", "session-list", colimaRoot, "--verbose"})
+	runErr := run([]string{"helper", "session-list", colimaRoot, "--verbose"})
 	_ = w.Close()
 	<-done
 	_ = r.Close()
@@ -370,7 +370,7 @@ func TestRunLauncherSessionShowText(t *testing.T) {
 		close(done)
 	}()
 
-	runErr := run([]string{"launcher", "session-show", colimaRoot, "session-1", "--text"})
+	runErr := run([]string{"helper", "session-show", colimaRoot, "session-1", "--text"})
 	_ = w.Close()
 	<-done
 	_ = r.Close()
@@ -414,10 +414,10 @@ func TestResolveHostOutputDirectoryCandidateRejectsRegularFile(t *testing.T) {
 	}
 }
 
-func TestLauncherUsageListsDirectoryCandidateResolver(t *testing.T) {
-	if err := launcherUsage(); err == nil {
-		t.Fatal("launcherUsage unexpectedly returned nil")
+func TestHelperUsageListsDirectoryCandidateResolver(t *testing.T) {
+	if err := helperUsage(); err == nil {
+		t.Fatal("helperUsage unexpectedly returned nil")
 	} else if !strings.Contains(err.Error(), "resolve-host-output-directory-candidate") {
-		t.Fatalf("launcherUsage error = %q, want resolve-host-output-directory-candidate", err)
+		t.Fatalf("helperUsage error = %q, want resolve-host-output-directory-candidate", err)
 	}
 }

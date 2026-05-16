@@ -265,7 +265,7 @@ session_lookup_root_args() {
   # The two roots are forwarded on argv (rather than via env) because
   # go_hostutil routes through run_clean_host_command, whose env -i
   # would otherwise strip them.
-  go_hostutil launcher lookup-state-roots \
+  go_hostutil helper lookup-state-roots \
     "${WORKCELL_STATE_ROOT:-}" \
     "${COLIMA_STATE_ROOT:-}"
 }
@@ -453,7 +453,7 @@ slugify() {
 }
 
 generate_session_suffix() {
-  go_hostutil launcher session-suffix
+  go_hostutil helper session-suffix
 }
 
 lower_ascii() {
@@ -596,7 +596,7 @@ docker_desktop_context_name() {
 profile_dir() {
   local profile="$1"
 
-  go_hostutil launcher profile-path dir "${COLIMA_STATE_ROOT}" "${profile}"
+  go_hostutil helper profile-path dir "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 target_kind_for_profile_state() {
@@ -645,20 +645,20 @@ profile_target_state_dir() {
 
   target_kind="$(target_kind_for_profile_state "${profile}")"
   target_provider="$(target_provider_for_profile_state "${profile}")"
-  go_hostutil launcher profile-path target-state-dir \
+  go_hostutil helper profile-path target-state-dir \
     "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
 profile_lima_dir() {
   local profile="$1"
 
-  go_hostutil launcher profile-path lima-dir "${COLIMA_STATE_ROOT}" "${profile}"
+  go_hostutil helper profile-path lima-dir "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 profile_disk_dir() {
   local profile="$1"
 
-  go_hostutil launcher profile-path disk-dir "${COLIMA_STATE_ROOT}" "${profile}"
+  go_hostutil helper profile-path disk-dir "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 remove_profile_state_dirs() {
@@ -700,7 +700,7 @@ profile_state_dirs_exist() {
 profile_colima_config_path() {
   local profile="$1"
 
-  go_hostutil launcher profile-path colima-config "${COLIMA_STATE_ROOT}" "${profile}"
+  go_hostutil helper profile-path colima-config "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 run_host_colima() {
@@ -755,7 +755,7 @@ run_host_colima_with_timeout() {
   if [[ -z "${HOST_COLIMA_BIN:-}" ]]; then
     HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
   fi
-  go_hostutil launcher run-host-colima-with-timeout "${timeout_seconds}" \
+  go_hostutil helper run-host-colima-with-timeout "${timeout_seconds}" \
     --colima-bin="${HOST_COLIMA_BIN}" \
     --real-home="${REAL_HOME:-}" \
     --colima-home="${COLIMA_STATE_ROOT:-}" \
@@ -780,7 +780,7 @@ colima_profile_status() {
   # trailer to preserve the contract verify-invariants depends on.
   local stderr_capture status_output rc trailer
   stderr_capture="$(mktemp)"
-  status_output="$(printf '%s' "${list_output}" | go_hostutil launcher colima-status "${profile}" 2>"${stderr_capture}")"
+  status_output="$(printf '%s' "${list_output}" | go_hostutil helper colima-status "${profile}" 2>"${stderr_capture}")"
   rc=$?
   if ((rc != 0)); then
     trailer="$(tail -n1 "${stderr_capture}" 2>/dev/null || true)"
@@ -956,7 +956,7 @@ prepare_current_target_docker_client() {
   # check fails, exactly as the original case-block did.
   local plan_stderr plan_output rc trailer
   plan_stderr="$(mktemp)"
-  plan_output="$(go_hostutil launcher prepare-current-docker-client-plan \
+  plan_output="$(go_hostutil helper prepare-current-docker-client-plan \
     --backend="${TARGET_BACKEND:-}" \
     --context-name="${desktop_context}" \
     "--context-exists=${context_exists_flag}" \
@@ -1471,14 +1471,14 @@ profile_audit_log_path() {
 
   target_kind="$(target_kind_for_profile_state "${profile}")"
   target_provider="$(target_provider_for_profile_state "${profile}")"
-  go_hostutil launcher profile-path audit-log \
+  go_hostutil helper profile-path audit-log \
     "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
 legacy_profile_audit_log_path() {
   local profile="$1"
 
-  go_hostutil launcher profile-path legacy-audit-log "${COLIMA_STATE_ROOT}" "${profile}"
+  go_hostutil helper profile-path legacy-audit-log "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 profile_sessions_dir_path() {
@@ -1488,14 +1488,14 @@ profile_sessions_dir_path() {
 
   target_kind="$(target_kind_for_profile_state "${profile}")"
   target_provider="$(target_provider_for_profile_state "${profile}")"
-  go_hostutil launcher profile-path sessions-dir \
+  go_hostutil helper profile-path sessions-dir \
     "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
 legacy_profile_sessions_dir_path() {
   local profile="$1"
 
-  go_hostutil launcher profile-path legacy-sessions-dir "${COLIMA_STATE_ROOT}" "${profile}"
+  go_hostutil helper profile-path legacy-sessions-dir "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
 generate_session_id() {
@@ -1509,7 +1509,7 @@ profile_lock_dir_path() {
 
   target_kind="$(target_kind_for_profile_state "${profile}")"
   target_provider="$(target_provider_for_profile_state "${profile}")"
-  go_hostutil launcher profile-path lock-dir \
+  go_hostutil helper profile-path lock-dir \
     "${WORKCELL_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}"
 }
 
@@ -1521,7 +1521,7 @@ profile_latest_log_pointer_path() {
 
   target_kind="$(target_kind_for_profile_state "${profile}")"
   target_provider="$(target_provider_for_profile_state "${profile}")"
-  go_hostutil launcher profile-path latest-log-pointer \
+  go_hostutil helper profile-path latest-log-pointer \
     "${WORKCELL_TARGET_STATE_ROOT}" "${target_kind}" "${target_provider}" "${profile}" "${kind}"
 }
 
@@ -1529,7 +1529,7 @@ legacy_profile_latest_log_pointer_path() {
   local profile="$1"
   local kind="$2"
 
-  go_hostutil launcher profile-path legacy-latest-log-pointer \
+  go_hostutil helper profile-path legacy-latest-log-pointer \
     "${COLIMA_STATE_ROOT}" "${profile}" "${kind}"
 }
 
@@ -1681,7 +1681,7 @@ run_profile_docker_command() {
   # diagnostic to its stderr and exits 1, which we surface here.
   local route_stderr route_output rc trailer
   route_stderr="$(mktemp)"
-  route_output="$(go_hostutil launcher route-profile-docker-command \
+  route_output="$(go_hostutil helper route-profile-docker-command \
     "--provider=${provider}" \
     "--socket-path=${socket_path}" \
     "--context-name=${context_name}" 2>"${route_stderr}")"
@@ -1766,7 +1766,7 @@ session_runtime_metadata() {
   while IFS= read -r root; do
     lookup_roots+=("${root}")
   done < <(session_lookup_root_args)
-  go_hostutil launcher session-runtime-metadata "${lookup_roots[@]}" "${session_id}"
+  go_hostutil helper session-runtime-metadata "${lookup_roots[@]}" "${session_id}"
 }
 
 load_session_runtime_metadata() {
@@ -2017,7 +2017,7 @@ current_workspace_transport() {
 refresh_support_matrix_state() {
   local metadata=""
 
-  metadata="$(go_hostutil launcher support-matrix-eval \
+  metadata="$(go_hostutil helper support-matrix-eval \
     "${WORKCELL_HOST_SUPPORT_MATRIX_PATH}" \
     "$(detected_host_os)" \
     "$(detected_host_arch)" \
@@ -2495,16 +2495,16 @@ cleanup_stale_latest_log_pointers() {
   local state_root="$1"
   local legacy_root="${2:-}"
 
-  go_hostutil launcher cleanup-stale-log-pointers "${state_root}"
+  go_hostutil helper cleanup-stale-log-pointers "${state_root}"
   if [[ -n "${legacy_root}" ]]; then
-    go_hostutil launcher cleanup-stale-log-pointers "${legacy_root}"
+    go_hostutil helper cleanup-stale-log-pointers "${legacy_root}"
   fi
 }
 
 profile_lock_is_stale() {
   local lock_dir="$1"
 
-  go_hostutil launcher profile-lock-is-stale "${lock_dir}"
+  go_hostutil helper profile-lock-is-stale "${lock_dir}"
 }
 
 acquire_profile_lock() {
@@ -2520,7 +2520,7 @@ acquire_profile_lock() {
   mkdir -p "${lock_parent}"
 
   while true; do
-    if ! acquired_state="$(go_hostutil launcher acquire-profile-lock "${lock_dir}" "$$")"; then
+    if ! acquired_state="$(go_hostutil helper acquire-profile-lock "${lock_dir}" "$$")"; then
       echo "Failed to create managed runtime lock for profile ${profile}." >&2
       return 1
     fi
@@ -2548,9 +2548,9 @@ cleanup_stale_session_audit_dirs() {
   local state_root="$1"
   local legacy_root="${2:-}"
 
-  go_hostutil launcher cleanup-stale-session-audit-dirs "${state_root}"
+  go_hostutil helper cleanup-stale-session-audit-dirs "${state_root}"
   if [[ -n "${legacy_root}" ]]; then
-    go_hostutil launcher cleanup-stale-session-audit-dirs "${legacy_root}"
+    go_hostutil helper cleanup-stale-session-audit-dirs "${legacy_root}"
   fi
 }
 
@@ -2572,7 +2572,7 @@ audit_record_digest() {
   local timestamp="$2"
   shift 2
 
-  go_hostutil launcher audit-digest "${prev_digest}" "${timestamp}" "$@"
+  go_hostutil helper audit-digest "${prev_digest}" "${timestamp}" "$@"
 }
 
 stash_profile_audit_log() {
@@ -2942,7 +2942,7 @@ write_session_record() {
   local path="$1"
   shift
 
-  go_hostutil launcher session-record-write "${path}" "$@"
+  go_hostutil helper session-record-write "${path}" "$@"
 }
 
 write_session_record_initial() {
@@ -3298,11 +3298,11 @@ resolve_host_path() {
 }
 
 resolve_host_output_candidate() {
-  go_hostutil launcher resolve-host-output-candidate "$1"
+  go_hostutil helper resolve-host-output-candidate "$1"
 }
 
 resolve_host_output_directory_candidate() {
-  go_hostutil launcher resolve-host-output-directory-candidate "$1"
+  go_hostutil helper resolve-host-output-directory-candidate "$1"
 }
 
 resolve_existing_directory_or_die() {
@@ -3324,7 +3324,7 @@ resolve_existing_directory_or_die() {
 }
 
 publish_pr_usage() {
-  go_hostutil launcher publish-pr-usage
+  go_hostutil publish-pr-usage
 }
 
 resolve_existing_file_or_die() {
@@ -3542,7 +3542,7 @@ publish_pr_main() {
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-publish-pr-stderr.XXXXXX")"
   trap 'rm -f "${stderr_file}"' RETURN
   local rc=0
-  go_hostutil launcher publish-pr-cli \
+  go_hostutil publish-pr-cli \
     "--bash-root-dir=${ROOT_DIR}" \
     "--bash-workspace-root=${WORKSPACE:-${PWD}}" \
     "--bash-real-home=${REAL_HOME}" \
@@ -3581,7 +3581,7 @@ publish_pr_main() {
 }
 
 session_usage() {
-  go_hostutil launcher session-usage
+  go_hostutil session-usage
 }
 
 session_git_metadata_lines() {
@@ -4278,7 +4278,7 @@ session_logs_main() {
   while IFS= read -r root; do
     lookup_roots+=("${root}")
   done < <(session_lookup_root_args)
-  go_hostutil launcher session-logs-cli "${lookup_roots[@]}" "$@"
+  go_hostutil session-logs-cli "${lookup_roots[@]}" "$@"
   exit $?
 }
 
@@ -4287,7 +4287,7 @@ session_timeline_main() {
   while IFS= read -r root; do
     lookup_roots+=("${root}")
   done < <(session_lookup_root_args)
-  go_hostutil launcher session-timeline-cli "${lookup_roots[@]}" "$@"
+  go_hostutil session-timeline-cli "${lookup_roots[@]}" "$@"
   exit $?
 }
 
@@ -4360,7 +4360,7 @@ session_main() {
 
   shift || true
   set +e
-  plan="$(go_hostutil launcher session-dispatch-cli "${subcommand}")"
+  plan="$(go_hostutil session-dispatch-cli "${subcommand}")"
   dispatch_cli_status="$?"
   set -e
   if [[ "${dispatch_cli_status}" -ne 0 ]]; then
@@ -4449,7 +4449,7 @@ session_main() {
         validate_colima_profile_name "${profile}"
         args+=("--profile=${profile}")
       fi
-      output="$(go_hostutil launcher session-list "${args[@]}")"
+      output="$(go_hostutil helper session-list "${args[@]}")"
       if [[ -z "${output}" ]]; then
         echo "No recorded sessions."
         exit 0
@@ -4498,7 +4498,7 @@ session_main() {
       if [[ "${emit_text}" -eq 1 ]]; then
         args+=(--text)
       fi
-      go_hostutil launcher session-show "${args[@]}"
+      go_hostutil helper session-show "${args[@]}"
       exit 0
       ;;
     delete)
@@ -4539,7 +4539,7 @@ session_main() {
       while IFS= read -r root; do
         lookup_roots+=("${root}")
       done < <(session_lookup_root_args)
-      metadata="$(go_hostutil launcher session-diff-metadata "${lookup_roots[@]}" "${session_id}")"
+      metadata="$(go_hostutil helper session-diff-metadata "${lookup_roots[@]}" "${session_id}")"
       workspace="$(shellproto_field "${metadata}" workspace)"
       git_branch="$(shellproto_field "${metadata}" git_branch)"
       git_head="$(shellproto_field "${metadata}" git_head)"
@@ -4616,7 +4616,7 @@ session_main() {
       while IFS= read -r root; do
         lookup_roots+=("${root}")
       done < <(session_lookup_root_args)
-      output="$(go_hostutil launcher session-export "${lookup_roots[@]}" "${session_id}")"
+      output="$(go_hostutil helper session-export "${lookup_roots[@]}" "${session_id}")"
       if [[ -n "${output_path}" ]]; then
         output_path="$(resolve_host_output_candidate "${output_path}")"
         mkdir -p "$(dirname "${output_path}")"
@@ -4653,7 +4653,7 @@ auth_main() {
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-auth-stderr.XXXXXX")"
   trap 'rm -f "${stderr_file}"' RETURN
   local rc=0
-  go_hostutil launcher auth-cli "--base=$(pwd -P)" "$@" 2>"${stderr_file}" || rc=$?
+  go_hostutil auth-cli "--base=$(pwd -P)" "$@" 2>"${stderr_file}" || rc=$?
   local stderr_capture=""
   stderr_capture="$(cat "${stderr_file}")"
   rm -f "${stderr_file}"
@@ -4671,7 +4671,7 @@ auth_main() {
 }
 
 policy_main() {
-  go_hostutil launcher policy-cli "$@"
+  go_hostutil policy-cli "$@"
   exit $?
 }
 
@@ -4760,7 +4760,7 @@ default_injection_bundle_parent() {
 cleanup_stale_injection_bundles() {
   local bundle_parent="$1"
 
-  go_hostutil launcher cleanup-stale-injection-bundles "${bundle_parent}"
+  go_hostutil helper cleanup-stale-injection-bundles "${bundle_parent}"
 }
 
 cleanup_workcell_temp_root() {
@@ -4834,7 +4834,7 @@ cleanup_workcell_cache_roots() {
 prepare_injection_bundle() {
   # PR 23.4 shim: the full pipeline (resolver, renderer, direct-mount
   # extraction + staging, metadata fan-out) now runs in-process inside the
-  # workcell-hostutil launcher subcommand.  Bash imports the resulting
+  # workcell-hostutil helper subcommand.  Bash imports the resulting
   # variables via a single "while read" loop.
   local agent="$1"
   local mode="$2"
@@ -4870,7 +4870,7 @@ prepare_injection_bundle() {
   stdout_capture="$(mktemp)"
   stderr_capture="$(mktemp)"
   rc=0
-  go_hostutil launcher injection-prepare-bundle \
+  go_hostutil helper injection-prepare-bundle \
     "--agent=${agent}" \
     "--mode=${mode}" \
     "--policy=${INJECTION_POLICY:-}" \
@@ -5732,7 +5732,7 @@ prepare_cache_mounts() {
   esac
 
   workspace_cache_key="$(
-    go_hostutil launcher workspace-cache-key "${workspace}"
+    go_hostutil helper workspace-cache-key "${workspace}"
   )"
   cache_root="$(resolve_host_path "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/cache/${agent}/${workspace_cache_key}")"
   if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -6046,7 +6046,7 @@ colima_start_hit_recoverable_docker_boot_race() {
 }
 
 extract_codex_version_from_dockerfile() {
-  go_hostutil launcher extract-codex-version "${ROOT_DIR}/runtime/container/Dockerfile"
+  go_hostutil helper extract-codex-version "${ROOT_DIR}/runtime/container/Dockerfile"
 }
 
 runtime_build_codex_arch() {
@@ -6241,7 +6241,7 @@ derive_profile_name() {
   slug="$(slugify "$(basename "${workspace}")" | cut -c1-10)"
   [[ -n "${slug}" ]] || slug="workspace"
   hash="$(
-    go_hostutil launcher workspace-cache-key "${workspace}" | cut -c1-8
+    go_hostutil helper workspace-cache-key "${workspace}" | cut -c1-8
   )"
   # Keep the derived Colima profile name short enough to avoid guest SSH
   # readiness hangs observed with longer managed profile names on macOS vz.
@@ -6318,7 +6318,7 @@ validate_colima_profile() {
   local status=""
 
   status="$(run_host_colima status --profile "${profile}" 2>&1)"
-  if ! printf '%s' "${status}" | go_hostutil launcher validate-colima-status "${profile}"; then
+  if ! printf '%s' "${status}" | go_hostutil helper validate-colima-status "${profile}"; then
     return 1
   fi
 
@@ -6387,7 +6387,7 @@ validate_runtime_security_posture() {
     exit 2
   }
 
-  go_hostutil launcher validate-security-options "${security_options_json}"
+  go_hostutil helper validate-security-options "${security_options_json}"
 }
 
 is_trusted_host_tool_path() {
@@ -6433,7 +6433,7 @@ is_trusted_host_tool_path() {
 
 canonicalize_host_tool_path() {
   local candidate="$1"
-  go_hostutil launcher canonicalize-tool-path "${candidate}"
+  go_hostutil helper canonicalize-tool-path "${candidate}"
 }
 
 resolve_host_tool() {
@@ -6599,7 +6599,7 @@ credential_extra_endpoints() {
 }
 
 dedupe_endpoint_list() {
-  go_hostutil launcher dedupe-endpoints "$1"
+  go_hostutil helper dedupe-endpoints "$1"
 }
 
 build_runtime_host_aliases() {
@@ -6617,7 +6617,7 @@ build_runtime_host_aliases() {
     else
       RUNTIME_NETWORK_ARGS+=(--add-host "${host}:${ip}")
     fi
-  done < <(go_hostutil launcher resolve-endpoints "${endpoint_list}")
+  done < <(go_hostutil helper resolve-endpoints "${endpoint_list}")
 
 }
 
