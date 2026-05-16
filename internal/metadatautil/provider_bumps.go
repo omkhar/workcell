@@ -36,8 +36,17 @@ const (
 	// caller (upstream-refresh, hosted-controls audit, release preflight).
 	// The error path already wraps in LimitReader(4096); these mirror that
 	// pattern for the success path.
-	providerBumpMaxJSONBytes = 4 << 20 // 4 MiB
-	providerBumpMaxXMLBytes  = 1 << 20 // 1 MiB
+	//
+	// 16 MiB headroom on JSON because the npm registry response for
+	// `@openai/codex` crossed 7.3 MiB in May 2026 (full version metadata
+	// accumulates per-release tarball entries; the bound grows over
+	// time). At 4 MiB the LimitReader truncated mid-stream and decode
+	// failed with "unexpected EOF", silently breaking the scheduled
+	// upstream-refresh workflow. The new ceiling still bounds memory
+	// for hostile/misbehaving upstreams and tracks the projected growth
+	// curve for the next ~5 years of npm metadata.
+	providerBumpMaxJSONBytes = 16 << 20 // 16 MiB
+	providerBumpMaxXMLBytes  = 1 << 20  // 1 MiB
 )
 
 var (
