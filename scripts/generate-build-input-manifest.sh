@@ -86,4 +86,4 @@ REQUIRE_TRACKED="${WORKCELL_BUILD_INPUT_REQUIRE_TRACKED:-0}"
 GO_BIN="$(resolve_go_bin)"
 OUTPUT_PATH="$(resolve_output_path "${OUTPUT_PATH}")"
 
-(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-metadatautil generate-build-input-manifest "${DOCKERFILE_PATH}" "${PACKAGE_JSON_PATH}" "${PACKAGE_LOCK_PATH}" "${OUTPUT_PATH}" "${BUILD_REF}" "${SOURCE_DATE_EPOCH}" "${REQUIRE_TRACKED}")
+(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools generate-build-input-manifest "${DOCKERFILE_PATH}" "${PACKAGE_JSON_PATH}" "${PACKAGE_LOCK_PATH}" "${OUTPUT_PATH}" "${BUILD_REF}" "${SOURCE_DATE_EPOCH}" "${REQUIRE_TRACKED}")

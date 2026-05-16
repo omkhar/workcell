@@ -103,7 +103,7 @@ if [[ "${digest_a}" != "${committed_digest}" ]]; then
   exit 1
 fi
 
-(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-metadatautil verify-control-plane-manifest "${TMP_ROOT}/a.json")
+(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools verify-control-plane-manifest "${TMP_ROOT}/a.json")
 
 if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   NESTED_ROOT="$(mktemp -d "${TMP_ROOT}/nested-control-plane.XXXXXX")"

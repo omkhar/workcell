@@ -5,5 +5,5 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 (
   cd "${ROOT_DIR}"
-  go run ./cmd/workcell-metadatautil run-mutation-tests
+  go run ./cmd/workcell-citools run-mutation-tests
 )

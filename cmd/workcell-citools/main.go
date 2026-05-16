@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-// Package main is the workcell-metadatautil umbrella binary — a CI
+// Package main is the workcell-citools umbrella binary — a CI
 // helper grab-bag (control-plane manifests, scenario-manifest, mutation
 // tests, tree-compare, coverage tooling, JSON/TOML validation, etc.).
 //
@@ -39,7 +39,7 @@ func die(err error) {
 	os.Exit(1)
 }
 
-// subcommand describes one workcell-metadatautil subcommand.  minArgs
+// subcommand describes one workcell-citools subcommand.  minArgs
 // and maxArgs count only the args that follow the subcommand name; a
 // maxArgs of -1 means unbounded.
 type subcommand struct {
@@ -106,7 +106,7 @@ func main() {
 	// forward Code straight through to os.Exit instead of routing it
 	// through die() (which would double-print the message).
 	if os.Args[1] == "scenario-manifest" {
-		if err := scenarios.Run("workcell-metadatautil scenario-manifest", os.Args[2:], os.Stdout, os.Stderr); err != nil {
+		if err := scenarios.Run("workcell-citools scenario-manifest", os.Args[2:], os.Stdout, os.Stderr); err != nil {
 			if ec, ok := cliexit.IsExitCodeError(err); ok {
 				os.Exit(ec.Code)
 			}
@@ -407,7 +407,7 @@ func cmdScanCredentialPatterns(args []string) error {
 // cmdRunMutationTests absorbs the former workcell-run-mutation-tests
 // binary.  Like that binary, the repo root is recovered from the
 // source path of this file via runtime.Caller — the resulting path
-// (cmd/workcell-metadatautil/main.go → cmd/workcell-metadatautil →
+// (cmd/workcell-citools/main.go → cmd/workcell-citools →
 // cmd → repo root) is two `..` segments up, identical to the
 // original.
 func cmdRunMutationTests(_ []string) error {
@@ -420,7 +420,7 @@ func cmdRunMutationTests(_ []string) error {
 
 // metadatautilRepoRoot returns the repo root by walking two `..`
 // segments up from this source file's path. This ties correctness to
-// the source-tree layout: moving cmd/workcell-metadatautil/main.go
+// the source-tree layout: moving cmd/workcell-citools/main.go
 // (or building+installing the binary outside the repo) breaks it.
 // The original workcell-run-mutation-tests standalone binary had the
 // same shape; preserved here for parity. A more robust fix would

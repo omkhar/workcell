@@ -125,11 +125,11 @@ fi
 
 codex_version="$(
   cd "${worktree_root}"
-  go run ./cmd/workcell-metadatautil extract-dockerfile-arg "${worktree_root}/runtime/container/Dockerfile" CODEX_VERSION
+  go run ./cmd/workcell-citools extract-dockerfile-arg "${worktree_root}/runtime/container/Dockerfile" CODEX_VERSION
 )"
 claude_version="$(
   cd "${worktree_root}"
-  go run ./cmd/workcell-metadatautil extract-dockerfile-arg "${worktree_root}/runtime/container/Dockerfile" CLAUDE_VERSION
+  go run ./cmd/workcell-citools extract-dockerfile-arg "${worktree_root}/runtime/container/Dockerfile" CLAUDE_VERSION
 )"
 gemini_version="$(jq -r '.dependencies["@google/gemini-cli"]' "${worktree_root}/runtime/container/providers/package.json")"
 

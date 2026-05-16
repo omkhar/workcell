@@ -108,7 +108,7 @@ docker_image_digest() {
 extract_dockerfile_arg() {
   (
     cd "${ROOT_DIR}"
-    go run ./cmd/workcell-metadatautil extract-dockerfile-arg "$1" "$2"
+    go run ./cmd/workcell-citools extract-dockerfile-arg "$1" "$2"
   )
 }
 

@@ -21,12 +21,12 @@ cleanup() {
 trap cleanup EXIT
 
 extract_codex_version() {
-  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil extract-dockerfile-arg "${DOCKERFILE_PATH}" CODEX_VERSION)
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools extract-dockerfile-arg "${DOCKERFILE_PATH}" CODEX_VERSION)
 }
 
 extract_codex_sha() {
   local target_arch="$1"
-  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil extract-codex-sha "${DOCKERFILE_PATH}" "${target_arch}")
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools extract-codex-sha "${DOCKERFILE_PATH}" "${target_arch}")
 }
 
 download_large_asset() {

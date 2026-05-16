@@ -11,7 +11,7 @@ fi
 (
   cd "${ROOT_DIR}"
   env -u WORKCELL_HELP_BIN \
-    go run ./cmd/workcell-metadatautil validate-operator-contract \
+    go run ./cmd/workcell-citools validate-operator-contract \
     "${ROOT_DIR}" \
     "${ROOT_DIR}/policy/operator-contract.toml" \
     "${ROOT_DIR}/policy/requirements.toml"
