@@ -43,8 +43,8 @@ type Options struct {
 	// (IsTrustedHostToolPath).
 	GhBin string
 	// Snapshot selects which working-tree slice to publish; must be
-	// "worktree" or "index" (or "staged" — same as "index"); rejected
-	// otherwise by ValidateSnapshotName.  Defaults to "worktree".
+	// "worktree" or "index"; rejected otherwise by ValidateSnapshotName.
+	// Defaults to "worktree".
 	Snapshot string
 	// Title is the inline PR title.  Mutually exclusive with TitleFile;
 	// one of the two MUST yield a non-empty value at Preflight.

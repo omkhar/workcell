@@ -16,6 +16,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
@@ -388,7 +389,7 @@ func parseBootstrapSummaryArgs(program string, args []string, stderr io.Writer) 
 }
 
 func resolveInputPath(raw string) string {
-	expanded, err := expandUserPath(raw)
+	expanded, err := pathutil.ExpandUserPathStrictRequireNonEmpty(raw)
 	if err != nil {
 		return raw
 	}

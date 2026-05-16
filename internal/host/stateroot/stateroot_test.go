@@ -67,36 +67,13 @@ func TestLookupRootsSkipsEmpty(t *testing.T) {
 	}
 }
 
-func TestFormattedRootArgsEmitsRootFlagPerNonEmptyEnv(t *testing.T) {
-	t.Setenv("WORKCELL_STATE_ROOT", "/tmp/wc")
-	t.Setenv("COLIMA_STATE_ROOT", "/tmp/colima")
-
-	got := FormattedRootArgs()
-	want := []string{"--root=/tmp/wc", "--root=/tmp/colima"}
-	if len(got) != len(want) {
-		t.Fatalf("FormattedRootArgs() = %v, want %v", got, want)
-	}
-	for i, line := range got {
-		if line != want[i] {
-			t.Fatalf("FormattedRootArgs()[%d] = %q, want %q", i, line, want[i])
-		}
-	}
-}
-
-func TestFormattedRootArgsSkipsEmpty(t *testing.T) {
-	t.Setenv("WORKCELL_STATE_ROOT", "")
-	t.Setenv("COLIMA_STATE_ROOT", "/tmp/colima")
-
-	got := FormattedRootArgs()
-	if len(got) != 1 || got[0] != "--root=/tmp/colima" {
-		t.Fatalf("FormattedRootArgs() = %v, want [--root=/tmp/colima]", got)
-	}
-}
-
 func TestFormatRootArgsEmitsBothInWorkcellThenColimaOrder(t *testing.T) {
 	t.Parallel()
 
-	got := FormatRootArgs("/tmp/wc", "/tmp/colima")
+	got, err := FormatRootArgs("/tmp/wc", "/tmp/colima")
+	if err != nil {
+		t.Fatalf("FormatRootArgs err = %v, want nil", err)
+	}
 	want := []string{"--root=/tmp/wc", "--root=/tmp/colima"}
 	if len(got) != len(want) {
 		t.Fatalf("FormatRootArgs() = %v, want %v", got, want)
@@ -111,13 +88,29 @@ func TestFormatRootArgsEmitsBothInWorkcellThenColimaOrder(t *testing.T) {
 func TestFormatRootArgsSkipsEmpty(t *testing.T) {
 	t.Parallel()
 
-	if got := FormatRootArgs("", "/tmp/colima"); len(got) != 1 || got[0] != "--root=/tmp/colima" {
-		t.Fatalf("FormatRootArgs(empty,/tmp/colima) = %v, want [--root=/tmp/colima]", got)
+	if got, err := FormatRootArgs("", "/tmp/colima"); err != nil || len(got) != 1 || got[0] != "--root=/tmp/colima" {
+		t.Fatalf("FormatRootArgs(empty,/tmp/colima) = %v, %v, want [--root=/tmp/colima], nil", got, err)
 	}
-	if got := FormatRootArgs("/tmp/wc", ""); len(got) != 1 || got[0] != "--root=/tmp/wc" {
-		t.Fatalf("FormatRootArgs(/tmp/wc,empty) = %v, want [--root=/tmp/wc]", got)
+	if got, err := FormatRootArgs("/tmp/wc", ""); err != nil || len(got) != 1 || got[0] != "--root=/tmp/wc" {
+		t.Fatalf("FormatRootArgs(/tmp/wc,empty) = %v, %v, want [--root=/tmp/wc], nil", got, err)
 	}
-	if got := FormatRootArgs("", ""); len(got) != 0 {
-		t.Fatalf("FormatRootArgs(empty,empty) = %v, want []", got)
+	if got, err := FormatRootArgs("", ""); err != nil || len(got) != 0 {
+		t.Fatalf("FormatRootArgs(empty,empty) = %v, %v, want [], nil", got, err)
+	}
+}
+
+// TestFormatRootArgsRejectsControlChars guards against an
+// attacker-controlled env var injecting forged --root= lines into the
+// bash consumer's `while read` loop after passing through `env -i`.
+func TestFormatRootArgsRejectsControlChars(t *testing.T) {
+	t.Parallel()
+
+	for _, root := range []string{"\n", "\r", "\x00", "/tmp/wc\nsmuggled", "/tmp/wc\rsmuggled"} {
+		if _, err := FormatRootArgs(root, "/tmp/ok"); err == nil {
+			t.Errorf("FormatRootArgs(%q, /tmp/ok) accepted control char", root)
+		}
+		if _, err := FormatRootArgs("/tmp/ok", root); err == nil {
+			t.Errorf("FormatRootArgs(/tmp/ok, %q) accepted control char", root)
+		}
 	}
 }

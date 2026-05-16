@@ -4,11 +4,14 @@
 package pathutil
 
 import (
+	"errors"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
 )
+
+var errEmptyPath = errors.New("path is empty")
 
 // ExpandUserPathBestEffort expands `~`, `~/...`, and `~user`/`~user/...`
 // references via os.UserHomeDir or user.Lookup.  When a `~user` lookup
@@ -27,6 +30,23 @@ func ExpandUserPathStrict(raw string) (string, error) {
 	return expandUserPath(raw, true)
 }
 
+// ExpandUserPathStrictRequireNonEmpty rejects an empty raw input with
+// errEmptyPath, then delegates to ExpandUserPathStrict.  The two
+// near-identical private wrappers in internal/authpolicy and
+// internal/injection used to inline this check; consolidating here
+// keeps the empty-input contract in a single place.
+func ExpandUserPathStrictRequireNonEmpty(raw string) (string, error) {
+	if raw == "" {
+		return "", errEmptyPath
+	}
+	return ExpandUserPathStrict(raw)
+}
+
+// ErrEmptyPath is the sentinel returned by
+// ExpandUserPathStrictRequireNonEmpty for empty inputs.  Exposed so
+// callers can errors.Is-wrap and stamp a domain-specific message.
+var ErrEmptyPath = errEmptyPath
+
 // ExpandUserPathHomeOnly expands `~` and `~/...` to the current user's
 // home directory and returns any other input verbatim — it never
 // consults user.Lookup.  This is the launcher-side variant: pointer
@@ -34,9 +54,9 @@ func ExpandUserPathStrict(raw string) (string, error) {
 // like `~/Library/...` but a `~someotheruser` reference would force a
 // host-level lookup, which the launcher deliberately avoids so a
 // hostile (or just non-existent) pointer cannot poke at the OS user
-// database.  Errors from os.UserHomeDir are surfaced as nil-result
-// rather than a returned error so the call site can keep its
-// best-effort fallback shape.
+// database.  Errors from os.UserHomeDir are surfaced as the
+// unmodified raw input rather than a returned error so the call site
+// can keep its best-effort fallback shape.
 func ExpandUserPathHomeOnly(raw string) string {
 	if raw == "" {
 		return ""

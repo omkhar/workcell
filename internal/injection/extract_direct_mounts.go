@@ -5,7 +5,6 @@ package injection
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -216,20 +215,8 @@ func sortedMapKeys(values map[string]any) []string {
 	return keys
 }
 
-// expandUserPath is a thin wrapper around pathutil.ExpandUserPathStrict
-// that preserves the "empty raw input is an error" rule the bash
-// caller's input-validation layer relied on.  All other tilde-expansion
-// semantics live in the shared pathutil helper so we have a single Go
-// owner of the expansion rules.
-func expandUserPath(raw string) (string, error) {
-	if raw == "" {
-		return "", errors.New("empty path")
-	}
-	return pathutil.ExpandUserPathStrict(raw)
-}
-
 func resolveAbsPath(raw string) (string, error) {
-	expanded, err := expandUserPath(raw)
+	expanded, err := pathutil.ExpandUserPathStrictRequireNonEmpty(raw)
 	if err != nil {
 		return "", err
 	}

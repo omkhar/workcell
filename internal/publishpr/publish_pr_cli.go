@@ -4,6 +4,7 @@
 package publishpr
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -230,28 +231,39 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		return err
 	}
 	prURL := strings.TrimRight(prOut.String(), "\n")
-	return shellproto.WriteFields(stdout, []shellproto.Field{
+	// Fail-closed: render through a buffer first so a forbidden control
+	// character in any field aborts the whole plan emission rather than
+	// leaving the bash shim with a half-imported plan. Mirrors the
+	// pattern FormatBundleResultForShell uses in internal/injection.
+	var buf bytes.Buffer
+	if err := shellproto.WriteFields(&buf, []shellproto.Field{
 		{Key: "publish_branch", Value: opts.Branch},
 		{Key: "publish_base", Value: opts.Base},
 		{Key: "publish_pr_url", Value: prURL},
 		{Key: "publish_snapshot", Value: opts.Snapshot},
-	})
+	}); err != nil {
+		return err
+	}
+	_, writeErr := stdout.Write(buf.Bytes())
+	return writeErr
 }
 
 // emitDryRunHeader writes the publish-pr dry-run KEY=VALUE plan header.
-// Fail-closed at the shellproto boundary: if any value contains a
-// forbidden control character we return the error rather than emit a
-// partial header.  Every value here originates from a tightly
-// validated CLI flag or a constant, so this should be impossible in
-// practice — but returning the error is the right shape so a future
-// regression that smuggles in a newline cannot silently corrupt the
-// bash-side plan re-import loop.
+// Fail-closed at the shellproto boundary: every field is rendered into
+// an in-memory buffer first; if any value contains a forbidden control
+// character, shellproto.WriteFields returns an error before anything
+// reaches stdout, so the bash shim never sees a partially-written
+// plan. Every value here originates from a tightly validated CLI flag
+// or a constant, so this should be impossible in practice — but the
+// buffered-then-flushed shape is the right defense for any future
+// regression that smuggles a newline through.
 func emitDryRunHeader(stdout io.Writer, opts *Options, preflight *PreflightInputs, resolvedWorkspace string, publishExistingCommits int, draft bool) error {
 	draftFlag := "0"
 	if draft {
 		draftFlag = "1"
 	}
-	return shellproto.WriteFields(stdout, []shellproto.Field{
+	var buf bytes.Buffer
+	if err := shellproto.WriteFields(&buf, []shellproto.Field{
 		{Key: "publish_workspace", Value: resolvedWorkspace},
 		{Key: "publish_snapshot", Value: opts.Snapshot},
 		{Key: "publish_branch", Value: opts.Branch},
@@ -260,7 +272,11 @@ func emitDryRunHeader(stdout io.Writer, opts *Options, preflight *PreflightInput
 		{Key: "publish_existing_commits", Value: strconv.Itoa(publishExistingCommits)},
 		{Key: "publish_repo_owned_pr_checks_expected", Value: preflight.RepoOwnedPRChecksExpected},
 		{Key: "publish_draft", Value: draftFlag},
-	})
+	}); err != nil {
+		return err
+	}
+	_, writeErr := stdout.Write(buf.Bytes())
+	return writeErr
 }
 
 func resolveOrStageCommitMessage(ctx *BashContext, opts *Options, preflight *PreflightInputs) (string, func(), error) {

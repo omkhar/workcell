@@ -9,6 +9,7 @@
 package stateroot
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -54,36 +55,32 @@ func LookupRoots() []string {
 	return roots
 }
 
-// FormattedRootArgs returns the --root=VALUE strings for non-empty
-// WORKCELL_STATE_ROOT and COLIMA_STATE_ROOT env vars, in that fixed
-// order.  This is the single Go owner of the bash↔Go state-root
-// contract; scripts/workcell::session_lookup_root_args shells out
-// through workcell-hostutil to consume it, so the order and the
-// "skip empty" rule live in exactly one place.
-func FormattedRootArgs() []string {
-	roots := LookupRoots()
-	out := make([]string, 0, len(roots))
-	for _, root := range roots {
-		out = append(out, "--root="+root)
+// FormatRootArgs returns the --root=VALUE strings for non-empty
+// workcellRoot and colimaRoot, in that fixed order. This is the single
+// Go owner of the bash↔Go state-root contract; scripts/workcell shells
+// out through `workcell-hostutil launcher lookup-state-roots` to
+// consume it, so the order and the "skip empty" rule live in exactly
+// one place.
+//
+// Argv-driven (rather than env-driven) because scripts/workcell routes
+// through go_hostutil → run_clean_host_command, which calls `env -i`
+// and strips the process env. The bash shim forwards
+// `${WORKCELL_STATE_ROOT:-} ${COLIMA_STATE_ROOT:-}` on argv.
+//
+// Returns an error if either input contains newline, carriage-return,
+// or NUL — those would let an attacker-controlled env var inject
+// forged --root= lines into the bash consumer's `while read` loop.
+func FormatRootArgs(workcellRoot, colimaRoot string) ([]string, error) {
+	for label, root := range map[string]string{"WORKCELL_STATE_ROOT": workcellRoot, "COLIMA_STATE_ROOT": colimaRoot} {
+		if strings.ContainsAny(root, "\n\r\x00") {
+			return nil, fmt.Errorf("%s must not contain newline, carriage-return, or NUL", label)
+		}
 	}
-	return out
-}
-
-// FormatRootArgs is the argv-driven sibling of FormattedRootArgs: it
-// returns the --root=VALUE strings for non-empty workcellRoot and
-// colimaRoot, in that fixed order.  scripts/workcell shells out
-// through go_hostutil → run_clean_host_command, which calls env -i and
-// strips the process env, so the bash shim cannot rely on
-// FormattedRootArgs reading env vars; instead it forwards
-// `${WORKCELL_STATE_ROOT:-} ${COLIMA_STATE_ROOT:-}` on argv and lets
-// this helper apply the same skip-empty rule.  Keeping both functions
-// in this package means the rule still lives in exactly one place.
-func FormatRootArgs(workcellRoot, colimaRoot string) []string {
 	out := make([]string, 0, 2)
 	for _, root := range []string{workcellRoot, colimaRoot} {
 		if root != "" {
 			out = append(out, "--root="+root)
 		}
 	}
-	return out
+	return out, nil
 }

@@ -205,9 +205,9 @@ func EmitCommand(w io.Writer, args []string) {
 // characters; never wrap the whole token in single quotes when only
 // printable characters are present; use ANSI-C `$'...'` only for non-
 // printable bytes. The empty string becomes a pair of bare ASCII
-// single-quote characters (the two-character literal returned at
-// line ~199 below by the `if s == ""` branch). The dry-run scenario
-// in tests/scenarios/shared/test-publish-pr-dry-run.sh greps for the
+// single-quote characters (returned by the `if s == ""` branch
+// below). The dry-run scenario in
+// tests/scenarios/shared/test-publish-pr-dry-run.sh greps for the
 // exact backslash form, so any divergence surfaces there.
 func bashQuote(s string) string {
 	if s == "" {

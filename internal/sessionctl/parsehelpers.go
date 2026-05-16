@@ -14,8 +14,9 @@ import (
 // It returns the value, the new index (i+1), and a *cliexit.ExitCodeError
 // with Code 2 if the value is missing or empty.  This mirrors the bash
 // option_value_or_die helper for the simple "next token is the value"
-// case shared across parseStopArgs, parseDeleteArgs, parseMonitorArgs,
-// parseAttachArgs, parseTimelineArgs, and parseSendArgs (--message).
+// case shared across every session_* parser (parseStopArgs,
+// parseDeleteArgs, parseMonitorArgs, parseAttachArgs,
+// parseTimelineArgs, parseLogsArgs, and parseSendArgs --message).
 //
 // parseSendArgs additionally rejects `--`-prefixed values for --id to
 // mirror the bash strict variant; for that mode call
@@ -36,25 +37,23 @@ func optionValueOrErrorStrict(args []string, i int, flag string) (string, int, e
 
 func optionValueOrErrorMode(args []string, i int, flag string, rejectDashDash bool) (string, int, error) {
 	if i+1 >= len(args) {
-		return "", i, &cliexit.ExitCodeError{
-			Code:    2,
-			Message: fmt.Sprintf("Option %s requires a value.", flag),
-		}
+		return "", i, missingOptionValueErr(flag)
 	}
 	value := args[i+1]
 	if value == "" {
-		return "", i, &cliexit.ExitCodeError{
-			Code:    2,
-			Message: fmt.Sprintf("Option %s requires a value.", flag),
-		}
+		return "", i, missingOptionValueErr(flag)
 	}
 	if rejectDashDash && strings.HasPrefix(value, "--") {
-		return "", i, &cliexit.ExitCodeError{
-			Code:    2,
-			Message: fmt.Sprintf("Option %s requires a value.", flag),
-		}
+		return "", i, missingOptionValueErr(flag)
 	}
 	return value, i + 1, nil
+}
+
+func missingOptionValueErr(flag string) error {
+	return &cliexit.ExitCodeError{
+		Code:    2,
+		Message: fmt.Sprintf("Option %s requires a value.", flag),
+	}
 }
 
 // unsupportedOption returns the exit-2 error for an unknown flag.  subcmd

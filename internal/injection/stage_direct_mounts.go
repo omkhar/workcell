@@ -97,13 +97,33 @@ func validateDirectMount(hostSource, mountPath string) error {
 	if !filepath.IsAbs(cleanedSource) {
 		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", hostSource)
 	}
-	// Reject symlinked sources up front: a symlink under
-	// /opt/workcell/host-inputs/ that points at /etc/passwd would
-	// dereference through every subsequent stat/open and leak the
-	// target's content into the staged bundle. copyDirContents already
-	// skips symlinks encountered inside a directory source; this
-	// closes the matching escape for the top-level source itself.
-	if lstatInfo, lerr := os.Lstat(cleanedSource); lerr == nil && lstatInfo.Mode()&fs.ModeSymlink != 0 {
+	// Reject symlinked sources up front: a symlink under the user's
+	// host-inputs root that points at /etc/passwd would dereference
+	// through every subsequent stat/open and leak the target's content
+	// into the staged bundle. copyDirContents already skips symlinks
+	// encountered inside a directory source; this closes the matching
+	// escape for the top-level source itself.
+	//
+	// Lstat error handling: any error other than ENOENT (which the
+	// downstream os.Stat will surface with the canonical diagnostic)
+	// is treated as a hard rejection so a transient I/O failure
+	// can't silently skip the symlink check.
+	//
+	// Intermediate-component-symlink defense (Sec-r2-1): the comprehensive
+	// fix requires distinguishing user-plantable symlinks from system
+	// symlinks (macOS's /var -> /private/var traverses the temp-dir
+	// staging path used by host-inputs cache and tests), which needs
+	// a dedicated design pass. The leaf-only check here closes the
+	// most obvious vector (the original FIX-5 finding) and is left
+	// as a known gap for follow-up.
+	lstatInfo, lerr := os.Lstat(cleanedSource)
+	if lerr != nil {
+		if !errors.Is(lerr, os.ErrNotExist) {
+			return fmt.Errorf("Direct input source could not be inspected: %s: %v", hostSource, lerr)
+		}
+		// ENOENT falls through to os.Stat which produces the canonical
+		// "missing, not absolute, or not a regular file/directory" diag.
+	} else if lstatInfo.Mode()&fs.ModeSymlink != 0 {
 		return fmt.Errorf("Direct input source must not be a symbolic link: %s", hostSource)
 	}
 	info, err := os.Stat(cleanedSource)
