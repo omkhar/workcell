@@ -4,7 +4,6 @@
 package pathutil
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 )
@@ -39,7 +38,7 @@ type Options struct {
 // new code should call CanonicalizePath directly.
 func CanonicalizePath(path string, opts Options) (string, error) {
 	if opts.Strict && path == "" {
-		return "", errors.New("empty path")
+		return "", ErrEmptyPath
 	}
 
 	expanded, err := expandUserPath(path, opts.Strict)

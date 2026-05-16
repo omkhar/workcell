@@ -45,14 +45,27 @@ var envVarNames = []string{"WORKCELL_STATE_ROOT", "COLIMA_STATE_ROOT"}
 // emit the workcell state root and the colima state root in that
 // order, skipping unset/empty values so the caller never receives a
 // bogus path.  Returns a fresh slice each call.
-func LookupRoots() []string {
+//
+// Returns an error if either env var contains newline, carriage-return,
+// or NUL — those would let an attacker-controlled env propagate the
+// same forged-record injection that FormatRootArgs defends against on
+// the argv-driven path. The check stays symmetric across both helpers
+// so any future plan-emission consumer of LookupRoots inherits the
+// same input-boundary defense.
+func LookupRoots() ([]string, error) {
+	for _, name := range envVarNames {
+		v := os.Getenv(name)
+		if strings.ContainsAny(v, "\n\r\x00") {
+			return nil, fmt.Errorf("%s must not contain newline, carriage-return, or NUL", name)
+		}
+	}
 	roots := make([]string, 0, len(envVarNames))
 	for _, name := range envVarNames {
 		if v := os.Getenv(name); v != "" {
 			roots = append(roots, v)
 		}
 	}
-	return roots
+	return roots, nil
 }
 
 // FormatRootArgs returns the --root=VALUE strings for non-empty
@@ -71,15 +84,24 @@ func LookupRoots() []string {
 // or NUL — those would let an attacker-controlled env var inject
 // forged --root= lines into the bash consumer's `while read` loop.
 func FormatRootArgs(workcellRoot, colimaRoot string) ([]string, error) {
-	for label, root := range map[string]string{"WORKCELL_STATE_ROOT": workcellRoot, "COLIMA_STATE_ROOT": colimaRoot} {
-		if strings.ContainsAny(root, "\n\r\x00") {
-			return nil, fmt.Errorf("%s must not contain newline, carriage-return, or NUL", label)
+	// Validate in fixed envVarNames order so error messages are
+	// deterministic when both inputs are bad — map iteration would
+	// randomize the labeled name reported back.
+	pairs := [...]struct {
+		label, root string
+	}{
+		{envVarNames[0], workcellRoot},
+		{envVarNames[1], colimaRoot},
+	}
+	for _, p := range pairs {
+		if strings.ContainsAny(p.root, "\n\r\x00") {
+			return nil, fmt.Errorf("%s must not contain newline, carriage-return, or NUL", p.label)
 		}
 	}
-	out := make([]string, 0, 2)
-	for _, root := range []string{workcellRoot, colimaRoot} {
-		if root != "" {
-			out = append(out, "--root="+root)
+	out := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		if p.root != "" {
+			out = append(out, "--root="+p.root)
 		}
 	}
 	return out, nil

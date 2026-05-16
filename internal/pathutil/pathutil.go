@@ -11,7 +11,13 @@ import (
 	"strings"
 )
 
-var errEmptyPath = errors.New("path is empty")
+// ErrEmptyPath is the sentinel returned by
+// ExpandUserPathStrictRequireNonEmpty for empty inputs (and reused by
+// the package's other empty-input gates, including
+// CanonicalizePath via canonicalize.go). Callers can match it via
+// errors.Is to detect the missing-input case and stamp a
+// domain-specific message.
+var ErrEmptyPath = errors.New("pathutil: path is empty")
 
 // ExpandUserPathBestEffort expands `~`, `~/...`, and `~user`/`~user/...`
 // references via os.UserHomeDir or user.Lookup.  When a `~user` lookup
@@ -31,21 +37,23 @@ func ExpandUserPathStrict(raw string) (string, error) {
 }
 
 // ExpandUserPathStrictRequireNonEmpty rejects an empty raw input with
-// errEmptyPath, then delegates to ExpandUserPathStrict.  The two
+// ErrEmptyPath, then delegates to ExpandUserPathStrict.  The two
 // near-identical private wrappers in internal/authpolicy and
 // internal/injection used to inline this check; consolidating here
 // keeps the empty-input contract in a single place.
+//
+// The function name is intentionally verbose — Strict and BestEffort
+// describe the error-handling axis, RequireNonEmpty is the empty-input
+// axis. If a 5th expansion variant arrives (e.g., a Strict + NonEmpty +
+// no-`~user`-lookup combination) the package should be reshaped into a
+// pathutil.ExpandUserPath(raw, ExpandOpts{...}) options-style API so
+// the variant count stays manageable.
 func ExpandUserPathStrictRequireNonEmpty(raw string) (string, error) {
 	if raw == "" {
-		return "", errEmptyPath
+		return "", ErrEmptyPath
 	}
 	return ExpandUserPathStrict(raw)
 }
-
-// ErrEmptyPath is the sentinel returned by
-// ExpandUserPathStrictRequireNonEmpty for empty inputs.  Exposed so
-// callers can errors.Is-wrap and stamp a domain-specific message.
-var ErrEmptyPath = errEmptyPath
 
 // ExpandUserPathHomeOnly expands `~` and `~/...` to the current user's
 // home directory and returns any other input verbatim — it never

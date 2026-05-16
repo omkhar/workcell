@@ -4,8 +4,6 @@
 package metadatautil
 
 import (
-	"errors"
-
 	"github.com/omkhar/workcell/internal/pathutil"
 )
 
@@ -17,7 +15,7 @@ import (
 // pathutil.CanonicalizePath directly.
 func CanonicalizePath(raw string) (string, error) {
 	if raw == "" {
-		return "", errors.New("empty path")
+		return "", pathutil.ErrEmptyPath
 	}
 	return pathutil.CanonicalizePath(raw, pathutil.Options{})
 }

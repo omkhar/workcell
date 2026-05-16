@@ -45,7 +45,11 @@ func logsMain(args []string, stdout io.Writer) error {
 	}
 
 	if len(roots) == 0 {
-		roots = stateroot.LookupRoots()
+		envRoots, lookupErr := stateroot.LookupRoots()
+		if lookupErr != nil {
+			return &cliexit.ExitCodeError{Code: 2, Message: lookupErr.Error()}
+		}
+		roots = envRoots
 	}
 	record, err := sessions.FindSessionRecordInRoots(roots, sessionID)
 	if err != nil {

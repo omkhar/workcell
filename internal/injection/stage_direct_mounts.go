@@ -109,13 +109,16 @@ func validateDirectMount(hostSource, mountPath string) error {
 	// is treated as a hard rejection so a transient I/O failure
 	// can't silently skip the symlink check.
 	//
-	// Intermediate-component-symlink defense (Sec-r2-1): the comprehensive
-	// fix requires distinguishing user-plantable symlinks from system
-	// symlinks (macOS's /var -> /private/var traverses the temp-dir
-	// staging path used by host-inputs cache and tests), which needs
-	// a dedicated design pass. The leaf-only check here closes the
-	// most obvious vector (the original FIX-5 finding) and is left
-	// as a known gap for follow-up.
+	// Intermediate-component-symlink defense (Sec-r2-1): the leaf
+	// path-component is rejected if it is itself a symlink. Intermediate
+	// path components (e.g., a parent dir that's been swapped for a
+	// symlink) are NOT yet inspected here — a comprehensive fix needs
+	// to distinguish user-plantable symlinks from system symlinks
+	// (macOS's /var -> /private/var traverses the temp-dir staging
+	// path used by host-inputs cache and tests), which warrants a
+	// dedicated design pass. Tracked under Sec-r2-1; PR-FIX-10 in
+	// `~/.claude/plans/distributed-wandering-raccoon.md` describes the
+	// follow-up using os.Root (Go 1.24+) or a component-walk allowlist.
 	lstatInfo, lerr := os.Lstat(cleanedSource)
 	if lerr != nil {
 		if !errors.Is(lerr, os.ErrNotExist) {

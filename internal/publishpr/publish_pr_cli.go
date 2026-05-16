@@ -233,8 +233,12 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	prURL := strings.TrimRight(prOut.String(), "\n")
 	// Fail-closed: render through a buffer first so a forbidden control
 	// character in any field aborts the whole plan emission rather than
-	// leaving the bash shim with a half-imported plan. Mirrors the
-	// pattern FormatBundleResultForShell uses in internal/injection.
+	// leaving the bash shim with a half-imported plan. Applies the same
+	// fail-closed contract as FormatBundleResultForShell in
+	// internal/injection (which buffers into a strings.Builder and
+	// returns the rendered string to its caller); the structural shape
+	// is different — this emitter writes the buffer to its io.Writer
+	// directly because the caller passes stdout in.
 	var buf bytes.Buffer
 	if err := shellproto.WriteFields(&buf, []shellproto.Field{
 		{Key: "publish_branch", Value: opts.Branch},
