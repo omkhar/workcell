@@ -60,4 +60,4 @@ ROOT_DIR="$(resolve_root_path "${WORKCELL_CONTROL_PLANE_ROOT:-$(cd "$(dirname "$
 GO_BIN="$(resolve_go_bin)"
 OUTPUT_PATH="$(resolve_output_path "${OUTPUT_PATH}")"
 
-(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-metadatautil generate-control-plane-manifest "${ROOT_DIR}" "${OUTPUT_PATH}")
+(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools generate-control-plane-manifest "${ROOT_DIR}" "${OUTPUT_PATH}")

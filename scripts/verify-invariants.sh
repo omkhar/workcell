@@ -137,7 +137,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
 go_verify_metadatautil() {
-  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-metadatautil "$@"
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools "$@"
 }
 
 go_verify_hostutil() {
@@ -1389,7 +1389,7 @@ if ! grep -q -- '--agent-arg VALUE' /tmp/workcell-installed-help.out; then
 fi
 
 if ! WORKCELL_HELP_BIN="${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
-  go run ./cmd/workcell-metadatautil validate-operator-contract \
+  go run ./cmd/workcell-citools validate-operator-contract \
   "${ROOT_DIR}" \
   "${ROOT_DIR}/policy/operator-contract.toml" \
   "${ROOT_DIR}/policy/requirements.toml" >/tmp/workcell-installed-operator-contract.out 2>&1; then

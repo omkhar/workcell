@@ -103,4 +103,4 @@ if command -v syft >/dev/null 2>&1; then
   syft_version="$(syft version 2>/dev/null || true)"
 fi
 
-(cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil generate-builder-environment-manifest "${OUTPUT_PATH}" "${BUILDKIT_IMAGE}" "${BUILDX_VERSION_TARGET}" "${COSIGN_VERSION_TARGET}" "${QEMU_IMAGE}" "${SYFT_VERSION_TARGET}" "${buildx_version}" "${buildx_inspect}" "${docker_version_json}" "${qemu_version}" "${cosign_version}" "${curl_version}" "${git_version}" "${gzip_version}" "${syft_version}" "${tar_version}")
+(cd "${ROOT_DIR}" && go run ./cmd/workcell-citools generate-builder-environment-manifest "${OUTPUT_PATH}" "${BUILDKIT_IMAGE}" "${BUILDX_VERSION_TARGET}" "${COSIGN_VERSION_TARGET}" "${QEMU_IMAGE}" "${SYFT_VERSION_TARGET}" "${buildx_version}" "${buildx_inspect}" "${docker_version_json}" "${qemu_version}" "${cosign_version}" "${curl_version}" "${git_version}" "${gzip_version}" "${syft_version}" "${tar_version}")

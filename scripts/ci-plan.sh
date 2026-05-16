@@ -157,7 +157,7 @@ jq -n \
 
 plan_json="$(
   cd "${ROOT_DIR}" &&
-    go run ./cmd/workcell-metadatautil plan-workflow-lanes "${MANIFEST_PATH}" "${tmp_config}"
+    go run ./cmd/workcell-citools plan-workflow-lanes "${MANIFEST_PATH}" "${tmp_config}"
 )"
 
 case "${OUTPUT_FORMAT}" in

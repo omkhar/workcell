@@ -71,7 +71,7 @@ while IFS=$'\t' read -r requirement_type label value; do
       ;;
   esac
 done < <(
-  cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-metadatautil verify-control-plane-parity "${MANIFEST}"
+  cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools verify-control-plane-parity "${MANIFEST}"
 )
 
 if [[ "${missing}" -gt 0 ]]; then

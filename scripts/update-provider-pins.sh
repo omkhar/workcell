@@ -95,7 +95,7 @@ if [[ "${mode}" == "apply" ]]; then
   export PATH="${npm_bin_dir}:${PATH}"
 fi
 
-plan_cmd=(go run ./cmd/workcell-metadatautil provider-bump-plan "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}")
+plan_cmd=(go run ./cmd/workcell-citools provider-bump-plan "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}")
 if [[ -n "${now_override}" ]]; then
   plan_cmd+=("${now_override}")
 fi
@@ -174,7 +174,7 @@ printf '%s\n' "${plan_json}" >"${plan_path}"
 
 (
   cd "${ROOT_DIR}"
-  go run ./cmd/workcell-metadatautil apply-provider-bump-plan "${plan_path}" "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}"
+  go run ./cmd/workcell-citools apply-provider-bump-plan "${plan_path}" "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}"
 )
 
 (

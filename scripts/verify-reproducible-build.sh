@@ -155,16 +155,16 @@ REPRO_REFERENCE_MANIFEST="${OCI_EXPORT_ROOT}/reference.json"
 case "${REPRO_BUILD_MODE}" in
   parallel)
     build_oci_layout_pair "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}" "${OCI_EXPORT_B}"
-    (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil verify-reproducible-build "${OCI_EXPORT_A}" "${OCI_EXPORT_B}" "${REPRO_PLATFORMS}" "${REPRO_MANIFEST_PATH}" "${SOURCE_DATE_EPOCH}")
+    (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools verify-reproducible-build "${OCI_EXPORT_A}" "${OCI_EXPORT_B}" "${REPRO_PLATFORMS}" "${REPRO_MANIFEST_PATH}" "${SOURCE_DATE_EPOCH}")
     ;;
   serial)
     build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_A}"
-    (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil generate-reproducible-build-manifest "${OCI_EXPORT_A}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}" "${SOURCE_DATE_EPOCH}")
+    (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools generate-reproducible-build-manifest "${OCI_EXPORT_A}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}" "${SOURCE_DATE_EPOCH}")
     rm -rf "${OCI_EXPORT_A}"
     OCI_EXPORT_A=""
     prune_repro_builder_cache
     build_oci_layout "${REPRO_PLATFORMS}" "${OCI_EXPORT_B}"
-    (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil verify-reproducible-build-manifest "${OCI_EXPORT_B}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}")
+    (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools verify-reproducible-build-manifest "${OCI_EXPORT_B}" "${REPRO_PLATFORMS}" "${REPRO_REFERENCE_MANIFEST}")
     if [[ -n "${REPRO_MANIFEST_PATH}" ]]; then
       mkdir -p "$(dirname "${REPRO_MANIFEST_PATH}")"
       cp "${REPRO_REFERENCE_MANIFEST}" "${REPRO_MANIFEST_PATH}"

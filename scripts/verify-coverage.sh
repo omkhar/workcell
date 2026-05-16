@@ -74,7 +74,7 @@ run_rust_launcher_coverage() {
       cargo test --locked --offline --bins
   )
 
-  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil coverage-executables "${message_file}") >"${TMP_ROOT}/rust-binaries.txt"
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools coverage-executables "${message_file}") >"${TMP_ROOT}/rust-binaries.txt"
 
   rust_binaries=()
   while IFS= read -r line; do
@@ -92,7 +92,7 @@ run_rust_launcher_coverage() {
     --ignore-filename-regex='(/.cargo/registry|/rustc/|/src/lib.rs$)' \
     "${rust_binaries[@]}" >"${export_file}"
 
-  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil coverage-percent "${export_file}" "${RUST_MIN_COVERAGE}" "Rust launcher coverage")
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools coverage-percent "${export_file}" "${RUST_MIN_COVERAGE}" "Rust launcher coverage")
 }
 
 run_go_metadatautil_coverage() {

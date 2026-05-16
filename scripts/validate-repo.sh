@@ -62,8 +62,8 @@ build_metadatautil() {
   if [[ -n "${METADATAUTIL_BIN}" ]]; then
     return 0
   fi
-  METADATAUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-metadatautil.XXXXXX")"
-  (cd "${ROOT_DIR}" && go build -buildvcs=false -o "${METADATAUTIL_BIN}" ./cmd/workcell-metadatautil)
+  METADATAUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-citools.XXXXXX")"
+  (cd "${ROOT_DIR}" && go build -buildvcs=false -o "${METADATAUTIL_BIN}" ./cmd/workcell-citools)
 }
 
 run_metadatautil() {

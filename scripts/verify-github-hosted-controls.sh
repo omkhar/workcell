@@ -31,8 +31,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-METADATAUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-metadatautil.XXXXXX")"
-build_go_tool_in_repo "${ROOT_DIR}" "${METADATAUTIL_BIN}" ./cmd/workcell-metadatautil
+METADATAUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-citools.XXXXXX")"
+build_go_tool_in_repo "${ROOT_DIR}" "${METADATAUTIL_BIN}" ./cmd/workcell-citools
 
 gh api "repos/${REPO}" >"${TMP_DIR}/repo.json"
 gh api "repos/${REPO}/actions/permissions" >"${TMP_DIR}/actions-permissions.json"

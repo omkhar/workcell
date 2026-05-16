@@ -10,4 +10,4 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   exit 0
 fi
 
-run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-metadatautil validate-requirements "${ROOT_DIR}" "${ROOT_DIR}/policy/requirements.toml"
+run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools validate-requirements "${ROOT_DIR}" "${ROOT_DIR}/policy/requirements.toml"

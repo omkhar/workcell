@@ -21,12 +21,12 @@ cleanup() {
 trap cleanup EXIT
 
 extract_claude_version() {
-  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil extract-dockerfile-arg "${DOCKERFILE_PATH}" CLAUDE_VERSION)
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools extract-dockerfile-arg "${DOCKERFILE_PATH}" CLAUDE_VERSION)
 }
 
 extract_claude_sha() {
   local target_arch="$1"
-  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil extract-claude-sha "${DOCKERFILE_PATH}" "${target_arch}")
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools extract-claude-sha "${DOCKERFILE_PATH}" "${target_arch}")
 }
 
 download_large_asset() {
@@ -57,7 +57,7 @@ verify_asset() {
 
 manifest_sha() {
   local platform="$1"
-  (cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil manifest-checksum "${MANIFEST_PATH}" "${platform}")
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools manifest-checksum "${MANIFEST_PATH}" "${platform}")
 }
 
 require_tool curl
@@ -68,7 +68,7 @@ CLAUDE_VERSION="$(extract_claude_version)"
 curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
   "${CLAUDE_RELEASE_ROOT}/${CLAUDE_VERSION}/manifest.json" -o "${MANIFEST_PATH}"
 
-(cd "${ROOT_DIR}" && go run ./cmd/workcell-metadatautil manifest-version "${MANIFEST_PATH}" "${CLAUDE_VERSION}")
+(cd "${ROOT_DIR}" && go run ./cmd/workcell-citools manifest-version "${MANIFEST_PATH}" "${CLAUDE_VERSION}")
 
 arm64_sha="$(extract_claude_sha arm64)"
 amd64_sha="$(extract_claude_sha amd64)"
