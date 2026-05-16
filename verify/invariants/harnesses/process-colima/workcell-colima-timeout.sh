@@ -1,6 +1,6 @@
 # Now that run_host_colima_with_timeout delegates the actual timeout
-# enforcement to the Go launcher subcommand
-# (workcell-hostutil launcher run-host-colima-with-timeout), this harness
+# enforcement to the Go helper subcommand
+# (workcell-hostutil helper run-host-colima-with-timeout), this harness
 # verifies the bash shim correctly forwards args and env-derived flags to
 # go_hostutil. The end-to-end timeout behaviour is covered by
 # TestRunHostColimaWithTimeoutKillsRunawayChild /
@@ -26,9 +26,9 @@ if [[ "${status}" -ne 124 ]]; then
 fi
 
 case "${captured_args}" in
-  *"launcher run-host-colima-with-timeout 1 "*) ;;
+  *"helper run-host-colima-with-timeout 1 "*) ;;
   *)
-    echo "Expected captured args to include 'launcher run-host-colima-with-timeout 1': ${captured_args}" >&2
+    echo "Expected captured args to include 'helper run-host-colima-with-timeout 1': ${captured_args}" >&2
     exit 1
     ;;
 esac

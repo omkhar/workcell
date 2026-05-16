@@ -55,14 +55,54 @@ func run(args []string) error {
 		return runPath(args[1:])
 	case "release":
 		return runRelease(args[1:])
+	case "helper":
+		return runHelper(args[1:])
+	// Deprecated: `launcher` is retained for one PR cycle as an alias
+	// for `helper` so that any straggling caller does not break.  All
+	// in-tree bash callers have been migrated; remove this alias in
+	// the next PR cycle once external mirrors have caught up.
 	case "launcher":
-		return runLauncher(args[1:])
+		return runHelper(args[1:])
 	case "policy":
 		return runHostutilPolicy(args[1:])
 	case "resolve-credentials":
 		return runHostutilResolveCredentials(args[1:])
 	case "pty-transcript":
 		return runHostutilPTYTranscript(args[1:])
+	// Top-level *-cli and *-usage entry points promoted out of the
+	// former `launcher` umbrella so the dispatch table only retains
+	// stateless helpers.  Each case delegates to the same handler the
+	// helper table used to call; no behavioural change.
+	case "auth-cli":
+		return cmdLauncherAuthCli(args[1:])
+	case "auth-usage":
+		return cmdLauncherAuthUsage(args[1:])
+	case "policy-cli":
+		return cmdLauncherPolicyCli(args[1:])
+	case "policy-usage":
+		return cmdLauncherPolicyUsage(args[1:])
+	case "publish-pr-cli":
+		return cmdLauncherPublishPRCli(args[1:])
+	case "publish-pr-usage":
+		return cmdLauncherPublishPRUsage(args[1:])
+	case "session-usage":
+		return cmdLauncherSessionUsage(args[1:])
+	case "session-attach-cli":
+		return cmdLauncherSessionAttachCli(args[1:])
+	case "session-delete-cli":
+		return cmdLauncherSessionDeleteCli(args[1:])
+	case "session-dispatch-cli":
+		return cmdLauncherSessionDispatchCli(args[1:])
+	case "session-logs-cli":
+		return cmdLauncherSessionLogsCli(args[1:])
+	case "session-monitor-cli":
+		return cmdLauncherSessionMonitorCli(args[1:])
+	case "session-send-cli":
+		return cmdLauncherSessionSendCli(args[1:])
+	case "session-stop-cli":
+		return cmdLauncherSessionStopCli(args[1:])
+	case "session-timeline-cli":
+		return cmdLauncherSessionTimelineCli(args[1:])
 	default:
 		return usage()
 	}
@@ -71,9 +111,9 @@ func run(args []string) error {
 // runHostutilPolicy dispatches the absorbed workcell-manage-injection-policy
 // CLI surface (scripts/lib/manage_injection_policy callers). This is the
 // **manage injection-policy** path: it edits the on-disk injection-policy
-// TOML files. Not to be confused with `workcell-hostutil launcher
-// policy-cli` below, which is the **`workcell policy <subcommand>`** Go
-// translation of the bash policy_main user-shell command (init/show/...).
+// TOML files. Not to be confused with `workcell-hostutil policy-cli`
+// below, which is the **`workcell policy <subcommand>`** Go translation
+// of the bash policy_main user-shell command (init/show/...).
 // authpolicy.Run returns a *cliexit.ExitCodeError directly, so we can
 // propagate it without re-wrapping; main()'s typed handler preserves
 // the stdout/stderr/exit-code contract.
@@ -172,36 +212,28 @@ func runRelease(args []string) error {
 	}
 }
 
-// launcherSubcommand describes one workcell-hostutil launcher subcommand.
+// helperSubcommand describes one workcell-hostutil helper subcommand.
 // minArgs and maxArgs count only the args that follow the subcommand
 // name; a maxArgs of -1 means unbounded.
-type launcherSubcommand struct {
+//
+// PR-FIX-11 renamed this from launcherSubcommand to helperSubcommand
+// after every `*-cli`/`*-usage` row was promoted to a top-level
+// workcell-hostutil subcommand.  The helper table now holds only
+// stateless helpers (cache keys, path math, validators, etc.).
+type helperSubcommand struct {
 	name    string
 	minArgs int
 	maxArgs int
 	handler func(args []string) error
 }
 
-// launcherSubcommands returns the dispatch table.  It is a function (not
+// helperSubcommands returns the dispatch table.  It is a function (not
 // a package-level var) because several of the session handlers below
-// call back into launcherUsage, which itself reads this table; using a
+// call back into helperUsage, which itself reads this table; using a
 // function defers the table's construction past package-init time and
 // avoids a Go initialization cycle.
-func launcherSubcommands() []launcherSubcommand {
-	return []launcherSubcommand{
-		{"session-usage", 0, 0, cmdLauncherSessionUsage},
-		{"auth-cli", 0, -1, cmdLauncherAuthCli},
-		{"auth-usage", 0, 0, cmdLauncherAuthUsage},
-		{"policy-usage", 0, 0, cmdLauncherPolicyUsage},
-		{"policy-cli", 0, -1, cmdLauncherPolicyCli},
-		{"session-timeline-cli", 0, -1, cmdLauncherSessionTimelineCli},
-		{"session-logs-cli", 0, -1, cmdLauncherSessionLogsCli},
-		{"session-attach-cli", 0, -1, cmdLauncherSessionAttachCli},
-		{"session-delete-cli", 0, -1, cmdLauncherSessionDeleteCli},
-		{"session-dispatch-cli", 0, -1, cmdLauncherSessionDispatchCli},
-		{"session-monitor-cli", 0, -1, cmdLauncherSessionMonitorCli},
-		{"session-send-cli", 0, -1, cmdLauncherSessionSendCli},
-		{"session-stop-cli", 0, -1, cmdLauncherSessionStopCli},
+func helperSubcommands() []helperSubcommand {
+	return []helperSubcommand{
 		{"session-suffix", 0, 0, cmdLauncherSessionSuffix},
 		{"colima-status", 1, 1, cmdLauncherColimaStatus},
 		{"validate-colima-status", 1, 1, cmdLauncherValidateColimaStatus},
@@ -236,12 +268,10 @@ func launcherSubcommands() []launcherSubcommand {
 		{"dedupe-endpoints", 1, 1, cmdLauncherDedupeEndpoints},
 		{"resolve-endpoints", 1, 1, cmdLauncherResolveEndpoints},
 		{"support-matrix-eval", 6, 6, cmdLauncherSupportMatrixEval},
-		{"publish-pr-usage", 0, 0, cmdLauncherPublishPRUsage},
 		{"profile-path", 1, -1, cmdLauncherProfilePath},
 		// PR 23.4 — injection bundle preparation moved into Go.
 		{"injection-stage-direct-mounts", 2, 2, cmdLauncherInjectionStageDirectMounts},
 		{"injection-prepare-bundle", 0, -1, cmdLauncherInjectionPrepareBundle},
-		{"publish-pr-cli", 0, -1, cmdLauncherPublishPRCli},
 		// lookup-state-roots takes the two state-root values as
 		// positional args (in WORKCELL,COLIMA order) so the bash shim
 		// does not need to leak them through env -i to the cleaned
@@ -251,24 +281,24 @@ func launcherSubcommands() []launcherSubcommand {
 	}
 }
 
-func runLauncher(args []string) error {
+func runHelper(args []string) error {
 	if len(args) == 0 {
-		return launcherUsage()
+		return helperUsage()
 	}
 	rest := args[1:]
-	for _, sub := range launcherSubcommands() {
+	for _, sub := range helperSubcommands() {
 		if sub.name != args[0] {
 			continue
 		}
 		if len(rest) < sub.minArgs {
-			return launcherUsage()
+			return helperUsage()
 		}
 		if sub.maxArgs >= 0 && len(rest) > sub.maxArgs {
-			return launcherUsage()
+			return helperUsage()
 		}
 		return sub.handler(rest)
 	}
-	return launcherUsage()
+	return helperUsage()
 }
 
 func cmdLauncherSessionUsage(_ []string) error {
@@ -295,12 +325,14 @@ func cmdLauncherPublishPRUsage(_ []string) error {
 	return nil
 }
 
-// cmdLauncherPolicyCli is the launcher entry point for the Go
-// translation of scripts/workcell's policy_main bash function — the
-// **user-facing `workcell policy <subcommand>`** surface (init, show,
-// etc.). Not to be confused with `workcell-hostutil policy` (above),
-// which is the **manage-injection-policy** TOML-editing surface
-// absorbed from the former workcell-manage-injection-policy binary.
+// cmdLauncherPolicyCli is the top-level `workcell-hostutil policy-cli`
+// entry point for the Go translation of scripts/workcell's policy_main
+// bash function — the **user-facing `workcell policy <subcommand>`**
+// surface (init, show, etc.). Not to be confused with `workcell-hostutil
+// policy` (above), which is the **manage-injection-policy** TOML-editing
+// surface absorbed from the former workcell-manage-injection-policy
+// binary.  PR-FIX-11 promoted this entry point out of the helper
+// dispatch table.
 // Usage errors (missing/unknown subcommand, unknown option) exit with
 // code 2 to match the bash CLI surface; all other errors propagate to
 // main() for the default exit-1 path.
@@ -408,7 +440,7 @@ func cmdLauncherRunHostColimaWithTimeout(args []string) error {
 // most convenient.
 func parseColimaInvocationArgs(args []string) (int, launcher.HostColimaInvocation, []string, error) {
 	if len(args) == 0 {
-		return 0, launcher.HostColimaInvocation{}, nil, launcherUsage()
+		return 0, launcher.HostColimaInvocation{}, nil, helperUsage()
 	}
 	timeoutSeconds, err := strconv.Atoi(args[0])
 	if err != nil {
@@ -437,7 +469,7 @@ func parseColimaInvocationArgs(args []string) (int, launcher.HostColimaInvocatio
 		case strings.HasPrefix(arg, "--cwd="):
 			inv.CWD = strings.TrimPrefix(arg, "--cwd=")
 		default:
-			return 0, launcher.HostColimaInvocation{}, nil, launcherUsage()
+			return 0, launcher.HostColimaInvocation{}, nil, helperUsage()
 		}
 		rest = rest[1:]
 	}
@@ -469,7 +501,7 @@ func cmdLauncherRouteProfileDockerCommand(args []string) error {
 		case strings.HasPrefix(arg, "--context-name="):
 			contextName = strings.TrimPrefix(arg, "--context-name=")
 		default:
-			return launcherUsage()
+			return helperUsage()
 		}
 	}
 	route, err := launcher.RouteProfileDockerCommand(provider, socketPath, contextName)
@@ -513,7 +545,7 @@ func cmdLauncherPrepareCurrentDockerClientPlan(args []string) error {
 		case arg == "--context-healthy=0":
 			contextHealthy = false
 		default:
-			return launcherUsage()
+			return helperUsage()
 		}
 	}
 	plan, err := launcher.PrepareCurrentDockerClientPlan(backend, contextName, contextExists, contextHealthy)
@@ -932,7 +964,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 }
 
 func usage() error {
-	return fmt.Errorf("usage: workcell-hostutil <path|release|launcher|policy|resolve-credentials|pty-transcript> [args...]")
+	return fmt.Errorf("usage: workcell-hostutil <path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli> [args...]")
 }
 
 func pathUsage() error {
@@ -943,18 +975,18 @@ func releaseUsage() error {
 	return fmt.Errorf("usage: workcell-hostutil release <create-payload|metadata|encode-name|bundle-manifest> [args...]")
 }
 
-func launcherUsage() error {
-	subs := launcherSubcommands()
+func helperUsage() error {
+	subs := helperSubcommands()
 	names := make([]string, 0, len(subs))
 	for _, sub := range subs {
 		names = append(names, sub.name)
 	}
-	return fmt.Errorf("usage: workcell-hostutil launcher <%s> [args...]", strings.Join(names, "|"))
+	return fmt.Errorf("usage: workcell-hostutil helper <%s> [args...]", strings.Join(names, "|"))
 }
 
 func parseSessionRoots(args []string) ([]string, []string, error) {
 	if len(args) == 0 {
-		return nil, nil, launcherUsage()
+		return nil, nil, helperUsage()
 	}
 
 	if strings.HasPrefix(args[0], "--root=") {
@@ -962,13 +994,13 @@ func parseSessionRoots(args []string) ([]string, []string, error) {
 		for len(args) > 0 && strings.HasPrefix(args[0], "--root=") {
 			root := strings.TrimPrefix(args[0], "--root=")
 			if root == "" {
-				return nil, nil, launcherUsage()
+				return nil, nil, helperUsage()
 			}
 			roots = append(roots, root)
 			args = args[1:]
 		}
 		if len(roots) == 0 {
-			return nil, nil, launcherUsage()
+			return nil, nil, helperUsage()
 		}
 		return roots, args, nil
 	}
@@ -996,7 +1028,7 @@ func runLauncherSessionList(args []string) error {
 		case strings.HasPrefix(arg, "--profile="):
 			opts.Profile = strings.TrimPrefix(arg, "--profile=")
 		default:
-			return launcherUsage()
+			return helperUsage()
 		}
 	}
 	if format == "json" && verbose {
@@ -1060,13 +1092,13 @@ func runLauncherSessionShow(args []string) error {
 		return err
 	}
 	if len(rest) < 1 || len(rest) > 2 {
-		return launcherUsage()
+		return helperUsage()
 	}
 
 	format := "json"
 	for _, arg := range rest[1:] {
 		if arg != "--text" {
-			return launcherUsage()
+			return helperUsage()
 		}
 		format = "text"
 	}
@@ -1094,7 +1126,7 @@ func runLauncherSessionExport(args []string) error {
 		return err
 	}
 	if len(rest) != 1 {
-		return launcherUsage()
+		return helperUsage()
 	}
 
 	exported, err := sessions.ExportSessionRecordInRoots(roots, rest[0])
@@ -1115,7 +1147,7 @@ func runLauncherSessionDiffMetadata(args []string) error {
 		return err
 	}
 	if len(rest) != 1 {
-		return launcherUsage()
+		return helperUsage()
 	}
 
 	record, err := sessions.FindSessionRecordInRoots(roots, rest[0])
@@ -1134,7 +1166,7 @@ func runLauncherSessionRuntimeMetadata(args []string) error {
 		return err
 	}
 	if len(rest) != 1 {
-		return launcherUsage()
+		return helperUsage()
 	}
 
 	record, recordPath, err := sessions.FindSessionRecordWithPathInRoots(roots, rest[0])
@@ -1154,7 +1186,7 @@ func runLauncherSessionTimeline(args []string) error {
 		return err
 	}
 	if len(rest) != 1 {
-		return launcherUsage()
+		return helperUsage()
 	}
 
 	lines, err := sessions.SessionTimelineRecordsInRoots(roots, rest[0])

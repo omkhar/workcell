@@ -71,7 +71,7 @@ func LookupRoots() ([]string, error) {
 // FormatRootArgs returns the --root=VALUE strings for non-empty
 // workcellRoot and colimaRoot, in that fixed order. This is the single
 // Go owner of the bash↔Go state-root contract; scripts/workcell shells
-// out through `workcell-hostutil launcher lookup-state-roots` to
+// out through `workcell-hostutil helper lookup-state-roots` to
 // consume it, so the order and the "skip empty" rule live in exactly
 // one place.
 //
