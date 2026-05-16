@@ -2,7 +2,9 @@ name: Upstream refresh
 
 on:
   schedule:
-    - cron: "15 13 * * 1-5"
+    # Daily at 13:15 UTC. Snapshot CVE timing does not respect business
+    # hours, so the workflow runs every day rather than Mon-Fri only.
+    - cron: "15 13 * * *"
   workflow_dispatch:
 
 permissions: {}
@@ -150,12 +152,15 @@ jobs:
             gh label create "${tracking_label}" --color "0E8A16" --description "Latest upstream refresh candidate tracking issue"
           fi
 
+          generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
           if [[ "${REFRESH_CHANGED}" != 'true' ]]; then
             {
               echo "## Latest result"
               echo
               echo "No upstream refresh changes were detected."
               echo
+              echo "- generated: \`${generated_at}\`"
               echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo "- base ref: ${GITHUB_REF}"
               echo "- base sha: $(git rev-parse HEAD)"
@@ -167,6 +172,7 @@ jobs:
               echo "Skipped candidate publication because a refresh PR is already open:"
               echo "${REFRESH_EXISTING_PR_URL}"
               echo
+              echo "- generated: \`${generated_at}\`"
               echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo "- base ref: ${GITHUB_REF}"
               echo "- base sha: $(git rev-parse HEAD)"
@@ -177,6 +183,7 @@ jobs:
             {
               echo "## Latest candidate"
               echo
+              echo "- generated: \`${generated_at}\`"
               echo "- run: $(jq -r '.run_url' "${metadata_path}")"
               echo "- artifact: \`$(jq -r '.artifact_name' "${metadata_path}")\`"
               echo "- base ref: \`$(jq -r '.base_ref' "${metadata_path}")\`"
