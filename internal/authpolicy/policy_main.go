@@ -24,7 +24,7 @@ import (
 //     policy path relative to the caller's working directory and
 //     dispatches to commandShow/commandValidate/commandDiff.
 //   - missing/unsupported subcommand or unknown option returns a
-//     usageError; the launcher wrapper translates that into exit 2 to
+//     usageError; the helper wrapper translates that into exit 2 to
 //     match scripts/workcell's `exit 2` on the same input.
 //
 // Stdout and stderr go to os.Stdout/os.Stderr; runPolicyMain is the

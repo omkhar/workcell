@@ -36,13 +36,13 @@ import (
 // export, monitor) or `usage` for the empty/help branches.  Any other
 // subcommand returns an ExitCodeError with code 2 carrying the bash
 // "Unsupported workcell session command: <name>" diagnostic so the
-// launcher exits with the historical bash status.
+// helper exits with the historical bash status.
 //
 // Help flags (-h, --help) and the empty-subcommand case route to
 // `subcommand=usage`, which the bash shim treats as a request to print
 // the canonical usage and exit 0.  The usage text itself lives in
 // usage.go (sessionctl.UsageText) and is already served via the
-// session-usage launcher subcommand.
+// session-usage helper subcommand.
 func DispatchMain(args []string) error {
 	return dispatchMain(args, os.Stdout)
 }

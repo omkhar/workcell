@@ -411,14 +411,14 @@ func cmdScanCredentialPatterns(args []string) error {
 // cmd → repo root) is two `..` segments up, identical to the
 // original.
 func cmdRunMutationTests(_ []string) error {
-	root, err := metadatautilRepoRoot()
+	root, err := citoolsRepoRoot()
 	if err != nil {
 		return err
 	}
 	return mutation.Run(root)
 }
 
-// metadatautilRepoRoot returns the repo root by walking two `..`
+// citoolsRepoRoot returns the repo root by walking two `..`
 // segments up from this source file's path. This ties correctness to
 // the source-tree layout: moving cmd/workcell-citools/main.go
 // (or building+installing the binary outside the repo) breaks it.
@@ -428,7 +428,7 @@ func cmdRunMutationTests(_ []string) error {
 //
 // TODO(workcell-citools-repo-root): take repo-root as an explicit
 // argv arg so this helper stops depending on runtime.Caller layout.
-func metadatautilRepoRoot() (string, error) {
+func citoolsRepoRoot() (string, error) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("unable to locate repo root")

@@ -57,12 +57,6 @@ func run(args []string) error {
 		return runRelease(args[1:])
 	case "helper":
 		return runHelper(args[1:])
-	// Deprecated: `launcher` is retained for one PR cycle as an alias
-	// for `helper` so that any straggling caller does not break.  All
-	// in-tree bash callers have been migrated; remove this alias in
-	// the next PR cycle once external mirrors have caught up.
-	case "launcher":
-		return runHelper(args[1:])
 	case "policy":
 		return runHostutilPolicy(args[1:])
 	case "resolve-credentials":
@@ -74,35 +68,35 @@ func run(args []string) error {
 	// stateless helpers.  Each case delegates to the same handler the
 	// helper table used to call; no behavioural change.
 	case "auth-cli":
-		return cmdLauncherAuthCli(args[1:])
+		return cmdHelperAuthCli(args[1:])
 	case "auth-usage":
-		return cmdLauncherAuthUsage(args[1:])
+		return cmdHelperAuthUsage(args[1:])
 	case "policy-cli":
-		return cmdLauncherPolicyCli(args[1:])
+		return cmdHelperPolicyCli(args[1:])
 	case "policy-usage":
-		return cmdLauncherPolicyUsage(args[1:])
+		return cmdHelperPolicyUsage(args[1:])
 	case "publish-pr-cli":
-		return cmdLauncherPublishPRCli(args[1:])
+		return cmdHelperPublishPRCli(args[1:])
 	case "publish-pr-usage":
-		return cmdLauncherPublishPRUsage(args[1:])
+		return cmdHelperPublishPRUsage(args[1:])
 	case "session-usage":
-		return cmdLauncherSessionUsage(args[1:])
+		return cmdHelperSessionUsage(args[1:])
 	case "session-attach-cli":
-		return cmdLauncherSessionAttachCli(args[1:])
+		return cmdHelperSessionAttachCli(args[1:])
 	case "session-delete-cli":
-		return cmdLauncherSessionDeleteCli(args[1:])
+		return cmdHelperSessionDeleteCli(args[1:])
 	case "session-dispatch-cli":
-		return cmdLauncherSessionDispatchCli(args[1:])
+		return cmdHelperSessionDispatchCli(args[1:])
 	case "session-logs-cli":
-		return cmdLauncherSessionLogsCli(args[1:])
+		return cmdHelperSessionLogsCli(args[1:])
 	case "session-monitor-cli":
-		return cmdLauncherSessionMonitorCli(args[1:])
+		return cmdHelperSessionMonitorCli(args[1:])
 	case "session-send-cli":
-		return cmdLauncherSessionSendCli(args[1:])
+		return cmdHelperSessionSendCli(args[1:])
 	case "session-stop-cli":
-		return cmdLauncherSessionStopCli(args[1:])
+		return cmdHelperSessionStopCli(args[1:])
 	case "session-timeline-cli":
-		return cmdLauncherSessionTimelineCli(args[1:])
+		return cmdHelperSessionTimelineCli(args[1:])
 	default:
 		return usage()
 	}
@@ -234,50 +228,50 @@ type helperSubcommand struct {
 // avoids a Go initialization cycle.
 func helperSubcommands() []helperSubcommand {
 	return []helperSubcommand{
-		{"session-suffix", 0, 0, cmdLauncherSessionSuffix},
-		{"colima-status", 1, 1, cmdLauncherColimaStatus},
-		{"validate-colima-status", 1, 1, cmdLauncherValidateColimaStatus},
-		{"run-host-colima-with-timeout", 1, -1, cmdLauncherRunHostColimaWithTimeout},
-		{"docker-desktop-context-name", 0, 0, cmdLauncherDockerDesktopContextName},
-		{"route-profile-docker-command", 1, -1, cmdLauncherRouteProfileDockerCommand},
-		{"prepare-current-docker-client-plan", 1, -1, cmdLauncherPrepareCurrentDockerClientPlan},
-		{"cleanup-stale-log-pointers", 1, 1, cmdLauncherCleanupStaleLogPointers},
-		{"profile-lock-is-stale", 1, 1, cmdLauncherProfileLockIsStale},
-		{"acquire-profile-lock", 2, 2, cmdLauncherAcquireProfileLock},
-		{"write-profile-owner", 2, 2, cmdLauncherWriteProfileOwner},
-		{"cleanup-stale-session-audit-dirs", 1, 1, cmdLauncherCleanupStaleSessionAuditDirs},
-		{"session-record-write", 2, -1, cmdLauncherSessionRecordWrite},
-		{"session-list", 0, -1, runLauncherSessionList},
-		{"session-show", 0, -1, runLauncherSessionShow},
-		{"session-export", 0, -1, runLauncherSessionExport},
-		{"session-diff-metadata", 0, -1, runLauncherSessionDiffMetadata},
-		{"session-runtime-metadata", 0, -1, runLauncherSessionRuntimeMetadata},
-		{"session-timeline", 0, -1, runLauncherSessionTimeline},
-		{"audit-digest", 2, -1, cmdLauncherAuditDigest},
-		{"direct-mount-cache-key", 2, 2, cmdLauncherDirectMountCacheKey},
-		{"resolve-host-output-candidate", 1, 1, cmdLauncherResolveHostOutputCandidate},
-		{"resolve-host-output-directory-candidate", 1, 1, cmdLauncherResolveHostOutputDirectoryCandidate},
-		{"cleanup-stale-injection-bundles", 1, 1, cmdLauncherCleanupStaleInjectionBundles},
-		{"manifest-metadata", 1, 1, cmdLauncherManifestMetadata},
-		{"resolver-metadata", 1, 1, cmdLauncherResolverMetadata},
-		{"workspace-cache-key", 1, 1, cmdLauncherWorkspaceCacheKey},
-		{"extract-codex-version", 1, 1, cmdLauncherExtractCodexVersion},
-		{"validate-security-options", 1, 1, cmdLauncherValidateSecurityOptions},
-		{"validate-container-security-options", 1, 1, cmdLauncherValidateContainerSecurityOptions},
-		{"canonicalize-tool-path", 1, 1, cmdLauncherCanonicalizeToolPath},
-		{"dedupe-endpoints", 1, 1, cmdLauncherDedupeEndpoints},
-		{"resolve-endpoints", 1, 1, cmdLauncherResolveEndpoints},
-		{"support-matrix-eval", 6, 6, cmdLauncherSupportMatrixEval},
-		{"profile-path", 1, -1, cmdLauncherProfilePath},
+		{"session-suffix", 0, 0, cmdHelperSessionSuffix},
+		{"colima-status", 1, 1, cmdHelperColimaStatus},
+		{"validate-colima-status", 1, 1, cmdHelperValidateColimaStatus},
+		{"run-host-colima-with-timeout", 1, -1, cmdHelperRunHostColimaWithTimeout},
+		{"docker-desktop-context-name", 0, 0, cmdHelperDockerDesktopContextName},
+		{"route-profile-docker-command", 1, -1, cmdHelperRouteProfileDockerCommand},
+		{"prepare-current-docker-client-plan", 1, -1, cmdHelperPrepareCurrentDockerClientPlan},
+		{"cleanup-stale-log-pointers", 1, 1, cmdHelperCleanupStaleLogPointers},
+		{"profile-lock-is-stale", 1, 1, cmdHelperProfileLockIsStale},
+		{"acquire-profile-lock", 2, 2, cmdHelperAcquireProfileLock},
+		{"write-profile-owner", 2, 2, cmdHelperWriteProfileOwner},
+		{"cleanup-stale-session-audit-dirs", 1, 1, cmdHelperCleanupStaleSessionAuditDirs},
+		{"session-record-write", 2, -1, cmdHelperSessionRecordWrite},
+		{"session-list", 0, -1, runHelperSessionList},
+		{"session-show", 0, -1, runHelperSessionShow},
+		{"session-export", 0, -1, runHelperSessionExport},
+		{"session-diff-metadata", 0, -1, runHelperSessionDiffMetadata},
+		{"session-runtime-metadata", 0, -1, runHelperSessionRuntimeMetadata},
+		{"session-timeline", 0, -1, runHelperSessionTimeline},
+		{"audit-digest", 2, -1, cmdHelperAuditDigest},
+		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
+		{"resolve-host-output-candidate", 1, 1, cmdHelperResolveHostOutputCandidate},
+		{"resolve-host-output-directory-candidate", 1, 1, cmdHelperResolveHostOutputDirectoryCandidate},
+		{"cleanup-stale-injection-bundles", 1, 1, cmdHelperCleanupStaleInjectionBundles},
+		{"manifest-metadata", 1, 1, cmdHelperManifestMetadata},
+		{"resolver-metadata", 1, 1, cmdHelperResolverMetadata},
+		{"workspace-cache-key", 1, 1, cmdHelperWorkspaceCacheKey},
+		{"extract-codex-version", 1, 1, cmdHelperExtractCodexVersion},
+		{"validate-security-options", 1, 1, cmdHelperValidateSecurityOptions},
+		{"validate-container-security-options", 1, 1, cmdHelperValidateContainerSecurityOptions},
+		{"canonicalize-tool-path", 1, 1, cmdHelperCanonicalizeToolPath},
+		{"dedupe-endpoints", 1, 1, cmdHelperDedupeEndpoints},
+		{"resolve-endpoints", 1, 1, cmdHelperResolveEndpoints},
+		{"support-matrix-eval", 6, 6, cmdHelperSupportMatrixEval},
+		{"profile-path", 1, -1, cmdHelperProfilePath},
 		// PR 23.4 — injection bundle preparation moved into Go.
-		{"injection-stage-direct-mounts", 2, 2, cmdLauncherInjectionStageDirectMounts},
-		{"injection-prepare-bundle", 0, -1, cmdLauncherInjectionPrepareBundle},
+		{"injection-stage-direct-mounts", 2, 2, cmdHelperInjectionStageDirectMounts},
+		{"injection-prepare-bundle", 0, -1, cmdHelperInjectionPrepareBundle},
 		// lookup-state-roots takes the two state-root values as
 		// positional args (in WORKCELL,COLIMA order) so the bash shim
 		// does not need to leak them through env -i to the cleaned
 		// host process; bash forwards `${WORKCELL_STATE_ROOT:-} ${COLIMA_STATE_ROOT:-}`
 		// directly on the command line.
-		{"lookup-state-roots", 2, 2, cmdLauncherLookupStateRoots},
+		{"lookup-state-roots", 2, 2, cmdHelperLookupStateRoots},
 	}
 }
 
@@ -301,31 +295,31 @@ func runHelper(args []string) error {
 	return helperUsage()
 }
 
-func cmdLauncherSessionUsage(_ []string) error {
+func cmdHelperSessionUsage(_ []string) error {
 	fmt.Print(sessionctl.UsageText())
 	return nil
 }
 
-func cmdLauncherAuthUsage(_ []string) error {
+func cmdHelperAuthUsage(_ []string) error {
 	fmt.Print(authpolicy.AuthUsageText())
 	return nil
 }
 
-func cmdLauncherAuthCli(args []string) error {
+func cmdHelperAuthCli(args []string) error {
 	return authpolicy.AuthMain(args)
 }
 
-func cmdLauncherPolicyUsage(_ []string) error {
+func cmdHelperPolicyUsage(_ []string) error {
 	fmt.Print(authpolicy.PolicyUsageText())
 	return nil
 }
 
-func cmdLauncherPublishPRUsage(_ []string) error {
+func cmdHelperPublishPRUsage(_ []string) error {
 	fmt.Print(publishpr.UsageText())
 	return nil
 }
 
-// cmdLauncherPolicyCli is the top-level `workcell-hostutil policy-cli`
+// cmdHelperPolicyCli is the top-level `workcell-hostutil policy-cli`
 // entry point for the Go translation of scripts/workcell's policy_main
 // bash function — the **user-facing `workcell policy <subcommand>`**
 // surface (init, show, etc.). Not to be confused with `workcell-hostutil
@@ -336,7 +330,7 @@ func cmdLauncherPublishPRUsage(_ []string) error {
 // Usage errors (missing/unknown subcommand, unknown option) exit with
 // code 2 to match the bash CLI surface; all other errors propagate to
 // main() for the default exit-1 path.
-func cmdLauncherPolicyCli(args []string) error {
+func cmdHelperPolicyCli(args []string) error {
 	err := authpolicy.PolicyMain(args)
 	if authpolicy.IsPolicyMainUsageError(err) {
 		return &cliexit.ExitCodeError{Code: 2}
@@ -344,43 +338,43 @@ func cmdLauncherPolicyCli(args []string) error {
 	return err
 }
 
-func cmdLauncherPublishPRCli(args []string) error {
+func cmdHelperPublishPRCli(args []string) error {
 	return publishpr.PublishPRMain(args, os.Stdin, os.Stdout, os.Stderr)
 }
 
-func cmdLauncherSessionTimelineCli(args []string) error {
+func cmdHelperSessionTimelineCli(args []string) error {
 	return sessionctl.TimelineMain(args)
 }
 
-func cmdLauncherSessionLogsCli(args []string) error {
+func cmdHelperSessionLogsCli(args []string) error {
 	return sessionctl.LogsMain(args)
 }
 
-func cmdLauncherSessionAttachCli(args []string) error {
+func cmdHelperSessionAttachCli(args []string) error {
 	return sessionctl.AttachMain(args)
 }
 
-func cmdLauncherSessionDeleteCli(args []string) error {
+func cmdHelperSessionDeleteCli(args []string) error {
 	return sessionctl.DeleteMain(args)
 }
 
-func cmdLauncherSessionDispatchCli(args []string) error {
+func cmdHelperSessionDispatchCli(args []string) error {
 	return sessionctl.DispatchMain(args)
 }
 
-func cmdLauncherSessionMonitorCli(args []string) error {
+func cmdHelperSessionMonitorCli(args []string) error {
 	return sessionctl.MonitorMain(args)
 }
 
-func cmdLauncherSessionSendCli(args []string) error {
+func cmdHelperSessionSendCli(args []string) error {
 	return sessionctl.SendMain(args)
 }
 
-func cmdLauncherSessionStopCli(args []string) error {
+func cmdHelperSessionStopCli(args []string) error {
 	return sessionctl.StopMain(args)
 }
 
-func cmdLauncherSessionSuffix(_ []string) error {
+func cmdHelperSessionSuffix(_ []string) error {
 	value, err := launcher.RandomHex(4)
 	if err != nil {
 		return err
@@ -389,7 +383,7 @@ func cmdLauncherSessionSuffix(_ []string) error {
 	return nil
 }
 
-func cmdLauncherColimaStatus(args []string) error {
+func cmdHelperColimaStatus(args []string) error {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return err
@@ -405,7 +399,7 @@ func cmdLauncherColimaStatus(args []string) error {
 	return nil
 }
 
-func cmdLauncherValidateColimaStatus(args []string) error {
+func cmdHelperValidateColimaStatus(args []string) error {
 	statusBytes, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return err
@@ -413,7 +407,7 @@ func cmdLauncherValidateColimaStatus(args []string) error {
 	return launcher.ValidateColimaStatusOutput(string(statusBytes), args[0])
 }
 
-func cmdLauncherRunHostColimaWithTimeout(args []string) error {
+func cmdHelperRunHostColimaWithTimeout(args []string) error {
 	timeoutSeconds, inv, colimaArgs, err := parseColimaInvocationArgs(args)
 	if err != nil {
 		return err
@@ -476,13 +470,13 @@ func parseColimaInvocationArgs(args []string) (int, launcher.HostColimaInvocatio
 	return timeoutSeconds, inv, rest, nil
 }
 
-func cmdLauncherDockerDesktopContextName(_ []string) error {
+func cmdHelperDockerDesktopContextName(_ []string) error {
 	fmt.Println(launcher.DockerDesktopContextName)
 	return nil
 }
 
-// cmdLauncherRouteProfileDockerCommand implements the
-// `route-profile-docker-command` launcher subcommand.  The bash caller
+// cmdHelperRouteProfileDockerCommand implements the
+// `route-profile-docker-command` helper subcommand.  The bash caller
 // passes the provider via --provider and, depending on the provider,
 // either --socket-path (colima) or --context-name (docker-desktop).
 // On success the env-prefix tokens are emitted to stdout one per line
@@ -490,7 +484,7 @@ func cmdLauncherDockerDesktopContextName(_ []string) error {
 // unsupported provider exits with status 1 after printing the bash
 // "Unsupported target provider for Docker command routing" diagnostic
 // to stderr.
-func cmdLauncherRouteProfileDockerCommand(args []string) error {
+func cmdHelperRouteProfileDockerCommand(args []string) error {
 	var provider, socketPath, contextName string
 	for _, arg := range args {
 		switch {
@@ -517,8 +511,8 @@ func cmdLauncherRouteProfileDockerCommand(args []string) error {
 	return nil
 }
 
-// cmdLauncherPrepareCurrentDockerClientPlan implements the
-// `prepare-current-docker-client-plan` launcher subcommand.  Required
+// cmdHelperPrepareCurrentDockerClientPlan implements the
+// `prepare-current-docker-client-plan` helper subcommand.  Required
 // arg: --backend=BACKEND.  Optional: --context-name=NAME,
 // --context-exists=0|1, --context-healthy=0|1 (consulted only for
 // docker-desktop).  On success it prints `mode=...` (and, for
@@ -526,7 +520,7 @@ func cmdLauncherRouteProfileDockerCommand(args []string) error {
 // context check fails the helper exits with status 2 after writing the
 // two-line bash diagnostic to stderr, matching the original `exit 2`
 // in scripts/workcell.
-func cmdLauncherPrepareCurrentDockerClientPlan(args []string) error {
+func cmdHelperPrepareCurrentDockerClientPlan(args []string) error {
 	var backend, contextName string
 	contextExists := false
 	contextHealthy := false
@@ -567,11 +561,11 @@ func cmdLauncherPrepareCurrentDockerClientPlan(args []string) error {
 	return nil
 }
 
-func cmdLauncherCleanupStaleLogPointers(args []string) error {
+func cmdHelperCleanupStaleLogPointers(args []string) error {
 	return hoststate.CleanupStaleLatestLogPointers(args[0])
 }
 
-func cmdLauncherProfileLockIsStale(args []string) error {
+func cmdHelperProfileLockIsStale(args []string) error {
 	stale, err := launcher.ProfileLockIsStale(args[0])
 	if err != nil {
 		return err
@@ -584,7 +578,7 @@ func cmdLauncherProfileLockIsStale(args []string) error {
 	return nil
 }
 
-func cmdLauncherAcquireProfileLock(args []string) error {
+func cmdHelperAcquireProfileLock(args []string) error {
 	pid, err := strconv.Atoi(args[1])
 	if err != nil {
 		return fmt.Errorf("parse pid: %w", err)
@@ -601,7 +595,7 @@ func cmdLauncherAcquireProfileLock(args []string) error {
 	return nil
 }
 
-func cmdLauncherWriteProfileOwner(args []string) error {
+func cmdHelperWriteProfileOwner(args []string) error {
 	pid, err := strconv.Atoi(args[1])
 	if err != nil {
 		return fmt.Errorf("parse pid: %w", err)
@@ -609,11 +603,11 @@ func cmdLauncherWriteProfileOwner(args []string) error {
 	return launcher.WriteProfileOwner(args[0], pid)
 }
 
-func cmdLauncherCleanupStaleSessionAuditDirs(args []string) error {
+func cmdHelperCleanupStaleSessionAuditDirs(args []string) error {
 	return hoststate.CleanupStaleSessionAuditDirs(args[0])
 }
 
-func cmdLauncherSessionRecordWrite(args []string) error {
+func cmdHelperSessionRecordWrite(args []string) error {
 	updates := map[string]string{}
 	for _, pair := range args[1:] {
 		key, value, ok := strings.Cut(pair, "=")
@@ -625,17 +619,17 @@ func cmdLauncherSessionRecordWrite(args []string) error {
 	return sessions.WriteSessionRecord(args[0], updates)
 }
 
-func cmdLauncherAuditDigest(args []string) error {
+func cmdHelperAuditDigest(args []string) error {
 	fmt.Println(hoststate.AuditRecordDigest(args[0], args[1], args[2:]))
 	return nil
 }
 
-func cmdLauncherDirectMountCacheKey(args []string) error {
+func cmdHelperDirectMountCacheKey(args []string) error {
 	fmt.Println(hoststate.DirectMountCacheKey(args[0], args[1]))
 	return nil
 }
 
-func cmdLauncherResolveHostOutputCandidate(args []string) error {
+func cmdHelperResolveHostOutputCandidate(args []string) error {
 	value, err := hoststate.ResolveHostOutputCandidate(args[0])
 	if err != nil {
 		return err
@@ -644,7 +638,7 @@ func cmdLauncherResolveHostOutputCandidate(args []string) error {
 	return nil
 }
 
-func cmdLauncherResolveHostOutputDirectoryCandidate(args []string) error {
+func cmdHelperResolveHostOutputDirectoryCandidate(args []string) error {
 	value, err := hoststate.ResolveHostOutputDirectoryCandidate(args[0])
 	if err != nil {
 		return err
@@ -653,11 +647,11 @@ func cmdLauncherResolveHostOutputDirectoryCandidate(args []string) error {
 	return nil
 }
 
-func cmdLauncherCleanupStaleInjectionBundles(args []string) error {
+func cmdHelperCleanupStaleInjectionBundles(args []string) error {
 	return hoststate.CleanupStaleInjectionBundles(args[0])
 }
 
-func cmdLauncherManifestMetadata(args []string) error {
+func cmdHelperManifestMetadata(args []string) error {
 	lines, err := hoststate.ManifestMetadataLines(args[0])
 	if err != nil {
 		return err
@@ -668,7 +662,7 @@ func cmdLauncherManifestMetadata(args []string) error {
 	return nil
 }
 
-func cmdLauncherResolverMetadata(args []string) error {
+func cmdHelperResolverMetadata(args []string) error {
 	lines, err := hoststate.ResolverMetadataLines(args[0])
 	if err != nil {
 		return err
@@ -679,7 +673,7 @@ func cmdLauncherResolverMetadata(args []string) error {
 	return nil
 }
 
-func cmdLauncherWorkspaceCacheKey(args []string) error {
+func cmdHelperWorkspaceCacheKey(args []string) error {
 	value, err := hoststate.WorkspaceCacheKey(args[0])
 	if err != nil {
 		return err
@@ -688,7 +682,7 @@ func cmdLauncherWorkspaceCacheKey(args []string) error {
 	return nil
 }
 
-func cmdLauncherExtractCodexVersion(args []string) error {
+func cmdHelperExtractCodexVersion(args []string) error {
 	value, err := launcher.ExtractCodexVersion(args[0])
 	if err != nil {
 		return err
@@ -697,15 +691,15 @@ func cmdLauncherExtractCodexVersion(args []string) error {
 	return nil
 }
 
-func cmdLauncherValidateSecurityOptions(args []string) error {
+func cmdHelperValidateSecurityOptions(args []string) error {
 	return launcher.ValidateSecurityOptions(args[0])
 }
 
-func cmdLauncherValidateContainerSecurityOptions(args []string) error {
+func cmdHelperValidateContainerSecurityOptions(args []string) error {
 	return launcher.ValidateContainerSecurityOptions(args[0])
 }
 
-func cmdLauncherCanonicalizeToolPath(args []string) error {
+func cmdHelperCanonicalizeToolPath(args []string) error {
 	value, err := launcher.CanonicalizeToolPath(args[0])
 	if err != nil {
 		return err
@@ -714,12 +708,12 @@ func cmdLauncherCanonicalizeToolPath(args []string) error {
 	return nil
 }
 
-func cmdLauncherDedupeEndpoints(args []string) error {
+func cmdHelperDedupeEndpoints(args []string) error {
 	fmt.Println(launcher.DedupeEndpointList(args[0]))
 	return nil
 }
 
-func cmdLauncherResolveEndpoints(args []string) error {
+func cmdHelperResolveEndpoints(args []string) error {
 	lines, err := launcher.ResolveEndpoints(args[0])
 	if err != nil {
 		return err
@@ -730,7 +724,7 @@ func cmdLauncherResolveEndpoints(args []string) error {
 	return nil
 }
 
-func cmdLauncherSupportMatrixEval(args []string) error {
+func cmdHelperSupportMatrixEval(args []string) error {
 	result, err := supportmatrix.Evaluate(args[0], supportmatrix.Query{
 		HostOS:               args[1],
 		HostArch:             args[2],
@@ -747,7 +741,7 @@ func cmdLauncherSupportMatrixEval(args []string) error {
 	return nil
 }
 
-// cmdLauncherProfilePath dispatches the profile-path umbrella
+// cmdHelperProfilePath dispatches the profile-path umbrella
 // subcommand.  Each kind exposes a thin, byte-identical replacement for
 // the matching scripts/workcell profile_* helper.
 //
@@ -765,7 +759,7 @@ func cmdLauncherSupportMatrixEval(args []string) error {
 //	profile-path latest-log-pointer        TARGET_STATE_ROOT TARGET_KIND TARGET_PROVIDER PROFILE KIND
 //	profile-path legacy-latest-log-pointer STATE_ROOT PROFILE KIND
 //	profile-path colima-config             STATE_ROOT PROFILE
-func cmdLauncherProfilePath(args []string) error {
+func cmdHelperProfilePath(args []string) error {
 	kind := args[0]
 	rest := args[1:]
 	value, err := dispatchProfilePath(kind, rest)
@@ -860,12 +854,12 @@ func dispatchProfilePath(kind string, args []string) (string, error) {
 	}
 }
 
-// cmdLauncherInjectionStageDirectMounts is the launcher subcommand entry
+// cmdHelperInjectionStageDirectMounts is the helper subcommand entry
 // point for the PR 23.4 Go translation of prepare_injection_direct_mounts.
 // It accepts BUNDLE_ROOT and MOUNT_SPEC_PATH and prints one "-v" argument
 // pair per output line so bash can split it back into the DIRECT_SOURCE_MOUNTS
 // array.
-func cmdLauncherInjectionStageDirectMounts(args []string) error {
+func cmdHelperInjectionStageDirectMounts(args []string) error {
 	dockerArgs, err := injection.StageDirectMounts(args[0], args[1])
 	if err != nil {
 		return err
@@ -876,14 +870,14 @@ func cmdLauncherInjectionStageDirectMounts(args []string) error {
 	return nil
 }
 
-// cmdLauncherInjectionPrepareBundle is the launcher subcommand entry point
+// cmdHelperInjectionPrepareBundle is the helper subcommand entry point
 // for the PR 23.4 Go translation of prepare_injection_bundle.  It reads the
 // bash globals from CLI flags, executes the full pipeline in-process, and
 // prints KEY=VALUE lines (one per bash global) so the shim can re-export
 // them via a read loop.  FormatBundleResultForShell is fail-closed: if
 // any value carries a forbidden control char we propagate the error and
 // emit nothing so bash never re-imports a partial plan.
-func cmdLauncherInjectionPrepareBundle(args []string) error {
+func cmdHelperInjectionPrepareBundle(args []string) error {
 	opts, err := parsePrepareBundleArgs(args)
 	if err != nil {
 		return err
@@ -900,14 +894,14 @@ func cmdLauncherInjectionPrepareBundle(args []string) error {
 	return nil
 }
 
-// cmdLauncherLookupStateRoots is the launcher subcommand entry point
+// cmdHelperLookupStateRoots is the helper subcommand entry point
 // that scripts/workcell::session_lookup_root_args shells out to so the
 // bash↔Go state-root contract has a single Go owner.  The two roots
 // arrive as positional args in (workcell, colima) order rather than as
 // env vars because go_hostutil routes through run_clean_host_command,
 // which strips the process env via env -i.  Each non-empty value is
 // emitted on its own line as a ready-to-consume `--root=PATH` token.
-func cmdLauncherLookupStateRoots(args []string) error {
+func cmdHelperLookupStateRoots(args []string) error {
 	lines, err := stateroot.FormatRootArgs(args[0], args[1])
 	if err != nil {
 		return &cliexit.ExitCodeError{Code: 2, Message: err.Error()}
@@ -1008,7 +1002,7 @@ func parseSessionRoots(args []string) ([]string, []string, error) {
 	return []string{args[0]}, args[1:], nil
 }
 
-func runLauncherSessionList(args []string) error {
+func runHelperSessionList(args []string) error {
 	roots, rest, err := parseSessionRoots(args)
 	if err != nil {
 		return err
@@ -1086,7 +1080,7 @@ func runLauncherSessionList(args []string) error {
 	return nil
 }
 
-func runLauncherSessionShow(args []string) error {
+func runHelperSessionShow(args []string) error {
 	roots, rest, err := parseSessionRoots(args)
 	if err != nil {
 		return err
@@ -1120,7 +1114,7 @@ func runLauncherSessionShow(args []string) error {
 	return nil
 }
 
-func runLauncherSessionExport(args []string) error {
+func runHelperSessionExport(args []string) error {
 	roots, rest, err := parseSessionRoots(args)
 	if err != nil {
 		return err
@@ -1141,7 +1135,7 @@ func runLauncherSessionExport(args []string) error {
 	return nil
 }
 
-func runLauncherSessionDiffMetadata(args []string) error {
+func runHelperSessionDiffMetadata(args []string) error {
 	roots, rest, err := parseSessionRoots(args)
 	if err != nil {
 		return err
@@ -1160,7 +1154,7 @@ func runLauncherSessionDiffMetadata(args []string) error {
 	return nil
 }
 
-func runLauncherSessionRuntimeMetadata(args []string) error {
+func runHelperSessionRuntimeMetadata(args []string) error {
 	roots, rest, err := parseSessionRoots(args)
 	if err != nil {
 		return err
@@ -1180,7 +1174,7 @@ func runLauncherSessionRuntimeMetadata(args []string) error {
 	return nil
 }
 
-func runLauncherSessionTimeline(args []string) error {
+func runHelperSessionTimeline(args []string) error {
 	roots, rest, err := parseSessionRoots(args)
 	if err != nil {
 		return err

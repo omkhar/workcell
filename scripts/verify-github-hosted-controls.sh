@@ -22,17 +22,17 @@ if [[ -z "${REPO}" ]]; then
 fi
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-gh-controls.XXXXXX")"
-METADATAUTIL_BIN=""
+CITOOLS_BIN=""
 cleanup() {
   rm -rf "${TMP_DIR}"
-  if [[ -n "${METADATAUTIL_BIN}" && -e "${METADATAUTIL_BIN}" ]]; then
-    rm -f "${METADATAUTIL_BIN}"
+  if [[ -n "${CITOOLS_BIN}" && -e "${CITOOLS_BIN}" ]]; then
+    rm -f "${CITOOLS_BIN}"
   fi
 }
 trap cleanup EXIT
 
-METADATAUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-citools.XXXXXX")"
-build_go_tool_in_repo "${ROOT_DIR}" "${METADATAUTIL_BIN}" ./cmd/workcell-citools
+CITOOLS_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-citools.XXXXXX")"
+build_go_tool_in_repo "${ROOT_DIR}" "${CITOOLS_BIN}" ./cmd/workcell-citools
 
 gh api "repos/${REPO}" >"${TMP_DIR}/repo.json"
 gh api "repos/${REPO}/actions/permissions" >"${TMP_DIR}/actions-permissions.json"
@@ -40,7 +40,7 @@ gh api --paginate "repos/${REPO}/actions/variables?per_page=100" |
   jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}' >"${TMP_DIR}/actions-variables.json"
 gh api "repos/${REPO}/collaborators?affiliation=direct&per_page=100" >"${TMP_DIR}/collaborators-direct.json"
 gh api "repos/${REPO}/rulesets" >"${TMP_DIR}/rulesets-summary.json"
-"${METADATAUTIL_BIN}" fetch-rulesets "${TMP_DIR}" "${REPO}"
+"${CITOOLS_BIN}" fetch-rulesets "${TMP_DIR}" "${REPO}"
 gh api --paginate "repos/${REPO}/environments?per_page=100" |
   jq -s '{total_count: (map(.total_count // 0) | max // 0), environments: (map(.environments // []) | add)}' >"${TMP_DIR}/environments.json"
 if gh api "repos/${REPO}/environments/release" >"${TMP_DIR}/environment-release.json" 2>/dev/null; then
@@ -65,6 +65,6 @@ while IFS= read -r environment_name; do
     jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}' >"${TMP_DIR}/environment-${safe_environment_name}-variables.json"
   gh api --paginate "repos/${REPO}/environments/${encoded_environment_name}/secrets?per_page=100" |
     jq -s '{total_count: (map(.total_count // 0) | max // 0), secrets: (map(.secrets // []) | add)}' >"${TMP_DIR}/environment-${safe_environment_name}-secrets.json"
-done < <("${METADATAUTIL_BIN}" list-hosted-control-environments "${POLICY_PATH}")
+done < <("${CITOOLS_BIN}" list-hosted-control-environments "${POLICY_PATH}")
 
-"${METADATAUTIL_BIN}" verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"
+"${CITOOLS_BIN}" verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"

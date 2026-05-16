@@ -13,7 +13,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -1077,8 +1076,12 @@ func validateSourcePath(raw any, label string, base Path) (Path, error) {
 	if _, err := os.Stat(source.String()); err != nil {
 		return Path(""), fmt.Errorf("%s does not exist: %s", label, source)
 	}
-	if err := requireNoSymlinkInPathChain(source, label); err != nil {
+	offender, err := findUnsafeSymlinkInPathChain(source.String())
+	if err != nil {
 		return Path(""), err
+	}
+	if offender != "" {
+		return Path(""), fmt.Errorf("%s must not be a symlink: %s", label, offender)
 	}
 	return source, nil
 }
@@ -1118,23 +1121,6 @@ func requireNoSymlink(path Path, label string) error {
 		return fmt.Errorf("%s must not be a symlink: %s", label, path)
 	}
 	return nil
-}
-
-func requireNoSymlinkInPathChain(path Path, label string) error {
-	current := path.String()
-	for {
-		info, err := os.Lstat(current)
-		if err == nil && info.Mode()&os.ModeSymlink != 0 {
-			if runtime.GOOS != "darwin" || (current != "/var" && current != "/tmp") {
-				return fmt.Errorf("%s must not be a symlink: %s", label, current)
-			}
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return nil
-		}
-		current = parent
-	}
 }
 
 func requireSecretOwnerOnly(path Path, label string) error {

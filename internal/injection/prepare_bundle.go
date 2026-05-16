@@ -20,7 +20,7 @@ import (
 
 // PrepareBundleOptions captures every bash global that the legacy
 // prepare_injection_bundle helper consumed.  The bash caller supplies these
-// via command-line flags on the launcher subcommand.
+// via command-line flags on the helper subcommand.
 type PrepareBundleOptions struct {
 	// Agent is the target agent name (e.g. "claude", "codex"); required.
 	Agent string

@@ -136,7 +136,7 @@ require_tool jq
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
-go_verify_metadatautil() {
+go_verify_citools() {
   run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools "$@"
 }
 
@@ -481,7 +481,7 @@ rg() {
 
 canonicalize_verify_tool_path() {
   local candidate="$1"
-  go_verify_metadatautil canonicalize-path "${candidate}"
+  go_verify_citools canonicalize-path "${candidate}"
 }
 
 verify_tool_path_is_trusted() {
@@ -1575,7 +1575,7 @@ grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/tr
 grep -q 'Preserved shared host packages installed outside Workcell.' /tmp/workcell-uninstall-debug.out
 
 CUSTOM_DEBUG_DIR="${INSTALL_VERIFY_HOME}/custom-workcell-debug"
-CUSTOM_DEBUG_DIR_REAL="$(go_verify_metadatautil canonicalize-path "${CUSTOM_DEBUG_DIR}")"
+CUSTOM_DEBUG_DIR_REAL="$(go_verify_citools canonicalize-path "${CUSTOM_DEBUG_DIR}")"
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug --debug-dir "${CUSTOM_DEBUG_DIR}" >/tmp/workcell-install-custom-debug.out 2>&1; then
   echo "Expected scripts/install.sh --debug --debug-dir to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-install-custom-debug.out >&2
@@ -5192,19 +5192,19 @@ grep -q -- '--cap-add SETGID' /tmp/workcell-default-autonomy-dry-run.stdout
 grep -q -- '--security-opt no-new-privileges:true' /tmp/workcell-default-autonomy-dry-run.stdout
 
 if ! go_verify_hostutil helper validate-security-options '["name=apparmor","name=seccomp,profile=builtin","name=cgroupns"]' >/dev/null; then
-  echo "Expected launcher validate-security-options to accept canonical AppArmor+seccomp daemon options" >&2
+  echo "Expected helper validate-security-options to accept canonical AppArmor+seccomp daemon options" >&2
   exit 1
 fi
 if go_verify_hostutil helper validate-security-options '["name=cgroupns"]' >/dev/null 2>&1; then
-  echo "Expected launcher validate-security-options to reject daemon options missing seccomp/MAC" >&2
+  echo "Expected helper validate-security-options to reject daemon options missing seccomp/MAC" >&2
   exit 1
 fi
 if ! go_verify_hostutil helper validate-container-security-options '["no-new-privileges:true"]' >/dev/null; then
-  echo "Expected launcher validate-container-security-options to accept canonical HostConfig.SecurityOpt" >&2
+  echo "Expected helper validate-container-security-options to accept canonical HostConfig.SecurityOpt" >&2
   exit 1
 fi
 if go_verify_hostutil helper validate-container-security-options '["no-new-privileges:true","seccomp=unconfined"]' >/dev/null 2>&1; then
-  echo "Expected launcher validate-container-security-options to reject seccomp=unconfined" >&2
+  echo "Expected helper validate-container-security-options to reject seccomp=unconfined" >&2
   exit 1
 fi
 if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "validate_runtime_security_posture" "go_hostutil helper validate-security-options"; then

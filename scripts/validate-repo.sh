@@ -48,27 +48,27 @@ case "${VALIDATION_PROFILE}" in
     ;;
 esac
 
-METADATAUTIL_BIN=""
+CITOOLS_BIN=""
 BUILD_CACHE_DIR="${ROOT_DIR}/.workcell-build-cache"
 
 cleanup() {
-  if [[ -n "${METADATAUTIL_BIN}" && -e "${METADATAUTIL_BIN}" ]]; then
-    rm -f "${METADATAUTIL_BIN}"
+  if [[ -n "${CITOOLS_BIN}" && -e "${CITOOLS_BIN}" ]]; then
+    rm -f "${CITOOLS_BIN}"
   fi
   rm -rf "${BUILD_CACHE_DIR}"
 }
 
-build_metadatautil() {
-  if [[ -n "${METADATAUTIL_BIN}" ]]; then
+build_citools() {
+  if [[ -n "${CITOOLS_BIN}" ]]; then
     return 0
   fi
-  METADATAUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-citools.XXXXXX")"
-  (cd "${ROOT_DIR}" && go build -buildvcs=false -o "${METADATAUTIL_BIN}" ./cmd/workcell-citools)
+  CITOOLS_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-citools.XXXXXX")"
+  (cd "${ROOT_DIR}" && go build -buildvcs=false -o "${CITOOLS_BIN}" ./cmd/workcell-citools)
 }
 
-run_metadatautil() {
-  build_metadatautil
-  "${METADATAUTIL_BIN}" "$@"
+run_citools() {
+  build_citools
+  "${CITOOLS_BIN}" "$@"
 }
 
 trap cleanup EXIT
@@ -276,7 +276,7 @@ done < <(
     -type f -name '*.json' -print | sort
 )
 if [[ "${#json_files[@]}" -gt 0 ]]; then
-  run_metadatautil validate-json "${json_files[@]}"
+  run_citools validate-json "${json_files[@]}"
 fi
 
 toml_files=()
@@ -292,7 +292,7 @@ done < <(
     -type f -name '*.toml' -print | sort
 )
 if [[ "${#toml_files[@]}" -gt 0 ]]; then
-  run_metadatautil validate-toml "${toml_files[@]}"
+  run_citools validate-toml "${toml_files[@]}"
 fi
 
 yamllint -d "{extends: default, rules: {comments: disable, document-start: disable, line-length: disable, truthy: disable}}" \
@@ -353,7 +353,7 @@ fi
 # validate-toml pass above, which scans the repository tree.
 
 # Check C: Credential pattern scan in tests/ and docs/examples/
-run_metadatautil scan-credential-patterns "${ROOT_DIR}"
+run_citools scan-credential-patterns "${ROOT_DIR}"
 
 if branding_scan; then
   echo "Found stale pre-rename branding." >&2

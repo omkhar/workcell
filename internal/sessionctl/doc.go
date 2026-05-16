@@ -43,6 +43,6 @@
 //
 // The host-side session-record schema and lookup helpers stay in the
 // neighbouring internal/host/sessions package (different concern: that
-// package is the file/JSON layout, this package is the launcher CLI
+// package is the file/JSON layout, this package is the session CLI
 // surface on top of it).
 package sessionctl
