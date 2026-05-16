@@ -303,6 +303,111 @@ func TestStageDirectMountsStripsGroupOtherPermissions(t *testing.T) {
 // validateDirectMount must reject the link up front, mirroring the
 // symlink skip that copyDirContents already does for entries it
 // encounters inside a directory source.
+// TestStageDirectMountsRejectsIntermediateSymlinkInSource — round-2
+// sethify Sec-r2-1 / PR-FIX-10. FIX-8 only Lstat'd the leaf component
+// of the mount source; an attacker who plants a symlink at any
+// intermediate component (e.g. `bundle/parent-link -> /etc`) bypasses
+// the check because the LEAF `parent-link/passwd` resolves through
+// the swapped-out parent dir and stat-as-a-regular-file succeeds.
+// rejectSymlinkInPath now walks every component and refuses absolute-
+// target symlinks anywhere in the path.
+func TestStageDirectMountsRejectsIntermediateSymlinkInSource(t *testing.T) {
+	bundleRoot := t.TempDir()
+	// "etc-style" sibling directory we'll pretend has sensitive content.
+	etcLike := filepath.Join(bundleRoot, "etc-like")
+	if err := os.MkdirAll(etcLike, 0o755); err != nil {
+		t.Fatalf("MkdirAll etcLike: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(etcLike, "secret.txt"), []byte("SECRET"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	// Plant a parent-component symlink with an absolute target.
+	parentLink := filepath.Join(bundleRoot, "legit-parent")
+	if err := os.Symlink(etcLike, parentLink); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	// The mount source has the symlink at an *intermediate* path
+	// component; the leaf itself is a perfectly normal file.
+	sourceViaLink := filepath.Join(parentLink, "secret.txt")
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{
+		{"source": sourceViaLink, "mount_path": "/opt/workcell/host-inputs/x"},
+	})
+	_, err := StageDirectMounts(bundleRoot, specPath)
+	if err == nil || !strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("expected intermediate-symlink rejection, got %v", err)
+	}
+}
+
+// TestStageDirectMountsRejectsIntermediateRelativeEscapeSymlink — same
+// attack class, but the planted symlink uses a *relative* target with
+// `..` segments to escape sideways. The component walk's
+// "no `..` in target" rule must catch this even though the resolved
+// path stays within `/`.
+func TestStageDirectMountsRejectsIntermediateRelativeEscapeSymlink(t *testing.T) {
+	bundleRoot := t.TempDir()
+	etcLike := filepath.Join(bundleRoot, "etc-like")
+	if err := os.MkdirAll(etcLike, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(etcLike, "secret.txt"), []byte("SECRET"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	innerDir := filepath.Join(bundleRoot, "inner")
+	if err := os.MkdirAll(innerDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll inner: %v", err)
+	}
+	parentLink := filepath.Join(innerDir, "parent-link")
+	// relative escape: `../etc-like` from inside `inner/`.
+	if err := os.Symlink("../etc-like", parentLink); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	sourceViaLink := filepath.Join(parentLink, "secret.txt")
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{
+		{"source": sourceViaLink, "mount_path": "/opt/workcell/host-inputs/x"},
+	})
+	_, err := StageDirectMounts(bundleRoot, specPath)
+	if err == nil || !strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("expected relative-escape symlink rejection, got %v", err)
+	}
+}
+
+// TestStageDirectMountsAcceptsLegitimateMacosVarPath — guards against
+// over-rejection. macOS `t.TempDir()` lives under `/var/folders/...`
+// and traverses the system `/var -> private/var` symlink. The
+// component walk's safe-relative-system rule must allow this; if not,
+// every production direct-mount staging on a Mac would fail. The
+// helper here uses os.MkdirTemp("/var/folders", ...) only when the
+// system layout makes that traversal meaningful (the test skips on
+// platforms where `/var` isn't a symlink).
+func TestStageDirectMountsAcceptsLegitimateMacosVarPath(t *testing.T) {
+	info, err := os.Lstat("/var")
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Skipf("/var is not a symlink on this platform; nothing to verify")
+	}
+	// t.TempDir on macOS routes through /var/folders/... so its
+	// absolute path crosses /var. Use it as both bundle and source
+	// home so the staging walk inspects the system symlink.
+	bundleRoot := t.TempDir()
+	sourceFile := filepath.Join(bundleRoot, "legit.txt")
+	if err := os.WriteFile(sourceFile, []byte("legit"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	mountPath := "/opt/workcell/host-inputs/legit"
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{
+		{"source": sourceFile, "mount_path": mountPath},
+	})
+	args, err := StageDirectMounts(bundleRoot, specPath)
+	if err != nil {
+		t.Fatalf("StageDirectMounts unexpectedly rejected legitimate /var path: %v", err)
+	}
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args, got %v", args)
+	}
+}
+
 func TestStageDirectMountsRejectsSymlinkedSource(t *testing.T) {
 	bundleRoot := t.TempDir()
 	// Real target file (would otherwise be valid mount content).
