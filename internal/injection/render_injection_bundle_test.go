@@ -85,6 +85,25 @@ func TestParseTOMLSubsetAndHelperErrors(t *testing.T) {
 	}
 }
 
+func TestParseTOMLSubsetRejectsCredentialScalarTableCollision(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseTOMLSubset(strings.Join([]string{
+		"version = 1",
+		"[credentials.codex_auth]",
+		`source = "auth.json"`,
+		`providers = ["codex"]`,
+		"[credentials]",
+		`codex_auth = "auth.json"`,
+	}, "\n"), Path("collision.toml"))
+	if err == nil {
+		t.Fatal("parseTOMLSubset accepted credentials scalar/table collision")
+	}
+	if !strings.Contains(err.Error(), "duplicate key across table forms: credentials.codex_auth") {
+		t.Fatalf("collision error = %q", err.Error())
+	}
+}
+
 func TestLoadPolicyBundleMergesIncludesRebasesAndRejectsBadIncludes(t *testing.T) {
 	t.Parallel()
 
