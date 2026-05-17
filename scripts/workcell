@@ -194,6 +194,64 @@ go_hostutil() {
     "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
 }
 
+run_go_hostutil_preserve_exit() {
+  local stderr_file=""
+  local stderr_capture=""
+  local rc=0
+
+  stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-hostutil-stderr.XXXXXX")"
+  trap 'rm -f "${stderr_file}"' RETURN
+  go_hostutil "$@" 2>"${stderr_file}" || rc=$?
+  stderr_capture="$(cat "${stderr_file}")"
+  rm -f "${stderr_file}"
+  trap - RETURN
+
+  if [[ "${stderr_capture}" =~ (^|$'\n')exit\ status\ ([0-9]+)$ ]]; then
+    if [[ ${rc} -eq 1 ]]; then
+      rc="${BASH_REMATCH[2]}"
+    fi
+    if [[ -z "${BASH_REMATCH[1]}" ]]; then
+      stderr_capture=""
+    else
+      stderr_capture="${stderr_capture%$'\n'exit status [0-9]*}"
+    fi
+  fi
+  if [[ -n "${stderr_capture}" ]]; then
+    printf '%s\n' "${stderr_capture}" >&2
+  fi
+  return "${rc}"
+}
+
+go_hostutil_publish_pr() {
+  ensure_go_run_env
+  local -a env_args=(
+    "GOPATH=${GOPATH}"
+    "GOMODCACHE=${GOMODCACHE}"
+    "GOCACHE=${GOCACHE}"
+  )
+
+  [[ -n "${TERM:-}" ]] && env_args+=("TERM=${TERM}")
+  [[ -n "${GPG_TTY:-}" ]] && env_args+=("GPG_TTY=${GPG_TTY}")
+  [[ -n "${GNUPGHOME:-}" ]] && env_args+=("GNUPGHOME=${GNUPGHOME}")
+  [[ -n "${SSH_AUTH_SOCK:-}" ]] && env_args+=("SSH_AUTH_SOCK=${SSH_AUTH_SOCK}")
+  [[ -n "${SSH_AGENT_PID:-}" ]] && env_args+=("SSH_AGENT_PID=${SSH_AGENT_PID}")
+  [[ -n "${SSH_ASKPASS:-}" ]] && env_args+=("SSH_ASKPASS=${SSH_ASKPASS}")
+  [[ -n "${GIT_ASKPASS:-}" ]] && env_args+=("GIT_ASKPASS=${GIT_ASKPASS}")
+  [[ -n "${XDG_CONFIG_HOME:-}" ]] && env_args+=("XDG_CONFIG_HOME=${XDG_CONFIG_HOME}")
+  [[ -n "${XDG_STATE_HOME:-}" ]] && env_args+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
+  [[ -n "${XDG_CACHE_HOME:-}" ]] && env_args+=("XDG_CACHE_HOME=${XDG_CACHE_HOME}")
+  [[ -n "${XDG_DATA_HOME:-}" ]] && env_args+=("XDG_DATA_HOME=${XDG_DATA_HOME}")
+  [[ -n "${XDG_RUNTIME_DIR:-}" ]] && env_args+=("XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}")
+  [[ -n "${GH_TOKEN:-}" ]] && env_args+=("GH_TOKEN=${GH_TOKEN}")
+  [[ -n "${GITHUB_TOKEN:-}" ]] && env_args+=("GITHUB_TOKEN=${GITHUB_TOKEN}")
+  [[ -n "${GH_HOST:-}" ]] && env_args+=("GH_HOST=${GH_HOST}")
+  [[ -n "${GH_CONFIG_DIR:-}" ]] && env_args+=("GH_CONFIG_DIR=${GH_CONFIG_DIR}")
+
+  run_clean_host_command_in_dir "${ROOT_DIR}" env \
+    "${env_args[@]}" \
+    "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
+}
+
 go_colimautil() {
   ensure_go_run_env
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
@@ -1761,12 +1819,9 @@ append_session_control_audit_record() {
 
 session_runtime_metadata() {
   local session_id="$1"
-  local -a lookup_roots=()
 
-  while IFS= read -r root; do
-    lookup_roots+=("${root}")
-  done < <(session_lookup_root_args)
-  go_hostutil helper session-runtime-metadata "${lookup_roots[@]}" "${session_id}"
+  collect_session_lookup_roots || return 1
+  go_hostutil helper session-runtime-metadata "${SESSION_LOOKUP_ROOTS[@]}" "${session_id}"
 }
 
 load_session_runtime_metadata() {
@@ -3542,7 +3597,7 @@ publish_pr_main() {
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-publish-pr-stderr.XXXXXX")"
   trap 'rm -f "${stderr_file}"' RETURN
   local rc=0
-  go_hostutil publish-pr-cli \
+  go_hostutil_publish_pr publish-pr-cli \
     "--bash-root-dir=${ROOT_DIR}" \
     "--bash-workspace-root=${WORKSPACE:-${PWD}}" \
     "--bash-real-home=${REAL_HOME}" \
@@ -4274,20 +4329,14 @@ session_delete_main() {
 }
 
 session_logs_main() {
-  local -a lookup_roots=()
-  while IFS= read -r root; do
-    lookup_roots+=("${root}")
-  done < <(session_lookup_root_args)
-  go_hostutil session-logs-cli "${lookup_roots[@]}" "$@"
+  collect_session_lookup_roots || exit 1
+  run_go_hostutil_preserve_exit session-logs-cli "${SESSION_LOOKUP_ROOTS[@]}" "$@"
   exit $?
 }
 
 session_timeline_main() {
-  local -a lookup_roots=()
-  while IFS= read -r root; do
-    lookup_roots+=("${root}")
-  done < <(session_lookup_root_args)
-  go_hostutil session-timeline-cli "${lookup_roots[@]}" "$@"
+  collect_session_lookup_roots || exit 1
+  run_go_hostutil_preserve_exit session-timeline-cli "${SESSION_LOOKUP_ROOTS[@]}" "$@"
   exit $?
 }
 
@@ -4355,12 +4404,11 @@ session_main() {
   local git_base=""
   local rendered=""
   local -a args=()
-  local -a lookup_roots=()
   local -a session_start_env=()
 
   shift || true
   set +e
-  plan="$(go_hostutil session-dispatch-cli "${subcommand}")"
+  plan="$(run_go_hostutil_preserve_exit session-dispatch-cli "${subcommand}")"
   dispatch_cli_status="$?"
   set -e
   if [[ "${dispatch_cli_status}" -ne 0 ]]; then
@@ -4428,10 +4476,8 @@ session_main() {
             ;;
         esac
       done
-      while IFS= read -r root; do
-        lookup_roots+=("${root}")
-      done < <(session_lookup_root_args)
-      args=("${lookup_roots[@]}")
+      collect_session_lookup_roots || exit 1
+      args=("${SESSION_LOOKUP_ROOTS[@]}")
       if [[ "${emit_json}" -eq 1 ]] && [[ "${emit_verbose}" -eq 1 ]]; then
         echo "workcell session list accepts either --json or --verbose, not both." >&2
         exit 2
@@ -4491,10 +4537,8 @@ session_main() {
         echo "workcell session show requires --id." >&2
         exit 2
       }
-      while IFS= read -r root; do
-        lookup_roots+=("${root}")
-      done < <(session_lookup_root_args)
-      args=("${lookup_roots[@]}" "${session_id}")
+      collect_session_lookup_roots || exit 1
+      args=("${SESSION_LOOKUP_ROOTS[@]}" "${session_id}")
       if [[ "${emit_text}" -eq 1 ]]; then
         args+=(--text)
       fi
@@ -4536,10 +4580,8 @@ session_main() {
         echo "workcell session diff requires --id." >&2
         exit 2
       }
-      while IFS= read -r root; do
-        lookup_roots+=("${root}")
-      done < <(session_lookup_root_args)
-      metadata="$(go_hostutil helper session-diff-metadata "${lookup_roots[@]}" "${session_id}")"
+      collect_session_lookup_roots || exit 1
+      metadata="$(go_hostutil helper session-diff-metadata "${SESSION_LOOKUP_ROOTS[@]}" "${session_id}")"
       workspace="$(shellproto_field "${metadata}" workspace)"
       git_branch="$(shellproto_field "${metadata}" git_branch)"
       git_head="$(shellproto_field "${metadata}" git_head)"
@@ -4613,10 +4655,8 @@ session_main() {
         echo "workcell session export requires --id." >&2
         exit 2
       }
-      while IFS= read -r root; do
-        lookup_roots+=("${root}")
-      done < <(session_lookup_root_args)
-      output="$(go_hostutil helper session-export "${lookup_roots[@]}" "${session_id}")"
+      collect_session_lookup_roots || exit 1
+      output="$(go_hostutil helper session-export "${SESSION_LOOKUP_ROOTS[@]}" "${session_id}")"
       if [[ -n "${output_path}" ]]; then
         output_path="$(resolve_host_output_candidate "${output_path}")"
         mkdir -p "$(dirname "${output_path}")"
@@ -4671,7 +4711,7 @@ auth_main() {
 }
 
 policy_main() {
-  go_hostutil policy-cli "$@"
+  run_go_hostutil_preserve_exit policy-cli "--base=$(pwd -P)" "$@"
   exit $?
 }
 

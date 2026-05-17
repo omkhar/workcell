@@ -5309,7 +5309,10 @@ if [[ ! -f "${FORBIDDEN_HOST_PATHS_FILE}" ]]; then
   exit 1
 fi
 
-mapfile -t FORBIDDEN_HOST_PATHS < <(
+FORBIDDEN_HOST_PATHS=()
+while IFS= read -r forbidden_host_path; do
+  FORBIDDEN_HOST_PATHS+=("${forbidden_host_path}")
+done < <(
   awk '
     /^[[:space:]]*\[forbidden_host_paths\][[:space:]]*$/ { in_section = 1; next }
     /^[[:space:]]*\[/ { in_section = 0 }

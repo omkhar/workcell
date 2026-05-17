@@ -34,6 +34,7 @@ func PolicyMain(args []string) error {
 }
 
 func runPolicyMain(args []string, stdout, stderr io.Writer) error {
+	base, args := consumeBaseArg(args)
 	if len(args) == 0 {
 		fmt.Fprint(stderr, PolicyUsageText())
 		return usageError{}
@@ -54,7 +55,7 @@ func runPolicyMain(args []string, stdout, stderr io.Writer) error {
 		if helpRequested {
 			return nil
 		}
-		resolved, err := launcher.CanonicalizePath(policyPath)
+		resolved, err := launcher.CanonicalizePathFrom(policyPath, base)
 		if err != nil {
 			return err
 		}
@@ -83,9 +84,13 @@ func parsePolicyMainArgs(subcommand string, args []string, stdout, stderr io.Wri
 		switch args[i] {
 		case "--injection-policy":
 			if i+1 >= len(args) {
-				return "", false, fmt.Errorf("--injection-policy requires a value")
+				return "", false, exit2("Option --injection-policy requires a value.")
 			}
-			policyPath = args[i+1]
+			value, valueErr := rawOptionValueOrDie("--injection-policy", args[i+1])
+			if valueErr != nil {
+				return "", false, valueErr
+			}
+			policyPath = value
 			i++
 		case "-h", "--help":
 			fmt.Fprint(stdout, PolicyUsageText())
