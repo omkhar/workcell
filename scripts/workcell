@@ -194,6 +194,36 @@ go_hostutil() {
     "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
 }
 
+go_hostutil_publish_pr() {
+  ensure_go_run_env
+  local -a env_args=(
+    "GOPATH=${GOPATH}"
+    "GOMODCACHE=${GOMODCACHE}"
+    "GOCACHE=${GOCACHE}"
+  )
+
+  [[ -n "${TERM:-}" ]] && env_args+=("TERM=${TERM}")
+  [[ -n "${GPG_TTY:-}" ]] && env_args+=("GPG_TTY=${GPG_TTY}")
+  [[ -n "${GNUPGHOME:-}" ]] && env_args+=("GNUPGHOME=${GNUPGHOME}")
+  [[ -n "${SSH_AUTH_SOCK:-}" ]] && env_args+=("SSH_AUTH_SOCK=${SSH_AUTH_SOCK}")
+  [[ -n "${SSH_AGENT_PID:-}" ]] && env_args+=("SSH_AGENT_PID=${SSH_AGENT_PID}")
+  [[ -n "${SSH_ASKPASS:-}" ]] && env_args+=("SSH_ASKPASS=${SSH_ASKPASS}")
+  [[ -n "${GIT_ASKPASS:-}" ]] && env_args+=("GIT_ASKPASS=${GIT_ASKPASS}")
+  [[ -n "${XDG_CONFIG_HOME:-}" ]] && env_args+=("XDG_CONFIG_HOME=${XDG_CONFIG_HOME}")
+  [[ -n "${XDG_STATE_HOME:-}" ]] && env_args+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
+  [[ -n "${XDG_CACHE_HOME:-}" ]] && env_args+=("XDG_CACHE_HOME=${XDG_CACHE_HOME}")
+  [[ -n "${XDG_DATA_HOME:-}" ]] && env_args+=("XDG_DATA_HOME=${XDG_DATA_HOME}")
+  [[ -n "${XDG_RUNTIME_DIR:-}" ]] && env_args+=("XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}")
+  [[ -n "${GH_TOKEN:-}" ]] && env_args+=("GH_TOKEN=${GH_TOKEN}")
+  [[ -n "${GITHUB_TOKEN:-}" ]] && env_args+=("GITHUB_TOKEN=${GITHUB_TOKEN}")
+  [[ -n "${GH_HOST:-}" ]] && env_args+=("GH_HOST=${GH_HOST}")
+  [[ -n "${GH_CONFIG_DIR:-}" ]] && env_args+=("GH_CONFIG_DIR=${GH_CONFIG_DIR}")
+
+  run_clean_host_command_in_dir "${ROOT_DIR}" env \
+    "${env_args[@]}" \
+    "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
+}
+
 go_colimautil() {
   ensure_go_run_env
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
@@ -3542,7 +3572,7 @@ publish_pr_main() {
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-publish-pr-stderr.XXXXXX")"
   trap 'rm -f "${stderr_file}"' RETURN
   local rc=0
-  go_hostutil publish-pr-cli \
+  go_hostutil_publish_pr publish-pr-cli \
     "--bash-root-dir=${ROOT_DIR}" \
     "--bash-workspace-root=${WORKSPACE:-${PWD}}" \
     "--bash-real-home=${REAL_HOME}" \
