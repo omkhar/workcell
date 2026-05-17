@@ -172,9 +172,19 @@ func runColimaCommand(cmd *exec.Cmd) (int, error) {
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), nil
+		return colimaExitCode(exitErr), nil
 	}
 	return 0, fmt.Errorf("colima invocation failed: %w", err)
+}
+
+func colimaExitCode(exitErr *exec.ExitError) int {
+	if exitErr == nil {
+		return 0
+	}
+	if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return 128 + int(status.Signal())
+	}
+	return exitErr.ExitCode()
 }
 
 func killColimaProcessGroup(cmd *exec.Cmd) error {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -120,6 +121,29 @@ exit 7
 	}
 	if code != 7 {
 		t.Fatalf("RunHostColima() code = %d, want 7", code)
+	}
+}
+
+func TestRunHostColimaPreservesSignalExitCode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("relies on POSIX signal semantics")
+	}
+	dir := t.TempDir()
+	fake := writeFakeColima(t, dir, `#!/bin/sh
+kill -TERM $$
+`)
+	code, err := RunHostColima(HostColimaInvocation{
+		ColimaBin: fake,
+		RealHome:  dir,
+		CWD:       dir,
+		Args:      []string{"start"},
+	})
+	if err != nil {
+		t.Fatalf("RunHostColima() err = %v", err)
+	}
+	want := 128 + int(syscall.SIGTERM)
+	if code != want {
+		t.Fatalf("RunHostColima() code = %d, want %d", code, want)
 	}
 }
 
