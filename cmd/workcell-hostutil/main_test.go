@@ -92,6 +92,12 @@ func TestRunLauncherCompatHelperFallback(t *testing.T) {
 	}
 }
 
+func TestRunLauncherCompatExplicitHelper(t *testing.T) {
+	if err := run([]string{"launcher", "helper", "session-suffix"}); err != nil {
+		t.Fatalf("run(launcher helper session-suffix) error = %v", err)
+	}
+}
+
 func TestRunHelperSessionRuntimeMetadata(t *testing.T) {
 	colimaRoot := t.TempDir()
 	sessionPath := filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json")

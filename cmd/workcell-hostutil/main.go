@@ -108,6 +108,9 @@ func runLauncherCompat(args []string) error {
 	if len(args) == 0 {
 		return launcherUsage()
 	}
+	if args[0] == "helper" {
+		return runHelper(args[1:])
+	}
 	switch args[0] {
 	case "auth-cli":
 		return cmdHelperAuthCli(args[1:])
