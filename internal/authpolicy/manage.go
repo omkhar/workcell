@@ -1144,6 +1144,16 @@ func summarizeBootstrap(agent string, selected map[string]any, inputKinds, resol
 				}
 			}
 		}
+		if credentialStateIsReady(providerReadyStates["gemini_projects"]) {
+			return bootstrapSummary{
+				state:    "supplemental-only",
+				path:     "project-registry-supplement",
+				support:  "manual",
+				handoff:  "host-stage-file",
+				doc:      "docs/examples/quickstart-gemini.md",
+				nextStep: "stage-reviewed-gemini-env-or-oauth",
+			}
+		}
 		if credentialStateIsReady(providerReadyStates["gcloud_adc"]) {
 			return bootstrapSummary{
 				state:    "supplemental-only",

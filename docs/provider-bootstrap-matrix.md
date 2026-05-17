@@ -40,7 +40,7 @@ the evidence explicitly says otherwise.
 | Claude | `[credentials.claude_auth] resolver = "claude-macos-keychain"` | `host-export-scaffold` | `manual` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh` | records intent and stays fail-closed until a supported export path exists |
 | Gemini | direct staged `gemini_env` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-status.sh` | reviewed API key or Vertex env-file path |
 | Gemini | direct staged `gemini_oauth` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-status.sh` | reviewed cached Gemini OAuth path |
-| Gemini | direct staged `gemini_projects` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-status.sh` | reviewed Gemini project registry input |
+| Gemini | direct staged `gemini_projects` supplement | `project-registry-supplement` | `manual` | `tests/scenarios/shared/test-auth-status.sh`, `internal/authpolicy/manage_test.go` | reviewed Gemini project registry input; not a standalone auth mode |
 | Gemini | direct staged `gcloud_adc` supplement | `vertex-supplement` | `manual` | `scripts/verify-invariants.sh`, `docs/examples/gemini-vertex-setup.md` | supplemental Vertex input only; not a standalone Gemini auth mode |
 
 ## Remote Target Bootstrap

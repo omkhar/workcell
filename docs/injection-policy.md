@@ -76,7 +76,7 @@ current bootstrap tiers, handoffs, and evidence.
 |---|---|---|---|
 | Codex | direct staged `codex_auth` or the `codex-home-auth-file` resolver | shared GitHub CLI and SSH inputs via policy as needed | direct staged auth is still the default recommendation; host resolver reuse remains host-side preprocessing only |
 | Claude | `claude_auth`, `claude_api_key`, `claude_mcp` | shared GitHub CLI and SSH inputs via policy as needed | the built-in `claude-macos-keychain` resolver can record intent but remains fail-closed until a supported export path exists |
-| Gemini | `gemini_env`, `gemini_oauth`, `gemini_projects` | `gcloud_adc` as a supplemental Vertex input plus shared GitHub CLI and SSH inputs via policy as needed | `gcloud_adc` is not a standalone Gemini auth mode |
+| Gemini | `gemini_env`, `gemini_oauth` | `gemini_projects` as a supplemental project registry input, `gcloud_adc` as a supplemental Vertex input, plus shared GitHub CLI and SSH inputs via policy as needed | `gemini_projects` and `gcloud_adc` are not standalone Gemini auth modes |
 
 ## Credential keys
 

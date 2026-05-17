@@ -116,12 +116,9 @@ func validateDirectMount(hostSource, mountPath string) error {
 	// Allowing macOS system symlinks: `/var -> private/var`,
 	// `/etc -> private/etc`, `/tmp -> private/tmp` are *legitimate*
 	// system-level symlinks that any `t.TempDir()` traversal crosses
-	// on macOS. We can't reject every symlink without breaking the
-	// production code path that stages files from `/var/folders/...`.
-	// Instead, we accept a symlink only when its target is a *relative*
-	// path with no `..` components and no leading `/` — the shape used
-	// by macOS bootstrapping. An attacker-planted absolute target
-	// (`-> /etc`) or `..`-escaping target (`-> ../../etc`) is rejected.
+	// on macOS. We allow only those exact platform links. Every
+	// operator-controlled symlink in the source chain is rejected,
+	// including relative non-escaping targets like `link -> child`.
 	//
 	// `os.Root` (Go 1.24+) was evaluated as an alternative but it
 	// follows relative symlinks transparently as long as the resolved

@@ -373,6 +373,31 @@ func TestStageDirectMountsRejectsIntermediateRelativeEscapeSymlink(t *testing.T)
 	}
 }
 
+func TestStageDirectMountsRejectsIntermediateRelativeSymlinkInSource(t *testing.T) {
+	bundleRoot := t.TempDir()
+	innerDir := filepath.Join(bundleRoot, "inner")
+	childDir := filepath.Join(innerDir, "child")
+	if err := os.MkdirAll(childDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll child: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(childDir, "secret.txt"), []byte("SECRET"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	parentLink := filepath.Join(innerDir, "parent-link")
+	if err := os.Symlink("child", parentLink); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	sourceViaLink := filepath.Join(parentLink, "secret.txt")
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{
+		{"source": sourceViaLink, "mount_path": "/opt/workcell/host-inputs/x"},
+	})
+	_, err := StageDirectMounts(bundleRoot, specPath)
+	if err == nil || !strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("expected relative-symlink rejection, got %v", err)
+	}
+}
+
 // TestStageDirectMountsAcceptsLegitimateMacosVarPath — guards against
 // over-rejection. macOS `t.TempDir()` lives under `/var/folders/...`
 // and traverses the system `/var -> private/var` symlink. The
