@@ -51,6 +51,8 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
+	case "launcher":
+		return runLauncherCompat(args[1:])
 	case "path":
 		return runPath(args[1:])
 	case "release":
@@ -99,6 +101,49 @@ func run(args []string) error {
 		return cmdHelperSessionTimelineCli(args[1:])
 	default:
 		return usage()
+	}
+}
+
+func runLauncherCompat(args []string) error {
+	if len(args) == 0 {
+		return launcherUsage()
+	}
+	if args[0] == "helper" {
+		return runHelper(args[1:])
+	}
+	switch args[0] {
+	case "auth-cli":
+		return cmdHelperAuthCli(args[1:])
+	case "auth-usage":
+		return cmdHelperAuthUsage(args[1:])
+	case "policy-cli":
+		return cmdHelperPolicyCli(args[1:])
+	case "policy-usage":
+		return cmdHelperPolicyUsage(args[1:])
+	case "publish-pr-cli":
+		return cmdHelperPublishPRCli(args[1:])
+	case "publish-pr-usage":
+		return cmdHelperPublishPRUsage(args[1:])
+	case "session-usage":
+		return cmdHelperSessionUsage(args[1:])
+	case "session-attach-cli":
+		return cmdHelperSessionAttachCli(args[1:])
+	case "session-delete-cli":
+		return cmdHelperSessionDeleteCli(args[1:])
+	case "session-dispatch-cli":
+		return cmdHelperSessionDispatchCli(args[1:])
+	case "session-logs-cli":
+		return cmdHelperSessionLogsCli(args[1:])
+	case "session-monitor-cli":
+		return cmdHelperSessionMonitorCli(args[1:])
+	case "session-send-cli":
+		return cmdHelperSessionSendCli(args[1:])
+	case "session-stop-cli":
+		return cmdHelperSessionStopCli(args[1:])
+	case "session-timeline-cli":
+		return cmdHelperSessionTimelineCli(args[1:])
+	default:
+		return runHelper(args)
 	}
 }
 
@@ -958,7 +1003,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 }
 
 func usage() error {
-	return fmt.Errorf("usage: workcell-hostutil <path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli> [args...]")
+	return fmt.Errorf("usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli> [args...]")
 }
 
 func pathUsage() error {
@@ -967,6 +1012,10 @@ func pathUsage() error {
 
 func releaseUsage() error {
 	return fmt.Errorf("usage: workcell-hostutil release <create-payload|metadata|encode-name|bundle-manifest> [args...]")
+}
+
+func launcherUsage() error {
+	return fmt.Errorf("usage: workcell-hostutil launcher <helper|*-cli|*-usage> [args...]")
 }
 
 func helperUsage() error {

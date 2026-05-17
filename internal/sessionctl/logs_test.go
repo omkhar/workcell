@@ -36,6 +36,18 @@ func TestParseLogsArgsRequiresKindValue(t *testing.T) {
 	}
 }
 
+func TestParseLogsArgsRejectsFlagLikeIDValue(t *testing.T) {
+	t.Parallel()
+
+	_, _, _, err := parseLogsArgs([]string{"--id", "--kind", "audit"})
+	if err == nil {
+		t.Fatal("parseLogsArgs accepted flag-like --id value")
+	}
+	if !strings.Contains(err.Error(), "Option --id requires a value") {
+		t.Fatalf("parseLogsArgs error = %v, want missing-value rejection", err)
+	}
+}
+
 func TestParseLogsArgsRejectsEmptyKindValue(t *testing.T) {
 	t.Parallel()
 

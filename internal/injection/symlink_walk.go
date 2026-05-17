@@ -11,41 +11,33 @@ import (
 	"strings"
 )
 
-// isSafeRelativeSymlinkTarget returns true when target is a relative
-// path with no `..` segments and no leading `/`. This is the shape macOS
-// uses for `/var -> private/var`, `/etc -> private/etc`,
-// `/tmp -> private/tmp` and is *not* the shape an attacker would plant
-// to escape a managed staging tree (those almost always use an absolute
-// target or a `..`-laden relative target).
-func isSafeRelativeSymlinkTarget(target string) bool {
-	if target == "" {
+// isAllowedSystemSymlink returns true only for the small set of
+// platform bootstrap links that Workcell must traverse on macOS.
+// Operator-controlled direct-mount sources remain symlink-free.
+func isAllowedSystemSymlink(linkPath, target string) bool {
+	switch filepath.Clean(linkPath) {
+	case "/var":
+		return target == "private/var"
+	case "/etc":
+		return target == "private/etc"
+	case "/tmp":
+		return target == "private/tmp"
+	default:
 		return false
 	}
-	if filepath.IsAbs(target) {
-		return false
-	}
-	for _, seg := range strings.Split(target, "/") {
-		if seg == ".." {
-			return false
-		}
-	}
-	return true
 }
 
 // findUnsafeSymlinkInPathChain walks every component of cleanedPath
 // from the filesystem root down to (and including) the leaf, Lstat'ing
 // each step. It returns the first component path that is a symbolic
-// link whose target fails isSafeRelativeSymlinkTarget. Returns "" with
+// link that is not a reviewed system symlink. Returns "" with
 // a nil error when no offending symlink is found.
 //
-// The safe-shape rule accepts macOS system symlinks
-// (`/var -> private/var`, `/etc -> private/etc`, `/tmp -> private/tmp`),
-// which production paths and `t.TempDir()` traversals rely on. It
-// rejects:
-//   - any link with an absolute target (the canonical attack pattern
-//     `parent-link -> /etc`),
-//   - any link whose target contains a `..` segment (the relative
-//     sideways/upward escape `parent-link -> ../../etc`).
+// The allowlist accepts only macOS system symlinks (`/var ->
+// private/var`, `/etc -> private/etc`, `/tmp -> private/tmp`), which
+// production paths and `t.TempDir()` traversals rely on. Every
+// operator-controlled symlink in the direct-mount source chain is
+// rejected, including relative targets that do not contain `..`.
 //
 // Errors other than os.ErrNotExist abort the walk: a transient I/O
 // failure on Lstat must not silently skip the symlink check. ENOENT
@@ -83,7 +75,7 @@ func findUnsafeSymlinkInPathChain(cleanedPath string) (string, error) {
 		if rerr != nil {
 			return "", rerr
 		}
-		if !isSafeRelativeSymlinkTarget(target) {
+		if !isAllowedSystemSymlink(current, target) {
 			return current, nil
 		}
 	}

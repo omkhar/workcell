@@ -56,7 +56,7 @@ func parseTimelineArgs(args []string) (sessionID string, showHelp bool, err erro
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			value, next, perr := optionValueOrError(args, i, "--id")
+			value, next, perr := optionValueOrErrorStrict(args, i, "--id")
 			if perr != nil {
 				return "", false, perr
 			}

@@ -26,18 +26,41 @@
 #   source "${ROOT_DIR}/scripts/lib/sessionctl-shim.sh"
 #
 # Requires session_lookup_root_args and go_hostutil to already be
-# defined in the sourcing shell (both live in scripts/workcell).
+# defined before this helper is called.  When scripts/workcell provides
+# run_go_hostutil_preserve_exit, the shim uses it so go-run child exit
+# statuses remain visible to callers.
+
+SESSION_LOOKUP_ROOTS=()
+
+collect_session_lookup_roots() {
+  local roots_file=""
+  local root=""
+
+  roots_file="$(mktemp "${TMPDIR:-/tmp}/workcell-session-roots.XXXXXX")"
+  if ! session_lookup_root_args >"${roots_file}"; then
+    rm -f "${roots_file}"
+    return 1
+  fi
+  SESSION_LOOKUP_ROOTS=()
+  while IFS= read -r root; do
+    SESSION_LOOKUP_ROOTS+=("${root}")
+  done <"${roots_file}"
+  rm -f "${roots_file}"
+}
 
 session_run_cli_with_roots() {
   local subcommand="$1"
   shift
-  local -a lookup_roots=()
-  while IFS= read -r line; do
-    lookup_roots+=("${line}")
-  done < <(session_lookup_root_args)
+
+  collect_session_lookup_roots || return 1
+  if declare -F run_go_hostutil_preserve_exit >/dev/null; then
+    run_go_hostutil_preserve_exit "${subcommand}" "${SESSION_LOOKUP_ROOTS[@]}" "$@"
+    return $?
+  fi
+
   set +e
   local plan
-  plan="$(go_hostutil "${subcommand}" "${lookup_roots[@]}" "$@")"
+  plan="$(go_hostutil "${subcommand}" "${SESSION_LOOKUP_ROOTS[@]}" "$@")"
   local status="$?"
   set -e
   printf '%s\n' "${plan}"

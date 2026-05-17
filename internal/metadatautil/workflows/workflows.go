@@ -238,7 +238,10 @@ func ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error 
 	if !strings.Contains(releaseWorkflow, "name: Confirm attestation environment policy") {
 		return errors.New(".github/workflows/release.yml must include the fail-closed attestation preflight step")
 	}
-	if !regexp.MustCompile(`(?ms)name: Confirm attestation environment policy.*?ENABLE_GITHUB_ATTESTATIONS_SUPPORTED.*?!= "true".*?exit 1`).MatchString(releaseWorkflow) {
+	attestationPolicyStep := namedWorkflowStep(releaseWorkflow, "Confirm attestation environment policy")
+	if !strings.Contains(attestationPolicyStep, `ENABLE_GITHUB_ATTESTATIONS_SUPPORTED`) ||
+		!strings.Contains(attestationPolicyStep, `!= "true"`) ||
+		!strings.Contains(attestationPolicyStep, `exit 1`) {
 		return errors.New(".github/workflows/release.yml must keep the fail-closed attestation preflight script body (must `exit 1` when ENABLE_GITHUB_ATTESTATIONS_SUPPORTED is not 'true' and RELEASE_NO_ATTEST is not 'true')")
 	}
 	const attestGuard = "if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'"
@@ -268,6 +271,27 @@ func ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error 
 		}
 	}
 	return nil
+}
+
+func namedWorkflowStep(workflow, name string) string {
+	lines := strings.Split(workflow, "\n")
+	stepPrefix := regexp.MustCompile(`^(\s*)-\s+name:\s+` + regexp.QuoteMeta(name) + `\s*$`)
+	for i, line := range lines {
+		match := stepPrefix.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		stepIndent := match[1]
+		end := len(lines)
+		for j := i + 1; j < len(lines); j++ {
+			if strings.HasPrefix(lines[j], stepIndent+"- ") {
+				end = j
+				break
+			}
+		}
+		return strings.Join(lines[i:end], "\n")
+	}
+	return ""
 }
 
 func ValidateMacOSInstallVerificationFlow(workflowText, workflowPath, artifactName, jobName string) error {

@@ -183,7 +183,8 @@ else
     pids+=($!)
     running_jobs=$((running_jobs + 1))
     if [[ "${running_jobs}" -ge "${SCENARIO_JOBS}" ]]; then
-      wait -n || true
+      wait "${pids[0]}" || true
+      pids=("${pids[@]:1}")
       running_jobs=$((running_jobs - 1))
     fi
   done <"${SCENARIO_LIST}"

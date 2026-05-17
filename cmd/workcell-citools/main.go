@@ -39,6 +39,11 @@ func die(err error) {
 	os.Exit(1)
 }
 
+func dieUsage(err error) {
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(2)
+}
+
 // subcommand describes one workcell-citools subcommand.  minArgs
 // and maxArgs count only the args that follow the subcommand name; a
 // maxArgs of -1 means unbounded.
@@ -120,7 +125,7 @@ func main() {
 		}
 		args := os.Args[2:]
 		if len(args) < sub.minArgs || (sub.maxArgs >= 0 && len(args) > sub.maxArgs) {
-			die(fmt.Errorf("usage: %s %s %s", os.Args[0], sub.name, sub.usage))
+			dieUsage(fmt.Errorf("usage: %s %s %s", os.Args[0], sub.name, sub.usage))
 		}
 		if err := sub.handler(args); err != nil {
 			die(err)

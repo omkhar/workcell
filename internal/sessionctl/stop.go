@@ -128,7 +128,7 @@ func parseStopArgs(args []string) (sessionID string, force, showHelp bool, err e
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			v, ni, perr := optionValueOrError(args, i, "--id")
+			v, ni, perr := optionValueOrErrorStrict(args, i, "--id")
 			if perr != nil {
 				return "", false, false, perr
 			}

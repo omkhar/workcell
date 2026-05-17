@@ -94,6 +94,17 @@ func TestPolicyMainInjectionPolicyRequiresValue(t *testing.T) {
 	}
 }
 
+func TestPolicyMainInjectionPolicyRejectsEmptyValue(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := runPolicyMain([]string{"show", "--injection-policy", ""}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("err = nil, want value-required failure")
+	}
+	if !strings.Contains(err.Error(), "Option --injection-policy requires a value") {
+		t.Fatalf("err = %v, want value-required message", err)
+	}
+}
+
 func TestPolicyMainSubcommandHelpFlagPrintsUsage(t *testing.T) {
 	for _, sub := range []string{"show", "validate", "diff"} {
 		for _, flag := range []string{"-h", "--help"} {
@@ -123,6 +134,20 @@ func TestPolicyMainShowRendersPolicy(t *testing.T) {
 	// renderPolicyTOML; for a minimal policy that's just the version
 	// header, which we assert on to confirm we hit the show path
 	// rather than failing earlier.
+	if !strings.Contains(stdout.String(), "version = 1") {
+		t.Errorf("show output missing version header: %q", stdout.String())
+	}
+}
+
+func TestPolicyMainResolvesRelativePolicyFromBase(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "policy.toml"), []byte(minimalPolicy), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runPolicyMain([]string{"--base=" + dir, "show", "--injection-policy", "policy.toml"}, &stdout, &stderr); err != nil {
+		t.Fatalf("err = %v stderr=%q", err, stderr.String())
+	}
 	if !strings.Contains(stdout.String(), "version = 1") {
 		t.Errorf("show output missing version header: %q", stdout.String())
 	}

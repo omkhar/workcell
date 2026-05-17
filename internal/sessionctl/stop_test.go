@@ -43,6 +43,18 @@ func TestParseStopArgsRejectsEmptyIDValue(t *testing.T) {
 	}
 }
 
+func TestParseStopArgsRejectsFlagLikeIDValue(t *testing.T) {
+	t.Parallel()
+
+	_, _, _, err := parseStopArgs([]string{"--id", "--force"})
+	if err == nil {
+		t.Fatal("parseStopArgs accepted flag-like --id value")
+	}
+	if !strings.Contains(err.Error(), "Option --id requires a value") {
+		t.Fatalf("parseStopArgs error = %v, want missing-value rejection", err)
+	}
+}
+
 func TestParseStopArgsRejectsUnknownFlag(t *testing.T) {
 	t.Parallel()
 
