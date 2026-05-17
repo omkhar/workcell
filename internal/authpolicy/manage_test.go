@@ -576,6 +576,32 @@ func TestSetCodexResolverAndStatusWhenHostCacheExists(t *testing.T) {
 	mustContain(t, got.stdout, "provider_bootstrap_support=repo-required")
 }
 
+func TestGeminiProjectsOnlyStatusIsSupplemental(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "injection-policy.toml")
+	projectsPath := filepath.Join(root, "projects.json")
+	writeFile(t, projectsPath, "{}\n", 0o600)
+	writeFile(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials]",
+		`gemini_projects = "` + projectsPath + `"`,
+	}, "\n")+"\n", 0o600)
+
+	got := runAuthPolicy("status", "--policy", policyPath, "--agent", "gemini")
+	if got.code != 0 {
+		t.Fatalf("Run(status) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stdout, "credential_keys=gemini_projects")
+	mustContain(t, got.stdout, "provider_auth_ready_states=gemini_projects:ready")
+	mustContain(t, got.stdout, "provider_auth_mode=none")
+	mustContain(t, got.stdout, "provider_auth_modes=none")
+	mustContain(t, got.stdout, "provider_bootstrap_state=supplemental-only")
+	mustContain(t, got.stdout, "provider_bootstrap_path=project-registry-supplement")
+	mustContain(t, got.stdout, "provider_bootstrap_support=manual")
+	mustContain(t, got.stdout, "provider_bootstrap_next_step=stage-reviewed-gemini-env-or-oauth")
+}
+
 func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

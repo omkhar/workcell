@@ -55,9 +55,11 @@ workcell auth status --agent gemini
 workcell --agent gemini --auth-status --workspace /path/to/repo
 ```
 
-The staged `gemini_env`, `gemini_oauth`, and `gemini_projects` paths report
-`provider_bootstrap_path=direct-staged`. `gcloud_adc` remains a supplemental
-Vertex input rather than a standalone Gemini auth mode; see
+The staged `gemini_env` and `gemini_oauth` paths report
+`provider_bootstrap_path=direct-staged`. `gemini_projects` reports
+`provider_bootstrap_state=supplemental-only` because the project registry is a
+reviewed input, not a standalone auth mode. `gcloud_adc` remains a supplemental
+Vertex input for the same reason; see
 [docs/examples/gemini-vertex-setup.md](gemini-vertex-setup.md) and
 [docs/provider-bootstrap-matrix.md](../provider-bootstrap-matrix.md) for the
 current manual handoff.

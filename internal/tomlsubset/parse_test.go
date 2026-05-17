@@ -265,6 +265,16 @@ func TestParseDocumentRejects(t *testing.T) {
 			want: "empty table name",
 		},
 		{
+			name: "empty dotted table component",
+			src:  "[credentials.]\nk = 1\n",
+			want: "empty table component",
+		},
+		{
+			name: "unsupported table component",
+			src:  "[credentials.api key]\nk = 1\n",
+			want: "unsupported table component",
+		},
+		{
 			name: "missing =",
 			src:  "[t]\nbare_line\n",
 			want: "expected key = value",

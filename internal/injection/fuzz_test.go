@@ -10,18 +10,19 @@ import (
 	"unicode"
 )
 
-// FuzzIsSafeRelativeSymlinkTarget pins the security oracle that gates
-// which symlink targets the injection-staging walker allows. The
-// invariant: if isSafeRelativeSymlinkTarget(t) returns true, then t is
-// a relative path with no `..` segments. A future regression that
-// silently accepted an absolute target or a `..`-laden target would
-// re-open the Sec-r2-1 escape that the FIX-10 component-walk closed.
-//
-// We don't seed `..`-bearing targets through `filepath.Clean` because
-// Clean rewrites them; we check the raw segment-by-segment form the
-// helper itself inspects.
-func FuzzIsSafeRelativeSymlinkTarget(f *testing.F) {
-	seeds := []string{
+// FuzzIsAllowedSystemSymlink pins the direct-mount source-chain oracle:
+// only reviewed platform bootstrap symlinks may be traversed. A
+// relative target such as "child" is not enough by itself; arbitrary
+// operator-controlled symlinks remain forbidden.
+func FuzzIsAllowedSystemSymlink(f *testing.F) {
+	paths := []string{
+		"/var",
+		"/etc",
+		"/tmp",
+		"/work/input/link",
+		"/private/tmp/link",
+	}
+	targets := []string{
 		"",
 		"private/var",
 		"private/etc",
@@ -43,24 +44,32 @@ func FuzzIsSafeRelativeSymlinkTarget(f *testing.F) {
 		"target with spaces",
 		strings.Repeat("a/", 64) + "leaf",
 	}
-	for _, s := range seeds {
-		f.Add(s)
+	for _, path := range paths {
+		for _, target := range targets {
+			f.Add(path, target)
+		}
 	}
 
-	f.Fuzz(func(t *testing.T, target string) {
-		if !isSafeRelativeSymlinkTarget(target) {
+	f.Fuzz(func(t *testing.T, linkPath, target string) {
+		if !isAllowedSystemSymlink(linkPath, target) {
 			return
 		}
+		cleaned := filepath.Clean(linkPath)
+		want := map[string]string{
+			"/var": "private/var",
+			"/etc": "private/etc",
+			"/tmp": "private/tmp",
+		}
+		if want[cleaned] != target {
+			t.Fatalf("isAllowedSystemSymlink accepted %q -> %q", linkPath, target)
+		}
 		if filepath.IsAbs(target) {
-			t.Fatalf("isSafeRelativeSymlinkTarget accepted absolute target %q", target)
+			t.Fatalf("isAllowedSystemSymlink accepted absolute target %q", target)
 		}
 		for _, seg := range strings.Split(target, "/") {
 			if seg == ".." {
-				t.Fatalf("isSafeRelativeSymlinkTarget accepted target with .. segment %q", target)
+				t.Fatalf("isAllowedSystemSymlink accepted target with .. segment %q", target)
 			}
-		}
-		if target == "" {
-			t.Fatalf("isSafeRelativeSymlinkTarget accepted empty target")
 		}
 	})
 }

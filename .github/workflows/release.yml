@@ -89,9 +89,12 @@ jobs:
           # verify that the tagged commit is an ancestor of main.  The git-fetch
           # approach requires re-authenticating against a private repo and has
           # proven unreliable with the actions/checkout credential cleanup.
-          cmp_status="$(gh api \
+          if ! cmp_status="$(gh api \
             "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...main" \
-            --jq '.status' 2>/dev/null || true)"
+            --jq '.status')"; then
+            echo "Could not verify whether tagged commit ${GITHUB_SHA} is on main." >&2
+            exit 1
+          fi
           case "${cmp_status}" in
             ahead|identical) ;;
             *)
@@ -112,8 +115,7 @@ jobs:
           # against a red main, must not produce a release.
           failed="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
             --paginate \
-            --jq '.check_runs[] | select(.status == "completed" and (.conclusion | IN("failure","cancelled","timed_out","action_required"))) | "\(.name) (\(.conclusion))"' \
-            2>/dev/null || true)"
+            --jq '.check_runs[] | select(.status == "completed" and (.conclusion | IN("failure","cancelled","timed_out","action_required"))) | "\(.name) (\(.conclusion))"')"
           if [[ -n "${failed}" ]]; then
             echo "Tagged commit ${GITHUB_SHA} has failed required checks:" >&2
             printf '%s\n' "${failed}" >&2
@@ -121,8 +123,7 @@ jobs:
           fi
           pending="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
             --paginate \
-            --jq '.check_runs[] | select(.status != "completed") | .name' \
-            2>/dev/null || true)"
+            --jq '.check_runs[] | select(.status != "completed" and (.name | startswith("Release ") | not)) | .name')"
           if [[ -n "${pending}" ]]; then
             echo "Tagged commit ${GITHUB_SHA} has check-runs not yet completed:" >&2
             printf '%s\n' "${pending}" >&2

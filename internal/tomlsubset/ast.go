@@ -136,6 +136,9 @@ func ParseDocument(content, sourcePath string) (*Document, error) {
 			if name == "" {
 				return nil, fmt.Errorf("%s:%d: empty table name", sourcePath, lineNo)
 			}
+			if _, err := parsePath(name); err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", sourcePath, lineNo, err)
+			}
 			if _, exists := seenTables[name]; exists {
 				return nil, fmt.Errorf("%s:%d: duplicate table [%s]", sourcePath, lineNo, name)
 			}
