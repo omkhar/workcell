@@ -108,7 +108,7 @@ func parseAttachArgs(args []string) (sessionID string, noStdin, showHelp bool, e
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			v, ni, perr := optionValueOrError(args, i, "--id")
+			v, ni, perr := optionValueOrErrorStrict(args, i, "--id")
 			if perr != nil {
 				return "", false, false, perr
 			}

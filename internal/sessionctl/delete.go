@@ -109,7 +109,7 @@ func parseDeleteArgs(args []string) (sessionID string, recordOnly, dryRun, showH
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			v, ni, perr := optionValueOrError(args, i, "--id")
+			v, ni, perr := optionValueOrErrorStrict(args, i, "--id")
 			if perr != nil {
 				return "", false, false, false, perr
 			}

@@ -36,6 +36,18 @@ func TestParseAttachArgsRejectsEmptyIDValue(t *testing.T) {
 	}
 }
 
+func TestParseAttachArgsRejectsFlagLikeIDValue(t *testing.T) {
+	t.Parallel()
+
+	_, _, _, err := parseAttachArgs([]string{"--id", "--no-stdin"})
+	if err == nil {
+		t.Fatal("parseAttachArgs accepted flag-like --id value")
+	}
+	if !strings.Contains(err.Error(), "Option --id requires a value") {
+		t.Fatalf("parseAttachArgs error = %v, want missing-value rejection", err)
+	}
+}
+
 func TestParseAttachArgsRejectsUnknownFlag(t *testing.T) {
 	t.Parallel()
 

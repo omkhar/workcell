@@ -66,14 +66,15 @@ func logsMain(args []string, stdout io.Writer) error {
 		return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("Workcell blocked host output path after launch: %s", logPath)}
 	}
 
-	data, err := os.ReadFile(resolved)
+	file, err := os.Open(resolved)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("No %s log is recorded for session %s.", kind, sessionID)}
 		}
 		return err
 	}
-	_, err = stdout.Write(data)
+	defer file.Close()
+	_, err = io.Copy(stdout, file)
 	return err
 }
 
@@ -81,7 +82,7 @@ func parseLogsArgs(args []string) (sessionID, kind string, showHelp bool, err er
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--id":
-			value, next, perr := optionValueOrError(args, i, "--id")
+			value, next, perr := optionValueOrErrorStrict(args, i, "--id")
 			if perr != nil {
 				return "", "", false, perr
 			}

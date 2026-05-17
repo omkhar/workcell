@@ -41,6 +41,18 @@ func TestParseDeleteArgsRejectsEmptyIDValue(t *testing.T) {
 	}
 }
 
+func TestParseDeleteArgsRejectsFlagLikeIDValue(t *testing.T) {
+	t.Parallel()
+
+	_, _, _, _, err := parseDeleteArgs([]string{"--id", "--dry-run"})
+	if err == nil {
+		t.Fatal("parseDeleteArgs accepted flag-like --id value")
+	}
+	if !strings.Contains(err.Error(), "Option --id requires a value") {
+		t.Fatalf("parseDeleteArgs error = %v, want missing-value rejection", err)
+	}
+}
+
 func TestParseDeleteArgsRejectsUnknownFlag(t *testing.T) {
 	t.Parallel()
 

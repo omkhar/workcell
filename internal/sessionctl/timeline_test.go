@@ -35,6 +35,18 @@ func TestParseTimelineArgsRejectsEmptyIDValue(t *testing.T) {
 	}
 }
 
+func TestParseTimelineArgsRejectsFlagLikeIDValue(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := parseTimelineArgs([]string{"--id", "--help"})
+	if err == nil {
+		t.Fatal("parseTimelineArgs accepted flag-like --id value")
+	}
+	if !strings.Contains(err.Error(), "Option --id requires a value") {
+		t.Fatalf("parseTimelineArgs error = %v, want missing-value rejection", err)
+	}
+}
+
 func TestParseTimelineArgsRejectsUnknownFlag(t *testing.T) {
 	t.Parallel()
 
