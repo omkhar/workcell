@@ -27,8 +27,9 @@ Releases.
 - add a repo-local quality loop for roadmap and contract work so changes keep
   code, docs, validation, and support claims tight before review completion.
 - refresh release-time upstream pins for Gemini CLI `0.42.0`, Buildx
-  `v0.34.0`, zizmor `1.25.2`, the `20260518T000000Z` Debian snapshot, and
-  current reviewed runtime and validator base-image digests.
+  `v0.34.0`, zizmor `1.25.2`, zizmor-action `v0.5.6`, the
+  `20260518T000000Z` Debian snapshot, and current reviewed runtime and
+  validator base-image digests.
 - collapse internal helper binaries behind fewer reviewed host utilities,
   including the `workcell-citools` metadata/workflow validation surface and
   renamed tree-compare tooling.

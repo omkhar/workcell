@@ -460,6 +460,42 @@ func TestCheckPinnedInputsRejectsZizmorVersionMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckPinnedInputsRejectsReleaseZizmorVersionMismatch(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	releaseWorkflowPath := filepath.Join(cfg.WorkflowsDir, "release.yml")
+	rewriteFile(t, releaseWorkflowPath, func(content string) string {
+		return strings.Replace(content, "version: 1.25.2", "version: 1.25.1", 1)
+	})
+
+	err := pinnedinputs.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("pinnedinputs.CheckPinnedInputs() unexpectedly accepted a release workflow zizmor version mismatch")
+	}
+	if !strings.Contains(err.Error(), "release workflow zizmor-action version") {
+		t.Fatalf("pinnedinputs.CheckPinnedInputs() error = %v, want release zizmor version mismatch rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsZizmorActionRefMismatch(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	releaseWorkflowPath := filepath.Join(cfg.WorkflowsDir, "release.yml")
+	rewriteFile(t, releaseWorkflowPath, func(content string) string {
+		return strings.Replace(content, "zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d", "zizmorcore/zizmor-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1)
+	})
+
+	err := pinnedinputs.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("pinnedinputs.CheckPinnedInputs() unexpectedly accepted a zizmor-action ref mismatch")
+	}
+	if !strings.Contains(err.Error(), "zizmorcore/zizmor-action must use the same reviewed commit SHA") {
+		t.Fatalf("pinnedinputs.CheckPinnedInputs() error = %v, want zizmor-action ref mismatch rejection", err)
+	}
+}
+
 func TestVerifyGitHubHostedControlsRejectsExtraPublicCollaboratorsForBranchReview(t *testing.T) {
 	t.Parallel()
 

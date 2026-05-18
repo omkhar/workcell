@@ -845,6 +845,24 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if securityZizmorVersionMatch[1] != securityZizmorActionVersionMatch[1] {
 		return errors.New("ZIZMOR_VERSION must match the zizmor-action version in .github/workflows/security.yml")
 	}
+	_, releaseZizmorActionVersionMatch, err := requireRegex(releaseWorkflow, `(?s)zizmorcore/zizmor-action@[0-9a-f]{40}\s*#\s*v[0-9]+\.[0-9]+\.[0-9]+.*?\n\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\n`, "release zizmor action version", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	if securityZizmorVersionMatch[1] != releaseZizmorActionVersionMatch[1] {
+		return errors.New("ZIZMOR_VERSION must match the release workflow zizmor-action version")
+	}
+	securityZizmorActionRef, err := requireActionRef(securityWorkflow, "zizmorcore/zizmor-action", ".github/workflows/security.yml")
+	if err != nil {
+		return err
+	}
+	releaseZizmorActionRef, err := requireActionRef(releaseWorkflow, "zizmorcore/zizmor-action", ".github/workflows/release.yml")
+	if err != nil {
+		return err
+	}
+	if securityZizmorActionRef != releaseZizmorActionRef {
+		return errors.New("zizmorcore/zizmor-action must use the same reviewed commit SHA in .github/workflows/security.yml and .github/workflows/release.yml")
+	}
 	for _, workflow := range []struct {
 		text string
 		path string
