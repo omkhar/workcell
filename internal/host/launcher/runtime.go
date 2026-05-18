@@ -33,15 +33,11 @@ func ExtractCodexVersion(dockerfilePath string) (string, error) {
 // daemon advertises BOTH seccomp AND a kernel mandatory-access-control
 // framework (AppArmor on Ubuntu/colima, SELinux on Fedora/RHEL).  Both
 // are required for the workcell container hardening contract.
-func ValidateSecurityOptions(raw string) error {
+func parseDockerSecurityOptions(raw string) (hasSeccomp, hasMAC bool, err error) {
 	var options []any
 	if err := json.Unmarshal([]byte(raw), &options); err != nil {
-		return err
+		return false, false, err
 	}
-	var (
-		hasSeccomp = false
-		hasMAC     = false
-	)
 	for _, option := range options {
 		s, ok := option.(string)
 		if !ok {
@@ -54,11 +50,34 @@ func ValidateSecurityOptions(raw string) error {
 			hasMAC = true
 		}
 	}
+	return hasSeccomp, hasMAC, nil
+}
+
+func ValidateSecurityOptions(raw string) error {
+	hasSeccomp, hasMAC, err := parseDockerSecurityOptions(raw)
+	if err != nil {
+		return err
+	}
 	if !hasSeccomp {
 		return errors.New("managed runtime requires Docker seccomp support to stay active")
 	}
 	if !hasMAC {
 		return errors.New("managed runtime requires Docker AppArmor or SELinux support to stay active")
+	}
+	return nil
+}
+
+// ValidateCompatSecurityOptions applies the lower-assurance local_compat
+// daemon posture check. Docker Desktop for macOS advertises seccomp but not
+// AppArmor/SELinux; accepting it here is the explicit compat distinction, not
+// a strict-target relaxation.
+func ValidateCompatSecurityOptions(raw string) error {
+	hasSeccomp, _, err := parseDockerSecurityOptions(raw)
+	if err != nil {
+		return err
+	}
+	if !hasSeccomp {
+		return errors.New("compat runtime requires Docker seccomp support to stay active")
 	}
 	return nil
 }

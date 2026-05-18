@@ -302,6 +302,7 @@ func helperSubcommands() []helperSubcommand {
 		{"workspace-cache-key", 1, 1, cmdHelperWorkspaceCacheKey},
 		{"extract-codex-version", 1, 1, cmdHelperExtractCodexVersion},
 		{"validate-security-options", 1, 1, cmdHelperValidateSecurityOptions},
+		{"validate-compat-security-options", 1, 1, cmdHelperValidateCompatSecurityOptions},
 		{"validate-container-security-options", 1, 1, cmdHelperValidateContainerSecurityOptions},
 		{"canonicalize-tool-path", 1, 1, cmdHelperCanonicalizeToolPath},
 		{"dedupe-endpoints", 1, 1, cmdHelperDedupeEndpoints},
@@ -738,6 +739,10 @@ func cmdHelperExtractCodexVersion(args []string) error {
 
 func cmdHelperValidateSecurityOptions(args []string) error {
 	return launcher.ValidateSecurityOptions(args[0])
+}
+
+func cmdHelperValidateCompatSecurityOptions(args []string) error {
+	return launcher.ValidateCompatSecurityOptions(args[0])
 }
 
 func cmdHelperValidateContainerSecurityOptions(args []string) error {

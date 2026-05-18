@@ -64,6 +64,8 @@ targets must stay labeled `compat` or another explicitly lower-assurance class.
 - `docker-desktop` is the first `compat` target with a cross-platform
   expansion path, but the current supported row is limited to macOS arm64 in
   the canonical support matrix
+- the macOS Docker Desktop `compat` path requires Docker seccomp support but
+  does not claim the strict Colima path's AppArmor/SELinux daemon posture
 - Linux and Windows Docker Desktop rows remain blocked until host-expansion
   gates promote them with scenario evidence and operator verification material
 - every supported `docker-desktop` row must stay explicitly lower assurance

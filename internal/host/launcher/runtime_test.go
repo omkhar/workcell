@@ -48,6 +48,26 @@ func TestValidateSecurityOptionsAcceptsSELinuxSeccomp(t *testing.T) {
 	}
 }
 
+func TestValidateCompatSecurityOptionsAcceptsSeccompOnly(t *testing.T) {
+	t.Parallel()
+
+	if err := ValidateCompatSecurityOptions(`["name=seccomp,profile=builtin","name=cgroupns"]`); err != nil {
+		t.Fatalf("ValidateCompatSecurityOptions error = %v, want nil for Docker Desktop compat daemon", err)
+	}
+}
+
+func TestValidateCompatSecurityOptionsRequiresSeccomp(t *testing.T) {
+	t.Parallel()
+
+	err := ValidateCompatSecurityOptions(`["name=cgroupns"]`)
+	if err == nil {
+		t.Fatal("ValidateCompatSecurityOptions accepted daemon options missing seccomp")
+	}
+	if !strings.Contains(err.Error(), "seccomp") {
+		t.Fatalf("ValidateCompatSecurityOptions error = %v, want seccomp rejection", err)
+	}
+}
+
 func TestValidateContainerSecurityOptionsRequiresNoNewPrivileges(t *testing.T) {
 	t.Parallel()
 
