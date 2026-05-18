@@ -8,16 +8,48 @@ Releases.
 
 ## Unreleased
 
+## v0.10.6 - 2026-05-18
+
 ### Added
 
 - record Phase 10 through Phase 12 execution with a managed-workstation
   contract, enterprise evidence baseline, host-expansion readiness gate, and
   requirements traceability without adding new support claims.
+- add explicit forbidden-host-path policy data, control-plane lockstep
+  validation, release publication gates, pinned-input checks, and fuzz coverage
+  for parser and injection security boundaries.
+- add internal Go packages for session control, auth/policy commands,
+  injection preparation, publication helpers, host launch state, workflow
+  validation, and release metadata so public shell entrypoints stay thinner.
 
 ### Changed
 
 - add a repo-local quality loop for roadmap and contract work so changes keep
   code, docs, validation, and support claims tight before review completion.
+- refresh release-time upstream pins for Gemini CLI `0.42.0`, Buildx
+  `v0.34.0`, zizmor `1.25.2`, the `20260518T000000Z` Debian snapshot, and
+  current reviewed runtime and validator base-image digests.
+- collapse internal helper binaries behind fewer reviewed host utilities,
+  including the `workcell-citools` metadata/workflow validation surface and
+  renamed tree-compare tooling.
+- tighten roadmap, rollout, release, provenance, and workflow documentation
+  around the current single-maintainer release model and host-support boundary.
+
+### Fixed
+
+- preserve host-side publication signing environment, signed-range checks, and
+  release preflight behavior across the repo-owned `publish-pr` path.
+- reject colliding credential tables, intermediate-symlink traversal, malformed
+  policy TOML, and other reviewed host/runtime boundary regressions with
+  focused tests.
+- keep session and launcher helper exit contracts stable after the Go helper
+  migrations, including Bash 3-compatible invariant parsing and Colima helper
+  trailer recovery.
+- keep Docker Desktop `compat` launch validation target-aware so the lower
+  assurance path requires seccomp without inheriting the strict Colima
+  AppArmor/SELinux daemon check.
+- harden hosted workflow validation, provider-bump status checks, release
+  attestation handling, and CI timeouts so release and review lanes fail closed.
 
 ## v0.10.5 - 2026-04-25
 

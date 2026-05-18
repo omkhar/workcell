@@ -430,7 +430,7 @@ func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
 	rewriteFile(t, securityWorkflowPath, func(content string) string {
-		return strings.Replace(content, "ZIZMOR_SHA256: a8000f3c683319a523d3b20df0e75457ba591f049cfcbfa98966631b56733c03", "ZIZMOR_SHA256: deadbeef", 1)
+		return strings.Replace(content, "ZIZMOR_SHA256: aa1facd105f0d83fe5c55b1adcd9d7417de5d83aa27471f91dc0b66cf3803577", "ZIZMOR_SHA256: deadbeef", 1)
 	})
 
 	err := pinnedinputs.CheckPinnedInputs(cfg)
@@ -448,7 +448,7 @@ func TestCheckPinnedInputsRejectsZizmorVersionMismatch(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
 	rewriteFile(t, securityWorkflowPath, func(content string) string {
-		return strings.Replace(content, "version: 1.24.1", "version: 1.24.0", 1)
+		return strings.Replace(content, "version: 1.25.2", "version: 1.25.1", 1)
 	})
 
 	err := pinnedinputs.CheckPinnedInputs(cfg)

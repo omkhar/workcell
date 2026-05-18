@@ -98,7 +98,10 @@ Today that certification tier includes:
 
 - `shared/agent-launch-smoke` for local macOS Colima prepare-only and
   provider-version smoke on the managed path
-- `shared/docker-desktop-launch-smoke` for the explicit `local_compat/docker-desktop/compat` path on healthy macOS Docker Desktop hosts
+- `shared/docker-desktop-launch-smoke` for the explicit
+  `local_compat/docker-desktop/compat` path on healthy macOS Docker Desktop
+  hosts with Docker seccomp available; this is lower assurance than the strict
+  Colima path and does not assert AppArmor/SELinux daemon parity
 - `shared/aws-ec2-ssm-launch-smoke` for the credentialed
   `remote_vm/aws-ec2-ssm/compat` preview boundary against a reviewed
   SSM-managed EC2 target

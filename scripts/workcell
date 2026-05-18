@@ -6427,6 +6427,11 @@ validate_runtime_security_posture() {
     exit 2
   }
 
+  if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
+    go_hostutil helper validate-compat-security-options "${security_options_json}"
+    return 0
+  fi
+
   go_hostutil helper validate-security-options "${security_options_json}"
 }
 

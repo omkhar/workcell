@@ -5201,6 +5201,14 @@ if go_verify_hostutil helper validate-security-options '["name=cgroupns"]' >/dev
   echo "Expected helper validate-security-options to reject daemon options missing seccomp/MAC" >&2
   exit 1
 fi
+if ! go_verify_hostutil helper validate-compat-security-options '["name=seccomp,profile=builtin","name=cgroupns"]' >/dev/null; then
+  echo "Expected helper validate-compat-security-options to accept Docker Desktop seccomp-only daemon options" >&2
+  exit 1
+fi
+if go_verify_hostutil helper validate-compat-security-options '["name=cgroupns"]' >/dev/null 2>&1; then
+  echo "Expected helper validate-compat-security-options to reject daemon options missing seccomp" >&2
+  exit 1
+fi
 if ! go_verify_hostutil helper validate-container-security-options '["no-new-privileges:true"]' >/dev/null; then
   echo "Expected helper validate-container-security-options to accept canonical HostConfig.SecurityOpt" >&2
   exit 1
@@ -5211,6 +5219,10 @@ if go_verify_hostutil helper validate-container-security-options '["no-new-privi
 fi
 if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "validate_runtime_security_posture" "go_hostutil helper validate-security-options"; then
   echo "Expected validate_runtime_security_posture to validate daemon SecurityOptions through the helper subcommand" >&2
+  exit 1
+fi
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "validate_runtime_security_posture" "go_hostutil helper validate-compat-security-options"; then
+  echo "Expected validate_runtime_security_posture to validate Docker Desktop compat daemon SecurityOptions through the compat helper subcommand" >&2
   exit 1
 fi
 
