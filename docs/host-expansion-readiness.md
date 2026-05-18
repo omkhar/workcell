@@ -26,11 +26,13 @@ or `preview` without becoming broadly supported.
 
 ## Candidate Scope
 
-Phase 13 may evaluate Linux `amd64` `local_compat` as the next narrow candidate.
-That evaluation must select one distro/runtime matrix before implying Linux
-operator support. If that selected matrix cannot preserve Workcell's support
-boundary, the phase must record the blocker instead of substituting a different
-runtime silently.
+The roadmap now places GitHub Copilot CLI Tier 1 provider parity before the
+Linux host-expansion slice. Phase 13 remains the next runtime-target candidate
+after that provider-parity work and may evaluate Linux `amd64` `local_compat`
+as a narrow candidate. That evaluation must select one distro/runtime matrix
+before implying Linux operator support. If that selected matrix cannot preserve
+Workcell's support boundary, the phase must record the blocker instead of
+substituting a different runtime silently.
 
 Later host tracks remain separate:
 

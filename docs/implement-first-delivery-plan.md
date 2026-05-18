@@ -237,7 +237,8 @@ Completion record:
 
 ## Later Phase Handoff
 
-Before Phase 13 begins implementation, assign distinct owner lanes:
+Before the Copilot provider-parity phase or the later Phase 13 runtime-target
+candidate begins implementation, assign distinct owner lanes:
 
 - EM:
   support-boundary owner for rollout scope, preview/GA decisions, and rollback
@@ -262,7 +263,9 @@ Before Phase 13 begins implementation, assign distinct owner lanes:
    later phase lands rather than as a cleanup pass
 4. treat Phase 10 through 12 docs as fixed gates for managed-workstation,
    enterprise-evidence, and host-expansion work
-5. leave later raw `remote_vm`, managed-workstation provider delivery, and host
+5. complete the Copilot CLI provider-parity phase before resuming Linux
+   host-expansion implementation
+6. leave later raw `remote_vm`, managed-workstation provider delivery, and host
    promotion to later runtime-target program phases once these prerequisites and
    owner handoffs are done
 

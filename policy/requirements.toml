@@ -325,8 +325,8 @@ docs = [
 ]
 
 [nonfunctional.NFR-007]
-title = "Target expansion gate discipline"
-summary = "Workcell records managed-workstation and host-expansion gates with explicit support boundaries, evidence expectations, and no backend or host support promotion until proof lands in the same change."
+title = "Target and provider expansion gate discipline"
+summary = "Workcell records managed-workstation, host-expansion, and provider-parity gates with explicit support boundaries, evidence expectations, and no backend, host, or provider support promotion until proof lands in the same change."
 evidence = [
   "scripts/verify-requirements-coverage.sh",
   "scripts/verify-operator-contract.sh",
@@ -334,6 +334,13 @@ evidence = [
 ]
 docs = [
   "ROADMAP.md",
+  "docs/provider-matrix.md",
+  "docs/provider-bootstrap-matrix.md",
+  "docs/injection-policy.md",
+  "docs/adapter-control-planes.md",
+  "docs/enterprise-rollout.md",
+  "docs/provenance.md",
+  "docs/invariants.md",
   "docs/runtime-target-phase-plan.md",
   "docs/runtime-target-expansion-plan.md",
   "docs/implement-first-delivery-plan.md",
