@@ -22,20 +22,41 @@ SEARCH_ROOTS=(
   "${ROOT_DIR}/CONTRIBUTING.md"
 )
 
+policy_name_is_documented() {
+  local base="$1"
+  local root=""
+  local path=""
+
+  for root in "${SEARCH_ROOTS[@]}"; do
+    if [[ -f "${root}" ]]; then
+      case "${root}" in
+        *.md)
+          if grep -qF "${base}" "${root}" 2>/dev/null; then
+            return 0
+          fi
+          ;;
+      esac
+      continue
+    fi
+
+    [[ -d "${root}" ]] || continue
+    while IFS= read -r -d '' path; do
+      if grep -qF "${base}" "${path}" 2>/dev/null; then
+        return 0
+      fi
+    done < <(find "${root}" -type f -name '*.md' -print0)
+  done
+
+  return 1
+}
+
 missing=()
 for path in "${ROOT_DIR}"/policy/*; do
   base="$(basename "${path}")"
   case "${base}" in
     README.md) continue ;;
   esac
-  hit=0
-  for root in "${SEARCH_ROOTS[@]}"; do
-    if [[ -e "${root}" ]] && grep -rlqF "${base}" "${root}" 2>/dev/null; then
-      hit=1
-      break
-    fi
-  done
-  if [[ "${hit}" -eq 0 ]]; then
+  if ! policy_name_is_documented "${base}"; then
     missing+=("${base}")
   fi
 done

@@ -407,7 +407,7 @@ echo "${plan_json}" | jq -r '
     (.lanes[] | [
       .status,
       .id,
-      (.local_script // .reason // .github_only_reason // "")
+      (.reason // .local_script // .github_only_reason // "")
     ] | @tsv)
   ] | .[]
 '

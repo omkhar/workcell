@@ -813,7 +813,7 @@ run_host_colima_with_timeout() {
   if [[ -z "${HOST_COLIMA_BIN:-}" ]]; then
     HOST_COLIMA_BIN="$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)"
   fi
-  go_hostutil helper run-host-colima-with-timeout "${timeout_seconds}" \
+  run_go_hostutil_preserve_exit helper run-host-colima-with-timeout "${timeout_seconds}" \
     --colima-bin="${HOST_COLIMA_BIN}" \
     --real-home="${REAL_HOME:-}" \
     --colima-home="${COLIMA_STATE_ROOT:-}" \
@@ -837,7 +837,7 @@ colima_profile_status() {
   # 1, so the bash side reconstructs the original exit code from that
   # trailer to preserve the contract verify-invariants depends on.
   local stderr_capture status_output rc trailer
-  stderr_capture="$(mktemp)"
+  stderr_capture="$(mktemp "${TMPDIR:-/tmp}/workcell-colima-status-stderr.XXXXXX")"
   status_output="$(printf '%s' "${list_output}" | go_hostutil helper colima-status "${profile}" 2>"${stderr_capture}")"
   rc=$?
   if ((rc != 0)); then
@@ -1013,7 +1013,7 @@ prepare_current_target_docker_client() {
   # the bash side can continue to exit 2 when the docker-desktop context
   # check fails, exactly as the original case-block did.
   local plan_stderr plan_output rc trailer
-  plan_stderr="$(mktemp)"
+  plan_stderr="$(mktemp "${TMPDIR:-/tmp}/workcell-docker-client-plan-stderr.XXXXXX")"
   plan_output="$(go_hostutil helper prepare-current-docker-client-plan \
     --backend="${TARGET_BACKEND:-}" \
     --context-name="${desktop_context}" \
@@ -1738,7 +1738,7 @@ run_profile_docker_command() {
   # unsupported providers the helper emits the original bash
   # diagnostic to its stderr and exits 1, which we surface here.
   local route_stderr route_output rc trailer
-  route_stderr="$(mktemp)"
+  route_stderr="$(mktemp "${TMPDIR:-/tmp}/workcell-docker-route-stderr.XXXXXX")"
   route_output="$(go_hostutil helper route-profile-docker-command \
     "--provider=${provider}" \
     "--socket-path=${socket_path}" \
@@ -4907,8 +4907,8 @@ prepare_injection_bundle() {
   INJECTION_SECRET_COPY_TARGETS=""
 
   local stdout_capture stderr_capture rc trailer
-  stdout_capture="$(mktemp)"
-  stderr_capture="$(mktemp)"
+  stdout_capture="$(mktemp "${TMPDIR:-/tmp}/workcell-injection-bundle-stdout.XXXXXX")"
+  stderr_capture="$(mktemp "${TMPDIR:-/tmp}/workcell-injection-bundle-stderr.XXXXXX")"
   rc=0
   go_hostutil helper injection-prepare-bundle \
     "--agent=${agent}" \

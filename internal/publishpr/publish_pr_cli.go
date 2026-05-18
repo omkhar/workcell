@@ -105,8 +105,10 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		return hasStagedChanges(ctx, resolvedWorkspace)
 	}
 	if !hasChanges() {
-		if current == opts.Branch || branchExists(ctx, resolvedWorkspace, opts.Branch) {
+		if current == opts.Branch {
 			publishExistingCommits = 1
+		} else if branchExists(ctx, resolvedWorkspace, opts.Branch) {
+			return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr existing-branch mode requires branch %s to be checked out in %s.", opts.Branch, resolvedWorkspace)}
 		} else {
 			missing := "workspace"
 			if opts.Snapshot != "worktree" {

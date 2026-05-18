@@ -2424,6 +2424,8 @@ WORKCELL_COLIMA_TIMEOUT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-colima-timeout-
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" terminate_process_tree_by_pid
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_go_hostutil_preserve_exit
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_host_colima_with_timeout
   printf '\n'
   cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-colima-timeout.sh"
@@ -5310,8 +5312,9 @@ if [[ ! -f "${FORBIDDEN_HOST_PATHS_FILE}" ]]; then
 fi
 
 FORBIDDEN_HOST_PATHS=()
-while IFS= read -r forbidden_host_path; do
-  FORBIDDEN_HOST_PATHS+=("${forbidden_host_path}")
+while IFS= read -r forbidden_path; do
+  [[ -n "${forbidden_path}" ]] || continue
+  FORBIDDEN_HOST_PATHS+=("${forbidden_path}")
 done < <(
   awk '
     /^[[:space:]]*\[forbidden_host_paths\][[:space:]]*$/ { in_section = 1; next }
@@ -5496,6 +5499,24 @@ grep -q -- ' push --no-verify -u origin feature/publish-existing-commits ' <<<"$
 grep -q -- 'gh pr create --base main --head feature/publish-existing-commits --title Existing\\ publish\\ branch --draft' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
 git -C "${PUBLISH_PR_FIXTURE}" switch -q "${PUBLISH_PR_FIXTURE_DEFAULT_BRANCH}"
 git -C "${PUBLISH_PR_FIXTURE}" branch -D feature/publish-existing-commits >/dev/null
+
+git -C "${PUBLISH_PR_FIXTURE}" switch -q -c feature/publish-existing-not-current
+printf 'existing not current\n' >"${PUBLISH_PR_FIXTURE}/existing-not-current.txt"
+git -C "${PUBLISH_PR_FIXTURE}" add existing-not-current.txt
+git -C "${PUBLISH_PR_FIXTURE}" commit -q -m "existing not current fixture"
+git -C "${PUBLISH_PR_FIXTURE}" switch -q "${PUBLISH_PR_FIXTURE_DEFAULT_BRANCH}"
+git -C "${PUBLISH_PR_FIXTURE}" reset -q --hard HEAD
+if "${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${PUBLISH_PR_FIXTURE}" \
+  --branch feature/publish-existing-not-current \
+  --title "Existing not current" \
+  --commit-message "Unused existing not current commit" \
+  --dry-run >/tmp/workcell-publish-existing-not-current.out 2>&1; then
+  echo "Expected publish-pr to reject existing-branch mode from another checked-out branch" >&2
+  exit 1
+fi
+grep -q 'publish-pr existing-branch mode requires branch feature/publish-existing-not-current to be checked out' /tmp/workcell-publish-existing-not-current.out
+git -C "${PUBLISH_PR_FIXTURE}" branch -D feature/publish-existing-not-current >/dev/null
 
 if "${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${PUBLISH_PR_FIXTURE}" \

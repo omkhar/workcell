@@ -40,6 +40,11 @@ func TestParseTOMLSubsetRejectsForbiddenConstructs(t *testing.T) {
 			wantError: "duplicate key: common",
 		},
 		{
+			name:      "credentials_scalar_table_collision",
+			content:   "[credentials.codex_auth]\nsource = \"/tmp/a\"\n[credentials]\ncodex_auth = \"/tmp/b\"\n",
+			wantError: "duplicate key across table forms: credentials.codex_auth",
+		},
+		{
 			name:      "multi_line_basic_string",
 			content:   "version = \"\"\"hi\nthere\"\"\"\n",
 			wantError: "multi-line strings are not supported",

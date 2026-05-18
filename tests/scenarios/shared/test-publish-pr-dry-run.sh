@@ -166,6 +166,17 @@ grep -q -- ' push --no-verify -u origin feature/existing-signed-branch ' <<<"${e
 grep -q -- 'gh pr create --base main --head feature/existing-signed-branch --title Existing\\ branch\\ title --draft' <<<"${existing_branch_dry_run}"
 git -C "${FIXTURE}" switch -q main
 git -C "${FIXTURE}" reset -q --hard origin/main
+set +e
+existing_branch_from_main="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/existing-signed-branch \
+  --title "Existing branch title" \
+  --commit-message "Unused existing branch commit" \
+  --dry-run 2>&1)"
+existing_branch_from_main_rc=$?
+set -e
+test "${existing_branch_from_main_rc}" -eq 2
+grep -q 'publish-pr existing-branch mode requires branch feature/existing-signed-branch to be checked out' <<<"${existing_branch_from_main}"
 git -C "${FIXTURE}" branch -D feature/existing-signed-branch >/dev/null
 
 cat >"${FIXTURE}/.git/hooks/pre-commit" <<EOF

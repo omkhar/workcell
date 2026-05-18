@@ -171,7 +171,7 @@ case "${OUTPUT_FORMAT}" in
         (.lanes[] | [
           .status,
           .id,
-          (.local_script // .reason // .github_only_reason // "")
+          (.reason // .local_script // .github_only_reason // "")
         ] | @tsv)
       ] | .[]
     ' <<<"${plan_json}"
