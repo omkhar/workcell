@@ -19,6 +19,14 @@ local use, but it requires a real macOS+Colima environment and live provider
 credentials and is not run in CI. Not every documented auth path has full
 automated end-to-end coverage across all providers.
 
+### GitHub Copilot CLI provider parity
+
+Copilot CLI is the next planned Tier 1 provider adapter, but current releases
+do not include `--agent copilot`, Copilot auth staging, a quickstart, scenario
+evidence, or live provider certification. The support claim remains blocked
+until deterministic tests and a live non-destructive `copilot -p` certification
+land with the adapter.
+
 ### Lower-assurance transition coverage
 
 Some downgrade paths are validated statically or by smoke tests but still need
@@ -46,9 +54,17 @@ more explicit end-to-end scenarios, especially:
 - more end-to-end coverage for Vertex plus `gcloud_adc`
 - more coverage for `breakglass` folder-trust restoration
 
+### Copilot
+
+- provider adapter, auth, bootstrap, unsafe-argument, and control-plane seeding
+  coverage after implementation starts
+- live `copilot -p` certification with staged credentials before any support
+  claim
+
 ## Why these gaps remain acceptable for now
 
 The core repo-required path is covered by invariants, smoke tests, deterministic
 repo validation, reproducibility checks, and tagged release preflight. The open
 gaps are mostly at the edges: live-provider auth, local macOS proof, and
-explicit lower-assurance transitions.
+explicit lower-assurance transitions. Copilot is different: it is a planned
+provider-parity track and remains unsupported until the adapter evidence lands.

@@ -15,6 +15,9 @@ On the managed path, Workcell does not pass through:
 - host provider-home state such as `~/.codex`, `~/.claude`, or `~/.gemini`
 
 Reusable auth enters the session only through explicit injection-policy inputs.
+The planned GitHub Copilot CLI adapter must preserve the same invariant for
+host `~/.copilot`, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, and ambient
+`gh auth token` fallback. Current releases do not support `--agent copilot`.
 
 ## 2. Writes stay inside the intended workspace
 
@@ -28,6 +31,11 @@ Repo-local control-plane files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
 `.codex/`, `.claude/`, and `.gemini/` are masked on the safe path and imported
 into provider homes as reviewed inputs. The workspace should not be able to
 quietly take over the runtime control plane.
+
+The planned Copilot adapter must explicitly account for Copilot-specific repo
+control-plane files such as `.github/copilot-instructions.md`,
+`.github/instructions/**`, and `.github/copilot/settings*.json` before it can
+claim support.
 
 ## 4. Network posture is explicit
 
@@ -58,6 +66,7 @@ Examples:
 - `--allow-arbitrary-command`
 - `breakglass`
 - host-side debug or transcript capture
+- any future Copilot telemetry, OpenTelemetry, or content-capture enablement
 
 Workcell records those choices in launch or runtime state instead of implying
 they are equivalent to the default path.

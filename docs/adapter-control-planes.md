@@ -24,11 +24,27 @@ adapter baseline.
 | Claude | `settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, optional API key helper | the reviewed Bash hook is defense in depth; MCP defaults are empty |
 | Gemini | `settings.json`, rendered `GEMINI.md`, `.env`, `oauth_creds.json`, `projects.json`, `trustedFolders.json` | `breakglass` restores Gemini's own folder-trust prompt; `gcloud_adc` is supplemental to Vertex config in `gemini_env` |
 
-Shared cross-provider state can also seed:
+## Planned Copilot CLI control plane
+
+GitHub Copilot CLI is planned as the next Tier 1 provider adapter. It is not
+seeded by current releases. Before support is claimed, the Copilot adapter must
+own a session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, `~/.copilot`
+settings, permissions, sessions, logs, plugin state, hooks, MCP/LSP config,
+and any imported instruction files.
+
+The future adapter must reject host `~/.copilot`, keychain access, `GH_TOKEN`,
+`GITHUB_TOKEN`, ambient GitHub CLI fallback, unreviewed plugin or MCP
+expansion, remote-control sharing, and provider auto-update state as implicit
+Tier 1 inputs.
+
+Shared cross-provider state can also seed the current supported adapters:
 
 - `~/.config/gh/config.yml`
 - `~/.config/gh/hosts.yml`
 - `~/.ssh/*`
+
+That GitHub CLI state must not become a Copilot safe-path auth input unless a
+separate reviewed Copilot path explicitly allows it.
 
 ## Instruction layering
 
@@ -49,6 +65,11 @@ control plane masked on the safe path.
 |---|---|---|---|
 | `--agent-autonomy yolo` | `--ask-for-approval never` | `--permission-mode bypassPermissions` | `--approval-mode yolo` |
 | `--agent-autonomy prompt` | `--ask-for-approval on-request` | `--permission-mode default` | `--approval-mode default` |
+
+Copilot autonomy mapping is intentionally absent until the adapter lands. The
+planned implementation must map prompt mode to Copilot's normal approval flow
+and yolo mode only to reviewed tool/path/URL permissions inside the Workcell
+runtime, while blocking user-supplied flags that silently widen trust.
 
 Unsafe provider-native attempts to override those managed flags are blocked on
 the managed path.
@@ -92,6 +113,17 @@ boundary and does not cover non-Bash Claude tools.
 Workcell seeds Gemini's trusted-folders state for `/workspace` on the managed
 path so masked ephemeral sessions do not force a restart-based trust prompt.
 `breakglass` restores Gemini's own folder-trust flow.
+
+### Copilot trust and permissions
+
+Copilot support must treat permissive CLI options, saved permissions, remote
+control, plugins, hooks, MCP/LSP config, and repository-local Copilot settings
+as managed control-plane inputs. Current releases do not import or trust those
+paths for Copilot because `--agent copilot` is not implemented.
+
+Future strict-mode support must also scrub Copilot telemetry, OpenTelemetry,
+and content-capture environment variables by default; any opt-in path must be
+lower assurance, acknowledged, audited, and tested.
 
 ## MCP posture
 

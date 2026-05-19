@@ -78,6 +78,14 @@ current bootstrap tiers, handoffs, and evidence.
 | Claude | `claude_auth`, `claude_api_key`, `claude_mcp` | shared GitHub CLI and SSH inputs via policy as needed | the built-in `claude-macos-keychain` resolver can record intent but remains fail-closed until a supported export path exists |
 | Gemini | `gemini_env`, `gemini_oauth` | `gemini_projects` as a supplemental project registry input, `gcloud_adc` as a supplemental Vertex input, plus shared GitHub CLI and SSH inputs via policy as needed | `gemini_projects` and `gcloud_adc` are not standalone Gemini auth modes |
 
+GitHub Copilot CLI is planned for Tier 1 parity but is not a launch-ready
+provider today. The planned path must use explicit staged token material, likely
+`copilot_github_token`, and session-local `COPILOT_HOME` /
+`COPILOT_CACHE_HOME` state. It must not pass through host `~/.copilot`, host
+keychains, `GH_TOKEN`, `GITHUB_TOKEN`, ambient `gh auth token`, arbitrary BYOK
+provider env, or whole-home state. The managed child should see only the
+Workcell-staged `COPILOT_GITHUB_TOKEN` on the supported path.
+
 ## Credential keys
 
 | Key | Session target | Notes |
@@ -93,6 +101,10 @@ current bootstrap tiers, handoffs, and evidence.
 | `github_hosts` | `~/.config/gh/hosts.yml` | shared GitHub CLI auth; prefer scoped nested tables |
 | `github_config` | `~/.config/gh/config.yml` | shared GitHub CLI config; prefer scoped nested tables |
 
+`copilot_github_token` is a planned credential key, not a supported key in
+current releases. It must not appear in operator policy until the Copilot
+adapter, validation, and docs land.
+
 ## Instruction precedence
 
 Provider docs are rendered in this order:
@@ -103,6 +115,11 @@ Provider docs are rendered in this order:
 4. `documents.common`
 5. provider-specific document fragment
 
+The planned Copilot adapter must separately define how `AGENTS.md`,
+`.github/copilot-instructions.md`, `.github/instructions/**`, and
+`.github/copilot/settings*.json` are imported, masked, or rejected. Current
+releases do not provide Copilot-specific instruction layering.
+
 ## Deliberate limits
 
 - no arbitrary environment-variable secret injection on the safe path
@@ -111,6 +128,12 @@ Provider docs are rendered in this order:
 - no `SSH_AUTH_SOCK` forwarding
 - no assumption that one process inside the session is isolated from another
   process in the same session
+- no host `~/.copilot`, keychain, `GH_TOKEN`, `GITHUB_TOKEN`, ambient
+  `gh auth token`, or broad Copilot token state passthrough on the future
+  Copilot path
+- no Copilot telemetry, OpenTelemetry, or content-capture environment variables
+  in future `strict` mode unless a lower-assurance acknowledged path and
+  deterministic tests are added
 
 ## Recommended usage
 

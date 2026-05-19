@@ -14,6 +14,13 @@ operator hosts, Windows hosts, Linux `arm64`, and Raspberry Pi remain
 unsupported until their support-matrix rows, diagnostics, docs, rollback
 guidance, and live certification evidence land together.
 
+Authoritative provider support status remains in
+[`docs/provider-matrix.md`](docs/provider-matrix.md). Codex, Claude Code, and
+Gemini are the supported Tier 1 provider adapters today. GitHub Copilot CLI is
+now the next committed provider-parity track, but it is not a support claim
+until its adapter, auth path, docs, deterministic evidence, and live
+certification land together.
+
 The active delivery shape lives in
 [`docs/implement-first-delivery-plan.md`](docs/implement-first-delivery-plan.md).
 The longer-lived runtime-target and deployment-reach program lives in
@@ -36,6 +43,9 @@ The deterministic phase breakdown lives in
   launch claims.
 - Keep open-source adoption grounded in quickstart reliability, public
   invariants, contributor ergonomics, and honest support labels.
+- Promote provider expansion through the same Tier 1 adapter bar as the current
+  Codex, Claude, and Gemini adapters, rather than through provider-specific
+  shortcuts.
 
 ## Current Support Boundary
 
@@ -53,8 +63,11 @@ The deterministic phase breakdown lives in
 - Phases 10 through 12 are now implemented as contract, evidence, and readiness
   gates. They do not add a managed-workstation backend, Linux support, Windows
   support, or any new launch target.
+- GitHub Copilot CLI is planned as the next Tier 1 provider adapter. Current
+  releases do not support `--agent copilot`, Copilot credential keys, or a
+  Copilot quickstart.
 
-## Next Ten Phases
+## Next Provider And Target Phases
 
 ### Phase 10: Managed Workstation Contract
 
@@ -118,10 +131,61 @@ Exit gates:
 - support-matrix promotion criteria and fail-closed diagnostics are specified
 - the gate creates no Linux or Windows operator-host support claim by itself
 
+### Provider Parity Phase: GitHub Copilot CLI Tier 1 Adapter Parity
+
+Deliver GitHub Copilot CLI to the same end-state support bar as Codex, Claude
+Code, and Gemini before the Linux operator-host expansion resumes. This is a
+provider-adapter phase, not a host-support promotion.
+
+Exit gates:
+
+- `workcell --agent copilot --workspace /path/to/repo` launches Copilot CLI
+  fully inside the bounded Workcell runtime
+- Copilot home, cache, settings, permissions, sessions, logs, plugins, hooks,
+  MCP/LSP state, and instruction imports are session-local or explicitly
+  staged; host `~/.copilot`, host keychains, ambient `gh` auth, and whole-home
+  passthrough remain outside the safe path
+- the primary auth path is an explicit staged credential such as
+  `copilot_github_token`, exported only to the managed Copilot child process as
+  `COPILOT_GITHUB_TOKEN`
+- Copilot auth fallback is fail-closed: `GH_TOKEN`, `GITHUB_TOKEN`,
+  keychain/plaintext config fallback, and `gh auth token` fallback are scrubbed
+  or rejected unless a separate reviewed lower-assurance path explicitly
+  enables them
+- `COPILOT_HOME` and `COPILOT_CACHE_HOME` are set to Workcell-owned paths, and
+  BYOK provider env, remote control, plugins, MCP expansion, ACP, and custom
+  instruction overrides are either blocked or explicitly reviewed before
+  support
+- Copilot telemetry, OpenTelemetry, and content-capture environment variables
+  are scrubbed by default in `strict`; any enablement is lower-assurance,
+  explicitly acknowledged, audited, and covered by deterministic tests
+- `--agent-autonomy prompt` and `--agent-autonomy yolo` map to reviewed
+  Copilot permission flags without letting user argv silently widen tool, path,
+  URL, remote-session, or update behavior
+- workspace control-plane masking accounts for Copilot-specific files such as
+  `AGENTS.md`, `.github/copilot-instructions.md`,
+  `.github/instructions/**`, and `.github/copilot/settings*.json`
+- README, provider matrix, bootstrap matrix, injection policy, adapter control
+  planes, quickstart, validation scenarios, requirements, operator contract,
+  and release-facing docs land with the implementation
+- release preflight, upstream provider-pin verification, provenance docs,
+  manifests, and release validation include Copilot before any support
+  promotion
+- deterministic repo-required tests cover provider selection, auth policy,
+  bootstrap summaries, control-plane seeding, unsafe-argument rejection, and
+  scenario manifest parity, including fail-closed auth fallback and
+  telemetry/content-capture behavior
+- live provider certification proves a non-destructive `copilot -p` launch with
+  staged credentials before any signed commit claims Copilot support
+- product, enterprise/security, adapter-maintainer, validation, docs/contract,
+  and release review lenses have no unresolved P0/P1 objections about support
+  labels, auth, masking, or certification
+
 ### Phase 13: Linux `amd64` `local_compat` Certification Candidate
 
 Move Linux earlier than the old late-roadmap position, but only as a narrow
-candidate for lower-assurance operator-host support.
+candidate for lower-assurance operator-host support after the Copilot provider
+parity phase records its adapter-support outcome.
 
 Exit gates:
 
@@ -235,6 +299,8 @@ Exit gates:
 
 - publish a short supported quickstart for the strict macOS path
 - publish a clearly labeled Docker Desktop compat quickstart
+- publish the Copilot CLI quickstart only with its adapter, auth, and
+  certification evidence; until then, keep Copilot labeled as planned parity
 - explain why Docker, devcontainers, prompt rules, and provider config are not
   equivalent to Workcell's runtime boundary
 - keep examples and provider adapters thin, versioned, and honest about
@@ -248,6 +314,9 @@ Exit gates:
 
 - provide an enterprise evaluation guide, control evidence packet, deployment
   decision tree, and pilot rollout plan
+- require Copilot enterprise rollout material to document licensing/policy
+  prerequisites, token ownership, audit expectations, and the ban on host
+  `~/.copilot`, keychain, and ambient GitHub CLI passthrough before support
 - keep customer-owned cloud resources, no broad IAM grants, no public ingress,
   and explicit rollback as non-negotiable cloud preview requirements
 - support MDM-friendly install, upgrade, uninstall, rollback, and support
@@ -264,6 +333,10 @@ Exit gates:
   security boundary
 - claiming Linux, Windows, Linux `arm64`, or Raspberry Pi support before the
   support matrix, docs, diagnostics, and certification evidence exist
+- claiming GitHub Copilot CLI support before the Tier 1 adapter, auth model,
+  unsafe-argument policy, docs, tests, and live certification evidence land
+- treating Copilot cloud agent, IDE extensions, or host-native Copilot CLI
+  execution as equivalent to a Workcell Tier 1 provider adapter
 - treating Linux or Windows `compat` support as strict parity
 - treating Raspberry Pi as an enterprise host default
 - automatic backend fallback
