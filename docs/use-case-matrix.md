@@ -8,6 +8,7 @@ Workcell workflows.
 - `tested`: covered by repo validation, invariants, smoke, or scenario tests
 - `doc-only`: documented and intentionally supported, but not deeply automated
 - `gap`: recognized coverage gap tracked in `docs/scenario-gaps.md`
+- `planned gap`: roadmap target with no current implementation, tracked in `docs/scenario-gaps.md`
 
 ## Matrix
 

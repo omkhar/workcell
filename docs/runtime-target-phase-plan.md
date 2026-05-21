@@ -34,7 +34,7 @@ Current repo status:
 - Phase 10 is implemented as the managed workstation contract and discovery gate
 - Phase 11 is implemented as the enterprise evidence baseline
 - Phase 12 is implemented as the host-expansion readiness gate
-- the roadmap now inserts GitHub Copilot CLI Tier 1 adapter parity before the
+- the roadmap sequences GitHub Copilot CLI Tier 1 adapter parity before the
   Linux host-expansion slice resumes
 - Phase 13 remains the next runtime-target slice: Linux `amd64`
   `local_compat` certification candidate
@@ -550,7 +550,7 @@ Phase 12 completion record:
 - [`docs/host-expansion-readiness.md`](host-expansion-readiness.md) records the
   support tiers, candidate scope, promotion criteria, and fail-closed diagnostic
   expectations
-- the roadmap now places the GitHub Copilot CLI provider-parity phase before
+- the roadmap sequences the GitHub Copilot CLI provider-parity phase before
   Phase 13 runtime-target implementation work resumes
 - Phase 13 remains queued to evaluate a narrow Linux `amd64` `local_compat`
   certification candidate

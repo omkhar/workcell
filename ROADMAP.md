@@ -17,7 +17,7 @@ guidance, and live certification evidence land together.
 Authoritative provider support status remains in
 [`docs/provider-matrix.md`](docs/provider-matrix.md). Codex, Claude Code, and
 Gemini are the supported Tier 1 provider adapters today. GitHub Copilot CLI is
-now the next committed provider-parity track, but it is not a support claim
+the next committed provider-parity track, but it is not a support claim
 until its adapter, auth path, docs, deterministic evidence, and live
 certification land together.
 
