@@ -148,13 +148,17 @@ jobs:
           path: dist/install
 
       - name: Verify install bundle checksum
-        # The validate job produced SHA256SUMS over the bundle; sha256sum
-        # -c here makes a flaky upload (or any future third-job mutation
-        # to the artifact) a hard error before we extract or install.
+        # The validate job produced SHA256SUMS over the bundle; the
+        # checksum check here makes a flaky upload (or any future
+        # third-job mutation to the artifact) a hard error before we
+        # extract or install.  Use `shasum -a 256 -c` rather than
+        # `sha256sum -c`: the install-verification matrix runs on
+        # macos-26 and macos-15, neither of which ships sha256sum
+        # (coreutils is not pre-installed), but both ship shasum.  The
+        # SHA256SUMS line format is identical between the two tools.
         run: |
-          set -euo pipefail
           test -f dist/install/SHA256SUMS
-          (cd dist/install && sha256sum -c SHA256SUMS)
+          (cd dist/install && shasum -a 256 -c SHA256SUMS)
 
       - name: Verify release bundle installer
         env:
