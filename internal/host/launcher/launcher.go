@@ -152,14 +152,31 @@ func WriteProfileOwner(ownerPath string, pid int) error {
 // ProcessStartTime returns the `ps -o lstart=` value for pid, or an error
 // satisfying IsProcessGone if pid no longer exists.
 func ProcessStartTime(pid int) (string, error) {
-	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
-	output, err := cmd.CombinedOutput()
+	// Use cmd.Output() so stderr is captured separately in
+	// (*exec.ExitError).Stderr.  cmd.CombinedOutput() leaves that field
+	// nil, which previously caused the classifier below to treat every
+	// non-zero exit as a "process gone" result and release profile locks
+	// for live PIDs whenever ps itself was unhappy (PATH, permissions,
+	// transient EAGAIN).
+	//
+	// Resolve ps against the trusted-host PATH allowlist instead of
+	// $PATH: this function gates profile-lock liveness, so a PATH-
+	// shadow on ps could persuade us a live profile is gone (and let
+	// the next launch steal its lock) or that a dead profile is alive
+	// (and refuse to clean up).  trustedPSPath() returns the first ps
+	// binary on the same hardcoded set scripts/workcell uses for
+	// TRUSTED_HOST_PATH; if none exists, we fall back to PATH lookup
+	// rather than fail-closed (callers tolerate the IsProcessGone
+	// signal but not a hard "ps missing" error mid-cleanup).
+	cmd := exec.Command(trustedPSPath(), "-o", "lstart=", "-p", strconv.Itoa(pid))
+	output, err := cmd.Output()
 	if err != nil {
-		// `ps -p PID` exits non-zero with empty output when the
-		// process does not exist. Distinguish that from other failures
-		// (PATH issue, permissions, transient ps error) so callers can
-		// decide whether the process is definitively gone vs unknown.
-		if exitErr, ok := err.(*exec.ExitError); ok && len(strings.TrimSpace(string(output))) == 0 && len(exitErr.Stderr) == 0 {
+		// `ps -p PID` exits non-zero with empty stdout AND empty stderr
+		// when the process does not exist.  Anything else (non-empty
+		// stderr, non-ExitError) is a genuine failure we propagate so
+		// callers can distinguish it from a definitively-gone PID.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(strings.TrimSpace(string(output))) == 0 && len(strings.TrimSpace(string(exitErr.Stderr))) == 0 {
 			return "", processGoneErr{pid: pid}
 		}
 		return "", err
@@ -169,6 +186,22 @@ func ProcessStartTime(pid int) (string, error) {
 		return "", processGoneErr{pid: pid}
 	}
 	return trimmed, nil
+}
+
+// trustedPSPath returns the first existing absolute ps binary from the
+// same hardcoded list scripts/workcell uses for TRUSTED_HOST_PATH, so
+// PATH-shadow attacks on ps cannot subvert the profile-lock liveness
+// classifier above.  Falls back to bare "ps" if none of the trusted
+// locations have ps (callers tolerate exec failures via
+// processGoneErr; an unusable host should not silently leak locks).
+func trustedPSPath() string {
+	for _, dir := range []string{"/bin", "/usr/bin", "/sbin", "/usr/sbin", "/opt/homebrew/bin", "/usr/local/bin"} {
+		candidate := dir + "/ps"
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
+			return candidate
+		}
+	}
+	return "ps"
 }
 
 // IsProcessGone reports whether err came from ProcessStartTime because
