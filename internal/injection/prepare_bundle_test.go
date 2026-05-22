@@ -200,3 +200,40 @@ func TestInstallSyntheticProbeEnvRestoresHomeOnPartialFailure(t *testing.T) {
 		t.Fatalf("installSyntheticProbeEnv leaked HOME on partial failure: got %q, want %q", got, originalHome)
 	}
 }
+
+// TestInstallSyntheticProbeEnvUnsetsHomeWhenOriginallyUnset pins the
+// sibling case to TestInstallSyntheticProbeEnvRestoresHomeOnPartialFailure:
+// when HOME is unset at entry, the synthetic-codex branch sets HOME, and
+// cleanup MUST unset it again so the calling process does not inherit a
+// HOME that points at a path the bundle parent removal will then delete.
+func TestInstallSyntheticProbeEnvUnsetsHomeWhenOriginallyUnset(t *testing.T) {
+	// Capture and restore HOME at the test boundary so we can clear it
+	// without leaking the unset state to sibling tests.
+	originalHome, hadOriginalHome := os.LookupEnv("HOME")
+	t.Cleanup(func() {
+		if hadOriginalHome {
+			_ = os.Setenv("HOME", originalHome)
+		} else {
+			_ = os.Unsetenv("HOME")
+		}
+	})
+	if err := os.Unsetenv("HOME"); err != nil {
+		t.Fatalf("unset HOME: %v", err)
+	}
+
+	bundleRoot := t.TempDir()
+	cleanup, err := installSyntheticProbeEnv(bundleRoot, true, false)
+	if cleanup == nil {
+		t.Fatal("installSyntheticProbeEnv returned nil cleanup")
+	}
+	if err != nil {
+		t.Fatalf("installSyntheticProbeEnv unexpected error: %v", err)
+	}
+	if _, ok := os.LookupEnv("HOME"); !ok {
+		t.Fatal("HOME was not set by the synthetic-codex branch before cleanup ran; the test cannot detect a leak")
+	}
+	cleanup()
+	if value, ok := os.LookupEnv("HOME"); ok {
+		t.Fatalf("installSyntheticProbeEnv leaked HOME after cleanup when originally unset: got %q, want unset", value)
+	}
+}
