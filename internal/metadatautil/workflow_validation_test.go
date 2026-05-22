@@ -9,9 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
-	"github.com/omkhar/workcell/internal/metadatautil/pinnedinputs"
-	"github.com/omkhar/workcell/internal/metadatautil/workflows"
+	"github.com/omkhar/workcell/internal/metadatautil"
 )
 
 func installWorkflowToolStubs(t *testing.T, root string) {
@@ -198,8 +196,8 @@ contexts = [
 		t.Fatalf("WriteFile(policy.toml) error = %v", err)
 	}
 
-	if err := workflows.CheckWorkflows(root, policyPath); err != nil {
-		t.Fatalf("workflows.CheckWorkflows() error = %v", err)
+	if err := metadatautil.CheckWorkflows(root, policyPath); err != nil {
+		t.Fatalf("metadatautil.CheckWorkflows() error = %v", err)
 	}
 }
 
@@ -238,12 +236,12 @@ contexts = [
 		t.Fatalf("WriteFile(policy.toml) error = %v", err)
 	}
 
-	err := workflows.CheckWorkflows(root, policyPath)
+	err := metadatautil.CheckWorkflows(root, policyPath)
 	if err == nil {
-		t.Fatal("workflows.CheckWorkflows() unexpectedly succeeded")
+		t.Fatal("metadatautil.CheckWorkflows() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "Validate repository") {
-		t.Fatalf("workflows.CheckWorkflows() error = %v, want missing Validate repository", err)
+		t.Fatalf("metadatautil.CheckWorkflows() error = %v, want missing Validate repository", err)
 	}
 }
 
@@ -267,8 +265,8 @@ jobs:
     steps:
       - run: true
 `
-	if err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml"); err != nil {
-		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v", err)
+	if err := metadatautil.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml"); err != nil {
+		t.Fatalf("metadatautil.IsSafePullRequestTargetWorkflow() error = %v", err)
 	}
 }
 
@@ -292,12 +290,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 `
-	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := metadatautil.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted checkout under pull_request_target")
+		t.Fatal("metadatautil.IsSafePullRequestTargetWorkflow() unexpectedly accepted checkout under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not checkout repository contents") {
-		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
+		t.Fatalf("metadatautil.IsSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
 	}
 }
 
@@ -323,12 +321,12 @@ jobs:
     steps:
       - run: true
 `
-	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := metadatautil.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted job-level permissions under pull_request_target")
+		t.Fatal("metadatautil.IsSafePullRequestTargetWorkflow() unexpectedly accepted job-level permissions under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not grant job-level permissions") {
-		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
+		t.Fatalf("metadatautil.IsSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
 	}
 }
 
@@ -347,12 +345,12 @@ permissions: {}
 
 jobs: { pr-base-policy: { name: Allowed PR base, runs-on: ubuntu-latest, permissions: { contents: write }, steps: [ { run: true } ] } }
 `
-	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := metadatautil.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline job-level permissions under pull_request_target")
+		t.Fatal("metadatautil.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline job-level permissions under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not grant job-level permissions") {
-		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
+		t.Fatalf("metadatautil.IsSafePullRequestTargetWorkflow() error = %v, want job-level permissions rejection", err)
 	}
 }
 
@@ -373,12 +371,12 @@ jobs:
   pr-base-policy:
     uses: ./.github/workflows/reusable.yml
 `
-	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := metadatautil.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted reusable workflow invocation under pull_request_target")
+		t.Fatal("metadatautil.IsSafePullRequestTargetWorkflow() unexpectedly accepted reusable workflow invocation under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not call reusable workflows") {
-		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
+		t.Fatalf("metadatautil.IsSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
 	}
 }
 
@@ -397,12 +395,12 @@ permissions: {}
 
 jobs: { pr-base-policy: { uses: ./.github/workflows/reusable.yml } }
 `
-	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := metadatautil.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline reusable workflow invocation under pull_request_target")
+		t.Fatal("metadatautil.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline reusable workflow invocation under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not call reusable workflows") {
-		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
+		t.Fatalf("metadatautil.IsSafePullRequestTargetWorkflow() error = %v, want reusable workflow rejection", err)
 	}
 }
 
@@ -421,12 +419,12 @@ permissions: {}
 
 jobs: { pr-base-policy: { name: Allowed PR base, runs-on: ubuntu-latest, steps: [ { uses: evil/action@0123456789012345678901234567890123456789 } ] } }
 `
-	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := metadatautil.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline external action under pull_request_target")
+		t.Fatal("metadatautil.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline external action under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not use external actions") {
-		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want external action rejection", err)
+		t.Fatalf("metadatautil.IsSafePullRequestTargetWorkflow() error = %v, want external action rejection", err)
 	}
 }
 
@@ -445,12 +443,12 @@ permissions: {}
 
 jobs: { pr-base-policy: { name: Allowed PR base, runs-on: ubuntu-latest, steps: [ { uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd } ] } }
 `
-	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := metadatautil.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline checkout under pull_request_target")
+		t.Fatal("metadatautil.IsSafePullRequestTargetWorkflow() unexpectedly accepted inline checkout under pull_request_target")
 	}
 	if !strings.Contains(err.Error(), "must not checkout repository contents") {
-		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
+		t.Fatalf("metadatautil.IsSafePullRequestTargetWorkflow() error = %v, want checkout rejection", err)
 	}
 }
 
@@ -473,12 +471,12 @@ jobs:
     steps:
       - run: true
 `
-	err := pinnedinputs.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
+	err := metadatautil.IsSafePullRequestTargetWorkflow(workflow, ".github/workflows/pr-base-policy.yml")
 	if err == nil {
-		t.Fatal("pinnedinputs.IsSafePullRequestTargetWorkflow() unexpectedly accepted a pull_request_target workflow without a Kusari suppression comment")
+		t.Fatal("metadatautil.IsSafePullRequestTargetWorkflow() unexpectedly accepted a pull_request_target workflow without a Kusari suppression comment")
 	}
 	if !strings.Contains(err.Error(), "must document the reviewed Kusari suppression") {
-		t.Fatalf("pinnedinputs.IsSafePullRequestTargetWorkflow() error = %v, want Kusari suppression rejection", err)
+		t.Fatalf("metadatautil.IsSafePullRequestTargetWorkflow() error = %v, want Kusari suppression rejection", err)
 	}
 }
 
@@ -501,12 +499,12 @@ func TestValidateReleaseWorkflowControlPlaneFlowRejectsMissingCanonicalArtifact(
             dist/preflight/workcell-control-plane-preflight.json
 `
 
-	err := workflows.ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow)
+	err := metadatautil.ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow)
 	if err == nil {
-		t.Fatal("workflows.ValidateReleaseWorkflowControlPlaneFlow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateReleaseWorkflowControlPlaneFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "dist/workcell-control-plane.json") {
-		t.Fatalf("workflows.ValidateReleaseWorkflowControlPlaneFlow() error = %v, want canonical control-plane artifact path", err)
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowControlPlaneFlow() error = %v, want canonical control-plane artifact path", err)
 	}
 }
 
@@ -529,8 +527,8 @@ func TestValidateReleaseWorkflowControlPlaneFlowAcceptsCanonicalArtifact(t *test
             dist/preflight/workcell-control-plane-preflight.json
 `
 
-	if err := workflows.ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
-		t.Fatalf("workflows.ValidateReleaseWorkflowControlPlaneFlow() error = %v", err)
+	if err := metadatautil.ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowControlPlaneFlow() error = %v", err)
 	}
 }
 
@@ -567,12 +565,12 @@ func TestValidateMacOSInstallVerificationFlowRejectsMissingBundleUninstall(t *te
           brew list --versions workcell
 `
 
-	err := workflows.ValidateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})")
+	err := metadatautil.ValidateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})")
 	if err == nil {
-		t.Fatal("workflows.ValidateMacOSInstallVerificationFlow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateMacOSInstallVerificationFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "scripts/uninstall.sh") {
-		t.Fatalf("workflows.ValidateMacOSInstallVerificationFlow() error = %v, want missing bundle uninstall check", err)
+		t.Fatalf("metadatautil.ValidateMacOSInstallVerificationFlow() error = %v, want missing bundle uninstall check", err)
 	}
 }
 
@@ -605,8 +603,8 @@ func TestValidateMacOSInstallVerificationFlowAcceptsCanonicalFlow(t *testing.T) 
           brew list --versions workcell
 `
 
-	if err := workflows.ValidateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
-		t.Fatalf("workflows.ValidateMacOSInstallVerificationFlow() error = %v", err)
+	if err := metadatautil.ValidateMacOSInstallVerificationFlow(workflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
+		t.Fatalf("metadatautil.ValidateMacOSInstallVerificationFlow() error = %v", err)
 	}
 }
 
@@ -628,12 +626,12 @@ func TestValidateCodeQLWorkflowRejectsGoBuildlessMode(t *testing.T) {
       - uses: github/codeql-action/analyze@deadbeef
 `
 
-	err := workflows.ValidateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml")
+	err := metadatautil.ValidateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml")
 	if err == nil {
-		t.Fatal("workflows.ValidateCodeQLWorkflow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateCodeQLWorkflow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "build-mode: none") {
-		t.Fatalf("workflows.ValidateCodeQLWorkflow() error = %v, want go build-mode rejection", err)
+		t.Fatalf("metadatautil.ValidateCodeQLWorkflow() error = %v, want go build-mode rejection", err)
 	}
 }
 
@@ -656,8 +654,8 @@ func TestValidateCodeQLWorkflowAcceptsGoAutobuild(t *testing.T) {
       - uses: github/codeql-action/analyze@deadbeef
 `
 
-	if err := workflows.ValidateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml"); err != nil {
-		t.Fatalf("workflows.ValidateCodeQLWorkflow() error = %v", err)
+	if err := metadatautil.ValidateCodeQLWorkflow(workflow, ".github/workflows/codeql.yml"); err != nil {
+		t.Fatalf("metadatautil.ValidateCodeQLWorkflow() error = %v", err)
 	}
 }
 
@@ -674,12 +672,12 @@ func TestValidateReleaseWorkflowCodeQLFlowRejectsMissingGoAutobuild(t *testing.T
       - preflight
 `
 
-	err := workflows.ValidateReleaseWorkflowCodeQLFlow(workflow)
+	err := metadatautil.ValidateReleaseWorkflowCodeQLFlow(workflow)
 	if err == nil {
-		t.Fatal("workflows.ValidateReleaseWorkflowCodeQLFlow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateReleaseWorkflowCodeQLFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "Release CodeQL") {
-		t.Fatalf("workflows.ValidateReleaseWorkflowCodeQLFlow() error = %v, want missing release CodeQL job", err)
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowCodeQLFlow() error = %v, want missing release CodeQL job", err)
 	}
 }
 
@@ -709,8 +707,8 @@ func TestValidateReleaseWorkflowCodeQLFlowAcceptsMatrixJob(t *testing.T) {
       - install-verification
 `
 
-	if err := workflows.ValidateReleaseWorkflowCodeQLFlow(workflow); err != nil {
-		t.Fatalf("workflows.ValidateReleaseWorkflowCodeQLFlow() error = %v", err)
+	if err := metadatautil.ValidateReleaseWorkflowCodeQLFlow(workflow); err != nil {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowCodeQLFlow() error = %v", err)
 	}
 }
 
@@ -735,12 +733,12 @@ func TestValidateCIWorkflowPRShapeFlowRejectsLegacyInlineShapeGate(t *testing.T)
         run: echo "PR shape gate applies only to pull requests."
 `
 
-	err := workflows.ValidateCIWorkflowPRShapeFlow(workflow)
+	err := metadatautil.ValidateCIWorkflowPRShapeFlow(workflow)
 	if err == nil {
-		t.Fatal("workflows.ValidateCIWorkflowPRShapeFlow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateCIWorkflowPRShapeFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "./scripts/ci/job-pr-shape.sh --base") {
-		t.Fatalf("workflows.ValidateCIWorkflowPRShapeFlow() error = %v, want shared job gate", err)
+		t.Fatalf("metadatautil.ValidateCIWorkflowPRShapeFlow() error = %v, want shared job gate", err)
 	}
 }
 
@@ -763,8 +761,8 @@ func TestValidateCIWorkflowPRShapeFlowAcceptsSharedJobGate(t *testing.T) {
         run: echo "PR shape gate applies only to pull requests."
 `
 
-	if err := workflows.ValidateCIWorkflowPRShapeFlow(workflow); err != nil {
-		t.Fatalf("workflows.ValidateCIWorkflowPRShapeFlow() error = %v", err)
+	if err := metadatautil.ValidateCIWorkflowPRShapeFlow(workflow); err != nil {
+		t.Fatalf("metadatautil.ValidateCIWorkflowPRShapeFlow() error = %v", err)
 	}
 }
 
@@ -812,12 +810,12 @@ jobs:
           gh pr create --draft
 `
 
-	err := workflows.ValidateUpstreamRefreshWorkflow(workflow)
+	err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow)
 	if err == nil {
-		t.Fatal("workflows.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), `gh pr create`) {
-		t.Fatalf("workflows.ValidateUpstreamRefreshWorkflow() error = %v, want GitHub-side PR publication rejection", err)
+		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v, want GitHub-side PR publication rejection", err)
 	}
 }
 
@@ -864,8 +862,8 @@ jobs:
           gh issue create --title "Upstream refresh candidate" --body "metadata.json"
 `
 
-	if err := workflows.ValidateUpstreamRefreshWorkflow(workflow); err != nil {
-		t.Fatalf("workflows.ValidateUpstreamRefreshWorkflow() error = %v", err)
+	if err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow); err != nil {
+		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v", err)
 	}
 }
 
@@ -912,12 +910,12 @@ jobs:
           gh issue create --title "Upstream refresh candidate" --body "metadata.json"
 `
 
-	err := workflows.ValidateUpstreamRefreshWorkflow(workflow)
+	err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow)
 	if err == nil {
-		t.Fatal("workflows.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY") {
-		t.Fatalf("workflows.ValidateUpstreamRefreshWorkflow() error = %v, want hosted signing input rejection", err)
+		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v, want hosted signing input rejection", err)
 	}
 }
 
@@ -962,12 +960,12 @@ jobs:
           gh issue create --title "Upstream refresh candidate" --body "metadata.json"
 `
 
-	err := workflows.ValidateUpstreamRefreshWorkflow(workflow)
+	err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow)
 	if err == nil {
-		t.Fatal("workflows.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), `environment:\n      name: upstream-refresh`) {
-		t.Fatalf("workflows.ValidateUpstreamRefreshWorkflow() error = %v, want upstream-refresh environment binding rejection", err)
+		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v, want upstream-refresh environment binding rejection", err)
 	}
 }
 
@@ -990,12 +988,12 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingSupportGuard(
           subject-name: ${{ env.IMAGE_NAME }}
 `
 
-	err := workflows.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
+	err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
 	if err == nil {
-		t.Fatal("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "public visibility or an explicit private-repo capability flag") {
-		t.Fatalf("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want support guard failure", err)
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want support guard failure", err)
 	}
 }
 
@@ -1054,12 +1052,12 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedAttestStep(
           subject-path: dist/SHA256SUMS
 `
 
-	err := workflows.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
+	err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
 	if err == nil {
-		t.Fatal("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "guard every actions/attest step") {
-		t.Fatalf("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want unguarded attestation failure", err)
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want unguarded attestation failure", err)
 	}
 }
 
@@ -1118,8 +1116,8 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowAcceptsSupportGuard(t *test
           subject-path: dist/SHA256SUMS
 `
 
-	if err := workflows.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
-		t.Fatalf("workflows.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v", err)
+	if err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v", err)
 	}
 }
 
@@ -1131,12 +1129,12 @@ func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsMissingPrivate
 		},
 	}
 
-	err := hostedcontrols.ValidateCanonicalRepositoryVariables(policy, "policy/github-hosted-controls.toml")
+	err := metadatautil.ValidateCanonicalRepositoryVariables(policy, "policy/github-hosted-controls.toml")
 	if err == nil {
-		t.Fatal("hostedcontrols.ValidateCanonicalRepositoryVariables() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateCanonicalRepositoryVariables() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS") {
-		t.Fatalf("hostedcontrols.ValidateCanonicalRepositoryVariables() error = %v, want missing private attestation flag", err)
+		t.Fatalf("metadatautil.ValidateCanonicalRepositoryVariables() error = %v, want missing private attestation flag", err)
 	}
 }
 
@@ -1149,12 +1147,12 @@ func TestValidateCanonicalHostedControlsRepositoryVariablesRejectsWrongPrivateAt
 		},
 	}
 
-	err := hostedcontrols.ValidateCanonicalRepositoryVariables(policy, "policy/github-hosted-controls.toml")
+	err := metadatautil.ValidateCanonicalRepositoryVariables(policy, "policy/github-hosted-controls.toml")
 	if err == nil {
-		t.Fatal("hostedcontrols.ValidateCanonicalRepositoryVariables() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateCanonicalRepositoryVariables() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"`) {
-		t.Fatalf("hostedcontrols.ValidateCanonicalRepositoryVariables() error = %v, want private attestation value failure", err)
+		t.Fatalf("metadatautil.ValidateCanonicalRepositoryVariables() error = %v, want private attestation value failure", err)
 	}
 }
 
@@ -1167,8 +1165,8 @@ func TestValidateCanonicalHostedControlsRepositoryVariablesAcceptsCanonicalValue
 		},
 	}
 
-	if err := hostedcontrols.ValidateCanonicalRepositoryVariables(policy, "policy/github-hosted-controls.toml"); err != nil {
-		t.Fatalf("hostedcontrols.ValidateCanonicalRepositoryVariables() error = %v", err)
+	if err := metadatautil.ValidateCanonicalRepositoryVariables(policy, "policy/github-hosted-controls.toml"); err != nil {
+		t.Fatalf("metadatautil.ValidateCanonicalRepositoryVariables() error = %v", err)
 	}
 }
 
@@ -1183,12 +1181,12 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHosted
 		},
 	}
 
-	err := hostedcontrols.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
+	err := metadatautil.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
 	if err == nil {
-		t.Fatal("hostedcontrols.ValidateCanonicalWorkflowEnvironments() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateCanonicalWorkflowEnvironments() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "workflow_environment.hosted-controls-audit") {
-		t.Fatalf("hostedcontrols.ValidateCanonicalWorkflowEnvironments() error = %v, want hosted-controls-audit rejection", err)
+		t.Fatalf("metadatautil.ValidateCanonicalWorkflowEnvironments() error = %v, want hosted-controls-audit rejection", err)
 	}
 }
 
@@ -1210,12 +1208,12 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUps
 		},
 	}
 
-	err := hostedcontrols.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
+	err := metadatautil.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
 	if err == nil {
-		t.Fatal("hostedcontrols.ValidateCanonicalWorkflowEnvironments() unexpectedly succeeded")
+		t.Fatal("metadatautil.ValidateCanonicalWorkflowEnvironments() unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "must not declare secrets") {
-		t.Fatalf("hostedcontrols.ValidateCanonicalWorkflowEnvironments() error = %v, want upstream-refresh secret rejection", err)
+		t.Fatalf("metadatautil.ValidateCanonicalWorkflowEnvironments() error = %v, want upstream-refresh secret rejection", err)
 	}
 }
 
@@ -1236,23 +1234,23 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValu
 		},
 	}
 
-	if err := hostedcontrols.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml"); err != nil {
-		t.Fatalf("hostedcontrols.ValidateCanonicalWorkflowEnvironments() error = %v", err)
+	if err := metadatautil.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml"); err != nil {
+		t.Fatalf("metadatautil.ValidateCanonicalWorkflowEnvironments() error = %v", err)
 	}
 }
 
 func TestHostedControlsEnvironmentArtifactNameEscapesSlashes(t *testing.T) {
 	t.Parallel()
 
-	if got := hostedcontrols.EnvironmentArtifactName("prod/us west"); got != "prod%2Fus%20west" {
-		t.Fatalf("hostedcontrols.EnvironmentArtifactName() = %q, want %q", got, "prod%2Fus%20west")
+	if got := metadatautil.EnvironmentArtifactName("prod/us west"); got != "prod%2Fus%20west" {
+		t.Fatalf("metadatautil.EnvironmentArtifactName() = %q, want %q", got, "prod%2Fus%20west")
 	}
 }
 
 func TestHostedControlsEnvironmentArtifactNameEscapesReservedCharacters(t *testing.T) {
 	t.Parallel()
 
-	if got := hostedcontrols.EnvironmentArtifactName("prod+east:blue&green=1"); got != "prod%2Beast%3Ablue%26green%3D1" {
-		t.Fatalf("hostedcontrols.EnvironmentArtifactName() = %q, want %q", got, "prod%2Beast%3Ablue%26green%3D1")
+	if got := metadatautil.EnvironmentArtifactName("prod+east:blue&green=1"); got != "prod%2Beast%3Ablue%26green%3D1" {
+		t.Fatalf("metadatautil.EnvironmentArtifactName() = %q, want %q", got, "prod%2Beast%3Ablue%26green%3D1")
 	}
 }
