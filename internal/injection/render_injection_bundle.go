@@ -172,11 +172,16 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 		return err
 	}
 
+	policySHA, err := effectivePolicySHA256(policySources, Path(resolvedOutputRoot), renderedDocuments, renderedCopies, renderedCredentials, renderedSSH)
+	if err != nil {
+		return fmt.Errorf("compute effective policy sha256: %w", err)
+	}
+
 	manifest := map[string]any{
 		"version": 1,
 		"metadata": map[string]any{
 			"policy_entrypoint":   policyEntrypoint,
-			"policy_sha256":       effectivePolicySHA256(policySources, Path(resolvedOutputRoot), renderedDocuments, renderedCopies, renderedCredentials, renderedSSH),
+			"policy_sha256":       policySHA,
 			"policy_sources":      policySources,
 			"credential_keys":     sortedStringKeysMap(renderedCredentials),
 			"extra_endpoints":     deriveCredentialExtraEndpoints(renderedCredentials),
@@ -298,9 +303,13 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 	if err := mergePolicyFragment(merged, currentPolicy, resolved); err != nil {
 		return nil, nil, err
 	}
+	sourceSHA, err := policySHA256(resolved.String())
+	if err != nil {
+		return nil, nil, err
+	}
 	sources = append(sources, PolicySource{
 		Path:   logicalPolicyPath(resolved, entrypointRoot),
-		Sha256: policySHA256(resolved.String()),
+		Sha256: sourceSHA,
 	})
 	return merged, sources, nil
 }
@@ -1469,10 +1478,14 @@ func effectivePolicySHA256(
 	renderedCopies []map[string]any,
 	renderedCredentials map[string]map[string]string,
 	renderedSSH map[string]any,
-) string {
+) (string, error) {
 	documents := map[string]string{}
 	for _, key := range sortedStringKeys(renderedDocuments) {
-		documents[key] = pathMaterialSHA256(outputRoot.Join(renderedDocuments[key]))
+		hash, err := pathMaterialSHA256(outputRoot.Join(renderedDocuments[key]))
+		if err != nil {
+			return "", fmt.Errorf("hash document %q: %w", key, err)
+		}
+		documents[key] = hash
 	}
 	copies := make([]map[string]any, 0, len(renderedCopies))
 	for _, entry := range renderedCopies {
@@ -1486,21 +1499,29 @@ func effectivePolicySHA256(
 				sourcePath = Path(hostSource)
 			}
 		}
+		hash, err := pathMaterialSHA256(sourcePath)
+		if err != nil {
+			return "", fmt.Errorf("hash copy %v: %w", entry["target"], err)
+		}
 		copies = append(copies, map[string]any{
 			"classification": entry["classification"],
 			"dir_mode":       entry["dir_mode"],
 			"file_mode":      entry["file_mode"],
 			"kind":           entry["kind"],
-			"sha256":         pathMaterialSHA256(sourcePath),
+			"sha256":         hash,
 			"target":         entry["target"],
 		})
 	}
 	credentials := map[string]map[string]any{}
 	for _, key := range sortedStringKeysMap(renderedCredentials) {
 		value := renderedCredentials[key]
+		hash, err := pathMaterialSHA256(Path(value["source"]))
+		if err != nil {
+			return "", fmt.Errorf("hash credential %q: %w", key, err)
+		}
 		credentials[key] = map[string]any{
 			"mount_path": value["mount_path"],
-			"sha256":     pathMaterialSHA256(Path(value["source"])),
+			"sha256":     hash,
 		}
 	}
 	ssh := map[string]any{}
@@ -1512,26 +1533,38 @@ func effectivePolicySHA256(
 		}
 		if config, ok := renderedSSH["config"].(map[string]any); ok {
 			if source, ok := config["source"].(string); ok {
+				hash, err := pathMaterialSHA256(Path(source))
+				if err != nil {
+					return "", fmt.Errorf("hash ssh config: %w", err)
+				}
 				ssh["config"] = map[string]any{
 					"mount_path": config["mount_path"],
-					"sha256":     pathMaterialSHA256(Path(source)),
+					"sha256":     hash,
 				}
 			}
 		}
 		if knownHosts, ok := renderedSSH["known_hosts"].(map[string]any); ok {
 			if source, ok := knownHosts["source"].(string); ok {
+				hash, err := pathMaterialSHA256(Path(source))
+				if err != nil {
+					return "", fmt.Errorf("hash ssh known_hosts: %w", err)
+				}
 				ssh["known_hosts"] = map[string]any{
 					"mount_path": knownHosts["mount_path"],
-					"sha256":     pathMaterialSHA256(Path(source)),
+					"sha256":     hash,
 				}
 			}
 		}
 		if identities, ok := renderedSSH["identities"].([]map[string]any); ok {
 			renderedIdentities := make([]map[string]any, 0, len(identities))
 			for _, entry := range identities {
+				hash, err := pathMaterialSHA256(Path(entry["source"].(string)))
+				if err != nil {
+					return "", fmt.Errorf("hash ssh identity %v: %w", entry["target_name"], err)
+				}
 				renderedIdentities = append(renderedIdentities, map[string]any{
 					"mount_path":  entry["mount_path"],
-					"sha256":      pathMaterialSHA256(Path(entry["source"].(string))),
+					"sha256":      hash,
 					"target_name": entry["target_name"],
 				})
 			}
@@ -1540,49 +1573,64 @@ func effectivePolicySHA256(
 			renderedIdentities := make([]map[string]any, 0, len(identities))
 			for _, rawEntry := range identities {
 				entry := rawEntry.(map[string]any)
+				hash, err := pathMaterialSHA256(Path(entry["source"].(string)))
+				if err != nil {
+					return "", fmt.Errorf("hash ssh identity %v: %w", entry["target_name"], err)
+				}
 				renderedIdentities = append(renderedIdentities, map[string]any{
 					"mount_path":  entry["mount_path"],
-					"sha256":      pathMaterialSHA256(Path(entry["source"].(string))),
+					"sha256":      hash,
 					"target_name": entry["target_name"],
 				})
 			}
 			ssh["identities"] = renderedIdentities
 		}
 	}
-	canonical, _ := json.Marshal(map[string]any{
+	canonical, err := json.Marshal(map[string]any{
 		"credentials":    credentials,
 		"copies":         copies,
 		"documents":      documents,
 		"policy_sources": policySources,
 		"ssh":            ssh,
 	})
+	if err != nil {
+		return "", fmt.Errorf("marshal effective policy: %w", err)
+	}
 	sum := sha256.Sum256(canonical)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func pathMaterialSHA256(path Path) string {
+// pathMaterialSHA256 returns a hash that fingerprints the on-disk material
+// at path.  Any I/O error during the walk is propagated; callers MUST refuse
+// to emit a manifest entry when the fingerprint cannot be computed — a
+// silent empty string here previously rounded-tripped as a valid hash and
+// defeated the integrity check the function exists to provide.
+func pathMaterialSHA256(path Path) (string, error) {
 	info, err := os.Lstat(path.String())
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("lstat %s: %w", path, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		target, _ := os.Readlink(path.String())
+		target, err := os.Readlink(path.String())
+		if err != nil {
+			return "", fmt.Errorf("readlink %s: %w", path, err)
+		}
 		sum := sha256.Sum256([]byte("symlink:" + target))
-		return hex.EncodeToString(sum[:])
+		return hex.EncodeToString(sum[:]), nil
 	}
 	if info.Mode().IsRegular() {
 		data, err := os.ReadFile(path.String())
 		if err != nil {
-			return ""
+			return "", fmt.Errorf("read %s: %w", path, err)
 		}
 		sum := sha256.Sum256(data)
-		return hex.EncodeToString(sum[:])
+		return hex.EncodeToString(sum[:]), nil
 	}
 	if info.IsDir() {
 		hasher := sha256.New()
 		hasher.Write([]byte("dir\n"))
 		children := []string{}
-		_ = filepath.WalkDir(path.String(), func(current string, entry fs.DirEntry, err error) error {
+		if err := filepath.WalkDir(path.String(), func(current string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -1591,23 +1639,28 @@ func pathMaterialSHA256(path Path) string {
 			}
 			children = append(children, current)
 			return nil
-		})
+		}); err != nil {
+			return "", fmt.Errorf("walk %s: %w", path, err)
+		}
 		sort.Slice(children, func(i, j int) bool {
 			return filepath.ToSlash(strings.TrimPrefix(children[i], path.String()+string(filepath.Separator))) < filepath.ToSlash(strings.TrimPrefix(children[j], path.String()+string(filepath.Separator)))
 		})
 		for _, child := range children {
 			info, err := os.Lstat(child)
 			if err != nil {
-				return ""
+				return "", fmt.Errorf("lstat %s: %w", child, err)
 			}
 			relative, err := filepath.Rel(path.String(), child)
 			if err != nil {
-				return ""
+				return "", fmt.Errorf("rel %s: %w", child, err)
 			}
 			relative = filepath.ToSlash(relative)
 			switch {
 			case info.Mode()&os.ModeSymlink != 0:
-				target, _ := os.Readlink(child)
+				target, err := os.Readlink(child)
+				if err != nil {
+					return "", fmt.Errorf("readlink %s: %w", child, err)
+				}
 				hasher.Write([]byte("symlink:" + relative + ":" + target + "\n"))
 			case info.IsDir():
 				hasher.Write([]byte("dir:" + relative + "\n"))
@@ -1615,26 +1668,26 @@ func pathMaterialSHA256(path Path) string {
 				hasher.Write([]byte("file:" + relative + "\n"))
 				data, err := os.ReadFile(child)
 				if err != nil {
-					return ""
+					return "", fmt.Errorf("read %s: %w", child, err)
 				}
 				hasher.Write(data)
 				hasher.Write([]byte("\n"))
 			default:
-				return ""
+				return "", fmt.Errorf("unsupported file mode for %s: %s", child, info.Mode())
 			}
 		}
-		return hex.EncodeToString(hasher.Sum(nil))
+		return hex.EncodeToString(hasher.Sum(nil)), nil
 	}
-	return ""
+	return "", fmt.Errorf("unsupported file mode for %s: %s", path, info.Mode())
 }
 
-func policySHA256(policyPath string) string {
+func policySHA256(policyPath string) (string, error) {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read policy %s: %w", policyPath, err)
 	}
 	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func logicalPolicyPath(policyPath, entrypointRoot Path) string {

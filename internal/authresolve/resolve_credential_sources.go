@@ -861,20 +861,24 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []
 	if err := mergePolicyFragment(merged, currentPolicy, policyPath); err != nil {
 		return nil, nil, err
 	}
+	sourceSHA, err := policySHA256(policyPath)
+	if err != nil {
+		return nil, nil, err
+	}
 	policySources = append(policySources, PolicySource{
 		Path:   logicalPolicyPath(policyPath, entrypointRoot),
-		Sha256: policySHA256(policyPath),
+		Sha256: sourceSHA,
 	})
 	return merged, policySources, nil
 }
 
-func policySHA256(policyPath string) string {
+func policySHA256(policyPath string) (string, error) {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read policy %s: %w", policyPath, err)
 	}
 	sum := sha256.Sum256(data)
-	return "sha256:" + fmt.Sprintf("%x", sum[:])
+	return "sha256:" + fmt.Sprintf("%x", sum[:]), nil
 }
 
 func validatePolicyInclude(raw any, label, base, entrypointRoot string) (string, error) {
