@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package workflows
+package metadatautil
 
 import (
 	"errors"
@@ -368,46 +368,5 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 	return nil
 }
 
-func readText(path string) (string, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(content), nil
-}
-
-func mustStringSlice(value any) ([]string, bool, error) {
-	raw, ok := value.([]any)
-	if !ok {
-		return nil, false, nil
-	}
-	result := make([]string, 0, len(raw))
-	for _, item := range raw {
-		s, ok := item.(string)
-		if !ok {
-			return nil, false, errors.New("array value must contain only strings")
-		}
-		result = append(result, s)
-	}
-	return result, true, nil
-}
-
-func requireStringSliceTable(root map[string]any, tableName, key, sourcePath string) ([]string, error) {
-	table, ok := root[tableName].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
-	}
-	values, ok, err := mustStringSlice(table[key])
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
-	}
-	for _, value := range values {
-		if strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
-		}
-	}
-	return values, nil
-}
+// readText lives in core.go.
+// mustStringSlice and requireStringSliceTable live in hostedcontrols.go.
