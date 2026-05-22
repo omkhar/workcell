@@ -7,6 +7,16 @@ on:
 
 permissions: {}
 
+# Apply strict bash mode (`-euo pipefail`) to every multi-line `run:`
+# block.  GitHub's default bash invocation gives `-eo pipefail` but
+# leaves `-u` off — release.yml's signing and publish steps interpolate
+# many env vars (e.g. ${BUNDLE_NAME}, ${IMAGE_DIGEST}) that would sign
+# an empty path on an unset variable.  Default-on is safer than relying
+# on every author to remember `set -euo pipefail`.
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false

@@ -49,9 +49,15 @@ on:
 
 permissions: {}
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 env:
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5
-  WORKCELL_BUILDX_VERSION: v0.33.0
+  # Pinned identically to ci.yml and release.yml so all three workflows
+  # share validator-image layer caches deterministically.
+  WORKCELL_BUILDX_VERSION: v0.34.0
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
