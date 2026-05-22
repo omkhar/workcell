@@ -21,6 +21,7 @@ import (
 	"syscall"
 
 	"github.com/omkhar/workcell/internal/adapters"
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/tomlsubset"
@@ -109,10 +110,11 @@ var (
 	}
 )
 
-type PolicySource struct {
-	Path   string `json:"path"`
-	Sha256 string `json:"sha256"`
-}
+// PolicySource is an alias for injectionpolicy.PolicySource — the
+// canonical cross-package type.  Kept exported here for callers that
+// have always imported it as injection.PolicySource; new code should
+// reach for injectionpolicy.PolicySource directly.
+type PolicySource = injectionpolicy.PolicySource
 
 func ValidateRenderAgentMode(agent, mode string) error {
 	if _, ok := supportedAgents[agent]; !ok {
