@@ -228,6 +228,23 @@ Adapters should stay thin. A new or changed adapter should:
 See [workflows/adapter-porting.md](workflows/adapter-porting.md) for the
 porting checklist.
 
+## Package naming
+
+For new internal Go packages, name by role rather than suffix:
+`canonicalpath`, `secretfile`, `transcript`, `injection`. Avoid the
+`*util`, `*helper`, `*manager`, `*handler` suffixes that the
+[Go style guide](https://go.dev/wiki/CodeReviewComments#package-names)
+flags as opaque — they hide what the package is for and become magnets
+for unrelated helpers over time.
+
+The repo carries some pre-existing `*util` packages (`pathutil`,
+`metadatautil`, `runtimeutil`, `colimautil`) and corresponding binary
+names (`cmd/workcell-hostutil`, `cmd/workcell-runtimeutil`,
+`cmd/workcell-citools`, `cmd/workcell-colimautil`). These are not
+retargeted for rename in place — the binary names appear in
+`policy/host-support-matrix.tsv`, audit logs, install paths, and PR
+review surfaces. The rule applies to new packages only.
+
 ## Project docs
 
 - [GOVERNANCE.md](GOVERNANCE.md)

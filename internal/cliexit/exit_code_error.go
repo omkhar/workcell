@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-// Package cliexit is the canonical exit-code error type used by all
-// workcell Go CLI translations. Each translated bash main returns
-// ExitCodeError when the wrapper main() should propagate a specific
-// exit code; cmd/workcell-hostutil/main.go (and the sibling umbrella
-// binaries) match it with errors.As and propagate the Code.
+// Package cliexit carries an explicit os.Exit code through Go's error
+// chain so a wrapper main() can preserve a specific exit code instead
+// of always returning 1.  Originally introduced for the bash→Go CLI
+// translation work (each translated main returns ExitCodeError so the
+// shell-level contract survives), now the canonical exit-code type
+// for every workcell Go CLI — including binaries (cmd/workcell-citools)
+// that have no bash predecessor.
 package cliexit
 
 import "errors"

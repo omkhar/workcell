@@ -323,7 +323,7 @@ Exit gates:
   bundle flows before broad enterprise rollout
 - add centralized policy administration, inventory, and analytics only after
   local export and signed policy distribution are proven
-- preserve-boundary IDE and GUI entrypoints must be clients of the session
+- preserved-boundary IDE and GUI entrypoints must be clients of the session
   plane, not alternate execution paths
 
 ## Non-Goals

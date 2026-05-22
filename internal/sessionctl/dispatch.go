@@ -59,12 +59,16 @@ func dispatchMain(args []string, stdout io.Writer) error {
 	return shellproto.WriteField(stdout, "subcommand", resolved)
 }
 
-// CanonicalSubcommands returns the ordered list of user-facing
-// `workcell session` subcommand tokens.  The order matches the bash
-// session_main case statement in scripts/workcell so usage prose, the
-// bash dispatcher, and the Go dispatcher all agree on a single
-// authoritative ordering.  A fresh slice is returned on every call so
-// callers may mutate it freely.
+// CanonicalSubcommands returns the ordered list of `workcell session`
+// dispatch tokens.  The order matches the bash session_main case
+// statement in scripts/workcell so usage prose, the bash dispatcher,
+// and the Go dispatcher all agree on a single authoritative ordering.
+// `monitor` is the internal supervisor verb that `session start`
+// invokes against itself, not a user-facing subcommand — `man
+// workcell.1` and `README.md` document the user surface as
+// start|attach|send|stop|list|show|delete|logs|timeline|diff|export.
+// A fresh slice is returned on every call so callers may mutate it
+// freely.
 func CanonicalSubcommands() []string {
 	return []string{
 		"start",

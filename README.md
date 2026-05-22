@@ -243,13 +243,21 @@ Workcell uses two terms throughout the docs:
 - `Tier 1`: a provider CLI running fully inside the bounded Workcell runtime
 - `strict`: the default managed Tier 1 runtime mode
 
-| Path | Intended use | Key properties |
+`--mode` selects one of four lanes:
+
+| `--mode` | Intended use | Key properties |
 |---|---|---|
 | `strict` | default provider lane | bounded VM plus container, reviewed network posture, repo control-plane masking, provider-focused entrypoint, `--agent-autonomy yolo` by default |
-| `strict --container-mutability readonly` | strongest managed lane | package-manager writes blocked; no package-mutation downgrade |
 | `development` | managed interactive development lane | same boundary and masking as `strict`, managed non-provider command execution, broader dependency egress, visibly lower assurance than `strict` |
 | `build` | image preparation and dependency refresh | broader egress for rebuild and preparation work |
 | `breakglass` | explicit higher-trust debugging path | requires `--ack-breakglass`; visibly lower assurance |
+
+`--container-mutability` is orthogonal to `--mode`: `ephemeral` (the
+default) allows package-manager mutations and labels the session
+`managed-mutable`, while `readonly` blocks package-manager writes and
+gives the strongest managed posture available — `--mode strict
+--container-mutability readonly` is the lane to pick when no
+lower-assurance downgrade is acceptable.
 
 Other defaults that matter:
 

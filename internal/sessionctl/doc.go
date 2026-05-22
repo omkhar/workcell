@@ -36,10 +36,11 @@
 //
 // DispatchMain is the Go translation of the session_main dispatcher
 // case statement.  It uses CanonicalSubcommands() as the single
-// authoritative list of user-facing subcommand tokens (start, attach,
-// send, stop, list, show, delete, logs, timeline, diff, export,
-// monitor) so the dispatch table, usage prose, and any future tooling
-// share one source of truth.
+// authoritative ordering of dispatch tokens (start, attach, send,
+// stop, list, show, delete, logs, timeline, diff, export, monitor).
+// The user-facing surface documented in man/workcell.1 and README.md
+// is the first eleven tokens; `monitor` is the internal supervisor
+// verb that `start` invokes against itself.
 //
 // The host-side session-record schema and lookup helpers stay in the
 // neighbouring internal/host/sessions package (different concern: that
