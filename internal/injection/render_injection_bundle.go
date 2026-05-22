@@ -21,7 +21,6 @@ import (
 	"syscall"
 
 	"github.com/omkhar/workcell/internal/adapters"
-	"github.com/omkhar/workcell/internal/adapters/gemini"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/tomlsubset"
@@ -74,7 +73,7 @@ var (
 	credentialContainerPaths  = adapters.CredentialContainerPaths()
 	agentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
 	sharedCredentialKeys      = adapters.SharedCredentialKeys()
-	googleAuthEndpoints       = gemini.GoogleAuthEndpoints
+	googleAuthEndpoints       = adapters.GeminiGoogleAuthEndpoints
 	vertexEndpoint            = "aiplatform.googleapis.com:443"
 	geminiProjectKeys         = []string{
 		"GOOGLE_CLOUD_PROJECT",
