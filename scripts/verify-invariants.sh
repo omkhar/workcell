@@ -7579,7 +7579,7 @@ done < <(awk '
     print
   }
 ' "${GIT_BLOCKLIST_TOML}")
-if (( ${#git_blocklist_keys[@]} == 0 )); then
+if ((${#git_blocklist_keys[@]} == 0)); then
   echo "policy/git-config-blocklist.toml had no [keys] entries; parity check needs at least one" >&2
   exit 1
 fi
