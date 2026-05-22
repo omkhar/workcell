@@ -1,7 +1,7 @@
 # Node.js LTS base image (v22 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:22-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:22-trixie-slim@sha256:e637ac91fb4f2f40761d217c5d48c41a05edf0b65eb9c34e72c27cce55af9e65
+ARG NODE_BASE_IMAGE=node:22-trixie-slim@sha256:02684a61c3e87ae3e9ec7ef98e312a6ec35483644e204e80fc053648c3e87d75
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
@@ -10,8 +10,8 @@ ARG SOURCE_DATE_EPOCH=0
 # Debian snapshot date for apt sources. Pinned for reproducibility.
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
-ARG DEBIAN_SNAPSHOT=20260522T000000Z
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.95.0-slim-trixie@sha256:e14e87345b4d5964ddcc3491d27ee046a0f23820f340c3c1e24da6880141f7c0
+ARG DEBIAN_SNAPSHOT=20260518T000000Z
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.95.0-slim-trixie@sha256:5021128d455987e7e7d6586bd7288fa876614821292614acbb761c21fc1ebb15
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
