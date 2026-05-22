@@ -158,7 +158,17 @@ func ProcessStartTime(pid int) (string, error) {
 	// non-zero exit as a "process gone" result and release profile locks
 	// for live PIDs whenever ps itself was unhappy (PATH, permissions,
 	// transient EAGAIN).
-	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
+	//
+	// Resolve ps against the trusted-host PATH allowlist instead of
+	// $PATH: this function gates profile-lock liveness, so a PATH-
+	// shadow on ps could persuade us a live profile is gone (and let
+	// the next launch steal its lock) or that a dead profile is alive
+	// (and refuse to clean up).  trustedPSPath() returns the first ps
+	// binary on the same hardcoded set scripts/workcell uses for
+	// TRUSTED_HOST_PATH; if none exists, we fall back to PATH lookup
+	// rather than fail-closed (callers tolerate the IsProcessGone
+	// signal but not a hard "ps missing" error mid-cleanup).
+	cmd := exec.Command(trustedPSPath(), "-o", "lstart=", "-p", strconv.Itoa(pid))
 	output, err := cmd.Output()
 	if err != nil {
 		// `ps -p PID` exits non-zero with empty stdout AND empty stderr
@@ -176,6 +186,22 @@ func ProcessStartTime(pid int) (string, error) {
 		return "", processGoneErr{pid: pid}
 	}
 	return trimmed, nil
+}
+
+// trustedPSPath returns the first existing absolute ps binary from the
+// same hardcoded list scripts/workcell uses for TRUSTED_HOST_PATH, so
+// PATH-shadow attacks on ps cannot subvert the profile-lock liveness
+// classifier above.  Falls back to bare "ps" if none of the trusted
+// locations have ps (callers tolerate exec failures via
+// processGoneErr; an unusable host should not silently leak locks).
+func trustedPSPath() string {
+	for _, dir := range []string{"/bin", "/usr/bin", "/sbin", "/usr/sbin", "/opt/homebrew/bin", "/usr/local/bin"} {
+		candidate := dir + "/ps"
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
+			return candidate
+		}
+	}
+	return "ps"
 }
 
 // IsProcessGone reports whether err came from ProcessStartTime because
