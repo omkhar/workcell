@@ -65,21 +65,27 @@ require_tool jq
 require_tool mktemp
 require_tool shasum
 
+# API response bodies are JSON/TOML; 200 MiB cap is well above realistic
+# upstream sizes (e.g. the Rust channel TOML is ~13 MiB and growing,
+# GitHub release lists are at most a few MiB) while still rejecting a
+# multi-GB body from a misbehaving or compromised endpoint.
+CURL_API_GUARDS=(--max-time 120 --connect-timeout 15 --max-filesize 209715200)
+
 github_api_get() {
   local url="$1"
   local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-}}"
   if [[ -n "${token}" ]]; then
-    curl -fsSL \
+    curl -fsSL "${CURL_API_GUARDS[@]}" \
       -H "Accept: application/vnd.github+json" \
       -H "Authorization: Bearer ${token}" \
       "${url}"
     return
   fi
-  curl -fsSL -H "Accept: application/vnd.github+json" "${url}"
+  curl -fsSL "${CURL_API_GUARDS[@]}" -H "Accept: application/vnd.github+json" "${url}"
 }
 
 dockerhub_api_get() {
-  curl -fsSL "$1"
+  curl -fsSL "${CURL_API_GUARDS[@]}" "$1"
 }
 
 github_release_asset_url() {
@@ -304,13 +310,13 @@ latest_qemu_tag() {
       '
 }
 
-latest_go_json="$(curl -fsSL 'https://go.dev/dl/?mode=json' | jq 'map(select(.stable == true)) | .[0]')"
+latest_go_json="$(curl -fsSL "${CURL_API_GUARDS[@]}" 'https://go.dev/dl/?mode=json' | jq 'map(select(.stable == true)) | .[0]')"
 target_go_toolchain="$(jq -r '.version | sub("^go"; "")' <<<"${latest_go_json}")"
 target_go_language="$(semver_patch_zero "${target_go_toolchain}")"
 target_go_sha_amd64="$(jq -r '.files[] | select(.os == "linux" and .arch == "amd64" and .kind == "archive") | .sha256' <<<"${latest_go_json}")"
 target_go_sha_arm64="$(jq -r '.files[] | select(.os == "linux" and .arch == "arm64" and .kind == "archive") | .sha256' <<<"${latest_go_json}")"
 
-rust_stable_toml="$(curl -fsSL 'https://static.rust-lang.org/dist/channel-rust-stable.toml')"
+rust_stable_toml="$(curl -fsSL "${CURL_API_GUARDS[@]}" 'https://static.rust-lang.org/dist/channel-rust-stable.toml')"
 target_rust_version="$(
   awk -F'"' '
     /^\[pkg\.rust\]$/ {
@@ -328,20 +334,25 @@ target_rust_version="$(
   ' <<<"${rust_stable_toml}"
 )"
 target_cargo_rust_version="$(semver_major_minor "${target_rust_version}")"
-rustup_stable_toml="$(curl -fsSL 'https://static.rust-lang.org/rustup/release-stable.toml')"
+rustup_stable_toml="$(curl -fsSL "${CURL_API_GUARDS[@]}" 'https://static.rust-lang.org/rustup/release-stable.toml')"
 target_rustup_version="$(awk -F"'" '$1 == "version = " { print $2; exit }' <<<"${rustup_stable_toml}")"
-target_rustup_sha_amd64="$(curl -fsSL "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/x86_64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
-target_rustup_sha_arm64="$(curl -fsSL "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/aarch64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
+# SHA256 checksum bodies are at most ~80 bytes; cap the response so a
+# misbehaving CDN or compromised release host cannot serve a multi-GB
+# body that OOMs the maintainer's shell.  Mirrors the discipline applied
+# to the zizmor download below.
+CURL_CHECKSUM_GUARDS=(--max-time 60 --connect-timeout 15 --max-filesize 65536)
+target_rustup_sha_amd64="$(curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/x86_64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
+target_rustup_sha_arm64="$(curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/aarch64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
 
 hadolint_release_json="$(github_api_get 'https://api.github.com/repos/hadolint/hadolint/releases/latest')"
 target_hadolint_version="$(jq -r '.tag_name' <<<"${hadolint_release_json}")"
 hadolint_sha_amd64_url="$(github_release_asset_url "${hadolint_release_json}" 'hadolint-linux-x86_64.sha256')"
 hadolint_sha_arm64_url="$(github_release_asset_url "${hadolint_release_json}" 'hadolint-linux-arm64.sha256')"
 target_hadolint_sha_amd64="$(
-  curl -fsSL "${hadolint_sha_amd64_url}" | awk '{print $1}'
+  curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_sha_amd64_url}" | awk '{print $1}'
 )"
 target_hadolint_sha_arm64="$(
-  curl -fsSL "${hadolint_sha_arm64_url}" | awk '{print $1}'
+  curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_sha_arm64_url}" | awk '{print $1}'
 )"
 
 buildx_release_json="$(github_api_get 'https://api.github.com/repos/docker/buildx/releases/latest')"
@@ -357,7 +368,7 @@ actionlint_release_json="$(github_api_get 'https://api.github.com/repos/rhysd/ac
 target_actionlint_version="$(jq -r '.tag_name | sub("^v"; "")' <<<"${actionlint_release_json}")"
 actionlint_checksums_url="$(github_release_asset_url "${actionlint_release_json}" "actionlint_${target_actionlint_version}_checksums.txt")"
 target_actionlint_sha="$(
-  curl -fsSL "${actionlint_checksums_url}" |
+  curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${actionlint_checksums_url}" |
     awk '/actionlint_'"${target_actionlint_version}"'_linux_amd64\.tar\.gz$/ { print $1; exit }'
 )"
 
