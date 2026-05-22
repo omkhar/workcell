@@ -19,14 +19,6 @@ local use, but it requires a real macOS+Colima environment and live provider
 credentials and is not run in CI. Not every documented auth path has full
 automated end-to-end coverage across all providers.
 
-### GitHub Copilot CLI provider parity
-
-Copilot CLI is the next planned Tier 1 provider adapter, but current releases
-do not include `--agent copilot`, Copilot auth staging, a quickstart, scenario
-evidence, or live provider certification. The support claim remains blocked
-until deterministic tests and a live non-destructive `copilot -p` certification
-land with the adapter.
-
 ### Lower-assurance transition coverage
 
 Some downgrade paths are validated statically or by smoke tests but still need

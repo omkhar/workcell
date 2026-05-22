@@ -15,3 +15,12 @@ Adapter rules:
 - prefer native provider config over wrapper-only policy
 - do not claim the adapter is the primary boundary
 - keep lower-assurance GUI or IDE paths clearly separate from Tier 1 CLI paths
+
+## Adding a new provider
+
+Per-provider Go tables (credential keys, container paths, reserved
+targets) live in `internal/adapters/data.go` — adding a new provider is
+a single row append to the `providers` slice plus the per-provider
+config tree under `adapters/<name>/`. There is no longer a per-provider
+Go sub-package; see `internal/adapters/adapters.go` for the public API
+that the injection, policy, and runtime paths consume.

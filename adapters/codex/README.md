@@ -7,8 +7,10 @@ Adapter layout (paths relative to `adapters/codex/`):
   session-local Codex home as `~/.codex/config.toml`
 - `.codex/AGENTS.md`: managed agent guidance seeded into the session-local
   Codex home
-- `.codex/rules/`: managed execpolicy rules seeded into the session-local
-  Codex home
+- `.codex/rules/default.rules`: managed Codex execpolicy ruleset seeded
+  into the session-local Codex home. Workcell currently ships one
+  ruleset; the directory shape exists so future overlays can drop in
+  alongside `default.rules`.
 - `.codex/agents/`: managed sub-agent guidance
 - `managed_config.toml`: workcell-side managed-mode TOML consumed by the
   launcher
