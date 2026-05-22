@@ -3,23 +3,15 @@
 
 // Package adapters aggregates per-provider table data so the injection,
 // policy, and runtime paths can iterate over them without hard-coding
-// provider names. New adapters register themselves here.
+// provider names.  New adapters add a row to providers in data.go.
 package adapters
-
-import (
-	"github.com/omkhar/workcell/internal/adapters/claude"
-	"github.com/omkhar/workcell/internal/adapters/codex"
-	"github.com/omkhar/workcell/internal/adapters/gemini"
-	"github.com/omkhar/workcell/internal/adapters/shared"
-	"github.com/omkhar/workcell/internal/providerid"
-)
 
 // AgentScopedCredentialKeys maps each providerid to the set of credential
 // keys scoped exclusively to that adapter (excludes shared keys).
 func AgentScopedCredentialKeys() map[string]map[string]struct{} {
-	out := map[string]map[string]struct{}{}
-	for _, agent := range registry {
-		out[agent.id] = setOf(agent.credentialKeys)
+	out := make(map[string]map[string]struct{}, len(providers))
+	for _, p := range providers {
+		out[p.id] = setOf(p.tables.credentialKeys)
 	}
 	return out
 }
@@ -27,19 +19,19 @@ func AgentScopedCredentialKeys() map[string]map[string]struct{} {
 // SharedCredentialKeys returns the set of credential keys provisioned for
 // every adapter (currently the github_* keys).
 func SharedCredentialKeys() map[string]struct{} {
-	return setOf(shared.CredentialKeys)
+	return setOf(sharedCredentialKeys)
 }
 
 // CredentialContainerPaths returns the merged container-side mount paths
 // for every adapter-scoped and shared credential key.
 func CredentialContainerPaths() map[string]string {
 	out := map[string]string{}
-	for _, agent := range registry {
-		for k, v := range agent.credentialPaths {
+	for _, p := range providers {
+		for k, v := range p.tables.credentialContainerPaths {
 			out[k] = v
 		}
 	}
-	for k, v := range shared.CredentialContainerPaths {
+	for k, v := range sharedCredentialContainerPaths {
 		out[k] = v
 	}
 	return out
@@ -49,39 +41,11 @@ func CredentialContainerPaths() map[string]string {
 // every adapter, in providerid-stable order.
 func ReservedTargets() []string {
 	var out []string
-	for _, agent := range registry {
-		out = append(out, agent.reservedTargets...)
+	for _, p := range providers {
+		out = append(out, p.tables.reservedTargets...)
 	}
-	out = append(out, shared.ReservedTargets...)
+	out = append(out, sharedReservedTargets...)
 	return out
-}
-
-type adapter struct {
-	id              string
-	credentialKeys  []string
-	credentialPaths map[string]string
-	reservedTargets []string
-}
-
-var registry = []adapter{
-	{
-		id:              providerid.Codex,
-		credentialKeys:  codex.CredentialKeys,
-		credentialPaths: codex.CredentialContainerPaths,
-		reservedTargets: codex.ReservedTargets,
-	},
-	{
-		id:              providerid.Claude,
-		credentialKeys:  claude.CredentialKeys,
-		credentialPaths: claude.CredentialContainerPaths,
-		reservedTargets: claude.ReservedTargets,
-	},
-	{
-		id:              providerid.Gemini,
-		credentialKeys:  gemini.CredentialKeys,
-		credentialPaths: gemini.CredentialContainerPaths,
-		reservedTargets: gemini.ReservedTargets,
-	},
 }
 
 func setOf(keys []string) map[string]struct{} {
