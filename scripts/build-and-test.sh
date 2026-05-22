@@ -19,6 +19,7 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 USE_DOCKER=0
 VALIDATOR_IMAGE_TAG=""
+RUN_VALIDATE_VALIDATOR_HOME=""
 
 cleanup() {
   if [[ "${USE_DOCKER}" -eq 1 ]] &&
@@ -26,6 +27,9 @@ cleanup() {
     [[ -n "${VALIDATOR_IMAGE_TAG:-}" ]] &&
     command -v docker >/dev/null 2>&1; then
     docker image rm -f "${VALIDATOR_IMAGE_TAG}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${RUN_VALIDATE_VALIDATOR_HOME}" ]]; then
+    rm -rf "${RUN_VALIDATE_VALIDATOR_HOME}"
   fi
 }
 trap cleanup EXIT
@@ -78,6 +82,11 @@ run_validate_repo_in_validator_snapshot() {
   # directory with mode 0700 and an unpredictable suffix.
   validator_home="$(mktemp -d "${TMPDIR:-/tmp}/workcell-home.XXXXXX")"
   chmod 0700 "${validator_home}"
+  # Remove the per-invocation HOME via the script-level cleanup trap so
+  # repeated --docker runs do not leak hundreds of MB of Go / Cargo
+  # caches into /tmp under unguessable names.  RUN_VALIDATE_VALIDATOR_HOME
+  # is consumed by the cleanup() function at the top of this file.
+  RUN_VALIDATE_VALIDATOR_HOME="${validator_home}"
   validator_cache="${validator_home}/.cache"
   validator_tmp="${validator_home}/.tmp"
 

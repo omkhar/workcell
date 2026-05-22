@@ -61,6 +61,7 @@ else
   KEEP_ARTIFACT_DIR=1
 fi
 
+VALIDATOR_HOME_FOR_CLEANUP=""
 cleanup() {
   if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then
     cleanup_workcell_validator_image "${VALIDATOR_IMAGE:-}"
@@ -68,6 +69,9 @@ cleanup() {
   cleanup_workcell_ci_docker
   if [[ "${KEEP_ARTIFACT_DIR}" -eq 0 ]]; then
     rm -rf "${ARTIFACT_DIR}"
+  fi
+  if [[ -n "${VALIDATOR_HOME_FOR_CLEANUP}" ]]; then
+    rm -rf "${VALIDATOR_HOME_FOR_CLEANUP}"
   fi
 }
 trap cleanup EXIT
@@ -126,6 +130,7 @@ if [[ "${PROFILE}" != "repo-core" ]]; then
   # shared hosts).
   validator_home="$(mktemp -d "${TMPDIR:-/tmp}/workcell-home.XXXXXX")"
   chmod 0700 "${validator_home}"
+  VALIDATOR_HOME_FOR_CLEANUP="${validator_home}"
   validator_cache="${validator_home}/.cache"
   validator_tmp="${validator_home}/.tmp"
   bundle_name="workcell-ci-${ARCHIVE_REF}.tar.gz"

@@ -9,8 +9,12 @@ VALIDATE_PROFILE="${WORKCELL_VALIDATE_REPO_PROFILE:-release-preflight}"
 WORKSPACE="${WORKCELL_VALIDATOR_WORKSPACE:-${ROOT_DIR}}"
 SKIP_HEAVY_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
 
+VALIDATOR_HOME_FOR_CLEANUP=""
 cleanup() {
   cleanup_workcell_ci_docker
+  if [[ -n "${VALIDATOR_HOME_FOR_CLEANUP}" ]]; then
+    rm -rf "${VALIDATOR_HOME_FOR_CLEANUP}"
+  fi
 }
 trap cleanup EXIT
 
@@ -30,6 +34,7 @@ validator_gid="$(id -g)"
 # shared hosts).
 validator_home="$(mktemp -d "${TMPDIR:-/tmp}/workcell-home.XXXXXX")"
 chmod 0700 "${validator_home}"
+VALIDATOR_HOME_FOR_CLEANUP="${validator_home}"
 validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"
 

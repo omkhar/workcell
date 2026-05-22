@@ -110,9 +110,13 @@ TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-release-bundle.XXXXXX")"
 EMPTY_GIT_TEMPLATE_DIR="${TMP_ROOT}/empty-git-template"
 mkdir -p "${EMPTY_GIT_TEMPLATE_DIR}"
 
+VERIFY_RELEASE_VALIDATOR_HOME=""
 cleanup() {
   cleanup_workcell_trusted_docker_client
   rm -rf "${TMP_ROOT}"
+  if [[ -n "${VERIFY_RELEASE_VALIDATOR_HOME}" ]]; then
+    rm -rf "${VERIFY_RELEASE_VALIDATOR_HOME}"
+  fi
 }
 
 trap cleanup EXIT
@@ -209,6 +213,7 @@ build_bundle_in_validator() {
   # shared hosts).
   validator_home="$(mktemp -d "${TMPDIR:-/tmp}/workcell-home.XXXXXX")"
   chmod 0700 "${validator_home}"
+  VERIFY_RELEASE_VALIDATOR_HOME="${validator_home}"
   validator_cache_root="${validator_home}/.cache"
   validator_tmpdir="${validator_home}/.tmp"
 
