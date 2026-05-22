@@ -80,6 +80,12 @@ jobs:
         env:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_MODE: gha
+          # Segregate the gha cache scope: PR runs write to a PR-keyed
+          # scope, push-to-main writes to validator-main.  build-validator-image.sh
+          # also reads validator-main as a base for PR builds.  mode=max
+          # is gated on push events so PRs cannot poison the trusted scope.
+          WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('validator-pr-{0}', github.event.pull_request.number) || 'validator-main' }}
+          WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE: ${{ github.event_name == 'push' && 'max' || 'min' }}
           WORKCELL_CI_INSTALL_ARTIFACT_DIR: dist/release-install
           WORKCELL_CI_ARCHIVE_REF: ${{ github.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
