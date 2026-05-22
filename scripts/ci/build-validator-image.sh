@@ -9,6 +9,17 @@ VALIDATOR_IMAGE_DEFAULT_TAG="workcell-validator:local-$(cksum "${VALIDATOR_DOCKE
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-${VALIDATOR_IMAGE_DEFAULT_TAG}}"
 REBUILD_VALIDATOR="${WORKCELL_REBUILD_VALIDATOR_IMAGE:-0}"
 CACHE_MODE="${WORKCELL_VALIDATOR_BUILDX_CACHE_MODE:-none}"
+# CACHE_SCOPE segregates the buildx gha cache so PR runs cannot poison
+# the main scope.  Callers supply WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE
+# from workflow ref state (set to "validator-main" on push events;
+# "validator-pr-${PR_NUMBER}" on pull_request events).  When unset the
+# script falls back to a host-local scope so local invocations do not
+# collide with CI scopes.
+CACHE_SCOPE="${WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE:-validator-local}"
+# CACHE_WRITE_MODE defaults to "min" to avoid storing every intermediate
+# layer in the gha cache from untrusted PR sources.  CI sets this to
+# "max" only on push-to-main runs where the cache is operator-trusted.
+CACHE_WRITE_MODE="${WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE:-min}"
 BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5}"
 
 cleanup() {
@@ -45,7 +56,13 @@ build_cmd=(
 
 case "${CACHE_MODE}" in
   gha)
-    build_cmd+=(--cache-from "type=gha" --cache-to "type=gha,mode=max")
+    build_cmd+=(--cache-from "type=gha,scope=${CACHE_SCOPE}")
+    # Read from main as a base when on a PR scope so PR builds still
+    # benefit from the operator-trusted main cache without write access.
+    if [[ "${CACHE_SCOPE}" != "validator-main" ]]; then
+      build_cmd+=(--cache-from "type=gha,scope=validator-main")
+    fi
+    build_cmd+=(--cache-to "type=gha,scope=${CACHE_SCOPE},mode=${CACHE_WRITE_MODE}")
     ;;
   none) ;;
   *)

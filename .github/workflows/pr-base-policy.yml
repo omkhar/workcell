@@ -17,6 +17,10 @@ on:
 
 permissions: {}
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
