@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -231,7 +232,7 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 		return nil, nil, err
 	}
 	resolved := Path(resolvedPolicyPath)
-	if containsPath(activeStack, resolved) {
+	if slices.Contains(activeStack, resolved) {
 		cycle := append(append([]Path{}, activeStack...), resolved)
 		parts := make([]string, 0, len(cycle))
 		for _, p := range cycle {
@@ -295,7 +296,7 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 		sources = append(sources, includedSources...)
 	}
 
-	currentPolicy := cloneMap(loaded)
+	currentPolicy := maps.Clone(loaded)
 	delete(currentPolicy, "includes")
 	if len(activeStack) > 0 {
 		currentPolicy = rebasePolicyFragment(currentPolicy, resolved.Parent())
@@ -460,12 +461,10 @@ func renderCopies(policy map[string]any, outputRoot, policyDir Path, agent, mode
 			if err := validateSecretTree(sourceValue, "copies.source"); err != nil {
 				return nil, err
 			}
-			kind = func() string {
-				if sourceValue.IsDir() {
-					return "dir"
-				}
-				return "file"
-			}()
+			kind = "file"
+			if sourceValue.IsDir() {
+				kind = "dir"
+			}
 			renderedSource = directMountEntry(sourceValue, mountPath)
 		} else {
 			kind, err = copySource(sourceValue, outputRoot.Join(relpath))
@@ -1763,7 +1762,7 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir Path) map[string]an
 				rebasedCopies := make([]any, 0, len(copies))
 				for _, entry := range copies {
 					if entryMap, ok := entry.(map[string]any); ok {
-						rebasedEntry := cloneMap(entryMap)
+						rebasedEntry := maps.Clone(entryMap)
 						if source, ok := rebasedEntry["source"]; ok {
 							rebasedEntry["source"] = rebaseFragmentPath(source, fragmentDir)
 						}
@@ -1777,7 +1776,7 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir Path) map[string]an
 			}
 		case "ssh":
 			if ssh, ok := value.(map[string]any); ok {
-				rebasedSSH := cloneMap(ssh)
+				rebasedSSH := maps.Clone(ssh)
 				for _, sshKey := range []string{"config", "known_hosts"} {
 					if sshValue, ok := rebasedSSH[sshKey]; ok {
 						rebasedSSH[sshKey] = rebaseFragmentPath(sshValue, fragmentDir)
@@ -1798,7 +1797,7 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir Path) map[string]an
 				rebasedCredentials := map[string]any{}
 				for credentialKey, credentialValue := range credentials {
 					if credentialMap, ok := credentialValue.(map[string]any); ok {
-						rebasedCredential := cloneMap(credentialMap)
+						rebasedCredential := maps.Clone(credentialMap)
 						if source, ok := rebasedCredential["source"]; ok {
 							rebasedCredential["source"] = rebaseFragmentPath(source, fragmentDir)
 						}
@@ -2004,23 +2003,6 @@ func mapKeysSet(keys []string) map[string]struct{} {
 		allowed[key] = struct{}{}
 	}
 	return allowed
-}
-
-func cloneMap(values map[string]any) map[string]any {
-	clone := map[string]any{}
-	for key, value := range values {
-		clone[key] = value
-	}
-	return clone
-}
-
-func containsPath(stack []Path, candidate Path) bool {
-	for _, item := range stack {
-		if item == candidate {
-			return true
-		}
-	}
-	return false
 }
 
 type Path string

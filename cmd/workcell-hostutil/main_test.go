@@ -80,24 +80,6 @@ func TestRunHelperSessionTimeline(t *testing.T) {
 	}
 }
 
-func TestRunLauncherCompatPromotedCli(t *testing.T) {
-	if err := run([]string{"launcher", "session-dispatch-cli", "logs"}); err != nil {
-		t.Fatalf("run(launcher session-dispatch-cli) error = %v", err)
-	}
-}
-
-func TestRunLauncherCompatHelperFallback(t *testing.T) {
-	if err := run([]string{"launcher", "session-suffix"}); err != nil {
-		t.Fatalf("run(launcher session-suffix) error = %v", err)
-	}
-}
-
-func TestRunLauncherCompatExplicitHelper(t *testing.T) {
-	if err := run([]string{"launcher", "helper", "session-suffix"}); err != nil {
-		t.Fatalf("run(launcher helper session-suffix) error = %v", err)
-	}
-}
-
 func TestRunHelperSessionRuntimeMetadata(t *testing.T) {
 	colimaRoot := t.TempDir()
 	sessionPath := filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json")

@@ -342,7 +342,12 @@ RUN export \
       --offline \
   && install -m 0644 /tmp/workcell-rust-target/release/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so \
   && install -m 0644 /tmp/workcell-rust-target/release/workcell-launcher /usr/local/libexec/workcell/core/launcher \
-  && install -m 0644 /tmp/workcell-rust-target/release/workcell-git-launcher /usr/local/libexec/workcell/core/git \
+  # `git` is dispatched by workcell-launcher based on argv[0] (see
+  # LAUNCH_TARGETS in src/bin/workcell-launcher.rs).  Hard-link the
+  # already-installed launcher under the `git` name instead of building
+  # a near-identical second binary; hard-link keeps mode/ownership/perms
+  # and survives the layer compression that a symlink would not.
+  && ln /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/git \
   && printf '/usr/local/lib/libworkcell_exec_guard.so\n' > /etc/ld.so.preload \
   && rm -rf /tmp/workcell-rust-target /workcell-rust
 

@@ -628,7 +628,6 @@ for file in \
   "${ROOT_DIR}/runtime/container/runtime-user.sh" \
   "${ROOT_DIR}/runtime/container/rust/Cargo.toml" \
   "${ROOT_DIR}/runtime/container/rust/src/lib.rs" \
-  "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-git-launcher.rs" \
   "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-launcher.rs" \
   "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh" \

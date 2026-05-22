@@ -51,8 +51,6 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
-	case "launcher":
-		return runLauncherCompat(args[1:])
 	case "path":
 		return runPath(args[1:])
 	case "release":
@@ -101,49 +99,6 @@ func run(args []string) error {
 		return cmdHelperSessionTimelineCli(args[1:])
 	default:
 		return usage()
-	}
-}
-
-func runLauncherCompat(args []string) error {
-	if len(args) == 0 {
-		return launcherUsage()
-	}
-	if args[0] == "helper" {
-		return runHelper(args[1:])
-	}
-	switch args[0] {
-	case "auth-cli":
-		return cmdHelperAuthCli(args[1:])
-	case "auth-usage":
-		return cmdHelperAuthUsage(args[1:])
-	case "policy-cli":
-		return cmdHelperPolicyCli(args[1:])
-	case "policy-usage":
-		return cmdHelperPolicyUsage(args[1:])
-	case "publish-pr-cli":
-		return cmdHelperPublishPRCli(args[1:])
-	case "publish-pr-usage":
-		return cmdHelperPublishPRUsage(args[1:])
-	case "session-usage":
-		return cmdHelperSessionUsage(args[1:])
-	case "session-attach-cli":
-		return cmdHelperSessionAttachCli(args[1:])
-	case "session-delete-cli":
-		return cmdHelperSessionDeleteCli(args[1:])
-	case "session-dispatch-cli":
-		return cmdHelperSessionDispatchCli(args[1:])
-	case "session-logs-cli":
-		return cmdHelperSessionLogsCli(args[1:])
-	case "session-monitor-cli":
-		return cmdHelperSessionMonitorCli(args[1:])
-	case "session-send-cli":
-		return cmdHelperSessionSendCli(args[1:])
-	case "session-stop-cli":
-		return cmdHelperSessionStopCli(args[1:])
-	case "session-timeline-cli":
-		return cmdHelperSessionTimelineCli(args[1:])
-	default:
-		return runHelper(args)
 	}
 }
 
@@ -267,10 +222,14 @@ type helperSubcommand struct {
 }
 
 // helperSubcommands returns the dispatch table.  It is a function (not
-// a package-level var) because several of the session handlers below
-// call back into helperUsage, which itself reads this table; using a
-// function defers the table's construction past package-init time and
-// avoids a Go initialization cycle.
+// a package-level var, and not a sync.OnceValue either — the value
+// initializer references helpers that, transitively, call back into
+// helperUsage, which reads this table.  Go's package-init analysis
+// detects that closure dependency graph and rejects a OnceValue here
+// just as it would reject a bare var, so the function form remains
+// load-bearing).  The per-dispatch allocation is a few dozen entries
+// once per subcommand invocation; cheap enough that the simpler shape
+// wins.
 func helperSubcommands() []helperSubcommand {
 	return []helperSubcommand{
 		{"session-suffix", 0, 0, cmdHelperSessionSuffix},
@@ -1017,10 +976,6 @@ func pathUsage() error {
 
 func releaseUsage() error {
 	return fmt.Errorf("usage: workcell-hostutil release <create-payload|metadata|encode-name|bundle-manifest> [args...]")
-}
-
-func launcherUsage() error {
-	return fmt.Errorf("usage: workcell-hostutil launcher <helper|*-cli|*-usage> [args...]")
 }
 
 func helperUsage() error {
