@@ -144,11 +144,15 @@ func CleanupStaleLatestLogPointers(stateRoot string) error {
 		"workcell.latest-file-trace-log",
 		"workcell.latest-transcript-log",
 	}
+	var errs []error
 	for _, profileDir := range stateDirs {
 		for _, pointerName := range pointerNames {
 			pointerPath := filepath.Join(profileDir, pointerName)
 			info, err := os.Lstat(pointerPath)
 			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					errs = append(errs, fmt.Errorf("lstat %s: %w", pointerPath, err))
+				}
 				continue
 			}
 			if info.Mode()&os.ModeSymlink != 0 {
@@ -160,6 +164,9 @@ func CleanupStaleLatestLogPointers(stateRoot string) error {
 			}
 			content, err := os.ReadFile(pointerPath)
 			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					errs = append(errs, fmt.Errorf("read %s: %w", pointerPath, err))
+				}
 				continue
 			}
 			lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
@@ -175,11 +182,17 @@ func CleanupStaleLatestLogPointers(stateRoot string) error {
 			if _, err := os.Stat(target); err != nil {
 				if errors.Is(err, os.ErrNotExist) {
 					_ = os.Remove(pointerPath)
+				} else {
+					// EACCES / EIO / ELOOP on the target — keep the
+					// pointer (it might be valid but unreadable from
+					// here) and surface the error to the caller so a
+					// silent failure does not hide a real fault.
+					errs = append(errs, fmt.Errorf("stat target %s for %s: %w", target, pointerPath, err))
 				}
 			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func CleanupStaleSessionAuditDirs(stateRoot string) error {
