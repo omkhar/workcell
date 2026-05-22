@@ -2004,29 +2004,5 @@ func mapKeysSet(keys []string) map[string]struct{} {
 	return allowed
 }
 
-type Path string
-
-func (p Path) String() string {
-	return string(p)
-}
-
-func (p Path) Parent() Path {
-	return Path(filepath.Dir(string(p)))
-}
-
-func (p Path) Join(rel string) Path {
-	return Path(filepath.Join(string(p), rel))
-}
-
-func (p Path) Base() string {
-	return filepath.Base(string(p))
-}
-
-func (p Path) IsDir() bool {
-	info, err := os.Stat(string(p))
-	return err == nil && info.IsDir()
-}
-
-func init() {
-	// Keep the regex-free helpers isolated; no init-time side effects.
-}
+// Path lives in path.go.  cloneMap / containsPath were replaced with
+// stdlib maps.Clone / slices.Contains in PR #270.
