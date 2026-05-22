@@ -8,13 +8,23 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
 // isAllowedSystemSymlink returns true only for the small set of
 // platform bootstrap links that Workcell must traverse on macOS.
 // Operator-controlled direct-mount sources remain symlink-free.
+//
+// The allowlist intentionally fires only on darwin: on Linux these
+// link targets (`/var -> private/var`, etc.) have no legitimate
+// meaning, so a match there is evidence of an attacker planting the
+// same name to bypass the check. Mirrors the GOOS == "darwin" gate
+// in internal/secretfile/open_unix.go::canonicalizeSystemPath.
 func isAllowedSystemSymlink(linkPath, target string) bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
 	switch filepath.Clean(linkPath) {
 	case "/var":
 		return target == "private/var"

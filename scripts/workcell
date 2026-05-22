@@ -8406,6 +8406,25 @@ fi
 write_session_record_initial "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 append_launch_audit_record "${COLIMA_PROFILE}" "${EXECUTION_PATH}"
 
+# Lower-assurance paths must be visible at session entry, not implied or
+# only retroactively labeled.  Mutable container mutability runs the
+# workload with SETUID/SETGID capability surface and user 0:0 (see the
+# --cap-add SETUID/--cap-add SETGID block in DOCKER_RUN_BASE composition
+# below).  --container-mutability readonly is the high-assurance lane;
+# any other choice gets a banner on stderr so an operator reading the
+# launch surface sees the elevated cap envelope before any agent
+# command runs.
+if [[ "${CONTAINER_MUTABILITY}" != "readonly" ]]; then
+  cat <<NOTE >&2
+Workcell notice: this session uses --container-mutability=${CONTAINER_MUTABILITY}.
+The runtime container holds SETUID/SETGID capabilities and runs the
+in-container entrypoint as UID 0.  Package-manager and SETUID surfaces
+are explicitly allowed.  This is a lower-assurance path than
+--container-mutability=readonly; treat in-session control-plane
+integrity accordingly.
+NOTE
+fi
+
 DOCKER_STATUS=0
 run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
