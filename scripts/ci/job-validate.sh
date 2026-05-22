@@ -90,7 +90,12 @@ echo "[ci/validate] upstream Claude release"
 echo "[ci/validate] upstream Gemini release"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 
-if [[ "${PROFILE}" == "release-preflight" ]]; then
+if [[ "${PROFILE}" == "pr-parity" || "${PROFILE}" == "release-preflight" ]]; then
+  # Mirror the pre-commit hook (.githooks/pre-commit) on every PR run so
+  # a contributor who set WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT=1 to
+  # bypass the local hook still has stale pins caught before merge.  The
+  # weekly pin-hygiene.yml cron remains as a backstop, not the primary
+  # gate.
   echo "[ci/validate] pinned upstream refresh status"
   "${ROOT_DIR}/scripts/update-upstream-pins.sh" --check
 fi
@@ -159,6 +164,16 @@ if [[ "${PROFILE}" != "repo-core" ]]; then
     "${bundle_sha}" \
     "${ARTIFACT_DIR}/workcell.rb" \
     --repository "${REPOSITORY_NAME}"
+  # Emit a SHA256SUMS file alongside the bundle so the install-verification
+  # job (which downloads the artifact across a job boundary) can
+  # `sha256sum -c` the bundle before extraction.  upload-artifact between
+  # jobs is internal infra, but pinning the content here means a flaky
+  # upload or any future third-job mutation surfaces as a verifiable
+  # check rather than as a silent install over a different bundle.
+  (
+    cd "${ARTIFACT_DIR}"
+    sha256sum "${bundle_name}" >SHA256SUMS
+  )
 fi
 
 echo "Workcell shared validate job passed."

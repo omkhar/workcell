@@ -106,6 +106,7 @@ jobs:
           path: |
             dist/release-install/workcell-ci-${{ github.sha }}.tar.gz
             dist/release-install/workcell.rb
+            dist/release-install/SHA256SUMS
           retention-days: 7
 
   container-smoke:
@@ -145,6 +146,15 @@ jobs:
         with:
           name: workcell-ci-install-candidate
           path: dist/install
+
+      - name: Verify install bundle checksum
+        # The validate job produced SHA256SUMS over the bundle; sha256sum
+        # -c here makes a flaky upload (or any future third-job mutation
+        # to the artifact) a hard error before we extract or install.
+        run: |
+          set -euo pipefail
+          test -f dist/install/SHA256SUMS
+          (cd dist/install && sha256sum -c SHA256SUMS)
 
       - name: Verify release bundle installer
         env:
