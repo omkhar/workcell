@@ -170,7 +170,7 @@ Current repo status:
 - Gate 7 is implemented
 - Gate 8 is implemented
 - Gate 9 is implemented
-- the roadmap now inserts GitHub Copilot CLI Tier 1 provider parity before the
+- the roadmap sequences GitHub Copilot CLI Tier 1 provider parity before the
   Linux `amd64` `local_compat` certification candidate resumes
 
 ### Gate 3: compatibility target certified

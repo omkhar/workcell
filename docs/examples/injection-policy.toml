@@ -7,6 +7,9 @@ codex = "/Users/example/.config/workcell/codex-extra.md"
 claude = "/Users/example/.config/workcell/claude-extra.md"
 gemini = "/Users/example/.config/workcell/gemini-extra.md"
 
+# Copilot CLI is intentionally omitted from every `providers` list below
+# until its adapter support lands.
+
 [credentials]
 codex_auth = "/Users/example/.codex/auth.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
@@ -23,12 +26,10 @@ materialization = "ephemeral"
 
 [credentials.github_hosts]
 source = "/Users/example/.config/gh/hosts.yml"
-# Copilot CLI is intentionally omitted until its adapter support lands.
 providers = ["codex", "claude", "gemini"]
 
 [credentials.github_config]
 source = "/Users/example/.config/gh/config.yml"
-# Copilot CLI is intentionally omitted until its adapter support lands.
 providers = ["codex", "claude", "gemini"]
 
 [ssh]
@@ -36,7 +37,6 @@ enabled = true
 config = "/Users/example/.ssh/config"
 known_hosts = "/Users/example/.ssh/known_hosts"
 identities = ["/Users/example/.ssh/id_workcell"]
-# Copilot CLI is intentionally omitted until its adapter support lands.
 providers = ["codex", "claude", "gemini"]
 modes = ["strict", "development", "build"]
 
