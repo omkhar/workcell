@@ -152,14 +152,21 @@ func WriteProfileOwner(ownerPath string, pid int) error {
 // ProcessStartTime returns the `ps -o lstart=` value for pid, or an error
 // satisfying IsProcessGone if pid no longer exists.
 func ProcessStartTime(pid int) (string, error) {
+	// Use cmd.Output() so stderr is captured separately in
+	// (*exec.ExitError).Stderr.  cmd.CombinedOutput() leaves that field
+	// nil, which previously caused the classifier below to treat every
+	// non-zero exit as a "process gone" result and release profile locks
+	// for live PIDs whenever ps itself was unhappy (PATH, permissions,
+	// transient EAGAIN).
 	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
-	output, err := cmd.CombinedOutput()
+	output, err := cmd.Output()
 	if err != nil {
-		// `ps -p PID` exits non-zero with empty output when the
-		// process does not exist. Distinguish that from other failures
-		// (PATH issue, permissions, transient ps error) so callers can
-		// decide whether the process is definitively gone vs unknown.
-		if exitErr, ok := err.(*exec.ExitError); ok && len(strings.TrimSpace(string(output))) == 0 && len(exitErr.Stderr) == 0 {
+		// `ps -p PID` exits non-zero with empty stdout AND empty stderr
+		// when the process does not exist.  Anything else (non-empty
+		// stderr, non-ExitError) is a genuine failure we propagate so
+		// callers can distinguish it from a definitively-gone PID.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(strings.TrimSpace(string(output))) == 0 && len(strings.TrimSpace(string(exitErr.Stderr))) == 0 {
 			return "", processGoneErr{pid: pid}
 		}
 		return "", err
