@@ -39,6 +39,20 @@ The following are not in scope for this policy:
 - issues reproducible only in unsupported configurations (non-macOS host,
   `breakglass` mode used as intended)
 
+## Container git-config blocklist
+
+The set of `git-config` keys that the in-container git wrapper and the
+in-container LD_PRELOAD exec guard refuse to honor (e.g. `core.askpass`,
+`core.hookspath`, `credential.*.helper`, `includeif.*.path`,
+`pager.*`) is the canonical control-plane denylist for git-mediated
+bypasses.  The single source of truth is
+[`policy/git-config-blocklist.toml`](policy/git-config-blocklist.toml);
+`scripts/verify-invariants.sh` enforces parity between the TOML and
+the three enforcement points (`scripts/workcell`,
+`runtime/container/bin/git`, `runtime/container/rust/src/lib.rs`).
+Adding a key requires editing the TOML and updating each enforcer in
+the same PR.
+
 ## Supported branch
 
 Security fixes are applied to `main`. There are no long-lived release branches.
