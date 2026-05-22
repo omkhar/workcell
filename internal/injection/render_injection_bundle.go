@@ -1494,6 +1494,14 @@ func effectivePolicySHA256(
 		switch value := renderedSource.(type) {
 		case string:
 			sourcePath = outputRoot.Join(value)
+		case map[string]string:
+			// directMountEntry (used for "secret" classification copies)
+			// returns map[string]string; the type switch must match it
+			// explicitly — historically a silent miss here produced
+			// sha256="" in the manifest for every secret copy.
+			if hostSource, ok := value["source"]; ok {
+				sourcePath = Path(hostSource)
+			}
 		case map[string]any:
 			if hostSource, ok := value["source"].(string); ok {
 				sourcePath = Path(hostSource)
@@ -1531,28 +1539,27 @@ func effectivePolicySHA256(
 		} else {
 			ssh["config_assurance"] = "off"
 		}
-		if config, ok := renderedSSH["config"].(map[string]any); ok {
-			if source, ok := config["source"].(string); ok {
-				hash, err := pathMaterialSHA256(Path(source))
-				if err != nil {
-					return "", fmt.Errorf("hash ssh config: %w", err)
-				}
-				ssh["config"] = map[string]any{
-					"mount_path": config["mount_path"],
-					"sha256":     hash,
-				}
+		// ssh.config / ssh.known_hosts come from directMountEntry, which
+		// returns map[string]string — historically these missed both
+		// type assertions below and so were never hashed at all.
+		if source, mountPath, ok := sshMountSource(renderedSSH, "config"); ok {
+			hash, err := pathMaterialSHA256(Path(source))
+			if err != nil {
+				return "", fmt.Errorf("hash ssh config: %w", err)
+			}
+			ssh["config"] = map[string]any{
+				"mount_path": mountPath,
+				"sha256":     hash,
 			}
 		}
-		if knownHosts, ok := renderedSSH["known_hosts"].(map[string]any); ok {
-			if source, ok := knownHosts["source"].(string); ok {
-				hash, err := pathMaterialSHA256(Path(source))
-				if err != nil {
-					return "", fmt.Errorf("hash ssh known_hosts: %w", err)
-				}
-				ssh["known_hosts"] = map[string]any{
-					"mount_path": knownHosts["mount_path"],
-					"sha256":     hash,
-				}
+		if source, mountPath, ok := sshMountSource(renderedSSH, "known_hosts"); ok {
+			hash, err := pathMaterialSHA256(Path(source))
+			if err != nil {
+				return "", fmt.Errorf("hash ssh known_hosts: %w", err)
+			}
+			ssh["known_hosts"] = map[string]any{
+				"mount_path": mountPath,
+				"sha256":     hash,
 			}
 		}
 		if identities, ok := renderedSSH["identities"].([]map[string]any); ok {
@@ -1688,6 +1695,34 @@ func policySHA256(policyPath string) (string, error) {
 	}
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// sshMountSource pulls the source + mount_path pair out of the
+// renderedSSH map for either of the directMountEntry-backed keys
+// ("config", "known_hosts").  Those entries are map[string]string, so
+// callers cannot use the map[string]any type assertion that the
+// outer effectivePolicySHA256 code applies to identities.
+func sshMountSource(renderedSSH map[string]any, key string) (source, mountPath string, ok bool) {
+	raw, present := renderedSSH[key]
+	if !present {
+		return "", "", false
+	}
+	switch v := raw.(type) {
+	case map[string]string:
+		s, hasSource := v["source"]
+		if !hasSource {
+			return "", "", false
+		}
+		return s, v["mount_path"], true
+	case map[string]any:
+		s, hasSource := v["source"].(string)
+		if !hasSource {
+			return "", "", false
+		}
+		mp, _ := v["mount_path"].(string)
+		return s, mp, true
+	}
+	return "", "", false
 }
 
 func logicalPolicyPath(policyPath, entrypointRoot Path) string {
