@@ -9,12 +9,8 @@ VALIDATE_PROFILE="${WORKCELL_VALIDATE_REPO_PROFILE:-release-preflight}"
 WORKSPACE="${WORKCELL_VALIDATOR_WORKSPACE:-${ROOT_DIR}}"
 SKIP_HEAVY_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
 
-VALIDATOR_HOME_FOR_CLEANUP=""
 cleanup() {
   cleanup_workcell_ci_docker
-  if [[ -n "${VALIDATOR_HOME_FOR_CLEANUP}" ]]; then
-    rm -rf "${VALIDATOR_HOME_FOR_CLEANUP}"
-  fi
 }
 trap cleanup EXIT
 
@@ -29,12 +25,14 @@ fi
 
 validator_uid="$(id -u)"
 validator_gid="$(id -g)"
-# Unpredictable validator HOME under /tmp: see scripts/build-and-test.sh
-# for the rationale (avoiding a /tmp planted-symlink TOCTOU surface on
-# shared hosts).
-validator_home="$(mktemp -d "${TMPDIR:-/tmp}/workcell-home.XXXXXX")"
-chmod 0700 "${validator_home}"
-VALIDATOR_HOME_FOR_CLEANUP="${validator_home}"
+# GitHub-hosted runners are exclusive per-job, so the /tmp/workcell-home-<uid>
+# planted-symlink TOCTOU surface is not reachable here.  Keep the
+# predictable path for CI to preserve test-fixture stability across
+# scenarios that rely on resolve_workcell_real_home's `synthetic`
+# fallback finding the same path multiple times within one run.  The
+# dev-side build-and-test.sh and verify-release-bundle.sh use mktemp -d
+# because those run on shared developer hosts where the TOCTOU is real.
+validator_home="/tmp/workcell-home-${validator_uid}"
 validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"
 

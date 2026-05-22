@@ -61,7 +61,6 @@ else
   KEEP_ARTIFACT_DIR=1
 fi
 
-VALIDATOR_HOME_FOR_CLEANUP=""
 cleanup() {
   if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then
     cleanup_workcell_validator_image "${VALIDATOR_IMAGE:-}"
@@ -69,9 +68,6 @@ cleanup() {
   cleanup_workcell_ci_docker
   if [[ "${KEEP_ARTIFACT_DIR}" -eq 0 ]]; then
     rm -rf "${ARTIFACT_DIR}"
-  fi
-  if [[ -n "${VALIDATOR_HOME_FOR_CLEANUP}" ]]; then
-    rm -rf "${VALIDATOR_HOME_FOR_CLEANUP}"
   fi
 }
 trap cleanup EXIT
@@ -125,12 +121,10 @@ if [[ "${PROFILE}" != "repo-core" ]]; then
   setup_workcell_ci_docker
   validator_uid="$(id -u)"
   validator_gid="$(id -g)"
-  # Unpredictable validator HOME under /tmp: see scripts/build-and-test.sh
-  # for the rationale (avoiding a /tmp planted-symlink TOCTOU surface on
-  # shared hosts).
-  validator_home="$(mktemp -d "${TMPDIR:-/tmp}/workcell-home.XXXXXX")"
-  chmod 0700 "${validator_home}"
-  VALIDATOR_HOME_FOR_CLEANUP="${validator_home}"
+  # GitHub-hosted runners are exclusive per-job, so the planted-symlink
+  # TOCTOU surface that motivates mktemp in scripts/build-and-test.sh is
+  # not reachable here.  Keep the predictable path for CI.
+  validator_home="/tmp/workcell-home-${validator_uid}"
   validator_cache="${validator_home}/.cache"
   validator_tmp="${validator_home}/.tmp"
   bundle_name="workcell-ci-${ARCHIVE_REF}.tar.gz"
