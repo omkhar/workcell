@@ -23,7 +23,11 @@ fi
 
 validator_uid="$(id -u)"
 validator_gid="$(id -g)"
-validator_home="/tmp/workcell-home-${validator_uid}"
+# Unpredictable validator HOME under /tmp: see scripts/build-and-test.sh
+# for the rationale (avoiding a /tmp planted-symlink TOCTOU surface on
+# shared hosts).
+validator_home="$(mktemp -d "${TMPDIR:-/tmp}/workcell-home.XXXXXX")"
+chmod 0700 "${validator_home}"
 validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"
 

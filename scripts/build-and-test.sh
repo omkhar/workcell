@@ -71,7 +71,13 @@ run_validate_repo_in_validator_snapshot() {
   mkdir -p "${snapshot_parent}"
   validator_uid="$(id -u)"
   validator_gid="$(id -g)"
-  validator_home="/tmp/workcell-home-${validator_uid}"
+  # Use mktemp -d to avoid the predictable /tmp/workcell-home-<uid> path.
+  # On a shared host that name was a planted-symlink target ("symlink to
+  # ~victim/.ssh" before the validator runs) — a TOCTOU surface for any
+  # local user who could write /tmp.  mktemp -d gives an unguessable
+  # directory with mode 0700 and an unpredictable suffix.
+  validator_home="$(mktemp -d "${TMPDIR:-/tmp}/workcell-home.XXXXXX")"
+  chmod 0700 "${validator_home}"
   validator_cache="${validator_home}/.cache"
   validator_tmp="${validator_home}/.tmp"
 
