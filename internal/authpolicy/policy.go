@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
@@ -86,10 +87,12 @@ func init() {
 	}
 }
 
-type PolicySource struct {
-	Path   string
-	SHA256 string
-}
+// PolicySource is an alias for injectionpolicy.PolicySource — the
+// canonical cross-package type.  The injectionpolicy form carries
+// json tags (path/sha256); this package was using the bare uppercase
+// SHA256 form before unification.  Call sites that used `.SHA256`
+// must be renamed to `.Sha256` for the alias to compile.
+type PolicySource = injectionpolicy.PolicySource
 
 func die(message string) error {
 	return fmt.Errorf("%s", message)
@@ -369,7 +372,7 @@ func compositePolicySHA256(policySources []PolicySource) string {
 		b.WriteString("{'path': ")
 		b.WriteString(pythonReprString(source.Path))
 		b.WriteString(", 'sha256': ")
-		b.WriteString(pythonReprString(source.SHA256))
+		b.WriteString(pythonReprString(source.Sha256))
 		b.WriteByte('}')
 	}
 	b.WriteByte(']')
@@ -636,7 +639,7 @@ func loadPolicyBundleWithState(policyPath string, entrypointRoot string, activeS
 	}
 	policySources = append(policySources, PolicySource{
 		Path:   logicalPath,
-		SHA256: sourceSHA,
+		Sha256: sourceSHA,
 	})
 	return merged, policySources, nil
 }

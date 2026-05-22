@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
@@ -109,11 +110,10 @@ var (
 	}()
 )
 
-// PolicySource is the per-policy-file metadata this resolver emits.
-type PolicySource struct {
-	Path   string `json:"path"`
-	Sha256 string `json:"sha256"`
-}
+// PolicySource is an alias for injectionpolicy.PolicySource — the
+// canonical cross-package type.  Kept exported here for callers that
+// have always imported it as authresolve.PolicySource.
+type PolicySource = injectionpolicy.PolicySource
 
 type config struct {
 	policyPath     string
