@@ -1,12 +1,14 @@
 name: Pin Hygiene
 
-# This workflow is the WEEKLY-CRON pin-hygiene lane only.  The
-# per-pull-request pin enforcement runs inside ci.yml::validate via
-# scripts/ci/job-validate.sh, which calls scripts/check-pinned-inputs.sh,
-# scripts/verify-upstream-{codex,claude,gemini}-release.sh, and
-# scripts/update-upstream-pins.sh --check on every PR.  This lane runs
-# the same checks on a schedule so drift gets caught even if PRs do not
-# touch pin files.
+# This workflow is the WEEKLY-CRON pin-hygiene lane.  scripts/ci/job-validate.sh
+# runs scripts/check-pinned-inputs.sh,
+# scripts/verify-upstream-{codex,claude,gemini}-release.sh, and (on the
+# release-preflight profile only) scripts/update-upstream-pins.sh --check.
+# This cron lane catches snapshot/digest drift independently of PR
+# activity.  The full update-upstream-pins --check is intentionally not
+# in the pr-parity profile yet: until that script handles the openssl
+# bootstrap pins atomically with the DEBIAN_SNAPSHOT bump it produces a
+# non-buildable Dockerfile, which would block routine PR work.
 
 on:
   schedule:

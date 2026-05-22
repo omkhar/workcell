@@ -90,12 +90,18 @@ echo "[ci/validate] upstream Claude release"
 echo "[ci/validate] upstream Gemini release"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 
-if [[ "${PROFILE}" == "pr-parity" || "${PROFILE}" == "release-preflight" ]]; then
-  # Mirror the pre-commit hook (.githooks/pre-commit) on every PR run so
-  # a contributor who set WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT=1 to
-  # bypass the local hook still has stale pins caught before merge.  The
-  # weekly pin-hygiene.yml cron remains as a backstop, not the primary
-  # gate.
+if [[ "${PROFILE}" == "release-preflight" ]]; then
+  # Pinned-upstream-refresh status: only on the release-preflight
+  # profile.  The intent was to also run this on pr-parity so a
+  # contributor who set WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT=1 to
+  # bypass the local hook would still get caught before merge, but
+  # update-upstream-pins.sh does not currently rewrite the Dockerfile
+  # bootstrap openssl URL+SHA when DEBIAN_SNAPSHOT advances — the
+  # `--apply` half of the same tool produces a non-buildable Dockerfile
+  # under that drift, so gating PRs on `--check` would block routine
+  # work whenever snapshot drift exists.  The weekly pin-hygiene.yml
+  # cron lane stays as the primary drift-detection surface until
+  # update-upstream-pins.sh handles the bootstrap pins atomically.
   echo "[ci/validate] pinned upstream refresh status"
   "${ROOT_DIR}/scripts/update-upstream-pins.sh" --check
 fi
