@@ -10,9 +10,12 @@ on:
 
 permissions: {}
 
-defaults:
-  run:
-    shell: bash --noprofile --norc -euo pipefail {0}
+# Note: scorecard.yml intentionally does NOT carry a workflow-level
+# `defaults:` block.  The ossf/scorecard-action rejects workflows with
+# global env vars or `defaults`
+# (https://github.com/ossf/scorecard-action#workflow-restrictions), so
+# the strict-bash defaults that every other workflow uses cannot be
+# applied here.  Steps that need strict mode must set it inline.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
