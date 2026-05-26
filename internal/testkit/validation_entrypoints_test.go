@@ -544,6 +544,10 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 		"https://api.github.com/repos/sigstore/cosign/releases/latest",
 		"https://api.github.com/repos/anchore/syft/releases/latest",
 		"https://api.github.com/repos/rhysd/actionlint/releases/latest",
+		"Accept: application/octet-stream",
+		"github_release_asset_api_url",
+		`-D "${headers_file}"`,
+		`curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${location}"`,
 		"https://api.github.com/repos/hadolint/hadolint/releases/latest",
 		"hub.docker.com/v2/repositories/tonistiigi/binfmt/tags",
 		"docker buildx imagetools inspect",
@@ -556,6 +560,15 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+
+	for _, want := range []string{
+		`actionlint_checksums_url="$(github_release_asset_api_url "${actionlint_release_json}" "actionlint_${target_actionlint_version}_checksums.txt")"`,
+		`github_release_asset_get "${actionlint_checksums_url}" |`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("actionlint checksum path in %s does not contain %q", scriptPath, want)
 		}
 	}
 }

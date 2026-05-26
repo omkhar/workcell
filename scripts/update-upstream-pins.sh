@@ -100,6 +100,62 @@ github_release_asset_url() {
   printf '%s\n' "${asset_url}"
 }
 
+github_release_asset_api_url() {
+  local release_json="$1"
+  local asset_name="$2"
+  local asset_url
+  asset_url="$(jq -r --arg asset_name "${asset_name}" '.assets[] | select(.name == $asset_name) | .url' <<<"${release_json}")"
+  if [[ -z "${asset_url}" || "${asset_url}" == "null" ]]; then
+    echo "Unable to resolve release asset ${asset_name}" >&2
+    exit 1
+  fi
+  printf '%s\n' "${asset_url}"
+}
+
+github_release_asset_get() {
+  local url="$1"
+  local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-}}"
+  local body_file=""
+  local headers_file=""
+  local location=""
+  local status=""
+
+  if [[ -n "${token}" ]]; then
+    headers_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-headers.XXXXXX")"
+    body_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-body.XXXXXX")"
+    trap 'rm -f "${headers_file}" "${body_file}"' RETURN
+
+    status="$(curl -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
+      -D "${headers_file}" \
+      -o "${body_file}" \
+      -w '%{http_code}' \
+      -H "Accept: application/octet-stream" \
+      -H "Authorization: Bearer ${token}" \
+      "${url}")"
+    case "${status}" in
+      200)
+        cat "${body_file}"
+        ;;
+      3??)
+        location="$(sed -n 's/^[Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]:[[:space:]]*//p' "${headers_file}" | tail -n 1 | tr -d '\r')"
+        if [[ -z "${location}" ]]; then
+          echo "GitHub release asset redirect did not include a Location header: ${url}" >&2
+          exit 1
+        fi
+        curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${location}"
+        ;;
+      *)
+        echo "Unexpected GitHub release asset response ${status}: ${url}" >&2
+        exit 1
+        ;;
+    esac
+    rm -f "${headers_file}" "${body_file}"
+    trap - RETURN
+    return 0
+  fi
+  curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" -H "Accept: application/octet-stream" "${url}"
+}
+
 github_tag_commit_sha() {
   local repo="$1"
   local tag="$2"
@@ -366,9 +422,9 @@ target_syft_version="$(jq -r '.tag_name' <<<"${syft_release_json}")"
 
 actionlint_release_json="$(github_api_get 'https://api.github.com/repos/rhysd/actionlint/releases/latest')"
 target_actionlint_version="$(jq -r '.tag_name | sub("^v"; "")' <<<"${actionlint_release_json}")"
-actionlint_checksums_url="$(github_release_asset_url "${actionlint_release_json}" "actionlint_${target_actionlint_version}_checksums.txt")"
+actionlint_checksums_url="$(github_release_asset_api_url "${actionlint_release_json}" "actionlint_${target_actionlint_version}_checksums.txt")"
 target_actionlint_sha="$(
-  curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${actionlint_checksums_url}" |
+  github_release_asset_get "${actionlint_checksums_url}" |
     awk '/actionlint_'"${target_actionlint_version}"'_linux_amd64\.tar\.gz$/ { print $1; exit }'
 )"
 
