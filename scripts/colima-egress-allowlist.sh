@@ -230,6 +230,15 @@ validate_endpoint() {
   fi
 }
 
+validate_endpoints() {
+  local endpoints="$1"
+  local endpoint=""
+
+  for endpoint in ${endpoints}; do
+    validate_endpoint "${endpoint}"
+  done
+}
+
 resolve_ips() {
   local host="$1"
   go_runtimeutil resolve-ips "${host}"
@@ -365,9 +374,7 @@ build_allowlist_rules() {
     "sudo ip6tables -A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
   )
 
-  for endpoint in ${endpoints}; do
-    validate_endpoint "${endpoint}"
-  done
+  validate_endpoints "${endpoints}"
 
   initialize_host_tools
 
@@ -420,7 +427,96 @@ fi
 sudo ip6tables -L WORKCELL_EGRESS6 >/dev/null 2>&1 || true
 EOF
   render_clear_plan
-  render_allowlist_plan
+  cat <<'EOF'
+sudo iptables -N WORKCELL_EGRESS 2>/dev/null || true
+sudo iptables -F WORKCELL_EGRESS
+sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS
+sudo iptables -A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+sudo ip6tables -N WORKCELL_EGRESS6 2>/dev/null || true
+sudo ip6tables -F WORKCELL_EGRESS6
+sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6
+sudo ip6tables -A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+resolve_vm_endpoint_ips() {
+  local host="$1"
+  local ip=""
+  local rest=""
+
+  if ! type getent >/dev/null 2>&1; then
+    echo "Missing required VM resolver: getent" >&2
+    return 1
+  fi
+
+  if getent ahosts "${host}" 2>/dev/null | while read -r ip rest; do
+    [[ -n "${ip}" ]] || continue
+    printf '%s\n' "${ip}"
+  done; then
+    return 0
+  fi
+
+  getent hosts "${host}" 2>/dev/null | while read -r ip rest; do
+    [[ -n "${ip}" ]] || continue
+    printf '%s\n' "${ip}"
+  done
+}
+
+add_vm_endpoint_rules() {
+  local endpoint="$1"
+  local host=""
+  local port=""
+  local ip=""
+  local resolved_any=0
+
+  if [[ "${endpoint}" =~ ^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$ ]]; then
+    host="[${BASH_REMATCH[1]}]"
+    port="${BASH_REMATCH[2]}"
+  elif [[ "${endpoint}" =~ ^([^:]+):([0-9]{1,5})$ ]]; then
+    host="${BASH_REMATCH[1]}"
+    port="${BASH_REMATCH[2]}"
+  else
+    echo "Invalid endpoint host: ${endpoint}" >&2
+    exit 1
+  fi
+
+  if [[ "${host}" == \[*\] ]]; then
+    sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d "${host:1:${#host}-2}" --dport "${port}" -j ACCEPT
+    return 0
+  fi
+  if [[ "${host}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    sudo iptables -A WORKCELL_EGRESS -p tcp -d "${host}" --dport "${port}" -j ACCEPT
+    return 0
+  fi
+
+  while IFS= read -r ip; do
+    [[ -n "${ip}" ]] || continue
+    if [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      sudo iptables -A WORKCELL_EGRESS -p tcp -d "${ip}" --dport "${port}" -j ACCEPT
+      resolved_any=1
+      continue
+    fi
+    if [[ "${ip}" == *:* ]]; then
+      sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d "${ip}" --dport "${port}" -j ACCEPT
+      resolved_any=1
+      continue
+    fi
+    echo "Resolver returned invalid IP address: ${ip}" >&2
+    exit 1
+  done < <(resolve_vm_endpoint_ips "${host}")
+
+  if [[ "${resolved_any}" -ne 1 ]]; then
+    echo "Resolver returned no IP addresses for: ${host}" >&2
+    exit 1
+  fi
+}
+EOF
+  printf 'WORKCELL_ENDPOINTS=%q\n' "${ENDPOINTS}"
+  cat <<'EOF'
+for endpoint in ${WORKCELL_ENDPOINTS}; do
+  add_vm_endpoint_rules "${endpoint}"
+done
+sudo iptables -A WORKCELL_EGRESS -j DROP
+sudo ip6tables -A WORKCELL_EGRESS6 -j DROP
+EOF
 }
 
 case "${COMMAND}" in
@@ -442,7 +538,7 @@ case "${COMMAND}" in
       echo "Missing endpoint list for apply" >&2
       exit 1
     }
-    build_allowlist_rules "${ENDPOINTS}"
+    validate_endpoints "${ENDPOINTS}"
     run_in_vm "$(render_allowlist_apply_plan)"
     ;;
   *)
