@@ -308,6 +308,8 @@ func installSyntheticProbeEnv(bundleRoot string, syntheticCodex, syntheticClaude
 	cleanup := func() {
 		if hadHome {
 			_ = os.Setenv("HOME", originalHome)
+		} else {
+			_ = os.Unsetenv("HOME")
 		}
 		if hadExport {
 			_ = os.Setenv("WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE", originalExport)

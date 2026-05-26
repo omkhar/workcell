@@ -11,6 +11,25 @@ through a native control-plane mapping.
 | Claude | Claude Code CLI | `~/.claude/settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, reviewed Bash hook | `claude_auth`, `claude_api_key`, `claude_mcp` | direct staged `claude_auth` and `claude_api_key` are supported; the built-in macOS resolver scaffold remains fail-closed |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, rendered `GEMINI.md`, `.env`, OAuth creds, `projects.json`, trusted folders | `gemini_env`, `gemini_oauth`, `gemini_projects`, `gcloud_adc` | Gemini's own sandbox is not the Tier 1 boundary here; `gcloud_adc` is supplemental to Vertex config |
 
+## Planned provider parity
+
+| Provider | Planned Tier 1 surface | Planned managed control plane | Planned auth input | Support status |
+|---|---|---|---|---|
+| GitHub Copilot CLI | `workcell --agent copilot --workspace ...` | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, `~/.copilot` config, permissions, sessions, logs, plugins, hooks, MCP/LSP state, and reviewed instruction imports | explicit staged token such as `copilot_github_token`, exported only to the managed child as `COPILOT_GITHUB_TOKEN` | roadmap parity track; not current support |
+
+Copilot support must land with the same evidence bar as the current providers:
+adapter baseline, auth/bootstrap explainability, unsafe-argument rejection,
+workspace control-plane masking, quickstart, scenario coverage, and live
+provider certification. Host `~/.copilot`, host keychains, `GH_TOKEN`,
+`GITHUB_TOKEN`, ambient GitHub CLI auth, and whole-home passthrough are not
+acceptable Tier 1 inputs.
+
+GitHub documents Copilot CLI as a terminal agent with interactive and
+programmatic modes, environment-token auth, configurable `COPILOT_HOME`, and
+permissive tool flags such as `--allow-all` and `--yolo`. Workcell treats
+those product surfaces as implementation inputs that must be mapped or blocked
+before support is claimed.
+
 For provider auth maturity and rollout caveats, see
 [docs/injection-policy.md](injection-policy.md) and
 [docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md).
@@ -21,6 +40,11 @@ For provider auth maturity and rollout caveats, see
 - Tier 2: GUI or IDE surface is only a client to that same bounded runtime
 - Tier 3: host-native GUI, cloud, or web-only guidance with no claim of
   equivalent local isolation
+
+Copilot cloud agent, IDE extensions, and host-native Copilot CLI execution are
+Tier 3 unless a future integration makes them clients of the same bounded
+Workcell session plane. The planned support target is the local Copilot CLI
+adapter running inside Tier 1.
 
 Do not force one provider's control model onto another. Keep one shared
 boundary and one thin adapter per product.

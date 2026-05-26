@@ -25,6 +25,13 @@ fi
 
 validator_uid="$(id -u)"
 validator_gid="$(id -g)"
+# GitHub-hosted runners are exclusive per-job, so the /tmp/workcell-home-<uid>
+# planted-symlink TOCTOU surface is not reachable here.  Keep the
+# predictable path for CI to preserve test-fixture stability across
+# scenarios that rely on resolve_workcell_real_home's `synthetic`
+# fallback finding the same path multiple times within one run.  The
+# dev-side build-and-test.sh and verify-release-bundle.sh use mktemp -d
+# because those run on shared developer hosts where the TOCTOU is real.
 validator_home="/tmp/workcell-home-${validator_uid}"
 validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"

@@ -1,0 +1,66 @@
+# Canonical workcell git-config blocklist.
+#
+# This file is the single source of truth for the per-key/per-pattern
+# git-config bypass denylist that the in-container git wrapper and the
+# in-container LD_PRELOAD exec guard both enforce.  The two enforcement
+# points use the same logical names but historically maintained their
+# own copies; this file pins them together.
+#
+# Two enforcement consumers:
+#
+#   - runtime/container/bin/git
+#     bash case statement in git_config_key_is_blocked() — drops keys
+#     via early-exit at the wrapper level.
+#
+#   - runtime/container/rust/src/lib.rs
+#     git_config_key_is_blocked() — blocks at exec syscall interception
+#     inside libworkcell_exec_guard.so.
+#
+# An invariant check in scripts/verify-invariants.sh asserts every key
+# named below appears in both sources, and that neither source contains
+# extra keys not listed here.  Adding a key requires editing one place
+# (this file); the invariant check will refuse a merge that leaves any
+# of the three sources out of sync.
+#
+# Keys (exact, case-insensitive) and patterns are case-insensitive at
+# the consumer.  The Rust side preserves the case of the input but the
+# match itself is via to_ascii_lowercase; the bash side uses ${var,,}
+# (bash 4+ lowercase expansion).  Adding a key with uppercase letters
+# here is OK — the canonical form for parity checking is the lower-case
+# representation.
+
+# Exact-match keys.  Each entry must compare equal (case-insensitive)
+# to the full git-config key before the optional `=value` suffix.
+keys = [
+  "core.askpass",
+  "core.editor",
+  "core.fsmonitor",
+  "core.hookspath",
+  "core.pager",
+  "core.sshcommand",
+  "core.worktree",
+  "credential.helper",
+  "diff.external",
+  "include.path",
+  "sequence.editor",
+]
+
+# Prefix+suffix patterns.  A key matches if it starts with `prefix`
+# (case-insensitive) AND ends with `suffix` (case-insensitive).  Used
+# for the per-host credential helper and the conditional-include path
+# entries that git supports as `credential.<host>.helper` and
+# `includeif.<condition>.path`.
+[[prefix_suffix_patterns]]
+prefix = "credential."
+suffix = ".helper"
+
+[[prefix_suffix_patterns]]
+prefix = "includeif."
+suffix = ".path"
+
+# Prefix-only patterns.  A key matches if it starts with `prefix`
+# (case-insensitive) and has at least one character after it.  Used for
+# the `pager.<command>` family, where any subcommand-specific pager
+# override is blocked.
+[[prefix_patterns]]
+prefix = "pager."

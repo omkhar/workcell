@@ -23,6 +23,10 @@ fi
 
 validator_uid="$(id -u)"
 validator_gid="$(id -g)"
+# GitHub-hosted runners are exclusive per-job, so the planted-symlink
+# TOCTOU surface that motivates mktemp in scripts/build-and-test.sh is
+# not reachable here.  Keep the predictable path for CI to preserve
+# test-fixture stability across scenarios.
 validator_home="/tmp/workcell-home-${validator_uid}"
 validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"

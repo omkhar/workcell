@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -20,7 +21,7 @@ import (
 	"syscall"
 
 	"github.com/omkhar/workcell/internal/adapters"
-	"github.com/omkhar/workcell/internal/adapters/gemini"
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/tomlsubset"
@@ -73,7 +74,7 @@ var (
 	credentialContainerPaths  = adapters.CredentialContainerPaths()
 	agentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
 	sharedCredentialKeys      = adapters.SharedCredentialKeys()
-	googleAuthEndpoints       = gemini.GoogleAuthEndpoints
+	googleAuthEndpoints       = adapters.GeminiGoogleAuthEndpoints
 	vertexEndpoint            = "aiplatform.googleapis.com:443"
 	geminiProjectKeys         = []string{
 		"GOOGLE_CLOUD_PROJECT",
@@ -109,10 +110,11 @@ var (
 	}
 )
 
-type PolicySource struct {
-	Path   string `json:"path"`
-	Sha256 string `json:"sha256"`
-}
+// PolicySource is an alias for injectionpolicy.PolicySource — the
+// canonical cross-package type.  Kept exported here for callers that
+// have always imported it as injection.PolicySource; new code should
+// reach for injectionpolicy.PolicySource directly.
+type PolicySource = injectionpolicy.PolicySource
 
 func ValidateRenderAgentMode(agent, mode string) error {
 	if _, ok := supportedAgents[agent]; !ok {
@@ -172,11 +174,16 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 		return err
 	}
 
+	policySHA, err := effectivePolicySHA256(policySources, Path(resolvedOutputRoot), renderedDocuments, renderedCopies, renderedCredentials, renderedSSH)
+	if err != nil {
+		return fmt.Errorf("compute effective policy sha256: %w", err)
+	}
+
 	manifest := map[string]any{
 		"version": 1,
 		"metadata": map[string]any{
 			"policy_entrypoint":   policyEntrypoint,
-			"policy_sha256":       effectivePolicySHA256(policySources, Path(resolvedOutputRoot), renderedDocuments, renderedCopies, renderedCredentials, renderedSSH),
+			"policy_sha256":       policySHA,
 			"policy_sources":      policySources,
 			"credential_keys":     sortedStringKeysMap(renderedCredentials),
 			"extra_endpoints":     deriveCredentialExtraEndpoints(renderedCredentials),
@@ -226,7 +233,7 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 		return nil, nil, err
 	}
 	resolved := Path(resolvedPolicyPath)
-	if containsPath(activeStack, resolved) {
+	if slices.Contains(activeStack, resolved) {
 		cycle := append(append([]Path{}, activeStack...), resolved)
 		parts := make([]string, 0, len(cycle))
 		for _, p := range cycle {
@@ -290,7 +297,7 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 		sources = append(sources, includedSources...)
 	}
 
-	currentPolicy := cloneMap(loaded)
+	currentPolicy := maps.Clone(loaded)
 	delete(currentPolicy, "includes")
 	if len(activeStack) > 0 {
 		currentPolicy = rebasePolicyFragment(currentPolicy, resolved.Parent())
@@ -298,9 +305,13 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 	if err := mergePolicyFragment(merged, currentPolicy, resolved); err != nil {
 		return nil, nil, err
 	}
+	sourceSHA, err := policySHA256(resolved.String())
+	if err != nil {
+		return nil, nil, err
+	}
 	sources = append(sources, PolicySource{
 		Path:   logicalPolicyPath(resolved, entrypointRoot),
-		Sha256: policySHA256(resolved.String()),
+		Sha256: sourceSHA,
 	})
 	return merged, sources, nil
 }
@@ -451,12 +462,10 @@ func renderCopies(policy map[string]any, outputRoot, policyDir Path, agent, mode
 			if err := validateSecretTree(sourceValue, "copies.source"); err != nil {
 				return nil, err
 			}
-			kind = func() string {
-				if sourceValue.IsDir() {
-					return "dir"
-				}
-				return "file"
-			}()
+			kind = "file"
+			if sourceValue.IsDir() {
+				kind = "dir"
+			}
 			renderedSource = directMountEntry(sourceValue, mountPath)
 		} else {
 			kind, err = copySource(sourceValue, outputRoot.Join(relpath))
@@ -1469,10 +1478,14 @@ func effectivePolicySHA256(
 	renderedCopies []map[string]any,
 	renderedCredentials map[string]map[string]string,
 	renderedSSH map[string]any,
-) string {
+) (string, error) {
 	documents := map[string]string{}
 	for _, key := range sortedStringKeys(renderedDocuments) {
-		documents[key] = pathMaterialSHA256(outputRoot.Join(renderedDocuments[key]))
+		hash, err := pathMaterialSHA256(outputRoot.Join(renderedDocuments[key]))
+		if err != nil {
+			return "", fmt.Errorf("hash document %q: %w", key, err)
+		}
+		documents[key] = hash
 	}
 	copies := make([]map[string]any, 0, len(renderedCopies))
 	for _, entry := range renderedCopies {
@@ -1481,26 +1494,42 @@ func effectivePolicySHA256(
 		switch value := renderedSource.(type) {
 		case string:
 			sourcePath = outputRoot.Join(value)
+		case map[string]string:
+			// directMountEntry (used for "secret" classification copies)
+			// returns map[string]string; the type switch must match it
+			// explicitly — historically a silent miss here produced
+			// sha256="" in the manifest for every secret copy.
+			if hostSource, ok := value["source"]; ok {
+				sourcePath = Path(hostSource)
+			}
 		case map[string]any:
 			if hostSource, ok := value["source"].(string); ok {
 				sourcePath = Path(hostSource)
 			}
+		}
+		hash, err := pathMaterialSHA256(sourcePath)
+		if err != nil {
+			return "", fmt.Errorf("hash copy %v: %w", entry["target"], err)
 		}
 		copies = append(copies, map[string]any{
 			"classification": entry["classification"],
 			"dir_mode":       entry["dir_mode"],
 			"file_mode":      entry["file_mode"],
 			"kind":           entry["kind"],
-			"sha256":         pathMaterialSHA256(sourcePath),
+			"sha256":         hash,
 			"target":         entry["target"],
 		})
 	}
 	credentials := map[string]map[string]any{}
 	for _, key := range sortedStringKeysMap(renderedCredentials) {
 		value := renderedCredentials[key]
+		hash, err := pathMaterialSHA256(Path(value["source"]))
+		if err != nil {
+			return "", fmt.Errorf("hash credential %q: %w", key, err)
+		}
 		credentials[key] = map[string]any{
 			"mount_path": value["mount_path"],
-			"sha256":     pathMaterialSHA256(Path(value["source"])),
+			"sha256":     hash,
 		}
 	}
 	ssh := map[string]any{}
@@ -1510,28 +1539,39 @@ func effectivePolicySHA256(
 		} else {
 			ssh["config_assurance"] = "off"
 		}
-		if config, ok := renderedSSH["config"].(map[string]any); ok {
-			if source, ok := config["source"].(string); ok {
-				ssh["config"] = map[string]any{
-					"mount_path": config["mount_path"],
-					"sha256":     pathMaterialSHA256(Path(source)),
-				}
+		// ssh.config / ssh.known_hosts come from directMountEntry, which
+		// returns map[string]string — historically these missed both
+		// type assertions below and so were never hashed at all.
+		if source, mountPath, ok := sshMountSource(renderedSSH, "config"); ok {
+			hash, err := pathMaterialSHA256(Path(source))
+			if err != nil {
+				return "", fmt.Errorf("hash ssh config: %w", err)
+			}
+			ssh["config"] = map[string]any{
+				"mount_path": mountPath,
+				"sha256":     hash,
 			}
 		}
-		if knownHosts, ok := renderedSSH["known_hosts"].(map[string]any); ok {
-			if source, ok := knownHosts["source"].(string); ok {
-				ssh["known_hosts"] = map[string]any{
-					"mount_path": knownHosts["mount_path"],
-					"sha256":     pathMaterialSHA256(Path(source)),
-				}
+		if source, mountPath, ok := sshMountSource(renderedSSH, "known_hosts"); ok {
+			hash, err := pathMaterialSHA256(Path(source))
+			if err != nil {
+				return "", fmt.Errorf("hash ssh known_hosts: %w", err)
+			}
+			ssh["known_hosts"] = map[string]any{
+				"mount_path": mountPath,
+				"sha256":     hash,
 			}
 		}
 		if identities, ok := renderedSSH["identities"].([]map[string]any); ok {
 			renderedIdentities := make([]map[string]any, 0, len(identities))
 			for _, entry := range identities {
+				hash, err := pathMaterialSHA256(Path(entry["source"].(string)))
+				if err != nil {
+					return "", fmt.Errorf("hash ssh identity %v: %w", entry["target_name"], err)
+				}
 				renderedIdentities = append(renderedIdentities, map[string]any{
 					"mount_path":  entry["mount_path"],
-					"sha256":      pathMaterialSHA256(Path(entry["source"].(string))),
+					"sha256":      hash,
 					"target_name": entry["target_name"],
 				})
 			}
@@ -1540,49 +1580,64 @@ func effectivePolicySHA256(
 			renderedIdentities := make([]map[string]any, 0, len(identities))
 			for _, rawEntry := range identities {
 				entry := rawEntry.(map[string]any)
+				hash, err := pathMaterialSHA256(Path(entry["source"].(string)))
+				if err != nil {
+					return "", fmt.Errorf("hash ssh identity %v: %w", entry["target_name"], err)
+				}
 				renderedIdentities = append(renderedIdentities, map[string]any{
 					"mount_path":  entry["mount_path"],
-					"sha256":      pathMaterialSHA256(Path(entry["source"].(string))),
+					"sha256":      hash,
 					"target_name": entry["target_name"],
 				})
 			}
 			ssh["identities"] = renderedIdentities
 		}
 	}
-	canonical, _ := json.Marshal(map[string]any{
+	canonical, err := json.Marshal(map[string]any{
 		"credentials":    credentials,
 		"copies":         copies,
 		"documents":      documents,
 		"policy_sources": policySources,
 		"ssh":            ssh,
 	})
+	if err != nil {
+		return "", fmt.Errorf("marshal effective policy: %w", err)
+	}
 	sum := sha256.Sum256(canonical)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func pathMaterialSHA256(path Path) string {
+// pathMaterialSHA256 returns a hash that fingerprints the on-disk material
+// at path.  Any I/O error during the walk is propagated; callers MUST refuse
+// to emit a manifest entry when the fingerprint cannot be computed — a
+// silent empty string here previously rounded-tripped as a valid hash and
+// defeated the integrity check the function exists to provide.
+func pathMaterialSHA256(path Path) (string, error) {
 	info, err := os.Lstat(path.String())
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("lstat %s: %w", path, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		target, _ := os.Readlink(path.String())
+		target, err := os.Readlink(path.String())
+		if err != nil {
+			return "", fmt.Errorf("readlink %s: %w", path, err)
+		}
 		sum := sha256.Sum256([]byte("symlink:" + target))
-		return hex.EncodeToString(sum[:])
+		return hex.EncodeToString(sum[:]), nil
 	}
 	if info.Mode().IsRegular() {
 		data, err := os.ReadFile(path.String())
 		if err != nil {
-			return ""
+			return "", fmt.Errorf("read %s: %w", path, err)
 		}
 		sum := sha256.Sum256(data)
-		return hex.EncodeToString(sum[:])
+		return hex.EncodeToString(sum[:]), nil
 	}
 	if info.IsDir() {
 		hasher := sha256.New()
 		hasher.Write([]byte("dir\n"))
 		children := []string{}
-		_ = filepath.WalkDir(path.String(), func(current string, entry fs.DirEntry, err error) error {
+		if err := filepath.WalkDir(path.String(), func(current string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -1591,23 +1646,28 @@ func pathMaterialSHA256(path Path) string {
 			}
 			children = append(children, current)
 			return nil
-		})
+		}); err != nil {
+			return "", fmt.Errorf("walk %s: %w", path, err)
+		}
 		sort.Slice(children, func(i, j int) bool {
 			return filepath.ToSlash(strings.TrimPrefix(children[i], path.String()+string(filepath.Separator))) < filepath.ToSlash(strings.TrimPrefix(children[j], path.String()+string(filepath.Separator)))
 		})
 		for _, child := range children {
 			info, err := os.Lstat(child)
 			if err != nil {
-				return ""
+				return "", fmt.Errorf("lstat %s: %w", child, err)
 			}
 			relative, err := filepath.Rel(path.String(), child)
 			if err != nil {
-				return ""
+				return "", fmt.Errorf("rel %s: %w", child, err)
 			}
 			relative = filepath.ToSlash(relative)
 			switch {
 			case info.Mode()&os.ModeSymlink != 0:
-				target, _ := os.Readlink(child)
+				target, err := os.Readlink(child)
+				if err != nil {
+					return "", fmt.Errorf("readlink %s: %w", child, err)
+				}
 				hasher.Write([]byte("symlink:" + relative + ":" + target + "\n"))
 			case info.IsDir():
 				hasher.Write([]byte("dir:" + relative + "\n"))
@@ -1615,26 +1675,54 @@ func pathMaterialSHA256(path Path) string {
 				hasher.Write([]byte("file:" + relative + "\n"))
 				data, err := os.ReadFile(child)
 				if err != nil {
-					return ""
+					return "", fmt.Errorf("read %s: %w", child, err)
 				}
 				hasher.Write(data)
 				hasher.Write([]byte("\n"))
 			default:
-				return ""
+				return "", fmt.Errorf("unsupported file mode for %s: %s", child, info.Mode())
 			}
 		}
-		return hex.EncodeToString(hasher.Sum(nil))
+		return hex.EncodeToString(hasher.Sum(nil)), nil
 	}
-	return ""
+	return "", fmt.Errorf("unsupported file mode for %s: %s", path, info.Mode())
 }
 
-func policySHA256(policyPath string) string {
+func policySHA256(policyPath string) (string, error) {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read policy %s: %w", policyPath, err)
 	}
 	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// sshMountSource pulls the source + mount_path pair out of the
+// renderedSSH map for either of the directMountEntry-backed keys
+// ("config", "known_hosts").  Those entries are map[string]string, so
+// callers cannot use the map[string]any type assertion that the
+// outer effectivePolicySHA256 code applies to identities.
+func sshMountSource(renderedSSH map[string]any, key string) (source, mountPath string, ok bool) {
+	raw, present := renderedSSH[key]
+	if !present {
+		return "", "", false
+	}
+	switch v := raw.(type) {
+	case map[string]string:
+		s, hasSource := v["source"]
+		if !hasSource {
+			return "", "", false
+		}
+		return s, v["mount_path"], true
+	case map[string]any:
+		s, hasSource := v["source"].(string)
+		if !hasSource {
+			return "", "", false
+		}
+		mp, _ := v["mount_path"].(string)
+		return s, mp, true
+	}
+	return "", "", false
 }
 
 func logicalPolicyPath(policyPath, entrypointRoot Path) string {
@@ -1675,7 +1763,7 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir Path) map[string]an
 				rebasedCopies := make([]any, 0, len(copies))
 				for _, entry := range copies {
 					if entryMap, ok := entry.(map[string]any); ok {
-						rebasedEntry := cloneMap(entryMap)
+						rebasedEntry := maps.Clone(entryMap)
 						if source, ok := rebasedEntry["source"]; ok {
 							rebasedEntry["source"] = rebaseFragmentPath(source, fragmentDir)
 						}
@@ -1689,7 +1777,7 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir Path) map[string]an
 			}
 		case "ssh":
 			if ssh, ok := value.(map[string]any); ok {
-				rebasedSSH := cloneMap(ssh)
+				rebasedSSH := maps.Clone(ssh)
 				for _, sshKey := range []string{"config", "known_hosts"} {
 					if sshValue, ok := rebasedSSH[sshKey]; ok {
 						rebasedSSH[sshKey] = rebaseFragmentPath(sshValue, fragmentDir)
@@ -1710,7 +1798,7 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir Path) map[string]an
 				rebasedCredentials := map[string]any{}
 				for credentialKey, credentialValue := range credentials {
 					if credentialMap, ok := credentialValue.(map[string]any); ok {
-						rebasedCredential := cloneMap(credentialMap)
+						rebasedCredential := maps.Clone(credentialMap)
 						if source, ok := rebasedCredential["source"]; ok {
 							rebasedCredential["source"] = rebaseFragmentPath(source, fragmentDir)
 						}
@@ -1918,46 +2006,5 @@ func mapKeysSet(keys []string) map[string]struct{} {
 	return allowed
 }
 
-func cloneMap(values map[string]any) map[string]any {
-	clone := map[string]any{}
-	for key, value := range values {
-		clone[key] = value
-	}
-	return clone
-}
-
-func containsPath(stack []Path, candidate Path) bool {
-	for _, item := range stack {
-		if item == candidate {
-			return true
-		}
-	}
-	return false
-}
-
-type Path string
-
-func (p Path) String() string {
-	return string(p)
-}
-
-func (p Path) Parent() Path {
-	return Path(filepath.Dir(string(p)))
-}
-
-func (p Path) Join(rel string) Path {
-	return Path(filepath.Join(string(p), rel))
-}
-
-func (p Path) Base() string {
-	return filepath.Base(string(p))
-}
-
-func (p Path) IsDir() bool {
-	info, err := os.Stat(string(p))
-	return err == nil && info.IsDir()
-}
-
-func init() {
-	// Keep the regex-free helpers isolated; no init-time side effects.
-}
+// Path lives in path.go.  cloneMap / containsPath were replaced with
+// stdlib maps.Clone / slices.Contains in PR #270.

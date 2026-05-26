@@ -95,16 +95,21 @@ func hasDirPrefix(candidate, prefix string) bool {
 }
 
 // CanonicalizeHostToolPath resolves symlinks the way scripts/workcell
-// canonicalize_host_tool_path did (via `realpath`); when the path is
-// missing it falls back to filepath.Clean so the trust-prefix check
-// runs against a normalized form.
+// canonicalize_host_tool_path did (via `realpath`).  Returns "" on any
+// EvalSymlinks error so the trust-prefix check downstream fails closed
+// — bash `realpath` fails closed too, and a fall-back to `filepath.Clean`
+// would let a planted symlink whose EvalSymlinks fails (broken target,
+// ELOOP, mid-walk EACCES) bypass the canonical-form trust check while
+// the raw-form check still passes against the symlink's containing
+// directory.  Callers (acceptCandidate, ResolveExistingExecutableOrDie)
+// must treat the empty return as "not trusted".
 func CanonicalizeHostToolPath(candidate string) string {
 	if candidate == "" {
 		return ""
 	}
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		return filepath.Clean(candidate)
+		return ""
 	}
 	return resolved
 }

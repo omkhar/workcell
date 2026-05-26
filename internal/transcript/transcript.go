@@ -175,11 +175,32 @@ func isTranscriptPersistenceError(err error) bool {
 	return errors.As(err, &persistErr)
 }
 
+// openLog opens the transcript log at path for write-truncate.  The
+// transcript records stdin and PTY output verbatim — including anything
+// the agent typed — so the path MUST resist symlink-swap attacks from
+// a co-tenant on the host:
+//
+//   - O_NOFOLLOW refuses to follow a symlink planted at the leaf.  A
+//     swap that races the open after a stat/touch check will fail to
+//     open rather than overwrite the symlink target.
+//   - The parent directory is Lstat-checked to refuse a symlink parent
+//     (which would let an attacker redirect transcripts wholesale).
+//
+// This does NOT walk the full parent chain — the operator selects the
+// transcript path and is expected to choose a safe location.  The
+// hardening here is defense-in-depth against a co-tenant racing a
+// known parent, not a general anti-traversal.
 func openLog(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if info, err := os.Lstat(parent); err != nil {
+		return nil, err
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("transcript parent directory is a symlink: %s", parent)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, err
 	}

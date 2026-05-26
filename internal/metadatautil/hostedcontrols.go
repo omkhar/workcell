@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package hostedcontrols
+package metadatautil
 
 import (
 	"bytes"
@@ -925,22 +925,4 @@ func mustStringSlice(value any) ([]string, bool, error) {
 	return result, true, nil
 }
 
-func readJSONFile(path string, target any) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(content, target)
-}
-
-func writeJSONFile(path string, value any) error {
-	content, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	content = append(content, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, content, 0o644)
-}
+// readJSONFile / writeJSONFile live in core.go.

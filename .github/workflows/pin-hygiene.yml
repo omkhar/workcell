@@ -1,9 +1,14 @@
 name: Pin Hygiene
 
-# This workflow is the WEEKLY-CRON pin-hygiene lane only.  The
-# per-pull-request pin enforcement runs inside ci.yml::validate via
-# scripts/ci/job-pin-hygiene.sh and scripts/check-pinned-inputs.sh.  Do
-# not assume this file gates PRs - it only catches scheduled drift.
+# This workflow is the WEEKLY-CRON pin-hygiene lane.  scripts/ci/job-validate.sh
+# runs scripts/check-pinned-inputs.sh,
+# scripts/verify-upstream-{codex,claude,gemini}-release.sh, and (on the
+# release-preflight profile only) scripts/update-upstream-pins.sh --check.
+# This cron lane catches snapshot/digest drift independently of PR
+# activity.  The full update-upstream-pins --check is intentionally not
+# in the pr-parity profile yet: until that script handles the openssl
+# bootstrap pins atomically with the DEBIAN_SNAPSHOT bump it produces a
+# non-buildable Dockerfile, which would block routine PR work.
 
 on:
   schedule:
@@ -11,6 +16,10 @@ on:
   workflow_dispatch:
 
 permissions: {}
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
 
 env:
   WORKCELL_COSIGN_VERSION: v3.0.6
@@ -31,7 +40,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
 

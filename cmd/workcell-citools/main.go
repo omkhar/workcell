@@ -26,9 +26,6 @@ import (
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/metadatautil"
-	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
-	"github.com/omkhar/workcell/internal/metadatautil/pinnedinputs"
-	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
 	"github.com/omkhar/workcell/internal/scenarios"
@@ -177,7 +174,7 @@ func cmdVerifyControlPlaneParity(args []string) error {
 }
 
 func cmdCheckWorkflows(args []string) error {
-	return workflows.CheckWorkflows(args[0], args[1])
+	return metadatautil.CheckWorkflows(args[0], args[1])
 }
 
 func cmdGenerateWorkflowLaneManifest(args []string) error {
@@ -206,11 +203,11 @@ func cmdPlanWorkflowLanes(args []string) error {
 }
 
 func cmdFetchRulesets(args []string) error {
-	return hostedcontrols.FetchRulesets(args[0], args[1])
+	return metadatautil.FetchRulesets(args[0], args[1])
 }
 
 func cmdListHostedControlEnvironments(args []string) error {
-	environments, err := hostedcontrols.EnvironmentNames(args[0])
+	environments, err := metadatautil.EnvironmentNames(args[0])
 	if err != nil {
 		return err
 	}
@@ -221,7 +218,7 @@ func cmdListHostedControlEnvironments(args []string) error {
 }
 
 func cmdVerifyGitHubHostedControls(args []string) error {
-	return hostedcontrols.VerifyGitHubHostedControls(args[0], args[1], args[2])
+	return metadatautil.VerifyGitHubHostedControls(args[0], args[1], args[2])
 }
 
 func cmdExtractDockerfileArg(args []string) error {
@@ -314,7 +311,7 @@ func cmdCheckPinnedInputs(args []string) error {
 	if err != nil {
 		return err
 	}
-	return pinnedinputs.CheckPinnedInputs(pinnedinputs.PinnedInputsConfig{
+	return metadatautil.CheckPinnedInputs(metadatautil.PinnedInputsConfig{
 		RuntimeDockerfilePath:    args[0],
 		ValidatorDockerfilePath:  args[1],
 		ProvidersPackageJSONPath: args[2],

@@ -8,7 +8,9 @@ assignees: ''
 
 ## Describe the bug
 
-A clear description of what the bug is.
+A clear description of what the bug is. For docs or planning issues about a
+roadmap-only provider track (such as the planned GitHub Copilot CLI parity),
+open a feature request instead and reference `docs/scenario-gaps.md`.
 
 ## To reproduce
 

@@ -8,6 +8,7 @@ Workcell workflows.
 - `tested`: covered by repo validation, invariants, smoke, or scenario tests
 - `doc-only`: documented and intentionally supported, but not deeply automated
 - `gap`: recognized coverage gap tracked in `docs/scenario-gaps.md`
+- `planned gap`: roadmap target with no current implementation, tracked in `docs/scenario-gaps.md`
 
 ## Matrix
 
@@ -31,6 +32,7 @@ Workcell workflows.
 | GitHub attestations on tagged releases | tested at release time | `release.yml` publish job |
 | full macOS Colima boundary proof | gap | local certification lane exists, but it is still not repo-required proof |
 | exhaustive live-provider auth UX across all providers | gap | manual provider-e2e path exists, but automation is partial |
+| GitHub Copilot CLI Tier 1 provider parity | planned gap | roadmap and provider docs record the target support bar; no adapter, auth key, quickstart, scenario evidence, or live certification exists yet |
 
 ## Notes
 
@@ -40,4 +42,5 @@ reproducibility, signed publication, and the host-side operator plane. The
 most mature host-side operator surfaces are auth/policy inspection plus
 session inventory, detached control, delete, timeline, export, and
 isolated-workspace remediation. The biggest remaining gaps are local macOS
-boundary proof and deeper end-to-end live-provider coverage.
+boundary proof, deeper end-to-end live-provider coverage, and the planned
+Copilot CLI adapter parity phase.

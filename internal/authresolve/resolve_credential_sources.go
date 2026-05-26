@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
@@ -108,11 +110,10 @@ var (
 	}()
 )
 
-// PolicySource is the per-policy-file metadata this resolver emits.
-type PolicySource struct {
-	Path   string `json:"path"`
-	Sha256 string `json:"sha256"`
-}
+// PolicySource is an alias for injectionpolicy.PolicySource — the
+// canonical cross-package type.  Kept exported here for callers that
+// have always imported it as authresolve.PolicySource.
+type PolicySource = injectionpolicy.PolicySource
 
 type config struct {
 	policyPath     string
@@ -797,7 +798,7 @@ func loadPolicyBundle(policyPath string) (map[string]any, []PolicySource, error)
 }
 
 func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []string, loadedPaths map[string]struct{}) (map[string]any, []PolicySource, error) {
-	if containsPath(activeStack, policyPath) {
+	if slices.Contains(activeStack, policyPath) {
 		cycle := append(append([]string{}, activeStack...), policyPath)
 		return nil, nil, fmt.Errorf("injection policy include cycle detected: %s", strings.Join(cycle, " -> "))
 	}
@@ -853,7 +854,7 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []
 		policySources = append(policySources, includedSources...)
 	}
 
-	currentPolicy := cloneMap(loaded)
+	currentPolicy := maps.Clone(loaded)
 	delete(currentPolicy, "includes")
 	if len(activeStack) > 0 {
 		currentPolicy = rebasePolicyFragment(currentPolicy, filepath.Dir(policyPath))
@@ -861,20 +862,24 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []
 	if err := mergePolicyFragment(merged, currentPolicy, policyPath); err != nil {
 		return nil, nil, err
 	}
+	sourceSHA, err := policySHA256(policyPath)
+	if err != nil {
+		return nil, nil, err
+	}
 	policySources = append(policySources, PolicySource{
 		Path:   logicalPolicyPath(policyPath, entrypointRoot),
-		Sha256: policySHA256(policyPath),
+		Sha256: sourceSHA,
 	})
 	return merged, policySources, nil
 }
 
-func policySHA256(policyPath string) string {
+func policySHA256(policyPath string) (string, error) {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read policy %s: %w", policyPath, err)
 	}
 	sum := sha256.Sum256(data)
-	return "sha256:" + fmt.Sprintf("%x", sum[:])
+	return "sha256:" + fmt.Sprintf("%x", sum[:]), nil
 }
 
 func validatePolicyInclude(raw any, label, base, entrypointRoot string) (string, error) {
@@ -976,7 +981,7 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir string) map[string]
 						rebasedCopies = append(rebasedCopies, entry)
 						continue
 					}
-					rebasedEntry := cloneMap(entryMap)
+					rebasedEntry := maps.Clone(entryMap)
 					if source, ok := rebasedEntry["source"]; ok {
 						rebasedEntry["source"] = rebaseFragmentPath(source, fragmentDir)
 					}
@@ -987,7 +992,7 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir string) map[string]
 			}
 		case "ssh":
 			if table, ok := value.(map[string]any); ok {
-				rebasedSSH := cloneMap(table)
+				rebasedSSH := maps.Clone(table)
 				for _, sshKey := range []string{"config", "known_hosts"} {
 					if sshValue, ok := rebasedSSH[sshKey]; ok {
 						rebasedSSH[sshKey] = rebaseFragmentPath(sshValue, fragmentDir)
@@ -1016,7 +1021,7 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir string) map[string]
 				rebasedCreds := map[string]any{}
 				for credKey, credValue := range table {
 					if credMap, ok := credValue.(map[string]any); ok {
-						rebasedCred := cloneMap(credMap)
+						rebasedCred := maps.Clone(credMap)
 						if source, ok := rebasedCred["source"]; ok {
 							rebasedCred["source"] = rebaseFragmentPath(source, fragmentDir)
 						}
@@ -1390,23 +1395,6 @@ func resolvePath(raw string) (string, error) {
 		return filepath.Join(resolvedParent, filepath.Base(abs)), nil
 	}
 	return abs, nil
-}
-
-func cloneMap(value map[string]any) map[string]any {
-	clone := make(map[string]any, len(value))
-	for key, val := range value {
-		clone[key] = val
-	}
-	return clone
-}
-
-func containsPath(stack []string, value string) bool {
-	for _, entry := range stack {
-		if entry == value {
-			return true
-		}
-	}
-	return false
 }
 
 func cwd() string {

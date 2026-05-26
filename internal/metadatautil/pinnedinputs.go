@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-package pinnedinputs
+package metadatautil
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/omkhar/workcell/internal/metadatautil"
-	"github.com/omkhar/workcell/internal/metadatautil/hostedcontrols"
-	"github.com/omkhar/workcell/internal/metadatautil/workflows"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 	"gopkg.in/yaml.v3"
 )
@@ -43,35 +39,9 @@ type PinnedInputsConfig struct {
 	MaxDebianSnapshotAgeDays int
 }
 
-var hexDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
-func isHexDigest(value string) bool {
-	return hexDigestPattern.MatchString(value)
-}
-
-func readText(path string) (string, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(content), nil
-}
-
-func mustStringSlice(value any) ([]string, bool, error) {
-	raw, ok := value.([]any)
-	if !ok {
-		return nil, false, nil
-	}
-	result := make([]string, 0, len(raw))
-	for _, item := range raw {
-		s, ok := item.(string)
-		if !ok {
-			return nil, false, errors.New("array value must contain only strings")
-		}
-		result = append(result, s)
-	}
-	return result, true, nil
-}
+// readText, isHexDigest, hexDigestPattern live in core.go.
+// mustStringSlice and requireStringSliceTable live in hostedcontrols.go
+// (canonical post-collapse; same package-internal symbols all consumers share).
 
 func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
@@ -375,7 +345,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requireNoRegistryBootstrapMCP(codexMCPConfigText, cfg.CodexMCPConfigPath); err != nil {
 		return err
 	}
-	if err := metadatautil.CheckProviderBumpPolicy(cfg.ProviderBumpPolicyPath, cfg.RuntimeDockerfilePath, cfg.ProvidersPackageJSONPath); err != nil {
+	if err := CheckProviderBumpPolicy(cfg.ProviderBumpPolicyPath, cfg.RuntimeDockerfilePath, cfg.ProvidersPackageJSONPath); err != nil {
 		return err
 	}
 	if _, _, err := requireRegex(runtimeDockerfile, `curl -fsSL "https://storage\.googleapis\.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/\$\{CLAUDE_VERSION\}/\$\{CLAUDE_PLATFORM\}/claude"`, "Claude native release download URL", cfg.RuntimeDockerfilePath); err != nil {
@@ -780,10 +750,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if strings.Contains(ciWorkflow, "docker/setup-qemu-action@") {
 		return errors.New(".github/workflows/ci.yml must not configure QEMU in CI now that arm64 reproducible builds use a native runner")
 	}
-	if err := workflows.ValidateCIWorkflowPRShapeFlow(ciWorkflow); err != nil {
+	if err := ValidateCIWorkflowPRShapeFlow(ciWorkflow); err != nil {
 		return err
 	}
-	if err := workflows.ValidateMacOSInstallVerificationFlow(ciWorkflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
+	if err := ValidateMacOSInstallVerificationFlow(ciWorkflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})"); err != nil {
 		return err
 	}
 	if !strings.Contains(releaseWorkflow, "cache-binary: false") {
@@ -963,13 +933,13 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		!strings.Contains(releaseWorkflow, "dist/workcell-image.spdx.sigstore.json") {
 		return errors.New(".github/workflows/release.yml must publish direct signature bundles for release artifacts")
 	}
-	if err := workflows.ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
+	if err := ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
 		return err
 	}
-	if err := workflows.ValidateMacOSInstallVerificationFlow(releaseWorkflow, ".github/workflows/release.yml", "workcell-release-install-candidate", "name: Release install verification (${{ matrix.runner_label }})"); err != nil {
+	if err := ValidateMacOSInstallVerificationFlow(releaseWorkflow, ".github/workflows/release.yml", "workcell-release-install-candidate", "name: Release install verification (${{ matrix.runner_label }})"); err != nil {
 		return err
 	}
-	if err := workflows.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
+	if err := ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
 		return err
 	}
 	if strings.Contains(releaseWorkflow, "steps.build.outputs.digest") {
@@ -993,7 +963,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if !strings.Contains(releaseWorkflow, "environment:\n      name: hosted-controls-audit") {
 		return errors.New(".github/workflows/release.yml release preflight must bind to the hosted-controls-audit environment")
 	}
-	if err := workflows.ValidateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
+	if err := ValidateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
 		return err
 	}
 	hostedControlsWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "hosted-controls.yml"))
@@ -1087,10 +1057,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if releaseMode != "review-gated" && releaseMode != "single-owner-public" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
 		return errors.New("policy/github-hosted-controls.toml must set release_environment.mode to 'review-gated', 'single-owner-public', 'single-owner-private', or 'plan-limited-private'")
 	}
-	if err := hostedcontrols.ValidateCanonicalRepositoryVariables(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
+	if err := ValidateCanonicalRepositoryVariables(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
 		return err
 	}
-	if err := hostedcontrols.ValidateCanonicalWorkflowEnvironments(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
+	if err := ValidateCanonicalWorkflowEnvironments(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
 		return err
 	}
 	for _, needle := range []string{
@@ -1115,26 +1085,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	}
 	return nil
-}
-
-func requireStringSliceTable(root map[string]any, tableName, key, sourcePath string) ([]string, error) {
-	table, ok := root[tableName].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
-	}
-	values, ok, err := mustStringSlice(table[key])
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
-	}
-	for _, value := range values {
-		if strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
-		}
-	}
-	return values, nil
 }
 
 func IsSafePullRequestTargetWorkflow(workflowText, workflowPath string) error {

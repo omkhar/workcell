@@ -85,6 +85,10 @@ workcell auth set \
   --source /Users/example/.config/workcell/gemini.env
 ```
 
+GitHub Copilot CLI is not a supported agent yet. Do not configure
+`--agent copilot`, `copilot_github_token`, or host `~/.copilot` state until the
+Copilot adapter support phase lands with matching docs and certification.
+
 Check the host-side view at any time:
 
 ```bash
@@ -132,6 +136,10 @@ workcell --agent codex --agent-autonomy prompt --workspace /path/to/repo
 - [Codex quickstart](examples/quickstart-codex.md)
 - [Claude quickstart](examples/quickstart-claude.md)
 - [Gemini quickstart](examples/quickstart-gemini.md)
+
+There is no Copilot quickstart in current releases. Copilot CLI is a planned
+Tier 1 parity provider and will get a quickstart only when support is
+implemented and certified.
 
 For team rollout patterns on today's local-first product, see
 [Enterprise rollout today](enterprise-rollout.md).

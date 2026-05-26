@@ -232,10 +232,12 @@ Ignore
 .I ~/.config/workcell/injection-policy.toml
 for this launch even if it exists.
 .TP
-.B --ui cli|gui
-Select the surface to launch. Only
-.BR cli
-is currently implemented as a preserved-boundary path.
+.B --ui cli
+Select the surface to launch. Current releases only accept
+.BR cli ;
+the
+.BR gui
+value is a planned roadmap surface and is not yet implemented.
 .TP
 .B --mode strict|development|build|breakglass
 Select the runtime profile. The default is

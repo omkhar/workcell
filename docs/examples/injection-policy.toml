@@ -7,6 +7,9 @@ codex = "/Users/example/.config/workcell/codex-extra.md"
 claude = "/Users/example/.config/workcell/claude-extra.md"
 gemini = "/Users/example/.config/workcell/gemini-extra.md"
 
+# Copilot CLI is intentionally omitted from every `providers` list below
+# until its adapter support lands.
+
 [credentials]
 codex_auth = "/Users/example/.codex/auth.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"

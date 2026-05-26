@@ -8,7 +8,8 @@ Workcell runs coding agents inside a bounded local runtime on Apple Silicon
 macOS: a dedicated Colima VM plus a hardened container inside that VM. It ships
 Tier 1 adapters for Codex, Claude Code, and Gemini that seed each provider's
 native control plane without pretending provider config is the security
-boundary.
+boundary. GitHub Copilot CLI is the next committed Tier 1 provider-parity
+track, but current releases do not support `--agent copilot`.
 
 This project is for teams that want local agent velocity without turning the
 host home directory, keychain, provider state, or local sockets into the trust
@@ -49,6 +50,9 @@ boundary.
   certification-only
 - CLI surfaces for Codex, Claude, and Gemini plus host-side detached session
   control and inspection commands
+- GitHub Copilot CLI is planned for the same Tier 1 adapter support bar as the
+  current providers; it is not launch-ready until the adapter, auth path,
+  quickstart, deterministic evidence, and live certification land together
 - GitHub-hosted CI verifies repo shape, reproducibility, release posture, and
   secretless runtime behavior
 - GitHub-hosted CI continuously verifies bundle install/uninstall and Homebrew
@@ -201,6 +205,11 @@ Workcell can stage:
 It does not support whole-home passthrough, arbitrary environment-variable
 secret injection, or host socket forwarding on the safe path.
 
+Copilot CLI credentials and `~/.copilot` state are not supported inputs yet.
+The planned Copilot adapter must use an explicit staged credential, session-local
+Copilot home and cache paths, and reviewed GitHub-token handling before it can
+join the supported provider set.
+
 See [docs/injection-policy.md](docs/injection-policy.md) and
 [docs/examples/injection-policy.toml](docs/examples/injection-policy.toml).
 The by-provider bootstrap tiers and handoffs live in
@@ -213,6 +222,12 @@ The by-provider bootstrap tiers and handoffs live in
 | Codex | CLI | `~/.codex/config.toml`, `AGENTS.md`, rules, MCP config | [docs/examples/quickstart-codex.md](docs/examples/quickstart-codex.md) |
 | Claude | Claude Code CLI | `~/.claude/settings.json`, `CLAUDE.md`, `.mcp.json`, auth mirrors, hooks, host-side macOS auth resolver scaffold | [docs/examples/quickstart-claude.md](docs/examples/quickstart-claude.md) |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, `GEMINI.md`, `.env`, `projects.json` | [docs/examples/quickstart-gemini.md](docs/examples/quickstart-gemini.md) |
+
+Planned provider parity:
+
+| Provider | Target surface | Required before support |
+|---|---|---|
+| GitHub Copilot CLI | planned Tier 1 CLI adapter; not current support | `--agent copilot`, explicit token staging, session-local `COPILOT_HOME` and `COPILOT_CACHE_HOME`, unsafe-argument policy, quickstart, deterministic tests, and live `copilot -p` certification |
 
 GUI and IDE surfaces are lower assurance unless they act only as clients to
 the same bounded runtime.
@@ -228,13 +243,21 @@ Workcell uses two terms throughout the docs:
 - `Tier 1`: a provider CLI running fully inside the bounded Workcell runtime
 - `strict`: the default managed Tier 1 runtime mode
 
-| Path | Intended use | Key properties |
+`--mode` selects one of four lanes:
+
+| `--mode` | Intended use | Key properties |
 |---|---|---|
 | `strict` | default provider lane | bounded VM plus container, reviewed network posture, repo control-plane masking, provider-focused entrypoint, `--agent-autonomy yolo` by default |
-| `strict --container-mutability readonly` | strongest managed lane | package-manager writes blocked; no package-mutation downgrade |
 | `development` | managed interactive development lane | same boundary and masking as `strict`, managed non-provider command execution, broader dependency egress, visibly lower assurance than `strict` |
 | `build` | image preparation and dependency refresh | broader egress for rebuild and preparation work |
 | `breakglass` | explicit higher-trust debugging path | requires `--ack-breakglass`; visibly lower assurance |
+
+`--container-mutability` is orthogonal to `--mode`: `ephemeral` (the
+default) allows package-manager mutations and labels the session
+`managed-mutable`, while `readonly` blocks package-manager writes and
+gives the strongest managed posture available — `--mode strict
+--container-mutability readonly` is the lane to pick when no
+lower-assurance downgrade is acceptable.
 
 Other defaults that matter:
 
@@ -343,6 +366,8 @@ Tagged releases are rebuilt and verified before publication. The release path:
   targets the newest two GitHub-hosted Apple Silicon macOS runner labels
 - refuses to publish if any reviewed provider, Linux base image, Linux
   toolchain, or release-build pin is behind the latest tracked upstream
+- adds Copilot upstream pin verification only after Copilot becomes a supported
+  provider adapter
 - publishes from the archived source bundle rather than the live checkout
 - gates publication on bundle and Homebrew install verification on
   GitHub-hosted Apple Silicon `macos-26` and `macos-15`
@@ -403,7 +428,8 @@ See [docs/provenance.md](docs/provenance.md) and
 
 - `runtime/`: VM and container boundary implementation
 - `policy/`: shared contract layer and hosted-control policy
-- `adapters/`: provider-native baselines for Codex, Claude, and Gemini
+- `adapters/`: provider-native baselines for Codex, Claude, and Gemini; the
+  Copilot baseline joins here only when its adapter support lands
 - `cmd/`: host-side and runtime-side Go entrypoints (the `workcell-*` binaries)
 - `internal/`: shared Go packages backing the `cmd/` binaries
 - `scripts/`: launcher, validation, release, audit, and bootstrap entrypoints

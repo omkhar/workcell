@@ -17,9 +17,17 @@ on:
 
 permissions: {}
 
+# GitHub's default bash invocation gives `-eo pipefail` but leaves `-u`
+# off; explicit strict mode here matches scripts/lib/trusted-entrypoint.sh
+# and prevents an unset-variable expansion from silently no-op-ing a
+# CI step.
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 env:
-  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5
-  WORKCELL_BUILDX_VERSION: v0.34.0
+  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+  WORKCELL_BUILDX_VERSION: v0.34.1
   WORKCELL_COSIGN_VERSION: v3.0.6
   WORKCELL_QEMU_IMAGE: tonistiigi/binfmt:qemu-v10.2.1-65@sha256:d3b963f787999e6c0219a48dba02978769286ff61a5f4d26245cb6a6e5567ea3
 
@@ -62,7 +70,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
 
@@ -80,6 +88,12 @@ jobs:
         env:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_MODE: gha
+          # Segregate the gha cache scope: PR runs write to a PR-keyed
+          # scope, push-to-main writes to validator-main.  build-validator-image.sh
+          # also reads validator-main as a base for PR builds.  mode=max
+          # is gated on push events so PRs cannot poison the trusted scope.
+          WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('validator-pr-{0}', github.event.pull_request.number) || 'validator-main' }}
+          WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE: ${{ github.event_name == 'push' && 'max' || 'min' }}
           WORKCELL_CI_INSTALL_ARTIFACT_DIR: dist/release-install
           WORKCELL_CI_ARCHIVE_REF: ${{ github.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -92,6 +106,7 @@ jobs:
           path: |
             dist/release-install/workcell-ci-${{ github.sha }}.tar.gz
             dist/release-install/workcell.rb
+            dist/release-install/SHA256SUMS
           retention-days: 7
 
   container-smoke:
@@ -131,6 +146,19 @@ jobs:
         with:
           name: workcell-ci-install-candidate
           path: dist/install
+
+      - name: Verify install bundle checksum
+        # The validate job produced SHA256SUMS over the bundle; the
+        # checksum check here makes a flaky upload (or any future
+        # third-job mutation to the artifact) a hard error before we
+        # extract or install.  Use `shasum -a 256 -c` rather than
+        # `sha256sum -c`: the install-verification matrix runs on
+        # macos-26 and macos-15, neither of which ships sha256sum
+        # (coreutils is not pre-installed), but both ship shasum.  The
+        # SHA256SUMS line format is identical between the two tools.
+        run: |
+          test -f dist/install/SHA256SUMS
+          (cd dist/install && shasum -a 256 -c SHA256SUMS)
 
       - name: Verify release bundle installer
         env:
