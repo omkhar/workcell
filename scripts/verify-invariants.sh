@@ -2706,6 +2706,20 @@ for dockerfile in \
     echo "Expected ${dockerfile} to pin apt HTTPS timeout for snapshot fetch resilience" >&2
     exit 1
   fi
+  if ! rg -q 'for attempt in 1 2 3; do' "${dockerfile}" ||
+    ! rg -q 'rm -f "\$\{output\}";' "${dockerfile}" ||
+    ! rg -q 'sleep "\$\(\(attempt \* 5\)\)";' "${dockerfile}"; then
+    echo "Expected ${dockerfile} snapshot TLS bootstrap downloads to retry and discard partial packages" >&2
+    exit 1
+  fi
+  if ! rg -q 'fetch_snapshot_bootstrap_package "\$\{openssl_url\}" /tmp/workcell-bootstrap-openssl\.deb' "${dockerfile}" ||
+    ! rg -q '&& echo "\$\{openssl_sha256\}  /tmp/workcell-bootstrap-openssl\.deb" \| sha256sum -c -' "${dockerfile}" ||
+    ! rg -q '&& fetch_snapshot_bootstrap_package "\$\{ca_url\}" /tmp/workcell-bootstrap-ca-certificates\.deb' "${dockerfile}" ||
+    ! rg -q '&& echo "\$\{ca_sha256\}  /tmp/workcell-bootstrap-ca-certificates\.deb" \| sha256sum -c -' "${dockerfile}" ||
+    ! rg -q '&& dpkg -i /tmp/workcell-bootstrap-openssl\.deb /tmp/workcell-bootstrap-ca-certificates\.deb' "${dockerfile}"; then
+    echo "Expected ${dockerfile} snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps" >&2
+    exit 1
+  fi
 done
 
 for dockerfile in \
