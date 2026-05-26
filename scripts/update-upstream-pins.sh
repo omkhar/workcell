@@ -321,13 +321,29 @@ latest_debian_snapshot() {
     stamp="$(date_stamp_for_offset "${offset}")"
     if curl -fsSI "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" >/dev/null &&
       curl -fsSI "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" >/dev/null &&
-      curl -fsSI "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release" >/dev/null; then
+      curl -fsSI "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release" >/dev/null &&
+      debian_snapshot_has_bootstrap_packages "${stamp}"; then
       printf '%s\n' "${stamp}"
       return
     fi
   done
-  echo "Unable to resolve a recent Debian snapshot for trixie/trixie-updates/trixie-security" >&2
+  echo "Unable to resolve a recent Debian snapshot for trixie/trixie-updates/trixie-security with bootstrap packages" >&2
   exit 1
+}
+
+debian_snapshot_has_bootstrap_packages() {
+  local stamp="$1"
+  local base="https://snapshot.debian.org/archive/debian/${stamp}"
+  local path
+
+  for path in \
+    "pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb" \
+    "pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb" \
+    "pool/main/c/ca-certificates/ca-certificates_20250419_all.deb"; do
+    if ! curl -fsSI "${base}/${path}" >/dev/null 2>&1; then
+      return 1
+    fi
+  done
 }
 
 semver_patch_zero() {

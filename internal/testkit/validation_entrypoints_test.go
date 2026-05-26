@@ -553,6 +553,10 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 		"docker buildx imagetools inspect",
 		"https://snapshot.debian.org/archive/debian/",
 		"https://snapshot.debian.org/archive/debian-security/",
+		"debian_snapshot_has_bootstrap_packages",
+		"openssl_3.5.5-1~deb13u1_amd64.deb",
+		"openssl_3.5.5-1~deb13u1_arm64.deb",
+		"ca-certificates_20250419_all.deb",
 		"scripts/check-pinned-inputs.sh",
 		"UPSTREAM_REFRESH_WORKFLOW_PATH",
 		"current_upstream_refresh_cosign_version",
@@ -569,6 +573,82 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("actionlint checksum path in %s does not contain %q", scriptPath, want)
+		}
+	}
+}
+
+func TestLatestDebianSnapshotRequiresBootstrapPackages(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "update-upstream-pins.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	curlLogPath := filepath.Join(t.TempDir(), "curl.log")
+	code, output := runBashProbe(t, `set -euo pipefail
+`+extractShellFunction(t, script, "latest_debian_snapshot")+`
+`+extractShellFunction(t, script, "debian_snapshot_has_bootstrap_packages")+`
+
+date_stamp_for_offset() {
+  case "$1" in
+    0) printf '%s\n' 20260526T000000Z ;;
+    1) printf '%s\n' 20260525T000000Z ;;
+    2) printf '%s\n' 20260524T000000Z ;;
+    3) printf '%s\n' 20260523T000000Z ;;
+    4) printf '%s\n' 20260522T000000Z ;;
+    5) printf '%s\n' 20260521T000000Z ;;
+    6) printf '%s\n' 20260520T000000Z ;;
+    7) printf '%s\n' 20260519T000000Z ;;
+    8) printf '%s\n' 20260518T000000Z ;;
+    *) printf '%s\n' 20260517T000000Z ;;
+  esac
+}
+
+curl() {
+  local url="${*: -1}"
+  printf '%s\n' "${url}" >>"${WORKCELL_CURL_LOG}"
+  case "${url}" in
+    */dists/trixie/Release | */dists/trixie-updates/Release | */dists/trixie-security/Release)
+      return 0
+      ;;
+    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb | \
+    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb | \
+    */20260518T000000Z/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb)
+      return 0
+      ;;
+    */pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb | \
+    */pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb | \
+    */pool/main/c/ca-certificates/ca-certificates_20250419_all.deb)
+      return 22
+      ;;
+  esac
+  return 1
+}
+
+latest_debian_snapshot
+`, map[string]string{"WORKCELL_CURL_LOG": curlLogPath})
+	if code != 0 {
+		t.Fatalf("probe exit code = %d output=%q", code, output)
+	}
+	if got := strings.TrimSpace(output); got != "20260518T000000Z" {
+		t.Fatalf("latest_debian_snapshot = %q, want 20260518T000000Z", got)
+	}
+
+	curlLog, err := os.ReadFile(curlLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"https://snapshot.debian.org/archive/debian/20260526T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb",
+		"https://snapshot.debian.org/archive/debian/20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb",
+		"https://snapshot.debian.org/archive/debian/20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb",
+		"https://snapshot.debian.org/archive/debian/20260518T000000Z/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb",
+	} {
+		if !strings.Contains(string(curlLog), want) {
+			t.Fatalf("curl log does not contain %q; log=%s", want, curlLog)
 		}
 	}
 }
@@ -593,4 +673,23 @@ func TestPreMergeChecksPinnedUpstreams(t *testing.T) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
 		}
 	}
+}
+
+func extractShellFunction(tb testing.TB, script, name string) string {
+	tb.Helper()
+
+	start := strings.Index(script, name+"() {")
+	if start < 0 {
+		tb.Fatalf("script does not contain shell function %s", name)
+	}
+	lines := strings.Split(script[start:], "\n")
+	var extracted []string
+	for i, line := range lines {
+		extracted = append(extracted, line)
+		if i > 0 && strings.TrimSpace(line) == "}" {
+			return strings.Join(extracted, "\n")
+		}
+	}
+	tb.Fatalf("script shell function %s has no closing brace", name)
+	return ""
 }
