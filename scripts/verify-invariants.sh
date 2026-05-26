@@ -2669,6 +2669,11 @@ if ! rg -q 'docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443' "${ROOT_D
   exit 1
 fi
 
+if ! rg -q 'production\.cloudfront\.docker\.com:443' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on CloudFront" >&2
+  exit 1
+fi
+
 if rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:80 egress" >&2
   exit 1
@@ -2699,6 +2704,20 @@ for dockerfile in \
   fi
   if ! rg -q 'Acquire::https::Timeout "30";' "${dockerfile}"; then
     echo "Expected ${dockerfile} to pin apt HTTPS timeout for snapshot fetch resilience" >&2
+    exit 1
+  fi
+  if ! rg -q 'for attempt in 1 2 3; do' "${dockerfile}" ||
+    ! rg -q 'rm -f "\$\{output\}";' "${dockerfile}" ||
+    ! rg -q 'sleep "\$\(\(attempt \* 5\)\)";' "${dockerfile}"; then
+    echo "Expected ${dockerfile} snapshot TLS bootstrap downloads to retry and discard partial packages" >&2
+    exit 1
+  fi
+  if ! rg -q 'fetch_snapshot_bootstrap_package "\$\{openssl_url\}" /tmp/workcell-bootstrap-openssl\.deb' "${dockerfile}" ||
+    ! rg -q '&& echo "\$\{openssl_sha256\}  /tmp/workcell-bootstrap-openssl\.deb" \| sha256sum -c -' "${dockerfile}" ||
+    ! rg -q '&& fetch_snapshot_bootstrap_package "\$\{ca_url\}" /tmp/workcell-bootstrap-ca-certificates\.deb' "${dockerfile}" ||
+    ! rg -q '&& echo "\$\{ca_sha256\}  /tmp/workcell-bootstrap-ca-certificates\.deb" \| sha256sum -c -' "${dockerfile}" ||
+    ! rg -q '&& dpkg -i /tmp/workcell-bootstrap-openssl\.deb /tmp/workcell-bootstrap-ca-certificates\.deb' "${dockerfile}"; then
+    echo "Expected ${dockerfile} snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps" >&2
     exit 1
   fi
 done
@@ -3719,6 +3738,18 @@ if ! function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.
   echo "Expected dual-stack allowlist apply plan to include render_clear_plan" >&2
   exit 1
 fi
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" 'resolve_vm_endpoint_ips'; then
+  echo "Expected dual-stack allowlist apply plan to resolve hostnames inside the VM before applying rules" >&2
+  exit 1
+fi
+if ! function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" 'getent ahosts'; then
+  echo "Expected dual-stack allowlist apply plan to use VM DNS results for hostname endpoints" >&2
+  exit 1
+fi
+if function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" 'render_allowlist_plan'; then
+  echo "Expected dual-stack allowlist apply plan to avoid host-resolved endpoint rules" >&2
+  exit 1
+fi
 if function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" '^[[:space:]]*clear_rules$'; then
   echo "Expected dual-stack allowlist apply plan to avoid invoking clear_rules during render" >&2
   exit 1
@@ -3741,12 +3772,22 @@ if ! "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" \
   echo "Expected dual-stack allowlist apply path to succeed under the test VM capture hook" >&2
   exit 1
 fi
-if ! grep -q 'sudo iptables -A WORKCELL_EGRESS -p tcp -d 127.0.0.1 --dport 443 -j ACCEPT' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
-  echo "Expected captured dual-stack apply script to include the IPv4 allowlist rule" >&2
+if ! grep -Fq 'WORKCELL_ENDPOINTS=127.0.0.1:443\ \[::1\]:443' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
+  echo "Expected captured dual-stack apply script to preserve the endpoint list for VM-side resolution" >&2
   exit 1
 fi
-if ! grep -q 'sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d ::1 --dport 443 -j ACCEPT' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
-  echo "Expected captured dual-stack apply script to include the IPv6 allowlist rule" >&2
+if ! grep -Fq 'resolve_vm_endpoint_ips()' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
+  echo "Expected captured dual-stack apply script to include the VM-side hostname resolver" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'sudo iptables -A WORKCELL_EGRESS -p tcp -d "${host}" --dport "${port}" -j ACCEPT' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
+  echo "Expected captured dual-stack apply script to preserve IPv4 literal allowlist handling" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d "${host:1:${#host}-2}" --dport "${port}" -j ACCEPT' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
+  echo "Expected captured dual-stack apply script to preserve IPv6 literal allowlist handling" >&2
   exit 1
 fi
 if ! grep -q "COLIMA_HOME=${REAL_HOME}/.colima" "${RUN_IN_VM_CAPTURE_DIR}/apply-default.env"; then
