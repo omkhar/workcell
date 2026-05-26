@@ -2669,6 +2669,11 @@ if ! rg -q 'docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443' "${ROOT_D
   exit 1
 fi
 
+if ! rg -q 'production\.cloudfront\.docker\.com:443' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on CloudFront" >&2
+  exit 1
+fi
+
 if rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:80 egress" >&2
   exit 1
