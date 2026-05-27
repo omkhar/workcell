@@ -2444,6 +2444,15 @@ WORKCELL_REFRESH_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-refresh-harness.sh"
 } >"${WORKCELL_REFRESH_HARNESS}"
 bash "${WORKCELL_REFRESH_HARNESS}"
 
+WORKCELL_RUNTIME_IMAGE_REFRESH_CACHE_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-runtime-image-refresh-cache-harness.sh"
+{
+  printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" remember_profile_runtime_image_for_refresh
+  printf '\n'
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-runtime-image-refresh-cache.sh"
+} >"${WORKCELL_RUNTIME_IMAGE_REFRESH_CACHE_HARNESS}"
+bash "${WORKCELL_RUNTIME_IMAGE_REFRESH_CACHE_HARNESS}"
+
 WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harness.sh"
 {
   printf 'set -euo pipefail\n'
@@ -2554,6 +2563,22 @@ for script in "${HOST_GATE_SCRIPTS[@]}"; do
     exit 1
   fi
 done
+
+publish_temp_probe="$("${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh" --self-temp-root-probe)"
+publish_git_dir="$(git -C "${ROOT_DIR}" rev-parse --absolute-git-dir)"
+if [[ ! -d "${publish_temp_probe}" ]]; then
+  echo "Expected upstream refresh publisher temp-root probe to create a directory" >&2
+  exit 1
+fi
+case "${publish_temp_probe}" in
+  "${publish_git_dir}"/workcell-tmp/workcell-upstream-refresh-probe.*) ;;
+  *)
+    echo "Expected upstream refresh publisher to create disposable PR worktrees under the repository git directory" >&2
+    echo "Found: ${publish_temp_probe}" >&2
+    exit 1
+    ;;
+esac
+rm -rf "${publish_temp_probe}"
 
 if [[ ! -x "${REPO_PRECOMMIT_HOOK}" ]]; then
   echo "Expected executable repo pre-commit hook: ${REPO_PRECOMMIT_HOOK}" >&2

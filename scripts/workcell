@@ -3235,11 +3235,15 @@ remember_profile_runtime_image_for_refresh() {
   PROFILE_REFRESH_EXPECTED_SOURCE_DATE_EPOCH=""
   recorded_image_id="$(profile_image_marker_value "${profile}" image_id || true)"
   [[ -n "${recorded_image_id}" ]] || return 0
+  recorded_source_date_epoch="$(profile_image_marker_value "${profile}" source_date_epoch || true)"
   live_image_id="$(current_profile_image_id "${profile}")"
   if [[ -n "${live_image_id}" ]] && [[ "${live_image_id}" != "${recorded_image_id}" ]]; then
     return 0
   fi
-  recorded_source_date_epoch="$(profile_image_marker_value "${profile}" source_date_epoch || true)"
+  if ! profile_runtime_image_cache_matches "${profile}" "${recorded_image_id}" "${recorded_source_date_epoch}"; then
+    [[ -n "${live_image_id}" ]] || return 0
+    cache_profile_runtime_image "${profile}" "${recorded_image_id}" || return 0
+  fi
   PROFILE_REFRESH_EXPECTED_IMAGE_ID="${recorded_image_id}"
   PROFILE_REFRESH_EXPECTED_SOURCE_DATE_EPOCH="${recorded_source_date_epoch}"
 }
