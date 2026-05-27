@@ -76,6 +76,25 @@ RUN fetch_snapshot_bootstrap_package() { \
   && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
   && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
   && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/99workcell-snapshot \
+  && apt_indexes_have_runtime_packages() { \
+       apt-cache show --no-all-versions \
+       bash \
+       bubblewrap \
+       ca-certificates \
+       curl \
+       fd-find \
+       git \
+       jq \
+       less \
+       openssh-client \
+       passwd \
+       procps \
+       ripgrep \
+       sudo \
+       unzip \
+       util-linux \
+       xz-utils >/dev/null; \
+     } \
   && install_runtime_packages() { \
        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        bash \
@@ -96,12 +115,13 @@ RUN fetch_snapshot_bootstrap_package() { \
        xz-utils \
        && return 0; \
      } \
-  && for attempt in 1 2 3; do \
+  && for attempt in 1 2 3 4 5; do \
        if DEBIAN_FRONTEND=noninteractive apt-get update \
+         && apt_indexes_have_runtime_packages \
          && install_runtime_packages; then \
          break; \
        fi; \
-       if [[ "${attempt}" -eq 3 ]]; then \
+       if [[ "${attempt}" -eq 5 ]]; then \
          exit 1; \
        fi; \
        rm -rf /var/lib/apt/lists/*; \
@@ -205,18 +225,24 @@ COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 
 # hadolint ignore=DL3008
-RUN install_runtime_builder_packages() { \
+RUN apt_indexes_have_runtime_builder_packages() { \
+      apt-cache show --no-all-versions \
+      gcc \
+      libc6-dev >/dev/null; \
+    } \
+  && install_runtime_builder_packages() { \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       gcc \
       libc6-dev \
       && return 0; \
     } \
-  && for attempt in 1 2 3; do \
+  && for attempt in 1 2 3 4 5; do \
        if DEBIAN_FRONTEND=noninteractive apt-get update \
+         && apt_indexes_have_runtime_builder_packages \
          && install_runtime_builder_packages; then \
          break; \
        fi; \
-       if [[ "${attempt}" -eq 3 ]]; then \
+       if [[ "${attempt}" -eq 5 ]]; then \
          exit 1; \
        fi; \
        rm -rf /var/lib/apt/lists/*; \
@@ -266,11 +292,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
       exit 1; \
       ;; \
   esac \
-  && curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" \
-    --retry 5 \
+  && curl --ipv4 -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" \
+    --retry 8 \
     --retry-all-errors \
     --retry-delay 5 \
-    --connect-timeout 20 \
+    --connect-timeout 30 \
     -o /tmp/claude \
   && echo "${CLAUDE_SHA256}  /tmp/claude" | sha256sum -c - \
   && install -m 0755 /tmp/claude /usr/local/libexec/workcell/real/claude \
@@ -303,18 +329,18 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
       ;; \
   esac \
   && if [[ -n "${CODEX_RELEASE_URL}" ]]; then \
-       curl -fsSL "${CODEX_RELEASE_URL}" \
-         --retry 5 \
+       curl --ipv4 -fsSL "${CODEX_RELEASE_URL}" \
+         --retry 8 \
          --retry-all-errors \
          --retry-delay 5 \
-         --connect-timeout 20 \
+         --connect-timeout 30 \
          -o /tmp/codex.tar.gz; \
      else \
-       curl -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${CODEX_ARCH}.tar.gz" \
-         --retry 5 \
+       curl --ipv4 -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${CODEX_ARCH}.tar.gz" \
+         --retry 8 \
          --retry-all-errors \
          --retry-delay 5 \
-         --connect-timeout 20 \
+         --connect-timeout 30 \
          -o /tmp/codex.tar.gz; \
      fi \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
