@@ -100,7 +100,8 @@ If the task is release-bound, also read:
   gate differently once a PR leaves draft.
 - If the task includes merging, re-check review surfaces immediately before
   merge, then follow merged `main` workflows until all repo-owned lanes are
-  green.
+  green. Scope hosted polling to the PR head SHA or merge SHA; historical
+  scheduled failures are triage inputs, not blockers for an unrelated SHA.
 - Do not accept failing repo-owned tests, checks, or workflows as acceptable
   residue. Fix them or explicitly change the claimed guarantee in the same
   review unit.
@@ -122,6 +123,10 @@ If the task is release-bound, also read:
    `./scripts/workcell publish-pr` path for explicit lower-assurance
    non-`main` exceptions or other repo-approved special cases.
 7. Follow repo-owned checks to completion.
+   Prefer required-check polling for merge gating:
+   `gh pr checks <pr-number> --repo <owner/repo> --required --watch`. Use the
+   full check list only as an advisory sweep so skipped non-required lanes do
+   not obscure the merge decision.
 8. If a repo-owned check fails:
    - inspect the failing GitHub Actions logs or PR checks
    - fix the underlying issue locally
@@ -137,7 +142,10 @@ If the task is release-bound, also read:
 12. If merge is part of the task, repeat the review sweep immediately before
     merge, merge, then follow merged `main` workflows until repo-owned lanes
     are green.
-13. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
+13. After merge follow-up, run the aggregate repository readiness gate:
+    `./scripts/check-repo-readiness.sh --repo <owner/repo> --base main`. Use
+    `--watch` when CI or maintenance workflows are still active.
+14. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
     update the relevant repo-local instructions in the same change stream or a
     separate follow-on PR.
 
@@ -163,3 +171,5 @@ Do not call PR work complete while any of these remain true:
 - repo-owned checks are still red or unreviewed
 - review surfaces still contain actionable findings
 - merged `main` workflows still show repo-owned failures for a merge task
+- `./scripts/check-repo-readiness.sh --base main` reports blocked after a
+  merge-everything or cleanup task

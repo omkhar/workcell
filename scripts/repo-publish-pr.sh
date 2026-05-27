@@ -93,6 +93,32 @@ compute_snapshot_tree() {
   printf '%s\n' "${tree_oid}"
 }
 
+compute_worktree_status_sha256() {
+  local workspace="$1"
+
+  "${HOST_GIT_BIN}" -C "${workspace}" status --short --untracked-files=all | shasum -a 256 | awk '{print $1}'
+}
+
+resolve_current_base_ref() {
+  local workspace="$1"
+  local base_branch="$2"
+
+  if "${HOST_GIT_BIN}" -C "${workspace}" remote get-url origin >/dev/null 2>&1; then
+    "${HOST_GIT_BIN}" -C "${workspace}" fetch --no-tags --prune origin "+refs/heads/${base_branch}:refs/remotes/origin/${base_branch}" >/dev/null
+    if "${HOST_GIT_BIN}" -C "${workspace}" rev-parse --verify --quiet "refs/remotes/origin/${base_branch}" >/dev/null; then
+      printf 'refs/remotes/origin/%s\n' "${base_branch}"
+      return 0
+    fi
+  fi
+  if "${HOST_GIT_BIN}" -C "${workspace}" rev-parse --verify --quiet "refs/heads/${base_branch}" >/dev/null; then
+    printf 'refs/heads/%s\n' "${base_branch}"
+    return 0
+  fi
+
+  echo "Could not resolve base branch for parity verification: ${base_branch}" >&2
+  exit 2
+}
+
 verify_pr_parity_evidence() {
   local workspace="$1"
   local snapshot_mode="$2"
@@ -100,6 +126,10 @@ verify_pr_parity_evidence() {
   local evidence_dir=""
   local evidence_path=""
   local expected_tree=""
+  local expected_head=""
+  local expected_status_sha256=""
+  local base_ref=""
+  local base_oid=""
 
   evidence_dir="$("${HOST_GIT_BIN}" -C "${workspace}" rev-parse --absolute-git-dir)/workcell-parity"
   evidence_path="${evidence_dir}/pr-parity.json"
@@ -108,19 +138,34 @@ verify_pr_parity_evidence() {
     echo "Run ./scripts/pre-merge.sh --profile pr-parity first, or use --allow-parity-override with a reason." >&2
     exit 2
   fi
+  base_ref="$(resolve_current_base_ref "${workspace}" "${base_branch}")"
+  base_oid="$("${HOST_GIT_BIN}" -C "${workspace}" rev-parse --verify "${base_ref}")"
   expected_tree="$(compute_snapshot_tree "${workspace}" "${snapshot_mode}")"
+  expected_head="$("${HOST_GIT_BIN}" -C "${workspace}" rev-parse HEAD)"
+  expected_status_sha256="$(compute_worktree_status_sha256 "${workspace}")"
 
+  # shellcheck disable=SC2016
   "${HOST_JQ_BIN}" -e \
     --arg base "${base_branch}" \
+    --arg base_ref "${base_ref}" \
+    --arg base_oid "${base_oid}" \
+    --arg head_oid "${expected_head}" \
+    --arg snapshot "${snapshot_mode}" \
     --arg tree_oid "${expected_tree}" \
+    --arg status_sha256 "${expected_status_sha256}" \
     '
       .version == 1 and
       .profile == "pr-parity" and
       .base_branch == $base and
-      .tree_oid == $tree_oid
+      .base_ref == $base_ref and
+      .base_oid == $base_oid and
+      .head_oid == $head_oid and
+      .snapshot == $snapshot and
+      .tree_oid == $tree_oid and
+      .status_sha256 == $status_sha256
     ' "${evidence_path}" >/dev/null || {
     echo "Local PR-parity evidence does not match the tree being published." >&2
-    echo "Expected base=${base_branch} tree_oid=${expected_tree}." >&2
+    echo "Expected base=${base_branch} base_oid=${base_oid} head_oid=${expected_head} snapshot=${snapshot_mode} tree_oid=${expected_tree}." >&2
     echo "Re-run ./scripts/pre-merge.sh --profile pr-parity before publishing, or use --allow-parity-override with a reason." >&2
     exit 2
   }

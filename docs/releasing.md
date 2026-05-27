@@ -395,7 +395,8 @@ comments are addressed.
 Useful commands:
 
 ```sh
-gh pr checks <pr-number> --repo "${REPO}" --watch
+gh pr checks <pr-number> --repo "${REPO}" --required --watch
+gh pr checks <pr-number> --repo "${REPO}"
 gh pr view <pr-number> --repo "${REPO}" --comments
 ```
 
@@ -446,10 +447,11 @@ Example:
 
 ```sh
 gh run list --repo "${REPO}" --commit <main-commit-sha>
+./scripts/check-repo-readiness.sh --repo "${REPO}" --base main --watch
 ```
 
 Proceed only when every required workflow on the merge commit has completed
-successfully.
+successfully and the repository readiness gate reports `repo_readiness=ready`.
 
 Refresh the local repository so the merged `main` commit is present locally
 before tagging:

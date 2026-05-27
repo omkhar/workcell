@@ -24,6 +24,12 @@ compute_worktree_tree_oid() {
   printf '%s\n' "${tree_oid}"
 }
 
+compute_worktree_status_sha256() {
+  local repo_root="$1"
+
+  git -C "${repo_root}" status --short --untracked-files=all | shasum -a 256 | awk '{print $1}'
+}
+
 FIXTURE="${TMP_DIR}/publish-pr-fixture"
 ORIGIN="${TMP_DIR}/publish-pr-origin.git"
 SHA256_FIXTURE="${TMP_DIR}/publish-pr-sha256-fixture"
@@ -299,12 +305,20 @@ test "${mismatched_parity_rc}" -eq 2
 grep -q 'Local PR-parity evidence does not match the tree being published' <<<"${mismatched_parity_output}"
 
 current_tree_oid="$(compute_worktree_tree_oid "${FIXTURE}")"
+current_head_oid="$(git -C "${FIXTURE}" rev-parse HEAD)"
+current_base_oid="$(git -C "${FIXTURE}" rev-parse refs/remotes/origin/main)"
+current_status_sha256="$(compute_worktree_status_sha256 "${FIXTURE}")"
 cat >"$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-parity.json" <<EOF
 {
   "version": 1,
   "profile": "pr-parity",
   "base_branch": "main",
-  "tree_oid": "${current_tree_oid}"
+  "base_ref": "refs/remotes/origin/main",
+  "base_oid": "${current_base_oid}",
+  "head_oid": "${current_head_oid}",
+  "snapshot": "worktree",
+  "tree_oid": "${current_tree_oid}",
+  "status_sha256": "${current_status_sha256}"
 }
 EOF
 wrapper_dry_run="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \

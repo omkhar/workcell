@@ -5022,19 +5022,54 @@ case "${1-}" in
   log)
     printf '%s\n' "${WORKCELL_FAKE_GIT_EPOCH:-1700000000}"
     ;;
-  rev-parse)
-    if [[ "${2-}" == "--absolute-git-dir" ]]; then
-      printf '%s/.git\n' "${WORKCELL_FAKE_GIT_ROOT}"
-    else
-      echo "unexpected rev-parse invocation: $*" >&2
-      exit 1
-    fi
+	  rev-parse)
+	    if [[ "${2-}" == "--absolute-git-dir" ]]; then
+	      printf '%s/.git\n' "${WORKCELL_FAKE_GIT_ROOT}"
+	    elif [[ "${2-}" == "HEAD" ]]; then
+	      printf '%s\n' "${WORKCELL_FAKE_GIT_HEAD_OID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+	    elif [[ "${2-}" == "--verify" && "${3-}" == "--quiet" ]]; then
+	      case "${4-}" in
+	        refs/remotes/origin/main | refs/heads/main)
+	          printf '%s\n' "${WORKCELL_FAKE_GIT_BASE_OID:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+	          ;;
+	        *)
+	          exit 1
+	          ;;
+	      esac
+	    elif [[ "${2-}" == "--verify" ]]; then
+	      case "${3-}" in
+	        refs/remotes/origin/main | refs/heads/main)
+	          printf '%s\n' "${WORKCELL_FAKE_GIT_BASE_OID:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+	          ;;
+	        *)
+	          echo "unexpected rev-parse --verify invocation: $*" >&2
+	          exit 1
+	          ;;
+	      esac
+	    else
+	      echo "unexpected rev-parse invocation: $*" >&2
+	      exit 1
+	    fi
     ;;
   read-tree)
     ;;
-  write-tree)
-    printf '%s\n' "${WORKCELL_FAKE_GIT_TREE_OID:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeef}"
-    ;;
+	  write-tree)
+	    if [[ -n "${WORKCELL_FAKE_GIT_TREE_SEQUENCE:-}" ]]; then
+	      sequence_index_path="${WORKCELL_FAKE_GIT_ROOT}/.git/workcell-fake-tree-sequence-index"
+	      sequence_index="0"
+	      if [[ -f "${sequence_index_path}" ]]; then
+	        sequence_index="$(cat "${sequence_index_path}")"
+	      fi
+	      mapfile -t sequence_values <<<"${WORKCELL_FAKE_GIT_TREE_SEQUENCE}"
+	      if [[ "${sequence_index}" -ge "${#sequence_values[@]}" ]]; then
+	        sequence_index="$((${#sequence_values[@]} - 1))"
+	      fi
+	      printf '%s\n' "${sequence_values[sequence_index]}"
+	      printf '%s\n' "$((sequence_index + 1))" >"${sequence_index_path}"
+	    else
+	      printf '%s\n' "${WORKCELL_FAKE_GIT_TREE_OID:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeef}"
+	    fi
+	    ;;
   archive)
     tar -C "${WORKCELL_FAKE_GIT_ROOT}" -cf - scripts tests tools
     ;;
@@ -5132,9 +5167,33 @@ for expected in \
   'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64'; do
   grep -q "${expected}" "${PREMERGE_LOG}"
 done
-for expected in '"profile": "pr-parity"' '"base_branch": "main"' '"tree_oid": "1111111111111111111111111111111111111111"'; do
+for expected in \
+  '"profile": "pr-parity"' \
+  '"base_branch": "main"' \
+  '"base_ref": "refs/remotes/origin/main"' \
+  '"base_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+  '"head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+  '"snapshot": "worktree"' \
+  '"tree_oid": "1111111111111111111111111111111111111111"' \
+  '"status_sha256":'; do
   grep -q "${expected}" "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 done
+
+rm -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" \
+  "${PREMERGE_HARNESS_ROOT}/.git/workcell-fake-tree-sequence-index"
+: >"${PREMERGE_LOG}"
+if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
+  WORKCELL_FAKE_GIT_TREE_SEQUENCE=$'3333333333333333333333333333333333333333\n4444444444444444444444444444444444444444' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --allow-dirty >/tmp/workcell-premerge-mutated-tree.out 2>&1; then
+  echo "Expected pre-merge to refuse evidence when validation changes the publishable tree" >&2
+  exit 1
+fi
+grep -q 'validation changed the publishable tree' /tmp/workcell-premerge-mutated-tree.out
+test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
