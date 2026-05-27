@@ -945,6 +945,7 @@ refresh_managed_profile() {
   local message="$1"
 
   echo "${message}" >&2
+  PROFILE_VALIDATED=0
   remember_profile_runtime_image_for_refresh "${COLIMA_PROFILE}"
   stash_profile_audit_log "${COLIMA_PROFILE}"
   reap_stale_profile_processes "${COLIMA_PROFILE}"
@@ -964,6 +965,17 @@ refresh_managed_profile() {
   PROFILE_PREEXISTED=0
   PROFILE_MARKER_WORKSPACE=""
   PROFILE_RUNNING=0
+}
+
+record_validated_profile_state() {
+  mkdir -p "$(profile_target_state_dir "${COLIMA_PROFILE}")" || return
+  restore_profile_audit_log "${COLIMA_PROFILE}" || return
+  ensure_session_audit_state || return
+  printf '%s\n' "${PROFILE_WORKSPACE_ROOT}" >"${PROFILE_MARKER}" || return
+  write_latest_log_pointer "${COLIMA_PROFILE}" debug "${DEBUG_LOG_PATH}" || return
+  write_latest_log_pointer "${COLIMA_PROFILE}" file-trace "${FILE_TRACE_LOG_PATH}" || return
+  write_latest_log_pointer "${COLIMA_PROFILE}" transcript "${AUDIT_TRANSCRIPT_PATH}" || return
+  PROFILE_VALIDATED=1
 }
 
 sanitize_host_docker_env() {
@@ -6143,7 +6155,7 @@ run_runtime_image_build_with_retries() {
   local build_source_date_epoch="$1"
   local build_status=0
   local attempt=1
-  local max_attempts=3
+  local max_attempts=5
   local codex_release_url=""
   local safe_builder_context=""
   local -a build_cmd=()
@@ -6160,6 +6172,7 @@ run_runtime_image_build_with_retries() {
       echo "Retrying the runtime image build for profile ${COLIMA_PROFILE} (attempt ${attempt}/${max_attempts})." >&2
       case "${TARGET_BACKEND}" in
         colima)
+          refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after a failed runtime image build." || return 2
           start_managed_profile || build_status=$?
           if [[ "${build_status}" -eq 0 ]] &&
             ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
@@ -6169,6 +6182,9 @@ run_runtime_image_build_with_retries() {
               ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
               build_status=2
             fi
+          fi
+          if [[ "${build_status}" -eq 0 ]]; then
+            record_validated_profile_state
           fi
           ;;
         docker-desktop)
@@ -8305,14 +8321,7 @@ if [[ "${TARGET_BACKEND}" == "colima" ]]; then
     fi
   fi
 fi
-mkdir -p "$(profile_target_state_dir "${COLIMA_PROFILE}")"
-restore_profile_audit_log "${COLIMA_PROFILE}"
-ensure_session_audit_state
-printf '%s\n' "${PROFILE_WORKSPACE_ROOT}" >"${PROFILE_MARKER}"
-PROFILE_VALIDATED=1
-write_latest_log_pointer "${COLIMA_PROFILE}" debug "${DEBUG_LOG_PATH}"
-write_latest_log_pointer "${COLIMA_PROFILE}" file-trace "${FILE_TRACE_LOG_PATH}"
-write_latest_log_pointer "${COLIMA_PROFILE}" transcript "${AUDIT_TRANSCRIPT_PATH}"
+record_validated_profile_state
 
 if [[ "${TARGET_BACKEND}" == "colima" ]]; then
   export DOCKER_HOST="unix://${COLIMA_STATE_ROOT}/${COLIMA_PROFILE}/docker.sock"

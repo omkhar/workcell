@@ -1,9 +1,11 @@
+# shellcheck shell=bash
 ROOT="$(mktemp -d)"
 COLIMA_PROFILE="refresh-fixture"
 PROFILE_WAS_REFRESHED=0
 PROFILE_PREEXISTED=1
 PROFILE_MARKER_WORKSPACE="bound"
 PROFILE_RUNNING=1
+PROFILE_VALIDATED=1
 
 stash_profile_audit_log() { :; }
 remember_profile_runtime_image_for_refresh() { :; }
@@ -29,3 +31,4 @@ refresh_managed_profile "refreshing fixture profile"
 [[ "${PROFILE_PREEXISTED}" -eq 0 ]]
 [[ -z "${PROFILE_MARKER_WORKSPACE}" ]]
 [[ "${PROFILE_RUNNING}" -eq 0 ]]
+[[ "${PROFILE_VALIDATED}" -eq 0 ]]

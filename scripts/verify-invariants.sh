@@ -2462,6 +2462,19 @@ WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-ti
 } >"${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 bash "${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 
+WORKCELL_RUNTIME_BUILD_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-runtime-build-retry-harness.sh"
+{
+  printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" write_latest_log_pointer
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" record_validated_profile_state
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_runtime_image_build_with_retries
+  printf '\n'
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-runtime-build-retry.sh"
+} >"${WORKCELL_RUNTIME_BUILD_RETRY_HARNESS}"
+bash "${WORKCELL_RUNTIME_BUILD_RETRY_HARNESS}"
+
 if ! rg -q 'run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env' "${ROOT_DIR}/scripts/workcell" ||
   ! rg -q 'GOPATH="\$\{GOPATH\}"' "${ROOT_DIR}/scripts/workcell" ||
   ! rg -q 'GOMODCACHE="\$\{GOMODCACHE\}"' "${ROOT_DIR}/scripts/workcell" ||
