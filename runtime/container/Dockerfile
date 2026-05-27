@@ -33,12 +33,12 @@ RUN fetch_snapshot_bootstrap_package() { \
       local url="$1"; \
       local output="$2"; \
       local attempt=""; \
-      for attempt in 1 2 3; do \
-        if node -e 'const fs = require("fs"); (async () => { const [url, output] = process.argv.slice(1); const response = await fetch(url); if (!response.ok) { throw new Error("unexpected status " + response.status + " for " + url); } const file = fs.createWriteStream(output); for await (const chunk of response.body) { file.write(chunk); } file.end(); await new Promise((resolve, reject) => { file.on("finish", resolve); file.on("error", reject); }); })().catch((error) => { console.error(error.stack || error); process.exit(1); });' "${url}" "${output}"; then \
+      for attempt in 1 2 3 4 5 6 7 8; do \
+        if node --dns-result-order=ipv4first -e 'const fs = require("fs"); (async () => { const [url, output] = process.argv.slice(1); const response = await fetch(url); if (!response.ok) { throw new Error("unexpected status " + response.status + " for " + url); } const file = fs.createWriteStream(output); for await (const chunk of response.body) { file.write(chunk); } file.end(); await new Promise((resolve, reject) => { file.on("finish", resolve); file.on("error", reject); }); })().catch((error) => { console.error(error.stack || error); process.exit(1); });' "${url}" "${output}"; then \
           return 0; \
         fi; \
         rm -f "${output}"; \
-        if [[ "${attempt}" -eq 3 ]]; then \
+        if [[ "${attempt}" -eq 8 ]]; then \
           return 1; \
         fi; \
         sleep "$((attempt * 5))"; \
