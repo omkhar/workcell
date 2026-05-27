@@ -544,6 +544,7 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 		"https://api.github.com/repos/sigstore/cosign/releases/latest",
 		"https://api.github.com/repos/anchore/syft/releases/latest",
 		"https://api.github.com/repos/rhysd/actionlint/releases/latest",
+		`--oauth2-bearer "${token}"`,
 		"Accept: application/octet-stream",
 		"github_release_asset_api_url",
 		`-D "${headers_file}"`,
@@ -574,6 +575,11 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("actionlint checksum path in %s does not contain %q", scriptPath, want)
 		}
+	}
+
+	githubAPIGet := extractShellFunction(t, script, "github_api_get")
+	if strings.Contains(githubAPIGet, `-H "Authorization: Bearer ${token}"`) {
+		t.Fatalf("github_api_get in %s must not follow redirects with a custom GitHub Authorization header", scriptPath)
 	}
 }
 

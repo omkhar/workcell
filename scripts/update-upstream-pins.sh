@@ -77,7 +77,7 @@ github_api_get() {
   if [[ -n "${token}" ]]; then
     curl -fsSL "${CURL_API_GUARDS[@]}" \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer ${token}" \
+      --oauth2-bearer "${token}" \
       "${url}"
     return
   fi
