@@ -25,6 +25,8 @@ signed draft PR through the repo-local parity-enforcing publication wrapper.
 Run this from a clean worktree. The disposable publication workspace is created
 from the latest available tip of the selected base branch, not the caller's
 current feature branch HEAD.
+The disposable publication workspace is placed under the repository git
+directory so local Docker parity jobs can mount it on macOS Colima hosts.
 EOF
 }
 
@@ -66,6 +68,22 @@ compute_patch_sha256() {
   local patch_path="$1"
   shasum -a 256 "${patch_path}" | awk '{print $1}'
 }
+
+make_repo_local_temp_dir() {
+  local purpose="$1"
+  local git_dir=""
+  local temp_parent=""
+
+  git_dir="$(git -C "${ROOT_DIR}" rev-parse --absolute-git-dir)"
+  temp_parent="${git_dir}/workcell-tmp"
+  mkdir -p "${temp_parent}"
+  mktemp -d "${temp_parent}/${purpose}.XXXXXX"
+}
+
+if [[ "${1:-}" == "--self-temp-root-probe" ]]; then
+  make_repo_local_temp_dir "workcell-upstream-refresh-probe"
+  exit 0
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -155,7 +173,7 @@ if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml"* ]]; then
 fi
 
 artifact_root="$(mktemp -d "${TMPDIR:-/tmp}/workcell-upstream-refresh-artifact.XXXXXX")"
-worktree_root="$(mktemp -d "${TMPDIR:-/tmp}/workcell-upstream-refresh.XXXXXX")"
+worktree_root="$(make_repo_local_temp_dir "workcell-upstream-refresh")"
 title_file="$(mktemp "${TMPDIR:-/tmp}/workcell-upstream-refresh-title.XXXXXX")"
 body_file="$(mktemp "${TMPDIR:-/tmp}/workcell-upstream-refresh-body.XXXXXX.md")"
 commit_file="$(mktemp "${TMPDIR:-/tmp}/workcell-upstream-refresh-commit.XXXXXX.txt")"
