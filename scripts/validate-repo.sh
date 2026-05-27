@@ -126,6 +126,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/check-dead-code.sh"
   "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"
   "${ROOT_DIR}/scripts/check-pr-shape.sh"
+  "${ROOT_DIR}/scripts/check-repo-readiness.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/ci-plan.sh"

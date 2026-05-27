@@ -348,7 +348,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := CheckProviderBumpPolicy(cfg.ProviderBumpPolicyPath, cfg.RuntimeDockerfilePath, cfg.ProvidersPackageJSONPath); err != nil {
 		return err
 	}
-	if _, _, err := requireRegex(runtimeDockerfile, `curl -fsSL "https://storage\.googleapis\.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/\$\{CLAUDE_VERSION\}/\$\{CLAUDE_PLATFORM\}/claude"`, "Claude native release download URL", cfg.RuntimeDockerfilePath); err != nil {
+	if _, _, err := requireRegex(runtimeDockerfile, `curl --ipv4 -fsSL "https://storage\.googleapis\.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/\$\{CLAUDE_VERSION\}/\$\{CLAUDE_PLATFORM\}/claude"`, "Claude native release download URL", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
 	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*arm64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`, "arm64 Claude mapping", cfg.RuntimeDockerfilePath); err != nil {

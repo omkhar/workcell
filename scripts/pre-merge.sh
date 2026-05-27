@@ -14,8 +14,14 @@ ALLOW_DIRTY=0
 LOCAL_SNAPSHOT_MODE=""
 LOCAL_INCLUDE_UNTRACKED=0
 LOCAL_KEEP_DIR=0
+PARITY_SNAPSHOT="worktree"
 ORIGINAL_ARGS=("$@")
 LABELS=()
+PARITY_START_TREE_OID=""
+PARITY_START_HEAD_OID=""
+PARITY_START_STATUS_SHA256=""
+PARITY_BASE_REF=""
+PARITY_BASE_OID=""
 
 usage() {
   cat <<EOF
@@ -33,6 +39,8 @@ Options:
   --local-snapshot <mode>   Run from a disposable snapshot: head, index, worktree
   --local-include-untracked Include untracked files with --local-snapshot worktree
   --keep-local-dir          Preserve the local snapshot directory after exit
+  --parity-snapshot <mode>  Publish snapshot recorded in pr-parity evidence:
+                            index or worktree (default: worktree)
   --rebuild-validator       Rebuild the local validator image before validation
   --skip-release-bundle     Skip verify-release-bundle.sh in shared validate runs
   --skip-repro              Skip verify-reproducible-build.sh when selected
@@ -156,6 +164,56 @@ compute_publish_snapshot_tree() {
   printf '%s\n' "${tree_oid}"
 }
 
+compute_worktree_status_sha256() {
+  git -C "${ROOT_DIR}" status --short --untracked-files=all | shasum -a 256 | awk '{print $1}'
+}
+
+resolve_base_ref_for_evidence() {
+  if git -C "${ROOT_DIR}" rev-parse --verify --quiet "refs/remotes/origin/${BASE_BRANCH}" >/dev/null; then
+    printf 'refs/remotes/origin/%s\n' "${BASE_BRANCH}"
+    return 0
+  fi
+  if git -C "${ROOT_DIR}" rev-parse --verify --quiet "refs/heads/${BASE_BRANCH}" >/dev/null; then
+    printf 'refs/heads/%s\n' "${BASE_BRANCH}"
+    return 0
+  fi
+  printf ''
+}
+
+capture_pr_parity_start_state() {
+  [[ "${PROFILE}" == "pr-parity" ]] || return 0
+
+  PARITY_START_TREE_OID="$(compute_publish_snapshot_tree "${PARITY_SNAPSHOT}")"
+  PARITY_START_HEAD_OID="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+  PARITY_START_STATUS_SHA256="$(compute_worktree_status_sha256)"
+  PARITY_BASE_REF="$(resolve_base_ref_for_evidence)"
+  if [[ -n "${PARITY_BASE_REF}" ]]; then
+    PARITY_BASE_OID="$(git -C "${ROOT_DIR}" rev-parse --verify "${PARITY_BASE_REF}")"
+  fi
+}
+
+verify_pr_parity_end_state() {
+  local end_tree_oid=""
+  local end_head_oid=""
+  local end_status_sha256=""
+
+  [[ "${PROFILE}" == "pr-parity" ]] || return 0
+
+  end_tree_oid="$(compute_publish_snapshot_tree "${PARITY_SNAPSHOT}")"
+  end_head_oid="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+  end_status_sha256="$(compute_worktree_status_sha256)"
+
+  if [[ "${end_tree_oid}" != "${PARITY_START_TREE_OID}" ||
+    "${end_head_oid}" != "${PARITY_START_HEAD_OID}" ||
+    "${end_status_sha256}" != "${PARITY_START_STATUS_SHA256}" ]]; then
+    echo "pre-merge validation changed the publishable tree; refusing to write PR-parity evidence." >&2
+    echo "Start head=${PARITY_START_HEAD_OID} tree=${PARITY_START_TREE_OID} status_sha256=${PARITY_START_STATUS_SHA256}" >&2
+    echo "End   head=${end_head_oid} tree=${end_tree_oid} status_sha256=${end_status_sha256}" >&2
+    echo "Inspect the worktree, keep only intentional changes, then rerun validation." >&2
+    exit 2
+  fi
+}
+
 collect_selected_scripts() {
   local plan_json="$1"
 
@@ -188,7 +246,8 @@ write_pr_parity_evidence() {
   local tmp_path=""
   local labels_json="[]"
 
-  tree_oid="$(compute_publish_snapshot_tree worktree)"
+  verify_pr_parity_end_state
+  tree_oid="${PARITY_START_TREE_OID}"
   evidence_dir="$(parity_evidence_dir)"
   evidence_path="${evidence_dir}/pr-parity.json"
   tmp_path="${evidence_path}.tmp"
@@ -201,7 +260,12 @@ write_pr_parity_evidence() {
     --arg profile "${PROFILE}" \
     --arg event "${PLANNER_EVENT}" \
     --arg base "${BASE_BRANCH}" \
+    --arg base_ref "${PARITY_BASE_REF}" \
+    --arg base_oid "${PARITY_BASE_OID}" \
+    --arg head_oid "${PARITY_START_HEAD_OID}" \
+    --arg snapshot "${PARITY_SNAPSHOT}" \
     --arg tree_oid "${tree_oid}" \
+    --arg status_sha256 "${PARITY_START_STATUS_SHA256}" \
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson labels "${labels_json}" \
     --argjson plan "${plan_json}" \
@@ -210,8 +274,13 @@ write_pr_parity_evidence() {
       profile: $profile,
       event: $event,
       base_branch: $base,
+      base_ref: $base_ref,
+      base_oid: $base_oid,
+      head_oid: $head_oid,
+      snapshot: $snapshot,
       labels: $labels,
       tree_oid: $tree_oid,
+      status_sha256: $status_sha256,
       generated_at: $generated_at,
       plan: $plan
     }' >"${tmp_path}"
@@ -349,6 +418,15 @@ while [[ $# -gt 0 ]]; do
       LOCAL_KEEP_DIR=1
       shift
       ;;
+    --parity-snapshot)
+      PARITY_SNAPSHOT="${2-}"
+      [[ -n "${PARITY_SNAPSHOT}" ]] || {
+        echo "Option --parity-snapshot requires a value." >&2
+        usage >&2
+        exit 2
+      }
+      shift 2
+      ;;
     --rebuild-validator)
       REBUILD_VALIDATOR=1
       shift
@@ -377,6 +455,14 @@ case "${PROFILE}" in
   repo-core | pr-parity | release-preflight) ;;
   *)
     echo "Unsupported pre-merge profile: ${PROFILE}" >&2
+    exit 2
+    ;;
+esac
+
+case "${PARITY_SNAPSHOT}" in
+  index | worktree) ;;
+  *)
+    echo "Unsupported parity snapshot: ${PARITY_SNAPSHOT}" >&2
     exit 2
     ;;
 esac
@@ -412,6 +498,7 @@ echo "${plan_json}" | jq -r '
   ] | .[]
 '
 
+capture_pr_parity_start_state
 execute_plan "${plan_json}"
 
 if [[ "${PROFILE}" == "pr-parity" ]]; then
