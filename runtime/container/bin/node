@@ -79,13 +79,6 @@ is_protected_provider_script() {
   return 1
 }
 
-reject_if_protected_provider_path() {
-  if is_protected_provider_script "${1:-}"; then
-    echo "Workcell blocked direct provider script execution via node." >&2
-    exit 2
-  fi
-}
-
 reject_dynamic_node_option() {
   echo "Workcell blocked dynamic Node code-loading option outside provider wrappers." >&2
   exit 2

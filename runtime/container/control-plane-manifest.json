@@ -196,7 +196,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/node",
       "runtime_path": "/usr/local/libexec/workcell/node-wrapper.sh",
-      "sha256": "536ee344d5bf93bcb51473fb8daef08f1019d06f50016e34c28ee00d8ad1e132"
+      "sha256": "24676fb4b7d78fc5cc22ee634ef856b12e1d1fe1b6d90da3c39387d2d4d1527a"
     },
     {
       "kind": "runtime-control-plane",

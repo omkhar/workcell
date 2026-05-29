@@ -333,7 +333,6 @@ done
 require_tool gh
 require_tool git
 require_tool jq
-require_tool shasum
 
 case "${OUTPUT_FORMAT}" in
   text | json) ;;
