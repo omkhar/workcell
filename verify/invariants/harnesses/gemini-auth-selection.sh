@@ -6,11 +6,6 @@ set -x
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-workcell_die() {
-  printf '%s\n' "$*" >&2
-  exit 1
-}
-
 expect_fatal_function_failure() {
   local stdout_path="$1"
   local stderr_path="$2"
