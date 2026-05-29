@@ -370,9 +370,11 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-// resolveExistingDirectoryOrDie mirrors resolve_existing_directory_or_die:
-// canonicalize against WorkspaceRoot, require an existing directory.
-func resolveExistingDirectoryOrDie(ctx *BashContext, rawPath string) (string, error) {
+// resolveAgainstWorkspace canonicalizes rawPath against the BashContext
+// WorkspaceRoot (when relative), cleans it, resolves symlinks best-effort, and
+// stats it. Callers apply their own existence/type policy on the returned
+// (path, info, statErr) so the byte-sensitive diagnostics stay caller-side.
+func resolveAgainstWorkspace(ctx *BashContext, rawPath string) (string, os.FileInfo, error) {
 	resolved := rawPath
 	if !filepath.IsAbs(resolved) && ctx != nil && ctx.WorkspaceRoot != "" {
 		resolved = filepath.Join(ctx.WorkspaceRoot, resolved)
@@ -382,6 +384,13 @@ func resolveExistingDirectoryOrDie(ctx *BashContext, rawPath string) (string, er
 		resolved = eval
 	}
 	info, err := os.Stat(resolved)
+	return resolved, info, err
+}
+
+// resolveExistingDirectoryOrDie mirrors resolve_existing_directory_or_die:
+// canonicalize against WorkspaceRoot, require an existing directory.
+func resolveExistingDirectoryOrDie(ctx *BashContext, rawPath string) (string, error) {
+	resolved, info, err := resolveAgainstWorkspace(ctx, rawPath)
 	if err != nil {
 		return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("Workspace path does not exist: %s\nResolve it to an existing directory, then rerun with --workspace %s", rawPath, resolved)}
 	}
@@ -393,15 +402,7 @@ func resolveExistingDirectoryOrDie(ctx *BashContext, rawPath string) (string, er
 
 // resolveExistingFileOrDie mirrors resolve_existing_file_or_die.
 func resolveExistingFileOrDie(ctx *BashContext, rawPath, label string) (string, error) {
-	resolved := rawPath
-	if !filepath.IsAbs(resolved) && ctx != nil && ctx.WorkspaceRoot != "" {
-		resolved = filepath.Join(ctx.WorkspaceRoot, resolved)
-	}
-	resolved = filepath.Clean(resolved)
-	if eval, err := filepath.EvalSymlinks(resolved); err == nil {
-		resolved = eval
-	}
-	info, err := os.Stat(resolved)
+	resolved, info, err := resolveAgainstWorkspace(ctx, rawPath)
 	if err != nil || info.IsDir() {
 		return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("%s file does not exist: %s", label, rawPath)}
 	}
