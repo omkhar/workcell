@@ -392,3 +392,60 @@ workcell_reexec_as_runtime_user() {
 
   exec setpriv --reuid "${uid}" --regid "${gid}" --init-groups "${command_argv[@]}"
 }
+
+# workcell_pin_runtime_env resolves and exports the canonical runtime
+# environment: HOME/CODEX_HOME/TMPDIR plus mode/profile/autonomy/mutability
+# taken from runtime state, falling back to the pid1 environment and then to
+# the strict/yolo/ephemeral defaults. Shared verbatim by the development and
+# provider wrappers.
+workcell_pin_runtime_env() {
+  local state_mode=""
+  local state_profile=""
+  local state_autonomy=""
+  local state_mutability=""
+  local pid1_mode=""
+  local pid1_profile=""
+  local pid1_autonomy=""
+  local pid1_mutability=""
+
+  HOME=/state/agent-home
+  CODEX_HOME="${HOME}/.codex"
+  TMPDIR=/state/tmp
+  state_mode="$(workcell_runtime_state_value WORKCELL_MODE || true)"
+  state_profile="$(workcell_runtime_state_value CODEX_PROFILE || true)"
+  state_autonomy="$(workcell_runtime_state_value WORKCELL_AGENT_AUTONOMY || true)"
+  state_mutability="$(workcell_runtime_state_value WORKCELL_CONTAINER_MUTABILITY || true)"
+  pid1_mode="$(workcell_pid1_env_value WORKCELL_MODE || true)"
+  pid1_profile="$(workcell_pid1_env_value CODEX_PROFILE || true)"
+  pid1_autonomy="$(workcell_pid1_env_value WORKCELL_AGENT_AUTONOMY || true)"
+  pid1_mutability="$(workcell_pid1_env_value WORKCELL_CONTAINER_MUTABILITY || true)"
+  WORKCELL_MODE="${state_mode:-${pid1_mode:-strict}}"
+  CODEX_PROFILE="${state_profile:-${pid1_profile:-${WORKCELL_MODE}}}"
+  WORKCELL_AGENT_AUTONOMY="${state_autonomy:-${pid1_autonomy:-yolo}}"
+  WORKCELL_CONTAINER_MUTABILITY="${state_mutability:-${pid1_mutability:-ephemeral}}"
+  export HOME CODEX_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY
+}
+
+# workcell_sanitize_runtime_env strips inherited loader/node/npm/TLS
+# environment, applies the git runtime sanitization, and pins LD_PRELOAD plus
+# the trusted PATH. The provider wrapper additionally exports
+# NODE_NO_WARNINGS=1 after calling this.
+workcell_sanitize_runtime_env() {
+  local trusted_path="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+  unset BASH_ENV
+  unset ENV
+  unset CLAUDE_CONFIG_DIR
+  unset DISABLE_AUTOUPDATER
+  unset NODE_OPTIONS
+  unset NODE_PATH
+  unset NODE_EXTRA_CA_CERTS
+  unset npm_config_userconfig
+  unset NPM_CONFIG_USERCONFIG
+  unset LD_AUDIT
+  unset LD_LIBRARY_PATH
+  unset SSL_CERT_FILE
+  unset SSL_CERT_DIR
+  workcell_sanitize_git_runtime_env
+  export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
+  export PATH="${trusted_path}"
+}
