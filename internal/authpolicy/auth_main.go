@@ -18,10 +18,6 @@ func exit2(format string, args ...any) error {
 	return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf(format, args...)}
 }
 
-func exit1(format string, args ...any) error {
-	return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf(format, args...)}
-}
-
 // AuthMain implements `workcell auth <subcommand>`, the Go translation
 // of the bash auth_main function in scripts/workcell. The user-visible
 // CLI surface is kept byte-identical: argument parsing, the four
