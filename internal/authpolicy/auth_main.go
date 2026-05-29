@@ -78,20 +78,20 @@ func consumeBaseArg(args []string) (base string, rest []string) {
 	return "", args
 }
 
-func defaultInjectionPolicyPath() string {
+func configHome() string {
 	home, err := launcher.RealHome()
 	if err != nil || home == "" {
 		home, _ = os.UserHomeDir()
 	}
-	return home + "/.config/workcell/injection-policy.toml"
+	return home + "/.config/workcell"
+}
+
+func defaultInjectionPolicyPath() string {
+	return configHome() + "/injection-policy.toml"
 }
 
 func defaultManagedCredentialsRoot() string {
-	home, err := launcher.RealHome()
-	if err != nil || home == "" {
-		home, _ = os.UserHomeDir()
-	}
-	return home + "/.config/workcell/credentials"
+	return configHome() + "/credentials"
 }
 
 // rawOptionValueOrDie mirrors scripts/workcell raw_option_value_or_die:

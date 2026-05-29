@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -163,7 +164,7 @@ func LoadScenarios(manifestPath string) ([]Scenario, error) {
 			if err != nil {
 				return nil, err
 			}
-			if _, ok := validProviders[providerName]; !ok {
+			if !containsKey(validProviders, providerName) {
 				return nil, fmt.Errorf(
 					"scenario %s: provider must be one of: %s",
 					scenarioID,
@@ -262,12 +263,7 @@ func containsKey(values map[string]struct{}, key string) bool {
 }
 
 func sortedKeys(values map[string]struct{}) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
+	return slices.Sorted(maps.Keys(values))
 }
 
 func isPersonaValid(persona string) bool {
