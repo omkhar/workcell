@@ -355,6 +355,25 @@ buildx_builder_matches_context() {
   return 1
 }
 
+# emit_registry_ca_block prints a buildkitd `[registry."<name>"]` block whose
+# `ca` array lists the prepared ca_paths from the calling scope. Both Docker Hub
+# registry aliases share identical CA wiring, so they reuse this emitter.
+emit_registry_ca_block() {
+  local registry_name="$1"
+  local first=1
+  local cert_file=""
+  printf '[registry."%s"]\n' "${registry_name}"
+  printf '  ca = ['
+  for cert_file in "${ca_paths[@]}"; do
+    if [[ "${first}" -eq 0 ]]; then
+      printf ', '
+    fi
+    first=0
+    printf '"%s"' "${cert_file}"
+  done
+  printf ']\n'
+}
+
 prepare_workcell_buildkitd_config() {
   local config_path=""
   local cert_root=""
@@ -390,28 +409,8 @@ prepare_workcell_buildkitd_config() {
   fi
 
   {
-    printf '[registry."docker.io"]\n'
-    printf '  ca = ['
-    local first=1
-    for cert_file in "${ca_paths[@]}"; do
-      if [[ "${first}" -eq 0 ]]; then
-        printf ', '
-      fi
-      first=0
-      printf '"%s"' "${cert_file}"
-    done
-    printf ']\n'
-    printf '[registry."registry-1.docker.io"]\n'
-    printf '  ca = ['
-    first=1
-    for cert_file in "${ca_paths[@]}"; do
-      if [[ "${first}" -eq 0 ]]; then
-        printf ', '
-      fi
-      first=0
-      printf '"%s"' "${cert_file}"
-    done
-    printf ']\n'
+    emit_registry_ca_block 'docker.io'
+    emit_registry_ca_block 'registry-1.docker.io'
   } >"${config_path}"
 
   printf '%s\n' "${config_path}"

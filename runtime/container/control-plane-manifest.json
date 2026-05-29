@@ -26,7 +26,7 @@
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
-      "sha256": "cc7ae4af8703361a675b3e262808938de85f65870002151c48760bf7f5aade71"
+      "sha256": "f1835ea3f4291c13134e803568f8b9ead5d7b7eff162c0550223f8873e6fb1f1"
     }
   ],
   "runtime_artifacts": [
