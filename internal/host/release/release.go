@@ -81,7 +81,6 @@ func WriteGitHubReleaseMetadata(releaseJSONPath string, assetPaths []string, out
 	uploadURL, _, _ := strings.Cut(resp.UploadURL, "{")
 	assetIDs := make(map[string]*int64, len(resp.Assets))
 	for _, asset := range resp.Assets {
-		asset := asset
 		assetIDs[asset.Name] = asset.ID
 	}
 

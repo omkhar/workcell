@@ -16,8 +16,6 @@ import (
 	"unsafe"
 )
 
-const ptyNameBufferSize = 128
-
 func openPTY() (*os.File, string, error) {
 	masterFD, err := syscall.Open("/dev/ptmx", syscall.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
