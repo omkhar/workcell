@@ -101,7 +101,7 @@ func WorkflowEnvironments(policy map[string]any, policyPath string) (map[string]
 
 		requiredSecrets := []string{}
 		if rawSecrets, ok := entry["required_secrets"]; ok {
-			secrets, present, err := mustStringSlice(rawSecrets)
+			secrets, present, err := MustStringSlice(rawSecrets)
 			if err != nil {
 				return nil, fmt.Errorf("%s workflow_environment.%s.required_secrets: %w", policyPath, environmentName, err)
 			}
@@ -131,7 +131,7 @@ func WorkflowEnvironments(policy map[string]any, policyPath string) (map[string]
 		deploymentBranches := []string{}
 		hasDeploymentBranches := false
 		if rawDeploymentBranches, ok := entry["deployment_branches"]; ok {
-			branches, present, err := mustStringSlice(rawDeploymentBranches)
+			branches, present, err := MustStringSlice(rawDeploymentBranches)
 			if err != nil {
 				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_branches: %w", policyPath, environmentName, err)
 			}
@@ -150,7 +150,7 @@ func WorkflowEnvironments(policy map[string]any, policyPath string) (map[string]
 		deploymentTags := []string{}
 		hasDeploymentTags := false
 		if rawDeploymentTags, ok := entry["deployment_tags"]; ok {
-			tags, present, err := mustStringSlice(rawDeploymentTags)
+			tags, present, err := MustStringSlice(rawDeploymentTags)
 			if err != nil {
 				return nil, fmt.Errorf("%s workflow_environment.%s.deployment_tags: %w", policyPath, environmentName, err)
 			}
@@ -894,7 +894,7 @@ func requireStringSliceTable(root map[string]any, tableName, key, sourcePath str
 	if !ok {
 		return nil, fmt.Errorf("%s must define %s.%s as a non-empty array", sourcePath, tableName, key)
 	}
-	values, ok, err := mustStringSlice(table[key])
+	values, ok, err := MustStringSlice(table[key])
 	if err != nil {
 		return nil, err
 	}
@@ -907,22 +907,6 @@ func requireStringSliceTable(root map[string]any, tableName, key, sourcePath str
 		}
 	}
 	return values, nil
-}
-
-func mustStringSlice(value any) ([]string, bool, error) {
-	raw, ok := value.([]any)
-	if !ok {
-		return nil, false, nil
-	}
-	result := make([]string, 0, len(raw))
-	for _, item := range raw {
-		s, ok := item.(string)
-		if !ok {
-			return nil, false, errors.New("array value must contain only strings")
-		}
-		result = append(result, s)
-	}
-	return result, true, nil
 }
 
 // readJSONFile / writeJSONFile live in core.go.

@@ -145,7 +145,7 @@ func validateRequirementTable(rootDir, requirementsPath, category, id string, ta
 		referencedDocs[canonicalPath] = struct{}{}
 	}
 
-	workflows, err := optionalRequirementWorkflows(table)
+	workflows, err := optionalStringSlice(table, "workflows")
 	if err != nil {
 		return fmt.Errorf("%s requirement %s workflows: %w", requirementsPath, id, err)
 	}
@@ -155,26 +155,6 @@ func validateRequirementTable(rootDir, requirementsPath, category, id string, ta
 		}
 	}
 	return nil
-}
-
-func optionalRequirementWorkflows(table map[string]any) ([]string, error) {
-	value, ok := table["workflows"]
-	if !ok {
-		return nil, nil
-	}
-	workflows, found, err := MustStringSlice(value)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, fmt.Errorf("must be an array of strings")
-	}
-	for _, workflowID := range workflows {
-		if strings.TrimSpace(workflowID) == "" {
-			return nil, fmt.Errorf("entries may not be empty")
-		}
-	}
-	return workflows, nil
 }
 
 func requiredReleaseFacingDocs(rootDir string) ([]string, error) {

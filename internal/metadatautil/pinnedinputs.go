@@ -40,7 +40,7 @@ type PinnedInputsConfig struct {
 }
 
 // readText, isHexDigest, hexDigestPattern live in core.go.
-// mustStringSlice and requireStringSliceTable live in hostedcontrols.go
+// requireStringSliceTable lives in hostedcontrols.go
 // (canonical post-collapse; same package-internal symbols all consumers share).
 
 func CheckPinnedInputs(cfg PinnedInputsConfig) error {
