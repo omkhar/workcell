@@ -214,7 +214,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/public-node-guard.mjs",
       "runtime_path": "/usr/local/libexec/workcell/public-node-guard.mjs",
-      "sha256": "cb2e3f78a4529469498700a0220463db025204a1e8b61cae014f7a3631231cc7"
+      "sha256": "3e5e1114876f4014c0a21cd849f0444b0cfb79dc2e80d799a68c11a44503160d"
     },
     {
       "kind": "runtime-control-plane",
