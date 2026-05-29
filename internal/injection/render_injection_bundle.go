@@ -185,7 +185,7 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 			"policy_entrypoint":   policyEntrypoint,
 			"policy_sha256":       policySHA,
 			"policy_sources":      policySources,
-			"credential_keys":     sortedStringKeysMap(renderedCredentials),
+			"credential_keys":     sortedKeys(renderedCredentials),
 			"extra_endpoints":     deriveCredentialExtraEndpoints(renderedCredentials),
 			"secret_copy_targets": secretCopyTargets(renderedCopies),
 			"ssh_enabled":         len(renderedSSH) > 0,
@@ -452,7 +452,7 @@ func renderCopies(policy map[string]any, outputRoot, policyDir Path, agent, mode
 		relpath := fmt.Sprintf("copies/%d", copyIndex)
 		mountPath := directMountRoot + "/copies/" + strconv.Itoa(copyIndex)
 		copyIndex++
-		fileMode, dirMode, err := classificationModes(classification, sourceValue.IsDir())
+		fileMode, dirMode, err := classificationModes(classification)
 		if err != nil {
 			return nil, err
 		}
@@ -651,7 +651,7 @@ func renderCredentials(policy map[string]any, policyDir Path, agent, mode string
 	}
 
 	rendered := map[string]map[string]string{}
-	for _, key := range sortedSetKeys(relevant) {
+	for _, key := range sortedKeys(relevant) {
 		rawValue, ok := credentials[key]
 		if !ok || rawValue == nil {
 			continue
@@ -1324,7 +1324,7 @@ func validateGeminiEnvFile(source Path) (map[string]any, error) {
 			}
 			return map[string]any{
 				"selected_auth_type": "vertex-ai",
-				"extra_endpoints":    sortedSetKeys(endpoints),
+				"extra_endpoints":    sortedKeys(endpoints),
 			}, nil
 		}
 		return nil, fmt.Errorf("gemini auth env file %s enables GOOGLE_GENAI_USE_VERTEXAI=true without either GOOGLE_API_KEY or both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION", source)
@@ -1468,7 +1468,7 @@ func deriveCredentialExtraEndpoints(renderedCredentials map[string]map[string]st
 			}
 		}
 	}
-	return sortedSetKeys(endpoints)
+	return sortedKeys(endpoints)
 }
 
 func effectivePolicySHA256(
@@ -1480,7 +1480,7 @@ func effectivePolicySHA256(
 	renderedSSH map[string]any,
 ) (string, error) {
 	documents := map[string]string{}
-	for _, key := range sortedStringKeys(renderedDocuments) {
+	for _, key := range sortedKeys(renderedDocuments) {
 		hash, err := pathMaterialSHA256(outputRoot.Join(renderedDocuments[key]))
 		if err != nil {
 			return "", fmt.Errorf("hash document %q: %w", key, err)
@@ -1521,7 +1521,7 @@ func effectivePolicySHA256(
 		})
 	}
 	credentials := map[string]map[string]any{}
-	for _, key := range sortedStringKeysMap(renderedCredentials) {
+	for _, key := range sortedKeys(renderedCredentials) {
 		value := renderedCredentials[key]
 		hash, err := pathMaterialSHA256(Path(value["source"]))
 		if err != nil {
@@ -1948,7 +1948,7 @@ func targetIsReserved(candidate string) bool {
 	return false
 }
 
-func classificationModes(classification string, isDir bool) (string, string, error) {
+func classificationModes(classification string) (string, string, error) {
 	if _, ok := supportedClassifications[classification]; !ok {
 		return "", "", fmt.Errorf("unsupported injection classification: %s", classification)
 	}
@@ -1971,25 +1971,7 @@ func secretCopyTargets(renderedCopies []map[string]any) []string {
 	return targets
 }
 
-func sortedStringKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
-func sortedStringKeysMap(values map[string]map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
-func sortedSetKeys(values map[string]struct{}) []string {
+func sortedKeys[V any](values map[string]V) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

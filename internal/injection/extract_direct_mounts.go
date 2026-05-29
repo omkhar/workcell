@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 
 	"github.com/omkhar/workcell/internal/pathutil"
@@ -56,10 +55,10 @@ func RunExtractDirectMounts(manifestPath, mountSpecPath string) error {
 		return err
 	}
 
-	if err := writePrettyJSON(resolvedManifestPath, manifest, 0o600); err != nil {
+	if err := writeIndentedJSON(resolvedManifestPath, manifest, 0o600); err != nil {
 		return err
 	}
-	if err := writePrettyJSON(resolvedMountSpecPath, directMounts, 0o600); err != nil {
+	if err := writeIndentedJSON(resolvedMountSpecPath, directMounts, 0o600); err != nil {
 		return err
 	}
 	return nil
@@ -73,7 +72,7 @@ func collectDirectMounts(manifest map[string]any) ([]DirectMount, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, key := range sortedMapKeys(credentials) {
+		for _, key := range sortedKeys(credentials) {
 			entry, err := asObjectMap(credentials[key], "credentials."+key)
 			if err != nil {
 				return nil, err
@@ -172,18 +171,6 @@ func loadJSONObject(path string) (map[string]any, error) {
 	return manifest, nil
 }
 
-func writePrettyJSON(path string, value any, mode os.FileMode) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(path, data, mode); err != nil {
-		return err
-	}
-	return os.Chmod(path, mode)
-}
-
 func asObjectMap(value any, label string) (map[string]any, error) {
 	if value == nil {
 		return nil, fmt.Errorf("%s must be a JSON object", label)
@@ -204,15 +191,6 @@ func asArray(value any, label string) ([]any, error) {
 		return nil, fmt.Errorf("%s must be a JSON array", label)
 	}
 	return array, nil
-}
-
-func sortedMapKeys(values map[string]any) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
 }
 
 func resolveAbsPath(raw string) (string, error) {

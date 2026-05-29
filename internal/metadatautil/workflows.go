@@ -369,4 +369,4 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 }
 
 // readText lives in core.go.
-// mustStringSlice and requireStringSliceTable live in hostedcontrols.go.
+// requireStringSliceTable lives in hostedcontrols.go.
