@@ -701,17 +701,19 @@ function maybeBlock(filePath) {
     return;
   }
 
+  const isProtected = isProtectedProviderFile(filePath);
+
   if (
     filePath !== SELF_GUARD_PATH &&
     !isWithinWorkspace(filePath) &&
-    !isProtectedProviderFile(filePath)
+    !isProtected
   ) {
     throw new Error(
       'Workcell blocked public node execution outside the mounted workspace.',
     );
   }
 
-  if (isProtectedProviderFile(filePath)) {
+  if (isProtected) {
     throw new Error(
       'Workcell blocked provider package execution via public node.',
     );
