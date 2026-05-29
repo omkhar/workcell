@@ -120,6 +120,7 @@ active_run_count() {
 collect_once() {
   local check_runs_json=""
   local tracker_count=0
+  local tracker_issues_json=""
   local tracker_body=""
   local unexpected_local_branches=""
   local unexpected_remote_heads=""
@@ -175,14 +176,15 @@ collect_once() {
   ACTIVE_RUNS="$(active_run_count)"
   [[ "${ACTIVE_RUNS}" == "0" ]] || add_blocker "queued, pending, waiting, requested, or in-progress workflow runs remain"
 
-  tracker_count="$(gh issue list --repo "${REPO}" --state all --label upstream-refresh-candidate --limit 10 --json number --jq 'length')"
+  tracker_issues_json="$(gh issue list --repo "${REPO}" --state all --label upstream-refresh-candidate --limit 10 --json number)"
+  tracker_count="$(jq 'length' <<<"${tracker_issues_json}")"
   if [[ "${tracker_count}" != "1" ]]; then
     TRACKER_ISSUE=""
     TRACKER_STATE=""
     TRACKER_CURRENT="false"
     add_blocker "expected exactly one upstream refresh tracker issue"
   else
-    TRACKER_ISSUE="$(gh issue list --repo "${REPO}" --state all --label upstream-refresh-candidate --limit 10 --json number --jq '.[0].number')"
+    TRACKER_ISSUE="$(jq -r '.[0].number' <<<"${tracker_issues_json}")"
     tracker_json="$(gh issue view "${TRACKER_ISSUE}" --repo "${REPO}" --json state,body)"
     TRACKER_STATE="$(jq -r '.state' <<<"${tracker_json}")"
     tracker_body="$(jq -r '.body' <<<"${tracker_json}")"
