@@ -11,7 +11,7 @@ ARG SOURCE_DATE_EPOCH=0
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
 ARG DEBIAN_SNAPSHOT=20260518T000000Z
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.95.0-slim-trixie@sha256:e14e87345b4d5964ddcc3491d27ee046a0f23820f340c3c1e24da6880141f7c0
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.96.0-slim-trixie@sha256:26abcef3d79b8d890c4ceb17093154573e1f6479cf6dd7c1450043b8458350f6
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -209,7 +209,7 @@ ARG CLAUDE_VERSION=2.1.108
 # for arm64 and amd64 below.
 ARG CODEX_VERSION=0.125.0
 ARG CODEX_RELEASE_URL=
-ARG RUST_VERSION=1.95.0
+ARG RUST_VERSION=1.96.0
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
