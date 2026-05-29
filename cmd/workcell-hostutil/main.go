@@ -1011,6 +1011,20 @@ func parseSessionRoots(args []string) ([]string, []string, error) {
 	return []string{args[0]}, args[1:], nil
 }
 
+// parseSessionRootsSingle parses session roots and requires exactly one
+// trailing positional argument (the session id), returning helperUsage on any
+// shape violation.
+func parseSessionRootsSingle(args []string) ([]string, string, error) {
+	roots, rest, err := parseSessionRoots(args)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(rest) != 1 {
+		return nil, "", helperUsage()
+	}
+	return roots, rest[0], nil
+}
+
 func runHelperSessionList(args []string) error {
 	roots, rest, err := parseSessionRoots(args)
 	if err != nil {
@@ -1124,15 +1138,12 @@ func runHelperSessionShow(args []string) error {
 }
 
 func runHelperSessionExport(args []string) error {
-	roots, rest, err := parseSessionRoots(args)
+	roots, id, err := parseSessionRootsSingle(args)
 	if err != nil {
 		return err
 	}
-	if len(rest) != 1 {
-		return helperUsage()
-	}
 
-	exported, err := sessions.ExportSessionRecordInRoots(roots, rest[0])
+	exported, err := sessions.ExportSessionRecordInRoots(roots, id)
 	if err != nil {
 		return err
 	}
@@ -1145,15 +1156,12 @@ func runHelperSessionExport(args []string) error {
 }
 
 func runHelperSessionDiffMetadata(args []string) error {
-	roots, rest, err := parseSessionRoots(args)
+	roots, id, err := parseSessionRootsSingle(args)
 	if err != nil {
 		return err
 	}
-	if len(rest) != 1 {
-		return helperUsage()
-	}
 
-	record, err := sessions.FindSessionRecordInRoots(roots, rest[0])
+	record, err := sessions.FindSessionRecordInRoots(roots, id)
 	if err != nil {
 		return err
 	}
@@ -1164,15 +1172,12 @@ func runHelperSessionDiffMetadata(args []string) error {
 }
 
 func runHelperSessionRuntimeMetadata(args []string) error {
-	roots, rest, err := parseSessionRoots(args)
+	roots, id, err := parseSessionRootsSingle(args)
 	if err != nil {
 		return err
 	}
-	if len(rest) != 1 {
-		return helperUsage()
-	}
 
-	record, recordPath, err := sessions.FindSessionRecordWithPathInRoots(roots, rest[0])
+	record, recordPath, err := sessions.FindSessionRecordWithPathInRoots(roots, id)
 	if err != nil {
 		return err
 	}
@@ -1184,15 +1189,12 @@ func runHelperSessionRuntimeMetadata(args []string) error {
 }
 
 func runHelperSessionTimeline(args []string) error {
-	roots, rest, err := parseSessionRoots(args)
+	roots, id, err := parseSessionRootsSingle(args)
 	if err != nil {
 		return err
 	}
-	if len(rest) != 1 {
-		return helperUsage()
-	}
 
-	lines, err := sessions.SessionTimelineRecordsInRoots(roots, rest[0])
+	lines, err := sessions.SessionTimelineRecordsInRoots(roots, id)
 	if err != nil {
 		return err
 	}
