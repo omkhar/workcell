@@ -509,6 +509,22 @@
       "github_only_reason": "release preflight binds hosted controls, artifacts, and release-only permissions"
     },
     {
+      "id": "release.yml/preflight-amd64-repro",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "preflight-amd64-repro",
+      "job_name": "Release reproducible image (amd64)",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release reproducibility verification of the amd64 image binds release-only artifacts in a parallel preflight job"
+    },
+    {
       "id": "release.yml/preflight-arm64-repro",
       "workflow_path": ".github/workflows/release.yml",
       "workflow_name": "Release",
@@ -523,6 +539,22 @@
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release reproducibility verification of the native arm64 image binds release-only artifacts and runs on a native arm64 runner"
+    },
+    {
+      "id": "release.yml/preflight-container-smoke",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "preflight-container-smoke",
+      "job_name": "Release container smoke",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release container smoke runs in a parallel preflight job and gates publication; mirrored locally by ci.yml/container-smoke"
     },
     {
       "id": "release.yml/release",

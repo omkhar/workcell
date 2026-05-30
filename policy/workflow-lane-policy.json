@@ -140,11 +140,23 @@
       "local_mode": "none",
       "github_only_reason": "release preflight binds hosted controls, artifacts, and release-only permissions"
     },
+    "release.yml/preflight-amd64-repro": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release reproducibility verification of the amd64 image binds release-only artifacts in a parallel preflight job"
+    },
     "release.yml/preflight-arm64-repro": {
       "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release reproducibility verification of the native arm64 image binds release-only artifacts and runs on a native arm64 runner"
+    },
+    "release.yml/preflight-container-smoke": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release container smoke runs in a parallel preflight job and gates publication; mirrored locally by ci.yml/container-smoke"
     },
     "release.yml/release": {
       "profiles": ["release-preflight"],

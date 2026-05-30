@@ -119,11 +119,82 @@ jobs:
           echo "image_manifest_digest=${manifest_digest}" >> "${GITHUB_OUTPUT}"
           echo "config_digest=${config_digest}" >> "${GITHUB_OUTPUT}"
 
+  preflight-amd64-repro:
+    name: Release reproducible image (amd64)
+    # Build and reproducibility-verify the linux/amd64 runtime image in its own
+    # native job (mirroring preflight-arm64-repro) so it runs in parallel with
+    # the rest of preflight instead of serially inside it.  Feeds its verified
+    # image/config digests back via job outputs; preflight assembles the
+    # combined runtime manifest that publish checks against.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      image_manifest_digest: ${{ steps.repro.outputs.image_manifest_digest }}
+      config_digest: ${{ steps.repro.outputs.config_digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: source_date
+        name: Compute source date epoch
+        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        with:
+          cache-binary: false
+          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
+          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+
+      - id: repro
+        name: Verify reproducible amd64 runtime image
+        env:
+          WORKCELL_REPRO_PLATFORMS: linux/amd64
+          WORKCELL_REPRO_MANIFEST_PATH: dist/workcell-runtime-amd64.json
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        run: |
+          ./scripts/verify-reproducible-build.sh
+          manifest_digest="$(jq -r '.platforms["linux/amd64"].image_manifest_digest' dist/workcell-runtime-amd64.json)"
+          config_digest="$(jq -r '.platforms["linux/amd64"].config_digest' dist/workcell-runtime-amd64.json)"
+          if [[ "${manifest_digest}" != sha256:* || "${config_digest}" != sha256:* ]]; then
+            echo "Malformed amd64 reproducible-build digests: manifest=${manifest_digest} config=${config_digest}" >&2
+            exit 1
+          fi
+          echo "image_manifest_digest=${manifest_digest}" >> "${GITHUB_OUTPUT}"
+          echo "config_digest=${config_digest}" >> "${GITHUB_OUTPUT}"
+
+  preflight-container-smoke:
+    name: Release container smoke
+    # Run the container smoke check in its own job so it overlaps the rest of
+    # preflight instead of running serially inside it.  Gates publish via the
+    # `needs` of build-arm64-image and release below.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        with:
+          cache-binary: false
+          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
+          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+
+      - name: Run container smoke
+        run: ./scripts/container-smoke.sh
+
   preflight:
     name: Release preflight
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs:
+      - preflight-amd64-repro
       - preflight-arm64-repro
     environment:
       name: hosted-controls-audit
@@ -376,45 +447,40 @@ jobs:
           persona: auditor
           version: 1.25.2
 
-      - name: Run container smoke
-        run: ./scripts/container-smoke.sh
-
-      - name: Reclaim runner space before reproducible image check
-        run: |
-          docker image rm -f "workcell-validator:${GITHUB_SHA}" >/dev/null 2>&1 || true
-          docker container prune -f || true
-          docker image prune -af || true
-          docker buildx prune -af || true
-          docker builder prune -af || true
-          docker system df || true
-
-      - name: Verify reproducible runtime image
+      - name: Assemble reproducible-build preflight manifest
+        # The amd64 and arm64 runtime images are now built and
+        # reproducibility-verified in the parallel preflight-amd64-repro and
+        # preflight-arm64-repro jobs; assemble their verified per-platform
+        # digests into the manifest publish byte-compares the published image
+        # against.  Fail closed on any missing/malformed digest.
         env:
-          # Build/verify the amd64 image natively here; the arm64 image is
-          # built and verified on a native arm64 runner in the
-          # preflight-arm64-repro job and merged in below.
-          WORKCELL_REPRO_PLATFORMS: linux/amd64
-          WORKCELL_REPRO_MANIFEST_PATH: dist/workcell-runtime-preflight.json
-          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
-        run: ./scripts/verify-reproducible-build.sh
-
-      - name: Merge native arm64 reproducible-build digests into preflight manifest
-        env:
+          AMD64_MANIFEST_DIGEST: ${{ needs.preflight-amd64-repro.outputs.image_manifest_digest }}
+          AMD64_CONFIG_DIGEST: ${{ needs.preflight-amd64-repro.outputs.config_digest }}
           ARM64_MANIFEST_DIGEST: ${{ needs.preflight-arm64-repro.outputs.image_manifest_digest }}
           ARM64_CONFIG_DIGEST: ${{ needs.preflight-arm64-repro.outputs.config_digest }}
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
         run: |
-          if [[ "${ARM64_MANIFEST_DIGEST}" != sha256:* || "${ARM64_CONFIG_DIGEST}" != sha256:* ]]; then
-            echo "Missing or malformed native arm64 reproducible-build digests from preflight-arm64-repro job" >&2
-            echo "manifest=${ARM64_MANIFEST_DIGEST} config=${ARM64_CONFIG_DIGEST}" >&2
-            exit 1
-          fi
-          merged="$(mktemp)"
-          jq \
-            --arg manifest "${ARM64_MANIFEST_DIGEST}" \
-            --arg config "${ARM64_CONFIG_DIGEST}" \
-            '.platforms["linux/arm64"] = {image_manifest_digest: $manifest, config_digest: $config}' \
-            dist/workcell-runtime-preflight.json > "${merged}"
-          mv "${merged}" dist/workcell-runtime-preflight.json
+          for digest in "${AMD64_MANIFEST_DIGEST}" "${AMD64_CONFIG_DIGEST}" \
+            "${ARM64_MANIFEST_DIGEST}" "${ARM64_CONFIG_DIGEST}"; do
+            if [[ "${digest}" != sha256:* ]]; then
+              echo "Missing or malformed reproducible-build digest from preflight repro jobs: ${digest}" >&2
+              exit 1
+            fi
+          done
+          mkdir -p dist
+          jq -n \
+            --argjson source_date_epoch "${SOURCE_DATE_EPOCH}" \
+            --arg amd64_manifest "${AMD64_MANIFEST_DIGEST}" \
+            --arg amd64_config "${AMD64_CONFIG_DIGEST}" \
+            --arg arm64_manifest "${ARM64_MANIFEST_DIGEST}" \
+            --arg arm64_config "${ARM64_CONFIG_DIGEST}" \
+            '{
+              source_date_epoch: $source_date_epoch,
+              platforms: {
+                "linux/amd64": {image_manifest_digest: $amd64_manifest, config_digest: $amd64_config},
+                "linux/arm64": {image_manifest_digest: $arm64_manifest, config_digest: $arm64_config}
+              }
+            }' > dist/workcell-runtime-preflight.json
 
       - name: Upload preflight binding manifests
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -532,6 +598,7 @@ jobs:
     needs:
       - codeql-preflight
       - preflight
+      - preflight-container-smoke
       - install-verification
     environment:
       name: release
@@ -589,6 +656,7 @@ jobs:
     needs:
       - codeql-preflight
       - preflight
+      - preflight-container-smoke
       - install-verification
       - build-arm64-image
     environment:
