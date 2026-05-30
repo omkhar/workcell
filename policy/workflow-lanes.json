@@ -377,6 +377,22 @@
       "github_only_reason": "pull_request_target metadata policy remains GitHub-only"
     },
     {
+      "id": "release.yml/build-arm64-image",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "build-arm64-image",
+      "job_name": "Build native arm64 release image",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "native arm64 release image build and GHCR push remain GitHub-only and gated on the release environment"
+    },
+    {
       "id": "release.yml/codeql-preflight[build-mode=autobuild,language=go]",
       "workflow_path": ".github/workflows/release.yml",
       "workflow_name": "Release",
@@ -491,6 +507,22 @@
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release preflight binds hosted controls, artifacts, and release-only permissions"
+    },
+    {
+      "id": "release.yml/preflight-arm64-repro",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "preflight-arm64-repro",
+      "job_name": "Release reproducible image (arm64)",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release reproducibility verification of the native arm64 image binds release-only artifacts and runs on a native arm64 runner"
     },
     {
       "id": "release.yml/release",

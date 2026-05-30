@@ -71,10 +71,60 @@ jobs:
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
         uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
 
+  preflight-arm64-repro:
+    name: Release reproducible image (arm64)
+    # Build and reproducibility-verify the linux/arm64 runtime image on a
+    # native arm64 runner instead of QEMU emulation.  The amd64 lane stays in
+    # the main `preflight` job (native on ubuntu-latest); this job feeds its
+    # verified arm64 image/config digests back via job outputs so preflight can
+    # assemble the combined runtime manifest that publish checks against.  This
+    # mirrors the already-reviewed native arm64 lane in ci.yml.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      image_manifest_digest: ${{ steps.repro.outputs.image_manifest_digest }}
+      config_digest: ${{ steps.repro.outputs.config_digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: source_date
+        name: Compute source date epoch
+        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        with:
+          cache-binary: false
+          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
+          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+
+      - id: repro
+        name: Verify reproducible arm64 runtime image
+        env:
+          WORKCELL_REPRO_PLATFORMS: linux/arm64
+          WORKCELL_REPRO_MANIFEST_PATH: dist/workcell-runtime-arm64.json
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        run: |
+          ./scripts/verify-reproducible-build.sh
+          manifest_digest="$(jq -r '.platforms["linux/arm64"].image_manifest_digest' dist/workcell-runtime-arm64.json)"
+          config_digest="$(jq -r '.platforms["linux/arm64"].config_digest' dist/workcell-runtime-arm64.json)"
+          if [[ "${manifest_digest}" != sha256:* || "${config_digest}" != sha256:* ]]; then
+            echo "Malformed arm64 reproducible-build digests: manifest=${manifest_digest} config=${config_digest}" >&2
+            exit 1
+          fi
+          echo "image_manifest_digest=${manifest_digest}" >> "${GITHUB_OUTPUT}"
+          echo "config_digest=${config_digest}" >> "${GITHUB_OUTPUT}"
+
   preflight:
     name: Release preflight
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    needs:
+      - preflight-arm64-repro
     environment:
       name: hosted-controls-audit
     permissions:
@@ -224,11 +274,6 @@ jobs:
             -t "workcell-validator:${GITHUB_SHA}" \
             .
 
-      - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
-        with:
-          cache-image: false
-          image: ${{ env.WORKCELL_QEMU_IMAGE }}
-
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
         with:
           cache-binary: false
@@ -345,9 +390,31 @@ jobs:
 
       - name: Verify reproducible runtime image
         env:
+          # Build/verify the amd64 image natively here; the arm64 image is
+          # built and verified on a native arm64 runner in the
+          # preflight-arm64-repro job and merged in below.
+          WORKCELL_REPRO_PLATFORMS: linux/amd64
           WORKCELL_REPRO_MANIFEST_PATH: dist/workcell-runtime-preflight.json
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
         run: ./scripts/verify-reproducible-build.sh
+
+      - name: Merge native arm64 reproducible-build digests into preflight manifest
+        env:
+          ARM64_MANIFEST_DIGEST: ${{ needs.preflight-arm64-repro.outputs.image_manifest_digest }}
+          ARM64_CONFIG_DIGEST: ${{ needs.preflight-arm64-repro.outputs.config_digest }}
+        run: |
+          if [[ "${ARM64_MANIFEST_DIGEST}" != sha256:* || "${ARM64_CONFIG_DIGEST}" != sha256:* ]]; then
+            echo "Missing or malformed native arm64 reproducible-build digests from preflight-arm64-repro job" >&2
+            echo "manifest=${ARM64_MANIFEST_DIGEST} config=${ARM64_CONFIG_DIGEST}" >&2
+            exit 1
+          fi
+          merged="$(mktemp)"
+          jq \
+            --arg manifest "${ARM64_MANIFEST_DIGEST}" \
+            --arg config "${ARM64_CONFIG_DIGEST}" \
+            '.platforms["linux/arm64"] = {image_manifest_digest: $manifest, config_digest: $config}' \
+            dist/workcell-runtime-preflight.json > "${merged}"
+          mv "${merged}" dist/workcell-runtime-preflight.json
 
       - name: Upload preflight binding manifests
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -452,6 +519,69 @@ jobs:
           brew cleanup workcell >/dev/null 2>&1 || true
           brew untap "${tap_name}" >/dev/null 2>&1 || true
 
+  build-arm64-image:
+    name: Build native arm64 release image
+    # Build and push the linux/arm64 runtime image by digest on a native arm64
+    # runner (no QEMU).  The amd64 image is still built inside the publish
+    # `release` job (native on ubuntu-latest); publish consumes this job's
+    # pushed-by-digest output to assemble the multi-arch manifest.  Gated on the
+    # `release` environment so no image is pushed to GHCR before the same human
+    # approval that gates publication, matching the existing release gate.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    needs:
+      - codeql-preflight
+      - preflight
+      - install-verification
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+    permissions:
+      contents: read
+      packages: write # Push the arm64 image (by digest) to GitHub Container Registry.
+    outputs:
+      digest: ${{ steps.build_arm64.outputs.digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: source_date
+        name: Compute source date epoch
+        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        with:
+          cache-binary: false
+          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
+          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+
+      - id: build_arm64
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        with:
+          build-args: |
+            BUILDKIT_MULTI_PLATFORM=1
+            SOURCE_DATE_EPOCH=${{ steps.source_date.outputs.epoch }}
+          # Build from the checked-out tree (same context the native
+          # preflight-arm64-repro reproducibility check uses), so the published
+          # arm64 digest matches the preflight manifest exactly.
+          context: .
+          file: runtime/container/Dockerfile
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true,rewrite-timestamp=true
+          platforms: linux/arm64
+          provenance: mode=max
+          sbom: true
+          tags: ${{ env.IMAGE_NAME }}
+
   release:
     name: Publish release artifacts
     runs-on: ubuntu-latest
@@ -460,6 +590,7 @@ jobs:
       - codeql-preflight
       - preflight
       - install-verification
+      - build-arm64-image
     environment:
       name: release
       url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
@@ -488,11 +619,6 @@ jobs:
       - id: source_date
         name: Compute source date epoch
         run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
-
-      - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
-        with:
-          cache-image: false
-          image: ${{ env.WORKCELL_QEMU_IMAGE }}
 
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
         with:
@@ -669,26 +795,10 @@ jobs:
           sbom: true
           tags: ${{ env.IMAGE_NAME }}
 
-      - id: build_arm64
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        env:
-          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
-        with:
-          build-args: |
-            BUILDKIT_MULTI_PLATFORM=1
-            SOURCE_DATE_EPOCH=${{ steps.source_date.outputs.epoch }}
-          context: dist/release-source
-          file: dist/release-source/runtime/container/Dockerfile
-          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true,rewrite-timestamp=true
-          platforms: linux/arm64
-          provenance: mode=max
-          sbom: true
-          tags: ${{ env.IMAGE_NAME }}
-
       - name: Verify published platform digests match preflight
         env:
           AMD64_DIGEST: ${{ steps.build_amd64.outputs.digest }}
-          ARM64_DIGEST: ${{ steps.build_arm64.outputs.digest }}
+          ARM64_DIGEST: ${{ needs.build-arm64-image.outputs.digest }}
         run: |
           set -euo pipefail
 
@@ -774,7 +884,7 @@ jobs:
         name: Publish deterministic multi-arch manifest
         env:
           AMD64_DIGEST: ${{ steps.build_amd64.outputs.digest }}
-          ARM64_DIGEST: ${{ steps.build_arm64.outputs.digest }}
+          ARM64_DIGEST: ${{ needs.build-arm64-image.outputs.digest }}
         run: |
           refs=(
             "${IMAGE_NAME}@${AMD64_DIGEST}"

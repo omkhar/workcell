@@ -759,8 +759,11 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if !strings.Contains(releaseWorkflow, "cache-binary: false") {
 		return errors.New("the publishing release workflow must not cache the Buildx binary")
 	}
-	if !strings.Contains(releaseWorkflow, "cache-image: false") {
-		return errors.New("the publishing release workflow must not cache the QEMU helper image")
+	if strings.Contains(releaseWorkflow, "docker/setup-qemu-action@") {
+		return errors.New(".github/workflows/release.yml must not configure QEMU now that arm64 release builds use a native runner")
+	}
+	if !strings.Contains(releaseWorkflow, "runs-on: ubuntu-24.04-arm") {
+		return errors.New(".github/workflows/release.yml must build the arm64 release image on a native ubuntu-24.04-arm runner")
 	}
 	releaseSyftVersion, err := requireYAMLKey(releaseWorkflow, "WORKCELL_SYFT_VERSION", ".github/workflows/release.yml")
 	if err != nil {
