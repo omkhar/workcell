@@ -1354,8 +1354,7 @@ pub unsafe extern "C" fn execveat(
                 protected_target = classify_loader_target(&pathname_string, &args);
             }
             if !mutable_native_target {
-                mutable_native_target =
-                    loader_targets_mutable_native_exec(&pathname_string, &args);
+                mutable_native_target = loader_targets_mutable_native_exec(&pathname_string, &args);
             }
 
             (
