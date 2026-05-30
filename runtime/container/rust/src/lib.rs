@@ -1350,22 +1350,12 @@ pub unsafe extern "C" fn execveat(
                 }
             }
 
-            if protected_target == ProtectedRuntime::None
-                && is_dynamic_loader_path(&pathname_string)
-                && args.get(1).is_some()
-            {
-                protected_target = args
-                    .get(1)
-                    .map(|target| classify_protected_runtime_path(target))
-                    .unwrap_or(ProtectedRuntime::None);
+            if protected_target == ProtectedRuntime::None {
+                protected_target = classify_loader_target(&pathname_string, &args);
             }
-            if !mutable_native_target
-                && is_dynamic_loader_path(&pathname_string)
-                && args.get(1).is_some()
-            {
-                mutable_native_target = args
-                    .get(1)
-                    .is_some_and(|target| path_is_mutable_native_exec(target));
+            if !mutable_native_target {
+                mutable_native_target =
+                    loader_targets_mutable_native_exec(&pathname_string, &args);
             }
 
             (
