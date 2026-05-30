@@ -172,7 +172,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/development-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/development-wrapper.sh",
-      "sha256": "0763f412aededb21d9853eaa916571d5ae021c9f8c0e3f50efea29746909658e"
+      "sha256": "26bf6e4b9655169b405593d72bd38637dee2a76001b996b4f4ebbc0c81f30341"
     },
     {
       "kind": "runtime-control-plane",
@@ -208,7 +208,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "b3e827b33cf233816c12d4b95aaef5a97f59e09b78ad1d015e7d9e7ed536f6b4"
+      "sha256": "bf0627a4f90d6bfd9a118e5d66254bc8e7d3e61f98b0c25552b98148c102ddac"
     },
     {
       "kind": "runtime-control-plane",
@@ -220,7 +220,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/runtime-user.sh",
       "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
-      "sha256": "290cf45e860da1887e29ba78109927d84d37ce6a0fbf929bfbb84a2f9d193034"
+      "sha256": "093867eac3baa96f6e8b58073dc2c88d06d2cab64545a50d5276e78a45d665f4"
     },
     {
       "kind": "runtime-control-plane",

@@ -6,6 +6,15 @@ set -x
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
+# Provides the abort primitive that the home-control-plane.sh gemini functions
+# (extracted and concatenated ahead of this harness by verify-invariants) call
+# to reject invalid auth configs. Do not remove: those callers live in another
+# file and bind to this definition via dynamic scope at harness runtime.
+workcell_die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
 expect_fatal_function_failure() {
   local stdout_path="$1"
   local stderr_path="$2"
