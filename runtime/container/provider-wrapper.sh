@@ -2,8 +2,57 @@
 set -euo pipefail
 
 AGENT_NAME="${WORKCELL_LAUNCH_TARGET:-${0##*/}}"
+TRUSTED_PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
 export WORKCELL_WRAPPER_CONTEXT=1
 export ADAPTER_ROOT="/opt/workcell/adapters"
+
+pin_runtime_env() {
+  local state_mode=""
+  local state_profile=""
+  local state_autonomy=""
+  local state_mutability=""
+  local pid1_mode=""
+  local pid1_profile=""
+  local pid1_autonomy=""
+  local pid1_mutability=""
+
+  HOME=/state/agent-home
+  CODEX_HOME="${HOME}/.codex"
+  TMPDIR=/state/tmp
+  state_mode="$(workcell_runtime_state_value WORKCELL_MODE || true)"
+  state_profile="$(workcell_runtime_state_value CODEX_PROFILE || true)"
+  state_autonomy="$(workcell_runtime_state_value WORKCELL_AGENT_AUTONOMY || true)"
+  state_mutability="$(workcell_runtime_state_value WORKCELL_CONTAINER_MUTABILITY || true)"
+  pid1_mode="$(workcell_pid1_env_value WORKCELL_MODE || true)"
+  pid1_profile="$(workcell_pid1_env_value CODEX_PROFILE || true)"
+  pid1_autonomy="$(workcell_pid1_env_value WORKCELL_AGENT_AUTONOMY || true)"
+  pid1_mutability="$(workcell_pid1_env_value WORKCELL_CONTAINER_MUTABILITY || true)"
+  WORKCELL_MODE="${state_mode:-${pid1_mode:-strict}}"
+  CODEX_PROFILE="${state_profile:-${pid1_profile:-${WORKCELL_MODE}}}"
+  WORKCELL_AGENT_AUTONOMY="${state_autonomy:-${pid1_autonomy:-yolo}}"
+  WORKCELL_CONTAINER_MUTABILITY="${state_mutability:-${pid1_mutability:-ephemeral}}"
+  export HOME CODEX_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY
+}
+
+sanitize_provider_env() {
+  unset BASH_ENV
+  unset ENV
+  unset CLAUDE_CONFIG_DIR
+  unset DISABLE_AUTOUPDATER
+  unset NODE_OPTIONS
+  unset NODE_PATH
+  unset NODE_EXTRA_CA_CERTS
+  unset npm_config_userconfig
+  unset NPM_CONFIG_USERCONFIG
+  unset LD_AUDIT
+  unset LD_LIBRARY_PATH
+  unset SSL_CERT_FILE
+  unset SSL_CERT_DIR
+  workcell_sanitize_git_runtime_env
+  export NODE_NO_WARNINGS=1
+  export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
+  export PATH="${TRUSTED_PATH}"
+}
 
 emit_codex_rules_mutability_notice() {
   local configured_mutability=""
@@ -43,9 +92,8 @@ source /usr/local/libexec/workcell/home-control-plane.sh
 # shellcheck source=runtime/container/runtime-user.sh
 source /usr/local/libexec/workcell/runtime-user.sh
 
-workcell_sanitize_runtime_env
-export NODE_NO_WARNINGS=1
-workcell_pin_runtime_env
+sanitize_provider_env
+pin_runtime_env
 mkdir -p "${TMPDIR}"
 if workcell_should_reexec_as_runtime_user; then
   workcell_reexec_as_runtime_user /usr/local/libexec/workcell/provider-wrapper.sh "$@"
