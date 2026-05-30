@@ -19,6 +19,17 @@ go_hostutil() {
   return "${captured_rc:-124}"
 }
 
+assert_contains() {
+  local haystack="$1" needle="$2" message="$3"
+  case "${haystack}" in
+    *"${needle}"*) ;;
+    *)
+      echo "${message}: ${haystack}" >&2
+      exit 1
+      ;;
+  esac
+}
+
 HOST_COLIMA_BIN="/fake/colima-binary"
 REAL_HOME="/fake/real-home"
 COLIMA_STATE_ROOT="/fake/colima-home"
@@ -33,37 +44,10 @@ if [[ "${status}" -ne 124 ]]; then
   exit 1
 fi
 
-case "${first_args}" in
-  *"helper run-host-colima-with-timeout 1 "*) ;;
-  *)
-    echo "Expected captured args to include 'helper run-host-colima-with-timeout 1': ${first_args}" >&2
-    exit 1
-    ;;
-esac
-
-case "${first_args}" in
-  *"--colima-bin=/fake/colima-binary"*) ;;
-  *)
-    echo "Expected --colima-bin to forward HOST_COLIMA_BIN: ${first_args}" >&2
-    exit 1
-    ;;
-esac
-
-case "${first_args}" in
-  *"--real-home=/fake/real-home"*) ;;
-  *)
-    echo "Expected --real-home to forward REAL_HOME: ${first_args}" >&2
-    exit 1
-    ;;
-esac
-
-case "${first_args}" in
-  *"--colima-home=/fake/colima-home"*) ;;
-  *)
-    echo "Expected --colima-home to forward COLIMA_STATE_ROOT: ${first_args}" >&2
-    exit 1
-    ;;
-esac
+assert_contains "${first_args}" "helper run-host-colima-with-timeout 1 " "Expected captured args to include 'helper run-host-colima-with-timeout 1'"
+assert_contains "${first_args}" "--colima-bin=/fake/colima-binary" "Expected --colima-bin to forward HOST_COLIMA_BIN"
+assert_contains "${first_args}" "--real-home=/fake/real-home" "Expected --real-home to forward REAL_HOME"
+assert_contains "${first_args}" "--colima-home=/fake/colima-home" "Expected --colima-home to forward COLIMA_STATE_ROOT"
 
 captured_rc=1
 captured_stderr=$'timeout diagnostic\nexit status 124'
@@ -81,10 +65,4 @@ if grep -q 'exit status 124' /tmp/workcell-colima-timeout.stderr; then
   exit 1
 fi
 
-case "${first_args}" in
-  *" -- delete --profile timeout-fixture"*) ;;
-  *)
-    echo "Expected '-- delete --profile timeout-fixture' payload after the flag separator: ${first_args}" >&2
-    exit 1
-    ;;
-esac
+assert_contains "${first_args}" " -- delete --profile timeout-fixture" "Expected '-- delete --profile timeout-fixture' payload after the flag separator"
