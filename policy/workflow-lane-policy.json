@@ -98,6 +98,12 @@
       "local_mode": "none",
       "github_only_reason": "pull_request_target metadata policy remains GitHub-only"
     },
+    "release.yml/build-arm64-image": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "native arm64 release image build and GHCR push remain GitHub-only and gated on the release environment"
+    },
     "release.yml/codeql-preflight[build-mode=autobuild,language=go]": {
       "profiles": ["release-preflight"],
       "authority": "release-only",
@@ -133,6 +139,12 @@
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "release preflight binds hosted controls, artifacts, and release-only permissions"
+    },
+    "release.yml/preflight-arm64-repro": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release reproducibility verification of the native arm64 image binds release-only artifacts and runs on a native arm64 runner"
     },
     "release.yml/release": {
       "profiles": ["release-preflight"],

@@ -51,6 +51,12 @@ repo-local `./scripts/repo-publish-pr.sh` publication gate.
 - it runs a release-scoped CodeQL matrix so Go uses `autobuild` while Rust and
   JavaScript keep buildless scanning
 - it binds publish outputs to preflight results before signing
+- it builds and reproducibility-verifies the `linux/arm64` runtime image on a
+  native `ubuntu-24.04-arm` runner instead of QEMU emulation, matching `ci.yml`;
+  the amd64 image stays native on `ubuntu-latest`, and publish assembles the
+  multi-arch manifest from both native digests after the preflight digest match
+- the native arm64 build/push job is gated on the same `release` environment as
+  publish, so no image reaches GHCR before the release approval
 - it refuses to publish when provider pins, Linux base images, Linux toolchains,
   or release-build pins lag the latest tracked upstream versions
 - it signs release assets with keyless Sigstore/Cosign
@@ -95,6 +101,12 @@ Other macOS versions are not install-gated today.
 actual platform checks. The native amd64 and arm64 reproducible-build lanes run
 for pull requests, and the aggregate required context fails unless the
 per-platform matrix succeeds.
+
+`release.yml` uses the same native-runner split: the `preflight-arm64-repro`
+job reproducibility-verifies the arm64 runtime image on `ubuntu-24.04-arm` and
+feeds its digests into the preflight manifest, while the amd64 image is verified
+natively in `preflight`. `check-pinned-inputs` rejects any reintroduction of
+`docker/setup-qemu-action` into the release workflow.
 
 `ci.yml` and `docs.yml` use the same explicit nonroot validator contract when
 they bind-mount the repository: the workflow computes the caller UID/GID,
