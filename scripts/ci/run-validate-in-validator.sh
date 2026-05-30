@@ -38,6 +38,25 @@ validator_tmp="${validator_home}/.tmp"
 
 setup_workcell_ci_docker
 
+# Optional persistent build cache: when WORKCELL_VALIDATOR_HOST_HOME_DIR is set
+# (CI restores its .cache subdir via actions/cache), bind-mount it as the
+# validator HOME so Go/Cargo build artifacts under ${validator_cache} survive
+# across runs.  We mount the home dir itself (not just .cache) because mounting
+# a subdir would make Docker create the home as root, blocking the unprivileged
+# container user from creating sibling .tmp.  The host dir is created by — and
+# therefore owned by — the same uid the container runs as, so the user can
+# write.  Default (env unset) keeps the run byte-identical to the ephemeral
+# behavior the other callers rely on.  Only incremental build/test artifacts are
+# persisted (content-addressed by Go, fingerprinted by Cargo — a stale entry is
+# a rebuild, never a wrong pass); the reproducible-build job is separate and
+# stays --no-cache.
+host_home_mount=()
+host_home_dir="${WORKCELL_VALIDATOR_HOST_HOME_DIR:-}"
+if [[ -n "${host_home_dir}" ]]; then
+  mkdir -p "${host_home_dir}"
+  host_home_mount=(-v "${host_home_dir}:${validator_home}")
+fi
+
 # shellcheck disable=SC2016
 workcell_ci_docker run --rm \
   --user "${validator_uid}:${validator_gid}" \
@@ -50,6 +69,7 @@ workcell_ci_docker run --rm \
   -e GOMODCACHE="${validator_cache}/go-mod" \
   -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
   -e TMPDIR="${validator_tmp}" \
+  "${host_home_mount[@]}" \
   -v "${WORKSPACE}:/workspace" \
   -w /workspace \
   "${VALIDATOR_IMAGE}" \

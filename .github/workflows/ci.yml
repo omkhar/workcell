@@ -84,9 +84,25 @@ jobs:
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
           version: ${{ env.WORKCELL_BUILDX_VERSION }}
 
+      # Persist the validator's Go/Cargo build+test artifacts across runs to cut
+      # the from-cold compile cost inside the validate container.  Keyed on the
+      # dependency lockfiles so a toolchain/dep change is a clean miss.  GitHub
+      # scopes caches per-branch (a PR cannot poison main's cache), and the
+      # cached artifacts are content-addressed (Go) / fingerprinted (Cargo), so
+      # a stale entry forces a rebuild, never a wrong pass.  The
+      # reproducible-build job is separate and stays --no-cache.
+      - name: Restore validator build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/workcell-validator-home/.cache
+          key: validate-buildcache-${{ runner.os }}-${{ hashFiles('go.sum', 'runtime/container/rust/Cargo.lock') }}
+          restore-keys: |
+            validate-buildcache-${{ runner.os }}-
+
       - name: Validate repository
         env:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
+          WORKCELL_VALIDATOR_HOST_HOME_DIR: ${{ runner.temp }}/workcell-validator-home
           WORKCELL_VALIDATOR_BUILDX_CACHE_MODE: gha
           # Segregate the gha cache scope: PR runs write to a PR-keyed
           # scope, push-to-main writes to validator-main.  build-validator-image.sh
