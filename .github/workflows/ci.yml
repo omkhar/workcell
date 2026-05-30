@@ -113,7 +113,10 @@ jobs:
     name: Container smoke
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: validate
+    # Only gated on pr-shape (not validate): container smoke builds and runs the
+    # runtime image independently and consumes no validate output, so running it
+    # in parallel with validate removes it from the gating critical path.
+    needs: pr-shape
     permissions:
       contents: read
     steps:
@@ -224,7 +227,11 @@ jobs:
     name: Reproducible build (${{ matrix.platform_name }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
-    needs: validate
+    # Only gated on pr-shape (not validate): the reproducible build runs its own
+    # checkout + buildx + no-cache double-build and consumes no validate output,
+    # so running it in parallel with validate removes ~5m of serialization from
+    # the gating critical path.
+    needs: pr-shape
     permissions:
       contents: read
     strategy:
