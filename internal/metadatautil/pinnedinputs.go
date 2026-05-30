@@ -1014,10 +1014,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		`sudo install -m 0755 "$(command -v syft)" /usr/local/bin/syft`,
 		`actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"`,
 		`tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint`,
-		"Reclaim runner space before reproducible image check",
-		`docker image rm -f "workcell-validator:${GITHUB_SHA}" >/dev/null 2>&1 || true`,
 		"git -c safe.directory=/workspace archive \\",
-		"docker buildx prune -af || true",
 	} {
 		if !strings.Contains(releaseWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
