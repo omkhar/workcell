@@ -17,6 +17,10 @@ through a native control-plane mapping.
 |---|---|---|---|---|
 | GitHub Copilot CLI | `workcell --agent copilot --workspace ...` | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, `~/.copilot` config, permissions, sessions, logs, plugins, hooks, MCP/LSP state, and reviewed instruction imports | explicit staged token such as `copilot_github_token`, exported only to the managed child as `COPILOT_GITHUB_TOKEN` | roadmap parity track; not current support |
 
+The current sequencing plan for the Copilot parity track is
+[docs/copilot-linux-local-compat-plan.md](copilot-linux-local-compat-plan.md).
+That page is planning-only and does not change the supported provider set.
+
 Copilot support must land with the same evidence bar as the current providers:
 adapter baseline, auth/bootstrap explainability, unsafe-argument rejection,
 workspace control-plane masking, quickstart, scenario coverage, and live
