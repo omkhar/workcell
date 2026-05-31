@@ -199,6 +199,24 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 		return re, match, nil
 	}
+	requireUniformWorkflowEnv := func(text, key, valuePattern, label, path string) (string, error) {
+		lineRE := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `:\s*(\S+)\s*$`)
+		valueRE := regexp.MustCompile(`^` + valuePattern + `$`)
+		matches := lineRE.FindAllStringSubmatch(text, -1)
+		if len(matches) == 0 {
+			return "", fmt.Errorf("%s in %s must define %s", label, path, key)
+		}
+		value := matches[0][1]
+		for _, match := range matches {
+			if !valueRE.MatchString(match[1]) {
+				return "", fmt.Errorf("%s in %s must match %q", label, path, valuePattern)
+			}
+			if match[1] != value {
+				return "", fmt.Errorf("%s in %s must use one reviewed value for %s", label, path, key)
+			}
+		}
+		return value, nil
+	}
 	requireActionRef := func(text, action, path string) (string, error) {
 		re := regexp.MustCompile(regexp.QuoteMeta(action) + `@([0-9a-f]{40})`)
 		matches := re.FindAllStringSubmatch(text, -1)
@@ -804,37 +822,22 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if securityActionlintSHAMatch[1] != releaseActionlintSHAMatch[1] {
 		return errors.New("ACTIONLINT_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
 	}
-	_, securityZizmorVersionMatch, err := requireRegex(securityWorkflow, `(?m)^\s*ZIZMOR_VERSION:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$`, "security zizmor version", ".github/workflows/security.yml")
+	securityZizmorVersion, err := requireUniformWorkflowEnv(securityWorkflow, "ZIZMOR_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "security zizmor version", ".github/workflows/security.yml")
 	if err != nil {
 		return err
 	}
-	if _, _, err := requireRegex(securityWorkflow, `(?m)^\s*ZIZMOR_SHA256:\s*([0-9a-f]{64})\s*$`, "security zizmor sha", ".github/workflows/security.yml"); err != nil {
+	if _, err := requireUniformWorkflowEnv(securityWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "security zizmor sha", ".github/workflows/security.yml"); err != nil {
 		return err
 	}
-	_, securityZizmorActionVersionMatch, err := requireRegex(securityWorkflow, `(?m)^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$`, "security zizmor action version", ".github/workflows/security.yml")
+	releaseZizmorVersion, err := requireUniformWorkflowEnv(releaseWorkflow, "ZIZMOR_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "release zizmor version", ".github/workflows/release.yml")
 	if err != nil {
 		return err
 	}
-	if securityZizmorVersionMatch[1] != securityZizmorActionVersionMatch[1] {
-		return errors.New("ZIZMOR_VERSION must match the zizmor-action version in .github/workflows/security.yml")
-	}
-	_, releaseZizmorActionVersionMatch, err := requireRegex(releaseWorkflow, `(?s)zizmorcore/zizmor-action@[0-9a-f]{40}\s*#\s*v[0-9]+\.[0-9]+\.[0-9]+.*?\n\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\n`, "release zizmor action version", ".github/workflows/release.yml")
-	if err != nil {
+	if _, err := requireUniformWorkflowEnv(releaseWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "release zizmor sha", ".github/workflows/release.yml"); err != nil {
 		return err
 	}
-	if securityZizmorVersionMatch[1] != releaseZizmorActionVersionMatch[1] {
-		return errors.New("ZIZMOR_VERSION must match the release workflow zizmor-action version")
-	}
-	securityZizmorActionRef, err := requireActionRef(securityWorkflow, "zizmorcore/zizmor-action", ".github/workflows/security.yml")
-	if err != nil {
-		return err
-	}
-	releaseZizmorActionRef, err := requireActionRef(releaseWorkflow, "zizmorcore/zizmor-action", ".github/workflows/release.yml")
-	if err != nil {
-		return err
-	}
-	if securityZizmorActionRef != releaseZizmorActionRef {
-		return errors.New("zizmorcore/zizmor-action must use the same reviewed commit SHA in .github/workflows/security.yml and .github/workflows/release.yml")
+	if securityZizmorVersion != releaseZizmorVersion {
+		return errors.New("ZIZMOR_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
 	}
 	for _, workflow := range []struct {
 		text string
@@ -852,14 +855,20 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		if !strings.Contains(workflow.text, "--connect-timeout 15") {
 			return fmt.Errorf("%s must bound actionlint download connect time", workflow.path)
 		}
+		if !strings.Contains(workflow.text, "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz") {
+			return fmt.Errorf("%s must derive the zizmor archive URL from ZIZMOR_VERSION", workflow.path)
+		}
+		if !strings.Contains(workflow.text, `echo "${ZIZMOR_SHA256}  zizmor.tar.gz" | sha256sum -c -`) {
+			return fmt.Errorf("%s must verify the pinned zizmor archive digest", workflow.path)
+		}
+		if !strings.Contains(workflow.text, `tar -xzf zizmor.tar.gz -C "${RUNNER_TEMP}/bin" zizmor`) {
+			return fmt.Errorf("%s must install the pinned zizmor binary archive", workflow.path)
+		}
 	}
 	for _, needle := range []string{
 		"github.event_name == 'workflow_dispatch' && github.ref_name != 'main'",
 		"base-ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/main' || '' }}",
 		"head-ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || '' }}",
-		"https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz",
-		`echo "${ZIZMOR_SHA256}  zizmor.tar.gz" | sha256sum -c -`,
-		`tar -xzf zizmor.tar.gz -C "${RUNNER_TEMP}/bin" zizmor`,
 		"./scripts/check-workflows.sh",
 	} {
 		if !strings.Contains(securityWorkflow, needle) {
@@ -953,6 +962,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	if !strings.Contains(releaseWorkflow, "./scripts/publish-github-release.sh") {
 		return errors.New(".github/workflows/release.yml must publish assets through the reviewed repo-local GitHub Release API script")
+	}
+	if count := strings.Count(releaseWorkflow, "./scripts/check-release-tag-signature.sh --github-repo"); count != 2 {
+		return fmt.Errorf(".github/workflows/release.yml must verify release tag signatures in preflight and publish jobs, found %d checks", count)
 	}
 	for _, needle := range []string{
 		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
@@ -1057,6 +1069,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if releaseMode != "review-gated" && releaseMode != "single-owner-public" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
 		return errors.New("policy/github-hosted-controls.toml must set release_environment.mode to 'review-gated', 'single-owner-public', 'single-owner-private', or 'plan-limited-private'")
 	}
+	if _, err := GitHubActionsPolicy(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
+		return err
+	}
+	if _, err := ReleaseAssets(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
+		return err
+	}
 	if err := ValidateCanonicalRepositoryVariables(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
 		return err
 	}
@@ -1065,6 +1083,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	for _, needle := range []string{
 		"gh api --paginate \"repos/${REPO}/actions/variables?per_page=100\"",
+		"repos/${REPO}/actions/permissions/selected-actions",
+		"repos/${REPO}/actions/permissions/workflow",
+		"repos/${REPO}/immutable-releases",
 		"jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}'",
 		"gh api --paginate \"repos/${REPO}/environments?per_page=100\"",
 		`list-hosted-control-environments "${POLICY_PATH}"`,

@@ -97,17 +97,41 @@ jobs:
         with:
           persist-credentials: false
 
-      - id: zizmor
-        uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d # v0.5.6
-        with:
-          advanced-security: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_ZIZMOR_SARIF == 'true' }}
-          inputs: .github/workflows
-          persona: auditor
-          version: 1.25.2
+      - name: Install zizmor
+        env:
+          ZIZMOR_SHA256: aa1facd105f0d83fe5c55b1adcd9d7417de5d83aa27471f91dc0b66cf3803577
+          ZIZMOR_VERSION: 1.25.2
+        run: |
+          curl -fsSL \
+            --max-time 60 \
+            --connect-timeout 15 \
+            -o zizmor.tar.gz \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA256}  zizmor.tar.gz" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/bin"
+          tar -xzf zizmor.tar.gz -C "${RUNNER_TEMP}/bin" zizmor
+          chmod 0755 "${RUNNER_TEMP}/bin/zizmor"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - name: Run GitHub Actions security analysis
+        run: |
+          zizmor \
+            --persona auditor \
+            --config .github/zizmor.yml \
+            .github/workflows
+
+      - name: Generate zizmor SARIF
+        if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_ZIZMOR_SARIF == 'true' }}
+        run: |
+          zizmor \
+            --persona auditor \
+            --config .github/zizmor.yml \
+            --format sarif \
+            .github/workflows >"${RUNNER_TEMP}/zizmor.sarif"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_ZIZMOR_SARIF == 'true' }}
         with:
           name: zizmor-sarif
-          path: ${{ steps.zizmor.outputs.output-file }}
+          path: ${{ runner.temp }}/zizmor.sarif
           retention-days: 5
