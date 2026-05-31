@@ -288,6 +288,21 @@ if grep -q '^support_matrix_launch=blocked$' <<<"${ROOT_STRICT_SUPPORT_OUTPUT}";
   export WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION="none"
 fi
 
+if grep -q '^support_matrix_launch=blocked$' <<<"${ROOT_STRICT_SUPPORT_OUTPUT}"; then
+  SUPPORT_OVERRIDE_SPOOF_EXIT=0
+  WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1 \
+    WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS=macos \
+    WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH=arm64 \
+    WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO=none \
+    WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION=none \
+    /bin/bash -c 'sleep 0.1 & /bin/bash -p "$1" --agent codex --workspace "$2" --no-default-injection-policy --dry-run; wait' \
+    _ "${ROOT_DIR}/scripts/workcell" "${ROOT_DIR}" >/tmp/workcell-support-override-spoof.out 2>&1 || SUPPORT_OVERRIDE_SPOOF_EXIT=$?
+  if [[ "${SUPPORT_OVERRIDE_SPOOF_EXIT}" -eq 0 ]] && grep -q '^docker run ' /tmp/workcell-support-override-spoof.out; then
+    echo "Expected support-matrix test override spoof to stay blocked outside approved validation harnesses" >&2
+    exit 1
+  fi
+fi
+
 run_workcell_verify() {
   local -a cmd=(/usr/bin/env -i PATH="${TRUSTED_HOST_PATH}" BASH_ENV= ENV= WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1)
   while [[ $# -gt 0 ]] && [[ "$1" == *=* ]]; do
@@ -1896,15 +1911,16 @@ INJECTION_DOCTOR_OUTPUT="$(run_workcell_real_host \
   --no-default-injection-policy \
   --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
   --doctor)"
-set +e
-INJECTION_DRY_RUN_OUTPUT="$(run_workcell_real_host \
+if INJECTION_DRY_RUN_OUTPUT="$(run_workcell_real_host \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
   --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/policy.toml" \
-  --dry-run 2>&1)"
-INJECTION_DRY_RUN_STATUS=$?
-set -e
+  --dry-run 2>&1)"; then
+  INJECTION_DRY_RUN_STATUS=0
+else
+  INJECTION_DRY_RUN_STATUS=$?
+fi
 
 INJECTION_LAUNCH_BLOCKED=0
 if grep -q '^support_matrix_launch=blocked$' <<<"${INJECTION_DOCTOR_OUTPUT}"; then
@@ -1970,14 +1986,15 @@ printf '999999\n' >"${STALE_INJECTION_BUNDLE}/owner.pid"
 printf 'stale-secret\n' >"${STALE_INJECTION_BUNDLE}/stale.txt"
 printf '[{"source":"/tmp/stale-secret","mount_path":"/opt/workcell/host-inputs/credentials/stale"}]\n' >"${STALE_INJECTION_SIDECAR}"
 touch -t 202001010000 "${STALE_INJECTION_BUNDLE}" "${STALE_INJECTION_BUNDLE}/owner.pid" "${STALE_INJECTION_BUNDLE}/stale.txt" "${STALE_INJECTION_SIDECAR}"
-set +e
-run_workcell_real_host \
+if run_workcell_real_host \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
-  --dry-run >/tmp/workcell-no-policy-dry-run.out 2>&1
-NO_POLICY_DRY_RUN_STATUS=$?
-set -e
+  --dry-run >/tmp/workcell-no-policy-dry-run.out 2>&1; then
+  NO_POLICY_DRY_RUN_STATUS=0
+else
+  NO_POLICY_DRY_RUN_STATUS=$?
+fi
 
 if [[ "${INJECTION_LAUNCH_BLOCKED}" -eq 1 ]]; then
   if [[ "${NO_POLICY_DRY_RUN_STATUS}" -ne 2 ]]; then
@@ -6114,13 +6131,26 @@ if run_workcell_verify --agent codex --workspace "${REAL_HOME}" --dry-run >/dev/
   exit 1
 fi
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --dry-run >/dev/null 2>&1; then
-  echo "Expected breakglass acknowledgement requirement" >&2
+PROVIDER_HOME_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/workcell-provider-home.XXXXXX")"
+mkdir -p "${PROVIDER_HOME_FIXTURE}/home/.codex"
+printf 'provider home marker\n' >"${PROVIDER_HOME_FIXTURE}/home/.codex/AGENTS.md"
+if run_workcell_verify \
+  HOME="${PROVIDER_HOME_FIXTURE}/home" \
+  XDG_CONFIG_HOME="${PROVIDER_HOME_FIXTURE}/home/.config" \
+  --agent codex \
+  --workspace "${PROVIDER_HOME_FIXTURE}/home/.codex" \
+  --allow-nongit-workspace \
+  --no-default-injection-policy \
+  --dry-run >/tmp/workcell-provider-home-workspace.out 2>&1; then
+  echo "Expected provider-home workspace rejection" >&2
+  rm -rf "${PROVIDER_HOME_FIXTURE}"
   exit 1
 fi
+grep -q 'Refusing sensitive workspace mount' /tmp/workcell-provider-home-workspace.out
+rm -rf "${PROVIDER_HOME_FIXTURE}"
 
-if ! run_workcell_verify --agent codex --mode breakglass --ack-breakglass --dry-run >/dev/null 2>&1; then
-  echo "Expected acknowledged breakglass dry-run to succeed" >&2
+if "${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --dry-run >/dev/null 2>&1; then
+  echo "Expected breakglass acknowledgement requirement" >&2
   exit 1
 fi
 
@@ -6148,8 +6178,8 @@ fi
 rm -f "${ACK_BREAKGLASS_STALE_STDERR_FILE}"
 
 ACK_BREAKGLASS_BARE_OUTPUT="$(run_workcell_verify --agent codex --mode breakglass --ack-breakglass --dry-run 2>&1 >/dev/null || true)"
-if ! grep -q -- '--ack-breakglass accepted without a date acknowledgement' <<<"${ACK_BREAKGLASS_BARE_OUTPUT}"; then
-  echo "Expected bare --ack-breakglass to print a deprecation warning" >&2
+if ! grep -q -- '--ack-breakglass requires a date acknowledgement' <<<"${ACK_BREAKGLASS_BARE_OUTPUT}"; then
+  echo "Expected bare --ack-breakglass to fail with a date acknowledgement requirement" >&2
   exit 1
 fi
 
@@ -6180,7 +6210,7 @@ if ! grep -q -- '--ack-arbitrary-command=1999-01-01 does not match today' "${ACK
 fi
 rm -f "${ACK_ARBITRARY_STALE_STDERR_FILE}"
 
-ARBITRARY_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command --dry-run -- bash -lc true 2>/dev/null)"
+ARBITRARY_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --prepare --allow-arbitrary-command "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run -- bash -lc true 2>/dev/null)"
 if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
   echo "Expected acknowledged arbitrary command dry-run to succeed" >&2
   exit 1
@@ -6512,7 +6542,7 @@ EOF
       --debug-log "${DETACHED_SESSION_DEBUG_LOG}" \
       --file-trace-log "${DETACHED_SESSION_FILE_TRACE_LOG}" \
       --allow-arbitrary-command \
-      --ack-arbitrary-command \
+      "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
       -- /bin/bash -lc "${DETACHED_SESSION_WORKER_COMMAND}" -- "${DETACHED_SESSION_SOURCE_SENTINEL_REL}" >"${DETACHED_SESSION_START_OUT}" 2>&1; then
       echo "Expected detached session start to succeed against the live runtime" >&2
       cat "${DETACHED_SESSION_START_OUT}" >&2
@@ -6771,7 +6801,7 @@ EOF
       --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
-      --ack-arbitrary-command \
+      "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
       -- /bin/bash -lc "${PACKAGE_MUTATION_AUDIT_COMMAND}"; then
       echo "Expected package-mutation audit verification run to succeed" >&2
       exit 1
@@ -6810,7 +6840,7 @@ EOF
       --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
-      --ack-arbitrary-command \
+      "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
       -- /bin/bash -lc "${PACKAGE_MUTATION_FAILURE_COMMAND}"; then
       echo "Expected package-mutation failure propagation verification run to succeed" >&2
       exit 1
@@ -6836,7 +6866,7 @@ EOF
       --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
-      --ack-arbitrary-command \
+      "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
       -- /bin/bash -lc 'test -f /opt/workcell/host-injections/manifest.json && grep -q "Repository Working Agreement" /workspace/AGENTS.md && test ! -d /workspace/AGENTS.md'; then
       echo "Expected live launcher run to stage an injection manifest and mount the tracked workspace AGENTS.md snapshot as a file" >&2
       exit 1
@@ -7046,7 +7076,7 @@ if run_workcell_verify --agent codex --workspace "${WORKTREE_LINKED}" --dry-run 
 fi
 grep -q 'This workspace is a linked worktree' /tmp/workcell-linked-worktree.out
 grep -q 'create a standard clone at the same location instead' /tmp/workcell-linked-worktree.out
-grep -q 'pass --mode breakglass --ack-breakglass to proceed with a linked worktree' /tmp/workcell-linked-worktree.out
+grep -q 'pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with a linked worktree' /tmp/workcell-linked-worktree.out
 
 REDIRECTED_ROOT="${BARRIER_VERIFY_ROOT}/redirected-root"
 REDIRECTED_REPO="${REDIRECTED_ROOT}/repo"
@@ -7590,6 +7620,14 @@ if ! grep -Fq 'unset DISABLE_AUTOUPDATER' "${ROOT_DIR}/runtime/container/provide
   echo "Expected provider wrapper to discard caller-supplied DISABLE_AUTOUPDATER" >&2
   exit 1
 fi
+if ! grep -Fq 'WORKCELL_PROVIDER_LAUNCHER_AUTHORITY' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to require the managed launcher authority marker" >&2
+  exit 1
+fi
+if ! grep -Fq 'WORKCELL_PROVIDER_LAUNCHER_AUTHORITY' "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-launcher.rs"; then
+  echo "Expected workcell-launcher to set the provider-wrapper authority marker" >&2
+  exit 1
+fi
 for gemini_sandbox_env in \
   'unset GEMINI_SANDBOX' \
   'unset GEMINI_SANDBOX_IMAGE' \
@@ -7620,12 +7658,20 @@ if ! grep -Fq "Workcell blocked Claude lifecycle command: \${arg}" "${ROOT_DIR}/
   echo "Expected provider policy to reject native Claude lifecycle commands that bypass the pinned image" >&2
   exit 1
 fi
+if ! grep -Fq '/usr/local/libexec/workcell/provider-wrapper.sh' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
+  echo "Expected Codex managed rules to block direct provider-wrapper launches" >&2
+  exit 1
+fi
 if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
   echo "Expected Codex managed rules to block the native Claude binary path" >&2
   exit 1
 fi
 if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
   echo "Codex managed rules should not reference the removed Claude npm entrypoint" >&2
+  exit 1
+fi
+if ! grep -Fq '/usr/local/libexec/workcell/provider-wrapper\.sh' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
+  echo "Expected Claude Bash guard to block direct provider-wrapper launches" >&2
   exit 1
 fi
 if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then

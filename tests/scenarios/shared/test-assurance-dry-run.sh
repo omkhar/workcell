@@ -11,6 +11,7 @@ trap cleanup EXIT
 
 HOME_DIR="${TMP_DIR}/home"
 WORKSPACE="${TMP_DIR}/workspace"
+ACK_TODAY_UTC="$(date -u +%Y-%m-%d)"
 mkdir -p "${HOME_DIR}/.config" "${WORKSPACE}"
 git -C "${WORKSPACE}" init -q
 printf 'scenario workspace\n' >"${WORKSPACE}/README.md"
@@ -158,9 +159,9 @@ fi
 if [[ "${launch_blocked}" -eq 1 ]]; then
   run_dry_run_expect_launch_blocked "prompt-codex" --agent codex --agent-autonomy prompt --agent-arg --version
   run_dry_run_expect_launch_blocked "development-codex" --agent codex --mode development --agent-arg --version
-  run_dry_run_expect_launch_blocked "breakglass-codex" --agent codex --mode breakglass --ack-breakglass
+  run_dry_run_expect_launch_blocked "breakglass-codex" --agent codex --mode breakglass "--ack-breakglass=${ACK_TODAY_UTC}"
   run_dry_run_expect_launch_blocked "readonly-codex" --agent codex --container-mutability readonly
-  run_dry_run_expect_launch_blocked "arbitrary-command-codex" --agent codex --allow-arbitrary-command --ack-arbitrary-command -- bash -lc true
+  run_dry_run_expect_launch_blocked "arbitrary-command-codex" --agent codex --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" -- bash -lc true
   run_dry_run_expect_launch_blocked "control-plane-vcs-codex" --agent codex --allow-control-plane-vcs --ack-control-plane-vcs
   echo "Assurance dry-run scenario passed"
   exit 0
@@ -215,7 +216,7 @@ run_dry_run_expect_failure 2 "breakglass-noack" --agent codex --mode breakglass
 grep -q '^breakglass mode requires --ack-breakglass\.$' "${TMP_DIR}/breakglass-noack.stderr"
 
 for agent in codex claude gemini; do
-  run_dry_run "breakglass-${agent}" --agent "${agent}" --mode breakglass --ack-breakglass
+  run_dry_run "breakglass-${agent}" --agent "${agent}" --mode breakglass "--ack-breakglass=${ACK_TODAY_UTC}"
   grep -q "^profile=.* mode=breakglass agent=${agent} " "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^workspace_control_plane=unmasked$' "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^network_policy=unrestricted ' "${TMP_DIR}/breakglass-${agent}.stderr"
@@ -260,7 +261,7 @@ for agent in codex claude gemini; do
     "${ROOT_DIR}/scripts/workcell" \
     --agent "${agent}" \
     --allow-arbitrary-command \
-    --ack-arbitrary-command \
+    "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
     --workspace "${WORKSPACE}" \
     --no-default-injection-policy \
     --dry-run \

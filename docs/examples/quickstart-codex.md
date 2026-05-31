@@ -114,7 +114,7 @@ workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 
 Breakglass:
 
 ```bash
-workcell --agent codex --mode breakglass --ack-breakglass --workspace /path/to/repo
+workcell --agent codex --mode breakglass --ack-breakglass=YYYY-MM-DD --workspace /path/to/repo
 ```
 
 ## 6. Publish on the host

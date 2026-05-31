@@ -54,6 +54,24 @@ sanitize_provider_env() {
   export PATH="${TRUSTED_PATH}"
 }
 
+require_managed_provider_launch() {
+  case "${AGENT_NAME}" in
+    codex | claude | gemini) ;;
+    *)
+      workcell_die "Unsupported provider wrapper target: ${AGENT_NAME}"
+      ;;
+  esac
+
+  if [[ "${AGENT_NAME}" == "codex" && "${1:-}" == "execpolicy" ]]; then
+    return 0
+  fi
+
+  if [[ "${WORKCELL_PROVIDER_LAUNCHER_AUTHORITY:-0}" != "1" ]]; then
+    workcell_die "Workcell blocked direct provider wrapper execution."
+  fi
+  unset WORKCELL_PROVIDER_LAUNCHER_AUTHORITY
+}
+
 emit_codex_rules_mutability_notice() {
   local configured_mutability=""
   local effective_mutability=""
@@ -98,6 +116,7 @@ mkdir -p "${TMPDIR}"
 if workcell_should_reexec_as_runtime_user; then
   workcell_reexec_as_runtime_user /usr/local/libexec/workcell/provider-wrapper.sh "$@"
 fi
+require_managed_provider_launch "$@"
 seed_agent_home "${AGENT_NAME}"
 emit_session_assurance_notice
 emit_codex_rules_mutability_notice

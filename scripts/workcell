@@ -10,6 +10,12 @@ scrub_host_process_env() {
 
   unset BASH_ENV ENV
   unset WORKCELL_TEST_FAIL_AFTER_PROFILE_REFRESH
+  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+    unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS
+    unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH
+    unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO
+    unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION
+  fi
   unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH PYTHONSTARTUP
   unset RUBYOPT RUBYLIB GEM_HOME GEM_PATH
   unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT
@@ -26,13 +32,30 @@ scrub_host_process_env() {
 
 scrub_host_process_env
 
+support_matrix_host_override_allowed() {
+  local parent_cmdline=""
+
+  [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] || return 1
+  [[ -r "/proc/${PPID}/cmdline" ]] || return 1
+  parent_cmdline="$(tr '\0' ' ' <"/proc/${PPID}/cmdline" 2>/dev/null || true)"
+  case "${parent_cmdline}" in
+    *"scripts/verify-invariants.sh"* | \
+      *"tests/scenarios/shared/test-compat-target-dry-run.sh"* | \
+      *"tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh"* | \
+      *"tests/scenarios/shared/test-aws-remote-vm-dry-run.sh"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 detected_host_os() {
   local host_os=""
 
   # verify-invariants uses a reserved harness-only host override so Linux
   # validation runners can still exercise launch assembly without weakening the
   # real operator-facing support boundary.
-  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]]; then
+  if support_matrix_host_override_allowed && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]]; then
     printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS}"
     return 0
   fi
@@ -57,7 +80,7 @@ detected_host_os() {
 detected_host_arch() {
   local host_arch=""
 
-  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]]; then
+  if support_matrix_host_override_allowed && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]]; then
     printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}"
     return 0
   fi
@@ -79,7 +102,7 @@ detected_host_arch() {
 detected_host_distro() {
   local host_distro=""
 
-  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO:-}" ]]; then
+  if support_matrix_host_override_allowed && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO:-}" ]]; then
     printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO}"
     return 0
   fi
@@ -102,7 +125,7 @@ detected_host_distro() {
 detected_host_distro_version() {
   local host_distro_version=""
 
-  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION:-}" ]]; then
+  if support_matrix_host_override_allowed && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION:-}" ]]; then
     printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION}"
     return 0
   fi
@@ -420,14 +443,11 @@ Options:
   --prepare-only                Seed or refresh the prepared runtime image, then exit without launching
   --repair-profile              Delete a conflicting unmanaged Colima profile before launch
                                 (implies --prepare on strict)
-  --ack-breakglass[=YYYY-MM-DD] Required with --mode breakglass; bare form
-                                accepted with a deprecation warning, the
-                                dated form requires today's UTC date
+  --ack-breakglass=YYYY-MM-DD   Required with --mode breakglass; date must be
+                                today's UTC date
   --ack-arbitrary-command[=YYYY-MM-DD]
-                                Required with --allow-arbitrary-command;
-                                bare form accepted with a deprecation
-                                warning, the dated form requires today's
-                                UTC date
+                                Required with --allow-arbitrary-command; date
+                                must be today's UTC date
   --workspace PATH              Workspace to mount (default: current directory)
   --session-workspace direct|isolated
                                 Detached session workspace flow for session start
@@ -1760,7 +1780,7 @@ validate_isolated_session_workspace_source() {
     echo "Refusing git workspace with admin state outside the mounted workspace: ${source_workspace}" >&2
     echo "This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path." >&2
     echo "To use this workspace on the safe path, create a standard clone at the same location instead." >&2
-    echo "Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree." >&2
+    echo "Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with a linked worktree." >&2
     exit 2
   fi
   if workspace_git_has_worktree_changes "${source_workspace}"; then
@@ -5573,6 +5593,9 @@ workspace_is_sensitive() {
     "${REAL_HOME}/.ssh"
     "${REAL_HOME}/.aws"
     "${REAL_HOME}/.azure"
+    "${REAL_HOME}/.codex"
+    "${REAL_HOME}/.claude"
+    "${REAL_HOME}/.gemini"
     "${REAL_HOME}/.config"
     "${REAL_HOME}/.docker"
     "${REAL_HOME}/.npm"
@@ -5587,6 +5610,9 @@ workspace_is_sensitive() {
   )
   real_home_lower="$(lower_ascii "${REAL_HOME}")"
   local sensitive_regexes=(
+    '(^|.*/)\.codex($|/)'
+    '(^|.*/)\.claude($|/)'
+    '(^|.*/)\.gemini($|/)'
     "^${real_home_lower}/library/application support/google/chrome"
     "^${real_home_lower}/library/application support/google/chrome beta"
     "^${real_home_lower}/library/application support/chromium"
@@ -5649,7 +5675,7 @@ validate_workspace() {
       if [[ "${SESSION_DETACHED:-0}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)" == "isolated" ]]; then
         echo "Next step: rerun with --session-workspace direct if you want to use the current workspace in place." >&2
       fi
-      echo "Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree." >&2
+      echo "Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with a linked worktree." >&2
       exit 2
     fi
     return
@@ -5679,8 +5705,10 @@ validate_ack_token() {
   local today
 
   if [[ -z "${token}" ]]; then
-    echo "Warning: ${flag_name} accepted without a date acknowledgement; prefer ${flag_name}=YYYY-MM-DD (today's UTC date)." >&2
-    return 0
+    today="$(date -u +%Y-%m-%d)"
+    echo "${flag_name} requires a date acknowledgement." >&2
+    echo "Re-issue with ${flag_name}=${today} when you still intend to bypass the boundary." >&2
+    exit 2
   fi
   today="$(date -u +%Y-%m-%d)"
   if [[ "${token}" != "${today}" ]]; then
