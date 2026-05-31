@@ -85,6 +85,9 @@ fn main() {
 
     launcher_common::sanitize_env();
     launcher_common::set_env_var("WORKCELL_LAUNCH_TARGET", request.target_name);
+    if request.script_path == "/usr/local/libexec/workcell/provider-wrapper.sh" {
+        launcher_common::set_env_var("WORKCELL_PROVIDER_LAUNCHER_AUTHORITY", "1");
+    }
     process::exit(launcher_common::exec_request(
         &request.exec_args,
         request.script_path,

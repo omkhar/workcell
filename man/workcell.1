@@ -266,15 +266,16 @@ this also implies
 .B --prepare
 because the recreated profile starts empty.
 .TP
-.B --ack-breakglass
+.B --ack-breakglass=YYYY-MM-DD
 Required with
 .B --mode breakglass
-to make the higher-trust path explicit.
+to make the higher-trust path explicit. The date must be today's UTC date.
 .TP
-.B --ack-arbitrary-command
+.B --ack-arbitrary-command=YYYY-MM-DD
 Required with
 .B --allow-arbitrary-command
 to make lower-assurance boundary-debugging command passthrough explicit.
+The date must be today's UTC date.
 .TP
 .B --ack-control-plane-vcs
 Required with
@@ -467,7 +468,7 @@ Still inside the Workcell VM plus container boundary, but with unrestricted
 network access. The managed entrypoint does not auto-inject unsafe provider
 flags; any adapter-specific high-trust launch is a lower-assurance direct
 provider path. This profile requires
-.BR --ack-breakglass .
+.BR --ack-breakglass=YYYY-MM-DD .
 .SH NODE SURFACE
 The public
 .B node

@@ -250,7 +250,7 @@ Workcell uses two terms throughout the docs:
 | `strict` | default provider lane | bounded VM plus container, reviewed network posture, repo control-plane masking, provider-focused entrypoint, `--agent-autonomy yolo` by default |
 | `development` | managed interactive development lane | same boundary and masking as `strict`, managed non-provider command execution, broader dependency egress, visibly lower assurance than `strict` |
 | `build` | image preparation and dependency refresh | broader egress for rebuild and preparation work |
-| `breakglass` | explicit higher-trust debugging path | requires `--ack-breakglass`; visibly lower assurance |
+| `breakglass` | explicit higher-trust debugging path | requires `--ack-breakglass=YYYY-MM-DD` using today's UTC date; visibly lower assurance |
 
 `--container-mutability` is orthogonal to `--mode`: `ephemeral` (the
 default) allows package-manager mutations and labels the session

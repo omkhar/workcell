@@ -71,20 +71,24 @@ func TestHomeControlPlaneRejectsManagedDirectoryTargets(t *testing.T) {
 		t.Run(filepath.Base(target), func(t *testing.T) {
 			t.Parallel()
 
-			code, output := runBashProbe(t, `set -euo pipefail
-source() {
-  if [[ "$1" == "/usr/local/libexec/workcell/assurance.sh" ]]; then
-    return 0
-  fi
-  builtin source "$@"
-}
-builtin source "`+scriptPath+`"
-if workcell_target_is_allowed "`+target+`"; then
-  printf 'allowed\n'
-else
-  printf 'blocked\n'
-fi
-`, nil)
+			probe := fmt.Sprintf(
+				"set -euo pipefail\n"+
+					"source() {\n"+
+					"  if [[ \"$1\" == \"/usr/local/libexec/workcell/assurance.sh\" ]]; then\n"+
+					"    return 0\n"+
+					"  fi\n"+
+					"  builtin source \"$@\"\n"+
+					"}\n"+
+					"builtin source %q\n"+
+					"if workcell_target_is_allowed %q; then\n"+
+					"  printf 'allowed\\n'\n"+
+					"else\n"+
+					"  printf 'blocked\\n'\n"+
+					"fi\n",
+				scriptPath,
+				target,
+			)
+			code, output := runBashProbe(t, probe, nil)
 			if code != 0 {
 				t.Fatalf("probe exit code = %d output=%q", code, output)
 			}
@@ -95,6 +99,46 @@ fi
 	}
 }
 
+func TestHomeControlPlaneRejectsTraversalTargets(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "runtime", "container", "home-control-plane.sh")
+	for _, target := range []string{
+		"/state/injected/../../state/agent-home/.codex/config.toml",
+		"/state/agent-home/../agent-home/.claude.json",
+		"/state/injected/./copy.txt",
+	} {
+		target := target
+		t.Run(strings.ReplaceAll(target, "/", "_"), func(t *testing.T) {
+			t.Parallel()
+
+			probe := fmt.Sprintf(
+				"set -euo pipefail\n"+
+					"source() {\n"+
+					"  if [[ \"$1\" == \"/usr/local/libexec/workcell/assurance.sh\" ]]; then\n"+
+					"    return 0\n"+
+					"  fi\n"+
+					"  builtin source \"$@\"\n"+
+					"}\n"+
+					"builtin source %q\n"+
+					"if workcell_target_is_allowed %q; then\n"+
+					"  printf 'allowed\\n'\n"+
+					"else\n"+
+					"  printf 'blocked\\n'\n"+
+					"fi\n",
+				scriptPath,
+				target,
+			)
+			code, output := runBashProbe(t, probe, nil)
+			if code != 0 {
+				t.Fatalf("probe exit code = %d output=%q", code, output)
+			}
+			if strings.TrimSpace(output) != "blocked" {
+				t.Fatalf("target %s unexpectedly allowed: %q", target, output)
+			}
+		})
+	}
+}
 func TestResolveWorkcellRealHomeRejectsWorkspaceOverride(t *testing.T) {
 	t.Parallel()
 
@@ -104,11 +148,8 @@ func TestResolveWorkcellRealHomeRejectsWorkspaceOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "lib", "trusted-docker-client.sh")
-	code, output := runBashProbe(t, `set -euo pipefail
-ROOT_DIR="`+workspace+`"
-source "`+scriptPath+`"
-resolve_workcell_real_home
-`, map[string]string{
+	probe := fmt.Sprintf("set -euo pipefail\nROOT_DIR=%q\nsource %q\nresolve_workcell_real_home\n", workspace, scriptPath)
+	code, output := runBashProbe(t, probe, map[string]string{
 		"HOME":                      t.TempDir(),
 		"WORKCELL_DOCKER_REAL_HOME": overrideHome,
 	})

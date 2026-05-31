@@ -1141,6 +1141,12 @@ workcell_target_is_allowed() {
   local target_path="$1"
 
   case "${target_path}" in
+    *"/../"* | *"/.." | *"/./"* | *"/.")
+      return 1
+      ;;
+  esac
+
+  case "${target_path}" in
     /state/agent-home | /state/agent-home/* | /state/injected | /state/injected/*) ;;
     *)
       return 1
@@ -1359,6 +1365,11 @@ workcell_apply_manifest_ssh() {
 
   while IFS=$'\x1f' read -r row_source row_mount_path row_target_name; do
     [[ -n "${row_source}${row_mount_path}" ]] || continue
+    case "${row_target_name}" in
+      "" | "." | ".." | */* | *\\*)
+        workcell_die "Workcell SSH identity target name is not allowed: ${row_target_name}"
+        ;;
+    esac
     workcell_reset_session_target "${HOME}/.ssh/${row_target_name}" "SSH identity"
     cp "$(workcell_resolve_manifest_input_path "${row_source}" "${row_mount_path}")" "${HOME}/.ssh/${row_target_name}"
     chmod 0600 "${HOME}/.ssh/${row_target_name}"

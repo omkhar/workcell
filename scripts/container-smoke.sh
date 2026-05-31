@@ -2602,11 +2602,24 @@ EOF
   cat <<'EOF' >/tmp/workcell-wrapper-bashenv.sh
 exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/codex --version
 EOF
-  if BASH_ENV=/tmp/workcell-wrapper-bashenv.sh bash /usr/local/libexec/workcell/provider-wrapper.sh >/tmp/provider-wrapper-bashenv.out 2>&1; then
+  set +e
+  BASH_ENV=/tmp/workcell-wrapper-bashenv.sh bash /usr/local/libexec/workcell/provider-wrapper.sh >/tmp/provider-wrapper-bashenv.out 2>&1
+  provider_wrapper_bashenv_status=$?
+  set -e
+  if [[ "${provider_wrapper_bashenv_status}" -eq 0 ]]; then
     echo "expected explicit bash launch of provider wrapper with hostile BASH_ENV to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/provider-wrapper-bashenv.out
+  set +e
+  WORKCELL_LAUNCH_TARGET=codex bash /usr/local/libexec/workcell/provider-wrapper.sh >/tmp/provider-wrapper-direct.out 2>&1
+  provider_wrapper_direct_status=$?
+  set -e
+  if [[ "${provider_wrapper_direct_status}" -eq 0 ]]; then
+    echo "expected explicit bash launch of provider wrapper to fail" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct provider wrapper execution." /tmp/provider-wrapper-direct.out
   cat <<'EOF' >/tmp/workcell-development-wrapper-bashenv.sh
 exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/codex --version
 EOF

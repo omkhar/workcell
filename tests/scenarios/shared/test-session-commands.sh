@@ -19,6 +19,7 @@ CLI_SESSION_FIXTURE_IMAGE="workcell-session-cli-fixture:test-$$"
 CLI_SESSION_FIXTURE_BUILD_DIR="${TMP_DIR}/session-cli-fixture-build"
 WORKCELL_FUNCTIONS_COPY="${ROOT_DIR}/scripts/.workcell-test-functions-$$"
 HOST_DOCKER_BIN=""
+ACK_TODAY_UTC="$(date -u +%Y-%m-%d)"
 
 resolve_host_docker_bin() {
   local candidate=""
@@ -458,7 +459,7 @@ run_detached_start_dry_run() {
     --workspace "${workspace_path}" \
     --no-default-injection-policy \
     --allow-arbitrary-command \
-    --ack-arbitrary-command \
+    "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
     "$@" \
     --dry-run \
     -- /bin/true
@@ -535,7 +536,7 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
   grep -q "Refusing git workspace with admin state outside the mounted workspace: ${LINKED_WORKTREE_PATH}" <<<"${linked_isolated_output}"
   grep -q 'This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path\.' <<<"${linked_isolated_output}"
   grep -q 'To use this workspace on the safe path, create a standard clone at the same location instead\.' <<<"${linked_isolated_output}"
-  grep -q 'Alternatively, pass --mode breakglass --ack-breakglass to proceed with a linked worktree\.' <<<"${linked_isolated_output}"
+  grep -q 'Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with a linked worktree\.' <<<"${linked_isolated_output}"
 fi
 
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
@@ -567,7 +568,7 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
       --workspace "${DETACHED_START_WORKSPACE}" \
       --no-default-injection-policy \
       --allow-arbitrary-command \
-      --ack-arbitrary-command \
+      "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
       --dry-run \
       -- /bin/true 2>&1
   )"
