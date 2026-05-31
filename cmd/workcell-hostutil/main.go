@@ -266,7 +266,7 @@ func helperSubcommands() []helperSubcommand {
 		{"canonicalize-tool-path", 1, 1, cmdHelperCanonicalizeToolPath},
 		{"dedupe-endpoints", 1, 1, cmdHelperDedupeEndpoints},
 		{"resolve-endpoints", 1, 1, cmdHelperResolveEndpoints},
-		{"support-matrix-eval", 6, 6, cmdHelperSupportMatrixEval},
+		{"support-matrix-eval", 8, 8, cmdHelperSupportMatrixEval},
 		{"profile-path", 1, -1, cmdHelperProfilePath},
 		// PR 23.4 — injection bundle preparation moved into Go.
 		{"injection-stage-direct-mounts", 2, 2, cmdHelperInjectionStageDirectMounts},
@@ -737,9 +737,11 @@ func cmdHelperSupportMatrixEval(args []string) error {
 	result, err := supportmatrix.Evaluate(args[0], supportmatrix.Query{
 		HostOS:               args[1],
 		HostArch:             args[2],
-		TargetKind:           args[3],
-		TargetProvider:       args[4],
-		TargetAssuranceClass: args[5],
+		HostDistro:           args[3],
+		HostDistroVersion:    args[4],
+		TargetKind:           args[5],
+		TargetProvider:       args[6],
+		TargetAssuranceClass: args[7],
 	})
 	if err != nil {
 		return err

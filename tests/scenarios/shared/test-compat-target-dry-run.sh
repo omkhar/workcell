@@ -48,11 +48,15 @@ run_with_support_override() {
   local label="$1"
   local host_os="$2"
   local host_arch="$3"
-  shift 3
+  local host_distro="$4"
+  local host_distro_version="$5"
+  shift 5
   HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
     WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1 \
     WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS="${host_os}" \
     WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="${host_arch}" \
+    WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO="${host_distro}" \
+    WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION="${host_distro_version}" \
     /bin/bash -p "${ROOT_DIR}/scripts/workcell" \
     "$@" \
     --workspace "${WORKSPACE}" \
@@ -65,12 +69,16 @@ run_with_support_override_expect_failure() {
   local label="$2"
   local host_os="$3"
   local host_arch="$4"
-  shift 4
+  local host_distro="$5"
+  local host_distro_version="$6"
+  shift 6
   set +e
   HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
     WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1 \
     WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS="${host_os}" \
     WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="${host_arch}" \
+    WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO="${host_distro}" \
+    WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION="${host_distro_version}" \
     /bin/bash -p "${ROOT_DIR}/scripts/workcell" \
     "$@" \
     --workspace "${WORKSPACE}" \
@@ -91,6 +99,8 @@ run_with_support_override \
   "compat-doctor-supported" \
   macos \
   arm64 \
+  none \
+  none \
   --target docker-desktop \
   --agent codex \
   --doctor
@@ -98,6 +108,8 @@ grep -q '^target_kind=local_compat$' "${TMP_DIR}/compat-doctor-supported.stdout"
 grep -q '^target_provider=docker-desktop$' "${TMP_DIR}/compat-doctor-supported.stdout"
 grep -q '^target_id=desktop-linux$' "${TMP_DIR}/compat-doctor-supported.stdout"
 grep -q '^target_assurance_class=compat$' "${TMP_DIR}/compat-doctor-supported.stdout"
+grep -q '^host_distro=none$' "${TMP_DIR}/compat-doctor-supported.stdout"
+grep -q '^host_distro_version=none$' "${TMP_DIR}/compat-doctor-supported.stdout"
 grep -q '^support_matrix_status=supported$' "${TMP_DIR}/compat-doctor-supported.stdout"
 grep -q '^support_matrix_launch=allowed$' "${TMP_DIR}/compat-doctor-supported.stdout"
 grep -q '^support_matrix_reason=apple-silicon-macos-docker-desktop-compat-reviewed-launch-host$' "${TMP_DIR}/compat-doctor-supported.stdout"
@@ -122,6 +134,8 @@ run_with_support_override \
   "compat-dry-run-supported" \
   macos \
   arm64 \
+  none \
+  none \
   --target docker-desktop \
   --agent codex \
   --dry-run
@@ -133,6 +147,8 @@ if [[ "${EXPECTED_ALLOWED_MISSING}" == "none" ]]; then
     "compat-dry-run-supported-no-path-docker" \
     macos \
     arm64 \
+    none \
+    none \
     --target docker-desktop \
     --agent codex \
     --dry-run
@@ -144,11 +160,15 @@ run_with_support_override \
   "compat-doctor-blocked" \
   linux \
   arm64 \
+  debian \
+  13 \
   --target docker-desktop \
   --agent codex \
   --doctor
 grep -q '^support_matrix_status=unsupported$' "${TMP_DIR}/compat-doctor-blocked.stdout"
 grep -q '^support_matrix_launch=blocked$' "${TMP_DIR}/compat-doctor-blocked.stdout"
+grep -q '^host_distro=debian$' "${TMP_DIR}/compat-doctor-blocked.stdout"
+grep -q '^host_distro_version=13$' "${TMP_DIR}/compat-doctor-blocked.stdout"
 grep -q '^doctor_recommended_next=use-supported-host$' "${TMP_DIR}/compat-doctor-blocked.stdout"
 
 run_with_support_override_expect_failure \
@@ -156,10 +176,13 @@ run_with_support_override_expect_failure \
   "compat-dry-run-blocked" \
   linux \
   arm64 \
+  debian \
+  13 \
   --target docker-desktop \
   --agent codex \
   --dry-run
 grep -q 'Workcell launch is not supported' "${TMP_DIR}/compat-dry-run-blocked.stderr"
+grep -q 'linux/arm64/debian/13' "${TMP_DIR}/compat-dry-run-blocked.stderr"
 grep -q 'local_compat/docker-desktop/compat' "${TMP_DIR}/compat-dry-run-blocked.stderr"
 grep -q 'Docker Desktop target remains a lower-assurance compat path' "${TMP_DIR}/compat-dry-run-blocked.stderr"
 

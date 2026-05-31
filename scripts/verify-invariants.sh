@@ -181,6 +181,38 @@ detected_verify_host_arch() {
   esac
 }
 
+detected_verify_host_distro() {
+  local host_distro=""
+
+  if [[ "$(detected_verify_host_os)" != "linux" ]]; then
+    printf 'none\n'
+    return 0
+  fi
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    host_distro="${ID:-}"
+  fi
+  [[ -n "${host_distro}" ]] || host_distro="unknown"
+  printf '%s\n' "$(printf '%s' "${host_distro}" | tr '[:upper:]' '[:lower:]')"
+}
+
+detected_verify_host_distro_version() {
+  local host_distro_version=""
+
+  if [[ "$(detected_verify_host_os)" != "linux" ]]; then
+    printf 'none\n'
+    return 0
+  fi
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    host_distro_version="${VERSION_ID:-${VERSION_CODENAME:-}}"
+  fi
+  [[ -n "${host_distro_version}" ]] || host_distro_version="unknown"
+  printf '%s\n' "$(printf '%s' "${host_distro_version}" | tr '[:upper:]' '[:lower:]')"
+}
+
 HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
@@ -243,6 +275,8 @@ ROOT_STRICT_SUPPORT_OUTPUT="$(
     "${ROOT_DIR}/policy/host-support-matrix.tsv" \
     "$(detected_verify_host_os)" \
     "$(detected_verify_host_arch)" \
+    "$(detected_verify_host_distro)" \
+    "$(detected_verify_host_distro_version)" \
     local_vm \
     colima \
     strict
@@ -250,6 +284,8 @@ ROOT_STRICT_SUPPORT_OUTPUT="$(
 if grep -q '^support_matrix_launch=blocked$' <<<"${ROOT_STRICT_SUPPORT_OUTPUT}"; then
   export WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS="macos"
   export WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="arm64"
+  export WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO="none"
+  export WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION="none"
 fi
 
 run_workcell_verify() {
@@ -260,11 +296,17 @@ run_workcell_verify() {
   done
   [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS}")
   [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}")
+  [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO}")
+  [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION}")
   "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "$@"
 }
 
 run_workcell_real_host() {
-  env -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH "${ROOT_DIR}/scripts/workcell" "$@"
+  env -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS \
+    -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH \
+    -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO \
+    -u WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION \
+    "${ROOT_DIR}/scripts/workcell" "$@"
 }
 
 delete_verify_colima_profile() {
