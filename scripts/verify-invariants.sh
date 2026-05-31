@@ -4031,6 +4031,13 @@ fi
 grep -q "Option --agent is required." /tmp/workcell-missing-agent.out
 grep -q '^Usage: workcell' /tmp/workcell-missing-agent.out
 
+if "${ROOT_DIR}/scripts/workcell" --agent copilot --dry-run >/tmp/workcell-copilot-fail-closed.out 2>&1; then
+  echo "Expected planned Copilot adapter to fail closed until runtime support and certification land" >&2
+  exit 1
+fi
+grep -q "GitHub Copilot CLI is a planned Workcell Tier 1 adapter, but it is not supported yet." /tmp/workcell-copilot-fail-closed.out
+grep -q "No Copilot runtime, auth handoff, or live certification evidence is shipped in this build." /tmp/workcell-copilot-fail-closed.out
+
 STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"
 mkdir -p "${STRICT_PREFLIGHT_WORKSPACE}"
 printf '# marker\n' >"${STRICT_PREFLIGHT_WORKSPACE}/AGENTS.md"

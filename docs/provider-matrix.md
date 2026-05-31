@@ -15,7 +15,7 @@ through a native control-plane mapping.
 
 | Provider | Planned Tier 1 surface | Planned managed control plane | Planned auth input | Support status |
 |---|---|---|---|---|
-| GitHub Copilot CLI | `workcell --agent copilot --workspace ...` | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, `~/.copilot` config, permissions, sessions, logs, plugins, hooks, MCP/LSP state, and reviewed instruction imports | explicit staged token such as `copilot_github_token`, exported only to the managed child as `COPILOT_GITHUB_TOKEN` | roadmap parity track; not current support |
+| GitHub Copilot CLI | `workcell --agent copilot --workspace ...` | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, `~/.copilot` config, permissions, sessions, logs, plugins, hooks, MCP/LSP state, and reviewed instruction imports | explicit staged token such as `copilot_github_token`, exported only to the managed child as `COPILOT_GITHUB_TOKEN` | fail-closed scaffold; not current support |
 
 The current sequencing plan for the Copilot parity track is
 [docs/copilot-linux-local-compat-plan.md](copilot-linux-local-compat-plan.md).

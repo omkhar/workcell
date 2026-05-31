@@ -57,6 +57,11 @@ credential.
 .TP
 .B --agent codex|claude|gemini
 Select the provider to run. This option is required.
+The
+.B copilot
+provider id is recognized only as a planned fail-closed adapter; current
+releases exit before runtime preparation because no Copilot runtime, auth
+handoff, or live certification evidence is shipped.
 .TP
 .B --agent-autonomy yolo|prompt
 Select the provider approval posture. The default is

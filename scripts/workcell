@@ -339,6 +339,7 @@ Usage: workcell [options] [-- provider-args...]
 
 Options:
   --agent codex|claude|gemini   Provider to run (required)
+                              copilot is recognized as planned but unsupported
   --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
   --agent-arg VALUE             Additional provider argv to append (repeatable)
   --target colima|docker-desktop|aws-ec2-ssm|gcp-vm
@@ -7815,6 +7816,11 @@ fi
 if [[ -n "${AGENT}" ]]; then
   case "${AGENT}" in
     codex | claude | gemini) ;;
+    copilot)
+      echo "GitHub Copilot CLI is a planned Workcell Tier 1 adapter, but it is not supported yet." >&2
+      echo "No Copilot runtime, auth handoff, or live certification evidence is shipped in this build." >&2
+      exit 2
+      ;;
     *)
       echo "Unsupported agent: ${AGENT}" >&2
       exit 2
