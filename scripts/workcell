@@ -76,6 +76,52 @@ detected_host_arch() {
   esac
 }
 
+detected_host_distro() {
+  local host_distro=""
+
+  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO:-}" ]]; then
+    printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO}"
+    return 0
+  fi
+
+  if [[ "$(detected_host_os)" != "linux" ]]; then
+    printf 'none\n'
+    return 0
+  fi
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    host_distro="${ID:-}"
+  fi
+  if [[ -z "${host_distro}" ]]; then
+    host_distro="unknown"
+  fi
+  printf '%s\n' "$(printf '%s' "${host_distro}" | tr '[:upper:]' '[:lower:]')"
+}
+
+detected_host_distro_version() {
+  local host_distro_version=""
+
+  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] && [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION:-}" ]]; then
+    printf '%s\n' "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION}"
+    return 0
+  fi
+
+  if [[ "$(detected_host_os)" != "linux" ]]; then
+    printf 'none\n'
+    return 0
+  fi
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    host_distro_version="${VERSION_ID:-${VERSION_CODENAME:-}}"
+  fi
+  if [[ -z "${host_distro_version}" ]]; then
+    host_distro_version="unknown"
+  fi
+  printf '%s\n' "$(printf '%s' "${host_distro_version}" | tr '[:upper:]' '[:lower:]')"
+}
+
 resolve_self_path() {
   local source_path="${BASH_SOURCE[0]}"
   local source_dir=""
@@ -283,6 +329,8 @@ SESSION_ID=""
 SESSION_RECORD_PATH=""
 SUPPORT_MATRIX_HOST_OS=""
 SUPPORT_MATRIX_HOST_ARCH=""
+SUPPORT_MATRIX_HOST_DISTRO=""
+SUPPORT_MATRIX_HOST_DISTRO_VERSION=""
 SUPPORT_MATRIX_STATUS=""
 SUPPORT_MATRIX_LAUNCH=""
 SUPPORT_MATRIX_EVIDENCE=""
@@ -2089,12 +2137,16 @@ refresh_support_matrix_state() {
     "${WORKCELL_HOST_SUPPORT_MATRIX_PATH}" \
     "$(detected_host_os)" \
     "$(detected_host_arch)" \
+    "$(detected_host_distro)" \
+    "$(detected_host_distro_version)" \
     "$(current_target_kind)" \
     "$(current_target_provider)" \
     "$(current_target_assurance_class)")"
 
   SUPPORT_MATRIX_HOST_OS=""
   SUPPORT_MATRIX_HOST_ARCH=""
+  SUPPORT_MATRIX_HOST_DISTRO=""
+  SUPPORT_MATRIX_HOST_DISTRO_VERSION=""
   SUPPORT_MATRIX_STATUS=""
   SUPPORT_MATRIX_LAUNCH=""
   SUPPORT_MATRIX_EVIDENCE=""
@@ -2104,6 +2156,8 @@ refresh_support_matrix_state() {
   shellproto_assign_globals "${metadata}" \
     host_os:SUPPORT_MATRIX_HOST_OS \
     host_arch:SUPPORT_MATRIX_HOST_ARCH \
+    host_distro:SUPPORT_MATRIX_HOST_DISTRO \
+    host_distro_version:SUPPORT_MATRIX_HOST_DISTRO_VERSION \
     support_matrix_status:SUPPORT_MATRIX_STATUS \
     support_matrix_launch:SUPPORT_MATRIX_LAUNCH \
     support_matrix_evidence:SUPPORT_MATRIX_EVIDENCE \
@@ -2112,6 +2166,8 @@ refresh_support_matrix_state() {
 
   [[ -n "${SUPPORT_MATRIX_HOST_OS}" ]] || SUPPORT_MATRIX_HOST_OS="$(detected_host_os)"
   [[ -n "${SUPPORT_MATRIX_HOST_ARCH}" ]] || SUPPORT_MATRIX_HOST_ARCH="$(detected_host_arch)"
+  [[ -n "${SUPPORT_MATRIX_HOST_DISTRO}" ]] || SUPPORT_MATRIX_HOST_DISTRO="$(detected_host_distro)"
+  [[ -n "${SUPPORT_MATRIX_HOST_DISTRO_VERSION}" ]] || SUPPORT_MATRIX_HOST_DISTRO_VERSION="$(detected_host_distro_version)"
   [[ -n "${SUPPORT_MATRIX_STATUS}" ]] || SUPPORT_MATRIX_STATUS="unsupported"
   [[ -n "${SUPPORT_MATRIX_LAUNCH}" ]] || SUPPORT_MATRIX_LAUNCH="blocked"
   [[ -n "${SUPPORT_MATRIX_EVIDENCE}" ]] || SUPPORT_MATRIX_EVIDENCE="none"
@@ -2122,6 +2178,8 @@ refresh_support_matrix_state() {
 print_support_matrix_state() {
   printf 'host_os=%s\n' "${SUPPORT_MATRIX_HOST_OS}"
   printf 'host_arch=%s\n' "${SUPPORT_MATRIX_HOST_ARCH}"
+  printf 'host_distro=%s\n' "${SUPPORT_MATRIX_HOST_DISTRO}"
+  printf 'host_distro_version=%s\n' "${SUPPORT_MATRIX_HOST_DISTRO_VERSION}"
   printf 'support_matrix_status=%s\n' "${SUPPORT_MATRIX_STATUS}"
   printf 'support_matrix_launch=%s\n' "${SUPPORT_MATRIX_LAUNCH}"
   printf 'support_matrix_evidence=%s\n' "${SUPPORT_MATRIX_EVIDENCE}"
@@ -2187,7 +2245,7 @@ fail_for_unsupported_launch_target() {
     return 0
   fi
 
-  echo "Workcell launch is not supported for ${SUPPORT_MATRIX_HOST_OS}/${SUPPORT_MATRIX_HOST_ARCH} on target $(current_target_kind)/$(current_target_provider)/$(current_target_assurance_class)." >&2
+  echo "Workcell launch is not supported for ${SUPPORT_MATRIX_HOST_OS}/${SUPPORT_MATRIX_HOST_ARCH}/${SUPPORT_MATRIX_HOST_DISTRO}/${SUPPORT_MATRIX_HOST_DISTRO_VERSION} on target $(current_target_kind)/$(current_target_provider)/$(current_target_assurance_class)." >&2
   if [[ "${SUPPORT_MATRIX_STATUS}" == "validation-host-only" ]] && [[ "${SUPPORT_MATRIX_VALIDATION_LANE}" != "none" ]]; then
     echo "This combination is reserved for the reviewed validation-host lane: ${SUPPORT_MATRIX_VALIDATION_LANE}." >&2
   fi

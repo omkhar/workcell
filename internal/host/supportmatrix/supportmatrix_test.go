@@ -17,6 +17,8 @@ func TestEvaluateMatchesReviewedRow(t *testing.T) {
 	result, err := Evaluate(path, Query{
 		HostOS:               "macos",
 		HostArch:             "arm64",
+		HostDistro:           "none",
+		HostDistroVersion:    "none",
 		TargetKind:           "local_vm",
 		TargetProvider:       "colima",
 		TargetAssuranceClass: "strict",
@@ -45,6 +47,8 @@ func TestEvaluateReturnsValidationHostLane(t *testing.T) {
 	result, err := Evaluate(path, Query{
 		HostOS:               "linux",
 		HostArch:             "amd64",
+		HostDistro:           "debian",
+		HostDistroVersion:    "13",
 		TargetKind:           "local_vm",
 		TargetProvider:       "colima",
 		TargetAssuranceClass: "strict",
@@ -64,6 +68,9 @@ func TestEvaluateReturnsValidationHostLane(t *testing.T) {
 	if result.ValidationLane != "trusted-linux-amd64-validator" {
 		t.Fatalf("validation_lane = %q, want trusted-linux-amd64-validator", result.ValidationLane)
 	}
+	if result.HostDistro != "debian" || result.HostDistroVersion != "13" {
+		t.Fatalf("host distro = %q/%q, want debian/13", result.HostDistro, result.HostDistroVersion)
+	}
 }
 
 func TestEvaluateReturnsPreviewOnlyRow(t *testing.T) {
@@ -78,6 +85,8 @@ func TestEvaluateReturnsPreviewOnlyRow(t *testing.T) {
 			result, err := Evaluate(path, Query{
 				HostOS:               "macos",
 				HostArch:             "arm64",
+				HostDistro:           "none",
+				HostDistroVersion:    "none",
 				TargetKind:           "remote_vm",
 				TargetProvider:       provider,
 				TargetAssuranceClass: "compat",
@@ -108,6 +117,8 @@ func TestEvaluateDefaultsToUnsupported(t *testing.T) {
 	result, err := Evaluate(path, Query{
 		HostOS:               "windows",
 		HostArch:             "amd64",
+		HostDistro:           "none",
+		HostDistroVersion:    "none",
 		TargetKind:           "local_vm",
 		TargetProvider:       "colima",
 		TargetAssuranceClass: "strict",
@@ -138,8 +149,8 @@ func TestEvaluateRejectsInvalidRows(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "host-support-matrix.tsv")
 	if err := os.WriteFile(path, []byte(strings.Join([]string{
-		"host_os\thost_arch\ttarget_kind\ttarget_provider\ttarget_assurance_class\tstatus\tlaunch\tevidence\tvalidation_lane\treason",
-		"linux\tamd64\tlocal_vm\tcolima\tstrict\tvalidation-host-only\tblocked\trepo-required\tnone\tbad-row",
+		"host_os\thost_arch\thost_distro\thost_distro_version\ttarget_kind\ttarget_provider\ttarget_assurance_class\tstatus\tlaunch\tevidence\tvalidation_lane\treason",
+		"linux\tamd64\tany\tany\tlocal_vm\tcolima\tstrict\tvalidation-host-only\tblocked\trepo-required\tnone\tbad-row",
 	}, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +158,8 @@ func TestEvaluateRejectsInvalidRows(t *testing.T) {
 	_, err := Evaluate(path, Query{
 		HostOS:               "linux",
 		HostArch:             "amd64",
+		HostDistro:           "debian",
+		HostDistroVersion:    "13",
 		TargetKind:           "local_vm",
 		TargetProvider:       "colima",
 		TargetAssuranceClass: "strict",
@@ -163,11 +176,11 @@ func writeSupportMatrixFixture(t *testing.T) string {
 	path := filepath.Join(dir, "host-support-matrix.tsv")
 	content := strings.Join([]string{
 		"# reviewed host support matrix fixture",
-		"host_os\thost_arch\ttarget_kind\ttarget_provider\ttarget_assurance_class\tstatus\tlaunch\tevidence\tvalidation_lane\treason",
-		"macos\tarm64\tlocal_vm\tcolima\tstrict\tsupported\tallowed\tcertification-only\tnone\tapple-silicon-macos-reviewed-launch-host",
-		"macos\tarm64\tremote_vm\taws-ec2-ssm\tcompat\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-aws-ec2-ssm-preview-certification-only",
-		"macos\tarm64\tremote_vm\tgcp-vm\tcompat\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-gcp-vm-preview-certification-only",
-		"linux\tamd64\tlocal_vm\tcolima\tstrict\tvalidation-host-only\tblocked\trepo-required\ttrusted-linux-amd64-validator\ttrusted-linux-amd64-validation-host-only",
+		"host_os\thost_arch\thost_distro\thost_distro_version\ttarget_kind\ttarget_provider\ttarget_assurance_class\tstatus\tlaunch\tevidence\tvalidation_lane\treason",
+		"macos\tarm64\tnone\tnone\tlocal_vm\tcolima\tstrict\tsupported\tallowed\tcertification-only\tnone\tapple-silicon-macos-reviewed-launch-host",
+		"macos\tarm64\tnone\tnone\tremote_vm\taws-ec2-ssm\tcompat\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-aws-ec2-ssm-preview-certification-only",
+		"macos\tarm64\tnone\tnone\tremote_vm\tgcp-vm\tcompat\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-gcp-vm-preview-certification-only",
+		"linux\tamd64\tany\tany\tlocal_vm\tcolima\tstrict\tvalidation-host-only\tblocked\trepo-required\ttrusted-linux-amd64-validator\ttrusted-linux-amd64-validation-host-only",
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)

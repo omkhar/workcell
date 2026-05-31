@@ -54,8 +54,8 @@ Later host tracks remain separate:
 
 Any future host promotion must land atomically with:
 
-- a canonical host-support matrix row for the exact host, architecture, target
-  kind, provider, and assurance class
+- a canonical host-support matrix row for the exact host OS, architecture,
+  distro, distro version, target kind, provider, and assurance class
 - fail-closed `doctor`, `inspect`, and launch diagnostics outside that row
 - install, uninstall, upgrade, rollback, and support-bundle guidance
 - deterministic repo-required tests for selection, unsupported combinations, and
@@ -74,6 +74,7 @@ Unsupported host combinations must remain blocked by default. Diagnostics should
 show:
 
 - selected host OS and architecture
+- selected Linux distro and distro version, or `none` for non-Linux hosts
 - target kind, provider, and assurance class
 - support-matrix status and reason
 - whether evidence is repo-required, locally mirrored, certification-only, or

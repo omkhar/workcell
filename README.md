@@ -61,7 +61,7 @@ boundary.
   GitHub-hosted Linux runners cannot prove it
 - the canonical host support boundary lives in
   [policy/host-support-matrix.tsv](policy/host-support-matrix.tsv), and
-  `--doctor` / `--inspect` emit matching `support_matrix_*` lines
+  `--doctor` / `--inspect` emit matching host and `support_matrix_*` lines
 - Workcell does not yet ship a centralized enterprise policy, inventory, or
   analytics plane; team rollout today relies on distributing reviewed
   host-side files

@@ -13,6 +13,8 @@ import (
 type Query struct {
 	HostOS               string
 	HostArch             string
+	HostDistro           string
+	HostDistroVersion    string
 	TargetKind           string
 	TargetProvider       string
 	TargetAssuranceClass string
@@ -21,6 +23,8 @@ type Query struct {
 type Result struct {
 	HostOS               string
 	HostArch             string
+	HostDistro           string
+	HostDistroVersion    string
 	TargetKind           string
 	TargetProvider       string
 	TargetAssuranceClass string
@@ -34,6 +38,8 @@ type Result struct {
 var columns = []string{
 	"host_os",
 	"host_arch",
+	"host_distro",
+	"host_distro_version",
 	"target_kind",
 	"target_provider",
 	"target_assurance_class",
@@ -76,7 +82,7 @@ func Evaluate(path string, query Query) (Result, error) {
 			return result, err
 		}
 		if entry.matches(query) {
-			return entry, nil
+			return entry.withQueryHost(query), nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -92,6 +98,8 @@ func MetadataLines(result Result) []string {
 	return []string{
 		fmt.Sprintf("host_os=%s", result.HostOS),
 		fmt.Sprintf("host_arch=%s", result.HostArch),
+		fmt.Sprintf("host_distro=%s", result.HostDistro),
+		fmt.Sprintf("host_distro_version=%s", result.HostDistroVersion),
 		fmt.Sprintf("support_matrix_status=%s", result.Status),
 		fmt.Sprintf("support_matrix_launch=%s", result.Launch),
 		fmt.Sprintf("support_matrix_evidence=%s", result.Evidence),
@@ -103,6 +111,8 @@ func MetadataLines(result Result) []string {
 func normalizeQuery(query Query) Query {
 	query.HostOS = strings.TrimSpace(query.HostOS)
 	query.HostArch = strings.TrimSpace(query.HostArch)
+	query.HostDistro = strings.TrimSpace(query.HostDistro)
+	query.HostDistroVersion = strings.TrimSpace(query.HostDistroVersion)
 	query.TargetKind = strings.TrimSpace(query.TargetKind)
 	query.TargetProvider = strings.TrimSpace(query.TargetProvider)
 	query.TargetAssuranceClass = strings.TrimSpace(query.TargetAssuranceClass)
@@ -113,6 +123,8 @@ func defaultResult(query Query) Result {
 	return Result{
 		HostOS:               query.HostOS,
 		HostArch:             query.HostArch,
+		HostDistro:           query.HostDistro,
+		HostDistroVersion:    query.HostDistroVersion,
 		TargetKind:           query.TargetKind,
 		TargetProvider:       query.TargetProvider,
 		TargetAssuranceClass: query.TargetAssuranceClass,
@@ -144,14 +156,16 @@ func parseEntry(path string, lineNo int, fields []string) (Result, error) {
 	entry := Result{
 		HostOS:               strings.TrimSpace(fields[0]),
 		HostArch:             strings.TrimSpace(fields[1]),
-		TargetKind:           strings.TrimSpace(fields[2]),
-		TargetProvider:       strings.TrimSpace(fields[3]),
-		TargetAssuranceClass: strings.TrimSpace(fields[4]),
-		Status:               strings.TrimSpace(fields[5]),
-		Launch:               strings.TrimSpace(fields[6]),
-		Evidence:             strings.TrimSpace(fields[7]),
-		ValidationLane:       strings.TrimSpace(fields[8]),
-		Reason:               strings.TrimSpace(fields[9]),
+		HostDistro:           strings.TrimSpace(fields[2]),
+		HostDistroVersion:    strings.TrimSpace(fields[3]),
+		TargetKind:           strings.TrimSpace(fields[4]),
+		TargetProvider:       strings.TrimSpace(fields[5]),
+		TargetAssuranceClass: strings.TrimSpace(fields[6]),
+		Status:               strings.TrimSpace(fields[7]),
+		Launch:               strings.TrimSpace(fields[8]),
+		Evidence:             strings.TrimSpace(fields[9]),
+		ValidationLane:       strings.TrimSpace(fields[10]),
+		Reason:               strings.TrimSpace(fields[11]),
 	}
 
 	for _, pair := range []struct {
@@ -160,6 +174,8 @@ func parseEntry(path string, lineNo int, fields []string) (Result, error) {
 	}{
 		{name: "host_os", value: entry.HostOS},
 		{name: "host_arch", value: entry.HostArch},
+		{name: "host_distro", value: entry.HostDistro},
+		{name: "host_distro_version", value: entry.HostDistroVersion},
 		{name: "target_kind", value: entry.TargetKind},
 		{name: "target_provider", value: entry.TargetProvider},
 		{name: "target_assurance_class", value: entry.TargetAssuranceClass},
@@ -202,9 +218,23 @@ func parseEntry(path string, lineNo int, fields []string) (Result, error) {
 }
 
 func (entry Result) matches(query Query) bool {
-	return entry.HostOS == query.HostOS &&
-		entry.HostArch == query.HostArch &&
+	return matrixFieldMatches(entry.HostOS, query.HostOS) &&
+		matrixFieldMatches(entry.HostArch, query.HostArch) &&
+		matrixFieldMatches(entry.HostDistro, query.HostDistro) &&
+		matrixFieldMatches(entry.HostDistroVersion, query.HostDistroVersion) &&
 		entry.TargetKind == query.TargetKind &&
 		entry.TargetProvider == query.TargetProvider &&
 		entry.TargetAssuranceClass == query.TargetAssuranceClass
+}
+
+func matrixFieldMatches(rowValue, queryValue string) bool {
+	return rowValue == "any" || rowValue == queryValue
+}
+
+func (entry Result) withQueryHost(query Query) Result {
+	entry.HostOS = query.HostOS
+	entry.HostArch = query.HostArch
+	entry.HostDistro = query.HostDistro
+	entry.HostDistroVersion = query.HostDistroVersion
+	return entry
 }

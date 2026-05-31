@@ -108,9 +108,10 @@ Initial candidate rows should preserve this shape:
 | Fedora Workstation/Server | `amd64` | `local_compat` | selected compatible runtime | `compat` | unsupported until separately reviewed |
 | Arch Linux | `amd64` | `local_compat` | selected compatible runtime | `compat` | unsupported until separately reviewed |
 
-The machine-readable matrix currently lacks distro/version columns. If Linux
-candidate rows need distro scoping, add that schema deliberately with parser
-tests and docs rather than encoding distro names only in free-form reasons.
+The machine-readable matrix now includes `host_distro` and
+`host_distro_version` columns. Current Linux rows use `any` wildcards and keep
+launch blocked; future candidate rows can be narrowed to exact Debian stable,
+Ubuntu LTS, Fedora, or Arch versions before any live certification claim.
 
 ## Pre-Signing Gates
 
