@@ -34,6 +34,11 @@ before implying Linux operator support. If that selected matrix cannot preserve
 Workcell's support boundary, the phase must record the blocker instead of
 substituting a different runtime silently.
 
+The active planning note for Copilot parity followed by Linux `amd64`
+`local_compat` research is
+[docs/copilot-linux-local-compat-plan.md](copilot-linux-local-compat-plan.md).
+It is not a support promotion.
+
 Later host tracks remain separate:
 
 - Linux `arm64` must identify package, runtime, kernel, cgroup, and live
