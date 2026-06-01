@@ -295,6 +295,21 @@ Other defaults that matter:
 
 Useful operator flows:
 
+For changes to this repository, publish main-based PRs through the repo wrapper
+after fresh local parity evidence:
+
+```bash
+./scripts/pre-merge.sh --profile pr-parity
+./scripts/repo-publish-pr.sh --workspace /path/to/repo --branch feature/name \
+  --title-file /tmp/pr-title.txt \
+  --body-file /tmp/pr-body.md \
+  --commit-message-file /tmp/commit-message.txt
+```
+
+`workcell publish-pr` is the lower-level host-side helper. Use it directly for
+operator repositories that do not carry Workcell's repo-local parity wrapper,
+or for the explicitly lower-assurance non-`main` draft path.
+
 Use `--target colima|docker-desktop|aws-ec2-ssm|gcp-vm` to select the managed
 runtime backend.
 
@@ -328,6 +343,7 @@ workcell --gc
 ./scripts/update-upstream-pins.sh --check
 ./scripts/publish-provider-bump-pr.sh
 workcell --logs audit --colima-profile wcl-...
+# Lower-level host publication helper for repositories without a repo wrapper.
 workcell publish-pr --workspace /path/to/repo --branch feature/name \
   --title-file /tmp/pr-title.txt \
   --body-file /tmp/pr-body.md \

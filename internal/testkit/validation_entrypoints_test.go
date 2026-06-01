@@ -491,6 +491,41 @@ func TestPublishProviderBumpPRRequiresCleanWorktree(t *testing.T) {
 	}
 }
 
+func TestReadmeDocumentsRepoPublishWrapperBeforeLowerLevelHelper(t *testing.T) {
+	t.Parallel()
+
+	readmePath := filepath.Join(repoRoot(t), "README.md")
+	content, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme := string(content)
+
+	wrapper := "./scripts/repo-publish-pr.sh --workspace /path/to/repo"
+	lowerLevel := "workcell publish-pr --workspace /path/to/repo --branch feature/name"
+	wrapperIndex := strings.Index(readme, wrapper)
+	lowerLevelIndex := strings.Index(readme, lowerLevel)
+	if wrapperIndex < 0 {
+		t.Fatalf("%s must document the repo-local publish wrapper", readmePath)
+	}
+	if lowerLevelIndex < 0 {
+		t.Fatalf("%s must document the lower-level publish-pr helper", readmePath)
+	}
+	if wrapperIndex > lowerLevelIndex {
+		t.Fatalf("%s must introduce the repo-local wrapper before the lower-level helper", readmePath)
+	}
+	for _, want := range []string{
+		"./scripts/pre-merge.sh --profile pr-parity",
+		"`workcell publish-pr` is the lower-level host-side helper",
+		"operator repositories that do not carry Workcell's repo-local parity wrapper",
+		"explicitly lower-assurance non-`main` draft path",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Fatalf("%s does not contain %q", readmePath, want)
+		}
+	}
+}
+
 func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 	t.Parallel()
 
