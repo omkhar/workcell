@@ -30,6 +30,46 @@ type WorkflowEnvironmentPolicy struct {
 	HasDeploymentTags     bool
 }
 
+type ActionsPolicy struct {
+	AllowOnlyPinnedVerifiedOrExplicitlyTrustedActions bool
+	DefaultWorkflowTokenPermissions                   string
+}
+
+type ReleaseAssetsPolicy struct {
+	ImmutableGitHubReleases bool
+}
+
+func GitHubActionsPolicy(policy map[string]any, policyPath string) (ActionsPolicy, error) {
+	rawPolicy, ok := policy["actions_policy"].(map[string]any)
+	if !ok {
+		return ActionsPolicy{}, fmt.Errorf("%s must define actions_policy as an explicit hosted-control table", policyPath)
+	}
+	allowOnlyPinned, ok := rawPolicy["allow_only_pinned_verified_or_explicitly_trusted_actions"].(bool)
+	if !ok || !allowOnlyPinned {
+		return ActionsPolicy{}, fmt.Errorf("%s must set actions_policy.allow_only_pinned_verified_or_explicitly_trusted_actions = true", policyPath)
+	}
+	defaultWorkflowTokenPermissions, ok := rawPolicy["default_workflow_token_permissions"].(string)
+	if !ok || defaultWorkflowTokenPermissions != "read" {
+		return ActionsPolicy{}, fmt.Errorf("%s must set actions_policy.default_workflow_token_permissions = \"read\"", policyPath)
+	}
+	return ActionsPolicy{
+		AllowOnlyPinnedVerifiedOrExplicitlyTrustedActions: allowOnlyPinned,
+		DefaultWorkflowTokenPermissions:                   defaultWorkflowTokenPermissions,
+	}, nil
+}
+
+func ReleaseAssets(policy map[string]any, policyPath string) (ReleaseAssetsPolicy, error) {
+	rawPolicy, ok := policy["release_assets"].(map[string]any)
+	if !ok {
+		return ReleaseAssetsPolicy{}, fmt.Errorf("%s must define release_assets as an explicit hosted-control table", policyPath)
+	}
+	immutableReleases, ok := rawPolicy["immutable_github_releases"].(bool)
+	if !ok || !immutableReleases {
+		return ReleaseAssetsPolicy{}, fmt.Errorf("%s must set release_assets.immutable_github_releases = true", policyPath)
+	}
+	return ReleaseAssetsPolicy{ImmutableGitHubReleases: immutableReleases}, nil
+}
+
 func RepositoryVariables(policy map[string]any, policyPath string) (map[string]any, error) {
 	expectedRepoVariables, ok := policy["repository_variables"].(map[string]any)
 	if !ok {
@@ -323,6 +363,18 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	if err := readJSONFile(filepath.Join(tmpDir, "actions-permissions.json"), &actionsPermissions); err != nil {
 		return err
 	}
+	var selectedActions map[string]any
+	if err := readJSONFile(filepath.Join(tmpDir, "actions-selected-actions.json"), &selectedActions); err != nil {
+		return err
+	}
+	var workflowPermissions map[string]any
+	if err := readJSONFile(filepath.Join(tmpDir, "actions-workflow-permissions.json"), &workflowPermissions); err != nil {
+		return err
+	}
+	var immutableReleases map[string]any
+	if err := readJSONFile(filepath.Join(tmpDir, "immutable-releases.json"), &immutableReleases); err != nil {
+		return err
+	}
 	var actionsVariables map[string]any
 	if err := readJSONFile(filepath.Join(tmpDir, "actions-variables.json"), &actionsVariables); err != nil {
 		return err
@@ -395,6 +447,14 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	if releaseMode != "review-gated" && releaseMode != "single-owner-public" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
 		return fmt.Errorf("%s must set release_environment.mode to 'review-gated', 'single-owner-public', 'single-owner-private', or 'plan-limited-private'", policyPath)
 	}
+	actionsPolicy, err := GitHubActionsPolicy(policy, policyPath)
+	if err != nil {
+		return err
+	}
+	releaseAssetsPolicy, err := ReleaseAssets(policy, policyPath)
+	if err != nil {
+		return err
+	}
 	expectedContexts, err := requireStringSliceTable(policy, "required_status_checks", "contexts", policyPath)
 	if err != nil {
 		return err
@@ -416,6 +476,39 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	}
 	if required, _ := actionsPermissions["sha_pinning_required"].(bool); !required {
 		return fmt.Errorf("GitHub Actions SHA pinning must be required on %s", repo)
+	}
+	if actionsPolicy.AllowOnlyPinnedVerifiedOrExplicitlyTrustedActions {
+		if allowedActions, _ := actionsPermissions["allowed_actions"].(string); allowedActions != "selected" {
+			return fmt.Errorf("GitHub Actions on %s must restrict allowed_actions to selected", repo)
+		}
+		if githubOwnedAllowed, _ := selectedActions["github_owned_allowed"].(bool); !githubOwnedAllowed {
+			return fmt.Errorf("GitHub Actions selected policy on %s must allow GitHub-owned actions", repo)
+		}
+		if verifiedAllowed, _ := selectedActions["verified_allowed"].(bool); !verifiedAllowed {
+			return fmt.Errorf("GitHub Actions selected policy on %s must allow verified creator actions", repo)
+		}
+		patternsAllowed, _ := selectedActions["patterns_allowed"].([]any)
+		unexpectedPatterns := make([]string, 0)
+		for _, raw := range patternsAllowed {
+			if pattern, _ := raw.(string); pattern != "" {
+				unexpectedPatterns = append(unexpectedPatterns, pattern)
+			}
+		}
+		slices.Sort(unexpectedPatterns)
+		if len(unexpectedPatterns) > 0 {
+			return fmt.Errorf("GitHub Actions selected policy on %s must not allow unreviewed action patterns: %s", repo, strings.Join(unexpectedPatterns, ", "))
+		}
+	}
+	if actual, _ := workflowPermissions["default_workflow_permissions"].(string); actual != actionsPolicy.DefaultWorkflowTokenPermissions {
+		return fmt.Errorf("GitHub Actions default workflow token permissions on %s must be %q", repo, actionsPolicy.DefaultWorkflowTokenPermissions)
+	}
+	if canApprove, _ := workflowPermissions["can_approve_pull_request_reviews"].(bool); canApprove {
+		return fmt.Errorf("GitHub Actions workflow token on %s must not be allowed to approve pull requests", repo)
+	}
+	if releaseAssetsPolicy.ImmutableGitHubReleases {
+		if enabled, _ := immutableReleases["enabled"].(bool); !enabled {
+			return fmt.Errorf("immutable GitHub releases must be enabled on %s", repo)
+		}
 	}
 
 	activeRulesets := make([]map[string]any, 0)

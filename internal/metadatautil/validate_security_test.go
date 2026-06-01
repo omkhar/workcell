@@ -130,6 +130,13 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		"[required_status_checks]",
 		`contexts = ["Allowed PR base", "Validate repository"]`,
 		"",
+		"[actions_policy]",
+		"allow_only_pinned_verified_or_explicitly_trusted_actions = true",
+		`default_workflow_token_permissions = "read"`,
+		"",
+		"[release_assets]",
+		"immutable_github_releases = true",
+		"",
 		"[repository_variables]",
 		`WORKCELL_RELEASE_NO_ATTEST = "false"`,
 		`WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"`,
@@ -158,7 +165,21 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 	}
 	actionsPermissions := map[string]any{
 		"enabled":              true,
+		"allowed_actions":      "selected",
 		"sha_pinning_required": true,
+	}
+	selectedActions := map[string]any{
+		"github_owned_allowed": true,
+		"verified_allowed":     true,
+		"patterns_allowed":     []any{},
+	}
+	workflowPermissions := map[string]any{
+		"default_workflow_permissions":     "read",
+		"can_approve_pull_request_reviews": false,
+	}
+	immutableReleases := map[string]any{
+		"enabled":           true,
+		"enforced_by_owner": false,
 	}
 	actionsVariables := map[string]any{
 		"variables": []map[string]any{
@@ -346,6 +367,9 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 	}{
 		{"repo.json", repoJSON},
 		{"actions-permissions.json", actionsPermissions},
+		{"actions-selected-actions.json", selectedActions},
+		{"actions-workflow-permissions.json", workflowPermissions},
+		{"immutable-releases.json", immutableReleases},
 		{"actions-variables.json", actionsVariables},
 		{"environments.json", environmentsIndex},
 		{"collaborators-direct.json", directCollaborators},
@@ -447,14 +471,14 @@ func TestCheckPinnedInputsRejectsZizmorVersionMismatch(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
 	rewriteFile(t, securityWorkflowPath, func(content string) string {
-		return strings.Replace(content, "version: 1.25.2", "version: 1.25.1", 1)
+		return strings.Replace(content, "ZIZMOR_VERSION: 1.25.2", "ZIZMOR_VERSION: 1.25.1", 1)
 	})
 
 	err := metadatautil.CheckPinnedInputs(cfg)
 	if err == nil {
 		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted mismatched zizmor versions")
 	}
-	if !strings.Contains(err.Error(), "ZIZMOR_VERSION must match") {
+	if !strings.Contains(err.Error(), "one reviewed value for ZIZMOR_VERSION") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want zizmor version mismatch rejection", err)
 	}
 }
@@ -465,33 +489,33 @@ func TestCheckPinnedInputsRejectsReleaseZizmorVersionMismatch(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	releaseWorkflowPath := filepath.Join(cfg.WorkflowsDir, "release.yml")
 	rewriteFile(t, releaseWorkflowPath, func(content string) string {
-		return strings.Replace(content, "version: 1.25.2", "version: 1.25.1", 1)
+		return strings.Replace(content, "ZIZMOR_VERSION: 1.25.2", "ZIZMOR_VERSION: 1.25.1", 1)
 	})
 
 	err := metadatautil.CheckPinnedInputs(cfg)
 	if err == nil {
 		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a release workflow zizmor version mismatch")
 	}
-	if !strings.Contains(err.Error(), "release workflow zizmor-action version") {
+	if !strings.Contains(err.Error(), "ZIZMOR_VERSION must match") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want release zizmor version mismatch rejection", err)
 	}
 }
 
-func TestCheckPinnedInputsRejectsZizmorActionRefMismatch(t *testing.T) {
+func TestCheckPinnedInputsRejectsReleaseZizmorDigestMismatch(t *testing.T) {
 	t.Parallel()
 
 	cfg := writePinnedInputsFixture(t)
 	releaseWorkflowPath := filepath.Join(cfg.WorkflowsDir, "release.yml")
 	rewriteFile(t, releaseWorkflowPath, func(content string) string {
-		return strings.Replace(content, "zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d", "zizmorcore/zizmor-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1)
+		return strings.Replace(content, "ZIZMOR_SHA256: aa1facd105f0d83fe5c55b1adcd9d7417de5d83aa27471f91dc0b66cf3803577", "ZIZMOR_SHA256: deadbeef", 1)
 	})
 
 	err := metadatautil.CheckPinnedInputs(cfg)
 	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a zizmor-action ref mismatch")
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a release workflow zizmor digest mismatch")
 	}
-	if !strings.Contains(err.Error(), "zizmorcore/zizmor-action must use the same reviewed commit SHA") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want zizmor-action ref mismatch rejection", err)
+	if !strings.Contains(err.Error(), "release zizmor sha") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want release zizmor digest rejection", err)
 	}
 }
 
@@ -572,6 +596,106 @@ func TestVerifyGitHubHostedControlsRejectsReviewGatedRulesetWithoutCodeOwnerRevi
 	}
 	if !strings.Contains(err.Error(), "must require code owner review") {
 		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want code-owner rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsAllActionsAllowed(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "actions-permissions.json"), func(content string) string {
+		return strings.Replace(content, `"allowed_actions": "selected"`, `"allowed_actions": "all"`, 1)
+	})
+
+	err := metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("metadatautil.VerifyGitHubHostedControls() unexpectedly accepted all Actions")
+	}
+	if !strings.Contains(err.Error(), "must restrict allowed_actions to selected") {
+		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want selected-actions rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsPermissiveWorkflowToken(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "actions-workflow-permissions.json"), func(content string) string {
+		return strings.Replace(content, `"default_workflow_permissions": "read"`, `"default_workflow_permissions": "write"`, 1)
+	})
+
+	err := metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("metadatautil.VerifyGitHubHostedControls() unexpectedly accepted write workflow token permissions")
+	}
+	if !strings.Contains(err.Error(), `must be "read"`) {
+		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want workflow-token rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsWorkflowTokenPRApproval(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "actions-workflow-permissions.json"), func(content string) string {
+		return strings.Replace(content, `"can_approve_pull_request_reviews": false`, `"can_approve_pull_request_reviews": true`, 1)
+	})
+
+	err := metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("metadatautil.VerifyGitHubHostedControls() unexpectedly accepted workflow token PR approval")
+	}
+	if !strings.Contains(err.Error(), "must not be allowed to approve pull requests") {
+		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want workflow-token approval rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsMutableGitHubReleases(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "immutable-releases.json"), func(content string) string {
+		return strings.Replace(content, `"enabled": true`, `"enabled": false`, 1)
+	})
+
+	err := metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("metadatautil.VerifyGitHubHostedControls() unexpectedly accepted mutable GitHub releases")
+	}
+	if !strings.Contains(err.Error(), "immutable GitHub releases must be enabled") {
+		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want immutable-release rejection", err)
 	}
 }
 

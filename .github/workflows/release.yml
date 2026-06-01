@@ -266,6 +266,11 @@ jobs:
         run: |
           [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
 
+      - name: Verify release tag signature
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${GITHUB_REF_NAME}"
+
       - name: Verify GitHub-hosted controls
         env:
           WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
@@ -440,12 +445,28 @@ jobs:
       - name: Run actionlint
         run: actionlint
 
-      - uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d # v0.5.6
-        with:
-          advanced-security: false
-          inputs: .github/workflows
-          persona: auditor
-          version: 1.25.2
+      - name: Install zizmor
+        env:
+          ZIZMOR_SHA256: aa1facd105f0d83fe5c55b1adcd9d7417de5d83aa27471f91dc0b66cf3803577
+          ZIZMOR_VERSION: 1.25.2
+        run: |
+          curl -fsSL \
+            --max-time 60 \
+            --connect-timeout 15 \
+            -o zizmor.tar.gz \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA256}  zizmor.tar.gz" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/bin"
+          tar -xzf zizmor.tar.gz -C "${RUNNER_TEMP}/bin" zizmor
+          chmod 0755 "${RUNNER_TEMP}/bin/zizmor"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - name: Run GitHub Actions security analysis
+        run: |
+          zizmor \
+            --persona auditor \
+            --config .github/zizmor.yml \
+            .github/workflows
 
       - name: Assemble reproducible-build preflight manifest
         # The amd64 and arm64 runtime images are now built and
@@ -683,6 +704,11 @@ jobs:
       - name: Validate release tag name
         run: |
           [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+
+      - name: Verify release tag signature
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${GITHUB_REF_NAME}"
 
       - id: source_date
         name: Compute source date epoch

@@ -167,6 +167,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/pre-merge.sh"
   "${ROOT_DIR}/scripts/provider-e2e.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
+  "${ROOT_DIR}/scripts/check-release-tag-signature.sh"
   "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
   "${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh"
   "${ROOT_DIR}/scripts/run-hosted-controls-audit.sh"

@@ -209,33 +209,6 @@ extract_workflow_env_value() {
   awk -v key="${key}:" '$1 == key { print $2; exit }' "${file}"
 }
 
-extract_action_ref() {
-  local file="$1"
-  local action="$2"
-  awk -v needle="uses: ${action}@" '
-    index($0, needle) > 0 {
-      sub(".*" needle, "", $0)
-      sub(/[[:space:]]+#.*/, "", $0)
-      print
-      exit
-    }
-  ' "${file}"
-}
-
-extract_zizmor_action_version_input() {
-  local file="$1"
-  awk '
-    /uses:[[:space:]]*zizmorcore\/zizmor-action@/ {
-      in_zizmor = 1
-      next
-    }
-    in_zizmor && /^[[:space:]]*version:/ {
-      print $2
-      exit
-    }
-  ' "${file}"
-}
-
 replace_line_with_prefix() {
   local file="$1"
   local prefix="$2"
@@ -456,10 +429,6 @@ target_zizmor_sha="$(
     shasum -a 256 |
     awk '{ print $1 }'
 )"
-zizmor_action_release_json="$(github_api_get 'https://api.github.com/repos/zizmorcore/zizmor-action/releases/latest')"
-target_zizmor_action_version="$(jq -r '.tag_name' <<<"${zizmor_action_release_json}")"
-target_zizmor_action_sha="$(github_tag_commit_sha 'zizmorcore/zizmor-action' "${target_zizmor_action_version}")"
-
 current_runtime_base="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" NODE_BASE_IMAGE)"
 current_validator_base="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" VALIDATOR_BASE_IMAGE)"
 current_runtime_snapshot="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" DEBIAN_SNAPSHOT)"
@@ -489,9 +458,8 @@ current_actionlint_version="$(extract_workflow_env_value "${SECURITY_WORKFLOW_PA
 current_actionlint_sha="$(extract_workflow_env_value "${SECURITY_WORKFLOW_PATH}" ACTIONLINT_SHA256)"
 current_zizmor_version="$(extract_workflow_env_value "${SECURITY_WORKFLOW_PATH}" ZIZMOR_VERSION)"
 current_zizmor_sha="$(extract_workflow_env_value "${SECURITY_WORKFLOW_PATH}" ZIZMOR_SHA256)"
-current_security_zizmor_action_ref="$(extract_action_ref "${SECURITY_WORKFLOW_PATH}" 'zizmorcore/zizmor-action')"
-current_release_zizmor_action_ref="$(extract_action_ref "${RELEASE_WORKFLOW_PATH}" 'zizmorcore/zizmor-action')"
-current_release_zizmor_version="$(extract_zizmor_action_version_input "${RELEASE_WORKFLOW_PATH}")"
+current_release_zizmor_version="$(extract_workflow_env_value "${RELEASE_WORKFLOW_PATH}" ZIZMOR_VERSION)"
+current_release_zizmor_sha="$(extract_workflow_env_value "${RELEASE_WORKFLOW_PATH}" ZIZMOR_SHA256)"
 
 runtime_base_track="${current_runtime_base%@*}"
 validator_base_track="${current_validator_base%@*}"
@@ -548,9 +516,8 @@ for current_target_pair in \
   "${current_actionlint_sha}|${target_actionlint_sha}" \
   "${current_zizmor_version}|${target_zizmor_version}" \
   "${current_zizmor_sha}|${target_zizmor_sha}" \
-  "${current_security_zizmor_action_ref}|${target_zizmor_action_sha}" \
-  "${current_release_zizmor_action_ref}|${target_zizmor_action_sha}" \
-  "${current_release_zizmor_version}|${target_zizmor_version}"; do
+  "${current_release_zizmor_version}|${target_zizmor_version}" \
+  "${current_release_zizmor_sha}|${target_zizmor_sha}"; do
   current_value="${current_target_pair%%|*}"
   target_value="${current_target_pair#*|}"
   if [[ "${current_value}" != "${target_value}" ]]; then
@@ -592,9 +559,8 @@ print_summary() {
   print_summary_line "syft-version" "${current_syft_version}" "${target_syft_version}"
   print_summary_line "actionlint-version" "${current_actionlint_version}" "${target_actionlint_version}"
   print_summary_line "zizmor-version" "${current_zizmor_version}" "${target_zizmor_version}"
-  print_summary_line "security-zizmor-action" "${current_security_zizmor_action_ref}" "${target_zizmor_action_sha}"
-  print_summary_line "release-zizmor-action" "${current_release_zizmor_action_ref}" "${target_zizmor_action_sha}"
   print_summary_line "release-zizmor-version" "${current_release_zizmor_version}" "${target_zizmor_version}"
+  print_summary_line "release-zizmor-sha" "${current_release_zizmor_sha}" "${target_zizmor_sha}"
   printf '%s\n' "${provider_summary}"
 }
 
@@ -655,15 +621,13 @@ replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_QEMU_IMAGE:' "  
 replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_SYFT_VERSION:' "  WORKCELL_SYFT_VERSION: ${target_syft_version}"
 replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '          ACTIONLINT_SHA256:' "          ACTIONLINT_SHA256: ${target_actionlint_sha}"
 replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '          ACTIONLINT_VERSION:' "          ACTIONLINT_VERSION: ${target_actionlint_version}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '      - uses: zizmorcore/zizmor-action@' "      - uses: zizmorcore/zizmor-action@${target_zizmor_action_sha} # ${target_zizmor_action_version}"
-replace_line_after_marker_with_prefix "${RELEASE_WORKFLOW_PATH}" 'zizmorcore/zizmor-action@' '          version:' "          version: ${target_zizmor_version}"
+replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '          ZIZMOR_SHA256:' "          ZIZMOR_SHA256: ${target_zizmor_sha}"
+replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '          ZIZMOR_VERSION:' "          ZIZMOR_VERSION: ${target_zizmor_version}"
 
 replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ACTIONLINT_SHA256:' "          ACTIONLINT_SHA256: ${target_actionlint_sha}"
 replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ACTIONLINT_VERSION:' "          ACTIONLINT_VERSION: ${target_actionlint_version}"
 replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_SHA256:' "          ZIZMOR_SHA256: ${target_zizmor_sha}"
 replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_VERSION:' "          ZIZMOR_VERSION: ${target_zizmor_version}"
-replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '        uses: zizmorcore/zizmor-action@' "        uses: zizmorcore/zizmor-action@${target_zizmor_action_sha} # ${target_zizmor_action_version}"
-replace_line_after_marker_with_prefix "${SECURITY_WORKFLOW_PATH}" 'zizmorcore/zizmor-action@' '          version:' "          version: ${target_zizmor_version}"
 
 "${ROOT_DIR}/scripts/update-provider-pins.sh" --apply
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"

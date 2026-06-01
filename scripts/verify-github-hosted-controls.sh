@@ -36,6 +36,18 @@ build_go_tool_in_repo "${ROOT_DIR}" "${CITOOLS_BIN}" ./cmd/workcell-citools
 
 gh api "repos/${REPO}" >"${TMP_DIR}/repo.json"
 gh api "repos/${REPO}/actions/permissions" >"${TMP_DIR}/actions-permissions.json"
+if gh api "repos/${REPO}/actions/permissions/selected-actions" >"${TMP_DIR}/actions-selected-actions.json" 2>"${TMP_DIR}/actions-selected-actions.err"; then
+  :
+else
+  status="$(jq -r '.status // empty' "${TMP_DIR}/actions-selected-actions.json" 2>/dev/null || true)"
+  if [[ "${status}" != "409" ]]; then
+    cat "${TMP_DIR}/actions-selected-actions.err" >&2
+    cat "${TMP_DIR}/actions-selected-actions.json" >&2
+    exit 1
+  fi
+fi
+gh api "repos/${REPO}/actions/permissions/workflow" >"${TMP_DIR}/actions-workflow-permissions.json"
+gh api "repos/${REPO}/immutable-releases" >"${TMP_DIR}/immutable-releases.json"
 gh api --paginate "repos/${REPO}/actions/variables?per_page=100" |
   jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}' >"${TMP_DIR}/actions-variables.json"
 gh api "repos/${REPO}/collaborators?affiliation=direct&per_page=100" >"${TMP_DIR}/collaborators-direct.json"
