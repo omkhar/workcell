@@ -15,6 +15,18 @@ import (
 	"time"
 )
 
+func writeRegistryMetadata(w http.ResponseWriter, latest string, published map[string]string) {
+	w.Header().Set("Content-Type", "application/json")
+	metadata := npmRegistryMetadata{
+		DistTags: map[string]string{"latest": latest},
+		Time:     map[string]string{"created": "2026-01-01T00:00:00Z"},
+	}
+	for version, publishedAt := range published {
+		metadata.Time[version] = publishedAt
+	}
+	_ = json.NewEncoder(w).Encode(metadata)
+}
+
 func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")
@@ -90,14 +102,12 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
     "0.37.0-preview.2": "2026-04-07T19:06:31Z"
   }
 }`))
-		case "/claude-bucket":
-			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.96/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.94/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.92/</Prefix></CommonPrefixes>
-</ListBucketResult>`))
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.96", map[string]string{
+				"2.1.96": "2026-04-08T03:19:21Z",
+				"2.1.94": "2026-04-07T20:58:22Z",
+				"2.1.92": "2026-04-03T23:57:51Z",
+			})
 		case "/claude-release/2.1.96/manifest.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -139,7 +149,7 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
 		CodexRegistryURL:      server.URL + "/codex-registry",
 		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
 		GeminiRegistryURL:     server.URL + "/gemini-registry",
-		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeRegistryURL:     server.URL + "/claude-registry",
 		ClaudeReleaseRootURL:  server.URL + "/claude-release",
 	}, server.Client())
 	if err != nil {
@@ -594,14 +604,12 @@ func TestPlanProviderBumpsHonorsClaudeMaxVersion(t *testing.T) {
     "0.36.0": "2026-04-01T00:00:00Z"
   }
 }`))
-		case "/claude-bucket":
-			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.107/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.105/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.104/</Prefix></CommonPrefixes>
-</ListBucketResult>`))
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.107", map[string]string{
+				"2.1.107": "2026-04-14T00:00:00Z",
+				"2.1.105": "2026-04-13T00:00:00Z",
+				"2.1.104": "2026-04-12T01:53:39Z",
+			})
 		case "/claude-release/2.1.104/manifest.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -623,7 +631,7 @@ func TestPlanProviderBumpsHonorsClaudeMaxVersion(t *testing.T) {
 		CodexRegistryURL:      server.URL + "/codex-registry",
 		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
 		GeminiRegistryURL:     server.URL + "/gemini-registry",
-		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeRegistryURL:     server.URL + "/claude-registry",
 		ClaudeReleaseRootURL:  server.URL + "/claude-release",
 	}, server.Client())
 	if err != nil {
@@ -685,14 +693,12 @@ func TestPlanProviderBumpsAllowsApprovedClaudeVersionPastCooloff(t *testing.T) {
     "0.36.0": "2026-04-01T00:00:00Z"
   }
 }`))
-		case "/claude-bucket":
-			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.108/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.107/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.104/</Prefix></CommonPrefixes>
-</ListBucketResult>`))
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.108", map[string]string{
+				"2.1.108": "2026-04-17T22:00:00Z",
+				"2.1.107": "2026-04-17T00:00:00Z",
+				"2.1.104": "2026-04-12T01:53:39Z",
+			})
 		case "/claude-release/2.1.108/manifest.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -714,7 +720,7 @@ func TestPlanProviderBumpsAllowsApprovedClaudeVersionPastCooloff(t *testing.T) {
 		CodexRegistryURL:      server.URL + "/codex-registry",
 		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
 		GeminiRegistryURL:     server.URL + "/gemini-registry",
-		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeRegistryURL:     server.URL + "/claude-registry",
 		ClaudeReleaseRootURL:  server.URL + "/claude-release",
 	}, server.Client())
 	if err != nil {
@@ -776,14 +782,12 @@ func TestPlanProviderBumpsIgnoresOlderApprovedClaudeVersionOnceCurrentRuntimeIsN
     "0.36.0": "2026-04-01T00:00:00Z"
   }
 }`))
-		case "/claude-bucket":
-			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.110/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.109/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.108/</Prefix></CommonPrefixes>
-</ListBucketResult>`))
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.110", map[string]string{
+				"2.1.110": "2026-04-17T16:00:00Z",
+				"2.1.109": "2026-04-17T00:00:00Z",
+				"2.1.108": "2026-04-16T00:00:00Z",
+			})
 		case "/claude-release/2.1.110/manifest.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -815,7 +819,7 @@ func TestPlanProviderBumpsIgnoresOlderApprovedClaudeVersionOnceCurrentRuntimeIsN
 		CodexRegistryURL:      server.URL + "/codex-registry",
 		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
 		GeminiRegistryURL:     server.URL + "/gemini-registry",
-		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeRegistryURL:     server.URL + "/claude-registry",
 		ClaudeReleaseRootURL:  server.URL + "/claude-release",
 	}, server.Client())
 	if err != nil {
@@ -877,13 +881,11 @@ func TestPlanProviderBumpsDoesNotDowngradeWhenCurrentClaudeVersionIsStillCooling
     "0.36.0": "2026-04-01T00:00:00Z"
   }
 }`))
-		case "/claude-bucket":
-			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.108/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.107/</Prefix></CommonPrefixes>
-</ListBucketResult>`))
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.108", map[string]string{
+				"2.1.108": "2026-04-18T00:30:00Z",
+				"2.1.107": "2026-04-17T00:00:00Z",
+			})
 		case "/claude-release/2.1.108/manifest.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -915,7 +917,7 @@ func TestPlanProviderBumpsDoesNotDowngradeWhenCurrentClaudeVersionIsStillCooling
 		CodexRegistryURL:      server.URL + "/codex-registry",
 		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
 		GeminiRegistryURL:     server.URL + "/gemini-registry",
-		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeRegistryURL:     server.URL + "/claude-registry",
 		ClaudeReleaseRootURL:  server.URL + "/claude-release",
 	}, server.Client())
 	if err != nil {
@@ -976,13 +978,11 @@ func TestPlanProviderBumpsRejectsCurrentClaudeVersionAboveMaxVersion(t *testing.
     "0.36.0": "2026-04-01T00:00:00Z"
   }
 }`))
-		case "/claude-bucket":
-			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.108/</Prefix></CommonPrefixes>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.107/</Prefix></CommonPrefixes>
-</ListBucketResult>`))
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.108", map[string]string{
+				"2.1.108": "2026-04-17T00:00:00Z",
+				"2.1.107": "2026-04-16T00:00:00Z",
+			})
 		case "/claude-release/2.1.108/manifest.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -1014,7 +1014,7 @@ func TestPlanProviderBumpsRejectsCurrentClaudeVersionAboveMaxVersion(t *testing.
 		CodexRegistryURL:      server.URL + "/codex-registry",
 		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
 		GeminiRegistryURL:     server.URL + "/gemini-registry",
-		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeRegistryURL:     server.URL + "/claude-registry",
 		ClaudeReleaseRootURL:  server.URL + "/claude-release",
 	}, server.Client())
 	if err == nil {
@@ -1025,7 +1025,7 @@ func TestPlanProviderBumpsRejectsCurrentClaudeVersionAboveMaxVersion(t *testing.
 	}
 }
 
-func TestPlanProviderBumpsRejectsMissingCurrentClaudeVersionFromBucket(t *testing.T) {
+func TestPlanProviderBumpsRejectsMissingCurrentClaudeVersionFromRegistry(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")
 	packageJSONPath := filepath.Join(root, "package.json")
@@ -1072,12 +1072,10 @@ func TestPlanProviderBumpsRejectsMissingCurrentClaudeVersionFromBucket(t *testin
     "0.36.0": "2026-04-01T00:00:00Z"
   }
 }`))
-		case "/claude-bucket":
-			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.107/</Prefix></CommonPrefixes>
-</ListBucketResult>`))
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.107", map[string]string{
+				"2.1.107": "2026-04-16T00:00:00Z",
+			})
 		case "/claude-release/2.1.107/manifest.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -1099,14 +1097,82 @@ func TestPlanProviderBumpsRejectsMissingCurrentClaudeVersionFromBucket(t *testin
 		CodexRegistryURL:      server.URL + "/codex-registry",
 		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
 		GeminiRegistryURL:     server.URL + "/gemini-registry",
-		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeRegistryURL:     server.URL + "/claude-registry",
 		ClaudeReleaseRootURL:  server.URL + "/claude-release",
 	}, server.Client())
 	if err == nil {
 		t.Fatal("PlanProviderBumps() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "current Claude version 2.1.108 is not present in the release bucket listing") {
+	if !strings.Contains(err.Error(), "current Claude version 2.1.108 is not present in the registry metadata") {
 		t.Fatalf("PlanProviderBumps() error = %v", err)
+	}
+}
+
+func TestSelectClaudeStableFailsClosedWhenRegistryCandidateLacksManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.109", map[string]string{
+				"2.1.109": "2026-04-18T00:00:00Z",
+				"2.1.108": "2026-04-17T00:00:00Z",
+			})
+		case "/claude-release/2.1.109/manifest.json":
+			http.NotFound(w, r)
+		case "/claude-release/2.1.108/manifest.json":
+			t.Fatal("selectClaudeStable should fail closed instead of falling back past a missing newer Claude manifest")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cutoff := time.Date(2026, time.April, 19, 0, 0, 0, 0, time.UTC)
+	_, err := selectClaudeStable("2.1.107", cutoff, "", "", ProviderBumpSources{
+		ClaudeRegistryURL:    server.URL + "/claude-registry",
+		ClaudeReleaseRootURL: server.URL + "/claude-release",
+	}, server.Client())
+	if err == nil {
+		t.Fatal("selectClaudeStable() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "/claude-release/2.1.109/manifest.json") ||
+		!strings.Contains(err.Error(), "unexpected status 404") {
+		t.Fatalf("selectClaudeStable() error = %v", err)
+	}
+}
+
+func TestSelectClaudeStableFailsClosedWhenManifestVersionDiffersFromRegistryCandidate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.109", map[string]string{
+				"2.1.109": "2026-04-18T00:00:00Z",
+			})
+		case "/claude-release/2.1.109/manifest.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "version": "2.1.108",
+  "buildDate": "2026-04-18T00:00:00Z",
+  "platforms": {
+    "linux-arm64": {"checksum": "109arm64109arm64109arm64109arm64109arm64109arm64109arm64109arm64"},
+    "linux-x64": {"checksum": "109amd64109amd64109amd64109amd64109amd64109amd64109amd64109amd64"}
+  }
+}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cutoff := time.Date(2026, time.April, 19, 0, 0, 0, 0, time.UTC)
+	_, err := selectClaudeStable("2.1.107", cutoff, "", "", ProviderBumpSources{
+		ClaudeRegistryURL:    server.URL + "/claude-registry",
+		ClaudeReleaseRootURL: server.URL + "/claude-release",
+	}, server.Client())
+	if err == nil {
+		t.Fatal("selectClaudeStable() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), `claude manifest for 2.1.109 reports version "2.1.108"`) {
+		t.Fatalf("selectClaudeStable() error = %v", err)
 	}
 }
 
@@ -1219,12 +1285,10 @@ func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
     "0.36.0": "2026-04-01T20:23:40Z"
   }
 }`))
-		case "/claude-bucket":
-			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult>
-  <CommonPrefixes><Prefix>claude-code-releases/2.1.92/</Prefix></CommonPrefixes>
-</ListBucketResult>`))
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.92", map[string]string{
+				"2.1.92": "2026-04-03T23:57:51Z",
+			})
 		case "/claude-release/2.1.92/manifest.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -1246,7 +1310,7 @@ func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
 		CodexRegistryURL:      server.URL + "/codex-registry",
 		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
 		GeminiRegistryURL:     server.URL + "/gemini-registry",
-		ClaudeBucketURL:       server.URL + "/claude-bucket",
+		ClaudeRegistryURL:     server.URL + "/claude-registry",
 		ClaudeReleaseRootURL:  server.URL + "/claude-release",
 	}, server.Client())
 	if err != nil {

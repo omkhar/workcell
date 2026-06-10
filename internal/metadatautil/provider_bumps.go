@@ -6,7 +6,6 @@ package metadatautil
 import (
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -25,17 +24,16 @@ const (
 	defaultProviderBumpCodexRegistryURL   = "https://registry.npmjs.org/@openai%2fcodex"
 	defaultProviderBumpCodexReleaseAPIURL = "https://api.github.com/repos/openai/codex/releases/tags/rust-v%s"
 	defaultProviderBumpGeminiRegistryURL  = "https://registry.npmjs.org/@google%2fgemini-cli"
-	defaultProviderBumpClaudeBucketURL    = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819?prefix=claude-code-releases/&delimiter=/"
+	defaultProviderBumpClaudeRegistryURL  = "https://registry.npmjs.org/@anthropic-ai%2fclaude-code"
 	defaultProviderBumpClaudeReleaseRoot  = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
 	providerBumpUserAgent                 = "workcell-provider-bump/1.0"
 	// providerBumpHTTPTimeout caps every upstream metadata fetch (npm
-	// registry, GitHub release API, GCS bucket listing) end-to-end.
+	// registry, GitHub release API, GCS release manifest) end-to-end.
 	providerBumpHTTPTimeout = 30 * time.Second
-	// providerBumpMaxJSONBytes / providerBumpMaxXMLBytes cap the success-path
-	// response body so a misbehaving or hostile upstream cannot OOM the
-	// caller (upstream-refresh, hosted-controls audit, release preflight).
-	// The error path already wraps in LimitReader(4096); these mirror that
-	// pattern for the success path.
+	// providerBumpMaxJSONBytes caps the success-path response body so a
+	// misbehaving or hostile upstream cannot OOM the caller (upstream-refresh,
+	// hosted-controls audit, release preflight). The error path already wraps
+	// in LimitReader(4096); this mirrors that pattern for the success path.
 	//
 	// 16 MiB headroom on JSON because the npm registry response for
 	// `@openai/codex` crossed 7.3 MiB in May 2026 (full version metadata
@@ -46,20 +44,18 @@ const (
 	// for hostile/misbehaving upstreams and tracks the projected growth
 	// curve for the next ~5 years of npm metadata.
 	providerBumpMaxJSONBytes = 16 << 20 // 16 MiB
-	providerBumpMaxXMLBytes  = 1 << 20  // 1 MiB
 )
 
 var (
-	errReleaseAssetNotFound       = errors.New("release asset not found")
-	stableVersionPattern          = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
-	geminiDependencyPattern       = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
-	claudeVersionLinePattern      = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
-	codexVersionLinePattern       = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
-	claudeArmChecksumLinePattern  = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CLAUDE_PLATFORM="linux-arm64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
-	claudeAmdChecksumLinePattern  = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CLAUDE_PLATFORM="linux-x64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
-	codexArmChecksumLinePattern   = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CODEX_ARCH="aarch64-unknown-linux-gnu";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
-	codexAmdChecksumLinePattern   = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CODEX_ARCH="x86_64-unknown-linux-gnu";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
-	claudeBucketVersionDirPattern = regexp.MustCompile(`^claude-code-releases/([0-9]+\.[0-9]+\.[0-9]+)/$`)
+	errReleaseAssetNotFound      = errors.New("release asset not found")
+	stableVersionPattern         = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	geminiDependencyPattern      = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
+	claudeVersionLinePattern     = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
+	codexVersionLinePattern      = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
+	claudeArmChecksumLinePattern = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CLAUDE_PLATFORM="linux-arm64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
+	claudeAmdChecksumLinePattern = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CLAUDE_PLATFORM="linux-x64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
+	codexArmChecksumLinePattern  = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CODEX_ARCH="aarch64-unknown-linux-gnu";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
+	codexAmdChecksumLinePattern  = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CODEX_ARCH="x86_64-unknown-linux-gnu";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
 )
 
 type ProviderBumpPolicy struct {
@@ -102,7 +98,7 @@ type ProviderBumpSources struct {
 	CodexRegistryURL      string
 	CodexReleaseAPIURLFmt string
 	GeminiRegistryURL     string
-	ClaudeBucketURL       string
+	ClaudeRegistryURL     string
 	ClaudeReleaseRootURL  string
 }
 
@@ -118,12 +114,6 @@ type codexReleaseMetadata struct {
 		Name   string `json:"name"`
 		Digest string `json:"digest"`
 	} `json:"assets"`
-}
-
-type claudeBucketListing struct {
-	CommonPrefixes []struct {
-		Prefix string `xml:"Prefix"`
-	} `xml:"CommonPrefixes"`
 }
 
 type claudeManifest struct {
@@ -151,7 +141,7 @@ func DefaultProviderBumpSources() ProviderBumpSources {
 		CodexRegistryURL:      defaultProviderBumpCodexRegistryURL,
 		CodexReleaseAPIURLFmt: defaultProviderBumpCodexReleaseAPIURL,
 		GeminiRegistryURL:     defaultProviderBumpGeminiRegistryURL,
-		ClaudeBucketURL:       defaultProviderBumpClaudeBucketURL,
+		ClaudeRegistryURL:     defaultProviderBumpClaudeRegistryURL,
 		ClaudeReleaseRootURL:  defaultProviderBumpClaudeReleaseRoot,
 	}
 }
@@ -497,33 +487,19 @@ func selectGeminiStable(currentVersion string, cutoff time.Time, sources Provide
 }
 
 func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion string, approvedVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
-	var listing claudeBucketListing
-	if err := fetchXML(client, sources.ClaudeBucketURL, &listing); err != nil {
+	candidates, _, err := stableCandidatesFromRegistry(sources.ClaudeRegistryURL, time.Time{}, maxVersion, client)
+	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
 	maxAllowed, hasMaxVersion := parseStableVersion(maxVersion)
 	current, hasCurrentVersion := parseStableVersion(currentVersion)
 	approved, hasApprovedVersion := parseStableVersion(approvedVersion)
-	candidates := make([]stableVersion, 0, len(listing.CommonPrefixes))
 	currentPresentInCandidates := false
-	for _, prefix := range listing.CommonPrefixes {
-		match := claudeBucketVersionDirPattern.FindStringSubmatch(prefix.Prefix)
-		if match == nil {
-			continue
-		}
-		version, ok := parseStableVersion(match[1])
-		if !ok {
-			continue
-		}
-		if hasMaxVersion && compareStableVersions(version, maxAllowed) > 0 {
-			continue
-		}
-		if hasCurrentVersion && compareStableVersions(version, current) == 0 {
+	for _, candidate := range candidates {
+		if hasCurrentVersion && compareStableVersions(candidate, current) == 0 {
 			currentPresentInCandidates = true
 		}
-		candidates = append(candidates, version)
 	}
-	sortStableVersionsDesc(candidates)
 	if hasApprovedVersion && hasCurrentVersion && compareStableVersions(approved, current) <= 0 {
 		hasApprovedVersion = false
 	}
@@ -536,6 +512,9 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 			var manifest claudeManifest
 			if err := fetchJSON(client, manifestURL, &manifest); err != nil {
 				return ProviderBumpSelection{}, err
+			}
+			if manifest.Version != candidate.Raw {
+				return ProviderBumpSelection{}, fmt.Errorf("claude manifest for %s reports version %q", candidate.Raw, manifest.Version)
 			}
 			buildTime, err := time.Parse(time.RFC3339, manifest.BuildDate)
 			if err != nil {
@@ -558,7 +537,7 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 				},
 			}, nil
 		}
-		return ProviderBumpSelection{}, fmt.Errorf("claude approved_version %s is not present in the release bucket listing", approvedVersion)
+		return ProviderBumpSelection{}, fmt.Errorf("claude approved_version %s is not present in the registry metadata", approvedVersion)
 	}
 	var selected *ProviderBumpSelection
 	var selectedVersion stableVersion
@@ -567,6 +546,9 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		var manifest claudeManifest
 		if err := fetchJSON(client, manifestURL, &manifest); err != nil {
 			return ProviderBumpSelection{}, err
+		}
+		if manifest.Version != candidate.Raw {
+			return ProviderBumpSelection{}, fmt.Errorf("claude manifest for %s reports version %q", candidate.Raw, manifest.Version)
 		}
 		buildTime, err := time.Parse(time.RFC3339, manifest.BuildDate)
 		if err != nil {
@@ -601,7 +583,7 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 				return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s exceeds provider.claude.max_version %s", currentVersion, maxVersion)
 			}
 			if !currentPresentInCandidates {
-				return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s is not present in the release bucket listing", currentVersion)
+				return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s is not present in the registry metadata", currentVersion)
 			}
 			return ProviderBumpSelection{
 				Channel:        "stable",
@@ -615,7 +597,7 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s exceeds provider.claude.max_version %s", currentVersion, maxVersion)
 	}
 	if hasCurrentVersion && len(candidates) > 0 && !currentPresentInCandidates && compareStableVersions(current, candidates[0]) > 0 {
-		return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s is not present in the release bucket listing", currentVersion)
+		return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s is not present in the registry metadata", currentVersion)
 	}
 	return ProviderBumpSelection{
 		Channel:        "stable",
@@ -668,7 +650,7 @@ func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersi
 			skipped = appendSkippedProviderRelease(skipped, version, fmt.Sprintf("exceeds configured max_version %s", maxVersion))
 			continue
 		}
-		if publishedAt.After(cutoff) {
+		if !cutoff.IsZero() && publishedAt.After(cutoff) {
 			continue
 		}
 		candidates = append(candidates, version)
@@ -774,29 +756,6 @@ func fetchJSON(client *http.Client, targetURL string, target any) error {
 		return fmt.Errorf("fetch %s: unexpected status %d: %s", targetURL, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, providerBumpMaxJSONBytes)).Decode(target); err != nil {
-		return fmt.Errorf("decode %s: %w", targetURL, err)
-	}
-	return nil
-}
-
-func fetchXML(client *http.Client, targetURL string, target any) error {
-	ctx, cancel := context.WithTimeout(context.Background(), providerBumpHTTPTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-	if err != nil {
-		return fmt.Errorf("fetch %s: %w", targetURL, err)
-	}
-	req.Header.Set("User-Agent", providerBumpUserAgent)
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("fetch %s: %w", targetURL, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("fetch %s: unexpected status %d: %s", targetURL, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	if err := xml.NewDecoder(io.LimitReader(resp.Body, providerBumpMaxXMLBytes)).Decode(target); err != nil {
 		return fmt.Errorf("decode %s: %w", targetURL, err)
 	}
 	return nil
