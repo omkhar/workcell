@@ -36,8 +36,12 @@ support_matrix_host_override_allowed() {
   local parent_cmdline=""
 
   [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] || return 1
-  [[ -r "/proc/${PPID}/cmdline" ]] || return 1
-  parent_cmdline="$(tr '\0' ' ' <"/proc/${PPID}/cmdline" 2>/dev/null || true)"
+  if [[ -r "/proc/${PPID}/cmdline" ]]; then
+    parent_cmdline="$(tr '\0' ' ' <"/proc/${PPID}/cmdline" 2>/dev/null || true)"
+  elif command -v ps >/dev/null 2>&1; then
+    parent_cmdline="$(ps -p "${PPID}" -o command= 2>/dev/null || true)"
+  fi
+  [[ -n "${parent_cmdline}" ]] || return 1
   case "${parent_cmdline}" in
     *"scripts/verify-invariants.sh"* | \
       *"tests/scenarios/shared/test-compat-target-dry-run.sh"* | \

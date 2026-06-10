@@ -694,6 +694,58 @@ latest_debian_snapshot
 	}
 }
 
+func TestLatestDebianSnapshotUsesFreshnessLookback(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "update-upstream-pins.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+
+	code, output := runBashProbe(t, `set -euo pipefail
+`+extractShellFunction(t, script, "latest_debian_snapshot")+`
+`+extractShellFunction(t, script, "debian_snapshot_has_bootstrap_packages")+`
+
+date_stamp_for_offset() {
+  if [[ "$1" == "22" ]]; then
+    printf '%s\n' 20260518T000000Z
+    return
+  fi
+  printf '202605%02dT000000Z\n' "$((40 - $1))"
+}
+
+curl() {
+  local url="${*: -1}"
+  case "${url}" in
+    */dists/trixie/Release | */dists/trixie-updates/Release | */dists/trixie-security/Release)
+      return 0
+      ;;
+    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb | \
+    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb | \
+    */20260518T000000Z/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb)
+      return 0
+      ;;
+    */pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb | \
+    */pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb | \
+    */pool/main/c/ca-certificates/ca-certificates_20250419_all.deb)
+      return 22
+      ;;
+  esac
+  return 1
+}
+
+latest_debian_snapshot
+`, nil)
+	if code != 0 {
+		t.Fatalf("probe exit code = %d output=%q", code, output)
+	}
+	if got := strings.TrimSpace(output); got != "20260518T000000Z" {
+		t.Fatalf("latest_debian_snapshot = %q, want 20260518T000000Z", got)
+	}
+}
+
 func TestPreMergeChecksPinnedUpstreams(t *testing.T) {
 	t.Parallel()
 

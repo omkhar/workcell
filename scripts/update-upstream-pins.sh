@@ -70,6 +70,7 @@ require_tool shasum
 # GitHub release lists are at most a few MiB) while still rejecting a
 # multi-GB body from a misbehaving or compromised endpoint.
 CURL_API_GUARDS=(--max-time 120 --connect-timeout 15 --max-filesize 209715200)
+DEBIAN_SNAPSHOT_LOOKBACK_DAYS="${WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-45}}"
 
 github_api_get() {
   local url="$1"
@@ -290,7 +291,8 @@ date_stamp_for_offset() {
 latest_debian_snapshot() {
   local stamp
   local offset
-  for offset in $(seq 0 14); do
+  local lookback_days="${DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-45}"
+  for offset in $(seq 0 "${lookback_days}"); do
     stamp="$(date_stamp_for_offset "${offset}")"
     if curl -fsSI "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" >/dev/null &&
       curl -fsSI "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" >/dev/null &&
@@ -300,7 +302,7 @@ latest_debian_snapshot() {
       return
     fi
   done
-  echo "Unable to resolve a recent Debian snapshot for trixie/trixie-updates/trixie-security with bootstrap packages" >&2
+  echo "Unable to resolve a Debian snapshot within ${lookback_days} days for trixie/trixie-updates/trixie-security with bootstrap packages" >&2
   exit 1
 }
 
