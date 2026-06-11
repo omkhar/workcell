@@ -1,3 +1,7 @@
+// Defense-in-depth only: this guard hardens provider-package integrity for
+// already-trusted launch paths. It is not a security boundary — the VM plus
+// hardened container is. Code already running in the workspace can import
+// modules without re-triggering these hooks.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';

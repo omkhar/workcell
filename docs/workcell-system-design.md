@@ -98,9 +98,11 @@ packages under [`internal/`](../internal):
   rendering and validation
 - [`internal/host/launcher`](../internal/host/launcher), [`internal/host/sessions`](../internal/host/sessions),
   [`internal/host/hoststate`](../internal/host/hoststate), [`internal/host/release`](../internal/host/release),
+  [`internal/host/stateroot`](../internal/host/stateroot),
   [`internal/host/supportmatrix`](../internal/host/supportmatrix): host-side
   utility subpackages (path canonicalization, colima/profile-lock, session
-  records, mount/audit state, GitHub release helpers, support matrix)
+  records, mount/audit state, GitHub release helpers, Workcell-owned
+  target-state roots, support matrix)
 - [`internal/metadatautil`](../internal/metadatautil): metadata and validation
   helpers used by repo checks and release posture
 - [`internal/runtimeutil`](../internal/runtimeutil): runtime-related utility

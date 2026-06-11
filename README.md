@@ -445,8 +445,9 @@ See [docs/provenance.md](docs/provenance.md) and
 
 - `runtime/`: VM and container boundary implementation
 - `policy/`: shared contract layer and hosted-control policy
-- `adapters/`: provider-native baselines for Codex, Claude, and Gemini; the
-  Copilot baseline joins here only when its adapter support lands
+- `adapters/`: provider-native baselines for Codex, Claude, and Gemini, plus
+  the fail-closed Copilot planning scaffold (`adapters/copilot/` is not a
+  baseline until its adapter support lands)
 - `cmd/`: host-side and runtime-side Go entrypoints (the `workcell-*` binaries)
 - `internal/`: shared Go packages backing the `cmd/` binaries
 - `scripts/`: launcher, validation, release, audit, and bootstrap entrypoints

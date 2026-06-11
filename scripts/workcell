@@ -434,7 +434,7 @@ Options:
   --debug-log PATH              Persist launcher stderr and captured build output to PATH
   --file-trace-log PATH         Persist session file transaction trace to PATH
   --audit-transcript PATH       Persist full interactive terminal transcript to PATH
-  --ui cli|gui                  Surface to launch (default: cli)
+  --ui cli|gui                  Surface to launch (default: cli; gui is not implemented and fails closed)
   --mode strict|development|build|breakglass
                                 Runtime profile (default: strict)
   --doctor                      Validate host/workspace/profile state and print remediation
