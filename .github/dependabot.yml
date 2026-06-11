@@ -80,6 +80,26 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: "npm"
+    directory: "/tools/markdownlint"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:15"
+      timezone: "America/Toronto"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "npm"
+    groups:
+      markdownlint:
+        patterns:
+          - "*"
+
   # Cargo updates are handled by the reviewed upstream refresh path because the
   # runtime Rust build is vendored and must remain reproducible with
   # cargo --locked --offline. Re-enable Dependabot for Cargo only after adding

@@ -27,6 +27,7 @@ jobs:
     timeout-minutes: 20
     environment:
       name: upstream-refresh
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     permissions:
       contents: read # Read the reviewed tree to compute the candidate bundle.
       issues: write # Update the rolling tracking issue with the latest candidate status.
