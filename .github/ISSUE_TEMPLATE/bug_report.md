@@ -29,7 +29,7 @@ What you expected to happen.
 - OS: [e.g. macOS 15.4]
 - Workcell version: [e.g. v0.5.0 or commit SHA]
 - Provider: [Codex / Claude / Gemini]
-- Mode: [strict / build / breakglass]
+- Mode: [strict / development / build / breakglass]
 - Docker version: `docker --version`
 - Colima version (macOS only): `colima version`
 

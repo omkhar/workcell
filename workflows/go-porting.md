@@ -1,5 +1,8 @@
 # Go Porting Workflow
 
+Status: this migration is complete and no repo-owned Python remains. The
+workflow is retained as the reference pattern for future language ports.
+
 This workflow defines the compatibility-first migration path for replacing
 repo-owned Python with Go on the experimental branch.
 

@@ -60,7 +60,9 @@ state:
 - `./scripts/build-and-test.sh` (host-native by default; `--docker` reruns repo validation inside the pinned CI validator container from a disposable snapshot)
 - `./scripts/container-smoke.sh`
 - `./scripts/verify-invariants.sh`
-- `./scripts/verify-release-bundle.sh`
+- `./scripts/verify-release-bundle.sh` (release-preflight only: it runs in
+  the `release-preflight` validate profile and in `release.yml`, not in the
+  standard PR lane)
 - `./scripts/verify-reproducible-build.sh`
 - `./scripts/pre-merge.sh` profiles:
   - `repo-core` for deterministic repo-required validation

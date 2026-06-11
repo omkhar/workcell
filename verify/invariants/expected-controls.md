@@ -16,6 +16,7 @@
 ## Codex controls
 
 - `strict` uses `workspace-write`
+- `development` uses `workspace-write`
 - `build` uses `workspace-write`
 - `breakglass` uses `danger-full-access`
 - web search stays disabled in all shipped profiles
@@ -23,6 +24,7 @@
 ## Network controls
 
 - `strict` applies the base egress allowlist
+- `development` applies the expanded development egress allowlist
 - `build` applies the expanded egress allowlist
 - allowlist modes program reviewed IPv4 and, when available, IPv6 destination
   allowlists; if IPv6 enforcement is unavailable, Workcell fails closed instead

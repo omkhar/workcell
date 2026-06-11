@@ -27,10 +27,14 @@ separate action.
 
 ## 3. Repo policy must not silently widen trust
 
-Repo-local control-plane files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
-`.codex/`, `.claude/`, and `.gemini/` are masked on the safe path and imported
-into provider homes as reviewed inputs. The workspace should not be able to
-quietly take over the runtime control plane.
+Repo-local control-plane files are masked on the safe path and imported into
+provider homes as reviewed inputs. The masked set is the provider files
+`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.mcp.json`; the provider and IDE
+directories `.codex/`, `.claude/`, `.gemini/`, `.vscode/`, `.idea/`,
+`.cursor/`, and `.zed/`; and git execution-control paths (`hooks`, `config`,
+`config.worktree`, and `worktrees` for the workspace repo and its
+submodules). The workspace should not be able to quietly take over the
+runtime control plane.
 
 The planned Copilot adapter must explicitly account for Copilot-specific repo
 control-plane files such as `.github/copilot-instructions.md`,

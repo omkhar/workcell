@@ -1,5 +1,8 @@
 # Python To Go Migration Workflow
 
+Status: this migration is complete and no repo-owned Python remains. The
+workflow is retained as the reference pattern for future language ports.
+
 Use this workflow when porting repo-owned Python helpers to Go.
 
 ## Goal
