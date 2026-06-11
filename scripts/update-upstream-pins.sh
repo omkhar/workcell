@@ -15,6 +15,8 @@ GO_MOD_PATH="${ROOT_DIR}/go.mod"
 RUST_TOOLCHAIN_PATH="${ROOT_DIR}/runtime/container/rust/rust-toolchain.toml"
 CARGO_MANIFEST_PATH="${ROOT_DIR}/runtime/container/rust/Cargo.toml"
 CI_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/ci.yml"
+DOCS_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/docs.yml"
+VALIDATOR_IMAGE_SCRIPT_PATH="${ROOT_DIR}/scripts/ci/build-validator-image.sh"
 PIN_HYGIENE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/pin-hygiene.yml"
 RELEASE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/release.yml"
 SECURITY_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/security.yml"
@@ -452,6 +454,15 @@ current_hadolint_sha_amd64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PAT
 current_hadolint_sha_arm64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" HADOLINT_LINUX_ARM64_SHA256)"
 current_buildkit_image="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
 current_buildx_version="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
+current_docs_buildkit_image="$(extract_yaml_scalar "${DOCS_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
+current_docs_buildx_version="$(extract_yaml_scalar "${DOCS_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
+current_validator_image_buildkit_fallback="$(awk -v prefix="BUILDKIT_IMAGE=\"\${WORKCELL_BUILDKIT_IMAGE:-" '
+  index($0, prefix) == 1 {
+    value = substr($0, length(prefix) + 1)
+    sub(/}"$/, "", value)
+    print value
+    exit
+  }' "${VALIDATOR_IMAGE_SCRIPT_PATH}")"
 current_cosign_version="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_COSIGN_VERSION)"
 current_upstream_refresh_cosign_version="$(extract_yaml_scalar "${UPSTREAM_REFRESH_WORKFLOW_PATH}" WORKCELL_COSIGN_VERSION)"
 current_qemu_image="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_QEMU_IMAGE)"
@@ -510,6 +521,9 @@ for current_target_pair in \
   "${current_hadolint_sha_arm64}|${target_hadolint_sha_arm64}" \
   "${current_buildkit_image}|${target_buildkit_image}" \
   "${current_buildx_version}|${target_buildx_version}" \
+  "${current_docs_buildkit_image}|${target_buildkit_image}" \
+  "${current_docs_buildx_version}|${target_buildx_version}" \
+  "${current_validator_image_buildkit_fallback}|${target_buildkit_image}" \
   "${current_cosign_version}|${target_cosign_version}" \
   "${current_upstream_refresh_cosign_version}|${target_cosign_version}" \
   "${current_qemu_image}|${target_qemu_image}" \
@@ -613,6 +627,10 @@ replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  W
 replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
 replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"
 replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_QEMU_IMAGE:' "  WORKCELL_QEMU_IMAGE: ${target_qemu_image}"
+
+replace_line_with_prefix "${DOCS_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  WORKCELL_BUILDKIT_IMAGE: ${target_buildkit_image}"
+replace_line_with_prefix "${DOCS_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
+replace_line_with_prefix "${VALIDATOR_IMAGE_SCRIPT_PATH}" "BUILDKIT_IMAGE=\"\${WORKCELL_BUILDKIT_IMAGE:-" "BUILDKIT_IMAGE=\"\${WORKCELL_BUILDKIT_IMAGE:-${target_buildkit_image}}\""
 
 replace_line_with_prefix "${PIN_HYGIENE_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"
 replace_line_with_prefix "${UPSTREAM_REFRESH_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"

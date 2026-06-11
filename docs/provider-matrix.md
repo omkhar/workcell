@@ -11,6 +11,20 @@ through a native control-plane mapping.
 | Claude | Claude Code CLI | `~/.claude/settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, reviewed Bash hook | `claude_auth`, `claude_api_key`, `claude_mcp` | direct staged `claude_auth` and `claude_api_key` are supported; the built-in macOS resolver scaffold remains fail-closed |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, rendered `GEMINI.md`, `.env`, OAuth creds, `projects.json`, trusted folders | `gemini_env`, `gemini_oauth`, `gemini_projects`, `gcloud_adc` | Gemini's own sandbox is not the Tier 1 boundary here; `gcloud_adc` is supplemental to Vertex config |
 
+### Upstream change: Gemini CLI retirement on June 18, 2026
+
+Google has announced that Gemini CLI stops serving requests for free, Pro,
+and Ultra accounts on June 18, 2026, in favor of the closed-source
+Antigravity CLI; organizations with Gemini Code Assist Standard or
+Enterprise licenses keep Gemini CLI access unchanged
+([announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)).
+After that date the Gemini Tier 1 adapter continues to work only with those
+licensed auth inputs; other Gemini accounts will be refused upstream even
+though the adapter, control-plane mapping, and pinned CLI remain intact. An
+Antigravity adapter would be a new provider-parity track with a different
+binary and control-plane surface, and follows the same Tier 1 evidence bar
+as every provider; the decision is tracked in [ROADMAP.md](../ROADMAP.md).
+
 ## Planned provider parity
 
 | Provider | Planned Tier 1 surface | Planned managed control plane | Planned auth input | Support status |

@@ -81,6 +81,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
+	validatorImageScript, err := readText(filepath.Join(repoRoot, "scripts", "ci", "build-validator-image.sh"))
+	if err != nil {
+		return err
+	}
 	codeowners, err := readText(cfg.CodeownersPath)
 	if err != nil {
 		return err
@@ -647,6 +651,41 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return errors.New("WORKCELL_BUILDKIT_IMAGE must match between .github/workflows/ci.yml and .github/workflows/release.yml")
 	}
 	if err := requirePinnedBaseImage(ciBuildkitImage, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml"); err != nil {
+		return err
+	}
+	for _, workflowPath := range mustGlob(filepath.Join(cfg.WorkflowsDir, "*.yml")) {
+		workflowText, err := readText(workflowPath)
+		if err != nil {
+			return err
+		}
+		workflowName := ".github/workflows/" + filepath.Base(workflowPath)
+		if regexp.MustCompile(`(?m)^\s*WORKCELL_BUILDX_VERSION:`).MatchString(workflowText) {
+			workflowBuildxVersion, err := requireYAMLKey(workflowText, "WORKCELL_BUILDX_VERSION", workflowName)
+			if err != nil {
+				return err
+			}
+			if err := requireEqual("WORKCELL_BUILDX_VERSION", ciBuildxVersion, ".github/workflows/ci.yml", workflowBuildxVersion, workflowName); err != nil {
+				return err
+			}
+		}
+		if regexp.MustCompile(`(?m)^\s*WORKCELL_BUILDKIT_IMAGE:`).MatchString(workflowText) {
+			workflowBuildkitImage, err := requireYAMLKey(workflowText, "WORKCELL_BUILDKIT_IMAGE", workflowName)
+			if err != nil {
+				return err
+			}
+			if err := requireEqual("WORKCELL_BUILDKIT_IMAGE", ciBuildkitImage, ".github/workflows/ci.yml", workflowBuildkitImage, workflowName); err != nil {
+				return err
+			}
+			if !strings.Contains(workflowText, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
+				return fmt.Errorf("%s must pin the BuildKit daemon image used by setup-buildx-action", workflowName)
+			}
+		}
+	}
+	validatorImageFallback := regexp.MustCompile(`(?m)^BUILDKIT_IMAGE="\$\{WORKCELL_BUILDKIT_IMAGE:-([^}]+)\}"$`).FindStringSubmatch(validatorImageScript)
+	if validatorImageFallback == nil {
+		return errors.New("scripts/ci/build-validator-image.sh must default BUILDKIT_IMAGE from WORKCELL_BUILDKIT_IMAGE with a pinned fallback")
+	}
+	if err := requireEqual("WORKCELL_BUILDKIT_IMAGE", ciBuildkitImage, ".github/workflows/ci.yml", validatorImageFallback[1], "scripts/ci/build-validator-image.sh"); err != nil {
 		return err
 	}
 

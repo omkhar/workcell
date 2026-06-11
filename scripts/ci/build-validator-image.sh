@@ -20,7 +20,7 @@ CACHE_SCOPE="${WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE:-validator-local}"
 # layer in the gha cache from untrusted PR sources.  CI sets this to
 # "max" only on push-to-main runs where the cache is operator-trusted.
 CACHE_WRITE_MODE="${WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE:-min}"
-BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:0039c1d47e8748b5afea56f4e85f14febaf34452bd99d9552d2daa82262b5cc5}"
+BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f}"
 
 cleanup() {
   cleanup_workcell_ci_docker
