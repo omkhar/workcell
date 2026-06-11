@@ -55,8 +55,9 @@ boundary.
   quickstart, deterministic evidence, and live certification land together
 - GitHub-hosted CI verifies repo shape, reproducibility, release posture, and
   secretless runtime behavior
-- GitHub-hosted CI continuously verifies bundle install/uninstall and Homebrew
-  install/uninstall on Apple Silicon `macos-26` and `macos-15`
+- GitHub-hosted CI verifies bundle install/uninstall and Homebrew
+  install/uninstall on Apple Silicon `macos-26` and `macos-15` on pushes to
+  `main`, manual dispatch, and PRs labeled `approved-heavy-ci`
 - the real macOS Colima boundary is still a local operator exercise because
   GitHub-hosted Linux runners cannot prove it
 - the canonical host support boundary lives in

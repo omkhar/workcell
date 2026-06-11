@@ -22,7 +22,7 @@ repo-local `./scripts/repo-publish-pr.sh` publication gate.
 
 | Workflow | Purpose |
 |---|---|
-| `ci.yml` | repository validation, smoke, reproducibility, pin verification, upstream release re-verification, and continuous package install/uninstall verification on pushes and PRs |
+| `ci.yml` | repository validation, smoke, reproducibility, pin verification, upstream release re-verification, and package install/uninstall verification on pushes to `main`, manual dispatch, and PRs labeled `approved-heavy-ci` |
 | `pr-base-policy.yml` | trusted base-branch guard that keeps `main` as the supported ready-PR base and leaves non-`main` PR bases as draft-only lower-assurance review units |
 | `docs.yml` | fast spelling and manpage feedback for docs-only changes |
 | `security.yml` | repo-owned workflow contract checks, dependency review, and `zizmor` |
@@ -75,7 +75,7 @@ Other macOS versions are not install-gated today.
 
 `upstream-refresh.yml` is the dedicated candidate lane for reviewed upstream pins:
 
-- it runs on a weekday schedule and on manual dispatch
+- it runs on a daily schedule and on manual dispatch
 - it installs the same pinned Cosign verifier release used by CI, release, and
   pin-hygiene before provider release verification paths run
 - it refreshes provider pins, the Linux runtime and validator base images,
