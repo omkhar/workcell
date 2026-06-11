@@ -60,6 +60,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"go.mod",
 		".github/CODEOWNERS",
 		".github/workflows/ci.yml",
+		".github/workflows/docs.yml",
 		".github/workflows/release.yml",
 		".github/workflows/hosted-controls.yml",
 		".github/workflows/security.yml",
@@ -74,6 +75,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"runtime/container/providers/package-lock.json",
 		"runtime/container/rust/Cargo.toml",
 		"runtime/container/rust/rust-toolchain.toml",
+		"scripts/ci/build-validator-image.sh",
 		"scripts/verify-github-hosted-controls.sh",
 		"tools/validator/Dockerfile",
 	} {
@@ -424,6 +426,58 @@ func TestCheckPinnedInputsRejectsInvalidRustupDigest(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "RUSTUP_INIT_LINUX") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want rustup digest rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsDocsBuildxVersionDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	rewriteFile(t, filepath.Join(cfg.WorkflowsDir, "docs.yml"), func(content string) string {
+		return strings.Replace(content, "  WORKCELL_BUILDX_VERSION: v", "  WORKCELL_BUILDX_VERSION: v9.", 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a drifted buildx version in docs.yml")
+	}
+	if !strings.Contains(err.Error(), "WORKCELL_BUILDX_VERSION") || !strings.Contains(err.Error(), "docs.yml") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want docs.yml buildx drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsDocsBuildkitImageDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	rewriteFile(t, filepath.Join(cfg.WorkflowsDir, "docs.yml"), func(content string) string {
+		return strings.Replace(content, "  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:", "  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:00000000", 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a drifted BuildKit image in docs.yml")
+	}
+	if !strings.Contains(err.Error(), "WORKCELL_BUILDKIT_IMAGE") || !strings.Contains(err.Error(), "docs.yml") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want docs.yml BuildKit drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsValidatorImageScriptFallbackDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	scriptPath := filepath.Join(filepath.Dir(cfg.HostedControlsScriptPath), "ci", "build-validator-image.sh")
+	rewriteFile(t, scriptPath, func(content string) string {
+		return strings.Replace(content, `BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:`, `BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:00000000`, 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a drifted BuildKit fallback in build-validator-image.sh")
+	}
+	if !strings.Contains(err.Error(), "build-validator-image.sh") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want validator image fallback drift rejection", err)
 	}
 }
 

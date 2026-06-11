@@ -81,6 +81,14 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
+	docsWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "docs.yml"))
+	if err != nil {
+		return err
+	}
+	validatorImageScript, err := readText(filepath.Join(repoRoot, "scripts", "ci", "build-validator-image.sh"))
+	if err != nil {
+		return err
+	}
 	codeowners, err := readText(cfg.CodeownersPath)
 	if err != nil {
 		return err
@@ -648,6 +656,30 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	if err := requirePinnedBaseImage(ciBuildkitImage, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml"); err != nil {
 		return err
+	}
+	docsBuildxVersion, err := requireYAMLKey(docsWorkflow, "WORKCELL_BUILDX_VERSION", ".github/workflows/docs.yml")
+	if err != nil {
+		return err
+	}
+	if docsBuildxVersion != ciBuildxVersion {
+		return errors.New("WORKCELL_BUILDX_VERSION must match between .github/workflows/ci.yml and .github/workflows/docs.yml")
+	}
+	docsBuildkitImage, err := requireYAMLKey(docsWorkflow, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/docs.yml")
+	if err != nil {
+		return err
+	}
+	if docsBuildkitImage != ciBuildkitImage {
+		return errors.New("WORKCELL_BUILDKIT_IMAGE must match between .github/workflows/ci.yml and .github/workflows/docs.yml")
+	}
+	if !strings.Contains(docsWorkflow, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
+		return errors.New(".github/workflows/docs.yml must pin the BuildKit daemon image used by setup-buildx-action")
+	}
+	validatorImageFallback := regexp.MustCompile(`(?m)^BUILDKIT_IMAGE="\$\{WORKCELL_BUILDKIT_IMAGE:-([^}]+)\}"$`).FindStringSubmatch(validatorImageScript)
+	if validatorImageFallback == nil {
+		return errors.New("scripts/ci/build-validator-image.sh must default BUILDKIT_IMAGE from WORKCELL_BUILDKIT_IMAGE with a pinned fallback")
+	}
+	if validatorImageFallback[1] != ciBuildkitImage {
+		return errors.New("the BUILDKIT_IMAGE fallback in scripts/ci/build-validator-image.sh must match WORKCELL_BUILDKIT_IMAGE in .github/workflows/ci.yml")
 	}
 
 	ciCosignVersion, err := requireYAMLKey(ciWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/ci.yml")
