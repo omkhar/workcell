@@ -22,7 +22,7 @@ repo-local `./scripts/repo-publish-pr.sh` publication gate.
 
 | Workflow | Purpose |
 |---|---|
-| `ci.yml` | repository validation, smoke, reproducibility, pin verification, upstream release re-verification, and package install/uninstall verification on pushes to `main`, manual dispatch, and PRs labeled `approved-heavy-ci` |
+| `ci.yml` | repository validation, smoke, reproducibility, pin verification, and upstream release re-verification on pushes and PRs; package install/uninstall verification runs only on pushes to `main`, manual dispatch, and PRs labeled `approved-heavy-ci` |
 | `pr-base-policy.yml` | trusted base-branch guard that keeps `main` as the supported ready-PR base and leaves non-`main` PR bases as draft-only lower-assurance review units |
 | `docs.yml` | fast spelling and manpage feedback for docs-only changes |
 | `security.yml` | repo-owned workflow contract checks, dependency review, and `zizmor` |
