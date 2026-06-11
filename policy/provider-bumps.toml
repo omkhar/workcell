@@ -10,11 +10,6 @@ max_version = "0.125.0"
 
 [provider.claude]
 channel = "stable"
-# Reviewed exception: Claude Code 2.1.108 fixes the defect that forced the
-# earlier 2.1.104 holdback, so approve that exact stable version before the
-# normal cool-off window.
-max_version = "2.1.108"
-approved_version = "2.1.108"
 
 [provider.gemini]
 channel = "stable"
