@@ -81,10 +81,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	docsWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "docs.yml"))
-	if err != nil {
-		return err
-	}
 	validatorImageScript, err := readText(filepath.Join(repoRoot, "scripts", "ci", "build-validator-image.sh"))
 	if err != nil {
 		return err
@@ -657,29 +653,40 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requirePinnedBaseImage(ciBuildkitImage, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml"); err != nil {
 		return err
 	}
-	docsBuildxVersion, err := requireYAMLKey(docsWorkflow, "WORKCELL_BUILDX_VERSION", ".github/workflows/docs.yml")
-	if err != nil {
-		return err
-	}
-	if docsBuildxVersion != ciBuildxVersion {
-		return errors.New("WORKCELL_BUILDX_VERSION must match between .github/workflows/ci.yml and .github/workflows/docs.yml")
-	}
-	docsBuildkitImage, err := requireYAMLKey(docsWorkflow, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/docs.yml")
-	if err != nil {
-		return err
-	}
-	if docsBuildkitImage != ciBuildkitImage {
-		return errors.New("WORKCELL_BUILDKIT_IMAGE must match between .github/workflows/ci.yml and .github/workflows/docs.yml")
-	}
-	if !strings.Contains(docsWorkflow, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
-		return errors.New(".github/workflows/docs.yml must pin the BuildKit daemon image used by setup-buildx-action")
+	for _, workflowPath := range mustGlob(filepath.Join(cfg.WorkflowsDir, "*.yml")) {
+		workflowText, err := readText(workflowPath)
+		if err != nil {
+			return err
+		}
+		workflowName := ".github/workflows/" + filepath.Base(workflowPath)
+		if regexp.MustCompile(`(?m)^\s*WORKCELL_BUILDX_VERSION:`).MatchString(workflowText) {
+			workflowBuildxVersion, err := requireYAMLKey(workflowText, "WORKCELL_BUILDX_VERSION", workflowName)
+			if err != nil {
+				return err
+			}
+			if err := requireEqual("WORKCELL_BUILDX_VERSION", ciBuildxVersion, ".github/workflows/ci.yml", workflowBuildxVersion, workflowName); err != nil {
+				return err
+			}
+		}
+		if regexp.MustCompile(`(?m)^\s*WORKCELL_BUILDKIT_IMAGE:`).MatchString(workflowText) {
+			workflowBuildkitImage, err := requireYAMLKey(workflowText, "WORKCELL_BUILDKIT_IMAGE", workflowName)
+			if err != nil {
+				return err
+			}
+			if err := requireEqual("WORKCELL_BUILDKIT_IMAGE", ciBuildkitImage, ".github/workflows/ci.yml", workflowBuildkitImage, workflowName); err != nil {
+				return err
+			}
+			if !strings.Contains(workflowText, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
+				return fmt.Errorf("%s must pin the BuildKit daemon image used by setup-buildx-action", workflowName)
+			}
+		}
 	}
 	validatorImageFallback := regexp.MustCompile(`(?m)^BUILDKIT_IMAGE="\$\{WORKCELL_BUILDKIT_IMAGE:-([^}]+)\}"$`).FindStringSubmatch(validatorImageScript)
 	if validatorImageFallback == nil {
 		return errors.New("scripts/ci/build-validator-image.sh must default BUILDKIT_IMAGE from WORKCELL_BUILDKIT_IMAGE with a pinned fallback")
 	}
-	if validatorImageFallback[1] != ciBuildkitImage {
-		return errors.New("the BUILDKIT_IMAGE fallback in scripts/ci/build-validator-image.sh must match WORKCELL_BUILDKIT_IMAGE in .github/workflows/ci.yml")
+	if err := requireEqual("WORKCELL_BUILDKIT_IMAGE", ciBuildkitImage, ".github/workflows/ci.yml", validatorImageFallback[1], "scripts/ci/build-validator-image.sh"); err != nil {
+		return err
 	}
 
 	ciCosignVersion, err := requireYAMLKey(ciWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/ci.yml")

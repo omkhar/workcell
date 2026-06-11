@@ -467,7 +467,10 @@ func TestCheckPinnedInputsRejectsValidatorImageScriptFallbackDrift(t *testing.T)
 	t.Parallel()
 
 	cfg := writePinnedInputsFixture(t)
-	scriptPath := filepath.Join(filepath.Dir(cfg.HostedControlsScriptPath), "ci", "build-validator-image.sh")
+	// CheckPinnedInputs derives this path from the repo root implied by
+	// RuntimeDockerfilePath; mirror that derivation instead of guessing.
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	scriptPath := filepath.Join(fixtureRoot, "scripts", "ci", "build-validator-image.sh")
 	rewriteFile(t, scriptPath, func(content string) string {
 		return strings.Replace(content, `BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:`, `BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:00000000`, 1)
 	})
