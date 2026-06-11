@@ -244,9 +244,31 @@ jobs:
           # tagged commit show failures or unfinished work.  Tag-ancestry
           # alone is not enough: a tag pushed before main CI completes, or
           # against a red main, must not produce a release.
+          # Fail closed when nothing has registered yet: a tag pushed inside
+          # the registration window would otherwise see zero check-runs and
+          # sail through both filters below. GitHub Actions check suites for
+          # main-push workflows register at event delivery, so an empty set
+          # means main CI has not started for this commit. Scope to the
+          # github-actions app on main: third-party app suites (for example
+          # kusari-inspector) can sit queued forever on main commits.
+          suites="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-suites" \
+            --paginate \
+            --jq '[.check_suites[] | select(.app.slug == "github-actions" and .head_branch == "main")]')"
+          if [[ "$(jq 'length' <<<"${suites}")" -eq 0 ]]; then
+            echo "Tagged commit ${GITHUB_SHA} has no registered main workflow check suites yet." >&2
+            echo "Wait for main checks to register and finish before re-running this release." >&2
+            exit 1
+          fi
+          incomplete_suites="$(jq -r '.[] | select(.status != "completed") | "check suite \(.id) (\(.status))"' <<<"${suites}")"
+          if [[ -n "${incomplete_suites}" ]]; then
+            echo "Tagged commit ${GITHUB_SHA} has main workflow check suites not yet completed:" >&2
+            printf '%s\n' "${incomplete_suites}" >&2
+            echo "Wait for main checks to finish before re-running this release." >&2
+            exit 1
+          fi
           failed="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
             --paginate \
-            --jq '.check_runs[] | select(.status == "completed" and (.conclusion | IN("failure","cancelled","timed_out","action_required"))) | "\(.name) (\(.conclusion))"')"
+            --jq '.check_runs[] | select(.status == "completed" and (.conclusion | IN("failure","cancelled","timed_out","action_required","stale"))) | "\(.name) (\(.conclusion))"')"
           if [[ -n "${failed}" ]]; then
             echo "Tagged commit ${GITHUB_SHA} has failed required checks:" >&2
             printf '%s\n' "${failed}" >&2

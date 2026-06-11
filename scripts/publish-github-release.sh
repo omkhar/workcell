@@ -81,8 +81,8 @@ shift
 require_tool curl
 
 for path in "$@"; do
-  [[ -f "${path}" ]] || {
-    echo "Missing release asset: ${path}" >&2
+  [[ -s "${path}" ]] || {
+    echo "Missing or empty release asset: ${path}" >&2
     exit 1
   }
 done
