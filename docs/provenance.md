@@ -72,11 +72,13 @@ GitHub-independent check.
 
 ## GitHub attestation path
 
-The canonical upstream repo also publishes GitHub attestations when the
-reviewed hosted controls allow it. That posture is tracked through two
-repository variables:
+The canonical upstream repo publishes GitHub attestations fail-closed: every
+release attests its artifacts unless the opt-out is set. That posture is
+tracked through two repository variables:
 
-- `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` requests GitHub attestations
+- `WORKCELL_RELEASE_NO_ATTEST=true` is the explicit opt-out; when unset,
+  releases attest (the earlier `WORKCELL_ENABLE_GITHUB_ATTESTATIONS` opt-in
+  was removed because a missing toggle silently produced unattested releases)
 - `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=true` is only allowed when the
   repository is private/internal and the GitHub plan actually supports private
   artifact attestations

@@ -11,14 +11,22 @@ GitHub-hosted Apple Silicon `macos-26` and `macos-15`.
 
 ### Option A: verified release bundle
 
-Download a tagged release bundle from GitHub Releases, unpack it, and run the
-installer:
+Download a tagged release bundle plus `SHA256SUMS` and
+`SHA256SUMS.sigstore.json` from GitHub Releases, verify the bundle, then
+unpack it and run the installer:
 
 ```bash
+cosign verify-blob SHA256SUMS \
+  --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+shasum -a 256 --ignore-missing -c SHA256SUMS
 tar -xzf workcell-vX.Y.Z.tar.gz
 cd workcell-vX.Y.Z
 ./scripts/install.sh
 ```
+
+See [docs/provenance.md](provenance.md) for the full verification contract.
 
 On supported macOS hosts, the installer uses Homebrew to install only the
 missing required packages (`colima`, `docker`, `gh`, `git`, `go`). Use
@@ -32,8 +40,18 @@ installs the same reviewed tree into Homebrew-managed `libexec`:
 
 ```bash
 curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/workcell.rb
+curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/SHA256SUMS
+curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/SHA256SUMS.sigstore.json
+cosign verify-blob SHA256SUMS \
+  --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+shasum -a 256 --ignore-missing -c SHA256SUMS
 brew install --formula ./workcell.rb
 ```
+
+The formula pins the bundle digest, so `brew` re-verifies the downloaded tree
+against the reviewed release at install time.
 
 The formula declares `colima`, `docker`, `gh`, `git`, and `go` as explicit
 dependencies.
