@@ -94,6 +94,21 @@ function_block_contains_fixed() {
   grep -Fq -- "${needle}" <<<"${block_text}"
 }
 
+# Scope a fixed-string assertion to one top-level Go function body, so an
+# invariant migrated from bash to Go cannot be satisfied by the same text
+# appearing in a comment or an unrelated helper elsewhere in the file.
+go_function_block_contains_fixed() {
+  local file_path="$1"
+  local function_name="$2"
+  local needle="$3"
+
+  awk -v fn="func ${function_name}(" '
+    index($0, fn) == 1 { in_block = 1 }
+    in_block { print }
+    in_block && $0 == "}" { exit }
+  ' "${file_path}" | grep -Fq -- "${needle}"
+}
+
 script_supports_command_flag() {
   local script_help=""
 
@@ -2965,7 +2980,7 @@ fi
 # resolve_existing_executable_or_die migrated to Go
 # (publishpr.ResolveExistingExecutableOrDie); assert the Go owner still
 # rejects untrusted host executable paths on both raw and canonical forms.
-if ! grep -qF -- '!IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)' "${ROOT_DIR}/internal/publishpr/host_exec.go"; then
+if ! go_function_block_contains_fixed "${ROOT_DIR}/internal/publishpr/host_exec.go" "ResolveExistingExecutableOrDie" '!IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)'; then
   echo "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths" >&2
   exit 1
 fi
@@ -3045,7 +3060,7 @@ fi
 # validate_publish_base_name migrated to Go (publishpr.ValidateBaseName);
 # assert the Go owner still rejects base names that fail the trusted git
 # check-ref-format hook (the call itself, not just the signature).
-if ! grep -qF -- '!checkRefFormat(base)' "${ROOT_DIR}/internal/publishpr/publish_pr_main.go"; then
+if ! go_function_block_contains_fixed "${ROOT_DIR}/internal/publishpr/publish_pr_main.go" "ValidateBaseName" '!checkRefFormat(base)'; then
   echo "Expected publishpr.ValidateBaseName to validate the publish-pr --base branch name through checkRefFormat" >&2
   exit 1
 fi
