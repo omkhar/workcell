@@ -60,16 +60,16 @@ jobs:
           persist-credentials: false
 
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
-        uses: github/codeql-action/init@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4.36.1
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
       - if: ${{ (!github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true') && matrix.build-mode == 'autobuild' }}
-        uses: github/codeql-action/autobuild@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4.36.1
+        uses: github/codeql-action/autobuild@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
 
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
-        uses: github/codeql-action/analyze@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4.36.1
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
 
   preflight-arm64-repro:
     name: Release reproducible image (arm64)
