@@ -96,7 +96,9 @@ function_block_contains_fixed() {
 
 # Scope a fixed-string assertion to one top-level Go function body, so an
 # invariant migrated from bash to Go cannot be satisfied by the same text
-# appearing in a comment or an unrelated helper elsewhere in the file.
+# appearing in an unrelated helper elsewhere in the file or in a comment
+# (// line comments and single-line /* */ comments are stripped before
+# matching; gofmt-formatted function bodies use those forms).
 go_function_block_contains_fixed() {
   local file_path="$1"
   local function_name="$2"
@@ -104,7 +106,12 @@ go_function_block_contains_fixed() {
 
   awk -v fn="func ${function_name}(" '
     index($0, fn) == 1 { in_block = 1 }
-    in_block { print }
+    in_block {
+      line = $0
+      gsub(/\/\*[^*]*\*\//, "", line)
+      sub(/\/\/.*$/, "", line)
+      print line
+    }
     in_block && $0 == "}" { exit }
   ' "${file_path}" | grep -Fq -- "${needle}"
 }
