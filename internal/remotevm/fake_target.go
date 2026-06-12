@@ -484,7 +484,13 @@ func writeJSON(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, content, 0o600)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		return err
+	}
+	// WriteFile's mode only applies at creation; a manifest rewritten over an
+	// existing file (for example a re-bootstrapped target) keeps its old
+	// permissions otherwise.
+	return os.Chmod(path, 0o600)
 }
 
 func appendAuditLine(path, line string) error {
