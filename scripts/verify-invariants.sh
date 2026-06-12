@@ -2965,7 +2965,7 @@ fi
 # resolve_existing_executable_or_die migrated to Go
 # (publishpr.ResolveExistingExecutableOrDie); assert the Go owner still
 # rejects untrusted host executable paths on both raw and canonical forms.
-if ! rg -qF 'IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)' "${ROOT_DIR}/internal/publishpr/host_exec.go"; then
+if ! grep -qF -- 'IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)' "${ROOT_DIR}/internal/publishpr/host_exec.go"; then
   echo "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths" >&2
   exit 1
 fi
@@ -3043,10 +3043,10 @@ if [[ "${go_cache_root_actual}" != "${go_cache_root_expected}" ]]; then
 fi
 
 # validate_publish_base_name migrated to Go (publishpr.ValidateBaseName);
-# assert the Go owner still validates the publish-pr --base branch name
-# through the trusted git check-ref-format hook.
-if ! rg -qF 'func ValidateBaseName(base string, allowNonMainBase bool, checkRefFormat CheckRefFormatFunc) error' "${ROOT_DIR}/internal/publishpr/publish_pr_main.go"; then
-  echo "Expected publishpr.ValidateBaseName to validate the publish-pr --base branch name" >&2
+# assert the Go owner still rejects base names that fail the trusted git
+# check-ref-format hook (the call itself, not just the signature).
+if ! grep -qF -- '!checkRefFormat(base)' "${ROOT_DIR}/internal/publishpr/publish_pr_main.go"; then
+  echo "Expected publishpr.ValidateBaseName to validate the publish-pr --base branch name through checkRefFormat" >&2
   exit 1
 fi
 
