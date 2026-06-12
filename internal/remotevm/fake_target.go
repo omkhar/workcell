@@ -367,7 +367,11 @@ func statePathSegment(label, value string) (string, error) {
 
 func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]WorkspaceEntry, error) {
 	entries := make([]WorkspaceEntry, 0)
-	err := filepath.WalkDir(sourceRoot, func(path string, d fs.DirEntry, walkErr error) error {
+	resolvedRoot, err := filepath.EvalSymlinks(sourceRoot)
+	if err != nil {
+		return nil, err
+	}
+	err = filepath.WalkDir(sourceRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -404,6 +408,18 @@ func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]Worksp
 			}
 			resolved := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(rel)), target)))
 			if resolved == ".." || strings.HasPrefix(resolved, "../") {
+				return fmt.Errorf("workspace symlink %s escapes the workspace: %s", rel, target)
+			}
+			// The lexical check above is evadable through symlink chains
+			// (an in-workspace link to a parent directory re-routes a later
+			// ".." through the kernel), so also require the kernel-resolved
+			// target to stay inside the resolved workspace root. Dangling
+			// links fail closed.
+			physical, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return fmt.Errorf("workspace symlink %s does not resolve inside the workspace: %v", rel, err)
+			}
+			if physical != resolvedRoot && !strings.HasPrefix(physical, resolvedRoot+string(filepath.Separator)) {
 				return fmt.Errorf("workspace symlink %s escapes the workspace: %s", rel, target)
 			}
 			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
