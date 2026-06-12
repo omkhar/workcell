@@ -8,3 +8,4 @@ git push origin main
 git push origin master
 git rebase --no-verify
 git merge --no-verify
+git -ccore.hookspath=/tmp/evil commit -m x
