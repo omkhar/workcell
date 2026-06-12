@@ -2965,7 +2965,7 @@ fi
 # resolve_existing_executable_or_die migrated to Go
 # (publishpr.ResolveExistingExecutableOrDie); assert the Go owner still
 # rejects untrusted host executable paths on both raw and canonical forms.
-if ! grep -qF -- 'IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)' "${ROOT_DIR}/internal/publishpr/host_exec.go"; then
+if ! grep -qF -- '!IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)' "${ROOT_DIR}/internal/publishpr/host_exec.go"; then
   echo "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths" >&2
   exit 1
 fi
