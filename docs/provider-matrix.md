@@ -18,12 +18,14 @@ and Ultra accounts on June 18, 2026, in favor of the closed-source
 Antigravity CLI; organizations with Gemini Code Assist Standard or
 Enterprise licenses keep Gemini CLI access unchanged
 ([announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)).
-After that date the Gemini Tier 1 adapter continues to work only with those
-licensed auth inputs; other Gemini accounts will be refused upstream even
-though the adapter, control-plane mapping, and pinned CLI remain intact. An
-Antigravity adapter would be a new provider-parity track with a different
-binary and control-plane surface, and follows the same Tier 1 evidence bar
-as every provider; the decision is tracked in [ROADMAP.md](../ROADMAP.md).
+**Reviewed posture: from June 18, 2026 the Gemini Tier 1 adapter is
+supported for Gemini Code Assist Standard/Enterprise license holders only.**
+Other Gemini accounts will be refused upstream even though the adapter,
+control-plane mapping, and pinned CLI remain intact; Workcell keeps the
+adapter shipped and unchanged for licensed users. An Antigravity adapter is
+a committed follow-on provider-parity track with a different binary and
+control-plane surface, following the same Tier 1 evidence bar as every
+provider; sequencing is tracked in [ROADMAP.md](../ROADMAP.md).
 
 ## Planned provider parity
 
