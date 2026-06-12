@@ -20,7 +20,7 @@ cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
-sha256sum -c SHA256SUMS --ignore-missing
+shasum -a 256 --ignore-missing -c SHA256SUMS
 tar -xzf workcell-vX.Y.Z.tar.gz
 cd workcell-vX.Y.Z
 ./scripts/install.sh
@@ -46,7 +46,7 @@ cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
-sha256sum -c SHA256SUMS --ignore-missing
+shasum -a 256 --ignore-missing -c SHA256SUMS
 brew install --formula ./workcell.rb
 ```
 
