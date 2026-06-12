@@ -174,3 +174,99 @@ func TestFakeTargetRejectsPathTraversalSessionID(t *testing.T) {
 		t.Fatalf("StartSession() error = %v, want session id rejection", err)
 	}
 }
+
+func TestFakeTargetMaterializeWorkspaceRejectsEscapingSymlinks(t *testing.T) {
+	t.Parallel()
+
+	target, err := NewFakeTarget(DefaultContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, linkTarget := range map[string]string{
+		"absolute": "/etc/passwd",
+		"relative": "../../outside",
+	} {
+		tempWorkspace := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tempWorkspace, "keep.txt"), []byte("ok\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(linkTarget, filepath.Join(tempWorkspace, "escape")); err != nil {
+			t.Fatal(err)
+		}
+		_, err := target.MaterializeWorkspace(context.Background(), MaterializeRequest{
+			StateRoot:         t.TempDir(),
+			TargetID:          "fake-remote-target",
+			MaterializationID: "symlink-escape-" + name,
+			SourceWorkspace:   tempWorkspace,
+		})
+		if err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("%s: expected symlink escape rejection, got %v", name, err)
+		}
+	}
+}
+
+func TestFakeTargetMaterializeWorkspaceKeepsInternalSymlinks(t *testing.T) {
+	t.Parallel()
+
+	target, err := NewFakeTarget(DefaultContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tempWorkspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tempWorkspace, "real.txt"), []byte("ok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.txt", filepath.Join(tempWorkspace, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := target.MaterializeWorkspace(context.Background(), MaterializeRequest{
+		StateRoot:         t.TempDir(),
+		TargetID:          "fake-remote-target",
+		MaterializationID: "symlink-internal",
+		SourceWorkspace:   tempWorkspace,
+	})
+	if err != nil {
+		t.Fatalf("internal symlink unexpectedly rejected: %v", err)
+	}
+	linked, err := os.Readlink(filepath.Join(result.MaterializedWorkspace, "alias"))
+	if err != nil || linked != "real.txt" {
+		t.Fatalf("alias = %q, %v; want real.txt", linked, err)
+	}
+}
+
+func TestFakeTargetMaterializeWorkspaceRejectsSymlinkChainEscape(t *testing.T) {
+	t.Parallel()
+
+	target, err := NewFakeTarget(DefaultContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "ws")
+	if err := os.MkdirAll(filepath.Join(workspace, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "secret.txt"), []byte("outside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// dir/up resolves to the workspace root (legal on its own), but a second
+	// link routed through it re-routes ".." past the lexical check; the
+	// kernel resolves escape to parent/secret.txt, outside the workspace.
+	if err := os.Symlink("..", filepath.Join(workspace, "dir", "up")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("dir/up/../secret.txt", filepath.Join(workspace, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = target.MaterializeWorkspace(context.Background(), MaterializeRequest{
+		StateRoot:         t.TempDir(),
+		TargetID:          "fake-remote-target",
+		MaterializationID: "symlink-chain-escape",
+		SourceWorkspace:   workspace,
+	})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink chain escape rejection, got %v", err)
+	}
+}

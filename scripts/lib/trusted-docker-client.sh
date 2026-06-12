@@ -57,8 +57,20 @@ discover_workcell_real_home() {
       fallback_parent="/tmp"
     fi
     fallback_home="${fallback_parent%/}/workcell-home-${uid}"
+    # The path is intentionally stable so validator build caches survive
+    # across runs, but on a shared host another user could pre-plant a
+    # symlink or directory here; refuse anything that is not a real
+    # directory owned by the current uid.
+    if [[ -L "${fallback_home}" ]]; then
+      echo "Refusing synthetic home: ${fallback_home} is a symlink." >&2
+      return 1
+    fi
     mkdir -p "${fallback_home}"
     chmod 0700 "${fallback_home}" 2>/dev/null || true
+    if [[ -L "${fallback_home}" ]] || [[ ! -d "${fallback_home}" ]] || [[ ! -O "${fallback_home}" ]]; then
+      echo "Refusing synthetic home: ${fallback_home} is not a directory owned by uid ${uid}." >&2
+      return 1
+    fi
     printf 'synthetic\t%s\n' "${fallback_home}"
     return 0
   fi

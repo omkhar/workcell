@@ -291,7 +291,7 @@ mcp_home_control_regex="(^|[[:space:]'\";|&])(~|\$home|/state/agent-home)/\\.mcp
 if grep_command '(^|[^[:alnum:]_./-])(git|/usr/bin/git|/usr/local/libexec/workcell/git|/usr/local/libexec/workcell/core/git|/usr/local/libexec/workcell/real/git)([^[:alnum:]_./-]|$)'; then
   if [[ "${command_lower}" == *"--no-verify"* ]] ||
     grep_command '(^|[[:space:]'"'"'";|&])commit.*[[:space:]'"'"'";|&]-n([[:space:]'"'"'";|&]|$)' ||
-    grep_command '(^|[[:space:]'"'"'";|&])-c[[:space:]]+(core\.hookspath|core\.worktree|include\.path|includeif\.[^=[:space:]]+\.path)=' ||
+    grep_command '(^|[[:space:]'"'"'";|&])-c[[:space:]]*(core\.hookspath|core\.worktree|include\.path|includeif\.[^=[:space:]]+\.path)=' ||
     grep_command '--config-env=(core\.hookspath|core\.worktree|include\.path|includeif\.[^=[:space:]]+\.path)=' ||
     grep_command '(^|[[:space:]'"'"'";|&])(git_config_(count|key_[0-9]+|value_[0-9]+|parameters)|git_dir|git_work_tree|git_common_dir)=' ||
     grep_command '(^|[[:space:]'"'"'";|&])--git-dir(=|[[:space:]'"'"'";|&])' ||

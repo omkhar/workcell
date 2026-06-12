@@ -26,7 +26,7 @@
     },
     {
       "repo_path": "scripts/lib/trusted-docker-client.sh",
-      "sha256": "f1835ea3f4291c13134e803568f8b9ead5d7b7eff162c0550223f8873e6fb1f1"
+      "sha256": "89cd4ca9b5ad710522f9182a896545e36bee46280b8b299873deed775e385250"
     }
   ],
   "runtime_artifacts": [
@@ -46,7 +46,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/claude/hooks/guard-bash.sh",
       "runtime_path": "/opt/workcell/adapters/claude/hooks/guard-bash.sh",
-      "sha256": "6821e692bd48cf2b6d58e7b8378cd6ef5c916364af30dff1723b54c8c2053de4"
+      "sha256": "9bca2ae76b97cec2c390cf4e06a24418cf9b526dc04f559ca6ec10bbdb94d24d"
     },
     {
       "kind": "adapter-baseline",
@@ -100,7 +100,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/rules/default.rules",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/rules/default.rules",
-      "sha256": "f935a387b1d33424dc90260006f20fd8e2a3c7736edeb6cad05d5172c065ee2d"
+      "sha256": "36216ff78322664d49b759e905ac82b92dc90e75f89fba470c73b12aebf462be"
     },
     {
       "kind": "adapter-baseline",
@@ -118,7 +118,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "6848ce9b85adfdb165a0609d0d7fc61cb8aad2ac4fb36a4b75670646f808666c"
+      "sha256": "35933deda8336c7984a9707fa0a995ffd99b5597263674dbd468692425aa058b"
     },
     {
       "kind": "adapter-baseline",
