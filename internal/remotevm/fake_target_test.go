@@ -174,3 +174,63 @@ func TestFakeTargetRejectsPathTraversalSessionID(t *testing.T) {
 		t.Fatalf("StartSession() error = %v, want session id rejection", err)
 	}
 }
+
+func TestFakeTargetMaterializeWorkspaceRejectsEscapingSymlinks(t *testing.T) {
+	t.Parallel()
+
+	target, err := NewFakeTarget(DefaultContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, linkTarget := range map[string]string{
+		"absolute": "/etc/passwd",
+		"relative": "../../outside",
+	} {
+		tempWorkspace := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tempWorkspace, "keep.txt"), []byte("ok\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(linkTarget, filepath.Join(tempWorkspace, "escape")); err != nil {
+			t.Fatal(err)
+		}
+		_, err := target.MaterializeWorkspace(context.Background(), MaterializeRequest{
+			StateRoot:         t.TempDir(),
+			TargetID:          "fake-remote-target",
+			MaterializationID: "symlink-escape-" + name,
+			SourceWorkspace:   tempWorkspace,
+		})
+		if err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("%s: expected symlink escape rejection, got %v", name, err)
+		}
+	}
+}
+
+func TestFakeTargetMaterializeWorkspaceKeepsInternalSymlinks(t *testing.T) {
+	t.Parallel()
+
+	target, err := NewFakeTarget(DefaultContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tempWorkspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tempWorkspace, "real.txt"), []byte("ok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.txt", filepath.Join(tempWorkspace, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := target.MaterializeWorkspace(context.Background(), MaterializeRequest{
+		StateRoot:         t.TempDir(),
+		TargetID:          "fake-remote-target",
+		MaterializationID: "symlink-internal",
+		SourceWorkspace:   tempWorkspace,
+	})
+	if err != nil {
+		t.Fatalf("internal symlink unexpectedly rejected: %v", err)
+	}
+	linked, err := os.Readlink(filepath.Join(result.MaterializedWorkspace, "alias"))
+	if err != nil || linked != "real.txt" {
+		t.Fatalf("alias = %q, %v; want real.txt", linked, err)
+	}
+}

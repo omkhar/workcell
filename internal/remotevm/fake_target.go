@@ -396,6 +396,16 @@ func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]Worksp
 			if err != nil {
 				return err
 			}
+			// The remote-vm contract promises host-auditable materialization:
+			// a symlink that resolves outside the materialized workspace would
+			// smuggle non-workspace content past that audit, so fail closed.
+			if filepath.IsAbs(target) {
+				return fmt.Errorf("workspace symlink %s targets an absolute path: %s", rel, target)
+			}
+			resolved := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(rel)), target)))
+			if resolved == ".." || strings.HasPrefix(resolved, "../") {
+				return fmt.Errorf("workspace symlink %s escapes the workspace: %s", rel, target)
+			}
 			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 				return err
 			}
@@ -458,7 +468,7 @@ func writeJSON(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, content, 0o644)
+	return os.WriteFile(path, content, 0o600)
 }
 
 func appendAuditLine(path, line string) error {
