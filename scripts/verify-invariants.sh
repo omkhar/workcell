@@ -2962,8 +2962,11 @@ if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "git_alias_val
   exit 1
 fi
 
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "resolve_existing_executable_or_die" 'is_trusted_host_tool_path'; then
-  echo "Expected resolve_existing_executable_or_die to reject untrusted host executable paths" >&2
+# resolve_existing_executable_or_die migrated to Go
+# (publishpr.ResolveExistingExecutableOrDie); assert the Go owner still
+# rejects untrusted host executable paths on both raw and canonical forms.
+if ! rg -qF 'IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)' "${ROOT_DIR}/internal/publishpr/host_exec.go"; then
+  echo "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths" >&2
   exit 1
 fi
 
@@ -3039,8 +3042,11 @@ if [[ "${go_cache_root_actual}" != "${go_cache_root_expected}" ]]; then
   exit 1
 fi
 
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "validate_publish_base_name" 'check-ref-format'; then
-  echo "Expected validate_publish_base_name to validate the publish-pr --base branch name" >&2
+# validate_publish_base_name migrated to Go (publishpr.ValidateBaseName);
+# assert the Go owner still validates the publish-pr --base branch name
+# through the trusted git check-ref-format hook.
+if ! rg -qF 'func ValidateBaseName(base string, allowNonMainBase bool, checkRefFormat CheckRefFormatFunc) error' "${ROOT_DIR}/internal/publishpr/publish_pr_main.go"; then
+  echo "Expected publishpr.ValidateBaseName to validate the publish-pr --base branch name" >&2
   exit 1
 fi
 
