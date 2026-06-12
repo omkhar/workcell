@@ -1,6 +1,5 @@
 #!/usr/bin/env -S -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash
 # shellcheck shell=bash
-# shellcheck disable=SC2317,SC2329  # publish_pr_* helpers became unreachable when publish_pr_main shimmed; deleted in a follow-up PR to keep this one within the shape budget.
 set -euo pipefail
 
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
@@ -391,6 +390,10 @@ PROFILE_LOCK_DIR=""
 NO_SPINNER=0
 TARGET_BACKEND="colima"
 
+# session_lookup_root_args is called from scripts/lib/sessionctl-shim.sh,
+# which is sourced into this script's scope; ShellCheck cannot see the
+# cross-file call and misclassifies the function as never invoked.
+# shellcheck disable=SC2317,SC2329
 session_lookup_root_args() {
   # Single Go owner: internal/host/stateroot.FormatRootArgs prints one
   # --root=PATH line per non-empty argument, in that fixed order, with
@@ -3475,208 +3478,6 @@ resolve_existing_directory_or_die() {
   fi
 
   printf '%s\n' "${resolved_path}"
-}
-
-publish_pr_usage() {
-  go_hostutil publish-pr-usage
-}
-
-resolve_existing_file_or_die() {
-  local raw_path="$1"
-  local label="$2"
-  local resolved_path=""
-
-  resolved_path="$(resolve_host_path "${raw_path}")"
-  if [[ ! -f "${resolved_path}" ]]; then
-    echo "${label} file does not exist: ${raw_path}" >&2
-    exit 2
-  fi
-
-  printf '%s\n' "${resolved_path}"
-}
-
-resolve_existing_executable_or_die() {
-  local raw_path="$1"
-  local label="$2"
-  local resolved_path=""
-  local canonical_path=""
-
-  resolved_path="$(resolve_existing_file_or_die "${raw_path}" "${label}")"
-  if [[ ! -x "${resolved_path}" ]]; then
-    echo "${label} file is not executable: ${raw_path}" >&2
-    exit 2
-  fi
-  canonical_path="$(canonicalize_host_tool_path "${resolved_path}")"
-  if [[ -z "${canonical_path}" ]] ||
-    ! is_trusted_host_tool_path "${resolved_path}" ||
-    ! is_trusted_host_tool_path "${canonical_path}"; then
-    echo "${label} must point to a trusted host executable path: ${raw_path}" >&2
-    exit 2
-  fi
-
-  printf '%s\n' "${canonical_path}"
-}
-
-run_publish_host_command_in_dir() {
-  local dir="$1"
-  local home="${REAL_HOME:-/}"
-  local -a env_args=()
-
-  shift
-  [[ "$#" -gt 0 ]] || return 0
-  if [[ ! -d "${dir}" ]]; then
-    echo "Missing host working directory: ${dir}" >&2
-    exit 2
-  fi
-  if [[ ! -d "${home}" ]]; then
-    home="/"
-  fi
-
-  env_args=(
-    PATH="${TRUSTED_HOST_PATH}"
-    HOME="${home}"
-    LC_ALL=C
-    LANG=C
-  )
-
-  [[ -n "${TERM:-}" ]] && env_args+=("TERM=${TERM}")
-  [[ -n "${GPG_TTY:-}" ]] && env_args+=("GPG_TTY=${GPG_TTY}")
-  [[ -n "${GNUPGHOME:-}" ]] && env_args+=("GNUPGHOME=${GNUPGHOME}")
-  [[ -n "${SSH_AUTH_SOCK:-}" ]] && env_args+=("SSH_AUTH_SOCK=${SSH_AUTH_SOCK}")
-  [[ -n "${SSH_AGENT_PID:-}" ]] && env_args+=("SSH_AGENT_PID=${SSH_AGENT_PID}")
-  [[ -n "${SSH_ASKPASS:-}" ]] && env_args+=("SSH_ASKPASS=${SSH_ASKPASS}")
-  [[ -n "${GIT_ASKPASS:-}" ]] && env_args+=("GIT_ASKPASS=${GIT_ASKPASS}")
-  [[ -n "${XDG_CONFIG_HOME:-}" ]] && env_args+=("XDG_CONFIG_HOME=${XDG_CONFIG_HOME}")
-  [[ -n "${XDG_STATE_HOME:-}" ]] && env_args+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
-  [[ -n "${XDG_CACHE_HOME:-}" ]] && env_args+=("XDG_CACHE_HOME=${XDG_CACHE_HOME}")
-  [[ -n "${XDG_DATA_HOME:-}" ]] && env_args+=("XDG_DATA_HOME=${XDG_DATA_HOME}")
-  [[ -n "${XDG_RUNTIME_DIR:-}" ]] && env_args+=("XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}")
-  [[ -n "${GH_TOKEN:-}" ]] && env_args+=("GH_TOKEN=${GH_TOKEN}")
-  [[ -n "${GITHUB_TOKEN:-}" ]] && env_args+=("GITHUB_TOKEN=${GITHUB_TOKEN}")
-  [[ -n "${GH_HOST:-}" ]] && env_args+=("GH_HOST=${GH_HOST}")
-  [[ -n "${GH_CONFIG_DIR:-}" ]] && env_args+=("GH_CONFIG_DIR=${GH_CONFIG_DIR}")
-
-  (
-    cd "${dir}" &&
-      env -i \
-        "${env_args[@]}" \
-        "$@"
-  )
-}
-validate_publish_snapshot_name() {
-  case "$1" in
-    index | worktree) ;;
-    *)
-      echo "Unsupported publish snapshot: $1" >&2
-      echo "Use --snapshot index or --snapshot worktree." >&2
-      exit 2
-      ;;
-  esac
-}
-
-validate_publish_branch_name() {
-  local branch="$1"
-
-  if [[ -z "${branch}" ]]; then
-    echo "publish-pr requires --branch." >&2
-    exit 2
-  fi
-  if [[ "${branch}" == "main" ]] || [[ "${branch}" == "master" ]]; then
-    echo "publish-pr refuses the default branch. Use a feature branch instead." >&2
-    exit 2
-  fi
-  if ! "${HOST_GIT_BIN}" check-ref-format --branch "${branch}" >/dev/null 2>&1; then
-    echo "Invalid publish branch name: ${branch}" >&2
-    exit 2
-  fi
-}
-
-validate_publish_base_name() {
-  local base="$1"
-  local allow_non_main_base="$2"
-
-  if [[ -z "${base}" ]]; then
-    echo "publish-pr requires a non-empty --base branch name." >&2
-    exit 2
-  fi
-  if ! "${HOST_GIT_BIN}" check-ref-format --branch "${base}" >/dev/null 2>&1; then
-    echo "Invalid publish base branch name: ${base}" >&2
-    exit 2
-  fi
-  if [[ "${base}" != "main" ]] && [[ "${allow_non_main_base}" -ne 1 ]]; then
-    echo "publish-pr only supports --base main by default. Use --allow-non-main-base for an explicit lower-assurance draft PR." >&2
-    exit 2
-  fi
-}
-publish_pr_load_text_arg() {
-  local inline_value="$1"
-  local file_value="$2"
-  local label="$3"
-  local required="$4"
-  local resolved_file=""
-
-  if [[ -n "${inline_value}" ]] && [[ -n "${file_value}" ]]; then
-    echo "Use only one of --${label} or --${label}-file." >&2
-    exit 2
-  fi
-
-  if [[ -n "${file_value}" ]]; then
-    resolved_file="$(resolve_existing_file_or_die "${file_value}" "${label}")"
-    cat "${resolved_file}"
-    return 0
-  fi
-
-  if [[ -n "${inline_value}" ]]; then
-    printf '%s' "${inline_value}"
-    return 0
-  fi
-
-  if [[ "${required}" == "1" ]]; then
-    echo "publish-pr requires --${label} or --${label}-file." >&2
-    exit 2
-  fi
-
-  printf ''
-}
-
-publish_pr_branch_exists() {
-  local workspace="$1"
-  local branch="$2"
-
-  run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" show-ref --verify --quiet "refs/heads/${branch}"
-}
-
-publish_pr_current_branch() {
-  local workspace="$1"
-
-  run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" branch --show-current
-}
-
-publish_pr_has_remote_origin() {
-  local workspace="$1"
-
-  run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" remote get-url origin >/dev/null 2>&1
-}
-
-publish_pr_has_worktree_changes() {
-  local workspace="$1"
-
-  workspace_git_has_worktree_changes "${workspace}"
-}
-publish_pr_has_staged_changes() {
-  local workspace="$1"
-
-  ! run_clean_host_command_in_dir "${workspace}" "${HOST_GIT_BIN}" diff --cached --quiet --exit-code
-}
-
-publish_pr_repo_owned_checks_expected() {
-  local base="$1"
-
-  if [[ "${base}" == "main" ]]; then
-    printf '1'
-  else
-    printf '0'
-  fi
 }
 
 publish_pr_main() {

@@ -94,6 +94,38 @@ function_block_contains_fixed() {
   grep -Fq -- "${needle}" <<<"${block_text}"
 }
 
+# Scope a fixed-string assertion to one top-level Go function body, so an
+# invariant migrated from bash to Go cannot be satisfied by the same text
+# appearing in an unrelated helper elsewhere in the file or in a comment
+# (// line comments and /* */ block comments, including multi-line block
+# comments, are stripped before matching).
+go_function_block_contains_fixed() {
+  local file_path="$1"
+  local function_name="$2"
+  local needle="$3"
+
+  awk -v fn="func ${function_name}(" '
+    index($0, fn) == 1 { in_block = 1 }
+    in_block {
+      line = $0
+      if (in_comment) {
+        if (sub(/^.*\*\//, "", line)) {
+          in_comment = 0
+        } else {
+          line = ""
+        }
+      }
+      gsub(/\/\*[^*]*\*\//, "", line)
+      if (sub(/\/\*.*$/, "", line)) {
+        in_comment = 1
+      }
+      sub(/\/\/.*$/, "", line)
+      print line
+    }
+    in_block && $0 == "}" { exit }
+  ' "${file_path}" | grep -Fq -- "${needle}"
+}
+
 script_supports_command_flag() {
   local script_help=""
 
@@ -2962,8 +2994,11 @@ if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "git_alias_val
   exit 1
 fi
 
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "resolve_existing_executable_or_die" 'is_trusted_host_tool_path'; then
-  echo "Expected resolve_existing_executable_or_die to reject untrusted host executable paths" >&2
+# resolve_existing_executable_or_die migrated to Go
+# (publishpr.ResolveExistingExecutableOrDie); assert the Go owner still
+# rejects untrusted host executable paths on both raw and canonical forms.
+if ! go_function_block_contains_fixed "${ROOT_DIR}/internal/publishpr/host_exec.go" "ResolveExistingExecutableOrDie" '!IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)'; then
+  echo "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths" >&2
   exit 1
 fi
 
@@ -3039,8 +3074,11 @@ if [[ "${go_cache_root_actual}" != "${go_cache_root_expected}" ]]; then
   exit 1
 fi
 
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "validate_publish_base_name" 'check-ref-format'; then
-  echo "Expected validate_publish_base_name to validate the publish-pr --base branch name" >&2
+# validate_publish_base_name migrated to Go (publishpr.ValidateBaseName);
+# assert the Go owner still rejects base names that fail the trusted git
+# check-ref-format hook (the call itself, not just the signature).
+if ! go_function_block_contains_fixed "${ROOT_DIR}/internal/publishpr/publish_pr_main.go" "ValidateBaseName" '!checkRefFormat(base)'; then
+  echo "Expected publishpr.ValidateBaseName to validate the publish-pr --base branch name through checkRefFormat" >&2
   exit 1
 fi
 
