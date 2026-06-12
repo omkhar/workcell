@@ -97,8 +97,8 @@ function_block_contains_fixed() {
 # Scope a fixed-string assertion to one top-level Go function body, so an
 # invariant migrated from bash to Go cannot be satisfied by the same text
 # appearing in an unrelated helper elsewhere in the file or in a comment
-# (// line comments and single-line /* */ comments are stripped before
-# matching; gofmt-formatted function bodies use those forms).
+# (// line comments and /* */ block comments, including multi-line block
+# comments, are stripped before matching).
 go_function_block_contains_fixed() {
   local file_path="$1"
   local function_name="$2"
@@ -108,7 +108,17 @@ go_function_block_contains_fixed() {
     index($0, fn) == 1 { in_block = 1 }
     in_block {
       line = $0
+      if (in_comment) {
+        if (sub(/^.*\*\//, "", line)) {
+          in_comment = 0
+        } else {
+          line = ""
+        }
+      }
       gsub(/\/\*[^*]*\*\//, "", line)
+      if (sub(/\/\*.*$/, "", line)) {
+        in_comment = 1
+      }
       sub(/\/\/.*$/, "", line)
       print line
     }
