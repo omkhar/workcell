@@ -15,13 +15,15 @@ through a native control-plane mapping.
 
 Google has announced that Gemini CLI stops serving requests for the free,
 Pro, and Ultra personal-account login tiers on June 18, 2026, in favor of
-the closed-source Antigravity CLI. Access continues for Gemini Code Assist
-Standard/Enterprise licenses and for billed Gemini API-key and Vertex auth
+the closed-source Antigravity CLI. Per the announcement, access continues
+for Gemini Code Assist Standard/Enterprise licenses and for paid Gemini /
+Gemini Enterprise Agent Platform API keys
 ([announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)).
 **Reviewed posture: the Gemini Tier 1 adapter stays shipped and supported
 for the auth inputs Google keeps serving — `gemini_env`/`gemini_oauth` with
-a Code Assist Standard/Enterprise license, and billed API-key or
-`gcloud_adc`/Vertex inputs.** The free, Pro, and Ultra personal-account
+a Code Assist Standard/Enterprise license or a paid Gemini API key;
+`gcloud_adc` remains the supplemental Vertex input to those modes, not a
+standalone post-June auth path.** The free, Pro, and Ultra personal-account
 OAuth login is what upstream retires; those accounts are refused by Google,
 not by Workcell, while the adapter, control-plane mapping, and pinned CLI
 remain intact. An Antigravity adapter is

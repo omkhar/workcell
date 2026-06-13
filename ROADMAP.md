@@ -68,10 +68,11 @@ The deterministic phase breakdown lives in
   Copilot quickstart.
 - Upstream retires Gemini CLI for the free, Pro, and Ultra personal-account
   login tiers on June 18, 2026 in favor of the closed-source Antigravity
-  CLI; Gemini Code Assist Standard/Enterprise licenses and billed API-key
-  or Vertex auth keep access. Reviewed posture: the Gemini Tier 1 adapter
-  stays supported for the auth inputs Google keeps serving (licensed Code
-  Assist plus billed API-key/`gcloud_adc`/Vertex), and an Antigravity
+  CLI; Gemini Code Assist Standard/Enterprise licenses and paid Gemini API
+  keys keep access. Reviewed posture: the Gemini Tier 1 adapter stays
+  supported for the auth inputs Google keeps serving (licensed Code Assist
+  or a paid Gemini API key, with `gcloud_adc` as the supplemental Vertex
+  input to those modes rather than a standalone path), and an Antigravity
   adapter is a committed follow-on provider-parity track behind the same
   Tier 1 evidence bar (see [docs/provider-matrix.md](docs/provider-matrix.md)).
 
