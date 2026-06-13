@@ -1,5 +1,5 @@
-# Node.js LTS base image (v22 trixie-slim). Pin includes digest for reproducibility.
-# To update: fetch new digest with `docker pull node:22-trixie-slim` and update both
+# Node.js LTS base image (v24 trixie-slim). Pin includes digest for reproducibility.
+# To update: fetch new digest with `docker pull node:24-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
 ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:45fbb3ca3b6c7e6646cd2889d0ac7bf314bb180036da792221fc2f48fe4d43fb
 
