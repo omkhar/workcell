@@ -2472,6 +2472,13 @@ run_container codex bash -lc "$(
     test ! -L "$CODEX_HOME/config.toml"
     test -w "$CODEX_HOME/config.toml"
     cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
+    for codex_profile in strict development build breakglass; do
+      test -f "$CODEX_HOME/${codex_profile}.config.toml"
+      test ! -L "$CODEX_HOME/${codex_profile}.config.toml"
+      test -w "$CODEX_HOME/${codex_profile}.config.toml"
+      cmp "$CODEX_HOME/${codex_profile}.config.toml" \
+        "/opt/workcell/adapters/codex/.codex/${codex_profile}.config.toml"
+    done
     codex features list >/tmp/codex-features.out 2>/tmp/codex-features.err
     assert_codex_stderr_clean /tmp/codex-features.err
     grep -Eq "^unified_exec[[:space:]]+stable[[:space:]]+false$" /tmp/codex-features.out

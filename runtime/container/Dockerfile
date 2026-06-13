@@ -203,11 +203,12 @@ FROM runtime-base AS runtime-builder
 ARG CLAUDE_VERSION=2.1.175
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
-# release after the cool-off in policy/provider-bumps.toml. To update
-# manually, resolve the eligible stable version, verify the GitHub release
-# asset digests for both Linux tarballs, and refresh the CODEX_SHA256 values
-# for arm64 and amd64 below.
-ARG CODEX_VERSION=0.125.0
+# release after the cool-off in policy/provider-bumps.toml. The runtime
+# consumes the statically linked musl Linux tarballs (which carry sigstore
+# bundles); to update manually, resolve the eligible stable version, verify
+# the GitHub release asset digests for both musl Linux tarballs, and refresh
+# the CODEX_SHA256 values for arm64 and amd64 below.
+ARG CODEX_VERSION=0.139.0
 ARG CODEX_RELEASE_URL=
 ARG RUST_VERSION=1.96.0
 ARG TARGETARCH
@@ -316,12 +317,12 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
      fi \
   && case "${TARGET_ARCH}" in \
     arm64) \
-      CODEX_ARCH="aarch64-unknown-linux-gnu"; \
-      CODEX_SHA256="2d076527fd7578656f1b8790650adc9344a7429980b3998941156ab6a06156e6"; \
+      CODEX_ARCH="aarch64-unknown-linux-musl"; \
+      CODEX_SHA256="2b7407643e0e74c525d84347c9eecec4b3d275af0382142ac42216508bb0b2a2"; \
       ;; \
     amd64) \
-      CODEX_ARCH="x86_64-unknown-linux-gnu"; \
-      CODEX_SHA256="522bc0b9b8ab31f3a8f1fc4878abd4e83b116a6c1bcfc7717d2fe036f54cd4be"; \
+      CODEX_ARCH="x86_64-unknown-linux-musl"; \
+      CODEX_SHA256="12ebf70df41dc831061862912ab5e7eacdd112bb17e8ce9b2098cb3d92180081"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \

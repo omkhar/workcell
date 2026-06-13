@@ -391,13 +391,13 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*arm64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "arm64 Codex mapping", cfg.RuntimeDockerfilePath); err != nil {
 		return err
-	} else if match[1] != "aarch64-unknown-linux-gnu" {
-		return fmt.Errorf("arm64 Codex mapping in %s must use aarch64-unknown-linux-gnu", cfg.RuntimeDockerfilePath)
+	} else if match[1] != "aarch64-unknown-linux-musl" {
+		return fmt.Errorf("arm64 Codex mapping in %s must use aarch64-unknown-linux-musl", cfg.RuntimeDockerfilePath)
 	}
 	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*amd64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "amd64 Codex mapping", cfg.RuntimeDockerfilePath); err != nil {
 		return err
-	} else if match[1] != "x86_64-unknown-linux-gnu" {
-		return fmt.Errorf("amd64 Codex mapping in %s must use x86_64-unknown-linux-gnu", cfg.RuntimeDockerfilePath)
+	} else if match[1] != "x86_64-unknown-linux-musl" {
+		return fmt.Errorf("amd64 Codex mapping in %s must use x86_64-unknown-linux-musl", cfg.RuntimeDockerfilePath)
 	}
 	if len(runtimeInstallBlocks) != 2 {
 		return fmt.Errorf("runtime/container/Dockerfile must contain exactly two apt install blocks (runtime base and runtime builder)")

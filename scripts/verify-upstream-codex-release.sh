@@ -74,7 +74,7 @@ require_tool tar
 CODEX_VERSION="$(extract_codex_version)"
 WORKFLOW_IDENTITY="https://github.com/openai/codex/.github/workflows/rust-release.yml@refs/tags/rust-v${CODEX_VERSION}"
 
-verify_asset arm64 aarch64-unknown-linux-gnu "$(extract_codex_sha arm64)"
-verify_asset amd64 x86_64-unknown-linux-gnu "$(extract_codex_sha amd64)"
+verify_asset arm64 aarch64-unknown-linux-musl "$(extract_codex_sha arm64)"
+verify_asset amd64 x86_64-unknown-linux-musl "$(extract_codex_sha amd64)"
 
 echo "Workcell upstream Codex release verification passed."

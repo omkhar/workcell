@@ -1385,6 +1385,14 @@ seed_codex_home() {
   workcell_render_provider_doc "${ADAPTER_ROOT}/codex/.codex/AGENTS.md" "${CODEX_HOME}/AGENTS.md" codex
   workcell_copy_control_plane_file "${ADAPTER_ROOT}/codex/.codex/config.toml" "${CODEX_HOME}/config.toml" 0600
   workcell_assert_session_regular_writable_file "${CODEX_HOME}/config.toml" "Codex config"
+  local codex_profile=""
+  for codex_profile in strict development build breakglass; do
+    workcell_copy_control_plane_file \
+      "${ADAPTER_ROOT}/codex/.codex/${codex_profile}.config.toml" \
+      "${CODEX_HOME}/${codex_profile}.config.toml" 0600
+    workcell_assert_session_regular_writable_file \
+      "${CODEX_HOME}/${codex_profile}.config.toml" "Codex ${codex_profile} profile"
+  done
   workcell_link_control_plane_path "${ADAPTER_ROOT}/codex/managed_config.toml" "${CODEX_HOME}/managed_config.toml"
   workcell_link_control_plane_path "${ADAPTER_ROOT}/codex/requirements.toml" "${CODEX_HOME}/requirements.toml"
   workcell_link_control_plane_path "${ADAPTER_ROOT}/codex/.codex/agents" "${CODEX_HOME}/agents"

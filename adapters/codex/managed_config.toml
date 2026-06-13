@@ -3,11 +3,19 @@
 # Admin-managed baseline for the Workcell Codex adapter. Keep this aligned with
 # the repo-local adapter config so the default local experience and the managed
 # deployment do not drift.
+#
+# Codex 0.134+ uses the layered profile-v2 model: this baseline mirrors the base
+# `.codex/config.toml`, and the per-profile layers live in the separate
+# `<name>.config.toml` files selected with `--profile`. For reference, the four
+# Workcell profile layers are:
+#   strict       sandbox_mode = "workspace-write"      approval_policy = "on-request"
+#   development  sandbox_mode = "workspace-write"      approval_policy = "on-request"
+#   build        sandbox_mode = "workspace-write"      approval_policy = "never"
+#   breakglass   sandbox_mode = "danger-full-access"   approval_policy = "never"
 
 analytics.enabled = false
 history.persistence = "none"
 web_search = "disabled"
-profile = "strict"
 
 [shell_environment_policy]
 inherit = "core"
@@ -41,26 +49,6 @@ network_access = false
 # Codex's unified exec path currently fails inside Workcell managed mode with
 # "Failed to create unified exec process: Operation not permitted".
 unified_exec = false
-
-[profiles.strict]
-sandbox_mode = "workspace-write"
-approval_policy = "on-request"
-web_search = "disabled"
-
-[profiles.development]
-sandbox_mode = "workspace-write"
-approval_policy = "on-request"
-web_search = "disabled"
-
-[profiles.build]
-sandbox_mode = "workspace-write"
-approval_policy = "never"
-web_search = "disabled"
-
-[profiles.breakglass]
-sandbox_mode = "danger-full-access"
-approval_policy = "never"
-web_search = "disabled"
 
 [[rules.prefix_rules]]
 pattern = [{ any_of = ["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"] }, { token = "commit" }, { any_of = ["--no-verify", "-n"] }]

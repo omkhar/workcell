@@ -92,9 +92,27 @@
     },
     {
       "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/breakglass.config.toml",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/breakglass.config.toml",
+      "sha256": "e82254b4d93ace201599e3b3bc753945cf49fd624c31741d8e8060011d0b4494"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/build.config.toml",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/build.config.toml",
+      "sha256": "66e9d8588059c30cdb6919940c7c04e2c02a63a9194db3236da1a7c2f51b4852"
+    },
+    {
+      "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/config.toml",
-      "sha256": "9a5fa873da71d3f216ee393a8ce19c7e9f9eef309a6aa641afdaff2e8c18bf95"
+      "sha256": "2fd96ca2373277b47e92a62bbfcd29c4e4d30369f08f97f3e368b559b3488ed5"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/development.config.toml",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/development.config.toml",
+      "sha256": "f09b8d2fe10241da9894e81fe5148510e11f2119e157f13cee11f33a8b8e2628"
     },
     {
       "kind": "adapter-baseline",
@@ -104,9 +122,15 @@
     },
     {
       "kind": "adapter-baseline",
+      "repo_path": "adapters/codex/.codex/strict.config.toml",
+      "runtime_path": "/opt/workcell/adapters/codex/.codex/strict.config.toml",
+      "sha256": "e371b19fa1d6f141e7a533160b07e93ce3d776f47a69553ac2a0b835f991c91f"
+    },
+    {
+      "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "9b8303fb0a8cf9ba7d8cecbe95e0cfd1fa5021683b5e58e050235484120b35d2"
+      "sha256": "7f0837ef0e85493c1f51c026f16ce1defbf521c1f6945900e27913fcf61fc340"
     },
     {
       "kind": "adapter-baseline",
@@ -190,7 +214,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "d85cf3335c4207a5b9ac5bd705341e9d2b4940dcb9364ae26d3ba13a510c224e"
+      "sha256": "461c87309ae6be940e9ec1afadf3025d8fb1135e94c645bff23af71421f44c61"
     },
     {
       "kind": "runtime-control-plane",
@@ -208,7 +232,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "3d66b1db78536c0462be0bccb22a5c262fee07d63057cc84988030e15a1d1ece"
+      "sha256": "bd5cb8e61aa3925e9d88033aef43e452231f0393e9e92655ae84ca2e2e609bff"
     },
     {
       "kind": "runtime-control-plane",

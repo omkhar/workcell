@@ -77,11 +77,11 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
   "prerelease": false,
   "assets": [
     {
-      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
+      "name": "codex-aarch64-unknown-linux-musl.tar.gz",
       "digest": "sha256:9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7"
     },
     {
-      "name": "codex-x86_64-unknown-linux-gnu.tar.gz",
+      "name": "codex-x86_64-unknown-linux-musl.tar.gz",
       "digest": "sha256:526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"
     }
   ]
@@ -216,7 +216,7 @@ func TestSelectCodexStableHonorsMaxVersionAndReportsSkippedRelease(t *testing.T)
 	}
 }
 
-func TestSelectCodexStableSkipsMissingGNUReleaseAssetsAndSelectsNextCompatible(t *testing.T) {
+func TestSelectCodexStableSkipsMissingMuslReleaseAssetsAndSelectsNextCompatible(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/codex-registry":
@@ -237,7 +237,7 @@ func TestSelectCodexStableSkipsMissingGNUReleaseAssetsAndSelectsNextCompatible(t
   "prerelease": false,
   "assets": [
     {
-      "name": "codex-aarch64-unknown-linux-musl.tar.gz",
+      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
       "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   ]
@@ -249,11 +249,11 @@ func TestSelectCodexStableSkipsMissingGNUReleaseAssetsAndSelectsNextCompatible(t
   "prerelease": false,
   "assets": [
     {
-      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
+      "name": "codex-aarch64-unknown-linux-musl.tar.gz",
       "digest": "sha256:9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7"
     },
     {
-      "name": "codex-x86_64-unknown-linux-gnu.tar.gz",
+      "name": "codex-x86_64-unknown-linux-musl.tar.gz",
       "digest": "sha256:526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"
     }
   ]
@@ -284,8 +284,8 @@ func TestSelectCodexStableSkipsMissingGNUReleaseAssetsAndSelectsNextCompatible(t
 	if len(selection.SkippedReleases) != 1 {
 		t.Fatalf("SkippedReleases length = %d, want 1", len(selection.SkippedReleases))
 	}
-	if skipped := selection.SkippedReleases[0]; skipped.Version != "0.129.0" || !strings.Contains(skipped.Reason, "missing supported GNU Linux release assets") {
-		t.Fatalf("SkippedReleases[0] = %#v, want missing GNU asset skip", skipped)
+	if skipped := selection.SkippedReleases[0]; skipped.Version != "0.129.0" || !strings.Contains(skipped.Reason, "missing supported musl Linux release assets") {
+		t.Fatalf("SkippedReleases[0] = %#v, want missing musl asset skip", skipped)
 	}
 }
 
@@ -341,11 +341,11 @@ func TestSelectCodexStableRejectsMalformedReleaseDigest(t *testing.T) {
   "prerelease": false,
   "assets": [
     {
-      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
+      "name": "codex-aarch64-unknown-linux-musl.tar.gz",
       "digest": "sha256:not-a-digest"
     },
     {
-      "name": "codex-x86_64-unknown-linux-gnu.tar.gz",
+      "name": "codex-x86_64-unknown-linux-musl.tar.gz",
       "digest": "sha256:526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"
     }
   ]
@@ -364,7 +364,7 @@ func TestSelectCodexStableRejectsMalformedReleaseDigest(t *testing.T) {
 	if err == nil {
 		t.Fatal("selectCodexStable() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "invalid GNU Linux asset metadata") {
+	if !strings.Contains(err.Error(), "invalid musl Linux asset metadata") {
 		t.Fatalf("selectCodexStable() error = %v, want malformed digest rejection", err)
 	}
 }
@@ -1369,11 +1369,11 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 		"esac",
 		"RUN case \"${TARGET_ARCH}\" in \\",
 		"  arm64) \\",
-		"    CODEX_ARCH=\"aarch64-unknown-linux-gnu\"; \\",
+		"    CODEX_ARCH=\"aarch64-unknown-linux-musl\"; \\",
 		"    CODEX_SHA256=\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"; \\",
 		"    ;;",
 		"  amd64) \\",
-		"    CODEX_ARCH=\"x86_64-unknown-linux-gnu\"; \\",
+		"    CODEX_ARCH=\"x86_64-unknown-linux-musl\"; \\",
 		"    CODEX_SHA256=\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"; \\",
 		"    ;;",
 		"esac",
