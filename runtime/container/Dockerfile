@@ -200,7 +200,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.170
+ARG CLAUDE_VERSION=2.1.175
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. To update
@@ -281,11 +281,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="1bb9d032440a75532f7dd4cafbc687f220aaf16c63eba17e192dfbec2f04bd25"; \
+      CLAUDE_SHA256="360f1f6f43ec26d9bb6e20e487bf44b753d9b8407e89e74bfeeb79707399f435"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="849e007277a0442ab27570d3e3d6d43787507946590e8dd1947e5a39b7081f9e"; \
+      CLAUDE_SHA256="4fc72fa6090c9a03f1850e1b1ccb3d6806bf802b67e3cb9dc5f2ced4b7ed5ca1"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
