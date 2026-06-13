@@ -66,13 +66,15 @@ The deterministic phase breakdown lives in
 - GitHub Copilot CLI is planned as the next Tier 1 provider adapter. Current
   releases do not support `--agent copilot`, Copilot credential keys, or a
   Copilot quickstart.
-- Upstream retires Gemini CLI for free, Pro, and Ultra accounts on June 18,
-  2026 in favor of the closed-source Antigravity CLI; Gemini Code Assist
-  Standard and Enterprise licenses keep Gemini CLI access. The Gemini Tier 1
-  adapter therefore narrows to licensed auth inputs after that date, and an
-  Antigravity adapter is an open decision that would follow the same Tier 1
-  evidence bar (see
-  [docs/provider-matrix.md](docs/provider-matrix.md)).
+- Upstream retires Gemini CLI for the free, Pro, and Ultra personal-account
+  login tiers on June 18, 2026 in favor of the closed-source Antigravity
+  CLI; Gemini Code Assist Standard/Enterprise licenses and paid Gemini API
+  keys keep access. Reviewed posture: the Gemini Tier 1 adapter stays
+  supported for the auth inputs Google keeps serving (licensed Code Assist
+  or a paid Gemini API key, with `gcloud_adc` as the supplemental Vertex
+  input to those modes rather than a standalone path), and an Antigravity
+  adapter is a committed follow-on provider-parity track behind the same
+  Tier 1 evidence bar (see [docs/provider-matrix.md](docs/provider-matrix.md)).
 
 ## Next Provider And Target Phases
 

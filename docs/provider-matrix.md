@@ -13,17 +13,23 @@ through a native control-plane mapping.
 
 ### Upstream change: Gemini CLI retirement on June 18, 2026
 
-Google has announced that Gemini CLI stops serving requests for free, Pro,
-and Ultra accounts on June 18, 2026, in favor of the closed-source
-Antigravity CLI; organizations with Gemini Code Assist Standard or
-Enterprise licenses keep Gemini CLI access unchanged
+Google has announced that Gemini CLI stops serving requests for the free,
+Pro, and Ultra personal-account login tiers on June 18, 2026, in favor of
+the closed-source Antigravity CLI. Per the announcement, access continues
+for Gemini Code Assist Standard/Enterprise licenses and for paid Gemini /
+Gemini Enterprise Agent Platform API keys
 ([announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)).
-After that date the Gemini Tier 1 adapter continues to work only with those
-licensed auth inputs; other Gemini accounts will be refused upstream even
-though the adapter, control-plane mapping, and pinned CLI remain intact. An
-Antigravity adapter would be a new provider-parity track with a different
-binary and control-plane surface, and follows the same Tier 1 evidence bar
-as every provider; the decision is tracked in [ROADMAP.md](../ROADMAP.md).
+**Reviewed posture: the Gemini Tier 1 adapter stays shipped and supported
+for the auth inputs Google keeps serving — `gemini_env`/`gemini_oauth` with
+a Code Assist Standard/Enterprise license or a paid Gemini API key;
+`gcloud_adc` remains the supplemental Vertex input to those modes, not a
+standalone post-June auth path.** The free, Pro, and Ultra personal-account
+OAuth login is what upstream retires; those accounts are refused by Google,
+not by Workcell, while the adapter, control-plane mapping, and pinned CLI
+remain intact. An Antigravity adapter is
+a committed follow-on provider-parity track with a different binary and
+control-plane surface, following the same Tier 1 evidence bar as every
+provider; sequencing is tracked in [ROADMAP.md](../ROADMAP.md).
 
 ## Planned provider parity
 
