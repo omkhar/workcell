@@ -142,6 +142,106 @@ codex_args_include_profile() {
   return 1
 }
 
+# Codex 0.134+ rejects the global --profile flag on non-runtime subcommands
+# (e.g. `codex features`, `codex login`): it only applies to the runtime
+# commands and `codex mcp`. Return success only when the managed --profile
+# injection is valid, i.e. the invocation resolves to a runtime subcommand,
+# the default TUI (a bare prompt with no subcommand), or a short-circuit
+# global flag like --version/--help that Codex accepts alongside --profile.
+# Global value-taking flags are consumed so the real subcommand token is found.
+codex_managed_profile_applies() {
+  local arg="" skip_value=0
+  for arg in "$@"; do
+    if [[ "${skip_value}" -eq 1 ]]; then
+      skip_value=0
+      continue
+    fi
+    case "${arg}" in
+      --)
+        # Everything after -- is the prompt; default TUI runtime.
+        return 0
+        ;;
+      -c | --config | -m | --model | -i | --image | -C | --cd | \
+        -a | --ask-for-approval | -s | --sandbox | -p | --profile)
+        skip_value=1
+        ;;
+      --*=* | -*)
+        # Boolean global flag or =-form value flag; keep scanning.
+        ;;
+      e | exec | review | resume | archive | unarchive | fork | mcp | sandbox)
+        # Runtime subcommands (and the `e` alias for exec) that accept --profile.
+        return 0
+        ;;
+      *)
+        # First positional that is not a runtime subcommand: either a
+        # non-runtime subcommand (login/features/...) that rejects --profile,
+        # or a bare prompt for the default TUI runtime. Treat a recognized
+        # non-runtime subcommand (including its aliases, e.g. `a` for apply and
+        # `cloud-tasks` for cloud) as rejecting; anything else is the default
+        # TUI prompt and accepts the profile.
+        case "${arg}" in
+          login | logout | plugin | mcp-server | app-server | remote-control | \
+            completion | update | doctor | apply | a | cloud | cloud-tasks | \
+            exec-server | execpolicy | features | help | debug)
+            return 1
+            ;;
+          *)
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+  done
+  # No subcommand token: default TUI runtime, profile applies.
+  return 0
+}
+
+# Map the active Workcell Codex profile to its sandbox_mode. Mirrors the
+# sandbox_mode in the per-profile `<name>.config.toml` layer files; anything
+# other than breakglass uses the workspace-write floor.
+codex_profile_sandbox_mode() {
+  case "${CODEX_PROFILE}" in
+    breakglass) printf 'danger-full-access\n' ;;
+    *) printf 'workspace-write\n' ;;
+  esac
+}
+
+# Codex 0.139 rejects --profile on `app-server` (the managed GUI backend), so
+# codex_managed_profile_applies skips profile injection there. app-server does
+# honor `-c` root config overrides, so emit the per-mode sandbox_mode override
+# on stdout (one arg per line) to give GUI sessions the same sandbox layer the
+# CLI gets from its profile. The approval policy still comes from the injected
+# --ask-for-approval autonomy flag, which app-server accepts. Emits nothing when
+# the invocation is not app-server.
+codex_app_server_sandbox_args() {
+  local arg="" skip_value=0 subcommand=""
+  for arg in "$@"; do
+    if [[ "${skip_value}" -eq 1 ]]; then
+      skip_value=0
+      continue
+    fi
+    case "${arg}" in
+      --)
+        break
+        ;;
+      -c | --config | -m | --model | -i | --image | -C | --cd | \
+        -a | --ask-for-approval | -s | --sandbox | -p | --profile)
+        skip_value=1
+        ;;
+      --*=* | -*) ;;
+      *)
+        subcommand="${arg}"
+        break
+        ;;
+    esac
+  done
+  case "${subcommand}" in
+    app | app-server)
+      printf '%s\n' "-c" "sandbox_mode=\"$(codex_profile_sandbox_mode)\""
+      ;;
+  esac
+}
+
 sanitize_gemini_sandbox_env() {
   unset GEMINI_SANDBOX
   unset GEMINI_SANDBOX_IMAGE
@@ -209,11 +309,13 @@ esac
 case "${AGENT_NAME}" in
   codex)
     declare -a MANAGED_CODEX_PROFILE_ARGS=()
-    if ! codex_args_include_profile "$@"; then
+    if ! codex_args_include_profile "$@" && codex_managed_profile_applies "$@"; then
       MANAGED_CODEX_PROFILE_ARGS=(--profile "${CODEX_PROFILE}")
     fi
+    declare -a MANAGED_CODEX_APP_SERVER_ARGS=()
+    mapfile -t MANAGED_CODEX_APP_SERVER_ARGS < <(codex_app_server_sandbox_args "$@")
     reject_unsafe_codex_args "$@"
-    exec /usr/local/libexec/workcell/real/codex "${MANAGED_CODEX_PROFILE_ARGS[@]}" "${MANAGED_AUTONOMY_ARGS[@]}" "$@"
+    exec /usr/local/libexec/workcell/real/codex "${MANAGED_CODEX_PROFILE_ARGS[@]}" "${MANAGED_CODEX_APP_SERVER_ARGS[@]}" "${MANAGED_AUTONOMY_ARGS[@]}" "$@"
     ;;
   claude)
     reject_unsafe_claude_args "$@"

@@ -1,0 +1,9 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Codex profile-v2 layer for the Workcell `strict` mode. Selected with
+# `--profile strict` and layered on top of `config.toml`. Keep aligned with the
+# matching `[profiles.strict]` baseline documented in managed_config.toml.
+
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+web_search = "disabled"

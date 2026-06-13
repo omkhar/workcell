@@ -3,8 +3,13 @@
 The Codex adapter maps the shared Workcell boundary into Codex-native controls.
 Adapter layout (paths relative to `adapters/codex/`):
 
-- `.codex/config.toml`: managed Codex configuration template seeded into the
-  session-local Codex home as `~/.codex/config.toml`
+- `.codex/config.toml`: managed Codex base configuration template seeded into
+  the session-local Codex home as `~/.codex/config.toml`
+- `.codex/{strict,development,build,breakglass}.config.toml`: Codex 0.134+
+  profile-v2 layer files. The launcher selects one with `--profile <name>`,
+  and Codex layers it on top of the base `config.toml`. Each layer carries the
+  per-profile `sandbox_mode`/`approval_policy`; the base config sets no sandbox
+  mode so every sandbox decision is profile-scoped.
 - `.codex/AGENTS.md`: managed agent guidance seeded into the session-local
   Codex home
 - `.codex/rules/default.rules`: managed Codex execpolicy ruleset seeded

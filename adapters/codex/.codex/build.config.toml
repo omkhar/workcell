@@ -1,0 +1,9 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Codex profile-v2 layer for the Workcell `build` mode. Selected with
+# `--profile build` and layered on top of `config.toml`. Keep aligned with the
+# matching `[profiles.build]` baseline documented in managed_config.toml.
+
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+web_search = "disabled"

@@ -476,8 +476,12 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/.codex/agents/apple_platform_boundary.md", RuntimePath: "/opt/workcell/adapters/codex/.codex/agents/apple_platform_boundary.md"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/.codex/agents/distinguished_security.md", RuntimePath: "/opt/workcell/adapters/codex/.codex/agents/distinguished_security.md"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/.codex/agents/openai_codex_platform.md", RuntimePath: "/opt/workcell/adapters/codex/.codex/agents/openai_codex_platform.md"},
+		{Kind: "adapter-baseline", RepoPath: "adapters/codex/.codex/breakglass.config.toml", RuntimePath: "/opt/workcell/adapters/codex/.codex/breakglass.config.toml"},
+		{Kind: "adapter-baseline", RepoPath: "adapters/codex/.codex/build.config.toml", RuntimePath: "/opt/workcell/adapters/codex/.codex/build.config.toml"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/.codex/config.toml", RuntimePath: "/opt/workcell/adapters/codex/.codex/config.toml"},
+		{Kind: "adapter-baseline", RepoPath: "adapters/codex/.codex/development.config.toml", RuntimePath: "/opt/workcell/adapters/codex/.codex/development.config.toml"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/.codex/rules/default.rules", RuntimePath: "/opt/workcell/adapters/codex/.codex/rules/default.rules"},
+		{Kind: "adapter-baseline", RepoPath: "adapters/codex/.codex/strict.config.toml", RuntimePath: "/opt/workcell/adapters/codex/.codex/strict.config.toml"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/managed_config.toml", RuntimePath: "/opt/workcell/adapters/codex/managed_config.toml"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/mcp/config.toml", RuntimePath: "/opt/workcell/adapters/codex/mcp/config.toml"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/requirements.toml", RuntimePath: "/opt/workcell/adapters/codex/requirements.toml"},
@@ -756,8 +760,8 @@ func GenerateBuildInputManifest(
 		arch string
 		name string
 	}{
-		{arch: "arm64", name: "aarch64-unknown-linux-gnu"},
-		{arch: "amd64", name: "x86_64-unknown-linux-gnu"},
+		{arch: "arm64", name: "aarch64-unknown-linux-musl"},
+		{arch: "amd64", name: "x86_64-unknown-linux-musl"},
 	} {
 		sha, err := ExtractCodexSHA(dockerfilePath, target.arch)
 		if err != nil {

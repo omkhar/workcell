@@ -3,10 +3,11 @@ cooloff_hours = 12
 
 [provider.codex]
 channel = "stable"
-# Reviewed holdback: newer Codex npm stable releases currently lack the GNU
-# Linux release assets that the runtime verifier consumes. Revisit this ceiling
-# when the runtime switches to the reviewed musl artifact path.
-max_version = "0.125.0"
+# The runtime consumes the reviewed musl Linux release assets (which carry
+# sigstore bundles), resolving the earlier GNU-asset holdback. The adapter
+# config uses the layered --profile-v2 model (base config.toml plus per-profile
+# `<name>.config.toml` files), so there is no profile-model ceiling; the normal
+# stable channel and cool-off govern Codex.
 
 [provider.claude]
 channel = "stable"

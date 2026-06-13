@@ -13,40 +13,49 @@ import (
 func TestCodexManagedConfigKeepsWorkspaceWriteOutsideBreakglass(t *testing.T) {
 	t.Parallel()
 
-	configPath := filepath.Join(repoRoot(t), "adapters", "codex", ".codex", "config.toml")
-	managedConfigPath := filepath.Join(repoRoot(t), "adapters", "codex", "managed_config.toml")
-	requirementsPath := filepath.Join(repoRoot(t), "adapters", "codex", "requirements.toml")
-	config, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
+	codexDir := filepath.Join(repoRoot(t), "adapters", "codex")
+	requirementsPath := filepath.Join(codexDir, "requirements.toml")
+
+	// Codex 0.134+ profile-v2: each profile is a separate layer file. The
+	// sandbox_mode floor must stay workspace-write everywhere except the
+	// explicit breakglass layer.
+	for name, wantSandbox := range map[string]string{
+		"strict":      "workspace-write",
+		"development": "workspace-write",
+		"build":       "workspace-write",
+		"breakglass":  "danger-full-access",
+	} {
+		layerPath := filepath.Join(codexDir, ".codex", name+".config.toml")
+		layer, err := os.ReadFile(layerPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "sandbox_mode = \"" + wantSandbox + "\""
+		if !strings.Contains(string(layer), want) {
+			t.Fatalf("%s does not contain %q", layerPath, want)
+		}
 	}
-	managedConfig, err := os.ReadFile(managedConfigPath)
-	if err != nil {
-		t.Fatal(err)
+
+	// The base configs must not reintroduce inline profile tables; profile
+	// selection and sandbox mode now come only from the layer files above.
+	for _, base := range []string{
+		filepath.Join(codexDir, ".codex", "config.toml"),
+		filepath.Join(codexDir, "managed_config.toml"),
+	} {
+		raw, err := os.ReadFile(base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "[profiles.") {
+			t.Fatalf("%s must not inline [profiles.*] tables under profile-v2", base)
+		}
 	}
+
 	requirements, err := os.ReadFile(requirementsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	for path, raw := range map[string]string{
-		configPath:        string(config),
-		managedConfigPath: string(managedConfig),
-	} {
-		for _, want := range []string{
-			"[profiles.strict]\nsandbox_mode = \"workspace-write\"",
-			"[profiles.development]\nsandbox_mode = \"workspace-write\"",
-			"[profiles.build]\nsandbox_mode = \"workspace-write\"",
-			"[profiles.breakglass]\nsandbox_mode = \"danger-full-access\"",
-		} {
-			if !strings.Contains(raw, want) {
-				t.Fatalf("%s does not contain %q", path, want)
-			}
-		}
-	}
-
-	requirementsText := string(requirements)
-	if !strings.Contains(requirementsText, `allowed_sandbox_modes = ["workspace-write", "danger-full-access"]`) {
+	if !strings.Contains(string(requirements), `allowed_sandbox_modes = ["workspace-write", "danger-full-access"]`) {
 		t.Fatalf("%s does not allow managed workspace-write mode", requirementsPath)
 	}
 }

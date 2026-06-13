@@ -54,8 +54,8 @@ var (
 	codexVersionLinePattern      = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
 	claudeArmChecksumLinePattern = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CLAUDE_PLATFORM="linux-arm64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
 	claudeAmdChecksumLinePattern = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CLAUDE_PLATFORM="linux-x64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
-	codexArmChecksumLinePattern  = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CODEX_ARCH="aarch64-unknown-linux-gnu";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
-	codexAmdChecksumLinePattern  = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CODEX_ARCH="x86_64-unknown-linux-gnu";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
+	codexArmChecksumLinePattern  = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CODEX_ARCH="aarch64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
+	codexAmdChecksumLinePattern  = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CODEX_ARCH="x86_64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
 )
 
 type ProviderBumpPolicy struct {
@@ -426,8 +426,8 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 			skipped = appendSkippedProviderRelease(skipped, candidate, "GitHub release is marked prerelease")
 			continue
 		}
-		armDigest, armErr := releaseAssetDigest(release, "codex-aarch64-unknown-linux-gnu.tar.gz")
-		amdDigest, amdErr := releaseAssetDigest(release, "codex-x86_64-unknown-linux-gnu.tar.gz")
+		armDigest, armErr := releaseAssetDigest(release, "codex-aarch64-unknown-linux-musl.tar.gz")
+		amdDigest, amdErr := releaseAssetDigest(release, "codex-x86_64-unknown-linux-musl.tar.gz")
 		if armErr != nil || amdErr != nil {
 			if (armErr == nil || errors.Is(armErr, errReleaseAssetNotFound)) && (amdErr == nil || errors.Is(amdErr, errReleaseAssetNotFound)) {
 				reasons := make([]string, 0, 2)
@@ -437,7 +437,7 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 				if amdErr != nil {
 					reasons = append(reasons, amdErr.Error())
 				}
-				skipped = appendSkippedProviderRelease(skipped, candidate, "missing supported GNU Linux release assets: "+strings.Join(reasons, "; "))
+				skipped = appendSkippedProviderRelease(skipped, candidate, "missing supported musl Linux release assets: "+strings.Join(reasons, "; "))
 				continue
 			}
 			reasons := make([]string, 0, 2)
@@ -447,7 +447,7 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 			if amdErr != nil {
 				reasons = append(reasons, amdErr.Error())
 			}
-			return ProviderBumpSelection{}, fmt.Errorf("codex release %s has invalid GNU Linux asset metadata: %s", candidate.Raw, strings.Join(reasons, "; "))
+			return ProviderBumpSelection{}, fmt.Errorf("codex release %s has invalid musl Linux asset metadata: %s", candidate.Raw, strings.Join(reasons, "; "))
 		}
 		return ProviderBumpSelection{
 			Channel:         "stable",

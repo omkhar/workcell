@@ -1181,7 +1181,11 @@ require_toml_section_absent() {
 verify_codex_managed_config_invariants() {
   local file="$1"
 
-  require_toml_assignment "${file}" "" "profile" '"strict"' || return 1
+  # Codex 0.134+ profile-v2: the base config must not select or inline a
+  # profile. Profile selection is supplied by the runtime wrapper via
+  # `--profile`, and the per-profile layers live in separate
+  # `<name>.config.toml` files validated by verify_codex_profile_layer_invariants.
+  require_toml_key_absent "${file}" "" "profile" || return 1
   require_toml_key_absent "${file}" "" "sandbox" || return 1
   require_toml_key_absent "${file}" "" "sandbox_mode" || return 1
   require_toml_key_absent "${file}" "" "sandbox_permissions" || return 1
@@ -1198,40 +1202,39 @@ verify_codex_managed_config_invariants() {
   require_toml_exact_keys "${file}" "features" "unified_exec" || return 1
   require_toml_assignment "${file}" "features" "unified_exec" "false" || return 1
 
-  require_toml_exact_keys "${file}" "profiles.strict" \
-    "approval_policy" \
-    "sandbox_mode" \
-    "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.strict" "sandbox_mode" '"workspace-write"' || return 1
-  require_toml_assignment "${file}" "profiles.strict" "approval_policy" '"on-request"' || return 1
-  require_toml_assignment "${file}" "profiles.strict" "web_search" '"disabled"' || return 1
-  require_toml_section_absent "${file}" "profiles.strict.sandbox_workspace_write" || return 1
+  # The base config must carry no inline `[profiles...]` tables (dotted-path
+  # form). Quoted single-segment section names with literal dots normalize to a
+  # backslash-escaped form and remain distinct, so they do not trip this guard.
+  if toml_section_names "${file}" | grep -Eq '^profiles(\.|$)'; then
+    echo "Expected ${file} not to define any [profiles...] section; profile-v2 uses separate <name>.config.toml layers" >&2
+    return 1
+  fi
+}
 
-  require_toml_exact_keys "${file}" "profiles.development" \
-    "approval_policy" \
-    "sandbox_mode" \
-    "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.development" "sandbox_mode" '"workspace-write"' || return 1
-  require_toml_assignment "${file}" "profiles.development" "approval_policy" '"on-request"' || return 1
-  require_toml_assignment "${file}" "profiles.development" "web_search" '"disabled"' || return 1
-  require_toml_section_absent "${file}" "profiles.development.sandbox_workspace_write" || return 1
+# Validate one Codex profile-v2 layer file (strict/development/build/breakglass).
+# A layer is a flat key set: exactly approval_policy, sandbox_mode, web_search,
+# with no nested profile selection and no sections (a `[sandbox_workspace_write]`
+# override inside a layer could widen network access, so it is rejected).
+verify_codex_profile_layer_invariants() {
+  local file="$1"
+  local expected_sandbox_mode="$2"
+  local expected_approval_policy="$3"
+  local sections=""
 
-  require_toml_exact_keys "${file}" "profiles.build" \
+  require_toml_key_absent "${file}" "" "profile" || return 1
+  require_toml_exact_keys "${file}" "" \
     "approval_policy" \
     "sandbox_mode" \
     "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.build" "sandbox_mode" '"workspace-write"' || return 1
-  require_toml_assignment "${file}" "profiles.build" "approval_policy" '"never"' || return 1
-  require_toml_assignment "${file}" "profiles.build" "web_search" '"disabled"' || return 1
-  require_toml_section_absent "${file}" "profiles.build.sandbox_workspace_write" || return 1
+  require_toml_assignment "${file}" "" "sandbox_mode" "${expected_sandbox_mode}" || return 1
+  require_toml_assignment "${file}" "" "approval_policy" "${expected_approval_policy}" || return 1
+  require_toml_assignment "${file}" "" "web_search" '"disabled"' || return 1
 
-  require_toml_exact_keys "${file}" "profiles.breakglass" \
-    "approval_policy" \
-    "sandbox_mode" \
-    "web_search" || return 1
-  require_toml_assignment "${file}" "profiles.breakglass" "sandbox_mode" '"danger-full-access"' || return 1
-  require_toml_assignment "${file}" "profiles.breakglass" "approval_policy" '"never"' || return 1
-  require_toml_assignment "${file}" "profiles.breakglass" "web_search" '"disabled"' || return 1
+  sections="$(toml_section_names "${file}")" || return 1
+  if [[ -n "${sections}" ]]; then
+    echo "Expected ${file} to contain no [sections]; a profile-v2 layer is a flat key set" >&2
+    return 1
+  fi
 }
 
 assert_codex_managed_config_rejected() {
@@ -1246,8 +1249,13 @@ assert_codex_managed_config_rejected() {
 
 CODEX_CONFIG="${ROOT_DIR}/adapters/codex/.codex/config.toml"
 CODEX_MANAGED_CONFIG="${ROOT_DIR}/adapters/codex/managed_config.toml"
+CODEX_PROFILE_DIR="${ROOT_DIR}/adapters/codex/.codex"
 verify_codex_managed_config_invariants "${CODEX_CONFIG}" || exit 1
 verify_codex_managed_config_invariants "${CODEX_MANAGED_CONFIG}" || exit 1
+verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/strict.config.toml" '"workspace-write"' '"on-request"' || exit 1
+verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/development.config.toml" '"workspace-write"' '"on-request"' || exit 1
+verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/build.config.toml" '"workspace-write"' '"never"' || exit 1
+verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/breakglass.config.toml" '"danger-full-access"' '"never"' || exit 1
 require_toml_assignment \
   "${ROOT_DIR}/adapters/codex/requirements.toml" \
   "" \
@@ -1263,7 +1271,7 @@ quoted_key_config="${codex_managed_config_tmpdir}/quoted-key.toml"
 awk '
   {
     print
-    if ($0 == "profile = \"strict\"") {
+    if ($0 == "web_search = \"disabled\"") {
       print "\"approval_policy\" = \"never\""
     }
   }
@@ -1274,7 +1282,7 @@ escaped_key_config="${codex_managed_config_tmpdir}/escaped-key.toml"
 awk '
   {
     print
-    if ($0 == "profile = \"strict\"") {
+    if ($0 == "web_search = \"disabled\"") {
       print "\"approval\\u005fpolicy\" = \"never\""
     }
   }
@@ -1295,7 +1303,7 @@ invalid_escape_key_config="${codex_managed_config_tmpdir}/invalid-escape-key.tom
 awk '
   {
     print
-    if ($0 == "profile = \"strict\"") {
+    if ($0 == "web_search = \"disabled\"") {
       print "\"approval\\u00ZZpolicy\" = \"never\""
     }
   }
