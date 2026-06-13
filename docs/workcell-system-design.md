@@ -252,6 +252,25 @@ Workcell reinforces this with command wrappers such as:
 The result is defense in depth below prompt files, shell aliases, and
 provider-native settings.
 
+The exec guard is a libc interposer registered in `/etc/ld.so.preload` (and
+re-exported as `LD_PRELOAD` by every wrapper), so it is loaded into the
+process that *calls* `exec`, not the process being launched. It therefore
+mediates a launch regardless of whether the launched binary is dynamically
+or statically linked — a wrapper or shell that invokes a static provider
+binary is still guarded, and a static provider invoked as a protected
+runtime is still blocked. The one linkage-dependent residual is a fully
+static process making its *own* `exec` call: such a process never consults
+`/etc/ld.so.preload`, so the interposer is absent inside it and its direct
+`exec` of a mutable `/workspace` or `/state` binary would not be intercepted
+by this layer (the provider's own sandbox and the VM/container boundary
+remain in force). Because providers are now packaged as static musl
+binaries, a fully linkage-independent backstop — kernel-enforced `noexec`
+on `/workspace` for the strict path, extending the existing `/tmp noexec`
+control, optionally paired with a seccomp `execve` filter — is the tracked
+hardening for this layer; it changes the macOS Colima runtime mount set and
+so must land with the host-side live certification rather than as a
+repo-only change.
+
 ### 9. Thin Provider Adapters
 
 Provider integration remains intentionally thin and explicit:
