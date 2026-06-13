@@ -232,7 +232,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "bd5cb8e61aa3925e9d88033aef43e452231f0393e9e92655ae84ca2e2e609bff"
+      "sha256": "d18c45a5833ccba0067cbad251b7822abdfe115dfa9f9da84fb9903863786bc7"
     },
     {
       "kind": "runtime-control-plane",
