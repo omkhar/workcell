@@ -13,16 +13,18 @@ through a native control-plane mapping.
 
 ### Upstream change: Gemini CLI retirement on June 18, 2026
 
-Google has announced that Gemini CLI stops serving requests for free, Pro,
-and Ultra accounts on June 18, 2026, in favor of the closed-source
-Antigravity CLI; organizations with Gemini Code Assist Standard or
-Enterprise licenses keep Gemini CLI access unchanged
+Google has announced that Gemini CLI stops serving requests for the free,
+Pro, and Ultra personal-account login tiers on June 18, 2026, in favor of
+the closed-source Antigravity CLI. Access continues for Gemini Code Assist
+Standard/Enterprise licenses and for billed Gemini API-key and Vertex auth
 ([announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)).
-**Reviewed posture: from June 18, 2026 the Gemini Tier 1 adapter is
-supported for Gemini Code Assist Standard/Enterprise license holders only.**
-Other Gemini accounts will be refused upstream even though the adapter,
-control-plane mapping, and pinned CLI remain intact; Workcell keeps the
-adapter shipped and unchanged for licensed users. An Antigravity adapter is
+**Reviewed posture: the Gemini Tier 1 adapter stays shipped and supported
+for the auth inputs Google keeps serving — `gemini_env`/`gemini_oauth` with
+a Code Assist Standard/Enterprise license, and billed API-key or
+`gcloud_adc`/Vertex inputs.** The free, Pro, and Ultra personal-account
+OAuth login is what upstream retires; those accounts are refused by Google,
+not by Workcell, while the adapter, control-plane mapping, and pinned CLI
+remain intact. An Antigravity adapter is
 a committed follow-on provider-parity track with a different binary and
 control-plane surface, following the same Tier 1 evidence bar as every
 provider; sequencing is tracked in [ROADMAP.md](../ROADMAP.md).
