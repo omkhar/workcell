@@ -297,24 +297,22 @@ func effectivePolicySHA256(
 				"sha256":     hash,
 			}
 		}
-		if identities, ok := renderedSSH["identities"].([]map[string]any); ok {
-			renderedIdentities := make([]map[string]any, 0, len(identities))
-			for _, entry := range identities {
-				hash, err := pathMaterialSHA256(Path(entry["source"].(string)))
-				if err != nil {
-					return "", fmt.Errorf("hash ssh identity %v: %w", entry["target_name"], err)
-				}
-				renderedIdentities = append(renderedIdentities, map[string]any{
-					"mount_path":  entry["mount_path"],
-					"sha256":      hash,
-					"target_name": entry["target_name"],
-				})
+		var identityEntries []map[string]any
+		identitiesFound := false
+		switch v := renderedSSH["identities"].(type) {
+		case []map[string]any:
+			identitiesFound = true
+			identityEntries = v
+		case []any:
+			identitiesFound = true
+			identityEntries = make([]map[string]any, 0, len(v))
+			for _, rawEntry := range v {
+				identityEntries = append(identityEntries, rawEntry.(map[string]any))
 			}
-			ssh["identities"] = renderedIdentities
-		} else if identities, ok := renderedSSH["identities"].([]any); ok {
-			renderedIdentities := make([]map[string]any, 0, len(identities))
-			for _, rawEntry := range identities {
-				entry := rawEntry.(map[string]any)
+		}
+		if identitiesFound {
+			renderedIdentities := make([]map[string]any, 0, len(identityEntries))
+			for _, entry := range identityEntries {
 				hash, err := pathMaterialSHA256(Path(entry["source"].(string)))
 				if err != nil {
 					return "", fmt.Errorf("hash ssh identity %v: %w", entry["target_name"], err)
