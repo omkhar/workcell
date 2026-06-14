@@ -222,15 +222,19 @@ func exitCodeFromWaitStatus(status int) int {
 	return 1
 }
 
+func isNotFoundError(err error) bool {
+	return errors.Is(err, syscall.ENOENT) || errors.Is(err, exec.ErrNotFound)
+}
+
 func exitCodeFromSpawnError(err error) int {
-	if errors.Is(err, syscall.ENOENT) || errors.Is(err, exec.ErrNotFound) {
+	if isNotFoundError(err) {
 		return 127
 	}
 	return 126
 }
 
 func spawnErrorText(err error) string {
-	if errors.Is(err, syscall.ENOENT) || errors.Is(err, exec.ErrNotFound) {
+	if isNotFoundError(err) {
 		return "No such file or directory"
 	}
 	return err.Error()
@@ -256,7 +260,7 @@ func spawnErrno(err error) int {
 	if errors.As(err, &errno) {
 		return int(errno)
 	}
-	if errors.Is(err, syscall.ENOENT) || errors.Is(err, exec.ErrNotFound) {
+	if isNotFoundError(err) {
 		return int(syscall.ENOENT)
 	}
 	return 1

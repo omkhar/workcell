@@ -75,24 +75,38 @@ func ProfileLockIsStale(lockDir string) (bool, error) {
 		return false, fmt.Errorf("profile lock owner metadata is incomplete: %s", ownerPath)
 	}
 
-	if err := syscall.Kill(owner.PID, 0); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
-			return true, nil
-		}
+	alive, err := pidAlive(owner.PID)
+	if err != nil {
 		return false, err
+	}
+	if !alive {
+		return true, nil
 	}
 
 	observed, err := ProcessStartTime(owner.PID)
 	if err != nil {
-		if killErr := syscall.Kill(owner.PID, 0); killErr != nil {
-			if errors.Is(killErr, syscall.ESRCH) {
-				return true, nil
-			}
+		alive, killErr := pidAlive(owner.PID)
+		if killErr != nil {
 			return false, killErr
+		}
+		if !alive {
+			return true, nil
 		}
 		return false, err
 	}
 	return observed != owner.Started, nil
+}
+
+// pidAlive reports whether signal 0 reaches pid. A missing process (ESRCH)
+// returns (false, nil); any other Kill error is surfaced.
+func pidAlive(pid int) (bool, error) {
+	if err := syscall.Kill(pid, 0); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func AcquireProfileLock(lockDir string, pid int) (bool, error) {
