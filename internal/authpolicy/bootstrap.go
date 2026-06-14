@@ -258,26 +258,22 @@ func bootstrapNextStepForReadiness(readiness, nextStep string) string {
 	return nextStep
 }
 
-func printBootstrapSummary(stdout io.Writer, summary bootstrapSummary) {
+func printBootstrapSummaryWithPrefix(stdout io.Writer, summary bootstrapSummary, prefix string) {
 	if summary.path == "" {
 		return
 	}
-	fmt.Fprintln(stdout, "provider_bootstrap_state="+summary.state)
-	fmt.Fprintln(stdout, "provider_bootstrap_path="+summary.path)
-	fmt.Fprintln(stdout, "provider_bootstrap_support="+summary.support)
-	fmt.Fprintln(stdout, "provider_bootstrap_handoff="+summary.handoff)
-	fmt.Fprintln(stdout, "provider_bootstrap_doc="+summary.doc)
-	fmt.Fprintln(stdout, "provider_bootstrap_next_step="+summary.nextStep)
+	fmt.Fprintln(stdout, prefix+"state="+summary.state)
+	fmt.Fprintln(stdout, prefix+"path="+summary.path)
+	fmt.Fprintln(stdout, prefix+"support="+summary.support)
+	fmt.Fprintln(stdout, prefix+"handoff="+summary.handoff)
+	fmt.Fprintln(stdout, prefix+"doc="+summary.doc)
+	fmt.Fprintln(stdout, prefix+"next_step="+summary.nextStep)
+}
+
+func printBootstrapSummary(stdout io.Writer, summary bootstrapSummary) {
+	printBootstrapSummaryWithPrefix(stdout, summary, "provider_bootstrap_")
 }
 
 func printCredentialBootstrapSummary(stdout io.Writer, summary bootstrapSummary) {
-	if summary.path == "" {
-		return
-	}
-	fmt.Fprintln(stdout, "bootstrap_state="+summary.state)
-	fmt.Fprintln(stdout, "bootstrap_path="+summary.path)
-	fmt.Fprintln(stdout, "bootstrap_support="+summary.support)
-	fmt.Fprintln(stdout, "bootstrap_handoff="+summary.handoff)
-	fmt.Fprintln(stdout, "bootstrap_doc="+summary.doc)
-	fmt.Fprintln(stdout, "bootstrap_next_step="+summary.nextStep)
+	printBootstrapSummaryWithPrefix(stdout, summary, "bootstrap_")
 }

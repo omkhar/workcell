@@ -83,7 +83,7 @@ func IsTrustedHostToolPath(candidate string, ctx *BashContext) bool {
 		}
 	}
 	for _, prefix := range trustedHostToolPrefixes {
-		if candidate == prefix || strings.HasPrefix(candidate, prefix+"/") {
+		if hasDirPrefix(candidate, prefix) {
 			return true
 		}
 	}

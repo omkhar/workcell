@@ -35,12 +35,9 @@ func TimelineMain(args []string) error {
 		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session timeline requires --id."}
 	}
 
-	if len(roots) == 0 {
-		envRoots, lookupErr := stateroot.LookupRoots()
-		if lookupErr != nil {
-			return lookupErr
-		}
-		roots = envRoots
+	roots, lookupErr := rootsOrLookup(roots)
+	if lookupErr != nil {
+		return lookupErr
 	}
 	lines, err := sessions.SessionTimelineRecordsInRoots(roots, sessionID)
 	if err != nil {
