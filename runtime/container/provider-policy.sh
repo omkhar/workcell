@@ -45,14 +45,19 @@ reject_unsafe_codex_args() {
   local expect_value=""
   local arg
   local saw_command=0
+  local allowed_profile=""
 
   provider_policy_allows_breakglass && return 0
+
+  # The effective profile is a session property (depends only on WORKCELL_MODE),
+  # so resolve it once instead of forking a subshell per --profile occurrence.
+  allowed_profile="$(effective_codex_profile)"
 
   for arg in "$@"; do
     if [[ -n "${expect_value}" ]]; then
       case "${expect_value}" in
         profile)
-          [[ "${arg}" != "$(effective_codex_profile)" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
+          [[ "${arg}" != "${allowed_profile}" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
           ;;
         cd)
           workcell_die "Workcell blocked unsafe Codex override: --cd"
@@ -100,7 +105,7 @@ reject_unsafe_codex_args() {
         workcell_die "Workcell blocked unsafe Codex override: --cd"
         ;;
       --profile=*)
-        [[ "${arg#--profile=}" != "$(effective_codex_profile)" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
+        [[ "${arg#--profile=}" != "${allowed_profile}" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
         ;;
       -s | --sandbox)
         expect_value="sandbox"
@@ -139,10 +144,7 @@ reject_unsafe_claude_args() {
       --dangerously-skip-permissions | --allow-dangerously-skip-permissions | --add-dir | --allowedTools | --mcp-config | --plugin-dir | --settings | --setting-sources | --system-prompt | --append-system-prompt)
         workcell_die "Workcell blocked unsafe Claude override: ${arg}"
         ;;
-      --permission-mode)
-        workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
-        ;;
-      --permission-mode=*)
+      --permission-mode | --permission-mode=*)
         workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
       --add-dir=* | --allowedTools=* | --mcp-config=* | --plugin-dir=* | --settings=* | --setting-sources=* | --system-prompt=* | --append-system-prompt=*)
