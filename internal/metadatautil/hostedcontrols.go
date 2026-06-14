@@ -354,6 +354,18 @@ func UnexpectedEnvironmentSecretNames(actual map[string]struct{}, expected []str
 	return unexpected
 }
 
+func rejectReleaseAdminBypass(releaseEnv, adminBypassRule map[string]any, repo string) error {
+	if bypass, _ := releaseEnv["can_admins_bypass"].(bool); bypass {
+		return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
+	}
+	if adminBypassRule != nil {
+		if enabled, _ := adminBypassRule["enabled"].(bool); enabled {
+			return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
+		}
+	}
+	return nil
+}
+
 func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	var repoMeta map[string]any
 	if err := readJSONFile(filepath.Join(tmpDir, "repo.json"), &repoMeta); err != nil {
@@ -868,13 +880,8 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		if !hasReviewer {
 			return fmt.Errorf("release environment on %s must define at least one reviewer", repo)
 		}
-		if bypass, _ := releaseEnv["can_admins_bypass"].(bool); bypass {
-			return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
-		}
-		if adminBypassRule != nil {
-			if enabled, _ := adminBypassRule["enabled"].(bool); enabled {
-				return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
-			}
+		if err := rejectReleaseAdminBypass(releaseEnv, adminBypassRule, repo); err != nil {
+			return err
 		}
 	case "plan-limited-private":
 		if private, _ := repoMeta["private"].(bool); !private {
@@ -908,13 +915,8 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		if !hasReviewer {
 			return fmt.Errorf("release environment on %s must define at least one reviewer in single-owner-public mode", repo)
 		}
-		if bypass, _ := releaseEnv["can_admins_bypass"].(bool); bypass {
-			return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
-		}
-		if adminBypassRule != nil {
-			if enabled, _ := adminBypassRule["enabled"].(bool); enabled {
-				return fmt.Errorf("release environment on %s must not allow administrator bypass", repo)
-			}
+		if err := rejectReleaseAdminBypass(releaseEnv, adminBypassRule, repo); err != nil {
+			return err
 		}
 	default:
 		if private, _ := repoMeta["private"].(bool); !private {

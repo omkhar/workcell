@@ -6,6 +6,7 @@ package metadatautil
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,14 +82,16 @@ func ValidateOperatorContract(rootDir, contractPath, requirementsPath string) er
 
 	for _, workflowID := range workflowIDs {
 		workflow := contract.Workflows[workflowID]
-		if isPublicWorkflowTier(workflow.Support) && len(workflow.Requirements) == 0 {
-			return fmt.Errorf("%s workflow %s must cite at least one requirement", contractPath, workflowID)
-		}
-		if isPublicWorkflowTier(workflow.Support) && len(workflow.Docs) == 0 {
-			return fmt.Errorf("%s workflow %s must cite at least one documentation path", contractPath, workflowID)
-		}
-		if isPublicWorkflowTier(workflow.Support) && len(workflow.Evidence) == 0 {
-			return fmt.Errorf("%s workflow %s must cite at least one evidence path", contractPath, workflowID)
+		if isPublicWorkflowTier(workflow.Support) {
+			if len(workflow.Requirements) == 0 {
+				return fmt.Errorf("%s workflow %s must cite at least one requirement", contractPath, workflowID)
+			}
+			if len(workflow.Docs) == 0 {
+				return fmt.Errorf("%s workflow %s must cite at least one documentation path", contractPath, workflowID)
+			}
+			if len(workflow.Evidence) == 0 {
+				return fmt.Errorf("%s workflow %s must cite at least one evidence path", contractPath, workflowID)
+			}
 		}
 
 		requirementDocs := map[string]struct{}{}
@@ -101,8 +104,8 @@ func ValidateOperatorContract(rootDir, contractPath, requirementsPath string) er
 			if _, ok := declared.Workflows[workflowID]; !ok {
 				return fmt.Errorf("%s workflow %s must appear in %s requirement %s workflows array", contractPath, workflowID, requirementsPath, requirementID)
 			}
-			mergePathSets(requirementDocs, declared.Docs)
-			mergePathSets(requirementEvidence, declared.Evidence)
+			maps.Copy(requirementDocs, declared.Docs)
+			maps.Copy(requirementEvidence, declared.Evidence)
 			publicWorkflowCovered[workflowID] = struct{}{}
 		}
 
@@ -571,12 +574,6 @@ func loadRequirementTraceability(rootDir, requirementsPath string) (map[string]r
 		}
 	}
 	return refs, nil
-}
-
-func mergePathSets(destination, source map[string]struct{}) {
-	for path := range source {
-		destination[path] = struct{}{}
-	}
 }
 
 func validateWorkflowPathReferences(rootDir, contractPath, requirementsPath, workflowID, field string, paths []string, requirementPaths map[string]struct{}) error {
