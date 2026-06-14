@@ -6,6 +6,7 @@ package metadatautil
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -489,7 +490,6 @@ func workflowLaneEvents(raw any) ([]string, map[string][]string, error) {
 	default:
 		return nil, nil, fmt.Errorf("workflow on stanza uses unsupported type %T", raw)
 	}
-	slices.Sort(events)
 	return uniqueSortedStrings(events), pathGlobs, nil
 }
 
@@ -513,9 +513,15 @@ func workflowLaneHasPathGlobs(pathGlobs map[string][]string, event string) bool 
 }
 
 func workflowLaneMatchesAnyPath(changedFiles, globs []string) bool {
+	// Compile each glob once per call rather than once per (changedFile × glob).
+	compiled := make([]*regexp.Regexp, len(globs))
+	for i, glob := range globs {
+		compiled[i] = workflowLanePathPattern(glob)
+	}
 	for _, changedFile := range changedFiles {
-		for _, glob := range globs {
-			if workflowLaneMatchPath(glob, changedFile) {
+		slashedPath := filepath.ToSlash(changedFile)
+		for _, re := range compiled {
+			if re.MatchString(slashedPath) {
 				return true
 			}
 		}
@@ -523,13 +529,12 @@ func workflowLaneMatchesAnyPath(changedFiles, globs []string) bool {
 	return false
 }
 
-func workflowLaneMatchPath(glob, path string) bool {
+func workflowLanePathPattern(glob string) *regexp.Regexp {
 	pattern := regexp.QuoteMeta(filepath.ToSlash(glob))
 	pattern = strings.ReplaceAll(pattern, `\*\*`, `.*`)
 	pattern = strings.ReplaceAll(pattern, `\*`, `[^/]*`)
 	pattern = strings.ReplaceAll(pattern, `\?`, `[^/]`)
-	re := regexp.MustCompile("^" + pattern + "$")
-	return re.MatchString(filepath.ToSlash(path))
+	return regexp.MustCompile("^" + pattern + "$")
 }
 
 func workflowLaneAvailableLocally(entry WorkflowLaneManifestEntry) (bool, string) {
@@ -582,11 +587,7 @@ func nilIfEmptyStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}
-	copyValues := make(map[string]string, len(values))
-	for key, value := range values {
-		copyValues[key] = value
-	}
-	return copyValues
+	return maps.Clone(values)
 }
 
 func cloneStringSliceMap(values map[string][]string) map[string][]string {
@@ -595,35 +596,15 @@ func cloneStringSliceMap(values map[string][]string) map[string][]string {
 	}
 	cloned := make(map[string][]string, len(values))
 	for key, rows := range values {
-		cloned[key] = append([]string{}, rows...)
+		cloned[key] = slices.Clone(rows)
 	}
 	return cloned
 }
 
 func workflowLanePathGlobsEqual(a, b map[string][]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for key, aValues := range a {
-		bValues, ok := b[key]
-		if !ok {
-			return false
-		}
-		if !slices.Equal(aValues, bValues) {
-			return false
-		}
-	}
-	return true
+	return maps.EqualFunc(a, b, slices.Equal[[]string, string])
 }
 
 func workflowLaneStringMapEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for key, value := range a {
-		if b[key] != value {
-			return false
-		}
-	}
-	return true
+	return maps.Equal(a, b)
 }
