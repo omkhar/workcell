@@ -78,12 +78,9 @@ func stopMain(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if len(roots) == 0 {
-		envRoots, lookupErr := stateroot.LookupRoots()
-		if lookupErr != nil {
-			return lookupErr
-		}
-		roots = envRoots
+	roots, lookupErr := rootsOrLookup(roots)
+	if lookupErr != nil {
+		return lookupErr
 	}
 	record, err := sessions.FindSessionRecordInRoots(roots, sessionID)
 	if err != nil {

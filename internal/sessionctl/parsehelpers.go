@@ -8,7 +8,18 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/host/stateroot"
 )
+
+// rootsOrLookup returns roots unchanged when non-empty, otherwise falls back
+// to the environment-derived roots via stateroot.LookupRoots. The session
+// subcommands (stop, attach, timeline, logs) share this resolution step.
+func rootsOrLookup(roots []string) ([]string, error) {
+	if len(roots) > 0 {
+		return roots, nil
+	}
+	return stateroot.LookupRoots()
+}
 
 // optionValueOrError reads args[i+1] as the value for the args[i] flag.
 // It returns the value, the new index (i+1), and a *cliexit.ExitCodeError

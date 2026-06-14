@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/shellproto"
@@ -99,10 +100,8 @@ func resolveSessionSubcommand(subcommand string) (string, error) {
 	case "", "-h", "--help":
 		return "usage", nil
 	}
-	for _, name := range CanonicalSubcommands() {
-		if subcommand == name {
-			return subcommand, nil
-		}
+	if slices.Contains(CanonicalSubcommands(), subcommand) {
+		return subcommand, nil
 	}
 	return "", &cliexit.ExitCodeError{
 		Code:    2,
