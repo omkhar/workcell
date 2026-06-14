@@ -24,6 +24,8 @@ var (
 	hexDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
+const missingTrackedInputMsg = "tracked release input is missing from the working tree; stage the deletion or restore the file before generating a verified build input manifest: %s"
+
 type ControlPlaneArtifact struct {
 	Kind        string
 	RepoPath    string
@@ -102,13 +104,9 @@ func ensureNoSymlinkRelativePath(rootDir, relativePath, label string) error {
 	return nil
 }
 
-func ensureNoSymlinkPrefix(rootDir, repoPath string) error {
-	return ensureNoSymlinkRelativePath(rootDir, repoPath, "control-plane artifact")
-}
-
 func ensureTrackedRegularFile(rootDir, repoPath string) error {
 	path := filepath.Join(rootDir, repoPath)
-	if err := ensureNoSymlinkPrefix(rootDir, repoPath); err != nil {
+	if err := ensureNoSymlinkRelativePath(rootDir, repoPath, "control-plane artifact"); err != nil {
 		return err
 	}
 	if err := ensureRegularFile(path); err != nil {
@@ -145,15 +143,21 @@ func gitTopLevel(rootDir string) (string, error) {
 	return filepath.Clean(strings.TrimSpace(output)), nil
 }
 
-func gitTrackedFiles(rootDir string) ([]string, bool, error) {
+// gitRootMatches reports whether git operations should run against rootDir,
+// i.e. rootDir is inside a work tree and is itself that work tree's top level.
+func gitRootMatches(rootDir string) bool {
 	if !gitInsideWorkTree(rootDir) {
-		return nil, false, nil
+		return false
 	}
 	topLevel, err := gitTopLevel(rootDir)
 	if err != nil {
-		return nil, false, nil
+		return false
 	}
-	if filepath.Clean(topLevel) != filepath.Clean(rootDir) {
+	return filepath.Clean(topLevel) == filepath.Clean(rootDir)
+}
+
+func gitTrackedFiles(rootDir string) ([]string, bool, error) {
+	if !gitRootMatches(rootDir) {
 		return nil, false, nil
 	}
 
@@ -197,14 +201,7 @@ func gitTrackedSubset(rootDir string, paths []string, requireTracked bool) ([]st
 	}
 	slices.Sort(unique)
 
-	if !gitInsideWorkTree(rootDir) {
-		return unique, nil
-	}
-	topLevel, err := gitTopLevel(rootDir)
-	if err != nil {
-		return unique, nil
-	}
-	if filepath.Clean(topLevel) != filepath.Clean(rootDir) {
+	if !gitRootMatches(rootDir) {
 		return unique, nil
 	}
 
@@ -361,15 +358,12 @@ func digestMap(rootDir string, paths []string) (map[string]string, error) {
 		info, err := os.Lstat(candidate)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return nil, fmt.Errorf(
-					"tracked release input is missing from the working tree; stage the deletion or restore the file before generating a verified build input manifest: %s",
-					relativePath,
-				)
+				return nil, fmt.Errorf(missingTrackedInputMsg, relativePath)
 			}
 			return nil, err
 		}
 		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("tracked release input is missing from the working tree; stage the deletion or restore the file before generating a verified build input manifest: %s", relativePath)
+			return nil, fmt.Errorf(missingTrackedInputMsg, relativePath)
 		}
 		sum, err := sha256HexFile(candidate)
 		if err != nil {
