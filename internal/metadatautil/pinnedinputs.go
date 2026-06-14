@@ -19,6 +19,12 @@ import (
 var (
 	workflowPermissionsRE = regexp.MustCompile(`(?m)^permissions:\s+\{\}$`)
 	aptInstallPattern     = regexp.MustCompile(`apt-get install -y --no-install-recommends(?s:(.*?))&&`)
+	// pinnedReleaseTagPattern matches an exact vMAJOR.MINOR.PATCH release tag.
+	pinnedReleaseTagPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+	// workflowUsesPattern and commitShaPattern scan workflow `uses:` refs for a
+	// pinned 40-hex commit SHA; both run inside the per-workflow scan loop.
+	workflowUsesPattern = regexp.MustCompile(`(?m)^\s*-\s+uses:\s+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)`)
+	commitShaPattern    = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
 type PinnedInputsConfig struct {
@@ -454,7 +460,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(validatorHadolintVersion) {
+	if !pinnedReleaseTagPattern.MatchString(validatorHadolintVersion) {
 		return fmt.Errorf("HADOLINT_VERSION must be an exact pinned release, found %q", validatorHadolintVersion)
 	}
 	validatorHadolintSHAx86_64, err := requireArg(validatorDockerfile, "HADOLINT_LINUX_X86_64_SHA256", cfg.ValidatorDockerfilePath)
@@ -475,7 +481,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(validatorDeadcodeVersion) {
+	if !pinnedReleaseTagPattern.MatchString(validatorDeadcodeVersion) {
 		return fmt.Errorf("DEADCODE_VERSION must be an exact pinned release, found %q", validatorDeadcodeVersion)
 	}
 	validatorMarkdownlintVersion, err := requireArg(validatorDockerfile, "MARKDOWNLINT_VERSION", cfg.ValidatorDockerfilePath)
@@ -621,7 +627,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if ciBuildxVersion != releaseBuildxVersion {
 		return errors.New("WORKCELL_BUILDX_VERSION must match between .github/workflows/ci.yml and .github/workflows/release.yml")
 	}
-	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(ciBuildxVersion) {
+	if !pinnedReleaseTagPattern.MatchString(ciBuildxVersion) {
 		return fmt.Errorf("WORKCELL_BUILDX_VERSION must be an exact pinned release (for example v0.32.1), found %q", ciBuildxVersion)
 	}
 
@@ -708,7 +714,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if len(map[string]struct{}{ciCosignVersion: {}, releaseCosignVersion: {}, pinHygieneCosignVersion: {}, upstreamRefreshCosignVersion: {}}) != 1 {
 		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
 	}
-	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(ciCosignVersion) {
+	if !pinnedReleaseTagPattern.MatchString(ciCosignVersion) {
 		return fmt.Errorf("WORKCELL_COSIGN_VERSION must be an exact pinned release, found %q", ciCosignVersion)
 	}
 	for _, workflow := range []struct {
@@ -826,7 +832,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(releaseSyftVersion) {
+	if !pinnedReleaseTagPattern.MatchString(releaseSyftVersion) {
 		return fmt.Errorf("WORKCELL_SYFT_VERSION must be an exact pinned release, found %q", releaseSyftVersion)
 	}
 	if !strings.Contains(releaseWorkflow, "syft-version: ${{ env.WORKCELL_SYFT_VERSION }}") {
@@ -1087,8 +1093,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		if regexp.MustCompile(`secrets\.[A-Z0-9_]*(?:PAT|PERSONAL_ACCESS_TOKEN)\b|GH_PAT\b|PERSONAL_ACCESS_TOKEN\b`).MatchString(workflowText) {
 			return fmt.Errorf("%s must not contain long-lived personal access tokens", workflowPath)
 		}
-		for _, match := range regexp.MustCompile(`(?m)^\s*-\s+uses:\s+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)`).FindAllStringSubmatch(workflowText, -1) {
-			if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(match[2]) {
+		for _, match := range workflowUsesPattern.FindAllStringSubmatch(workflowText, -1) {
+			if !commitShaPattern.MatchString(match[2]) {
 				return fmt.Errorf("%s must pin GitHub Actions by full commit SHA; found %s@%s", workflowPath, match[1], match[2])
 			}
 		}
