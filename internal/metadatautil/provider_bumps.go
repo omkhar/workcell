@@ -429,23 +429,16 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 		armDigest, armErr := releaseAssetDigest(release, "codex-aarch64-unknown-linux-musl.tar.gz")
 		amdDigest, amdErr := releaseAssetDigest(release, "codex-x86_64-unknown-linux-musl.tar.gz")
 		if armErr != nil || amdErr != nil {
-			if (armErr == nil || errors.Is(armErr, errReleaseAssetNotFound)) && (amdErr == nil || errors.Is(amdErr, errReleaseAssetNotFound)) {
-				reasons := make([]string, 0, 2)
-				if armErr != nil {
-					reasons = append(reasons, armErr.Error())
-				}
-				if amdErr != nil {
-					reasons = append(reasons, amdErr.Error())
-				}
-				skipped = appendSkippedProviderRelease(skipped, candidate, "missing supported musl Linux release assets: "+strings.Join(reasons, "; "))
-				continue
-			}
 			reasons := make([]string, 0, 2)
 			if armErr != nil {
 				reasons = append(reasons, armErr.Error())
 			}
 			if amdErr != nil {
 				reasons = append(reasons, amdErr.Error())
+			}
+			if (armErr == nil || errors.Is(armErr, errReleaseAssetNotFound)) && (amdErr == nil || errors.Is(amdErr, errReleaseAssetNotFound)) {
+				skipped = appendSkippedProviderRelease(skipped, candidate, "missing supported musl Linux release assets: "+strings.Join(reasons, "; "))
+				continue
 			}
 			return ProviderBumpSelection{}, fmt.Errorf("codex release %s has invalid musl Linux asset metadata: %s", candidate.Raw, strings.Join(reasons, "; "))
 		}
@@ -486,6 +479,41 @@ func selectGeminiStable(currentVersion string, cutoff time.Time, sources Provide
 	}, nil
 }
 
+// claudeSelectionForCandidate fetches and validates the Claude release manifest
+// for a candidate version and assembles its ProviderBumpSelection, returning the
+// parsed build time so callers can apply the cool-off cutoff. Shared by the
+// approved-version and newest-stable resolution paths in selectClaudeStable.
+func claudeSelectionForCandidate(candidate stableVersion, currentVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, time.Time, error) {
+	manifestURL := fmt.Sprintf("%s/%s/manifest.json", sources.ClaudeReleaseRootURL, candidate.Raw)
+	var manifest claudeManifest
+	if err := fetchJSON(client, manifestURL, &manifest); err != nil {
+		return ProviderBumpSelection{}, time.Time{}, err
+	}
+	if manifest.Version != candidate.Raw {
+		return ProviderBumpSelection{}, time.Time{}, fmt.Errorf("claude manifest for %s reports version %q", candidate.Raw, manifest.Version)
+	}
+	buildTime, err := time.Parse(time.RFC3339, manifest.BuildDate)
+	if err != nil {
+		return ProviderBumpSelection{}, time.Time{}, fmt.Errorf("parse Claude manifest buildDate for %s: %w", candidate.Raw, err)
+	}
+	armChecksum := manifest.Platforms["linux-arm64"].Checksum
+	amdChecksum := manifest.Platforms["linux-x64"].Checksum
+	if armChecksum == "" || amdChecksum == "" {
+		return ProviderBumpSelection{}, time.Time{}, fmt.Errorf("claude manifest for %s is missing Linux checksums", candidate.Raw)
+	}
+	return ProviderBumpSelection{
+		Channel:        "stable",
+		CurrentVersion: currentVersion,
+		TargetVersion:  candidate.Raw,
+		PublishedAt:    buildTime.UTC().Format(time.RFC3339),
+		Changed:        candidate.Raw != currentVersion,
+		Checksums: map[string]string{
+			"arm64": armChecksum,
+			"amd64": amdChecksum,
+		},
+	}, buildTime, nil
+}
+
 func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion string, approvedVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
 	candidates, _, err := stableCandidatesFromRegistry(sources.ClaudeRegistryURL, time.Time{}, maxVersion, client)
 	if err != nil {
@@ -508,70 +536,23 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 			if compareStableVersions(candidate, approved) != 0 {
 				continue
 			}
-			manifestURL := fmt.Sprintf("%s/%s/manifest.json", sources.ClaudeReleaseRootURL, candidate.Raw)
-			var manifest claudeManifest
-			if err := fetchJSON(client, manifestURL, &manifest); err != nil {
+			selection, _, err := claudeSelectionForCandidate(candidate, currentVersion, sources, client)
+			if err != nil {
 				return ProviderBumpSelection{}, err
 			}
-			if manifest.Version != candidate.Raw {
-				return ProviderBumpSelection{}, fmt.Errorf("claude manifest for %s reports version %q", candidate.Raw, manifest.Version)
-			}
-			buildTime, err := time.Parse(time.RFC3339, manifest.BuildDate)
-			if err != nil {
-				return ProviderBumpSelection{}, fmt.Errorf("parse Claude manifest buildDate for %s: %w", candidate.Raw, err)
-			}
-			armChecksum := manifest.Platforms["linux-arm64"].Checksum
-			amdChecksum := manifest.Platforms["linux-x64"].Checksum
-			if armChecksum == "" || amdChecksum == "" {
-				return ProviderBumpSelection{}, fmt.Errorf("claude manifest for %s is missing Linux checksums", candidate.Raw)
-			}
-			return ProviderBumpSelection{
-				Channel:        "stable",
-				CurrentVersion: currentVersion,
-				TargetVersion:  candidate.Raw,
-				PublishedAt:    buildTime.UTC().Format(time.RFC3339),
-				Changed:        candidate.Raw != currentVersion,
-				Checksums: map[string]string{
-					"arm64": armChecksum,
-					"amd64": amdChecksum,
-				},
-			}, nil
+			return selection, nil
 		}
 		return ProviderBumpSelection{}, fmt.Errorf("claude approved_version %s is not present in the registry metadata", approvedVersion)
 	}
 	var selected *ProviderBumpSelection
 	var selectedVersion stableVersion
 	for _, candidate := range candidates {
-		manifestURL := fmt.Sprintf("%s/%s/manifest.json", sources.ClaudeReleaseRootURL, candidate.Raw)
-		var manifest claudeManifest
-		if err := fetchJSON(client, manifestURL, &manifest); err != nil {
-			return ProviderBumpSelection{}, err
-		}
-		if manifest.Version != candidate.Raw {
-			return ProviderBumpSelection{}, fmt.Errorf("claude manifest for %s reports version %q", candidate.Raw, manifest.Version)
-		}
-		buildTime, err := time.Parse(time.RFC3339, manifest.BuildDate)
+		selection, buildTime, err := claudeSelectionForCandidate(candidate, currentVersion, sources, client)
 		if err != nil {
-			return ProviderBumpSelection{}, fmt.Errorf("parse Claude manifest buildDate for %s: %w", candidate.Raw, err)
+			return ProviderBumpSelection{}, err
 		}
 		if buildTime.After(cutoff) {
 			continue
-		}
-		armChecksum := manifest.Platforms["linux-arm64"].Checksum
-		amdChecksum := manifest.Platforms["linux-x64"].Checksum
-		if armChecksum == "" || amdChecksum == "" {
-			return ProviderBumpSelection{}, fmt.Errorf("claude manifest for %s is missing Linux checksums", candidate.Raw)
-		}
-		selection := ProviderBumpSelection{
-			Channel:        "stable",
-			CurrentVersion: currentVersion,
-			TargetVersion:  candidate.Raw,
-			PublishedAt:    buildTime.UTC().Format(time.RFC3339),
-			Changed:        candidate.Raw != currentVersion,
-			Checksums: map[string]string{
-				"arm64": armChecksum,
-				"amd64": amdChecksum,
-			},
 		}
 		selected = &selection
 		selectedVersion = candidate
@@ -684,7 +665,7 @@ func releaseAssetDigest(release codexReleaseMetadata, assetName string) (string,
 			continue
 		}
 		digest := strings.TrimPrefix(asset.Digest, "sha256:")
-		if !hexDigestPattern.MatchString(digest) {
+		if !isHexDigest(digest) {
 			return "", fmt.Errorf("release asset %s is missing a valid sha256 digest", assetName)
 		}
 		return digest, nil
