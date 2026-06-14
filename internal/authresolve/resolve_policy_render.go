@@ -93,27 +93,11 @@ documents:
 	if ssh, ok := policy["ssh"].(map[string]any); ok && len(ssh) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, "[ssh]")
-		ordered := []string{"enabled", "config", "known_hosts", "identities", "providers", "modes", "allow_unsafe_config"}
-		seen := map[string]struct{}{}
-		for _, key := range ordered {
-			if value, ok := ssh[key]; ok {
-				rendered, err := renderTOMLValue(value)
-				if err != nil {
-					return "", err
-				}
-				lines = append(lines, key+" = "+rendered)
-				seen[key] = struct{}{}
-			}
-		}
-		for _, key := range sortedKeys(ssh) {
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			rendered, err := renderTOMLValue(ssh[key])
-			if err != nil {
-				return "", err
-			}
-			lines = append(lines, key+" = "+rendered)
+		var renderErr error
+		lines, renderErr = renderOrderedThenSorted(lines, ssh,
+			[]string{"enabled", "config", "known_hosts", "identities", "providers", "modes", "allow_unsafe_config"})
+		if renderErr != nil {
+			return "", renderErr
 		}
 	}
 
@@ -125,32 +109,46 @@ documents:
 			}
 			lines = append(lines, "")
 			lines = append(lines, "[[copies]]")
-			ordered := []string{"source", "target", "classification", "providers", "modes"}
-			seen := map[string]struct{}{}
-			for _, key := range ordered {
-				if value, ok := entryMap[key]; ok {
-					rendered, err := renderTOMLValue(value)
-					if err != nil {
-						return "", err
-					}
-					lines = append(lines, key+" = "+rendered)
-					seen[key] = struct{}{}
-				}
-			}
-			for _, key := range sortedKeys(entryMap) {
-				if _, ok := seen[key]; ok {
-					continue
-				}
-				rendered, err := renderTOMLValue(entryMap[key])
-				if err != nil {
-					return "", err
-				}
-				lines = append(lines, key+" = "+rendered)
+			var renderErr error
+			lines, renderErr = renderOrderedThenSorted(lines, entryMap,
+				[]string{"source", "target", "classification", "providers", "modes"})
+			if renderErr != nil {
+				return "", renderErr
 			}
 		}
 	}
 
 	return strings.Join(lines, "\n") + "\n", nil
+}
+
+// renderOrderedThenSorted appends "key = value" TOML lines for m: first the
+// keys listed in ordered (when present in m), then any remaining keys in
+// sorted order. It returns the extended lines slice.
+func renderOrderedThenSorted(lines []string, m map[string]any, ordered []string) ([]string, error) {
+	seen := map[string]struct{}{}
+	for _, key := range ordered {
+		value, ok := m[key]
+		if !ok {
+			continue
+		}
+		rendered, err := renderTOMLValue(value)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, key+" = "+rendered)
+		seen[key] = struct{}{}
+	}
+	for _, key := range sortedKeys(m) {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		rendered, err := renderTOMLValue(m[key])
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, key+" = "+rendered)
+	}
+	return lines, nil
 }
 
 func renderTOMLValue(value any) (string, error) {
