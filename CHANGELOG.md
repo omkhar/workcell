@@ -8,6 +8,69 @@ Releases.
 
 ## Unreleased
 
+## v0.11.0 - 2026-06-15
+
+### Added
+
+- upgrade the Codex CLI to `0.139.0`, switch to the musl static artifact, and
+  migrate managed Codex configuration to the profile-v2 layered model (a base
+  `config.toml` plus per-profile `strict`/`development`/`build`/`breakglass`
+  `<name>.config.toml` files applied with `--profile`), with the managed GUI
+  app-server sandbox mode injected by the provider wrapper.
+- bump Claude Code to `2.1.175` and Gemini CLI to `0.46.0`.
+- migrate the runtime and validator base images to Node 24 LTS.
+- add a fail-closed Copilot adapter scaffold and distro-scoped host
+  support-matrix fields.
+- build the native arm64 release image on a native runner and split the
+  release preflight into parallel amd64-reproducibility and container-smoke
+  jobs.
+
+### Changed
+
+- thin the public shell entrypoints and internal surfaces through a large set
+  of behavior-preserving refactors across the Codex provider wrapper, the
+  provider-policy argument validators, and the `metadatautil`, `authpolicy`,
+  `authresolve`, `injection`, `sessionctl`, `publishpr`, host `launcher`, and
+  `transcript` packages.
+
+### Fixed
+
+- close the glued `-c` Codex hook-bypass gap and align the nested-CLI rules.
+- fail the release gate closed on unregistered or stale required `main` checks.
+- enforce BuildKit/buildx pin parity across `docs.yml` and the validator-image
+  fallback.
+- harden host and runtime boundary checks, including physical remote-VM
+  symlink resolution and `0600` rewritten-manifest permissions.
+
+### Documentation
+
+- document the exec guard's process-linkage model and noexec hardening, record
+  the reviewed auth-input-scoped Gemini posture (Code Assist Standard/Enterprise
+  licenses and paid API keys; upstream retires only the personal-account OAuth
+  login), make the quickstart verify release assets, and correct CI trigger
+  wording.
+
+## v0.10.7 - 2026-05-29
+
+### Added
+
+- add a repository readiness gate for maintainer-facing workflow hardening.
+
+### Changed
+
+- remove dead bash and Go helpers and dedup runtime wrappers, execveat loader
+  classification, registry CA blocks, and `publishpr`/`hostutil`/`providerid`
+  helpers across many internal surfaces.
+- extract the shared `PolicySource` type into `internal/injectionpolicy`.
+
+### Fixed
+
+- harden runtime image fetch retries and build recovery, keep GitHub API auth
+  host-bound, preserve refresh publication validation, keep Debian refreshes
+  bootstrap-buildable, resolve Colima egress hosts inside the VM, fail closed
+  on snapshot TLS bootstrap errors, allow Docker CloudFront blobs in bootstrap
+  policy, and fetch actionlint checksums through the asset API.
+
 ## v0.10.6 - 2026-05-18
 
 ### Added
