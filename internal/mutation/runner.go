@@ -35,14 +35,14 @@ func goCmd(args ...string) commandSpec {
 
 var goHelperMutations = []mutationCase{
 	{
-		relativePath: "internal/injection/render_injection_bundle.go",
+		relativePath: "internal/injection/render_documents_copies.go",
 		original:     `if targetIsReserved(candidate) {`,
 		replacement:  `if false && targetIsReserved(candidate) {`,
 		label:        "reserved target protection",
 		command:      goCmd("test", "./internal/injection"),
 	},
 	{
-		relativePath: "internal/injection/render_injection_bundle.go",
+		relativePath: "internal/injection/render_credentials.go",
 		original: strings.Join([]string{
 			`if err := validateAllowedKeys(credentials, mapKeysSet([]string{`,
 			`		"codex_auth",`,
@@ -61,7 +61,7 @@ var goHelperMutations = []mutationCase{
 		command: goCmd("test", "./internal/injection"),
 	},
 	{
-		relativePath: "internal/injection/render_injection_bundle.go",
+		relativePath: "internal/injection/render_validation.go",
 		original:     `if info.Mode().Perm()&0o077 != 0 {`,
 		replacement:  `if false && info.Mode().Perm()&0o077 != 0 {`,
 		label:        "secret permission hygiene",
@@ -97,8 +97,8 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/metadatautil/operator_contract.go",
-		original:     `if isPublicWorkflowTier(workflow.Support) && len(workflow.Evidence) == 0 {`,
-		replacement:  `if false && isPublicWorkflowTier(workflow.Support) && len(workflow.Evidence) == 0 {`,
+		original:     `if len(workflow.Evidence) == 0 {`,
+		replacement:  `if false && len(workflow.Evidence) == 0 {`,
 		label:        "workflow evidence requirement",
 		command:      goCmd("test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"),
 	},
