@@ -8,6 +8,19 @@ Releases.
 
 ## Unreleased
 
+## v0.11.1 - 2026-06-15
+
+Supersedes v0.11.0, which was tagged but never published: its release-preflight
+aborted on the pin-freshness gate because the latest reviewed track had moved on.
+This patch refreshes those pins and re-cuts the release; it carries the full
+v0.11.0 content below plus the refresh.
+
+### Changed
+
+- bump Claude Code to `2.1.177` (from the v0.11.0 `2.1.175` pin) and refresh the
+  rust runtime toolchain image to the current reviewed `rust:1.96.0-slim-trixie`
+  digest, so the release matches the latest reviewed upstream track.
+
 ## v0.11.0 - 2026-06-15
 
 ### Added
