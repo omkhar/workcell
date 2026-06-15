@@ -45,8 +45,10 @@ Releases.
 ### Documentation
 
 - document the exec guard's process-linkage model and noexec hardening, record
-  the Gemini enterprise-license-only auth posture, make the quickstart verify
-  release assets, and correct CI trigger wording.
+  the reviewed auth-input-scoped Gemini posture (Code Assist Standard/Enterprise
+  licenses and paid API keys; upstream retires only the personal-account OAuth
+  login), make the quickstart verify release assets, and correct CI trigger
+  wording.
 
 ## v0.10.7 - 2026-05-29
 
