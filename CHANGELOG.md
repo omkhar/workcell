@@ -8,6 +8,22 @@ Releases.
 
 ## Unreleased
 
+## v0.11.2 - 2026-06-15
+
+Supersedes v0.11.1, which was tagged but never published: its release-preflight
+mutation gate failed because the mutation-test harness anchors still pointed at
+pre-split source locations. This patch repoints them and carries the full
+v0.11.0/v0.11.1 content below.
+
+### Fixed
+
+- repoint the `internal/mutation` harness source anchors to the current
+  injection/metadatautil layout: `validateAllowedKeys`, `targetIsReserved`,
+  and the secret-permission check moved into `render_credentials.go`,
+  `render_documents_copies.go`, and `render_validation.go` during the injection
+  package split, and the operator-contract evidence check was hoisted — so the
+  release-preflight mutation gate matches the shipped source again.
+
 ## v0.11.1 - 2026-06-15
 
 Supersedes v0.11.0, which was tagged but never published: its release-preflight
