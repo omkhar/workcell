@@ -115,6 +115,30 @@ func rewriteFile(tb testing.TB, path string, rewrite func(string) string) {
 	}
 }
 
+func rewritePinnedInputsFixtureFile(tb testing.TB, relativePath string, rewrite func(string) string) metadatautil.PinnedInputsConfig {
+	tb.Helper()
+	cfg := writePinnedInputsFixture(tb)
+	fixtureRoot := filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", "..")
+	rewriteFile(tb, filepath.Join(fixtureRoot, filepath.FromSlash(relativePath)), rewrite)
+	return cfg
+}
+
+func rewriteInstallDevToolsFixture(tb testing.TB, rewrite func(string) string) metadatautil.PinnedInputsConfig {
+	tb.Helper()
+	return rewritePinnedInputsFixtureFile(tb, "scripts/install-dev-tools.sh", rewrite)
+}
+
+func requirePinnedInputsErrorContains(tb testing.TB, cfg metadatautil.PinnedInputsConfig, want string) {
+	tb.Helper()
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		tb.Fatalf("metadatautil.CheckPinnedInputs() unexpectedly accepted fixture; want error containing %q", want)
+	}
+	if !strings.Contains(err.Error(), want) {
+		tb.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want %q", err, want)
+	}
+}
+
 func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, directCollaborators []map[string]any) (string, string) {
 	tb.Helper()
 
@@ -510,197 +534,115 @@ func TestCheckPinnedInputsRejectsInvalidValidatorToolDigests(t *testing.T) {
 func TestCheckPinnedInputsRejectsMarkdownlintPinDrift(t *testing.T) {
 	t.Parallel()
 
-	cfg := writePinnedInputsFixture(t)
-	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	packageJSONPath := filepath.Join(fixtureRoot, "tools", "markdownlint", "package.json")
-	rewriteFile(t, packageJSONPath, func(content string) string {
-		return strings.Replace(content, `"markdownlint-cli": "0.49.0"`, `"markdownlint-cli": "0.48.0"`, 1)
-	})
+	for _, tc := range []struct {
+		name         string
+		relativePath string
+		old          string
+		new          string
+		want         string
+	}{
+		{
+			name:         "package-json",
+			relativePath: "tools/markdownlint/package.json",
+			old:          `"markdownlint-cli": "0.49.0"`,
+			new:          `"markdownlint-cli": "0.48.0"`,
+			want:         "markdownlint-cli version must match",
+		},
+		{
+			name:         "package-lock-dependency",
+			relativePath: "tools/markdownlint/package-lock.json",
+			old:          `"markdownlint-cli": "0.49.0"`,
+			new:          `"markdownlint-cli": "0.48.0"`,
+			want:         "markdownlint-cli version must match",
+		},
+		{
+			name:         "package-lock-entry",
+			relativePath: "tools/markdownlint/package-lock.json",
+			old: `"node_modules/markdownlint-cli": {
+      "version": "0.49.0"`,
+			new: `"node_modules/markdownlint-cli": {
+      "version": "0.48.0"`,
+			want: "locked markdownlint-cli package version",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted drifted markdownlint-cli pins")
-	}
-	if !strings.Contains(err.Error(), "markdownlint-cli version must match") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint pin drift rejection", err)
-	}
-}
-
-func TestCheckPinnedInputsRejectsMarkdownlintLockDrift(t *testing.T) {
-	t.Parallel()
-
-	cfg := writePinnedInputsFixture(t)
-	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	packageLockPath := filepath.Join(fixtureRoot, "tools", "markdownlint", "package-lock.json")
-	rewriteFile(t, packageLockPath, func(content string) string {
-		return strings.Replace(content, `"markdownlint-cli": "0.49.0"`, `"markdownlint-cli": "0.48.0"`, 1)
-	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted drifted markdownlint-cli lockfile pins")
-	}
-	if !strings.Contains(err.Error(), "markdownlint-cli version must match") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint lock drift rejection", err)
-	}
-}
-
-func TestCheckPinnedInputsRejectsMarkdownlintLockedPackageDrift(t *testing.T) {
-	t.Parallel()
-
-	cfg := writePinnedInputsFixture(t)
-	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	packageLockPath := filepath.Join(fixtureRoot, "tools", "markdownlint", "package-lock.json")
-	rewriteFile(t, packageLockPath, func(content string) string {
-		return strings.Replace(content, `"node_modules/markdownlint-cli": {
-      "version": "0.49.0"`, `"node_modules/markdownlint-cli": {
-      "version": "0.48.0"`, 1)
-	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted drifted markdownlint-cli package lock")
-	}
-	if !strings.Contains(err.Error(), "locked markdownlint-cli package version") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint locked package drift rejection", err)
+			cfg := rewritePinnedInputsFixtureFile(t, tc.relativePath, func(content string) string {
+				return strings.Replace(content, tc.old, tc.new, 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, tc.want)
+		})
 	}
 }
 
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerNodeFloorDrift(t *testing.T) {
 	t.Parallel()
 
-	cfg := writePinnedInputsFixture(t)
-	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
-	rewriteFile(t, installerPath, func(content string) string {
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
 		return strings.Replace(content, `readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="22.12.0"`, `readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="22.0.0"`, 1)
 	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a stale markdownlint Node.js floor")
-	}
-	if !strings.Contains(err.Error(), "MARKDOWNLINT_NODE_VERSION_MINIMUM") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint Node floor rejection", err)
-	}
+	requirePinnedInputsErrorContains(t, cfg, "MARKDOWNLINT_NODE_VERSION_MINIMUM")
 }
 
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeCheck(t *testing.T) {
 	t.Parallel()
 
-	cfg := writePinnedInputsFixture(t)
-	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
-	rewriteFile(t, installerPath, func(content string) string {
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
 		return strings.Replace(content, "if markdownlint_needs_install; then\n  require_markdownlint_node\n  require_markdownlint_npm\n  echo", "if markdownlint_needs_install; then\n  echo", 1)
 	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted markdownlint install without a Node.js floor check")
-	}
-	if !strings.Contains(err.Error(), "immediately before installing markdownlint-cli") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint installer Node check rejection", err)
-	}
+	requirePinnedInputsErrorContains(t, cfg, "immediately before installing markdownlint-cli")
 }
 
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNPMInstall(t *testing.T) {
 	t.Parallel()
 
-	cfg := writePinnedInputsFixture(t)
-	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
-	rewriteFile(t, installerPath, func(content string) string {
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
 		return strings.Replace(content, "  npm install -g \"markdownlint-cli@${MARKDOWNLINT_VERSION}\"\n", "", 1)
 	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted markdownlint install block without npm install")
-	}
-	if !strings.Contains(err.Error(), "immediately before installing markdownlint-cli") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint npm install rejection", err)
-	}
+	requirePinnedInputsErrorContains(t, cfg, "immediately before installing markdownlint-cli")
 }
 
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingLinuxEarlyNodeCheck(t *testing.T) {
 	t.Parallel()
 
-	cfg := writePinnedInputsFixture(t)
-	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
-	rewriteFile(t, installerPath, func(content string) string {
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
 		return strings.Replace(content, "if [[ \"${host_os}\" == \"Linux\" ]] && markdownlint_needs_install; then\n  require_markdownlint_node\n  require_markdownlint_npm\nfi\n\n", "", 1)
 	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted Linux markdownlint install without an early Node.js/npm check")
-	}
-	if !strings.Contains(err.Error(), "before apt installs") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want Linux markdownlint early Node check rejection", err)
-	}
+	requirePinnedInputsErrorContains(t, cfg, "before apt installs")
 }
 
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerAptNodeBootstrap(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name    string
-		rewrite func(string) string
+		name string
+		old  string
+		new  string
 	}{
 		{
 			name: "reordered-append",
-			rewrite: func(content string) string {
-				return strings.Replace(content, "    Linux) ;;", "    Linux)\n      append_unique_apt npm nodejs\n      ;;", 1)
-			},
-		},
-		{
-			name: "separate-append",
-			rewrite: func(content string) string {
-				return strings.Replace(content, "    Linux) ;;", "    Linux)\n      append_unique_apt nodejs\n      append_unique_apt npm\n      ;;", 1)
-			},
-		},
-		{
-			name: "direct-array-append",
-			rewrite: func(content string) string {
-				return strings.Replace(content, "    Linux) ;;", "    Linux)\n      apt_missing+=(nodejs npm)\n      ;;", 1)
-			},
-		},
-		{
-			name: "direct-apt-install",
-			rewrite: func(content string) string {
-				return strings.Replace(content, `sudo apt-get update -qq && sudo apt-get install -y "${apt_missing[@]}"`, `sudo apt-get update -qq && sudo apt-get install -y nodejs npm "${apt_missing[@]}"`, 1)
-			},
+			old:  "    Linux) ;;",
+			new:  "    Linux)\n      append_unique_apt npm nodejs\n      ;;",
 		},
 		{
 			name: "direct-multiline-apt-install",
-			rewrite: func(content string) string {
-				return strings.Replace(content, `sudo apt-get update -qq && sudo apt-get install -y "${apt_missing[@]}"`, "sudo apt-get update -qq && sudo apt-get install -y \\\n        nodejs=18.19.1 \\\n        npm/stable \\\n        \"${apt_missing[@]}\"", 1)
-			},
+			old:  `sudo apt-get update -qq && sudo apt-get install -y "${apt_missing[@]}"`,
+			new:  "sudo apt-get update -qq && sudo apt-get install -y \\\n        nodejs=18.19.1 \\\n        npm/stable \\\n        \"${apt_missing[@]}\"",
 		},
 		{
 			name: "qualified-apt-specs",
-			rewrite: func(content string) string {
-				return strings.Replace(content, "    Linux) ;;", "    Linux)\n      apt_missing+=(nodejs=18.19.1 npm/stable)\n      append_unique_apt nodejs:amd64\n      ;;", 1)
-			},
+			old:  "    Linux) ;;",
+			new:  "    Linux)\n      apt_missing+=(nodejs=18.19.1 npm/stable)\n      append_unique_apt nodejs:amd64\n      ;;",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := writePinnedInputsFixture(t)
-			fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-			installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
-			rewriteFile(t, installerPath, tc.rewrite)
-
-			err := metadatautil.CheckPinnedInputs(cfg)
-			if err == nil {
-				t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted Linux apt nodejs/npm bootstrap for markdownlint")
-			}
-			if !strings.Contains(err.Error(), "must not add") {
-				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want Linux apt node bootstrap rejection", err)
-			}
+			cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+				return strings.Replace(content, tc.old, tc.new, 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "must not add")
 		})
 	}
 }
@@ -708,20 +650,10 @@ func TestCheckPinnedInputsRejectsMarkdownlintInstallerAptNodeBootstrap(t *testin
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeInstructions(t *testing.T) {
 	t.Parallel()
 
-	cfg := writePinnedInputsFixture(t)
-	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
-	rewriteFile(t, installerPath, func(content string) string {
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
 		return strings.Replace(content, "Ubuntu 24.04's nodejs/npm apt packages are too old for this markdownlint release.", "Ubuntu apt packages are fine.", 1)
 	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted markdownlint install without Node.js upgrade instructions")
-	}
-	if !strings.Contains(err.Error(), "manual Node.js upgrade instructions") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint Node instruction rejection", err)
-	}
+	requirePinnedInputsErrorContains(t, cfg, "manual Node.js upgrade instructions")
 }
 
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeHintCall(t *testing.T) {
@@ -743,20 +675,10 @@ func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeHintCall(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := writePinnedInputsFixture(t)
-			fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-			installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
-			rewriteFile(t, installerPath, func(content string) string {
+			cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
 				return strings.Replace(content, tc.old, strings.Replace(tc.old, "\n    markdownlint_node_install_hint", "", 1), 1)
 			})
-
-			err := metadatautil.CheckPinnedInputs(cfg)
-			if err == nil {
-				t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted markdownlint Node failure without hint call")
-			}
-			if !strings.Contains(err.Error(), "every markdownlint-cli Node.js floor failure path") {
-				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint Node hint call rejection", err)
-			}
+			requirePinnedInputsErrorContains(t, cfg, "every markdownlint-cli Node.js floor failure path")
 		})
 	}
 }
@@ -764,20 +686,10 @@ func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeHintCall(t *tes
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNPMHintCall(t *testing.T) {
 	t.Parallel()
 
-	cfg := writePinnedInputsFixture(t)
-	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
-	rewriteFile(t, installerPath, func(content string) string {
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
 		return strings.Replace(content, "requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer installation.\" >&2\n  markdownlint_node_install_hint\n  exit 1", "requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer installation.\" >&2\n  exit 1", 1)
 	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted markdownlint npm failure without hint call")
-	}
-	if !strings.Contains(err.Error(), "markdownlint-cli npm failure path") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint npm hint call rejection", err)
-	}
+	requirePinnedInputsErrorContains(t, cfg, "markdownlint-cli npm failure path")
 }
 
 func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
