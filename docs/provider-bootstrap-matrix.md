@@ -63,6 +63,19 @@ Workcell-staged `COPILOT_GITHUB_TOKEN` path. The row also needs live provider
 certification proving a non-destructive `copilot -p` launch with staged
 credentials.
 
+## Planned Antigravity CLI Bootstrap Track
+
+Google Antigravity CLI is a planned fail-closed provider track, but it has no
+supported bootstrap row yet. Before it can join the current matrix, Workcell
+must pin the official install and auth model, add explicit staged Google auth
+material, and prevent host Google account state, browser profiles, keychains,
+host homes, and provider caches from becoming implicit inputs.
+
+The Antigravity bootstrap row is supportable only after deterministic
+auth-status, policy, bootstrap-summary, control-plane seeding, and
+unsafe-argument tests exist, plus live provider certification with staged
+credentials inside the managed runtime.
+
 ## Remote Target Bootstrap
 
 Preview remote targets also carry an explicit host-side bootstrap contract.
@@ -92,5 +105,5 @@ The bootstrap summary fields also report the remaining operator handoff:
 - [Quickstart: Gemini](examples/quickstart-gemini.md)
 - [Gemini Vertex AI setup](examples/gemini-vertex-setup.md)
 
-There is no Copilot quickstart until Copilot CLI support lands with matching
-adapter, auth, and certification evidence.
+There is no Copilot or Antigravity quickstart until the matching CLI support
+lands with adapter, auth, and certification evidence.

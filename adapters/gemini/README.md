@@ -18,5 +18,6 @@ Key points:
   sandbox is optional and not the Tier 1 boundary here
 - repo-local `.gemini/` content stays masked on the safe path
 - `gemini_env`, `gemini_oauth`, `gemini_projects`, and `gcloud_adc` cover the
-  supported long-lived auth and project-state paths
+  supported long-lived auth and project-state paths for upstream-served Gemini
+  auth modes; see `docs/provider-matrix.md` for the Gemini retirement caveat
 - `breakglass` restores Gemini's own folder-trust prompt behavior

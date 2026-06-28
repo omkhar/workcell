@@ -17,9 +17,9 @@ guidance, and live certification evidence land together.
 Authoritative provider support status remains in
 [`docs/provider-matrix.md`](docs/provider-matrix.md). Codex, Claude Code, and
 Gemini are the supported Tier 1 provider adapters today. GitHub Copilot CLI is
-the next committed provider-parity track, but it is not a support claim
-until its adapter, auth path, docs, deterministic evidence, and live
-certification land together.
+the next committed provider-parity phase, and Google Antigravity CLI is a
+queued follow-on track. Neither is a support claim until its adapter, auth path,
+docs, deterministic evidence, and live certification land together.
 
 The active delivery shape lives in
 [`docs/implement-first-delivery-plan.md`](docs/implement-first-delivery-plan.md).
@@ -63,9 +63,10 @@ The deterministic phase breakdown lives in
 - Phases 10 through 12 are now implemented as contract, evidence, and readiness
   gates. They do not add a managed-workstation backend, Linux support, Windows
   support, or any new launch target.
-- GitHub Copilot CLI is planned as the next Tier 1 provider adapter. Current
-  releases do not support `--agent copilot`, Copilot credential keys, or a
-  Copilot quickstart.
+- GitHub Copilot CLI is planned as the next provider adapter, and Google
+  Antigravity CLI is queued as the follow-on track. Current releases do not
+  support `--agent copilot`, `--agent antigravity`, their credential keys, or
+  matching quickstarts.
 - Upstream retires Gemini CLI for the free, Pro, and Ultra personal-account
   login tiers on June 18, 2026 in favor of the closed-source Antigravity
   CLI; Gemini Code Assist Standard/Enterprise licenses and paid Gemini API

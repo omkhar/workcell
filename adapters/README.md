@@ -11,6 +11,7 @@ Current adapters:
 
 Planned fail-closed scaffolds:
 
+- `antigravity/`
 - `copilot/`
 
 Adapter rules:

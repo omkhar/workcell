@@ -46,17 +46,17 @@ more explicit end-to-end scenarios, especially:
 - more end-to-end coverage for Vertex plus `gcloud_adc`
 - more coverage for `breakglass` folder-trust restoration
 
-### Copilot
+### Planned provider adapters
 
-- provider adapter, auth, bootstrap, unsafe-argument, and control-plane seeding
-  coverage after implementation starts
-- live `copilot -p` certification with staged credentials before any support
-  claim
+- Copilot and Antigravity adapter, auth, bootstrap, unsafe-argument, and
+  control-plane seeding coverage after implementation starts
+- live staged-credential certification before any support claim
 
 ## Why these gaps remain acceptable for now
 
 The core repo-required path is covered by invariants, smoke tests, deterministic
 repo validation, reproducibility checks, and tagged release preflight. The open
 gaps are mostly at the edges: live-provider auth, local macOS proof, and
-explicit lower-assurance transitions. Copilot is different: it is a planned
-provider-parity track and remains unsupported until the adapter evidence lands.
+explicit lower-assurance transitions. Copilot and Antigravity are different:
+they are planned provider-parity tracks and remain unsupported until their
+adapter evidence lands.

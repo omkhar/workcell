@@ -4143,11 +4143,15 @@ fi
 grep -q "Option --agent is required." /tmp/workcell-missing-agent.out
 grep -q '^Usage: workcell' /tmp/workcell-missing-agent.out
 
-if "${ROOT_DIR}/scripts/workcell" --agent copilot --dry-run >/tmp/workcell-copilot-fail-closed.out 2>&1; then
-  echo "Expected planned Copilot adapter to fail closed until runtime support and certification land" >&2
-  exit 1
-fi
-grep -q "GitHub Copilot CLI is a planned Workcell Tier 1 adapter, but it is not supported yet." /tmp/workcell-copilot-fail-closed.out
+for planned_agent in antigravity copilot; do
+  if "${ROOT_DIR}/scripts/workcell" --agent "${planned_agent}" --dry-run >"/tmp/workcell-${planned_agent}-fail-closed.out" 2>&1; then
+    echo "Expected planned ${planned_agent} adapter to fail closed until runtime support and certification land" >&2
+    exit 1
+  fi
+done
+grep -q "Google Antigravity CLI is a planned Workcell provider adapter, but it is not supported yet." /tmp/workcell-antigravity-fail-closed.out
+grep -q "No Antigravity runtime, auth handoff, or live certification evidence is shipped in this build." /tmp/workcell-antigravity-fail-closed.out
+grep -q "GitHub Copilot CLI is a planned Workcell provider adapter, but it is not supported yet." /tmp/workcell-copilot-fail-closed.out
 grep -q "No Copilot runtime, auth handoff, or live certification evidence is shipped in this build." /tmp/workcell-copilot-fail-closed.out
 
 STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"

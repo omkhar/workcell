@@ -36,6 +36,7 @@ provider; sequencing is tracked in [ROADMAP.md](../ROADMAP.md).
 | Provider | Planned Tier 1 surface | Planned managed control plane | Planned auth input | Support status |
 |---|---|---|---|---|
 | GitHub Copilot CLI | `workcell --agent copilot --workspace ...` | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, `~/.copilot` config, permissions, sessions, logs, plugins, hooks, MCP/LSP state, and reviewed instruction imports | explicit staged token such as `copilot_github_token`, exported only to the managed child as `COPILOT_GITHUB_TOKEN` | fail-closed scaffold; not current support |
+| Google Antigravity CLI | `workcell --agent antigravity --workspace ...` | session-local provider home/cache, settings, permissions, subagents, plugins, MCP, sandbox state, hooks, and reviewed instruction imports once official CLI provenance is pinned | explicit staged Google auth material, exact key names still pending official install/auth implementation | fail-closed scaffold; not current support |
 
 The current sequencing plan for the Copilot parity track is
 [docs/copilot-linux-local-compat-plan.md](copilot-linux-local-compat-plan.md).
@@ -54,6 +55,11 @@ permissive tool flags such as `--allow-all` and `--yolo`. Workcell treats
 those product surfaces as implementation inputs that must be mapped or blocked
 before support is claimed.
 
+Antigravity support must first pin an official install and auth path from
+Google, then land the same adapter, auth/bootstrap, unsafe-argument,
+control-plane masking, quickstart, scenario, and live-certification evidence
+before any Tier 1 support claim.
+
 For provider auth maturity and rollout caveats, see
 [docs/injection-policy.md](injection-policy.md) and
 [docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md).
@@ -65,10 +71,10 @@ For provider auth maturity and rollout caveats, see
 - Tier 3: host-native GUI, cloud, or web-only guidance with no claim of
   equivalent local isolation
 
-Copilot cloud agent, IDE extensions, and host-native Copilot CLI execution are
-Tier 3 unless a future integration makes them clients of the same bounded
-Workcell session plane. The planned support target is the local Copilot CLI
-adapter running inside Tier 1.
+Copilot cloud agent, Copilot IDE extensions, Antigravity desktop or IDE
+surfaces, and host-native provider CLI execution are Tier 3 unless a future
+integration makes them clients of the same bounded Workcell session plane. The
+planned support target is each local provider CLI adapter running inside Tier 1.
 
 Do not force one provider's control model onto another. Keep one shared
 boundary and one thin adapter per product.
