@@ -238,13 +238,16 @@ func TestInstallDevToolsBootstrapsCommonHostPrereqs(t *testing.T) {
 	for _, want := range []string{
 		`command -v npm`,
 		`append_unique_brew node`,
-		`append_unique_apt nodejs npm`,
+		`if [[ "${host_os}" == "Linux" ]] && markdownlint_needs_install; then`,
+		`require_markdownlint_node`,
+		`require_markdownlint_npm`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
 		}
 	}
 	for _, unwanted := range []string{
+		"append_unique_apt nodejs npm",
 		"python3 -m venv",
 		"python3-venv",
 		"pytest",

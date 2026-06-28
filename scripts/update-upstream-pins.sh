@@ -209,7 +209,27 @@ extract_yaml_scalar() {
 extract_workflow_env_value() {
   local file="$1"
   local key="$2"
-  awk -v key="${key}:" '$1 == key { print $2; exit }' "${file}"
+  awk -v key="${key}:" '
+    $1 == key {
+      if (count == 0) {
+        value = $2
+      } else if ($2 != value) {
+        printf "%s must use one reviewed value in %s; found both %s and %s\n", key, FILENAME, value, $2 > "/dev/stderr"
+        failed = 1
+        exit 4
+      }
+      count++
+    }
+    END {
+      if (failed) {
+        exit 4
+      }
+      if (count == 0) {
+        exit 3
+      }
+      print value
+    }
+  ' "${file}"
 }
 
 replace_line_with_prefix() {
@@ -234,6 +254,33 @@ replace_line_with_prefix() {
   ' "${file}" >"${tmp}"; then
     rm -f "${tmp}"
     echo "Unable to replace ${prefix} in ${file}" >&2
+    exit 1
+  fi
+  mv "${tmp}" "${file}"
+}
+
+replace_all_lines_with_prefix() {
+  local file="$1"
+  local prefix="$2"
+  local newline="$3"
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/workcell-upstream-refresh.XXXXXX")"
+  if ! awk -v prefix="${prefix}" -v newline="${newline}" '
+    BEGIN { replaced = 0 }
+    index($0, prefix) == 1 {
+      print newline
+      replaced++
+      next
+    }
+    { print }
+    END {
+      if (replaced == 0) {
+        exit 3
+      }
+    }
+  ' "${file}" >"${tmp}"; then
+    rm -f "${tmp}"
+    echo "Failed to update ${prefix} in ${file}" >&2
     exit 1
   fi
   mv "${tmp}" "${file}"
@@ -646,8 +693,8 @@ replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '          ZIZMOR_VERSION:' 
 
 replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ACTIONLINT_SHA256:' "          ACTIONLINT_SHA256: ${target_actionlint_sha}"
 replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ACTIONLINT_VERSION:' "          ACTIONLINT_VERSION: ${target_actionlint_version}"
-replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_SHA256:' "          ZIZMOR_SHA256: ${target_zizmor_sha}"
-replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_VERSION:' "          ZIZMOR_VERSION: ${target_zizmor_version}"
+replace_all_lines_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_SHA256:' "          ZIZMOR_SHA256: ${target_zizmor_sha}"
+replace_all_lines_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_VERSION:' "          ZIZMOR_VERSION: ${target_zizmor_version}"
 
 "${ROOT_DIR}/scripts/update-provider-pins.sh" --apply
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"

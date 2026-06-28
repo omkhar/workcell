@@ -76,7 +76,10 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"runtime/container/rust/Cargo.toml",
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/ci/build-validator-image.sh",
+		"scripts/install-dev-tools.sh",
 		"scripts/verify-github-hosted-controls.sh",
+		"tools/markdownlint/package.json",
+		"tools/markdownlint/package-lock.json",
 		"tools/validator/Dockerfile",
 	} {
 		copyFixtureFile(tb, srcRoot, dstRoot, relativePath)
@@ -109,6 +112,30 @@ func rewriteFile(tb testing.TB, path string, rewrite func(string) string) {
 	}
 	if err := os.WriteFile(path, []byte(rewrite(string(content))), 0o644); err != nil {
 		tb.Fatal(err)
+	}
+}
+
+func rewritePinnedInputsFixtureFile(tb testing.TB, relativePath string, rewrite func(string) string) metadatautil.PinnedInputsConfig {
+	tb.Helper()
+	cfg := writePinnedInputsFixture(tb)
+	fixtureRoot := filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", "..")
+	rewriteFile(tb, filepath.Join(fixtureRoot, filepath.FromSlash(relativePath)), rewrite)
+	return cfg
+}
+
+func rewriteInstallDevToolsFixture(tb testing.TB, rewrite func(string) string) metadatautil.PinnedInputsConfig {
+	tb.Helper()
+	return rewritePinnedInputsFixtureFile(tb, "scripts/install-dev-tools.sh", rewrite)
+}
+
+func requirePinnedInputsErrorContains(tb testing.TB, cfg metadatautil.PinnedInputsConfig, want string) {
+	tb.Helper()
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		tb.Fatalf("metadatautil.CheckPinnedInputs() unexpectedly accepted fixture; want error containing %q", want)
+	}
+	if !strings.Contains(err.Error(), want) {
+		tb.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want %q", err, want)
 	}
 }
 
@@ -504,6 +531,167 @@ func TestCheckPinnedInputsRejectsInvalidValidatorToolDigests(t *testing.T) {
 	}
 }
 
+func TestCheckPinnedInputsRejectsMarkdownlintPinDrift(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name         string
+		relativePath string
+		old          string
+		new          string
+		want         string
+	}{
+		{
+			name:         "package-json",
+			relativePath: "tools/markdownlint/package.json",
+			old:          `"markdownlint-cli": "0.49.0"`,
+			new:          `"markdownlint-cli": "0.48.0"`,
+			want:         "markdownlint-cli version must match",
+		},
+		{
+			name:         "package-lock-dependency",
+			relativePath: "tools/markdownlint/package-lock.json",
+			old:          `"markdownlint-cli": "0.49.0"`,
+			new:          `"markdownlint-cli": "0.48.0"`,
+			want:         "markdownlint-cli version must match",
+		},
+		{
+			name:         "package-lock-entry",
+			relativePath: "tools/markdownlint/package-lock.json",
+			old: `"node_modules/markdownlint-cli": {
+      "version": "0.49.0"`,
+			new: `"node_modules/markdownlint-cli": {
+      "version": "0.48.0"`,
+			want: "locked markdownlint-cli package version",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := rewritePinnedInputsFixtureFile(t, tc.relativePath, func(content string) string {
+				return strings.Replace(content, tc.old, tc.new, 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, tc.want)
+		})
+	}
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerNodeFloorDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, `readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="22.12.0"`, `readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="22.0.0"`, 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "MARKDOWNLINT_NODE_VERSION_MINIMUM")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeCheck(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, "if markdownlint_needs_install; then\n  require_markdownlint_node\n  require_markdownlint_npm\n  echo", "if markdownlint_needs_install; then\n  echo", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "immediately before installing markdownlint-cli")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNPMInstall(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, "  npm install -g \"markdownlint-cli@${MARKDOWNLINT_VERSION}\"\n", "", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "immediately before installing markdownlint-cli")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingLinuxEarlyNodeCheck(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, "if [[ \"${host_os}\" == \"Linux\" ]] && markdownlint_needs_install; then\n  require_markdownlint_node\n  require_markdownlint_npm\nfi\n\n", "", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "before apt installs")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerAptNodeBootstrap(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{
+			name: "reordered-append",
+			old:  "    Linux) ;;",
+			new:  "    Linux)\n      append_unique_apt npm nodejs\n      ;;",
+		},
+		{
+			name: "direct-multiline-apt-install",
+			old:  `sudo apt-get update -qq && sudo apt-get install -y "${apt_missing[@]}"`,
+			new:  "sudo apt-get update -qq && sudo apt-get install -y \\\n        nodejs=18.19.1 \\\n        npm/stable \\\n        \"${apt_missing[@]}\"",
+		},
+		{
+			name: "qualified-apt-specs",
+			old:  "    Linux) ;;",
+			new:  "    Linux)\n      apt_missing+=(nodejs=18.19.1 npm/stable)\n      append_unique_apt nodejs:amd64\n      ;;",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+				return strings.Replace(content, tc.old, tc.new, 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "must not add")
+		})
+	}
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeInstructions(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, "Ubuntu 24.04's nodejs/npm apt packages are too old for this markdownlint release.", "Ubuntu apt packages are fine.", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "manual Node.js upgrade instructions")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeHintCall(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		old  string
+	}{
+		{
+			name: "missing-node",
+			old:  "no usable node binary was found.\" >&2\n    markdownlint_node_install_hint\n    exit 1",
+		},
+		{
+			name: "too-old-node",
+			old:  "found ${version}.\" >&2\n    markdownlint_node_install_hint\n    exit 1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+				return strings.Replace(content, tc.old, strings.Replace(tc.old, "\n    markdownlint_node_install_hint", "", 1), 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "every markdownlint-cli Node.js floor failure path")
+		})
+	}
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNPMHintCall(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, "requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer installation.\" >&2\n  markdownlint_node_install_hint\n  exit 1", "requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer installation.\" >&2\n  exit 1", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "markdownlint-cli npm failure path")
+}
+
 func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
 	t.Parallel()
 
@@ -519,6 +707,24 @@ func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "security zizmor sha") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want zizmor digest rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsUnboundedWorkflowDownloadSize(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
+	rewriteFile(t, securityWorkflowPath, func(content string) string {
+		return strings.Replace(content, "            --max-filesize 209715200 \\\n", "", 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted an unbounded workflow download")
+	}
+	if !strings.Contains(err.Error(), "must bound actionlint downloads") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want download size cap rejection", err)
 	}
 }
 

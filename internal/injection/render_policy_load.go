@@ -58,7 +58,9 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 	if err != nil {
 		return nil, nil, err
 	}
-	validateAllowedKeys(loaded, allowedRootPolicyKeys, "root policy")
+	if err := validateAllowedKeys(loaded, allowedRootPolicyKeys, "root policy"); err != nil {
+		return nil, nil, err
+	}
 	version := 1
 	if rawVersion, ok := loaded["version"]; ok {
 		if v, ok := rawVersion.(int); ok {

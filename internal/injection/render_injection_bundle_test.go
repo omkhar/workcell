@@ -238,6 +238,25 @@ func TestLoadPolicyBundleMergesIncludesRebasesAndRejectsBadIncludes(t *testing.T
 	}
 }
 
+func TestLoadPolicyBundleRejectsUnsupportedRootKey(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	writeText(t, policyPath, strings.Join([]string{
+		"version = 1",
+		`unsupported = "ignored-before-fix"`,
+	}, "\n"), 0o600)
+
+	_, _, err := loadPolicyBundle(Path(policyPath))
+	if err == nil {
+		t.Fatal("loadPolicyBundle unexpectedly accepted an unsupported root policy key")
+	}
+	if !strings.Contains(err.Error(), "root policy") || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("loadPolicyBundle error = %v, want unsupported root key rejection", err)
+	}
+}
+
 func compositePolicySHA256(policySources []PolicySource) string {
 	data, _ := json.Marshal(policySources)
 	sum := sha256.Sum256(data)

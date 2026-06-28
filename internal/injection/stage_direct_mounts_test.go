@@ -5,9 +5,11 @@ package injection
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/omkhar/workcell/internal/host/hoststate"
@@ -270,6 +272,76 @@ func TestStageDirectMountsSkipsSymlinkToDir(t *testing.T) {
 	}
 }
 
+func TestStageDirectMountsSkipsFIFOUnderDirectory(t *testing.T) {
+	bundleRoot := t.TempDir()
+	sourceDir := filepath.Join(bundleRoot, "src-dir")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	realFile := filepath.Join(sourceDir, "real.txt")
+	if err := os.WriteFile(realFile, []byte("real"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	fifoPath := filepath.Join(sourceDir, "pipe")
+	if err := syscall.Mkfifo(fifoPath, 0o600); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	mountPath := "/opt/workcell/host-inputs/configs"
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{
+		{"source": sourceDir, "mount_path": mountPath},
+	})
+
+	if _, err := StageDirectMounts(bundleRoot, specPath); err != nil {
+		t.Fatalf("StageDirectMounts: %v", err)
+	}
+	hash := hoststate.DirectMountCacheKey(sourceDir, mountPath)
+	stagedRoot := filepath.Join(bundleRoot, "direct-mounts", hash)
+	stagedReal := filepath.Join(stagedRoot, "real.txt")
+	if data, err := os.ReadFile(stagedReal); err != nil || string(data) != "real" {
+		t.Fatalf("expected real.txt staged with content 'real', got data=%q err=%v", string(data), err)
+	}
+	if _, err := os.Lstat(filepath.Join(stagedRoot, "pipe")); err == nil {
+		t.Fatal("FIFO should have been skipped, but staged entry exists")
+	}
+}
+
+func TestStageDirectMountsSkipsSocketUnderDirectory(t *testing.T) {
+	bundleRoot := t.TempDir()
+	sourceDir := filepath.Join(bundleRoot, "src-dir")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	realFile := filepath.Join(sourceDir, "real.txt")
+	if err := os.WriteFile(realFile, []byte("real"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	socketPath := filepath.Join(sourceDir, "sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("unix socket unavailable: %v", err)
+	}
+	defer listener.Close()
+	mountPath := "/opt/workcell/host-inputs/configs"
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{
+		{"source": sourceDir, "mount_path": mountPath},
+	})
+
+	if _, err := StageDirectMounts(bundleRoot, specPath); err != nil {
+		t.Fatalf("StageDirectMounts: %v", err)
+	}
+	hash := hoststate.DirectMountCacheKey(sourceDir, mountPath)
+	stagedRoot := filepath.Join(bundleRoot, "direct-mounts", hash)
+	stagedReal := filepath.Join(stagedRoot, "real.txt")
+	if data, err := os.ReadFile(stagedReal); err != nil || string(data) != "real" {
+		t.Fatalf("expected real.txt staged with content 'real', got data=%q err=%v", string(data), err)
+	}
+	if _, err := os.Lstat(filepath.Join(stagedRoot, "sock")); err == nil {
+		t.Fatal("socket should have been skipped, but staged entry exists")
+	}
+}
+
 func TestStageDirectMountsStripsGroupOtherPermissions(t *testing.T) {
 	bundleRoot := t.TempDir()
 	sourceFile := filepath.Join(bundleRoot, "src.txt")
@@ -452,5 +524,74 @@ func TestStageDirectMountsRejectsSymlinkedSource(t *testing.T) {
 	_, err := StageDirectMounts(bundleRoot, specPath)
 	if err == nil || !strings.Contains(err.Error(), "must not be a symbolic link") {
 		t.Fatalf("expected symlink-rejection error, got %v", err)
+	}
+}
+
+func TestCopyFileWithModeRejectsSymlinkSource(t *testing.T) {
+	root := t.TempDir()
+	realFile := filepath.Join(root, "real.txt")
+	if err := os.WriteFile(realFile, []byte("real-content"), 0o600); err != nil {
+		t.Fatalf("WriteFile real: %v", err)
+	}
+	linkSource := filepath.Join(root, "link.txt")
+	if err := os.Symlink(realFile, linkSource); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	staged := filepath.Join(root, "staged.txt")
+
+	err := copyFileWithMode(linkSource, staged, 0o600)
+	if err == nil || !strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("expected symlink-rejection error, got %v", err)
+	}
+	if _, statErr := os.Lstat(staged); !os.IsNotExist(statErr) {
+		t.Fatalf("staged symlink copy should not exist, stat err=%v", statErr)
+	}
+}
+
+func TestCopyDirContentsUsesOpenedDirectoryAfterPathSwap(t *testing.T) {
+	root := t.TempDir()
+	sourceParent := filepath.Join(root, "source", "parent")
+	if err := os.MkdirAll(sourceParent, 0o755); err != nil {
+		t.Fatalf("MkdirAll source parent: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceParent, "secret.txt"), []byte("opened-directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile source secret: %v", err)
+	}
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("MkdirAll outside: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("swapped-symlink"), 0o600); err != nil {
+		t.Fatalf("WriteFile outside secret: %v", err)
+	}
+
+	source, _, kind, err := openDirectMountSource(sourceParent)
+	if err != nil {
+		t.Fatalf("openDirectMountSource: %v", err)
+	}
+	defer source.Close()
+	if kind != directMountSourceDir {
+		t.Fatalf("openDirectMountSource kind = %v, want dir", kind)
+	}
+	if err := os.Rename(sourceParent, filepath.Join(root, "source", "parent-original")); err != nil {
+		t.Fatalf("Rename source parent: %v", err)
+	}
+	if err := os.Symlink(outside, sourceParent); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+
+	staged := filepath.Join(root, "staged")
+	if err := os.MkdirAll(staged, 0o755); err != nil {
+		t.Fatalf("MkdirAll staged: %v", err)
+	}
+	if err := copyDirContents(source, sourceParent, staged); err != nil {
+		t.Fatalf("copyDirContents: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(staged, "secret.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile staged secret: %v", err)
+	}
+	if string(data) != "opened-directory" {
+		t.Fatalf("staged content = %q, want opened directory content", string(data))
 	}
 }
