@@ -1113,18 +1113,23 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if _, err := requireUniformWorkflowEnv(securityWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "security zizmor sha", ".github/workflows/security.yml"); err != nil {
+	securityZizmorSHA, err := requireUniformWorkflowEnv(securityWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "security zizmor sha", ".github/workflows/security.yml")
+	if err != nil {
 		return err
 	}
 	releaseZizmorVersion, err := requireUniformWorkflowEnv(releaseWorkflow, "ZIZMOR_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "release zizmor version", ".github/workflows/release.yml")
 	if err != nil {
 		return err
 	}
-	if _, err := requireUniformWorkflowEnv(releaseWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "release zizmor sha", ".github/workflows/release.yml"); err != nil {
+	releaseZizmorSHA, err := requireUniformWorkflowEnv(releaseWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "release zizmor sha", ".github/workflows/release.yml")
+	if err != nil {
 		return err
 	}
 	if securityZizmorVersion != releaseZizmorVersion {
 		return errors.New("ZIZMOR_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
+	}
+	if securityZizmorSHA != releaseZizmorSHA {
+		return errors.New("ZIZMOR_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
 	}
 	for _, workflow := range []struct {
 		text string
