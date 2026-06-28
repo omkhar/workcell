@@ -5,11 +5,20 @@ package providerid
 
 import "testing"
 
-func TestCopilotRemainsPlannedUntilCertified(t *testing.T) {
-	if Copilot != "copilot" {
-		t.Fatalf("Copilot = %q, want copilot", Copilot)
-	}
-	if IsValid(Copilot) {
-		t.Fatal("Copilot must stay out of the supported-provider set until runtime support and certification land")
+func TestPlannedProvidersRemainUnsupportedUntilCertified(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "Antigravity", got: Antigravity, want: "antigravity"},
+		{name: "Copilot", got: Copilot, want: "copilot"},
+	} {
+		if tc.got != tc.want {
+			t.Fatalf("%s = %q, want %q", tc.name, tc.got, tc.want)
+		}
+		if IsValid(tc.got) {
+			t.Fatalf("%s must stay out of the supported-provider set until runtime support and certification land", tc.name)
+		}
 	}
 }

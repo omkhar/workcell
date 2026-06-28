@@ -41,7 +41,7 @@ Use these anchors when checking release-facing claims:
   enterprise evidence, and host expansion:
   `scripts/verify-requirements-coverage.sh`,
   `scripts/verify-operator-contract.sh`
-- Copilot CLI provider-parity roadmap traceability:
+- planned provider-parity roadmap traceability:
   `ROADMAP.md`, `docs/provider-matrix.md`,
   `docs/provider-bootstrap-matrix.md`
 - Claude hook coverage: `claude-swe/hook-parametric`
@@ -114,11 +114,11 @@ Today that certification tier includes:
   `remote_vm/gcp-vm/compat` preview boundary against a reviewed
   IAP-reachable Compute Engine target without an external NAT IP
 
-The planned Copilot CLI adapter must add live provider certification before it
-claims support. That certification should prove a non-destructive `copilot -p`
-run with staged credentials inside the managed runtime and must stay separate
-from repo-required validation unless it can run deterministically without live
-provider credentials.
+The planned Copilot and Antigravity CLI adapters must add live provider
+certification before they claim support. Certification should prove a
+non-destructive provider prompt run with staged credentials inside the managed
+runtime and must stay separate from repo-required validation unless it can run
+deterministically without live provider credentials.
 
 Remote VM live smoke remains certification-only as well, but it is currently a
 provider-e2e preview gate documented in
@@ -153,8 +153,8 @@ when the repo does not add a dedicated new scenario for each page.
 | `docs/provider-bootstrap-matrix.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-codex-resolver-launcher.sh`, `tests/scenarios/shared/test-claude-resolver-launcher.sh` |
 | `docs/examples/enterprise-claude-setup.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
 
-There is no Copilot quickstart row until the Copilot adapter, credential path,
-scenario evidence, and live certification land.
+There is no Copilot or Antigravity quickstart row until the matching adapter,
+credential path, scenario evidence, and live certification land.
 
 ## Manual authenticated smoke
 
@@ -168,8 +168,8 @@ Use it when you need to verify:
 - provider-specific auth selection
 - injected MCP or project-registry behavior
 - provider UX that only shows up with a live account
-- future Copilot CLI behavior that depends on a live staged
-  `COPILOT_GITHUB_TOKEN`
+- future Copilot or Antigravity CLI behavior that depends on live staged
+  provider credentials
 
 ## GitHub CI vs local boundary proof
 

@@ -24,7 +24,7 @@ adapter baseline.
 | Claude | `settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, optional API key helper | the reviewed Bash hook is defense in depth; MCP defaults are empty |
 | Gemini | `settings.json`, rendered `GEMINI.md`, `.env`, `oauth_creds.json`, `projects.json`, `trustedFolders.json` | `breakglass` restores Gemini's own folder-trust prompt; `gcloud_adc` is supplemental to Vertex config in `gemini_env` |
 
-## Planned Copilot CLI control plane
+## Planned provider control planes
 
 GitHub Copilot CLI is planned as the next Tier 1 provider adapter. It is not
 seeded by current releases. Before support is claimed, the Copilot adapter must
@@ -46,6 +46,13 @@ Shared cross-provider state can also seed the current supported adapters:
 That GitHub CLI state must not become a Copilot safe-path auth input unless a
 separate reviewed Copilot path explicitly allows it.
 
+Google Antigravity CLI is also a planned fail-closed adapter. Before support is
+claimed, the Antigravity adapter must pin official CLI provenance, own
+session-local provider home/cache/settings state, and explicitly map or block
+subagents, plugins, MCP, sandbox settings, permissions, hooks, and any shared
+desktop/IDE state. Host Google account caches, browser profiles, keychains,
+host homes, and provider caches must not become implicit Tier 1 inputs.
+
 ## Instruction layering
 
 Provider docs are rendered in this order:
@@ -66,10 +73,11 @@ control plane masked on the safe path.
 | `--agent-autonomy yolo` | `--ask-for-approval never` | `--permission-mode bypassPermissions` | `--approval-mode yolo` |
 | `--agent-autonomy prompt` | `--ask-for-approval on-request` | `--permission-mode default` | `--approval-mode default` |
 
-Copilot autonomy mapping is intentionally absent until the adapter lands. The
-planned implementation must map prompt mode to Copilot's normal approval flow
-and yolo mode only to reviewed tool/path/URL permissions inside the Workcell
-runtime, while blocking user-supplied flags that silently widen trust.
+Copilot and Antigravity autonomy mappings are intentionally absent until their
+adapters land. The planned implementations must map prompt mode to each
+provider's normal approval flow and yolo mode only to reviewed permissions
+inside the Workcell runtime, while blocking user-supplied flags that silently
+widen trust.
 
 Unsafe provider-native attempts to override those managed flags are blocked on
 the managed path.
@@ -114,14 +122,19 @@ Workcell seeds Gemini's trusted-folders state for `/workspace` on the managed
 path so masked ephemeral sessions do not force a restart-based trust prompt.
 `breakglass` restores Gemini's own folder-trust flow.
 
-### Copilot trust and permissions
+### Planned provider trust and permissions
 
 Copilot support must treat permissive CLI options, saved permissions, remote
 control, plugins, hooks, MCP/LSP config, and repository-local Copilot settings
 as managed control-plane inputs. Current releases do not import or trust those
-paths for Copilot because `--agent copilot` is not implemented.
+paths because `--agent copilot` is not implemented.
 
-Future strict-mode support must also scrub Copilot telemetry, OpenTelemetry,
+Antigravity support must do the same once official CLI provenance identifies
+its settings, permission, plugin, MCP, hook, and instruction surfaces. Current
+releases do not import or trust those paths because `--agent antigravity` is
+not implemented.
+
+Future strict-mode support must also scrub provider telemetry, OpenTelemetry,
 and content-capture environment variables by default; any opt-in path must be
 lower assurance, acknowledged, audited, and tested.
 

@@ -17,7 +17,10 @@ On the managed path, Workcell does not pass through:
 Reusable auth enters the session only through explicit injection-policy inputs.
 The planned GitHub Copilot CLI adapter must preserve the same invariant for
 host `~/.copilot`, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, and ambient
-`gh auth token` fallback. Current releases do not support `--agent copilot`.
+`gh auth token` fallback. The planned Google Antigravity CLI adapter must
+preserve it for host Google account caches, browser profiles, keychains, host
+homes, and provider caches. Current releases do not support `--agent copilot`
+or `--agent antigravity`.
 
 ## 2. Writes stay inside the intended workspace
 
@@ -39,7 +42,9 @@ runtime control plane.
 The planned Copilot adapter must explicitly account for Copilot-specific repo
 control-plane files such as `.github/copilot-instructions.md`,
 `.github/instructions/**`, and `.github/copilot/settings*.json` before it can
-claim support.
+claim support. The planned Antigravity adapter must do the same for
+Antigravity-specific settings, plugin, MCP, hook, and instruction files before
+it can claim support.
 
 ## 4. Network posture is explicit
 

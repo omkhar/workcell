@@ -2,8 +2,8 @@
 // Copyright 2026 Omkhar Arasaratnam
 
 // Package providerid is the canonical source of provider id strings. Claude,
-// Codex, and Gemini are supported today; Copilot is a planned fail-closed id
-// until its runtime adapter and certification evidence land.
+// Codex, and Gemini are supported today; Antigravity and Copilot are planned
+// fail-closed ids until their runtime adapters and certification evidence land.
 //
 // Before this package existed, "claude" / "codex" / "gemini" were spelled as
 // raw string literals in 70+ sites across internal/ and cmd/, with three

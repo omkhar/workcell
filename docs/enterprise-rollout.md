@@ -92,24 +92,25 @@ Current caveats:
   fail-closed until a supported export path exists
 - `gcloud_adc` is supplemental to Vertex config, not a standalone Gemini auth
   mode
-- GitHub Copilot CLI is planned for Tier 1 parity but is not supported today;
-  do not distribute host `~/.copilot`, keychain exports, `GH_TOKEN`,
-  `GITHUB_TOKEN`, ambient `gh` auth, or broad GitHub tokens as Workcell inputs
+- GitHub Copilot CLI and Google Antigravity CLI are planned for provider parity
+  but are not supported today; do not distribute their host provider homes,
+  keychain/browser exports, ambient CLI auth, or broad provider tokens as
+  Workcell inputs
 
 See [injection-policy.md](injection-policy.md) for the current by-provider auth
 maturity summary and
 [provider-bootstrap-matrix.md](provider-bootstrap-matrix.md) for the explicit
 repo-required versus manual bootstrap tiers.
 
-The Copilot enterprise rollout gate must document organization policy and
-license prerequisites, token ownership, audit expectations, telemetry/content
-capture posture, and the exact staged-token handoff before any team treats
-Copilot as supported.
+The Copilot and Antigravity enterprise rollout gates must document organization
+policy and license prerequisites, token ownership, audit expectations,
+telemetry/content-capture posture, and the exact staged-token handoff before
+any team treats either provider as supported.
 
-Future strict-mode Copilot support must default-deny Copilot telemetry,
-OpenTelemetry, and content-capture environment variables. Any content-capture
-enablement must be lower assurance, explicitly acknowledged, audited, and
-covered by deterministic tests.
+Future strict-mode Copilot and Antigravity support must default-deny provider
+telemetry, OpenTelemetry, and content-capture environment variables. Any
+content-capture enablement must be lower assurance, explicitly acknowledged,
+audited, and covered by deterministic tests.
 
 ### 4. Scope shared GitHub and SSH inputs deliberately
 

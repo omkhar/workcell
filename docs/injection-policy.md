@@ -86,6 +86,12 @@ keychains, `GH_TOKEN`, `GITHUB_TOKEN`, ambient `gh auth token`, arbitrary BYOK
 provider env, or whole-home state. The managed child should see only the
 Workcell-staged `COPILOT_GITHUB_TOKEN` on the supported path.
 
+Google Antigravity CLI is also planned, but not launch-ready. Its future path
+must first pin official install and auth provenance, then stage only reviewed
+Google auth material into session-local provider state. Host Google account
+caches, browser profiles, keychains, host homes, and provider caches are not
+acceptable implicit safe-path inputs.
+
 ## Credential keys
 
 | Key | Session target | Notes |
@@ -101,9 +107,9 @@ Workcell-staged `COPILOT_GITHUB_TOKEN` on the supported path.
 | `github_hosts` | `~/.config/gh/hosts.yml` | shared GitHub CLI auth; prefer scoped nested tables |
 | `github_config` | `~/.config/gh/config.yml` | shared GitHub CLI config; prefer scoped nested tables |
 
-`copilot_github_token` is a planned credential key, not a supported key in
-current releases. It must not appear in operator policy until the Copilot
-adapter, validation, and docs land.
+`copilot_github_token` and any future Antigravity credential keys are planned,
+not supported keys in current releases. They must not appear in operator policy
+until the matching adapter, validation, and docs land.
 
 ## Instruction precedence
 
@@ -117,8 +123,10 @@ Provider docs are rendered in this order:
 
 The planned Copilot adapter must separately define how `AGENTS.md`,
 `.github/copilot-instructions.md`, `.github/instructions/**`, and
-`.github/copilot/settings*.json` are imported, masked, or rejected. Current
-releases do not provide Copilot-specific instruction layering.
+`.github/copilot/settings*.json` are imported, masked, or rejected. The planned
+Antigravity adapter must do the same once official CLI provenance identifies
+its instruction, settings, plugin, MCP, and hook files. Current releases do not
+provide provider-specific instruction layering for those planned adapters.
 
 ## Deliberate limits
 
@@ -128,12 +136,11 @@ releases do not provide Copilot-specific instruction layering.
 - no `SSH_AUTH_SOCK` forwarding
 - no assumption that one process inside the session is isolated from another
   process in the same session
-- no host `~/.copilot`, keychain, `GH_TOKEN`, `GITHUB_TOKEN`, ambient
-  `gh auth token`, or broad Copilot token state passthrough on the future
-  Copilot path
-- no Copilot telemetry, OpenTelemetry, or content-capture environment variables
-  in future `strict` mode unless a lower-assurance acknowledged path and
-  deterministic tests are added
+- no host provider-home, keychain, browser-profile, ambient CLI auth, or broad
+  provider token state passthrough on future Copilot or Antigravity paths
+- no provider telemetry, OpenTelemetry, or content-capture environment
+  variables in future `strict` mode unless a lower-assurance acknowledged path
+  and deterministic tests are added
 
 ## Recommended usage
 

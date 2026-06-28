@@ -6,8 +6,8 @@ package adapters
 import "github.com/omkhar/workcell/internal/providerid"
 
 // providerTables is the per-adapter data shape consumed by the injection
-// and policy paths.  When a new provider lands (e.g. Copilot per ROADMAP)
-// it adds a row to providers below; no new package is required.
+// and policy paths.  When a planned provider lands per ROADMAP, it adds a row
+// to providers below; no new package is required.
 type providerTables struct {
 	credentialKeys           []string
 	credentialContainerPaths map[string]string
