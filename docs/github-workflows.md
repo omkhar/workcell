@@ -148,7 +148,7 @@ reviewed inputs:
   dedicated environment gate for `WORKCELL_HOSTED_CONTROLS_TOKEN`
 - GitHub Actions SHA pinning
 - canonical repository variables such as
-  `WORKCELL_ENABLE_GITHUB_ATTESTATIONS=true` and
+  `WORKCELL_RELEASE_NO_ATTEST=false` and
   `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=false`
 
 `scripts/verify-github-hosted-controls.sh` audits those settings against

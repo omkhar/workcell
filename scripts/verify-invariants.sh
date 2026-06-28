@@ -2484,6 +2484,13 @@ if ! rg -q 'buildx_cmd build' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "runtime_build_codex_arch" "aarch64-unknown-linux-musl" ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "runtime_build_codex_arch" "x86_64-unknown-linux-musl" ||
+  function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "runtime_build_codex_arch" "unknown-linux-gnu"; then
+  echo "Expected scripts/workcell Codex release probe to resolve musl release assets" >&2
+  exit 1
+fi
+
 if ! rg -q -- '--self-docker-probe' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell to expose a hidden self-docker probe for invariant testing" >&2
   exit 1

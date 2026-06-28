@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -113,6 +114,23 @@ func rewriteFile(tb testing.TB, path string, rewrite func(string) string) {
 	if err := os.WriteFile(path, []byte(rewrite(string(content))), 0o644); err != nil {
 		tb.Fatal(err)
 	}
+}
+
+func replaceFirstMatch(tb testing.TB, content string, pattern *regexp.Regexp, replacement string) string {
+	tb.Helper()
+	match := pattern.FindStringIndex(content)
+	if match == nil {
+		tb.Fatalf("fixture does not contain pattern %q", pattern.String())
+	}
+	return content[:match[0]] + replacement + content[match[1]:]
+}
+
+func replaceAllMatches(tb testing.TB, content string, pattern *regexp.Regexp, replacement string) string {
+	tb.Helper()
+	if !pattern.MatchString(content) {
+		tb.Fatalf("fixture does not contain pattern %q", pattern.String())
+	}
+	return pattern.ReplaceAllString(content, replacement)
 }
 
 func rewritePinnedInputsFixtureFile(tb testing.TB, relativePath string, rewrite func(string) string) metadatautil.PinnedInputsConfig {
@@ -698,7 +716,7 @@ func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
 	rewriteFile(t, securityWorkflowPath, func(content string) string {
-		return strings.Replace(content, "ZIZMOR_SHA256: aa1facd105f0d83fe5c55b1adcd9d7417de5d83aa27471f91dc0b66cf3803577", "ZIZMOR_SHA256: deadbeef", 1)
+		return replaceFirstMatch(t, content, regexp.MustCompile(`ZIZMOR_SHA256: [0-9a-f]{64}`), "ZIZMOR_SHA256: deadbeef")
 	})
 
 	err := metadatautil.CheckPinnedInputs(cfg)
@@ -734,7 +752,7 @@ func TestCheckPinnedInputsRejectsZizmorVersionMismatch(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
 	rewriteFile(t, securityWorkflowPath, func(content string) string {
-		return strings.Replace(content, "ZIZMOR_VERSION: 1.25.2", "ZIZMOR_VERSION: 1.25.1", 1)
+		return replaceFirstMatch(t, content, regexp.MustCompile(`ZIZMOR_VERSION: [0-9]+\.[0-9]+\.[0-9]+`), "ZIZMOR_VERSION: 0.0.0")
 	})
 
 	err := metadatautil.CheckPinnedInputs(cfg)
@@ -752,7 +770,7 @@ func TestCheckPinnedInputsRejectsReleaseZizmorVersionMismatch(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	releaseWorkflowPath := filepath.Join(cfg.WorkflowsDir, "release.yml")
 	rewriteFile(t, releaseWorkflowPath, func(content string) string {
-		return strings.Replace(content, "ZIZMOR_VERSION: 1.25.2", "ZIZMOR_VERSION: 1.25.1", 1)
+		return replaceFirstMatch(t, content, regexp.MustCompile(`ZIZMOR_VERSION: [0-9]+\.[0-9]+\.[0-9]+`), "ZIZMOR_VERSION: 0.0.0")
 	})
 
 	err := metadatautil.CheckPinnedInputs(cfg)
@@ -770,7 +788,7 @@ func TestCheckPinnedInputsRejectsReleaseZizmorDigestMismatch(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	releaseWorkflowPath := filepath.Join(cfg.WorkflowsDir, "release.yml")
 	rewriteFile(t, releaseWorkflowPath, func(content string) string {
-		return strings.Replace(content, "ZIZMOR_SHA256: aa1facd105f0d83fe5c55b1adcd9d7417de5d83aa27471f91dc0b66cf3803577", "ZIZMOR_SHA256: deadbeef", 1)
+		return replaceFirstMatch(t, content, regexp.MustCompile(`ZIZMOR_SHA256: [0-9a-f]{64}`), "ZIZMOR_SHA256: deadbeef")
 	})
 
 	err := metadatautil.CheckPinnedInputs(cfg)
@@ -779,6 +797,29 @@ func TestCheckPinnedInputsRejectsReleaseZizmorDigestMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "release zizmor sha") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want release zizmor digest rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsCrossWorkflowZizmorDigestMismatch(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
+	rewriteFile(t, securityWorkflowPath, func(content string) string {
+		return replaceAllMatches(
+			t,
+			content,
+			regexp.MustCompile(`ZIZMOR_SHA256: [0-9a-f]{64}`),
+			"ZIZMOR_SHA256: 0000000000000000000000000000000000000000000000000000000000000000",
+		)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted mismatched workflow zizmor digests")
+	}
+	if !strings.Contains(err.Error(), "ZIZMOR_SHA256 must match") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want cross-workflow zizmor digest mismatch rejection", err)
 	}
 }
 

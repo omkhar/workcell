@@ -6007,10 +6007,10 @@ runtime_build_codex_arch() {
   server_arch="${server_arch//$'\n'/}"
   case "${server_arch}" in
     arm64 | aarch64)
-      printf 'aarch64-unknown-linux-gnu\n'
+      printf 'aarch64-unknown-linux-musl\n'
       ;;
     amd64 | x86_64)
-      printf 'x86_64-unknown-linux-gnu\n'
+      printf 'x86_64-unknown-linux-musl\n'
       ;;
     *)
       return 1

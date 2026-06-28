@@ -30,10 +30,10 @@ env:
   ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
-  WORKCELL_BUILDX_VERSION: v0.34.1
+  WORKCELL_BUILDX_VERSION: v0.35.0
   WORKCELL_COSIGN_VERSION: v3.1.1
   WORKCELL_QEMU_IMAGE: tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-  WORKCELL_SYFT_VERSION: v1.45.1
+  WORKCELL_SYFT_VERSION: v1.46.0
 
 jobs:
   codeql-preflight:
@@ -470,8 +470,8 @@ jobs:
 
       - name: Install zizmor
         env:
-          ZIZMOR_SHA256: aa1facd105f0d83fe5c55b1adcd9d7417de5d83aa27471f91dc0b66cf3803577
-          ZIZMOR_VERSION: 1.25.2
+          ZIZMOR_SHA256: 8556289a64e7aaf2400cd516f61a471aa91c5902cc56ad96a82fd12f90c2ef73
+          ZIZMOR_VERSION: 1.26.1
         run: |
           curl -fsSL \
             --max-time 60 \

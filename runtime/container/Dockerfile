@@ -1,7 +1,7 @@
 # Node.js LTS base image (v24 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:24-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:45fbb3ca3b6c7e6646cd2889d0ac7bf314bb180036da792221fc2f48fe4d43fb
+ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:366fdef91728b1b7fa18c84fba63b6e79ed77b7e10cc206878e9705da4d7b169
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
@@ -11,7 +11,7 @@ ARG SOURCE_DATE_EPOCH=0
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
 ARG DEBIAN_SNAPSHOT=20260518T000000Z
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.96.0-slim-trixie@sha256:3b05f7c617a200c41c3506097f0d15fc193a1c93bfd8f141007b47cac8f95d3c
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.96.0-slim-trixie@sha256:6abf73f05806f36362d0ff2722f2250c6153398831edd0455e0e0baa1f78ecc7
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -200,7 +200,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.177
+ARG CLAUDE_VERSION=2.1.195
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
@@ -208,7 +208,7 @@ ARG CLAUDE_VERSION=2.1.177
 # bundles); to update manually, resolve the eligible stable version, verify
 # the GitHub release asset digests for both musl Linux tarballs, and refresh
 # the CODEX_SHA256 values for arm64 and amd64 below.
-ARG CODEX_VERSION=0.139.0
+ARG CODEX_VERSION=0.142.3
 ARG CODEX_RELEASE_URL=
 ARG RUST_VERSION=1.96.0
 ARG TARGETARCH
@@ -282,11 +282,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="baf3926dc166215772f959e367da9784ff4c75157aaafe4524fdc79ebff984b1"; \
+      CLAUDE_SHA256="b02279999058dc80a0e1c5d39463d1545a178615492f84139aac8d61214a7e9a"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="ff41753634b20c869ef6a32a20863521b33d4186ac0d6a49379ab48a48395ee7"; \
+      CLAUDE_SHA256="8323e70125063147a4478b957745d835a87e5e72ffd25b838ea9a841c03e6a37"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -318,11 +318,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-musl"; \
-      CODEX_SHA256="2b7407643e0e74c525d84347c9eecec4b3d275af0382142ac42216508bb0b2a2"; \
+      CODEX_SHA256="d4bb18793cd53902593ddb92c409f262c05dc80e4235f865ede2378ba15a1dd1"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-musl"; \
-      CODEX_SHA256="12ebf70df41dc831061862912ab5e7eacdd112bb17e8ce9b2098cb3d92180081"; \
+      CODEX_SHA256="f96813f41692b4d8ae44d0812165a2fcc429196eb3481f6bc221afdec96a17f8"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
