@@ -53,6 +53,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
 	goModPath := filepath.Join(repoRoot, "go.mod")
 	cargoManifestPath := filepath.Join(repoRoot, "runtime", "container", "rust", "Cargo.toml")
+	installDevToolsScriptPath := filepath.Join(repoRoot, "scripts", "install-dev-tools.sh")
+	markdownlintPackageJSONPath := filepath.Join(repoRoot, "tools", "markdownlint", "package.json")
+	markdownlintPackageLockPath := filepath.Join(repoRoot, "tools", "markdownlint", "package-lock.json")
 	rustToolchainPath := filepath.Join(repoRoot, "runtime", "container", "rust", "rust-toolchain.toml")
 
 	runtimeDockerfile, err := readText(cfg.RuntimeDockerfilePath)
@@ -68,6 +71,18 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	}
 	providersPackageLockText, err := readText(cfg.ProvidersPackageLockPath)
+	if err != nil {
+		return err
+	}
+	markdownlintPackageJSONText, err := readText(markdownlintPackageJSONPath)
+	if err != nil {
+		return err
+	}
+	markdownlintPackageLockText, err := readText(markdownlintPackageLockPath)
+	if err != nil {
+		return err
+	}
+	installDevToolsScript, err := readText(installDevToolsScriptPath)
 	if err != nil {
 		return err
 	}
@@ -130,6 +145,21 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	var providersPackageLock map[string]any
 	if err := json.Unmarshal([]byte(providersPackageLockText), &providersPackageLock); err != nil {
+		return err
+	}
+	var markdownlintPackageJSON struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if err := json.Unmarshal([]byte(markdownlintPackageJSONText), &markdownlintPackageJSON); err != nil {
+		return err
+	}
+	var markdownlintPackageLock struct {
+		Packages map[string]struct {
+			Version      string            `json:"version"`
+			Dependencies map[string]string `json:"dependencies"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal([]byte(markdownlintPackageLockText), &markdownlintPackageLock); err != nil {
 		return err
 	}
 	hostedControlsPolicy, err := tomlsubset.Parse(hostedControlsPolicyText, cfg.HostedControlsPolicyPath)
@@ -226,6 +256,38 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 			}
 		}
 		return value, nil
+	}
+	requireCappedReleaseDownloads := func(text, path string, downloads []struct {
+		label string
+		url   string
+	}) error {
+		for _, download := range downloads {
+			offset := 0
+			found := false
+			for {
+				relativeURLIndex := strings.Index(text[offset:], download.url)
+				if relativeURLIndex < 0 {
+					break
+				}
+				found = true
+				urlIndex := offset + relativeURLIndex
+				curlIndex := strings.LastIndex(text[:urlIndex], "curl -fsSL")
+				if curlIndex < 0 {
+					return fmt.Errorf("%s must download %s with curl -fsSL", path, download.label)
+				}
+				block := text[curlIndex : urlIndex+len(download.url)]
+				for _, needle := range []string{"--max-time 60", "--connect-timeout 15", "--max-filesize 209715200"} {
+					if !strings.Contains(block, needle) {
+						return fmt.Errorf("%s must bound %s downloads with %s", path, download.label, needle)
+					}
+				}
+				offset = urlIndex + len(download.url)
+			}
+			if !found {
+				return fmt.Errorf("%s must derive the %s archive URL from its pinned version", path, download.label)
+			}
+		}
+		return nil
 	}
 	requireActionRef := func(text, action, path string) (string, error) {
 		re := regexp.MustCompile(regexp.QuoteMeta(action) + `@([0-9a-f]{40})`)
@@ -490,6 +552,44 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	if !regexp.MustCompile(`^0\.\d+\.\d+$`).MatchString(validatorMarkdownlintVersion) {
 		return fmt.Errorf("MARKDOWNLINT_VERSION must be an exact pinned release, found %q", validatorMarkdownlintVersion)
+	}
+	markdownlintDependency, ok := markdownlintPackageJSON.Dependencies["markdownlint-cli"]
+	if !ok {
+		return fmt.Errorf("%s must depend on markdownlint-cli", markdownlintPackageJSONPath)
+	}
+	if markdownlintDependency != validatorMarkdownlintVersion {
+		return fmt.Errorf("markdownlint-cli version must match between %s and %s; found %q and %q", markdownlintPackageJSONPath, cfg.ValidatorDockerfilePath, markdownlintDependency, validatorMarkdownlintVersion)
+	}
+	markdownlintLockRoot, ok := markdownlintPackageLock.Packages[""]
+	if !ok {
+		return fmt.Errorf("%s must include the root package lock entry", markdownlintPackageLockPath)
+	}
+	if markdownlintLockRoot.Dependencies["markdownlint-cli"] != validatorMarkdownlintVersion {
+		return fmt.Errorf("markdownlint-cli version must match between %s and %s; found %q and %q", markdownlintPackageLockPath, cfg.ValidatorDockerfilePath, markdownlintLockRoot.Dependencies["markdownlint-cli"], validatorMarkdownlintVersion)
+	}
+	markdownlintLockPackage, ok := markdownlintPackageLock.Packages["node_modules/markdownlint-cli"]
+	if !ok {
+		return fmt.Errorf("%s must lock node_modules/markdownlint-cli", markdownlintPackageLockPath)
+	}
+	if markdownlintLockPackage.Version != validatorMarkdownlintVersion {
+		return fmt.Errorf("locked markdownlint-cli package version must match %s; found %q and %q", cfg.ValidatorDockerfilePath, markdownlintLockPackage.Version, validatorMarkdownlintVersion)
+	}
+	_, installMarkdownlintVersionMatch, err := requireRegex(installDevToolsScript, `(?m)^readonly MARKDOWNLINT_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$`, "install-dev-tools markdownlint version", installDevToolsScriptPath)
+	if err != nil {
+		return err
+	}
+	if installMarkdownlintVersionMatch[1] != validatorMarkdownlintVersion {
+		return fmt.Errorf("MARKDOWNLINT_VERSION must match between %s and %s; found %q and %q", installDevToolsScriptPath, cfg.ValidatorDockerfilePath, installMarkdownlintVersionMatch[1], validatorMarkdownlintVersion)
+	}
+	_, markdownlintNodeFloorMatch, err := requireRegex(installDevToolsScript, `(?m)^readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="([0-9]+\.[0-9]+\.[0-9]+)"$`, "install-dev-tools markdownlint Node floor", installDevToolsScriptPath)
+	if err != nil {
+		return err
+	}
+	if markdownlintNodeFloorMatch[1] != "22.12.0" {
+		return fmt.Errorf("MARKDOWNLINT_NODE_VERSION_MINIMUM in %s must be 22.12.0 for markdownlint-cli@%s, found %q", installDevToolsScriptPath, validatorMarkdownlintVersion, markdownlintNodeFloorMatch[1])
+	}
+	if !strings.Contains(installDevToolsScript, "if markdownlint_needs_install; then\n  require_markdownlint_node\n  echo \"  npm install -g markdownlint-cli@${MARKDOWNLINT_VERSION}\"") {
+		return fmt.Errorf("%s must validate the Node.js floor immediately before installing markdownlint-cli", installDevToolsScriptPath)
 	}
 	for _, needle := range []string{
 		`GOBIN=/usr/local/bin go install "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}"`,
@@ -891,17 +991,20 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		{text: securityWorkflow, path: ".github/workflows/security.yml"},
 		{text: releaseWorkflow, path: ".github/workflows/release.yml"},
 	} {
-		if !strings.Contains(workflow.text, "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz") {
-			return fmt.Errorf("%s must derive the actionlint archive URL from ACTIONLINT_VERSION", workflow.path)
-		}
-		if !strings.Contains(workflow.text, "--max-time 60") {
-			return fmt.Errorf("%s must bound actionlint download wall-clock time", workflow.path)
-		}
-		if !strings.Contains(workflow.text, "--connect-timeout 15") {
-			return fmt.Errorf("%s must bound actionlint download connect time", workflow.path)
-		}
-		if !strings.Contains(workflow.text, "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz") {
-			return fmt.Errorf("%s must derive the zizmor archive URL from ZIZMOR_VERSION", workflow.path)
+		if err := requireCappedReleaseDownloads(workflow.text, workflow.path, []struct {
+			label string
+			url   string
+		}{
+			{
+				label: "actionlint",
+				url:   "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz",
+			},
+			{
+				label: "zizmor",
+				url:   "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz",
+			},
+		}); err != nil {
+			return err
 		}
 		if !strings.Contains(workflow.text, `echo "${ZIZMOR_SHA256}  zizmor.tar.gz" | sha256sum -c -`) {
 			return fmt.Errorf("%s must verify the pinned zizmor archive digest", workflow.path)

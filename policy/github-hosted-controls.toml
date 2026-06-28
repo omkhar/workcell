@@ -45,6 +45,7 @@ contexts = [
   "Validate repository",
   "Container smoke",
   "Reproducible build",
+  "Dependency review",
   "GitHub Actions lint",
   "GitHub Actions security analysis",
 ]

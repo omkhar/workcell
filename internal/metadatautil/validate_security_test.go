@@ -76,7 +76,10 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"runtime/container/rust/Cargo.toml",
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/ci/build-validator-image.sh",
+		"scripts/install-dev-tools.sh",
 		"scripts/verify-github-hosted-controls.sh",
+		"tools/markdownlint/package.json",
+		"tools/markdownlint/package-lock.json",
 		"tools/validator/Dockerfile",
 	} {
 		copyFixtureFile(tb, srcRoot, dstRoot, relativePath)
@@ -504,6 +507,103 @@ func TestCheckPinnedInputsRejectsInvalidValidatorToolDigests(t *testing.T) {
 	}
 }
 
+func TestCheckPinnedInputsRejectsMarkdownlintPinDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	packageJSONPath := filepath.Join(fixtureRoot, "tools", "markdownlint", "package.json")
+	rewriteFile(t, packageJSONPath, func(content string) string {
+		return strings.Replace(content, `"markdownlint-cli": "0.49.0"`, `"markdownlint-cli": "0.48.0"`, 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted drifted markdownlint-cli pins")
+	}
+	if !strings.Contains(err.Error(), "markdownlint-cli version must match") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint pin drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintLockDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	packageLockPath := filepath.Join(fixtureRoot, "tools", "markdownlint", "package-lock.json")
+	rewriteFile(t, packageLockPath, func(content string) string {
+		return strings.Replace(content, `"markdownlint-cli": "0.49.0"`, `"markdownlint-cli": "0.48.0"`, 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted drifted markdownlint-cli lockfile pins")
+	}
+	if !strings.Contains(err.Error(), "markdownlint-cli version must match") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint lock drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintLockedPackageDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	packageLockPath := filepath.Join(fixtureRoot, "tools", "markdownlint", "package-lock.json")
+	rewriteFile(t, packageLockPath, func(content string) string {
+		return strings.Replace(content, `"node_modules/markdownlint-cli": {
+      "version": "0.49.0"`, `"node_modules/markdownlint-cli": {
+      "version": "0.48.0"`, 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted drifted markdownlint-cli package lock")
+	}
+	if !strings.Contains(err.Error(), "locked markdownlint-cli package version") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint locked package drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerNodeFloorDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
+	rewriteFile(t, installerPath, func(content string) string {
+		return strings.Replace(content, `readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="22.12.0"`, `readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="22.0.0"`, 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a stale markdownlint Node.js floor")
+	}
+	if !strings.Contains(err.Error(), "MARKDOWNLINT_NODE_VERSION_MINIMUM") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint Node floor rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeCheck(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	installerPath := filepath.Join(fixtureRoot, "scripts", "install-dev-tools.sh")
+	rewriteFile(t, installerPath, func(content string) string {
+		return strings.Replace(content, "if markdownlint_needs_install; then\n  require_markdownlint_node\n  echo", "if markdownlint_needs_install; then\n  echo", 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted markdownlint install without a Node.js floor check")
+	}
+	if !strings.Contains(err.Error(), "immediately before installing markdownlint-cli") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want markdownlint installer Node check rejection", err)
+	}
+}
+
 func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
 	t.Parallel()
 
@@ -519,6 +619,24 @@ func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "security zizmor sha") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want zizmor digest rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsUnboundedWorkflowDownloadSize(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
+	rewriteFile(t, securityWorkflowPath, func(content string) string {
+		return strings.Replace(content, "            --max-filesize 209715200 \\\n", "", 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted an unbounded workflow download")
+	}
+	if !strings.Contains(err.Error(), "must bound actionlint downloads") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want download size cap rejection", err)
 	}
 }
 

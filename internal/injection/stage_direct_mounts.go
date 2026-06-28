@@ -15,6 +15,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/runtimeutil"
+	"golang.org/x/sys/unix"
 )
 
 // hostInputMountPrefix is the only mount root that may be staged for the
@@ -154,20 +155,26 @@ func validateDirectMount(hostSource, mountPath string) error {
 // stageDirectMountEntry copies a host source into stagedSource, replicating
 // "cp -R ${src}/." for directories and "cp -f ${src}" for files.
 func stageDirectMountEntry(hostSource, stagedSource string) error {
-	info, err := os.Stat(hostSource)
+	source, mode, kind, err := openDirectMountSource(hostSource)
 	if err != nil {
 		return err
 	}
-	if info.IsDir() {
+	defer source.Close()
+
+	switch kind {
+	case directMountSourceDir:
 		if err := os.MkdirAll(stagedSource, 0o755); err != nil {
 			return err
 		}
-		return copyDirContents(hostSource, stagedSource)
+		return copyDirContents(source, filepath.Clean(hostSource), stagedSource)
+	case directMountSourceRegular:
+		if err := os.MkdirAll(filepath.Dir(stagedSource), 0o755); err != nil {
+			return err
+		}
+		return copyOpenFileWithMode(source, stagedSource, mode)
+	default:
+		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", hostSource)
 	}
-	if err := os.MkdirAll(filepath.Dir(stagedSource), 0o755); err != nil {
-		return err
-	}
-	return copyFileWithMode(hostSource, stagedSource, info.Mode().Perm())
 }
 
 // copyDirContents mirrors "cp -R src/. dst" with one cautious-staging
@@ -182,53 +189,84 @@ func stageDirectMountEntry(hostSource, stagedSource string) error {
 // the operator enough signal to notice that an expected file did not
 // land in the container.
 //
-// We use entry.Type() / entry.Info() from WalkDir's DirEntry to avoid a
-// second Stat per file (entry.Type() returns the lstat-derived mode
-// bits, and Info() is the cached fs.FileInfo for the entry).
-func copyDirContents(src, dst string) error {
-	return filepath.WalkDir(src, func(current string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, current)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
+// Source traversal is anchored to opened directory descriptors. Each child is
+// opened with openat(O_NOFOLLOW), so a parent path swapped after validation
+// cannot redirect staging to a different host tree.
+func copyDirContents(src *os.File, srcDisplay, dst string) error {
+	entries, err := src.ReadDir(-1)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
 		mode := entry.Type()
+		displayPath := filepath.Join(srcDisplay, entry.Name())
 		if mode&fs.ModeSymlink != 0 {
-			log.Printf("workcell injection: skipping symlink under host-input source: %s", current)
-			return nil
+			log.Printf("workcell injection: skipping symlink under host-input source: %s", displayPath)
+			continue
 		}
-		target := filepath.Join(dst, rel)
-		info, err := entry.Info()
+		childMode, kind, err := classifyDirectMountChild(src, entry.Name())
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode().Perm())
+		if kind == directMountSourceOther {
+			continue
 		}
-		if info.Mode().IsRegular() {
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		target := filepath.Join(dst, entry.Name())
+		child, childMode, kind, err := openDirectMountChild(src, entry.Name(), displayPath)
+		if err != nil {
+			if errors.Is(err, unix.ELOOP) || isSkippableDirectMountOpenError(err) {
+				log.Printf("workcell injection: skipping non-regular entry under host-input source: %s", displayPath)
+				continue
+			}
+			return err
+		}
+		switch kind {
+		case directMountSourceDir:
+			if err := os.MkdirAll(target, childMode); err != nil {
+				child.Close()
 				return err
 			}
-			return copyFileWithMode(current, target, info.Mode().Perm())
+			if err := copyDirContents(child, displayPath, target); err != nil {
+				child.Close()
+				return err
+			}
+			if err := child.Close(); err != nil {
+				return err
+			}
+		case directMountSourceRegular:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				child.Close()
+				return err
+			}
+			if err := copyOpenFileWithMode(child, target, childMode); err != nil {
+				child.Close()
+				return err
+			}
+			if err := child.Close(); err != nil {
+				return err
+			}
+		default:
+			if err := child.Close(); err != nil {
+				return err
+			}
 		}
-		// Non-regular files (devices, sockets, FIFOs) are skipped — bash
-		// cp would refuse most of these too, and they have no defensible
-		// meaning inside a container input mount.
-		return nil
-	})
+	}
+	return nil
 }
 
-func copyFileWithMode(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
+func copyFileWithMode(src, dst string, _ os.FileMode) error {
+	in, sourceMode, kind, err := openDirectMountSource(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+	if kind != directMountSourceRegular {
+		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", src)
+	}
+	return copyOpenFileWithMode(in, dst, sourceMode)
+}
+
+func copyOpenFileWithMode(in *os.File, dst string, mode os.FileMode) error {
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
@@ -241,6 +279,117 @@ func copyFileWithMode(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	return os.Chmod(dst, mode)
+}
+
+type directMountSourceKind int
+
+const (
+	directMountSourceOther directMountSourceKind = iota
+	directMountSourceRegular
+	directMountSourceDir
+)
+
+func openDirectMountSource(src string) (*os.File, os.FileMode, directMountSourceKind, error) {
+	cleanedSource := canonicalizeAllowedSystemPath(filepath.Clean(src))
+	if !filepath.IsAbs(cleanedSource) {
+		return nil, 0, directMountSourceOther, fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", src)
+	}
+	fd, err := unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY, 0)
+	if err != nil {
+		return nil, 0, directMountSourceOther, err
+	}
+	if cleanedSource != string(filepath.Separator) {
+		components := strings.Split(strings.TrimPrefix(cleanedSource, string(filepath.Separator)), string(filepath.Separator))
+		for index, component := range components {
+			nextFD, err := unix.Openat(fd, component, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+			_ = unix.Close(fd)
+			if err != nil {
+				if errors.Is(err, unix.ELOOP) {
+					return nil, 0, directMountSourceOther, fmt.Errorf("Direct input source must not be a symbolic link: %s", cleanedSource)
+				}
+				return nil, 0, directMountSourceOther, err
+			}
+			fd = nextFD
+			if index < len(components)-1 {
+				kind, _, err := classifyDirectMountFD(fd)
+				if err != nil {
+					_ = unix.Close(fd)
+					return nil, 0, directMountSourceOther, err
+				}
+				if kind != directMountSourceDir {
+					_ = unix.Close(fd)
+					return nil, 0, directMountSourceOther, fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", src)
+				}
+			}
+		}
+	}
+	file := os.NewFile(uintptr(fd), cleanedSource)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, 0, directMountSourceOther, fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", src)
+	}
+	kind, mode, err := classifyDirectMountFD(fd)
+	if err != nil {
+		file.Close()
+		return nil, 0, directMountSourceOther, err
+	}
+	if kind == directMountSourceOther {
+		file.Close()
+		return nil, 0, directMountSourceOther, fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", src)
+	}
+	return file, mode, kind, nil
+}
+
+func openDirectMountChild(parent *os.File, name, displayPath string) (*os.File, os.FileMode, directMountSourceKind, error) {
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, 0, directMountSourceOther, err
+	}
+	file := os.NewFile(uintptr(fd), displayPath)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, 0, directMountSourceOther, fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", displayPath)
+	}
+	kind, mode, err := classifyDirectMountFD(fd)
+	if err != nil {
+		file.Close()
+		return nil, 0, directMountSourceOther, err
+	}
+	return file, mode, kind, nil
+}
+
+func classifyDirectMountChild(parent *os.File, name string) (os.FileMode, directMountSourceKind, error) {
+	var stat unix.Stat_t
+	if err := unix.Fstatat(int(parent.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return 0, directMountSourceOther, err
+	}
+	return classifyDirectMountStat(stat)
+}
+
+func classifyDirectMountFD(fd int) (directMountSourceKind, os.FileMode, error) {
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return directMountSourceOther, 0, err
+	}
+	mode, kind, err := classifyDirectMountStat(stat)
+	return kind, mode, err
+}
+
+func classifyDirectMountStat(stat unix.Stat_t) (os.FileMode, directMountSourceKind, error) {
+	modeBits := uint32(stat.Mode)
+	mode := os.FileMode(modeBits & 0o777)
+	switch modeBits & uint32(unix.S_IFMT) {
+	case uint32(unix.S_IFREG):
+		return mode, directMountSourceRegular, nil
+	case uint32(unix.S_IFDIR):
+		return mode, directMountSourceDir, nil
+	default:
+		return mode, directMountSourceOther, nil
+	}
+}
+
+func isSkippableDirectMountOpenError(err error) bool {
+	return errors.Is(err, unix.ENXIO) || errors.Is(err, unix.ENODEV)
 }
 
 // chmodRecursiveGoNoAccess strips group/other rwx bits from every entry under

@@ -37,6 +37,18 @@ func isAllowedSystemSymlink(linkPath, target string) bool {
 	}
 }
 
+func canonicalizeAllowedSystemPath(path string) string {
+	if runtime.GOOS != "darwin" {
+		return path
+	}
+	for _, prefix := range []string{"/var", "/etc", "/tmp"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return filepath.Join("/private", strings.TrimPrefix(path, string(filepath.Separator)))
+		}
+	}
+	return path
+}
+
 // findUnsafeSymlinkInPathChain walks every component of cleanedPath
 // from the filesystem root down to (and including) the leaf, Lstat'ing
 // each step. It returns the first component path that is a symbolic
