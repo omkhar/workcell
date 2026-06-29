@@ -4168,7 +4168,11 @@ done
 grep -q "Google Antigravity CLI is a planned Workcell provider adapter, but it is not supported yet." /tmp/workcell-antigravity-fail-closed.out
 grep -q "No Antigravity runtime, auth handoff, or live certification evidence is shipped in this build." /tmp/workcell-antigravity-fail-closed.out
 grep -q "GitHub Copilot CLI is a planned Workcell provider adapter, but it is not supported yet." /tmp/workcell-copilot-fail-closed.out
-grep -q "No Copilot runtime, auth handoff, or live certification evidence is shipped in this build." /tmp/workcell-copilot-fail-closed.out
+grep -q "Copilot runtime binary is shipped only for provenance and release verification; auth handoff, supported launch, and live certification evidence are not shipped in this build." /tmp/workcell-copilot-fail-closed.out
+grep -q "ProtectedRuntime::Copilot" "${ROOT_DIR}/runtime/container/rust/src/lib.rs"
+grep -q "/usr/local/libexec/workcell/real/copilot" "${ROOT_DIR}/runtime/container/rust/src/lib.rs"
+grep -q "/usr/local/libexec/workcell/real/copilot" "${ROOT_DIR}/runtime/container/development-wrapper.sh"
+grep -q '"/opt/workcell/adapters/copilot/README.md"' "${ROOT_DIR}/runtime/container/control-plane-manifest.json"
 
 STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"
 mkdir -p "${STRICT_PREFLIGHT_WORKSPACE}"
@@ -7743,6 +7747,22 @@ if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${ROOT_DIR}/adapters/co
   echo "Expected Codex managed rules to block the native Claude binary path" >&2
   exit 1
 fi
+if ! grep -Fq '/usr/local/libexec/workcell/core/copilot' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
+  echo "Expected Codex managed rules to block direct Copilot launcher path" >&2
+  exit 1
+fi
+if ! grep -Fq '/usr/local/libexec/workcell/real/copilot' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
+  echo "Expected Codex managed rules to block the native Copilot binary path" >&2
+  exit 1
+fi
+if ! grep -Fq '/usr/local/libexec/workcell/core/copilot' "${ROOT_DIR}/adapters/codex/requirements.toml"; then
+  echo "Expected Codex requirements to block direct Copilot launcher path" >&2
+  exit 1
+fi
+if ! grep -Fq '/usr/local/libexec/workcell/real/copilot' "${ROOT_DIR}/adapters/codex/requirements.toml"; then
+  echo "Expected Codex requirements to block the native Copilot binary path" >&2
+  exit 1
+fi
 if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
   echo "Codex managed rules should not reference the removed Claude npm entrypoint" >&2
   exit 1
@@ -7753,6 +7773,14 @@ if ! grep -Fq '/usr/local/libexec/workcell/provider-wrapper\.sh' "${ROOT_DIR}/ad
 fi
 if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
   echo "Expected Claude Bash guard to block direct native Claude binary launches" >&2
+  exit 1
+fi
+if ! grep -Fq '/usr/local/libexec/workcell/core/copilot' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
+  echo "Expected Claude Bash guard to block direct Copilot launcher path" >&2
+  exit 1
+fi
+if ! grep -Fq '/usr/local/libexec/workcell/real/copilot' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
+  echo "Expected Claude Bash guard to block direct native Copilot binary launches" >&2
   exit 1
 fi
 if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then

@@ -1417,6 +1417,11 @@ seed_claude_home() {
   fi
 }
 
+seed_copilot_home() {
+  workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/copilot/"
+  workcell_die "GitHub Copilot CLI is a planned Workcell provider adapter, but it is not supported yet."
+}
+
 seed_gemini_home() {
   local workspace_root="${WORKSPACE:-/workspace}"
   local selected_auth_type=""
@@ -1472,6 +1477,9 @@ seed_agent_home() {
       ;;
     claude)
       seed_claude_home
+      ;;
+    copilot)
+      seed_copilot_home
       ;;
     gemini)
       seed_gemini_home

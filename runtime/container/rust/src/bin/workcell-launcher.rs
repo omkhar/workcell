@@ -18,6 +18,7 @@ const LAUNCH_TARGETS: &[(&str, &str)] = &[
     ("node", "/usr/local/libexec/workcell/node-wrapper.sh"),
     ("codex", "/usr/local/libexec/workcell/provider-wrapper.sh"),
     ("claude", "/usr/local/libexec/workcell/provider-wrapper.sh"),
+    ("copilot", "/usr/local/libexec/workcell/provider-wrapper.sh"),
     ("gemini", "/usr/local/libexec/workcell/provider-wrapper.sh"),
 ];
 

@@ -209,6 +209,11 @@ ARG CLAUDE_VERSION=2.1.195
 # the GitHub release asset digests for both musl Linux tarballs, and refresh
 # the CODEX_SHA256 values for arm64 and amd64 below.
 ARG CODEX_VERSION=0.142.3
+# GitHub Copilot CLI native binary version and SHA256 checksums for each Linux
+# architecture. Workcell pins the non-prerelease GitHub release asset here;
+# support promotion must keep token auth explicit through copilot_github_token
+# instead of host GitHub CLI state.
+ARG COPILOT_VERSION=1.0.65
 ARG CODEX_RELEASE_URL=
 ARG RUST_VERSION=1.96.0
 ARG TARGETARCH
@@ -351,6 +356,43 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/codex \
   && rm -f /tmp/codex.tar.gz
 
+RUN TARGET_ARCH="${TARGETARCH:-}" \
+  && if [[ -z "${TARGET_ARCH}" ]]; then \
+       case "$(dpkg --print-architecture)" in \
+         arm64) TARGET_ARCH="arm64" ;; \
+         amd64) TARGET_ARCH="amd64" ;; \
+         *) \
+           echo "Unsupported dpkg architecture: $(dpkg --print-architecture)" >&2; \
+           exit 1; \
+           ;; \
+       esac; \
+     fi \
+  && case "${TARGET_ARCH}" in \
+    arm64) \
+      COPILOT_PLATFORM="linux-arm64"; \
+      COPILOT_SHA256="e9f4e570cfe85e7be4a3be4b74eb6564c3f96e97cb1162bcc6282cd1f820c686"; \
+      ;; \
+    amd64) \
+      COPILOT_PLATFORM="linux-x64"; \
+      COPILOT_SHA256="da36be29a5afc7c6cef63b25ac10ee1862216a0f5efabed502ed42c4e0f62af8"; \
+      ;; \
+    *) \
+      echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
+      exit 1; \
+      ;; \
+  esac \
+  && curl --ipv4 -fsSL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_VERSION}/copilot-${COPILOT_PLATFORM}.tar.gz" \
+    --retry 8 \
+    --retry-all-errors \
+    --retry-delay 5 \
+    --connect-timeout 30 \
+    -o /tmp/copilot.tar.gz \
+  && echo "${COPILOT_SHA256}  /tmp/copilot.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/copilot.tar.gz -C /tmp copilot \
+  && install -m 0755 /tmp/copilot /usr/local/libexec/workcell/real/copilot \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/copilot \
+  && rm -f /tmp/copilot.tar.gz /tmp/copilot
+
 # Copy ONLY the Rust source before the expensive compile so that changes to
 # adapters or shell scripts do not invalidate the cargo build cache layer.
 COPY runtime/container/rust /workcell-rust
@@ -470,6 +512,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/libexec/workcell/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/codex \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/claude \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/copilot \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/gemini \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/workcell-entrypoint \
   && ln -sf /usr/local/libexec/workcell/apt-wrapper.sh /usr/local/bin/apt \
@@ -477,6 +520,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/node \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/codex \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/claude \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/copilot \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/gemini \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/bin/git \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/bin/git \

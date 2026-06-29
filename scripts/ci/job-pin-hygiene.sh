@@ -15,6 +15,9 @@ echo "[ci/pin-hygiene] upstream Codex release"
 echo "[ci/pin-hygiene] upstream Claude release"
 "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
 
+echo "[ci/pin-hygiene] upstream Copilot release"
+"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
+
 echo "[ci/pin-hygiene] upstream Gemini release"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 

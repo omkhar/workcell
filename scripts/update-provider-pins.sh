@@ -184,6 +184,7 @@ printf '%s\n' "${plan_json}" >"${plan_path}"
 
 "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
 "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
+"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 
 print_summary

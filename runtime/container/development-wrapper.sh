@@ -75,6 +75,7 @@ development_wrapper_protected_runtime_match() {
   for protected_path in \
     /usr/local/libexec/workcell/real/codex \
     /usr/local/libexec/workcell/real/claude \
+    /usr/local/libexec/workcell/real/copilot \
     /usr/local/libexec/workcell/real/node \
     /usr/local/libexec/workcell/real/git \
     /usr/local/libexec/workcell/core/git \
@@ -98,7 +99,7 @@ reject_protected_runtime_launch() {
   command_name="${command_path##*/}"
 
   case "${command_name}" in
-    codex | claude | gemini)
+    codex | claude | copilot | gemini)
       workcell_die "Workcell blocked direct provider command in development mode: ${command_name} (run through the managed provider entrypoint)."
       ;;
   esac

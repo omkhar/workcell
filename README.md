@@ -386,8 +386,8 @@ Tagged releases are rebuilt and verified before publication. The release path:
   targets the newest two GitHub-hosted Apple Silicon macOS runner labels
 - refuses to publish if any reviewed provider, Linux base image, Linux
   toolchain, or release-build pin is behind the latest tracked upstream
-- adds Copilot or Antigravity upstream pin verification as part of provider
-  promotion, before any support claim
+- verifies Copilot upstream release pins before support promotion, and requires
+  equivalent Antigravity pin verification before any future support claim
 - publishes from the archived source bundle rather than the live checkout
 - gates publication on bundle and Homebrew install verification on
   GitHub-hosted Apple Silicon `macos-26` and `macos-15`
@@ -449,8 +449,9 @@ See [docs/provenance.md](docs/provenance.md) and
 - `runtime/`: VM and container boundary implementation
 - `policy/`: shared contract layer and hosted-control policy
 - `adapters/`: provider-native baselines for Codex, Claude, and Gemini, plus
-  fail-closed Copilot and Antigravity planning scaffolds (their directories are
-  not baselines until adapter support lands)
+  fail-closed Copilot and Antigravity planning scaffolds. Copilot currently has
+  a narrow README/provenance baseline while its runtime pin is verified ahead of
+  support; Antigravity is not a runtime baseline until adapter support lands.
 - `cmd/`: host-side and runtime-side Go entrypoints (the `workcell-*` binaries)
 - `internal/`: shared Go packages backing the `cmd/` binaries
 - `scripts/`: launcher, validation, release, audit, and bootstrap entrypoints

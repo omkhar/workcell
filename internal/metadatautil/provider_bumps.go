@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,12 +23,13 @@ import (
 )
 
 const (
-	defaultProviderBumpCodexRegistryURL   = "https://registry.npmjs.org/@openai%2fcodex"
-	defaultProviderBumpCodexReleaseAPIURL = "https://api.github.com/repos/openai/codex/releases/tags/rust-v%s"
-	defaultProviderBumpGeminiRegistryURL  = "https://registry.npmjs.org/@google%2fgemini-cli"
-	defaultProviderBumpClaudeRegistryURL  = "https://registry.npmjs.org/@anthropic-ai%2fclaude-code"
-	defaultProviderBumpClaudeReleaseRoot  = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
-	providerBumpUserAgent                 = "workcell-provider-bump/1.0"
+	defaultProviderBumpCodexRegistryURL     = "https://registry.npmjs.org/@openai%2fcodex"
+	defaultProviderBumpCodexReleaseAPIURL   = "https://api.github.com/repos/openai/codex/releases/tags/rust-v%s"
+	defaultProviderBumpCopilotReleaseAPIURL = "https://api.github.com/repos/github/copilot-cli/releases"
+	defaultProviderBumpGeminiRegistryURL    = "https://registry.npmjs.org/@google%2fgemini-cli"
+	defaultProviderBumpClaudeRegistryURL    = "https://registry.npmjs.org/@anthropic-ai%2fclaude-code"
+	defaultProviderBumpClaudeReleaseRoot    = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
+	providerBumpUserAgent                   = "workcell-provider-bump/1.0"
 	// providerBumpHTTPTimeout caps every upstream metadata fetch (npm
 	// registry, GitHub release API, GCS release manifest) end-to-end.
 	providerBumpHTTPTimeout = 30 * time.Second
@@ -44,18 +47,22 @@ const (
 	// for hostile/misbehaving upstreams and tracks the projected growth
 	// curve for the next ~5 years of npm metadata.
 	providerBumpMaxJSONBytes = 16 << 20 // 16 MiB
+	copilotReleaseMaxPages   = 10
 )
 
 var (
-	errReleaseAssetNotFound      = errors.New("release asset not found")
-	stableVersionPattern         = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
-	geminiDependencyPattern      = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
-	claudeVersionLinePattern     = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
-	codexVersionLinePattern      = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
-	claudeArmChecksumLinePattern = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CLAUDE_PLATFORM="linux-arm64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
-	claudeAmdChecksumLinePattern = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CLAUDE_PLATFORM="linux-x64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
-	codexArmChecksumLinePattern  = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CODEX_ARCH="aarch64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
-	codexAmdChecksumLinePattern  = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CODEX_ARCH="x86_64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
+	errReleaseAssetNotFound       = errors.New("release asset not found")
+	stableVersionPattern          = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	geminiDependencyPattern       = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
+	claudeVersionLinePattern      = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
+	codexVersionLinePattern       = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
+	copilotVersionLinePattern     = regexp.MustCompile(`(?m)^ARG COPILOT_VERSION=.*$`)
+	claudeArmChecksumLinePattern  = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CLAUDE_PLATFORM="linux-arm64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
+	claudeAmdChecksumLinePattern  = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CLAUDE_PLATFORM="linux-x64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
+	codexArmChecksumLinePattern   = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CODEX_ARCH="aarch64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
+	codexAmdChecksumLinePattern   = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CODEX_ARCH="x86_64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
+	copilotArmChecksumLinePattern = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*COPILOT_PLATFORM="linux-arm64";\s+\\\s*COPILOT_SHA256=")[0-9a-f]{64}(";)`)
+	copilotAmdChecksumLinePattern = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*COPILOT_PLATFORM="linux-x64";\s+\\\s*COPILOT_SHA256=")[0-9a-f]{64}(";)`)
 )
 
 type ProviderBumpPolicy struct {
@@ -97,6 +104,7 @@ type ProviderBumpSkippedRelease struct {
 type ProviderBumpSources struct {
 	CodexRegistryURL      string
 	CodexReleaseAPIURLFmt string
+	CopilotReleaseAPIURL  string
 	GeminiRegistryURL     string
 	ClaudeRegistryURL     string
 	ClaudeReleaseRootURL  string
@@ -111,6 +119,16 @@ type codexReleaseMetadata struct {
 	TagName    string `json:"tag_name"`
 	Prerelease bool   `json:"prerelease"`
 	Assets     []struct {
+		Name   string `json:"name"`
+		Digest string `json:"digest"`
+	} `json:"assets"`
+}
+
+type copilotReleaseMetadata struct {
+	TagName     string `json:"tag_name"`
+	Prerelease  bool   `json:"prerelease"`
+	PublishedAt string `json:"published_at"`
+	Assets      []struct {
 		Name   string `json:"name"`
 		Digest string `json:"digest"`
 	} `json:"assets"`
@@ -140,6 +158,7 @@ func DefaultProviderBumpSources() ProviderBumpSources {
 	return ProviderBumpSources{
 		CodexRegistryURL:      defaultProviderBumpCodexRegistryURL,
 		CodexReleaseAPIURLFmt: defaultProviderBumpCodexReleaseAPIURL,
+		CopilotReleaseAPIURL:  defaultProviderBumpCopilotReleaseAPIURL,
 		GeminiRegistryURL:     defaultProviderBumpGeminiRegistryURL,
 		ClaudeRegistryURL:     defaultProviderBumpClaudeRegistryURL,
 		ClaudeReleaseRootURL:  defaultProviderBumpClaudeReleaseRoot,
@@ -157,7 +176,7 @@ func LoadProviderBumpPolicy(policyPath string) (ProviderBumpPolicy, error) {
 	if policy.CooloffHours <= 0 {
 		return ProviderBumpPolicy{}, fmt.Errorf("%s must set a positive cooloff_hours", policyPath)
 	}
-	requiredProviders := []string{providerid.Claude, providerid.Codex, providerid.Gemini}
+	requiredProviders := []string{providerid.Claude, providerid.Codex, providerid.Copilot, providerid.Gemini}
 	for _, provider := range requiredProviders {
 		spec, ok := policy.Providers[provider]
 		if !ok {
@@ -209,6 +228,10 @@ func CheckProviderBumpPolicy(policyPath, dockerfilePath, providersPackageJSONPat
 	if err != nil {
 		return err
 	}
+	copilotVersion, err := ExtractDockerfileArg(dockerfilePath, "COPILOT_VERSION")
+	if err != nil {
+		return err
+	}
 	geminiVersion, err := extractGeminiVersion(providersPackageJSONPath)
 	if err != nil {
 		return err
@@ -219,6 +242,9 @@ func CheckProviderBumpPolicy(policyPath, dockerfilePath, providersPackageJSONPat
 	if policy.Providers[providerid.Claude].Channel == "stable" && !stableVersionPattern.MatchString(claudeVersion) {
 		return fmt.Errorf("%s requires a stable Claude pin, found %q in %s", policyPath, claudeVersion, dockerfilePath)
 	}
+	if policy.Providers[providerid.Copilot].Channel == "stable" && !stableVersionPattern.MatchString(copilotVersion) {
+		return fmt.Errorf("%s requires a stable Copilot pin, found %q in %s", policyPath, copilotVersion, dockerfilePath)
+	}
 	if policy.Providers[providerid.Gemini].Channel == "stable" && !stableVersionPattern.MatchString(geminiVersion) {
 		return fmt.Errorf("%s requires a stable Gemini pin, found %q in %s", policyPath, geminiVersion, providersPackageJSONPath)
 	}
@@ -226,6 +252,9 @@ func CheckProviderBumpPolicy(policyPath, dockerfilePath, providersPackageJSONPat
 		return err
 	}
 	if err := enforceProviderMaxVersion(policyPath, providerid.Claude, "Claude", claudeVersion, policy.Providers[providerid.Claude].MaxVersion, dockerfilePath); err != nil {
+		return err
+	}
+	if err := enforceProviderMaxVersion(policyPath, providerid.Copilot, "Copilot", copilotVersion, policy.Providers[providerid.Copilot].MaxVersion, dockerfilePath); err != nil {
 		return err
 	}
 	return nil
@@ -249,6 +278,10 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	if err != nil {
 		return nil, err
 	}
+	copilotCurrent, err := ExtractDockerfileArg(dockerfilePath, "COPILOT_VERSION")
+	if err != nil {
+		return nil, err
+	}
 	geminiCurrent, err := extractGeminiVersion(providersPackageJSONPath)
 	if err != nil {
 		return nil, err
@@ -269,6 +302,10 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	if err != nil {
 		return nil, err
 	}
+	copilotSelection, err := selectCopilotStable(copilotCurrent, cutoff, policy.Providers[providerid.Copilot].MaxVersion, sources, client)
+	if err != nil {
+		return nil, err
+	}
 	geminiSelection, err := selectGeminiStable(geminiCurrent, cutoff, sources, client)
 	if err != nil {
 		return nil, err
@@ -278,11 +315,12 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 		GeneratedAt:  now.UTC().Format(time.RFC3339),
 		Cutoff:       cutoff.Format(time.RFC3339),
 		CooloffHours: policy.CooloffHours,
-		HasChanges:   codexSelection.Changed || claudeSelection.Changed || geminiSelection.Changed,
+		HasChanges:   codexSelection.Changed || claudeSelection.Changed || copilotSelection.Changed || geminiSelection.Changed,
 		Providers: map[string]ProviderBumpSelection{
-			providerid.Codex:  codexSelection,
-			providerid.Claude: claudeSelection,
-			providerid.Gemini: geminiSelection,
+			providerid.Codex:   codexSelection,
+			providerid.Claude:  claudeSelection,
+			providerid.Copilot: copilotSelection,
+			providerid.Gemini:  geminiSelection,
 		},
 	}
 	return plan, nil
@@ -310,6 +348,10 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	if !ok {
 		return fmt.Errorf("%s does not contain a claude provider plan", planPath)
 	}
+	copilotPlan, ok := plan.Providers[providerid.Copilot]
+	if !ok {
+		return fmt.Errorf("%s does not contain a copilot provider plan", planPath)
+	}
 	geminiPlan, ok := plan.Providers[providerid.Gemini]
 	if !ok {
 		return fmt.Errorf("%s does not contain a gemini provider plan", planPath)
@@ -320,8 +362,23 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	if !stableVersionPattern.MatchString(codexPlan.TargetVersion) {
 		return fmt.Errorf("%s contains a non-stable Codex target version %q", planPath, codexPlan.TargetVersion)
 	}
+	if !stableVersionPattern.MatchString(copilotPlan.TargetVersion) {
+		return fmt.Errorf("%s contains a non-stable Copilot target version %q", planPath, copilotPlan.TargetVersion)
+	}
 	if !stableVersionPattern.MatchString(geminiPlan.TargetVersion) {
 		return fmt.Errorf("%s contains a non-stable Gemini target version %q", planPath, geminiPlan.TargetVersion)
+	}
+	currentCopilotVersion, err := ExtractDockerfileArg(dockerfilePath, "COPILOT_VERSION")
+	if err != nil {
+		return err
+	}
+	copilotVersionChanged := copilotPlan.TargetVersion != currentCopilotVersion
+	if copilotVersionChanged {
+		if err := requireProviderChecksums(planPath, providerid.Copilot, copilotPlan); err != nil {
+			return err
+		}
+	} else if err := validateSuppliedProviderChecksums(planPath, providerid.Copilot, copilotPlan); err != nil {
+		return err
 	}
 	if policyPath != "" {
 		policy, err := LoadProviderBumpPolicy(policyPath)
@@ -334,11 +391,15 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 		if err := enforceProviderMaxVersion(policyPath, providerid.Claude, "Claude", claudePlan.TargetVersion, policy.Providers[providerid.Claude].MaxVersion, planPath); err != nil {
 			return err
 		}
+		if err := enforceProviderMaxVersion(policyPath, providerid.Copilot, "Copilot", copilotPlan.TargetVersion, policy.Providers[providerid.Copilot].MaxVersion, planPath); err != nil {
+			return err
+		}
 	}
 
 	updatedDockerfile := dockerfileText
 	updatedDockerfile = claudeVersionLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf("ARG CLAUDE_VERSION=%s", claudePlan.TargetVersion))
 	updatedDockerfile = codexVersionLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf("ARG CODEX_VERSION=%s", codexPlan.TargetVersion))
+	updatedDockerfile = copilotVersionLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf("ARG COPILOT_VERSION=%s", copilotPlan.TargetVersion))
 	if checksum := claudePlan.Checksums["arm64"]; checksum != "" {
 		updatedDockerfile = claudeArmChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
 	}
@@ -350,6 +411,23 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	}
 	if checksum := codexPlan.Checksums["amd64"]; checksum != "" {
 		updatedDockerfile = codexAmdChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
+	}
+	if checksum := copilotPlan.Checksums["arm64"]; checksum != "" {
+		updatedDockerfile = copilotArmChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
+	}
+	if checksum := copilotPlan.Checksums["amd64"]; checksum != "" {
+		updatedDockerfile = copilotAmdChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
+	}
+	if copilotVersionChanged {
+		if !strings.Contains(updatedDockerfile, fmt.Sprintf("ARG COPILOT_VERSION=%s", copilotPlan.TargetVersion)) {
+			return fmt.Errorf("failed to update COPILOT_VERSION to %s in %s", copilotPlan.TargetVersion, dockerfilePath)
+		}
+		for _, arch := range []string{"arm64", "amd64"} {
+			checksum := copilotPlan.Checksums[arch]
+			if !strings.Contains(updatedDockerfile, fmt.Sprintf(`COPILOT_SHA256="%s"`, checksum)) {
+				return fmt.Errorf("failed to update Copilot %s checksum in %s", arch, dockerfilePath)
+			}
+		}
 	}
 	if updatedDockerfile != dockerfileText {
 		if err := os.WriteFile(dockerfilePath, []byte(updatedDockerfile), 0o644); err != nil {
@@ -365,6 +443,26 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	if updatedPackageJSON != packageJSONText {
 		if err := os.WriteFile(providersPackageJSONPath, []byte(updatedPackageJSON), 0o644); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func requireProviderChecksums(planPath, provider string, selection ProviderBumpSelection) error {
+	for _, arch := range []string{"arm64", "amd64"} {
+		checksum := selection.Checksums[arch]
+		if !isHexDigest(checksum) {
+			return fmt.Errorf("%s provider %s target version %s requires a valid %s sha256 checksum", planPath, provider, selection.TargetVersion, arch)
+		}
+	}
+	return nil
+}
+
+func validateSuppliedProviderChecksums(planPath, provider string, selection ProviderBumpSelection) error {
+	for _, arch := range []string{"arm64", "amd64"} {
+		checksum := selection.Checksums[arch]
+		if checksum != "" && !isHexDigest(checksum) {
+			return fmt.Errorf("%s provider %s target version %s contains an invalid %s sha256 checksum", planPath, provider, selection.TargetVersion, arch)
 		}
 	}
 	return nil
@@ -448,6 +546,123 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 			TargetVersion:   candidate.Raw,
 			PublishedAt:     candidate.Source.Format(time.RFC3339),
 			Changed:         candidate.Raw != currentVersion,
+			SkippedReleases: skipped,
+			Checksums: map[string]string{
+				"arm64": armDigest,
+				"amd64": amdDigest,
+			},
+		}, nil
+	}
+	return currentSelection(time.Time{}), nil
+}
+
+func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
+	current, hasCurrentVersion := parseStableVersion(currentVersion)
+	maxAllowed, hasMaxVersion := parseStableVersion(maxVersion)
+	if maxVersion != "" && !hasMaxVersion {
+		return ProviderBumpSelection{}, fmt.Errorf("provider.copilot.max_version must be an exact stable version, found %q", maxVersion)
+	}
+	if hasCurrentVersion && hasMaxVersion && compareStableVersions(current, maxAllowed) > 0 {
+		return ProviderBumpSelection{}, fmt.Errorf("current Copilot version %s exceeds provider.copilot.max_version %s", currentVersion, maxVersion)
+	}
+	if sources.CopilotReleaseAPIURL == "" {
+		return ProviderBumpSelection{
+			Channel:        "stable",
+			CurrentVersion: currentVersion,
+			TargetVersion:  currentVersion,
+		}, nil
+	}
+	releases, err := fetchCopilotReleases(client, sources.CopilotReleaseAPIURL)
+	if err != nil {
+		return ProviderBumpSelection{}, err
+	}
+
+	type releaseCandidate struct {
+		version stableVersion
+		release copilotReleaseMetadata
+	}
+	candidates := make([]releaseCandidate, 0, len(releases))
+	skipped := make([]ProviderBumpSkippedRelease, 0)
+	for _, release := range releases {
+		rawVersion := strings.TrimPrefix(release.TagName, "v")
+		version, ok := parseStableVersion(rawVersion)
+		if !ok {
+			continue
+		}
+		publishedAt, err := time.Parse(time.RFC3339, release.PublishedAt)
+		if err != nil {
+			return ProviderBumpSelection{}, fmt.Errorf("parse GitHub Copilot CLI release publish time for %s: %w", release.TagName, err)
+		}
+		version.Source = publishedAt.UTC()
+		if release.Prerelease {
+			skipped = appendSkippedProviderRelease(skipped, version, "GitHub release is marked prerelease")
+			continue
+		}
+		if hasMaxVersion && compareStableVersions(version, maxAllowed) > 0 {
+			skipped = appendSkippedProviderRelease(skipped, version, fmt.Sprintf("exceeds configured max_version %s", maxVersion))
+			continue
+		}
+		if !cutoff.IsZero() && version.Source.After(cutoff) {
+			continue
+		}
+		candidates = append(candidates, releaseCandidate{version: version, release: release})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return compareStableVersions(candidates[i].version, candidates[j].version) > 0
+	})
+	sort.Slice(skipped, func(i, j int) bool {
+		left, leftOK := parseStableVersion(skipped[i].Version)
+		right, rightOK := parseStableVersion(skipped[j].Version)
+		if leftOK && rightOK {
+			return compareStableVersions(left, right) > 0
+		}
+		return skipped[i].Version > skipped[j].Version
+	})
+
+	currentSelection := func(publishedAt time.Time) ProviderBumpSelection {
+		selection := ProviderBumpSelection{
+			Channel:         "stable",
+			CurrentVersion:  currentVersion,
+			TargetVersion:   currentVersion,
+			SkippedReleases: skipped,
+		}
+		if !publishedAt.IsZero() {
+			selection.PublishedAt = publishedAt.Format(time.RFC3339)
+		}
+		return selection
+	}
+	if len(candidates) == 0 {
+		return currentSelection(time.Time{}), nil
+	}
+	for _, candidate := range candidates {
+		if hasCurrentVersion && compareStableVersions(candidate.version, current) < 0 {
+			break
+		}
+		if candidate.version.Raw == currentVersion {
+			return currentSelection(candidate.version.Source), nil
+		}
+		armDigest, armErr := copilotReleaseAssetDigest(candidate.release, "copilot-linux-arm64.tar.gz")
+		amdDigest, amdErr := copilotReleaseAssetDigest(candidate.release, "copilot-linux-x64.tar.gz")
+		if armErr != nil || amdErr != nil {
+			reasons := make([]string, 0, 2)
+			if armErr != nil {
+				reasons = append(reasons, armErr.Error())
+			}
+			if amdErr != nil {
+				reasons = append(reasons, amdErr.Error())
+			}
+			if (armErr == nil || errors.Is(armErr, errReleaseAssetNotFound)) && (amdErr == nil || errors.Is(amdErr, errReleaseAssetNotFound)) {
+				skipped = appendSkippedProviderRelease(skipped, candidate.version, "missing supported Linux release assets: "+strings.Join(reasons, "; "))
+				continue
+			}
+			return ProviderBumpSelection{}, fmt.Errorf("copilot release %s has invalid Linux asset metadata: %s", candidate.version.Raw, strings.Join(reasons, "; "))
+		}
+		return ProviderBumpSelection{
+			Channel:         "stable",
+			CurrentVersion:  currentVersion,
+			TargetVersion:   candidate.version.Raw,
+			PublishedAt:     candidate.version.Source.Format(time.RFC3339),
+			Changed:         candidate.version.Raw != currentVersion,
 			SkippedReleases: skipped,
 			Checksums: map[string]string{
 				"arm64": armDigest,
@@ -673,6 +888,84 @@ func releaseAssetDigest(release codexReleaseMetadata, assetName string) (string,
 	return "", fmt.Errorf("%w: %s", errReleaseAssetNotFound, assetName)
 }
 
+func copilotReleaseAssetDigest(release copilotReleaseMetadata, assetName string) (string, error) {
+	for _, asset := range release.Assets {
+		if asset.Name != assetName {
+			continue
+		}
+		digest := strings.TrimPrefix(asset.Digest, "sha256:")
+		if !isHexDigest(digest) {
+			return "", fmt.Errorf("release asset %s is missing a valid sha256 digest", assetName)
+		}
+		return digest, nil
+	}
+	return "", fmt.Errorf("%w: %s", errReleaseAssetNotFound, assetName)
+}
+
+func fetchCopilotReleases(client *http.Client, releaseAPIURL string) ([]copilotReleaseMetadata, error) {
+	var releases []copilotReleaseMetadata
+	nextURL, err := paginatedCopilotReleaseURL(releaseAPIURL, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	for page := 1; page <= copilotReleaseMaxPages && nextURL != ""; page++ {
+		var pageReleases []copilotReleaseMetadata
+		header, err := fetchJSONResponse(client, nextURL, &pageReleases)
+		if err != nil {
+			return nil, err
+		}
+		releases = append(releases, pageReleases...)
+
+		if linkNext := nextLinkURL(header.Get("Link")); linkNext != "" {
+			nextURL = linkNext
+			continue
+		}
+		if len(pageReleases) == 100 {
+			nextURL, err = paginatedCopilotReleaseURL(releaseAPIURL, page+1)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		nextURL = ""
+	}
+
+	if nextURL != "" {
+		return nil, fmt.Errorf("fetch %s: exceeded Copilot release pagination cap of %d pages", releaseAPIURL, copilotReleaseMaxPages)
+	}
+	return releases, nil
+}
+
+func paginatedCopilotReleaseURL(releaseAPIURL string, page int) (string, error) {
+	parsed, err := url.Parse(releaseAPIURL)
+	if err != nil {
+		return "", fmt.Errorf("parse Copilot release API URL %s: %w", releaseAPIURL, err)
+	}
+	values := parsed.Query()
+	if values.Get("per_page") == "" {
+		values.Set("per_page", "100")
+	}
+	values.Set("page", strconv.Itoa(page))
+	parsed.RawQuery = values.Encode()
+	return parsed.String(), nil
+}
+
+func nextLinkURL(linkHeader string) string {
+	for _, part := range strings.Split(linkHeader, ",") {
+		part = strings.TrimSpace(part)
+		if !strings.Contains(part, `rel="next"`) && !strings.Contains(part, `rel=next`) {
+			continue
+		}
+		start := strings.Index(part, "<")
+		end := strings.Index(part, ">")
+		if start >= 0 && end > start {
+			return strings.TrimSpace(part[start+1 : end])
+		}
+	}
+	return ""
+}
+
 func parseStableVersion(raw string) (stableVersion, bool) {
 	if !stableVersionPattern.MatchString(raw) {
 		return stableVersion{}, false
@@ -720,24 +1013,29 @@ func compareStableVersions(left, right stableVersion) int {
 }
 
 func fetchJSON(client *http.Client, targetURL string, target any) error {
+	_, err := fetchJSONResponse(client, targetURL, target)
+	return err
+}
+
+func fetchJSONResponse(client *http.Client, targetURL string, target any) (http.Header, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), providerBumpHTTPTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
-		return fmt.Errorf("fetch %s: %w", targetURL, err)
+		return nil, fmt.Errorf("fetch %s: %w", targetURL, err)
 	}
 	req.Header.Set("User-Agent", providerBumpUserAgent)
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("fetch %s: %w", targetURL, err)
+		return nil, fmt.Errorf("fetch %s: %w", targetURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("fetch %s: unexpected status %d: %s", targetURL, resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("fetch %s: unexpected status %d: %s", targetURL, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, providerBumpMaxJSONBytes)).Decode(target); err != nil {
-		return fmt.Errorf("decode %s: %w", targetURL, err)
+		return nil, fmt.Errorf("decode %s: %w", targetURL, err)
 	}
-	return nil
+	return resp.Header.Clone(), nil
 }

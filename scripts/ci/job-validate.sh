@@ -87,6 +87,9 @@ echo "[ci/validate] upstream Codex release"
 echo "[ci/validate] upstream Claude release"
 "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
 
+echo "[ci/validate] upstream Copilot release"
+"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
+
 echo "[ci/validate] upstream Gemini release"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 

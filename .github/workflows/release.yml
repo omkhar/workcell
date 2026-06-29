@@ -360,6 +360,9 @@ jobs:
       - name: Verify upstream Claude release
         run: ./scripts/verify-upstream-claude-release.sh
 
+      - name: Verify upstream Copilot release
+        run: ./scripts/verify-upstream-copilot-release.sh
+
       - name: Verify upstream Gemini release
         run: ./scripts/verify-upstream-gemini-release.sh
 
@@ -847,6 +850,7 @@ jobs:
         run: |
           ./scripts/verify-upstream-codex-release.sh
           ./scripts/verify-upstream-claude-release.sh
+          ./scripts/verify-upstream-copilot-release.sh
           ./scripts/verify-upstream-gemini-release.sh
           ./scripts/update-upstream-pins.sh --check
 

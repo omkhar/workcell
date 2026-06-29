@@ -413,6 +413,19 @@ func ExtractCodexSHA(dockerfilePath, targetArch string) (string, error) {
 	return match[1], nil
 }
 
+func ExtractCopilotSHA(dockerfilePath, targetArch string) (string, error) {
+	text, err := readText(dockerfilePath)
+	if err != nil {
+		return "", err
+	}
+	pattern := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(targetArch) + `\)\s+\\\s*COPILOT_PLATFORM="[^"]+";\s+\\\s*COPILOT_SHA256="([0-9a-f]{64})";`)
+	match := pattern.FindStringSubmatch(text)
+	if match == nil {
+		return "", fmt.Errorf("unable to extract COPILOT_SHA256 for %s", targetArch)
+	}
+	return match[1], nil
+}
+
 func ManifestChecksum(manifestPath, platform string) (string, error) {
 	var manifest map[string]any
 	if err := readJSONFile(manifestPath, &manifest); err != nil {
@@ -479,6 +492,7 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/managed_config.toml", RuntimePath: "/opt/workcell/adapters/codex/managed_config.toml"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/mcp/config.toml", RuntimePath: "/opt/workcell/adapters/codex/mcp/config.toml"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/requirements.toml", RuntimePath: "/opt/workcell/adapters/codex/requirements.toml"},
+		{Kind: "adapter-baseline", RepoPath: "adapters/copilot/README.md", RuntimePath: "/opt/workcell/adapters/copilot/README.md"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/.gemini/settings.json", RuntimePath: "/opt/workcell/adapters/gemini/.gemini/settings.json"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/GEMINI.md", RuntimePath: "/opt/workcell/adapters/gemini/GEMINI.md"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/assurance.sh", RuntimePath: "/usr/local/libexec/workcell/assurance.sh"},
@@ -630,7 +644,7 @@ func ControlPlaneParityRows(manifestPath string) ([]string, error) {
 	}
 
 	rows := make([]string, 0, 4)
-	for _, provider := range []string{providerid.Codex, providerid.Claude, providerid.Gemini} {
+	for _, provider := range []string{providerid.Codex, providerid.Claude, providerid.Copilot, providerid.Gemini} {
 		prefix := "/opt/workcell/adapters/" + provider + "/"
 		for runtimePath := range runtimePaths {
 			if strings.HasPrefix(runtimePath, prefix) {
@@ -728,6 +742,10 @@ func GenerateBuildInputManifest(
 	if err != nil {
 		return err
 	}
+	copilotVersion, err := ExtractDockerfileArg(dockerfilePath, "COPILOT_VERSION")
+	if err != nil {
+		return err
+	}
 
 	claudeAssets := map[string]any{}
 	for _, target := range []struct {
@@ -765,6 +783,26 @@ func GenerateBuildInputManifest(
 			"arch":   target.name,
 			"sha256": sha,
 			"url":    "https://github.com/openai/codex/releases/download/rust-v" + codexVersion + "/codex-" + target.name + ".tar.gz",
+		}
+	}
+
+	copilotAssets := map[string]any{}
+	for _, target := range []struct {
+		arch     string
+		platform string
+	}{
+		{arch: "arm64", platform: "linux-arm64"},
+		{arch: "amd64", platform: "linux-x64"},
+	} {
+		sha, err := ExtractCopilotSHA(dockerfilePath, target.arch)
+		if err != nil {
+			return err
+		}
+		copilotAssets[target.arch] = map[string]any{
+			"platform": target.platform,
+			"sha256":   sha,
+			"url": "https://github.com/github/copilot-cli/releases/download/v" +
+				copilotVersion + "/copilot-" + target.platform + ".tar.gz",
 		}
 	}
 
@@ -859,6 +897,10 @@ func GenerateBuildInputManifest(
 			providerid.Codex: map[string]any{
 				"version": codexVersion,
 				"assets":  codexAssets,
+			},
+			providerid.Copilot: map[string]any{
+				"version": copilotVersion,
+				"assets":  copilotAssets,
 			},
 			"providers": map[string]any{
 				"package_json_sha256": sha256HexString(packageJSONText),

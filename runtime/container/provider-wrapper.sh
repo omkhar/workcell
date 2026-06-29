@@ -56,7 +56,7 @@ sanitize_provider_env() {
 
 require_managed_provider_launch() {
   case "${AGENT_NAME}" in
-    codex | claude | gemini) ;;
+    codex | claude | copilot | gemini) ;;
     *)
       workcell_die "Unsupported provider wrapper target: ${AGENT_NAME}"
       ;;
