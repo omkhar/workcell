@@ -1,11 +1,14 @@
 COLIMA_PROFILE="start-retry-fixture"
 WORKSPACE="/tmp/workspace"
+REAL_HOME="$(mktemp -d)"
 COLIMA_CPU=4
 COLIMA_MEMORY=8
 COLIMA_DISK=60
 PROFILE_RUNNING=0
 RUN_COUNT=0
 REFRESH_COUNT=0
+
+trap 'rm -rf "${REAL_HOME}"' EXIT
 
 maybe_reap_stale_profile_processes() { :; }
 reap_stale_profile_processes() { :; }

@@ -2562,6 +2562,14 @@ bash "${WORKCELL_RUNTIME_IMAGE_REFRESH_CACHE_HARNESS}"
 WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harness.sh"
 {
   printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_host_path_components
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_staging_cache_root
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prepare_colima_staging_cache_roots
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" start_managed_profile
   printf '\n'
   cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-start-retry.sh"
@@ -2571,6 +2579,14 @@ bash "${WORKCELL_START_RETRY_HARNESS}"
 WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-timeout-cleanup-harness.sh"
 {
   printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_host_path_components
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_staging_cache_root
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prepare_colima_staging_cache_roots
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" start_managed_profile
   printf '\n'
   cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-start-timeout-cleanup.sh"
@@ -6435,6 +6451,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --rebuild \
       --workspace "${ROOT_DIR}" \
       --vm-memory 6 \
+      --vm-disk 80 \
       --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --debug-log "${LIVE_DEBUG_LOG}" >"${LIVE_DEBUG_PREPARE_OUT}" 2>&1; then
@@ -6450,6 +6467,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --agent codex \
       --workspace "${ROOT_DIR}" \
       --vm-memory 6 \
+      --vm-disk 80 \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --file-trace-log "${FILE_TRACE_CAPTURE}" \
       --agent-arg --version >"${LIVE_DEBUG_FILE_TRACE_OUT}" 2>&1; then
@@ -6473,6 +6491,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --agent codex \
       --workspace "${ROOT_DIR}" \
       --vm-memory 6 \
+      --vm-disk 80 \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}" 2>&1; then
       echo "Expected --inspect to surface the latest retained file trace log" >&2
       cat "${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}" >&2
@@ -6494,6 +6513,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
         --mode development \
         --workspace "${ROOT_DIR}" \
         --vm-memory 6 \
+        --vm-disk 80 \
         --no-default-injection-policy \
         --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
         -- bash -lc 'git -c safe.directory=/workspace status --short >/tmp/workcell-development-shell.out && printf "WORKCELL_DEVELOPMENT_SHELL_OK\n"' \
