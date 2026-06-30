@@ -264,6 +264,7 @@ HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 )
 REPO_PRECOMMIT_HOOK="${ROOT_DIR}/.githooks/pre-commit"
@@ -2115,6 +2116,28 @@ if ! grep -q 'unsupported keys: provider' /tmp/workcell-injection-bad-keys.out; 
   cat /tmp/workcell-injection-bad-keys.out >&2
   exit 1
 fi
+
+printf 'version = 1\n[documents]\ncopilot = "secret.txt"\n' >"${INJECTION_POLICY_FIXTURE_ROOT}/bad-document-key.toml"
+if "${ROOT_DIR}/scripts/workcell" policy validate --injection-policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-document-key.toml" >/tmp/workcell-injection-bad-document-key.out 2>&1; then
+  echo "Expected workcell policy validate to reject unsupported document provider keys" >&2
+  exit 1
+fi
+grep -q 'documents contains unsupported keys: copilot' /tmp/workcell-injection-bad-document-key.out
+bad_document_resolved_root="${INJECTION_POLICY_FIXTURE_ROOT}/bad-document-key-resolved"
+mkdir -p "${bad_document_resolved_root}"
+bad_document_resolved_root="$(cd "${bad_document_resolved_root}" && pwd -P)"
+if go_verify_hostutil resolve-credentials \
+  --policy "${INJECTION_POLICY_FIXTURE_ROOT}/bad-document-key.toml" \
+  --agent codex \
+  --mode strict \
+  --resolution-mode metadata \
+  --output-policy "${bad_document_resolved_root}/policy.toml" \
+  --output-metadata "${bad_document_resolved_root}/metadata.json" \
+  --output-root "${bad_document_resolved_root}" >/tmp/workcell-injection-bad-document-key-resolve.out 2>&1; then
+  echo "Expected credential resolver to reject unsupported document provider keys" >&2
+  exit 1
+fi
+grep -q 'documents contains unsupported keys: copilot' /tmp/workcell-injection-bad-document-key-resolve.out
 
 cat <<'EOF' >"${INJECTION_POLICY_FIXTURE_ROOT}/missing-classification.toml"
 version = 1
@@ -4168,7 +4191,7 @@ done
 grep -q "Google Antigravity CLI is a planned Workcell provider adapter, but it is not supported yet." /tmp/workcell-antigravity-fail-closed.out
 grep -q "No Antigravity runtime, auth handoff, or live certification evidence is shipped in this build." /tmp/workcell-antigravity-fail-closed.out
 grep -q "GitHub Copilot CLI is a planned Workcell provider adapter, but it is not supported yet." /tmp/workcell-copilot-fail-closed.out
-grep -q "No Copilot runtime, auth handoff, or live certification evidence is shipped in this build." /tmp/workcell-copilot-fail-closed.out
+grep -q "Copilot runtime artifact is shipped only for provenance and release verification; auth handoff, supported launch, and live certification evidence are not shipped in this build." /tmp/workcell-copilot-fail-closed.out
 
 STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"
 mkdir -p "${STRICT_PREFLIGHT_WORKSPACE}"
@@ -6205,21 +6228,23 @@ if run_workcell_verify --agent codex --workspace "${REAL_HOME}" --dry-run >/dev/
 fi
 
 PROVIDER_HOME_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/workcell-provider-home.XXXXXX")"
-mkdir -p "${PROVIDER_HOME_FIXTURE}/home/.codex"
-printf 'provider home marker\n' >"${PROVIDER_HOME_FIXTURE}/home/.codex/AGENTS.md"
-if run_workcell_verify \
-  HOME="${PROVIDER_HOME_FIXTURE}/home" \
-  XDG_CONFIG_HOME="${PROVIDER_HOME_FIXTURE}/home/.config" \
-  --agent codex \
-  --workspace "${PROVIDER_HOME_FIXTURE}/home/.codex" \
-  --allow-nongit-workspace \
-  --no-default-injection-policy \
-  --dry-run >/tmp/workcell-provider-home-workspace.out 2>&1; then
-  echo "Expected provider-home workspace rejection" >&2
-  rm -rf "${PROVIDER_HOME_FIXTURE}"
-  exit 1
-fi
-grep -q 'Refusing sensitive workspace mount' /tmp/workcell-provider-home-workspace.out
+for provider_home_name in .codex .copilot; do
+  mkdir -p "${PROVIDER_HOME_FIXTURE}/home/${provider_home_name}"
+  printf 'provider home marker\n' >"${PROVIDER_HOME_FIXTURE}/home/${provider_home_name}/AGENTS.md"
+  if run_workcell_verify \
+    HOME="${PROVIDER_HOME_FIXTURE}/home" \
+    XDG_CONFIG_HOME="${PROVIDER_HOME_FIXTURE}/home/.config" \
+    --agent codex \
+    --workspace "${PROVIDER_HOME_FIXTURE}/home/${provider_home_name}" \
+    --allow-nongit-workspace \
+    --no-default-injection-policy \
+    --dry-run >"/tmp/workcell-provider-home-workspace-${provider_home_name#.}.out" 2>&1; then
+    echo "Expected provider-home workspace rejection for ${provider_home_name}" >&2
+    rm -rf "${PROVIDER_HOME_FIXTURE}"
+    exit 1
+  fi
+  grep -q 'Refusing sensitive workspace mount' "/tmp/workcell-provider-home-workspace-${provider_home_name#.}.out"
+done
 rm -rf "${PROVIDER_HOME_FIXTURE}"
 
 if "${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --dry-run >/dev/null 2>&1; then

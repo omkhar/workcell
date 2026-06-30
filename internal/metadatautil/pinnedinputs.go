@@ -470,6 +470,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
+	copilotVersion, err := requireArg(runtimeDockerfile, "COPILOT_VERSION", cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return err
+	}
 
 	runtimeInstallBlocks, err := extractInstallBlocks(runtimeDockerfile, cfg.RuntimeDockerfilePath)
 	if err != nil {
@@ -504,6 +508,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if _, _, err := requireRegex(runtimeDockerfile, `curl --ipv4 -fsSL "https://storage\.googleapis\.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/\$\{CLAUDE_VERSION\}/\$\{CLAUDE_PLATFORM\}/claude"`, "Claude native release download URL", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
+	if _, _, err := requireRegex(runtimeDockerfile, `curl --ipv4 -fsSL "https://github\.com/github/copilot-cli/releases/download/v\$\{COPILOT_VERSION\}/copilot-\$\{COPILOT_PLATFORM\}\.tar\.gz"`, "Copilot native release download URL", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	if _, _, err := requireRegex(runtimeDockerfile, `install -m 0644 /tmp/copilot /usr/local/libexec/workcell/real/copilot`, "non-executable Copilot provenance artifact install", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
 	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*arm64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`, "arm64 Claude mapping", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	} else if match[1] != "linux-arm64" {
@@ -520,6 +530,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$`).MatchString(claudeVersion) {
 		return fmt.Errorf("runtime/container/Dockerfile CLAUDE_VERSION must stay pinned to an explicit release, found %q", claudeVersion)
 	}
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(copilotVersion) {
+		return fmt.Errorf("runtime/container/Dockerfile COPILOT_VERSION must stay pinned to a non-prerelease GitHub Copilot CLI release, found %q", copilotVersion)
+	}
 	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*arm64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "arm64 Codex mapping", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	} else if match[1] != "aarch64-unknown-linux-musl" {
@@ -529,6 +542,16 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	} else if match[1] != "x86_64-unknown-linux-musl" {
 		return fmt.Errorf("amd64 Codex mapping in %s must use x86_64-unknown-linux-musl", cfg.RuntimeDockerfilePath)
+	}
+	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*arm64\)\s+\\\s*COPILOT_PLATFORM="([^"]+)";\s+\\\s*COPILOT_SHA256="([0-9a-f]{64})";`, "arm64 Copilot mapping", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	} else if match[1] != "linux-arm64" {
+		return fmt.Errorf("arm64 Copilot mapping in %s must use linux-arm64", cfg.RuntimeDockerfilePath)
+	}
+	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*amd64\)\s+\\\s*COPILOT_PLATFORM="([^"]+)";\s+\\\s*COPILOT_SHA256="([0-9a-f]{64})";`, "amd64 Copilot mapping", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	} else if match[1] != "linux-x64" {
+		return fmt.Errorf("amd64 Copilot mapping in %s must use linux-x64", cfg.RuntimeDockerfilePath)
 	}
 	if len(runtimeInstallBlocks) != 2 {
 		return fmt.Errorf("runtime/container/Dockerfile must contain exactly two apt install blocks (runtime base and runtime builder)")
@@ -1294,6 +1317,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		"./scripts/verify-github-macos-release-test-runners.sh",
 		"./scripts/verify-upstream-codex-release.sh",
 		"./scripts/verify-upstream-claude-release.sh",
+		"./scripts/verify-upstream-copilot-release.sh",
 		"./scripts/verify-upstream-gemini-release.sh",
 		"./scripts/update-upstream-pins.sh --check",
 	} {
@@ -1306,6 +1330,32 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	} {
 		if !strings.Contains(pinHygieneWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/pin-hygiene.yml must contain %q", needle)
+		}
+	}
+	pinHygieneJob, err := readText(filepath.Join(repoRoot, "scripts", "ci", "job-pin-hygiene.sh"))
+	if err != nil {
+		return err
+	}
+	validateJob, err := readText(filepath.Join(repoRoot, "scripts", "ci", "job-validate.sh"))
+	if err != nil {
+		return err
+	}
+	for _, needle := range []string{
+		"${ROOT_DIR}/scripts/verify-upstream-codex-release.sh",
+		"${ROOT_DIR}/scripts/verify-upstream-claude-release.sh",
+		"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh",
+		"${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh",
+	} {
+		if !strings.Contains(pinHygieneJob, needle) {
+			return fmt.Errorf("scripts/ci/job-pin-hygiene.sh must contain %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh",
+		"unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN",
+	} {
+		if !strings.Contains(validateJob, needle) {
+			return fmt.Errorf("scripts/ci/job-validate.sh must contain %q", needle)
 		}
 	}
 	for _, needle := range []string{

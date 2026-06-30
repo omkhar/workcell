@@ -52,6 +52,7 @@ enum ProtectedRuntime {
     Node,
     Codex,
     Claude,
+    Copilot,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +85,10 @@ const PROTECTED_RUNTIME_PATHS: &[(ProtectedRuntime, &str)] = &[
     (
         ProtectedRuntime::Claude,
         "/usr/local/libexec/workcell/real/claude",
+    ),
+    (
+        ProtectedRuntime::Copilot,
+        "/usr/local/libexec/workcell/real/copilot",
     ),
 ];
 
@@ -158,6 +163,7 @@ static REAL_SYSCALL_FN: OnceLock<SyscallFn> = OnceLock::new();
 static STRICT_MUTABLE_EXEC_BLOCK: OnceLock<bool> = OnceLock::new();
 static PROTECTED_RUNTIME_SIGS: OnceLock<Vec<(ProtectedRuntime, StatSignature)>> = OnceLock::new();
 static PROTECTED_GIT_SIGS: OnceLock<Vec<StatSignature>> = OnceLock::new();
+static DYNAMIC_LOADER_SIGS: OnceLock<Vec<(String, StatSignature)>> = OnceLock::new();
 
 fn current_mode_blocks_mutable_native_exec() -> bool {
     *STRICT_MUTABLE_EXEC_BLOCK.get_or_init(|| {
@@ -677,6 +683,95 @@ fn protected_git_signatures() -> &'static Vec<StatSignature> {
     })
 }
 
+fn dynamic_loader_candidate_paths() -> Vec<String> {
+    let mut paths = Vec::new();
+
+    for path in [
+        "/lib64/ld-linux-x86-64.so.2",
+        "/lib/ld-linux-aarch64.so.1",
+        "/lib/ld-linux-armhf.so.3",
+    ] {
+        if fs::metadata(path).is_ok() {
+            paths.push(path.to_owned());
+        }
+    }
+
+    for dir in ["/lib", "/lib64"] {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(path_string) = path.to_str().map(str::to_owned) else {
+                continue;
+            };
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_dynamic_loader_path)
+                && !paths.iter().any(|candidate| candidate == &path_string)
+            {
+                paths.push(path_string);
+            }
+        }
+    }
+
+    paths
+}
+
+fn dynamic_loader_signatures() -> &'static Vec<(String, StatSignature)> {
+    DYNAMIC_LOADER_SIGS.get_or_init(|| {
+        dynamic_loader_candidate_paths()
+            .into_iter()
+            .filter_map(|path| {
+                fs::metadata(&path)
+                    .ok()
+                    .map(|metadata| (path, metadata_signature_from_metadata(&metadata)))
+            })
+            .collect()
+    })
+}
+
+fn stat_matches_dynamic_loader(candidate: &StatSignature) -> bool {
+    dynamic_loader_signatures()
+        .iter()
+        .any(|(_, loader)| loader.dev == candidate.dev && loader.ino == candidate.ino)
+}
+
+fn candidate_size_matches_dynamic_loader(candidate: &StatSignature) -> bool {
+    (candidate.mode & file_type_bits()) == regular_file_mode()
+        && dynamic_loader_signatures()
+            .iter()
+            .any(|(_, loader)| loader.size == candidate.size)
+}
+
+fn file_matches_dynamic_loader_by_contents(
+    candidate: &mut File,
+    candidate_signature: &StatSignature,
+) -> bool {
+    if (candidate_signature.mode & file_type_bits()) != regular_file_mode() {
+        return false;
+    }
+
+    for (path, loader_signature) in dynamic_loader_signatures() {
+        if loader_signature.size != candidate_signature.size {
+            continue;
+        }
+
+        let Ok(mut loader_file) = File::open(path) else {
+            continue;
+        };
+        let Ok(mut candidate_clone) = candidate.try_clone() else {
+            continue;
+        };
+        if compare_open_files(&mut candidate_clone, &mut loader_file) {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn stat_matches_protected_runtime(candidate: &StatSignature) -> ProtectedRuntime {
     protected_runtime_signatures()
         .iter()
@@ -777,20 +872,110 @@ fn is_dynamic_loader_path(path: &str) -> bool {
     base.starts_with("ld-linux-") || base.starts_with("ld-musl-")
 }
 
-fn classify_loader_target(path: &str, args: &[String]) -> ProtectedRuntime {
-    if !is_dynamic_loader_path(path) {
-        return ProtectedRuntime::None;
+fn path_points_to_dynamic_loader(path: &str) -> bool {
+    if is_dynamic_loader_path(path) {
+        return true;
     }
-    args.get(1)
+    if let Ok(target) = fs::read_link(path) {
+        let target_string = target.to_string_lossy();
+        if is_dynamic_loader_path(trim_deleted_suffix(&target_string)) {
+            return true;
+        }
+    }
+    if fs::canonicalize(path)
+        .ok()
+        .is_some_and(|target| is_dynamic_loader_path(&target.to_string_lossy()))
+    {
+        return true;
+    }
+
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let Ok(metadata) = file.metadata() else {
+        return false;
+    };
+    let candidate = metadata_signature_from_metadata(&metadata);
+    stat_matches_dynamic_loader(&candidate)
+        || (candidate_size_matches_dynamic_loader(&candidate)
+            && file_matches_dynamic_loader_by_contents(&mut file, &candidate))
+}
+
+fn fd_is_dynamic_loader(fd: c_int) -> bool {
+    if fs::read_link(proc_fd_path(fd)).ok().is_some_and(|target| {
+        let target_string = target.to_string_lossy();
+        path_points_to_dynamic_loader(trim_deleted_suffix(&target_string))
+    }) {
+        return true;
+    }
+
+    let Some(mut file) = duplicate_fd_file(fd) else {
+        return false;
+    };
+    let Ok(metadata) = file.metadata() else {
+        return false;
+    };
+    let candidate = metadata_signature_from_metadata(&metadata);
+    stat_matches_dynamic_loader(&candidate)
+        || (candidate_size_matches_dynamic_loader(&candidate)
+            && file_matches_dynamic_loader_by_contents(&mut file, &candidate))
+}
+
+fn classify_loader_args(args: &[String]) -> ProtectedRuntime {
+    args.iter()
+        .skip(1)
         .map(|target| classify_protected_runtime_path(target))
+        .find(|kind| *kind != ProtectedRuntime::None)
         .unwrap_or(ProtectedRuntime::None)
 }
 
+fn classify_loader_target(path: &str, args: &[String]) -> ProtectedRuntime {
+    if !path_points_to_dynamic_loader(path) {
+        return ProtectedRuntime::None;
+    }
+    classify_loader_args(args)
+}
+
+fn classify_loader_fd_target(fd: c_int, args: &[String]) -> ProtectedRuntime {
+    if fd_is_dynamic_loader(fd) {
+        classify_loader_args(args)
+    } else {
+        ProtectedRuntime::None
+    }
+}
+
+fn loader_arg_targets_mutable_native_exec(target: &str) -> bool {
+    if let Some(proc_fd) = path_is_current_process_fd_path(target) {
+        return file_descriptor_is_mutable_native_exec(proc_fd);
+    }
+    path_is_mutable_native_exec(target)
+}
+
 fn loader_targets_mutable_native_exec(path: &str, args: &[String]) -> bool {
-    is_dynamic_loader_path(path)
+    path_points_to_dynamic_loader(path)
         && args
-            .get(1)
-            .is_some_and(|target| path_is_mutable_native_exec(target))
+            .iter()
+            .skip(1)
+            .any(|target| loader_arg_targets_mutable_native_exec(target))
+}
+
+fn loader_fd_targets_mutable_native_exec(fd: c_int, args: &[String]) -> bool {
+    fd_is_dynamic_loader(fd)
+        && args
+            .iter()
+            .skip(1)
+            .any(|target| loader_arg_targets_mutable_native_exec(target))
+}
+
+fn protected_runtime_exec_blocked(kind: ProtectedRuntime, approved_wrapper: bool) -> bool {
+    kind != ProtectedRuntime::None && (kind == ProtectedRuntime::Copilot || !approved_wrapper)
+}
+
+fn should_block_protected_runtime_kind(kind: ProtectedRuntime) -> bool {
+    if kind == ProtectedRuntime::None {
+        return false;
+    }
+    protected_runtime_exec_blocked(kind, current_process_uses_approved_wrapper())
 }
 
 fn should_block_protected_runtime_exec(
@@ -801,7 +986,11 @@ fn should_block_protected_runtime_exec(
     if let Some(proc_fd) = path_is_current_process_fd_path(path) {
         let kind = classify_protected_runtime_fd(proc_fd);
         if kind != ProtectedRuntime::None {
-            return !current_process_uses_approved_wrapper();
+            return should_block_protected_runtime_kind(kind);
+        }
+        let kind = classify_loader_fd_target(proc_fd, args);
+        if kind != ProtectedRuntime::None {
+            return should_block_protected_runtime_kind(kind);
         }
         return file_descriptor_is_mutable_shebang_to_protected_runtime(proc_fd, env_entries);
     }
@@ -811,7 +1000,7 @@ fn should_block_protected_runtime_exec(
         kind = classify_loader_target(path, args);
     }
     if kind != ProtectedRuntime::None {
-        return !current_process_uses_approved_wrapper();
+        return should_block_protected_runtime_kind(kind);
     }
 
     path_is_mutable_shebang_to_protected_runtime(path, env_entries)
@@ -819,7 +1008,8 @@ fn should_block_protected_runtime_exec(
 
 fn should_block_mutable_native_exec(path: &str, args: &[String]) -> bool {
     if let Some(proc_fd) = path_is_current_process_fd_path(path) {
-        return file_descriptor_is_mutable_native_exec(proc_fd);
+        return file_descriptor_is_mutable_native_exec(proc_fd)
+            || loader_fd_targets_mutable_native_exec(proc_fd, args);
     }
 
     path_is_mutable_native_exec(path) || loader_targets_mutable_native_exec(path, args)
@@ -1313,9 +1503,14 @@ pub unsafe extern "C" fn execveat(
 
     let (protected_target, mutable_native_target, mutable_shebang_protected_target) =
         if (flags & AT_EMPTY_PATH_FLAG) != 0 && pathname_string.is_empty() {
+            let mut protected_target = classify_protected_runtime_fd(dirfd);
+            if protected_target == ProtectedRuntime::None {
+                protected_target = classify_loader_fd_target(dirfd, &args);
+            }
             (
-                classify_protected_runtime_fd(dirfd),
-                file_descriptor_is_mutable_native_exec(dirfd),
+                protected_target,
+                file_descriptor_is_mutable_native_exec(dirfd)
+                    || loader_fd_targets_mutable_native_exec(dirfd, &args),
                 file_descriptor_is_mutable_shebang_to_protected_runtime(dirfd, &env_entries),
             )
         } else {
@@ -1336,8 +1531,15 @@ pub unsafe extern "C" fn execveat(
                     let candidate_fd =
                         libc::openat(dirfd, c_path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
                     if candidate_fd >= 0 {
+                        if protected_target == ProtectedRuntime::None {
+                            protected_target = classify_loader_fd_target(candidate_fd, &args);
+                        }
                         mutable_native_target =
                             file_descriptor_is_mutable_native_exec(candidate_fd);
+                        if !mutable_native_target {
+                            mutable_native_target =
+                                loader_fd_targets_mutable_native_exec(candidate_fd, &args);
+                        }
                         if !mutable_native_target {
                             mutable_shebang_target =
                                 file_descriptor_is_mutable_shebang_to_protected_runtime(
@@ -1364,9 +1566,7 @@ pub unsafe extern "C" fn execveat(
             )
         };
 
-    if (protected_target != ProtectedRuntime::None && !current_process_uses_approved_wrapper())
-        || mutable_shebang_protected_target
-    {
+    if should_block_protected_runtime_kind(protected_target) || mutable_shebang_protected_target {
         report_protected_runtime_block();
         return -1;
     }
@@ -1395,8 +1595,8 @@ pub unsafe extern "C" fn fexecve(
     let args = collect_cstring_array(argv);
     let env_entries = collect_cstring_array(effective_env_ptr(envp));
 
-    if classify_protected_runtime_fd(fd) != ProtectedRuntime::None
-        && !current_process_uses_approved_wrapper()
+    if should_block_protected_runtime_kind(classify_protected_runtime_fd(fd))
+        || should_block_protected_runtime_kind(classify_loader_fd_target(fd, &args))
     {
         report_protected_runtime_block();
         return -1;
@@ -1405,7 +1605,9 @@ pub unsafe extern "C" fn fexecve(
         report_protected_runtime_block();
         return -1;
     }
-    if file_descriptor_is_mutable_native_exec(fd) {
+    if file_descriptor_is_mutable_native_exec(fd)
+        || loader_fd_targets_mutable_native_exec(fd, &args)
+    {
         report_mutable_native_exec_block();
         return -1;
     }

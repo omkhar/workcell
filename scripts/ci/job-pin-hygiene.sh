@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+unset GITHUB_TOKEN GH_TOKEN WORKCELL_GITHUB_API_TOKEN
 
 echo "[ci/pin-hygiene] pinned input policy"
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
@@ -14,6 +15,9 @@ echo "[ci/pin-hygiene] upstream Codex release"
 
 echo "[ci/pin-hygiene] upstream Claude release"
 "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
+
+echo "[ci/pin-hygiene] upstream Copilot release"
+"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
 
 echo "[ci/pin-hygiene] upstream Gemini release"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"

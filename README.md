@@ -386,8 +386,7 @@ Tagged releases are rebuilt and verified before publication. The release path:
   targets the newest two GitHub-hosted Apple Silicon macOS runner labels
 - refuses to publish if any reviewed provider, Linux base image, Linux
   toolchain, or release-build pin is behind the latest tracked upstream
-- adds Copilot or Antigravity upstream pin verification as part of provider
-  promotion, before any support claim
+- verifies the pinned Copilot provenance artifact against upstream GitHub release metadata while keeping Copilot launch unsupported; Antigravity gets the same gate before any future support claim
 - publishes from the archived source bundle rather than the live checkout
 - gates publication on bundle and Homebrew install verification on
   GitHub-hosted Apple Silicon `macos-26` and `macos-15`

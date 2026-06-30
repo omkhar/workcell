@@ -2,7 +2,7 @@ name: Pin Hygiene
 
 # This workflow is the WEEKLY-CRON pin-hygiene lane.  scripts/ci/job-validate.sh
 # runs scripts/check-pinned-inputs.sh,
-# scripts/verify-upstream-{codex,claude,gemini}-release.sh, and (on the
+# scripts/verify-upstream-{codex,claude,copilot,gemini}-release.sh, and (on the
 # release-preflight profile only) scripts/update-upstream-pins.sh --check.
 # This cron lane catches snapshot/digest drift independently of PR
 # activity.  The full update-upstream-pins --check is intentionally not
@@ -49,4 +49,10 @@ jobs:
           sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
 
       - name: Check pinned upstream hygiene
-        run: ./scripts/ci/job-pin-hygiene.sh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/job-pin-hygiene.sh

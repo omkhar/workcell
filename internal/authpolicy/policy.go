@@ -75,6 +75,7 @@ var (
 		"copies":      {},
 		"credentials": {},
 	}
+	documentKeys      = []string{"common", providerid.Codex, providerid.Claude, providerid.Gemini}
 	managedRootMarker = ".workcell-managed-root"
 )
 
@@ -181,6 +182,15 @@ func validateAllowedKeys(table map[string]any, allowedKeys map[string]struct{}, 
 		return die(fmt.Sprintf("%s contains unsupported keys: %s", label, strings.Join(unknown, ", ")))
 	}
 	return nil
+}
+
+func validateDocumentKeys(policy map[string]any) error {
+	documents, _ := policy["documents"].(map[string]any)
+	allowed := make(map[string]struct{}, len(documentKeys))
+	for _, key := range documentKeys {
+		allowed[key] = struct{}{}
+	}
+	return validateAllowedKeys(documents, allowed, "documents")
 }
 
 func selectedFor(values any, current string, label string, allowedValues map[string]struct{}) (bool, error) {
@@ -345,6 +355,9 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 			}
 			target[pair.Key] = pair.Value
 		}
+	}
+	if err := validateDocumentKeys(root); err != nil {
+		return nil, err
 	}
 	return root, nil
 }
@@ -765,7 +778,7 @@ func renderPolicyTOML(policy map[string]any) (string, error) {
 	if documents, ok := policy["documents"].(map[string]any); ok && len(documents) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, "[documents]")
-		for _, key := range []string{"common", providerid.Codex, providerid.Claude, providerid.Gemini} {
+		for _, key := range documentKeys {
 			if value, ok := documents[key]; ok {
 				rendered, err := renderTOMLValue(value)
 				if err != nil {

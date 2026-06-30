@@ -62,8 +62,9 @@ The
 and
 .B antigravity
 provider ids are recognized only as planned fail-closed adapters; current
-releases exit before runtime preparation because no matching runtime, auth
-handoff, or live certification evidence is shipped.
+releases exit before supported runtime preparation. Copilot ships only a pinned
+non-executable runtime artifact for provenance and release verification; neither
+provider ships auth handoff or live certification evidence.
 .TP
 .B --agent-autonomy yolo|prompt
 Select the provider approval posture. The default is

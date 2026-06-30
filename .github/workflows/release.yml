@@ -360,11 +360,26 @@ jobs:
       - name: Verify upstream Claude release
         run: ./scripts/verify-upstream-claude-release.sh
 
+      - name: Verify upstream Copilot release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/verify-upstream-copilot-release.sh
+
       - name: Verify upstream Gemini release
         run: ./scripts/verify-upstream-gemini-release.sh
 
       - name: Require pinned upstreams to match the latest reviewed track
-        run: ./scripts/update-upstream-pins.sh --check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
 
       - name: Build validation tool image
         run: |
@@ -843,10 +858,17 @@ jobs:
           ./scripts/generate-builder-environment-manifest.sh dist/workcell-builder-environment.json
 
       - name: Re-verify pinned upstreams from archived source tree
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         working-directory: dist/release-source
         run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          export WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}"
           ./scripts/verify-upstream-codex-release.sh
           ./scripts/verify-upstream-claude-release.sh
+          ./scripts/verify-upstream-copilot-release.sh
           ./scripts/verify-upstream-gemini-release.sh
           ./scripts/update-upstream-pins.sh --check
 

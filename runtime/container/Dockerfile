@@ -11,7 +11,7 @@ ARG SOURCE_DATE_EPOCH=0
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
 ARG DEBIAN_SNAPSHOT=20260518T000000Z
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.96.0-slim-trixie@sha256:6abf73f05806f36362d0ff2722f2250c6153398831edd0455e0e0baa1f78ecc7
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.96.0-slim-trixie@sha256:c37af730be4fd8104cbf9aedbd6ab259e51ca2d5437817a0f8680edf66ac6c28
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -200,7 +200,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.195
+ARG CLAUDE_VERSION=2.1.196
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
@@ -208,7 +208,12 @@ ARG CLAUDE_VERSION=2.1.195
 # bundles); to update manually, resolve the eligible stable version, verify
 # the GitHub release asset digests for both musl Linux tarballs, and refresh
 # the CODEX_SHA256 values for arm64 and amd64 below.
-ARG CODEX_VERSION=0.142.3
+ARG CODEX_VERSION=0.142.4
+# GitHub Copilot CLI native binary version and SHA256 checksums for each Linux
+# architecture. Workcell pins the non-prerelease GitHub release asset here;
+# support promotion must keep token auth explicit through copilot_github_token
+# instead of host GitHub CLI state.
+ARG COPILOT_VERSION=1.0.65
 ARG CODEX_RELEASE_URL=
 ARG RUST_VERSION=1.96.0
 ARG TARGETARCH
@@ -282,11 +287,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="b02279999058dc80a0e1c5d39463d1545a178615492f84139aac8d61214a7e9a"; \
+      CLAUDE_SHA256="05aa9189d335d1e921ca9608acd699193e661559aff56704456ce5bda6fd4dd8"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="8323e70125063147a4478b957745d835a87e5e72ffd25b838ea9a841c03e6a37"; \
+      CLAUDE_SHA256="eb933c6dd5534db89b83ba09009d5c0932bd1395f7e3bb0f34ba37eec37bbade"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -318,11 +323,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-musl"; \
-      CODEX_SHA256="d4bb18793cd53902593ddb92c409f262c05dc80e4235f865ede2378ba15a1dd1"; \
+      CODEX_SHA256="a546ee05915313fea340f8315b54f43d077f4390afbb5af2de944d48013d447f"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-musl"; \
-      CODEX_SHA256="f96813f41692b4d8ae44d0812165a2fcc429196eb3481f6bc221afdec96a17f8"; \
+      CODEX_SHA256="f0ac43751c6d3b29a973a860a8de528ad79cb20cc1296611930a3d5c91ddef95"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -350,6 +355,43 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && chmod 0755 /usr/local/libexec/workcell/real/codex \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/codex \
   && rm -f /tmp/codex.tar.gz
+
+RUN TARGET_ARCH="${TARGETARCH:-}" \
+  && if [[ -z "${TARGET_ARCH}" ]]; then \
+       case "$(dpkg --print-architecture)" in \
+         arm64) TARGET_ARCH="arm64" ;; \
+         amd64) TARGET_ARCH="amd64" ;; \
+         *) \
+           echo "Unsupported dpkg architecture: $(dpkg --print-architecture)" >&2; \
+           exit 1; \
+           ;; \
+       esac; \
+     fi \
+  && case "${TARGET_ARCH}" in \
+    arm64) \
+      COPILOT_PLATFORM="linux-arm64"; \
+      COPILOT_SHA256="e9f4e570cfe85e7be4a3be4b74eb6564c3f96e97cb1162bcc6282cd1f820c686"; \
+      ;; \
+    amd64) \
+      COPILOT_PLATFORM="linux-x64"; \
+      COPILOT_SHA256="da36be29a5afc7c6cef63b25ac10ee1862216a0f5efabed502ed42c4e0f62af8"; \
+      ;; \
+    *) \
+      echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
+      exit 1; \
+      ;; \
+  esac \
+  && curl --ipv4 -fsSL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_VERSION}/copilot-${COPILOT_PLATFORM}.tar.gz" \
+    --retry 8 \
+    --retry-all-errors \
+    --retry-delay 5 \
+    --connect-timeout 30 \
+    -o /tmp/copilot.tar.gz \
+  && echo "${COPILOT_SHA256}  /tmp/copilot.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/copilot.tar.gz -C /tmp copilot \
+  && install -m 0644 /tmp/copilot /usr/local/libexec/workcell/real/copilot \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/copilot \
+  && rm -f /tmp/copilot.tar.gz /tmp/copilot
 
 # Copy ONLY the Rust source before the expensive compile so that changes to
 # adapters or shell scripts do not invalidate the cargo build cache layer.

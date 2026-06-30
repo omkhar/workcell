@@ -2690,8 +2690,37 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/claude-loader-real.out
+  if env -u LD_PRELOAD "$LOADER" --argv0 copilot /usr/local/libexec/workcell/real/copilot --version >/tmp/copilot-loader-argv0.out 2>&1; then
+    echo "expected loader option invocation of the real Copilot payload to fail" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-argv0.out
+  ln -sf "$LOADER" "$EXEC_TMP/workcell-loader-alias"
+  if env -u LD_PRELOAD "$EXEC_TMP/workcell-loader-alias" --argv0 copilot /usr/local/libexec/workcell/real/copilot --version >/tmp/copilot-loader-alias-argv0.out 2>&1; then echo "expected aliased loader option invocation of the real Copilot payload to fail" >&2; exit 1; fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-alias-argv0.out
+  if env -u LD_PRELOAD bash -c 'exec 9<"$1"; /proc/self/fd/9 --argv0 copilot /usr/local/libexec/workcell/real/copilot --version' bash "$LOADER" >/tmp/copilot-loader-fd-argv0.out 2>&1; then
+    echo "expected fd loader option invocation of the real Copilot payload to fail" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-fd-argv0.out
+  cp "$LOADER" "$EXEC_TMP/workcell-loader-copy"
+  chmod 0700 "$EXEC_TMP/workcell-loader-copy"
+  if env -u LD_PRELOAD "$EXEC_TMP/workcell-loader-copy" --argv0 copilot /usr/local/libexec/workcell/real/copilot --version >/tmp/copilot-loader-copy-argv0.out 2>&1; then
+    echo "expected copied loader option invocation of the real Copilot payload to fail" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-copy-argv0.out
+  if env -u LD_PRELOAD bash -c 'exec 9<"$1"; rm -f "$1"; /proc/self/fd/9 --argv0 copilot /usr/local/libexec/workcell/real/copilot --version' bash "$EXEC_TMP/workcell-loader-copy" >/tmp/copilot-loader-deleted-fd-argv0.out 2>&1; then
+    echo "expected deleted-fd loader option invocation of the real Copilot payload to fail" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-deleted-fd-argv0.out
   cp /bin/true "$EXEC_TMP/workcell-state-native"
   chmod 0700 "$EXEC_TMP/workcell-state-native"
+  if env -u LD_PRELOAD bash -c 'exec 9<"$1"; /proc/self/fd/9 "$2" --version' bash "$LOADER" "$EXEC_TMP/workcell-state-native" >/tmp/state-native-loader-fd-target.out 2>&1; then echo "expected strict profile to reject fd loader-mediated native executable launches from /state" >&2; exit 1; fi
+  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader-fd-target.out
+  if env -u LD_PRELOAD bash -c 'cp "$2" "$2.deleted"; exec 8<"$2.deleted"; rm -f "$2.deleted"; exec "$1" /proc/self/fd/8' bash "$LOADER" "$EXEC_TMP/workcell-state-native" >/tmp/state-native-loader-deleted-fd-target.out 2>&1; then echo "expected strict profile to reject deleted-fd loader-mediated native executable launches from /state" >&2; exit 1; fi
+  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader-deleted-fd-target.out
   if "$EXEC_TMP/workcell-state-native" >/tmp/state-native.out 2>&1; then
     echo "expected strict profile to reject direct native executable launches from /state" >&2
     exit 1

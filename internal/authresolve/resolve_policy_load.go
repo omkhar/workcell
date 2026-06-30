@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
@@ -407,7 +408,15 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 			target[pair.Key] = pair.Value
 		}
 	}
+	if err := validateDocumentKeys(root); err != nil {
+		return nil, err
+	}
 	return root, nil
+}
+
+func validateDocumentKeys(policy map[string]any) error {
+	documents, _ := policy["documents"].(map[string]any)
+	return validateAllowedKeys(documents, map[string]struct{}{"common": {}, providerid.Codex: {}, providerid.Claude: {}, providerid.Gemini: {}}, "documents")
 }
 
 func validateAllowedKeys(table map[string]any, allowed map[string]struct{}, label string) error {
