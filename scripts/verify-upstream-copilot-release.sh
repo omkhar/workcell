@@ -31,7 +31,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-copilot-release.XXXXXX")"
 BUILD_INPUT_MANIFEST_PATH="${TMP_ROOT}/build-input.json"
 RELEASE_METADATA_PATH="${TMP_ROOT}/release.json"
-COPILOT_VERSION=""
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
@@ -50,13 +49,6 @@ extract_copilot_sha() {
     exit 1
   fi
   printf '%s\n' "${value}"
-}
-
-download_large_asset() {
-  local url="$1"
-  local output="$2"
-
-  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --speed-limit 1024 --speed-time 60 "${url}" -o "${output}"
 }
 
 github_api_get() {
@@ -94,12 +86,6 @@ EOF
     -o "${output}"
 }
 
-release_asset_digest() {
-  local asset_name="$1"
-
-  jq -r --arg asset_name "${asset_name}" '.assets[] | select(.name == $asset_name) | .digest | sub("^sha256:"; "")' "${RELEASE_METADATA_PATH}"
-}
-
 verify_asset() {
   local target_arch="$1"
   local platform="$2"
@@ -110,7 +96,7 @@ verify_asset() {
   local metadata_sha=""
 
   mkdir -p "${work_dir}"
-  metadata_sha="$(release_asset_digest "${tarball_name}")"
+  metadata_sha="$(jq -r --arg asset_name "${tarball_name}" '.assets[] | select(.name == $asset_name) | .digest | sub("^sha256:"; "")' "${RELEASE_METADATA_PATH}")"
   if [[ -z "${metadata_sha}" || "${metadata_sha}" == "null" ]]; then
     echo "GitHub Copilot CLI release v${COPILOT_VERSION} is missing ${tarball_name}" >&2
     exit 1
@@ -119,7 +105,7 @@ verify_asset() {
     echo "Pinned ${target_arch} Copilot checksum does not match GitHub release metadata" >&2
     exit 1
   fi
-  download_large_asset "${asset_root}/${tarball_name}" "${work_dir}/${tarball_name}"
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --speed-limit 1024 --speed-time 60 "${asset_root}/${tarball_name}" -o "${work_dir}/${tarball_name}"
   echo "${expected_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null
   tar -tzf "${work_dir}/${tarball_name}" copilot >/dev/null
 }
