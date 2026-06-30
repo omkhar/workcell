@@ -163,6 +163,7 @@ static REAL_SYSCALL_FN: OnceLock<SyscallFn> = OnceLock::new();
 static STRICT_MUTABLE_EXEC_BLOCK: OnceLock<bool> = OnceLock::new();
 static PROTECTED_RUNTIME_SIGS: OnceLock<Vec<(ProtectedRuntime, StatSignature)>> = OnceLock::new();
 static PROTECTED_GIT_SIGS: OnceLock<Vec<StatSignature>> = OnceLock::new();
+static DYNAMIC_LOADER_SIGS: OnceLock<Vec<(String, StatSignature)>> = OnceLock::new();
 
 fn current_mode_blocks_mutable_native_exec() -> bool {
     *STRICT_MUTABLE_EXEC_BLOCK.get_or_init(|| {
@@ -682,6 +683,95 @@ fn protected_git_signatures() -> &'static Vec<StatSignature> {
     })
 }
 
+fn dynamic_loader_candidate_paths() -> Vec<String> {
+    let mut paths = Vec::new();
+
+    for path in [
+        "/lib64/ld-linux-x86-64.so.2",
+        "/lib/ld-linux-aarch64.so.1",
+        "/lib/ld-linux-armhf.so.3",
+    ] {
+        if fs::metadata(path).is_ok() {
+            paths.push(path.to_owned());
+        }
+    }
+
+    for dir in ["/lib", "/lib64"] {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(path_string) = path.to_str().map(str::to_owned) else {
+                continue;
+            };
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_dynamic_loader_path)
+                && !paths.iter().any(|candidate| candidate == &path_string)
+            {
+                paths.push(path_string);
+            }
+        }
+    }
+
+    paths
+}
+
+fn dynamic_loader_signatures() -> &'static Vec<(String, StatSignature)> {
+    DYNAMIC_LOADER_SIGS.get_or_init(|| {
+        dynamic_loader_candidate_paths()
+            .into_iter()
+            .filter_map(|path| {
+                fs::metadata(&path)
+                    .ok()
+                    .map(|metadata| (path, metadata_signature_from_metadata(&metadata)))
+            })
+            .collect()
+    })
+}
+
+fn stat_matches_dynamic_loader(candidate: &StatSignature) -> bool {
+    dynamic_loader_signatures()
+        .iter()
+        .any(|(_, loader)| loader.dev == candidate.dev && loader.ino == candidate.ino)
+}
+
+fn candidate_size_matches_dynamic_loader(candidate: &StatSignature) -> bool {
+    (candidate.mode & file_type_bits()) == regular_file_mode()
+        && dynamic_loader_signatures()
+            .iter()
+            .any(|(_, loader)| loader.size == candidate.size)
+}
+
+fn file_matches_dynamic_loader_by_contents(
+    candidate: &mut File,
+    candidate_signature: &StatSignature,
+) -> bool {
+    if (candidate_signature.mode & file_type_bits()) != regular_file_mode() {
+        return false;
+    }
+
+    for (path, loader_signature) in dynamic_loader_signatures() {
+        if loader_signature.size != candidate_signature.size {
+            continue;
+        }
+
+        let Ok(mut loader_file) = File::open(path) else {
+            continue;
+        };
+        let Ok(mut candidate_clone) = candidate.try_clone() else {
+            continue;
+        };
+        if compare_open_files(&mut candidate_clone, &mut loader_file) {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn stat_matches_protected_runtime(candidate: &StatSignature) -> ProtectedRuntime {
     protected_runtime_signatures()
         .iter()
@@ -792,16 +882,43 @@ fn path_points_to_dynamic_loader(path: &str) -> bool {
             return true;
         }
     }
-    fs::canonicalize(path)
+    if fs::canonicalize(path)
         .ok()
         .is_some_and(|target| is_dynamic_loader_path(&target.to_string_lossy()))
+    {
+        return true;
+    }
+
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let Ok(metadata) = file.metadata() else {
+        return false;
+    };
+    let candidate = metadata_signature_from_metadata(&metadata);
+    stat_matches_dynamic_loader(&candidate)
+        || (candidate_size_matches_dynamic_loader(&candidate)
+            && file_matches_dynamic_loader_by_contents(&mut file, &candidate))
 }
 
 fn fd_is_dynamic_loader(fd: c_int) -> bool {
-    fs::read_link(proc_fd_path(fd)).ok().is_some_and(|target| {
+    if fs::read_link(proc_fd_path(fd)).ok().is_some_and(|target| {
         let target_string = target.to_string_lossy();
         path_points_to_dynamic_loader(trim_deleted_suffix(&target_string))
-    })
+    }) {
+        return true;
+    }
+
+    let Some(mut file) = duplicate_fd_file(fd) else {
+        return false;
+    };
+    let Ok(metadata) = file.metadata() else {
+        return false;
+    };
+    let candidate = metadata_signature_from_metadata(&metadata);
+    stat_matches_dynamic_loader(&candidate)
+        || (candidate_size_matches_dynamic_loader(&candidate)
+            && file_matches_dynamic_loader_by_contents(&mut file, &candidate))
 }
 
 fn classify_loader_args(args: &[String]) -> ProtectedRuntime {

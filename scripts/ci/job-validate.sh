@@ -2,6 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workcell_validate_token_file_created=""
+if [[ -z "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
+  workcell_validate_token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
+  if [[ -n "${workcell_validate_token}" ]]; then
+    workcell_validate_token_file="$(umask 077 && mktemp "${TMPDIR:-/tmp}/workcell-github-token.XXXXXX")"
+    printf '%s' "${workcell_validate_token}" >"${workcell_validate_token_file}"
+    export WORKCELL_GITHUB_API_TOKEN_FILE="${workcell_validate_token_file}"
+    workcell_validate_token_file_created="${workcell_validate_token_file}"
+  fi
+fi
+unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN workcell_validate_token
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 source "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
 PROFILE="${WORKCELL_CI_VALIDATE_PROFILE:-pr-parity}"
@@ -62,6 +73,7 @@ else
 fi
 
 cleanup() {
+  [[ -z "${workcell_validate_token_file_created}" || "${workcell_validate_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_validate_token_file_created}"
   if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then
     cleanup_workcell_validator_image "${VALIDATOR_IMAGE:-}"
   fi
@@ -86,6 +98,9 @@ echo "[ci/validate] upstream Codex release"
 
 echo "[ci/validate] upstream Claude release"
 "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
+
+echo "[ci/validate] upstream Copilot release"
+"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
 
 echo "[ci/validate] upstream Gemini release"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"

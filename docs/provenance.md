@@ -45,9 +45,10 @@ Before publish, release preflight reruns:
 - hosted-control auditing
 - authoritative-source verification of the GitHub-hosted Apple Silicon macOS
   release install runner labels
-- upstream pinned Codex, Claude, and Gemini release verification
-- GitHub Copilot CLI and Google Antigravity CLI upstream pin verification as
-  part of provider promotion, before any support claim
+- upstream pinned Codex, Claude, Gemini, and non-executable GitHub Copilot CLI
+  release verification; Copilot launch/auth remains unsupported
+- Google Antigravity CLI upstream pin verification as part of provider
+  promotion, before any support claim
 - reviewed upstream pin verification across providers, Linux base images,
   Linux toolchains, and release-build helper pins
 - release-bundle install/uninstall and Homebrew install/uninstall verification

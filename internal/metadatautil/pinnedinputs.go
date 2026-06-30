@@ -1336,6 +1336,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
+	validateJob, err := readText(filepath.Join(repoRoot, "scripts", "ci", "job-validate.sh"))
+	if err != nil {
+		return err
+	}
 	for _, needle := range []string{
 		"${ROOT_DIR}/scripts/verify-upstream-codex-release.sh",
 		"${ROOT_DIR}/scripts/verify-upstream-claude-release.sh",
@@ -1344,6 +1348,14 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	} {
 		if !strings.Contains(pinHygieneJob, needle) {
 			return fmt.Errorf("scripts/ci/job-pin-hygiene.sh must contain %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh",
+		"unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN",
+	} {
+		if !strings.Contains(validateJob, needle) {
+			return fmt.Errorf("scripts/ci/job-validate.sh must contain %q", needle)
 		}
 	}
 	for _, needle := range []string{

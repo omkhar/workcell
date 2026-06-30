@@ -97,7 +97,12 @@ jobs:
           WORKCELL_CI_INSTALL_ARTIFACT_DIR: dist/release-install
           WORKCELL_CI_ARCHIVE_REF: ${{ github.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: ./scripts/ci/job-validate.sh --profile pr-parity
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/job-validate.sh --profile pr-parity
 
       - name: Upload CI release install artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
