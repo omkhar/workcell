@@ -12,8 +12,5 @@ channel = "stable"
 [provider.claude]
 channel = "stable"
 
-[provider.copilot]
-channel = "stable"
-
 [provider.gemini]
 channel = "stable"

@@ -36,7 +36,6 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
 	mustWriteText(t, dockerfilePath, strings.Join([]string{
 		"ARG CLAUDE_VERSION=2.1.86",
 		"ARG CODEX_VERSION=0.117.0-alpha.8",
-		"ARG COPILOT_VERSION=1.0.65",
 		"RUN true",
 	}, "\n")+"\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.34.0"}}`+"\n")
@@ -45,9 +44,6 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
 		"cooloff_hours = 72",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -142,9 +138,6 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
     "linux-x64": {"checksum": "e22324514967ff2d5e9f91f0ee37e4675bf8b6dfec27fafb19cb25cc5b23fcaf"}
   }
 }`))
-		case "/copilot-releases":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`[{"tag_name":"v1.0.66","prerelease":false,"published_at":"2026-04-03T00:00:00Z","assets":[{"name":"copilot-linux-arm64.tar.gz","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},{"name":"copilot-linux-x64.tar.gz","digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333"}]}]`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -158,7 +151,6 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
 		GeminiRegistryURL:     server.URL + "/gemini-registry",
 		ClaudeRegistryURL:     server.URL + "/claude-registry",
 		ClaudeReleaseRootURL:  server.URL + "/claude-release",
-		CopilotReleaseAPIURL:  server.URL + "/copilot-releases",
 	}, server.Client())
 	if err != nil {
 		t.Fatalf("PlanProviderBumps() error = %v", err)
@@ -173,17 +165,11 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
 	if got := plan.Providers["claude"].TargetVersion; got != "2.1.92" {
 		t.Fatalf("Claude target = %q, want 2.1.92", got)
 	}
-	if got := plan.Providers["copilot"].TargetVersion; got != "1.0.66" {
-		t.Fatalf("Copilot target = %q, want 1.0.66", got)
-	}
 	if got := plan.Providers["gemini"].TargetVersion; got != "0.36.0" {
 		t.Fatalf("Gemini target = %q, want 0.36.0", got)
 	}
 	if got := plan.Providers["codex"].Checksums["arm64"]; got != "9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7" {
 		t.Fatalf("Codex arm64 checksum = %q", got)
-	}
-	if got := plan.Providers["copilot"].Checksums["amd64"]; got != "3333333333333333333333333333333333333333333333333333333333333333" {
-		t.Fatalf("Copilot amd64 checksum = %q", got)
 	}
 }
 
@@ -389,16 +375,13 @@ func TestCheckProviderBumpPolicyRejectsPrereleaseCodexPin(t *testing.T) {
 	packageJSONPath := filepath.Join(root, "package.json")
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.92\nARG CODEX_VERSION=0.118.0-alpha.1\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.92\nARG CODEX_VERSION=0.118.0-alpha.1\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"cooloff_hours = 72",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -423,7 +406,7 @@ func TestCheckProviderBumpPolicyRejectsCodexVersionAboveConfiguredCeiling(t *tes
 	packageJSONPath := filepath.Join(root, "package.json")
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.92\nARG CODEX_VERSION=0.128.0\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.92\nARG CODEX_VERSION=0.128.0\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
@@ -432,9 +415,6 @@ func TestCheckProviderBumpPolicyRejectsCodexVersionAboveConfiguredCeiling(t *tes
 		"[provider.codex]",
 		`channel = "stable"`,
 		`max_version = "0.125.0"`,
-		"",
-		"[provider.copilot]",
-		`channel = "stable"`,
 		"",
 		"[provider.claude]",
 		`channel = "stable"`,
@@ -458,16 +438,13 @@ func TestCheckProviderBumpPolicyRejectsClaudeVersionAboveConfiguredCeiling(t *te
 	packageJSONPath := filepath.Join(root, "package.json")
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.107\nARG CODEX_VERSION=0.118.0\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.107\nARG CODEX_VERSION=0.118.0\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"cooloff_hours = 72",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -493,16 +470,13 @@ func TestCheckProviderBumpPolicyAllowsApprovedClaudeVersion(t *testing.T) {
 	packageJSONPath := filepath.Join(root, "package.json")
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.108\nARG CODEX_VERSION=0.118.0\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.108\nARG CODEX_VERSION=0.118.0\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"cooloff_hours = 72",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -525,16 +499,13 @@ func TestCheckProviderBumpPolicyRejectsClaudeApprovedVersionAboveConfiguredCeili
 	packageJSONPath := filepath.Join(root, "package.json")
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.118.0\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.118.0\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"cooloff_hours = 72",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -561,16 +532,13 @@ func TestCheckProviderBumpPolicyRejectsUnstableClaudePinWithCeiling(t *testing.T
 	packageJSONPath := filepath.Join(root, "package.json")
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104-beta\nARG CODEX_VERSION=0.118.0\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104-beta\nARG CODEX_VERSION=0.118.0\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"cooloff_hours = 72",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -598,7 +566,6 @@ func TestPlanProviderBumpsHonorsClaudeMaxVersion(t *testing.T) {
 	mustWriteText(t, dockerfilePath, strings.Join([]string{
 		"ARG CLAUDE_VERSION=2.1.100",
 		"ARG CODEX_VERSION=0.118.0",
-		"ARG COPILOT_VERSION=1.0.65",
 		"RUN true",
 	}, "\n")+"\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
@@ -607,9 +574,6 @@ func TestPlanProviderBumpsHonorsClaudeMaxVersion(t *testing.T) {
 		"cooloff_hours = 12",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -690,7 +654,6 @@ func TestPlanProviderBumpsAllowsApprovedClaudeVersionPastCooloff(t *testing.T) {
 	mustWriteText(t, dockerfilePath, strings.Join([]string{
 		"ARG CLAUDE_VERSION=2.1.104",
 		"ARG CODEX_VERSION=0.118.0",
-		"ARG COPILOT_VERSION=1.0.65",
 		"RUN true",
 	}, "\n")+"\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
@@ -699,9 +662,6 @@ func TestPlanProviderBumpsAllowsApprovedClaudeVersionPastCooloff(t *testing.T) {
 		"cooloff_hours = 12",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -783,7 +743,6 @@ func TestPlanProviderBumpsIgnoresOlderApprovedClaudeVersionOnceCurrentRuntimeIsN
 	mustWriteText(t, dockerfilePath, strings.Join([]string{
 		"ARG CLAUDE_VERSION=2.1.109",
 		"ARG CODEX_VERSION=0.118.0",
-		"ARG COPILOT_VERSION=1.0.65",
 		"RUN true",
 	}, "\n")+"\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
@@ -792,9 +751,6 @@ func TestPlanProviderBumpsIgnoresOlderApprovedClaudeVersionOnceCurrentRuntimeIsN
 		"cooloff_hours = 12",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -886,7 +842,6 @@ func TestPlanProviderBumpsDoesNotDowngradeWhenCurrentClaudeVersionIsStillCooling
 	mustWriteText(t, dockerfilePath, strings.Join([]string{
 		"ARG CLAUDE_VERSION=2.1.108",
 		"ARG CODEX_VERSION=0.118.0",
-		"ARG COPILOT_VERSION=1.0.65",
 		"RUN true",
 	}, "\n")+"\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
@@ -895,9 +850,6 @@ func TestPlanProviderBumpsDoesNotDowngradeWhenCurrentClaudeVersionIsStillCooling
 		"cooloff_hours = 12",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -988,7 +940,6 @@ func TestPlanProviderBumpsRejectsCurrentClaudeVersionAboveMaxVersion(t *testing.
 	mustWriteText(t, dockerfilePath, strings.Join([]string{
 		"ARG CLAUDE_VERSION=2.1.109",
 		"ARG CODEX_VERSION=0.118.0",
-		"ARG COPILOT_VERSION=1.0.65",
 		"RUN true",
 	}, "\n")+"\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
@@ -997,9 +948,6 @@ func TestPlanProviderBumpsRejectsCurrentClaudeVersionAboveMaxVersion(t *testing.
 		"cooloff_hours = 12",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -1086,7 +1034,6 @@ func TestPlanProviderBumpsRejectsMissingCurrentClaudeVersionFromRegistry(t *test
 	mustWriteText(t, dockerfilePath, strings.Join([]string{
 		"ARG CLAUDE_VERSION=2.1.108",
 		"ARG CODEX_VERSION=0.118.0",
-		"ARG COPILOT_VERSION=1.0.65",
 		"RUN true",
 	}, "\n")+"\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
@@ -1095,9 +1042,6 @@ func TestPlanProviderBumpsRejectsMissingCurrentClaudeVersionFromRegistry(t *test
 		"cooloff_hours = 12",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -1239,16 +1183,13 @@ func TestApplyProviderBumpPlanRejectsUnstableClaudeTargetVersion(t *testing.T) {
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 	planPath := filepath.Join(root, "plan.json")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.118.0\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.118.0\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"cooloff_hours = 12",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -1271,9 +1212,6 @@ func TestApplyProviderBumpPlanRejectsUnstableClaudeTargetVersion(t *testing.T) {
 			"codex": {
 				TargetVersion: "0.118.0",
 			},
-			"copilot": {
-				TargetVersion: "1.0.65",
-			},
 			"gemini": {
 				TargetVersion: "0.36.0",
 			},
@@ -1287,9 +1225,11 @@ func TestApplyProviderBumpPlanRejectsUnstableClaudeTargetVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, packageJSONPath); err == nil {
+	err = ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, packageJSONPath)
+	if err == nil {
 		t.Fatal("ApplyProviderBumpPlan() unexpectedly succeeded")
-	} else if !strings.Contains(err.Error(), "contains a non-stable Claude target version") {
+	}
+	if !strings.Contains(err.Error(), "contains a non-stable Claude target version") {
 		t.Fatalf("ApplyProviderBumpPlan() error = %v", err)
 	}
 }
@@ -1299,16 +1239,13 @@ func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
 	packageJSONPath := filepath.Join(root, "package.json")
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.92\nARG CODEX_VERSION=0.118.0\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.92\nARG CODEX_VERSION=0.118.0\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"cooloff_hours = 72",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -1392,13 +1329,9 @@ func TestPlanProviderBumpsRespectsCurrentRegistryLatestTrack(t *testing.T) {
 }
 
 func TestFetchJSONAddsUserAgentHeader(t *testing.T) {
-	t.Setenv("WORKCELL_GITHUB_API_TOKEN", "ci-token")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("User-Agent"); got != providerBumpUserAgent {
 			t.Fatalf("User-Agent = %q, want %q", got, providerBumpUserAgent)
-		}
-		if got := r.Header.Get("Authorization"); got != "" {
-			t.Fatalf("Authorization header leaked to non-GitHub host: %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -1424,7 +1357,6 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 	mustWriteText(t, dockerfilePath, strings.Join([]string{
 		"ARG CLAUDE_VERSION=2.1.86",
 		"ARG CODEX_VERSION=0.117.0-alpha.8",
-		"ARG COPILOT_VERSION=1.0.65",
 		"RUN case \"${TARGET_ARCH}\" in \\",
 		"  arm64) \\",
 		"    CLAUDE_PLATFORM=\"linux-arm64\"; \\",
@@ -1445,16 +1377,6 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 		"    CODEX_SHA256=\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"; \\",
 		"    ;;",
 		"esac",
-		"RUN case \"${TARGET_ARCH}\" in \\",
-		"  arm64) \\",
-		"    COPILOT_PLATFORM=\"linux-arm64\"; \\",
-		"    COPILOT_SHA256=\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"; \\",
-		"    ;;",
-		"  amd64) \\",
-		"    COPILOT_PLATFORM=\"linux-x64\"; \\",
-		"    COPILOT_SHA256=\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"; \\",
-		"    ;;",
-		"esac",
 	}, "\n")+"\n")
 	mustWriteText(t, packageJSONPath, "{\n  \"dependencies\": {\n    \"@google/gemini-cli\": \"0.34.0\"\n  }\n}\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
@@ -1462,9 +1384,6 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 		"cooloff_hours = 72",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -1488,13 +1407,6 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 				Checksums: map[string]string{
 					"arm64": "9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7",
 					"amd64": "526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b",
-				},
-			},
-			"copilot": {
-				TargetVersion: "1.0.66",
-				Checksums: map[string]string{
-					"arm64": "1111111111111111111111111111111111111111111111111111111111111111",
-					"amd64": "2222222222222222222222222222222222222222222222222222222222222222",
 				},
 			},
 			"gemini": {
@@ -1524,17 +1436,11 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 	if !strings.Contains(string(updatedDockerfile), "ARG CODEX_VERSION=0.118.0") {
 		t.Fatalf("Dockerfile was not updated with Codex target version:\n%s", updatedDockerfile)
 	}
-	if !strings.Contains(string(updatedDockerfile), "ARG COPILOT_VERSION=1.0.66") {
-		t.Fatalf("Dockerfile was not updated with Copilot target version:\n%s", updatedDockerfile)
-	}
-	if !strings.Contains(string(updatedDockerfile), "  arm64) \\\n    CLAUDE_PLATFORM=\"linux-arm64\"; \\\n    CLAUDE_SHA256=\"08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953\"") {
+	if !strings.Contains(string(updatedDockerfile), `CLAUDE_SHA256="08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953"`) {
 		t.Fatalf("Dockerfile was not updated with Claude arm64 checksum:\n%s", updatedDockerfile)
 	}
-	if !strings.Contains(string(updatedDockerfile), "  amd64) \\\n    CODEX_ARCH=\"x86_64-unknown-linux-musl\"; \\\n    CODEX_SHA256=\"526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b\"") {
+	if !strings.Contains(string(updatedDockerfile), `CODEX_SHA256="526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"`) {
 		t.Fatalf("Dockerfile was not updated with Codex amd64 checksum:\n%s", updatedDockerfile)
-	}
-	if !strings.Contains(string(updatedDockerfile), "  amd64) \\\n    COPILOT_PLATFORM=\"linux-x64\"; \\\n    COPILOT_SHA256=\"2222222222222222222222222222222222222222222222222222222222222222\"") {
-		t.Fatalf("Dockerfile was not updated with Copilot amd64 checksum:\n%s", updatedDockerfile)
 	}
 
 	updatedPackageJSON, err := os.ReadFile(packageJSONPath)
@@ -1553,16 +1459,13 @@ func TestApplyProviderBumpPlanRejectsClaudeTargetAboveConfiguredCeiling(t *testi
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 	planPath := filepath.Join(root, "plan.json")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.118.0\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.118.0\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
 		"cooloff_hours = 12",
 		"",
 		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
 		`channel = "stable"`,
 		"",
 		"[provider.claude]",
@@ -1584,9 +1487,6 @@ func TestApplyProviderBumpPlanRejectsClaudeTargetAboveConfiguredCeiling(t *testi
 			},
 			"codex": {
 				TargetVersion: "0.118.0",
-			},
-			"copilot": {
-				TargetVersion: "1.0.65",
 			},
 			"gemini": {
 				TargetVersion: "0.36.0",
@@ -1617,7 +1517,7 @@ func TestApplyProviderBumpPlanRejectsCodexTargetAboveConfiguredCeiling(t *testin
 	policyPath := filepath.Join(root, "provider-bumps.toml")
 	planPath := filepath.Join(root, "plan.json")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.125.0\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.125.0\n")
 	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
 	mustWriteText(t, policyPath, strings.Join([]string{
 		"version = 1",
@@ -1626,9 +1526,6 @@ func TestApplyProviderBumpPlanRejectsCodexTargetAboveConfiguredCeiling(t *testin
 		"[provider.codex]",
 		`channel = "stable"`,
 		`max_version = "0.125.0"`,
-		"",
-		"[provider.copilot]",
-		`channel = "stable"`,
 		"",
 		"[provider.claude]",
 		`channel = "stable"`,
@@ -1644,9 +1541,6 @@ func TestApplyProviderBumpPlanRejectsCodexTargetAboveConfiguredCeiling(t *testin
 			},
 			"codex": {
 				TargetVersion: "0.128.0",
-			},
-			"copilot": {
-				TargetVersion: "1.0.65",
 			},
 			"gemini": {
 				TargetVersion: "0.36.0",

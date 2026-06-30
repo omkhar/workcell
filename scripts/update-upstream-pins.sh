@@ -1,40 +1,10 @@
 #!/bin/bash -p
-workcell_upstream_pins_token_file_created=""
-if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
-  unset WORKCELL_UPSTREAM_PINS_TOKEN_FILE_CREATED
-  if [[ -z "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
-    workcell_upstream_pins_token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
-    unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN
-    if [[ -n "${workcell_upstream_pins_token}" ]]; then
-      workcell_upstream_pins_token_file="$(umask 077 && /usr/bin/mktemp "${TMPDIR:-/tmp}/workcell-github-token.XXXXXX")"
-      printf '%s' "${workcell_upstream_pins_token}" >"${workcell_upstream_pins_token_file}"
-      export WORKCELL_GITHUB_API_TOKEN_FILE="${workcell_upstream_pins_token_file}"
-      workcell_upstream_pins_token_file_created="${workcell_upstream_pins_token_file}"
-      export WORKCELL_UPSTREAM_PINS_TOKEN_FILE_CREATED="${workcell_upstream_pins_token_file_created}"
-    fi
-  fi
-  unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN workcell_upstream_pins_token
-fi
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
-workcell_upstream_pins_token_file_created="${WORKCELL_UPSTREAM_PINS_TOKEN_FILE_CREATED:-${workcell_upstream_pins_token_file_created}}"
-unset WORKCELL_UPSTREAM_PINS_TOKEN_FILE_CREATED
-
-if [[ -z "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
-  workcell_upstream_pins_token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
-  if [[ -n "${workcell_upstream_pins_token}" ]]; then
-    workcell_upstream_pins_token_file="$(umask 077 && mktemp "${TMPDIR:-/tmp}/workcell-github-token.XXXXXX")"
-    printf '%s' "${workcell_upstream_pins_token}" >"${workcell_upstream_pins_token_file}"
-    export WORKCELL_GITHUB_API_TOKEN_FILE="${workcell_upstream_pins_token_file}"
-    workcell_upstream_pins_token_file_created="${workcell_upstream_pins_token_file}"
-  fi
-fi
-unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN workcell_upstream_pins_token
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
   echo "update-upstream-pins-entrypoint-ok"
-  [[ -z "${workcell_upstream_pins_token_file_created}" || "${workcell_upstream_pins_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_upstream_pins_token_file_created}"
   exit 0
 fi
 
@@ -53,11 +23,6 @@ SECURITY_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/security.yml"
 UPSTREAM_REFRESH_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/upstream-refresh.yml"
 
 mode="summary"
-
-cleanup() {
-  [[ -z "${workcell_upstream_pins_token_file_created}" || "${workcell_upstream_pins_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_upstream_pins_token_file_created}"
-}
-trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
@@ -109,31 +74,14 @@ require_tool shasum
 CURL_API_GUARDS=(--max-time 120 --connect-timeout 15 --max-filesize 209715200)
 DEBIAN_SNAPSHOT_LOOKBACK_DAYS="${WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-45}}"
 
-github_api_token() {
-  local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
-  if [[ -z "${token}" && -n "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
-    if [[ ! -r "${WORKCELL_GITHUB_API_TOKEN_FILE}" ]]; then
-      echo "GitHub API token file is not readable: ${WORKCELL_GITHUB_API_TOKEN_FILE}" >&2
-      exit 1
-    fi
-    token="$(<"${WORKCELL_GITHUB_API_TOKEN_FILE}")"
-  fi
-  if [[ -n "${token}" && ("${token}" == *$'\n'* || "${token}" == *$'\r'*) ]]; then
-    echo "GitHub API token must be a single line" >&2
-    exit 1
-  fi
-  printf '%s' "${token}"
-}
-
 github_api_get() {
   local url="$1"
-  local token
-  token="$(github_api_token)"
+  local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-}}"
   if [[ -n "${token}" ]]; then
-    curl -fsSL "${CURL_API_GUARDS[@]}" --config - "${url}" <<EOF
-header = "Accept: application/vnd.github+json"
-header = "Authorization: Bearer ${token}"
-EOF
+    curl -fsSL "${CURL_API_GUARDS[@]}" \
+      -H "Accept: application/vnd.github+json" \
+      --oauth2-bearer "${token}" \
+      "${url}"
     return
   fi
   curl -fsSL "${CURL_API_GUARDS[@]}" -H "Accept: application/vnd.github+json" "${url}"
@@ -169,29 +117,24 @@ github_release_asset_api_url() {
 
 github_release_asset_get() {
   local url="$1"
-  local token
+  local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-}}"
   local body_file=""
   local headers_file=""
   local location=""
   local status=""
 
-  token="$(github_api_token)"
   if [[ -n "${token}" ]]; then
     headers_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-headers.XXXXXX")"
     body_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-body.XXXXXX")"
     trap 'rm -f "${headers_file}" "${body_file}"' RETURN
 
-    status="$(
-      curl -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
-        -D "${headers_file}" \
-        -o "${body_file}" \
-        -w '%{http_code}' \
-        -H "Accept: application/octet-stream" \
-        --config - \
-        "${url}" <<EOF
-header = "Authorization: Bearer ${token}"
-EOF
-    )"
+    status="$(curl -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
+      -D "${headers_file}" \
+      -o "${body_file}" \
+      -w '%{http_code}' \
+      -H "Accept: application/octet-stream" \
+      -H "Authorization: Bearer ${token}" \
+      "${url}")"
     case "${status}" in
       200)
         cat "${body_file}"
