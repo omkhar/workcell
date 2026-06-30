@@ -3454,6 +3454,65 @@ resolve_host_path() {
   go_hostutil path resolve --base "$(pwd -P)" "$1"
 }
 
+reject_symlinked_host_path_components() {
+  local path="$1"
+  local label="$2"
+  local component=""
+  local current=""
+  local scan_path=""
+  local trusted_root="${REAL_HOME%/}"
+  local -a components=()
+
+  [[ "${path}" == /* ]] || {
+    echo "Refusing to use ${label} because it is not an absolute host path: ${path}" >&2
+    return 2
+  }
+
+  if [[ -n "${trusted_root}" && "${path}" == "${trusted_root}/"* ]]; then
+    current="${trusted_root}"
+    scan_path="${path#"${trusted_root}/"}"
+  else
+    scan_path="${path#/}"
+  fi
+
+  IFS='/' read -r -a components <<<"${scan_path}"
+  for component in "${components[@]}"; do
+    [[ -n "${component}" ]] || continue
+    if [[ -z "${current}" ]]; then
+      current="/${component}"
+    else
+      current="${current}/${component}"
+    fi
+    if [[ -L "${current}" ]]; then
+      echo "Refusing to use ${label} through symlink component: ${current}" >&2
+      echo "Remove the symlink and rerun so Workcell-owned staging stays under ${REAL_HOME}/Library/Caches/colima." >&2
+      return 2
+    fi
+  done
+}
+
+colima_staging_cache_root() {
+  printf '%s\n' "${REAL_HOME}/Library/Caches/colima"
+}
+
+reject_symlinked_colima_staging_cache_roots() {
+  local cache_root=""
+
+  cache_root="$(colima_staging_cache_root)"
+  reject_symlinked_host_path_components "${cache_root}" "Colima staging cache root" || return $?
+  reject_symlinked_host_path_components "${cache_root}/workcell-host-inputs" "Workcell host-input staging root" || return $?
+  reject_symlinked_host_path_components "${cache_root}/workcell-shadow" "Workcell shadow staging root" || return $?
+}
+
+prepare_colima_staging_cache_roots() {
+  local cache_root=""
+
+  reject_symlinked_colima_staging_cache_roots || return $?
+  cache_root="$(colima_staging_cache_root)"
+  mkdir -p "${cache_root}/workcell-host-inputs" "${cache_root}/workcell-shadow"
+  reject_symlinked_colima_staging_cache_roots
+}
+
 resolve_host_output_candidate() {
   go_hostutil helper resolve-host-output-candidate "$1"
 }
@@ -4694,6 +4753,7 @@ why_main() {
 }
 
 default_injection_bundle_parent() {
+  reject_symlinked_colima_staging_cache_roots || return $?
   resolve_host_path "${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
 }
 
@@ -4701,6 +4761,13 @@ cleanup_stale_injection_bundles() {
   local bundle_parent="$1"
 
   go_hostutil helper cleanup-stale-injection-bundles "${bundle_parent}"
+}
+
+cleanup_default_injection_bundles() {
+  local bundle_parent=""
+
+  bundle_parent="$(default_injection_bundle_parent)" || return $?
+  cleanup_stale_injection_bundles "${bundle_parent}"
 }
 
 cleanup_workcell_temp_root() {
@@ -4789,6 +4856,8 @@ prepare_injection_bundle() {
   case "${SELF_STAGING_PROBE_SYNTHETIC_CLAUDE_EXPORT:-0}" in
     1 | true) synthetic_claude="1" ;;
   esac
+
+  prepare_colima_staging_cache_roots || return $?
 
   DIRECT_SOURCE_MOUNTS=()
   INJECTION_BUNDLE_ROOT=""
@@ -6287,6 +6356,12 @@ start_managed_profile() {
   local start_status=0
   local attempt=1
   local max_attempts=2
+  local workspace_mount="${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"
+  local cache_root="${REAL_HOME}/Library/Caches/colima"
+  local host_inputs_root="${cache_root}/workcell-host-inputs"
+  local shadow_root="${cache_root}/workcell-shadow"
+
+  prepare_colima_staging_cache_roots || return $?
 
   while :; do
     maybe_reap_stale_profile_processes "${COLIMA_PROFILE}"
@@ -6294,7 +6369,9 @@ start_managed_profile() {
       run_host_colima start \
       --profile "${COLIMA_PROFILE}" \
       --vm-type vz \
-      --mount "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}:w" \
+      --mount "${workspace_mount}:w" \
+      --mount "${host_inputs_root}" \
+      --mount "${shadow_root}" \
       --mount-type virtiofs \
       --runtime docker \
       --cpu "${COLIMA_CPU}" \
@@ -7175,7 +7252,7 @@ prepare_workspace_control_plane_shadow() {
   WORKSPACE_IMPORT_MOUNTS=()
   [[ "${mode}" == "breakglass" ]] && return 0
 
-  mkdir -p "${shadow_parent}"
+  prepare_colima_staging_cache_roots || return $?
   CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
 
   while IFS= read -r -d '' git_dir; do
@@ -7670,7 +7747,7 @@ if [[ -n "${AUDIT_TRANSCRIPT_PATH}" ]]; then
   AUDIT_TRANSCRIPT_PATH="$(prepare_host_output_path "${AUDIT_TRANSCRIPT_PATH}")"
 fi
 if [[ "${GC}" -eq 1 ]]; then
-  cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
+  cleanup_default_injection_bundles
   cleanup_stale_session_audit_dirs "${WORKCELL_STATE_ROOT}" "${COLIMA_STATE_ROOT}"
   cleanup_stale_latest_log_pointers "${WORKCELL_STATE_ROOT}" "${COLIMA_STATE_ROOT}"
   prune_runtime_image_caches
@@ -7813,7 +7890,7 @@ if [[ -n "${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE:-}" ]]; then
   echo "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE is reserved for the Workcell test harness." >&2
   exit 2
 fi
-cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"
+cleanup_default_injection_bundles
 prepare_injection_bundle "${AGENT}" "${MODE}"
 
 IMAGE_TAG="workcell:local"

@@ -19,41 +19,46 @@ func ValidateRuntimeMounts(configPath, workspace, profile string) error {
 		return err
 	}
 
+	return validateManagedMounts(config["mounts"], workspace, profile)
+}
+
+func expectedReadOnlyCacheMounts() (map[string]bool, error) {
+	home, err := canonicalizeConfigPath(userHome())
+	if err != nil {
+		return nil, err
+	}
+	cacheRoot := filepath.Join(home, "Library", "Caches", "colima")
+	roots := []string{
+		filepath.Join(cacheRoot, "workcell-host-inputs"),
+		filepath.Join(cacheRoot, "workcell-shadow"),
+	}
+	expected := make(map[string]bool, len(roots))
+	for _, root := range roots {
+		canonical, err := canonicalizeConfigPath(root)
+		if err != nil {
+			return nil, err
+		}
+		expected[canonical] = false
+	}
+	return expected, nil
+}
+
+func validateManagedMounts(mountsRaw any, workspace, profile string) error {
 	expected, err := canonicalizeConfigPath(workspace)
 	if err != nil {
 		return err
 	}
-	home, err := canonicalizeConfigPath(userHome())
-	if err != nil {
-		return err
-	}
-	cacheRoot, err := canonicalizeConfigPath(filepath.Join(home, "Library", "Caches", "colima"))
+	cacheMounts, err := expectedReadOnlyCacheMounts()
 	if err != nil {
 		return err
 	}
 
-	mounts := yamlSlice(config["mounts"])
+	mounts := yamlSlice(mountsRaw)
+	if len(mounts) == 0 {
+		return fmt.Errorf("unexpected configured Colima mounts: %v", mountsRaw)
+	}
 	writableCount := 0
 	writableMatches := 0
-	for _, entry := range mounts {
-		mount := yamlMap(entry)
-		if mount == nil || !yamlBool(mount, "writable") {
-			continue
-		}
-		writableCount++
-		location, err := canonicalizeConfigPath(yamlString(mount, "location"))
-		if err != nil {
-			continue
-		}
-		if location == expected {
-			writableMatches++
-		}
-	}
-
-	if writableCount != 1 || writableMatches != 1 {
-		return fmt.Errorf("colima profile %s must mount only %s as writable", profile, expected)
-	}
-
 	for _, entry := range mounts {
 		mount := yamlMap(entry)
 		if mount == nil {
@@ -71,14 +76,27 @@ func ValidateRuntimeMounts(configPath, workspace, profile string) error {
 			}
 		}
 
-		writable := yamlBool(mount, "writable")
-		if !writable && (location == cacheRoot || strings.HasPrefix(location, cacheRoot+string(filepath.Separator))) {
+		if yamlBool(mount, "writable") {
+			writableCount++
+			if location == expected {
+				writableMatches++
+			}
 			continue
 		}
-		if location == expected {
+		if _, ok := cacheMounts[location]; ok {
+			cacheMounts[location] = true
 			continue
 		}
 		return fmt.Errorf("colima profile %s has an unexpected host mount: %s", profile, rawLocation)
+	}
+
+	if writableCount != 1 || writableMatches != 1 {
+		return fmt.Errorf("colima profile %s must mount only %s as writable", profile, expected)
+	}
+	for location, seen := range cacheMounts {
+		if !seen {
+			return fmt.Errorf("colima profile %s is missing read-only Workcell cache mount: %s", profile, location)
+		}
 	}
 
 	return nil
@@ -99,22 +117,11 @@ func ValidateProfileConfig(configPath, workspace, expectedCPU, expectedMemory, e
 		return fmt.Errorf("colima profile must not forward the SSH agent")
 	}
 
-	mountsRaw := config["mounts"]
-	mounts := yamlSlice(mountsRaw)
-	if len(mounts) != 1 {
-		return fmt.Errorf("unexpected configured Colima mounts: %v", mountsRaw)
-	}
-
-	mount := yamlMap(mounts[0])
-	if mount == nil {
-		return fmt.Errorf("unexpected configured Colima mounts: %v", mountsRaw)
-	}
-	location, err := canonicalizeConfigPath(yamlString(mount, "location"))
-	if err != nil {
-		return fmt.Errorf("colima profile must mount only %s as writable in colima.yaml", expectedWorkspace)
-	}
-	if !yamlBool(mount, "writable") || location != expectedWorkspace {
-		return fmt.Errorf("colima profile must mount only %s as writable in colima.yaml", expectedWorkspace)
+	if err := validateManagedMounts(config["mounts"], workspace, "managed"); err != nil {
+		if strings.HasPrefix(err.Error(), "colima profile managed must mount only ") {
+			return fmt.Errorf("colima profile must mount only %s as writable in colima.yaml", expectedWorkspace)
+		}
+		return err
 	}
 
 	vmType := yamlFirstString(config, "vmType", "vm_type")
