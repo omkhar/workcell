@@ -46,7 +46,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/claude/hooks/guard-bash.sh",
       "runtime_path": "/opt/workcell/adapters/claude/hooks/guard-bash.sh",
-      "sha256": "e9e397e0f3dbcc819fc6497191d20de5614f20aa25a9eb858549d81644172fbe"
+      "sha256": "9bca2ae76b97cec2c390cf4e06a24418cf9b526dc04f559ca6ec10bbdb94d24d"
     },
     {
       "kind": "adapter-baseline",
@@ -130,7 +130,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "e3ca9a96309d54618af7eb4847af0d98bd2cae0cb4412d8a61d4d6902245c731"
+      "sha256": "7f0837ef0e85493c1f51c026f16ce1defbf521c1f6945900e27913fcf61fc340"
     },
     {
       "kind": "adapter-baseline",
@@ -142,7 +142,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "02d631c9bb718b1bcfe13a44798485e158846601b7f39e7b4312341d4573936f"
+      "sha256": "35933deda8336c7984a9707fa0a995ffd99b5597263674dbd468692425aa058b"
     },
     {
       "kind": "adapter-baseline",

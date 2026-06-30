@@ -49,4 +49,9 @@ jobs:
           sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
 
       - name: Check pinned upstream hygiene
-        run: ./scripts/ci/job-pin-hygiene.sh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/job-pin-hygiene.sh

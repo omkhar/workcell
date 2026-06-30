@@ -582,7 +582,8 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 		"https://api.github.com/repos/sigstore/cosign/releases/latest",
 		"https://api.github.com/repos/anchore/syft/releases/latest",
 		"https://api.github.com/repos/rhysd/actionlint/releases/latest",
-		`--oauth2-bearer "${token}"`,
+		"--config -",
+		`header = "Authorization: Bearer ${token}"`,
 		"Accept: application/octet-stream",
 		"github_release_asset_api_url",
 		`-D "${headers_file}"`,
@@ -604,6 +605,9 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
 		}
+	}
+	if strings.Contains(script, "--oauth2-bearer") {
+		t.Fatalf("%s still passes GitHub tokens through curl argv", scriptPath)
 	}
 
 	for _, want := range []string{

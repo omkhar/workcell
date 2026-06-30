@@ -74,14 +74,23 @@ require_tool shasum
 CURL_API_GUARDS=(--max-time 120 --connect-timeout 15 --max-filesize 209715200)
 DEBIAN_SNAPSHOT_LOOKBACK_DAYS="${WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-45}}"
 
+github_api_token() {
+  local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
+  if [[ -z "${token}" && -n "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
+    token="$(<"${WORKCELL_GITHUB_API_TOKEN_FILE}")"
+  fi
+  printf '%s' "${token}"
+}
+
 github_api_get() {
   local url="$1"
-  local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-}}"
+  local token
+  token="$(github_api_token)"
   if [[ -n "${token}" ]]; then
-    curl -fsSL "${CURL_API_GUARDS[@]}" \
-      -H "Accept: application/vnd.github+json" \
-      --oauth2-bearer "${token}" \
-      "${url}"
+    curl -fsSL "${CURL_API_GUARDS[@]}" --config - "${url}" <<EOF
+header = "Accept: application/vnd.github+json"
+header = "Authorization: Bearer ${token}"
+EOF
     return
   fi
   curl -fsSL "${CURL_API_GUARDS[@]}" -H "Accept: application/vnd.github+json" "${url}"
@@ -117,24 +126,29 @@ github_release_asset_api_url() {
 
 github_release_asset_get() {
   local url="$1"
-  local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-}}"
+  local token
   local body_file=""
   local headers_file=""
   local location=""
   local status=""
 
+  token="$(github_api_token)"
   if [[ -n "${token}" ]]; then
     headers_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-headers.XXXXXX")"
     body_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-body.XXXXXX")"
     trap 'rm -f "${headers_file}" "${body_file}"' RETURN
 
-    status="$(curl -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
-      -D "${headers_file}" \
-      -o "${body_file}" \
-      -w '%{http_code}' \
-      -H "Accept: application/octet-stream" \
-      -H "Authorization: Bearer ${token}" \
-      "${url}")"
+    status="$(
+      curl -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
+        -D "${headers_file}" \
+        -o "${body_file}" \
+        -w '%{http_code}' \
+        -H "Accept: application/octet-stream" \
+        --config - \
+        "${url}" <<EOF
+header = "Authorization: Bearer ${token}"
+EOF
+    )"
     case "${status}" in
       200)
         cat "${body_file}"

@@ -1052,7 +1052,11 @@ func fetchJSONResponse(client *http.Client, targetURL string, target any) (http.
 		return nil, fmt.Errorf("fetch %s: %w", targetURL, err)
 	}
 	req.Header.Set("User-Agent", providerBumpUserAgent)
-	if token := githubBearerTokenForURL(targetURL); token != "" {
+	token, err := githubBearerTokenForURL(targetURL)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -1071,15 +1075,26 @@ func fetchJSONResponse(client *http.Client, targetURL string, target any) (http.
 	return resp.Header.Clone(), nil
 }
 
-func githubBearerTokenForURL(targetURL string) string {
+func githubBearerTokenForURL(targetURL string) (string, error) {
 	parsed, err := url.Parse(targetURL)
 	if err != nil || parsed.Hostname() != "api.github.com" {
-		return ""
+		return "", nil
+	}
+	if tokenFile := os.Getenv("WORKCELL_GITHUB_API_TOKEN_FILE"); tokenFile != "" {
+		contents, err := os.ReadFile(tokenFile)
+		if err != nil {
+			return "", fmt.Errorf("read WORKCELL_GITHUB_API_TOKEN_FILE: %w", err)
+		}
+		token := strings.TrimSpace(string(contents))
+		if token == "" {
+			return "", fmt.Errorf("WORKCELL_GITHUB_API_TOKEN_FILE is empty")
+		}
+		return token, nil
 	}
 	for _, name := range []string{"WORKCELL_GITHUB_API_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"} {
 		if token := os.Getenv(name); token != "" {
-			return token
+			return token, nil
 		}
 	}
-	return ""
+	return "", nil
 }
