@@ -250,6 +250,28 @@ docker_image_digest() {
   printf '%s\n' "${digest}"
 }
 
+docker_image_digest_if_available() {
+  local image_ref="$1"
+  local output=""
+  local status=0
+  local digest=""
+
+  output="$(docker buildx imagetools inspect "${image_ref}" 2>&1)" || status=$?
+  if [[ "${status}" -ne 0 ]]; then
+    if grep -Eiq '(not found|manifest unknown)' <<<"${output}"; then
+      return 1
+    fi
+    printf '%s\n' "${output}" >&2
+    exit "${status}"
+  fi
+  digest="$(awk '/^Digest:/ {print $2; exit}' <<<"${output}")"
+  if [[ -z "${digest}" ]]; then
+    echo "Unable to resolve image digest for ${image_ref}" >&2
+    exit 1
+  fi
+  printf '%s\n' "${digest}"
+}
+
 extract_dockerfile_arg() {
   (
     cd "${ROOT_DIR}"
@@ -581,10 +603,19 @@ current_release_zizmor_sha="$(extract_workflow_env_value "${RELEASE_WORKFLOW_PAT
 runtime_base_track="${current_runtime_base%@*}"
 validator_base_track="${current_validator_base%@*}"
 buildkit_track="${current_buildkit_image%@*}"
+unavailable_rust_toolchain_image=""
 
 target_runtime_base="${runtime_base_track}@$(docker_image_digest "${runtime_base_track}")"
 target_validator_base="${validator_base_track}@$(docker_image_digest "${validator_base_track}")"
-target_runtime_rust_toolchain_image="rust:${target_rust_version}-slim-trixie@$(docker_image_digest "rust:${target_rust_version}-slim-trixie")"
+target_runtime_rust_toolchain_track="rust:${target_rust_version}-slim-trixie"
+if target_runtime_rust_toolchain_digest="$(docker_image_digest_if_available "${target_runtime_rust_toolchain_track}")"; then
+  target_runtime_rust_toolchain_image="${target_runtime_rust_toolchain_track}@${target_runtime_rust_toolchain_digest}"
+else
+  unavailable_rust_toolchain_image="${target_runtime_rust_toolchain_track}"
+  target_rust_version="${current_rust_version}"
+  target_cargo_rust_version="${current_cargo_rust_version}"
+  target_runtime_rust_toolchain_image="${current_runtime_rust_toolchain_image}"
+fi
 target_debian_snapshot="$(latest_debian_snapshot)"
 target_buildkit_image="${buildkit_track}@$(docker_image_digest "${buildkit_track}")"
 target_qemu_tag="$(latest_qemu_tag)"
@@ -669,6 +700,9 @@ print_summary() {
   print_summary_line "go-language" "${current_go_language}" "${target_go_language}"
   print_summary_line "rust-toolchain" "${current_rust_version}" "${target_rust_version}"
   print_summary_line "runtime-rust-image" "${current_runtime_rust_toolchain_image}" "${target_runtime_rust_toolchain_image}"
+  if [[ -n "${unavailable_rust_toolchain_image}" ]]; then
+    printf '  rust-toolchain-candidate: %s (waiting for official Docker image)\n' "${unavailable_rust_toolchain_image}"
+  fi
   print_summary_line "rustup" "${current_rustup_version}" "${target_rustup_version}"
   print_summary_line "hadolint" "${current_hadolint_version}" "${target_hadolint_version}"
   print_summary_line "buildkit-image" "${current_buildkit_image}" "${target_buildkit_image}"
