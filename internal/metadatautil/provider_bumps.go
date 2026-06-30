@@ -115,23 +115,22 @@ type npmRegistryMetadata struct {
 	Time     map[string]string `json:"time"`
 }
 
+type githubReleaseAsset struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
+}
+
 type codexReleaseMetadata struct {
-	TagName    string `json:"tag_name"`
-	Prerelease bool   `json:"prerelease"`
-	Assets     []struct {
-		Name   string `json:"name"`
-		Digest string `json:"digest"`
-	} `json:"assets"`
+	TagName    string               `json:"tag_name"`
+	Prerelease bool                 `json:"prerelease"`
+	Assets     []githubReleaseAsset `json:"assets"`
 }
 
 type copilotReleaseMetadata struct {
-	TagName     string `json:"tag_name"`
-	Prerelease  bool   `json:"prerelease"`
-	PublishedAt string `json:"published_at"`
-	Assets      []struct {
-		Name   string `json:"name"`
-		Digest string `json:"digest"`
-	} `json:"assets"`
+	TagName     string               `json:"tag_name"`
+	Prerelease  bool                 `json:"prerelease"`
+	PublishedAt string               `json:"published_at"`
+	Assets      []githubReleaseAsset `json:"assets"`
 }
 
 type claudeManifest struct {
@@ -368,17 +367,22 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	if !stableVersionPattern.MatchString(geminiPlan.TargetVersion) {
 		return fmt.Errorf("%s contains a non-stable Gemini target version %q", planPath, geminiPlan.TargetVersion)
 	}
+	currentClaudeVersion, err := ExtractDockerfileArg(dockerfilePath, "CLAUDE_VERSION")
+	if err != nil {
+		return err
+	}
+	currentCodexVersion, err := ExtractDockerfileArg(dockerfilePath, "CODEX_VERSION")
+	if err != nil {
+		return err
+	}
 	currentCopilotVersion, err := ExtractDockerfileArg(dockerfilePath, "COPILOT_VERSION")
 	if err != nil {
 		return err
 	}
-	copilotVersionChanged := copilotPlan.TargetVersion != currentCopilotVersion
-	if copilotVersionChanged {
-		if err := requireProviderChecksums(planPath, providerid.Copilot, copilotPlan); err != nil {
-			return err
-		}
-	} else if err := validateSuppliedProviderChecksums(planPath, providerid.Copilot, copilotPlan); err != nil {
-		return err
+	nativePlans := []nativeDockerfilePlan{
+		{Provider: providerid.Claude, Label: "Claude", ArgName: "CLAUDE_VERSION", SHAName: "CLAUDE_SHA256", CurrentVersion: currentClaudeVersion, Selection: claudePlan},
+		{Provider: providerid.Codex, Label: "Codex", ArgName: "CODEX_VERSION", SHAName: "CODEX_SHA256", CurrentVersion: currentCodexVersion, Selection: codexPlan},
+		{Provider: providerid.Copilot, Label: "Copilot", ArgName: "COPILOT_VERSION", SHAName: "COPILOT_SHA256", CurrentVersion: currentCopilotVersion, Selection: copilotPlan},
 	}
 	if policyPath != "" {
 		policy, err := LoadProviderBumpPolicy(policyPath)
@@ -392,6 +396,15 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 			return err
 		}
 		if err := enforceProviderMaxVersion(policyPath, providerid.Copilot, "Copilot", copilotPlan.TargetVersion, policy.Providers[providerid.Copilot].MaxVersion, planPath); err != nil {
+			return err
+		}
+	}
+	for _, nativePlan := range nativePlans {
+		if nativePlan.VersionChanged() {
+			if err := requireProviderChecksums(planPath, nativePlan.Provider, nativePlan.Selection); err != nil {
+				return err
+			}
+		} else if err := validateSuppliedProviderChecksums(planPath, nativePlan.Provider, nativePlan.Selection); err != nil {
 			return err
 		}
 	}
@@ -418,14 +431,10 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	if checksum := copilotPlan.Checksums["amd64"]; checksum != "" {
 		updatedDockerfile = copilotAmdChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
 	}
-	if copilotVersionChanged {
-		if !strings.Contains(updatedDockerfile, fmt.Sprintf("ARG COPILOT_VERSION=%s", copilotPlan.TargetVersion)) {
-			return fmt.Errorf("failed to update COPILOT_VERSION to %s in %s", copilotPlan.TargetVersion, dockerfilePath)
-		}
-		for _, arch := range []string{"arm64", "amd64"} {
-			checksum := copilotPlan.Checksums[arch]
-			if !strings.Contains(updatedDockerfile, fmt.Sprintf(`COPILOT_SHA256="%s"`, checksum)) {
-				return fmt.Errorf("failed to update Copilot %s checksum in %s", arch, dockerfilePath)
+	for _, nativePlan := range nativePlans {
+		if nativePlan.VersionChanged() {
+			if err := verifyNativeDockerfilePlanApplied(updatedDockerfile, dockerfilePath, nativePlan); err != nil {
+				return err
 			}
 		}
 	}
@@ -443,6 +452,38 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	if updatedPackageJSON != packageJSONText {
 		if err := os.WriteFile(providersPackageJSONPath, []byte(updatedPackageJSON), 0o644); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+type nativeDockerfilePlan struct {
+	Provider       string
+	Label          string
+	ArgName        string
+	SHAName        string
+	CurrentVersion string
+	Selection      ProviderBumpSelection
+}
+
+func (p nativeDockerfilePlan) VersionChanged() bool {
+	return p.Selection.TargetVersion != p.CurrentVersion
+}
+
+func verifyNativeDockerfilePlanApplied(updatedDockerfile, dockerfilePath string, plan nativeDockerfilePlan) error {
+	if !strings.Contains(updatedDockerfile, fmt.Sprintf("ARG %s=%s", plan.ArgName, plan.Selection.TargetVersion)) {
+		return fmt.Errorf("failed to update %s to %s in %s", plan.ArgName, plan.Selection.TargetVersion, dockerfilePath)
+	}
+	for _, arch := range []string{"arm64", "amd64"} {
+		checksum := plan.Selection.Checksums[arch]
+		checksumPattern := regexp.MustCompile(fmt.Sprintf(
+			`(?ms)^\s*%s\)\s+\\\s*[A-Z_]+="[^"]+";\s+\\\s*%s="%s";`,
+			regexp.QuoteMeta(arch),
+			regexp.QuoteMeta(plan.SHAName),
+			regexp.QuoteMeta(checksum),
+		))
+		if !checksumPattern.MatchString(updatedDockerfile) {
+			return fmt.Errorf("failed to update %s %s checksum in %s", plan.Label, arch, dockerfilePath)
 		}
 	}
 	return nil
@@ -524,8 +565,8 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 			skipped = appendSkippedProviderRelease(skipped, candidate, "GitHub release is marked prerelease")
 			continue
 		}
-		armDigest, armErr := releaseAssetDigest(release, "codex-aarch64-unknown-linux-musl.tar.gz")
-		amdDigest, amdErr := releaseAssetDigest(release, "codex-x86_64-unknown-linux-musl.tar.gz")
+		armDigest, armErr := releaseAssetDigest(release.Assets, "codex-aarch64-unknown-linux-musl.tar.gz")
+		amdDigest, amdErr := releaseAssetDigest(release.Assets, "codex-x86_64-unknown-linux-musl.tar.gz")
 		if armErr != nil || amdErr != nil {
 			reasons := make([]string, 0, 2)
 			if armErr != nil {
@@ -641,8 +682,8 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 		if candidate.version.Raw == currentVersion {
 			return currentSelection(candidate.version.Source), nil
 		}
-		armDigest, armErr := copilotReleaseAssetDigest(candidate.release, "copilot-linux-arm64.tar.gz")
-		amdDigest, amdErr := copilotReleaseAssetDigest(candidate.release, "copilot-linux-x64.tar.gz")
+		armDigest, armErr := releaseAssetDigest(candidate.release.Assets, "copilot-linux-arm64.tar.gz")
+		amdDigest, amdErr := releaseAssetDigest(candidate.release.Assets, "copilot-linux-x64.tar.gz")
 		if armErr != nil || amdErr != nil {
 			reasons := make([]string, 0, 2)
 			if armErr != nil {
@@ -874,22 +915,8 @@ func appendSkippedProviderRelease(skipped []ProviderBumpSkippedRelease, version 
 	return append(skipped, entry)
 }
 
-func releaseAssetDigest(release codexReleaseMetadata, assetName string) (string, error) {
-	for _, asset := range release.Assets {
-		if asset.Name != assetName {
-			continue
-		}
-		digest := strings.TrimPrefix(asset.Digest, "sha256:")
-		if !isHexDigest(digest) {
-			return "", fmt.Errorf("release asset %s is missing a valid sha256 digest", assetName)
-		}
-		return digest, nil
-	}
-	return "", fmt.Errorf("%w: %s", errReleaseAssetNotFound, assetName)
-}
-
-func copilotReleaseAssetDigest(release copilotReleaseMetadata, assetName string) (string, error) {
-	for _, asset := range release.Assets {
+func releaseAssetDigest(assets []githubReleaseAsset, assetName string) (string, error) {
+	for _, asset := range assets {
 		if asset.Name != assetName {
 			continue
 		}
@@ -1025,6 +1052,10 @@ func fetchJSONResponse(client *http.Client, targetURL string, target any) (http.
 		return nil, fmt.Errorf("fetch %s: %w", targetURL, err)
 	}
 	req.Header.Set("User-Agent", providerBumpUserAgent)
+	if token := githubBearerTokenForURL(targetURL); token != "" {
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", targetURL, err)
@@ -1038,4 +1069,17 @@ func fetchJSONResponse(client *http.Client, targetURL string, target any) (http.
 		return nil, fmt.Errorf("decode %s: %w", targetURL, err)
 	}
 	return resp.Header.Clone(), nil
+}
+
+func githubBearerTokenForURL(targetURL string) string {
+	parsed, err := url.Parse(targetURL)
+	if err != nil || parsed.Hostname() != "api.github.com" {
+		return ""
+	}
+	for _, name := range []string{"WORKCELL_GITHUB_API_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"} {
+		if token := os.Getenv(name); token != "" {
+			return token
+		}
+	}
+	return ""
 }

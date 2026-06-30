@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "1eb3a0e0f07c72b35f705406e0f334cdeabea3e67a1306903483f5a318e2d155"
+      "sha256": "baaced3b09f08ce7e0fcc663a36e9588bbbbf453a2d08eccfb285889fc5d3b0e"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -46,7 +46,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/claude/hooks/guard-bash.sh",
       "runtime_path": "/opt/workcell/adapters/claude/hooks/guard-bash.sh",
-      "sha256": "1b589e05514035b5beddd41da31ff2845a8b9147c3719dc2d084712e81f6db6a"
+      "sha256": "e9e397e0f3dbcc819fc6497191d20de5614f20aa25a9eb858549d81644172fbe"
     },
     {
       "kind": "adapter-baseline",
@@ -130,7 +130,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "c893bda9d799981ef7604581e26bdd45cf0254ce72550fe7112bc25563bd7fce"
+      "sha256": "e3ca9a96309d54618af7eb4847af0d98bd2cae0cb4412d8a61d4d6902245c731"
     },
     {
       "kind": "adapter-baseline",
@@ -142,13 +142,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "e4dce7bcb8f06c546c3e55d8f8f6509e3ff0f597cfb68bc36c47d5f86ffae295"
-    },
-    {
-      "kind": "adapter-baseline",
-      "repo_path": "adapters/copilot/README.md",
-      "runtime_path": "/opt/workcell/adapters/copilot/README.md",
-      "sha256": "4c8c0b9d4c8428dce1003bdfade6ff0838ad68a58686f9bb2d3dfd7773cdfe75"
+      "sha256": "02d631c9bb718b1bcfe13a44798485e158846601b7f39e7b4312341d4573936f"
     },
     {
       "kind": "adapter-baseline",
@@ -202,7 +196,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/development-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/development-wrapper.sh",
-      "sha256": "daee2c25d6ac714ebcb918eca6650175b73e60927d0f8d06396fc5d6f39c09be"
+      "sha256": "26bf6e4b9655169b405593d72bd38637dee2a76001b996b4f4ebbc0c81f30341"
     },
     {
       "kind": "runtime-control-plane",
@@ -220,7 +214,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "58a1e6147ada7d484813c5fd237231e5a23d6a000bfc076cf26c3a9cb0c4ca15"
+      "sha256": "461c87309ae6be940e9ec1afadf3025d8fb1135e94c645bff23af71421f44c61"
     },
     {
       "kind": "runtime-control-plane",
@@ -238,7 +232,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "c147a3a49f4b0fd2d3395cb8ba1f9d831ca3aaf295a6f1ada4daaf6ea7afdcad"
+      "sha256": "d18c45a5833ccba0067cbad251b7822abdfe115dfa9f9da84fb9903863786bc7"
     },
     {
       "kind": "runtime-control-plane",

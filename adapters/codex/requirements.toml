@@ -61,7 +61,7 @@ decision = "forbidden"
 justification = "Do not bypass git hooks with --no-verify from Workcell."
 
 [[rules.prefix_rules]]
-pattern = [{ any_of = ["codex", "claude", "copilot", "gemini", "/usr/local/libexec/workcell/provider-wrapper.sh", "/usr/local/libexec/workcell/core/codex", "/usr/local/libexec/workcell/core/claude", "/usr/local/libexec/workcell/core/copilot", "/usr/local/libexec/workcell/core/gemini", "/usr/local/libexec/workcell/real/codex", "/usr/local/libexec/workcell/real/claude", "/usr/local/libexec/workcell/real/copilot", "/opt/workcell/providers/node_modules/.bin/gemini"] }]
+pattern = [{ any_of = ["codex", "claude", "gemini", "/usr/local/libexec/workcell/provider-wrapper.sh", "/usr/local/libexec/workcell/core/codex", "/usr/local/libexec/workcell/core/claude", "/usr/local/libexec/workcell/core/gemini", "/usr/local/libexec/workcell/real/codex", "/usr/local/libexec/workcell/real/claude", "/usr/local/libexec/workcell/real/copilot", "/opt/workcell/providers/node_modules/.bin/gemini"] }]
 decision = "forbidden"
 justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."
 

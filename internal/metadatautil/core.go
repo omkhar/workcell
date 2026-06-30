@@ -492,7 +492,6 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/managed_config.toml", RuntimePath: "/opt/workcell/adapters/codex/managed_config.toml"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/mcp/config.toml", RuntimePath: "/opt/workcell/adapters/codex/mcp/config.toml"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/codex/requirements.toml", RuntimePath: "/opt/workcell/adapters/codex/requirements.toml"},
-		{Kind: "adapter-baseline", RepoPath: "adapters/copilot/README.md", RuntimePath: "/opt/workcell/adapters/copilot/README.md"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/.gemini/settings.json", RuntimePath: "/opt/workcell/adapters/gemini/.gemini/settings.json"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/GEMINI.md", RuntimePath: "/opt/workcell/adapters/gemini/GEMINI.md"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/assurance.sh", RuntimePath: "/usr/local/libexec/workcell/assurance.sh"},

@@ -54,6 +54,25 @@ download_large_asset() {
     "${url}" -o "${output}"
 }
 
+github_api_get() {
+  local url="$1"
+  local output="$2"
+  local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
+
+  if [[ -n "${token}" ]]; then
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+      -H "Accept: application/vnd.github+json" \
+      --oauth2-bearer "${token}" \
+      "${url}" \
+      -o "${output}"
+    return
+  fi
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+    -H "Accept: application/vnd.github+json" \
+    "${url}" \
+    -o "${output}"
+}
+
 release_asset_digest() {
   local asset_name="$1"
 
@@ -101,9 +120,7 @@ if [[ -z "${COPILOT_VERSION}" ]]; then
   echo "Build input manifest is missing the Copilot version" >&2
   exit 1
 fi
-curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-  "https://api.github.com/repos/github/copilot-cli/releases/tags/v${COPILOT_VERSION}" \
-  -o "${RELEASE_METADATA_PATH}"
+github_api_get "https://api.github.com/repos/github/copilot-cli/releases/tags/v${COPILOT_VERSION}" "${RELEASE_METADATA_PATH}"
 
 if [[ "$(jq -r '.tag_name' "${RELEASE_METADATA_PATH}")" != "v${COPILOT_VERSION}" ]]; then
   echo "GitHub Copilot CLI release metadata does not match v${COPILOT_VERSION}" >&2

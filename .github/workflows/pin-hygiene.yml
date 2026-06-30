@@ -2,7 +2,7 @@ name: Pin Hygiene
 
 # This workflow is the WEEKLY-CRON pin-hygiene lane.  scripts/ci/job-validate.sh
 # runs scripts/check-pinned-inputs.sh,
-# scripts/verify-upstream-{codex,claude,gemini}-release.sh, and (on the
+# scripts/verify-upstream-{codex,claude,copilot,gemini}-release.sh, and (on the
 # release-preflight profile only) scripts/update-upstream-pins.sh --check.
 # This cron lane catches snapshot/digest drift independently of PR
 # activity.  The full update-upstream-pins --check is intentionally not

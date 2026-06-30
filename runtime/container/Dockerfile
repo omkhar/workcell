@@ -11,7 +11,7 @@ ARG SOURCE_DATE_EPOCH=0
 # To update: choose a newer snapshot date at https://snapshot.debian.org/,
 # verify packages are available, update this value, and re-run verify-reproducible-build.sh.
 ARG DEBIAN_SNAPSHOT=20260518T000000Z
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.96.0-slim-trixie@sha256:6abf73f05806f36362d0ff2722f2250c6153398831edd0455e0e0baa1f78ecc7
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.96.0-slim-trixie@sha256:c37af730be4fd8104cbf9aedbd6ab259e51ca2d5437817a0f8680edf66ac6c28
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -200,7 +200,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.195
+ARG CLAUDE_VERSION=2.1.196
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
@@ -208,7 +208,7 @@ ARG CLAUDE_VERSION=2.1.195
 # bundles); to update manually, resolve the eligible stable version, verify
 # the GitHub release asset digests for both musl Linux tarballs, and refresh
 # the CODEX_SHA256 values for arm64 and amd64 below.
-ARG CODEX_VERSION=0.142.3
+ARG CODEX_VERSION=0.142.4
 # GitHub Copilot CLI native binary version and SHA256 checksums for each Linux
 # architecture. Workcell pins the non-prerelease GitHub release asset here;
 # support promotion must keep token auth explicit through copilot_github_token
@@ -287,11 +287,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="b02279999058dc80a0e1c5d39463d1545a178615492f84139aac8d61214a7e9a"; \
+      CLAUDE_SHA256="05aa9189d335d1e921ca9608acd699193e661559aff56704456ce5bda6fd4dd8"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="8323e70125063147a4478b957745d835a87e5e72ffd25b838ea9a841c03e6a37"; \
+      CLAUDE_SHA256="eb933c6dd5534db89b83ba09009d5c0932bd1395f7e3bb0f34ba37eec37bbade"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -323,11 +323,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-musl"; \
-      CODEX_SHA256="d4bb18793cd53902593ddb92c409f262c05dc80e4235f865ede2378ba15a1dd1"; \
+      CODEX_SHA256="a546ee05915313fea340f8315b54f43d077f4390afbb5af2de944d48013d447f"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-musl"; \
-      CODEX_SHA256="f96813f41692b4d8ae44d0812165a2fcc429196eb3481f6bc221afdec96a17f8"; \
+      CODEX_SHA256="f0ac43751c6d3b29a973a860a8de528ad79cb20cc1296611930a3d5c91ddef95"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -389,7 +389,7 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
     -o /tmp/copilot.tar.gz \
   && echo "${COPILOT_SHA256}  /tmp/copilot.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/copilot.tar.gz -C /tmp copilot \
-  && install -m 0755 /tmp/copilot /usr/local/libexec/workcell/real/copilot \
+  && install -m 0644 /tmp/copilot /usr/local/libexec/workcell/real/copilot \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/copilot \
   && rm -f /tmp/copilot.tar.gz /tmp/copilot
 
@@ -512,7 +512,6 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/libexec/workcell/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/codex \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/claude \
-  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/copilot \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/gemini \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/workcell-entrypoint \
   && ln -sf /usr/local/libexec/workcell/apt-wrapper.sh /usr/local/bin/apt \
@@ -520,7 +519,6 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/node \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/codex \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/claude \
-  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/copilot \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/gemini \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/bin/git \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/bin/git \

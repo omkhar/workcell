@@ -383,62 +383,43 @@ func TestSelectCodexStableRejectsMalformedReleaseDigest(t *testing.T) {
 	}
 }
 
-func TestSelectCopilotStableSkipsPrereleaseAndMissingAssetsThenSelectsCompatible(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestSelectCopilotStableFollowsPaginationSkipsAndHonorsMaxVersion(t *testing.T) {
+	var sawPage2 atomic.Bool
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/copilot-releases" {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[
-  {
-    "tag_name": "v1.0.68",
-    "prerelease": true,
-    "published_at": "2026-04-11T00:00:00Z",
-    "assets": []
-  },
-  {
-    "tag_name": "v1.0.67",
-    "prerelease": false,
-    "published_at": "2026-04-10T00:00:00Z",
-    "assets": [
-      {
-        "name": "copilot-linux-arm64.tar.gz",
-        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-      }
-    ]
-  },
-  {
-    "tag_name": "v1.0.66",
-    "prerelease": false,
-    "published_at": "2026-04-09T00:00:00Z",
-    "assets": [
-      {
-        "name": "copilot-linux-arm64.tar.gz",
-        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
-      },
-      {
-        "name": "copilot-linux-x64.tar.gz",
-        "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
-      }
-    ]
-  }
-]`))
+		switch r.URL.Query().Get("page") {
+		case "", "1":
+			w.Header().Set("Link", "<"+server.URL+"/copilot-releases?page=2&per_page=100>; rel=\"next\"")
+			_, _ = w.Write([]byte(`[{"tag_name":"v1.0.70","prerelease":false,"published_at":"2026-04-11T00:00:00Z","assets":[{"name":"copilot-linux-arm64.tar.gz","digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444"},{"name":"copilot-linux-x64.tar.gz","digest":"sha256:5555555555555555555555555555555555555555555555555555555555555555"}]},{"tag_name":"v1.0.68","prerelease":true,"published_at":"2026-04-10T00:00:00Z","assets":[]}]`))
+		case "2":
+			sawPage2.Store(true)
+			_, _ = w.Write([]byte(`[{"tag_name":"v1.0.67","prerelease":false,"published_at":"2026-04-09T12:00:00Z","assets":[{"name":"copilot-linux-arm64.tar.gz","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]},{"tag_name":"v1.0.66","prerelease":false,"published_at":"2026-04-09T00:00:00Z","assets":[{"name":"copilot-linux-arm64.tar.gz","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},{"name":"copilot-linux-x64.tar.gz","digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333"}]}]`))
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	defer server.Close()
 
 	cutoff := time.Date(2026, time.April, 12, 0, 0, 0, 0, time.UTC)
-	selection, err := selectCopilotStable("1.0.65", cutoff, "", ProviderBumpSources{
+	selection, err := selectCopilotStable("1.0.64", cutoff, "1.0.67", ProviderBumpSources{
 		CopilotReleaseAPIURL: server.URL + "/copilot-releases",
 	}, server.Client())
 	if err != nil {
 		t.Fatalf("selectCopilotStable() error = %v", err)
 	}
-	if selection.TargetVersion != "1.0.66" {
-		t.Fatalf("Copilot target = %q, want 1.0.66", selection.TargetVersion)
+	if !sawPage2.Load() {
+		t.Fatal("selectCopilotStable() did not follow the GitHub pagination link")
+	}
+	if got := selection.TargetVersion; got != "1.0.66" {
+		t.Fatalf("Copilot target = %q, want 1.0.66", got)
 	}
 	if !selection.Changed {
-		t.Fatal("Copilot selection should advance to the next compatible release")
+		t.Fatal("Copilot selection should mark a newer compatible release as changed")
 	}
 	if got := selection.Checksums["arm64"]; got != "2222222222222222222222222222222222222222222222222222222222222222" {
 		t.Fatalf("Copilot arm64 checksum = %q", got)
@@ -446,189 +427,17 @@ func TestSelectCopilotStableSkipsPrereleaseAndMissingAssetsThenSelectsCompatible
 	if got := selection.Checksums["amd64"]; got != "3333333333333333333333333333333333333333333333333333333333333333" {
 		t.Fatalf("Copilot amd64 checksum = %q", got)
 	}
-	if len(selection.SkippedReleases) != 2 {
-		t.Fatalf("SkippedReleases length = %d, want 2", len(selection.SkippedReleases))
+	if len(selection.SkippedReleases) != 3 {
+		t.Fatalf("SkippedReleases length = %d, want 3", len(selection.SkippedReleases))
 	}
-	if skipped := selection.SkippedReleases[0]; skipped.Version != "1.0.68" || !strings.Contains(skipped.Reason, "prerelease") {
-		t.Fatalf("SkippedReleases[0] = %#v, want prerelease skip", skipped)
-	}
-	if skipped := selection.SkippedReleases[1]; skipped.Version != "1.0.67" || !strings.Contains(skipped.Reason, "missing supported Linux release assets") {
-		t.Fatalf("SkippedReleases[1] = %#v, want missing asset skip", skipped)
-	}
-}
-
-func TestSelectCopilotStableFollowsPaginatedReleases(t *testing.T) {
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/copilot-releases" {
-			http.NotFound(w, r)
-			return
-		}
-		if got := r.URL.Query().Get("per_page"); got != "100" {
-			t.Errorf("per_page = %q, want 100", got)
-			http.Error(w, "bad per_page", http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Query().Get("page") {
-		case "1":
-			w.Header().Set("Link", `<`+server.URL+`/copilot-releases?per_page=100&page=2>; rel="next"`)
-			_, _ = w.Write([]byte(`[
-  {
-    "tag_name": "v1.0.68",
-    "prerelease": true,
-    "published_at": "2026-04-11T00:00:00Z",
-    "assets": []
-  },
-  {
-    "tag_name": "v1.0.67",
-    "prerelease": false,
-    "published_at": "2026-04-10T00:00:00Z",
-    "assets": [
-      {
-        "name": "copilot-linux-arm64.tar.gz",
-        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-      }
-    ]
-  }
-]`))
-		case "2":
-			_, _ = w.Write([]byte(`[
-  {
-    "tag_name": "v1.0.66",
-    "prerelease": false,
-    "published_at": "2026-04-09T00:00:00Z",
-    "assets": [
-      {
-        "name": "copilot-linux-arm64.tar.gz",
-        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
-      },
-      {
-        "name": "copilot-linux-x64.tar.gz",
-        "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
-      }
-    ]
-  }
-]`))
-		default:
-			t.Errorf("unexpected Copilot release page %q", r.URL.Query().Get("page"))
-			http.Error(w, "unexpected page", http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	cutoff := time.Date(2026, time.April, 12, 0, 0, 0, 0, time.UTC)
-	selection, err := selectCopilotStable("1.0.65", cutoff, "", ProviderBumpSources{
-		CopilotReleaseAPIURL: server.URL + "/copilot-releases",
-	}, server.Client())
-	if err != nil {
-		t.Fatalf("selectCopilotStable() error = %v", err)
-	}
-	if selection.TargetVersion != "1.0.66" {
-		t.Fatalf("Copilot target = %q, want 1.0.66", selection.TargetVersion)
-	}
-	if got := selection.Checksums["amd64"]; got != "3333333333333333333333333333333333333333333333333333333333333333" {
-		t.Fatalf("Copilot amd64 checksum = %q", got)
-	}
-	if len(selection.SkippedReleases) != 2 {
-		t.Fatalf("SkippedReleases length = %d, want 2", len(selection.SkippedReleases))
-	}
-}
-
-func TestSelectCopilotStableRejectsMalformedReleaseDigest(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/copilot-releases" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[
-  {
-    "tag_name": "v1.0.66",
-    "prerelease": false,
-    "published_at": "2026-04-09T00:00:00Z",
-    "assets": [
-      {
-        "name": "copilot-linux-arm64.tar.gz",
-        "digest": "sha256:not-a-digest"
-      },
-      {
-        "name": "copilot-linux-x64.tar.gz",
-        "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
-      }
-    ]
-  }
-]`))
-	}))
-	defer server.Close()
-
-	cutoff := time.Date(2026, time.April, 12, 0, 0, 0, 0, time.UTC)
-	_, err := selectCopilotStable("1.0.65", cutoff, "", ProviderBumpSources{
-		CopilotReleaseAPIURL: server.URL + "/copilot-releases",
-	}, server.Client())
-	if err == nil {
-		t.Fatal("selectCopilotStable() unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), "invalid Linux asset metadata") {
-		t.Fatalf("selectCopilotStable() error = %v, want malformed digest rejection", err)
-	}
-}
-
-func TestSelectCopilotStableEnforcesCurrentVersionCeilingWithoutReleaseSource(t *testing.T) {
-	_, err := selectCopilotStable("1.0.66", time.Time{}, "1.0.65", ProviderBumpSources{}, nil)
-	if err == nil {
-		t.Fatal("selectCopilotStable() unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), "current Copilot version 1.0.66 exceeds provider.copilot.max_version 1.0.65") {
-		t.Fatalf("selectCopilotStable() error = %v, want max_version rejection", err)
-	}
-}
-
-func TestSelectCopilotStableHonorsMaxVersionAndReportsSkippedRelease(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/copilot-releases" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[
-  {
-    "tag_name": "v1.0.66",
-    "prerelease": false,
-    "published_at": "2026-04-09T00:00:00Z",
-    "assets": [
-      {
-        "name": "copilot-linux-arm64.tar.gz",
-        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
-      },
-      {
-        "name": "copilot-linux-x64.tar.gz",
-        "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
-      }
-    ]
-  }
-]`))
-	}))
-	defer server.Close()
-
-	cutoff := time.Date(2026, time.April, 12, 0, 0, 0, 0, time.UTC)
-	selection, err := selectCopilotStable("1.0.65", cutoff, "1.0.65", ProviderBumpSources{
-		CopilotReleaseAPIURL: server.URL + "/copilot-releases",
-	}, server.Client())
-	if err != nil {
-		t.Fatalf("selectCopilotStable() error = %v", err)
-	}
-	if selection.TargetVersion != "1.0.65" {
-		t.Fatalf("Copilot target = %q, want 1.0.65", selection.TargetVersion)
-	}
-	if selection.Changed {
-		t.Fatal("Copilot selection should hold at the configured ceiling")
-	}
-	if len(selection.SkippedReleases) != 1 {
-		t.Fatalf("SkippedReleases length = %d, want 1", len(selection.SkippedReleases))
-	}
-	if skipped := selection.SkippedReleases[0]; skipped.Version != "1.0.66" || !strings.Contains(skipped.Reason, "max_version 1.0.65") {
+	if skipped := selection.SkippedReleases[0]; skipped.Version != "1.0.70" || !strings.Contains(skipped.Reason, "max_version 1.0.67") {
 		t.Fatalf("SkippedReleases[0] = %#v, want max_version holdback", skipped)
+	}
+	if skipped := selection.SkippedReleases[1]; skipped.Version != "1.0.68" || !strings.Contains(skipped.Reason, "prerelease") {
+		t.Fatalf("SkippedReleases[1] = %#v, want prerelease skip", skipped)
+	}
+	if skipped := selection.SkippedReleases[2]; skipped.Version != "1.0.67" || !strings.Contains(skipped.Reason, "missing supported Linux release assets") {
+		t.Fatalf("SkippedReleases[2] = %#v, want missing asset skip", skipped)
 	}
 }
 
@@ -1661,6 +1470,18 @@ func TestFetchJSONAddsUserAgentHeader(t *testing.T) {
 	}
 }
 
+func TestGitHubBearerTokenForURL(t *testing.T) {
+	t.Setenv("WORKCELL_GITHUB_API_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "ci-token")
+	if got := githubBearerTokenForURL("https://api.github.com/repos/github/copilot-cli/releases"); got != "ci-token" {
+		t.Fatalf("githubBearerTokenForURL() = %q, want ci-token", got)
+	}
+	if got := githubBearerTokenForURL("https://registry.npmjs.org/@openai%2fcodex"); got != "" {
+		t.Fatalf("githubBearerTokenForURL() leaked token to non-GitHub host: %q", got)
+	}
+}
+
 func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")
@@ -1774,13 +1595,13 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 	if !strings.Contains(string(updatedDockerfile), "ARG COPILOT_VERSION=1.0.66") {
 		t.Fatalf("Dockerfile was not updated with Copilot target version:\n%s", updatedDockerfile)
 	}
-	if !strings.Contains(string(updatedDockerfile), `CLAUDE_SHA256="08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953"`) {
+	if !strings.Contains(string(updatedDockerfile), "  arm64) \\\n    CLAUDE_PLATFORM=\"linux-arm64\"; \\\n    CLAUDE_SHA256=\"08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953\"") {
 		t.Fatalf("Dockerfile was not updated with Claude arm64 checksum:\n%s", updatedDockerfile)
 	}
-	if !strings.Contains(string(updatedDockerfile), `CODEX_SHA256="526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"`) {
+	if !strings.Contains(string(updatedDockerfile), "  amd64) \\\n    CODEX_ARCH=\"x86_64-unknown-linux-musl\"; \\\n    CODEX_SHA256=\"526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b\"") {
 		t.Fatalf("Dockerfile was not updated with Codex amd64 checksum:\n%s", updatedDockerfile)
 	}
-	if !strings.Contains(string(updatedDockerfile), `COPILOT_SHA256="2222222222222222222222222222222222222222222222222222222222222222"`) {
+	if !strings.Contains(string(updatedDockerfile), "  amd64) \\\n    COPILOT_PLATFORM=\"linux-x64\"; \\\n    COPILOT_SHA256=\"2222222222222222222222222222222222222222222222222222222222222222\"") {
 		t.Fatalf("Dockerfile was not updated with Copilot amd64 checksum:\n%s", updatedDockerfile)
 	}
 
@@ -1793,62 +1614,68 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 	}
 }
 
-func TestApplyProviderBumpPlanRejectsCopilotVersionChangeWithoutChecksums(t *testing.T) {
-	root := t.TempDir()
-	dockerfilePath := filepath.Join(root, "Dockerfile")
-	packageJSONPath := filepath.Join(root, "package.json")
-	policyPath := filepath.Join(root, "provider-bumps.toml")
-	planPath := filepath.Join(root, "plan.json")
+func TestApplyProviderBumpPlanRejectsNativeVersionChangesWithoutChecksums(t *testing.T) {
+	cases := []struct {
+		provider     string
+		target       string
+		wantContains string
+	}{
+		{provider: "claude", target: "2.1.105", wantContains: "provider claude target version 2.1.105 requires a valid arm64 sha256 checksum"},
+		{provider: "codex", target: "0.119.0", wantContains: "provider codex target version 0.119.0 requires a valid arm64 sha256 checksum"},
+		{provider: "copilot", target: "1.0.66", wantContains: "provider copilot target version 1.0.66 requires a valid arm64 sha256 checksum"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			root := t.TempDir()
+			dockerfilePath := filepath.Join(root, "Dockerfile")
+			packageJSONPath := filepath.Join(root, "package.json")
+			policyPath := filepath.Join(root, "provider-bumps.toml")
+			planPath := filepath.Join(root, "plan.json")
 
-	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.118.0\nARG COPILOT_VERSION=1.0.65\n")
-	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
-	mustWriteText(t, policyPath, strings.Join([]string{
-		"version = 1",
-		"cooloff_hours = 12",
-		"",
-		"[provider.codex]",
-		`channel = "stable"`,
-		"",
-		"[provider.copilot]",
-		`channel = "stable"`,
-		"",
-		"[provider.claude]",
-		`channel = "stable"`,
-		"",
-		"[provider.gemini]",
-		`channel = "stable"`,
-	}, "\n")+"\n")
+			mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.104\nARG CODEX_VERSION=0.118.0\nARG COPILOT_VERSION=1.0.65\n")
+			mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.36.0"}}`+"\n")
+			mustWriteText(t, policyPath, strings.Join([]string{
+				"version = 1",
+				"cooloff_hours = 12",
+				"",
+				"[provider.codex]",
+				`channel = "stable"`,
+				"",
+				"[provider.copilot]",
+				`channel = "stable"`,
+				"",
+				"[provider.claude]",
+				`channel = "stable"`,
+				"",
+				"[provider.gemini]",
+				`channel = "stable"`,
+			}, "\n")+"\n")
 
-	plan := ProviderBumpPlan{
-		Providers: map[string]ProviderBumpSelection{
-			"claude": {
-				TargetVersion: "2.1.104",
-			},
-			"codex": {
-				TargetVersion: "0.118.0",
-			},
-			"copilot": {
-				TargetVersion: "1.0.66",
-			},
-			"gemini": {
-				TargetVersion: "0.36.0",
-			},
-		},
-	}
-	content, err := json.Marshal(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(planPath, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
+			plan := ProviderBumpPlan{Providers: map[string]ProviderBumpSelection{
+				"claude":  {TargetVersion: "2.1.104"},
+				"codex":   {TargetVersion: "0.118.0"},
+				"copilot": {TargetVersion: "1.0.65"},
+				"gemini":  {TargetVersion: "0.36.0"},
+			}}
+			selection := plan.Providers[tc.provider]
+			selection.TargetVersion = tc.target
+			plan.Providers[tc.provider] = selection
+			content, err := json.Marshal(plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(planPath, content, 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	err = ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, packageJSONPath)
-	if err == nil {
-		t.Fatal("ApplyProviderBumpPlan() unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), "provider copilot target version 1.0.66 requires a valid arm64 sha256 checksum") {
-		t.Fatalf("ApplyProviderBumpPlan() error = %v", err)
+			err = ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, packageJSONPath)
+			if err == nil {
+				t.Fatal("ApplyProviderBumpPlan() unexpectedly succeeded")
+			}
+			if !strings.Contains(err.Error(), tc.wantContains) {
+				t.Fatalf("ApplyProviderBumpPlan() error = %v", err)
+			}
+		})
 	}
 }
 

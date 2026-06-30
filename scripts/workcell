@@ -5469,6 +5469,7 @@ workspace_is_sensitive() {
     "${REAL_HOME}/.azure"
     "${REAL_HOME}/.codex"
     "${REAL_HOME}/.claude"
+    "${REAL_HOME}/.copilot"
     "${REAL_HOME}/.gemini"
     "${REAL_HOME}/.config"
     "${REAL_HOME}/.docker"
@@ -5486,6 +5487,7 @@ workspace_is_sensitive() {
   local sensitive_regexes=(
     '(^|.*/)\.codex($|/)'
     '(^|.*/)\.claude($|/)'
+    '(^|.*/)\.copilot($|/)'
     '(^|.*/)\.gemini($|/)'
     "^${real_home_lower}/library/application support/google/chrome"
     "^${real_home_lower}/library/application support/google/chrome beta"
@@ -7792,7 +7794,7 @@ if [[ -n "${AGENT}" ]]; then
           ;;
         copilot)
           planned_provider_name="GitHub Copilot CLI"
-          planned_missing_support_detail="Copilot runtime binary is shipped only for provenance and release verification; auth handoff, supported launch, and live certification evidence are not shipped in this build."
+          planned_missing_support_detail="Copilot runtime artifact is shipped only for provenance and release verification; auth handoff, supported launch, and live certification evidence are not shipped in this build."
           ;;
       esac
       echo "${planned_provider_name} is a planned Workcell provider adapter, but it is not supported yet." >&2

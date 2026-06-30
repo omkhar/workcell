@@ -292,6 +292,7 @@ summary = "Release artifacts, control-plane manifests, and signing metadata must
 evidence = [
   "scripts/verify-release-bundle.sh",
   "scripts/verify-control-plane-manifest.sh",
+  "scripts/verify-upstream-copilot-release.sh",
 ]
 docs = [
   "docs/provenance.md",
