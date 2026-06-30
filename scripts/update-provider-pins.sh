@@ -1,10 +1,29 @@
 #!/bin/bash -p
+workcell_provider_pins_token_file_created=""
+if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  unset WORKCELL_PROVIDER_PINS_TOKEN_FILE_CREATED
+  if [[ -z "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
+    workcell_provider_pins_token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
+    unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN
+    if [[ -n "${workcell_provider_pins_token}" ]]; then
+      workcell_provider_pins_token_file="$(umask 077 && /usr/bin/mktemp "${TMPDIR:-/tmp}/workcell-github-token.XXXXXX")"
+      printf '%s' "${workcell_provider_pins_token}" >"${workcell_provider_pins_token_file}"
+      export WORKCELL_GITHUB_API_TOKEN_FILE="${workcell_provider_pins_token_file}"
+      workcell_provider_pins_token_file_created="${workcell_provider_pins_token_file}"
+      export WORKCELL_PROVIDER_PINS_TOKEN_FILE_CREATED="${workcell_provider_pins_token_file_created}"
+    fi
+  fi
+  unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN workcell_provider_pins_token
+fi
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
+workcell_provider_pins_token_file_created="${WORKCELL_PROVIDER_PINS_TOKEN_FILE_CREATED:-${workcell_provider_pins_token_file_created}}"
+unset WORKCELL_PROVIDER_PINS_TOKEN_FILE_CREATED
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
   echo "update-provider-pins-entrypoint-ok"
+  [[ -z "${workcell_provider_pins_token_file_created}" || "${workcell_provider_pins_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_provider_pins_token_file_created}"
   exit 0
 fi
 
@@ -16,6 +35,11 @@ PROVIDERS_DIR="${ROOT_DIR}/runtime/container/providers"
 
 mode="summary"
 now_override=""
+
+cleanup() {
+  [[ -z "${workcell_provider_pins_token_file_created}" || "${workcell_provider_pins_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_provider_pins_token_file_created}"
+}
+trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
@@ -166,10 +190,11 @@ else
 fi
 
 plan_path="$(mktemp "${TMPDIR:-/tmp}/workcell-provider-bump-plan.XXXXXX.json")"
-cleanup() {
+cleanup_apply() {
+  cleanup
   rm -f "${plan_path}"
 }
-trap cleanup EXIT
+trap cleanup_apply EXIT
 printf '%s\n' "${plan_json}" >"${plan_path}"
 
 (
@@ -184,6 +209,7 @@ printf '%s\n' "${plan_json}" >"${plan_path}"
 
 "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
 "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
+"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 
 print_summary
