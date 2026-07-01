@@ -14,8 +14,10 @@ import (
 var forbiddenCredentialSourceRoots = []string{
 	".codex",
 	".claude",
+	".claude.json",
 	".copilot",
 	".gemini",
+	".config/claude-code",
 	".config/gh",
 	".config/gcloud",
 	".config/git",

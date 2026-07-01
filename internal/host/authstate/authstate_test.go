@@ -36,6 +36,16 @@ func TestForbiddenCredentialSourceRootRejectsCaseVariedProviderState(t *testing.
 			want:   filepath.Join(home, ".config", "gh"),
 		},
 		{
+			name:   "claude top-level auth mirror",
+			source: filepath.Join(home, ".Claude.Json"),
+			want:   filepath.Join(home, ".claude.json"),
+		},
+		{
+			name:   "claude xdg auth mirror",
+			source: filepath.Join(home, ".Config", "claude-code", "auth.json"),
+			want:   filepath.Join(home, ".config", "claude-code"),
+		},
+		{
 			name:   "gcloud adc",
 			source: filepath.Join(home, ".Config", "gcloud", "application_default_credentials.json"),
 			want:   filepath.Join(home, ".config", "gcloud"),
