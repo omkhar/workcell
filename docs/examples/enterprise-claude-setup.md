@@ -33,7 +33,7 @@ source = "/Users/example/.config/workcell/claude-api-key.txt"
 source = "/Users/example/.config/workcell/claude-mcp.json"
 
 [credentials.github_hosts]
-source = "/Users/example/.config/gh/hosts.yml"
+source = "/Users/example/.config/workcell/github-hosts.yml"
 providers = ["claude"]
 ```
 

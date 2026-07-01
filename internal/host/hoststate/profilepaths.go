@@ -76,6 +76,16 @@ func ProfileDiskDir(colimaStateRoot, profile string) (string, error) {
 	return filepath.Join(colimaStateRoot, "_lima", "_disks", "colima-"+profile), nil
 }
 
+// ProfileStorePath mirrors the Colima profile metadata location used by
+// Colima 0.10. Workcell removes it during managed profile refresh so
+// stale VM resource settings cannot survive profile recreation.
+func ProfileStorePath(colimaStateRoot, profile string) (string, error) {
+	if err := ValidateProfileName(profile); err != nil {
+		return "", err
+	}
+	return filepath.Join(colimaStateRoot, "_store", "colima-"+profile+".json"), nil
+}
+
 // ProfileTargetStateDir mirrors the bash profile_target_state_dir
 // helper.  The bash version resolves target_kind and target_provider
 // from environment-derived getters; Go exposes them as explicit args so

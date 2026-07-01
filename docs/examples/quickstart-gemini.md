@@ -87,7 +87,7 @@ If the env file configures Vertex and you need ADC as a supplemental input:
 workcell auth set \
   --agent gemini \
   --credential gcloud_adc \
-  --source /Users/example/.config/gcloud/application_default_credentials.json
+  --source /Users/example/.config/workcell/gcloud-adc.json
 ```
 
 ## 6. Publish the result on the host

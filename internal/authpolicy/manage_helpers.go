@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/authresolve"
+	"github.com/omkhar/workcell/internal/host/authstate"
 )
 
 func allowedCredentialsForAgent(agent string) map[string]struct{} {
@@ -83,6 +84,9 @@ func validateStatusCredentialSource(key string, raw any, policyBase string) erro
 	}
 	source, err := validateSourcePath(sourceRaw, "credentials."+key, policyBase)
 	if err != nil {
+		return err
+	}
+	if err := authstate.RejectCredentialSource(source, "credentials."+key); err != nil {
 		return err
 	}
 	_, err = requireSecretFile(source, "credentials."+key)

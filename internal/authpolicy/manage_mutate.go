@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/authresolve"
+	"github.com/omkhar/workcell/internal/host/authstate"
 	"github.com/omkhar/workcell/internal/providerid"
 )
 
@@ -92,6 +93,9 @@ func commandSet(opts setOptions) error {
 		}
 		source, err := validateSourcePath(opts.sourceRaw, "credentials."+opts.credential, sourceBase)
 		if err != nil {
+			return err
+		}
+		if err := authstate.RejectCredentialSource(source, "credentials."+opts.credential); err != nil {
 			return err
 		}
 		if _, err := requireSecretFile(source, "credentials."+opts.credential); err != nil {

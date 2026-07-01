@@ -257,6 +257,12 @@ func CleanupStaleInjectionBundles(bundleParent string) error {
 	for _, entry := range entries {
 		name := entry.Name()
 		path := filepath.Join(root, name)
+		if _, ok := copilotTokenHandoffBundleName(name); ok {
+			continue
+		}
+		if _, ok := copilotTokenEnvSidecarBundleName(name); ok {
+			continue
+		}
 		if strings.HasPrefix(name, "workcell-injections.") && !strings.HasSuffix(name, ".mounts.json") {
 			info, err := os.Lstat(path)
 			if err != nil {
@@ -276,6 +282,7 @@ func CleanupStaleInjectionBundles(bundleParent string) error {
 			_ = os.RemoveAll(path)
 			sidecar := filepath.Join(root, name+".mounts.json")
 			_ = os.Remove(sidecar)
+			removeCopilotTokenHandoffArtifacts(root, name, uid)
 		}
 	}
 
@@ -303,7 +310,155 @@ func CleanupStaleInjectionBundles(bundleParent string) error {
 		}
 		_ = os.Remove(path)
 	}
+
+	entries, err = os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if copilotStandaloneTokenHandoffName(name) {
+			path := filepath.Join(root, name)
+			info, err := os.Lstat(path)
+			if err != nil {
+				continue
+			}
+			fileUID, ok := statUID(info)
+			if !ok || fileUID != uid || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+			if info.ModTime().After(cutoff) {
+				continue
+			}
+			_ = os.RemoveAll(path)
+			continue
+		}
+		bundleName, ok := copilotTokenHandoffBundleName(name)
+		if ok {
+			path := filepath.Join(root, name)
+			info, err := os.Lstat(path)
+			if err != nil {
+				continue
+			}
+			fileUID, ok := statUID(info)
+			if !ok || fileUID != uid || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+			bundleDir := filepath.Join(root, bundleName)
+			if _, err := os.Stat(bundleDir); err == nil {
+				continue
+			}
+			if info.ModTime().After(cutoff) {
+				continue
+			}
+			_ = os.RemoveAll(path)
+			continue
+		}
+		bundleName, ok = copilotTokenEnvSidecarBundleName(name)
+		if !ok {
+			continue
+		}
+		path := filepath.Join(root, name)
+		info, err := os.Lstat(path)
+		if err != nil {
+			continue
+		}
+		fileUID, ok := statUID(info)
+		if !ok || fileUID != uid || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		bundleDir := filepath.Join(root, bundleName)
+		if _, err := os.Stat(bundleDir); err == nil {
+			continue
+		}
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(path)
+	}
 	return nil
+}
+
+func copilotTokenEnvSidecarBundleName(name string) (string, bool) {
+	const marker = ".copilot-token."
+
+	if !strings.HasPrefix(name, "workcell-injections.") {
+		return "", false
+	}
+	index := strings.Index(name, marker)
+	if index <= 0 {
+		return "", false
+	}
+	if !copilotTokenEnvSidecarSuffix(name[index+len(marker):]) {
+		return "", false
+	}
+	bundleName := name[:index]
+	if !strings.HasPrefix(bundleName, "workcell-injections.") {
+		return "", false
+	}
+	return bundleName, true
+}
+
+func copilotTokenHandoffBundleName(name string) (string, bool) {
+	const marker = ".copilot-token-handoff."
+
+	if !strings.HasPrefix(name, "workcell-injections.") {
+		return "", false
+	}
+	index := strings.Index(name, marker)
+	if index <= 0 || index+len(marker) >= len(name) {
+		return "", false
+	}
+	bundleName := name[:index]
+	if !strings.HasPrefix(bundleName, "workcell-injections.") {
+		return "", false
+	}
+	return bundleName, true
+}
+
+func copilotStandaloneTokenHandoffName(name string) bool {
+	return strings.HasPrefix(name, "copilot-token-handoff.")
+}
+
+func copilotTokenEnvSidecarSuffix(suffix string) bool {
+	return suffix == "env" || strings.HasPrefix(suffix, "env.") || strings.HasSuffix(suffix, ".env")
+}
+
+func removeCopilotTokenHandoffArtifacts(root, bundleName string, uid uint32) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	handoffPrefix := bundleName + ".copilot-token-handoff."
+	envPrefix := bundleName + ".copilot-token."
+	for _, entry := range entries {
+		name := entry.Name()
+		isHandoff := strings.HasPrefix(name, handoffPrefix)
+		isEnvSidecar := strings.HasPrefix(name, envPrefix) && copilotTokenEnvSidecarSuffix(strings.TrimPrefix(name, envPrefix))
+		if !isHandoff && !isEnvSidecar {
+			continue
+		}
+		path := filepath.Join(root, name)
+		info, err := os.Lstat(path)
+		if err != nil {
+			continue
+		}
+		fileUID, ok := statUID(info)
+		if !ok || fileUID != uid || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if isHandoff {
+			if !info.IsDir() {
+				continue
+			}
+			_ = os.RemoveAll(path)
+			continue
+		}
+		if info.IsDir() {
+			continue
+		}
+		_ = os.Remove(path)
+	}
 }
 
 func injectionBundleIsLive(bundlePath string, cutoff time.Time) (bool, error) {
