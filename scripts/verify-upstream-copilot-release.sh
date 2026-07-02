@@ -28,13 +28,29 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/trusted-docker-client.sh
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-copilot-release.XXXXXX")"
 BUILD_INPUT_MANIFEST_PATH="${TMP_ROOT}/build-input.json"
 RELEASE_METADATA_PATH="${TMP_ROOT}/release.json"
+COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-checksum}"
+COPILOT_NATIVE_HELP_DONE=0
+COPILOT_DOCKER_HELP_DONE=0
+COPILOT_NATIVE_HELP_PLATFORM=""
+COPILOT_NATIVE_HELP_BINARY=""
+COPILOT_NATIVE_HELP_LABEL=""
+COPILOT_DOCKER_HELP_PLATFORM=""
+COPILOT_DOCKER_HELP_BINARY=""
+COPILOT_DOCKER_HELP_LABEL=""
+COPILOT_DOCKER_CLIENT_READY=0
+COPILOT_DOCKER_CLIENT_OWNS_SANDBOX=0
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
   [[ -z "${workcell_copilot_release_token_file_created}" || "${workcell_copilot_release_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_copilot_release_token_file_created}"
+  if [[ "${COPILOT_DOCKER_CLIENT_OWNS_SANDBOX}" == "1" ]]; then
+    cleanup_workcell_trusted_docker_client
+  fi
 }
 
 trap cleanup EXIT
@@ -54,12 +70,16 @@ extract_copilot_sha() {
 github_api_get() {
   local url="$1"
   local output="$2"
+  github_get "${url}" "${output}" "application/vnd.github+json"
+}
+
+github_token() {
   local token="${WORKCELL_GITHUB_API_TOKEN:-}"
 
   if [[ -z "${token}" && -n "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
     if [[ ! -r "${WORKCELL_GITHUB_API_TOKEN_FILE}" ]]; then
       echo "GitHub API token file is not readable: ${WORKCELL_GITHUB_API_TOKEN_FILE}" >&2
-      exit 1
+      return 1
     fi
     token="$(<"${WORKCELL_GITHUB_API_TOKEN_FILE}")"
   fi
@@ -70,20 +90,220 @@ github_api_get() {
   if [[ -n "${token}" ]]; then
     if [[ "${token}" == *$'\n'* || "${token}" == *$'\r'* ]]; then
       echo "GitHub API token must be a single line" >&2
-      exit 1
+      return 1
     fi
+    printf '%s' "${token}"
+  fi
+}
+
+github_asset_get() {
+  local url="$1"
+  local output="$2"
+  local token=""
+  local headers_file=""
+  local body_file=""
+  local location=""
+  local status=""
+
+  token="$(github_token)" || exit 1
+  if [[ -n "${token}" ]]; then
+    headers_file="$(mktemp "${TMP_ROOT}/github-asset-headers.XXXXXX")"
+    body_file="$(mktemp "${TMP_ROOT}/github-asset-body.XXXXXX")"
+    status="$(
+      curl -fsS --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+        --speed-limit 1024 --speed-time 60 \
+        -D "${headers_file}" \
+        -o "${body_file}" \
+        -w '%{http_code}' \
+        -H "Accept: application/octet-stream" \
+        --config - \
+        "${url}" <<EOF
+header = "Authorization: Bearer ${token}"
+EOF
+    )"
+    case "${status}" in
+      200)
+        mv "${body_file}" "${output}"
+        ;;
+      3??)
+        location="$(sed -n 's/^[Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]:[[:space:]]*//p' "${headers_file}" | tail -n 1 | tr -d '\r')"
+        if [[ -z "${location}" ]]; then
+          echo "GitHub release asset redirect did not include a Location header: ${url}" >&2
+          exit 1
+        fi
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+          --speed-limit 1024 --speed-time 60 \
+          "${location}" \
+          -o "${output}"
+        ;;
+      *)
+        echo "Unexpected GitHub release asset response ${status}: ${url}" >&2
+        exit 1
+        ;;
+    esac
+    rm -f "${headers_file}" "${body_file}"
+    return
+  fi
+
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+    --speed-limit 1024 --speed-time 60 \
+    -H "Accept: application/octet-stream" \
+    "${url}" \
+    -o "${output}"
+}
+
+github_get() {
+  local url="$1"
+  local output="$2"
+  local accept="$3"
+  local token=""
+
+  token="$(github_token)" || exit 1
+  if [[ -n "${token}" ]]; then
     curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --config - \
       "${url}" \
       -o "${output}" <<EOF
-header = "Accept: application/vnd.github+json"
+header = "Accept: ${accept}"
 header = "Authorization: Bearer ${token}"
 EOF
     return
   fi
   curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-    -H "Accept: application/vnd.github+json" \
+    -H "Accept: ${accept}" \
     "${url}" \
     -o "${output}"
+}
+
+discard_created_github_token_file() {
+  [[ -z "${workcell_copilot_release_token_file_created}" || "${workcell_copilot_release_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_copilot_release_token_file_created}"
+  workcell_copilot_release_token_file_created=""
+}
+
+scrub_github_token_env_for_child() {
+  discard_created_github_token_file
+  unset WORKCELL_GITHUB_API_TOKEN WORKCELL_GITHUB_API_TOKEN_FILE GITHUB_TOKEN GH_TOKEN
+}
+
+copilot_platform_for_linux_arch() {
+  local arch="$1"
+
+  case "${arch}" in
+    x86_64 | amd64)
+      printf '%s\n' "linux-x64"
+      ;;
+    aarch64 | arm64)
+      printf '%s\n' "linux-arm64"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+detect_native_copilot_platform() {
+  [[ "$(uname -s)" == "Linux" ]] || return 1
+  copilot_platform_for_linux_arch "$(uname -m)"
+}
+
+detect_docker_copilot_platform() {
+  local docker_info=""
+  local os_type=""
+  local arch=""
+
+  ensure_copilot_docker_client >/dev/null 2>&1 || return 1
+  docker_info="$(copilot_docker_cmd info --format '{{.OSType}} {{.Architecture}}' 2>/dev/null)" || return 1
+  os_type="${docker_info%% *}"
+  arch="${docker_info#* }"
+  [[ "${os_type}" == "linux" ]] || return 1
+  copilot_platform_for_linux_arch "${arch}"
+}
+
+ensure_copilot_docker_client() {
+  local previous_sandbox_root="${WORKCELL_DOCKER_SANDBOX_ROOT:-}"
+
+  if [[ "${COPILOT_DOCKER_CLIENT_READY}" == "1" ]]; then
+    return 0
+  fi
+  if [[ -n "${WORKCELL_DOCKER_CONTEXT:-}" ]]; then
+    DOCKER_CONTEXT_NAME="${WORKCELL_DOCKER_CONTEXT}"
+  fi
+  HOST_DOCKER_BIN="$(command -v docker 2>/dev/null)" || return 1
+  setup_workcell_trusted_docker_client || return 1
+  if [[ -n "${WORKCELL_DOCKER_SANDBOX_ROOT:-}" && "${WORKCELL_DOCKER_SANDBOX_ROOT}" != "${previous_sandbox_root}" ]]; then
+    COPILOT_DOCKER_CLIENT_OWNS_SANDBOX=1
+  fi
+  COPILOT_DOCKER_CLIENT_READY=1
+}
+
+copilot_docker_cmd() {
+  ensure_copilot_docker_client || return 1
+  if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
+    run_workcell_docker_client_command env DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}" "${HOST_DOCKER_BIN}" "$@"
+    return
+  fi
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" "$@"
+}
+
+verify_copilot_help_flags_file() {
+  local help_path="$1"
+  local label="$2"
+  local flag
+
+  for flag in \
+    --no-custom-instructions \
+    --disable-builtin-mcps \
+    --no-remote \
+    --no-remote-export \
+    --secret-env-vars \
+    --available-tools; do
+    if ! grep -Eq -- "(^|[^[:alnum:]_-])${flag}([^[:alnum:]_-]|$)" "${help_path}"; then
+      echo "GitHub Copilot CLI v${COPILOT_VERSION} ${label} help is missing managed safety flag ${flag}" >&2
+      exit 1
+    fi
+  done
+}
+
+run_native_copilot_help_probe() {
+  local binary_path="$1"
+  local label="$2"
+  local help_path="${TMP_ROOT}/copilot-help-native.txt"
+  local child_home="${TMP_ROOT}/copilot-native-home"
+
+  mkdir -p "${child_home}"
+  scrub_github_token_env_for_child
+  if ! env -i \
+    HOME="${child_home}" \
+    PATH="/usr/bin:/bin" \
+    TMPDIR="${TMP_ROOT}" \
+    "${binary_path}" --help >"${help_path}" 2>&1; then
+    echo "Failed to inspect GitHub Copilot CLI v${COPILOT_VERSION} ${label} help on the native Linux host" >&2
+    return 1
+  fi
+  verify_copilot_help_flags_file "${help_path}" "${label}"
+  COPILOT_NATIVE_HELP_DONE=1
+}
+
+run_docker_copilot_help_probe() {
+  local image="${WORKCELL_COPILOT_RELEASE_HELP_IMAGE:-${WORKCELL_IMAGE_TAG:-workcell:smoke}}"
+  local container_id=""
+  local help_path="${TMP_ROOT}/copilot-help-docker.txt"
+
+  [[ -n "${COPILOT_DOCKER_HELP_BINARY}" ]] || return 1
+  copilot_docker_cmd image inspect "${image}" >/dev/null 2>&1 || return 1
+
+  container_id="$(copilot_docker_cmd create --network none --entrypoint /tmp/workcell-copilot-help-probe "${image}" --help)" || return 1
+  if ! copilot_docker_cmd cp "${COPILOT_DOCKER_HELP_BINARY}" "${container_id}:/tmp/workcell-copilot-help-probe"; then
+    copilot_docker_cmd rm -f "${container_id}" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! copilot_docker_cmd start -a "${container_id}" >"${help_path}" 2>&1; then
+    copilot_docker_cmd rm -f "${container_id}" >/dev/null 2>&1 || true
+    echo "Failed to inspect GitHub Copilot CLI v${COPILOT_VERSION} ${COPILOT_DOCKER_HELP_LABEL} help inside Docker image ${image}" >&2
+    return 1
+  fi
+  copilot_docker_cmd rm -f "${container_id}" >/dev/null 2>&1 || true
+  verify_copilot_help_flags_file "${help_path}" "${COPILOT_DOCKER_HELP_LABEL}"
+  COPILOT_DOCKER_HELP_DONE=1
 }
 
 verify_asset() {
@@ -91,23 +311,38 @@ verify_asset() {
   local platform="$2"
   local expected_sha="$3"
   local tarball_name="copilot-${platform}.tar.gz"
-  local asset_root="https://github.com/github/copilot-cli/releases/download/v${COPILOT_VERSION}"
   local work_dir="${TMP_ROOT}/${target_arch}"
   local metadata_sha=""
+  local asset_url=""
 
   mkdir -p "${work_dir}"
   metadata_sha="$(jq -r --arg asset_name "${tarball_name}" '.assets[] | select(.name == $asset_name) | .digest | sub("^sha256:"; "")' "${RELEASE_METADATA_PATH}")"
+  asset_url="$(jq -r --arg asset_name "${tarball_name}" '.assets[] | select(.name == $asset_name) | .url // empty' "${RELEASE_METADATA_PATH}")"
   if [[ -z "${metadata_sha}" || "${metadata_sha}" == "null" ]]; then
     echo "GitHub Copilot CLI release v${COPILOT_VERSION} is missing ${tarball_name}" >&2
+    exit 1
+  fi
+  if [[ -z "${asset_url}" || "${asset_url}" == "null" ]]; then
+    echo "GitHub Copilot CLI release v${COPILOT_VERSION} asset ${tarball_name} is missing its API download URL" >&2
     exit 1
   fi
   if [[ "${metadata_sha}" != "${expected_sha}" ]]; then
     echo "Pinned ${target_arch} Copilot checksum does not match GitHub release metadata" >&2
     exit 1
   fi
-  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --speed-limit 1024 --speed-time 60 "${asset_root}/${tarball_name}" -o "${work_dir}/${tarball_name}"
+  github_asset_get "${asset_url}" "${work_dir}/${tarball_name}"
   echo "${expected_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null
   tar -tzf "${work_dir}/${tarball_name}" copilot >/dev/null
+  [[ "${COPILOT_HELP_MODE}" == "checksum" ]] && return 0
+  tar -xzf "${work_dir}/${tarball_name}" -C "${work_dir}" copilot
+  if [[ "${COPILOT_HELP_MODE}" != "docker" && "${platform}" == "${COPILOT_NATIVE_HELP_PLATFORM}" && "${COPILOT_NATIVE_HELP_DONE}" != "1" ]]; then
+    COPILOT_NATIVE_HELP_BINARY="${work_dir}/copilot"
+    COPILOT_NATIVE_HELP_LABEL="${platform}"
+  fi
+  if [[ "${platform}" == "${COPILOT_DOCKER_HELP_PLATFORM}" ]]; then
+    COPILOT_DOCKER_HELP_BINARY="${work_dir}/copilot"
+    COPILOT_DOCKER_HELP_LABEL="${platform}"
+  fi
 }
 
 require_tool curl
@@ -115,6 +350,25 @@ require_tool go
 require_tool jq
 require_tool sha256sum
 require_tool tar
+
+case "${COPILOT_HELP_MODE}" in
+  auto | native | docker | checksum) ;;
+  *)
+    echo "Unsupported WORKCELL_COPILOT_RELEASE_HELP_MODE: ${COPILOT_HELP_MODE}" >&2
+    exit 2
+    ;;
+esac
+
+case "${COPILOT_HELP_MODE}" in
+  auto | native)
+    COPILOT_NATIVE_HELP_PLATFORM="$(detect_native_copilot_platform || true)"
+    ;;
+esac
+case "${COPILOT_HELP_MODE}" in
+  auto | docker)
+    COPILOT_DOCKER_HELP_PLATFORM="$(detect_docker_copilot_platform || true)"
+    ;;
+esac
 
 "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "${BUILD_INPUT_MANIFEST_PATH}"
 COPILOT_VERSION="$(jq -r '.runtime.copilot.version // empty' "${BUILD_INPUT_MANIFEST_PATH}")"
@@ -135,5 +389,37 @@ fi
 
 verify_asset arm64 linux-arm64 "$(extract_copilot_sha arm64)"
 verify_asset amd64 linux-x64 "$(extract_copilot_sha amd64)"
+
+case "${COPILOT_HELP_MODE}" in
+  auto)
+    if [[ -n "${COPILOT_NATIVE_HELP_BINARY}" ]]; then
+      run_native_copilot_help_probe "${COPILOT_NATIVE_HELP_BINARY}" "${COPILOT_NATIVE_HELP_LABEL}" || true
+    fi
+    if [[ "${COPILOT_NATIVE_HELP_DONE}" != "1" && "${COPILOT_DOCKER_HELP_DONE}" != "1" ]]; then
+      if ! run_docker_copilot_help_probe; then
+        echo "Copilot release help verification requires a Linux host or a local Workcell image matching the Docker engine architecture." >&2
+        echo "Run ./scripts/container-smoke.sh first, or set WORKCELL_COPILOT_RELEASE_HELP_IMAGE to a local Workcell runtime image." >&2
+        exit 1
+      fi
+    fi
+    ;;
+  native)
+    if [[ -n "${COPILOT_NATIVE_HELP_BINARY}" ]]; then
+      run_native_copilot_help_probe "${COPILOT_NATIVE_HELP_BINARY}" "${COPILOT_NATIVE_HELP_LABEL}" || exit 1
+    fi
+    if [[ -z "${COPILOT_NATIVE_HELP_PLATFORM}" || "${COPILOT_NATIVE_HELP_DONE}" != "1" ]]; then
+      echo "Copilot release native help verification requires a Linux host matching a pinned Copilot asset architecture." >&2
+      exit 1
+    fi
+    ;;
+  docker)
+    if ! run_docker_copilot_help_probe; then
+      echo "Copilot release Docker help verification requires a local Workcell image matching the Docker engine architecture." >&2
+      echo "Run ./scripts/container-smoke.sh first, or set WORKCELL_COPILOT_RELEASE_HELP_IMAGE to a local Workcell runtime image." >&2
+      exit 1
+    fi
+    ;;
+  checksum) ;;
+esac
 
 echo "Workcell upstream Copilot release verification passed."
