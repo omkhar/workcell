@@ -224,6 +224,9 @@ ensure_copilot_docker_client() {
   if [[ "${COPILOT_DOCKER_CLIENT_READY}" == "1" ]]; then
     return 0
   fi
+  if [[ -n "${WORKCELL_DOCKER_CONTEXT:-}" ]]; then
+    DOCKER_CONTEXT_NAME="${WORKCELL_DOCKER_CONTEXT}"
+  fi
   HOST_DOCKER_BIN="$(command -v docker 2>/dev/null)" || return 1
   setup_workcell_trusted_docker_client || return 1
   if [[ -n "${WORKCELL_DOCKER_SANDBOX_ROOT:-}" && "${WORKCELL_DOCKER_SANDBOX_ROOT}" != "${previous_sandbox_root}" ]]; then
