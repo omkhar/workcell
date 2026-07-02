@@ -339,6 +339,7 @@ fi
 run_workcell_verify() {
   local -a cmd=(/usr/bin/env -i PATH="${TRUSTED_HOST_PATH}" BASH_ENV= ENV= WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1)
   local alias_command=""
+  local logs_kind=""
   while [[ $# -gt 0 ]] && [[ "$1" == *=* ]]; do
     cmd+=("$1")
     shift
@@ -350,7 +351,18 @@ run_workcell_verify() {
   # Most invariant probes assert launcher behavior, not the operator's local
   # auth policy. Tests that need injection pass --injection-policy explicitly.
   case "${1:-}" in
-    doctor | inspect | auth-status | logs | gc)
+    logs)
+      alias_command="$1"
+      shift
+      if [[ $# -gt 0 ]]; then
+        logs_kind="$1"
+        shift
+        "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "${alias_command}" "${logs_kind}" --no-default-injection-policy "$@"
+      else
+        "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "${alias_command}"
+      fi
+      ;;
+    doctor | inspect | auth-status | gc)
       alias_command="$1"
       shift
       "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "${alias_command}" --no-default-injection-policy "$@"
