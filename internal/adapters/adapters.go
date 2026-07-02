@@ -16,17 +16,58 @@ func AgentScopedCredentialKeys() map[string]map[string]struct{} {
 	return out
 }
 
-// SharedCredentialKeys returns the set of credential keys provisioned for
-// every adapter (currently the github_* keys).
+// AgentScopedCredentialKeysForProviders returns adapter-scoped credential
+// keys only for the requested provider ids.
+func AgentScopedCredentialKeysForProviders(providerIDs []string) map[string]map[string]struct{} {
+	wanted := setOf(providerIDs)
+	out := make(map[string]map[string]struct{}, len(wanted))
+	for _, p := range providers {
+		if _, ok := wanted[p.id]; ok {
+			out[p.id] = setOf(p.tables.credentialKeys)
+		}
+	}
+	return out
+}
+
+// SharedCredentialKeys returns the set of credential keys available to
+// adapters that explicitly opt into shared credentials.
 func SharedCredentialKeys() map[string]struct{} {
 	return setOf(sharedCredentialKeys)
+}
+
+// SharedCredentialsApplyToAgent reports whether shared GitHub CLI
+// credentials are in scope for agent. Copilot intentionally uses only
+// copilot_github_token so host gh auth cannot become an implicit auth path.
+func SharedCredentialsApplyToAgent(agent string) bool {
+	for _, p := range providers {
+		if p.id == agent {
+			return p.sharedCredentialsEnabled
+		}
+	}
+	return false
 }
 
 // CredentialContainerPaths returns the merged container-side mount paths
 // for every adapter-scoped and shared credential key.
 func CredentialContainerPaths() map[string]string {
+	return credentialContainerPathsForProviders(nil)
+}
+
+// CredentialContainerPathsForProviders returns container-side mount paths for
+// shared credential keys and the adapter-scoped credential keys of the
+// requested supported provider ids.
+func CredentialContainerPathsForProviders(providerIDs []string) map[string]string {
+	return credentialContainerPathsForProviders(setOf(providerIDs))
+}
+
+func credentialContainerPathsForProviders(wanted map[string]struct{}) map[string]string {
 	out := map[string]string{}
 	for _, p := range providers {
+		if wanted != nil {
+			if _, ok := wanted[p.id]; !ok {
+				continue
+			}
+		}
 		for k, v := range p.tables.credentialContainerPaths {
 			out[k] = v
 		}

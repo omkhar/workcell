@@ -4,6 +4,7 @@
 package adapters
 
 import (
+	"slices"
 	"sort"
 	"testing"
 
@@ -15,11 +16,52 @@ import (
 // is also present in CredentialContainerPaths, no key is both shared
 // and adapter-scoped.
 
-func TestAgentScopedCredentialKeysCoversAllProviders(t *testing.T) {
+func TestProviderRegistryMatchesProviderIDOrder(t *testing.T) {
+	got := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		got = append(got, provider.id)
+	}
+	if !slices.Equal(got, providerid.CredentialMetadataProviders) {
+		t.Fatalf("provider registry order = %v, want %v", got, providerid.CredentialMetadataProviders)
+	}
+}
+
+func TestAgentScopedCredentialKeysCoversCredentialMetadataProviders(t *testing.T) {
 	got := AgentScopedCredentialKeys()
-	for _, want := range []string{providerid.Codex, providerid.Claude, providerid.Gemini} {
+	for _, want := range providerid.CredentialMetadataProviders {
 		if _, ok := got[want]; !ok {
 			t.Errorf("provider %q missing from AgentScopedCredentialKeys", want)
+		}
+	}
+}
+
+func TestAgentScopedCredentialKeysForProvidersFiltersPlannedProviders(t *testing.T) {
+	got := AgentScopedCredentialKeysForProviders(providerid.AllProviders)
+	if _, ok := got[providerid.Copilot]; ok {
+		t.Fatal("planned Copilot credentials must not appear in supported-provider credential set")
+	}
+	for _, want := range providerid.AllProviders {
+		if _, ok := got[want]; !ok {
+			t.Errorf("supported provider %q missing from filtered credential set", want)
+		}
+	}
+}
+
+func TestCredentialContainerPathsForProvidersFiltersPlannedProviders(t *testing.T) {
+	got := CredentialContainerPathsForProviders(providerid.AllProviders)
+	if _, ok := got["copilot_github_token"]; ok {
+		t.Fatal("planned Copilot credential path must not appear in supported-provider injection path set")
+	}
+	for provider, keys := range AgentScopedCredentialKeysForProviders(providerid.AllProviders) {
+		for key := range keys {
+			if _, ok := got[key]; !ok {
+				t.Errorf("supported provider %q credential key %q missing from filtered path set", provider, key)
+			}
+		}
+	}
+	for key := range SharedCredentialKeys() {
+		if _, ok := got[key]; !ok {
+			t.Errorf("shared credential key %q missing from filtered path set", key)
 		}
 	}
 }
@@ -40,6 +82,19 @@ func TestSharedCredentialKeysHaveContainerPaths(t *testing.T) {
 	for key := range SharedCredentialKeys() {
 		if _, ok := paths[key]; !ok {
 			t.Errorf("shared credential key %q has no container path", key)
+		}
+	}
+}
+
+func TestSharedCredentialsApplyOnlyToExplicitProviders(t *testing.T) {
+	for _, provider := range []string{providerid.Claude, providerid.Codex, providerid.Gemini} {
+		if !SharedCredentialsApplyToAgent(provider) {
+			t.Errorf("shared credentials should apply to %q", provider)
+		}
+	}
+	for _, provider := range []string{providerid.Copilot, providerid.Antigravity, "unknown"} {
+		if SharedCredentialsApplyToAgent(provider) {
+			t.Errorf("shared credentials should not apply to %q", provider)
 		}
 	}
 }

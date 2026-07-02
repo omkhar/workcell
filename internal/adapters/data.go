@@ -14,37 +14,19 @@ type providerTables struct {
 	reservedTargets          []string
 }
 
+type providerDefinition struct {
+	id                       string
+	sharedCredentialsEnabled bool
+	tables                   providerTables
+}
+
 // providers is the canonical per-adapter registry, ordered to match
 // providerid stable ordering.  Order is load-bearing for deterministic
 // rendering in the injection bundle (see ReservedTargets()).
-var providers = []struct {
-	id     string
-	tables providerTables
-}{
+var providers = []providerDefinition{
 	{
-		id: providerid.Codex,
-		tables: providerTables{
-			credentialKeys: []string{
-				"codex_auth",
-			},
-			credentialContainerPaths: map[string]string{
-				"codex_auth": "/opt/workcell/host-inputs/credentials/codex-auth.json",
-			},
-			reservedTargets: []string{
-				"/state/agent-home/.codex",
-				"/state/agent-home/.codex/AGENTS.md",
-				"/state/agent-home/.codex/auth.json",
-				"/state/agent-home/.codex/config.toml",
-				"/state/agent-home/.codex/managed_config.toml",
-				"/state/agent-home/.codex/requirements.toml",
-				"/state/agent-home/.codex/agents",
-				"/state/agent-home/.codex/rules",
-				"/state/agent-home/.codex/mcp",
-			},
-		},
-	},
-	{
-		id: providerid.Claude,
+		id:                       providerid.Claude,
+		sharedCredentialsEnabled: true,
 		tables: providerTables{
 			credentialKeys: []string{
 				"claude_api_key",
@@ -71,7 +53,50 @@ var providers = []struct {
 		},
 	},
 	{
-		id: providerid.Gemini,
+		id:                       providerid.Codex,
+		sharedCredentialsEnabled: true,
+		tables: providerTables{
+			credentialKeys: []string{
+				"codex_auth",
+			},
+			credentialContainerPaths: map[string]string{
+				"codex_auth": "/opt/workcell/host-inputs/credentials/codex-auth.json",
+			},
+			reservedTargets: []string{
+				"/state/agent-home/.codex",
+				"/state/agent-home/.codex/AGENTS.md",
+				"/state/agent-home/.codex/auth.json",
+				"/state/agent-home/.codex/config.toml",
+				"/state/agent-home/.codex/managed_config.toml",
+				"/state/agent-home/.codex/requirements.toml",
+				"/state/agent-home/.codex/agents",
+				"/state/agent-home/.codex/rules",
+				"/state/agent-home/.codex/mcp",
+			},
+		},
+	},
+	{
+		id:                       providerid.Copilot,
+		sharedCredentialsEnabled: false,
+		tables: providerTables{
+			credentialKeys: []string{
+				"copilot_github_token",
+			},
+			credentialContainerPaths: map[string]string{
+				"copilot_github_token": "/opt/workcell/host-inputs/credentials/copilot-github-token.txt",
+			},
+			reservedTargets: []string{
+				"/state/agent-home/.copilot",
+				"/state/agent-home/.copilot/AGENTS.md",
+				"/state/agent-home/.copilot/logs",
+				"/state/agent-home/.cache/github-copilot",
+				"/state/agent-home/.config/github-copilot",
+			},
+		},
+	},
+	{
+		id:                       providerid.Gemini,
+		sharedCredentialsEnabled: true,
 		tables: providerTables{
 			credentialKeys: []string{
 				"gemini_env",
@@ -100,8 +125,9 @@ var providers = []struct {
 	},
 }
 
-// sharedCredentialKeys lists credential keys provisioned for every
-// adapter (currently the github_* keys).
+// sharedCredentialKeys lists credential keys provisioned for adapters
+// whose provider registry row opts into shared credentials. Copilot
+// deliberately opts out so GitHub CLI state is not implicit Copilot auth.
 var sharedCredentialKeys = []string{
 	"github_hosts",
 	"github_config",

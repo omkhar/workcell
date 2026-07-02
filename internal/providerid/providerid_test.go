@@ -3,22 +3,50 @@
 
 package providerid
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
-func TestPlannedProvidersRemainUnsupportedUntilCertified(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		got  string
-		want string
-	}{
-		{name: "Antigravity", got: Antigravity, want: "antigravity"},
-		{name: "Copilot", got: Copilot, want: "copilot"},
-	} {
-		if tc.got != tc.want {
-			t.Fatalf("%s = %q, want %q", tc.name, tc.got, tc.want)
+func TestPlannedAntigravityRemainsUnsupportedUntilCertified(t *testing.T) {
+	if Antigravity != "antigravity" {
+		t.Fatalf("Antigravity = %q, want antigravity", Antigravity)
+	}
+	if IsValid(Antigravity) {
+		t.Fatal("Antigravity must stay out of the supported-provider set until runtime support and certification land")
+	}
+}
+
+func TestPlannedCopilotRemainsUnsupportedUntilCertified(t *testing.T) {
+	if Copilot != "copilot" {
+		t.Fatalf("Copilot = %q, want copilot", Copilot)
+	}
+	if IsValid(Copilot) {
+		t.Fatal("Copilot must stay out of the supported-provider set until runtime support and certification evidence land")
+	}
+}
+
+func TestAllProviderSetMatchesAllProviders(t *testing.T) {
+	set := AllProviderSet()
+	if len(set) != len(AllProviders) {
+		t.Fatalf("AllProviderSet length = %d, want %d", len(set), len(AllProviders))
+	}
+	for _, provider := range AllProviders {
+		if _, ok := set[provider]; !ok {
+			t.Fatalf("AllProviderSet missing %q", provider)
 		}
-		if IsValid(tc.got) {
-			t.Fatalf("%s must stay out of the supported-provider set until runtime support and certification land", tc.name)
-		}
+	}
+	if _, ok := set[Antigravity]; ok {
+		t.Fatal("AllProviderSet must not include planned providers before certification")
+	}
+	if _, ok := set[Copilot]; ok {
+		t.Fatal("AllProviderSet must not include planned Copilot before certification")
+	}
+}
+
+func TestCredentialMetadataProvidersIncludesPlannedCopilot(t *testing.T) {
+	want := []string{Claude, Codex, Copilot, Gemini}
+	if !slices.Equal(CredentialMetadataProviders, want) {
+		t.Fatalf("CredentialMetadataProviders = %v, want %v", CredentialMetadataProviders, want)
 	}
 }

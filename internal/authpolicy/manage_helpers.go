@@ -8,14 +8,17 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/adapters"
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/host/authstate"
 )
 
 func allowedCredentialsForAgent(agent string) map[string]struct{} {
 	allowed := map[string]struct{}{}
-	for key := range SharedCredentialKeys {
-		allowed[key] = struct{}{}
+	if adapters.SharedCredentialsApplyToAgent(agent) {
+		for key := range SharedCredentialKeys {
+			allowed[key] = struct{}{}
+		}
 	}
 	for key := range AgentScopedCredentialKeys[agent] {
 		allowed[key] = struct{}{}
@@ -193,10 +196,7 @@ func selectedCredentials(policy map[string]any, agent string, mode string) (map[
 		return selected, nil
 	}
 	relevant := map[string]struct{}{}
-	for key := range SharedCredentialKeys {
-		relevant[key] = struct{}{}
-	}
-	for key := range AgentScopedCredentialKeys[agent] {
+	for key := range allowedCredentialsForAgent(agent) {
 		relevant[key] = struct{}{}
 	}
 	selected := map[string]any{}

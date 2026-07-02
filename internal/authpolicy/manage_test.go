@@ -602,6 +602,75 @@ func TestSetCodexResolverAndStatusWhenHostCacheExists(t *testing.T) {
 	mustContain(t, got.stdout, "provider_bootstrap_support=repo-required")
 }
 
+func TestRunAuthSetRejectsHostProviderStateSource(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	t.Setenv("HOME", home)
+	policyPath := filepath.Join(root, "policy.toml")
+	managedRoot := filepath.Join(root, "managed")
+
+	init := runAuthPolicy("init", "--policy", policyPath, "--managed-root", managedRoot)
+	if init.code != 0 {
+		t.Fatalf("Run(init) = %d stdout=%q stderr=%q", init.code, init.stdout, init.stderr)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		agent      string
+		credential string
+		source     string
+		body       string
+	}{
+		{
+			name:       "github cli shared auth",
+			agent:      "codex",
+			credential: "github_hosts",
+			source:     filepath.Join(home, ".config", "gh", "hosts.yml"),
+			body:       "github.com:\n  oauth_token: fixture\n",
+		},
+		{
+			name:       "gcloud adc",
+			agent:      "gemini",
+			credential: "gcloud_adc",
+			source:     filepath.Join(home, ".config", "gcloud", "application_default_credentials.json"),
+			body:       `{"type":"authorized_user"}` + "\n",
+		},
+		{
+			name:       "xdg git auth",
+			agent:      "codex",
+			credential: "github_hosts",
+			source:     filepath.Join(home, ".config", "git", "credentials"),
+			body:       "https://token@example.com\n",
+		},
+		{
+			name:       "netrc auth",
+			agent:      "codex",
+			credential: "github_hosts",
+			source:     filepath.Join(home, ".netrc"),
+			body:       "machine github.com login x-access-token password token\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Dir(tc.source), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, tc.source, tc.body, 0o600)
+
+			got := runAuthPolicy("set",
+				"--policy", policyPath,
+				"--managed-root", managedRoot,
+				"--agent", tc.agent,
+				"--credential", tc.credential,
+				"--source", tc.source,
+			)
+			if got.code == 0 {
+				t.Fatalf("Run(set forbidden source) succeeded stdout=%q stderr=%q", got.stdout, got.stderr)
+			}
+			mustContain(t, got.stderr, "host provider/auth state")
+		})
+	}
+}
+
 func TestGeminiProjectsOnlyStatusIsSupplemental(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -638,7 +707,7 @@ func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
 		"version = 1",
 		"[credentials.github_hosts]",
 		`source = "` + hostsPath + `"`,
-		`providers = ["codex"]`,
+		`providers = ["codex", "gemini"]`,
 	}, "\n")+"\n", 0o600)
 
 	codexStatus := runAuthPolicy("status", "--policy", policyPath, "--agent", "codex")
@@ -656,6 +725,16 @@ func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
 	mustContain(t, claudeStatus.stdout, "credential_keys=none")
 	mustContain(t, claudeStatus.stdout, "shared_auth_ready_states=github_hosts:filtered-provider")
 	mustContain(t, claudeStatus.stdout, "shared_auth_modes=none")
+
+	copilotStatus := runAuthPolicy("status", "--policy", policyPath, "--agent", "copilot")
+	if copilotStatus.code != 2 {
+		t.Fatalf("Run(status copilot) = %d stdout=%q stderr=%q", copilotStatus.code, copilotStatus.stdout, copilotStatus.stderr)
+	}
+
+	copilotWhy := runAuthPolicy("why", "--policy", policyPath, "--agent", "copilot", "--mode", "strict", "--credential", "github_hosts")
+	if copilotWhy.code != 2 {
+		t.Fatalf("Run(why copilot github_hosts) = %d stdout=%q stderr=%q", copilotWhy.code, copilotWhy.stdout, copilotWhy.stderr)
+	}
 }
 
 func TestRunRejectsInvalidConfigurations(t *testing.T) {
@@ -709,6 +788,43 @@ func TestRunRejectsInvalidConfigurations(t *testing.T) {
 			agent:        "codex",
 			needsInit:    false,
 			wantContains: "credentials.codex_auth.providers contains unsupported value: bogus",
+		},
+		{
+			name: "planned-copilot-selector-value",
+			policy: strings.Join([]string{
+				"version = 1",
+				"[credentials.codex_auth]",
+				`source = "/tmp/auth.json"`,
+				`providers = ["copilot"]`,
+			}, "\n") + "\n",
+			command:      "status",
+			agent:        "codex",
+			needsInit:    false,
+			wantContains: "credentials.codex_auth.providers contains unsupported value: copilot",
+		},
+		{
+			name: "planned-copilot-credential-key",
+			policy: strings.Join([]string{
+				"version = 1",
+				"[credentials.copilot_github_token]",
+				`source = "/tmp/copilot-token.txt"`,
+			}, "\n") + "\n",
+			command:      "status",
+			agent:        "codex",
+			needsInit:    false,
+			wantContains: "unsupported credentials table [credentials.copilot_github_token]",
+		},
+		{
+			name: "planned-copilot-scalar-credential-key",
+			policy: strings.Join([]string{
+				"version = 1",
+				"[credentials]",
+				`copilot_github_token = "/tmp/copilot-token.txt"`,
+			}, "\n") + "\n",
+			command:      "status",
+			agent:        "codex",
+			needsInit:    false,
+			wantContains: "credentials contains unsupported keys: copilot_github_token",
 		},
 		{
 			name: "shared-github-without-providers",

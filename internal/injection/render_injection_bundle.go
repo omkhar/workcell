@@ -64,7 +64,7 @@ var (
 		"userknownhostsfile":  {},
 	}
 	reservedTargets           = adapters.ReservedTargets()
-	credentialContainerPaths  = adapters.CredentialContainerPaths()
+	credentialContainerPaths  = adapters.CredentialContainerPathsForProviders(providerid.AllProviders)
 	agentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
 	sharedCredentialKeys      = adapters.SharedCredentialKeys()
 	googleAuthEndpoints       = adapters.GeminiGoogleAuthEndpoints

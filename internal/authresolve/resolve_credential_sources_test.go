@@ -223,44 +223,6 @@ func TestRunMetadataModeRejectsSharedCredentialStringForm(t *testing.T) {
 	}
 }
 
-func TestRunMetadataModeRejectsHostProviderStateSource(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("HOME", root)
-	policyPath := filepath.Join(root, "policy.toml")
-	githubHostsPath := filepath.Join(root, ".config", "gh", "hosts.yml")
-	if err := os.MkdirAll(filepath.Dir(githubHostsPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writePolicy(t, githubHostsPath, "github.com:\n  oauth_token: fixture\n")
-	writePolicy(t, policyPath, strings.Join([]string{
-		"version = 1",
-		"[credentials.github_hosts]",
-		`source = "` + githubHostsPath + `"`,
-		`providers = ["codex"]`,
-	}, "\n")+"\n")
-
-	outputRoot := filepath.Join(root, "out")
-	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	code, stdout, stderr := runResolveCredentialSources(t, []string{
-		"--policy", policyPath,
-		"--agent", "codex",
-		"--mode", "strict",
-		"--resolution-mode", "metadata",
-		"--output-policy", filepath.Join(outputRoot, "resolved-policy.toml"),
-		"--output-metadata", filepath.Join(outputRoot, "resolver-metadata.json"),
-		"--output-root", outputRoot,
-	}, nil)
-	if code != 1 {
-		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
-	}
-	if !strings.Contains(stderr, "host provider/auth state") {
-		t.Fatalf("stderr %q missing host provider/auth state rejection", stderr)
-	}
-}
-
 func TestRunLaunchModeFailsClosedWithoutSupportedExportPath(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -514,6 +476,88 @@ func TestRunMetadataModeRejectsMissingSourceCredential(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "does not exist") && !strings.Contains(stderr, "no such file or directory") {
 		t.Fatalf("stderr %q missing missing-source failure", stderr)
+	}
+}
+
+func TestRunMetadataModeRejectsHostProviderStateSource(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	t.Setenv("HOME", home)
+
+	for _, tc := range []struct {
+		name       string
+		agent      string
+		credential string
+		provider   string
+		source     string
+		body       string
+	}{
+		{
+			name:       "github cli shared auth",
+			agent:      "codex",
+			credential: "github_hosts",
+			provider:   "codex",
+			source:     filepath.Join(home, ".config", "gh", "hosts.yml"),
+			body:       "github.com:\n  oauth_token: fixture\n",
+		},
+		{
+			name:       "gcloud adc",
+			agent:      "gemini",
+			credential: "gcloud_adc",
+			provider:   "gemini",
+			source:     filepath.Join(home, ".config", "gcloud", "application_default_credentials.json"),
+			body:       `{"type":"authorized_user"}` + "\n",
+		},
+		{
+			name:       "xdg git auth",
+			agent:      "codex",
+			credential: "github_hosts",
+			provider:   "codex",
+			source:     filepath.Join(home, ".config", "git", "credentials"),
+			body:       "https://token@example.com\n",
+		},
+		{
+			name:       "netrc auth",
+			agent:      "codex",
+			credential: "github_hosts",
+			provider:   "codex",
+			source:     filepath.Join(home, ".netrc"),
+			body:       "machine github.com login x-access-token password token\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Dir(tc.source), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writePolicy(t, tc.source, tc.body)
+			policyPath := filepath.Join(root, "policy-"+tc.name+".toml")
+			writePolicy(t, policyPath, strings.Join([]string{
+				"version = 1",
+				"[credentials." + tc.credential + "]",
+				`source = "` + tc.source + `"`,
+				`providers = ["` + tc.provider + `"]`,
+			}, "\n")+"\n")
+			outputRoot := filepath.Join(root, "out-"+tc.name)
+			if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+
+			code, _, stderr := runResolveCredentialSources(t, []string{
+				"--policy", policyPath,
+				"--agent", tc.agent,
+				"--mode", "strict",
+				"--resolution-mode", "metadata",
+				"--output-policy", filepath.Join(outputRoot, "resolved-policy.toml"),
+				"--output-metadata", filepath.Join(outputRoot, "resolver-metadata.json"),
+				"--output-root", outputRoot,
+			}, nil)
+			if code == 0 {
+				t.Fatalf("expected forbidden provider-state source to fail")
+			}
+			if !strings.Contains(stderr, "host provider/auth state") {
+				t.Fatalf("stderr %q missing provider-state failure", stderr)
+			}
+		})
 	}
 }
 
