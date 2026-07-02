@@ -37,6 +37,8 @@ COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-checksum}"
 COPILOT_NATIVE_HELP_DONE=0
 COPILOT_DOCKER_HELP_DONE=0
 COPILOT_NATIVE_HELP_PLATFORM=""
+COPILOT_NATIVE_HELP_BINARY=""
+COPILOT_NATIVE_HELP_LABEL=""
 COPILOT_DOCKER_HELP_PLATFORM=""
 COPILOT_DOCKER_HELP_BINARY=""
 COPILOT_DOCKER_HELP_LABEL=""
@@ -328,7 +330,8 @@ verify_asset() {
   [[ "${COPILOT_HELP_MODE}" == "checksum" ]] && return 0
   tar -xzf "${work_dir}/${tarball_name}" -C "${work_dir}" copilot
   if [[ "${COPILOT_HELP_MODE}" != "docker" && "${platform}" == "${COPILOT_NATIVE_HELP_PLATFORM}" && "${COPILOT_NATIVE_HELP_DONE}" != "1" ]]; then
-    run_native_copilot_help_probe "${work_dir}/copilot" "${platform}"
+    COPILOT_NATIVE_HELP_BINARY="${work_dir}/copilot"
+    COPILOT_NATIVE_HELP_LABEL="${platform}"
   fi
   if [[ "${platform}" == "${COPILOT_DOCKER_HELP_PLATFORM}" ]]; then
     COPILOT_DOCKER_HELP_BINARY="${work_dir}/copilot"
@@ -380,6 +383,10 @@ fi
 
 verify_asset arm64 linux-arm64 "$(extract_copilot_sha arm64)"
 verify_asset amd64 linux-x64 "$(extract_copilot_sha amd64)"
+
+if [[ "${COPILOT_HELP_MODE}" != "checksum" && "${COPILOT_HELP_MODE}" != "docker" && -n "${COPILOT_NATIVE_HELP_BINARY}" ]]; then
+  run_native_copilot_help_probe "${COPILOT_NATIVE_HELP_BINARY}" "${COPILOT_NATIVE_HELP_LABEL}"
+fi
 
 case "${COPILOT_HELP_MODE}" in
   auto)
