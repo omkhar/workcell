@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/adapters"
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/providerid"
@@ -22,9 +23,10 @@ import (
 
 var (
 	supportedAgents = map[string]struct{}{
-		providerid.Codex:  {},
-		providerid.Claude: {},
-		providerid.Gemini: {},
+		providerid.Codex:   {},
+		providerid.Claude:  {},
+		providerid.Copilot: {},
+		providerid.Gemini:  {},
 	}
 	supportedModes = map[string]struct{}{
 		"strict":      {},
@@ -44,39 +46,10 @@ var (
 			"claude-macos-keychain": {},
 		},
 	}
-	sharedCredentialKeys = map[string]struct{}{
-		"github_hosts":  {},
-		"github_config": {},
-	}
-	agentScopedCredentialKeys = map[string]map[string]struct{}{
-		providerid.Codex: {
-			"codex_auth": {},
-		},
-		providerid.Claude: {
-			"claude_api_key": {},
-			"claude_auth":    {},
-			"claude_mcp":     {},
-		},
-		providerid.Gemini: {
-			"gemini_env":      {},
-			"gemini_oauth":    {},
-			"gemini_projects": {},
-			"gcloud_adc":      {},
-		},
-	}
-	allCredentialKeys = map[string]struct{}{
-		"codex_auth":      {},
-		"claude_auth":     {},
-		"claude_api_key":  {},
-		"claude_mcp":      {},
-		"gemini_env":      {},
-		"gemini_oauth":    {},
-		"gemini_projects": {},
-		"gcloud_adc":      {},
-		"github_hosts":    {},
-		"github_config":   {},
-	}
-	rootPolicyKeys = map[string]struct{}{
+	sharedCredentialKeys      = adapters.SharedCredentialKeys()
+	agentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
+	allCredentialKeys         = credentialKeyUnion(agentScopedCredentialKeys, sharedCredentialKeys)
+	rootPolicyKeys            = map[string]struct{}{
 		"version":     {},
 		"includes":    {},
 		"documents":   {},
@@ -84,6 +57,7 @@ var (
 		"copies":      {},
 		"credentials": {},
 	}
+	documentKeys        = providerid.DocumentKeySet()
 	credentialEntryKeys = map[string]struct{}{
 		"source":          {},
 		"resolver":        {},
@@ -101,6 +75,19 @@ var (
 		return map[string]struct{}{}
 	}()
 )
+
+func credentialKeyUnion(scoped map[string]map[string]struct{}, shared map[string]struct{}) map[string]struct{} {
+	out := make(map[string]struct{})
+	for key := range shared {
+		out[key] = struct{}{}
+	}
+	for _, keys := range scoped {
+		for key := range keys {
+			out[key] = struct{}{}
+		}
+	}
+	return out
+}
 
 // PolicySource is an alias for injectionpolicy.PolicySource — the
 // canonical cross-package type.  Kept exported here for callers that
@@ -430,8 +417,10 @@ func authReadyStateForResolution(state string) string {
 
 func selectedCredentialKeys(agent string) []string {
 	keys := make([]string, 0, len(sharedCredentialKeys)+len(agentScopedCredentialKeys[agent]))
-	for key := range sharedCredentialKeys {
-		keys = append(keys, key)
+	if adapters.SharedCredentialsApplyToAgent(agent) {
+		for key := range sharedCredentialKeys {
+			keys = append(keys, key)
+		}
 	}
 	for key := range agentScopedCredentialKeys[agent] {
 		keys = append(keys, key)

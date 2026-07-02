@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/adapters"
 	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/providerid"
@@ -25,9 +26,10 @@ import (
 
 var (
 	SupportedAgents = map[string]struct{}{
-		providerid.Codex:  {},
-		providerid.Claude: {},
-		providerid.Gemini: {},
+		providerid.Codex:   {},
+		providerid.Claude:  {},
+		providerid.Copilot: {},
+		providerid.Gemini:  {},
 	}
 	SupportedModes = map[string]struct{}{
 		"strict":      {},
@@ -35,39 +37,14 @@ var (
 		"build":       {},
 		"breakglass":  {},
 	}
-	CredentialKeys = map[string]struct{}{
-		"codex_auth":      {},
-		"claude_auth":     {},
-		"claude_api_key":  {},
-		"claude_mcp":      {},
-		"gemini_env":      {},
-		"gemini_oauth":    {},
-		"gemini_projects": {},
-		"gcloud_adc":      {},
-		"github_hosts":    {},
-		"github_config":   {},
-	}
-	AgentScopedCredentialKeys = map[string]map[string]struct{}{
-		providerid.Codex: {
-			"codex_auth": {},
-		},
-		providerid.Claude: {
-			"claude_api_key": {},
-			"claude_auth":    {},
-			"claude_mcp":     {},
-		},
-		providerid.Gemini: {
-			"gemini_env":      {},
-			"gemini_oauth":    {},
-			"gemini_projects": {},
-			"gcloud_adc":      {},
-		},
-	}
-	SharedCredentialKeys = map[string]struct{}{
-		"github_hosts":  {},
-		"github_config": {},
-	}
-	AllowedRootPolicyKeys = map[string]struct{}{
+	CredentialKeys = credentialKeyUnion(
+		adapters.AgentScopedCredentialKeys(),
+		adapters.SharedCredentialKeys(),
+	)
+	DocumentKeys              = providerid.DocumentKeySet()
+	AgentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
+	SharedCredentialKeys      = adapters.SharedCredentialKeys()
+	AllowedRootPolicyKeys     = map[string]struct{}{
 		"version":     {},
 		"includes":    {},
 		"documents":   {},
@@ -75,9 +52,21 @@ var (
 		"copies":      {},
 		"credentials": {},
 	}
-	documentKeys      = []string{"common", providerid.Codex, providerid.Claude, providerid.Gemini}
 	managedRootMarker = ".workcell-managed-root"
 )
+
+func credentialKeyUnion(scoped map[string]map[string]struct{}, shared map[string]struct{}) map[string]struct{} {
+	out := make(map[string]struct{})
+	for key := range shared {
+		out[key] = struct{}{}
+	}
+	for _, keys := range scoped {
+		for key := range keys {
+			out[key] = struct{}{}
+		}
+	}
+	return out
+}
 
 var systemSymlinkAllowlist = map[string]struct{}{}
 
@@ -184,13 +173,16 @@ func validateAllowedKeys(table map[string]any, allowedKeys map[string]struct{}, 
 	return nil
 }
 
-func validateDocumentKeys(policy map[string]any) error {
-	documents, _ := policy["documents"].(map[string]any)
-	allowed := make(map[string]struct{}, len(documentKeys))
-	for _, key := range documentKeys {
-		allowed[key] = struct{}{}
+func validatePolicyDocuments(policy map[string]any) error {
+	raw, ok := policy["documents"]
+	if !ok || raw == nil {
+		return nil
 	}
-	return validateAllowedKeys(documents, allowed, "documents")
+	documents, ok := raw.(map[string]any)
+	if !ok {
+		return die("documents must be a TOML table")
+	}
+	return validateAllowedKeys(documents, DocumentKeys, "documents")
 }
 
 func selectedFor(values any, current string, label string, allowedValues map[string]struct{}) (bool, error) {
@@ -356,7 +348,7 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 			target[pair.Key] = pair.Value
 		}
 	}
-	if err := validateDocumentKeys(root); err != nil {
+	if err := validatePolicyDocuments(root); err != nil {
 		return nil, err
 	}
 	return root, nil
@@ -754,6 +746,10 @@ func jsonQuote(value string) string {
 }
 
 func renderPolicyTOML(policy map[string]any) (string, error) {
+	if err := validatePolicyDocuments(policy); err != nil {
+		return "", err
+	}
+
 	lines := make([]string, 0)
 	version := 1
 	if rawVersion, ok := policy["version"]; ok {
@@ -778,7 +774,7 @@ func renderPolicyTOML(policy map[string]any) (string, error) {
 	if documents, ok := policy["documents"].(map[string]any); ok && len(documents) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, "[documents]")
-		for _, key := range documentKeys {
+		for _, key := range sortedSetKeys(DocumentKeys) {
 			if value, ok := documents[key]; ok {
 				rendered, err := renderTOMLValue(value)
 				if err != nil {
@@ -970,6 +966,15 @@ func pathsEquivalent(left string, right string) bool {
 }
 
 func sortedKeys(value map[string]any) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func sortedSetKeys(value map[string]struct{}) []string {
 	keys := make([]string, 0, len(value))
 	for key := range value {
 		keys = append(keys, key)

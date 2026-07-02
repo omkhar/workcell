@@ -14,20 +14,34 @@ const (
 	// planned fail-closed adapter, not a member of AllProviders until
 	// runtime support and certification evidence land.
 	Antigravity = "antigravity"
-	// Copilot is the GitHub Copilot CLI provider identifier. It is a
-	// planned fail-closed adapter, not a member of AllProviders until
-	// runtime support and certification evidence land.
+	// Copilot is the GitHub Copilot CLI provider identifier.
 	Copilot = "copilot"
 	// Gemini is the Google Gemini provider identifier.
 	Gemini = "gemini"
+	// CommonDocument is the provider-neutral managed document key.
+	CommonDocument = "common"
 )
 
 // AllProviders is the canonical iteration order for Workcell adapters.
 // Many call sites (validators, manifests, sort orders) depend on a stable
 // order; use this slice instead of declaring a local one.
-var AllProviders = []string{Claude, Codex, Gemini}
+var AllProviders = []string{Claude, Codex, Copilot, Gemini}
+
+// DocumentKeys is the canonical rendering/validation order for managed
+// document injection. Copilot is deliberately absent because managed Copilot
+// custom instructions are disabled.
+var DocumentKeys = []string{CommonDocument, Codex, Claude, Gemini}
 
 // IsValid reports whether s names a supported provider.
 func IsValid(s string) bool {
 	return slices.Contains(AllProviders, s)
+}
+
+// DocumentKeySet returns the supported managed document keys.
+func DocumentKeySet() map[string]struct{} {
+	out := make(map[string]struct{}, len(DocumentKeys))
+	for _, key := range DocumentKeys {
+		out[key] = struct{}{}
+	}
+	return out
 }

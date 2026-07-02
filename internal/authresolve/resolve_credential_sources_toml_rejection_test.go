@@ -165,6 +165,32 @@ func TestParseTOMLSubsetShippedPolicyFiles(t *testing.T) {
 	}
 }
 
+func TestLoadPolicyBundleRejectsUnsupportedCopilotDocument(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.toml")
+	if err := os.WriteFile(policyPath, []byte(strings.Join([]string{
+		"version = 1",
+		"",
+		"[documents]",
+		"copilot = \"copilot.md\"",
+		"",
+	}, "\n")), 0o600); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "copilot.md"), []byte("unsupported\n"), 0o600); err != nil {
+		t.Fatalf("write copilot doc: %v", err)
+	}
+
+	_, _, err := loadPolicyBundle(policyPath)
+	if err == nil {
+		t.Fatal("expected documents.copilot to be rejected by authresolve")
+	}
+	if !strings.Contains(err.Error(), "documents contains unsupported keys: copilot") {
+		t.Fatalf("err = %v, want unsupported documents.copilot failure", err)
+	}
+}
+
 // findRepoRoot walks up from the test file's working directory until it
 // finds the repo's go.mod, so the shipped-policy walk works regardless
 // of where `go test` is invoked from.

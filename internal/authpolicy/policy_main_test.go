@@ -167,6 +167,64 @@ func TestPolicyMainValidateReportsPolicyValid(t *testing.T) {
 	}
 }
 
+func TestPolicyMainValidateRejectsUnsupportedDocumentKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "injection-policy.toml")
+	if err := os.WriteFile(path, []byte(`version = 1
+
+[documents]
+copilot = "copilot.md"
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := runPolicyMain([]string{"validate", "--injection-policy", path}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("validate unexpectedly accepted documents.copilot")
+	}
+	if !strings.Contains(err.Error(), "documents contains unsupported keys: copilot") {
+		t.Fatalf("err = %v, want unsupported documents.copilot failure", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty output on validation failure", stdout.String())
+	}
+}
+
+func TestPolicyMainShowRendersSupportedDocumentKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "injection-policy.toml")
+	if err := os.WriteFile(path, []byte(`version = 1
+
+[documents]
+common = "common.md"
+codex = "AGENTS.md"
+claude = "CLAUDE.md"
+gemini = "GEMINI.md"
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := runPolicyMain([]string{"show", "--injection-policy", path}, &stdout, &stderr); err != nil {
+		t.Fatalf("err = %v stderr=%q", err, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		`claude = "CLAUDE.md"`,
+		`codex = "AGENTS.md"`,
+		`common = "common.md"`,
+		`gemini = "GEMINI.md"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("show output missing %s: %q", want, output)
+		}
+	}
+	if strings.Contains(output, "copilot") {
+		t.Fatalf("show output unexpectedly rendered unsupported copilot document key: %q", output)
+	}
+}
+
 func TestPolicyMainDiffReportsClean(t *testing.T) {
 	path := writeMinimalPolicy(t)
 	var stdout, stderr bytes.Buffer

@@ -5,20 +5,20 @@ package providerid
 
 import "testing"
 
-func TestPlannedProvidersRemainUnsupportedUntilCertified(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		got  string
-		want string
-	}{
-		{name: "Antigravity", got: Antigravity, want: "antigravity"},
-		{name: "Copilot", got: Copilot, want: "copilot"},
-	} {
-		if tc.got != tc.want {
-			t.Fatalf("%s = %q, want %q", tc.name, tc.got, tc.want)
-		}
-		if IsValid(tc.got) {
-			t.Fatalf("%s must stay out of the supported-provider set until runtime support and certification land", tc.name)
-		}
+func TestPlannedAntigravityRemainsUnsupportedUntilCertified(t *testing.T) {
+	if Antigravity != "antigravity" {
+		t.Fatalf("Antigravity = %q, want antigravity", Antigravity)
+	}
+	if IsValid(Antigravity) {
+		t.Fatal("Antigravity must stay out of the supported-provider set until runtime support and certification land")
+	}
+}
+
+func TestCopilotIsSupportedProvider(t *testing.T) {
+	if Copilot != "copilot" {
+		t.Fatalf("Copilot = %q, want copilot", Copilot)
+	}
+	if !IsValid(Copilot) {
+		t.Fatal("Copilot must be in the supported-provider set after runtime support and certification evidence land")
 	}
 }

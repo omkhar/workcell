@@ -4,6 +4,7 @@
 package adapters
 
 import (
+	"slices"
 	"sort"
 	"testing"
 
@@ -15,9 +16,19 @@ import (
 // is also present in CredentialContainerPaths, no key is both shared
 // and adapter-scoped.
 
+func TestProviderRegistryMatchesProviderIDOrder(t *testing.T) {
+	got := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		got = append(got, provider.id)
+	}
+	if !slices.Equal(got, providerid.AllProviders) {
+		t.Fatalf("provider registry order = %v, want %v", got, providerid.AllProviders)
+	}
+}
+
 func TestAgentScopedCredentialKeysCoversAllProviders(t *testing.T) {
 	got := AgentScopedCredentialKeys()
-	for _, want := range []string{providerid.Codex, providerid.Claude, providerid.Gemini} {
+	for _, want := range providerid.AllProviders {
 		if _, ok := got[want]; !ok {
 			t.Errorf("provider %q missing from AgentScopedCredentialKeys", want)
 		}

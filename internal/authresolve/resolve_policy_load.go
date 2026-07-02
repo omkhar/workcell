@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
@@ -42,6 +41,9 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []
 		return nil, nil, err
 	}
 	if err := validateAllowedKeys(loaded, rootPolicyKeys, "root policy"); err != nil {
+		return nil, nil, err
+	}
+	if err := validatePolicyDocuments(loaded); err != nil {
 		return nil, nil, err
 	}
 
@@ -408,15 +410,10 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 			target[pair.Key] = pair.Value
 		}
 	}
-	if err := validateDocumentKeys(root); err != nil {
+	if err := validatePolicyDocuments(root); err != nil {
 		return nil, err
 	}
 	return root, nil
-}
-
-func validateDocumentKeys(policy map[string]any) error {
-	documents, _ := policy["documents"].(map[string]any)
-	return validateAllowedKeys(documents, map[string]struct{}{"common": {}, providerid.Codex: {}, providerid.Claude: {}, providerid.Gemini: {}}, "documents")
 }
 
 func validateAllowedKeys(table map[string]any, allowed map[string]struct{}, label string) error {
@@ -431,6 +428,18 @@ func validateAllowedKeys(table map[string]any, allowed map[string]struct{}, labe
 		return fmt.Errorf("%s contains unsupported keys: %s", label, strings.Join(unknown, ", "))
 	}
 	return nil
+}
+
+func validatePolicyDocuments(policy map[string]any) error {
+	raw, ok := policy["documents"]
+	if !ok {
+		return nil
+	}
+	documents, ok := raw.(map[string]any)
+	if !ok {
+		return errors.New("documents must be a TOML table")
+	}
+	return validateAllowedKeys(documents, documentKeys, "documents")
 }
 
 func selectedFor(values any, current, label string, allowed map[string]struct{}) (bool, error) {

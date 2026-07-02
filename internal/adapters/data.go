@@ -22,28 +22,6 @@ var providers = []struct {
 	tables providerTables
 }{
 	{
-		id: providerid.Codex,
-		tables: providerTables{
-			credentialKeys: []string{
-				"codex_auth",
-			},
-			credentialContainerPaths: map[string]string{
-				"codex_auth": "/opt/workcell/host-inputs/credentials/codex-auth.json",
-			},
-			reservedTargets: []string{
-				"/state/agent-home/.codex",
-				"/state/agent-home/.codex/AGENTS.md",
-				"/state/agent-home/.codex/auth.json",
-				"/state/agent-home/.codex/config.toml",
-				"/state/agent-home/.codex/managed_config.toml",
-				"/state/agent-home/.codex/requirements.toml",
-				"/state/agent-home/.codex/agents",
-				"/state/agent-home/.codex/rules",
-				"/state/agent-home/.codex/mcp",
-			},
-		},
-	},
-	{
 		id: providerid.Claude,
 		tables: providerTables{
 			credentialKeys: []string{
@@ -67,6 +45,46 @@ var providers = []struct {
 				"/state/agent-home/.claude/workcell",
 				"/state/agent-home/.config/claude-code/auth.json",
 				"/state/agent-home/.mcp.json",
+			},
+		},
+	},
+	{
+		id: providerid.Codex,
+		tables: providerTables{
+			credentialKeys: []string{
+				"codex_auth",
+			},
+			credentialContainerPaths: map[string]string{
+				"codex_auth": "/opt/workcell/host-inputs/credentials/codex-auth.json",
+			},
+			reservedTargets: []string{
+				"/state/agent-home/.codex",
+				"/state/agent-home/.codex/AGENTS.md",
+				"/state/agent-home/.codex/auth.json",
+				"/state/agent-home/.codex/config.toml",
+				"/state/agent-home/.codex/managed_config.toml",
+				"/state/agent-home/.codex/requirements.toml",
+				"/state/agent-home/.codex/agents",
+				"/state/agent-home/.codex/rules",
+				"/state/agent-home/.codex/mcp",
+			},
+		},
+	},
+	{
+		id: providerid.Copilot,
+		tables: providerTables{
+			credentialKeys: []string{
+				"copilot_github_token",
+			},
+			credentialContainerPaths: map[string]string{
+				"copilot_github_token": "/opt/workcell/host-inputs/credentials/copilot-github-token.txt",
+			},
+			reservedTargets: []string{
+				"/state/agent-home/.copilot",
+				"/state/agent-home/.copilot/AGENTS.md",
+				"/state/agent-home/.copilot/logs",
+				"/state/agent-home/.cache/github-copilot",
+				"/state/agent-home/.config/github-copilot",
 			},
 		},
 	},
