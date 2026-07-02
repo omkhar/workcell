@@ -100,7 +100,7 @@ echo "[ci/validate] upstream Claude release"
 "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
 
 echo "[ci/validate] upstream Copilot release"
-"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
+WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
 
 echo "[ci/validate] upstream Gemini release"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
