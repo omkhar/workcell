@@ -277,7 +277,7 @@ run_native_copilot_help_probe() {
     TMPDIR="${TMP_ROOT}" \
     "${binary_path}" --help >"${help_path}" 2>&1; then
     echo "Failed to inspect GitHub Copilot CLI v${COPILOT_VERSION} ${label} help on the native Linux host" >&2
-    exit 1
+    return 1
   fi
   verify_copilot_help_flags_file "${help_path}" "${label}"
   COPILOT_NATIVE_HELP_DONE=1
@@ -387,12 +387,11 @@ fi
 verify_asset arm64 linux-arm64 "$(extract_copilot_sha arm64)"
 verify_asset amd64 linux-x64 "$(extract_copilot_sha amd64)"
 
-if [[ "${COPILOT_HELP_MODE}" != "checksum" && "${COPILOT_HELP_MODE}" != "docker" && -n "${COPILOT_NATIVE_HELP_BINARY}" ]]; then
-  run_native_copilot_help_probe "${COPILOT_NATIVE_HELP_BINARY}" "${COPILOT_NATIVE_HELP_LABEL}"
-fi
-
 case "${COPILOT_HELP_MODE}" in
   auto)
+    if [[ -n "${COPILOT_NATIVE_HELP_BINARY}" ]]; then
+      run_native_copilot_help_probe "${COPILOT_NATIVE_HELP_BINARY}" "${COPILOT_NATIVE_HELP_LABEL}" || true
+    fi
     if [[ "${COPILOT_NATIVE_HELP_DONE}" != "1" && "${COPILOT_DOCKER_HELP_DONE}" != "1" ]]; then
       if ! run_docker_copilot_help_probe; then
         echo "Copilot release help verification requires a Linux host or a local Workcell image matching the Docker engine architecture." >&2
@@ -402,6 +401,9 @@ case "${COPILOT_HELP_MODE}" in
     fi
     ;;
   native)
+    if [[ -n "${COPILOT_NATIVE_HELP_BINARY}" ]]; then
+      run_native_copilot_help_probe "${COPILOT_NATIVE_HELP_BINARY}" "${COPILOT_NATIVE_HELP_LABEL}" || exit 1
+    fi
     if [[ -z "${COPILOT_NATIVE_HELP_PLATFORM}" || "${COPILOT_NATIVE_HELP_DONE}" != "1" ]]; then
       echo "Copilot release native help verification requires a Linux host matching a pinned Copilot asset architecture." >&2
       exit 1
