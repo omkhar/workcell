@@ -31,7 +31,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-copilot-release.XXXXXX")"
 BUILD_INPUT_MANIFEST_PATH="${TMP_ROOT}/build-input.json"
 RELEASE_METADATA_PATH="${TMP_ROOT}/release.json"
-COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-auto}"
+COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-checksum}"
 COPILOT_NATIVE_HELP_DONE=0
 COPILOT_DOCKER_HELP_DONE=0
 COPILOT_NATIVE_HELP_PLATFORM=""
@@ -67,7 +67,11 @@ github_api_get() {
 github_asset_get() {
   local url="$1"
   local output="$2"
-  github_get "${url}" "${output}" "application/octet-stream"
+
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+    -H "Accept: application/octet-stream" \
+    "${url}" \
+    -o "${output}"
 }
 
 github_get() {
@@ -104,6 +108,16 @@ EOF
     -H "Accept: ${accept}" \
     "${url}" \
     -o "${output}"
+}
+
+discard_created_github_token_file() {
+  [[ -z "${workcell_copilot_release_token_file_created}" || "${workcell_copilot_release_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_copilot_release_token_file_created}"
+  workcell_copilot_release_token_file_created=""
+}
+
+scrub_github_token_env_for_child() {
+  discard_created_github_token_file
+  unset WORKCELL_GITHUB_API_TOKEN WORKCELL_GITHUB_API_TOKEN_FILE GITHUB_TOKEN GH_TOKEN
 }
 
 copilot_platform_for_linux_arch() {
@@ -163,8 +177,15 @@ run_native_copilot_help_probe() {
   local binary_path="$1"
   local label="$2"
   local help_path="${TMP_ROOT}/copilot-help-native.txt"
+  local child_home="${TMP_ROOT}/copilot-native-home"
 
-  if ! "${binary_path}" --help >"${help_path}" 2>&1; then
+  mkdir -p "${child_home}"
+  scrub_github_token_env_for_child
+  if ! env -i \
+    HOME="${child_home}" \
+    PATH="/usr/bin:/bin" \
+    TMPDIR="${TMP_ROOT}" \
+    "${binary_path}" --help >"${help_path}" 2>&1; then
     echo "Failed to inspect GitHub Copilot CLI v${COPILOT_VERSION} ${label} help on the native Linux host" >&2
     exit 1
   fi
@@ -219,6 +240,7 @@ verify_asset() {
   fi
   github_asset_get "${asset_url}" "${work_dir}/${tarball_name}"
   echo "${expected_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null
+  tar -tzf "${work_dir}/${tarball_name}" copilot >/dev/null
   [[ "${COPILOT_HELP_MODE}" == "checksum" ]] && return 0
   tar -xzf "${work_dir}/${tarball_name}" -C "${work_dir}" copilot
   if [[ "${COPILOT_HELP_MODE}" != "docker" && "${platform}" == "${COPILOT_NATIVE_HELP_PLATFORM}" && "${COPILOT_NATIVE_HELP_DONE}" != "1" ]]; then
