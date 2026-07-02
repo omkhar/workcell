@@ -285,20 +285,23 @@ run_native_copilot_help_probe() {
 
 run_docker_copilot_help_probe() {
   local image="${WORKCELL_COPILOT_RELEASE_HELP_IMAGE:-${WORKCELL_IMAGE_TAG:-workcell:smoke}}"
-  local binary_dir=""
+  local container_id=""
   local help_path="${TMP_ROOT}/copilot-help-docker.txt"
 
   [[ -n "${COPILOT_DOCKER_HELP_BINARY}" ]] || return 1
   copilot_docker_cmd image inspect "${image}" >/dev/null 2>&1 || return 1
 
-  binary_dir="$(dirname "${COPILOT_DOCKER_HELP_BINARY}")"
-  if ! copilot_docker_cmd run --rm \
-    -v "${binary_dir}:/work:ro" \
-    --entrypoint /work/copilot \
-    "${image}" --help >"${help_path}" 2>&1; then
+  container_id="$(copilot_docker_cmd create --network none --entrypoint /tmp/workcell-copilot-help-probe "${image}" --help)" || return 1
+  if ! copilot_docker_cmd cp "${COPILOT_DOCKER_HELP_BINARY}" "${container_id}:/tmp/workcell-copilot-help-probe"; then
+    copilot_docker_cmd rm -f "${container_id}" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! copilot_docker_cmd start -a "${container_id}" >"${help_path}" 2>&1; then
+    copilot_docker_cmd rm -f "${container_id}" >/dev/null 2>&1 || true
     echo "Failed to inspect GitHub Copilot CLI v${COPILOT_VERSION} ${COPILOT_DOCKER_HELP_LABEL} help inside Docker image ${image}" >&2
     return 1
   fi
+  copilot_docker_cmd rm -f "${container_id}" >/dev/null 2>&1 || true
   verify_copilot_help_flags_file "${help_path}" "${COPILOT_DOCKER_HELP_LABEL}"
   COPILOT_DOCKER_HELP_DONE=1
 }
