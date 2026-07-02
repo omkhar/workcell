@@ -6,8 +6,6 @@
 // provider names.  New adapters add a row to providers in data.go.
 package adapters
 
-import "github.com/omkhar/workcell/internal/providerid"
-
 // AgentScopedCredentialKeys maps each providerid to the set of credential
 // keys scoped exclusively to that adapter (excludes shared keys).
 func AgentScopedCredentialKeys() map[string]map[string]struct{} {
@@ -18,8 +16,8 @@ func AgentScopedCredentialKeys() map[string]map[string]struct{} {
 	return out
 }
 
-// SharedCredentialKeys returns the set of credential keys provisioned for
-// every adapter (currently the github_* keys).
+// SharedCredentialKeys returns the set of credential keys available to
+// adapters that explicitly opt into shared credentials.
 func SharedCredentialKeys() map[string]struct{} {
 	return setOf(sharedCredentialKeys)
 }
@@ -28,7 +26,12 @@ func SharedCredentialKeys() map[string]struct{} {
 // credentials are in scope for agent. Copilot intentionally uses only
 // copilot_github_token so host gh auth cannot become an implicit auth path.
 func SharedCredentialsApplyToAgent(agent string) bool {
-	return agent != providerid.Copilot
+	for _, p := range providers {
+		if p.id == agent {
+			return p.sharedCredentialsEnabled
+		}
+	}
+	return false
 }
 
 // CredentialContainerPaths returns the merged container-side mount paths

@@ -18,7 +18,7 @@ Commands:
   set
     --injection-policy PATH     Policy file to update (default: ~/.config/workcell/injection-policy.toml)
     --managed-root PATH         Managed credential root (default: ~/.config/workcell/credentials)
-    --agent codex|claude|copilot|gemini
+    --agent codex|claude|gemini
                                 Agent used for validation and default shared-credential scoping
     --credential KEY            Credential key to configure
     --source PATH               Copy PATH into the managed Workcell credential store
@@ -32,7 +32,7 @@ Commands:
 
   status
     --injection-policy PATH     Policy file to inspect (default: ~/.config/workcell/injection-policy.toml)
-    --agent codex|claude|copilot|gemini
+    --agent codex|claude|gemini
                                 Filter to the selected agent
     --mode strict|development|build|breakglass
     --workspace PATH            Accepted for CLI symmetry; ignored by host status

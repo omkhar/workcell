@@ -14,15 +14,19 @@ type providerTables struct {
 	reservedTargets          []string
 }
 
+type providerDefinition struct {
+	id                       string
+	sharedCredentialsEnabled bool
+	tables                   providerTables
+}
+
 // providers is the canonical per-adapter registry, ordered to match
 // providerid stable ordering.  Order is load-bearing for deterministic
 // rendering in the injection bundle (see ReservedTargets()).
-var providers = []struct {
-	id     string
-	tables providerTables
-}{
+var providers = []providerDefinition{
 	{
-		id: providerid.Claude,
+		id:                       providerid.Claude,
+		sharedCredentialsEnabled: true,
 		tables: providerTables{
 			credentialKeys: []string{
 				"claude_api_key",
@@ -49,7 +53,8 @@ var providers = []struct {
 		},
 	},
 	{
-		id: providerid.Codex,
+		id:                       providerid.Codex,
+		sharedCredentialsEnabled: true,
 		tables: providerTables{
 			credentialKeys: []string{
 				"codex_auth",
@@ -71,7 +76,8 @@ var providers = []struct {
 		},
 	},
 	{
-		id: providerid.Copilot,
+		id:                       providerid.Copilot,
+		sharedCredentialsEnabled: false,
 		tables: providerTables{
 			credentialKeys: []string{
 				"copilot_github_token",
@@ -89,7 +95,8 @@ var providers = []struct {
 		},
 	},
 	{
-		id: providerid.Gemini,
+		id:                       providerid.Gemini,
+		sharedCredentialsEnabled: true,
 		tables: providerTables{
 			credentialKeys: []string{
 				"gemini_env",
@@ -118,8 +125,9 @@ var providers = []struct {
 	},
 }
 
-// sharedCredentialKeys lists credential keys provisioned for every
-// adapter (currently the github_* keys).
+// sharedCredentialKeys lists credential keys provisioned for adapters
+// whose provider registry row opts into shared credentials. Copilot
+// deliberately opts out so GitHub CLI state is not implicit Copilot auth.
 var sharedCredentialKeys = []string{
 	"github_hosts",
 	"github_config",

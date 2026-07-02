@@ -41,7 +41,7 @@ func TestAuthUsageTextDocumentsRequiredFlags(t *testing.T) {
 	for _, want := range []string{
 		"--injection-policy PATH",
 		"--managed-root PATH",
-		"--agent codex|claude|copilot|gemini",
+		"--agent codex|claude|gemini",
 		"--credential KEY",
 		"--source PATH",
 		"--resolver NAME",

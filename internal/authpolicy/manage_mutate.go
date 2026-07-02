@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/authresolve"
@@ -37,7 +38,7 @@ func commandInit(policyPath string, managedRoot string) error {
 	if err := writeManagedRootMarker(managedRoot); err != nil {
 		return err
 	}
-	for _, name := range []string{providerid.Codex, providerid.Copilot, providerid.Claude, providerid.Gemini, "shared"} {
+	for _, name := range append(slices.Clone(providerid.AllProviders), "shared") {
 		path := filepath.Join(managedRoot, name)
 		if err := validateManagedPath(managedRoot, path, "managed_root/"+name); err != nil {
 			return err

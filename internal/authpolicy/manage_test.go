@@ -707,7 +707,7 @@ func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
 		"version = 1",
 		"[credentials.github_hosts]",
 		`source = "` + hostsPath + `"`,
-		`providers = ["codex", "copilot"]`,
+		`providers = ["codex", "gemini"]`,
 	}, "\n")+"\n", 0o600)
 
 	codexStatus := runAuthPolicy("status", "--policy", policyPath, "--agent", "codex")
@@ -727,20 +727,14 @@ func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
 	mustContain(t, claudeStatus.stdout, "shared_auth_modes=none")
 
 	copilotStatus := runAuthPolicy("status", "--policy", policyPath, "--agent", "copilot")
-	if copilotStatus.code != 0 {
+	if copilotStatus.code != 2 {
 		t.Fatalf("Run(status copilot) = %d stdout=%q stderr=%q", copilotStatus.code, copilotStatus.stdout, copilotStatus.stderr)
 	}
-	mustContain(t, copilotStatus.stdout, "credential_keys=none")
-	mustContain(t, copilotStatus.stdout, "shared_auth_ready_states=none")
-	mustContain(t, copilotStatus.stdout, "shared_auth_modes=none")
 
 	copilotWhy := runAuthPolicy("why", "--policy", policyPath, "--agent", "copilot", "--mode", "strict", "--credential", "github_hosts")
-	if copilotWhy.code != 0 {
+	if copilotWhy.code != 2 {
 		t.Fatalf("Run(why copilot github_hosts) = %d stdout=%q stderr=%q", copilotWhy.code, copilotWhy.stdout, copilotWhy.stderr)
 	}
-	mustContain(t, copilotWhy.stdout, "selected=0")
-	mustContain(t, copilotWhy.stdout, "selection_reason=credential is not in scope for agent copilot")
-	mustContain(t, copilotWhy.stdout, "credential_readiness=out-of-scope")
 }
 
 func TestRunRejectsInvalidConfigurations(t *testing.T) {
@@ -794,6 +788,19 @@ func TestRunRejectsInvalidConfigurations(t *testing.T) {
 			agent:        "codex",
 			needsInit:    false,
 			wantContains: "credentials.codex_auth.providers contains unsupported value: bogus",
+		},
+		{
+			name: "planned-copilot-selector-value",
+			policy: strings.Join([]string{
+				"version = 1",
+				"[credentials.codex_auth]",
+				`source = "/tmp/auth.json"`,
+				`providers = ["copilot"]`,
+			}, "\n") + "\n",
+			command:      "status",
+			agent:        "codex",
+			needsInit:    false,
+			wantContains: "credentials.codex_auth.providers contains unsupported value: copilot",
 		},
 		{
 			name: "shared-github-without-providers",

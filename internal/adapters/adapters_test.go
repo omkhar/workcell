@@ -21,14 +21,14 @@ func TestProviderRegistryMatchesProviderIDOrder(t *testing.T) {
 	for _, provider := range providers {
 		got = append(got, provider.id)
 	}
-	if !slices.Equal(got, providerid.AllProviders) {
-		t.Fatalf("provider registry order = %v, want %v", got, providerid.AllProviders)
+	if !slices.Equal(got, providerid.CredentialMetadataProviders) {
+		t.Fatalf("provider registry order = %v, want %v", got, providerid.CredentialMetadataProviders)
 	}
 }
 
-func TestAgentScopedCredentialKeysCoversAllProviders(t *testing.T) {
+func TestAgentScopedCredentialKeysCoversCredentialMetadataProviders(t *testing.T) {
 	got := AgentScopedCredentialKeys()
-	for _, want := range providerid.AllProviders {
+	for _, want := range providerid.CredentialMetadataProviders {
 		if _, ok := got[want]; !ok {
 			t.Errorf("provider %q missing from AgentScopedCredentialKeys", want)
 		}
@@ -51,6 +51,19 @@ func TestSharedCredentialKeysHaveContainerPaths(t *testing.T) {
 	for key := range SharedCredentialKeys() {
 		if _, ok := paths[key]; !ok {
 			t.Errorf("shared credential key %q has no container path", key)
+		}
+	}
+}
+
+func TestSharedCredentialsApplyOnlyToExplicitProviders(t *testing.T) {
+	for _, provider := range []string{providerid.Claude, providerid.Codex, providerid.Gemini} {
+		if !SharedCredentialsApplyToAgent(provider) {
+			t.Errorf("shared credentials should apply to %q", provider)
+		}
+	}
+	for _, provider := range []string{providerid.Copilot, providerid.Antigravity, "unknown"} {
+		if SharedCredentialsApplyToAgent(provider) {
+			t.Errorf("shared credentials should not apply to %q", provider)
 		}
 	}
 }

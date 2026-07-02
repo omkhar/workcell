@@ -25,13 +25,8 @@ import (
 )
 
 var (
-	SupportedAgents = map[string]struct{}{
-		providerid.Codex:   {},
-		providerid.Claude:  {},
-		providerid.Copilot: {},
-		providerid.Gemini:  {},
-	}
-	SupportedModes = map[string]struct{}{
+	SupportedAgents = providerid.AllProviderSet()
+	SupportedModes  = map[string]struct{}{
 		"strict":      {},
 		"development": {},
 		"build":       {},
@@ -41,7 +36,7 @@ var (
 		adapters.AgentScopedCredentialKeys(),
 		adapters.SharedCredentialKeys(),
 	)
-	DocumentKeys              = providerid.DocumentKeySet()
+	DocumentKeySet            = providerid.DocumentKeySet()
 	AgentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
 	SharedCredentialKeys      = adapters.SharedCredentialKeys()
 	AllowedRootPolicyKeys     = map[string]struct{}{
@@ -182,7 +177,7 @@ func validatePolicyDocuments(policy map[string]any) error {
 	if !ok {
 		return die("documents must be a TOML table")
 	}
-	return validateAllowedKeys(documents, DocumentKeys, "documents")
+	return validateAllowedKeys(documents, DocumentKeySet, "documents")
 }
 
 func selectedFor(values any, current string, label string, allowedValues map[string]struct{}) (bool, error) {
@@ -774,7 +769,7 @@ func renderPolicyTOML(policy map[string]any) (string, error) {
 	if documents, ok := policy["documents"].(map[string]any); ok && len(documents) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, "[documents]")
-		for _, key := range sortedSetKeys(DocumentKeys) {
+		for _, key := range providerid.DocumentKeys {
 			if value, ok := documents[key]; ok {
 				rendered, err := renderTOMLValue(value)
 				if err != nil {
@@ -966,15 +961,6 @@ func pathsEquivalent(left string, right string) bool {
 }
 
 func sortedKeys(value map[string]any) []string {
-	keys := make([]string, 0, len(value))
-	for key := range value {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
-func sortedSetKeys(value map[string]struct{}) []string {
 	keys := make([]string, 0, len(value))
 	for key := range value {
 		keys = append(keys, key)

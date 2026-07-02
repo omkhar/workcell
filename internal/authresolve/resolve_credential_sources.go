@@ -22,13 +22,8 @@ import (
 )
 
 var (
-	supportedAgents = map[string]struct{}{
-		providerid.Codex:   {},
-		providerid.Claude:  {},
-		providerid.Copilot: {},
-		providerid.Gemini:  {},
-	}
-	supportedModes = map[string]struct{}{
+	supportedAgents = providerid.AllProviderSet()
+	supportedModes  = map[string]struct{}{
 		"strict":      {},
 		"development": {},
 		"build":       {},
