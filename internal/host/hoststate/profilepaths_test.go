@@ -65,7 +65,7 @@ func TestProfileDir(t *testing.T) {
 	}
 }
 
-func TestProfileLimaDirAndDiskDir(t *testing.T) {
+func TestProfileLimaDiskAndStorePaths(t *testing.T) {
 	t.Parallel()
 	lima, err := ProfileLimaDir("/state/colima", "wcl-target")
 	if err != nil {
@@ -80,6 +80,13 @@ func TestProfileLimaDirAndDiskDir(t *testing.T) {
 	}
 	if disk != "/state/colima/_lima/_disks/colima-wcl-target" {
 		t.Errorf("ProfileDiskDir = %q", disk)
+	}
+	store, err := ProfileStorePath("/state/colima", "wcl-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store != "/state/colima/_store/colima-wcl-target.json" {
+		t.Errorf("ProfileStorePath = %q", store)
 	}
 }
 
@@ -254,6 +261,8 @@ func TestProfilePathHelpersRejectInvalidProfile(t *testing.T) {
 	check("ProfileLimaDir", err)
 	_, err = ProfileDiskDir("/state", "../escape")
 	check("ProfileDiskDir", err)
+	_, err = ProfileStorePath("/state", "../escape")
+	check("ProfileStorePath", err)
 	_, err = ProfileTargetStateDir("/state", "local_vm", "colima", "../escape")
 	check("ProfileTargetStateDir", err)
 	_, err = ProfileLockDirPath("/state", "local_vm", "colima", "../escape")

@@ -11,7 +11,8 @@ GOOGLE_CLOUD_PROJECT=my-project
 GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
-If your flow also needs ADC, keep it as a separate reviewed credential file.
+If your flow also needs ADC, export a reviewed copy and keep it as a separate
+credential file under Workcell-managed operator state.
 
 ## 2. Create the injection policy
 
@@ -20,7 +21,7 @@ version = 1
 
 [credentials]
 gemini_env = "/Users/example/.config/workcell/gemini-vertex.env"
-gcloud_adc = "/Users/example/.config/gcloud/application_default_credentials.json"
+gcloud_adc = "/Users/example/.config/workcell/gcloud-adc.json"
 ```
 
 ## 3. What Workcell does with this

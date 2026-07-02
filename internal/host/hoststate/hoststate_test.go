@@ -117,3 +117,132 @@ func TestCleanupStaleSessionAuditDirsSupportsTargetAndLegacyRoots(t *testing.T) 
 		}
 	}
 }
+
+func TestCleanupStaleInjectionBundlesRemovesCopilotTokenSidecar(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	bundleName := "workcell-injections.fixture"
+	bundleDir := filepath.Join(root, bundleName)
+	mountSidecar := filepath.Join(root, bundleName+".mounts.json")
+	tokenSidecar := filepath.Join(root, bundleName+".copilot-token.env.fixture")
+	tokenHandoffDir := filepath.Join(root, bundleName+".copilot-token-handoff.fixture")
+
+	if err := os.MkdirAll(bundleDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(tokenHandoffDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mountSidecar, []byte("[]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenSidecar, []byte("WORKCELL_COPILOT_GITHUB_TOKEN=test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tokenHandoffDir, "copilot-github-token.txt"), []byte("test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-13 * time.Hour)
+	for _, path := range []string{bundleDir, mountSidecar, tokenSidecar, tokenHandoffDir} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := CleanupStaleInjectionBundles(root); err != nil {
+		t.Fatalf("CleanupStaleInjectionBundles() error = %v", err)
+	}
+	for _, path := range []string{bundleDir, mountSidecar, tokenSidecar, tokenHandoffDir} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("stale injection artifact should be removed: %s err=%v", path, err)
+		}
+	}
+}
+
+func TestCleanupStaleInjectionBundlesConservativelyHandlesOrphanCopilotTokenSidecars(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	staleTokenSidecar := filepath.Join(root, "workcell-injections.stale.copilot-token.env.fixture")
+	recentTokenSidecar := filepath.Join(root, "workcell-injections.recent.copilot-token.env.fixture")
+	for _, path := range []string{staleTokenSidecar, recentTokenSidecar} {
+		if err := os.WriteFile(path, []byte("WORKCELL_COPILOT_GITHUB_TOKEN=test\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-13 * time.Hour)
+	if err := os.Chtimes(staleTokenSidecar, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CleanupStaleInjectionBundles(root); err != nil {
+		t.Fatalf("CleanupStaleInjectionBundles() error = %v", err)
+	}
+	if _, err := os.Stat(staleTokenSidecar); !os.IsNotExist(err) {
+		t.Fatalf("stale orphan Copilot token sidecar should be removed, err=%v", err)
+	}
+	if _, err := os.Stat(recentTokenSidecar); err != nil {
+		t.Fatalf("recent orphan Copilot token sidecar should remain: %v", err)
+	}
+}
+
+func TestCleanupStaleInjectionBundlesConservativelyHandlesOrphanCopilotTokenHandoffs(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	staleTokenHandoff := filepath.Join(root, "workcell-injections.stale.copilot-token-handoff.fixture")
+	recentTokenHandoff := filepath.Join(root, "workcell-injections.recent.copilot-token-handoff.fixture")
+	for _, path := range []string{staleTokenHandoff, recentTokenHandoff} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "copilot-github-token.txt"), []byte("test\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-13 * time.Hour)
+	if err := os.Chtimes(staleTokenHandoff, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CleanupStaleInjectionBundles(root); err != nil {
+		t.Fatalf("CleanupStaleInjectionBundles() error = %v", err)
+	}
+	if _, err := os.Stat(staleTokenHandoff); !os.IsNotExist(err) {
+		t.Fatalf("stale orphan Copilot token handoff should be removed, err=%v", err)
+	}
+	if _, err := os.Stat(recentTokenHandoff); err != nil {
+		t.Fatalf("recent orphan Copilot token handoff should remain: %v", err)
+	}
+}
+
+func TestCleanupStaleInjectionBundlesConservativelyHandlesStandaloneCopilotTokenHandoffs(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	staleTokenHandoff := filepath.Join(root, "copilot-token-handoff.stale")
+	recentTokenHandoff := filepath.Join(root, "copilot-token-handoff.recent")
+	for _, path := range []string{staleTokenHandoff, recentTokenHandoff} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "copilot-github-token.txt"), []byte("test\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-13 * time.Hour)
+	if err := os.Chtimes(staleTokenHandoff, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CleanupStaleInjectionBundles(root); err != nil {
+		t.Fatalf("CleanupStaleInjectionBundles() error = %v", err)
+	}
+	if _, err := os.Stat(staleTokenHandoff); !os.IsNotExist(err) {
+		t.Fatalf("stale standalone Copilot token handoff should be removed, err=%v", err)
+	}
+	if _, err := os.Stat(recentTokenHandoff); err != nil {
+		t.Fatalf("recent standalone Copilot token handoff should remain: %v", err)
+	}
+}

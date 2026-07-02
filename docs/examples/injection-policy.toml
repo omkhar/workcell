@@ -11,12 +11,12 @@ gemini = "/Users/example/.config/workcell/gemini-extra.md"
 # below until their adapter support lands.
 
 [credentials]
-codex_auth = "/Users/example/.codex/auth.json"
+codex_auth = "/Users/example/.config/workcell/codex-auth.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
 claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
 gemini_env = "/Users/example/.config/workcell/gemini.env"
 gemini_projects = "/Users/example/.config/workcell/gemini-projects.json"
-gcloud_adc = "/Users/example/.config/gcloud/application_default_credentials.json"
+gcloud_adc = "/Users/example/.config/workcell/gcloud-adc.json"
 
 [credentials.claude_auth]
 # Records the intended macOS Claude auth source. Current Workcell releases
@@ -25,18 +25,18 @@ resolver = "claude-macos-keychain"
 materialization = "ephemeral"
 
 [credentials.github_hosts]
-source = "/Users/example/.config/gh/hosts.yml"
+source = "/Users/example/.config/workcell/github-hosts.yml"
 providers = ["codex", "claude", "gemini"]
 
 [credentials.github_config]
-source = "/Users/example/.config/gh/config.yml"
+source = "/Users/example/.config/workcell/github-config.yml"
 providers = ["codex", "claude", "gemini"]
 
 [ssh]
 enabled = true
-config = "/Users/example/.ssh/config"
-known_hosts = "/Users/example/.ssh/known_hosts"
-identities = ["/Users/example/.ssh/id_workcell"]
+config = "/Users/example/.config/workcell/ssh/config"
+known_hosts = "/Users/example/.config/workcell/ssh/known_hosts"
+identities = ["/Users/example/.config/workcell/ssh/id_workcell"]
 providers = ["codex", "claude", "gemini"]
 modes = ["strict", "development", "build"]
 

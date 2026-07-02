@@ -489,6 +489,32 @@ func TestInitSetStatusUnsetRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSetRejectsHostProviderStateSource(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	policyPath := filepath.Join(root, "injection-policy.toml")
+	managedRoot := filepath.Join(root, "credentials")
+	sourcePath := filepath.Join(root, ".codex", "auth.json")
+	writeFile(t, sourcePath, "{}\n", 0o600)
+
+	if got := runAuthPolicy("init", "--policy", policyPath, "--managed-root", managedRoot); got.code != 0 {
+		t.Fatalf("Run(init) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+
+	got := runAuthPolicy(
+		"set",
+		"--policy", policyPath,
+		"--managed-root", managedRoot,
+		"--agent", "codex",
+		"--credential", "codex_auth",
+		"--source", sourcePath,
+	)
+	if got.code != 1 {
+		t.Fatalf("Run(set) = %d stdout=%q stderr=%q", got.code, got.stdout, got.stderr)
+	}
+	mustContain(t, got.stderr, "host provider/auth state")
+}
+
 func TestSetResolverAndStatus(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

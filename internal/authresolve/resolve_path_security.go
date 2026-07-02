@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/host/authstate"
 	"github.com/omkhar/workcell/internal/secretfile"
 )
 
@@ -23,6 +24,9 @@ func validateSourcePath(raw any, label, base string) (string, error) {
 		return "", fmt.Errorf("%s does not exist: %s", label, source)
 	}
 	if err := requireNoSymlinkInPathChain(source, label); err != nil {
+		return "", err
+	}
+	if err := authstate.RejectCredentialSource(source, label); err != nil {
 		return "", err
 	}
 	return source, nil

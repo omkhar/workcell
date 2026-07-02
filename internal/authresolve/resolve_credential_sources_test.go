@@ -223,6 +223,44 @@ func TestRunMetadataModeRejectsSharedCredentialStringForm(t *testing.T) {
 	}
 }
 
+func TestRunMetadataModeRejectsHostProviderStateSource(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	policyPath := filepath.Join(root, "policy.toml")
+	githubHostsPath := filepath.Join(root, ".config", "gh", "hosts.yml")
+	if err := os.MkdirAll(filepath.Dir(githubHostsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writePolicy(t, githubHostsPath, "github.com:\n  oauth_token: fixture\n")
+	writePolicy(t, policyPath, strings.Join([]string{
+		"version = 1",
+		"[credentials.github_hosts]",
+		`source = "` + githubHostsPath + `"`,
+		`providers = ["codex"]`,
+	}, "\n")+"\n")
+
+	outputRoot := filepath.Join(root, "out")
+	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runResolveCredentialSources(t, []string{
+		"--policy", policyPath,
+		"--agent", "codex",
+		"--mode", "strict",
+		"--resolution-mode", "metadata",
+		"--output-policy", filepath.Join(outputRoot, "resolved-policy.toml"),
+		"--output-metadata", filepath.Join(outputRoot, "resolver-metadata.json"),
+		"--output-root", outputRoot,
+	}, nil)
+	if code != 1 {
+		t.Fatalf("Run() = %d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "host provider/auth state") {
+		t.Fatalf("stderr %q missing host provider/auth state rejection", stderr)
+	}
+}
+
 func TestRunLaunchModeFailsClosedWithoutSupportedExportPath(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

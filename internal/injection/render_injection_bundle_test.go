@@ -418,6 +418,101 @@ func TestRenderCredentialsRejectsSharedCredentialStringForm(t *testing.T) {
 	}
 }
 
+func TestRenderSourcesRejectHostProviderState(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	output := filepath.Join(root, "bundle")
+	if err := os.MkdirAll(output, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeText(t, filepath.Join(root, ".docker", "config.json"), "{}\n", 0o600)
+	writeText(t, filepath.Join(root, ".config", "gh", "hosts.yml"), "github.com:\n  oauth_token: fixture\n", 0o600)
+	writeText(t, filepath.Join(root, ".config", "gcloud", "application_default_credentials.json"), `{"type":"authorized_user"}`+"\n", 0o600)
+
+	for _, tc := range []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "documents",
+			run: func() error {
+				_, err := renderDocuments(map[string]any{
+					"documents": map[string]any{
+						"common": filepath.Join(root, ".docker", "config.json"),
+					},
+				}, Path(output), Path(root))
+				return err
+			},
+		},
+		{
+			name: "copies",
+			run: func() error {
+				_, err := renderCopies(map[string]any{
+					"copies": []any{
+						map[string]any{
+							"source":         filepath.Join(root, ".config", "gh", "hosts.yml"),
+							"target":         "/state/injected/hosts.yml",
+							"classification": "public",
+						},
+					},
+				}, Path(output), Path(root), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "copies public directory containing provider state",
+			run: func() error {
+				_, err := renderCopies(map[string]any{
+					"copies": []any{
+						map[string]any{
+							"source":         filepath.Join(root, ".config"),
+							"target":         "/state/injected/config",
+							"classification": "public",
+						},
+					},
+				}, Path(output), Path(root), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "copies secret directory containing provider state",
+			run: func() error {
+				_, err := renderCopies(map[string]any{
+					"copies": []any{
+						map[string]any{
+							"source":         filepath.Join(root, ".config"),
+							"target":         "~/.config/workcell/config",
+							"classification": "secret",
+						},
+					},
+				}, Path(output), Path(root), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "credentials",
+			run: func() error {
+				_, err := renderCredentials(map[string]any{
+					"credentials": map[string]any{
+						"gcloud_adc": map[string]any{
+							"source":    filepath.Join(root, ".config", "gcloud", "application_default_credentials.json"),
+							"providers": []any{"gemini"},
+						},
+					},
+				}, Path(output), "gemini", "strict")
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			if err == nil || !strings.Contains(err.Error(), "host provider/auth state") {
+				t.Fatalf("%s error = %v, want host provider/auth state rejection", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestRenderHelpersAndManifestParity(t *testing.T) {
 	t.Parallel()
 

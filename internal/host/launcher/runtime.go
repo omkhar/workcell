@@ -14,18 +14,21 @@ import (
 	"time"
 )
 
-var codexVersionPattern = regexp.MustCompile(`(?m)^\s*ARG CODEX_VERSION=(.+)$`)
-
-func ExtractCodexVersion(dockerfilePath string) (string, error) {
+func ExtractDockerfileArg(dockerfilePath, argName string) (string, error) {
 	content, err := os.ReadFile(dockerfilePath)
 	if err != nil {
 		return "", err
 	}
-	match := codexVersionPattern.FindStringSubmatch(string(content))
+	argPattern := regexp.MustCompile(`(?m)^\s*ARG ` + regexp.QuoteMeta(argName) + `=(.+)$`)
+	match := argPattern.FindStringSubmatch(string(content))
 	if match == nil {
-		return "", errors.New("unable to extract CODEX_VERSION from Dockerfile")
+		return "", errors.New("unable to extract " + argName + " from Dockerfile")
 	}
 	return strings.TrimSpace(match[1]), nil
+}
+
+func ExtractCodexVersion(dockerfilePath string) (string, error) {
+	return ExtractDockerfileArg(dockerfilePath, "CODEX_VERSION")
 }
 
 // ValidateSecurityOptions parses the JSON returned by

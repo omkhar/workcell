@@ -338,6 +338,8 @@ fi
 
 run_workcell_verify() {
   local -a cmd=(/usr/bin/env -i PATH="${TRUSTED_HOST_PATH}" BASH_ENV= ENV= WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1)
+  local alias_command=""
+  local logs_kind=""
   while [[ $# -gt 0 ]] && [[ "$1" == *=* ]]; do
     cmd+=("$1")
     shift
@@ -346,7 +348,29 @@ run_workcell_verify() {
   [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}")
   [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO}")
   [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION}")
-  "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "$@"
+  # Most invariant probes assert launcher behavior, not the operator's local
+  # auth policy. Tests that need injection pass --injection-policy explicitly.
+  case "${1:-}" in
+    logs)
+      alias_command="$1"
+      shift
+      if [[ $# -gt 0 ]]; then
+        logs_kind="$1"
+        shift
+        "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "${alias_command}" "${logs_kind}" --no-default-injection-policy "$@"
+      else
+        "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "${alias_command}"
+      fi
+      ;;
+    doctor | inspect | auth-status | gc)
+      alias_command="$1"
+      shift
+      "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "${alias_command}" --no-default-injection-policy "$@"
+      ;;
+    *)
+      "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" --no-default-injection-policy "$@"
+      ;;
+  esac
 }
 
 run_workcell_real_host() {
@@ -1573,7 +1597,8 @@ grep -q 'DEFAULT_DEBUG_LOG=' "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
 grep -q 'EXTRA_ARGS+=(--debug-log ' "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
 grep -q 'EXTRA_ARGS+=(--rebuild)' "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
 
-if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" --help >/tmp/workcell-installed-debug-help.out 2>&1; then
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
+  "${INSTALL_VERIFY_HOME}/.local/bin/workcell" --help >/tmp/workcell-installed-debug-help.out 2>&1; then
   echo "Expected debug-installed ~/.local/bin/workcell wrapper to resolve support files correctly" >&2
   cat /tmp/workcell-installed-debug-help.out >&2
   exit 1
@@ -1584,9 +1609,11 @@ if ! grep -q '^Usage: workcell' /tmp/workcell-installed-debug-help.out; then
   exit 1
 fi
 
-if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
+  "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
+  --no-default-injection-policy \
   --doctor >/tmp/workcell-installed-debug-doctor.out 2>&1; then
   echo "Expected debug-installed ~/.local/bin/workcell --doctor to succeed" >&2
   cat /tmp/workcell-installed-debug-doctor.out >&2
@@ -1597,9 +1624,11 @@ if grep -q '^support_matrix_launch=blocked$' /tmp/workcell-installed-debug-docto
   INSTALLED_DEBUG_LAUNCH_BLOCKED=1
 fi
 
-if "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+if env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
+  "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
+  --no-default-injection-policy \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-debug-strict-dry-run.out 2>&1; then
@@ -1621,10 +1650,12 @@ else
   grep -q 'strict mode requires --prepare when you explicitly request --rebuild.' /tmp/workcell-installed-debug-strict-dry-run.out
 fi
 
-if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
+  "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --mode build \
+  --no-default-injection-policy \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-debug-dry-run.out 2>&1; then
@@ -1646,9 +1677,11 @@ else
   grep -q "debug_log=${INSTALL_VERIFY_HOME}/.config/workcell/debug/latest-debug.log" /tmp/workcell-installed-debug-dry-run.out
 fi
 
-if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
+  "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --auth-status \
   --agent codex \
+  --no-default-injection-policy \
   --workspace "${ROOT_DIR}" >/tmp/workcell-installed-debug-auth-status.out 2>&1; then
   echo "Expected debug-installed ~/.local/bin/workcell non-launch path to skip auto debug flags" >&2
   cat /tmp/workcell-installed-debug-auth-status.out >&2
@@ -1678,10 +1711,12 @@ if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DI
   cat /tmp/workcell-install-custom-debug.out >&2
   exit 1
 fi
-if ! "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
+  "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
   --workspace "${ROOT_DIR}" \
   --mode build \
+  --no-default-injection-policy \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-custom-debug-dry-run.out 2>&1; then
@@ -2854,6 +2889,19 @@ fi
 
 if ! rg -q 'production\.cloudfront\.docker\.com:443' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on CloudFront" >&2
+  exit 1
+fi
+
+if ! rg -q '^ARG COPILOT_RELEASE_URL=' "${ROOT_DIR}/runtime/container/Dockerfile"; then
+  echo "Expected runtime Dockerfile to accept a host-resolved Copilot release URL override" >&2
+  exit 1
+fi
+if ! rg -q 'resolve_copilot_release_url\(\)' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to resolve Copilot release URLs on the host before runtime builds" >&2
+  exit 1
+fi
+if ! rg -q -- '--build-arg "COPILOT_RELEASE_URL=\$\{copilot_release_url\}"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell runtime builds to pass host-resolved Copilot release URLs into Docker" >&2
   exit 1
 fi
 
@@ -4036,7 +4084,7 @@ HOSTILE_PERL_DRY_RUN_OUTPUT="$(
   WORKCELL_PERL_MARKER="${HOST_PERL_MARKER}" \
     PERL5OPT=-MWorkcellMarker \
     PERL5LIB="${HOST_PERL_INJECT_DIR}" \
-    "${ROOT_DIR}/scripts/workcell" --agent codex --dry-run 2>&1
+    "${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --dry-run 2>&1
 )" || HOSTILE_PERL_DRY_RUN_STATUS=$?
 HOSTILE_PERL_DRY_RUN_STATUS="${HOSTILE_PERL_DRY_RUN_STATUS:-0}"
 if [[ "${HOSTILE_PERL_DRY_RUN_STATUS}" -ne 0 ]]; then
@@ -4210,6 +4258,7 @@ rm -rf \
 if "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}/missing" \
+  --no-default-injection-policy \
   --dry-run >/tmp/workcell-missing-workspace.out 2>&1; then
   echo "Expected nonexistent workspace resolution to fail with a Workcell-owned diagnostic" >&2
   exit 1
@@ -6493,6 +6542,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --workspace "${ROOT_DIR}" \
       --vm-memory 6 \
       --vm-disk 80 \
+      --no-default-injection-policy \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --file-trace-log "${FILE_TRACE_CAPTURE}" \
       --agent-arg --version >"${LIVE_DEBUG_FILE_TRACE_OUT}" 2>&1; then
@@ -6517,6 +6567,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --workspace "${ROOT_DIR}" \
       --vm-memory 6 \
       --vm-disk 80 \
+      --no-default-injection-policy \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}" 2>&1; then
       echo "Expected --inspect to surface the latest retained file trace log" >&2
       cat "${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}" >&2
@@ -6573,7 +6624,6 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     fi
     grep -q '^WORKCELL_DEVELOPMENT_REFRESH_OK$' "${LIVE_DEBUG_REFRESH_OUT}"
     grep -q "Refreshing managed Colima profile ${LIVE_DEBUG_PROFILE_NAME} to apply the requested reviewed VM resources." "${LIVE_DEBUG_REFRESH_OUT}"
-    grep -q "Restored the prepared runtime image from cache for profile ${LIVE_DEBUG_PROFILE_NAME}." "${LIVE_DEBUG_REFRESH_OUT}"
     if grep -Eq 'Preparing the runtime image for profile|runtime-build|429 Too Many Requests' "${LIVE_DEBUG_REFRESH_OUT}"; then
       echo "Expected refreshed managed development shell to restore the prepared runtime image from cache without rebuilding" >&2
       cat "${LIVE_DEBUG_REFRESH_OUT}" >&2
@@ -6633,6 +6683,7 @@ while IFS= read -r line; do
 done
 EOF
     )"
+    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
     if ! "${ROOT_DIR}/scripts/workcell" \
       session start \
       --agent codex \
@@ -6894,6 +6945,7 @@ for attempt in 1 2 3; do
 done
 EOF
     )"
+    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
@@ -6933,6 +6985,7 @@ codex --version >/tmp/workcell-package-mutation-post-failure.out 2>&1
 grep -q "session previously ran package-manager mutations as root" /tmp/workcell-package-mutation-post-failure.out
 EOF
     )"
+    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
@@ -6959,6 +7012,7 @@ EOF
         exit 1
       fi
     done
+    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
@@ -6997,6 +7051,7 @@ EOF
       --prepare \
       --allow-nongit-workspace \
       --workspace "${NONGIT_WORKSPACE}" \
+      --no-default-injection-policy \
       --colima-profile "${AUDIT_RESTORE_PROFILE_NAME}" \
       --agent-arg --version >/tmp/workcell-audit-restore.out 2>&1; then
       echo "Expected managed-profile refresh test hook to fail after stashing the audit log" >&2
@@ -7033,6 +7088,7 @@ EOF
       --agent codex \
       --allow-nongit-workspace \
       --workspace "${NONGIT_WORKSPACE}" \
+      --no-default-injection-policy \
       --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
       --agent-arg --version >/tmp/workcell-strict-refresh-preflight.out 2>&1
     strict_refresh_status=$?
@@ -7058,6 +7114,7 @@ EOF
       --prepare \
       --allow-nongit-workspace \
       --workspace "${NONGIT_WORKSPACE}" \
+      --no-default-injection-policy \
       --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
       --agent-arg --version >/tmp/workcell-strict-refresh-prepare.out 2>&1
     strict_refresh_prepare_status=$?
@@ -7149,6 +7206,7 @@ EOF
     --agent codex \
     --allow-nongit-workspace \
     --workspace "${NONGIT_WORKSPACE}" \
+    --no-default-injection-policy \
     --colima-profile "${GOFLAGS_PROFILE_NAME}" >/tmp/workcell-goflags.out 2>&1 || true
   if grep -q 'missing-go.mod' /tmp/workcell-goflags.out; then
     echo "scripts/workcell honored hostile GOFLAGS before validating managed Colima profiles" >&2

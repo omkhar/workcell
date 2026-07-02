@@ -41,6 +41,7 @@ ensure_session_audit_state() {
   rm -f "${SESSION_AUDIT_STATE_FILE}"
 }
 resolve_codex_release_url() { return 0; }
+resolve_copilot_release_url() { return 0; }
 refresh_managed_profile() {
   REFRESH_COUNT=$((REFRESH_COUNT + 1))
   PROFILE_VALIDATED=0

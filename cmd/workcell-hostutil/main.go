@@ -259,6 +259,7 @@ func helperSubcommands() []helperSubcommand {
 		{"manifest-metadata", 1, 1, cmdHelperManifestMetadata},
 		{"resolver-metadata", 1, 1, cmdHelperResolverMetadata},
 		{"workspace-cache-key", 1, 1, cmdHelperWorkspaceCacheKey},
+		{"extract-dockerfile-arg", 2, 2, cmdHelperExtractDockerfileArg},
 		{"extract-codex-version", 1, 1, cmdHelperExtractCodexVersion},
 		{"validate-security-options", 1, 1, cmdHelperValidateSecurityOptions},
 		{"validate-compat-security-options", 1, 1, cmdHelperValidateCompatSecurityOptions},
@@ -689,6 +690,15 @@ func cmdHelperWorkspaceCacheKey(args []string) error {
 
 func cmdHelperExtractCodexVersion(args []string) error {
 	value, err := launcher.ExtractCodexVersion(args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func cmdHelperExtractDockerfileArg(args []string) error {
+	value, err := launcher.ExtractDockerfileArg(args[0], args[1])
 	if err != nil {
 		return err
 	}

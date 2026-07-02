@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/omkhar/workcell/internal/host/authstate"
 	"github.com/omkhar/workcell/internal/pathutil"
 )
 
@@ -121,7 +122,8 @@ func validateSourcePath(raw any, label string, base Path) (Path, error) {
 	if err != nil {
 		return Path(""), err
 	}
-	if _, err := os.Stat(source.String()); err != nil {
+	info, err := os.Stat(source.String())
+	if err != nil {
 		return Path(""), fmt.Errorf("%s does not exist: %s", label, source)
 	}
 	offender, err := findUnsafeSymlinkInPathChain(source.String())
@@ -130,6 +132,14 @@ func validateSourcePath(raw any, label string, base Path) (Path, error) {
 	}
 	if offender != "" {
 		return Path(""), fmt.Errorf("%s must not be a symlink: %s", label, offender)
+	}
+	if err := authstate.RejectCredentialSource(source.String(), label); err != nil {
+		return Path(""), err
+	}
+	if info.IsDir() {
+		if err := authstate.RejectCredentialDirectorySource(source.String(), label); err != nil {
+			return Path(""), err
+		}
 	}
 	return source, nil
 }
