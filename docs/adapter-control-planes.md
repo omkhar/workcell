@@ -11,7 +11,8 @@ from:
 
 1. immutable adapter baselines baked into the image
 2. explicit injection-policy inputs staged read-only for the session
-3. selected workspace instruction imports such as repo-local `AGENTS.md`
+3. selected workspace instruction imports such as repo-local `AGENTS.md`,
+   where the provider adapter enables native instructions
 
 Mutable provider state stays session-local. It is not written back into the
 adapter baseline.
@@ -22,20 +23,19 @@ adapter baseline.
 |---|---|---|
 | Codex | `config.toml`, `managed_config.toml`, `requirements.toml`, `rules/`, `mcp/config.toml`, rendered `AGENTS.md`, optional `auth.json` | rules are immutable by default and can become session-local writable only in explicit lower-assurance cases |
 | Claude | `settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, optional API key helper | the reviewed Bash hook is defense in depth; MCP defaults are empty |
+| GitHub Copilot CLI | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, host-mounted token handoff plus transient runtime handoff, logs, and `~/.config/github-copilot` | supported Copilot token credential: `copilot_github_token`, staged through reviewed host-side inputs, removed from direct runtime mounts including the staged direct-mount copy, passed through a temporary handoff mount outside provider state, scrubbed from PID 1 by running the Workcell entrypoint without Docker `--init` for token handoff launches, and exported as `COPILOT_GITHUB_TOKEN` only to the managed child after unlinking the runtime handoff file; host `gh` auth, host keychains, host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`, `~/.cache/github-copilot`), custom instructions, and skill/dynamic-retrieval surfaces are not safe-path inputs |
 | Gemini | `settings.json`, rendered `GEMINI.md`, `.env`, `oauth_creds.json`, `projects.json`, `trustedFolders.json` | `breakglass` restores Gemini's own folder-trust prompt; `gcloud_adc` is supplemental to Vertex config in `gemini_env` |
 
-## Planned provider control planes
+## Current and planned provider control planes
 
-GitHub Copilot CLI is planned as the next Tier 1 provider adapter. It is not
-seeded by current releases. Before support is claimed, the Copilot adapter must
-own a session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, `~/.copilot`
-settings, permissions, sessions, logs, plugin state, hooks, MCP/LSP config,
-and any imported instruction files.
-
-The future adapter must reject host `~/.copilot`, keychain access, `GH_TOKEN`,
-`GITHUB_TOKEN`, ambient GitHub CLI fallback, unreviewed plugin or MCP
-expansion, remote-control sharing, and provider auto-update state as implicit
-Tier 1 inputs.
+GitHub Copilot CLI is seeded as a Tier 1 provider adapter. The adapter owns a
+session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, token handoff, logs, and
+cache/config directories. It rejects host `~/.copilot`, keychain access,
+host `~/.config/github-copilot`, host `~/.cache/github-copilot`, `GH_TOKEN`,
+`GITHUB_TOKEN`, ambient GitHub CLI fallback, custom instructions, repo-local
+skill/dynamic-retrieval expansion, unreviewed plugin or MCP expansion,
+remote-control sharing, and provider auto-update state as implicit Tier 1
+inputs.
 
 Shared cross-provider state can also seed the current supported adapters:
 
@@ -55,7 +55,8 @@ host homes, and provider caches must not become implicit Tier 1 inputs.
 
 ## Instruction layering
 
-Provider docs are rendered in this order:
+Provider docs are rendered in this order for adapters that enable native
+instruction files:
 
 1. adapter baseline doc
 2. workspace `AGENTS.md` when present
@@ -68,16 +69,15 @@ control plane masked on the safe path.
 
 ## Autonomy mapping
 
-| Workcell setting | Codex | Claude | Gemini |
-|---|---|---|---|
-| `--agent-autonomy yolo` | `--ask-for-approval never` | `--permission-mode bypassPermissions` | `--approval-mode yolo` |
-| `--agent-autonomy prompt` | `--ask-for-approval on-request` | `--permission-mode default` | `--approval-mode default` |
+| Workcell setting | Codex | Claude | Copilot | Gemini |
+|---|---|---|---|---|
+| `--agent-autonomy yolo` | `--ask-for-approval never` | `--permission-mode bypassPermissions` | `--available-tools=view,create,edit,apply_patch,grep,glob --allow-tool=read --allow-tool=write --no-ask-user` | `--approval-mode yolo` |
+| `--agent-autonomy prompt` | `--ask-for-approval on-request` | `--permission-mode default` | `--available-tools=view,create,edit,apply_patch,grep,glob` | `--approval-mode default` |
 
-Copilot and Antigravity autonomy mappings are intentionally absent until their
-adapters land. The planned implementations must map prompt mode to each
-provider's normal approval flow and yolo mode only to reviewed permissions
-inside the Workcell runtime, while blocking user-supplied flags that silently
-widen trust.
+Copilot maps prompt and yolo modes through the reviewed provider wrapper,
+blocks shell access by omission from `--available-tools`, and rejects
+user-supplied flags that silently widen trust. Antigravity autonomy mappings
+are intentionally absent until its adapter lands.
 
 Unsafe provider-native attempts to override those managed flags are blocked on
 the managed path.
@@ -122,21 +122,23 @@ Workcell seeds Gemini's trusted-folders state for `/workspace` on the managed
 path so masked ephemeral sessions do not force a restart-based trust prompt.
 `breakglass` restores Gemini's own folder-trust flow.
 
-### Planned provider trust and permissions
+### Provider trust and permissions
 
-Copilot support must treat permissive CLI options, saved permissions, remote
-control, plugins, hooks, MCP/LSP config, and repository-local Copilot settings
-as managed control-plane inputs. Current releases do not import or trust those
-paths because `--agent copilot` is not implemented.
+Copilot support treats permissive CLI options, saved permissions, remote
+control, plugins, hooks, skills, MCP/LSP config, custom instructions,
+repository-local Copilot settings, and dynamic retrieval as managed
+control-plane inputs. Current releases stage only the reviewed session-local
+Copilot home/cache and explicit token input mount, not host Copilot or ambient
+GitHub CLI state.
 
 Antigravity support must do the same once official CLI provenance identifies
 its settings, permission, plugin, MCP, hook, and instruction surfaces. Current
 releases do not import or trust those paths because `--agent antigravity` is
 not implemented.
 
-Future strict-mode support must also scrub provider telemetry, OpenTelemetry,
-and content-capture environment variables by default; any opt-in path must be
-lower assurance, acknowledged, audited, and tested.
+Strict mode scrubs provider telemetry, OpenTelemetry, and content-capture
+environment variables by default; any opt-in path must be lower assurance,
+acknowledged, audited, and tested.
 
 ## MCP posture
 

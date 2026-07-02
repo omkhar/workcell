@@ -32,7 +32,8 @@ Workcell workflows.
 | GitHub attestations on tagged releases | tested at release time | `release.yml` publish job |
 | full macOS Colima boundary proof | gap | local certification lane exists, but it is still not repo-required proof |
 | exhaustive live-provider auth UX across all providers | gap | manual provider-e2e path exists, but automation is partial |
-| GitHub Copilot CLI and Google Antigravity CLI provider parity | planned gap | roadmap and provider docs record the target support bar; no adapter, auth key, quickstart, scenario evidence, or live certification exists yet |
+| GitHub Copilot CLI provider parity | tested for deterministic adapter path; live certification-only gate | adapter, auth key, docs, deterministic scenario evidence, smoke coverage, and release pin checks exist; live staged-token `copilot -p` certification is required before signing or publishing changes that promote or materially alter the Copilot support claim |
+| Google Antigravity CLI provider parity | planned gap | roadmap and provider docs record the target support bar; no adapter, auth key, quickstart, scenario evidence, or live certification exists yet |
 
 ## Notes
 
@@ -43,4 +44,4 @@ most mature host-side operator surfaces are auth/policy inspection plus
 session inventory, detached control, delete, timeline, export, and
 isolated-workspace remediation. The biggest remaining gaps are local macOS
 boundary proof, deeper end-to-end live-provider coverage, and the planned
-Copilot and Antigravity adapter parity phases.
+Antigravity adapter parity phase.

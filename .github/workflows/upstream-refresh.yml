@@ -46,7 +46,14 @@ jobs:
         run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
 
       - name: Refresh pinned upstreams
-        run: ./scripts/update-upstream-pins.sh --apply
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
 
       - id: changes
         name: Detect refreshed content
@@ -59,8 +66,14 @@ jobs:
 
       - name: Re-check refreshed pin state
         if: steps.changes.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          ./scripts/update-upstream-pins.sh --check
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
           ./scripts/check-pinned-inputs.sh
 
       - id: existing_pr

@@ -5,6 +5,8 @@ AGENT_NAME="${AGENT_NAME:-}"
 AGENT_UI="${AGENT_UI:-cli}"
 HOME="${HOME:-/state/agent-home}"
 CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+COPILOT_HOME="${COPILOT_HOME:-${HOME}/.copilot}"
+COPILOT_CACHE_HOME="${COPILOT_CACHE_HOME:-${HOME}/.cache/github-copilot}"
 CODEX_PROFILE="${CODEX_PROFILE:-strict}"
 WORKCELL_MODE="${WORKCELL_MODE:-${CODEX_PROFILE}}"
 WORKCELL_AGENT_AUTONOMY="${WORKCELL_AGENT_AUTONOMY:-yolo}"
@@ -12,6 +14,8 @@ WORKCELL_ALLOW_ARBITRARY_COMMAND="${WORKCELL_ALLOW_ARBITRARY_COMMAND:-0}"
 TMPDIR="${TMPDIR:-/state/tmp}"
 WORKSPACE="${WORKSPACE:-/workspace}"
 export ADAPTER_ROOT="/opt/workcell/adapters"
+readonly WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR:-/opt/workcell/copilot-token-handoff}"
+readonly WORKCELL_COPILOT_HOST_TOKEN_FILE="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}/copilot-github-token.txt"
 
 # shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh
@@ -103,6 +107,61 @@ run_command_with_file_trace() {
   return "${status}"
 }
 
+exec_command_without_file_trace() {
+  exec "$@"
+}
+
+stage_copilot_token_handoff_file() {
+  local token=""
+  local handoff_dir="${TMPDIR:-/state/tmp}"
+  local token_file=""
+  local host_token_file="${WORKCELL_COPILOT_HOST_TOKEN_FILE}"
+  local uid=""
+  local gid=""
+  local user_name=""
+
+  [[ "${AGENT_NAME}" == "copilot" ]] || return 0
+  [[ ! -r "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}" ]] || {
+    unset WORKCELL_COPILOT_GITHUB_TOKEN
+    return 0
+  }
+  if [[ -r "${host_token_file}" ]]; then
+    token="$(tr -d '\r\n' <"${host_token_file}")"
+  fi
+  [[ -n "${token}" ]] || return 0
+
+  unset WORKCELL_COPILOT_GITHUB_TOKEN
+  mkdir -p "${handoff_dir}"
+  if [[ "$(id -u)" == "0" ]]; then
+    chmod 1777 "${handoff_dir}"
+  fi
+  if workcell_should_reexec_as_runtime_user; then
+    uid="$(workcell_runtime_host_uid)"
+    gid="$(workcell_runtime_host_gid)"
+    user_name="$(workcell_prepare_runtime_identity)"
+    token_file="$(
+      printf '%s\n' "${token}" |
+        USER="${user_name}" LOGNAME="${user_name}" env -u WORKCELL_COPILOT_GITHUB_TOKEN \
+          setpriv --reuid "${uid}" --regid "${gid}" --init-groups /bin/bash -c $'set -euo pipefail\ntoken_file="$(mktemp "${TMPDIR:-/state/tmp}/workcell-copilot-token.XXXXXX")"\ncat >"${token_file}"\nchmod 0600 "${token_file}"\nprintf "%s\\n" "${token_file}"\n'
+    )"
+  else
+    token_file="$(mktemp "${handoff_dir}/workcell-copilot-token.XXXXXX")"
+    printf '%s\n' "${token}" >"${token_file}"
+    chmod 0600 "${token_file}"
+  fi
+  export WORKCELL_COPILOT_TOKEN_FILE="${token_file}"
+  workcell_write_readonly_state_file "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}" "${token_file}"
+  if [[ -r "${host_token_file}" ]]; then
+    rm -f -- "${host_token_file}" || {
+      echo "Workcell could not remove the mounted Copilot token handoff file." >&2
+      exit 2
+    }
+  fi
+  exec env -u WORKCELL_COPILOT_GITHUB_TOKEN \
+    WORKCELL_COPILOT_TOKEN_FILE="${WORKCELL_COPILOT_TOKEN_FILE}" \
+    /bin/bash /usr/local/libexec/workcell/entrypoint.sh "$@"
+}
+
 umask 077
 
 if [[ "$$" -ne 1 ]]; then
@@ -138,6 +197,7 @@ if [[ "$(id -u)" == "0" ]]; then
   workcell_write_runtime_state
 fi
 workcell_verify_control_plane_path "/usr/local/libexec/workcell/sudo-wrapper.sh"
+stage_copilot_token_handoff_file "$@"
 
 if workcell_should_reexec_as_runtime_user; then
   workcell_verify_control_plane_path "/usr/local/libexec/workcell/apt-broker.sh"
@@ -161,6 +221,9 @@ if [[ $# -eq 0 ]]; then
       ;;
     claude:cli)
       set -- claude
+      ;;
+    copilot:cli)
+      set -- copilot
       ;;
     gemini:cli)
       set -- gemini
@@ -195,6 +258,11 @@ else
           set -- /usr/local/libexec/workcell/core/claude "${@:2}"
         fi
         ;;
+      copilot)
+        if [[ "$1" == "copilot" ]]; then
+          set -- /usr/local/libexec/workcell/core/copilot "${@:2}"
+        fi
+        ;;
       gemini)
         if [[ "$1" == "gemini" ]]; then
           set -- /usr/local/libexec/workcell/core/gemini "${@:2}"
@@ -214,4 +282,4 @@ if workcell_file_trace_enabled; then
   run_command_with_file_trace "$@"
   exit "$?"
 fi
-exec "$@"
+exec_command_without_file_trace "$@"

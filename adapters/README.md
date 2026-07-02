@@ -7,12 +7,12 @@ Current adapters:
 
 - `codex/`
 - `claude/`
+- `copilot/`
 - `gemini/`
 
 Planned fail-closed scaffolds:
 
 - `antigravity/`
-- `copilot/`
 
 Adapter rules:
 

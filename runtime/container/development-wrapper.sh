@@ -23,6 +23,8 @@ pin_runtime_env() {
 
   HOME=/state/agent-home
   CODEX_HOME="${HOME}/.codex"
+  COPILOT_HOME="${HOME}/.copilot"
+  COPILOT_CACHE_HOME="${HOME}/.cache/github-copilot"
   TMPDIR=/state/tmp
   state_mode="$(workcell_runtime_state_value WORKCELL_MODE || true)"
   state_profile="$(workcell_runtime_state_value CODEX_PROFILE || true)"
@@ -36,13 +38,24 @@ pin_runtime_env() {
   CODEX_PROFILE="${state_profile:-${pid1_profile:-${WORKCELL_MODE}}}"
   WORKCELL_AGENT_AUTONOMY="${state_autonomy:-${pid1_autonomy:-yolo}}"
   WORKCELL_CONTAINER_MUTABILITY="${state_mutability:-${pid1_mutability:-ephemeral}}"
-  export HOME CODEX_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY
+  export HOME CODEX_HOME COPILOT_HOME COPILOT_CACHE_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY
 }
 
 sanitize_development_env() {
+  local env_name=""
+
   unset BASH_ENV
   unset ENV
   unset CLAUDE_CONFIG_DIR
+  unset GH_CONFIG_DIR
+  unset GH_HOST
+  unset GH_TOKEN
+  unset GITHUB_TOKEN
+  unset PLAIN_DIFF
+  unset USE_BUILTIN_RIPGREP
+  for env_name in "${!COPILOT_@}" "${!GITHUB_COPILOT_@}"; do
+    unset "${env_name}"
+  done
   unset DISABLE_AUTOUPDATER
   unset NODE_OPTIONS
   unset NODE_PATH
@@ -53,6 +66,27 @@ sanitize_development_env() {
   unset LD_LIBRARY_PATH
   unset SSL_CERT_FILE
   unset SSL_CERT_DIR
+  unset OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+  unset OTEL_EXPORTER_OTLP_ENDPOINT
+  unset OTEL_EXPORTER_OTLP_HEADERS
+  unset OTEL_EXPORTER_OTLP_PROTOCOL
+  unset OTEL_EXPORTER_OTLP_TIMEOUT
+  unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+  unset OTEL_EXPORTER_OTLP_TRACES_HEADERS
+  unset OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+  unset OTEL_EXPORTER_OTLP_TRACES_TIMEOUT
+  unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+  unset OTEL_EXPORTER_OTLP_METRICS_HEADERS
+  unset OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
+  unset OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
+  unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+  unset OTEL_EXPORTER_OTLP_LOGS_HEADERS
+  unset OTEL_EXPORTER_OTLP_LOGS_PROTOCOL
+  unset OTEL_EXPORTER_OTLP_LOGS_TIMEOUT
+  unset OTEL_RESOURCE_ATTRIBUTES
+  unset OTEL_TRACES_EXPORTER
+  unset OTEL_METRICS_EXPORTER
+  unset OTEL_LOGS_EXPORTER
   workcell_sanitize_git_runtime_env
   export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
   export PATH="${TRUSTED_PATH}"
@@ -75,6 +109,7 @@ development_wrapper_protected_runtime_match() {
   for protected_path in \
     /usr/local/libexec/workcell/real/codex \
     /usr/local/libexec/workcell/real/claude \
+    /usr/local/libexec/workcell/real/copilot \
     /usr/local/libexec/workcell/real/node \
     /usr/local/libexec/workcell/real/git \
     /usr/local/libexec/workcell/core/git \
@@ -98,7 +133,7 @@ reject_protected_runtime_launch() {
   command_name="${command_path##*/}"
 
   case "${command_name}" in
-    codex | claude | gemini)
+    codex | claude | copilot | gemini)
       workcell_die "Workcell blocked direct provider command in development mode: ${command_name} (run through the managed provider entrypoint)."
       ;;
   esac
@@ -109,6 +144,23 @@ reject_protected_runtime_launch() {
       workcell_die "Workcell blocked direct protected runtime execution in development mode: ${command_path}."
     fi
   fi
+}
+
+reject_protected_runtime_arguments() {
+  local command_path="${1:-}"
+  local arg=""
+  local protected_match=""
+
+  [[ -n "${command_path}" ]] || return 0
+  shift || return 0
+
+  for arg in "$@"; do
+    [[ "${arg}" == */* ]] || continue
+    protected_match="$(development_wrapper_protected_runtime_match "${arg}" || true)"
+    if [[ -n "${protected_match}" ]]; then
+      workcell_die "Workcell blocked direct protected runtime execution in development mode: ${arg}."
+    fi
+  done
 }
 
 sanitize_development_env
@@ -128,5 +180,6 @@ if [[ $# -eq 0 ]]; then
 fi
 
 reject_protected_runtime_launch "$1"
+reject_protected_runtime_arguments "$@"
 
 exec "$@"

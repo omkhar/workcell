@@ -42,23 +42,11 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/injection"),
 	},
 	{
-		relativePath: "internal/injection/render_credentials.go",
-		original: strings.Join([]string{
-			`if err := validateAllowedKeys(credentials, mapKeysSet([]string{`,
-			`		"codex_auth",`,
-			`		"claude_auth",`,
-			`		"claude_api_key",`,
-			`		"claude_mcp",`,
-		}, "\n"),
-		replacement: strings.Join([]string{
-			`if err := validateAllowedKeys(credentials, mapKeysSet([]string{`,
-			`		"codex_auth",`,
-			`		"claude_auth",`,
-			`		"claude_api_key",`,
-			`		// "claude_mcp",`,
-		}, "\n"),
-		label:   "claude mcp credential support",
-		command: goCmd("test", "./internal/injection"),
+		relativePath: "internal/adapters/data.go",
+		original:     `				"claude_mcp",`,
+		replacement:  `				// "claude_mcp",`,
+		label:        "claude mcp credential support",
+		command:      goCmd("test", "./internal/injection"),
 	},
 	{
 		relativePath: "internal/injection/render_validation.go",

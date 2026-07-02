@@ -17,16 +17,20 @@ profile_target_state_dir() { printf '%s/state-%s\n' "${ROOT}" "$1"; }
 profile_dir() { printf '%s/profile-%s\n' "${ROOT}" "$1"; }
 profile_lima_dir() { printf '%s/lima-%s\n' "${ROOT}" "$1"; }
 profile_disk_dir() { printf '%s/disk-%s\n' "${ROOT}" "$1"; }
+profile_store_path() { printf '%s/store-%s.json\n' "${ROOT}" "$1"; }
 profile_process_pids() { return 1; }
 
 PROFILE_DIR="$(profile_dir "${COLIMA_PROFILE}")"
 PROFILE_STATE_DIR="$(profile_target_state_dir "${COLIMA_PROFILE}")"
+PROFILE_STORE_PATH="$(profile_store_path "${COLIMA_PROFILE}")"
 mkdir -p "${PROFILE_STATE_DIR}" "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")" "$(profile_disk_dir "${COLIMA_PROFILE}")"
+printf '{}\n' >"${PROFILE_STORE_PATH}"
 refresh_managed_profile "refreshing fixture profile"
 [[ ! -e "${PROFILE_STATE_DIR}" ]]
 [[ ! -e "${PROFILE_DIR}" ]]
 [[ ! -e "$(profile_lima_dir "${COLIMA_PROFILE}")" ]]
 [[ ! -e "$(profile_disk_dir "${COLIMA_PROFILE}")" ]]
+[[ ! -e "${PROFILE_STORE_PATH}" ]]
 [[ "${PROFILE_WAS_REFRESHED}" -eq 1 ]]
 [[ "${PROFILE_PREEXISTED}" -eq 0 ]]
 [[ -z "${PROFILE_MARKER_WORKSPACE}" ]]

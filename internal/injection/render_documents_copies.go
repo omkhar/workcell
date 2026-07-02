@@ -24,36 +24,28 @@ func renderDocuments(policy map[string]any, outputRoot, policyDir Path) (map[str
 	if !ok {
 		return nil, errors.New("documents must be a TOML table")
 	}
-	if err := validateAllowedKeys(documents, mapKeysSet([]string{"common", providerid.Codex, providerid.Claude, providerid.Gemini}), "documents"); err != nil {
+	if err := validateAllowedKeys(documents, providerid.DocumentKeySet(), "documents"); err != nil {
 		return nil, err
 	}
 
 	rendered := map[string]string{}
-	ordered := []struct {
-		key     string
-		relpath string
-	}{
-		{"common", "documents/common.md"},
-		{providerid.Codex, "documents/codex.md"},
-		{providerid.Claude, "documents/claude.md"},
-		{providerid.Gemini, "documents/gemini.md"},
-	}
-	for _, item := range ordered {
-		rawValue, ok := documents[item.key]
+	for _, key := range providerid.DocumentKeys {
+		relpath := path.Join("documents", key+".md")
+		rawValue, ok := documents[key]
 		if !ok || rawValue == nil {
 			continue
 		}
-		source, err := validateSourcePath(rawValue, "documents."+item.key, policyDir)
+		source, err := validateSourcePath(rawValue, "documents."+key, policyDir)
 		if err != nil {
 			return nil, err
 		}
-		if err := ensureIsFile(source, fmt.Sprintf("documents.%s", item.key)); err != nil {
+		if err := ensureIsFile(source, fmt.Sprintf("documents.%s", key)); err != nil {
 			return nil, err
 		}
-		if err := stageFile(source, outputRoot, item.relpath); err != nil {
+		if err := stageFile(source, outputRoot, relpath); err != nil {
 			return nil, err
 		}
-		rendered[item.key] = item.relpath
+		rendered[key] = relpath
 	}
 	return rendered, nil
 }

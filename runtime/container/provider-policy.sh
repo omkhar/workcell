@@ -187,6 +187,85 @@ reject_unsafe_gemini_args() {
   done
 }
 
+reject_unsafe_copilot_args() {
+  local expect_value=""
+  local arg
+  local arg_lower=""
+  local attached_prompt_value=""
+  local saw_command=0
+
+  provider_policy_allows_breakglass && return 0
+
+  for arg in "$@"; do
+    if [[ -n "${expect_value}" ]]; then
+      case "${arg}" in
+        -*)
+          workcell_die "Workcell blocked unsafe Copilot override: ${arg}"
+          ;;
+      esac
+      expect_value=""
+      continue
+    fi
+
+    if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
+      saw_command=1
+      case "${arg}" in
+        init | login | mcp | plugin | skill | update)
+          workcell_die "Workcell blocked Copilot lifecycle/control-plane command: ${arg}"
+          ;;
+      esac
+      continue
+    fi
+
+    arg_lower="${arg,,}"
+    case "${arg_lower}" in
+      --acp | --add-dir | --add-github-mcp-tool | --add-github-mcp-toolset | --additional-mcp-config | --agent | --allow-all | --allow-all-mcp-server-instructions | --allow-all-paths | --allow-all-tools | --allow-all-urls | --allow-tool | --allow-url | --attachment | --autopilot | --available-tools | --bash-env | -c | --config-dir | --connect | --continue | --deny-tool | --deny-url | --disable-builtin-mcps | --disable-mcp-server | --disallow-temp-dir | --dynamic-retrieval | --enable-all-github-mcp-tools | --enable-memory | --excluded-tools | --experimental | --extension-sdk-path | --interactive | --log-dir | --max-autopilot-continues | --mode | --name | --no-ask-user | --no-auto-update | --no-bash-env | --no-custom-instructions | --no-remote | --no-remote-export | --output-format | --plan | --plugin-dir | --remote | --remote-export | --resume | --secret-env-vars | --session-id | --share | --share-gist | --worktree | --yolo)
+        workcell_die "Workcell blocked unsafe Copilot override: ${arg}"
+        ;;
+      --acp=* | --add-dir=* | --add-github-mcp-tool=* | --add-github-mcp-toolset=* | --additional-mcp-config=* | --agent=* | --allow-all=* | --allow-all-mcp-server-instructions=* | --allow-all-paths=* | --allow-all-tools=* | --allow-all-urls=* | --allow-tool=* | --allow-url=* | --attachment=* | --autopilot=* | --available-tools=* | --bash-env=* | -c=* | --config-dir=* | --connect=* | --continue=* | --deny-tool=* | --deny-url=* | --disable-builtin-mcps=* | --disable-mcp-server=* | --disallow-temp-dir=* | --dynamic-retrieval=* | --enable-all-github-mcp-tools=* | --enable-memory=* | --excluded-tools=* | --experimental=* | --extension-sdk-path=* | --interactive=* | --log-dir=* | --max-autopilot-continues=* | --mode=* | --name=* | --no-ask-user=* | --no-auto-update=* | --no-bash-env=* | --no-custom-instructions=* | --no-remote=* | --no-remote-export=* | --output-format=* | --plan=* | --plugin-dir=* | --remote=* | --remote-export=* | --resume=* | --secret-env-vars=* | --session-id=* | --share=* | --share-gist=* | --worktree=* | --yolo=*)
+        workcell_die "Workcell blocked unsafe Copilot override: ${arg%%=*}"
+        ;;
+    esac
+
+    case "${arg}" in
+      -p | --prompt)
+        expect_value="prompt"
+        ;;
+      -p?*)
+        attached_prompt_value="${arg:2}"
+        if [[ "${attached_prompt_value}" == -* ]]; then
+          workcell_die "Workcell blocked unsafe Copilot override: ${attached_prompt_value}"
+        fi
+        ;;
+      --prompt=*)
+        attached_prompt_value="${arg#--prompt=}"
+        if [[ "${attached_prompt_value}" == -* ]]; then
+          workcell_die "Workcell blocked unsafe Copilot override: ${attached_prompt_value}"
+        fi
+        ;;
+      --model)
+        expect_value="safe"
+        ;;
+      --model=*) ;;
+      -C | -i | -n | -r | -w)
+        workcell_die "Workcell blocked unsafe Copilot override: ${arg}"
+        ;;
+      -C?* | -c?* | -i?* | -n?* | -r?* | -w?*)
+        workcell_die "Workcell blocked unsafe Copilot override: ${arg:0:2}"
+        ;;
+      -A | -a)
+        workcell_die "Workcell blocked unsafe Copilot override: ${arg}"
+        ;;
+      -A?* | -a?*)
+        workcell_die "Workcell blocked unsafe Copilot override: ${arg:0:2}"
+        ;;
+      -[!-]?*)
+        workcell_die "Workcell blocked bundled Copilot short options: ${arg}"
+        ;;
+    esac
+  done
+}
+
 # entrypoint.sh validates the full provider command before launch. After that,
 # provider-wrapper.sh calls the per-provider reject helpers directly because it
 # has already fixed the launch target and only needs to re-check user argv.
@@ -210,6 +289,9 @@ validate_command_args() {
       ;;
     claude)
       reject_unsafe_claude_args "${@:2}"
+      ;;
+    copilot)
+      reject_unsafe_copilot_args "${@:2}"
       ;;
     gemini)
       reject_unsafe_gemini_args "${@:2}"

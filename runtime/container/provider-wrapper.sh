@@ -3,6 +3,9 @@ set -euo pipefail
 
 AGENT_NAME="${WORKCELL_LAUNCH_TARGET:-${0##*/}}"
 TRUSTED_PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR:-/opt/workcell/copilot-token-handoff}"
+copilot_token_handoff_consumed_file="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}/copilot-token-consumed"
+WORKCELL_COPILOT_AUTH_REQUIRED=""
 export WORKCELL_WRAPPER_CONTEXT=1
 export ADAPTER_ROOT="/opt/workcell/adapters"
 
@@ -18,6 +21,8 @@ pin_runtime_env() {
 
   HOME=/state/agent-home
   CODEX_HOME="${HOME}/.codex"
+  COPILOT_HOME="${HOME}/.copilot"
+  COPILOT_CACHE_HOME="${HOME}/.cache/github-copilot"
   TMPDIR=/state/tmp
   state_mode="$(workcell_runtime_state_value WORKCELL_MODE || true)"
   state_profile="$(workcell_runtime_state_value CODEX_PROFILE || true)"
@@ -31,13 +36,29 @@ pin_runtime_env() {
   CODEX_PROFILE="${state_profile:-${pid1_profile:-${WORKCELL_MODE}}}"
   WORKCELL_AGENT_AUTONOMY="${state_autonomy:-${pid1_autonomy:-yolo}}"
   WORKCELL_CONTAINER_MUTABILITY="${state_mutability:-${pid1_mutability:-ephemeral}}"
-  export HOME CODEX_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY
+  WORKCELL_COPILOT_AUTH_REQUIRED="$(workcell_pid1_env_value WORKCELL_COPILOT_AUTH_REQUIRED || true)"
+  case "${WORKCELL_COPILOT_AUTH_REQUIRED}" in
+    0 | 1 | '') ;;
+    *) WORKCELL_COPILOT_AUTH_REQUIRED="" ;;
+  esac
+  export HOME CODEX_HOME COPILOT_HOME COPILOT_CACHE_HOME TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY WORKCELL_COPILOT_AUTH_REQUIRED
 }
 
 sanitize_provider_env() {
+  local env_name=""
+
   unset BASH_ENV
   unset ENV
   unset CLAUDE_CONFIG_DIR
+  unset GH_CONFIG_DIR
+  unset GH_HOST
+  unset GH_TOKEN
+  unset GITHUB_TOKEN
+  unset PLAIN_DIFF
+  unset USE_BUILTIN_RIPGREP
+  for env_name in "${!COPILOT_@}" "${!GITHUB_COPILOT_@}"; do
+    unset "${env_name}"
+  done
   unset DISABLE_AUTOUPDATER
   unset NODE_OPTIONS
   unset NODE_PATH
@@ -48,25 +69,61 @@ sanitize_provider_env() {
   unset LD_LIBRARY_PATH
   unset SSL_CERT_FILE
   unset SSL_CERT_DIR
+  unset OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+  unset OTEL_EXPORTER_OTLP_ENDPOINT
+  unset OTEL_EXPORTER_OTLP_HEADERS
+  unset OTEL_EXPORTER_OTLP_PROTOCOL
+  unset OTEL_EXPORTER_OTLP_TIMEOUT
+  unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+  unset OTEL_EXPORTER_OTLP_TRACES_HEADERS
+  unset OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+  unset OTEL_EXPORTER_OTLP_TRACES_TIMEOUT
+  unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+  unset OTEL_EXPORTER_OTLP_METRICS_HEADERS
+  unset OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
+  unset OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
+  unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+  unset OTEL_EXPORTER_OTLP_LOGS_HEADERS
+  unset OTEL_EXPORTER_OTLP_LOGS_PROTOCOL
+  unset OTEL_EXPORTER_OTLP_LOGS_TIMEOUT
+  unset OTEL_RESOURCE_ATTRIBUTES
+  unset OTEL_TRACES_EXPORTER
+  unset OTEL_METRICS_EXPORTER
+  unset OTEL_LOGS_EXPORTER
   workcell_sanitize_git_runtime_env
   export NODE_NO_WARNINGS=1
   export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
   export PATH="${TRUSTED_PATH}"
 }
 
+workcell_provider_parent_is_launcher() {
+  local parent_exe=""
+  local launcher_path=""
+
+  parent_exe="$(readlink "/proc/${PPID}/exe" 2>/dev/null || true)"
+  [[ -n "${parent_exe}" ]] || return 1
+
+  for launcher_path in \
+    /usr/local/libexec/workcell/core/launcher \
+    /usr/local/libexec/workcell/core/git; do
+    if [[ -e "${launcher_path}" && "${parent_exe}" -ef "${launcher_path}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 require_managed_provider_launch() {
   case "${AGENT_NAME}" in
-    codex | claude | gemini) ;;
+    codex | claude | copilot | gemini) ;;
     *)
       workcell_die "Unsupported provider wrapper target: ${AGENT_NAME}"
       ;;
   esac
 
-  if [[ "${AGENT_NAME}" == "codex" && "${1:-}" == "execpolicy" ]]; then
-    return 0
-  fi
-
-  if [[ "${WORKCELL_PROVIDER_LAUNCHER_AUTHORITY:-0}" != "1" ]]; then
+  if [[ "${WORKCELL_PROVIDER_LAUNCHER_AUTHORITY:-0}" != "1" ]] ||
+    ! workcell_provider_parent_is_launcher; then
     workcell_die "Workcell blocked direct provider wrapper execution."
   fi
   unset WORKCELL_PROVIDER_LAUNCHER_AUTHORITY
@@ -249,6 +306,79 @@ gemini_provider_script_path() {
   printf '/opt/workcell/providers/node_modules/@google/gemini-cli/%s\n' "${relative_path}"
 }
 
+workcell_read_copilot_handoff_file() {
+  local token_file=""
+
+  if [[ -r "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}" ]]; then
+    token_file="$(head -n1 "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}")"
+  fi
+  unset WORKCELL_COPILOT_TOKEN_FILE
+  printf '%s\n' "${token_file}"
+}
+
+workcell_mark_copilot_token_consumed() {
+  if [[ -d "$(dirname "${copilot_token_handoff_consumed_file}")" ]]; then
+    : >"${copilot_token_handoff_consumed_file}" ||
+      workcell_die "Copilot auth token handoff consumed marker could not be written."
+    chmod 0600 "${copilot_token_handoff_consumed_file}" || true
+  fi
+}
+
+workcell_load_copilot_github_token() {
+  local token=""
+  local token_file=""
+
+  token_file="$(workcell_read_copilot_handoff_file)"
+  [[ -n "${token_file}" ]] || workcell_die "Copilot auth token handoff file is required."
+  [[ -r "${token_file}" ]] || workcell_die "Copilot auth token handoff file is not readable."
+  token="$(tr -d '\r\n' <"${token_file}")"
+  rm -f -- "${token_file}" || workcell_die "Copilot auth token handoff file could not be removed."
+  [[ -n "${token}" ]] || workcell_die "Copilot auth token is empty. Stage a non-empty copilot_github_token."
+  workcell_mark_copilot_token_consumed
+  printf '%s\n' "${token}"
+}
+
+workcell_discard_copilot_github_token() {
+  local token_file=""
+
+  token_file="$(workcell_read_copilot_handoff_file)"
+  if [[ -n "${token_file}" ]]; then
+    rm -f -- "${token_file}" || workcell_die "Copilot auth token handoff file could not be removed."
+  fi
+  workcell_mark_copilot_token_consumed
+}
+
+copilot_no_auth_invocation() {
+  local first="${1:-}"
+  local second="${2:-}"
+
+  if [[ "${first}" == "copilot" ]]; then
+    first="${second}"
+  fi
+
+  case "${first}" in
+    -h | --help | -v | --version | help | version | completion)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+copilot_invocation_requires_auth() {
+  case "${WORKCELL_COPILOT_AUTH_REQUIRED}" in
+    0)
+      return 1
+      ;;
+    1)
+      return 0
+      ;;
+  esac
+  if copilot_no_auth_invocation "$@"; then
+    return 1
+  fi
+  return 0
+}
+
 case "${WORKCELL_AGENT_AUTONOMY}" in
   yolo | prompt) ;;
   *)
@@ -280,7 +410,32 @@ case "${AGENT_NAME}:${WORKCELL_AGENT_AUTONOMY}" in
   gemini:prompt)
     MANAGED_AUTONOMY_ARGS=(--approval-mode default)
     ;;
+  copilot:yolo)
+    MANAGED_AUTONOMY_ARGS=(
+      "--available-tools=view,create,edit,apply_patch,grep,glob"
+      "--allow-tool=read"
+      "--allow-tool=write"
+      --no-ask-user
+    )
+    ;;
+  copilot:prompt)
+    MANAGED_AUTONOMY_ARGS=(
+      "--available-tools=view,create,edit,apply_patch,grep,glob"
+    )
+    ;;
 esac
+
+declare -a MANAGED_COPILOT_SAFETY_ARGS=(
+  "--no-auto-update"
+  "--no-remote"
+  "--no-remote-export"
+  "--disable-builtin-mcps"
+  "--no-custom-instructions"
+  "--disallow-temp-dir"
+  "--log-dir"
+  "${COPILOT_HOME}/logs"
+  "--secret-env-vars=GH_TOKEN,GITHUB_TOKEN,COPILOT_GITHUB_TOKEN"
+)
 
 case "${AGENT_NAME}" in
   codex)
@@ -298,6 +453,28 @@ case "${AGENT_NAME}" in
     reject_unsafe_claude_args "$@"
     DISABLE_AUTOUPDATER=1 CLAUDE_CONFIG_DIR="${HOME}/.claude" exec /usr/local/libexec/workcell/real/claude \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
+      "$@"
+    ;;
+  copilot)
+    declare copilot_github_token=""
+    reject_unsafe_copilot_args "$@"
+    if copilot_invocation_requires_auth "$@"; then
+      copilot_github_token="$(workcell_load_copilot_github_token)"
+      unset WORKCELL_COPILOT_GITHUB_TOKEN
+      unset WORKCELL_COPILOT_TOKEN_FILE
+      COPILOT_GITHUB_TOKEN="${copilot_github_token}" \
+        COPILOT_AUTO_UPDATE=false \
+        COPILOT_ENABLE_HTTP2=false \
+        exec /usr/local/libexec/workcell/real/copilot \
+        "${MANAGED_COPILOT_SAFETY_ARGS[@]}" \
+        "${MANAGED_AUTONOMY_ARGS[@]}" \
+        "$@"
+    fi
+    workcell_discard_copilot_github_token
+    unset WORKCELL_COPILOT_GITHUB_TOKEN
+    unset WORKCELL_COPILOT_TOKEN_FILE
+    COPILOT_AUTO_UPDATE=false COPILOT_ENABLE_HTTP2=false exec /usr/local/libexec/workcell/real/copilot \
+      "${MANAGED_COPILOT_SAFETY_ARGS[@]}" \
       "$@"
     ;;
   gemini)

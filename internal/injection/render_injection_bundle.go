@@ -27,12 +27,8 @@ const (
 )
 
 var (
-	supportedAgents = map[string]struct{}{
-		providerid.Codex:  {},
-		providerid.Claude: {},
-		providerid.Gemini: {},
-	}
-	supportedModes = map[string]struct{}{
+	supportedAgents = providerid.AllProviderSet()
+	supportedModes  = map[string]struct{}{
 		"strict":      {},
 		"development": {},
 		"build":       {},

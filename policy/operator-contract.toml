@@ -10,6 +10,16 @@ evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "tests/scenarios
 requirements = ["functional.FR-001"]
 target_state = "retain"
 
+[workflows.launch_managed_copilot]
+title = "Managed Copilot launch"
+support = "supported"
+canonical = "workcell --agent copilot --workspace /path/to/repo"
+discoverability = ["top-level-help", "readme"]
+docs = ["README.md", "docs/provider-matrix.md", "docs/examples/quickstart-copilot.md"]
+evidence = ["tests/scenarios/shared/test-agent-launch-smoke.sh", "tests/scenarios/shared/test-copilot-session-dry-run.sh", "tests/scenarios/shared/test-copilot-provider-e2e.sh", "scripts/container-smoke.sh", "scripts/provider-e2e.sh"]
+requirements = ["functional.FR-001"]
+target_state = "retain"
+
 [workflows.prepare_image]
 title = "Explicit image prepare"
 support = "supported"
@@ -106,7 +116,7 @@ support = "supported"
 canonical = "workcell auth status [options]"
 discoverability = ["subcommand-help:auth"]
 docs = ["README.md", "docs/injection-policy.md", "docs/provider-bootstrap-matrix.md"]
-evidence = ["tests/scenarios/shared/test-auth-commands.sh", "tests/scenarios/shared/test-codex-resolver-launcher.sh"]
+evidence = ["tests/scenarios/shared/test-auth-commands.sh", "tests/scenarios/shared/test-auth-status.sh", "tests/scenarios/shared/test-codex-resolver-launcher.sh"]
 requirements = ["functional.FR-006"]
 target_state = "retain"
 
@@ -166,7 +176,7 @@ support = "supported"
 canonical = "workcell session"
 discoverability = ["top-level-help", "readme", "manpage"]
 docs = ["README.md", "man/workcell.1"]
-evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh", "tests/scenarios/shared/test-copilot-session-dry-run.sh"]
 requirements = ["functional.FR-007"]
 target_state = "retain"
 
@@ -176,7 +186,7 @@ support = "supported"
 canonical = "workcell session start"
 discoverability = ["top-level-help", "subcommand-help:session", "readme"]
 docs = ["README.md", "man/workcell.1"]
-evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh", "tests/scenarios/shared/test-copilot-session-dry-run.sh"]
 requirements = ["functional.FR-007"]
 target_state = "retain"
 
@@ -186,7 +196,7 @@ support = "supported"
 canonical = "--session-workspace direct|isolated"
 discoverability = ["top-level-help", "subcommand-help:session", "manpage"]
 docs = ["man/workcell.1"]
-evidence = ["tests/scenarios/shared/test-session-commands.sh"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh", "tests/scenarios/shared/test-copilot-session-dry-run.sh"]
 requirements = ["functional.FR-007"]
 remediation = [
   "Detached session start with --session-workspace isolated requires a git workspace.",

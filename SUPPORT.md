@@ -22,7 +22,7 @@
 
 - Workcell version or commit SHA
 - host OS version
-- provider (`codex`, `claude`, or `gemini`)
+- provider (`codex`, `claude`, `copilot`, or `gemini`)
 - runtime mode (`strict`, `development`, `build`, or `breakglass`)
 - whether the problem happens on the default safe path or only on a
   lower-assurance path

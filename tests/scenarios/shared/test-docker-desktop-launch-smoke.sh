@@ -26,6 +26,7 @@ cleanup() {
       prepare.stdout prepare.stderr \
       codex.stdout codex.stderr codex.combined \
       claude.stdout claude.stderr claude.combined \
+      copilot.stdout copilot.stderr copilot.combined \
       gemini.stdout gemini.stderr gemini.combined; do
       [[ -f "${TMP_DIR}/${file}" ]] || continue
       printf -- '--- %s ---\n' "${file}" >&2
@@ -74,6 +75,8 @@ printf '{"token":"claude-auth"}\n' >"${AUTH_ROOT}/claude-auth.json"
 chmod 0600 "${AUTH_ROOT}/claude-auth.json"
 printf 'claude-key\n' >"${AUTH_ROOT}/claude-api-key.txt"
 chmod 0600 "${AUTH_ROOT}/claude-api-key.txt"
+printf 'copilot-token\n' >"${AUTH_ROOT}/copilot-github-token.txt"
+chmod 0600 "${AUTH_ROOT}/copilot-github-token.txt"
 cat >"${AUTH_ROOT}/gemini.env" <<'EOF'
 GOOGLE_GENAI_USE_VERTEXAI=true
 GOOGLE_API_KEY=verify-google-key
@@ -87,6 +90,9 @@ codex_auth = "auth.json"
 claude_auth = "claude-auth.json"
 claude_api_key = "claude-api-key.txt"
 gemini_env = "gemini.env"
+
+[credentials.copilot_github_token]
+source = "copilot-github-token.txt"
 EOF
 
 inspect_target_state() {
@@ -126,6 +132,9 @@ expected_runtime_version() {
       ;;
     claude)
       sed -n 's/^ARG CLAUDE_VERSION=//p' "${ROOT_DIR}/runtime/container/Dockerfile"
+      ;;
+    copilot)
+      sed -n 's/^ARG COPILOT_VERSION=//p' "${ROOT_DIR}/runtime/container/Dockerfile"
       ;;
     gemini)
       jq -r '.dependencies["@google/gemini-cli"]' "${ROOT_DIR}/runtime/container/providers/package.json"
@@ -183,7 +192,7 @@ grep -q 'Prepared runtime image recorded for profile ' "${TMP_DIR}/prepare.stder
 [[ -f "${TARGET_STATE_DIR}/workcell.image-ready" ]]
 [[ -f "${TARGET_STATE_DIR}/workcell.managed" ]]
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   expected_version="$(expected_runtime_version "${agent}")"
   run_agent_version_smoke "${agent}"
   grep -q '^target_kind=local_compat target_provider=docker-desktop target_id=desktop-linux target_assurance_class=compat runtime_api=docker workspace_transport=workspace-mount$' "${TMP_DIR}/${agent}.stderr"

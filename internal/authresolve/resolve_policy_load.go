@@ -389,16 +389,19 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 			if _, ok := allCredentialKeys[credentialKey]; !ok {
 				return nil, fmt.Errorf("%s:%d: unsupported credentials table [%s]", policyPath, table.Line, name)
 			}
-			credentials, _ := root["credentials"].(map[string]any)
-			if credentials == nil {
+			credentialsRaw, exists := root["credentials"]
+			credentials, _ := credentialsRaw.(map[string]any)
+			switch {
+			case !exists:
 				credentials = map[string]any{}
 				root["credentials"] = credentials
+			case credentials == nil:
+				return nil, fmt.Errorf("%s:%d: credentials table conflicts with scalar key credentials", policyPath, table.Line)
+			case credentials[credentialKey] != nil:
+				return nil, fmt.Errorf("%s:%d: duplicate credentials entry: %s", policyPath, table.Line, credentialKey)
 			}
-			entry, _ := credentials[credentialKey].(map[string]any)
-			if entry == nil {
-				entry = map[string]any{}
-				credentials[credentialKey] = entry
-			}
+			entry := map[string]any{}
+			credentials[credentialKey] = entry
 			for _, pair := range table.Pairs {
 				entry[pair.Key] = pair.Value
 			}
@@ -407,12 +410,19 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 		if name != "documents" && name != "ssh" && name != "credentials" {
 			return nil, fmt.Errorf("%s:%d: unsupported table [%s]", policyPath, table.Line, name)
 		}
-		target, _ := root[name].(map[string]any)
-		if target == nil {
+		targetRaw, exists := root[name]
+		target, _ := targetRaw.(map[string]any)
+		switch {
+		case !exists:
 			target = map[string]any{}
 			root[name] = target
+		case target == nil:
+			return nil, fmt.Errorf("%s:%d: table [%s] conflicts with scalar key %s", policyPath, table.Line, name, name)
 		}
 		for _, pair := range table.Pairs {
+			if _, exists := target[pair.Key]; exists {
+				return nil, fmt.Errorf("%s:%d: duplicate key across table forms: %s.%s", policyPath, pair.Line, name, pair.Key)
+			}
 			target[pair.Key] = pair.Value
 		}
 	}

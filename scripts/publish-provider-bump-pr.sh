@@ -1,10 +1,29 @@
 #!/bin/bash -p
+workcell_provider_bump_token_file_created=""
+if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  unset WORKCELL_PROVIDER_BUMP_TOKEN_FILE_CREATED
+  if [[ -z "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
+    workcell_provider_bump_token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
+    unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN
+    if [[ -n "${workcell_provider_bump_token}" ]]; then
+      workcell_provider_bump_token_file="$(umask 077 && /usr/bin/mktemp "${TMPDIR:-/tmp}/workcell-github-token.XXXXXX")"
+      printf '%s' "${workcell_provider_bump_token}" >"${workcell_provider_bump_token_file}"
+      export WORKCELL_GITHUB_API_TOKEN_FILE="${workcell_provider_bump_token_file}"
+      workcell_provider_bump_token_file_created="${workcell_provider_bump_token_file}"
+      export WORKCELL_PROVIDER_BUMP_TOKEN_FILE_CREATED="${workcell_provider_bump_token_file_created}"
+    fi
+  fi
+  unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN workcell_provider_bump_token
+fi
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
+workcell_provider_bump_token_file_created="${WORKCELL_PROVIDER_BUMP_TOKEN_FILE_CREATED:-${workcell_provider_bump_token_file_created}}"
+unset WORKCELL_PROVIDER_BUMP_TOKEN_FILE_CREATED
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
   echo "publish-provider-bump-pr-entrypoint-ok"
+  [[ -z "${workcell_provider_bump_token_file_created}" || "${workcell_provider_bump_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_provider_bump_token_file_created}"
   exit 0
 fi
 
@@ -103,6 +122,7 @@ cleanup() {
   git -C "${ROOT_DIR}" worktree remove --force "${worktree_root}" >/dev/null 2>&1 || true
   git -C "${ROOT_DIR}" worktree prune >/dev/null 2>&1 || true
   rm -f "${title_file}" "${body_file}" "${commit_file}"
+  [[ -z "${workcell_provider_bump_token_file_created}" || "${workcell_provider_bump_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_provider_bump_token_file_created}"
 }
 trap cleanup EXIT
 
@@ -131,6 +151,10 @@ claude_version="$(
   cd "${worktree_root}"
   go run ./cmd/workcell-citools extract-dockerfile-arg "${worktree_root}/runtime/container/Dockerfile" CLAUDE_VERSION
 )"
+copilot_version="$(
+  cd "${worktree_root}"
+  go run ./cmd/workcell-citools extract-dockerfile-arg "${worktree_root}/runtime/container/Dockerfile" COPILOT_VERSION
+)"
 gemini_version="$(jq -r '.dependencies["@google/gemini-cli"]' "${worktree_root}/runtime/container/providers/package.json")"
 
 title="Bump stable provider pins"
@@ -146,6 +170,7 @@ cat >"${body_file}" <<EOF
 
 - Codex ${codex_version}
 - Claude ${claude_version}
+- Copilot ${copilot_version}
 - Gemini ${gemini_version}
 
 ## Validation
@@ -158,6 +183,7 @@ Bump stable provider pins
 
 - Codex ${codex_version}
 - Claude ${claude_version}
+- Copilot ${copilot_version}
 - Gemini ${gemini_version}
 EOF
 

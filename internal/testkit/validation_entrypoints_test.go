@@ -171,6 +171,7 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		`${ROOT_DIR}/scripts/publish-provider-bump-pr.sh`,
 		`${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh`,
 		`${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh`,
+		`${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh`,
 		`${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh`,
 	} {
 		if !strings.Contains(string(validateRepo), want) {

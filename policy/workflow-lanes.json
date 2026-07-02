@@ -525,6 +525,22 @@
       "github_only_reason": "release reproducibility verification of the amd64 image binds release-only artifacts in a parallel preflight job"
     },
     {
+      "id": "release.yml/preflight-arm64-copilot-runtime",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "preflight-arm64-copilot-runtime",
+      "job_name": "Release Copilot runtime image probe (arm64)",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release Copilot runtime-image verification runs on the native arm64 hosted runner with release preflight token-file wiring"
+    },
+    {
       "id": "release.yml/preflight-arm64-repro",
       "workflow_path": ".github/workflows/release.yml",
       "workflow_name": "Release",

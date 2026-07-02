@@ -1,11 +1,17 @@
 # Copilot And Linux Local Compat Plan
 
-Status: planning only. This page does not promote GitHub Copilot CLI,
-Linux hosts, or Linux `local_compat` to supported operator-launch status.
+Status: historical planning context for the Copilot provider-parity phase and
+active planning context for Linux `local_compat`. The current Copilot support
+boundary lives in [provider-matrix.md](provider-matrix.md) and
+[examples/quickstart-copilot.md](examples/quickstart-copilot.md). This page
+does not promote Linux hosts or Linux `local_compat` to supported
+operator-launch status.
 
-As of 2026-05-31, GitHub Copilot CLI is generally available, but Workcell has
-not yet implemented the adapter evidence required to support `--agent copilot`.
-The Linux `amd64` `local_compat` path also remains blocked until a selected
+As of the Copilot provider-parity implementation, Workcell has deterministic
+adapter, auth, policy, pin-verification, and smoke evidence for
+`--agent copilot`. Live provider-authenticated `copilot -p` certification with
+staged credentials remains a maintainer pre-signing gate for support-claim
+changes. The Linux `amd64` `local_compat` path remains blocked until a selected
 distro/runtime matrix has live host evidence and fail-closed diagnostics.
 
 ## Current External Facts
@@ -42,19 +48,24 @@ those signals as prioritization inputs only, not proof of supportability.
 
 ## Proposed PR Sequence
 
+The Copilot-specific rows are retained as the sequence that led to the current
+provider-parity change. Remaining rows continue to track Linux `local_compat`
+and follow-on validation work.
+
 1. Copilot discovery and fail-closed scaffold.
    Record current Copilot CLI product behavior, unsupported diagnostics, unsafe
    flag inventory, and control-plane risks without claiming support.
 
 2. Copilot auth and bootstrap.
    Add the `copilot_github_token` credential key, auth-status explainability,
-   direct staged-token materialization, and tests proving that host
-   `~/.copilot`, `GH_TOKEN`, `GITHUB_TOKEN`, host keychains, and ambient
-   GitHub CLI auth do not become safe-path inputs.
+   host-only staged-token handoff, and tests proving that host Copilot
+   provider state (`~/.copilot`, `~/.config/github-copilot`,
+   `~/.cache/github-copilot`), `GH_TOKEN`, `GITHUB_TOKEN`, host keychains, and
+   ambient GitHub CLI auth do not become safe-path inputs.
 
 3. Copilot managed home and control plane.
    Add session-local `COPILOT_HOME` and `COPILOT_CACHE_HOME`, managed
-   `~/.copilot` state, reviewed instruction import rules, repo-local Copilot
+   provider state, reviewed instruction import rules, repo-local Copilot
    control-plane masking, MCP/LSP/plugin/hook defaults, telemetry/content
    capture posture, and deterministic tests.
 
@@ -63,11 +74,13 @@ those signals as prioritization inputs only, not proof of supportability.
    Copilot flags that would bypass Workcell policy, add scenario coverage, and
    keep the live provider check certification-only.
 
-5. Copilot live certification and support claim.
-   Before signing the support-claim commit, run a non-destructive live
-   `copilot -p` certification with a staged `COPILOT_GITHUB_TOKEN` inside the
-   managed runtime. Only then update the supported provider matrix, quickstart,
-   operator contract, requirements, and release-facing evidence.
+5. Copilot live certification and support claim. Completed for the Tier 1
+   adapter path: the support-claim commit requires a non-destructive live
+   `copilot -p` certification with a staged token moved through the reviewed
+   host-mounted token handoff and transient runtime handoff path, then exported
+   as `COPILOT_GITHUB_TOKEN` only to the managed child process. The supported
+   provider matrix, quickstart, operator contract, requirements, and
+   release-facing evidence now track that gate.
 
 6. Linux `amd64` `local_compat` research.
    Select the first candidate matrix narrowly. The default candidate should be

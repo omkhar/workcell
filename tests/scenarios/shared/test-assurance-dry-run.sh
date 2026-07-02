@@ -167,7 +167,7 @@ if [[ "${launch_blocked}" -eq 1 ]]; then
   exit 0
 fi
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   run_dry_run "prompt-${agent}" --agent "${agent}" --agent-autonomy prompt --agent-arg --version
   grep -q "^profile=.* mode=strict agent=${agent} " "${TMP_DIR}/prompt-${agent}.stderr"
   grep -q '^agent_autonomy=prompt$' "${TMP_DIR}/prompt-${agent}.stderr"
@@ -178,9 +178,10 @@ done
 
 grep -q '^codex_rules_mutability_effective_initial=session$' "${TMP_DIR}/prompt-codex.stderr"
 grep -q '^codex_rules_mutability_effective_initial=not-applicable$' "${TMP_DIR}/prompt-claude.stderr"
+grep -q '^codex_rules_mutability_effective_initial=not-applicable$' "${TMP_DIR}/prompt-copilot.stderr"
 grep -q '^codex_rules_mutability_effective_initial=not-applicable$' "${TMP_DIR}/prompt-gemini.stderr"
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   run_dry_run "development-${agent}" --agent "${agent}" --mode development --agent-arg --version
   grep -q "^profile=.* mode=development agent=${agent} " "${TMP_DIR}/development-${agent}.stderr"
   grep -q '^workspace_control_plane=masked$' "${TMP_DIR}/development-${agent}.stderr"
@@ -189,7 +190,7 @@ for agent in codex claude gemini; do
   grep -q '^session_assurance_initial=managed-mutable$' "${TMP_DIR}/development-${agent}.stderr"
 done
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
     "${ROOT_DIR}/scripts/workcell" \
     --agent "${agent}" \
@@ -215,7 +216,7 @@ done
 run_dry_run_expect_failure 2 "breakglass-noack" --agent codex --mode breakglass
 grep -q '^breakglass mode requires --ack-breakglass\.$' "${TMP_DIR}/breakglass-noack.stderr"
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   run_dry_run "breakglass-${agent}" --agent "${agent}" --mode breakglass "--ack-breakglass=${ACK_TODAY_UTC}"
   grep -q "^profile=.* mode=breakglass agent=${agent} " "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^workspace_control_plane=unmasked$' "${TMP_DIR}/breakglass-${agent}.stderr"
@@ -225,7 +226,7 @@ for agent in codex claude gemini; do
   grep -q '^session_assurance_initial=managed-mutable$' "${TMP_DIR}/breakglass-${agent}.stderr"
 done
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   run_dry_run "readonly-${agent}" --agent "${agent}" --container-mutability readonly
   grep -q "^profile=.* mode=strict agent=${agent} " "${TMP_DIR}/readonly-${agent}.stderr"
   grep -q '^container_resources=mutability=readonly ' "${TMP_DIR}/readonly-${agent}.stderr"
@@ -256,7 +257,7 @@ set -e
 test "${arbitrary_noack_rc}" -eq 2
 grep -q '^arbitrary command mode requires --ack-arbitrary-command\.$' "${TMP_DIR}/arbitrary-command-noack.stderr"
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
     "${ROOT_DIR}/scripts/workcell" \
     --agent "${agent}" \
@@ -287,7 +288,7 @@ fi
 run_dry_run_expect_failure 2 "control-plane-vcs-noack" --agent codex --allow-control-plane-vcs
 grep -q '^control-plane VCS mode requires --ack-control-plane-vcs\.$' "${TMP_DIR}/control-plane-vcs-noack.stderr"
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   run_dry_run "control-plane-vcs-${agent}" \
     --agent "${agent}" \
     --allow-control-plane-vcs \

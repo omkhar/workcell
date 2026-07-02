@@ -152,6 +152,12 @@
       "local_mode": "none",
       "github_only_reason": "release reproducibility verification of the native arm64 image binds release-only artifacts and runs on a native arm64 runner"
     },
+    "release.yml/preflight-arm64-copilot-runtime": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release Copilot runtime-image verification runs on the native arm64 hosted runner with release preflight token-file wiring"
+    },
     "release.yml/preflight-container-smoke": {
       "profiles": ["release-preflight"],
       "authority": "release-only",

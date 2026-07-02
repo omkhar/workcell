@@ -38,6 +38,8 @@ INJECTION_BUNDLE_ROOT=""
 WORKSPACE_IMPORT_ROOT=""
 declare -a WORKSPACE_IMPORT_ARGS=()
 declare -a RUNTIME_SECURITY_ARGS=()
+declare -a COPILOT_SMOKE_TOKEN_HANDOFF_DIRS=()
+readonly COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="/opt/workcell/copilot-token-handoff"
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
@@ -476,6 +478,9 @@ cleanup() {
   if [[ -n "${INJECTION_BUNDLE_ROOT}" ]]; then
     remove_host_path_safely "${INJECTION_BUNDLE_ROOT}" "container-smoke cleanup" || true
   fi
+  for token_handoff_dir in "${COPILOT_SMOKE_TOKEN_HANDOFF_DIRS[@]+"${COPILOT_SMOKE_TOKEN_HANDOFF_DIRS[@]}"}"; do
+    remove_host_path_safely "${token_handoff_dir}" "container-smoke cleanup" || true
+  done
   if [[ -n "${WORKSPACE_IMPORT_ROOT}" ]]; then
     remove_host_path_safely "${WORKSPACE_IMPORT_ROOT}" "container-smoke cleanup" || true
   fi
@@ -543,6 +548,59 @@ direct_mount_specs_for_bundle() {
   [[ -f "${mount_spec_path}" ]] || return 0
 
   go_runtimeutil list-direct-mounts "${mount_spec_path}"
+}
+
+stage_copilot_token_handoff_dir() {
+  local bundle_root="$1"
+  local token_source="$2"
+  local token_handoff_dir=""
+  local token_handoff_file=""
+  local token=""
+
+  token_handoff_dir="$(mktemp -d "${bundle_root}.copilot-token-handoff.XXXXXX")"
+  token_handoff_file="${token_handoff_dir}/copilot-github-token.txt"
+  token="$(tr -d '\r\n' <"${token_source}")"
+  chmod 0700 "${token_handoff_dir}"
+  printf '%s\n' "${token}" >"${token_handoff_file}"
+  chmod 0600 "${token_handoff_file}"
+  COPILOT_SMOKE_TOKEN_HANDOFF_DIRS+=("${token_handoff_dir}")
+  printf '%s\n' "${token_handoff_dir}"
+}
+
+populate_injection_bundle_credential_mounts() {
+  local agent="$1"
+  local bundle_root="$2"
+  local host_source=""
+  local mount_path=""
+  local copilot_token_handoff_dir=""
+
+  CREDENTIAL_MOUNT_ARGS=()
+  COPILOT_HANDOFF_MOUNT_ARGS=()
+  while IFS=$'\t' read -r host_source mount_path; do
+    [[ -n "${host_source}" ]] || continue
+    if [[ "${agent}" == "copilot" && "${mount_path}" == "/opt/workcell/host-inputs/credentials/copilot-github-token.txt" ]]; then
+      copilot_token_handoff_dir="$(stage_copilot_token_handoff_dir "${bundle_root}" "${host_source}")"
+      COPILOT_HANDOFF_MOUNT_ARGS=(-v "$(workcell_docker_host_path "${copilot_token_handoff_dir}"):${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}:rw")
+      continue
+    fi
+    CREDENTIAL_MOUNT_ARGS+=(-v "$(workcell_docker_host_path "${host_source}"):${mount_path}:ro")
+  done < <(direct_mount_specs_for_bundle "${bundle_root}")
+}
+
+copilot_token_handoff_dir_for_bundle() {
+  local bundle_root="$1"
+  local host_source=""
+  local mount_path=""
+
+  while IFS=$'\t' read -r host_source mount_path; do
+    [[ -n "${host_source}" ]] || continue
+    if [[ "${mount_path}" == "/opt/workcell/host-inputs/credentials/copilot-github-token.txt" ]]; then
+      stage_copilot_token_handoff_dir "${bundle_root}" "${host_source}"
+      return 0
+    fi
+  done < <(direct_mount_specs_for_bundle "${bundle_root}")
+
+  container_smoke_die "Expected staged Copilot token direct mount in bundle ${bundle_root}."
 }
 
 workspace_import_mounts() {
@@ -856,17 +914,10 @@ run_entrypoint_with_injection_bundle() {
   local agent="$1"
   local bundle_root="$2"
   shift 2
-  local -a credential_mounts=()
   local docker_workspace=""
   local docker_bundle_root=""
-  local host_source=""
-  local mount_path=""
 
-  while IFS=$'\t' read -r host_source mount_path; do
-    [[ -n "${host_source}" ]] || continue
-    credential_mounts+=(-v "$(workcell_docker_host_path "${host_source}"):${mount_path}:ro")
-  done < <(direct_mount_specs_for_bundle "${bundle_root}")
-
+  populate_injection_bundle_credential_mounts "${agent}" "${bundle_root}"
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
   populate_workspace_import_mounts
@@ -893,8 +944,9 @@ run_entrypoint_with_injection_bundle() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    ${COPILOT_HANDOFF_MOUNT_ARGS[@]+"${COPILOT_HANDOFF_MOUNT_ARGS[@]}"} \
     -v "${docker_workspace}:/workspace" \
-    ${credential_mounts[@]+"${credential_mounts[@]}"} \
+    ${CREDENTIAL_MOUNT_ARGS[@]+"${CREDENTIAL_MOUNT_ARGS[@]}"} \
     ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
     "${IMAGE_TAG}" "$@"
@@ -904,17 +956,10 @@ run_container_with_injection_bundle() {
   local agent="$1"
   local bundle_root="$2"
   shift 2
-  local -a credential_mounts=()
   local docker_workspace=""
   local docker_bundle_root=""
-  local host_source=""
-  local mount_path=""
 
-  while IFS=$'\t' read -r host_source mount_path; do
-    [[ -n "${host_source}" ]] || continue
-    credential_mounts+=(-v "$(workcell_docker_host_path "${host_source}"):${mount_path}:ro")
-  done < <(direct_mount_specs_for_bundle "${bundle_root}")
-
+  populate_injection_bundle_credential_mounts "${agent}" "${bundle_root}"
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
   populate_workspace_import_mounts
@@ -940,8 +985,9 @@ run_container_with_injection_bundle() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    ${COPILOT_HANDOFF_MOUNT_ARGS[@]+"${COPILOT_HANDOFF_MOUNT_ARGS[@]}"} \
     -v "${docker_workspace}:/workspace" \
-    ${credential_mounts[@]+"${credential_mounts[@]}"} \
+    ${CREDENTIAL_MOUNT_ARGS[@]+"${CREDENTIAL_MOUNT_ARGS[@]}"} \
     ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
     --entrypoint "$1" \
@@ -952,17 +998,10 @@ run_container_with_injection_bundle_stdin() {
   local agent="$1"
   local bundle_root="$2"
   shift 2
-  local -a credential_mounts=()
   local docker_workspace=""
   local docker_bundle_root=""
-  local host_source=""
-  local mount_path=""
 
-  while IFS=$'\t' read -r host_source mount_path; do
-    [[ -n "${host_source}" ]] || continue
-    credential_mounts+=(-v "$(workcell_docker_host_path "${host_source}"):${mount_path}:ro")
-  done < <(direct_mount_specs_for_bundle "${bundle_root}")
-
+  populate_injection_bundle_credential_mounts "${agent}" "${bundle_root}"
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
   populate_workspace_import_mounts
@@ -988,8 +1027,9 @@ run_container_with_injection_bundle_stdin() {
     -e WORKSPACE=/workspace \
     -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    ${COPILOT_HANDOFF_MOUNT_ARGS[@]+"${COPILOT_HANDOFF_MOUNT_ARGS[@]}"} \
     -v "${docker_workspace}:/workspace" \
-    ${credential_mounts[@]+"${credential_mounts[@]}"} \
+    ${CREDENTIAL_MOUNT_ARGS[@]+"${CREDENTIAL_MOUNT_ARGS[@]}"} \
     ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
     -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
     --entrypoint "$1" \
@@ -1019,6 +1059,7 @@ prepare_smoke_workspace
 setup_workcell_trusted_docker_client
 select_docker_context
 
+printf 'container smoke workspace\n' >"${SMOKE_WORKSPACE}/README.md"
 cat <<'EOF' >"${SMOKE_WORKSPACE}/AGENTS.md"
 # Workspace AGENTS Instructions
 EOF
@@ -1038,6 +1079,7 @@ EOF
 cat <<'EOF' >"${SMOKE_WORKSPACE}/nested/GEMINI.md"
 # Nested Workspace Gemini Instructions
 EOF
+align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/README.md" 0644 0755
 align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/AGENTS.md" 0644 0755
 align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/CLAUDE.md" 0644 0755
 align_path_for_mapped_runtime_user "${SMOKE_WORKSPACE}/GEMINI.md" 0644 0755
@@ -1115,6 +1157,9 @@ EOF
 cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/claude-api-key.txt"
 claude-smoke-key
 EOF
+cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/copilot-github-token.txt"
+copilot-smoke-token
+EOF
 cat <<'EOF' >"${INJECTION_FIXTURE_ROOT}/gemini.env"
 GEMINI_API_KEY=smoke-gemini-key
 EOF
@@ -1189,6 +1234,9 @@ claude_api_key = "claude-api-key.txt"
 claude_mcp = "claude-mcp.json"
 gemini_env = "gemini.env"
 gemini_projects = "gemini-projects.json"
+
+[credentials.copilot_github_token]
+source = "copilot-github-token.txt"
 
 [credentials.github_hosts]
 source = "gh-hosts.yml"
@@ -1281,6 +1329,7 @@ chmod 0600 \
   "${INJECTION_FIXTURE_ROOT}/claude-mcp.json" \
   "${INJECTION_FIXTURE_ROOT}/gh-hosts.yml" \
   "${INJECTION_FIXTURE_ROOT}/claude-api-key.txt" \
+  "${INJECTION_FIXTURE_ROOT}/copilot-github-token.txt" \
   "${INJECTION_FIXTURE_ROOT}/gemini.env" \
   "${INJECTION_FIXTURE_ROOT}/gemini-invalid-bool.env" \
   "${INJECTION_FIXTURE_ROOT}/gemini-conflicting.env" \
@@ -1311,6 +1360,13 @@ run_as_mapped_host_user "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --mode strict \
   --output-root "${INJECTION_BUNDLE_ROOT}/claude" >/dev/null
 prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/claude"
+
+run_as_mapped_host_user "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
+  --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
+  --agent copilot \
+  --mode strict \
+  --output-root "${INJECTION_BUNDLE_ROOT}/copilot" >/dev/null
+prepare_direct_mount_spec_for_bundle "${INJECTION_BUNDLE_ROOT}/copilot"
 
 run_as_mapped_host_user "${ROOT_DIR}/scripts/lib/render_injection_bundle" \
   --policy "${INJECTION_FIXTURE_ROOT}/policy.toml" \
@@ -1484,6 +1540,381 @@ grep -q "symlinked session path component" /tmp/codex-injected-copy-symlink.out
 test ! -e /workspace/exfil/token.txt
 INNER
 SCRIPT
+
+run_container_with_injection_bundle_stdin copilot "${INJECTION_BUNDLE_ROOT}/copilot" bash -s <<'SCRIPT'
+set -euo pipefail
+real_copilot="/usr/local/libexec/workcell/real/copilot"
+mv "${real_copilot}" "${real_copilot}.real"
+cat >"${real_copilot}" <<'COPILOT_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${COPILOT_GITHUB_TOKEN:-}" == "copilot-smoke-token" ]] || {
+  echo "missing managed Copilot token in child" >&2
+  exit 33
+}
+[[ -z "${WORKCELL_COPILOT_GITHUB_TOKEN:-}" ]] || {
+  echo "Workcell Copilot handoff token remained in child env" >&2
+  exit 34
+}
+[[ ! -e /opt/workcell/host-inputs/credentials/copilot-github-token.txt ]] || {
+  echo "Copilot token remained mounted at the legacy host-input path" >&2
+  exit 35
+}
+[[ ! -e /opt/workcell/copilot-token-handoff/copilot-github-token.txt ]] || {
+  echo "Copilot host handoff token file was not consumed" >&2
+  exit 36
+}
+[[ -e /opt/workcell/copilot-token-handoff/copilot-token-consumed ]] || {
+  echo "Copilot runtime token consumption marker was not written" >&2
+  exit 42
+}
+if [[ -d /opt/workcell/host-injections/direct-mounts ]] &&
+  find /opt/workcell/host-injections/direct-mounts -type f -print -quit | grep -q .; then
+  echo "Copilot token direct-mount copy remained in the mounted injection bundle" >&2
+  exit 29
+fi
+if find "${TMPDIR:-/state/tmp}" -maxdepth 1 -name 'workcell-copilot-token.*' -print -quit | grep -q .; then
+  echo "Copilot token handoff file was not removed" >&2
+  exit 24
+fi
+test ! -e "${COPILOT_HOME}/workcell-token"
+test -d "${COPILOT_CACHE_HOME}"
+if [[ "${WORKCELL_EXPECT_NO_PARENT_COPILOT_TOKEN:-}" == "1" ]]; then
+  if tr '\0' '\n' <"/proc/${PPID}/environ" | grep -q '^WORKCELL_COPILOT_GITHUB_TOKEN='; then
+    echo "entrypoint parent still exposes Copilot handoff token" >&2
+    exit 23
+  fi
+fi
+case " $* " in
+  *" --no-custom-instructions "*) ;;
+  *) echo "missing managed Copilot custom-instruction disablement" >&2; exit 21 ;;
+esac
+case " $* " in
+  *" --available-tools=view,create,edit,apply_patch,grep,glob "*) ;;
+  *) echo "missing managed Copilot shell-free tool list" >&2; exit 22 ;;
+esac
+for expected_copilot_arg in \
+  --no-auto-update \
+  --no-remote \
+  --no-remote-export \
+  --disable-builtin-mcps \
+  --no-custom-instructions \
+  --disallow-temp-dir \
+  --log-dir \
+  "${COPILOT_HOME}/logs" \
+  --secret-env-vars=GH_TOKEN,GITHUB_TOKEN,COPILOT_GITHUB_TOKEN; do
+  case " $* " in
+    *" ${expected_copilot_arg} "*) ;;
+    *) echo "missing managed Copilot safety arg: ${expected_copilot_arg}" >&2; exit 44 ;;
+  esac
+done
+printf 'copilot-stub-ok\n'
+COPILOT_STUB
+chmod 0555 "${real_copilot}"
+mkdir -p "${TMPDIR:-/state/tmp}"
+chmod 1777 "${TMPDIR:-/state/tmp}"
+copilot_runtime_token_file="$(
+  tr -d '\r\n' </opt/workcell/copilot-token-handoff/copilot-github-token.txt |
+    USER="${WORKCELL_HOST_USER}" LOGNAME="${WORKCELL_HOST_USER}" \
+      setpriv --reuid "${WORKCELL_HOST_UID}" --regid "${WORKCELL_HOST_GID}" --clear-groups /bin/bash -c $'set -euo pipefail\ntoken_file="$(mktemp "${TMPDIR:-/state/tmp}/workcell-copilot-token.XXXXXX")"\ncat >"${token_file}"\nchmod 0600 "${token_file}"\nprintf "%s\\n" "${token_file}"\n'
+)"
+rm -f /opt/workcell/copilot-token-handoff/copilot-github-token.txt
+mkdir -p /run/workcell
+chmod 0755 /run/workcell
+printf '%s\n' "${copilot_runtime_token_file}" >/run/workcell/copilot-token-file
+chmod 0444 /run/workcell/copilot-token-file
+set +e
+WORKCELL_EXPECT_NO_PARENT_COPILOT_TOKEN=1 \
+  WORKCELL_FILE_TRACE_PATH=/tmp/copilot-file-trace.log \
+  WORKCELL_COPILOT_TOKEN_FILE="${copilot_runtime_token_file}" \
+  /usr/local/bin/workcell-entrypoint copilot -p smoke -s \
+  >/tmp/copilot-stub.out 2>/tmp/copilot-stub.err
+copilot_stub_status=$?
+set -e
+cat /tmp/copilot-stub.err >&2
+if [[ "${copilot_stub_status}" -ne 0 ]]; then
+  cat /tmp/copilot-stub.out >&2
+  echo "Copilot stub entrypoint exited with status ${copilot_stub_status}" >&2
+  exit 38
+fi
+if ! grep -q '^copilot-stub-ok$' /tmp/copilot-stub.out; then
+  cat /tmp/copilot-stub.out >&2
+  exit 38
+fi
+if ! setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups \
+  grep -q 'event=provider-launch' /tmp/copilot-file-trace.log; then
+  echo "Copilot file trace is missing provider-launch:" >&2
+  cat /tmp/copilot-file-trace.log >&2
+  exit 39
+fi
+if ! setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups \
+  grep -q 'event=provider-exit' /tmp/copilot-file-trace.log; then
+  echo "Copilot file trace is missing provider-exit:" >&2
+  cat /tmp/copilot-file-trace.log >&2
+  exit 40
+fi
+chmod u+w "${real_copilot}"
+cat >"${real_copilot}" <<'COPILOT_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+test -z "${COPILOT_GITHUB_TOKEN:-}"
+test -z "${WORKCELL_COPILOT_GITHUB_TOKEN:-}"
+test -z "${WORKCELL_COPILOT_TOKEN_FILE:-}"
+if find "${TMPDIR:-/state/tmp}" -maxdepth 1 -name 'workcell-copilot-token.*' -print -quit | grep -q .; then
+  echo "Copilot no-auth launch left a staged token file" >&2
+  exit 43
+fi
+test -e /opt/workcell/copilot-token-handoff/copilot-token-consumed
+printf 'copilot-noauth-stub-ok\n'
+COPILOT_STUB
+chmod 0555 "${real_copilot}"
+rm -f /opt/workcell/copilot-token-handoff/copilot-token-consumed
+copilot_runtime_token_file="$(
+  printf '%s\n' "copilot-smoke-token" |
+    USER="${WORKCELL_HOST_USER}" LOGNAME="${WORKCELL_HOST_USER}" \
+      setpriv --reuid "${WORKCELL_HOST_UID}" --regid "${WORKCELL_HOST_GID}" --clear-groups /bin/bash -c $'set -euo pipefail\ntoken_file="$(mktemp "${TMPDIR:-/state/tmp}/workcell-copilot-token.XXXXXX")"\ncat >"${token_file}"\nchmod 0600 "${token_file}"\nprintf "%s\\n" "${token_file}"\n'
+)"
+chmod u+w /run/workcell/copilot-token-file 2>/dev/null || true
+printf '%s\n' "${copilot_runtime_token_file}" >/run/workcell/copilot-token-file
+chmod 0444 /run/workcell/copilot-token-file
+WORKCELL_COPILOT_TOKEN_FILE="${copilot_runtime_token_file}" \
+  /usr/local/bin/workcell-entrypoint copilot --version >/tmp/copilot-noauth-stub.out 2>/tmp/copilot-noauth-stub.err
+cat /tmp/copilot-noauth-stub.err >&2
+if ! grep -q '^copilot-noauth-stub-ok$' /tmp/copilot-noauth-stub.out; then
+  cat /tmp/copilot-noauth-stub.out >&2
+  echo "Copilot no-auth stub did not report success" >&2
+  exit 46
+fi
+rm -f /opt/workcell/copilot-token-handoff/copilot-token-consumed
+empty_copilot_runtime_token_file="$(
+  USER="${WORKCELL_HOST_USER}" LOGNAME="${WORKCELL_HOST_USER}" \
+    setpriv --reuid "${WORKCELL_HOST_UID}" --regid "${WORKCELL_HOST_GID}" --clear-groups /bin/bash -c $'set -euo pipefail\ntoken_file="$(mktemp "${TMPDIR:-/state/tmp}/workcell-copilot-token.XXXXXX")"\n: >"${token_file}"\nchmod 0600 "${token_file}"\nprintf "%s\\n" "${token_file}"\n'
+)"
+chmod u+w /run/workcell/copilot-token-file 2>/dev/null || true
+printf '%s\n' "${empty_copilot_runtime_token_file}" >/run/workcell/copilot-token-file
+chmod 0444 /run/workcell/copilot-token-file
+if WORKCELL_COPILOT_TOKEN_FILE="${empty_copilot_runtime_token_file}" \
+  /usr/local/bin/workcell-entrypoint copilot -p smoke >/tmp/copilot-empty-token.out 2>&1; then
+  echo "expected empty Copilot runtime token handoff to fail" >&2
+  exit 45
+fi
+if ! grep -q "Copilot auth token is empty" /tmp/copilot-empty-token.out; then
+  cat /tmp/copilot-empty-token.out >&2
+  echo "Copilot empty-token failure did not report the expected reason" >&2
+  exit 47
+fi
+if [[ -e /opt/workcell/copilot-token-handoff/copilot-token-consumed ]]; then
+  echo "Copilot empty-token failure wrote a consumed marker before validating the token" >&2
+  exit 48
+fi
+unset WORKCELL_COPILOT_GITHUB_TOKEN COPILOT_GITHUB_TOKEN
+if WORKCELL_COPILOT_GITHUB_TOKEN=forged-copilot-token \
+  /usr/local/bin/copilot -p smoke >/tmp/copilot-forged-env.out 2>&1; then
+  echo "expected direct Copilot launcher to reject caller-supplied Workcell token env" >&2
+  exit 32
+fi
+if ! grep -Eq "Copilot auth token handoff file is (required|not readable)|Workcell blocked direct provider wrapper execution\\." /tmp/copilot-forged-env.out; then
+  cat /tmp/copilot-forged-env.out >&2
+  exit 41
+fi
+setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -s <<'INNER'
+set -euo pipefail
+COPILOT_HOME="${COPILOT_HOME:-${HOME}/.copilot}"
+COPILOT_CACHE_HOME="${COPILOT_CACHE_HOME:-${HOME}/.cache/github-copilot}"
+test ! -e "$COPILOT_HOME/AGENTS.md"
+test ! -e "$COPILOT_HOME/workcell-token"
+test ! -e /opt/workcell/host-inputs/credentials/copilot-github-token.txt
+test ! -e /opt/workcell/copilot-token-handoff/copilot-github-token.txt
+if [[ -d /opt/workcell/host-injections/direct-mounts ]] &&
+  find /opt/workcell/host-injections/direct-mounts -type f -print -quit | grep -q .; then
+  echo "Copilot token direct-mount copy remained in the mounted injection bundle" >&2
+  exit 30
+fi
+test -d "$COPILOT_CACHE_HOME"
+test ! -e "$HOME/.config/gh/hosts.yml"
+INNER
+SCRIPT
+
+COPILOT_PID1_STUB="${SMOKE_WORKSPACE}/tmp/copilot-pid1-stub"
+COPILOT_PID1_TOKEN_HANDOFF_DIR="$(copilot_token_handoff_dir_for_bundle "${INJECTION_BUNDLE_ROOT}/copilot")"
+cat >"${COPILOT_PID1_STUB}" <<'COPILOT_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${COPILOT_GITHUB_TOKEN:-}" == "copilot-smoke-token" ]] || {
+  echo "missing managed Copilot token in child" >&2
+  exit 34
+}
+[[ -z "${WORKCELL_COPILOT_GITHUB_TOKEN:-}" ]] || {
+  echo "Workcell Copilot handoff token remained in child env" >&2
+  exit 35
+}
+if tr '\0' '\n' </proc/1/environ | grep -q '^WORKCELL_COPILOT_GITHUB_TOKEN='; then
+  echo "pid 1 still exposes Copilot handoff token" >&2
+  exit 25
+fi
+[[ ! -e /opt/workcell/host-inputs/credentials/copilot-github-token.txt ]] || {
+  echo "Copilot token remained mounted at the legacy host-input path" >&2
+  exit 36
+}
+[[ ! -e /opt/workcell/copilot-token-handoff/copilot-github-token.txt ]] || {
+  echo "Copilot host handoff token file was not consumed" >&2
+  exit 37
+}
+[[ -e /opt/workcell/copilot-token-handoff/copilot-token-consumed ]] || {
+  echo "Copilot runtime token consumption marker was not written" >&2
+  exit 38
+}
+if [[ -d /opt/workcell/host-injections/direct-mounts ]] &&
+  find /opt/workcell/host-injections/direct-mounts -type f -print -quit | grep -q .; then
+  echo "Copilot token direct-mount copy remained in the mounted injection bundle" >&2
+  exit 31
+fi
+if find "${TMPDIR:-/state/tmp}" -maxdepth 1 -name 'workcell-copilot-token.*' -print -quit | grep -q .; then
+  echo "Copilot token handoff file was not removed" >&2
+  exit 26
+fi
+case " $* " in
+  *" --no-custom-instructions "*) ;;
+  *) echo "missing managed Copilot custom-instruction disablement" >&2; exit 27 ;;
+esac
+case " $* " in
+  *" --available-tools=view,create,edit,apply_patch,grep,glob "*) ;;
+  *) echo "missing managed Copilot shell-free tool list" >&2; exit 28 ;;
+esac
+for expected_copilot_arg in \
+  --no-auto-update \
+  --no-remote \
+  --no-remote-export \
+  --disable-builtin-mcps \
+  --no-custom-instructions \
+  --disallow-temp-dir \
+  --log-dir \
+  "${COPILOT_HOME}/logs" \
+  --secret-env-vars=GH_TOKEN,GITHUB_TOKEN,COPILOT_GITHUB_TOKEN; do
+  case " $* " in
+    *" ${expected_copilot_arg} "*) ;;
+    *) echo "missing managed Copilot safety arg: ${expected_copilot_arg}" >&2; exit 44 ;;
+  esac
+done
+printf 'copilot-pid1-stub-ok\n'
+COPILOT_STUB
+chmod 0555 "${COPILOT_PID1_STUB}"
+populate_workspace_import_mounts
+populate_runtime_security_args ephemeral
+docker_cmd run --rm \
+  ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
+  --user 0:0 \
+  --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+  --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+  --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+  -e AGENT_NAME=copilot \
+  -e AGENT_UI=cli \
+  -e WORKCELL_AGENT_AUTONOMY=yolo \
+  -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+  -e WORKCELL_HOST_UID="${HOST_UID}" \
+  -e WORKCELL_HOST_GID="${HOST_GID}" \
+  -e WORKCELL_HOST_USER="${HOST_USER}" \
+  -e CODEX_PROFILE=strict \
+  -e WORKCELL_MODE=strict \
+  -e HOME=/state/agent-home \
+  -e CODEX_HOME=/state/agent-home/.codex \
+  -e COPILOT_HOME=/state/agent-home/.copilot \
+  -e COPILOT_CACHE_HOME=/state/agent-home/.cache/github-copilot \
+  -e TMPDIR=/state/tmp \
+  -e WORKCELL_RUNTIME=1 \
+  -e WORKSPACE=/workspace \
+  -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
+  -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+  -v "$(workcell_docker_host_path "${COPILOT_PID1_TOKEN_HANDOFF_DIR}"):${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}:rw" \
+  -v "$(workcell_docker_host_path "${SMOKE_WORKSPACE}"):/workspace" \
+  ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
+  -v "$(workcell_docker_host_path "${INJECTION_BUNDLE_ROOT}/copilot"):/opt/workcell/host-injections:ro" \
+  -v "$(workcell_docker_host_path "${COPILOT_PID1_STUB}"):/usr/local/libexec/workcell/real/copilot:ro" \
+  "${IMAGE_TAG}" copilot -p smoke -s >/tmp/workcell-copilot-pid1-stub.out
+grep -q '^copilot-pid1-stub-ok$' /tmp/workcell-copilot-pid1-stub.out
+
+COPILOT_METADATA_STUB="${SMOKE_WORKSPACE}/tmp/copilot-metadata-stub"
+COPILOT_METADATA_TOKEN_HANDOFF_DIR="$(copilot_token_handoff_dir_for_bundle "${INJECTION_BUNDLE_ROOT}/copilot")"
+COPILOT_METADATA_CONTAINER="workcell-copilot-metadata-smoke-$$"
+cat >"${COPILOT_METADATA_STUB}" <<'COPILOT_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+test "${COPILOT_GITHUB_TOKEN:-}" = "copilot-smoke-token"
+test -z "${WORKCELL_COPILOT_GITHUB_TOKEN:-}"
+test -z "${WORKCELL_COPILOT_TOKEN_FILE:-}"
+test ! -e /opt/workcell/copilot-token-handoff/copilot-github-token.txt
+test -e /opt/workcell/copilot-token-handoff/copilot-token-consumed
+printf 'copilot-metadata-stub-ok\n' >/workspace/tmp/copilot-metadata-stub.out
+trap 'printf "copilot-metadata-term-ok\n" >/workspace/tmp/copilot-metadata-term.out; exit 0' TERM INT
+while :; do
+  sleep 1
+done
+COPILOT_STUB
+chmod 0555 "${COPILOT_METADATA_STUB}"
+docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
+docker_cmd run -d \
+  --name "${COPILOT_METADATA_CONTAINER}" \
+  ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
+  --user 0:0 \
+  --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
+  --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+  --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
+  -e AGENT_NAME=copilot \
+  -e AGENT_UI=cli \
+  -e WORKCELL_AGENT_AUTONOMY=yolo \
+  -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+  -e WORKCELL_HOST_UID="${HOST_UID}" \
+  -e WORKCELL_HOST_GID="${HOST_GID}" \
+  -e WORKCELL_HOST_USER="${HOST_USER}" \
+  -e CODEX_PROFILE=strict \
+  -e WORKCELL_MODE=strict \
+  -e HOME=/state/agent-home \
+  -e CODEX_HOME=/state/agent-home/.codex \
+  -e COPILOT_HOME=/state/agent-home/.copilot \
+  -e COPILOT_CACHE_HOME=/state/agent-home/.cache/github-copilot \
+  -e TMPDIR=/state/tmp \
+  -e WORKCELL_RUNTIME=1 \
+  -e WORKSPACE=/workspace \
+  -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
+  -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+  -v "$(workcell_docker_host_path "${COPILOT_METADATA_TOKEN_HANDOFF_DIR}"):${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}:rw" \
+  -v "$(workcell_docker_host_path "${SMOKE_WORKSPACE}"):/workspace" \
+  ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
+  -v "$(workcell_docker_host_path "${INJECTION_BUNDLE_ROOT}/copilot"):/opt/workcell/host-injections:ro" \
+  -v "$(workcell_docker_host_path "${COPILOT_METADATA_STUB}"):/usr/local/libexec/workcell/real/copilot:ro" \
+  "${IMAGE_TAG}" copilot -p smoke -s >/dev/null
+for _ in {1..100}; do
+  [[ -e "${COPILOT_METADATA_TOKEN_HANDOFF_DIR}/copilot-token-consumed" ]] && break
+  sleep 0.1
+done
+if [[ ! -e "${COPILOT_METADATA_TOKEN_HANDOFF_DIR}/copilot-token-consumed" ]]; then
+  echo "Copilot metadata smoke token handoff marker was not written" >&2
+  docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
+  exit 32
+fi
+if [[ -e "${COPILOT_METADATA_TOKEN_HANDOFF_DIR}/copilot-github-token.txt" ]]; then
+  echo "Copilot metadata smoke token handoff file was not consumed" >&2
+  docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
+  exit 32
+fi
+COPILOT_METADATA_ENV="$(docker_cmd inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${COPILOT_METADATA_CONTAINER}")"
+COPILOT_METADATA_JSON="$(docker_cmd inspect "${COPILOT_METADATA_CONTAINER}")"
+if ! docker_cmd stop -t 5 "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1; then
+  echo "Copilot metadata smoke container did not stop cleanly" >&2
+  docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
+  exit 34
+fi
+if ! grep -q '^copilot-metadata-term-ok$' "${SMOKE_WORKSPACE}/tmp/copilot-metadata-term.out"; then
+  echo "Copilot launcher did not forward docker stop to the managed child" >&2
+  docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
+  exit 34
+fi
+docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
+if grep -Eq '^(WORKCELL_COPILOT_GITHUB_TOKEN|WORKCELL_COPILOT_TOKEN_FILE|COPILOT_GITHUB_TOKEN)=' <<<"${COPILOT_METADATA_ENV}" ||
+  grep -Fq 'copilot-smoke-token' <<<"${COPILOT_METADATA_JSON}"; then
+  echo "Copilot token leaked into Docker container metadata" >&2
+  exit 33
+fi
 
 run_container_with_injection_bundle_stdin claude "${INJECTION_BUNDLE_ROOT}/claude" bash -s <<'SCRIPT'
 set -euo pipefail
@@ -1970,7 +2401,7 @@ if run_entrypoint codex bash -lc true >/tmp/workcell-entrypoint-command.out 2>&1
 fi
 grep -q "Workcell blocked non-provider command" /tmp/workcell-entrypoint-command.out
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   if ! run_entrypoint_with_profile "${agent}" development bash -lc "printf '%s\n' development-mode-ok" \
     >/tmp/workcell-entrypoint-development-${agent}.out 2>&1; then
     echo "expected Workcell entrypoint development mode to allow managed non-provider commands for ${agent}" >&2
@@ -2084,6 +2515,7 @@ fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-remote.out
 
 run_entrypoint claude claude --version >/dev/null
+run_entrypoint copilot copilot --version >/dev/null
 run_entrypoint_with_init_profile codex build codex --version >/dev/null
 run_entrypoint gemini gemini --version >/dev/null
 
@@ -2192,6 +2624,8 @@ test ! -L "$CODEX_HOME/rules"
 test -w "$CODEX_HOME/rules/default.rules"
 claude --version >/tmp/workcell-post-apt-claude.out 2>&1
 grep -q "session previously ran package-manager mutations as root" /tmp/workcell-post-apt-claude.out
+copilot --version >/tmp/workcell-post-apt-copilot.out 2>&1
+grep -q "session previously ran package-manager mutations as root" /tmp/workcell-post-apt-copilot.out
 gemini --version >/tmp/workcell-post-apt-gemini.out 2>&1
 grep -q "session previously ran package-manager mutations as root" /tmp/workcell-post-apt-gemini.out
 EOF
@@ -2250,6 +2684,163 @@ printf "regexXuser::20000:0:99999:7:::\n" >>/etc/shadow
 workcell_append_shadow_entry "regex.user"
 test "$(grep -c "^regex\\.user:" /etc/shadow)" = "1"
 SCRIPT
+
+run_container copilot bash -s <<'SCRIPT'
+set -euo pipefail
+source /usr/local/libexec/workcell/provider-policy.sh
+reject_unsafe_copilot_args -p mcp
+reject_unsafe_copilot_args --prompt=mcp
+reject_unsafe_copilot_args --model gpt-4.1 -p smoke
+reject_unsafe_copilot_args --model=gpt-4.1 --prompt=smoke
+if (reject_unsafe_copilot_args mcp) >/tmp/workcell-copilot-policy-mcp.out 2>&1; then
+  echo "expected Copilot policy to reject bare MCP control-plane commands" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Copilot lifecycle/control-plane command: mcp" /tmp/workcell-copilot-policy-mcp.out
+if (reject_unsafe_copilot_args --model gpt-4.1 mcp) >/tmp/workcell-copilot-policy-model-mcp.out 2>&1; then
+  echo "expected Copilot policy to reject lifecycle commands after model values" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Copilot lifecycle/control-plane command: mcp" /tmp/workcell-copilot-policy-model-mcp.out
+if (reject_unsafe_copilot_args --prompt smoke mcp) >/tmp/workcell-copilot-policy-prompt-mcp.out 2>&1; then
+  echo "expected Copilot policy to reject lifecycle commands after prompt values" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Copilot lifecycle/control-plane command: mcp" /tmp/workcell-copilot-policy-prompt-mcp.out
+if (reject_unsafe_copilot_args --model --yolo) >/tmp/workcell-copilot-policy-model-yolo.out 2>&1; then
+  echo "expected Copilot policy to reject dash-prefixed model values" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: --yolo" /tmp/workcell-copilot-policy-model-yolo.out
+if (reject_unsafe_copilot_args -p --allow-tool=write) >/tmp/workcell-copilot-policy-prompt-allow-tool.out 2>&1; then
+  echo "expected Copilot policy to reject dash-prefixed prompt values" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: --allow-tool=write" /tmp/workcell-copilot-policy-prompt-allow-tool.out
+if (reject_unsafe_copilot_args -p--allow-tool=write) >/tmp/workcell-copilot-policy-attached-short-prompt-allow-tool.out 2>&1; then
+  echo "expected Copilot policy to reject attached dash-prefixed short prompt values" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: --allow-tool=write" /tmp/workcell-copilot-policy-attached-short-prompt-allow-tool.out
+if (reject_unsafe_copilot_args --prompt=--allow-tool=write) >/tmp/workcell-copilot-policy-attached-long-prompt-allow-tool.out 2>&1; then
+  echo "expected Copilot policy to reject attached dash-prefixed long prompt values" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: --allow-tool=write" /tmp/workcell-copilot-policy-attached-long-prompt-allow-tool.out
+if (reject_unsafe_copilot_args -si) >/tmp/workcell-copilot-policy-bundled-short-options.out 2>&1; then
+  echo "expected Copilot policy to reject bundled short options" >&2
+  exit 1
+fi
+grep -q "Workcell blocked bundled Copilot short options: -si" /tmp/workcell-copilot-policy-bundled-short-options.out
+if (reject_unsafe_copilot_args -i --allow-all-tools) >/tmp/workcell-copilot-policy-short-interactive.out 2>&1; then
+  echo "expected Copilot policy to reject short interactive overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: -i" /tmp/workcell-copilot-policy-short-interactive.out
+if (reject_unsafe_copilot_args --interactive --add-dir) >/tmp/workcell-copilot-policy-interactive.out 2>&1; then
+  echo "expected Copilot policy to reject long interactive overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: --interactive" /tmp/workcell-copilot-policy-interactive.out
+SCRIPT
+
+if run_entrypoint copilot copilot --allow-all --version >/tmp/workcell-entrypoint-copilot-allow-all.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot allow-all overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-allow-all.out
+
+if run_entrypoint copilot copilot --allow-url=https://example.invalid --version >/tmp/workcell-entrypoint-copilot-allow-url.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot URL allow overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-allow-url.out
+
+if run_entrypoint copilot copilot --allow-tool bash --version >/tmp/workcell-entrypoint-copilot-allow-tool.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot tool allow overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-allow-tool.out
+
+if run_entrypoint copilot copilot --allow-all-tools --version >/tmp/workcell-entrypoint-copilot-allow-all-tools.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot all-tools overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-allow-all-tools.out
+
+if run_entrypoint copilot copilot --plan --version >/tmp/workcell-entrypoint-copilot-plan.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot plan mode overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-plan.out
+
+if run_entrypoint copilot copilot --worktree /workspace --version >/tmp/workcell-entrypoint-copilot-worktree.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot worktree overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-worktree.out
+
+if run_entrypoint copilot copilot -w/workspace --version >/tmp/workcell-entrypoint-copilot-short-worktree.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot short worktree overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-short-worktree.out
+
+for copilot_short_flag in -C -i -n -r -w; do
+  if run_entrypoint copilot copilot "${copilot_short_flag}" >/tmp/workcell-entrypoint-copilot-short-flag.out 2>&1; then
+    echo "expected Workcell entrypoint to reject bare Copilot short override ${copilot_short_flag}" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-short-flag.out
+done
+
+if run_entrypoint copilot copilot --remote --version >/tmp/workcell-entrypoint-copilot-remote.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot remote-session overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-remote.out
+
+if run_entrypoint copilot copilot --config-dir /workspace/.copilot --version >/tmp/workcell-entrypoint-copilot-config-dir.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot config-dir overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-config-dir.out
+
+if run_entrypoint copilot copilot --allow-all-mcp-server-instructions --version >/tmp/workcell-entrypoint-copilot-mcp-instructions.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot MCP instruction expansion" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-mcp-instructions.out
+
+if run_entrypoint copilot copilot --dynamic-retrieval=skills=on --version >/tmp/workcell-entrypoint-copilot-dynamic-retrieval.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot dynamic retrieval overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-dynamic-retrieval.out
+
+if run_entrypoint copilot copilot --no-remote --version >/tmp/workcell-entrypoint-copilot-no-remote.out 2>&1; then
+  echo "expected Workcell entrypoint to reject user-supplied Copilot safety flags" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-no-remote.out
+
+if run_entrypoint copilot copilot --secret-env-vars=GH_TOKEN --version >/tmp/workcell-entrypoint-copilot-secret-env.out 2>&1; then
+  echo "expected Workcell entrypoint to reject user-supplied Copilot secret-env overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override" /tmp/workcell-entrypoint-copilot-secret-env.out
+
+if run_entrypoint copilot copilot mcp >/tmp/workcell-entrypoint-copilot-mcp.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot MCP control-plane commands" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Copilot lifecycle/control-plane command: mcp" /tmp/workcell-entrypoint-copilot-mcp.out
+
+if run_entrypoint copilot copilot --model gpt-4.1 mcp >/tmp/workcell-entrypoint-copilot-model-mcp.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Copilot MCP after model values" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Copilot lifecycle/control-plane command: mcp" /tmp/workcell-entrypoint-copilot-model-mcp.out
 
 if run_entrypoint claude claude --dangerously-skip-permissions >/tmp/workcell-entrypoint-claude-danger.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude dangerous override outside breakglass" >&2
@@ -2430,8 +3021,8 @@ run_container gemini bash -lc '
 
 run_container codex bash -lc "$(
   cat <<'SCRIPT'
-  set -euo pipefail
-  /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+	  set -euo pipefail
+	  /usr/local/bin/workcell-entrypoint codex --version >/dev/null
   setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
     CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
@@ -2464,11 +3055,37 @@ run_container codex bash -lc "$(
     codex --version >/tmp/codex-version.out 2>/tmp/codex-version.err
     grep -q "codex-cli" /tmp/codex-version.out
     assert_codex_stderr_clean /tmp/codex-version.err
-    LD_PRELOAD=/workspace/workcell-does-not-exist.so codex --version | grep -q "codex-cli"
-    LD_PRELOAD=/workspace/workcell-does-not-exist.so claude --version >/dev/null
-    LD_PRELOAD=/workspace/workcell-does-not-exist.so git --version | grep -q "git version"
-    LD_PRELOAD=/workspace/workcell-does-not-exist.so node --version | grep -q "^v"
-    test -f "$CODEX_HOME/config.toml"
+    if LD_PRELOAD=/workspace/workcell-does-not-exist.so codex --version >/tmp/codex-unsafe-ld-preload.out 2>&1; then
+      echo "expected unsafe LD_PRELOAD to be blocked before Workcell launcher execution" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution" /tmp/codex-unsafe-ld-preload.out
+    if LD_PRELOAD=/workspace/workcell-does-not-exist.so claude --version >/tmp/claude-unsafe-ld-preload.out 2>&1; then
+      echo "expected unsafe LD_PRELOAD to be blocked before Claude launcher execution" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution" /tmp/claude-unsafe-ld-preload.out
+    if LD_PRELOAD=/workspace/workcell-does-not-exist.so git --version >/tmp/git-unsafe-ld-preload.out 2>&1; then
+      echo "expected unsafe LD_PRELOAD to be blocked before Git launcher execution" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution" /tmp/git-unsafe-ld-preload.out
+    if LD_PRELOAD=/workspace/workcell-does-not-exist.so node --version >/tmp/node-unsafe-ld-preload.out 2>&1; then
+      echo "expected unsafe LD_PRELOAD to be blocked before Node launcher execution" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution" /tmp/node-unsafe-ld-preload.out
+    if LD_TRACE_LOADED_OBJECTS=1 codex --version >/tmp/codex-ld-trace.out 2>&1; then
+      echo "expected LD_TRACE_LOADED_OBJECTS to be blocked before Workcell launcher execution" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution" /tmp/codex-ld-trace.out
+    if LD_AUDIT=/workspace/workcell-does-not-exist.so copilot --version >/tmp/copilot-ld-audit.out 2>&1; then
+      echo "expected LD_AUDIT to be blocked before Copilot launcher execution" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution" /tmp/copilot-ld-audit.out
+test -f "$CODEX_HOME/config.toml"
     test ! -L "$CODEX_HOME/config.toml"
     test -w "$CODEX_HOME/config.toml"
     cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
@@ -2580,20 +3197,23 @@ run_container codex bash -lc "$(
   EXEC_TMP="/state/workcell-exec"
   mkdir -p "$EXEC_TMP"
   chmod 0777 "$EXEC_TMP"
-  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules rm -rf build \
-    | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git push origin feature \
-    | jq -e ".decision == \"prompt\"" >/dev/null
-  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git push origin main --force \
-    | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git commit --no-verify \
-    | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/bin/git push --no-verify origin feature \
-    | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/local/libexec/workcell/core/claude --dangerously-skip-permissions \
-    | jq -e ".decision == \"forbidden\"" >/dev/null
-  codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/local/libexec/workcell/real/claude --dangerously-skip-permissions \
-    | jq -e ".decision == \"forbidden\"" >/dev/null
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
+    set -euo pipefail
+    codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules rm -rf build \
+      | jq -e ".decision == \"forbidden\"" >/dev/null
+    codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git push origin feature \
+      | jq -e ".decision == \"prompt\"" >/dev/null
+    codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git push origin main --force \
+      | jq -e ".decision == \"forbidden\"" >/dev/null
+    codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules git commit --no-verify \
+      | jq -e ".decision == \"forbidden\"" >/dev/null
+    codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/bin/git push --no-verify origin feature \
+      | jq -e ".decision == \"forbidden\"" >/dev/null
+    codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/local/libexec/workcell/core/claude --dangerously-skip-permissions \
+      | jq -e ".decision == \"forbidden\"" >/dev/null
+    codex execpolicy check --rules /opt/workcell/adapters/codex/.codex/rules/default.rules /usr/local/libexec/workcell/real/claude --dangerously-skip-permissions \
+      | jq -e ".decision == \"forbidden\"" >/dev/null
+  '
   grep -q "Do not bypass git hooks with --no-verify or git commit -n from Workcell." \
     /opt/workcell/adapters/codex/.codex/rules/default.rules
   grep -q "git commit --no-verify -m test" \
@@ -2606,12 +3226,14 @@ EOF
   rm -f /tmp/workcell-bashenv-ran
   BASH_ENV=/tmp/workcell-bashenv.sh node --version >/tmp/node-bashenv.out 2>&1
   test ! -e /tmp/workcell-bashenv-ran
-  cat <<'EOF' >/tmp/workcell-wrapper-bashenv.sh
+	  cat <<'EOF' >/tmp/workcell-wrapper-bashenv.sh
+unset BASH_ENV
+unset ENV
 exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/codex --version
 EOF
-  set +e
-  BASH_ENV=/tmp/workcell-wrapper-bashenv.sh bash /usr/local/libexec/workcell/provider-wrapper.sh >/tmp/provider-wrapper-bashenv.out 2>&1
-  provider_wrapper_bashenv_status=$?
+	  set +e
+	  BASH_ENV=/tmp/workcell-wrapper-bashenv.sh bash /usr/local/libexec/workcell/provider-wrapper.sh >/tmp/provider-wrapper-bashenv.out 2>&1
+	  provider_wrapper_bashenv_status=$?
   set -e
   if [[ "${provider_wrapper_bashenv_status}" -eq 0 ]]; then
     echo "expected explicit bash launch of provider wrapper with hostile BASH_ENV to fail" >&2
@@ -2625,13 +3247,36 @@ EOF
   if [[ "${provider_wrapper_direct_status}" -eq 0 ]]; then
     echo "expected explicit bash launch of provider wrapper to fail" >&2
     exit 1
-  fi
-  grep -q "Workcell blocked direct provider wrapper execution." /tmp/provider-wrapper-direct.out
-  cat <<'EOF' >/tmp/workcell-development-wrapper-bashenv.sh
+	  fi
+	  grep -q "Workcell blocked direct provider wrapper execution." /tmp/provider-wrapper-direct.out
+	  set +e
+	  WORKCELL_LAUNCH_TARGET=codex WORKCELL_PROVIDER_LAUNCHER_AUTHORITY=1 \
+	    bash /usr/local/libexec/workcell/provider-wrapper.sh --version >/tmp/provider-wrapper-forged-authority.out 2>&1
+	  provider_wrapper_forged_authority_status=$?
+	  set -e
+	  if [[ "${provider_wrapper_forged_authority_status}" -eq 0 ]]; then
+	    echo "expected explicit bash launch of provider wrapper with forged authority to fail" >&2
+	    exit 1
+	  fi
+	  grep -q "Workcell blocked direct provider wrapper execution." /tmp/provider-wrapper-forged-authority.out
+	  if bash -lc 'exec -a copilot /usr/local/libexec/workcell/core/launcher --version' >/tmp/provider-launcher-exec-a.out 2>&1; then
+	    echo "expected spoofed argv0 launcher invocation to fail" >&2
+	    exit 1
+	  fi
+	  grep -q "Unsupported Workcell launcher invocation for copilot: /usr/local/libexec/workcell/core/launcher" /tmp/provider-launcher-exec-a.out
+	  ln -sf /usr/local/libexec/workcell/core/launcher /workspace/tmp/copilot
+	  if /workspace/tmp/copilot --version >/tmp/provider-launcher-workspace-symlink.out 2>&1; then
+	    echo "expected workspace symlink launcher invocation to fail" >&2
+	    exit 1
+	  fi
+	  grep -q "Unsupported Workcell launcher invocation for copilot: /workspace/tmp/copilot" /tmp/provider-launcher-workspace-symlink.out
+	  cat <<'EOF' >/tmp/workcell-development-wrapper-bashenv.sh
+unset BASH_ENV
+unset ENV
 exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/codex --version
 EOF
-  if BASH_ENV=/tmp/workcell-development-wrapper-bashenv.sh bash /usr/local/libexec/workcell/development-wrapper.sh >/tmp/development-wrapper-bashenv.out 2>&1; then
-    echo "expected explicit bash launch of development wrapper with hostile BASH_ENV to fail" >&2
+	  if BASH_ENV=/tmp/workcell-development-wrapper-bashenv.sh bash /usr/local/libexec/workcell/development-wrapper.sh >/tmp/development-wrapper-bashenv.out 2>&1; then
+	    echo "expected explicit bash launch of development wrapper with hostile BASH_ENV to fail" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/development-wrapper-bashenv.out
@@ -2651,9 +3296,11 @@ EOF
     echo "expected development wrapper to reject renamed symlinks to protected runtimes" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/development-wrapper-renamed-path.out
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups rm -f /workspace/tmp/workcell-renamed-codex
-  cat <<'EOF' >/tmp/workcell-node-wrapper-bashenv.sh
+	  grep -q "Workcell blocked direct protected runtime execution" /tmp/development-wrapper-renamed-path.out
+	  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups rm -f /workspace/tmp/workcell-renamed-codex
+	  cat <<'EOF' >/tmp/workcell-node-wrapper-bashenv.sh
+unset BASH_ENV
+unset ENV
 exec env -u LD_PRELOAD /usr/local/libexec/workcell/real/node --version
 EOF
   if BASH_ENV=/tmp/workcell-node-wrapper-bashenv.sh bash /usr/local/libexec/workcell/node-wrapper.sh --version >/tmp/node-wrapper-bashenv.out 2>&1; then
@@ -2673,11 +3320,25 @@ EOF
         break
       fi
     done
-  )"
-  test -n "$LOADER"
-  if env -u LD_PRELOAD "$LOADER" /usr/local/libexec/workcell/real/node --version >/tmp/node-loader-real.out 2>&1; then
-    echo "expected direct loader invocation of the real Node payload to fail" >&2
-    exit 1
+	  )"
+	  test -n "$LOADER"
+	  if AGENT_NAME=copilot \
+	    WORKCELL_MODE=development \
+	    CODEX_PROFILE=development \
+	    HOME=/state/agent-home \
+	    CODEX_HOME=/state/agent-home/.codex \
+	    COPILOT_HOME=/state/agent-home/.copilot \
+	    COPILOT_CACHE_HOME=/state/agent-home/.cache/github-copilot \
+	    TMPDIR=/state/tmp \
+	    /usr/local/libexec/workcell/development-wrapper.sh \
+	    "$LOADER" --argv0 copilot /usr/local/libexec/workcell/real/copilot --version >/tmp/development-wrapper-copilot-loader.out 2>&1; then
+	    echo "expected development wrapper to reject loader-mediated protected Copilot execution" >&2
+	    exit 1
+	  fi
+	  grep -q "Workcell blocked direct protected runtime execution" /tmp/development-wrapper-copilot-loader.out
+	  if env -u LD_PRELOAD "$LOADER" /usr/local/libexec/workcell/real/node --version >/tmp/node-loader-real.out 2>&1; then
+	    echo "expected direct loader invocation of the real Node payload to fail" >&2
+	    exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/node-loader-real.out
   if env -u LD_PRELOAD "$LOADER" /usr/local/libexec/workcell/real/codex --version >/tmp/codex-loader-real.out 2>&1; then
@@ -3042,7 +3703,7 @@ EOF
   rm -f "${workspace_exec_scratch}/shebang-bypass" "${workspace_exec_scratch}/workcell-child-envp-bypass.js"
   rm -f "${workspace_exec_scratch}/node"
   rm -f "${workspace_exec_scratch}/.workcell-native-helper"
-	cp /usr/local/libexec/workcell/real/node "$EXEC_TMP/workcell-node-real-copy"
+		cp /usr/local/libexec/workcell/real/node "$EXEC_TMP/workcell-node-real-copy"
 	chmod 0700 "$EXEC_TMP/workcell-node-real-copy"
 	if "$EXEC_TMP/workcell-node-real-copy" --version >/tmp/node-real-copy.out 2>&1; then
 		echo "expected renamed copy of the real Node payload to fail" >&2
@@ -3064,12 +3725,24 @@ EOF
 	if env -u LD_PRELOAD "$LOADER" "$EXEC_TMP/workcell-claude-real-copy" --version >/tmp/claude-loader-copy.out 2>&1; then
 		echo "expected loader invocation of a renamed real Claude copy to fail" >&2
 		exit 1
-	fi
-	grep -q "Workcell blocked direct protected runtime execution" /tmp/claude-loader-copy.out
-	if node /opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js --yolo >/tmp/node-provider-gemini.out 2>&1; then
-		echo "expected Workcell node wrapper to reject direct Gemini provider script execution" >&2
-		exit 1
-	fi
+		fi
+			grep -q "Workcell blocked direct protected runtime execution" /tmp/claude-loader-copy.out
+			cp /usr/local/libexec/workcell/real/copilot "$EXEC_TMP/workcell-copilot-real-copy"
+			chmod 0755 "$EXEC_TMP/workcell-copilot-real-copy"
+		if /usr/local/libexec/workcell/development-wrapper.sh "$EXEC_TMP/workcell-copilot-real-copy" --version >/tmp/copilot-development-real-copy.out 2>&1; then
+			echo "expected development wrapper to reject a renamed real Copilot copy" >&2
+			exit 1
+		fi
+		grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-development-real-copy.out
+		if /usr/local/libexec/workcell/development-wrapper.sh "$LOADER" "$EXEC_TMP/workcell-copilot-real-copy" --version >/tmp/copilot-development-loader-copy.out 2>&1; then
+			echo "expected development wrapper to reject loader invocation of a renamed real Copilot copy" >&2
+			exit 1
+		fi
+		grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-development-loader-copy.out
+		if node /opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js --yolo >/tmp/node-provider-gemini.out 2>&1; then
+			echo "expected Workcell node wrapper to reject direct Gemini provider script execution" >&2
+			exit 1
+		fi
   grep -q "Workcell blocked direct provider script execution via node." /tmp/node-provider-gemini.out
   if WORKCELL_ALLOW_PROVIDER_NODE=1 node /opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js --yolo >/tmp/node-provider-env.out 2>&1; then
     echo "expected Workcell node wrapper to ignore caller-supplied provider bypass env" >&2
@@ -3198,24 +3871,28 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked public node execution outside the mounted workspace.|Workcell blocked provider package execution via public node." /tmp/node-workspace-env.out
-  cat <<'EOF' >/tmp/workcell-node-preload.js
+	  cat <<'EOF' >/tmp/workcell-node-preload.js
 require("fs").writeFileSync("/tmp/workcell-node-preload-ran", "1")
 process.exit(99)
 EOF
-  rm -f /tmp/workcell-node-preload-ran
-  if ! NODE_OPTIONS=--require=/tmp/workcell-node-preload.js claude --version >/tmp/claude-node-options.out 2>&1; then
-    cat /tmp/claude-node-options.out >&2
-    echo "expected Claude provider launch to ignore caller-supplied NODE_OPTIONS" >&2
-    exit 1
-  fi
-  test ! -e /tmp/workcell-node-preload-ran
-  rm -f /tmp/workcell-node-preload-ran
-  if ! NODE_OPTIONS=--require=/tmp/workcell-node-preload.js gemini --version >/tmp/gemini-node-options.out 2>&1; then
-    cat /tmp/gemini-node-options.out >&2
-    echo "expected Gemini provider launch to ignore caller-supplied NODE_OPTIONS" >&2
-    exit 1
-  fi
-  test ! -e /tmp/workcell-node-preload-ran
+	  chmod 0644 /tmp/workcell-node-preload.js
+	  rm -f /tmp/workcell-node-preload-ran
+	  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
+	    set -euo pipefail
+	    if ! NODE_OPTIONS=--require=/tmp/workcell-node-preload.js claude --version >/tmp/claude-node-options.out 2>&1; then
+	      cat /tmp/claude-node-options.out >&2
+	      echo "expected Claude provider launch to ignore caller-supplied NODE_OPTIONS" >&2
+	      exit 1
+	    fi
+	    test ! -e /tmp/workcell-node-preload-ran
+	    rm -f /tmp/workcell-node-preload-ran
+	    if ! NODE_OPTIONS=--require=/tmp/workcell-node-preload.js gemini --version >/tmp/gemini-node-options.out 2>&1; then
+	      cat /tmp/gemini-node-options.out >&2
+	      echo "expected Gemini provider launch to ignore caller-supplied NODE_OPTIONS" >&2
+	      exit 1
+	    fi
+	    test ! -e /tmp/workcell-node-preload-ran
+	  '
   mkdir -p "$EXEC_TMP/git-guard" && cd "$EXEC_TMP/git-guard"
   git init -q
   git config user.name "Workcell Smoke"
@@ -3378,6 +4055,11 @@ EOF
     exit 1
   fi
   grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-fsmonitor.out
+  if ! git -c core.fsmonitor=false status --short >/tmp/git-guard-fsmonitor-disabled.out 2>&1; then
+    cat /tmp/git-guard-fsmonitor-disabled.out >&2
+    echo "expected Workcell git guard to allow explicitly disabled inline core.fsmonitor" >&2
+    exit 1
+  fi
   if GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m smoke >/tmp/git-guard-env.out 2>&1; then
     echo "expected Workcell git guard to reject GIT_CONFIG_* hook override" >&2
     exit 1
@@ -3488,11 +4170,22 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked git control-plane override" /tmp/git-guard-exec-path-override.out
+  git --git-dir=/workspace/.git --work-tree=/workspace status --short >/tmp/git-guard-managed-path-override.out 2>&1 || true
+  if grep -q "Workcell blocked git control-plane override" /tmp/git-guard-managed-path-override.out; then
+    cat /tmp/git-guard-managed-path-override.out >&2
+    echo "expected Workcell git guard to allow explicit managed workspace git-dir/work-tree overrides" >&2
+    exit 1
+  fi
   if git --git-dir="$EXEC_TMP/git-guard/.git" --work-tree="$EXEC_TMP/git-guard" status >/tmp/git-guard-path-override.out 2>&1; then
     echo "expected Workcell git guard to reject git-dir/work-tree overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked git control-plane override" /tmp/git-guard-path-override.out
+  if git -C /workspace --git-dir=.git -C "$EXEC_TMP/git-guard" status >/tmp/git-guard-trailing-c.out 2>&1; then
+    echo "expected Workcell git guard to reject relative git-dir followed by trailing -C" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked git control-plane override" /tmp/git-guard-trailing-c.out
   git config alias.ci "commit -n"
   if git ci -m smoke >/tmp/git-guard-alias.out 2>&1; then
     echo "expected Workcell git guard to reject alias-expanded git commit -n" >&2

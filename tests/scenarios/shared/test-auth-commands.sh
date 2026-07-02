@@ -12,9 +12,12 @@ trap cleanup EXIT
 POLICY_PATH="${TMP_DIR}/injection-policy.toml"
 MANAGED_ROOT="${TMP_DIR}/managed-credentials"
 SOURCE_AUTH="${TMP_DIR}/codex-auth.json"
+SOURCE_COPILOT_TOKEN="${TMP_DIR}/copilot-github-token.txt"
 
 printf '{}\n' >"${SOURCE_AUTH}"
 chmod 0600 "${SOURCE_AUTH}"
+printf 'copilot-token\n' >"${SOURCE_COPILOT_TOKEN}"
+chmod 0600 "${SOURCE_COPILOT_TOKEN}"
 
 help_output="$("${ROOT_DIR}/scripts/workcell" auth --help)"
 grep -q '^Usage: workcell auth init \[options\]$' <<<"${help_output}"
@@ -60,6 +63,31 @@ grep -q '^provider_bootstrap_state=ready$' <<<"${status_output}"
 grep -q '^provider_bootstrap_path=direct-staged$' <<<"${status_output}"
 grep -q '^provider_bootstrap_support=repo-required$' <<<"${status_output}"
 
+copilot_set_output="$(
+  cd "${TMP_DIR}"
+  "${ROOT_DIR}/scripts/workcell" auth set \
+    --injection-policy ./injection-policy.toml \
+    --managed-root ./managed-credentials \
+    --agent copilot \
+    --credential copilot_github_token \
+    --source ./copilot-github-token.txt
+)"
+grep -q "^credential=copilot_github_token$" <<<"${copilot_set_output}"
+test -f "${MANAGED_ROOT}/copilot/github-token.txt"
+
+copilot_status="$("${ROOT_DIR}/scripts/workcell" auth status \
+  --injection-policy "${POLICY_PATH}" \
+  --agent copilot)"
+grep -q '^credential_keys=copilot_github_token$' <<<"${copilot_status}"
+grep -q '^credential_input_kinds=copilot_github_token:source$' <<<"${copilot_status}"
+grep -q '^provider_auth_ready_states=copilot_github_token:ready$' <<<"${copilot_status}"
+grep -q '^shared_auth_ready_states=none$' <<<"${copilot_status}"
+grep -q '^provider_auth_mode=copilot_github_token$' <<<"${copilot_status}"
+grep -q '^provider_auth_modes=copilot_github_token$' <<<"${copilot_status}"
+grep -q '^provider_bootstrap_state=ready$' <<<"${copilot_status}"
+grep -q '^provider_bootstrap_path=direct-staged$' <<<"${copilot_status}"
+grep -q '^provider_bootstrap_support=repo-required$' <<<"${copilot_status}"
+
 resolver_output="$("${ROOT_DIR}/scripts/workcell" auth set \
   --injection-policy "${POLICY_PATH}" \
   --managed-root "${MANAGED_ROOT}" \
@@ -102,5 +130,12 @@ unset_output="$("${ROOT_DIR}/scripts/workcell" auth unset \
   --credential codex_auth)"
 grep -q '^removed=1$' <<<"${unset_output}"
 test ! -f "${MANAGED_ROOT}/codex/auth.json"
+
+copilot_unset_output="$("${ROOT_DIR}/scripts/workcell" auth unset \
+  --injection-policy "${POLICY_PATH}" \
+  --managed-root "${MANAGED_ROOT}" \
+  --credential copilot_github_token)"
+grep -q '^removed=1$' <<<"${copilot_unset_output}"
+test ! -f "${MANAGED_ROOT}/copilot/github-token.txt"
 
 echo "Auth command scenario passed"

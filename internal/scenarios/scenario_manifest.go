@@ -23,7 +23,7 @@ import (
 var (
 	validLanes           = map[string]struct{}{"secretless": {}, "provider-e2e": {}}
 	validPlatforms       = map[string]struct{}{"any": {}, "linux": {}, "macos": {}}
-	validProviders       = map[string]struct{}{providerid.Codex: {}, providerid.Claude: {}, providerid.Gemini: {}}
+	validProviders       = map[string]struct{}{providerid.Codex: {}, providerid.Claude: {}, providerid.Copilot: {}, providerid.Gemini: {}}
 	validValidationTiers = map[string]struct{}{"repo-required": {}, "certification": {}}
 	personaPrefix        = "^[a-z][a-z0-9-]*$"
 )

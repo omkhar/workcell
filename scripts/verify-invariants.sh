@@ -6,6 +6,7 @@ if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     PATH="${TRUSTED_HOST_PATH}" \
     HOME="${HOME:-/tmp}" \
     TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_COLIMA_START_TIMEOUT_SECONDS="${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-}" \
     WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1 \
     /bin/bash -p "$0" "$@"
 fi
@@ -65,6 +66,21 @@ assert_output_matches_regex() {
     cat "${output_path}" >&2
     exit 1
   fi
+}
+
+lower_ascii() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+host_path_within_root() {
+  local root="${1%/}"
+  local candidate="${2%/}"
+  local root_cmp=""
+  local candidate_cmp=""
+
+  root_cmp="$(lower_ascii "${root}")"
+  candidate_cmp="$(lower_ascii "${candidate}")"
+  [[ "${candidate_cmp}" == "${root_cmp}" ]] || [[ "${candidate_cmp}" == "${root_cmp}/"* ]]
 }
 
 extract_named_function_block() {
@@ -263,6 +279,7 @@ HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
@@ -348,6 +365,7 @@ run_workcell_verify() {
   [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}")
   [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO}")
   [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION:-}" ]] && cmd+=(WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION="${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION}")
+  [[ -n "${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-}" ]] && cmd+=(WORKCELL_COLIMA_START_TIMEOUT_SECONDS="${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")
   # Most invariant probes assert launcher behavior, not the operator's local
   # auth policy. Tests that need injection pass --injection-policy explicitly.
   case "${1:-}" in
@@ -367,10 +385,131 @@ run_workcell_verify() {
       shift
       "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "${alias_command}" --no-default-injection-policy "$@"
       ;;
+    session)
+      alias_command="$1"
+      shift
+      "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" "${alias_command}" "$@"
+      ;;
     *)
       "${cmd[@]}" /bin/bash -p "${ROOT_DIR}/scripts/workcell" --no-default-injection-policy "$@"
       ;;
   esac
+}
+
+dry_run_mount_specs() {
+  awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        token = $i
+        if (token == "-v" || token == "--volume" || token == "--mount") {
+          if (i < NF) print $(i + 1)
+          i++
+          continue
+        }
+        if (token ~ /^-v[^[:space:]]+/) {
+          print substr(token, 3)
+          continue
+        }
+        if (token ~ /^--volume=/) {
+          print substr(token, 10)
+          continue
+        }
+        if (token ~ /^--mount=/) {
+          print substr(token, 9)
+          continue
+        }
+      }
+    }
+  '
+}
+
+mount_source_from_spec() {
+  local spec="$1"
+  local part=""
+  local -a mount_parts=()
+
+  if [[ "${spec}" == *"source="* ]] || [[ "${spec}" == *"src="* ]]; then
+    IFS=',' read -r -a mount_parts <<<"${spec}"
+    for part in "${mount_parts[@]}"; do
+      case "${part}" in
+        source=* | src=*)
+          printf '%s\n' "${part#*=}"
+          return 0
+          ;;
+      esac
+    done
+    return 0
+  fi
+
+  printf '%s\n' "${spec%%:*}"
+}
+
+host_provider_state_roots() {
+  printf '%s\n' \
+    "${REAL_HOME}/.codex" \
+    "${REAL_HOME}/.claude" \
+    "${REAL_HOME}/.copilot" \
+    "${REAL_HOME}/.gemini" \
+    "${REAL_HOME}/.config/gh" \
+    "${REAL_HOME}/.config/gcloud" \
+    "${REAL_HOME}/.config/git" \
+    "${REAL_HOME}/.config/github-copilot" \
+    "${REAL_HOME}/.config/op" \
+    "${REAL_HOME}/.cache/github-copilot" \
+    "${REAL_HOME}/.ssh" \
+    "${REAL_HOME}/.aws" \
+    "${REAL_HOME}/.docker" \
+    "${REAL_HOME}/.kube" \
+    "${REAL_HOME}/.gnupg" \
+    "${REAL_HOME}/.git-credentials" \
+    "${REAL_HOME}/.netrc" \
+    "${REAL_HOME}/Library/Keychains"
+}
+
+host_mount_source_is_provider_state() {
+  local source="${1%/}"
+  local root=""
+
+  [[ -n "${source}" ]] || return 1
+  [[ "${source}" == /* ]] || return 1
+  while IFS= read -r root; do
+    root="${root%/}"
+    if host_path_within_root "${root}" "${source}"; then
+      return 0
+    fi
+  done < <(host_provider_state_roots)
+
+  return 1
+}
+
+find_forbidden_host_mount_source() {
+  local output="$1"
+  local spec=""
+  local source=""
+
+  while IFS= read -r spec; do
+    [[ -n "${spec}" ]] || continue
+    source="$(mount_source_from_spec "${spec}")"
+    [[ -n "${source}" ]] || continue
+    if host_mount_source_is_provider_state "${source}"; then
+      printf '%s\n' "${source}"
+      return 0
+    fi
+  done < <(printf '%s\n' "${output}" | dry_run_mount_specs)
+
+  return 0
+}
+
+assert_no_forbidden_host_mount_sources() {
+  local output="$1"
+  local context="$2"
+  local forbidden_source=""
+
+  forbidden_source="$(find_forbidden_host_mount_source "${output}")"
+  if [[ -n "${forbidden_source}" ]]; then
+    echo "Unexpected host provider/auth state mount source in ${context}: ${forbidden_source}" >&2
+    exit 1
+  fi
 }
 
 run_workcell_real_host() {
@@ -395,6 +534,7 @@ delete_verify_colima_profile() {
     "${REAL_HOME}/.local/state/workcell/targets/local_vm/colima/${profile_name}" \
     "${REAL_HOME}/.colima/_lima/colima-${profile_name}" \
     "${REAL_HOME}/.colima/_lima/_disks/colima-${profile_name}"
+  rm -f "${REAL_HOME}/.colima/_store/colima-${profile_name}.json"
 }
 
 verify_profile_target_state_dir() {
@@ -1551,16 +1691,27 @@ mkdir -p \
   "${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile" \
   "${INSTALL_VERIFY_HOME}/.colima/_lima/colima-workcell-verify-profile" \
   "${INSTALL_VERIFY_HOME}/.colima/locks/workcell-verify-profile.lock" \
+  "${INSTALL_VERIFY_HOME}/.colima/_store" \
   "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-host-inputs" \
-  "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow"
+  "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow" \
+  "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-token-handoff"
 mkdir -p "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks"
 printf '#!/bin/sh\n' >"${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks/pre-commit"
 chmod 0555 "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks"
 chmod 0444 "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks/pre-commit"
 printf '%s\n' "${ROOT_DIR}" >"${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile/workcell.managed"
 printf 'image_tag=workcell:local\nimage_id=sha256:test\nsource_date_epoch=0\n' >"${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile/workcell.image-ready"
+printf '{}\n' >"${INSTALL_VERIFY_HOME}/.colima/_store/colima-workcell-verify-profile.json"
+printf '{}\n' >"${INSTALL_VERIFY_HOME}/.colima/_store/colima-workcell-store-only-profile.json"
 printf 'tmp\n' >"/tmp/workcell-uninstall-verify.log.$$"
 mkdir -p "/tmp/workcell-docker.verify-uninstall.$$"
+
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" --help >/tmp/workcell-uninstall-help.out 2>&1; then
+  echo "Expected scripts/uninstall.sh --help to succeed in a clean temporary HOME" >&2
+  cat /tmp/workcell-uninstall-help.out >&2
+  exit 1
+fi
+grep -q 'matching _store metadata' /tmp/workcell-uninstall-help.out
 
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall.out 2>&1; then
   echo "Expected scripts/uninstall.sh to succeed in a clean temporary HOME" >&2
@@ -1574,8 +1725,11 @@ test ! -e "${INSTALL_VERIFY_HOME}/.local/state/workcell"
 test ! -e "${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile"
 test ! -e "${INSTALL_VERIFY_HOME}/.colima/_lima/colima-workcell-verify-profile"
 test ! -e "${INSTALL_VERIFY_HOME}/.colima/locks/workcell-verify-profile.lock"
+test ! -e "${INSTALL_VERIFY_HOME}/.colima/_store/colima-workcell-verify-profile.json"
+test ! -e "${INSTALL_VERIFY_HOME}/.colima/_store/colima-workcell-store-only-profile.json"
 test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-host-inputs"
 test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow"
+test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-token-handoff"
 test -e "${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
 test ! -e "/tmp/workcell-uninstall-verify.log.$$"
 test ! -e "/tmp/workcell-docker.verify-uninstall.$$"
@@ -1612,8 +1766,8 @@ fi
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
   "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
-  --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
+  --workspace "${ROOT_DIR}" \
   --doctor >/tmp/workcell-installed-debug-doctor.out 2>&1; then
   echo "Expected debug-installed ~/.local/bin/workcell --doctor to succeed" >&2
   cat /tmp/workcell-installed-debug-doctor.out >&2
@@ -1627,8 +1781,8 @@ fi
 if env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
   "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
-  --workspace "${ROOT_DIR}" \
   --no-default-injection-policy \
+  --workspace "${ROOT_DIR}" \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-debug-strict-dry-run.out 2>&1; then
@@ -1653,9 +1807,9 @@ fi
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
   "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
+  --no-default-injection-policy \
   --workspace "${ROOT_DIR}" \
   --mode build \
-  --no-default-injection-policy \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-debug-dry-run.out 2>&1; then
@@ -1714,9 +1868,9 @@ fi
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" \
   "${INSTALL_VERIFY_HOME}/.local/bin/workcell" \
   --agent codex \
+  --no-default-injection-policy \
   --workspace "${ROOT_DIR}" \
   --mode build \
-  --no-default-injection-policy \
   --allow-control-plane-vcs \
   --ack-control-plane-vcs \
   --dry-run >/tmp/workcell-installed-custom-debug-dry-run.out 2>&1; then
@@ -2577,6 +2731,30 @@ fi
 
 if ! rg -q 'go_colimautil validate-runtime-mounts' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell to validate managed Lima mounts through the dedicated Go helper" >&2
+  exit 1
+fi
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'workcell-host-inputs' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'workcell-shadow' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'workcell-token-handoff' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" "--mount \"\${host_inputs_root}\"" ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" "--mount \"\${shadow_root}\"" ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" "--mount \"\${token_handoff_root}:w\""; then
+  echo "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes" >&2
+  exit 1
+fi
+if ! rg -q 'reject_symlinked_colima_staging_cache_roots' "${ROOT_DIR}/scripts/workcell" ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_injection_bundle" 'prepare_colima_staging_cache_roots' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_workspace_control_plane_shadow" 'prepare_colima_staging_cache_roots' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'prepare_colima_staging_cache_roots'; then
+  echo "Expected Workcell staging cache roots to reject symlinked host components before staging or mounting" >&2
+  exit 1
+fi
+if rg -q 'cleanup_stale_injection_bundles "\$\(default_injection_bundle_parent\)"' "${ROOT_DIR}/scripts/workcell" ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "cleanup_default_injection_bundles" "bundle_parent=\"\$(default_injection_bundle_parent)\" || return \$?" ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "cleanup_default_injection_bundles" "token_handoff_parent=\"\$(default_copilot_token_handoff_parent)\" || return \$?" ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "cleanup_default_injection_bundles" "cleanup_stale_injection_bundles \"\${bundle_parent}\"" ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "cleanup_default_injection_bundles" "cleanup_stale_injection_bundles \"\${token_handoff_parent}\""; then
+  echo "Expected stale injection cleanup to fail closed when the default bundle parent is rejected" >&2
   exit 1
 fi
 
@@ -4177,7 +4355,7 @@ fi
 grep -q "Unsupported mode" /tmp/workcell-mode-traversal.out
 rm -f "${MODE_TRAVERSAL_ENV}"
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --mode strict --rebuild --dry-run >/tmp/workcell-strict-rebuild.out 2>&1; then
+if "${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --mode strict --rebuild --dry-run >/tmp/workcell-strict-rebuild.out 2>&1; then
   echo "Expected strict mode to reject explicit --rebuild requests" >&2
   exit 1
 fi
@@ -4204,7 +4382,7 @@ fi
 grep -q "Option --agent-autonomy requires a value." /tmp/workcell-missing-agent-autonomy.out
 grep -q '^Usage: workcell' /tmp/workcell-missing-agent-autonomy.out
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --agent-autonomy turbo --dry-run >/tmp/workcell-invalid-agent-autonomy.out 2>&1; then
+if "${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --agent-autonomy turbo --dry-run >/tmp/workcell-invalid-agent-autonomy.out 2>&1; then
   echo "Expected invalid --agent-autonomy values to fail cleanly" >&2
   exit 1
 fi
@@ -4217,7 +4395,7 @@ fi
 grep -q "Option --agent-arg requires a value." /tmp/workcell-missing-agent-arg.out
 grep -q '^Usage: workcell' /tmp/workcell-missing-agent-arg.out
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-control-plane-vcs --dry-run >/tmp/workcell-missing-control-plane-vcs-ack.out 2>&1; then
+if "${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --allow-control-plane-vcs --dry-run >/tmp/workcell-missing-control-plane-vcs-ack.out 2>&1; then
   echo "Expected --allow-control-plane-vcs without acknowledgement to fail cleanly" >&2
   exit 1
 fi
@@ -4230,16 +4408,12 @@ fi
 grep -q "Option --agent is required." /tmp/workcell-missing-agent.out
 grep -q '^Usage: workcell' /tmp/workcell-missing-agent.out
 
-for planned_agent in antigravity copilot; do
-  if "${ROOT_DIR}/scripts/workcell" --agent "${planned_agent}" --dry-run >"/tmp/workcell-${planned_agent}-fail-closed.out" 2>&1; then
-    echo "Expected planned ${planned_agent} adapter to fail closed until runtime support and certification land" >&2
-    exit 1
-  fi
-done
+if "${ROOT_DIR}/scripts/workcell" --agent antigravity --dry-run >/tmp/workcell-antigravity-fail-closed.out 2>&1; then
+  echo "Expected planned antigravity adapter to fail closed until runtime support and certification land" >&2
+  exit 1
+fi
 grep -q "Google Antigravity CLI is a planned Workcell provider adapter, but it is not supported yet." /tmp/workcell-antigravity-fail-closed.out
 grep -q "No Antigravity runtime, auth handoff, or live certification evidence is shipped in this build." /tmp/workcell-antigravity-fail-closed.out
-grep -q "GitHub Copilot CLI is a planned Workcell provider adapter, but it is not supported yet." /tmp/workcell-copilot-fail-closed.out
-grep -q "Copilot runtime artifact is shipped only for provenance and release verification; auth handoff, supported launch, and live certification evidence are not shipped in this build." /tmp/workcell-copilot-fail-closed.out
 
 STRICT_PREFLIGHT_WORKSPACE="${BARRIER_VERIFY_ROOT}/strict-preflight-workspace"
 mkdir -p "${STRICT_PREFLIGHT_WORKSPACE}"
@@ -4257,6 +4431,7 @@ rm -rf \
   "${REAL_HOME}/.colima/_lima/colima-${STRICT_PREFLIGHT_PROFILE}"
 if "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
+  --no-default-injection-policy \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}/missing" \
   --no-default-injection-policy \
   --dry-run >/tmp/workcell-missing-workspace.out 2>&1; then
@@ -4267,6 +4442,7 @@ grep -q "Workspace path does not exist" /tmp/workcell-missing-workspace.out
 grep -q -- '--workspace' /tmp/workcell-missing-workspace.out
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
   --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
@@ -4369,6 +4545,20 @@ grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect-cla
 grep -q '^provider_native_sandbox_reason=deferred-until-runtime-prereqs-and-validation$' /tmp/workcell-inspect-claude.out
 
 if ! run_workcell_verify \
+  --agent copilot \
+  --no-default-injection-policy \
+  --allow-nongit-workspace \
+  --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
+  --colima-profile "${STRICT_PREFLIGHT_PROFILE}-copilot-inspect" \
+  --inspect >/tmp/workcell-inspect-copilot.out 2>&1; then
+  echo "Expected Copilot --inspect to succeed without launching the runtime" >&2
+  exit 1
+fi
+grep -q '^provider_native_sandbox_configured=disabled$' /tmp/workcell-inspect-copilot.out
+grep -q '^provider_native_sandbox_effective=disabled$' /tmp/workcell-inspect-copilot.out
+grep -q '^provider_native_sandbox_reason=workcell-pinned-off-until-provider-permission-surfaces-are-reviewed$' /tmp/workcell-inspect-copilot.out
+
+if ! run_workcell_verify \
   --agent gemini \
   --no-default-injection-policy \
   --allow-nongit-workspace \
@@ -4469,6 +4659,7 @@ DEBUG_LOG_PROFILE="${STRICT_PREFLIGHT_PROFILE}-logs"
 rm -rf "$(dirname "${DEBUG_LOG_CAPTURE}")"
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
   --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
@@ -4534,6 +4725,7 @@ printf 'seed\n' >"${DEBUG_LOG_SYMLINK_TARGET}"
 ln -s "${DEBUG_LOG_SYMLINK_TARGET}" "${DEBUG_LOG_SYMLINK}"
 if run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
   --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
@@ -4560,6 +4752,7 @@ TRANSCRIPT_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/session.transcript"
 TRANSCRIPT_LOG_PROFILE="${STRICT_PREFLIGHT_PROFILE}-transcript-logs"
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
   --colima-profile "${STRICT_PREFLIGHT_PROFILE}" \
@@ -4608,6 +4801,8 @@ printf '{"token":"claude-auth"}\n' >"${AUTH_STATUS_ROOT}/claude-auth.json"
 chmod 0600 "${AUTH_STATUS_ROOT}/claude-auth.json"
 printf 'claude-key\n' >"${AUTH_STATUS_ROOT}/claude-api-key.txt"
 chmod 0600 "${AUTH_STATUS_ROOT}/claude-api-key.txt"
+printf 'copilot-token\n' >"${AUTH_STATUS_ROOT}/copilot-github-token.txt"
+chmod 0600 "${AUTH_STATUS_ROOT}/copilot-github-token.txt"
 printf 'GEMINI_API_KEY=verify-gemini-key\n' >"${AUTH_STATUS_ROOT}/gemini.env"
 chmod 0600 "${AUTH_STATUS_ROOT}/gemini.env"
 printf '{"type":"authorized_user"}\n' >"${AUTH_STATUS_ROOT}/gcloud-adc.json"
@@ -4648,6 +4843,8 @@ claude_api_key = "claude-api-key.txt"
 gemini_env = "gemini.env"
 gemini_projects = "gemini-projects.json"
 gcloud_adc = "gcloud-adc.json"
+[credentials.copilot_github_token]
+source = "copilot-github-token.txt"
 [credentials.github_hosts]
 source = "hosts.yml"
 providers = ["codex", "claude", "gemini"]
@@ -4698,6 +4895,77 @@ grep -q '^provider_auth_mode=claude_api_key$' /tmp/workcell-auth-status-claude.o
 grep -q '^provider_auth_modes=claude_api_key,claude_auth$' /tmp/workcell-auth-status-claude.out
 grep -q '^shared_auth_modes=github_hosts$' /tmp/workcell-auth-status-claude.out
 grep -q '^github_auth_present=1$' /tmp/workcell-auth-status-claude.out
+if ! "${ROOT_DIR}/scripts/workcell" \
+  --agent copilot \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+  --auth-status >/tmp/workcell-auth-status-copilot.out 2>&1; then
+  echo "Expected Copilot --auth-status to succeed" >&2
+  exit 1
+fi
+grep -q '^credential_keys=copilot_github_token$' /tmp/workcell-auth-status-copilot.out
+grep -q '^provider_auth_ready_states=copilot_github_token:ready$' /tmp/workcell-auth-status-copilot.out
+grep -q '^shared_auth_ready_states=none$' /tmp/workcell-auth-status-copilot.out
+grep -q '^provider_auth_mode=copilot_github_token$' /tmp/workcell-auth-status-copilot.out
+grep -q '^provider_auth_modes=copilot_github_token$' /tmp/workcell-auth-status-copilot.out
+grep -q '^shared_auth_modes=none$' /tmp/workcell-auth-status-copilot.out
+grep -q '^github_auth_present=0$' /tmp/workcell-auth-status-copilot.out
+if ! run_workcell_verify \
+  --agent copilot \
+  --mode development \
+  --workspace "${ROOT_DIR}" \
+  --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+  --dry-run \
+  -- bash -lc true >/tmp/workcell-copilot-dev-shell-dry-run.out 2>/tmp/workcell-copilot-dev-shell-dry-run.err; then
+  echo "Expected Copilot development-shell dry-run with staged token to succeed" >&2
+  cat /tmp/workcell-copilot-dev-shell-dry-run.err >&2
+  exit 1
+fi
+if grep -Fq '/opt/workcell/host-inputs/credentials/copilot-github-token.txt' /tmp/workcell-copilot-dev-shell-dry-run.out ||
+  grep -Fq -- '--env-file' /tmp/workcell-copilot-dev-shell-dry-run.out ||
+  grep -Fq ':/opt/workcell/copilot-token-handoff:rw' /tmp/workcell-copilot-dev-shell-dry-run.out; then
+  echo "Expected Copilot development-shell launch to remove the staged token mount without creating a token handoff mount" >&2
+  cat /tmp/workcell-copilot-dev-shell-dry-run.out >&2
+  exit 1
+fi
+if ! run_workcell_verify \
+  --agent copilot \
+  --workspace "${ROOT_DIR}" \
+  --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+  --agent-arg -p \
+  --agent-arg smoke \
+  --agent-arg -s \
+  --dry-run >/tmp/workcell-copilot-provider-dry-run.out 2>/tmp/workcell-copilot-provider-dry-run.err; then
+  echo "Expected Copilot provider dry-run with staged token to succeed" >&2
+  cat /tmp/workcell-copilot-provider-dry-run.err >&2
+  exit 1
+fi
+if grep -Fq '/opt/workcell/host-inputs/credentials/copilot-github-token.txt' /tmp/workcell-copilot-provider-dry-run.out ||
+  grep -Fq -- '--env-file' /tmp/workcell-copilot-provider-dry-run.out ||
+  grep -Fq ':/opt/workcell/copilot-token-handoff:rw' /tmp/workcell-copilot-provider-dry-run.out; then
+  echo "Expected Copilot provider dry-run to remove the staged token mount without creating a token handoff mount" >&2
+  cat /tmp/workcell-copilot-provider-dry-run.out >&2
+  exit 1
+fi
+if ! GH_TOKEN='ambient-gh-token' \
+  GITHUB_TOKEN='ambient-github-token' \
+  COPILOT_GITHUB_TOKEN='ambient-copilot-token' \
+  "${ROOT_DIR}/scripts/workcell" \
+  --agent copilot \
+  --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
+  --no-default-injection-policy \
+  --auth-status >/tmp/workcell-auth-status-copilot-ambient.out 2>&1; then
+  echo "Expected Copilot --auth-status to ignore ambient host GitHub/Copilot env without an injection policy" >&2
+  cat /tmp/workcell-auth-status-copilot-ambient.out >&2
+  exit 1
+fi
+grep -q '^credential_keys=none$' /tmp/workcell-auth-status-copilot-ambient.out
+grep -q '^provider_auth_ready_states=none$' /tmp/workcell-auth-status-copilot-ambient.out
+grep -q '^shared_auth_ready_states=none$' /tmp/workcell-auth-status-copilot-ambient.out
+grep -q '^provider_auth_mode=none$' /tmp/workcell-auth-status-copilot-ambient.out
+grep -q '^provider_auth_modes=none$' /tmp/workcell-auth-status-copilot-ambient.out
+grep -q '^shared_auth_modes=none$' /tmp/workcell-auth-status-copilot-ambient.out
+grep -q '^github_auth_present=0$' /tmp/workcell-auth-status-copilot-ambient.out
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent gemini \
   --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
@@ -4923,6 +5191,65 @@ if printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Eq '^(direct_mount|shadow_mou
   exit 1
 fi
 
+SYMLINK_STAGING_HOME="${AUTH_STATUS_ROOT}/symlink-staging-home"
+SYMLINK_STAGING_TARGET="${AUTH_STATUS_ROOT}/symlink-staging-target"
+SYMLINK_STAGING_HARNESS="$(mktemp)"
+{
+  printf 'set -euo pipefail\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_host_path_components
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_staging_cache_root
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prepare_colima_staging_cache_roots
+  cat <<'EOF'
+run_reject() {
+  local case_name="$1"
+  local expected="$2"
+  local home="${SYMLINK_STAGING_HOME}-${case_name}"
+  local target="${SYMLINK_STAGING_TARGET}-${case_name}"
+
+  rm -rf "${home}" "${target}"
+  case "${case_name}" in
+    colima)
+      mkdir -p "${home}/Library/Caches" "${target}/colima"
+      ln -s "${target}/colima" "${home}/Library/Caches/colima"
+      ;;
+    host_inputs)
+      mkdir -p "${home}/Library/Caches/colima" "${target}/host-inputs"
+      ln -s "${target}/host-inputs" "${home}/Library/Caches/colima/workcell-host-inputs"
+      ;;
+    shadow)
+      mkdir -p "${home}/Library/Caches/colima/workcell-host-inputs" "${target}/shadow"
+      ln -s "${target}/shadow" "${home}/Library/Caches/colima/workcell-shadow"
+      ;;
+    token_handoff)
+      mkdir -p "${home}/Library/Caches/colima/workcell-host-inputs" "${home}/Library/Caches/colima/workcell-shadow" "${target}/token-handoff"
+      ln -s "${target}/token-handoff" "${home}/Library/Caches/colima/workcell-token-handoff"
+      ;;
+  esac
+
+  REAL_HOME="${home}"
+  if prepare_colima_staging_cache_roots >/tmp/workcell-staging-symlink-${case_name}.stdout 2>/tmp/workcell-staging-symlink-${case_name}.stderr; then
+    echo "Expected staging root preparation to reject ${case_name}" >&2
+    exit 1
+  fi
+  grep -q "${expected}" "/tmp/workcell-staging-symlink-${case_name}.stderr"
+}
+
+run_reject colima 'Refusing to use Colima staging cache root through symlink component'
+run_reject host_inputs 'Refusing to use Workcell host-input staging root through symlink component'
+run_reject shadow 'Refusing to use Workcell shadow staging root through symlink component'
+run_reject token_handoff 'Refusing to use Workcell token handoff staging root through symlink component'
+EOF
+} >"${SYMLINK_STAGING_HARNESS}"
+SYMLINK_STAGING_HOME="${SYMLINK_STAGING_HOME}" \
+  SYMLINK_STAGING_TARGET="${SYMLINK_STAGING_TARGET}" \
+  bash "${SYMLINK_STAGING_HARNESS}"
+rm -f "${SYMLINK_STAGING_HARNESS}"
+rm -rf "${SYMLINK_STAGING_HOME}" "${SYMLINK_STAGING_TARGET}"
+
 GEMINI_AUTH_FAILURE_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" csv_contains_value
@@ -5001,6 +5328,76 @@ EOF
 } >"${GEMINI_AUTH_FAILURE_HARNESS}"
 /bin/bash "${GEMINI_AUTH_FAILURE_HARNESS}"
 rm -f "${GEMINI_AUTH_FAILURE_HARNESS}"
+
+COPILOT_AUTH_FAILURE_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" csv_contains_value
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_resolution_state
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" credential_is_launch_ready
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" provider_auth_modes
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" selected_provider_auth_mode
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" copilot_no_auth_invocation
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" fail_fast_for_missing_copilot_auth
+  printf 'set -euo pipefail\n'
+  cat <<'EOF'
+AGENT=copilot
+PREPARE_ONLY=0
+ALLOW_ARBITRARY_COMMAND=0
+DRY_RUN=0
+MODE=strict
+INJECTION_POLICY=/tmp/no-copilot-policy.toml
+WORKSPACE=/tmp/workcell-copilot-workspace
+INJECTION_CREDENTIAL_KEYS=github_hosts
+INJECTION_CREDENTIAL_RESOLUTION_STATES=github_hosts:ready
+
+status=0
+set -- copilot
+if ( fail_fast_for_missing_copilot_auth "$@" ) >/tmp/workcell-copilot-auth-harness.stdout 2>/tmp/workcell-copilot-auth-harness.stderr; then
+  echo "Expected Copilot missing-auth harness to fail fast" >&2
+  exit 1
+else
+  status=$?
+fi
+if [[ "${status}" -ne 2 ]]; then
+  echo "Expected Copilot missing-auth harness to exit 2, got ${status}" >&2
+  exit 1
+fi
+grep -q 'Copilot auth is not configured for this session.' /tmp/workcell-copilot-auth-harness.stderr
+grep -q 'credentials.copilot_github_token' /tmp/workcell-copilot-auth-harness.stderr
+grep -q 'host ~/.copilot, ~/.config/github-copilot, ~/.cache/github-copilot, host GitHub CLI auth, GH_TOKEN, and GITHUB_TOKEN are not used as readiness sources.' /tmp/workcell-copilot-auth-harness.stderr
+grep -q '^Next step: workcell --auth-status --agent copilot --workspace /tmp/workcell-copilot-workspace$' /tmp/workcell-copilot-auth-harness.stderr
+
+set -- copilot --version
+if ! ( fail_fast_for_missing_copilot_auth "$@" ) >/tmp/workcell-copilot-auth-version.stdout 2>/tmp/workcell-copilot-auth-version.stderr; then
+  echo "Expected Copilot --version harness to bypass missing-auth fail-fast" >&2
+  exit 1
+fi
+if [[ -s /tmp/workcell-copilot-auth-version.stderr ]]; then
+  echo "Expected Copilot --version harness to stay silent" >&2
+  exit 1
+fi
+
+DRY_RUN=1
+set -- copilot
+if ! ( fail_fast_for_missing_copilot_auth "$@" ) >/tmp/workcell-copilot-auth-dry-run.stdout 2>/tmp/workcell-copilot-auth-dry-run.stderr; then
+  echo "Expected Copilot missing-auth harness to skip dry-run" >&2
+  exit 1
+fi
+if [[ -s /tmp/workcell-copilot-auth-dry-run.stderr ]]; then
+  echo "Expected Copilot missing-auth dry-run harness to stay silent" >&2
+  exit 1
+fi
+EOF
+} >"${COPILOT_AUTH_FAILURE_HARNESS}"
+/bin/bash "${COPILOT_AUTH_FAILURE_HARNESS}"
+rm -f "${COPILOT_AUTH_FAILURE_HARNESS}"
+
 PROFILE_PROCESS_MATCH_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" profile_process_pids
@@ -5070,6 +5467,7 @@ printf '%s\n' "${BARRIER_VERIFY_ROOT}/missing-debug.log" >"${REAL_HOME}/.colima/
 if "${ROOT_DIR}/scripts/workcell" \
   --inspect \
   --agent codex \
+  --no-default-injection-policy \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
   --debug-log "${BARRIER_VERIFY_ROOT}/debug/nonlaunch.log" >/tmp/workcell-nonlaunch-debug-log.out 2>&1; then
   echo "Expected non-launch --inspect to reject --debug-log" >&2
@@ -5495,6 +5893,7 @@ grep -q -- '--local-include-untracked requires --local-snapshot worktree.' /tmp/
 
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --prepare \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -5508,6 +5907,7 @@ grep -q 'docker run' /tmp/workcell-prepare-dry-run.out
 
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --prepare-only \
   --allow-nongit-workspace \
   --workspace "${STRICT_PREFLIGHT_WORKSPACE}" \
@@ -5521,6 +5921,7 @@ grep -q '^prepare_only=1 no_session_launch=1$' /tmp/workcell-prepare-only-dry-ru
 
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --mode strict \
   --dry-run >/tmp/workcell-default-autonomy-dry-run.stdout 2>/tmp/workcell-default-autonomy-dry-run.stderr; then
   echo "Expected default autonomy dry-run to succeed" >&2
@@ -5576,6 +5977,7 @@ fi
 
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --agent-autonomy prompt \
   --agent-arg --version \
   --dry-run >/tmp/workcell-prompt-autonomy-dry-run.stdout 2>/tmp/workcell-prompt-autonomy-dry-run.stderr; then
@@ -5596,6 +5998,7 @@ grep -q 'workcell:local codex --version' /tmp/workcell-prompt-autonomy-dry-run.s
 
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --codex-rules-mutability session \
   --agent-arg --version \
   --dry-run >/tmp/workcell-codex-session-rules-dry-run.stdout 2>/tmp/workcell-codex-session-rules-dry-run.stderr; then
@@ -5611,6 +6014,7 @@ grep -q 'WORKCELL_CODEX_RULES_MUTABILITY=session' /tmp/workcell-codex-session-ru
 
 if ! run_workcell_verify \
   --agent claude \
+  --no-default-injection-policy \
   --agent-arg --version \
   --dry-run >/tmp/workcell-claude-agent-arg-dry-run.stdout 2>/tmp/workcell-claude-agent-arg-dry-run.stderr; then
   echo "Expected Claude --agent-arg dry-run to succeed" >&2
@@ -5622,6 +6026,7 @@ grep -q 'workcell:local claude --version' /tmp/workcell-claude-agent-arg-dry-run
 
 if ! run_workcell_verify \
   --agent gemini \
+  --no-default-injection-policy \
   --agent-arg --version \
   --dry-run >/tmp/workcell-gemini-agent-arg-dry-run.stdout 2>/tmp/workcell-gemini-agent-arg-dry-run.stderr; then
   echo "Expected Gemini --agent-arg dry-run to succeed" >&2
@@ -5631,8 +6036,8 @@ fi
 grep -q 'agent_autonomy=yolo' /tmp/workcell-gemini-agent-arg-dry-run.stderr
 grep -q 'workcell:local gemini --version' /tmp/workcell-gemini-agent-arg-dry-run.stdout
 
-DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --mode strict --dry-run 2>/dev/null)"
-SECOND_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --mode strict --dry-run 2>/dev/null)"
+DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --dry-run 2>/dev/null)"
+SECOND_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --dry-run 2>/dev/null)"
 DRY_RUN_CONTAINER_NAME="$(printf '%s\n' "${DRY_RUN_OUTPUT}" | sed -n 's/.*--name \([^ ]*\).*/\1/p' | head -n1)"
 SECOND_DRY_RUN_CONTAINER_NAME="$(printf '%s\n' "${SECOND_DRY_RUN_OUTPUT}" | sed -n 's/.*--name \([^ ]*\).*/\1/p' | head -n1)"
 if [[ -z "${DRY_RUN_CONTAINER_NAME}" ]] || [[ -z "${SECOND_DRY_RUN_CONTAINER_NAME}" ]]; then
@@ -5650,16 +6055,25 @@ git init -q -b master "${MASK_VERIFY_WORKSPACE}"
 printf '# root agent marker\n' >"${MASK_VERIFY_WORKSPACE}/AGENTS.md"
 mkdir -p "${MASK_VERIFY_WORKSPACE}/.codex"
 printf 'profile = "strict"\n' >"${MASK_VERIFY_WORKSPACE}/.codex/config.toml"
+mkdir -p "${MASK_VERIFY_WORKSPACE}/.github/skills/example" "${MASK_VERIFY_WORKSPACE}/.agents/skills/example"
+printf '# masked Copilot skill fixture\n' >"${MASK_VERIFY_WORKSPACE}/.github/skills/example/SKILL.md"
+printf '# masked agent skill fixture\n' >"${MASK_VERIFY_WORKSPACE}/.agents/skills/example/SKILL.md"
+mkdir -p "${MASK_VERIFY_WORKSPACE}/nested/.github/skills/indexed" "${MASK_VERIFY_WORKSPACE}/nested/.agents/skills/indexed"
+printf '# indexed Copilot skill fixture\n' >"${MASK_VERIFY_WORKSPACE}/nested/.github/skills/indexed/SKILL.md"
+printf '# indexed agent skill fixture\n' >"${MASK_VERIFY_WORKSPACE}/nested/.agents/skills/indexed/SKILL.md"
+git -C "${MASK_VERIFY_WORKSPACE}" add nested/.github/skills/indexed/SKILL.md nested/.agents/skills/indexed/SKILL.md
+rm -rf "${MASK_VERIFY_WORKSPACE}/nested/.github" "${MASK_VERIFY_WORKSPACE}/nested/.agents"
 printf '# nested agent marker\n' >"${MASK_VERIFY_WORKSPACE}/nested/AGENTS.md"
 printf '{\n  "masked": true\n}\n' >"${MASK_VERIFY_WORKSPACE}/nested/.claude/settings.json"
 git init -q -b master "${MASK_VERIFY_WORKSPACE}/.alt"
-MASK_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run 2>/dev/null)"
+MASK_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${MASK_VERIFY_WORKSPACE}" --dry-run 2>/dev/null)"
 SECRET_DRY_RUN_OUTPUT="$(
   run_workcell_verify \
     AWS_SECRET_ACCESS_KEY='verify-aws-secret' \
     GITHUB_TOKEN='verify-gh-token' \
     SSH_AUTH_SOCK='/tmp/workcell-secret-sock' \
     --agent codex \
+    --no-default-injection-policy \
     --mode strict \
     --workspace "${MASK_VERIFY_WORKSPACE}" \
     --dry-run 2>/dev/null
@@ -5704,6 +6118,35 @@ for forbidden in "${FORBIDDEN_HOST_PATHS[@]}"; do
   fi
 done
 
+assert_no_forbidden_host_mount_sources "${DRY_RUN_OUTPUT}" "strict dry-run output"
+assert_no_forbidden_host_mount_sources "${SECRET_DRY_RUN_OUTPUT}" "secret-scrub dry-run output"
+if [[ -z "$(find_forbidden_host_mount_source "docker run -v ${REAL_HOME}/.config/gh:/state/agent-home/.config/gh:ro workcell:local")" ]]; then
+  echo "Expected mount-source parser to reject host GitHub CLI state roots" >&2
+  exit 1
+fi
+for case_varied_provider_state in \
+  "${REAL_HOME}/.Config/gh/hosts.yml" \
+  "${REAL_HOME}/.Config/gcloud/application_default_credentials.json" \
+  "${REAL_HOME}/.Config/git/credentials" \
+  "${REAL_HOME}/.SSH/id_ed25519" \
+  "${REAL_HOME}/Library/keychains/login.keychain-db" \
+  "${REAL_HOME}/.Docker/config.json" \
+  "${REAL_HOME}/.Kube/config" \
+  "${REAL_HOME}/.Netrc"; do
+  if [[ -z "$(find_forbidden_host_mount_source "docker run -v ${case_varied_provider_state}:/state/agent-home/provider-state:ro workcell:local")" ]]; then
+    echo "Expected mount-source parser to reject case-varied host provider/auth state root: ${case_varied_provider_state}" >&2
+    exit 1
+  fi
+done
+if [[ -z "$(find_forbidden_host_mount_source "docker run -v ${REAL_HOME}/src/workcell:/workspace -v ${REAL_HOME}/.ssh:/state/agent-home/.ssh:ro workcell:local")" ]]; then
+  echo "Expected mount-source parser to reject forbidden host roots after the first mount" >&2
+  exit 1
+fi
+if [[ -n "$(find_forbidden_host_mount_source "docker run -v ${REAL_HOME}/src/workcell:/workspace workcell:local")" ]]; then
+  echo "Expected mount-source parser to allow ordinary workspace roots under HOME" >&2
+  exit 1
+fi
+
 for forbidden in "verify-aws-secret" "verify-gh-token" "/tmp/workcell-secret-sock"; do
   if echo "${SECRET_DRY_RUN_OUTPUT}" | grep -Fq -- "${forbidden}"; then
     echo "Unexpected host secret forwarding in dry-run output: ${forbidden}" >&2
@@ -5718,14 +6161,14 @@ for required in "--user" "HOME=/state/agent-home" "CODEX_HOME=/state/agent-home/
   fi
 done
 
-for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.git/config:ro"; do
+for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.git/config:ro" "/workspace/.github/skills:ro" "/workspace/.agents/skills:ro"; do
   if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
     echo "Missing workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
   fi
 done
 
-for required in "/workspace/nested/.claude:ro" "/workspace/.alt/.git/config:ro"; do
+for required in "/workspace/nested/.claude:ro" "/workspace/nested/.github/skills:ro" "/workspace/nested/.agents/skills:ro" "/workspace/.alt/.git/config:ro"; do
   if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
     echo "Missing nested workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
@@ -5739,6 +6182,7 @@ fi
 
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --mode strict \
   --workspace "${MASK_VERIFY_WORKSPACE}" \
   --allow-control-plane-vcs \
@@ -6220,7 +6664,7 @@ mkdir -p "${SHADOW_SYMLINK_REPO}/.git/modules/demo"
 ln -sf "${SHADOW_SYMLINK_REPO}/external-config" "${SHADOW_SYMLINK_REPO}/.git/modules/demo/config"
 ln -sf "${SHADOW_SYMLINK_REPO}/external-hooks-dir" "${SHADOW_SYMLINK_REPO}/.git/modules/demo/hooks"
 ln -sf "${SHADOW_SYMLINK_REPO}/external-worktrees" "${SHADOW_SYMLINK_REPO}/.git/modules/demo/worktrees"
-SHADOW_SYMLINK_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --mode strict --workspace "${SHADOW_SYMLINK_REPO}" --dry-run 2>/dev/null)"
+SHADOW_SYMLINK_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${SHADOW_SYMLINK_REPO}" --dry-run 2>/dev/null)"
 for required in \
   "/workspace/.git/hooks:ro" \
   "/workspace/.git/modules/demo/config:ro" \
@@ -6241,6 +6685,7 @@ done
 
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --mode strict \
   --container-mutability readonly \
   --container-cpu 2 \
@@ -6271,45 +6716,69 @@ if grep -q -- '--cap-add SETGID' /tmp/workcell-resource-tunables.stdout; then
   exit 1
 fi
 
-if run_workcell_verify --agent codex --workspace "${REAL_HOME}" --dry-run >/dev/null 2>&1; then
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${REAL_HOME}" --dry-run >/dev/null 2>&1; then
   echo "Expected broad workspace rejection for ${REAL_HOME}" >&2
   exit 1
 fi
 
 PROVIDER_HOME_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/workcell-provider-home.XXXXXX")"
-for provider_home_name in .codex .copilot; do
-  mkdir -p "${PROVIDER_HOME_FIXTURE}/home/${provider_home_name}"
-  printf 'provider home marker\n' >"${PROVIDER_HOME_FIXTURE}/home/${provider_home_name}/AGENTS.md"
+for provider_home_entry in \
+  "codex:.codex" \
+  "copilot:.copilot"; do
+  provider_home_label="${provider_home_entry%%:*}"
+  provider_home_path="${provider_home_entry#*:}"
+  mkdir -p "${PROVIDER_HOME_FIXTURE}/home/${provider_home_path}"
+  printf 'provider home marker\n' >"${PROVIDER_HOME_FIXTURE}/home/${provider_home_path}/AGENTS.md"
   if run_workcell_verify \
     HOME="${PROVIDER_HOME_FIXTURE}/home" \
     XDG_CONFIG_HOME="${PROVIDER_HOME_FIXTURE}/home/.config" \
     --agent codex \
-    --workspace "${PROVIDER_HOME_FIXTURE}/home/${provider_home_name}" \
+    --workspace "${PROVIDER_HOME_FIXTURE}/home/${provider_home_path}" \
     --allow-nongit-workspace \
     --no-default-injection-policy \
-    --dry-run >"/tmp/workcell-provider-home-workspace-${provider_home_name#.}.out" 2>&1; then
-    echo "Expected provider-home workspace rejection for ${provider_home_name}" >&2
+    --dry-run >"/tmp/workcell-provider-home-workspace-${provider_home_label}.out" 2>&1; then
+    echo "Expected provider-home workspace rejection for ${provider_home_path}" >&2
     rm -rf "${PROVIDER_HOME_FIXTURE}"
     exit 1
   fi
-  grep -q 'Refusing sensitive workspace mount' "/tmp/workcell-provider-home-workspace-${provider_home_name#.}.out"
+  grep -q 'Refusing sensitive workspace mount' "/tmp/workcell-provider-home-workspace-${provider_home_label}.out"
 done
 rm -rf "${PROVIDER_HOME_FIXTURE}"
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --dry-run >/dev/null 2>&1; then
+for case_varied_workspace in \
+  "${REAL_HOME}/.Config/gh" \
+  "${REAL_HOME}/.Config/gcloud" \
+  "${REAL_HOME}/.SSH" \
+  "${REAL_HOME}/Library/keychains" \
+  "${REAL_HOME}/.Docker" \
+  "${REAL_HOME}/.Kube"; do
+  case_varied_workspace_label="$(printf '%s' "${case_varied_workspace#"${REAL_HOME}"/}" | sed 's#[/.]#-#g')"
+  if run_workcell_verify \
+    --agent codex \
+    --workspace "${case_varied_workspace}" \
+    --allow-nongit-workspace \
+    --no-default-injection-policy \
+    --dry-run >"/tmp/workcell-provider-home-workspace-${case_varied_workspace_label}.out" 2>&1; then
+    echo "Expected case-varied provider/auth workspace rejection for ${case_varied_workspace}" >&2
+    exit 1
+  fi
+  grep -q 'Refusing sensitive workspace mount' "/tmp/workcell-provider-home-workspace-${case_varied_workspace_label}.out"
+done
+
+if "${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --mode breakglass --dry-run >/dev/null 2>&1; then
   echo "Expected breakglass acknowledgement requirement" >&2
   exit 1
 fi
 
 ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-if ! run_workcell_verify --agent codex --mode breakglass "--ack-breakglass=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run >/dev/null 2>&1; then
+if ! run_workcell_verify --agent codex --no-default-injection-policy --mode breakglass "--ack-breakglass=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run >/dev/null 2>&1; then
   echo "Expected dated --ack-breakglass=${ACK_BREAKGLASS_TODAY_UTC} dry-run to succeed" >&2
   exit 1
 fi
 
 ACK_BREAKGLASS_STALE_STDERR_FILE="$(mktemp -t workcell-stale-breakglass.XXXXXX)"
 ACK_BREAKGLASS_STALE_EXIT=0
-"${ROOT_DIR}/scripts/workcell" --agent codex --mode breakglass --ack-breakglass=1999-01-01 --dry-run >/dev/null 2>"${ACK_BREAKGLASS_STALE_STDERR_FILE}" || ACK_BREAKGLASS_STALE_EXIT=$?
+"${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --mode breakglass --ack-breakglass=1999-01-01 --dry-run >/dev/null 2>"${ACK_BREAKGLASS_STALE_STDERR_FILE}" || ACK_BREAKGLASS_STALE_EXIT=$?
 if [[ "${ACK_BREAKGLASS_STALE_EXIT}" -ne 2 ]]; then
   echo "Expected --ack-breakglass=1999-01-01 to exit 2, got ${ACK_BREAKGLASS_STALE_EXIT}" >&2
   cat "${ACK_BREAKGLASS_STALE_STDERR_FILE}" >&2
@@ -6324,25 +6793,25 @@ if ! grep -q -- '--ack-breakglass=1999-01-01 does not match today' "${ACK_BREAKG
 fi
 rm -f "${ACK_BREAKGLASS_STALE_STDERR_FILE}"
 
-ACK_BREAKGLASS_BARE_OUTPUT="$(run_workcell_verify --agent codex --mode breakglass --ack-breakglass --dry-run 2>&1 >/dev/null || true)"
+ACK_BREAKGLASS_BARE_OUTPUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode breakglass --ack-breakglass --dry-run 2>&1 >/dev/null || true)"
 if ! grep -q -- '--ack-breakglass requires a date acknowledgement' <<<"${ACK_BREAKGLASS_BARE_OUTPUT}"; then
   echo "Expected bare --ack-breakglass to fail with a date acknowledgement requirement" >&2
   exit 1
 fi
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --allow-arbitrary-command --dry-run >/dev/null 2>&1; then
+if "${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --allow-arbitrary-command --dry-run >/dev/null 2>&1; then
   echo "Expected arbitrary command acknowledgement requirement" >&2
   exit 1
 fi
 
-if ! run_workcell_verify --agent codex --prepare --allow-arbitrary-command "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run -- bash -lc true >/dev/null 2>&1; then
+if ! run_workcell_verify --agent codex --no-default-injection-policy --prepare --allow-arbitrary-command "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run -- bash -lc true >/dev/null 2>&1; then
   echo "Expected dated --ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC} dry-run to succeed" >&2
   exit 1
 fi
 
 ACK_ARBITRARY_STALE_STDERR_FILE="$(mktemp -t workcell-stale-arbitrary.XXXXXX)"
 ACK_ARBITRARY_STALE_EXIT=0
-"${ROOT_DIR}/scripts/workcell" --agent codex --prepare --allow-arbitrary-command --ack-arbitrary-command=1999-01-01 --dry-run -- bash -lc true >/dev/null 2>"${ACK_ARBITRARY_STALE_STDERR_FILE}" || ACK_ARBITRARY_STALE_EXIT=$?
+"${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --prepare --allow-arbitrary-command --ack-arbitrary-command=1999-01-01 --dry-run -- bash -lc true >/dev/null 2>"${ACK_ARBITRARY_STALE_STDERR_FILE}" || ACK_ARBITRARY_STALE_EXIT=$?
 if [[ "${ACK_ARBITRARY_STALE_EXIT}" -ne 2 ]]; then
   echo "Expected --ack-arbitrary-command=1999-01-01 to exit 2, got ${ACK_ARBITRARY_STALE_EXIT}" >&2
   cat "${ACK_ARBITRARY_STALE_STDERR_FILE}" >&2
@@ -6357,7 +6826,7 @@ if ! grep -q -- '--ack-arbitrary-command=1999-01-01 does not match today' "${ACK
 fi
 rm -f "${ACK_ARBITRARY_STALE_STDERR_FILE}"
 
-ARBITRARY_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --prepare --allow-arbitrary-command "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run -- bash -lc true 2>/dev/null)"
+ARBITRARY_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --no-default-injection-policy --prepare --allow-arbitrary-command "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run -- bash -lc true 2>/dev/null)"
 if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
   echo "Expected acknowledged arbitrary command dry-run to succeed" >&2
   exit 1
@@ -6378,6 +6847,7 @@ fi
 
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --mode development \
   --dry-run \
   -- bash -lc true \
@@ -6398,7 +6868,7 @@ if grep -q -- 'workcell:local codex bash -lc true ' /tmp/workcell-development-co
   exit 1
 fi
 
-if "${ROOT_DIR}/scripts/workcell" --agent codex --colima-profile ../../Library/Caches/colima-evil --dry-run >/dev/null 2>&1; then
+if "${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --colima-profile ../../Library/Caches/colima-evil --dry-run >/dev/null 2>&1; then
   echo "Expected invalid Colima profile name rejection" >&2
   exit 1
 fi
@@ -6436,24 +6906,24 @@ if [[ -e /tmp/workcell-egress-pwned ]]; then
   exit 1
 fi
 
-if [[ -d "${REAL_HOME}/.ssh" ]] && run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.ssh" --dry-run >/dev/null 2>&1; then
+if [[ -d "${REAL_HOME}/.ssh" ]] && run_workcell_verify --agent codex --no-default-injection-policy --allow-nongit-workspace --workspace "${REAL_HOME}/.ssh" --dry-run >/dev/null 2>&1; then
   echo "Expected sensitive workspace rejection for ${REAL_HOME}/.ssh" >&2
   exit 1
 fi
 
-if [[ -d "${REAL_HOME}/.config" ]] && run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/.config" --dry-run >/dev/null 2>&1; then
+if [[ -d "${REAL_HOME}/.config" ]] && run_workcell_verify --agent codex --no-default-injection-policy --allow-nongit-workspace --workspace "${REAL_HOME}/.config" --dry-run >/dev/null 2>&1; then
   echo "Expected sensitive workspace rejection for ${REAL_HOME}/.config" >&2
   exit 1
 fi
 
 if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
-  if run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${REAL_HOME}/Library/Application Support" --dry-run >/dev/null 2>&1; then
+  if run_workcell_verify --agent codex --no-default-injection-policy --allow-nongit-workspace --workspace "${REAL_HOME}/Library/Application Support" --dry-run >/dev/null 2>&1; then
     echo "Expected sensitive workspace rejection for ${REAL_HOME}/Library/Application Support" >&2
     exit 1
   fi
   BROWSER_PROFILE_FIXTURE="${REAL_HOME}/Library/Application Support/Google/Chrome/WorkcellVerifyBrowserProfile"
   mkdir -p "${BROWSER_PROFILE_FIXTURE}"
-  if run_workcell_verify --agent codex --allow-nongit-workspace --workspace "${BROWSER_PROFILE_FIXTURE}" --dry-run >/dev/null 2>&1; then
+  if run_workcell_verify --agent codex --no-default-injection-policy --allow-nongit-workspace --workspace "${BROWSER_PROFILE_FIXTURE}" --dry-run >/dev/null 2>&1; then
     echo "Expected browser-profile workspace rejection for ${BROWSER_PROFILE_FIXTURE}" >&2
     exit 1
   fi
@@ -6473,6 +6943,7 @@ if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
   if run_workcell_verify \
     HOME="${BARRIER_VERIFY_ROOT}/fake-home" \
     --agent codex \
+    --no-default-injection-policy \
     --allow-nongit-workspace \
     --workspace "${REAL_HOME}/Library/Application Support" \
     --dry-run >/dev/null 2>&1; then
@@ -6484,17 +6955,17 @@ fi
 NONGIT_WORKSPACE="${BARRIER_VERIFY_ROOT}/nongit-workspace"
 mkdir -p "${NONGIT_WORKSPACE}"
 NONGIT_WORKSPACE="$(cd "${NONGIT_WORKSPACE}" && pwd -P)"
-if run_workcell_verify --agent codex --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
   echo "Expected non-git workspace rejection without explicit opt-in" >&2
   exit 1
 fi
 printf '# marker\n' >"${NONGIT_WORKSPACE}/AGENTS.md"
-if ! run_workcell_verify --agent codex --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+if ! run_workcell_verify --agent codex --no-default-injection-policy --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
   echo "Expected marker-based non-git workspace to succeed with explicit opt-in" >&2
   exit 1
 fi
 for agent in claude gemini; do
-  if ! run_workcell_verify --agent "${agent}" --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
+  if ! run_workcell_verify --agent "${agent}" --no-default-injection-policy --prepare --allow-nongit-workspace --workspace "${NONGIT_WORKSPACE}" --dry-run >/dev/null 2>&1; then
     echo "Expected marker-based non-git workspace prepare dry-run to succeed for ${agent}" >&2
     exit 1
   fi
@@ -6519,7 +6990,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     LIVE_DEBUG_INSPECT_FILE_TRACE_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.inspect-file-trace.out"
     LIVE_DEBUG_LOGS_DEBUG_OUT="${BARRIER_VERIFY_ROOT}/debug/live-debug.logs-debug.out"
     AUDIT_SESSION_LOG="${BARRIER_VERIFY_ROOT}/debug/live-debug.audit-session.log"
-    if ! "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify \
       --agent codex \
       --prepare-only \
       --rebuild \
@@ -6537,8 +7008,9 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       "Expected audit verification prepare run debug log to capture managed Colima startup"
     assert_output_matches_regex 'Preparing the runtime image for profile|runtime-build|runtime-builder' "${LIVE_DEBUG_LOG}" \
       "Expected audit verification prepare run debug log to capture runtime image preparation"
-    if ! "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify \
       --agent codex \
+      --no-default-injection-policy \
       --workspace "${ROOT_DIR}" \
       --vm-memory 6 \
       --vm-disk 80 \
@@ -6554,16 +7026,17 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     grep -q 'event=provider-launch' "${FILE_TRACE_CAPTURE}"
     grep -q 'event=watch-start' "${FILE_TRACE_CAPTURE}"
     grep -q 'event=provider-exit' "${FILE_TRACE_CAPTURE}"
-    if ! "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify \
       --logs file-trace \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_LOGS_FILE_TRACE_OUT}" 2>&1; then
       echo "Expected --logs file-trace to print the latest retained file trace log" >&2
       exit 1
     fi
     grep -q 'event=provider-launch' "${LIVE_DEBUG_LOGS_FILE_TRACE_OUT}"
-    if ! "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify \
       --inspect \
       --agent codex \
+      --no-default-injection-policy \
       --workspace "${ROOT_DIR}" \
       --vm-memory 6 \
       --vm-disk 80 \
@@ -6574,7 +7047,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       exit 1
     fi
     grep -q "latest_file_trace_log=${FILE_TRACE_CAPTURE}" "${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}"
-    if ! "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify \
       --logs debug \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_LOGS_DEBUG_OUT}" 2>&1; then
       echo "Expected successful prepare run to persist the latest debug-log pointer" >&2
@@ -6583,8 +7056,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     assert_output_matches_regex 'Starting managed Colima profile|starting colima' "${LIVE_DEBUG_LOGS_DEBUG_OUT}" \
       "Expected workcell logs debug to print the retained managed Colima startup log"
     for agent in codex claude gemini; do
-      if ! GIT_PAGER=cat PAGER=cat \
-        "${ROOT_DIR}/scripts/workcell" \
+      if ! run_workcell_verify GIT_PAGER=cat PAGER=cat \
         --agent "${agent}" \
         --mode development \
         --workspace "${ROOT_DIR}" \
@@ -6601,14 +7073,15 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       grep -q '^WORKCELL_DEVELOPMENT_SHELL_OK$' "${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out"
       if [[ "${agent}" == "codex" ]] &&
         grep -Eq 'Preparing the runtime image for profile|runtime-build|429 Too Many Requests' \
+          "${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out" &&
+        ! grep -q 'Workcell timed out waiting for managed Colima profile' \
           "${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out"; then
         echo "Expected refreshed managed development shell to reuse the prepared runtime image without rebuilding" >&2
         cat "${BARRIER_VERIFY_ROOT}/debug/live-development-shell-${agent}.out" >&2
         exit 1
       fi
     done
-    if ! GIT_PAGER=cat PAGER=cat \
-      "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify GIT_PAGER=cat PAGER=cat \
       --agent codex \
       --mode development \
       --workspace "${ROOT_DIR}" \
@@ -6624,8 +7097,9 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     fi
     grep -q '^WORKCELL_DEVELOPMENT_REFRESH_OK$' "${LIVE_DEBUG_REFRESH_OUT}"
     grep -q "Refreshing managed Colima profile ${LIVE_DEBUG_PROFILE_NAME} to apply the requested reviewed VM resources." "${LIVE_DEBUG_REFRESH_OUT}"
-    if grep -Eq 'Preparing the runtime image for profile|runtime-build|429 Too Many Requests' "${LIVE_DEBUG_REFRESH_OUT}"; then
-      echo "Expected refreshed managed development shell to restore the prepared runtime image from cache without rebuilding" >&2
+    if grep -Eq 'Preparing the runtime image for profile|runtime-build|429 Too Many Requests' "${LIVE_DEBUG_REFRESH_OUT}" &&
+      ! grep -q 'Workcell timed out waiting for managed Colima profile' "${LIVE_DEBUG_REFRESH_OUT}"; then
+      echo "Expected refreshed managed development shell to reuse or restore the prepared runtime image without rebuilding" >&2
       cat "${LIVE_DEBUG_REFRESH_OUT}" >&2
       exit 1
     fi
@@ -6684,7 +7158,7 @@ done
 EOF
     )"
     ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-    if ! "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify \
       session start \
       --agent codex \
       --mode development \
@@ -6737,7 +7211,7 @@ EOF
         ;;
     esac
     test -d "${DETACHED_SESSION_WORKSPACE}"
-    if ! "${ROOT_DIR}/scripts/workcell" session show --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_SHOW_RUNNING_OUT}" 2>&1; then
+    if ! run_workcell_verify session show --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_SHOW_RUNNING_OUT}" 2>&1; then
       echo "Expected session show to succeed for a running detached session" >&2
       cat "${DETACHED_SESSION_SHOW_RUNNING_OUT}" >&2
       exit 1
@@ -6793,12 +7267,12 @@ EOF
     ) &
     DETACHED_ATTACH_PID=$!
     sleep 1
-    if ! "${ROOT_DIR}/scripts/workcell" session send --id "${DETACHED_SESSION_ID}" --message alpha >"${DETACHED_SESSION_SEND_ALPHA_OUT}" 2>&1; then
+    if ! run_workcell_verify session send --id "${DETACHED_SESSION_ID}" --message alpha >"${DETACHED_SESSION_SEND_ALPHA_OUT}" 2>&1; then
       echo "Expected detached session send(alpha) to succeed" >&2
       cat "${DETACHED_SESSION_SEND_ALPHA_OUT}" >&2
       exit 1
     fi
-    if ! "${ROOT_DIR}/scripts/workcell" session send --id "${DETACHED_SESSION_ID}" --message beta >"${DETACHED_SESSION_SEND_BETA_OUT}" 2>&1; then
+    if ! run_workcell_verify session send --id "${DETACHED_SESSION_ID}" --message beta >"${DETACHED_SESSION_SEND_BETA_OUT}" 2>&1; then
       echo "Expected detached session send(beta) to succeed" >&2
       cat "${DETACHED_SESSION_SEND_BETA_OUT}" >&2
       exit 1
@@ -6842,14 +7316,14 @@ EOF
       echo "Detached session wrote into the source workspace instead of the isolated clone: ${DETACHED_SESSION_SOURCE_SENTINEL_PATH}" >&2
       exit 1
     fi
-    if ! "${ROOT_DIR}/scripts/workcell" session diff --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_DIFF_OUT}" 2>&1; then
+    if ! run_workcell_verify session diff --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_DIFF_OUT}" 2>&1; then
       echo "Expected detached session diff to succeed for the isolated workspace clone" >&2
       cat "${DETACHED_SESSION_DIFF_OUT}" >&2
       exit 1
     fi
     grep -q "^session_id=${DETACHED_SESSION_ID}$" "${DETACHED_SESSION_DIFF_OUT}"
     grep -q "^?? ${DETACHED_SESSION_SOURCE_SENTINEL_REL}$" "${DETACHED_SESSION_DIFF_OUT}"
-    if ! "${ROOT_DIR}/scripts/workcell" session stop --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_STOP_OUT}" 2>&1; then
+    if ! run_workcell_verify session stop --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_STOP_OUT}" 2>&1; then
       echo "Expected detached session stop to succeed" >&2
       cat "${DETACHED_SESSION_STOP_OUT}" >&2
       exit 1
@@ -6857,7 +7331,7 @@ EOF
     grep -q "^session_id=${DETACHED_SESSION_ID}$" "${DETACHED_SESSION_STOP_OUT}"
     grep -q '^stop_requested=1$' "${DETACHED_SESSION_STOP_OUT}"
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-      if "${ROOT_DIR}/scripts/workcell" session show --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_SHOW_STOPPED_OUT}" 2>&1 &&
+      if run_workcell_verify session show --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_SHOW_STOPPED_OUT}" 2>&1 &&
         grep -q '"status": "exited"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}" &&
         grep -q '"live_status": "stopped"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"; then
         break
@@ -6879,7 +7353,7 @@ EOF
     esac
     test ! -e "${DETACHED_SESSION_AUDIT_DIR}"
     test ! -e "${DETACHED_SESSION_MONITOR_STATE_FILE}"
-    if ! "${ROOT_DIR}/scripts/workcell" session timeline --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_TIMELINE_OUT}" 2>&1; then
+    if ! run_workcell_verify session timeline --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_TIMELINE_OUT}" 2>&1; then
       echo "Expected detached session timeline to succeed" >&2
       cat "${DETACHED_SESSION_TIMELINE_OUT}" >&2
       exit 1
@@ -6889,20 +7363,20 @@ EOF
     test "$(grep -c "event=command session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}")" = "2"
     grep -q "event=stop-request session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
     grep -q "event=exit session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
-    if ! "${ROOT_DIR}/scripts/workcell" session logs --id "${DETACHED_SESSION_ID}" --kind audit >"${DETACHED_SESSION_LOGS_AUDIT_OUT}" 2>&1; then
+    if ! run_workcell_verify session logs --id "${DETACHED_SESSION_ID}" --kind audit >"${DETACHED_SESSION_LOGS_AUDIT_OUT}" 2>&1; then
       echo "Expected detached session audit log retrieval to succeed" >&2
       cat "${DETACHED_SESSION_LOGS_AUDIT_OUT}" >&2
       exit 1
     fi
     grep -q "event=launch session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_LOGS_AUDIT_OUT}"
     grep -q "event=exit session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_LOGS_AUDIT_OUT}"
-    if ! "${ROOT_DIR}/scripts/workcell" session logs --id "${DETACHED_SESSION_ID}" --kind debug >"${DETACHED_SESSION_LOGS_DEBUG_OUT}" 2>&1; then
+    if ! run_workcell_verify session logs --id "${DETACHED_SESSION_ID}" --kind debug >"${DETACHED_SESSION_LOGS_DEBUG_OUT}" 2>&1; then
       echo "Expected detached session debug log retrieval to succeed" >&2
       cat "${DETACHED_SESSION_LOGS_DEBUG_OUT}" >&2
       exit 1
     fi
     grep -q "profile=${LIVE_DETACHED_PROFILE_NAME}" "${DETACHED_SESSION_LOGS_DEBUG_OUT}"
-    if ! "${ROOT_DIR}/scripts/workcell" session logs --id "${DETACHED_SESSION_ID}" --kind file-trace >"${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" 2>&1; then
+    if ! run_workcell_verify session logs --id "${DETACHED_SESSION_ID}" --kind file-trace >"${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" 2>&1; then
       echo "Expected detached session file-trace retrieval to succeed" >&2
       cat "${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" >&2
       exit 1
@@ -6912,12 +7386,12 @@ EOF
       cat "${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" >&2
       exit 1
     fi
-    if "${ROOT_DIR}/scripts/workcell" session logs --id "${DETACHED_SESSION_ID}" --kind transcript >"${DETACHED_SESSION_LOGS_TRANSCRIPT_OUT}" 2>&1; then
+    if run_workcell_verify session logs --id "${DETACHED_SESSION_ID}" --kind transcript >"${DETACHED_SESSION_LOGS_TRANSCRIPT_OUT}" 2>&1; then
       echo "Expected detached session transcript retrieval to fail when transcript capture is not enabled" >&2
       exit 1
     fi
     grep -q "No transcript log is recorded for session ${DETACHED_SESSION_ID}" "${DETACHED_SESSION_LOGS_TRANSCRIPT_OUT}"
-    if ! "${ROOT_DIR}/scripts/workcell" session list --json --workspace "${DETACHED_SESSION_WORKSPACE}" --colima-profile "${LIVE_DETACHED_PROFILE_NAME}" >"${DETACHED_SESSION_LIST_OUT}" 2>&1; then
+    if ! run_workcell_verify session list --json --workspace "${DETACHED_SESSION_WORKSPACE}" --colima-profile "${LIVE_DETACHED_PROFILE_NAME}" >"${DETACHED_SESSION_LIST_OUT}" 2>&1; then
       echo "Expected detached session list --json to include the isolated workspace session" >&2
       cat "${DETACHED_SESSION_LIST_OUT}" >&2
       exit 1
@@ -6946,7 +7420,7 @@ done
 EOF
     )"
     ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-    if ! "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify \
       --agent codex \
       --mode build \
       --workspace "${ROOT_DIR}" \
@@ -6986,7 +7460,7 @@ grep -q "session previously ran package-manager mutations as root" /tmp/workcell
 EOF
     )"
     ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-    if ! "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify \
       --agent codex \
       --mode build \
       --workspace "${ROOT_DIR}" \
@@ -7013,7 +7487,7 @@ EOF
       fi
     done
     ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-    if ! "${ROOT_DIR}/scripts/workcell" \
+    if ! run_workcell_verify \
       --agent codex \
       --mode build \
       --workspace "${ROOT_DIR}" \
@@ -7045,9 +7519,10 @@ vmType: vz
 mountType: virtiofs
 EOF
     printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_LOG}"
-    if "${ROOT_DIR}/scripts/workcell" \
+    if run_workcell_verify \
       --test-fail-after-profile-refresh \
       --agent codex \
+      --no-default-injection-policy \
       --prepare \
       --allow-nongit-workspace \
       --workspace "${NONGIT_WORKSPACE}" \
@@ -7083,9 +7558,10 @@ EOF
     printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_STATE_DIR}/workcell.audit.log"
     VERIFY_INVARIANTS_EXPECTED_FAILURE=1
     set +e
-    "${ROOT_DIR}/scripts/workcell" \
+    run_workcell_verify \
       --test-fail-after-profile-refresh \
       --agent codex \
+      --no-default-injection-policy \
       --allow-nongit-workspace \
       --workspace "${NONGIT_WORKSPACE}" \
       --no-default-injection-policy \
@@ -7108,9 +7584,10 @@ EOF
     grep -q 'Workcell test hook: forcing failure after managed profile refresh.' /tmp/workcell-strict-refresh-preflight.out
     VERIFY_INVARIANTS_EXPECTED_FAILURE=1
     set +e
-    "${ROOT_DIR}/scripts/workcell" \
+    run_workcell_verify \
       --test-fail-after-profile-refresh \
       --agent codex \
+      --no-default-injection-policy \
       --prepare \
       --allow-nongit-workspace \
       --workspace "${NONGIT_WORKSPACE}" \
@@ -7145,6 +7622,7 @@ UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
 mkdir -p "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}"
 if run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --allow-nongit-workspace \
   --workspace "${NONGIT_WORKSPACE}" \
   --colima-profile "${UNMANAGED_PROFILE_NAME}" >/tmp/workcell-unmanaged-profile.out 2>&1; then
@@ -7157,6 +7635,7 @@ grep -q "colima delete --profile" /tmp/workcell-unmanaged-profile.out
 
 if ! run_workcell_verify \
   --agent codex \
+  --no-default-injection-policy \
   --repair-profile \
   --allow-nongit-workspace \
   --workspace "${NONGIT_WORKSPACE}" \
@@ -7171,6 +7650,7 @@ grep -q 'docker run' /tmp/workcell-repair-profile-dry-run.out
 for agent in claude gemini; do
   if ! run_workcell_verify \
     --agent "${agent}" \
+    --no-default-injection-policy \
     --repair-profile \
     --allow-nongit-workspace \
     --workspace "${NONGIT_WORKSPACE}" \
@@ -7193,21 +7673,34 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
   host_tool_exists /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker; then
   GOFLAGS_PROFILE_NAME="workcell-goflags-verify-$$"
   COLIMA_PROFILE_FIXTURE="${REAL_HOME}/.colima/${GOFLAGS_PROFILE_NAME}"
-  mkdir -p "${COLIMA_PROFILE_FIXTURE}"
+  GOFLAGS_PROFILE_STATE_DIR="$(verify_profile_target_state_dir "${GOFLAGS_PROFILE_NAME}")"
+  mkdir -p "${COLIMA_PROFILE_FIXTURE}" "${GOFLAGS_PROFILE_STATE_DIR}"
   printf '%s\n' "${NONGIT_WORKSPACE}" >"${COLIMA_PROFILE_FIXTURE}/workcell.managed"
+  printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${GOFLAGS_PROFILE_STATE_DIR}/workcell.audit.log"
   printf 'image_tag=workcell:local\nimage_id=sha256:test\nsource_date_epoch=0\n' >"${COLIMA_PROFILE_FIXTURE}/workcell.image-ready"
   cat >"${COLIMA_PROFILE_FIXTURE}/colima.yaml" <<'EOF'
 vmType: qemu
 mountType: virtiofs
 runtime: docker
 EOF
+  VERIFY_INVARIANTS_EXPECTED_FAILURE=1
+  set +e
   GOFLAGS="-modfile=${BARRIER_VERIFY_ROOT}/missing-go.mod" \
     "${ROOT_DIR}/scripts/workcell" \
+    --test-fail-after-profile-refresh \
     --agent codex \
+    --no-default-injection-policy \
     --allow-nongit-workspace \
     --workspace "${NONGIT_WORKSPACE}" \
-    --no-default-injection-policy \
-    --colima-profile "${GOFLAGS_PROFILE_NAME}" >/tmp/workcell-goflags.out 2>&1 || true
+    --colima-profile "${GOFLAGS_PROFILE_NAME}" >/tmp/workcell-goflags.out 2>&1
+  goflags_status=$?
+  set -e
+  VERIFY_INVARIANTS_EXPECTED_FAILURE=0
+  if [[ "${goflags_status}" -eq 0 ]]; then
+    echo "Expected hostile GOFLAGS fixture to stop before launch" >&2
+    cat /tmp/workcell-goflags.out >&2
+    exit 1
+  fi
   if grep -q 'missing-go.mod' /tmp/workcell-goflags.out; then
     echo "scripts/workcell honored hostile GOFLAGS before validating managed Colima profiles" >&2
     exit 1
@@ -7217,6 +7710,10 @@ EOF
     cat /tmp/workcell-goflags.out >&2
     exit 1
   fi
+  assert_output_did_not_start_colima \
+    /tmp/workcell-goflags.out \
+    "Hostile GOFLAGS fixture should stop after managed profile validation/refresh and before Colima startup"
+  delete_verify_colima_profile "${GOFLAGS_PROFILE_NAME}"
 fi
 
 WORKTREE_ROOT="${BARRIER_VERIFY_ROOT}/worktree-root"
@@ -7230,7 +7727,7 @@ touch "${WORKTREE_MAIN}/tracked.txt"
 git -C "${WORKTREE_MAIN}" add tracked.txt
 git -C "${WORKTREE_MAIN}" commit -q -m init
 git -C "${WORKTREE_MAIN}" worktree add -q -b linked "${WORKTREE_LINKED}"
-if run_workcell_verify --agent codex --workspace "${WORKTREE_LINKED}" --dry-run >/tmp/workcell-linked-worktree.out 2>&1; then
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${WORKTREE_LINKED}" --dry-run >/tmp/workcell-linked-worktree.out 2>&1; then
   echo "Expected linked git worktree with external admin state to be rejected" >&2
   exit 1
 fi
@@ -7244,8 +7741,17 @@ REDIRECTED_WORKTREE="${REDIRECTED_ROOT}/outside"
 mkdir -p "${REDIRECTED_WORKTREE}"
 git init -q -b master "${REDIRECTED_REPO}"
 git --git-dir "${REDIRECTED_REPO}/.git" config core.worktree "${REDIRECTED_WORKTREE}"
-if run_workcell_verify --agent codex --workspace "${REDIRECTED_REPO}" --dry-run >/dev/null 2>&1; then
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${REDIRECTED_REPO}" --dry-run >/dev/null 2>&1; then
   echo "Expected redirected core.worktree repo to be rejected" >&2
+  exit 1
+fi
+
+if ! grep -q 'WORKCELL_PROVIDER_E2E_RESTORE_ENV_FILE' "${ROOT_DIR}/scripts/provider-e2e.sh"; then
+  echo "Expected provider-e2e secret preservation to use a restore env file" >&2
+  exit 1
+fi
+if grep -Eq 'WORKCELL_E2E_[A-Z0-9_]+="\$\{WORKCELL_E2E_' "${ROOT_DIR}/scripts/provider-e2e.sh"; then
+  echo "provider-e2e must not pass E2E secret values through /usr/bin/env argv during sanitization" >&2
   exit 1
 fi
 
@@ -7269,9 +7775,12 @@ if grep -q 'github_hosts' /tmp/workcell-provider-e2e-codex.out; then
 fi
 grep -q 'provider_e2e_auth_status_cmd=.*--auth-status' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_prepare_only_cmd=.*--prepare-only' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_prepare_only_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*--mode development' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_shell_probe_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*-- bash -lc' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*WORKCELL_PROVIDER_E2E_SHELL_OK' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_probe_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg exec' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg --json' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-codex.out
@@ -7297,6 +7806,34 @@ grep -q 'provider_e2e_probe_cmd=.*--agent-arg --no-session-persistence' /tmp/wor
 grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-claude.out
 if grep -q 'github_hosts' /tmp/workcell-provider-e2e-claude.out; then
   echo "Expected provider-e2e claude dry-run to omit unrelated shared GitHub credentials" >&2
+  exit 1
+fi
+
+if ! WORKCELL_E2E_COPILOT_GITHUB_TOKEN='copilot-smoke-token' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent copilot \
+  --workspace "${ROOT_DIR}" \
+  --dry-run >/tmp/workcell-provider-e2e-copilot.out 2>&1; then
+  echo "Expected provider-e2e copilot dry-run to succeed with generated env credentials" >&2
+  cat /tmp/workcell-provider-e2e-copilot.out >&2
+  exit 1
+fi
+grep -q '^provider_e2e_agent=copilot$' /tmp/workcell-provider-e2e-copilot.out
+grep -q '^provider_e2e_injection_source=generated-env$' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'copilot_github_token' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_shell_probe_cmd=.*--mode development' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_prepare_only_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_shell_probe_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_shell_probe_cmd=.*-- bash -lc' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_shell_probe_cmd=.*copilot-github-token.txt' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_shell_probe_cmd=.*host-injections/direct-mounts' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_shell_probe_cmd=.*WORKCELL_PROVIDER_E2E_SHELL_OK' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_probe_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_probe_cmd=.*--agent-arg -p' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_probe_cmd=.*--agent-arg -s' /tmp/workcell-provider-e2e-copilot.out
+grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-copilot.out
+if grep -q 'github_hosts' /tmp/workcell-provider-e2e-copilot.out; then
+  echo "Expected provider-e2e copilot dry-run to omit unrelated shared GitHub credentials" >&2
   exit 1
 fi
 
@@ -7514,6 +8051,123 @@ grep -q '^WORKCELL_PROVIDER_E2E_SHELL_OK$' /tmp/workcell-provider-e2e-live-probe
 grep -q '\[provider-e2e\] live-probe (claude)' /tmp/workcell-provider-e2e-live-probe-claude.out
 grep -q '"result":"WORKCELL_PROVIDER_E2E_OK"' /tmp/workcell-provider-e2e-live-probe-claude.out
 
+FAKE_PROVIDER_E2E_WORKCELL_COPILOT="${BARRIER_VERIFY_ROOT}/provider-e2e-fake-workcell-copilot.sh"
+cat >"${FAKE_PROVIDER_E2E_WORKCELL_COPILOT}" <<'EOF_FAKE_PROVIDER_E2E_COPILOT'
+#!/bin/bash
+set -euo pipefail
+
+for arg in "$@"; do
+  if [[ "${arg}" == "--auth-status" ]]; then
+    cat <<'STATUS'
+credential_keys=copilot_github_token
+provider_auth_mode=copilot_github_token
+provider_auth_modes=copilot_github_token
+shared_auth_modes=none
+github_auth_present=0
+ssh_injected=0
+ssh_config_assurance=off
+secret_copy_targets=none
+STATUS
+    exit 0
+  fi
+done
+
+if [[ "${1:-}" == "--prepare-only" ]]; then
+  exit 0
+fi
+
+if [[ " $* " == *" --mode development "* ]]; then
+  case " $* " in
+    *" -- bash -lc "* ) ;;
+    * )
+      echo "missing copilot development-shell args: $*" >&2
+      exit 86
+      ;;
+  esac
+  case " $* " in
+    *" WORKCELL_PROVIDER_E2E_SHELL_OK "* ) ;;
+    * )
+      echo "missing copilot development-shell token: $*" >&2
+      exit 85
+      ;;
+  esac
+  printf 'WORKCELL_PROVIDER_E2E_SHELL_OK\n'
+  exit 0
+fi
+
+case " $* " in
+  *" --agent-arg -p "* ) ;;
+  * )
+    echo "missing copilot prompt probe args: $*" >&2
+    exit 84
+    ;;
+esac
+case " $* " in
+  *" --agent-arg -s "* ) ;;
+  * )
+    echo "missing copilot stream probe args: $*" >&2
+    exit 83
+    ;;
+esac
+
+printf '{"text":"WORKCELL_PROVIDER_E2E_OK"}\n'
+EOF_FAKE_PROVIDER_E2E_COPILOT
+chmod +x "${FAKE_PROVIDER_E2E_WORKCELL_COPILOT}"
+
+if ! WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_COPILOT}" \
+  WORKCELL_E2E_COPILOT_GITHUB_TOKEN='copilot-smoke-token' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent copilot \
+  --workspace "${ROOT_DIR}" \
+  --require-injection >/tmp/workcell-provider-e2e-live-probe-copilot.out 2>&1; then
+  echo "Expected provider-e2e Copilot probe to succeed against the fake Workcell shim" >&2
+  cat /tmp/workcell-provider-e2e-live-probe-copilot.out >&2
+  exit 1
+fi
+grep -q '\[provider-e2e\] auth-status (copilot)' /tmp/workcell-provider-e2e-live-probe-copilot.out
+grep -q '\[provider-e2e\] prepare-only (copilot)' /tmp/workcell-provider-e2e-live-probe-copilot.out
+grep -q '\[provider-e2e\] development-shell (copilot)' /tmp/workcell-provider-e2e-live-probe-copilot.out
+grep -q '^WORKCELL_PROVIDER_E2E_SHELL_OK$' /tmp/workcell-provider-e2e-live-probe-copilot.out
+grep -q '\[provider-e2e\] live-probe (copilot)' /tmp/workcell-provider-e2e-live-probe-copilot.out
+grep -q '"text":"WORKCELL_PROVIDER_E2E_OK"' /tmp/workcell-provider-e2e-live-probe-copilot.out
+
+FAKE_PROVIDER_E2E_WORKCELL_COPILOT_LEAK="${BARRIER_VERIFY_ROOT}/provider-e2e-fake-workcell-copilot-leak.sh"
+cat >"${FAKE_PROVIDER_E2E_WORKCELL_COPILOT_LEAK}" <<'EOF_FAKE_PROVIDER_E2E_COPILOT_LEAK'
+#!/bin/bash
+set -euo pipefail
+
+for arg in "$@"; do
+  if [[ "${arg}" == "--auth-status" ]]; then
+    printf 'provider_auth_mode=copilot_github_token\n'
+    exit 0
+  fi
+done
+
+if [[ "${1:-}" == "--prepare-only" ]]; then
+  printf '%s\n' "${WORKCELL_E2E_COPILOT_GITHUB_TOKEN}"
+  exit 0
+fi
+
+printf '{"text":"WORKCELL_PROVIDER_E2E_OK"}\n'
+EOF_FAKE_PROVIDER_E2E_COPILOT_LEAK
+chmod +x "${FAKE_PROVIDER_E2E_WORKCELL_COPILOT_LEAK}"
+
+if WORKCELL_SANITIZED_ENTRYPOINT=1 \
+  WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_COPILOT_LEAK}" \
+  WORKCELL_E2E_COPILOT_GITHUB_TOKEN='copilot-smoke-token' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent copilot \
+  --workspace "${ROOT_DIR}" \
+  --require-injection >/tmp/workcell-provider-e2e-copilot-leak.out 2>&1; then
+  echo "Expected provider-e2e Copilot probe to reject token material in captured output" >&2
+  exit 1
+fi
+grep -q "contained Copilot token material; suppressing output" /tmp/workcell-provider-e2e-copilot-leak.out
+if grep -Fq 'copilot-smoke-token' /tmp/workcell-provider-e2e-copilot-leak.out; then
+  echo "Provider-e2e leak guard printed Copilot token material" >&2
+  exit 1
+fi
+
 FAKE_PROVIDER_E2E_WORKCELL_GEMINI="${BARRIER_VERIFY_ROOT}/provider-e2e-fake-workcell-gemini.sh"
 cat >"${FAKE_PROVIDER_E2E_WORKCELL_GEMINI}" <<'EOF_FAKE_PROVIDER_E2E_GEMINI'
 #!/bin/bash
@@ -7630,6 +8284,16 @@ if WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_NONE}" \
   exit 1
 fi
 grep -q 'Workcell did not detect provider auth for claude' /tmp/workcell-provider-e2e-auth-guard-claude.out
+
+if WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${FAKE_PROVIDER_E2E_WORKCELL_NONE}" \
+  WORKCELL_E2E_COPILOT_GITHUB_TOKEN='copilot-smoke-token' \
+  "${ROOT_DIR}/scripts/provider-e2e.sh" \
+  --agent copilot \
+  --workspace "${ROOT_DIR}" >/tmp/workcell-provider-e2e-auth-guard-copilot.out 2>&1; then
+  echo "Expected provider-e2e auth guard to fail for Copilot when injected credentials are not recognized" >&2
+  exit 1
+fi
+grep -q 'Workcell did not detect provider auth for copilot' /tmp/workcell-provider-e2e-auth-guard-copilot.out
 
 if "${ROOT_DIR}/scripts/provider-e2e.sh" \
   --agent claude \
@@ -7780,12 +8444,214 @@ if ! grep -Fq 'unset DISABLE_AUTOUPDATER' "${ROOT_DIR}/runtime/container/provide
   echo "Expected provider wrapper to discard caller-supplied DISABLE_AUTOUPDATER" >&2
   exit 1
 fi
+for copilot_env in \
+  'unset GH_CONFIG_DIR' \
+  'unset GH_HOST' \
+  'unset GH_TOKEN' \
+  'unset GITHUB_TOKEN' \
+  'unset OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT' \
+  'unset PLAIN_DIFF' \
+  'unset USE_BUILTIN_RIPGREP' \
+  'unset OTEL_EXPORTER_OTLP_ENDPOINT' \
+  'unset OTEL_EXPORTER_OTLP_HEADERS' \
+  'unset OTEL_EXPORTER_OTLP_PROTOCOL' \
+  'unset OTEL_EXPORTER_OTLP_TIMEOUT' \
+  'unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT' \
+  'unset OTEL_EXPORTER_OTLP_TRACES_HEADERS' \
+  'unset OTEL_EXPORTER_OTLP_TRACES_PROTOCOL' \
+  'unset OTEL_EXPORTER_OTLP_TRACES_TIMEOUT' \
+  'unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT' \
+  'unset OTEL_EXPORTER_OTLP_METRICS_HEADERS' \
+  'unset OTEL_EXPORTER_OTLP_METRICS_PROTOCOL' \
+  'unset OTEL_EXPORTER_OTLP_METRICS_TIMEOUT' \
+  'unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT' \
+  'unset OTEL_EXPORTER_OTLP_LOGS_HEADERS' \
+  'unset OTEL_EXPORTER_OTLP_LOGS_PROTOCOL' \
+  'unset OTEL_EXPORTER_OTLP_LOGS_TIMEOUT' \
+  'unset OTEL_RESOURCE_ATTRIBUTES'; do
+  for copilot_wrapper in \
+    "${ROOT_DIR}/runtime/container/provider-wrapper.sh" \
+    "${ROOT_DIR}/runtime/container/development-wrapper.sh"; do
+    if ! grep -Fq -- "${copilot_env}" "${copilot_wrapper}"; then
+      echo "Expected $(basename "${copilot_wrapper}") to scrub Copilot/GitHub ambient env knob: ${copilot_env}" >&2
+      exit 1
+    fi
+  done
+done
+for copilot_wrapper in \
+  "${ROOT_DIR}/runtime/container/provider-wrapper.sh" \
+  "${ROOT_DIR}/runtime/container/development-wrapper.sh"; do
+  if ! grep -Fq "\${!COPILOT_@}" "${copilot_wrapper}"; then
+    echo "Expected $(basename "${copilot_wrapper}") to scrub unknown future Copilot env variables by prefix" >&2
+    exit 1
+  fi
+  if ! grep -Fq "\${!GITHUB_COPILOT_@}" "${copilot_wrapper}"; then
+    echo "Expected $(basename "${copilot_wrapper}") to scrub unknown future GitHub Copilot env variables by prefix" >&2
+    exit 1
+  fi
+  if grep -Fq "\${!GITHUB_COPILOT_OIDC_MCP_TOKEN@}" "${copilot_wrapper}"; then
+    echo "$(basename "${copilot_wrapper}") must rely on the GITHUB_COPILOT_ prefix scrub instead of a duplicate OIDC token loop" >&2
+    exit 1
+  fi
+  if grep -Fq "\${!COPILOT_EXP_@}" "${copilot_wrapper}"; then
+    echo "$(basename "${copilot_wrapper}") must rely on the COPILOT_ prefix scrub instead of a duplicate experiment loop" >&2
+    exit 1
+  fi
+done
+if grep -Fq "\${COPILOT_HOME}/workcell-token" "${ROOT_DIR}/runtime/container/provider-wrapper.sh" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
+  echo "Copilot auth token must not be copied into COPILOT_HOME" >&2
+  exit 1
+fi
+if ! grep -Fq 'prepare_copilot_token_handoff_mount "$@"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected launcher to prepare a host-mounted Copilot token handoff before docker run" >&2
+  exit 1
+fi
+if ! grep -Fq "DIRECT_SOURCE_MOUNTS=(\"\${filtered_mounts[@]}\")" "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected launcher to remove Copilot token direct mounts after host-side handoff preparation" >&2
+  exit 1
+fi
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "copilot_no_auth_invocation" '-h | --help | -v | --version | help | version | completion)' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/runtime/container/provider-wrapper.sh" "copilot_no_auth_invocation" '-h | --help | -v | --version | help | version | completion)' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "copilot_host_invocation_requires_auth" 'if copilot_no_auth_invocation "$@"; then' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "fail_fast_for_missing_copilot_auth" 'if copilot_no_auth_invocation "$@"; then' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/runtime/container/provider-wrapper.sh" "copilot_invocation_requires_auth" 'if copilot_no_auth_invocation "$@"; then'; then
+  echo "Expected host and runtime Copilot auth classifiers to share the no-auth subcommand helper" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'workcell-token-handoff' "${ROOT_DIR}/scripts/workcell" ||
+  ! grep -Fq 'COPILOT_TOKEN_HANDOFF_DIR="$(mktemp -d "${token_handoff_parent}/copilot-token-handoff.XXXXXX")"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected Copilot token handoff directory to live in the dedicated writable Colima handoff root" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'token_handoff_parent="$(default_copilot_token_handoff_parent)" || exit $?' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'reject_symlinked_colima_staging_cache_roots || exit $?'; then
+  echo "Expected Copilot token handoff writes to re-check the guarded Colima handoff root at the write site" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'COPILOT_TOKEN_HANDOFF_CONSUMED_FILE="${COPILOT_TOKEN_HANDOFF_DIR}/copilot-token-consumed"' "${ROOT_DIR}/scripts/workcell" ||
+  ! grep -Fq 'while [[ ! -e "${COPILOT_TOKEN_HANDOFF_CONSUMED_FILE}" ]]; do' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected detached Copilot launches to wait for the wrapper-side token consumed marker" >&2
+  exit 1
+fi
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" "rm -f -- \"\${source_path}\""; then
+  echo "Expected Copilot token handoff to remove the staged token copy from the mounted injection bundle" >&2
+  exit 1
+fi
+if ! grep -Fq 'copilotStandaloneTokenHandoffName' "${ROOT_DIR}/internal/host/hoststate/hoststate.go" ||
+  ! grep -Fq 'copilotTokenHandoffBundleName' "${ROOT_DIR}/internal/host/hoststate/hoststate.go" ||
+  ! grep -Fq 'removeCopilotTokenHandoffArtifacts' "${ROOT_DIR}/internal/host/hoststate/hoststate.go"; then
+  echo "Expected stale Copilot token handoff directories to be covered by host cleanup" >&2
+  exit 1
+fi
+if ! grep -Fq 'strings.HasPrefix(suffix, "env.")' "${ROOT_DIR}/internal/host/hoststate/hoststate.go"; then
+  echo "Expected legacy stale Copilot token env-file cleanup to cover production mktemp suffixes" >&2
+  exit 1
+fi
+if grep -Fq -- "--env-file \"\${COPILOT_TOKEN" "${ROOT_DIR}/scripts/workcell"; then
+  echo "Copilot auth must not use Docker env-files because Docker stores them in container metadata" >&2
+  exit 1
+fi
+if ! grep -Fq "if [[ -z \"\${COPILOT_TOKEN_HANDOFF_DIR}\" ]]; then" "${ROOT_DIR}/scripts/workcell" ||
+  ! grep -Fq 'DOCKER_RUN_BASE+=(--init)' "${ROOT_DIR}/scripts/workcell" ||
+  ! grep -Fq 'DOCKER_RUN_PREFIX_LEN=2' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected Copilot token handoff launches to keep the Workcell entrypoint as PID 1" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq '${COPILOT_TOKEN_HANDOFF_DIR}:${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}:rw' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected docker run to mount only the Copilot token handoff directory, not the original token source" >&2
+  exit 1
+fi
+copilot_container_dir_env_needle="WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR=\"\${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}\""
+copilot_auth_required_env_needle="WORKCELL_COPILOT_AUTH_REQUIRED=\"\${COPILOT_AUTH_REQUIRED}\""
+if ! grep -Fq "${copilot_container_dir_env_needle}" "${ROOT_DIR}/scripts/workcell" ||
+  ! grep -Fq "${copilot_auth_required_env_needle}" "${ROOT_DIR}/scripts/workcell" ||
+  ! grep -Fq 'WORKCELL_COPILOT_AUTH_REQUIRED' "${ROOT_DIR}/runtime/container/rust/src/bin/common/launcher_common.rs" ||
+  ! grep -Fq 'copilot_auth_required_for_pid1(request.target_name)' "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-launcher.rs"; then
+  echo "Expected Copilot launches to pass validated host-computed auth metadata through PID 1 and scrub caller-supplied metadata before provider wrapper exec" >&2
+  exit 1
+fi
+if ! grep -Fq 'wait_for_copilot_token_handoff_consumed' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected detached Copilot launches to wait until the managed wrapper consumes the token handoff" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq -- '--tmpfs "/run/workcell:nosuid,nodev,size=4m,mode=755,uid=${HOST_UID},gid=${HOST_GID}"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected readonly Copilot token handoff state to use a mapped-user writable /run/workcell tmpfs" >&2
+  exit 1
+fi
+if ! grep -Fq 'stage_copilot_token_handoff_file "$@"' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "Expected runtime entrypoint to stage the Copilot host handoff token into a transient runtime file" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR:-/opt/workcell/copilot-token-handoff}"' "${ROOT_DIR}/runtime/container/entrypoint.sh" ||
+  ! grep -Fq 'WORKCELL_COPILOT_HOST_TOKEN_FILE="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}/copilot-github-token.txt"' "${ROOT_DIR}/runtime/container/entrypoint.sh" ||
+  ! grep -Fq 'rm -f -- "${host_token_file}"' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "Expected runtime entrypoint to read and unlink the mounted Copilot token handoff file" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'COPILOT_METADATA_ENV="$(docker_cmd inspect' "${ROOT_DIR}/scripts/container-smoke.sh" ||
+  ! grep -Fq 'Copilot token leaked into Docker container metadata' "${ROOT_DIR}/scripts/container-smoke.sh"; then
+  echo "Expected container smoke to prove Copilot token material is absent from Docker inspect metadata" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH="${WORKCELL_RUNTIME_STATE_DIR}/copilot-token-file"' "${ROOT_DIR}/runtime/container/runtime-user.sh" ||
+  ! grep -Fq 'workcell_write_readonly_state_file "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}" "${token_file}"' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "Expected runtime entrypoint to record the staged Copilot token path in root-controlled runtime state" >&2
+  exit 1
+fi
+if ! grep -Fq 'exec env -u WORKCELL_COPILOT_GITHUB_TOKEN' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "Expected runtime entrypoint to self-reexec without the Copilot token env variable" >&2
+  exit 1
+fi
+if ! grep -Fq "setpriv --reuid \"\${uid}\" --regid \"\${gid}\" --init-groups /bin/bash -c" "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "Expected runtime entrypoint to create the Copilot token handoff file as the mapped runtime user" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if grep -Fq 'token="${WORKCELL_COPILOT_GITHUB_TOKEN:-}"' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "Runtime entrypoint must not accept caller-supplied WORKCELL_COPILOT_GITHUB_TOKEN as a Copilot auth source" >&2
+  exit 1
+fi
+if grep -Fq "chown \"\${uid}:\${gid}\"" "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "Runtime entrypoint must not depend on chown for Copilot token handoff ownership" >&2
+  exit 1
+fi
+if grep -Eq 'WORKCELL_COPILOT_GITHUB_TOKEN=.*"\$@"' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
+  echo "Runtime entrypoint must not reintroduce the Copilot token env variable when launching the provider child" >&2
+  exit 1
+fi
 if ! grep -Fq 'WORKCELL_PROVIDER_LAUNCHER_AUTHORITY' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
   echo "Expected provider wrapper to require the managed launcher authority marker" >&2
   exit 1
 fi
 if ! grep -Fq 'WORKCELL_PROVIDER_LAUNCHER_AUTHORITY' "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-launcher.rs"; then
   echo "Expected workcell-launcher to set the provider-wrapper authority marker" >&2
+  exit 1
+fi
+if ! grep -Fq 'WORKCELL_PROVIDER_LAUNCHER_AUTHORITY' "${ROOT_DIR}/runtime/container/rust/src/bin/common/launcher_common.rs"; then
+  echo "Expected workcell-launcher env sanitization to discard caller-supplied provider authority markers" >&2
+  exit 1
+fi
+if ! grep -Fq 'spawn_and_wait_request' "${ROOT_DIR}/runtime/container/rust/src/bin/workcell-launcher.rs"; then
+  echo "Expected workcell-launcher to keep a native parent supervising shell wrappers" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'workcell_provider_parent_is_launcher' "${ROOT_DIR}/runtime/container/provider-wrapper.sh" ||
+  ! grep -Fq 'readlink "/proc/${PPID}/exe"' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to require a native Workcell launcher parent before managed provider launch" >&2
+  exit 1
+fi
+if ! grep -Fq 'current_process_parent_is_approved_native_launcher' "${ROOT_DIR}/runtime/container/rust/src/lib.rs" ||
+  ! grep -Fq 'approved_wrapper_requires_native_launcher_parent' "${ROOT_DIR}/runtime/container/rust/src/lib.rs"; then
+  echo "Expected exec guard to reject protected runtime wrapper approval without a native launcher parent" >&2
   exit 1
 fi
 for gemini_sandbox_env in \
@@ -7814,22 +8680,246 @@ if ! grep -Fq "GEMINI_CLI_NO_RELAUNCH=1 GEMINI_SANDBOX=false exec /usr/local/lib
   echo "Expected provider wrapper to pin Gemini native sandbox off on the managed path" >&2
   exit 1
 fi
+if ! grep -Fq "copilot_github_token=\"\$(workcell_load_copilot_github_token)\"" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to load Copilot auth from the staged host-side token handoff" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'token_file="$(head -n1 "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}")"' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to read the Copilot token handoff path from root-controlled runtime state" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'copilot_token_handoff_consumed_file="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}/copilot-token-consumed"' "${ROOT_DIR}/runtime/container/provider-wrapper.sh" ||
+  ! grep -Fq ': >"${copilot_token_handoff_consumed_file}"' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to write a host-visible Copilot token consumed marker" >&2
+  exit 1
+fi
+if ! grep -Fq 'unset GH_CONFIG_DIR' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to scrub GitHub CLI config directory overrides before provider launch" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if grep -Fq 'local token_file="${WORKCELL_COPILOT_TOKEN_FILE:-}"' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Provider wrapper must not trust caller-supplied WORKCELL_COPILOT_TOKEN_FILE" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq '[[ -n "${token_file}" ]] || workcell_die "Copilot auth token handoff file is required."' "${ROOT_DIR}/runtime/container/provider-wrapper.sh" ||
+  grep -Fq 'WORKCELL_COPILOT_GITHUB_TOKEN:-' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to require staged Copilot token files instead of caller-supplied token env fallbacks" >&2
+  exit 1
+fi
+if ! grep -Fq "rm -f -- \"\${token_file}\"" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to unlink the runtime Copilot token handoff file before managed exec" >&2
+  exit 1
+fi
+if ! grep -Fq 'unset WORKCELL_COPILOT_GITHUB_TOKEN' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to discard the host-side Copilot token handoff variable before exec" >&2
+  exit 1
+fi
+if ! grep -Fq 'unset WORKCELL_COPILOT_TOKEN_FILE' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to discard the Copilot token handoff path before exec" >&2
+  exit 1
+fi
+if ! grep -Fq "COPILOT_GITHUB_TOKEN=\"\${copilot_github_token}\"" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to expose Copilot auth only as COPILOT_GITHUB_TOKEN to the managed child" >&2
+  exit 1
+fi
+if ! grep -Fq 'COPILOT_ENABLE_HTTP2=false' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to pin Copilot HTTP/2 off on the managed path" >&2
+  exit 1
+fi
+if ! grep -Fq -- '--secret-env-vars=GH_TOKEN,GITHUB_TOKEN,COPILOT_GITHUB_TOKEN' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to declare Copilot/GitHub token env as provider secrets" >&2
+  exit 1
+fi
+if ! grep -Fq -- '--disallow-temp-dir' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to deny Copilot temp-dir access on the managed path" >&2
+  exit 1
+fi
+if ! grep -Fq -- '"--available-tools=view,create,edit,apply_patch,grep,glob"' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to keep Copilot prompt/yolo tool grants shell-free" >&2
+  exit 1
+fi
+if grep -Eq -- '--available-tools=[^"]*(shell|bash|run|exec)' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Provider wrapper must not grant Copilot shell-like tools on the safe path" >&2
+  exit 1
+fi
+if grep -Fq -- '--allow-all-tools' "${ROOT_DIR}/runtime/container/provider-wrapper.sh" ||
+  grep -Fq -- '--allow-all-paths' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Provider wrapper must not grant Copilot all tools or all paths on the safe path" >&2
+  exit 1
+fi
+if ! grep -Fq "exec /usr/local/libexec/workcell/real/copilot \\" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to launch the pinned native Copilot binary" >&2
+  exit 1
+fi
 if ! grep -Fq "Workcell blocked Claude lifecycle command: \${arg}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
   echo "Expected provider policy to reject native Claude lifecycle commands that bypass the pinned image" >&2
   exit 1
 fi
-if ! grep -Fq '/usr/local/libexec/workcell/provider-wrapper.sh' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
-  echo "Expected Codex managed rules to block direct provider-wrapper launches" >&2
+if ! grep -Fq "Workcell blocked Copilot lifecycle/control-plane command: \${arg}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
+  echo "Expected provider policy to reject native Copilot lifecycle/control-plane commands" >&2
   exit 1
 fi
-if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
-  echo "Expected Codex managed rules to block the native Claude binary path" >&2
+if ! grep -Fq -- '-p | --prompt)' "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
+  echo "Expected provider policy to treat only Copilot -p/--prompt as value-taking prompt flags" >&2
   exit 1
 fi
-if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/codex/managed_config.toml"; then
-  echo "Codex managed rules should not reference the removed Claude npm entrypoint" >&2
+if ! grep -Fq "attached_prompt_value=\"\${arg:2}\"" "${ROOT_DIR}/runtime/container/provider-policy.sh" ||
+  ! grep -Fq "attached_prompt_value=\"\${arg#--prompt=}\"" "${ROOT_DIR}/runtime/container/provider-policy.sh" ||
+  ! grep -Fq 'workcell-copilot-policy-attached-short-prompt-allow-tool.out' "${ROOT_DIR}/scripts/container-smoke.sh" ||
+  ! grep -Fq 'workcell-copilot-policy-attached-long-prompt-allow-tool.out' "${ROOT_DIR}/scripts/container-smoke.sh"; then
+  echo "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values" >&2
   exit 1
 fi
+if ! grep -Fq -- '-[!-]?*)' "${ROOT_DIR}/runtime/container/provider-policy.sh" ||
+  ! grep -Fq "Workcell blocked bundled Copilot short options: \${arg}" "${ROOT_DIR}/runtime/container/provider-policy.sh" ||
+  ! grep -Fq 'workcell-copilot-policy-bundled-short-options.out' "${ROOT_DIR}/scripts/container-smoke.sh"; then
+  echo "Expected provider policy and smoke coverage to reject bundled Copilot short options" >&2
+  exit 1
+fi
+if grep -Fq -- '-p | --prompt | -i | --interactive)' "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
+  echo "Expected provider policy not to treat Copilot -i/--interactive as prompt aliases" >&2
+  exit 1
+fi
+for unsafe_copilot_flag in \
+  '--config-dir' \
+  '--allow-tool' \
+  '--allow-all-tools' \
+  '--allow-all-mcp-server-instructions' \
+  '--available-tools' \
+  '--secret-env-vars' \
+  '--no-auto-update' \
+  '--no-remote' \
+  '--no-remote-export' \
+  '--disable-builtin-mcps' \
+  '--disallow-temp-dir' \
+  '--dynamic-retrieval' \
+  '--interactive' \
+  '--no-bash-env' \
+  '--plan' \
+  '--worktree'; do
+  if ! grep -Fq -- "${unsafe_copilot_flag}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
+    echo "Expected provider policy to reject Copilot unsafe flag: ${unsafe_copilot_flag}" >&2
+    exit 1
+  fi
+done
+for unsafe_copilot_short_form in \
+  '-c?*' \
+  '-i?*' \
+  '-a?*' \
+  '-A?*' \
+  '-w?*'; do
+  if ! grep -Fq -- "${unsafe_copilot_short_form}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
+    echo "Expected provider policy to reject Copilot attached unsafe short flag: ${unsafe_copilot_short_form}" >&2
+    exit 1
+  fi
+done
+for unsafe_copilot_bare_short in \
+  'copilot_short_flag in -C -i -n -r -w' \
+  '-C | -i | -n | -r | -w)'; do
+  if ! grep -Fq -- "${unsafe_copilot_bare_short}" "${ROOT_DIR}/scripts/container-smoke.sh" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
+    echo "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: ${unsafe_copilot_bare_short}" >&2
+    exit 1
+  fi
+done
+if ! grep -Fq 'reject_unsafe_copilot_args' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo "Expected provider wrapper to re-check Copilot argv before launch" >&2
+  exit 1
+fi
+if ! grep -Fq 'reject_protected_runtime_arguments "$@"' "${ROOT_DIR}/runtime/container/development-wrapper.sh"; then
+  echo "Expected development wrapper to reject loader-mediated protected runtime targets before exec" >&2
+  exit 1
+fi
+if ! grep -Fq 'development-wrapper-copilot-loader' "${ROOT_DIR}/scripts/container-smoke.sh"; then
+  echo "Expected container smoke to cover development-wrapper loader-mediated Copilot execution" >&2
+  exit 1
+fi
+if ! grep -Fq 'workcell-copilot-real-copy' "${ROOT_DIR}/scripts/container-smoke.sh"; then
+  echo "Expected container smoke to cover development-wrapper execution of copied protected Copilot payloads" >&2
+  exit 1
+fi
+if ! grep -Fq 'ApprovedWrapper::Development | ApprovedWrapper::None => false' "${ROOT_DIR}/runtime/container/rust/src/lib.rs" ||
+  ! grep -Fq 'approved_wrapper_allows_runtime' "${ROOT_DIR}/runtime/container/rust/src/lib.rs"; then
+  echo "Expected exec guard to keep protected runtime authorization wrapper-specific" >&2
+  exit 1
+fi
+if ! grep -Fq 'WORKCELL_COPILOT_GITHUB_TOKEN' "${ROOT_DIR}/runtime/container/rust/src/bin/common/launcher_common.rs" ||
+  ! grep -Fq 'forged-copilot-token' "${ROOT_DIR}/scripts/container-smoke.sh"; then
+  echo "Expected launcher and smoke coverage to reject forged Copilot auth env" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -Fq 'COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-auto}"' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
+  ! grep -Fq 'COPILOT_NATIVE_HELP_DONE=0' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
+  ! grep -Fq 'COPILOT_DOCKER_HELP_DONE=0' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
+  ! grep -Fq 'auto | native | docker | checksum)' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
+  ! grep -Fq '[[ "${COPILOT_HELP_MODE}" == "checksum" ]] && return 0' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
+  ! grep -Fq "grep -Eq -- \"(^|[^[:alnum:]_-])\${flag}([^[:alnum:]_-]|\$)\"" "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"; then
+  echo "Expected Copilot upstream release verifier to track native/Docker help probes separately, support checksum-only paths, and match whole safety flags" >&2
+  exit 1
+fi
+for copilot_release_help_flag in \
+  '--allow-tool' \
+  '--available-tools' \
+  '--disable-builtin-mcps' \
+  '--disallow-temp-dir' \
+  '--log-dir' \
+  '--no-ask-user' \
+  '--no-auto-update' \
+  '--no-custom-instructions' \
+  '--no-remote' \
+  '--no-remote-export' \
+  '--secret-env-vars'; do
+  if ! grep -Fq -- "${copilot_release_help_flag}" "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"; then
+    echo "Expected Copilot upstream release verifier to require managed flag: ${copilot_release_help_flag}" >&2
+    exit 1
+  fi
+done
+copilot_checksum_verify_needle="WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum \"\${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh\""
+if ! grep -Fq "${copilot_checksum_verify_needle}" "${ROOT_DIR}/scripts/update-provider-pins.sh" ||
+  ! grep -Fq "${copilot_checksum_verify_needle}" "${ROOT_DIR}/scripts/ci/job-validate.sh"; then
+  echo "Expected provider bump and routine validate paths to use checksum-only Copilot release verification before smoke images exist" >&2
+  exit 1
+fi
+if ! grep -Fq 'WORKCELL_COPILOT_RELEASE_HELP_MODE: docker' "${ROOT_DIR}/.github/workflows/release.yml" ||
+  ! grep -Fq 'WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:smoke' "${ROOT_DIR}/.github/workflows/release.yml"; then
+  echo "Expected release container-smoke job to force Copilot release help verification inside the runtime image" >&2
+  exit 1
+fi
+if ! grep -Fq 'preflight-arm64-copilot-runtime:' "${ROOT_DIR}/.github/workflows/release.yml" ||
+  ! grep -Fq 'WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:copilot-arm64-smoke' "${ROOT_DIR}/.github/workflows/release.yml" ||
+  ! grep -Fq 'preflight-arm64-copilot-runtime' "${ROOT_DIR}/.github/workflows/release.yml"; then
+  echo "Expected release workflow to verify Copilot release help inside an arm64 runtime image before publication" >&2
+  exit 1
+fi
+if [[ "$(grep -Fc 'WORKCELL_COPILOT_RELEASE_HELP_MODE: native' "${ROOT_DIR}/.github/workflows/release.yml")" -lt 2 ]]; then
+  echo "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes" >&2
+  exit 1
+fi
+for codex_rule_file in \
+  "${ROOT_DIR}/adapters/codex/managed_config.toml" \
+  "${ROOT_DIR}/adapters/codex/requirements.toml"; do
+  if ! grep -Fq '/usr/local/libexec/workcell/provider-wrapper.sh' "${codex_rule_file}"; then
+    echo "Expected $(basename "${codex_rule_file}") to block direct provider-wrapper launches" >&2
+    exit 1
+  fi
+  if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${codex_rule_file}"; then
+    echo "Expected $(basename "${codex_rule_file}") to block the native Claude binary path" >&2
+    exit 1
+  fi
+  if ! grep -Fq '/usr/local/libexec/workcell/core/copilot' "${codex_rule_file}" ||
+    ! grep -Fq '/usr/local/libexec/workcell/real/copilot' "${codex_rule_file}"; then
+    echo "Expected $(basename "${codex_rule_file}") to block Copilot provider mediation bypass paths" >&2
+    exit 1
+  fi
+  if grep -Fq '@anthropic-ai/claude-code/cli.js' "${codex_rule_file}"; then
+    echo "$(basename "${codex_rule_file}") should not reference the removed Claude npm entrypoint" >&2
+    exit 1
+  fi
+done
 if ! grep -Fq '/usr/local/libexec/workcell/provider-wrapper\.sh' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
   echo "Expected Claude Bash guard to block direct provider-wrapper launches" >&2
   exit 1
@@ -7838,15 +8928,22 @@ if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${ROOT_DIR}/adapters/cl
   echo "Expected Claude Bash guard to block direct native Claude binary launches" >&2
   exit 1
 fi
+if ! grep -Fq '/usr/local/libexec/workcell/core/copilot' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh" ||
+  ! grep -Fq '/usr/local/libexec/workcell/real/copilot' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh" ||
+  ! grep -Fq '\\.copilot' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh" ||
+  ! grep -Fq 'copilot\.md' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
+  echo "Expected Claude Bash guard to block Copilot provider and home control-plane bypass paths" >&2
+  exit 1
+fi
 if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
   echo "Claude Bash guard should not reference the removed Claude npm entrypoint" >&2
   exit 1
 fi
 
 if ! awk '
-  $0 == "  acquire_profile_lock \"${COLIMA_PROFILE}\"" { seen_lock = 1; next }
-  seen_lock && $0 == "  # Another launch may have created or repaired the profile while we waited." { seen_comment = 1; next }
-  seen_lock && seen_comment && $0 == "  refresh_profile_state \"${COLIMA_PROFILE}\"" { found = 1; exit }
+  /^[[:space:]]*acquire_profile_lock "\$\{COLIMA_PROFILE\}"$/ { seen_lock = 1; next }
+  seen_lock && /^[[:space:]]*# Another launch may have created or repaired the profile while we waited\.$/ { seen_comment = 1; next }
+  seen_lock && seen_comment && /^[[:space:]]*refresh_profile_state "\$\{COLIMA_PROFILE\}"$/ { found = 1; exit }
   END { exit(found ? 0 : 1) }
 ' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected workcell to refresh profile state immediately after taking the profile lock" >&2
@@ -7854,20 +8951,20 @@ if ! awk '
 fi
 
 if ! sed -n '/^acquire_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | awk '
-  $0 == "  while true; do" && state == 0 { state = 1; next }
-  $0 == "    if ! acquired_state=\"$(go_hostutil helper acquire-profile-lock \"${lock_dir}\" \"$$\")\"; then" && state == 1 { state = 2; next }
-  $0 == "      echo \"Failed to create managed runtime lock for profile ${profile}.\" >&2" && state == 2 { state = 3; next }
-  $0 == "      return 1" && state == 3 { state = 4; next }
-  $0 == "    fi" && state == 4 { state = 5; next }
-  $0 == "    if [[ \"${acquired_state}\" == \"1\" ]]; then" && state == 5 { state = 6; next }
-  $0 == "      PROFILE_LOCK_DIR=\"${lock_dir}\"" && state == 6 { state = 7; next }
-  $0 == "      return 0" && state == 7 { state = 8; next }
-  $0 == "    fi" && state == 8 { state = 9; next }
-  $0 == "    if ! stale_state=\"$(profile_lock_is_stale \"${lock_dir}\")\"; then" && state == 9 { state = 10; next }
-  $0 == "      echo \"Failed to inspect managed runtime lock state for profile ${profile}.\" >&2" && state == 10 { state = 11; next }
-  $0 == "      return 1" && state == 11 { state = 12; next }
-  $0 == "    fi" && state == 12 { state = 13; next }
-  $0 == "    if [[ \"${stale_state}\" == \"1\" ]]; then" && state == 13 { state = 14; exit }
+  /^[[:space:]]*while true; do$/ && state == 0 { state = 1; next }
+  /^[[:space:]]*if ! acquired_state="\$\(go_hostutil helper acquire-profile-lock "\$\{lock_dir\}" "\$\$"\)"; then$/ && state == 1 { state = 2; next }
+  /^[[:space:]]*echo "Failed to create managed runtime lock for profile \$\{profile\}\." >&2$/ && state == 2 { state = 3; next }
+  /^[[:space:]]*return 1$/ && state == 3 { state = 4; next }
+  /^[[:space:]]*fi$/ && state == 4 { state = 5; next }
+  /^[[:space:]]*if \[\[ "\$\{acquired_state\}" == "1" \]\]; then$/ && state == 5 { state = 6; next }
+  /^[[:space:]]*PROFILE_LOCK_DIR="\$\{lock_dir\}"$/ && state == 6 { state = 7; next }
+  /^[[:space:]]*return 0$/ && state == 7 { state = 8; next }
+  /^[[:space:]]*fi$/ && state == 8 { state = 9; next }
+  /^[[:space:]]*if ! stale_state="\$\(profile_lock_is_stale "\$\{lock_dir\}"\)"; then$/ && state == 9 { state = 10; next }
+  /^[[:space:]]*echo "Failed to inspect managed runtime lock state for profile \$\{profile\}\." >&2$/ && state == 10 { state = 11; next }
+  /^[[:space:]]*return 1$/ && state == 11 { state = 12; next }
+  /^[[:space:]]*fi$/ && state == 12 { state = 13; next }
+  /^[[:space:]]*if \[\[ "\$\{stale_state\}" == "1" \]\]; then$/ && state == 13 { state = 14; exit }
   END { exit(state == 14 ? 0 : 1) }
 '; then
   echo "Expected workcell to acquire profile locks atomically and fail fast when lock state cannot be inspected" >&2
@@ -7911,6 +9008,10 @@ done
 
 if [[ ! -d "${ROOT_DIR}/docs/examples" ]]; then
   echo "docs/examples/ must exist" >&2
+  exit 1
+fi
+if rg -n '/Users/example/\.(codex|config/(gh|gcloud)|ssh)(/|")|/Users/example/Library/Keychains' "${ROOT_DIR}/docs/examples"; then
+  echo "docs/examples/ must use reviewed exported credential copies, not live host provider/auth state roots" >&2
   exit 1
 fi
 

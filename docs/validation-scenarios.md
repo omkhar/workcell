@@ -102,7 +102,7 @@ repo-required validation path because they depend on a live runtime boundary.
 
 - `./scripts/run-scenario-tests.sh --secretless-only --certification-only`
 
-Today that certification tier includes:
+Today that secretless certification tier includes:
 
 - `shared/agent-launch-smoke` for local macOS Colima prepare-only and
   provider-version smoke on the managed path
@@ -110,18 +110,31 @@ Today that certification tier includes:
   `local_compat/docker-desktop/compat` path on healthy macOS Docker Desktop
   hosts with Docker seccomp available; this is lower assurance than the strict
   Colima path and does not assert AppArmor/SELinux daemon parity
+
+Credentialed certification smoke is in the `provider-e2e` lane and requires
+`--all` plus the relevant live credentials:
+
+- `./scripts/run-scenario-tests.sh --all --certification-only`
+
+That credentialed tier includes:
+
 - `shared/aws-ec2-ssm-launch-smoke` for the credentialed
   `remote_vm/aws-ec2-ssm/compat` preview boundary against a reviewed
   SSM-managed EC2 target
 - `shared/gcp-vm-launch-smoke` for the credentialed
   `remote_vm/gcp-vm/compat` preview boundary against a reviewed
   IAP-reachable Compute Engine target without an external NAT IP
+- `shared/copilot-provider-e2e` for the credentialed Copilot CLI adapter path:
+  explicit `copilot_github_token` staging, managed development shell, and a
+  non-destructive authenticated `copilot -p` probe
 
-The planned Copilot and Antigravity CLI adapters must add live provider
-certification before they claim support. Certification should prove a
-non-destructive provider prompt run with staged credentials inside the managed
-runtime and must stay separate from repo-required validation unless it can run
-deterministically without live provider credentials.
+Copilot CLI has deterministic adapter, auth, bootstrap, policy, and smoke
+coverage in the repo-required lane. Live provider-authenticated certification
+of a non-destructive `copilot -p` launch with staged credentials remains a
+maintainer pre-signing gate for changes that promote or materially alter the
+Copilot support claim, and stays separate from repo-required validation because
+it needs live provider credentials. Antigravity remains planned/fail-closed and
+must add the same deterministic and live evidence before claiming support.
 
 Remote VM live smoke remains certification-only as well, but it is currently a
 provider-e2e preview gate documented in
@@ -152,12 +165,14 @@ when the repo does not add a dedicated new scenario for each page.
 | `docs/getting-started.md` | `scripts/verify-invariants.sh`, `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh` |
 | `docs/examples/quickstart-codex.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-codex-resolver-launcher.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
 | `docs/examples/quickstart-claude.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-claude-resolver-launcher.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
+| `docs/examples/quickstart-copilot.md` | `tests/scenarios/shared/test-agent-launch-smoke.sh`, `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `scripts/container-smoke.sh`; live `scripts/provider-e2e.sh --agent copilot` remains certification-only |
 | `docs/examples/quickstart-gemini.md` | `tests/scenarios/shared/test-auth-status.sh` for the staged `gemini_env` path and `tests/scenarios/shared/test-publish-pr-dry-run.sh` for the host-side publication steps; OAuth plus supplemental `gemini_projects` and `gcloud_adc` remain manual provider-e2e validation paths |
-| `docs/provider-bootstrap-matrix.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-codex-resolver-launcher.sh`, `tests/scenarios/shared/test-claude-resolver-launcher.sh` |
+| `docs/provider-bootstrap-matrix.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-codex-resolver-launcher.sh`, `tests/scenarios/shared/test-claude-resolver-launcher.sh`, `scripts/container-smoke.sh` |
+| `workcell session start --agent copilot` | `tests/scenarios/shared/test-copilot-session-dry-run.sh` for detached-session launch metadata, dry-run token redaction, and non-dry-run Copilot token handoff assembly/consumption cleanup; live provider-authenticated Copilot CLI certification remains covered by certification-only provider-e2e |
 | `docs/examples/enterprise-claude-setup.md` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `tests/scenarios/shared/test-publish-pr-dry-run.sh` |
 
-There is no Copilot or Antigravity quickstart row until the matching adapter,
-credential path, scenario evidence, and live certification land.
+There is no Antigravity quickstart row until the matching adapter, credential
+path, scenario evidence, and live certification land.
 
 ## Manual authenticated smoke
 
@@ -171,7 +186,7 @@ Use it when you need to verify:
 - provider-specific auth selection
 - injected MCP or project-registry behavior
 - provider UX that only shows up with a live account
-- future Copilot or Antigravity CLI behavior that depends on live staged
+- Copilot or future Antigravity CLI behavior that depends on live staged
   provider credentials
 
 ## GitHub CI vs local boundary proof

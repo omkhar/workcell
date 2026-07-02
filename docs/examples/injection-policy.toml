@@ -7,13 +7,14 @@ codex = "/Users/example/.config/workcell/codex-extra.md"
 claude = "/Users/example/.config/workcell/claude-extra.md"
 gemini = "/Users/example/.config/workcell/gemini-extra.md"
 
-# Copilot and Antigravity are intentionally omitted from every `providers` list
-# below until their adapter support lands.
+# Antigravity is intentionally omitted from every `providers` list below until
+# its adapter support lands.
 
 [credentials]
 codex_auth = "/Users/example/.config/workcell/codex-auth.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
 claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
+copilot_github_token = "/Users/example/.config/workcell/copilot-github-token.txt"
 gemini_env = "/Users/example/.config/workcell/gemini.env"
 gemini_projects = "/Users/example/.config/workcell/gemini-projects.json"
 gcloud_adc = "/Users/example/.config/workcell/gcloud-adc.json"
@@ -37,7 +38,7 @@ enabled = true
 config = "/Users/example/.config/workcell/ssh/config"
 known_hosts = "/Users/example/.config/workcell/ssh/known_hosts"
 identities = ["/Users/example/.config/workcell/ssh/id_workcell"]
-providers = ["codex", "claude", "gemini"]
+providers = ["codex", "claude", "copilot", "gemini"]
 modes = ["strict", "development", "build"]
 
 [[copies]]

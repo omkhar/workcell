@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/providerid"
 )
 
 func TestWalkFilesSkipsExcludedPaths(t *testing.T) {
@@ -204,6 +206,41 @@ func TestGenerateControlPlaneManifestIncludesDetachedStdinWrapper(t *testing.T) 
 		}
 	}
 	t.Fatal("control-plane manifest missing detached stdin wrapper attestation")
+}
+
+func TestGenerateControlPlaneManifestIncludesSupportedAdapterPrefixes(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	outputPath := filepath.Join(t.TempDir(), "control-plane-manifest.json")
+	if err := GenerateControlPlaneManifest(root, outputPath); err != nil {
+		t.Fatalf("GenerateControlPlaneManifest() error = %v", err)
+	}
+
+	var manifest struct {
+		RuntimeArtifacts []struct {
+			RuntimePath string `json:"runtime_path"`
+		} `json:"runtime_artifacts"`
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", outputPath, err)
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	for _, provider := range providerid.AllProviders {
+		prefix := "/opt/workcell/adapters/" + provider + "/"
+		found := false
+		for _, artifact := range manifest.RuntimeArtifacts {
+			if strings.HasPrefix(artifact.RuntimePath, prefix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("control-plane manifest missing adapter prefix %s", prefix)
+		}
+	}
 }
 
 func TestControlPlaneParityRowsIncludePrivilegedAndDetachedWrappers(t *testing.T) {

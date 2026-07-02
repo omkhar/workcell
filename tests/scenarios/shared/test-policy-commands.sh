@@ -10,13 +10,17 @@ cleanup() {
 trap cleanup EXIT
 
 AUTH_JSON="${TMP_DIR}/auth.json"
+COPILOT_TOKEN="${TMP_DIR}/copilot-github-token.txt"
 HOSTS_YML="${TMP_DIR}/hosts.yml"
 SHARED_POLICY="${TMP_DIR}/shared.toml"
 POLICY_PATH="${TMP_DIR}/policy.toml"
 OUT_OF_SCOPE_POLICY_PATH="${TMP_DIR}/out-of-scope-policy.toml"
+UNSUPPORTED_COPILOT_DOC_POLICY_PATH="${TMP_DIR}/unsupported-copilot-doc-policy.toml"
 
 printf '{"token":"super-secret"}\n' >"${AUTH_JSON}"
 chmod 0600 "${AUTH_JSON}"
+printf 'copilot-token\n' >"${COPILOT_TOKEN}"
+chmod 0600 "${COPILOT_TOKEN}"
 cat >"${HOSTS_YML}" <<'EOF'
 github.com:
   oauth_token: ghp-example
@@ -37,6 +41,10 @@ includes = ["${SHARED_POLICY}"]
 [credentials.codex_auth]
 source = "${AUTH_JSON}"
 modes = ["strict"]
+
+[credentials.copilot_github_token]
+source = "${COPILOT_TOKEN}"
+providers = ["copilot"]
 EOF
 chmod 0600 "${POLICY_PATH}"
 
@@ -47,6 +55,14 @@ version = 1
 source = "/no/such/file"
 EOF
 chmod 0600 "${OUT_OF_SCOPE_POLICY_PATH}"
+
+cat >"${UNSUPPORTED_COPILOT_DOC_POLICY_PATH}" <<'EOF'
+version = 1
+
+[documents]
+copilot = "copilot.md"
+EOF
+chmod 0600 "${UNSUPPORTED_COPILOT_DOC_POLICY_PATH}"
 
 show_output="$("${ROOT_DIR}/scripts/workcell" policy show --injection-policy "${POLICY_PATH}")"
 grep -q '^version = 1$' <<<"${show_output}"
@@ -89,6 +105,22 @@ grep -q '^credential_providers=codex$' <<<"${why_filtered}"
 grep -q '^selection_reason=agent does not match providers; modes not restricted$' <<<"${why_filtered}"
 grep -q '^bootstrap_path=direct-staged$' <<<"${why_filtered}"
 
+why_copilot="$("${ROOT_DIR}/scripts/workcell" why \
+  --credential copilot_github_token \
+  --agent copilot \
+  --mode strict \
+  --injection-policy "${POLICY_PATH}")"
+grep -q '^selected=1$' <<<"${why_copilot}"
+grep -q '^credential_readiness=ready$' <<<"${why_copilot}"
+grep -q '^credential_providers=copilot$' <<<"${why_copilot}"
+grep -q '^selection_reason=agent matches providers; modes not restricted$' <<<"${why_copilot}"
+grep -q '^bootstrap_path=direct-staged$' <<<"${why_copilot}"
+grep -q '^bootstrap_next_step=none$' <<<"${why_copilot}"
+if grep -q 'copilot-token' <<<"${why_copilot}"; then
+  echo "workcell why leaked Copilot credential material" >&2
+  exit 1
+fi
+
 why_out_of_scope="$("${ROOT_DIR}/scripts/workcell" why \
   --credential claude_api_key \
   --agent codex \
@@ -105,5 +137,12 @@ missing_rc=$?
 set -e
 test "${missing_rc}" -eq 1
 grep -Eq 'missing\.toml|no such file or directory|file does not exist' <<<"${missing_output}"
+
+set +e
+unsupported_doc_output="$("${ROOT_DIR}/scripts/workcell" policy validate --injection-policy "${UNSUPPORTED_COPILOT_DOC_POLICY_PATH}" 2>&1)"
+unsupported_doc_rc=$?
+set -e
+test "${unsupported_doc_rc}" -eq 1
+grep -q 'documents contains unsupported keys: copilot' <<<"${unsupported_doc_output}"
 
 echo "Policy command scenario passed"
