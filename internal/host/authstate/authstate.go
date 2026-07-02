@@ -30,6 +30,7 @@ var forbiddenCredentialSourceRoots = []string{
 	".kube",
 	".gnupg",
 	".git-credentials",
+	".mcp.json",
 	".netrc",
 	"Library/Keychains",
 }

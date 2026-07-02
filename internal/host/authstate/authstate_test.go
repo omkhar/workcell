@@ -46,6 +46,11 @@ func TestForbiddenCredentialSourceRootRejectsCaseVariedProviderState(t *testing.
 			want:   filepath.Join(home, ".config", "claude-code"),
 		},
 		{
+			name:   "top-level mcp registry",
+			source: filepath.Join(home, ".Mcp.Json"),
+			want:   filepath.Join(home, ".mcp.json"),
+		},
+		{
 			name:   "gcloud adc",
 			source: filepath.Join(home, ".Config", "gcloud", "application_default_credentials.json"),
 			want:   filepath.Join(home, ".config", "gcloud"),
