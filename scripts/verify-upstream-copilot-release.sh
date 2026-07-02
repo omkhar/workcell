@@ -41,11 +41,14 @@ COPILOT_DOCKER_HELP_PLATFORM=""
 COPILOT_DOCKER_HELP_BINARY=""
 COPILOT_DOCKER_HELP_LABEL=""
 COPILOT_DOCKER_CLIENT_READY=0
+COPILOT_DOCKER_CLIENT_OWNS_SANDBOX=0
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
   [[ -z "${workcell_copilot_release_token_file_created}" || "${workcell_copilot_release_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_copilot_release_token_file_created}"
-  cleanup_workcell_trusted_docker_client
+  if [[ "${COPILOT_DOCKER_CLIENT_OWNS_SANDBOX}" == "1" ]]; then
+    cleanup_workcell_trusted_docker_client
+  fi
 }
 
 trap cleanup EXIT
@@ -160,11 +163,16 @@ detect_docker_copilot_platform() {
 }
 
 ensure_copilot_docker_client() {
+  local previous_sandbox_root="${WORKCELL_DOCKER_SANDBOX_ROOT:-}"
+
   if [[ "${COPILOT_DOCKER_CLIENT_READY}" == "1" ]]; then
     return 0
   fi
   HOST_DOCKER_BIN="$(command -v docker 2>/dev/null)" || return 1
   setup_workcell_trusted_docker_client || return 1
+  if [[ -n "${WORKCELL_DOCKER_SANDBOX_ROOT:-}" && "${WORKCELL_DOCKER_SANDBOX_ROOT}" != "${previous_sandbox_root}" ]]; then
+    COPILOT_DOCKER_CLIENT_OWNS_SANDBOX=1
+  fi
   COPILOT_DOCKER_CLIENT_READY=1
 }
 
