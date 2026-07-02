@@ -215,6 +215,7 @@ ARG CODEX_VERSION=0.142.4
 # instead of host GitHub CLI state.
 ARG COPILOT_VERSION=1.0.65
 ARG CODEX_RELEASE_URL=
+ARG COPILOT_RELEASE_URL=
 ARG RUST_VERSION=1.96.0
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
@@ -381,12 +382,21 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
       exit 1; \
       ;; \
   esac \
-  && curl --ipv4 -fsSL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_VERSION}/copilot-${COPILOT_PLATFORM}.tar.gz" \
-    --retry 8 \
-    --retry-all-errors \
-    --retry-delay 5 \
-    --connect-timeout 30 \
-    -o /tmp/copilot.tar.gz \
+  && if [[ -n "${COPILOT_RELEASE_URL}" ]]; then \
+       curl --ipv4 -fsSL "${COPILOT_RELEASE_URL}" \
+         --retry 8 \
+         --retry-all-errors \
+         --retry-delay 5 \
+         --connect-timeout 30 \
+         -o /tmp/copilot.tar.gz; \
+     else \
+       curl --ipv4 -fsSL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_VERSION}/copilot-${COPILOT_PLATFORM}.tar.gz" \
+         --retry 8 \
+         --retry-all-errors \
+         --retry-delay 5 \
+         --connect-timeout 30 \
+         -o /tmp/copilot.tar.gz; \
+     fi \
   && echo "${COPILOT_SHA256}  /tmp/copilot.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/copilot.tar.gz -C /tmp copilot \
   && install -m 0644 /tmp/copilot /usr/local/libexec/workcell/real/copilot \

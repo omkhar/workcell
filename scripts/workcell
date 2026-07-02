@@ -6065,7 +6065,15 @@ colima_start_hit_recoverable_docker_boot_race() {
 }
 
 extract_codex_version_from_dockerfile() {
-  go_hostutil helper extract-codex-version "${ROOT_DIR}/runtime/container/Dockerfile"
+  extract_runtime_dockerfile_arg CODEX_VERSION
+}
+
+extract_copilot_version_from_dockerfile() {
+  extract_runtime_dockerfile_arg COPILOT_VERSION
+}
+
+extract_runtime_dockerfile_arg() {
+  go_hostutil helper extract-dockerfile-arg "${ROOT_DIR}/runtime/container/Dockerfile" "$1"
 }
 
 runtime_build_codex_arch() {
@@ -6082,6 +6090,27 @@ runtime_build_codex_arch() {
       ;;
     amd64 | x86_64)
       printf 'x86_64-unknown-linux-musl\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+runtime_build_copilot_platform() {
+  local server_arch=""
+
+  server_arch="$(
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" version --format '{{.Server.Arch}}' 2>/dev/null
+  )"
+  server_arch="${server_arch//$'\r'/}"
+  server_arch="${server_arch//$'\n'/}"
+  case "${server_arch}" in
+    arm64 | aarch64)
+      printf 'linux-arm64\n'
+      ;;
+    amd64 | x86_64)
+      printf 'linux-x64\n'
       ;;
     *)
       return 1
@@ -6118,12 +6147,42 @@ resolve_codex_release_url() {
   esac
 }
 
+resolve_copilot_release_url() {
+  local copilot_platform=""
+  local copilot_version=""
+  local release_url=""
+  local resolved_url=""
+
+  copilot_platform="$(runtime_build_copilot_platform)" || return 0
+  copilot_version="$(extract_copilot_version_from_dockerfile)" || return 0
+  release_url="https://github.com/github/copilot-cli/releases/download/v${copilot_version}/copilot-${copilot_platform}.tar.gz"
+  resolved_url="$(
+    run_clean_host_command curl -fsSLI \
+      --retry 5 \
+      --retry-all-errors \
+      --retry-delay 5 \
+      --connect-timeout 20 \
+      --max-time 20 \
+      -o /dev/null \
+      -w '%{url_effective}' \
+      "${release_url}" 2>/dev/null || true
+  )"
+  resolved_url="${resolved_url//$'\r'/}"
+  resolved_url="${resolved_url//$'\n'/}"
+  case "${resolved_url}" in
+    https://release-assets.githubusercontent.com/*)
+      printf '%s\n' "${resolved_url}"
+      ;;
+  esac
+}
+
 run_runtime_image_build_with_retries() {
   local build_source_date_epoch="$1"
   local build_status=0
   local attempt=1
   local max_attempts=5
   local codex_release_url=""
+  local copilot_release_url=""
   local safe_builder_context=""
   local -a build_cmd=()
 
@@ -6135,6 +6194,7 @@ run_runtime_image_build_with_retries() {
   while :; do
     build_status=0
     codex_release_url="$(resolve_codex_release_url || true)"
+    copilot_release_url="$(resolve_copilot_release_url || true)"
     if [[ "${attempt}" -gt 1 ]]; then
       echo "Retrying the runtime image build for profile ${COLIMA_PROFILE} (attempt ${attempt}/${max_attempts})." >&2
       case "${TARGET_BACKEND}" in
@@ -6184,6 +6244,9 @@ run_runtime_image_build_with_retries() {
     )
     if [[ -n "${codex_release_url}" ]]; then
       build_cmd+=(--build-arg "CODEX_RELEASE_URL=${codex_release_url}")
+    fi
+    if [[ -n "${copilot_release_url}" ]]; then
+      build_cmd+=(--build-arg "COPILOT_RELEASE_URL=${copilot_release_url}")
     fi
     SOURCE_DATE_EPOCH="${build_source_date_epoch}" run_command_with_debug_log runtime-build \
       "${build_cmd[@]}" || build_status=$?

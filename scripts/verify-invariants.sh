@@ -2892,6 +2892,19 @@ if ! rg -q 'production\.cloudfront\.docker\.com:443' "${ROOT_DIR}/scripts/workce
   exit 1
 fi
 
+if ! rg -q '^ARG COPILOT_RELEASE_URL=' "${ROOT_DIR}/runtime/container/Dockerfile"; then
+  echo "Expected runtime Dockerfile to accept a host-resolved Copilot release URL override" >&2
+  exit 1
+fi
+if ! rg -q 'resolve_copilot_release_url\(\)' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell to resolve Copilot release URLs on the host before runtime builds" >&2
+  exit 1
+fi
+if ! rg -q -- '--build-arg "COPILOT_RELEASE_URL=\$\{copilot_release_url\}"' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell runtime builds to pass host-resolved Copilot release URLs into Docker" >&2
+  exit 1
+fi
+
 if rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:80 egress" >&2
   exit 1
