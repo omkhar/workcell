@@ -14,6 +14,10 @@ import (
 )
 
 func renderPolicyTOML(policy map[string]any) (string, error) {
+	if err := validatePolicyCredentials(policy); err != nil {
+		return "", err
+	}
+
 	lines := []string{}
 
 	version := policy["version"]

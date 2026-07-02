@@ -49,6 +49,11 @@ func TestParseTOMLSubsetRejectsForbiddenConstructs(t *testing.T) {
 			content:   "[ssh]\nidentities = { primary = \"id_rsa\" }\n",
 			wantError: "inline tables are not supported",
 		},
+		{
+			name:      "unsupported_scalar_credential_key",
+			content:   "[credentials]\ncopilot_github_token = \"/tmp/copilot-token.txt\"\n",
+			wantError: "credentials contains unsupported keys: copilot_github_token",
+		},
 	}
 	for _, r := range rows {
 		r := r

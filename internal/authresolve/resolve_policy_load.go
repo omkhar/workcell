@@ -46,6 +46,9 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []
 	if err := validatePolicyDocuments(loaded); err != nil {
 		return nil, nil, err
 	}
+	if err := validatePolicyCredentials(loaded); err != nil {
+		return nil, nil, err
+	}
 
 	version := loaded["version"]
 	if version == nil {
@@ -88,6 +91,9 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []
 		currentPolicy = rebasePolicyFragment(currentPolicy, filepath.Dir(policyPath))
 	}
 	if err := mergePolicyFragment(merged, currentPolicy, policyPath); err != nil {
+		return nil, nil, err
+	}
+	if err := validatePolicyCredentials(merged); err != nil {
 		return nil, nil, err
 	}
 	sourceSHA, err := policySHA256(policyPath)
@@ -413,6 +419,9 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 	if err := validatePolicyDocuments(root); err != nil {
 		return nil, err
 	}
+	if err := validatePolicyCredentials(root); err != nil {
+		return nil, err
+	}
 	return root, nil
 }
 
@@ -440,6 +449,18 @@ func validatePolicyDocuments(policy map[string]any) error {
 		return errors.New("documents must be a TOML table")
 	}
 	return validateAllowedKeys(documents, documentKeys, "documents")
+}
+
+func validatePolicyCredentials(policy map[string]any) error {
+	raw, ok := policy["credentials"]
+	if !ok || raw == nil {
+		return nil
+	}
+	credentials, ok := raw.(map[string]any)
+	if !ok {
+		return errors.New("credentials must be a TOML table")
+	}
+	return validateAllowedKeys(credentials, allCredentialKeys, "credentials")
 }
 
 func selectedFor(values any, current, label string, allowed map[string]struct{}) (bool, error) {

@@ -180,6 +180,18 @@ func validatePolicyDocuments(policy map[string]any) error {
 	return validateAllowedKeys(documents, DocumentKeySet, "documents")
 }
 
+func validatePolicyCredentials(policy map[string]any) error {
+	raw, ok := policy["credentials"]
+	if !ok || raw == nil {
+		return nil
+	}
+	credentials, ok := raw.(map[string]any)
+	if !ok {
+		return die("credentials must be a TOML table")
+	}
+	return validateAllowedKeys(credentials, CredentialKeys, "credentials")
+}
+
 func selectedFor(values any, current string, label string, allowedValues map[string]struct{}) (bool, error) {
 	rawValues, err := selectorStrings(values, label, allowedValues)
 	if err != nil {
@@ -344,6 +356,9 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 		}
 	}
 	if err := validatePolicyDocuments(root); err != nil {
+		return nil, err
+	}
+	if err := validatePolicyCredentials(root); err != nil {
 		return nil, err
 	}
 	return root, nil
@@ -629,6 +644,9 @@ func loadPolicyBundleWithState(policyPath string, entrypointRoot string, activeS
 	if err := mergePolicyFragment(merged, currentPolicy, resolvedPolicyPath); err != nil {
 		return nil, nil, err
 	}
+	if err := validatePolicyCredentials(merged); err != nil {
+		return nil, nil, err
+	}
 	sourceSHA, err := policySHA256(resolvedPolicyPath)
 	if err != nil {
 		return nil, nil, err
@@ -657,6 +675,9 @@ func loadRawPolicy(policyPath string) (map[string]any, error) {
 		return nil, err
 	}
 	if err := validateAllowedKeys(loaded, AllowedRootPolicyKeys, "root policy"); err != nil {
+		return nil, err
+	}
+	if err := validatePolicyCredentials(loaded); err != nil {
 		return nil, err
 	}
 	version := 1
@@ -742,6 +763,9 @@ func jsonQuote(value string) string {
 
 func renderPolicyTOML(policy map[string]any) (string, error) {
 	if err := validatePolicyDocuments(policy); err != nil {
+		return "", err
+	}
+	if err := validatePolicyCredentials(policy); err != nil {
 		return "", err
 	}
 
