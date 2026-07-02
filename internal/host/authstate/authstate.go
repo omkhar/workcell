@@ -42,12 +42,27 @@ func RejectCredentialSource(source string, label string) error {
 	return nil
 }
 
+func RejectCredentialDirectorySource(source string, label string) error {
+	if root, ok := ForbiddenCredentialDirectorySourceRoot(source); ok {
+		return fmt.Errorf("%s must not include host provider/auth state: %s", label, root)
+	}
+	return nil
+}
+
 func ForbiddenCredentialSourceRoot(source string) (string, bool) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return "", false
 	}
 	return forbiddenCredentialSourceRoot(source, home, hostPathComparisonCaseInsensitive())
+}
+
+func ForbiddenCredentialDirectorySourceRoot(source string) (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", false
+	}
+	return forbiddenCredentialDirectorySourceRoot(source, home, hostPathComparisonCaseInsensitive())
 }
 
 func forbiddenCredentialSourceRoot(source, home string, caseInsensitive bool) (string, bool) {
@@ -66,6 +81,28 @@ func forbiddenCredentialSourceRoot(source, home string, caseInsensitive bool) (s
 	for _, rel := range forbiddenCredentialSourceRoots {
 		root := filepath.Clean(filepath.Join(home, filepath.FromSlash(rel)))
 		if pathWithinRoot(root, source, caseInsensitive) {
+			return root, true
+		}
+	}
+	return "", false
+}
+
+func forbiddenCredentialDirectorySourceRoot(source, home string, caseInsensitive bool) (string, bool) {
+	var err error
+
+	home, err = filepath.Abs(home)
+	if err != nil {
+		return "", false
+	}
+	source, err = filepath.Abs(source)
+	if err != nil {
+		return "", false
+	}
+	source = filepath.Clean(source)
+
+	for _, rel := range forbiddenCredentialSourceRoots {
+		root := filepath.Clean(filepath.Join(home, filepath.FromSlash(rel)))
+		if pathWithinRoot(source, root, caseInsensitive) {
 			return root, true
 		}
 	}

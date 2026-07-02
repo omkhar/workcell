@@ -111,3 +111,52 @@ func TestForbiddenCredentialSourceRootAllowsSiblingAndManagedState(t *testing.T)
 		}
 	}
 }
+
+func TestForbiddenCredentialDirectorySourceRootRejectsAncestorProviderState(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "Home")
+
+	for _, tc := range []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "xdg config ancestor",
+			source: filepath.Join(home, ".config"),
+			want:   filepath.Join(home, ".config", "claude-code"),
+		},
+		{
+			name:   "case varied xdg config ancestor",
+			source: filepath.Join(home, ".Config"),
+			want:   filepath.Join(home, ".config", "claude-code"),
+		},
+		{
+			name:   "home ancestor",
+			source: home,
+			want:   filepath.Join(home, ".codex"),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, ok := forbiddenCredentialDirectorySourceRoot(tc.source, home, true)
+			if !ok {
+				t.Fatalf("forbiddenCredentialDirectorySourceRoot(%q) did not reject directory containing provider state", tc.source)
+			}
+			if root != tc.want {
+				t.Fatalf("root = %q, want %q", root, tc.want)
+			}
+		})
+	}
+}
+
+func TestForbiddenCredentialDirectorySourceRootAllowsSibling(t *testing.T) {
+	home := t.TempDir()
+
+	for _, source := range []string{
+		filepath.Join(home, ".config", "github-copilot-export"),
+		filepath.Join(home, ".local", "state", "workcell"),
+	} {
+		if root, ok := forbiddenCredentialDirectorySourceRoot(source, home, true); ok {
+			t.Fatalf("forbiddenCredentialDirectorySourceRoot(%q) rejected allowed directory under %q", source, root)
+		}
+	}
+}

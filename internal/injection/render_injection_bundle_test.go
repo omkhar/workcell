@@ -460,6 +460,36 @@ func TestRenderSourcesRejectHostProviderState(t *testing.T) {
 			},
 		},
 		{
+			name: "copies public directory containing provider state",
+			run: func() error {
+				_, err := renderCopies(map[string]any{
+					"copies": []any{
+						map[string]any{
+							"source":         filepath.Join(root, ".config"),
+							"target":         "/state/injected/config",
+							"classification": "public",
+						},
+					},
+				}, Path(output), Path(root), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "copies secret directory containing provider state",
+			run: func() error {
+				_, err := renderCopies(map[string]any{
+					"copies": []any{
+						map[string]any{
+							"source":         filepath.Join(root, ".config"),
+							"target":         "~/.config/workcell/config",
+							"classification": "secret",
+						},
+					},
+				}, Path(output), Path(root), "codex", "strict")
+				return err
+			},
+		},
+		{
 			name: "credentials",
 			run: func() error {
 				_, err := renderCredentials(map[string]any{
