@@ -47,6 +47,25 @@ func TestAgentScopedCredentialKeysForProvidersFiltersPlannedProviders(t *testing
 	}
 }
 
+func TestCredentialContainerPathsForProvidersFiltersPlannedProviders(t *testing.T) {
+	got := CredentialContainerPathsForProviders(providerid.AllProviders)
+	if _, ok := got["copilot_github_token"]; ok {
+		t.Fatal("planned Copilot credential path must not appear in supported-provider injection path set")
+	}
+	for provider, keys := range AgentScopedCredentialKeysForProviders(providerid.AllProviders) {
+		for key := range keys {
+			if _, ok := got[key]; !ok {
+				t.Errorf("supported provider %q credential key %q missing from filtered path set", provider, key)
+			}
+		}
+	}
+	for key := range SharedCredentialKeys() {
+		if _, ok := got[key]; !ok {
+			t.Errorf("shared credential key %q missing from filtered path set", key)
+		}
+	}
+}
+
 func TestScopedCredentialKeysHaveContainerPaths(t *testing.T) {
 	paths := CredentialContainerPaths()
 	for provider, keys := range AgentScopedCredentialKeys() {

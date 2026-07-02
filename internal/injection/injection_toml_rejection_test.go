@@ -140,6 +140,17 @@ func TestParseTOMLSubsetUnsupportedCredentialsScopedTable(t *testing.T) {
 	}
 }
 
+func TestParseTOMLSubsetRejectsPlannedCopilotCredentialTable(t *testing.T) {
+	t.Parallel()
+	_, err := parseTOMLSubset("[credentials.copilot_github_token]\nsource = \"/tmp/copilot-token.txt\"\n", Path("test.toml"))
+	if err == nil {
+		t.Fatal("expected planned Copilot credential table to be rejected")
+	}
+	if !strings.Contains(err.Error(), "unsupported credentials table [credentials.copilot_github_token]") {
+		t.Fatalf("error %q does not reject planned Copilot credential table", err.Error())
+	}
+}
+
 // TestParseTOMLSubsetShippedPolicyFiles walks every real-world TOML in
 // policy/ and adapters/*/requirements.toml and confirms the migrated
 // injection parser rejects each one.  None of these files conform to
