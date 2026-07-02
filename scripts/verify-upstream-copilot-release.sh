@@ -28,6 +28,8 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/trusted-docker-client.sh
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-copilot-release.XXXXXX")"
 BUILD_INPUT_MANIFEST_PATH="${TMP_ROOT}/build-input.json"
 RELEASE_METADATA_PATH="${TMP_ROOT}/release.json"
@@ -38,10 +40,12 @@ COPILOT_NATIVE_HELP_PLATFORM=""
 COPILOT_DOCKER_HELP_PLATFORM=""
 COPILOT_DOCKER_HELP_BINARY=""
 COPILOT_DOCKER_HELP_LABEL=""
+COPILOT_DOCKER_CLIENT_READY=0
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
   [[ -z "${workcell_copilot_release_token_file_created}" || "${workcell_copilot_release_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_copilot_release_token_file_created}"
+  cleanup_workcell_trusted_docker_client
 }
 
 trap cleanup EXIT
@@ -69,6 +73,7 @@ github_asset_get() {
   local output="$2"
 
   curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+    --speed-limit 1024 --speed-time 60 \
     -H "Accept: application/octet-stream" \
     "${url}" \
     -o "${output}"
@@ -146,12 +151,30 @@ detect_docker_copilot_platform() {
   local os_type=""
   local arch=""
 
-  command -v docker >/dev/null 2>&1 || return 1
-  docker_info="$(docker info --format '{{.OSType}} {{.Architecture}}' 2>/dev/null)" || return 1
+  ensure_copilot_docker_client >/dev/null 2>&1 || return 1
+  docker_info="$(copilot_docker_cmd info --format '{{.OSType}} {{.Architecture}}' 2>/dev/null)" || return 1
   os_type="${docker_info%% *}"
   arch="${docker_info#* }"
   [[ "${os_type}" == "linux" ]] || return 1
   copilot_platform_for_linux_arch "${arch}"
+}
+
+ensure_copilot_docker_client() {
+  if [[ "${COPILOT_DOCKER_CLIENT_READY}" == "1" ]]; then
+    return 0
+  fi
+  HOST_DOCKER_BIN="$(command -v docker 2>/dev/null)" || return 1
+  setup_workcell_trusted_docker_client || return 1
+  COPILOT_DOCKER_CLIENT_READY=1
+}
+
+copilot_docker_cmd() {
+  ensure_copilot_docker_client || return 1
+  if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
+    run_workcell_docker_client_command env DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}" "${HOST_DOCKER_BIN}" "$@"
+    return
+  fi
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" "$@"
 }
 
 verify_copilot_help_flags_file() {
@@ -199,11 +222,10 @@ run_docker_copilot_help_probe() {
   local help_path="${TMP_ROOT}/copilot-help-docker.txt"
 
   [[ -n "${COPILOT_DOCKER_HELP_BINARY}" ]] || return 1
-  command -v docker >/dev/null 2>&1 || return 1
-  docker image inspect "${image}" >/dev/null 2>&1 || return 1
+  copilot_docker_cmd image inspect "${image}" >/dev/null 2>&1 || return 1
 
   binary_dir="$(dirname "${COPILOT_DOCKER_HELP_BINARY}")"
-  if ! docker run --rm \
+  if ! copilot_docker_cmd run --rm \
     -v "${binary_dir}:/work:ro" \
     --entrypoint /work/copilot \
     "${image}" --help >"${help_path}" 2>&1; then
@@ -266,8 +288,16 @@ case "${COPILOT_HELP_MODE}" in
     ;;
 esac
 
-COPILOT_NATIVE_HELP_PLATFORM="$(detect_native_copilot_platform || true)"
-COPILOT_DOCKER_HELP_PLATFORM="$(detect_docker_copilot_platform || true)"
+case "${COPILOT_HELP_MODE}" in
+  auto | native)
+    COPILOT_NATIVE_HELP_PLATFORM="$(detect_native_copilot_platform || true)"
+    ;;
+esac
+case "${COPILOT_HELP_MODE}" in
+  auto | docker)
+    COPILOT_DOCKER_HELP_PLATFORM="$(detect_docker_copilot_platform || true)"
+    ;;
+esac
 
 "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "${BUILD_INPUT_MANIFEST_PATH}"
 COPILOT_VERSION="$(jq -r '.runtime.copilot.version // empty' "${BUILD_INPUT_MANIFEST_PATH}")"
