@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/omkhar/workcell/internal/adapters"
+	"github.com/omkhar/workcell/internal/providerid"
 )
 
 func TestCredentialRegistryMatchesAdapters(t *testing.T) {
-	wantScoped := adapters.AgentScopedCredentialKeys()
+	wantScoped := adapters.AgentScopedCredentialKeysForProviders(providerid.AllProviders)
 	if !reflect.DeepEqual(agentScopedCredentialKeys, wantScoped) {
-		t.Fatalf("agentScopedCredentialKeys = %#v, want adapter registry %#v", agentScopedCredentialKeys, wantScoped)
+		t.Fatalf("agentScopedCredentialKeys = %#v, want supported adapter registry %#v", agentScopedCredentialKeys, wantScoped)
 	}
 	wantShared := adapters.SharedCredentialKeys()
 	if !reflect.DeepEqual(sharedCredentialKeys, wantShared) {
@@ -29,6 +30,9 @@ func TestCredentialRegistryMatchesAdapters(t *testing.T) {
 		}
 	}
 	if !reflect.DeepEqual(allCredentialKeys, wantAll) {
-		t.Fatalf("allCredentialKeys = %#v, want adapter registry union %#v", allCredentialKeys, wantAll)
+		t.Fatalf("allCredentialKeys = %#v, want supported adapter registry union %#v", allCredentialKeys, wantAll)
+	}
+	if _, ok := allCredentialKeys["copilot_github_token"]; ok {
+		t.Fatal("planned Copilot token must stay out of accepted authresolve credential keys until launch support lands")
 	}
 }

@@ -42,7 +42,7 @@ var (
 		},
 	}
 	sharedCredentialKeys      = adapters.SharedCredentialKeys()
-	agentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
+	agentScopedCredentialKeys = adapters.AgentScopedCredentialKeysForProviders(providerid.AllProviders)
 	allCredentialKeys         = credentialKeyUnion(agentScopedCredentialKeys, sharedCredentialKeys)
 	rootPolicyKeys            = map[string]struct{}{
 		"version":     {},

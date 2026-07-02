@@ -803,6 +803,18 @@ func TestRunRejectsInvalidConfigurations(t *testing.T) {
 			wantContains: "credentials.codex_auth.providers contains unsupported value: copilot",
 		},
 		{
+			name: "planned-copilot-credential-key",
+			policy: strings.Join([]string{
+				"version = 1",
+				"[credentials.copilot_github_token]",
+				`source = "/tmp/copilot-token.txt"`,
+			}, "\n") + "\n",
+			command:      "status",
+			agent:        "codex",
+			needsInit:    false,
+			wantContains: "unsupported credentials table [credentials.copilot_github_token]",
+		},
+		{
 			name: "shared-github-without-providers",
 			policy: strings.Join([]string{
 				"version = 1",

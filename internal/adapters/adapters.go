@@ -16,6 +16,19 @@ func AgentScopedCredentialKeys() map[string]map[string]struct{} {
 	return out
 }
 
+// AgentScopedCredentialKeysForProviders returns adapter-scoped credential
+// keys only for the requested provider ids.
+func AgentScopedCredentialKeysForProviders(providerIDs []string) map[string]map[string]struct{} {
+	wanted := setOf(providerIDs)
+	out := make(map[string]map[string]struct{}, len(wanted))
+	for _, p := range providers {
+		if _, ok := wanted[p.id]; ok {
+			out[p.id] = setOf(p.tables.credentialKeys)
+		}
+	}
+	return out
+}
+
 // SharedCredentialKeys returns the set of credential keys available to
 // adapters that explicitly opt into shared credentials.
 func SharedCredentialKeys() map[string]struct{} {

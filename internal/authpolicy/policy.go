@@ -33,11 +33,11 @@ var (
 		"breakglass":  {},
 	}
 	CredentialKeys = credentialKeyUnion(
-		adapters.AgentScopedCredentialKeys(),
+		adapters.AgentScopedCredentialKeysForProviders(providerid.AllProviders),
 		adapters.SharedCredentialKeys(),
 	)
 	DocumentKeySet            = providerid.DocumentKeySet()
-	AgentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
+	AgentScopedCredentialKeys = adapters.AgentScopedCredentialKeysForProviders(providerid.AllProviders)
 	SharedCredentialKeys      = adapters.SharedCredentialKeys()
 	AllowedRootPolicyKeys     = map[string]struct{}{
 		"version":     {},

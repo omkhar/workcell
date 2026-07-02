@@ -35,6 +35,18 @@ func TestAgentScopedCredentialKeysCoversCredentialMetadataProviders(t *testing.T
 	}
 }
 
+func TestAgentScopedCredentialKeysForProvidersFiltersPlannedProviders(t *testing.T) {
+	got := AgentScopedCredentialKeysForProviders(providerid.AllProviders)
+	if _, ok := got[providerid.Copilot]; ok {
+		t.Fatal("planned Copilot credentials must not appear in supported-provider credential set")
+	}
+	for _, want := range providerid.AllProviders {
+		if _, ok := got[want]; !ok {
+			t.Errorf("supported provider %q missing from filtered credential set", want)
+		}
+	}
+}
+
 func TestScopedCredentialKeysHaveContainerPaths(t *testing.T) {
 	paths := CredentialContainerPaths()
 	for provider, keys := range AgentScopedCredentialKeys() {
