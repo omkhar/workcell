@@ -71,9 +71,77 @@ github_api_get() {
   github_get "${url}" "${output}" "application/vnd.github+json"
 }
 
+github_token() {
+  local token="${WORKCELL_GITHUB_API_TOKEN:-}"
+
+  if [[ -z "${token}" && -n "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
+    if [[ ! -r "${WORKCELL_GITHUB_API_TOKEN_FILE}" ]]; then
+      echo "GitHub API token file is not readable: ${WORKCELL_GITHUB_API_TOKEN_FILE}" >&2
+      return 1
+    fi
+    token="$(<"${WORKCELL_GITHUB_API_TOKEN_FILE}")"
+  fi
+  if [[ -z "${token}" ]]; then
+    token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+  fi
+
+  if [[ -n "${token}" ]]; then
+    if [[ "${token}" == *$'\n'* || "${token}" == *$'\r'* ]]; then
+      echo "GitHub API token must be a single line" >&2
+      return 1
+    fi
+    printf '%s' "${token}"
+  fi
+}
+
 github_asset_get() {
   local url="$1"
   local output="$2"
+  local token=""
+  local headers_file=""
+  local body_file=""
+  local location=""
+  local status=""
+
+  token="$(github_token)" || exit 1
+  if [[ -n "${token}" ]]; then
+    headers_file="$(mktemp "${TMP_ROOT}/github-asset-headers.XXXXXX")"
+    body_file="$(mktemp "${TMP_ROOT}/github-asset-body.XXXXXX")"
+    status="$(
+      curl -fsS --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+        --speed-limit 1024 --speed-time 60 \
+        -D "${headers_file}" \
+        -o "${body_file}" \
+        -w '%{http_code}' \
+        -H "Accept: application/octet-stream" \
+        --config - \
+        "${url}" <<EOF
+header = "Authorization: Bearer ${token}"
+EOF
+    )"
+    case "${status}" in
+      200)
+        mv "${body_file}" "${output}"
+        ;;
+      3??)
+        location="$(sed -n 's/^[Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]:[[:space:]]*//p' "${headers_file}" | tail -n 1 | tr -d '\r')"
+        if [[ -z "${location}" ]]; then
+          echo "GitHub release asset redirect did not include a Location header: ${url}" >&2
+          exit 1
+        fi
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+          --speed-limit 1024 --speed-time 60 \
+          "${location}" \
+          -o "${output}"
+        ;;
+      *)
+        echo "Unexpected GitHub release asset response ${status}: ${url}" >&2
+        exit 1
+        ;;
+    esac
+    rm -f "${headers_file}" "${body_file}"
+    return
+  fi
 
   curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
     --speed-limit 1024 --speed-time 60 \
@@ -86,24 +154,10 @@ github_get() {
   local url="$1"
   local output="$2"
   local accept="$3"
-  local token="${WORKCELL_GITHUB_API_TOKEN:-}"
+  local token=""
 
-  if [[ -z "${token}" && -n "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
-    if [[ ! -r "${WORKCELL_GITHUB_API_TOKEN_FILE}" ]]; then
-      echo "GitHub API token file is not readable: ${WORKCELL_GITHUB_API_TOKEN_FILE}" >&2
-      exit 1
-    fi
-    token="$(<"${WORKCELL_GITHUB_API_TOKEN_FILE}")"
-  fi
-  if [[ -z "${token}" ]]; then
-    token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
-  fi
-
+  token="$(github_token)" || exit 1
   if [[ -n "${token}" ]]; then
-    if [[ "${token}" == *$'\n'* || "${token}" == *$'\r'* ]]; then
-      echo "GitHub API token must be a single line" >&2
-      exit 1
-    fi
     curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --config - \
       "${url}" \
       -o "${output}" <<EOF
