@@ -302,7 +302,12 @@ execute_plan() {
         ;;
       scripts/ci/job-pr-shape.sh)
         echo "[pre-merge] pull request shape"
-        WORKCELL_PR_BASE_REF="${BASE_BRANCH}" "${ROOT_DIR}/${script}" --base "${BASE_BRANCH}"
+        local -a shape_args=(--base "${BASE_BRANCH}")
+        local shape_label=""
+        for shape_label in "${LABELS[@]}"; do
+          shape_args+=(--label "${shape_label}")
+        done
+        WORKCELL_PR_BASE_REF="${BASE_BRANCH}" "${ROOT_DIR}/${script}" "${shape_args[@]}"
         ;;
       scripts/ci/job-validate.sh)
         echo "[pre-merge] shared validate job (${PROFILE})"

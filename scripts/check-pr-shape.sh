@@ -9,10 +9,15 @@ readonly DEFAULT_MAX_FILES=25
 readonly DEFAULT_MAX_LINES=1200
 readonly DEFAULT_MAX_AREAS=8
 readonly DEFAULT_MAX_BINARY_FILES=0
+readonly CERTIFIED_ADAPTER_MAX_FILES=125
+readonly CERTIFIED_ADAPTER_MAX_LINES=10000
+readonly CERTIFIED_ADAPTER_MAX_AREAS=12
+readonly CERTIFIED_ADAPTER_MAX_BINARY_FILES=0
 MAX_FILES="${DEFAULT_MAX_FILES}"
 MAX_LINES="${DEFAULT_MAX_LINES}"
 MAX_AREAS="${DEFAULT_MAX_AREAS}"
 MAX_BINARY_FILES="${DEFAULT_MAX_BINARY_FILES}"
+ALLOW_CERTIFIED_ADAPTER_SHAPE=0
 TRUSTED_HOST_PATH=""
 HOST_GIT_BIN=""
 REAL_HOME=""
@@ -158,6 +163,9 @@ Options:
   --max-lines N      Maximum added+deleted lines allowed (default: 1200)
   --max-areas N      Maximum top-level areas allowed (default: 8)
   --max-binaries N   Maximum binary files allowed (default: 0)
+  --allow-certified-adapter-shape
+                     Allow a reviewed certified-adapter PR shape up to
+                     125 files, 10000 lines, 12 areas, and 0 binaries
   -h, --help         Show this help text
 EOF
 }
@@ -242,6 +250,10 @@ while [[ $# -gt 0 ]]; do
       MAX_BINARY_FILES="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
+    --allow-certified-adapter-shape)
+      ALLOW_CERTIFIED_ADAPTER_SHAPE=1
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -309,12 +321,23 @@ done < <(run_workspace_safe_git_command_in_dir "${REPO_ROOT}" diff --name-status
 
 changed_area_count="$(printf '%s' "${changed_areas_text}" | grep -c . || true)"
 
-if ((changed_files == 0)); then
-  printf 'PR shape check passed: no committed diff between %s and %s.\n' "${BASE_REF}" "${HEAD_REF}"
-  exit 0
+normal_shape_ok=0
+if ((changed_files <= MAX_FILES)) &&
+  ((changed_lines <= MAX_LINES)) &&
+  ((changed_area_count <= MAX_AREAS)) &&
+  ((binary_files <= MAX_BINARY_FILES)); then
+  normal_shape_ok=1
 fi
 
-if ((changed_files > MAX_FILES || changed_lines > MAX_LINES || changed_area_count > MAX_AREAS || binary_files > MAX_BINARY_FILES)); then
+certified_adapter_shape_ok=0
+if ((changed_files <= CERTIFIED_ADAPTER_MAX_FILES)) &&
+  ((changed_lines <= CERTIFIED_ADAPTER_MAX_LINES)) &&
+  ((changed_area_count <= CERTIFIED_ADAPTER_MAX_AREAS)) &&
+  ((binary_files <= CERTIFIED_ADAPTER_MAX_BINARY_FILES)); then
+  certified_adapter_shape_ok=1
+fi
+
+fail_pr_shape() {
   echo "PR shape check failed: the diff is too broad for a single reviewable PR." >&2
   printf '  base_ref=%s\n' "${BASE_REF}" >&2
   printf '  head_ref=%s\n' "${HEAD_REF}" >&2
@@ -322,9 +345,48 @@ if ((changed_files > MAX_FILES || changed_lines > MAX_LINES || changed_area_coun
   printf '  changed_lines=%d (limit=%d)\n' "${changed_lines}" "${MAX_LINES}" >&2
   printf '  changed_areas=%d (limit=%d)\n' "${changed_area_count}" "${MAX_AREAS}" >&2
   printf '  binary_files=%d (limit=%d)\n' "${binary_files}" "${MAX_BINARY_FILES}" >&2
+  if ((ALLOW_CERTIFIED_ADAPTER_SHAPE == 1)); then
+    printf '  certified_adapter_changed_files=%d (limit=%d)\n' \
+      "${changed_files}" \
+      "${CERTIFIED_ADAPTER_MAX_FILES}" >&2
+    printf '  certified_adapter_changed_lines=%d (limit=%d)\n' \
+      "${changed_lines}" \
+      "${CERTIFIED_ADAPTER_MAX_LINES}" >&2
+    printf '  certified_adapter_changed_areas=%d (limit=%d)\n' \
+      "${changed_area_count}" \
+      "${CERTIFIED_ADAPTER_MAX_AREAS}" >&2
+    printf '  certified_adapter_binary_files=%d (limit=%d)\n' \
+      "${binary_files}" \
+      "${CERTIFIED_ADAPTER_MAX_BINARY_FILES}" >&2
+  fi
   printf '  areas=%s\n' "$(printf '%s' "${changed_areas_text}" | sort | paste -sd, -)" >&2
   echo "Split unrelated fixes, opportunistic cleanup, or separate reviewer-sized concerns before publishing." >&2
   exit 2
+}
+
+if ((changed_files == 0)); then
+  printf 'PR shape check passed: no committed diff between %s and %s.\n' "${BASE_REF}" "${HEAD_REF}"
+  exit 0
+fi
+
+if ((ALLOW_CERTIFIED_ADAPTER_SHAPE == 1 && certified_adapter_shape_ok == 0)); then
+  fail_pr_shape
+fi
+
+if ((normal_shape_ok == 0)); then
+  if ((ALLOW_CERTIFIED_ADAPTER_SHAPE == 1 && certified_adapter_shape_ok == 1)); then
+    printf 'PR shape check passed with approved certified-adapter override: files=%d/%d lines=%d/%d areas=%d/%d binary_files=%d/%d\n' \
+      "${changed_files}" \
+      "${CERTIFIED_ADAPTER_MAX_FILES}" \
+      "${changed_lines}" \
+      "${CERTIFIED_ADAPTER_MAX_LINES}" \
+      "${changed_area_count}" \
+      "${CERTIFIED_ADAPTER_MAX_AREAS}" \
+      "${binary_files}" \
+      "${CERTIFIED_ADAPTER_MAX_BINARY_FILES}"
+    exit 0
+  fi
+  fail_pr_shape
 fi
 
 printf 'PR shape check passed: files=%d lines=%d areas=%d binary_files=%d\n' \

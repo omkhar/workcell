@@ -24,9 +24,9 @@ func TestParseArgsAppliesDefaults(t *testing.T) {
 	if opts.Snapshot != "worktree" {
 		t.Errorf("Snapshot = %q, want worktree", opts.Snapshot)
 	}
-	if opts.Ready || opts.DryRun || opts.AllowNonMainBase || opts.HelpRequested {
-		t.Errorf("Ready/DryRun/AllowNonMainBase/HelpRequested = %v/%v/%v/%v, want all false",
-			opts.Ready, opts.DryRun, opts.AllowNonMainBase, opts.HelpRequested)
+	if opts.Ready || opts.DryRun || opts.AllowNonMainBase || opts.ApprovedLargeCertifiedAdapter || opts.HelpRequested {
+		t.Errorf("Ready/DryRun/AllowNonMainBase/ApprovedLargeCertifiedAdapter/HelpRequested = %v/%v/%v/%v/%v, want all false",
+			opts.Ready, opts.DryRun, opts.AllowNonMainBase, opts.ApprovedLargeCertifiedAdapter, opts.HelpRequested)
 	}
 }
 
@@ -46,6 +46,7 @@ func TestParseArgsAcceptsAllSupportedFlags(t *testing.T) {
 		"--commit-message", "C",
 		"--commit-message-file", "/tmp/commit.txt",
 		"--ready",
+		"--approved-large-certified-adapter",
 		"--dry-run",
 	}
 	opts, err := ParseArgs(args)
@@ -53,20 +54,21 @@ func TestParseArgsAcceptsAllSupportedFlags(t *testing.T) {
 		t.Fatalf("ParseArgs() returned err = %v", err)
 	}
 	want := Options{
-		Workspace:         "/work",
-		Branch:            "feature/x",
-		Base:              "feature/review-stack",
-		AllowNonMainBase:  true,
-		GhBin:             "/opt/homebrew/bin/gh",
-		Snapshot:          "index",
-		Title:             "T",
-		TitleFile:         "/tmp/title.txt",
-		Body:              "B",
-		BodyFile:          "/tmp/body.txt",
-		CommitMessage:     "C",
-		CommitMessageFile: "/tmp/commit.txt",
-		Ready:             true,
-		DryRun:            true,
+		Workspace:                     "/work",
+		Branch:                        "feature/x",
+		Base:                          "feature/review-stack",
+		AllowNonMainBase:              true,
+		GhBin:                         "/opt/homebrew/bin/gh",
+		Snapshot:                      "index",
+		Title:                         "T",
+		TitleFile:                     "/tmp/title.txt",
+		Body:                          "B",
+		BodyFile:                      "/tmp/body.txt",
+		CommitMessage:                 "C",
+		CommitMessageFile:             "/tmp/commit.txt",
+		Ready:                         true,
+		ApprovedLargeCertifiedAdapter: true,
+		DryRun:                        true,
 	}
 	got := *opts
 	if got != want {

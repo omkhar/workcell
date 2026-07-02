@@ -414,6 +414,13 @@ The supported base branch is
 non-main bases remain an explicit lower-assurance draft-only escape hatch
 selected via
 .BR --allow-non-main-base .
+Reviewed, live-certified adapter support pull requests that cannot be split
+without invalidating certification evidence may use the bounded
+.B approved-large-certified-adapter
+label together with
+.BR --approved-large-certified-adapter ;
+binary changes and changes beyond the certified-adapter size budget still
+fail closed.
 Dry-run output reports whether repo-owned PR checks are expected for the chosen
 base.
 Use
@@ -694,6 +701,14 @@ Publishing a prepared workspace snapshot from the host side:
 .IP
 .EX
 workcell publish-pr --workspace /path/to/repo --branch feature/name \\
+  --title-file /tmp/pr-title.txt --body-file /tmp/pr-body.md \\
+  --commit-message-file /tmp/commit-message.txt
+.EE
+.IP
+.EX
+# Reviewed exception: live-certified adapter PRs that cannot be split.
+workcell publish-pr --workspace /path/to/repo --branch feature/name \\
+  --approved-large-certified-adapter \\
   --title-file /tmp/pr-title.txt --body-file /tmp/pr-body.md \\
   --commit-message-file /tmp/commit-message.txt
 .EE

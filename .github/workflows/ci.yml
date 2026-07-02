@@ -52,6 +52,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         env:
           WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          WORKCELL_PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: ./scripts/ci/job-pr-shape.sh --base "${WORKCELL_PR_BASE_REF}"
 
       - name: Skip outside pull requests

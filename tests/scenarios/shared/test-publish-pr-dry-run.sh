@@ -242,6 +242,18 @@ grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/mai
 grep -q -- ' push --no-verify -u origin feature/publish-scenario ' <<<"${worktree_dry_run}"
 grep -q -- 'gh pr create --base main --head feature/publish-scenario --title Scenario\\ PR\\ title --draft --body-file' <<<"${worktree_dry_run}"
 
+certified_adapter_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/certified-adapter \
+  --title-file "${TITLE_FILE}" \
+  --body-file "${BODY_FILE}" \
+  --commit-message-file "${COMMIT_MESSAGE_FILE}" \
+  --snapshot worktree \
+  --approved-large-certified-adapter \
+  --dry-run)"
+grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0 --allow-certified-adapter-shape' <<<"${certified_adapter_dry_run}"
+grep -q -- 'gh pr create --base main --head feature/certified-adapter --title Scenario\\ PR\\ title --label approved-large-certified-adapter --draft --body-file' <<<"${certified_adapter_dry_run}"
+
 git -C "${FIXTURE}" add tracked.txt
 index_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${FIXTURE}" \
@@ -706,6 +718,78 @@ if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/publis
   echo "publish-pr should not push an over-broad branch" >&2
   exit 1
 fi
+
+git -C "${FIXTURE}" switch -C main >/dev/null
+git -C "${FIXTURE}" reset -q --hard origin/main
+for index in $(seq 1 26); do
+  printf 'certified adapter broad %02d\n' "${index}" >"${FIXTURE}/certified-adapter-${index}.txt"
+done
+certified_publish_output="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/publish-certified-adapter \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Certified adapter scenario title" \
+    --body "Certified adapter scenario body" \
+    --commit-message "Certified adapter scenario commit" \
+    --approved-large-certified-adapter \
+    2>"${TMP_DIR}/publish-certified-adapter.stderr"
+)"
+grep -q 'PR shape check passed with approved certified-adapter override' <<<"${certified_publish_output}"
+grep -q '^publish_branch=feature/publish-certified-adapter$' <<<"${certified_publish_output}"
+grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${certified_publish_output}"
+grep -q '^pr create --base main --head feature/publish-certified-adapter --title Certified adapter scenario title --label approved-large-certified-adapter --draft --body Certified adapter scenario body$' "${GH_LOG}"
+if ! git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/publish-certified-adapter; then
+  echo "publish-pr should push a bounded certified-adapter branch when explicitly approved" >&2
+  exit 1
+fi
+
+git -C "${FIXTURE}" switch -C main >/dev/null
+git -C "${FIXTURE}" reset -q --hard origin/main
+printf '\x00\x01binary\n' >"${FIXTURE}/artifact.bin"
+git -C "${FIXTURE}" add .
+git -C "${FIXTURE}" commit -q --no-verify -m "certified small binary shape fixture"
+
+set +e
+certified_small_binary_shape_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" \
+  --base-ref refs/remotes/origin/main \
+  --head-ref HEAD \
+  --max-files 25 \
+  --max-lines 1200 \
+  --max-areas 8 \
+  --max-binaries 1 \
+  --allow-certified-adapter-shape \
+  2>&1)"
+certified_small_binary_shape_rc=$?
+set -e
+test "${certified_small_binary_shape_rc}" -eq 2
+grep -q 'certified_adapter_binary_files=1 (limit=0)' <<<"${certified_small_binary_shape_output}"
+
+git -C "${FIXTURE}" switch -C main >/dev/null
+git -C "${FIXTURE}" reset -q --hard origin/main
+for index in $(seq 1 26); do
+  printf 'certified adapter binary broad %02d\n' "${index}" >"${FIXTURE}/certified-adapter-binary-${index}.txt"
+done
+printf '\x00\x01binary\n' >"${FIXTURE}/artifact.bin"
+git -C "${FIXTURE}" add .
+git -C "${FIXTURE}" commit -q --no-verify -m "certified binary shape fixture"
+
+set +e
+certified_binary_shape_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" \
+  --base-ref refs/remotes/origin/main \
+  --head-ref HEAD \
+  --max-files 25 \
+  --max-lines 1200 \
+  --max-areas 8 \
+  --max-binaries 1 \
+  --allow-certified-adapter-shape \
+  2>&1)"
+certified_binary_shape_rc=$?
+set -e
+test "${certified_binary_shape_rc}" -eq 2
+grep -q 'certified_adapter_binary_files=1 (limit=0)' <<<"${certified_binary_shape_output}"
 
 git -C "${FIXTURE}" switch -C main >/dev/null
 git -C "${FIXTURE}" reset -q --hard origin/main
