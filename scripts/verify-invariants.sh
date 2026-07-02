@@ -6658,6 +6658,7 @@ while IFS= read -r line; do
 done
 EOF
     )"
+    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
     if ! "${ROOT_DIR}/scripts/workcell" \
       session start \
       --agent codex \
@@ -6919,6 +6920,7 @@ for attempt in 1 2 3; do
 done
 EOF
     )"
+    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
@@ -6958,6 +6960,7 @@ codex --version >/tmp/workcell-package-mutation-post-failure.out 2>&1
 grep -q "session previously ran package-manager mutations as root" /tmp/workcell-package-mutation-post-failure.out
 EOF
     )"
+    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
@@ -6984,6 +6987,7 @@ EOF
         exit 1
       fi
     done
+    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
     if ! "${ROOT_DIR}/scripts/workcell" \
       --agent codex \
       --mode build \
