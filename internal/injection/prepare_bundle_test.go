@@ -107,6 +107,21 @@ func TestPrepareBundleRejectsCredentialSourceUnderTildeWorkspace(t *testing.T) {
 	}
 }
 
+func TestPathWithinCaseInsensitiveHostComparison(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "Users", "maintainer", "Repo")
+	candidate := filepath.Join(string(filepath.Separator), "users", "maintainer", "repo", "copilot-token.txt")
+
+	if !pathWithinWithCase(root, candidate, true) {
+		t.Fatalf("expected case-insensitive host comparison to treat %q as inside %q", candidate, root)
+	}
+	if pathWithinWithCase(root, candidate, false) {
+		t.Fatalf("expected case-sensitive comparison to preserve exact-case path boundaries")
+	}
+	if pathWithinWithCase(root, filepath.Join(string(filepath.Separator), "users", "maintainer", "repo-other", "token.txt"), true) {
+		t.Fatalf("expected sibling case-variant path to stay outside workspace")
+	}
+}
+
 func TestPrepareBundleRejectsMissingLaunchWorkspaceForCredentialValidation(t *testing.T) {
 	realHome := t.TempDir()
 	policyPath := filepath.Join(realHome, "policy.toml")

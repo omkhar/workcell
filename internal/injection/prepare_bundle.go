@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -347,14 +348,33 @@ func rejectWorkspaceCredentialSources(manifestPath, workspacePath string, requir
 }
 
 func pathWithin(root, candidate string) bool {
+	return pathWithinWithCase(root, candidate, hostPathComparisonCaseInsensitive())
+}
+
+func hostPathComparisonCaseInsensitive() bool {
+	switch runtime.GOOS {
+	case "darwin", "windows":
+		return true
+	default:
+		return false
+	}
+}
+
+func pathWithinWithCase(root, candidate string, caseInsensitive bool) bool {
 	if root == "" || candidate == "" {
 		return false
+	}
+	root = filepath.Clean(root)
+	candidate = filepath.Clean(candidate)
+	if caseInsensitive {
+		root = strings.ToLower(root)
+		candidate = strings.ToLower(candidate)
 	}
 	rel, err := filepath.Rel(root, candidate)
 	if err != nil {
 		return false
 	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	return rel == "." || (rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // installSyntheticProbeEnv mirrors the bash branches that stage synthetic

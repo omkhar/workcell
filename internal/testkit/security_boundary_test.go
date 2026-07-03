@@ -227,6 +227,36 @@ func TestWorkcellRejectsHarnessOnlyCredentialResolverEnvBeforeBundlePreparation(
 	}
 }
 
+func TestWorkcellResolvesLaunchWorkspaceBeforeBundlePreparation(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	prepareIndex := strings.LastIndex(script, `prepare_injection_bundle "${AGENT}" "${MODE}"`)
+	if prepareIndex == -1 {
+		t.Fatalf("%s must prepare the injection bundle through prepare_injection_bundle", scriptPath)
+	}
+	resolveIndex := strings.LastIndex(script[:prepareIndex], "\nresolve_launch_workspace\n")
+	if resolveIndex == -1 {
+		t.Fatalf("%s must resolve the launch workspace before preparing the injection bundle", scriptPath)
+	}
+	for _, expected := range []string{
+		`[[ "${AUTH_STATUS}" -eq 0 ]]`,
+		`[[ "${DOCTOR}" -eq 0 ]]`,
+		`[[ "${INSPECT}" -eq 0 ]]`,
+		`[[ "${GC}" -eq 0 ]]`,
+		`[[ -z "${LOGS_KIND}" ]]`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("%s launch workspace resolver must preserve diagnostic exception %s", scriptPath, expected)
+		}
+	}
+}
+
 func TestEnsureGoRunEnvFallsBackToPerUserCacheWithoutHome(t *testing.T) {
 	t.Parallel()
 

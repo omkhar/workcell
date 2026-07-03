@@ -3592,6 +3592,20 @@ resolve_existing_directory_or_die() {
   printf '%s\n' "${resolved_path}"
 }
 
+launch_requires_existing_workspace() {
+  [[ "${DOCTOR}" -eq 0 ]] &&
+    [[ "${INSPECT}" -eq 0 ]] &&
+    [[ -z "${LOGS_KIND}" ]] &&
+    [[ "${AUTH_STATUS}" -eq 0 ]] &&
+    [[ "${GC}" -eq 0 ]]
+}
+
+resolve_launch_workspace() {
+  launch_requires_existing_workspace || return 0
+  WORKSPACE="$(resolve_existing_directory_or_die "${WORKSPACE}")"
+  validate_workspace "${WORKSPACE}" "${ALLOW_NONGIT_WORKSPACE}"
+}
+
 publish_pr_main() {
   # Invoke the in-process publish-pr-cli launcher and translate the
   # launcher's exit code back to the bash publish_pr_main contract
@@ -8263,6 +8277,7 @@ if [[ -n "${WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE:-}" ]]; then
   exit 2
 fi
 cleanup_default_injection_bundles
+resolve_launch_workspace
 prepare_injection_bundle "${AGENT}" "${MODE}"
 
 IMAGE_TAG="workcell:local"
@@ -8289,11 +8304,6 @@ if [[ "${AUTH_STATUS}" -eq 1 ]]; then
   exit 0
 fi
 
-if [[ "${DOCTOR}" -eq 0 ]] && [[ "${INSPECT}" -eq 0 ]] && [[ -z "${LOGS_KIND}" ]] &&
-  [[ "${AUTH_STATUS}" -eq 0 ]] && [[ "${GC}" -eq 0 ]]; then
-  WORKSPACE="$(resolve_existing_directory_or_die "${WORKSPACE}")"
-  validate_workspace "${WORKSPACE}" "${ALLOW_NONGIT_WORKSPACE}"
-fi
 if [[ -z "${PROFILE_WORKSPACE_ROOT}" ]]; then
   PROFILE_WORKSPACE_ROOT="${WORKSPACE}"
 fi
