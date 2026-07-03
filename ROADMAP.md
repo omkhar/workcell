@@ -489,9 +489,11 @@ security-boundary product to prove.
   add a second release approver, require two approvals on the release
   environment, and document the emergency bypass. This is the single largest
   step toward SLSA L3 and OpenSSF expectations.
-- **B3 (now, M): Mutation testing gated in CI.** `scripts/run-mutation-tests.sh`
-  exists but no workflow invokes it, so mutation coverage can silently
-  regress. Add a scheduled or `approved-heavy-ci` mutation lane, publish the
+- **B3 (now, M): Mutation testing gated in CI.** Mutation tests currently run
+  only inside the release-preflight `validate-repo.sh` profile, with no
+  scheduled or PR-time lane on `main`, no published score, and no baseline
+  regression gate, so mutation coverage can silently degrade between
+  releases. Add a scheduled or `approved-heavy-ci` mutation lane, publish the
   score, and block release when coverage degrades below the recorded
   baseline.
 - **B4 (now, S): Centralized tool pins and action allowlist.** Tool pins

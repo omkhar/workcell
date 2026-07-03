@@ -101,9 +101,10 @@ them.
 ### B3: Mutation Testing Gated In CI
 
 - Steps: add a scheduled and `approved-heavy-ci` mutation lane invoking the
-  existing `scripts/run-mutation-tests.sh` path; record the current score as
-  the baseline in a reviewed policy file; fail the lane when the score drops
-  below baseline; surface the score in the job summary.
+  existing `scripts/run-mutation-tests.sh` path (today mutation tests run
+  only inside the release-preflight `validate-repo.sh` profile); record the
+  current score as the baseline in a reviewed policy file; fail the lane when
+  the score drops below baseline; surface the score in the job summary.
 - Exit gates: lane green on `main`; baseline file reviewed; release preflight
   refuses when the recorded baseline regresses.
 - Validation: deliberate mutant-survival dry run proves the gate trips.
