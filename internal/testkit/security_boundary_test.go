@@ -257,6 +257,51 @@ func TestWorkcellResolvesLaunchWorkspaceBeforeBundlePreparation(t *testing.T) {
 	}
 }
 
+func TestWorkcellRejectsSensitiveWorkspaceBeforeExistenceCheck(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	rejectIndex := strings.Index(script, `reject_broad_or_sensitive_workspace "${resolved_path}"`)
+	if rejectIndex == -1 {
+		t.Fatalf("%s must reject broad/sensitive resolved workspaces before existence checks", scriptPath)
+	}
+	existenceIndex := strings.Index(script, `if [[ ! -e "${resolved_path}" ]]; then`)
+	if existenceIndex == -1 {
+		t.Fatalf("%s must check resolved workspace existence", scriptPath)
+	}
+	if rejectIndex > existenceIndex {
+		t.Fatalf("%s must reject broad/sensitive workspaces before missing-path errors", scriptPath)
+	}
+	if !strings.Contains(script, `reject_broad_or_sensitive_workspace "${path}"`) {
+		t.Fatalf("%s validate_workspace must share the broad/sensitive rejection helper", scriptPath)
+	}
+}
+
+func TestWorkcellForwardsColimaStartTimeoutThroughDetachedSessionHandoff(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	for _, expected := range []string{
+		`WORKCELL_COLIMA_START_TIMEOUT_SECONDS`,
+		`monitor_env+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")`,
+		`session_start_env+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("%s must preserve detached-session Colima start timeout setting %q", scriptPath, expected)
+		}
+	}
+}
+
 func TestEnsureGoRunEnvFallsBackToPerUserCacheWithoutHome(t *testing.T) {
 	t.Parallel()
 

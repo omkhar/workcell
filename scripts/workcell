@@ -2608,6 +2608,7 @@ write_session_monitor_env_file() {
     SESSION_RECORD_FINALIZED
     SESSION_MONITOR_READY_PATH
     UI
+    WORKCELL_COLIMA_START_TIMEOUT_SECONDS
     WORKCELL_STATE_ROOT
     WORKCELL_TARGET_STATE_ROOT
     XDG_STATE_HOME
@@ -3579,6 +3580,7 @@ resolve_existing_directory_or_die() {
   local resolved_path=""
 
   resolved_path="$(resolve_host_path "${raw_path}")"
+  reject_broad_or_sensitive_workspace "${resolved_path}"
   if [[ ! -e "${resolved_path}" ]]; then
     echo "Workspace path does not exist: ${raw_path}" >&2
     echo "Resolve it to an existing directory, then rerun with --workspace ${resolved_path}" >&2
@@ -3760,6 +3762,7 @@ start_detached_session_monitor() {
     LANG=C
     WORKCELL_SESSION_DETACHED=0
   )
+  [[ -n "${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-}" ]] && monitor_env+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")
   [[ -n "${XDG_STATE_HOME:-}" ]] && monitor_env+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
   [[ -n "${WORKCELL_STATE_ROOT:-}" ]] && monitor_env+=("WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}")
   [[ -n "${WORKCELL_TARGET_STATE_ROOT:-}" ]] && monitor_env+=("WORKCELL_TARGET_STATE_ROOT=${WORKCELL_TARGET_STATE_ROOT}")
@@ -4452,6 +4455,7 @@ session_main() {
         LANG=C
         WORKCELL_SESSION_DETACHED=1
       )
+      [[ -n "${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-}" ]] && session_start_env+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")
       [[ -n "${XDG_STATE_HOME:-}" ]] && session_start_env+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
       [[ -n "${WORKCELL_STATE_ROOT:-}" ]] && session_start_env+=("WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}")
       if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]]; then
@@ -5803,9 +5807,8 @@ workspace_is_sensitive() {
   return 1
 }
 
-validate_workspace() {
+reject_broad_or_sensitive_workspace() {
   local path="$1"
-  local allow_nongit="$2"
 
   if [[ "${path}" == "/" ]] || [[ "${path}" == "${REAL_HOME}" ]]; then
     echo "Refusing broad workspace mount: ${path}" >&2
@@ -5816,6 +5819,13 @@ validate_workspace() {
     echo "Refusing sensitive workspace mount: ${path}" >&2
     exit 2
   fi
+}
+
+validate_workspace() {
+  local path="$1"
+  local allow_nongit="$2"
+
+  reject_broad_or_sensitive_workspace "${path}"
 
   if [[ "${SESSION_DETACHED:-0}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)" == "isolated" ]]; then
     validate_isolated_session_workspace_source "${path}"
