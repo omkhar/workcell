@@ -86,9 +86,6 @@ jobs:
       - name: Run workflow contract checks
         run: ./scripts/check-workflows.sh
 
-      - name: Check artifact retention policy
-        run: ./scripts/check-retention-policy.sh
-
   zizmor:
     name: GitHub Actions security analysis
     runs-on: ubuntu-latest

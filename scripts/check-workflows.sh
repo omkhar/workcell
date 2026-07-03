@@ -24,5 +24,6 @@ zizmor --persona auditor --config "${ROOT_DIR}/.github/zizmor.yml" "${ROOT_DIR}/
 
 run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools check-workflows "${ROOT_DIR}" "${POLICY_PATH}"
 "${ROOT_DIR}/scripts/verify-workflow-lanes.sh"
+"${ROOT_DIR}/scripts/check-retention-policy.sh"
 
 echo "Workcell workflow checks passed."

@@ -35,11 +35,16 @@ workflow_set() {
 }
 
 # Documented rows between the machine-checked markers, tolerant of column
-# padding: "<workflow><TAB><comma/space separated values>".
+# padding: "<workflow><TAB><comma/space separated values>". awk emits the tab
+# via printf so the separator is portable (a sed "\t" replacement is not).
 doc_rows="$(
   awk '/<!-- retention-policy:begin -->/{f=1;next} /<!-- retention-policy:end -->/{f=0} f' "${DOC}" \
-    | grep -E '^\|[[:space:]]*[a-z0-9_.-]+\.yml[[:space:]]*\|[[:space:]]*[0-9]+([[:space:]]*,[[:space:]]*[0-9]+)*[[:space:]]*\|' \
-    | sed -E 's/^\|[[:space:]]*([a-z0-9_.-]+\.yml)[[:space:]]*\|[[:space:]]*([0-9][0-9, ]*)[[:space:]]*\|.*/\1\t\2/' || true
+    | awk -F'|' '{
+        wf=$2; vals=$3
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", wf)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", vals)
+        if (wf ~ /^[a-z0-9_.-]+\.yml$/ && vals ~ /^[0-9]/) printf "%s\t%s\n", wf, vals
+      }' || true
 )"
 [[ -n "${doc_rows}" ]] || { note "no retention rows found in ${DOC} (are the markers present?)"; exit 1; }
 
