@@ -248,7 +248,8 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 	if info, err := os.Stat(manifestPath); err != nil || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("Injection manifest was not rendered: %s", manifestPath)
 	}
-	if err := rejectWorkspaceCredentialSources(manifestPath, opts.WorkspacePath); err != nil {
+	requireWorkspaceDirectory := !(opts.AuthStatus || opts.Doctor || opts.Inspect)
+	if err := rejectWorkspaceCredentialSources(manifestPath, opts.WorkspacePath, requireWorkspaceDirectory); err != nil {
 		return nil, err
 	}
 
@@ -296,19 +297,24 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 	}, nil
 }
 
-func rejectWorkspaceCredentialSources(manifestPath, workspacePath string) error {
+func rejectWorkspaceCredentialSources(manifestPath, workspacePath string, requireWorkspaceDirectory bool) error {
 	if strings.TrimSpace(workspacePath) == "" {
 		return nil
 	}
-	if _, err := os.Stat(workspacePath); err != nil {
-		if os.IsNotExist(err) {
+	workspace, err := launcher.CanonicalizePath(workspacePath)
+	if err != nil {
+		return fmt.Errorf("resolve workspace for credential-source validation: %w", err)
+	}
+	if info, err := os.Stat(workspace); err != nil {
+		if os.IsNotExist(err) && !requireWorkspaceDirectory {
 			return nil
 		}
 		return fmt.Errorf("stat workspace for credential-source validation: %w", err)
-	}
-	workspace, err := filepath.EvalSymlinks(workspacePath)
-	if err != nil {
-		return fmt.Errorf("resolve workspace for credential-source validation: %w", err)
+	} else if !info.IsDir() {
+		if !requireWorkspaceDirectory {
+			return nil
+		}
+		return fmt.Errorf("workspace for credential-source validation is not a directory: %s", workspace)
 	}
 	workspace = filepath.Clean(workspace)
 
