@@ -172,16 +172,18 @@ blocked only for host-side authority; if the operator explicitly injects
 publishing credentials (for example `github_hosts`/`github_config` or SSH
 material, a reviewed lower-assurance choice), an agent can publish from inside
 the container using that injected authority. Containment adds host-side
-auditability: the profile audit log lives on the host, outside
-the contained agent's reach, and is digest-chained so records are
-order-preserving and corruption-evident; durable host-side session records
-survive `--gc` and can be exported as JSON via `workcell session timeline` and
-`workcell session export`.
+auditability: the profile audit log lives on the host, outside the contained
+agent's reach, and each record includes a chained digest of the prior record;
+durable host-side session records survive `--gc`. `workcell session timeline`
+prints the audit-log entries for a session, and `workcell session export`
+emits a JSON bundle of the session record plus its audit records.
 
-Gap: the digest chain is not externally anchored, so against a host-level
-attacker it detects reordering and corruption rather than proving
-tamper-evidence; and there is no behavioral monitoring or rogue-behavior
-detection. Discovery of a contained rogue agent is post-hoc via audit evidence.
+Gap: the chained digests provide the basis for order and corruption
+verification, but Workcell does not yet ship a verifier that checks the chain,
+and the chain is not externally anchored — so the audit log is evidence to
+review, not proof of tamper-evidence against a host-level attacker. There is
+no behavioral monitoring or rogue-behavior detection; discovery of a contained
+rogue agent is post-hoc via audit evidence.
 
 ## Sources
 
