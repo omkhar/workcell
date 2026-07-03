@@ -26,18 +26,21 @@ mapping describes the default `strict` safe path — lower-assurance lanes
 prompt` changes) shift several verdicts and are called out where they matter.
 See [support tiers](support-tiers.md) for the assurance vocabulary.
 
+Category titles follow the OWASP source; the `ASInn:2026` identifiers are the
+stable cross-reference for audits and keyword crosswalks.
+
 ## Coverage summary
 
 | Category | Verdict |
 |---|---|
 | ASI01:2026 Agent Goal Hijack | Partial |
-| ASI02:2026 Tool Misuse & Exploitation | Partial |
-| ASI03:2026 Agent Identity & Privilege Abuse | Partial (strong) |
-| ASI04:2026 Agentic Supply Chain Compromise | Partial |
+| ASI02:2026 Tool Misuse and Exploitation | Partial |
+| ASI03:2026 Agent Identity and Privilege Abuse | Partial (strong) |
+| ASI04:2026 Agentic Supply Chain Vulnerabilities | Partial |
 | ASI05:2026 Unexpected Code Execution | Covered (isolation) |
-| ASI06:2026 Memory & Context Poisoning | Partial |
+| ASI06:2026 Memory and Context Poisoning | Partial |
 | ASI07:2026 Insecure Inter-Agent Communication | Out of scope |
-| ASI08:2026 Cascading Agent Failures | Partial (containment) |
+| ASI08:2026 Cascading Failures | Partial (containment) |
 | ASI09:2026 Human-Agent Trust Exploitation | Partial |
 | ASI10:2026 Rogue Agents | Partial (contain and audit) |
 
@@ -57,7 +60,7 @@ Honest limit: the runtime cannot prevent in-content prompt injection from
 steering the agent while it runs. It removes one hijack vector (control-plane
 takeover) and contains the blast radius.
 
-### ASI02:2026 Tool Misuse & Exploitation — Partial
+### ASI02:2026 Tool Misuse and Exploitation — Partial
 
 Unsafe tool chaining, loops, or excessive invocations despite valid
 permissions. Writes are confined to the selected workspace; the VM applies a
@@ -69,7 +72,7 @@ managed settings) are explicitly labeled secondary defenses, not the boundary.
 Gap: there is no rate limiting, loop detection, or per-tool-call policy. Misuse
 within the boundary is bounded, not detected.
 
-### ASI03:2026 Agent Identity & Privilege Abuse — Partial (strong)
+### ASI03:2026 Agent Identity and Privilege Abuse — Partial (strong)
 
 Delegated authority, ambiguous identity, and trust assumptions leading to
 unauthorized actions. This is Workcell's core design: no ambient host
@@ -83,7 +86,7 @@ the workspace are rejected; `workcell why` explains each credential decision.
 Gap: Workcell does not down-scope the injected provider token itself. The
 token's own privileges remain an operator and provider decision.
 
-### ASI04:2026 Agentic Supply Chain Compromise — Partial
+### ASI04:2026 Agentic Supply Chain Vulnerabilities — Partial
 
 Compromise of external tools, MCP servers, schemas, or prompts the agent
 dynamically trusts. Repo-local `.mcp.json` and `.github/mcp.json` are masked on
@@ -114,7 +117,7 @@ integrity is explicitly lower-assurance; `readonly` is the strongest
 "covered" is about isolation of execution, not the integrity of state inside
 it.
 
-### ASI06:2026 Memory & Context Poisoning — Partial
+### ASI06:2026 Memory and Context Poisoning — Partial
 
 Injection or leakage of agent memory or contextual state that influences future
 reasoning. Provider homes are session-local and rebuilt each launch from
@@ -133,13 +136,13 @@ no multi-agent messaging layer to secure. Any subagent traffic internal to a
 provider CLI stays inside the container boundary and outside Workcell's control
 plane.
 
-### ASI08:2026 Cascading Agent Failures — Partial (containment)
+### ASI08:2026 Cascading Failures — Partial (containment)
 
 Small agent failures propagating through connected systems. The boundary
 structurally cuts the main propagation paths from a session into the host and
-org: no host credentials to pivot with, no docker socket, and publication
-requires the separate host-side signed `publish-pr` flow that blocks unsigned
-ranges and over-broad diffs.
+org: no host credentials to pivot with unless the operator explicitly injects
+them, no docker socket, and no use of the host-side signed `publish-pr` flow
+(which blocks unsigned ranges and over-broad diffs) from inside the container.
 
 Gap: Workcell does not orchestrate agent fleets and has no circuit-breaker or
 health mechanisms. It limits a cascade's reach; it does not manage cascades.
@@ -162,9 +165,14 @@ actions.
 ### ASI10:2026 Rogue Agents — Partial (contain and audit)
 
 Agents acting beyond intended objectives through goal drift, collusion, or
-emergent behavior. Containment is identical to ASI05 and ASI03 — a rogue agent
-cannot reach host secrets, publish, or escape the workspace on the safe path —
-plus host-side auditability: the profile audit log lives on the host, outside
+emergent behavior. Containment is identical to ASI05 and ASI03 — on the safe
+path a rogue agent cannot reach host secrets, use host-side publication
+authority, or escape the workspace. The important qualifier: publication is
+blocked only for host-side authority; if the operator explicitly injects
+publishing credentials (for example `github_hosts`/`github_config` or SSH
+material, a reviewed lower-assurance choice), an agent can publish from inside
+the container using that injected authority. Containment adds host-side
+auditability: the profile audit log lives on the host, outside
 the contained agent's reach, and is digest-chained so records are
 order-preserving and corruption-evident; durable host-side session records
 survive `--gc` and can be exported as JSON via `workcell session timeline` and
