@@ -153,6 +153,7 @@ jobs:
             ${{ steps.candidate.outputs.dir }}/patch
             ${{ steps.candidate.outputs.dir }}/diffstat
             ${{ steps.candidate.outputs.dir }}/metadata.json
+          retention-days: 7
 
       - name: Update tracking issue
         env:

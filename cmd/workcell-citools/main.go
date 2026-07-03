@@ -58,6 +58,7 @@ func subcommands() []subcommand {
 		{"verify-control-plane-manifest", "MANIFEST_PATH", 1, 1, cmdVerifyControlPlaneManifest},
 		{"verify-control-plane-parity", "MANIFEST_PATH", 1, 1, cmdVerifyControlPlaneParity},
 		{"check-workflows", "ROOT_DIR POLICY_PATH", 2, 2, cmdCheckWorkflows},
+		{"check-retention-policy", "ROOT_DIR POLICY_PATH", 2, 2, cmdCheckRetentionPolicy},
 		{"generate-workflow-lane-manifest", "ROOT_DIR POLICY_PATH OUTPUT_PATH", 3, 3, cmdGenerateWorkflowLaneManifest},
 		{"verify-workflow-lane-manifest", "ROOT_DIR POLICY_PATH MANIFEST_PATH", 3, 3, cmdVerifyWorkflowLaneManifest},
 		{"plan-workflow-lanes", "MANIFEST_PATH CONFIG_JSON_PATH", 2, 2, cmdPlanWorkflowLanes},
@@ -176,6 +177,10 @@ func cmdVerifyControlPlaneParity(args []string) error {
 
 func cmdCheckWorkflows(args []string) error {
 	return metadatautil.CheckWorkflows(args[0], args[1])
+}
+
+func cmdCheckRetentionPolicy(args []string) error {
+	return metadatautil.CheckRetentionPolicy(args[0], args[1])
 }
 
 func cmdGenerateWorkflowLaneManifest(args []string) error {

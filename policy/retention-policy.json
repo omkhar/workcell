@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "artifacts": {
+    "ci.yml": {
+      "workcell-ci-install-candidate": 7
+    },
+    "release.yml": {
+      "workcell-release-preflight": 90,
+      "workcell-release-install-candidate": 90,
+      "workcell-release-artifacts": 7
+    },
+    "security.yml": {
+      "zizmor-sarif": 5
+    },
+    "scorecard.yml": {
+      "scorecard-sarif": 5
+    },
+    "upstream-refresh.yml": {
+      "upstream-refresh-candidate": 7
+    }
+  }
+}

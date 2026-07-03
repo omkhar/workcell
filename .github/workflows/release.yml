@@ -618,7 +618,7 @@ jobs:
             dist/workcell-control-plane-preflight.json
             dist/workcell-release-bundle-preflight.json
             dist/workcell-runtime-preflight.json
-          retention-days: 7
+          retention-days: 90
 
       - name: Upload preflight release install artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -627,7 +627,7 @@ jobs:
           path: |
             dist/release-install/workcell-${{ github.ref_name }}.tar.gz
             dist/release-install/workcell.rb
-          retention-days: 7
+          retention-days: 90
 
   install-verification:
     name: Release install verification (${{ matrix.runner_label }})
