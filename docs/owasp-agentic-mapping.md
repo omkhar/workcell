@@ -170,8 +170,9 @@ path a rogue agent cannot reach host secrets, use host-side publication
 authority, or escape the workspace. The important qualifier: publication is
 blocked only for host-side authority; if the operator explicitly injects
 publishing credentials (for example `github_hosts`/`github_config` or SSH
-material, a reviewed lower-assurance choice), an agent can publish from inside
-the container using that injected authority. Containment adds host-side
+material — an explicit credential-injection decision available on the strict
+path, not a lower-assurance lane), an agent can publish from inside the
+container using that injected authority. Containment adds host-side
 auditability: the profile audit log lives on the host, outside the contained
 agent's reach, and each record includes a chained digest of the prior record;
 durable host-side session records survive `--gc`. `workcell session timeline`
