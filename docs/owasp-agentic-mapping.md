@@ -26,8 +26,10 @@ mapping describes the default `strict` safe path — lower-assurance lanes
 prompt` changes) shift several verdicts and are called out where they matter.
 See [support tiers](support-tiers.md) for the assurance vocabulary.
 
-Category titles follow the OWASP source; the `ASInn:2026` identifiers are the
-stable cross-reference for audits and keyword crosswalks.
+The `ASInn:2026` identifiers are the authoritative cross-reference for audits
+and keyword crosswalks. The category titles here are for readability; secondary
+sources vary on exact punctuation and annotations, so consult the linked OWASP
+source for canonical wording.
 
 ## Coverage summary
 
@@ -120,13 +122,18 @@ it.
 ### ASI06:2026 Memory and Context Poisoning — Partial
 
 Injection or leakage of agent memory or contextual state that influences future
-reasoning. Provider homes are session-local and rebuilt each launch from
-immutable adapter baselines plus reviewed imports, so poisoned state does not
-persist across sessions on the default path; `--cache-profile off` is the
-default and `standard` is an explicitly labeled lower-assurance choice.
+reasoning. Provider-home state is session-local and rebuilt each launch from
+immutable adapter baselines plus reviewed imports, so poisoned provider-home
+state does not persist across sessions on the default path; `--cache-profile
+off` is the default and `standard` is an explicitly labeled lower-assurance
+choice.
 
-Gap: there is no in-session detection or sanitization of poisoned context from
-workspace content.
+Gap: the workspace itself is durable, and the launcher imports the workspace's
+root instruction files (`AGENTS.md`/`CLAUDE.md`/`GEMINI.md`) on each launch, so
+poisoned context committed into the workspace re-enters future sessions even
+with the home rebuild. Home-rebuild addresses provider-home poisoning, not
+poisoned workspace content, and Workcell does no in-session detection or
+sanitization of it.
 
 ### ASI07:2026 Insecure Inter-Agent Communication — Out of scope
 
