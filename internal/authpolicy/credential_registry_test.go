@@ -32,7 +32,4 @@ func TestCredentialRegistryMatchesAdapters(t *testing.T) {
 	if !reflect.DeepEqual(CredentialKeys, wantAll) {
 		t.Fatalf("CredentialKeys = %#v, want supported adapter registry union %#v", CredentialKeys, wantAll)
 	}
-	if _, ok := CredentialKeys["copilot_github_token"]; ok {
-		t.Fatal("planned Copilot token must stay out of accepted auth-policy credential keys until launch support lands")
-	}
 }

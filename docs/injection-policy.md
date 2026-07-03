@@ -17,7 +17,8 @@ Secret-bearing inputs are handled more carefully than public inputs:
 - provider credentials, SSH identities, and `classification = "secret"` copies
   are validated on the host
 - they are mounted read-only into the runtime from launcher-owned staging
-  state, then copied into the ephemeral session home
+  state, then copied into provider home only when provider-native files are
+  required, or consumed directly by the wrapper for Copilot
 - a crash can leave short-lived staged plaintext behind until later cleanup
 
 ## Supported sections
@@ -44,7 +45,7 @@ see whether the path is repo-required, certification-only, or manual.
 
 Selectors let you scope entries to only some launches:
 
-- `providers = ["codex", "claude", "gemini"]`
+- `providers = ["codex", "claude", "copilot", "gemini"]`
 - `modes = ["strict", "development", "build"]`
 
 Credential entries can be either direct file sources or built-in host
@@ -52,6 +53,11 @@ resolvers:
 
 - `credentials.codex_auth = "/abs/path"`
 - `[credentials.claude_auth] resolver = "claude-macos-keychain"`
+
+Direct credential source files must live outside the mounted workspace. Workcell
+rejects credential sources under the workspace because the workspace itself is
+mounted into the runtime and would expose the original secret path in addition
+to the reviewed credential handoff.
 
 Resolver-backed credentials are still host-side preprocessing only. Workcell
 materializes them into ordinary files under the per-launch injection bundle; it
@@ -76,15 +82,28 @@ current bootstrap tiers, handoffs, and evidence.
 |---|---|---|---|
 | Codex | direct staged `codex_auth` or the `codex-home-auth-file` resolver | shared GitHub CLI and SSH inputs via policy as needed | direct staged auth is still the default recommendation; host resolver reuse remains host-side preprocessing only |
 | Claude | `claude_auth`, `claude_api_key`, `claude_mcp` | shared GitHub CLI and SSH inputs via policy as needed | the built-in `claude-macos-keychain` resolver can record intent but remains fail-closed until a supported export path exists |
+| GitHub Copilot CLI | `copilot_github_token` | SSH inputs via policy as needed | staged through reviewed host-side inputs, removed from direct runtime mounts, passed through a temporary handoff mount outside provider state and a transient runtime handoff file, and exported as `COPILOT_GITHUB_TOKEN` only to the managed child process; shared GitHub CLI state, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, and host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`, `~/.cache/github-copilot`) are not Copilot auth inputs |
 | Gemini | `gemini_env`, `gemini_oauth` | `gemini_projects` as a supplemental project registry input, `gcloud_adc` as a supplemental Vertex input, plus shared GitHub CLI and SSH inputs via policy as needed | `gemini_projects` and `gcloud_adc` are not standalone Gemini auth modes |
 
-GitHub Copilot CLI is planned for Tier 1 parity but is not a launch-ready
-provider today. The planned path must use explicit staged token material, likely
-`copilot_github_token`, and session-local `COPILOT_HOME` /
-`COPILOT_CACHE_HOME` state. It must not pass through host `~/.copilot`, host
-keychains, `GH_TOKEN`, `GITHUB_TOKEN`, ambient `gh auth token`, arbitrary BYOK
-provider env, or whole-home state. The managed child should see only the
-Workcell-staged `COPILOT_GITHUB_TOKEN` on the supported path.
+GitHub Copilot CLI is supported only through explicit staged token material:
+`copilot_github_token`, with session-local `COPILOT_HOME` and
+`COPILOT_CACHE_HOME` state. It does not pass through host Copilot provider
+state (`~/.copilot`, `~/.config/github-copilot`,
+`~/.cache/github-copilot`), host keychains, `GH_TOKEN`, `GITHUB_TOKEN`,
+ambient `gh auth token`, arbitrary BYOK provider env, or whole-home state.
+For auth-required launches, Workcell
+removes the reviewed staged token file from direct runtime mounts, deletes the
+staged direct-mount copy from the mounted injection bundle, converts the token
+into a temporary host-mounted token handoff outside mounted provider state,
+stages the value into a transient runtime handoff file, unlinks the mounted
+handoff file, re-execs the entrypoint without the token in its environment, keeps that
+entrypoint as PID 1 instead of Docker `--init` so `/proc/1/environ` is
+scrubbed, and exports its value as
+`COPILOT_GITHUB_TOKEN` only to the managed child after the wrapper unlinks the
+handoff file. Copilot development-shell or debug-command launches with a staged
+token also remove the token file and staged copy from direct runtime mounts,
+but do not create the handoff mount because the provider is not being
+authenticated.
 
 Google Antigravity CLI is also planned, but not launch-ready. Its future path
 must first pin official install and auth provenance, then stage only reviewed
@@ -104,16 +123,18 @@ acceptable implicit safe-path inputs.
 | `gemini_oauth` | `~/.gemini/oauth_creds.json` | cached Gemini OAuth state |
 | `gemini_projects` | `~/.gemini/projects.json` | persisted Gemini project registry |
 | `gcloud_adc` | `~/.config/gcloud/application_default_credentials.json` | supplemental Vertex credential, not a standalone Gemini auth mode |
+| `copilot_github_token` | session-local Copilot token handoff | converted to a temporary host-mounted token handoff outside mounted provider state, moved through a transient runtime handoff file with the Workcell entrypoint as PID 1, and exported as `COPILOT_GITHUB_TOKEN` only to the managed Copilot child process; the original token file and staged direct-mount copy are removed from direct runtime mounts and are not copied into provider state |
 | `github_hosts` | `~/.config/gh/hosts.yml` | shared GitHub CLI auth; prefer scoped nested tables |
 | `github_config` | `~/.config/gh/config.yml` | shared GitHub CLI config; prefer scoped nested tables |
 
-`copilot_github_token` and any future Antigravity credential keys are planned,
-not supported keys in current releases. They must not appear in operator policy
-until the matching adapter, validation, and docs land.
+Future Antigravity credential keys are planned, not supported keys in current
+releases. They must not appear in operator policy until the matching adapter,
+validation, and docs land.
 
 ## Instruction precedence
 
-Provider docs are rendered in this order:
+Provider docs are rendered in this order for adapters that enable native
+instruction files:
 
 1. adapter baseline doc
 2. repo-local `AGENTS.md`
@@ -121,12 +142,14 @@ Provider docs are rendered in this order:
 4. `documents.common`
 5. provider-specific document fragment
 
-The planned Copilot adapter must separately define how `AGENTS.md`,
+The Copilot adapter masks repo-local Copilot control-plane paths such as
 `.github/copilot-instructions.md`, `.github/instructions/**`, and
-`.github/copilot/settings*.json` are imported, masked, or rejected. The planned
-Antigravity adapter must do the same once official CLI provenance identifies
-its instruction, settings, plugin, MCP, and hook files. Current releases do not
-provide provider-specific instruction layering for those planned adapters.
+`.github/copilot/settings*.json` instead of trusting them directly, and the
+managed wrapper launches with custom instructions disabled. The planned
+Antigravity adapter must define its instruction, settings, plugin, MCP, and
+hook files before any provider-specific instruction layering is supported.
+Current releases do not provide provider-specific instruction layering for
+Antigravity.
 
 ## Deliberate limits
 
@@ -137,16 +160,17 @@ provide provider-specific instruction layering for those planned adapters.
 - no assumption that one process inside the session is isolated from another
   process in the same session
 - no host provider-home, keychain, browser-profile, ambient CLI auth, or broad
-  provider token state passthrough on future Copilot or Antigravity paths
+  provider token state passthrough on Copilot or future Antigravity paths
 - no provider telemetry, OpenTelemetry, or content-capture environment
-  variables in future `strict` mode unless a lower-assurance acknowledged path
-  and deterministic tests are added
+  variables in `strict` mode unless a lower-assurance acknowledged path and
+  deterministic tests are added
 
 ## Recommended usage
 
 - put org-wide guidance in `documents.common`
 - keep provider deltas in `documents.codex`, `documents.claude`, or
-  `documents.gemini`
+  `documents.gemini`; Copilot custom instructions are disabled on the managed
+  path
 - use `[credentials]` for reusable auth, not `[[copies]]`
 - scope shared GitHub credentials with `providers = [...]`
 - keep secret inputs owner-only and avoid symlinks

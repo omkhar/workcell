@@ -140,14 +140,18 @@ func TestParseTOMLSubsetUnsupportedCredentialsScopedTable(t *testing.T) {
 	}
 }
 
-func TestParseTOMLSubsetRejectsPlannedCopilotCredentialTable(t *testing.T) {
+func TestParseTOMLSubsetAcceptsCopilotCredentialTable(t *testing.T) {
 	t.Parallel()
-	_, err := parseTOMLSubset("[credentials.copilot_github_token]\nsource = \"/tmp/copilot-token.txt\"\n", Path("test.toml"))
-	if err == nil {
-		t.Fatal("expected planned Copilot credential table to be rejected")
+	loaded, err := parseTOMLSubset("[credentials.copilot_github_token]\nsource = \"/tmp/copilot-token.txt\"\n", Path("test.toml"))
+	if err != nil {
+		t.Fatalf("parseTOMLSubset rejected supported Copilot credential table: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unsupported credentials table [credentials.copilot_github_token]") {
-		t.Fatalf("error %q does not reject planned Copilot credential table", err.Error())
+	credentials, ok := loaded["credentials"].(map[string]any)
+	if !ok {
+		t.Fatalf("credentials table missing or wrong type: %#v", loaded["credentials"])
+	}
+	if _, ok := credentials["copilot_github_token"]; !ok {
+		t.Fatalf("credentials table missing copilot_github_token: %#v", credentials)
 	}
 }
 

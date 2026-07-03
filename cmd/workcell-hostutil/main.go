@@ -771,6 +771,7 @@ func cmdHelperSupportMatrixEval(args []string) error {
 //	profile-path dir          STATE_ROOT PROFILE
 //	profile-path lima-dir     STATE_ROOT PROFILE
 //	profile-path disk-dir     STATE_ROOT PROFILE
+//	profile-path store-path   STATE_ROOT PROFILE
 //	profile-path target-state-dir          TARGET_STATE_ROOT TARGET_KIND TARGET_PROVIDER PROFILE
 //	profile-path audit-log                 TARGET_STATE_ROOT TARGET_KIND TARGET_PROVIDER PROFILE
 //	profile-path legacy-audit-log          STATE_ROOT PROFILE
@@ -825,6 +826,11 @@ func dispatchProfilePath(kind string, args []string) (string, error) {
 			return "", err
 		}
 		return hoststate.ProfileDiskDir(args[0], args[1])
+	case "store-path":
+		if err := expect(2); err != nil {
+			return "", err
+		}
+		return hoststate.ProfileStorePath(args[0], args[1])
 	case "target-state-dir":
 		if err := expect(4); err != nil {
 			return "", err
@@ -945,6 +951,8 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 			opts.Agent = value
 		case "--mode":
 			opts.Mode = value
+		case "--workspace":
+			opts.WorkspacePath = value
 		case "--policy":
 			opts.PolicyPath = value
 		case "--use-default-policy":

@@ -103,10 +103,30 @@ workcell auth set \
   --source /Users/example/.config/workcell/gemini.env
 ```
 
-GitHub Copilot CLI and Google Antigravity CLI are not supported agents yet. Do
-not configure `--agent copilot`, `--agent antigravity`, planned credential keys,
-or host provider-home state until the matching adapter support phase lands with
-docs and certification.
+GitHub Copilot CLI:
+
+```bash
+workcell auth set \
+  --agent copilot \
+  --credential copilot_github_token \
+  --source /Users/example/.config/workcell/copilot-github-token.txt
+```
+
+Do not use host `gh` auth, `GH_TOKEN`, `GITHUB_TOKEN`, host keychains, or host
+Copilot provider state (`~/.copilot`, `~/.config/github-copilot`,
+`~/.cache/github-copilot`) as Copilot readiness sources. Workcell stages only
+`copilot_github_token` and removes the token file plus staged direct-mount
+copy from direct runtime mounts for Copilot sessions. For auth-required
+provider launches, Workcell converts it to a temporary host-mounted token
+handoff outside mounted provider state, moves it through a transient runtime
+handoff file with the Workcell entrypoint as PID 1, unlinks the mounted handoff
+file, and exports it as `COPILOT_GITHUB_TOKEN` only for the managed Copilot
+child.
+
+Google Antigravity CLI is not a supported agent yet. Do not configure
+`--agent antigravity`, planned credential keys, or host provider-home state
+until the matching Workcell adapter support phase lands with docs and
+certification.
 
 Check the host-side view at any time:
 
@@ -154,10 +174,11 @@ workcell --agent codex --agent-autonomy prompt --workspace /path/to/repo
 
 - [Codex quickstart](examples/quickstart-codex.md)
 - [Claude quickstart](examples/quickstart-claude.md)
+- [Copilot quickstart](examples/quickstart-copilot.md)
 - [Gemini quickstart](examples/quickstart-gemini.md)
 
-There is no Copilot or Antigravity quickstart in current releases. Each planned
-provider will get a quickstart only when support is implemented and certified.
+There is no Antigravity quickstart in current releases. That planned provider
+will get a quickstart only when Workcell support is implemented and certified.
 
 For team rollout patterns on today's local-first product, see
 [Enterprise rollout today](enterprise-rollout.md).

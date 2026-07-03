@@ -10,6 +10,8 @@ hooks_path_bypass=0
 env_config_bypass=0
 path_override_bypass=0
 prefix_args=()
+expect_path_override_arg=""
+expect_chdir_arg=0
 
 git_config_key_is_blocked() {
   local key_lower="$1"
@@ -27,6 +29,16 @@ git_config_spec_is_blocked() {
   local spec="$1"
   local key="${spec%%=*}"
   local key_lower="${key,,}"
+  local value=""
+
+  if [[ "${spec}" == *"="* ]]; then
+    value="${spec#*=}"
+    case "${key_lower}:${value,,}" in
+      core.fsmonitor: | core.fsmonitor:false | core.fsmonitor:0 | core.fsmonitor:no | core.fsmonitor:off)
+        return 1
+        ;;
+    esac
+  fi
 
   git_config_key_is_blocked "${key_lower}"
 }
@@ -34,6 +46,8 @@ git_config_spec_is_blocked() {
 has_hooks_path_env_bypass() {
   local count key_var key key_lower value_var value
 
+  # Inline argv config may disable fsmonitor with explicit false-ish values, but
+  # env-sourced Git config stays fail-closed because it is inherited ambiently.
   if [[ -n "${GIT_CONFIG_PARAMETERS:-}" ]] &&
     { [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.hookspath"* ]] ||
       [[ "${GIT_CONFIG_PARAMETERS,,}" == *"core.askpass"* ]] ||
@@ -227,6 +241,20 @@ has_unsafe_git_env() {
   return 1
 }
 
+git_path_override_is_allowed() {
+  local kind="$1"
+  local value="$2"
+  local normalized="${value%/}"
+
+  case "${kind}:${normalized}" in
+    git-dir:/workspace/.git | work-tree:/workspace)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 loader_path() {
   case "$(uname -m)" in
     x86_64)
@@ -247,6 +275,21 @@ if has_unsafe_git_env; then
 fi
 
 for arg in "$@"; do
+  if [[ "${expect_chdir_arg}" -eq 1 ]]; then
+    prefix_args+=("${arg}")
+    expect_chdir_arg=0
+    continue
+  fi
+
+  if [[ -n "${expect_path_override_arg}" ]]; then
+    prefix_args+=("${arg}")
+    if ! git_path_override_is_allowed "${expect_path_override_arg}" "${arg}"; then
+      path_override_bypass=1
+    fi
+    expect_path_override_arg=""
+    continue
+  fi
+
   if [[ "${skip_next}" -eq 1 ]]; then
     prefix_args+=("${arg}")
     skip_next=0
@@ -269,7 +312,12 @@ for arg in "$@"; do
         expect_config_arg=1
         continue
         ;;
-      -C | --namespace | --super-prefix)
+      -C)
+        prefix_args+=("${arg}")
+        expect_chdir_arg=1
+        continue
+        ;;
+      --namespace | --super-prefix)
         prefix_args+=("${arg}")
         skip_next=1
         continue
@@ -280,10 +328,14 @@ for arg in "$@"; do
         skip_next=1
         continue
         ;;
-      --git-dir | --work-tree)
-        path_override_bypass=1
+      --git-dir)
         prefix_args+=("${arg}")
-        skip_next=1
+        expect_path_override_arg=git-dir
+        continue
+        ;;
+      --work-tree)
+        prefix_args+=("${arg}")
+        expect_path_override_arg=work-tree
         continue
         ;;
       --config-env=*)
@@ -293,8 +345,17 @@ for arg in "$@"; do
         fi
         continue
         ;;
-      --git-dir=* | --work-tree=*)
-        path_override_bypass=1
+      --git-dir=*)
+        if ! git_path_override_is_allowed git-dir "${arg#--git-dir=}"; then
+          path_override_bypass=1
+        fi
+        prefix_args+=("${arg}")
+        continue
+        ;;
+      --work-tree=*)
+        if ! git_path_override_is_allowed work-tree "${arg#--work-tree=}"; then
+          path_override_bypass=1
+        fi
         prefix_args+=("${arg}")
         continue
         ;;

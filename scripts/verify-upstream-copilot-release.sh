@@ -33,7 +33,7 @@ source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-copilot-release.XXXXXX")"
 BUILD_INPUT_MANIFEST_PATH="${TMP_ROOT}/build-input.json"
 RELEASE_METADATA_PATH="${TMP_ROOT}/release.json"
-COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-checksum}"
+COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-auto}"
 COPILOT_NATIVE_HELP_DONE=0
 COPILOT_DOCKER_HELP_DONE=0
 COPILOT_NATIVE_HELP_PLATFORM=""
@@ -219,7 +219,9 @@ detect_docker_copilot_platform() {
 }
 
 ensure_copilot_docker_client() {
+  local candidate=""
   local previous_sandbox_root="${WORKCELL_DOCKER_SANDBOX_ROOT:-}"
+  local seen=" "
 
   if [[ "${COPILOT_DOCKER_CLIENT_READY}" == "1" ]]; then
     return 0
@@ -229,6 +231,22 @@ ensure_copilot_docker_client() {
   fi
   HOST_DOCKER_BIN="$(command -v docker 2>/dev/null)" || return 1
   setup_workcell_trusted_docker_client || return 1
+  if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
+    docker_context_exists "${DOCKER_CONTEXT_NAME}" && docker_context_is_healthy "${DOCKER_CONTEXT_NAME}" || return 1
+  else
+    for candidate in colima default $(docker_context_names); do
+      [[ -n "${candidate}" ]] || continue
+      if [[ "${seen}" == *" ${candidate} "* ]]; then
+        continue
+      fi
+      seen+="${candidate} "
+      if docker_context_exists "${candidate}" && docker_context_is_healthy "${candidate}"; then
+        DOCKER_CONTEXT_NAME="${candidate}"
+        break
+      fi
+    done
+    [[ -n "${DOCKER_CONTEXT_NAME:-}" ]] || return 1
+  fi
   if [[ -n "${WORKCELL_DOCKER_SANDBOX_ROOT:-}" && "${WORKCELL_DOCKER_SANDBOX_ROOT}" != "${previous_sandbox_root}" ]]; then
     COPILOT_DOCKER_CLIENT_OWNS_SANDBOX=1
   fi
@@ -250,12 +268,17 @@ verify_copilot_help_flags_file() {
   local flag
 
   for flag in \
-    --no-custom-instructions \
+    --allow-tool \
+    --available-tools \
     --disable-builtin-mcps \
+    --disallow-temp-dir \
+    --log-dir \
+    --no-ask-user \
+    --no-auto-update \
+    --no-custom-instructions \
     --no-remote \
     --no-remote-export \
-    --secret-env-vars \
-    --available-tools; do
+    --secret-env-vars; do
     if ! grep -Eq -- "(^|[^[:alnum:]_-])${flag}([^[:alnum:]_-]|$)" "${help_path}"; then
       echo "GitHub Copilot CLI v${COPILOT_VERSION} ${label} help is missing managed safety flag ${flag}" >&2
       exit 1

@@ -12,7 +12,9 @@ reproducible runtime for the supported providers.
 
 - keep the safe path one command away
 - run the provider inside the boundary, not on the host
-- mount only the selected workspace
+- mount only the selected workspace as durable host state, with explicit
+  narrow per-session handoff directories only where a reviewed provider auth
+  path requires them
 - keep the container unprivileged by default, with a named nonroot `workcell`
   user in the shipped runtime and validator images
 - enforce network posture at the VM layer

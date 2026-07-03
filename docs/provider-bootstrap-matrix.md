@@ -42,26 +42,35 @@ matching adapter and evidence land.
 | Claude | direct staged `claude_auth` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh` | reviewed exported Claude auth file |
 | Claude | direct staged `claude_api_key` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh` | helper-backed API key path |
 | Claude | `[credentials.claude_auth] resolver = "claude-macos-keychain"` | `host-export-scaffold` | `manual` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh` | records intent and stays fail-closed until a supported export path exists |
+| GitHub Copilot CLI | direct staged `copilot_github_token` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `scripts/container-smoke.sh` | converted to a temporary host-mounted token handoff outside mounted provider state, removed from direct runtime mounts, consumed into a transient runtime handoff file with the Workcell entrypoint as PID 1, and exported to the managed Copilot child as `COPILOT_GITHUB_TOKEN`; host `gh` auth, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, and host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`, `~/.cache/github-copilot`) are not auth sources |
 | Gemini | direct staged `gemini_env` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-status.sh` | reviewed API key or Vertex env-file path |
 | Gemini | direct staged `gemini_oauth` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-status.sh` | reviewed cached Gemini OAuth path |
 | Gemini | direct staged `gemini_projects` supplement | `project-registry-supplement` | `manual` | `tests/scenarios/shared/test-auth-status.sh`, `internal/authpolicy/manage_test.go` | reviewed Gemini project registry input; not a standalone auth mode |
 | Gemini | direct staged `gcloud_adc` supplement | `vertex-supplement` | `manual` | `scripts/verify-invariants.sh`, `docs/examples/gemini-vertex-setup.md` | supplemental Vertex input only; not a standalone Gemini auth mode |
 
-## Planned Copilot CLI Bootstrap Track
+## Copilot CLI Bootstrap Notes
 
-GitHub Copilot CLI is the next provider-parity track, but it has no supported
-bootstrap row yet. Before it can join the current matrix, Workcell must add an
-explicit staged token credential such as `copilot_github_token`, export it only
-to the managed Copilot child process as `COPILOT_GITHUB_TOKEN`, and prevent
-host `~/.copilot`, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, ambient
-`gh auth token`, or whole-home state from becoming implicit inputs.
+Copilot support is intentionally limited to one direct staged credential:
+`copilot_github_token`. For auth-required launches, Workcell converts that
+file into a temporary host-mounted token handoff outside mounted provider
+state, removes the original token file from direct runtime mounts, deletes the
+staged direct-mount copy from the mounted injection bundle, stages it into a
+transient runtime handoff file, unlinks the mounted handoff file, re-execs the
+entrypoint
+without the token in its environment, keeps that entrypoint as PID 1 instead
+of Docker `--init` so `/proc/1/environ` is scrubbed, and exports its value as
+`COPILOT_GITHUB_TOKEN` only for the managed Copilot child process after the
+wrapper unlinks the handoff file. Copilot development-shell or debug-command
+launches also remove the token file and staged copy from direct runtime mounts
+without creating the handoff mount. It is not copied into `COPILOT_HOME`. Host
+Copilot provider state (`~/.copilot`, `~/.config/github-copilot`,
+`~/.cache/github-copilot`), host keychains, `GH_TOKEN`, `GITHUB_TOKEN`,
+ambient `gh auth token`, and whole-home state are not safe-path inputs.
 
-The Copilot bootstrap row is supportable only after deterministic auth-status,
-policy, bootstrap-summary, control-plane seeding, and unsafe-argument tests
-exist. Those tests must prove Copilot auth fallback fails closed outside the
-Workcell-staged `COPILOT_GITHUB_TOKEN` path. The row also needs live provider
-certification proving a non-destructive `copilot -p` launch with staged
-credentials.
+The deterministic bootstrap row is repo-required. Live provider-authenticated
+certification of a non-destructive `copilot -p` launch with staged credentials
+remains a maintainer pre-signing gate for changes that promote or materially
+alter the Copilot support claim.
 
 ## Planned Antigravity CLI Bootstrap Track
 
@@ -102,8 +111,9 @@ The bootstrap summary fields also report the remaining operator handoff:
 
 - [Quickstart: Codex](examples/quickstart-codex.md)
 - [Quickstart: Claude](examples/quickstart-claude.md)
+- [Quickstart: Copilot](examples/quickstart-copilot.md)
 - [Quickstart: Gemini](examples/quickstart-gemini.md)
 - [Gemini Vertex AI setup](examples/gemini-vertex-setup.md)
 
-There is no Copilot or Antigravity quickstart until the matching CLI support
-lands with adapter, auth, and certification evidence.
+There is no Antigravity quickstart until the matching CLI support lands with
+adapter, auth, and certification evidence.

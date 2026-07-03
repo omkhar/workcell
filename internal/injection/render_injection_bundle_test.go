@@ -388,17 +388,19 @@ func TestRenderDocumentsRejectsUnknownKeys(t *testing.T) {
 	}
 	writeText(t, filepath.Join(root, "common.md"), "common\n", 0o600)
 
-	_, err := renderDocuments(map[string]any{
-		"documents": map[string]any{
-			"common": "common.md",
-			"extra":  "common.md",
-		},
-	}, Path(output), Path(root))
-	if err == nil {
-		t.Fatal("renderDocuments() unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), "unsupported keys: extra") {
-		t.Fatalf("renderDocuments() error = %v, want unknown key failure", err)
+	for _, key := range []string{"extra", "copilot"} {
+		_, err := renderDocuments(map[string]any{
+			"documents": map[string]any{
+				"common": "common.md",
+				key:      "common.md",
+			},
+		}, Path(output), Path(root))
+		if err == nil {
+			t.Fatalf("renderDocuments(%s) unexpectedly succeeded", key)
+		}
+		if !strings.Contains(err.Error(), "unsupported keys: "+key) {
+			t.Fatalf("renderDocuments(%s) error = %v, want unknown key failure", key, err)
+		}
 	}
 }
 
@@ -428,6 +430,12 @@ func TestRenderSourcesRejectHostProviderState(t *testing.T) {
 	writeText(t, filepath.Join(root, ".docker", "config.json"), "{}\n", 0o600)
 	writeText(t, filepath.Join(root, ".config", "gh", "hosts.yml"), "github.com:\n  oauth_token: fixture\n", 0o600)
 	writeText(t, filepath.Join(root, ".config", "gcloud", "application_default_credentials.json"), `{"type":"authorized_user"}`+"\n", 0o600)
+	writeText(t, filepath.Join(root, ".config", "git", "credentials"), "https://token@example.com\n", 0o600)
+	writeText(t, filepath.Join(root, ".ssh", "config"), "Host github.com\n", 0o600)
+	writeText(t, filepath.Join(root, ".ssh", "known_hosts"), "github.com ssh-ed25519 AAAA\n", 0o600)
+	writeText(t, filepath.Join(root, ".ssh", "id_ed25519"), "private\n", 0o600)
+	writeText(t, filepath.Join(root, ".netrc"), "machine github.com login x-access-token password token\n", 0o600)
+	writeText(t, filepath.Join(root, "Library", "Keychains", "login.keychain-db"), "keychain\n", 0o600)
 
 	for _, tc := range []struct {
 		name string
@@ -490,7 +498,21 @@ func TestRenderSourcesRejectHostProviderState(t *testing.T) {
 			},
 		},
 		{
-			name: "credentials",
+			name: "credentials github hosts",
+			run: func() error {
+				_, err := renderCredentials(map[string]any{
+					"credentials": map[string]any{
+						"github_hosts": map[string]any{
+							"source":    filepath.Join(root, ".config", "gh", "hosts.yml"),
+							"providers": []any{"codex"},
+						},
+					},
+				}, Path(output), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "credentials gcloud adc",
 			run: func() error {
 				_, err := renderCredentials(map[string]any{
 					"credentials": map[string]any{
@@ -500,6 +522,81 @@ func TestRenderSourcesRejectHostProviderState(t *testing.T) {
 						},
 					},
 				}, Path(output), "gemini", "strict")
+				return err
+			},
+		},
+		{
+			name: "credentials xdg git auth",
+			run: func() error {
+				_, err := renderCredentials(map[string]any{
+					"credentials": map[string]any{
+						"github_hosts": map[string]any{
+							"source":    filepath.Join(root, ".config", "git", "credentials"),
+							"providers": []any{"codex"},
+						},
+					},
+				}, Path(output), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "credentials netrc auth",
+			run: func() error {
+				_, err := renderCredentials(map[string]any{
+					"credentials": map[string]any{
+						"github_hosts": map[string]any{
+							"source":    filepath.Join(root, ".netrc"),
+							"providers": []any{"codex"},
+						},
+					},
+				}, Path(output), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "credentials keychain",
+			run: func() error {
+				_, err := renderCredentials(map[string]any{
+					"credentials": map[string]any{
+						"github_hosts": map[string]any{
+							"source":    filepath.Join(root, "Library", "Keychains", "login.keychain-db"),
+							"providers": []any{"codex"},
+						},
+					},
+				}, Path(output), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "ssh config",
+			run: func() error {
+				_, err := renderSSH(map[string]any{
+					"ssh": map[string]any{
+						"config": filepath.Join(root, ".ssh", "config"),
+					},
+				}, Path(output), Path(root), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "ssh known hosts",
+			run: func() error {
+				_, err := renderSSH(map[string]any{
+					"ssh": map[string]any{
+						"known_hosts": filepath.Join(root, ".ssh", "known_hosts"),
+					},
+				}, Path(output), Path(root), "codex", "strict")
+				return err
+			},
+		},
+		{
+			name: "ssh identities",
+			run: func() error {
+				_, err := renderSSH(map[string]any{
+					"ssh": map[string]any{
+						"identities": []any{filepath.Join(root, ".ssh", "id_ed25519")},
+					},
+				}, Path(output), Path(root), "codex", "strict")
 				return err
 			},
 		},

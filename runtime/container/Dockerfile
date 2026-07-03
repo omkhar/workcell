@@ -200,7 +200,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.196
+ARG CLAUDE_VERSION=2.1.197
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
@@ -210,10 +210,10 @@ ARG CLAUDE_VERSION=2.1.196
 # the CODEX_SHA256 values for arm64 and amd64 below.
 ARG CODEX_VERSION=0.142.4
 # GitHub Copilot CLI native binary version and SHA256 checksums for each Linux
-# architecture. Workcell pins the non-prerelease GitHub release asset here;
-# support promotion must keep token auth explicit through copilot_github_token
-# instead of host GitHub CLI state.
-ARG COPILOT_VERSION=1.0.65
+# architecture. Workcell pins the non-prerelease GitHub release asset and keeps
+# token auth explicit through copilot_github_token instead of host GitHub CLI
+# state.
+ARG COPILOT_VERSION=1.0.67
 ARG CODEX_RELEASE_URL=
 ARG COPILOT_RELEASE_URL=
 ARG RUST_VERSION=1.96.0
@@ -288,11 +288,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="05aa9189d335d1e921ca9608acd699193e661559aff56704456ce5bda6fd4dd8"; \
+      CLAUDE_SHA256="fb48473c467c27615ac799a754f4ef0b68c363e4596cefbb59c3815d51a0cc8a"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="eb933c6dd5534db89b83ba09009d5c0932bd1395f7e3bb0f34ba37eec37bbade"; \
+      CLAUDE_SHA256="f54e69cbc89b2da61a415700af7ff52a147e862517d4f1b0eecf768448cf7f83"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -371,11 +371,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       COPILOT_PLATFORM="linux-arm64"; \
-      COPILOT_SHA256="e9f4e570cfe85e7be4a3be4b74eb6564c3f96e97cb1162bcc6282cd1f820c686"; \
+      COPILOT_SHA256="f8d9d6c7b54bfd5a98200e67a3439ef3278061f8131520497107626a763c3f63"; \
       ;; \
     amd64) \
       COPILOT_PLATFORM="linux-x64"; \
-      COPILOT_SHA256="da36be29a5afc7c6cef63b25ac10ee1862216a0f5efabed502ed42c4e0f62af8"; \
+      COPILOT_SHA256="c6d251de20d14415ebd6af00bfb6a8e3854094b49fa49fb7f3df2bfa64f6db3b"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -399,7 +399,7 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
      fi \
   && echo "${COPILOT_SHA256}  /tmp/copilot.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/copilot.tar.gz -C /tmp copilot \
-  && install -m 0644 /tmp/copilot /usr/local/libexec/workcell/real/copilot \
+  && install -m 0755 /tmp/copilot /usr/local/libexec/workcell/real/copilot \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/copilot \
   && rm -f /tmp/copilot.tar.gz /tmp/copilot
 
@@ -522,6 +522,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/libexec/workcell/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/codex \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/claude \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/copilot \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/gemini \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/workcell-entrypoint \
   && ln -sf /usr/local/libexec/workcell/apt-wrapper.sh /usr/local/bin/apt \
@@ -529,6 +530,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/node \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/codex \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/claude \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/copilot \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/gemini \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/local/bin/git \
   && ln -sf /usr/local/libexec/workcell/core/git /usr/bin/git \

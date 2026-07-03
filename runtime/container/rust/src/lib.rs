@@ -56,6 +56,15 @@ enum ProtectedRuntime {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ApprovedWrapper {
+    None,
+    Development,
+    Git,
+    Node,
+    Provider,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct StatSignature {
     dev: u64,
     ino: u64,
@@ -92,13 +101,29 @@ const PROTECTED_RUNTIME_PATHS: &[(ProtectedRuntime, &str)] = &[
     ),
 ];
 
-const APPROVED_WRAPPER_SCRIPTS: &[&str] = &[
-    "/usr/local/libexec/workcell/development-wrapper.sh",
-    "/usr/local/libexec/workcell/git-wrapper.sh",
-    "/usr/local/libexec/workcell/node-wrapper.sh",
-    "/usr/local/libexec/workcell/provider-wrapper.sh",
+const APPROVED_WRAPPER_SCRIPTS: &[(ApprovedWrapper, &str)] = &[
+    (
+        ApprovedWrapper::Development,
+        "/usr/local/libexec/workcell/development-wrapper.sh",
+    ),
+    (
+        ApprovedWrapper::Git,
+        "/usr/local/libexec/workcell/git-wrapper.sh",
+    ),
+    (
+        ApprovedWrapper::Node,
+        "/usr/local/libexec/workcell/node-wrapper.sh",
+    ),
+    (
+        ApprovedWrapper::Provider,
+        "/usr/local/libexec/workcell/provider-wrapper.sh",
+    ),
 ];
 const APPROVED_WRAPPER_LAUNCHERS: &[&str] = &["/bin/bash"];
+const APPROVED_NATIVE_LAUNCHERS: &[&str] = &[
+    "/usr/local/libexec/workcell/core/launcher",
+    "/usr/local/libexec/workcell/core/git",
+];
 
 const MUTABLE_EXEC_ROOTS: &[&str] = &["/workspace", "/state"];
 const ALLOWED_LD_PRELOAD: &str = "/usr/local/lib/libworkcell_exec_guard.so";
@@ -113,11 +138,15 @@ const SYS_EXECVE: c_long = -1;
 #[cfg(not(target_os = "linux"))]
 const SYS_EXECVEAT: c_long = -1;
 
-const ARG_BLOCK_MESSAGE: &str = "Workcell blocked git control-plane override: remove --no-verify, git commit -n, --exec-path, --git-dir, --work-tree, or inline hook/include overrides.\n";
+const ARG_BLOCK_MESSAGE_PREFIX: &str =
+    "Workcell blocked git control-plane override: remove unsafe git override (reason: ";
+const ARG_BLOCK_MESSAGE_SUFFIX: &str = ").\n";
 const ENV_BLOCK_MESSAGE: &str = "Workcell blocked git control-plane override: remove GIT_CONFIG_*, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_EXEC_PATH, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_INDEX_FILE, GIT_ASKPASS, GIT_EDITOR, GIT_SEQUENCE_EDITOR, GIT_SSH, GIT_SSH_COMMAND, SSH_ASKPASS, EDITOR, PAGER, or VISUAL overrides.\n";
 const PROTECTED_RUNTIME_BLOCK_MESSAGE: &str =
     "Workcell blocked direct protected runtime execution outside approved wrappers.\n";
 const MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE: &str = "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile.\n";
+const WORKCELL_LAUNCHER_LOADER_ENV_BLOCK_MESSAGE: &str =
+    "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution.\n";
 
 type ExecveFn =
     unsafe extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int;
@@ -542,12 +571,27 @@ fn current_process_wrapper_env_is_clean() -> bool {
             .is_none_or(|value| value.is_empty() || value == ALLOWED_LD_PRELOAD)
 }
 
-fn path_matches_any_same_file(path: &Path, candidates: &[&str]) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    let signature = metadata_signature_from_metadata(&metadata);
+fn env_entry_value<'a>(entry: &'a str, key: &str) -> Option<&'a str> {
+    let (entry_key, value) = entry.split_once('=')?;
+    if entry_key == key { Some(value) } else { None }
+}
 
+fn env_has_unsafe_workcell_launcher_loader_override(env_entries: &[String]) -> bool {
+    env_entries.iter().any(|entry| {
+        env_entry_value(entry, "LD_AUDIT").is_some_and(|value| !value.is_empty())
+            || env_entry_value(entry, "LD_LIBRARY_PATH").is_some_and(|value| !value.is_empty())
+            || env_entry_value(entry, "LD_TRACE_LOADED_OBJECTS")
+                .is_some_and(|value| !value.is_empty())
+            || env_entry_value(entry, "LD_PRELOAD")
+                .is_some_and(|value| !value.is_empty() && value != ALLOWED_LD_PRELOAD)
+    })
+}
+
+fn path_is_workcell_native_launcher(path: &str) -> bool {
+    !path.is_empty() && path_matches_any_same_file(Path::new(path), APPROVED_NATIVE_LAUNCHERS)
+}
+
+fn stat_signature_matches_any_same_file(signature: &StatSignature, candidates: &[&str]) -> bool {
     candidates.iter().any(|candidate| {
         canonicalize_existing_path(candidate)
             .and_then(|resolved| fs::metadata(resolved).ok())
@@ -558,6 +602,41 @@ fn path_matches_any_same_file(path: &Path, candidates: &[&str]) -> bool {
     })
 }
 
+fn fd_matches_any_same_file(fd: c_int, candidates: &[&str]) -> bool {
+    duplicate_fd_file(fd)
+        .and_then(|file| file.metadata().ok())
+        .map(|metadata| {
+            stat_signature_matches_any_same_file(
+                &metadata_signature_from_metadata(&metadata),
+                candidates,
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn fd_matches_workcell_native_launcher(fd: c_int) -> bool {
+    fd_matches_any_same_file(fd, APPROVED_NATIVE_LAUNCHERS)
+}
+
+fn should_block_workcell_launcher_loader_env(path: &str, env_entries: &[String]) -> bool {
+    path_is_workcell_native_launcher(path)
+        && env_has_unsafe_workcell_launcher_loader_override(env_entries)
+}
+
+fn should_block_workcell_launcher_fd_loader_env(fd: c_int, env_entries: &[String]) -> bool {
+    fd_matches_workcell_native_launcher(fd)
+        && env_has_unsafe_workcell_launcher_loader_override(env_entries)
+}
+
+fn path_matches_any_same_file(path: &Path, candidates: &[&str]) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    let signature = metadata_signature_from_metadata(&metadata);
+
+    stat_signature_matches_any_same_file(&signature, candidates)
+}
+
 fn current_process_executable_is_approved_wrapper_launcher() -> bool {
     let Ok(current_exe) = fs::read_link("/proc/self/exe") else {
         return false;
@@ -566,13 +645,34 @@ fn current_process_executable_is_approved_wrapper_launcher() -> bool {
     path_matches_any_same_file(&current_exe, APPROVED_WRAPPER_LAUNCHERS)
 }
 
-fn current_process_uses_approved_wrapper() -> bool {
-    if !current_process_wrapper_env_is_clean() {
+fn approved_wrapper_requires_native_launcher_parent(wrapper: ApprovedWrapper) -> bool {
+    matches!(
+        wrapper,
+        ApprovedWrapper::Git | ApprovedWrapper::Node | ApprovedWrapper::Provider
+    )
+}
+
+fn current_process_parent_is_approved_native_launcher() -> bool {
+    let parent_pid = unsafe { libc::getppid() };
+    if parent_pid < 1 {
         return false;
     }
 
-    let Ok(cmdline) = fs::read("/proc/self/cmdline") else {
+    let parent_exe_path = format!("/proc/{parent_pid}/exe");
+    let Ok(parent_exe) = fs::read_link(parent_exe_path) else {
         return false;
+    };
+
+    path_matches_any_same_file(&parent_exe, APPROVED_NATIVE_LAUNCHERS)
+}
+
+fn current_process_approved_wrapper() -> ApprovedWrapper {
+    if !current_process_wrapper_env_is_clean() {
+        return ApprovedWrapper::None;
+    }
+
+    let Ok(cmdline) = fs::read("/proc/self/cmdline") else {
+        return ApprovedWrapper::None;
     };
     let args: Vec<String> = cmdline
         .split(|byte| *byte == 0)
@@ -581,19 +681,50 @@ fn current_process_uses_approved_wrapper() -> bool {
         .collect();
 
     if !current_process_executable_is_approved_wrapper_launcher() {
-        return false;
+        return ApprovedWrapper::None;
     }
 
     let Some(candidate) = args.get(1) else {
-        return false;
+        return ApprovedWrapper::None;
     };
 
-    APPROVED_WRAPPER_SCRIPTS.iter().any(|approved| {
-        candidate == approved
-            || fs::canonicalize(candidate)
-                .ok()
-                .is_some_and(|resolved| resolved.to_string_lossy() == *approved)
-    })
+    let wrapper = APPROVED_WRAPPER_SCRIPTS
+        .iter()
+        .find_map(|(kind, approved)| {
+            if candidate == approved
+                || fs::canonicalize(candidate)
+                    .ok()
+                    .is_some_and(|resolved| resolved.to_string_lossy() == *approved)
+            {
+                Some(*kind)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(ApprovedWrapper::None);
+
+    if approved_wrapper_requires_native_launcher_parent(wrapper)
+        && !current_process_parent_is_approved_native_launcher()
+    {
+        return ApprovedWrapper::None;
+    }
+
+    wrapper
+}
+
+fn approved_wrapper_allows_runtime(wrapper: ApprovedWrapper, kind: ProtectedRuntime) -> bool {
+    match wrapper {
+        ApprovedWrapper::Provider => matches!(
+            kind,
+            ProtectedRuntime::Codex
+                | ProtectedRuntime::Claude
+                | ProtectedRuntime::Copilot
+                | ProtectedRuntime::Node
+        ),
+        ApprovedWrapper::Git => kind == ProtectedRuntime::Git,
+        ApprovedWrapper::Node => kind == ProtectedRuntime::Node,
+        ApprovedWrapper::Development | ApprovedWrapper::None => false,
+    }
 }
 
 fn read_all(file: &mut File) -> Option<Vec<u8>> {
@@ -967,15 +1098,18 @@ fn loader_fd_targets_mutable_native_exec(fd: c_int, args: &[String]) -> bool {
             .any(|target| loader_arg_targets_mutable_native_exec(target))
 }
 
-fn protected_runtime_exec_blocked(kind: ProtectedRuntime, approved_wrapper: bool) -> bool {
-    kind != ProtectedRuntime::None && (kind == ProtectedRuntime::Copilot || !approved_wrapper)
+fn protected_runtime_exec_blocked(
+    kind: ProtectedRuntime,
+    approved_wrapper: ApprovedWrapper,
+) -> bool {
+    kind != ProtectedRuntime::None && !approved_wrapper_allows_runtime(approved_wrapper, kind)
 }
 
 fn should_block_protected_runtime_kind(kind: ProtectedRuntime) -> bool {
     if kind == ProtectedRuntime::None {
         return false;
     }
-    protected_runtime_exec_blocked(kind, current_process_uses_approved_wrapper())
+    protected_runtime_exec_blocked(kind, current_process_approved_wrapper())
 }
 
 fn should_block_protected_runtime_exec(
@@ -1047,7 +1181,21 @@ fn git_config_key_is_blocked(key: &str) -> bool {
 
 fn git_config_spec_is_blocked(spec: &str) -> bool {
     let key = spec.split_once('=').map(|(key, _)| key).unwrap_or(spec);
+    let value = spec.split_once('=').map(|(_, value)| value);
+    if let Some(value) = value
+        && git_config_spec_value_is_explicit_safe(key, value)
+    {
+        return false;
+    }
     !key.is_empty() && git_config_key_is_blocked(key)
+}
+
+fn git_config_spec_value_is_explicit_safe(key: &str, value: &str) -> bool {
+    key.eq_ignore_ascii_case("core.fsmonitor")
+        && matches!(
+            value.to_ascii_lowercase().as_str(),
+            "" | "false" | "0" | "no" | "off"
+        )
 }
 
 fn stat_matches_protected_git(candidate: &StatSignature) -> bool {
@@ -1075,21 +1223,47 @@ fn is_git_path(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(test)]
 fn should_block(path: &str, args: &[String]) -> bool {
+    should_block_reason(path, args).is_some()
+}
+
+fn should_block_reason(path: &str, args: &[String]) -> Option<&'static str> {
     if !is_git_path(path) || args.is_empty() {
-        return false;
+        return None;
     }
 
     let mut saw_commit = false;
     let mut expect_config_arg = false;
+    let mut expect_path_override_arg: Option<GitPathOverrideKind> = None;
+    let mut expect_chdir_arg = false;
 
     for arg in args.iter().skip(1) {
+        if expect_chdir_arg {
+            expect_chdir_arg = false;
+            continue;
+        }
+
+        if let Some(kind) = expect_path_override_arg.take() {
+            if !git_path_override_is_allowed(kind, arg) {
+                return Some(git_path_override_reason(kind));
+            }
+            continue;
+        }
+
         if expect_config_arg {
             expect_config_arg = false;
             if git_config_spec_is_blocked(arg) {
-                return true;
+                return Some("unsafe-inline-config");
             }
             continue;
+        }
+
+        if arg == "--" {
+            break;
+        }
+        if saw_commit && git_commit_short_arg_invokes_no_verify(arg) {
+            return Some("unsafe-commit-short-no-verify");
         }
 
         match arg.as_str() {
@@ -1097,7 +1271,20 @@ fn should_block(path: &str, args: &[String]) -> bool {
                 expect_config_arg = true;
                 continue;
             }
-            "--exec-path" | "--git-dir" | "--work-tree" | "--no-verify" => return true,
+            "-C" => {
+                expect_chdir_arg = true;
+                continue;
+            }
+            "--exec-path" => return Some("unsafe-exec-path"),
+            "--no-verify" => return Some("unsafe-no-verify"),
+            "--git-dir" => {
+                expect_path_override_arg = Some(GitPathOverrideKind::GitDir);
+                continue;
+            }
+            "--work-tree" => {
+                expect_path_override_arg = Some(GitPathOverrideKind::WorkTree);
+                continue;
+            }
             "commit" => saw_commit = true,
             _ => {}
         }
@@ -1105,21 +1292,45 @@ fn should_block(path: &str, args: &[String]) -> bool {
         if let Some(spec) = arg.strip_prefix("--config-env=")
             && git_config_spec_is_blocked(spec)
         {
-            return true;
+            return Some("unsafe-config-env");
         }
-        if arg.starts_with("--exec-path=")
-            || arg.starts_with("--git-dir=")
-            || arg.starts_with("--work-tree=")
+        if arg.starts_with("--exec-path=") {
+            return Some("unsafe-exec-path");
+        }
+        if let Some(value) = arg.strip_prefix("--git-dir=")
+            && !git_path_override_is_allowed(GitPathOverrideKind::GitDir, value)
         {
-            return true;
+            return Some("unsafe-git-dir");
+        }
+        if let Some(value) = arg.strip_prefix("--work-tree=")
+            && !git_path_override_is_allowed(GitPathOverrideKind::WorkTree, value)
+        {
+            return Some("unsafe-work-tree");
         }
     }
 
-    saw_commit
-        && args
-            .iter()
-            .skip(1)
-            .any(|arg| git_commit_short_arg_invokes_no_verify(arg))
+    None
+}
+
+#[derive(Clone, Copy)]
+enum GitPathOverrideKind {
+    GitDir,
+    WorkTree,
+}
+
+fn git_path_override_reason(kind: GitPathOverrideKind) -> &'static str {
+    match kind {
+        GitPathOverrideKind::GitDir => "unsafe-git-dir",
+        GitPathOverrideKind::WorkTree => "unsafe-work-tree",
+    }
+}
+
+fn git_path_override_is_allowed(kind: GitPathOverrideKind, value: &str) -> bool {
+    let value = value.trim_end_matches('/');
+    match kind {
+        GitPathOverrideKind::GitDir => value == "/workspace/.git",
+        GitPathOverrideKind::WorkTree => value == "/workspace",
+    }
 }
 
 fn git_commit_short_arg_invokes_no_verify(arg: &str) -> bool {
@@ -1142,13 +1353,24 @@ fn env_has_unsafe_git_override(env_entries: &[String]) -> bool {
     let mut count = 0usize;
 
     for entry in env_entries {
+        // Inline argv config may disable fsmonitor with explicit false-ish
+        // values, but env-sourced Git config stays fail-closed because it is
+        // inherited ambiently.
         if let Some(value) = entry.strip_prefix("GIT_CONFIG_PARAMETERS=") {
             let lower = value.to_ascii_lowercase();
-            if lower.contains("core.hookspath")
+            if lower.contains("core.askpass")
+                || lower.contains("core.editor")
                 || lower.contains("core.fsmonitor")
+                || lower.contains("core.hookspath")
+                || lower.contains("core.pager")
+                || lower.contains("core.sshcommand")
                 || lower.contains("core.worktree")
+                || lower.contains("credential.helper")
+                || lower.contains("diff.external")
                 || lower.contains("include.path")
                 || lower.contains("includeif.")
+                || lower.contains("pager.")
+                || lower.contains("sequence.editor")
             {
                 return true;
             }
@@ -1227,12 +1449,14 @@ unsafe fn errno_location() -> *mut c_int {
     unsafe { libc::__error() }
 }
 
-fn report_block(env_bypass: bool) {
-    report(if env_bypass {
-        ENV_BLOCK_MESSAGE
-    } else {
-        ARG_BLOCK_MESSAGE
-    });
+fn report_env_block() {
+    report(ENV_BLOCK_MESSAGE);
+}
+
+fn report_arg_block(reason: &str) {
+    report(ARG_BLOCK_MESSAGE_PREFIX);
+    report(reason);
+    report(ARG_BLOCK_MESSAGE_SUFFIX);
 }
 
 fn report_protected_runtime_block() {
@@ -1241,6 +1465,10 @@ fn report_protected_runtime_block() {
 
 fn report_mutable_native_exec_block() {
     report(MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE);
+}
+
+fn report_workcell_launcher_loader_env_block() {
+    report(WORKCELL_LAUNCHER_LOADER_ENV_BLOCK_MESSAGE);
 }
 
 unsafe fn load_symbol<T: Copy>(name: &CStr) -> T {
@@ -1378,6 +1606,10 @@ pub unsafe extern "C" fn execve(
     let args = collect_cstring_array(argv);
     let env_entries = collect_cstring_array(effective_env_ptr(envp));
 
+    if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
+        report_workcell_launcher_loader_env_block();
+        return -1;
+    }
     if should_block_protected_runtime_exec(&path_string, &args, &env_entries) {
         report_protected_runtime_block();
         return -1;
@@ -1387,11 +1619,11 @@ pub unsafe extern "C" fn execve(
         return -1;
     }
     if is_git_path(&path_string) && env_has_unsafe_git_override(&env_entries) {
-        report_block(true);
+        report_env_block();
         return -1;
     }
-    if should_block(&path_string, &args) {
-        report_block(false);
+    if let Some(reason) = should_block_reason(&path_string, &args) {
+        report_arg_block(reason);
         return -1;
     }
 
@@ -1404,6 +1636,10 @@ pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) 
     let args = collect_cstring_array(argv);
     let env_entries = collect_cstring_array(unsafe { environ.cast() });
 
+    if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
+        report_workcell_launcher_loader_env_block();
+        return -1;
+    }
     if should_block_protected_runtime_exec(&path_string, &args, &env_entries) {
         report_protected_runtime_block();
         return -1;
@@ -1413,11 +1649,11 @@ pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) 
         return -1;
     }
     if is_git_path(&path_string) && env_has_unsafe_git_override(&env_entries) {
-        report_block(true);
+        report_env_block();
         return -1;
     }
-    if should_block(&path_string, &args) {
-        report_block(false);
+    if let Some(reason) = should_block_reason(&path_string, &args) {
+        report_arg_block(reason);
         return -1;
     }
 
@@ -1431,6 +1667,10 @@ pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char)
     let env_entries = collect_cstring_array(unsafe { environ.cast() });
     let effective_path = resolve_exec_search_target(&file_string, &env_entries);
 
+    if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
+        report_workcell_launcher_loader_env_block();
+        return -1;
+    }
     if should_block_protected_runtime_exec(&effective_path, &args, &env_entries) {
         report_protected_runtime_block();
         return -1;
@@ -1440,11 +1680,11 @@ pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char)
         return -1;
     }
     if is_git_path(&file_string) && env_has_unsafe_git_override(&env_entries) {
-        report_block(true);
+        report_env_block();
         return -1;
     }
-    if should_block(&file_string, &args) {
-        report_block(false);
+    if let Some(reason) = should_block_reason(&file_string, &args) {
+        report_arg_block(reason);
         return -1;
     }
 
@@ -1462,6 +1702,10 @@ pub unsafe extern "C" fn execvpe(
     let env_entries = collect_cstring_array(effective_env_ptr(envp));
     let effective_path = resolve_exec_search_target(&file_string, &env_entries);
 
+    if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
+        report_workcell_launcher_loader_env_block();
+        return -1;
+    }
     if should_block_protected_runtime_exec(&effective_path, &args, &env_entries) {
         report_protected_runtime_block();
         return -1;
@@ -1471,11 +1715,11 @@ pub unsafe extern "C" fn execvpe(
         return -1;
     }
     if is_git_path(&file_string) && env_has_unsafe_git_override(&env_entries) {
-        report_block(true);
+        report_env_block();
         return -1;
     }
-    if should_block(&file_string, &args) {
-        report_block(false);
+    if let Some(reason) = should_block_reason(&file_string, &args) {
+        report_arg_block(reason);
         return -1;
     }
 
@@ -1501,73 +1745,96 @@ pub unsafe extern "C" fn execveat(
             pathname_string.clone()
         };
 
-    let (protected_target, mutable_native_target, mutable_shebang_protected_target) =
-        if (flags & AT_EMPTY_PATH_FLAG) != 0 && pathname_string.is_empty() {
-            let mut protected_target = classify_protected_runtime_fd(dirfd);
-            if protected_target == ProtectedRuntime::None {
-                protected_target = classify_loader_fd_target(dirfd, &args);
-            }
-            (
-                protected_target,
-                file_descriptor_is_mutable_native_exec(dirfd)
-                    || loader_fd_targets_mutable_native_exec(dirfd, &args),
-                file_descriptor_is_mutable_shebang_to_protected_runtime(dirfd, &env_entries),
-            )
-        } else {
-            let mut protected_target = ProtectedRuntime::None;
-            let mut mutable_native_target = false;
-            let mut mutable_shebang_target = false;
+    let (
+        protected_target,
+        mutable_native_target,
+        mutable_shebang_protected_target,
+        native_launcher_target,
+    ) = if (flags & AT_EMPTY_PATH_FLAG) != 0 && pathname_string.is_empty() {
+        let mut protected_target = classify_protected_runtime_fd(dirfd);
+        if protected_target == ProtectedRuntime::None {
+            protected_target = classify_loader_fd_target(dirfd, &args);
+        }
+        (
+            protected_target,
+            file_descriptor_is_mutable_native_exec(dirfd)
+                || loader_fd_targets_mutable_native_exec(dirfd, &args),
+            file_descriptor_is_mutable_shebang_to_protected_runtime(dirfd, &env_entries),
+            fd_matches_workcell_native_launcher(dirfd),
+        )
+    } else {
+        let mut protected_target = ProtectedRuntime::None;
+        let mut mutable_native_target = false;
+        let mut mutable_shebang_target = false;
+        let mut native_launcher_target = false;
 
-            if let Ok(c_path) = CString::new(pathname_string.as_bytes()) {
-                unsafe {
-                    let mut stat_buf = MaybeUninit::<libc::stat>::uninit();
-                    if libc::fstatat(dirfd, c_path.as_ptr(), stat_buf.as_mut_ptr(), 0) == 0
-                        && let stat_buf = stat_buf.assume_init()
-                        && let Some(signature) = stat_signature_from_stat(&stat_buf)
-                    {
-                        protected_target = stat_matches_protected_runtime(&signature);
+        if let Ok(c_path) = CString::new(pathname_string.as_bytes()) {
+            unsafe {
+                let mut stat_buf = MaybeUninit::<libc::stat>::uninit();
+                if libc::fstatat(dirfd, c_path.as_ptr(), stat_buf.as_mut_ptr(), 0) == 0
+                    && let stat_buf = stat_buf.assume_init()
+                    && let Some(signature) = stat_signature_from_stat(&stat_buf)
+                {
+                    protected_target = stat_matches_protected_runtime(&signature);
+                    native_launcher_target =
+                        stat_signature_matches_any_same_file(&signature, APPROVED_NATIVE_LAUNCHERS);
+                }
+
+                let candidate_fd =
+                    libc::openat(dirfd, c_path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
+                if candidate_fd >= 0 {
+                    if protected_target == ProtectedRuntime::None {
+                        protected_target = classify_loader_fd_target(candidate_fd, &args);
                     }
-
-                    let candidate_fd =
-                        libc::openat(dirfd, c_path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
-                    if candidate_fd >= 0 {
-                        if protected_target == ProtectedRuntime::None {
-                            protected_target = classify_loader_fd_target(candidate_fd, &args);
-                        }
+                    if !native_launcher_target {
+                        native_launcher_target = fd_matches_workcell_native_launcher(candidate_fd);
+                    }
+                    mutable_native_target = file_descriptor_is_mutable_native_exec(candidate_fd);
+                    if !mutable_native_target {
                         mutable_native_target =
-                            file_descriptor_is_mutable_native_exec(candidate_fd);
-                        if !mutable_native_target {
-                            mutable_native_target =
-                                loader_fd_targets_mutable_native_exec(candidate_fd, &args);
-                        }
-                        if !mutable_native_target {
-                            mutable_shebang_target =
-                                file_descriptor_is_mutable_shebang_to_protected_runtime(
-                                    candidate_fd,
-                                    &env_entries,
-                                );
-                        }
-                        libc::close(candidate_fd);
+                            loader_fd_targets_mutable_native_exec(candidate_fd, &args);
                     }
+                    if !mutable_native_target {
+                        mutable_shebang_target =
+                            file_descriptor_is_mutable_shebang_to_protected_runtime(
+                                candidate_fd,
+                                &env_entries,
+                            );
+                    }
+                    libc::close(candidate_fd);
                 }
             }
+        }
 
-            if protected_target == ProtectedRuntime::None {
-                protected_target = classify_loader_target(&pathname_string, &args);
-            }
-            if !mutable_native_target {
-                mutable_native_target = loader_targets_mutable_native_exec(&pathname_string, &args);
-            }
+        if protected_target == ProtectedRuntime::None {
+            protected_target = classify_loader_target(&pathname_string, &args);
+        }
+        if !mutable_native_target {
+            mutable_native_target = loader_targets_mutable_native_exec(&pathname_string, &args);
+        }
 
-            (
-                protected_target,
-                mutable_native_target,
-                mutable_shebang_target,
-            )
-        };
+        (
+            protected_target,
+            mutable_native_target,
+            mutable_shebang_target,
+            native_launcher_target,
+        )
+    };
 
     if should_block_protected_runtime_kind(protected_target) || mutable_shebang_protected_target {
         report_protected_runtime_block();
+        return -1;
+    }
+    let launcher_loader_env_blocked = if (flags & AT_EMPTY_PATH_FLAG) != 0
+        && pathname_string.is_empty()
+    {
+        should_block_workcell_launcher_fd_loader_env(dirfd, &env_entries)
+    } else {
+        (native_launcher_target && env_has_unsafe_workcell_launcher_loader_override(&env_entries))
+            || should_block_workcell_launcher_loader_env(&pathname_string, &env_entries)
+    };
+    if launcher_loader_env_blocked {
+        report_workcell_launcher_loader_env_block();
         return -1;
     }
     if mutable_native_target {
@@ -1575,11 +1842,11 @@ pub unsafe extern "C" fn execveat(
         return -1;
     }
     if git_target && env_has_unsafe_git_override(&env_entries) {
-        report_block(true);
+        report_env_block();
         return -1;
     }
-    if git_target && should_block(&effective_path, &args) {
-        report_block(false);
+    if git_target && let Some(reason) = should_block_reason(&effective_path, &args) {
+        report_arg_block(reason);
         return -1;
     }
 
@@ -1595,6 +1862,10 @@ pub unsafe extern "C" fn fexecve(
     let args = collect_cstring_array(argv);
     let env_entries = collect_cstring_array(effective_env_ptr(envp));
 
+    if should_block_workcell_launcher_fd_loader_env(fd, &env_entries) {
+        report_workcell_launcher_loader_env_block();
+        return -1;
+    }
     if should_block_protected_runtime_kind(classify_protected_runtime_fd(fd))
         || should_block_protected_runtime_kind(classify_loader_fd_target(fd, &args))
     {
@@ -1612,11 +1883,13 @@ pub unsafe extern "C" fn fexecve(
         return -1;
     }
     if fd_matches_protected_git(fd) && env_has_unsafe_git_override(&env_entries) {
-        report_block(true);
+        report_env_block();
         return -1;
     }
-    if fd_matches_protected_git(fd) && should_block("/usr/local/bin/git", &args) {
-        report_block(false);
+    if fd_matches_protected_git(fd)
+        && let Some(reason) = should_block_reason("/usr/local/bin/git", &args)
+    {
+        report_arg_block(reason);
         return -1;
     }
 
@@ -1636,6 +1909,10 @@ pub unsafe extern "C" fn posix_spawn(
     let args = collect_cstring_array(argv);
     let env_entries = collect_cstring_array(effective_env_ptr(envp));
 
+    if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
+        report_workcell_launcher_loader_env_block();
+        return libc::EPERM;
+    }
     if should_block_protected_runtime_exec(&path_string, &args, &env_entries) {
         report_protected_runtime_block();
         return libc::EPERM;
@@ -1645,11 +1922,11 @@ pub unsafe extern "C" fn posix_spawn(
         return libc::EPERM;
     }
     if is_git_path(&path_string) && env_has_unsafe_git_override(&env_entries) {
-        report_block(true);
+        report_env_block();
         return libc::EPERM;
     }
-    if should_block(&path_string, &args) {
-        report_block(false);
+    if let Some(reason) = should_block_reason(&path_string, &args) {
+        report_arg_block(reason);
         return libc::EPERM;
     }
 
@@ -1670,6 +1947,10 @@ pub unsafe extern "C" fn posix_spawnp(
     let env_entries = collect_cstring_array(effective_env_ptr(envp));
     let effective_path = resolve_exec_search_target(&file_string, &env_entries);
 
+    if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
+        report_workcell_launcher_loader_env_block();
+        return libc::EPERM;
+    }
     if should_block_protected_runtime_exec(&effective_path, &args, &env_entries) {
         report_protected_runtime_block();
         return libc::EPERM;
@@ -1679,11 +1960,11 @@ pub unsafe extern "C" fn posix_spawnp(
         return libc::EPERM;
     }
     if is_git_path(&file_string) && env_has_unsafe_git_override(&env_entries) {
-        report_block(true);
+        report_env_block();
         return libc::EPERM;
     }
-    if should_block(&file_string, &args) {
-        report_block(false);
+    if let Some(reason) = should_block_reason(&file_string, &args) {
+        report_arg_block(reason);
         return libc::EPERM;
     }
 
@@ -1741,6 +2022,84 @@ mod tests {
         assert!(!git_commit_short_arg_invokes_no_verify("-mnote"));
         assert!(!git_commit_short_arg_invokes_no_verify("-uno"));
         assert!(!git_commit_short_arg_invokes_no_verify("--no-verify"));
+        assert!(!should_block(
+            "git",
+            &[
+                "git".to_string(),
+                "commit".to_string(),
+                "--".to_string(),
+                "--no-verify".to_string(),
+            ],
+        ));
+        assert!(!should_block(
+            "git",
+            &[
+                "git".to_string(),
+                "commit".to_string(),
+                "--".to_string(),
+                "-n".to_string(),
+            ],
+        ));
+    }
+
+    #[test]
+    fn git_path_overrides_allow_only_managed_workspace_roots() {
+        assert!(!should_block(
+            "git",
+            &[
+                "git".to_string(),
+                "--git-dir=/workspace/.git".to_string(),
+                "--work-tree=/workspace".to_string(),
+                "status".to_string(),
+            ],
+        ));
+        assert!(!should_block(
+            "git",
+            &[
+                "git".to_string(),
+                "--git-dir".to_string(),
+                "/workspace/.git".to_string(),
+                "--work-tree".to_string(),
+                "/workspace".to_string(),
+                "status".to_string(),
+            ],
+        ));
+        assert!(should_block(
+            "git",
+            &[
+                "git".to_string(),
+                "-C".to_string(),
+                "/workspace".to_string(),
+                "--git-dir=.git".to_string(),
+                "--work-tree=.".to_string(),
+                "status".to_string(),
+            ],
+        ));
+        assert!(should_block(
+            "git",
+            &[
+                "git".to_string(),
+                "-C".to_string(),
+                "/workspace".to_string(),
+                "--git-dir=.git".to_string(),
+                "-C".to_string(),
+                "/tmp/evil".to_string(),
+                "status".to_string(),
+            ],
+        ));
+        assert!(should_block(
+            "git",
+            &[
+                "git".to_string(),
+                "--git-dir=/tmp/repo/.git".to_string(),
+                "--work-tree=/tmp/repo".to_string(),
+                "status".to_string(),
+            ],
+        ));
+        assert!(!should_block(
+            "git",
+            &["git".to_string(), "--git-dir".to_string()],
+        ));
     }
 
     #[test]
@@ -1788,9 +2147,113 @@ mod tests {
     }
 
     #[test]
+    fn git_config_spec_allows_only_explicit_fsmonitor_disable_values() {
+        assert!(!git_config_spec_is_blocked("core.fsmonitor=false"));
+        assert!(!git_config_spec_is_blocked("core.fsmonitor="));
+        assert!(git_config_spec_is_blocked("core.fsmonitor=/tmp/fsmonitor"));
+    }
+
+    #[test]
     fn env_has_unsafe_git_override_blocks_core_fsmonitor_parameters() {
         assert!(env_has_unsafe_git_override(&[
             "GIT_CONFIG_PARAMETERS='core.fsmonitor=/attacker/fsmonitor'".to_string()
+        ]));
+    }
+
+    #[test]
+    fn env_has_unsafe_git_override_blocks_all_sensitive_config_parameters() {
+        for key in [
+            "core.askpass",
+            "core.editor",
+            "core.pager",
+            "core.sshCommand",
+            "credential.helper",
+            "diff.external",
+            "pager.log",
+            "sequence.editor",
+        ] {
+            assert!(
+                env_has_unsafe_git_override(&[format!("GIT_CONFIG_PARAMETERS='{key}=unsafe'")]),
+                "expected GIT_CONFIG_PARAMETERS {key} to be blocked"
+            );
+        }
+    }
+
+    #[test]
+    fn approved_wrappers_are_runtime_specific() {
+        assert!(!protected_runtime_exec_blocked(
+            ProtectedRuntime::Copilot,
+            ApprovedWrapper::Provider
+        ));
+        assert!(protected_runtime_exec_blocked(
+            ProtectedRuntime::Copilot,
+            ApprovedWrapper::Development
+        ));
+        assert!(protected_runtime_exec_blocked(
+            ProtectedRuntime::Copilot,
+            ApprovedWrapper::Node
+        ));
+        assert!(!protected_runtime_exec_blocked(
+            ProtectedRuntime::Git,
+            ApprovedWrapper::Git
+        ));
+        assert!(protected_runtime_exec_blocked(
+            ProtectedRuntime::Git,
+            ApprovedWrapper::Provider
+        ));
+        assert!(!protected_runtime_exec_blocked(
+            ProtectedRuntime::Node,
+            ApprovedWrapper::Node
+        ));
+        assert!(!protected_runtime_exec_blocked(
+            ProtectedRuntime::Node,
+            ApprovedWrapper::Provider
+        ));
+    }
+
+    #[test]
+    fn protected_runtime_wrappers_require_native_launcher_parent() {
+        assert!(approved_wrapper_requires_native_launcher_parent(
+            ApprovedWrapper::Provider
+        ));
+        assert!(approved_wrapper_requires_native_launcher_parent(
+            ApprovedWrapper::Node
+        ));
+        assert!(approved_wrapper_requires_native_launcher_parent(
+            ApprovedWrapper::Git
+        ));
+        assert!(!approved_wrapper_requires_native_launcher_parent(
+            ApprovedWrapper::Development
+        ));
+        assert!(!approved_wrapper_requires_native_launcher_parent(
+            ApprovedWrapper::None
+        ));
+    }
+
+    #[test]
+    fn workcell_launcher_loader_env_blocks_unsafe_dynamic_loader_overrides() {
+        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+            "LD_PRELOAD=/workspace/preload.so".to_string()
+        ]));
+        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+            "LD_AUDIT=/workspace/audit.so".to_string()
+        ]));
+        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+            "LD_TRACE_LOADED_OBJECTS=1".to_string()
+        ]));
+        assert!(!env_has_unsafe_workcell_launcher_loader_override(&[
+            format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}")
+        ]));
+        assert!(!env_has_unsafe_workcell_launcher_loader_override(&[
+            "LD_PRELOAD=".to_string()
+        ]));
+        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+            format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
+            "LD_PRELOAD=/workspace/preload.so".to_string()
+        ]));
+        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+            "LD_AUDIT=".to_string(),
+            "LD_AUDIT=/workspace/audit.so".to_string()
         ]));
     }
 

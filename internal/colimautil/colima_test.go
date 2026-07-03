@@ -16,7 +16,8 @@ func TestValidateRuntimeMountsAllowsWorkspaceAndReadOnlyCache(t *testing.T) {
 	workspace := filepath.Join(tmp, "workspace")
 	hostInputs := filepath.Join(home, "Library", "Caches", "colima", "workcell-host-inputs")
 	shadow := filepath.Join(home, "Library", "Caches", "colima", "workcell-shadow")
-	for _, path := range []string{home, workspace, hostInputs, shadow} {
+	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	for _, path := range []string{home, workspace, hostInputs, shadow, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -27,6 +28,9 @@ func TestValidateRuntimeMountsAllowsWorkspaceAndReadOnlyCache(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("mounts:\n"+
 		"  - location: "+workspace+"\n"+
 		"    mountPoint: "+workspace+"\n"+
+		"    writable: true\n"+
+		"  - location: "+tokenHandoff+"\n"+
+		"    mountPoint: "+tokenHandoff+"\n"+
 		"    writable: true\n"+
 		"  - location: "+hostInputs+"\n"+
 		"    mountPoint: "+hostInputs+"\n"+
@@ -46,7 +50,8 @@ func TestValidateRuntimeMountsRequiresWorkcellCacheMounts(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
 	workspace := filepath.Join(tmp, "workspace")
-	for _, path := range []string{home, workspace} {
+	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	for _, path := range []string{home, workspace, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -56,6 +61,8 @@ func TestValidateRuntimeMountsRequiresWorkcellCacheMounts(t *testing.T) {
 	configPath := filepath.Join(tmp, "lima.yaml")
 	if err := os.WriteFile(configPath, []byte("mounts:\n"+
 		"  - location: "+workspace+"\n"+
+		"    writable: true\n"+
+		"  - location: "+tokenHandoff+"\n"+
 		"    writable: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +78,8 @@ func TestValidateRuntimeMountsRejectsUnexpectedWritableMount(t *testing.T) {
 	home := filepath.Join(tmp, "home")
 	workspace := filepath.Join(tmp, "workspace")
 	other := filepath.Join(tmp, "other")
-	for _, path := range []string{home, workspace, other} {
+	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	for _, path := range []string{home, workspace, other, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -82,13 +90,15 @@ func TestValidateRuntimeMountsRejectsUnexpectedWritableMount(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("mounts:\n"+
 		"  - location: "+workspace+"\n"+
 		"    writable: true\n"+
+		"  - location: "+tokenHandoff+"\n"+
+		"    writable: true\n"+
 		"  - location: "+other+"\n"+
 		"    writable: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	err := ValidateRuntimeMounts(configPath, workspace, "wcl-fixture")
-	if err == nil || !strings.Contains(err.Error(), "must mount only") {
+	if err == nil || !strings.Contains(err.Error(), "unexpected writable host mount") {
 		t.Fatalf("ValidateRuntimeMounts() error = %v, want writable mount failure", err)
 	}
 }
@@ -99,7 +109,8 @@ func TestValidateProfileConfigAcceptsManagedProfile(t *testing.T) {
 	workspace := filepath.Join(tmp, "workspace")
 	hostInputs := filepath.Join(home, "Library", "Caches", "colima", "workcell-host-inputs")
 	shadow := filepath.Join(home, "Library", "Caches", "colima", "workcell-shadow")
-	for _, path := range []string{home, workspace, hostInputs, shadow} {
+	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	for _, path := range []string{home, workspace, hostInputs, shadow, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -115,6 +126,8 @@ func TestValidateProfileConfigAcceptsManagedProfile(t *testing.T) {
 		"disk: 100\n"+
 		"mounts:\n"+
 		"  - location: "+workspace+"\n"+
+		"    writable: true\n"+
+		"  - location: "+tokenHandoff+"\n"+
 		"    writable: true\n"+
 		"  - location: "+hostInputs+"\n"+
 		"    writable: false\n"+
@@ -132,7 +145,8 @@ func TestValidateProfileConfigRequiresWorkcellCacheMounts(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
 	workspace := filepath.Join(tmp, "workspace")
-	for _, path := range []string{home, workspace} {
+	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	for _, path := range []string{home, workspace, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -148,6 +162,8 @@ func TestValidateProfileConfigRequiresWorkcellCacheMounts(t *testing.T) {
 		"disk: 100\n"+
 		"mounts:\n"+
 		"  - location: "+workspace+"\n"+
+		"    writable: true\n"+
+		"  - location: "+tokenHandoff+"\n"+
 		"    writable: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +180,8 @@ func TestValidateProfileConfigRejectsForwardAgent(t *testing.T) {
 	workspace := filepath.Join(tmp, "workspace")
 	hostInputs := filepath.Join(home, "Library", "Caches", "colima", "workcell-host-inputs")
 	shadow := filepath.Join(home, "Library", "Caches", "colima", "workcell-shadow")
-	for _, path := range []string{home, workspace, hostInputs, shadow} {
+	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	for _, path := range []string{home, workspace, hostInputs, shadow, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -181,6 +198,8 @@ func TestValidateProfileConfigRejectsForwardAgent(t *testing.T) {
 		"forwardAgent: true\n"+
 		"mounts:\n"+
 		"  - location: "+workspace+"\n"+
+		"    writable: true\n"+
+		"  - location: "+tokenHandoff+"\n"+
 		"    writable: true\n"+
 		"  - location: "+hostInputs+"\n"+
 		"    writable: false\n"+

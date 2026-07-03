@@ -9,3 +9,8 @@ git push origin master
 git rebase --no-verify
 git merge --no-verify
 git -ccore.hookspath=/tmp/evil commit -m x
+copilot -p hello
+/usr/local/libexec/workcell/core/copilot --version
+/usr/local/libexec/workcell/real/copilot --version
+cat ~/.copilot/config
+cat copilot.md

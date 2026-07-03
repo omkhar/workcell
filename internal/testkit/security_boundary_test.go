@@ -227,6 +227,107 @@ func TestWorkcellRejectsHarnessOnlyCredentialResolverEnvBeforeBundlePreparation(
 	}
 }
 
+func TestWorkcellResolvesLaunchWorkspaceBeforeBundlePreparation(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	prepareIndex := strings.LastIndex(script, `prepare_injection_bundle "${AGENT}" "${MODE}"`)
+	if prepareIndex == -1 {
+		t.Fatalf("%s must prepare the injection bundle through prepare_injection_bundle", scriptPath)
+	}
+	resolveIndex := strings.LastIndex(script[:prepareIndex], "\nresolve_launch_workspace\n")
+	if resolveIndex == -1 {
+		t.Fatalf("%s must resolve the launch workspace before preparing the injection bundle", scriptPath)
+	}
+	for _, expected := range []string{
+		`[[ "${AUTH_STATUS}" -eq 0 ]]`,
+		`[[ "${DOCTOR}" -eq 0 ]]`,
+		`[[ "${INSPECT}" -eq 0 ]]`,
+		`[[ "${GC}" -eq 0 ]]`,
+		`[[ -z "${LOGS_KIND}" ]]`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("%s launch workspace resolver must preserve diagnostic exception %s", scriptPath, expected)
+		}
+	}
+}
+
+func TestWorkcellRejectsSensitiveWorkspaceBeforeExistenceCheck(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	rejectIndex := strings.Index(script, `reject_broad_or_sensitive_workspace "${resolved_path}"`)
+	if rejectIndex == -1 {
+		t.Fatalf("%s must reject broad/sensitive resolved workspaces before existence checks", scriptPath)
+	}
+	existenceIndex := strings.Index(script, `if [[ ! -e "${resolved_path}" ]]; then`)
+	if existenceIndex == -1 {
+		t.Fatalf("%s must check resolved workspace existence", scriptPath)
+	}
+	if rejectIndex > existenceIndex {
+		t.Fatalf("%s must reject broad/sensitive workspaces before missing-path errors", scriptPath)
+	}
+	if !strings.Contains(script, `reject_broad_or_sensitive_workspace "${path}"`) {
+		t.Fatalf("%s validate_workspace must share the broad/sensitive rejection helper", scriptPath)
+	}
+}
+
+func TestWorkcellForwardsColimaStartTimeoutThroughDetachedSessionHandoff(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	for _, expected := range []string{
+		`WORKCELL_COLIMA_START_TIMEOUT_SECONDS`,
+		`monitor_env+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")`,
+		`session_start_env+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("%s must preserve detached-session Colima start timeout setting %q", scriptPath, expected)
+		}
+	}
+}
+
+func TestWorkcellShadowsCopilotRepoHookControlPlane(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	sharedDirList := `for rel in .github/instructions .github/copilot .github/hooks .github/agents .github/skills .agents/skills; do`
+	for _, expected := range []string{
+		`.github/hooks/*)`,
+		`printf '%s\0' ".github/hooks"`,
+		`*/.github/hooks/*)`,
+		`"${path%%/.github/hooks/*}/.github/hooks"`,
+		sharedDirList,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("%s must include Copilot repo hook control-plane masking entry %q", scriptPath, expected)
+		}
+	}
+	if strings.Count(script, sharedDirList) != 2 {
+		t.Fatalf("%s must use the Copilot repo hook control-plane list for both readonly VCS and safe-path shadowing", scriptPath)
+	}
+}
+
 func TestEnsureGoRunEnvFallsBackToPerUserCacheWithoutHome(t *testing.T) {
 	t.Parallel()
 

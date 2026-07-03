@@ -4,10 +4,12 @@
 package injection
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -26,6 +28,10 @@ type PrepareBundleOptions struct {
 	Agent string
 	// Mode is the agent execution mode (e.g. "auto", "manual"); required.
 	Mode string
+	// WorkspacePath is the host workspace mounted at /workspace. Credential
+	// sources must resolve outside this path so secrets are not also exposed
+	// through the workspace mount.
+	WorkspacePath string
 	// PolicyPath is an explicit injection-policy TOML path.  When empty
 	// and UseDefaultPolicy is true, the default
 	// DefaultInjectionPolicyPath is consulted.
@@ -243,6 +249,10 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 	if info, err := os.Stat(manifestPath); err != nil || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("Injection manifest was not rendered: %s", manifestPath)
 	}
+	requireWorkspaceDirectory := !(opts.AuthStatus || opts.Doctor || opts.Inspect)
+	if err := rejectWorkspaceCredentialSources(manifestPath, opts.WorkspacePath, requireWorkspaceDirectory); err != nil {
+		return nil, err
+	}
 
 	mountSpecPath, err := launcher.CanonicalizePath(bundleRoot + ".mounts.json")
 	if err != nil {
@@ -286,6 +296,85 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 		InjectionProviderAuthReadyStates:    resolverLines[4],
 		InjectionSharedAuthReadyStates:      resolverLines[5],
 	}, nil
+}
+
+func rejectWorkspaceCredentialSources(manifestPath, workspacePath string, requireWorkspaceDirectory bool) error {
+	if strings.TrimSpace(workspacePath) == "" {
+		return nil
+	}
+	workspace, err := launcher.CanonicalizePath(workspacePath)
+	if err != nil {
+		return fmt.Errorf("resolve workspace for credential-source validation: %w", err)
+	}
+	if info, err := os.Stat(workspace); err != nil {
+		if os.IsNotExist(err) && !requireWorkspaceDirectory {
+			return nil
+		}
+		return fmt.Errorf("stat workspace for credential-source validation: %w", err)
+	} else if !info.IsDir() {
+		if !requireWorkspaceDirectory {
+			return nil
+		}
+		return fmt.Errorf("workspace for credential-source validation is not a directory: %s", workspace)
+	}
+	workspace = filepath.Clean(workspace)
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
+	}
+	var manifest struct {
+		Credentials map[string]struct {
+			Source string `json:"source"`
+		} `json:"credentials"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return err
+	}
+	for key, entry := range manifest.Credentials {
+		if strings.TrimSpace(entry.Source) == "" {
+			continue
+		}
+		source, err := filepath.EvalSymlinks(entry.Source)
+		if err != nil {
+			return fmt.Errorf("resolve credentials.%s source for workspace validation: %w", key, err)
+		}
+		source = filepath.Clean(source)
+		if pathWithin(workspace, source) {
+			return fmt.Errorf("credentials.%s source must be outside the mounted workspace: %s", key, source)
+		}
+	}
+	return nil
+}
+
+func pathWithin(root, candidate string) bool {
+	return pathWithinWithCase(root, candidate, hostPathComparisonCaseInsensitive())
+}
+
+func hostPathComparisonCaseInsensitive() bool {
+	switch runtime.GOOS {
+	case "darwin", "windows":
+		return true
+	default:
+		return false
+	}
+}
+
+func pathWithinWithCase(root, candidate string, caseInsensitive bool) bool {
+	if root == "" || candidate == "" {
+		return false
+	}
+	root = filepath.Clean(root)
+	candidate = filepath.Clean(candidate)
+	if caseInsensitive {
+		root = strings.ToLower(root)
+		candidate = strings.ToLower(candidate)
+	}
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // installSyntheticProbeEnv mirrors the bash branches that stage synthetic

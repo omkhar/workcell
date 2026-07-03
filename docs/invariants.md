@@ -12,39 +12,55 @@ On the managed path, Workcell does not pass through:
 - git credential helpers
 - `docker.sock`
 - SSH, GPG, or provider agent sockets
-- host provider-home state such as `~/.codex`, `~/.claude`, or `~/.gemini`
+- host provider-home state such as `~/.codex`, `~/.claude`, `~/.copilot`,
+  `~/.config/github-copilot`, `~/.cache/github-copilot`, or `~/.gemini`
 
 Reusable auth enters the session only through explicit injection-policy inputs.
-The planned GitHub Copilot CLI adapter must preserve the same invariant for
-host `~/.copilot`, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, and ambient
-`gh auth token` fallback. The planned Google Antigravity CLI adapter must
-preserve it for host Google account caches, browser profiles, keychains, host
-homes, and provider caches. Current releases do not support `--agent copilot`
-or `--agent antigravity`.
+The GitHub Copilot CLI adapter preserves the same invariant for host Copilot
+provider state (`~/.copilot`, `~/.config/github-copilot`,
+`~/.cache/github-copilot`), host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, and
+ambient `gh auth token` fallback by accepting only `copilot_github_token`
+through the reviewed host-side staging path, removing the original token file
+from direct runtime mounts, moving it through a temporary handoff mount outside
+provider state and a transient runtime handoff file, re-execing the entrypoint
+without the token in its environment, and exporting it as
+`COPILOT_GITHUB_TOKEN` only for the managed child after the wrapper unlinks the
+handoff file. The
+planned Google Antigravity CLI adapter must preserve it for host Google account
+caches, browser profiles, keychains, host homes, and provider caches. Current
+releases do not support `--agent antigravity`.
 
 ## 2. Writes stay inside the intended workspace
 
 The selected workspace is the durable writable mount. Provider homes are
-session-local state inside the runtime. Host-side publication remains a
-separate action.
+session-local state inside the runtime. Workcell's host-side staging roots under
+`~/Library/Caches/colima/workcell-host-inputs` and
+`~/Library/Caches/colima/workcell-shadow` are mounted into the managed Colima VM
+read-only so the runtime can consume reviewed injection bundles and masked
+workspace control-plane snapshots without widening durable write access.
+Host-side publication remains a separate action.
 
 ## 3. Repo policy must not silently widen trust
 
 Repo-local control-plane files are masked on the safe path and imported into
 provider homes as reviewed inputs. The masked set is the provider files
-`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.mcp.json`; the provider and IDE
-directories `.codex/`, `.claude/`, `.gemini/`, `.vscode/`, `.idea/`,
-`.cursor/`, and `.zed/`; and git execution-control paths (`hooks`, `config`,
+`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.mcp.json`,
+`.github/mcp.json`, and `.github/copilot-instructions.md`; the provider,
+Copilot, and IDE directories `.codex/`, `.claude/`, `.copilot/`,
+`.gemini/`, `.github/instructions/`, `.github/copilot/`,
+`.github/hooks/`, `.github/agents/`, `.github/skills/`, `.agents/skills/`,
+`.vscode/`, `.idea/`, `.cursor/`, and `.zed/`; and git execution-control paths (`hooks`, `config`,
 `config.worktree`, and `worktrees` for the workspace repo and its
 submodules). The workspace should not be able to quietly take over the
 runtime control plane.
 
-The planned Copilot adapter must explicitly account for Copilot-specific repo
-control-plane files such as `.github/copilot-instructions.md`,
-`.github/instructions/**`, and `.github/copilot/settings*.json` before it can
-claim support. The planned Antigravity adapter must do the same for
-Antigravity-specific settings, plugin, MCP, hook, and instruction files before
-it can claim support.
+The Copilot adapter explicitly accounts for Copilot-specific repo control-plane
+files such as `.github/copilot-instructions.md`, `.github/instructions/**`,
+`.github/mcp.json`, `.github/copilot/settings*.json`, and repo-local skill
+and hook directories by masking them on the safe path and launching Copilot with custom
+instructions disabled while blocking skill/dynamic-retrieval overrides. The
+planned Antigravity adapter must do the same for Antigravity-specific settings,
+plugin, MCP, hook, and instruction files before it can claim support.
 
 ## 4. Network posture is explicit
 
@@ -75,7 +91,8 @@ Examples:
 - `--allow-arbitrary-command`
 - `breakglass`
 - host-side debug or transcript capture
-- any future Copilot telemetry, OpenTelemetry, or content-capture enablement
+- any Copilot or future Antigravity telemetry, OpenTelemetry, or content-capture
+  enablement
 
 Workcell records those choices in launch or runtime state instead of implying
 they are equivalent to the default path.

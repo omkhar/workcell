@@ -46,8 +46,8 @@ func TestParseTOMLSubsetRejectsForbiddenConstructs(t *testing.T) {
 		},
 		{
 			name:      "unsupported_scalar_credential_key",
-			content:   "[credentials]\ncopilot_github_token = \"/tmp/copilot-token.txt\"\n",
-			wantError: "credentials contains unsupported keys: copilot_github_token",
+			content:   "[credentials]\nnot_a_credential = \"/tmp/nope.txt\"\n",
+			wantError: "credentials contains unsupported keys: not_a_credential",
 		},
 		{
 			name:      "multi_line_basic_string",

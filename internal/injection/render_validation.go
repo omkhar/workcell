@@ -126,6 +126,9 @@ func validateSourcePath(raw any, label string, base Path) (Path, error) {
 	if err != nil {
 		return Path(""), fmt.Errorf("%s does not exist: %s", label, source)
 	}
+	if err := authstate.RejectCredentialSource(source.String(), label); err != nil {
+		return Path(""), err
+	}
 	offender, err := findUnsafeSymlinkInPathChain(source.String())
 	if err != nil {
 		return Path(""), err
