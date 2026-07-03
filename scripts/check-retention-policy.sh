@@ -17,18 +17,21 @@ note() { echo "check-retention-policy: $*" >&2; failures=$((failures + 1)); }
 
 [[ -f "${DOC}" ]] || { note "missing ${DOC}"; exit 1; }
 
-# Normalize a whitespace/comma-separated list of integers to a sorted, unique,
-# single-space-joined string, e.g. "90, 7 90" -> "7 90".
+# Normalize a whitespace/comma-separated list of integers to a sorted
+# multiset (duplicates preserved), single-space-joined, e.g. "90, 7 90"
+# -> "7 90 90". Multiplicity is kept so that reducing one of several equal-value
+# uploads to a different value is still detected.
 normalize_set() {
-  printf '%s\n' "$1" | tr ',' ' ' | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -un \
+  printf '%s\n' "$1" | tr ',' ' ' | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -n \
     | tr '\n' ' ' | sed 's/ *$//' || true
 }
 
-# Actual retention-days values for a workflow, as a normalized set. Anchored to
-# the YAML key position so a "# retention-days:" comment is not counted.
+# Actual retention-days values for a workflow, as a sorted multiset. Anchored to
+# the YAML key position so a "# retention-days:" comment is not counted, and
+# duplicates are preserved so per-upload changes are not masked.
 workflow_set() {
   grep -oE '^[[:space:]]*retention-days:[[:space:]]*[0-9]+' "$1" 2>/dev/null \
-    | grep -oE '[0-9]+' | sort -un | tr '\n' ' ' | sed 's/ *$//' || true
+    | grep -oE '[0-9]+' | sort -n | tr '\n' ' ' | sed 's/ *$//' || true
 }
 
 # Documented rows between the machine-checked markers, tolerant of column

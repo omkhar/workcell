@@ -10,11 +10,15 @@ and the workflow configuration cannot drift apart.
 
 ## Retention by workflow
 
+Each row lists the retention value of every artifact upload in that workflow,
+including repeats (so `7, 90, 90` means one 7-day upload and two 90-day
+uploads). The drift check compares these multisets exactly.
+
 <!-- retention-policy:begin -->
 | Workflow | retention-days |
 |---|---|
 | ci.yml | 7 |
-| release.yml | 7, 90 |
+| release.yml | 7, 90, 90 |
 | security.yml | 5 |
 | scorecard.yml | 5 |
 | upstream-refresh.yml | 7 |
@@ -33,10 +37,16 @@ and the workflow configuration cannot drift apart.
 - **`ci.yml` — 7 days.** The CI install candidate is a transient
   per-PR/per-push build; it is only useful while the change is in flight, and
   the durable release evidence is produced by `release.yml`.
-- **`security.yml` — 5 days** and **`scorecard.yml` — 5 days.** These upload
-  SARIF backups. The authoritative copies are ingested into GitHub code
-  scanning and the Scorecard dashboard; the artifact is a short-lived
-  convenience copy, not the system of record.
+- **`security.yml` — 5 days.** The `zizmor` audit job itself is the enforcement
+  gate: it fails the workflow on any finding. The `zizmor-sarif` upload is a
+  short-lived supplementary export of that run and is **not** ingested into
+  GitHub code scanning, so there is no durable copy after it expires — 5 days is
+  enough to inspect a specific run's SARIF; the durable signal is the pass/fail
+  gate and the workflow logs.
+- **`scorecard.yml` — 5 days.** The Scorecard SARIF is uploaded to GitHub code
+  scanning (`github/codeql-action/upload-sarif`), which is the authoritative,
+  durable copy; the 5-day `scorecard-sarif` artifact is only a short-lived
+  convenience copy of the same data.
 - **`upstream-refresh.yml` — 7 days.** The `upstream-refresh-candidate` bundle
   (`patch`, `diffstat`, `metadata.json`) is an advisory operator signal for a
   reviewed upstream-pin refresh, not integrity evidence; the authoritative
