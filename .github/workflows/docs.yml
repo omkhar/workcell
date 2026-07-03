@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".codespellrc"
+      - "**/*.md"
       - "CHANGELOG.md"
       - "CODE_OF_CONDUCT.md"
       - "CONTRIBUTING.md"
@@ -21,6 +22,9 @@ on:
       - "man/**"
       - "policy/**"
       - "runtime/**"
+      - "scripts/check-doc-links.sh"
+      - "scripts/check-doc-support-matrix-fields.sh"
+      - "scripts/ci/job-docs.sh"
       - "verify/**"
       - "workflows/**"
   pull_request:
@@ -28,6 +32,7 @@ on:
       - main
     paths:
       - ".codespellrc"
+      - "**/*.md"
       - "CHANGELOG.md"
       - "CODE_OF_CONDUCT.md"
       - "CONTRIBUTING.md"
@@ -43,6 +48,9 @@ on:
       - "man/**"
       - "policy/**"
       - "runtime/**"
+      - "scripts/check-doc-links.sh"
+      - "scripts/check-doc-support-matrix-fields.sh"
+      - "scripts/ci/job-docs.sh"
       - "verify/**"
       - "workflows/**"
   workflow_dispatch:

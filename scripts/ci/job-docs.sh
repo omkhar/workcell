@@ -21,6 +21,9 @@ echo "[ci/docs] pinned input policy"
 echo "[ci/docs] support-matrix field parity"
 "${ROOT_DIR}/scripts/check-doc-support-matrix-fields.sh"
 
+echo "[ci/docs] markdown link and orphan check"
+"${ROOT_DIR}/scripts/check-doc-links.sh"
+
 echo "[ci/docs] validator image build"
 VALIDATOR_IMAGE="$("${ROOT_DIR}/scripts/ci/build-validator-image.sh")"
 export WORKCELL_VALIDATOR_IMAGE="${VALIDATOR_IMAGE}"

@@ -125,6 +125,7 @@ workcell auth set \
 
 ## Further reading
 
+- [docs/examples/enterprise-claude-setup.md](enterprise-claude-setup.md)
 - [docs/injection-policy.md](../injection-policy.md)
 - [docs/provider-bootstrap-matrix.md](../provider-bootstrap-matrix.md)
 - [docs/adapter-control-planes.md](../adapter-control-planes.md)
