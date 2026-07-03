@@ -67,8 +67,10 @@ takeover) and contains the blast radius.
 ### ASI02:2026 Tool Misuse and Exploitation — Partial
 
 Unsafe tool chaining, loops, or excessive invocations despite valid
-permissions. Writes are confined to the selected workspace; the VM applies a
-reviewed egress posture and explicit network profiles; `--container-mutability
+permissions. Durable host writes are confined to the selected workspace
+(in-container overlay and package state can still change under the default
+`ephemeral` mutability); the VM applies a reviewed egress posture and explicit
+network profiles; `--container-mutability
 readonly` blocks package-manager writes; git execution-control paths are
 masked; provider-side guardrails (Codex rules, the Claude bash hook, Gemini
 managed settings) are explicitly labeled secondary defenses, not the boundary.
@@ -82,13 +84,17 @@ Delegated authority, ambiguous identity, and trust assumptions leading to
 unauthorized actions. This is Workcell's core design: no ambient host
 passthrough of home directories, keychains, git credential helpers,
 `docker.sock`, SSH/GPG/provider agent sockets, or provider-home state.
-Credentials enter only through the operator-owned injection policy, staged
-host-side and mounted read-only; the Copilot token handoff re-execs without the
-token in its environment and unlinks the handoff file; credential sources under
-the workspace are rejected; `workcell why` explains each credential decision.
+Reusable credentials enter only through the operator-owned injection policy,
+staged host-side and mounted read-only; the Copilot token handoff re-execs
+without the token in its environment and unlinks the handoff file; credential
+sources under the workspace are rejected; `workcell why` explains each
+credential decision.
 
-Gap: Workcell does not down-scope the injected provider token itself. The
-token's own privileges remain an operator and provider decision.
+Gap: Workcell does not down-scope the injected provider token itself; the
+token's own privileges remain an operator and provider decision. There is also
+a session-local exception — for an interactive Gemini launch with no selected
+auth, Workcell starts Gemini so the operator can authenticate in-session rather
+than through the injection policy.
 
 ### ASI04:2026 Agentic Supply Chain Vulnerabilities — Partial
 
