@@ -451,6 +451,8 @@ See [docs/provenance.md](docs/provenance.md) and
 | Topic | File |
 |---|---|
 | Getting started | [docs/getting-started.md](docs/getting-started.md) |
+| Support tiers | [docs/support-tiers.md](docs/support-tiers.md) |
+| Diagnostics and support matrix | [docs/diagnostics-and-support-matrix.md](docs/diagnostics-and-support-matrix.md) |
 | Security invariants | [docs/invariants.md](docs/invariants.md) |
 | Threat model | [docs/threat-model.md](docs/threat-model.md) |
 | Provider matrix | [docs/provider-matrix.md](docs/provider-matrix.md) |
