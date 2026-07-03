@@ -32,38 +32,23 @@ scrub_host_process_env() {
 scrub_host_process_env
 
 support_matrix_host_override_allowed() {
-  local candidate_pid="${PPID}"
-  local depth=0
-  local next_pid=""
   local parent_cmdline=""
 
   [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]] || return 1
-  while [[ -n "${candidate_pid}" && "${candidate_pid}" != "0" && "${depth}" -lt 5 ]]; do
-    parent_cmdline=""
-    next_pid=""
-    if [[ -r "/proc/${candidate_pid}/cmdline" ]]; then
-      parent_cmdline="$(tr '\0' ' ' <"/proc/${candidate_pid}/cmdline" 2>/dev/null || true)"
-    elif command -v ps >/dev/null 2>&1; then
-      parent_cmdline="$(ps -p "${candidate_pid}" -o command= 2>/dev/null || true)"
-    fi
-    case "${parent_cmdline}" in
-      *"scripts/verify-invariants.sh"* | \
-        *"tests/scenarios/shared/test-copilot-session-dry-run.sh"* | \
-        *"tests/scenarios/shared/test-compat-target-dry-run.sh"* | \
-        *"tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh"* | \
-        *"tests/scenarios/shared/test-aws-remote-vm-dry-run.sh"*)
-        return 0
-        ;;
-    esac
-    if [[ -r "/proc/${candidate_pid}/status" ]]; then
-      next_pid="$(awk '/^PPid:/ { print $2; exit }' "/proc/${candidate_pid}/status" 2>/dev/null || true)"
-    elif command -v ps >/dev/null 2>&1; then
-      next_pid="$(ps -p "${candidate_pid}" -o ppid= 2>/dev/null | awk '{ print $1; exit }' || true)"
-    fi
-    [[ -n "${next_pid}" && "${next_pid}" != "${candidate_pid}" ]] || break
-    candidate_pid="${next_pid}"
-    depth="$((depth + 1))"
-  done
+  if [[ -r "/proc/${PPID}/cmdline" ]]; then
+    parent_cmdline="$(tr '\0' ' ' <"/proc/${PPID}/cmdline" 2>/dev/null || true)"
+  elif command -v ps >/dev/null 2>&1; then
+    parent_cmdline="$(ps -p "${PPID}" -o command= 2>/dev/null || true)"
+  fi
+  case "${parent_cmdline}" in
+    *"scripts/verify-invariants.sh"* | \
+      *"tests/scenarios/shared/test-copilot-session-dry-run.sh"* | \
+      *"tests/scenarios/shared/test-compat-target-dry-run.sh"* | \
+      *"tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh"* | \
+      *"tests/scenarios/shared/test-aws-remote-vm-dry-run.sh"*)
+      return 0
+      ;;
+  esac
   return 1
 }
 
@@ -5131,13 +5116,14 @@ prepare_copilot_token_handoff_mount() {
   }
   token_handoff_parent="$(default_copilot_token_handoff_parent)" || exit $?
   mkdir -p "${token_handoff_parent}"
+  chmod 0700 "${token_handoff_parent}"
   reject_symlinked_colima_staging_cache_roots || exit $?
   COPILOT_TOKEN_HANDOFF_DIR="$(mktemp -d "${token_handoff_parent}/copilot-token-handoff.XXXXXX")"
   COPILOT_TOKEN_HANDOFF_FILE="${COPILOT_TOKEN_HANDOFF_DIR}/copilot-github-token.txt"
   COPILOT_TOKEN_HANDOFF_CONSUMED_FILE="${COPILOT_TOKEN_HANDOFF_DIR}/copilot-token-consumed"
-  chmod 0700 "${COPILOT_TOKEN_HANDOFF_DIR}"
+  chmod 0733 "${COPILOT_TOKEN_HANDOFF_DIR}"
   printf '%s\n' "${token}" >"${COPILOT_TOKEN_HANDOFF_FILE}"
-  chmod 0600 "${COPILOT_TOKEN_HANDOFF_FILE}"
+  chmod 0444 "${COPILOT_TOKEN_HANDOFF_FILE}"
 }
 
 wait_for_copilot_token_handoff_consumed() {

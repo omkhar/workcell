@@ -8526,8 +8526,17 @@ if ! grep -Fq 'workcell-token-handoff' "${ROOT_DIR}/scripts/workcell" ||
 fi
 # shellcheck disable=SC2016
 if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'token_handoff_parent="$(default_copilot_token_handoff_parent)" || exit $?' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'chmod 0700 "${token_handoff_parent}"' ||
   ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'reject_symlinked_colima_staging_cache_roots || exit $?'; then
   echo "Expected Copilot token handoff writes to re-check the guarded Colima handoff root at the write site" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'chmod 0733 "${COPILOT_TOKEN_HANDOFF_DIR}"' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'chmod 0444 "${COPILOT_TOKEN_HANDOFF_FILE}"' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/container-smoke.sh" "stage_copilot_token_handoff_dir" 'chmod 0733 "${token_handoff_dir}"' ||
+  ! function_block_contains_fixed "${ROOT_DIR}/scripts/container-smoke.sh" "stage_copilot_token_handoff_dir" 'chmod 0444 "${token_handoff_file}"'; then
+  echo "Expected Copilot token handoff leaf permissions to support cap-dropped container root without exposing parent traversal" >&2
   exit 1
 fi
 # shellcheck disable=SC2016

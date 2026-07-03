@@ -560,9 +560,9 @@ stage_copilot_token_handoff_dir() {
   token_handoff_dir="$(mktemp -d "${bundle_root}.copilot-token-handoff.XXXXXX")"
   token_handoff_file="${token_handoff_dir}/copilot-github-token.txt"
   token="$(tr -d '\r\n' <"${token_source}")"
-  chmod 0700 "${token_handoff_dir}"
+  chmod 0733 "${token_handoff_dir}"
   printf '%s\n' "${token}" >"${token_handoff_file}"
-  chmod 0600 "${token_handoff_file}"
+  chmod 0444 "${token_handoff_file}"
   COPILOT_SMOKE_TOKEN_HANDOFF_DIRS+=("${token_handoff_dir}")
   printf '%s\n' "${token_handoff_dir}"
 }
