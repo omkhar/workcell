@@ -18,6 +18,9 @@ trap cleanup EXIT
 echo "[ci/docs] pinned input policy"
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
 
+echo "[ci/docs] support-matrix field parity"
+"${ROOT_DIR}/scripts/check-doc-support-matrix-fields.sh"
+
 echo "[ci/docs] validator image build"
 VALIDATOR_IMAGE="$("${ROOT_DIR}/scripts/ci/build-validator-image.sh")"
 export WORKCELL_VALIDATOR_IMAGE="${VALIDATOR_IMAGE}"
