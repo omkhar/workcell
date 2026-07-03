@@ -275,6 +275,7 @@
       ],
       "workflow_path_globs": {
         "pull_request": [
+          "**/*.md",
           ".codespellrc",
           "AGENTS.md",
           "CHANGELOG.md",
@@ -298,6 +299,7 @@
           "workflows/**"
         ],
         "push": [
+          "**/*.md",
           ".codespellrc",
           "AGENTS.md",
           "CHANGELOG.md",

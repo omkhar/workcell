@@ -26,8 +26,9 @@ failures=0
 note() { echo "check-doc-links: $*" >&2; failures=$((failures + 1)); }
 
 # Vendored and generated trees are not our docs; exclude the same paths the
-# docs spelling job and .codespellrc skip.
-excluded='^(runtime/container/rust/vendor|runtime/container/providers/node_modules|runtime/container/rust/target|dist|tmp)/'
+# docs spelling job and .codespellrc skip. Test fixtures (testdata/) are also
+# excluded: they simulate external content, not documentation.
+excluded='^(runtime/container/rust/vendor|runtime/container/providers/node_modules|runtime/container/rust/target|dist|tmp)/|(^|/)testdata/'
 mapfile -t md_files < <(git ls-files '*.md' | grep -vE "${excluded}" || true)
 
 # Records, per link-target basename, the markdown files that navigably link it.
