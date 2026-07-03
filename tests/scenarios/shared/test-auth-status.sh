@@ -21,6 +21,8 @@ printf '{"token":"claude-auth"}\n' >"${AUTH_ROOT}/claude-auth.json"
 chmod 0600 "${AUTH_ROOT}/claude-auth.json"
 printf 'claude-key\n' >"${AUTH_ROOT}/claude-api-key.txt"
 chmod 0600 "${AUTH_ROOT}/claude-api-key.txt"
+printf 'copilot-token\n' >"${AUTH_ROOT}/copilot-github-token.txt"
+chmod 0600 "${AUTH_ROOT}/copilot-github-token.txt"
 cat >"${AUTH_ROOT}/gemini.env" <<'EOF'
 GOOGLE_GENAI_USE_VERTEXAI=true
 GOOGLE_API_KEY=verify-google-key
@@ -44,9 +46,12 @@ claude_auth = "claude-auth.json"
 claude_api_key = "claude-api-key.txt"
 gemini_env = "gemini.env"
 
+[credentials.copilot_github_token]
+source = "copilot-github-token.txt"
+
 [credentials.github_hosts]
 source = "hosts.yml"
-providers = ["codex", "claude", "gemini"]
+providers = ["codex", "claude", "copilot", "gemini"]
 
 [ssh]
 enabled = true
@@ -120,6 +125,18 @@ grep -q '^provider_bootstrap_state=ready$' <<<"${claude_output}"
 grep -q '^provider_bootstrap_path=direct-staged$' <<<"${claude_output}"
 grep -q '^provider_bootstrap_support=repo-required$' <<<"${claude_output}"
 
+copilot_output="$(run_auth_status copilot)"
+grep -q '^credential_keys=copilot_github_token$' <<<"${copilot_output}"
+grep -q '^provider_auth_ready_states=copilot_github_token:ready$' <<<"${copilot_output}"
+grep -q '^shared_auth_ready_states=none$' <<<"${copilot_output}"
+grep -q '^provider_auth_mode=copilot_github_token$' <<<"${copilot_output}"
+grep -q '^provider_auth_modes=copilot_github_token$' <<<"${copilot_output}"
+grep -q '^shared_auth_modes=none$' <<<"${copilot_output}"
+grep -q '^github_auth_present=0$' <<<"${copilot_output}"
+grep -q '^provider_bootstrap_state=ready$' <<<"${copilot_output}"
+grep -q '^provider_bootstrap_path=direct-staged$' <<<"${copilot_output}"
+grep -q '^provider_bootstrap_support=repo-required$' <<<"${copilot_output}"
+
 gemini_output="$(run_auth_status gemini)"
 grep -q '^provider_auth_ready_states=gemini_env:ready$' <<<"${gemini_output}"
 grep -q '^shared_auth_ready_states=github_hosts:ready$' <<<"${gemini_output}"
@@ -131,7 +148,7 @@ grep -q '^provider_bootstrap_state=ready$' <<<"${gemini_output}"
 grep -q '^provider_bootstrap_path=direct-staged$' <<<"${gemini_output}"
 grep -q '^provider_bootstrap_support=repo-required$' <<<"${gemini_output}"
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   if [[ "${launch_blocked}" -eq 1 ]]; then
     set +e
     run_launch_dry_run "${agent}"
@@ -152,6 +169,7 @@ done
 if [[ "${launch_blocked}" -eq 0 ]]; then
   grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=(codex_auth,github_hosts|github_hosts,codex_auth) ssh_injected=1$' "${TMP_DIR}/launch-codex.stderr"
   grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=claude_api_key,claude_auth,github_hosts ssh_injected=1$' "${TMP_DIR}/launch-claude.stderr"
+  grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=copilot_github_token ssh_injected=1$' "${TMP_DIR}/launch-copilot.stderr"
   grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=(gemini_env,github_hosts|github_hosts,gemini_env) ssh_injected=1$' "${TMP_DIR}/launch-gemini.stderr"
 fi
 

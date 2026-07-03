@@ -120,7 +120,7 @@ The supported safe path is two-tier:
 
 The container launch path applies controls such as:
 
-- `--init`
+- Docker `--init` for launches that do not require PID 1 environment scrubbing
 - `--security-opt no-new-privileges:true`
 - `--cap-drop ALL`
 - `--pids-limit 1024`

@@ -13,20 +13,22 @@ import (
 
 var (
 	canonicalCredentialDestinations = map[string][2]string{
-		"codex_auth":      {providerid.Codex, "auth.json"},
-		"claude_api_key":  {providerid.Claude, "api-key.txt"},
-		"claude_mcp":      {providerid.Claude, "mcp.json"},
-		"gemini_env":      {providerid.Gemini, "gemini.env"},
-		"gemini_oauth":    {providerid.Gemini, "oauth_creds.json"},
-		"gemini_projects": {providerid.Gemini, "projects.json"},
-		"gcloud_adc":      {providerid.Gemini, "gcloud-adc.json"},
-		"github_hosts":    {"shared", "github-hosts.yml"},
-		"github_config":   {"shared", "github-config.yml"},
+		"codex_auth":           {providerid.Codex, "auth.json"},
+		"copilot_github_token": {providerid.Copilot, "github-token.txt"},
+		"claude_api_key":       {providerid.Claude, "api-key.txt"},
+		"claude_mcp":           {providerid.Claude, "mcp.json"},
+		"gemini_env":           {providerid.Gemini, "gemini.env"},
+		"gemini_oauth":         {providerid.Gemini, "oauth_creds.json"},
+		"gemini_projects":      {providerid.Gemini, "projects.json"},
+		"gcloud_adc":           {providerid.Gemini, "gcloud-adc.json"},
+		"github_hosts":         {"shared", "github-hosts.yml"},
+		"github_config":        {"shared", "github-config.yml"},
 	}
 	statusOrder = map[string][]string{
-		providerid.Codex:  {"codex_auth"},
-		providerid.Claude: {"claude_api_key", "claude_auth"},
-		providerid.Gemini: {"gemini_env", "gemini_oauth"},
+		providerid.Codex:   {"codex_auth"},
+		providerid.Copilot: {"copilot_github_token"},
+		providerid.Claude:  {"claude_api_key", "claude_auth"},
+		providerid.Gemini:  {"gemini_env", "gemini_oauth"},
 	}
 	entryAllowedKeys = map[string]struct{}{
 		"source":          {},

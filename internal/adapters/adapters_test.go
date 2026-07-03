@@ -35,22 +35,22 @@ func TestAgentScopedCredentialKeysCoversCredentialMetadataProviders(t *testing.T
 	}
 }
 
-func TestAgentScopedCredentialKeysForProvidersFiltersPlannedProviders(t *testing.T) {
+func TestAgentScopedCredentialKeysForProvidersCoversSupportedProviders(t *testing.T) {
 	got := AgentScopedCredentialKeysForProviders(providerid.AllProviders)
-	if _, ok := got[providerid.Copilot]; ok {
-		t.Fatal("planned Copilot credentials must not appear in supported-provider credential set")
-	}
 	for _, want := range providerid.AllProviders {
 		if _, ok := got[want]; !ok {
 			t.Errorf("supported provider %q missing from filtered credential set", want)
 		}
 	}
+	if _, ok := got[providerid.Antigravity]; ok {
+		t.Fatal("planned Antigravity credentials must not appear in supported-provider credential set")
+	}
 }
 
-func TestCredentialContainerPathsForProvidersFiltersPlannedProviders(t *testing.T) {
+func TestCredentialContainerPathsForProvidersCoversSupportedProviders(t *testing.T) {
 	got := CredentialContainerPathsForProviders(providerid.AllProviders)
-	if _, ok := got["copilot_github_token"]; ok {
-		t.Fatal("planned Copilot credential path must not appear in supported-provider injection path set")
+	if _, ok := got["copilot_github_token"]; !ok {
+		t.Fatal("supported Copilot credential path must appear in supported-provider injection path set")
 	}
 	for provider, keys := range AgentScopedCredentialKeysForProviders(providerid.AllProviders) {
 		for key := range keys {

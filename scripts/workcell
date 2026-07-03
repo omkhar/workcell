@@ -40,9 +40,9 @@ support_matrix_host_override_allowed() {
   elif command -v ps >/dev/null 2>&1; then
     parent_cmdline="$(ps -p "${PPID}" -o command= 2>/dev/null || true)"
   fi
-  [[ -n "${parent_cmdline}" ]] || return 1
   case "${parent_cmdline}" in
     *"scripts/verify-invariants.sh"* | \
+      *"tests/scenarios/shared/test-copilot-session-dry-run.sh"* | \
       *"tests/scenarios/shared/test-compat-target-dry-run.sh"* | \
       *"tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh"* | \
       *"tests/scenarios/shared/test-aws-remote-vm-dry-run.sh"*)
@@ -416,8 +416,9 @@ Usage: workcell [options] [-- provider-args...]
        workcell why --credential KEY --agent NAME [options]
 
 Options:
-  --agent codex|claude|gemini   Provider to run (required)
-                              copilot and antigravity are recognized as planned but unsupported
+  --agent codex|claude|copilot|gemini
+                                Provider to run (required)
+                                antigravity is recognized as planned but unsupported
   --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
   --agent-arg VALUE             Additional provider argv to append (repeatable)
   --target colima|docker-desktop|aws-ec2-ssm|gcp-vm
@@ -474,6 +475,7 @@ Workflows:
   Direct launch (strict auto-prepares on first run when needed):
     workcell --agent codex --workspace /path/to/repo
     workcell --agent claude --workspace /path/to/repo
+    workcell --agent copilot --workspace /path/to/repo
     workcell --agent gemini --workspace /path/to/repo
   Docker Desktop compatibility target (macOS lower-assurance compat):
     workcell --target docker-desktop --agent codex --workspace /path/to/repo
@@ -484,25 +486,30 @@ Workflows:
   Managed development command lane:
     workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
     workcell --agent claude --mode development --workspace /path/to/repo -- bash -lc 'rg TODO'
+    workcell --agent copilot --mode development --workspace /path/to/repo -- bash -lc 'git status'
     workcell --agent gemini --mode development --workspace /path/to/repo -- bash -lc 'npm test'
   Optional explicit prepare:
     workcell --prepare --agent codex --workspace /path/to/repo
     workcell --prepare --agent claude --workspace /path/to/repo
+    workcell --prepare --agent copilot --workspace /path/to/repo
     workcell --prepare --agent gemini --workspace /path/to/repo
   Prewarm only:
     workcell --prepare-only --agent codex --workspace /path/to/repo
   Normal run:
     workcell --agent codex --workspace /path/to/repo
     workcell --agent claude --workspace /path/to/repo
+    workcell --agent copilot --workspace /path/to/repo
     workcell --agent gemini --workspace /path/to/repo
   Repair a conflicting unmanaged profile:
     workcell --repair-profile --agent codex --workspace /path/to/repo
     workcell --repair-profile --agent claude --workspace /path/to/repo
+    workcell --repair-profile --agent copilot --workspace /path/to/repo
     workcell --repair-profile --agent gemini --workspace /path/to/repo
   Operator actions:
     workcell auth init
     workcell auth set --agent codex --credential codex_auth --source /path/to/auth.json
     workcell auth set --agent claude --credential claude_auth --resolver claude-macos-keychain --ack-host-resolver
+    workcell auth set --agent copilot --credential copilot_github_token --source /path/to/copilot-token.txt
     workcell auth status --agent codex
     workcell policy validate
     workcell why --credential codex_auth --agent codex --mode strict
@@ -592,6 +599,17 @@ generate_session_suffix() {
 
 lower_ascii() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+host_path_within_root() {
+  local root="${1%/}"
+  local candidate="${2%/}"
+  local root_cmp=""
+  local candidate_cmp=""
+
+  root_cmp="$(lower_ascii "${root}")"
+  candidate_cmp="$(lower_ascii "${candidate}")"
+  [[ "${candidate_cmp}" == "${root_cmp}" ]] || [[ "${candidate_cmp}" == "${root_cmp}/"* ]]
 }
 
 option_value_or_die() {
@@ -795,6 +813,12 @@ profile_disk_dir() {
   go_hostutil helper profile-path disk-dir "${COLIMA_STATE_ROOT}" "${profile}"
 }
 
+profile_store_path() {
+  local profile="$1"
+
+  go_hostutil helper profile-path store-path "${COLIMA_STATE_ROOT}" "${profile}"
+}
+
 remove_profile_state_dirs() {
   local profile="$1"
 
@@ -804,6 +828,7 @@ remove_profile_state_dirs() {
       "$(profile_dir "${profile}")" \
       "$(profile_lima_dir "${profile}")" \
       "$(profile_disk_dir "${profile}")"
+    rm -f "$(profile_store_path "${profile}")"
   fi
 }
 
@@ -820,6 +845,7 @@ profile_state_dirs_exist() {
       "$(profile_dir "${profile}")"
       "$(profile_lima_dir "${profile}")"
       "$(profile_disk_dir "${profile}")"
+      "$(profile_store_path "${profile}")"
     )
   fi
   for path in "${paths[@]}"; do
@@ -1151,6 +1177,11 @@ prepare_current_target_docker_client() {
 CONTROL_PLANE_SHADOW_ROOT=""
 INJECTION_BUNDLE_ROOT=""
 DIRECT_MOUNT_SPEC_PATH=""
+COPILOT_TOKEN_HANDOFF_DIR=""
+COPILOT_TOKEN_HANDOFF_FILE=""
+COPILOT_TOKEN_HANDOFF_CONSUMED_FILE=""
+COPILOT_AUTH_REQUIRED=0
+readonly COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="/opt/workcell/copilot-token-handoff"
 PROFILE_AUDIT_LOG_STASH=""
 PROFILE_WAS_REFRESHED=0
 PROFILE_REFRESH_EXPECTED_IMAGE_ID=""
@@ -1201,6 +1232,11 @@ cleanup() {
   if [[ -n "${INJECTION_BUNDLE_ROOT}" ]] && [[ -e "${INJECTION_BUNDLE_ROOT}" ]]; then
     chmod -R u+w "${INJECTION_BUNDLE_ROOT}" 2>/dev/null || true
     rm -rf "${INJECTION_BUNDLE_ROOT}"
+  fi
+
+  if [[ -n "${COPILOT_TOKEN_HANDOFF_DIR}" ]] && [[ -e "${COPILOT_TOKEN_HANDOFF_DIR}" ]]; then
+    chmod -R u+w "${COPILOT_TOKEN_HANDOFF_DIR}" 2>/dev/null || true
+    rm -rf "${COPILOT_TOKEN_HANDOFF_DIR}"
   fi
 
   if [[ -n "${DIRECT_MOUNT_SPEC_PATH}" ]] && [[ -e "${DIRECT_MOUNT_SPEC_PATH}" ]]; then
@@ -2943,6 +2979,9 @@ provider_native_sandbox_configured() {
     claude)
       printf 'deferred\n'
       ;;
+    copilot)
+      printf 'disabled\n'
+      ;;
     gemini)
       printf 'disabled\n'
       ;;
@@ -2957,7 +2996,7 @@ provider_native_sandbox_effective() {
     codex)
       provider_native_sandbox_configured
       ;;
-    claude | gemini)
+    claude | copilot | gemini)
       printf 'disabled\n'
       ;;
     *)
@@ -2973,6 +3012,9 @@ provider_native_sandbox_reason() {
       ;;
     claude)
       printf 'deferred-until-runtime-prereqs-and-validation\n'
+      ;;
+    copilot)
+      printf 'workcell-pinned-off-until-provider-permission-surfaces-are-reviewed\n'
       ;;
     gemini)
       printf 'workcell-pinned-off-until-validated\n'
@@ -3435,10 +3477,20 @@ emit_command() {
 emit_redacted_command() {
   local token=""
   local redacted=""
+  local redact_next_env_file=0
 
   for token in "$@"; do
+    if [[ "${redact_next_env_file}" -eq 1 ]]; then
+      printf '%q ' "<redacted-host-path>"
+      redact_next_env_file=0
+      continue
+    fi
     case "${token}" in
-      *:/opt/workcell/host-inputs/* | *:/opt/workcell/host-injections:ro)
+      --env-file)
+        redacted="${token}"
+        redact_next_env_file=1
+        ;;
+      *:/opt/workcell/host-inputs/* | *:/opt/workcell/host-injections:ro | *:/opt/workcell/copilot-token-handoff:*)
         redacted="<redacted-host-path>:${token#*:}"
         ;;
       *)
@@ -3502,6 +3554,7 @@ reject_symlinked_colima_staging_cache_roots() {
   reject_symlinked_host_path_components "${cache_root}" "Colima staging cache root" || return $?
   reject_symlinked_host_path_components "${cache_root}/workcell-host-inputs" "Workcell host-input staging root" || return $?
   reject_symlinked_host_path_components "${cache_root}/workcell-shadow" "Workcell shadow staging root" || return $?
+  reject_symlinked_host_path_components "${cache_root}/workcell-token-handoff" "Workcell token handoff staging root" || return $?
 }
 
 prepare_colima_staging_cache_roots() {
@@ -3509,7 +3562,7 @@ prepare_colima_staging_cache_roots() {
 
   reject_symlinked_colima_staging_cache_roots || return $?
   cache_root="$(colima_staging_cache_root)"
-  mkdir -p "${cache_root}/workcell-host-inputs" "${cache_root}/workcell-shadow"
+  mkdir -p "${cache_root}/workcell-host-inputs" "${cache_root}/workcell-shadow" "${cache_root}/workcell-token-handoff"
   reject_symlinked_colima_staging_cache_roots
 }
 
@@ -4387,6 +4440,13 @@ session_main() {
       )
       [[ -n "${XDG_STATE_HOME:-}" ]] && session_start_env+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
       [[ -n "${WORKCELL_STATE_ROOT:-}" ]] && session_start_env+=("WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}")
+      if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]]; then
+        session_start_env+=("WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1")
+        [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]] && session_start_env+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS}")
+        [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]] && session_start_env+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}")
+        [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO:-}" ]] && session_start_env+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO}")
+        [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION:-}" ]] && session_start_env+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION}")
+      fi
       if [[ "${#}" -eq 0 ]]; then
         exec env -i \
           "${session_start_env[@]}" \
@@ -4681,7 +4741,8 @@ Usage: workcell why --credential KEY --agent NAME [options]
 Options:
   --credential KEY            Credential key to explain
   --injection-policy PATH     Policy file to inspect (default: ~/.config/workcell/injection-policy.toml)
-  --agent codex|claude|gemini Agent selector for selection reasoning
+  --agent codex|claude|copilot|gemini
+                                Agent selector for selection reasoning
   --mode strict|development|build|breakglass
                                 Selector mode to explain (default: strict)
 
@@ -4757,6 +4818,11 @@ default_injection_bundle_parent() {
   resolve_host_path "${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
 }
 
+default_copilot_token_handoff_parent() {
+  reject_symlinked_colima_staging_cache_roots || return $?
+  resolve_host_path "${REAL_HOME}/Library/Caches/colima/workcell-token-handoff"
+}
+
 cleanup_stale_injection_bundles() {
   local bundle_parent="$1"
 
@@ -4765,9 +4831,12 @@ cleanup_stale_injection_bundles() {
 
 cleanup_default_injection_bundles() {
   local bundle_parent=""
+  local token_handoff_parent=""
 
   bundle_parent="$(default_injection_bundle_parent)" || return $?
+  token_handoff_parent="$(default_copilot_token_handoff_parent)" || return $?
   cleanup_stale_injection_bundles "${bundle_parent}"
+  cleanup_stale_injection_bundles "${token_handoff_parent}"
 }
 
 cleanup_workcell_temp_root() {
@@ -4862,6 +4931,10 @@ prepare_injection_bundle() {
   DIRECT_SOURCE_MOUNTS=()
   INJECTION_BUNDLE_ROOT=""
   DIRECT_MOUNT_SPEC_PATH=""
+  COPILOT_TOKEN_HANDOFF_DIR=""
+  COPILOT_TOKEN_HANDOFF_FILE=""
+  COPILOT_TOKEN_HANDOFF_CONSUMED_FILE=""
+  COPILOT_AUTH_REQUIRED=0
   INJECTION_POLICY_SHA256=""
   INJECTION_CREDENTIAL_KEYS=""
   INJECTION_CREDENTIAL_INPUT_KINDS=""
@@ -4882,6 +4955,7 @@ prepare_injection_bundle() {
   go_hostutil helper injection-prepare-bundle \
     "--agent=${agent}" \
     "--mode=${mode}" \
+    "--workspace=${WORKSPACE:-}" \
     "--policy=${INJECTION_POLICY:-}" \
     "--use-default-policy=${USE_DEFAULT_INJECTION_POLICY:-0}" \
     "--auth-status=${AUTH_STATUS:-0}" \
@@ -4929,6 +5003,160 @@ prepare_injection_bundle() {
   done <"${stdout_capture}"
   rm -f "${stdout_capture}" "${stderr_capture}"
   return "${rc}"
+}
+
+copilot_no_auth_invocation() {
+  local first="${1:-}"
+  local second="${2:-}"
+
+  if [[ "${first}" == "copilot" ]]; then
+    first="${second}"
+  fi
+
+  case "${first}" in
+    -h | --help | -v | --version | help | version | completion)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+copilot_host_invocation_requires_auth() {
+  if [[ "${AGENT}" != "copilot" ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
+    return 1
+  fi
+  if [[ "${MODE}" == "development" ]] && [[ "$#" -gt 0 ]] && [[ "$1" != "copilot" ]]; then
+    return 1
+  fi
+  if copilot_no_auth_invocation "$@"; then
+    return 1
+  fi
+  return 0
+}
+
+prepare_copilot_token_handoff_mount() {
+  local target_mount_path="/opt/workcell/host-inputs/credentials/copilot-github-token.txt"
+  local mount_flag=""
+  local mount_spec=""
+  local source_path=""
+  local token=""
+  local token_handoff_parent=""
+  local found=0
+  local index=0
+  local auth_required=0
+  local -a filtered_mounts=()
+
+  [[ "${AGENT}" == "copilot" ]] || return 0
+  [[ "$(selected_provider_auth_mode)" == "copilot_github_token" ]] || return 0
+  [[ -n "${INJECTION_BUNDLE_ROOT}" ]] || {
+    echo "Copilot auth handoff requires a staged injection bundle." >&2
+    exit 2
+  }
+  if copilot_host_invocation_requires_auth "$@"; then
+    auth_required=1
+  fi
+  COPILOT_AUTH_REQUIRED="${auth_required}"
+
+  for ((index = 0; index < ${#DIRECT_SOURCE_MOUNTS[@]}; index += 2)); do
+    mount_flag="${DIRECT_SOURCE_MOUNTS[index]}"
+    mount_spec="${DIRECT_SOURCE_MOUNTS[index + 1]:-}"
+    if [[ "${mount_flag}" == "-v" && "${mount_spec}" == *":${target_mount_path}:ro" ]]; then
+      source_path="${mount_spec%:"${target_mount_path}":ro}"
+      found=$((found + 1))
+      continue
+    fi
+    filtered_mounts+=("${mount_flag}" "${mount_spec}")
+  done
+
+  if [[ "${found}" -eq 0 && "${auth_required}" -eq 0 ]]; then
+    return 0
+  fi
+  if [[ "${found}" -ne 1 ]]; then
+    echo "Copilot auth handoff expected exactly one staged copilot_github_token input, found ${found}." >&2
+    exit 2
+  fi
+  if [[ ! -f "${source_path}" ]]; then
+    echo "Copilot auth handoff expected a staged token source file." >&2
+    exit 2
+  fi
+  case "${source_path}" in
+    "${INJECTION_BUNDLE_ROOT%/}/direct-mounts/"*) ;;
+    *)
+      echo "Copilot auth handoff expected the staged token copy under the injection bundle direct-mounts directory." >&2
+      exit 2
+      ;;
+  esac
+
+  DIRECT_SOURCE_MOUNTS=()
+  if ((${#filtered_mounts[@]} > 0)); then
+    DIRECT_SOURCE_MOUNTS=("${filtered_mounts[@]}")
+  fi
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    rm -f -- "${source_path}" || {
+      echo "Copilot auth handoff could not remove the staged token copy from the injection bundle." >&2
+      exit 2
+    }
+    return 0
+  fi
+  if [[ "${auth_required}" -eq 0 ]]; then
+    rm -f -- "${source_path}" || {
+      echo "Copilot auth handoff could not remove the staged token copy from the injection bundle." >&2
+      exit 2
+    }
+    return 0
+  fi
+  token="$(tr -d '\r\n' <"${source_path}")"
+  if [[ -z "${token}" ]]; then
+    echo "Copilot auth token is empty. Stage a non-empty copilot_github_token." >&2
+    exit 2
+  fi
+  rm -f -- "${source_path}" || {
+    echo "Copilot auth handoff could not remove the staged token copy from the injection bundle." >&2
+    exit 2
+  }
+  token_handoff_parent="$(default_copilot_token_handoff_parent)" || exit $?
+  mkdir -p "${token_handoff_parent}"
+  chmod 0700 "${token_handoff_parent}"
+  reject_symlinked_colima_staging_cache_roots || exit $?
+  COPILOT_TOKEN_HANDOFF_DIR="$(mktemp -d "${token_handoff_parent}/copilot-token-handoff.XXXXXX")"
+  COPILOT_TOKEN_HANDOFF_FILE="${COPILOT_TOKEN_HANDOFF_DIR}/copilot-github-token.txt"
+  COPILOT_TOKEN_HANDOFF_CONSUMED_FILE="${COPILOT_TOKEN_HANDOFF_DIR}/copilot-token-consumed"
+  chmod 0733 "${COPILOT_TOKEN_HANDOFF_DIR}"
+  printf '%s\n' "${token}" >"${COPILOT_TOKEN_HANDOFF_FILE}"
+  chmod 0444 "${COPILOT_TOKEN_HANDOFF_FILE}"
+}
+
+wait_for_copilot_token_handoff_consumed() {
+  local timeout_seconds="${WORKCELL_COPILOT_TOKEN_HANDOFF_TIMEOUT_SECONDS:-10}"
+  local deadline=0
+  local container_status=""
+
+  [[ -n "${COPILOT_TOKEN_HANDOFF_FILE}" ]] || return 0
+  [[ -n "${COPILOT_TOKEN_HANDOFF_CONSUMED_FILE}" ]] || return 0
+  if [[ ! "${timeout_seconds}" =~ ^[0-9]+$ ]] || [[ "${timeout_seconds}" -eq 0 ]]; then
+    timeout_seconds=10
+  fi
+  deadline=$((SECONDS + timeout_seconds))
+
+  while [[ ! -e "${COPILOT_TOKEN_HANDOFF_CONSUMED_FILE}" ]]; do
+    container_status="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" inspect --format '{{.State.Status}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
+    case "${container_status}" in
+      "" | created | running | restarting) ;;
+      *)
+        echo "Copilot auth handoff was not consumed before the runtime container stopped." >&2
+        return 1
+        ;;
+    esac
+    if ((SECONDS >= deadline)); then
+      echo "Timed out waiting for the managed Copilot wrapper to consume the Copilot auth handoff." >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  if [[ -e "${COPILOT_TOKEN_HANDOFF_FILE}" ]]; then
+    echo "Copilot auth handoff marker was written before the mounted token file was removed." >&2
+    return 1
+  fi
 }
 
 build_recommended_command() {
@@ -5163,6 +5391,11 @@ provider_auth_modes() {
         modes+=(claude_auth)
       fi
       ;;
+    copilot)
+      if csv_contains_value "${credential_keys}" "copilot_github_token" && credential_is_launch_ready "copilot_github_token"; then
+        modes+=(copilot_github_token)
+      fi
+      ;;
     gemini)
       if csv_contains_value "${credential_keys}" "gemini_env" && credential_is_launch_ready "gemini_env"; then
         modes+=(gemini_env)
@@ -5256,11 +5489,41 @@ fail_fast_for_missing_gemini_auth() {
   exit 2
 }
 
+fail_fast_for_missing_copilot_auth() {
+  if [[ "${AGENT}" != "copilot" ]] || [[ "${PREPARE_ONLY}" -eq 1 ]] || [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ "${MODE}" == "development" ]] && [[ "$#" -gt 0 ]] && [[ "$1" != "copilot" ]]; then
+    return 0
+  fi
+
+  if copilot_no_auth_invocation "$@"; then
+    return 0
+  fi
+
+  if [[ "$(selected_provider_auth_mode)" != "none" ]]; then
+    return 0
+  fi
+
+  echo "Copilot auth is not configured for this session." >&2
+  echo "Workcell supports Copilot auth only through the explicit copilot_github_token injection-policy key;" >&2
+  echo "host ~/.copilot, ~/.config/github-copilot, ~/.cache/github-copilot, host GitHub CLI auth, GH_TOKEN, and GITHUB_TOKEN are not used as readiness sources." >&2
+  if [[ -n "${INJECTION_POLICY}" ]]; then
+    echo "Update ${INJECTION_POLICY} to include credentials.copilot_github_token." >&2
+  else
+    echo "Create $(default_injection_policy_path) or pass --injection-policy PATH with credentials.copilot_github_token." >&2
+    echo "See docs/examples/quickstart-copilot.md for the full credential reference." >&2
+  fi
+  printf 'Next step: workcell --auth-status --agent copilot --workspace %q\n' "${WORKSPACE}" >&2
+  exit 2
+}
+
 print_injection_status() {
   if [[ -z "${INJECTION_POLICY_SHA256}" ]]; then
     printf 'injection_policy=none\n'
     printf 'default_injection_policy_path=%s\n' "$(default_injection_policy_path)"
-    printf 'supported_credential_keys=codex_auth,claude_api_key,claude_auth,claude_mcp,gemini_env,gemini_oauth,gemini_projects,gcloud_adc,github_config,github_hosts\n'
+    printf 'supported_credential_keys=codex_auth,claude_api_key,claude_auth,claude_mcp,copilot_github_token,gemini_env,gemini_oauth,gemini_projects,gcloud_adc,github_config,github_hosts\n'
     printf 'credential_keys=none\n'
     printf 'credential_input_kinds=none\n'
     printf 'credential_resolvers=none\n'
@@ -5471,6 +5734,7 @@ workspace_is_sensitive() {
     "${REAL_HOME}/.claude"
     "${REAL_HOME}/.copilot"
     "${REAL_HOME}/.gemini"
+    "${REAL_HOME}/.cache/github-copilot"
     "${REAL_HOME}/.config"
     "${REAL_HOME}/.docker"
     "${REAL_HOME}/.npm"
@@ -5478,6 +5742,7 @@ workspace_is_sensitive() {
     "${REAL_HOME}/.gnupg"
     "${REAL_HOME}/.kube"
     "${REAL_HOME}/.config/gh"
+    "${REAL_HOME}/.config/github-copilot"
     "${REAL_HOME}/Library/Keychains"
     "${REAL_HOME}/Library/Application Support"
     "${REAL_HOME}/Library/Containers"
@@ -5510,7 +5775,7 @@ workspace_is_sensitive() {
   path_lower="$(lower_ascii "${path}")"
 
   for root in "${sensitive_roots[@]}"; do
-    if [[ "${path}" == "${root}" ]] || [[ "${path}" == "${root}/"* ]]; then
+    if host_path_within_root "${root}" "${path}"; then
       return 0
     fi
   done
@@ -6425,6 +6690,7 @@ start_managed_profile() {
   local cache_root="${REAL_HOME}/Library/Caches/colima"
   local host_inputs_root="${cache_root}/workcell-host-inputs"
   local shadow_root="${cache_root}/workcell-shadow"
+  local token_handoff_root="${cache_root}/workcell-token-handoff"
 
   prepare_colima_staging_cache_roots || return $?
 
@@ -6437,6 +6703,7 @@ start_managed_profile() {
       --mount "${workspace_mount}:w" \
       --mount "${host_inputs_root}" \
       --mount "${shadow_root}" \
+      --mount "${token_handoff_root}:w" \
       --mount-type virtiofs \
       --runtime docker \
       --cpu "${COLIMA_CPU}" \
@@ -6642,6 +6909,9 @@ provider_endpoints() {
       ;;
     claude)
       echo "api.anthropic.com:443 claude.ai:443 console.anthropic.com:443"
+      ;;
+    copilot)
+      echo "api.githubcopilot.com:443 api.individual.githubcopilot.com:443 api.github.com:443 github.com:443"
       ;;
     gemini)
       echo "generativelanguage.googleapis.com:443 ai.google.dev:443"
@@ -7138,8 +7408,26 @@ git_index_control_plane_dir_roots() {
       .claude/*)
         printf '%s\0' ".claude"
         ;;
+      .copilot/*)
+        printf '%s\0' ".copilot"
+        ;;
       .gemini/*)
         printf '%s\0' ".gemini"
+        ;;
+      .github/instructions/*)
+        printf '%s\0' ".github/instructions"
+        ;;
+      .github/copilot/*)
+        printf '%s\0' ".github/copilot"
+        ;;
+      .github/agents/*)
+        printf '%s\0' ".github/agents"
+        ;;
+      .github/skills/*)
+        printf '%s\0' ".github/skills"
+        ;;
+      .agents/skills/*)
+        printf '%s\0' ".agents/skills"
         ;;
       .vscode/*)
         printf '%s\0' ".vscode"
@@ -7159,8 +7447,26 @@ git_index_control_plane_dir_roots() {
       */.claude/*)
         printf '%s\0' "${path%%/.claude/*}/.claude"
         ;;
+      */.copilot/*)
+        printf '%s\0' "${path%%/.copilot/*}/.copilot"
+        ;;
       */.gemini/*)
         printf '%s\0' "${path%%/.gemini/*}/.gemini"
+        ;;
+      */.github/instructions/*)
+        printf '%s\0' "${path%%/.github/instructions/*}/.github/instructions"
+        ;;
+      */.github/copilot/*)
+        printf '%s\0' "${path%%/.github/copilot/*}/.github/copilot"
+        ;;
+      */.github/agents/*)
+        printf '%s\0' "${path%%/.github/agents/*}/.github/agents"
+        ;;
+      */.github/skills/*)
+        printf '%s\0' "${path%%/.github/skills/*}/.github/skills"
+        ;;
+      */.agents/skills/*)
+        printf '%s\0' "${path%%/.agents/skills/*}/.agents/skills"
         ;;
       */.vscode/*)
         printf '%s\0' "${path%%/.vscode/*}/.vscode"
@@ -7359,10 +7665,14 @@ prepare_workspace_control_plane_shadow() {
     done < <(
       find "${workspace}" \
         \( -name .git -type d -prune \) -o \
-        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .copilot -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
     )
 
-    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json; do
+    for rel in .github/instructions .github/copilot .github/agents .github/skills .agents/skills; do
+      register_workspace_control_plane_dir_mount "${workspace}" "${rel}"
+    done
+
+    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md; do
       register_workspace_control_plane_file_mount "${workspace}" "${rel}"
     done
   else
@@ -7372,13 +7682,18 @@ prepare_workspace_control_plane_shadow() {
     done < <(
       find "${workspace}" \
         \( -name .git -type d -prune \) -o \
-        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .copilot -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
     )
+    for rel in .github/instructions .github/copilot .github/agents .github/skills .agents/skills; do
+      if [[ -d "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
+        add_shadow_dir_mount "${workspace}" "${rel}"
+      fi
+    done
     while IFS= read -r -d '' rel; do
       add_shadow_dir_mount "${workspace}" "${rel}"
     done < <(git_index_control_plane_dir_roots "${workspace}" | LC_ALL=C sort -zu)
 
-    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json; do
+    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md; do
       if [[ -f "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
         add_shadow_file_mount "${workspace}" "${rel}"
       fi
@@ -7848,18 +8163,10 @@ fi
 
 if [[ -n "${AGENT}" ]]; then
   case "${AGENT}" in
-    codex | claude | gemini) ;;
-    antigravity | copilot)
-      case "${AGENT}" in
-        antigravity)
-          planned_provider_name="Google Antigravity CLI"
-          planned_missing_support_detail="No Antigravity runtime, auth handoff, or live certification evidence is shipped in this build."
-          ;;
-        copilot)
-          planned_provider_name="GitHub Copilot CLI"
-          planned_missing_support_detail="Copilot runtime artifact is shipped only for provenance and release verification; auth handoff, supported launch, and live certification evidence are not shipped in this build."
-          ;;
-      esac
+    codex | claude | copilot | gemini) ;;
+    antigravity)
+      planned_provider_name="Google Antigravity CLI"
+      planned_missing_support_detail="No Antigravity runtime, auth handoff, or live certification evidence is shipped in this build."
       echo "${planned_provider_name} is a planned Workcell provider adapter, but it is not supported yet." >&2
       echo "${planned_missing_support_detail}" >&2
       exit 2
@@ -8063,6 +8370,7 @@ fi
 fail_for_unsupported_launch_target
 
 fail_fast_for_missing_gemini_auth "$@"
+fail_fast_for_missing_copilot_auth "$@"
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   if [[ "${TARGET_BACKEND}" == "colima" ]]; then
@@ -8090,10 +8398,11 @@ if [[ "${TARGET_BACKEND}" == "colima" ]] &&
     fi
     echo "Manual cleanup, if you prefer to inspect and delete it yourself:" >&2
     printf '  colima delete --profile %q --force\n' "${COLIMA_PROFILE}" >&2
-    printf '  rm -rf %q %q %q\n' \
+    printf '  rm -rf %q %q %q && rm -f %q\n' \
       "$(profile_dir "${COLIMA_PROFILE}")" \
       "$(profile_lima_dir "${COLIMA_PROFILE}")" \
-      "$(profile_disk_dir "${COLIMA_PROFILE}")" >&2
+      "$(profile_disk_dir "${COLIMA_PROFILE}")" \
+      "$(profile_store_path "${COLIMA_PROFILE}")" >&2
     exit 2
   fi
 fi
@@ -8149,6 +8458,7 @@ if [[ "${SESSION_DETACHED}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)"
 fi
 prepare_workspace_control_plane_shadow "${WORKSPACE_SHADOW_SOURCE}" "${MODE}"
 prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
+prepare_copilot_token_handoff_mount "$@"
 build_runtime_host_aliases "${ALLOW_ENDPOINTS}"
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   prepare_session_audit_state "${COLIMA_PROFILE}"
@@ -8158,7 +8468,14 @@ CONTAINER_NAME="workcell-$(slugify "${AGENT}-${MODE}-$(basename "${WORKSPACE}")"
 DOCKER_RUN_BASE=(
   "${HOST_DOCKER_BIN}"
   run
-  --init
+)
+# Copilot token handoff mounts are consumed and unlinked by the Workcell
+# entrypoint before provider exec, so keep that entrypoint as PID 1 for the
+# authenticated launch path.
+if [[ -z "${COPILOT_TOKEN_HANDOFF_DIR}" ]]; then
+  DOCKER_RUN_BASE+=(--init)
+fi
+DOCKER_RUN_BASE+=(
   --name "${CONTAINER_NAME}"
   --security-opt no-new-privileges:true
   --cap-drop ALL
@@ -8183,7 +8500,11 @@ DOCKER_RUN_BASE=(
   -e WORKCELL_MODE="${MODE}"
   -e HOME=/state/agent-home
   -e CODEX_HOME=/state/agent-home/.codex
+  -e COPILOT_HOME=/state/agent-home/.copilot
+  -e COPILOT_CACHE_HOME=/state/agent-home/.cache/github-copilot
   -e WORKCELL_RUNTIME=1
+  -e WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}"
+  -e WORKCELL_COPILOT_AUTH_REQUIRED="${COPILOT_AUTH_REQUIRED}"
   -e TMPDIR=/state/tmp
   -e WORKSPACE=/workspace
   -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane
@@ -8197,6 +8518,7 @@ fi
 if [[ "${CONTAINER_MUTABILITY}" == "readonly" ]]; then
   DOCKER_RUN_BASE+=(
     --read-only
+    --tmpfs "/run/workcell:nosuid,nodev,size=4m,mode=755,uid=${HOST_UID},gid=${HOST_GID}"
     --user "${HOST_UID}:${HOST_GID}"
     -e USER=agent
     -e LOGNAME=agent
@@ -8228,6 +8550,11 @@ if ((${#RUNTIME_NETWORK_ARGS[@]} > 0)); then
 fi
 if ((${#DIRECT_SOURCE_MOUNTS[@]} > 0)); then
   DOCKER_RUN_BASE+=("${DIRECT_SOURCE_MOUNTS[@]}")
+fi
+if [[ -n "${COPILOT_TOKEN_HANDOFF_DIR}" ]]; then
+  DOCKER_RUN_BASE+=(
+    -v "${COPILOT_TOKEN_HANDOFF_DIR}:${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}:rw"
+  )
 fi
 if ((${#CACHE_MOUNTS[@]} > 0)); then
   DOCKER_RUN_BASE+=("${CACHE_MOUNTS[@]}")
@@ -8278,14 +8605,23 @@ else
   fi
 fi
 
+DOCKER_RUN_PREFIX_LEN=2
+if [[ "${DOCKER_RUN[2]:-}" == "--init" ]]; then
+  DOCKER_RUN_PREFIX_LEN=3
+fi
+DOCKER_RUN_ARGS=("${DOCKER_RUN[@]:${DOCKER_RUN_PREFIX_LEN}}")
+
 if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
   DOCKER_RUN=(
-    "${HOST_DOCKER_BIN}" run --init -d -i -t
-    "${DOCKER_RUN[@]:3}"
+    "${HOST_DOCKER_BIN}" run
   )
+  if [[ -z "${COPILOT_TOKEN_HANDOFF_DIR}" ]]; then
+    DOCKER_RUN+=(--init)
+  fi
+  DOCKER_RUN+=(-d -i -t "${DOCKER_RUN_ARGS[@]}")
 elif [[ -t 0 ]] && [[ -t 1 ]]; then
   mark_interactive_host_terminal_dirty
-  DOCKER_RUN=("${HOST_DOCKER_BIN}" run -it "${DOCKER_RUN[@]:3}")
+  DOCKER_RUN=("${HOST_DOCKER_BIN}" run -it "${DOCKER_RUN_ARGS[@]}")
 fi
 
 printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
@@ -8498,6 +8834,7 @@ if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
     exit 2
   fi
   "${DOCKER_RUN[@]}" >/dev/null
+  wait_for_copilot_token_handoff_consumed
   start_detached_session_monitor
   load_session_runtime_metadata "${SESSION_ID}"
   detached_status="${SESSION_META_STATUS:-running}"

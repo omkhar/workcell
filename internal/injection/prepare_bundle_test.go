@@ -48,6 +48,35 @@ func TestPrepareBundleRejectsMissingPolicy(t *testing.T) {
 	}
 }
 
+func TestPrepareBundleRejectsCredentialSourceUnderWorkspace(t *testing.T) {
+	realHome := t.TempDir()
+	workspace := filepath.Join(realHome, "workspace")
+	policyPath := filepath.Join(realHome, "policy.toml")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	credentialPath := filepath.Join(workspace, "copilot-token.txt")
+	if err := os.WriteFile(credentialPath, []byte("token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(policyPath, []byte("[credentials.copilot_github_token]\nsource = \"workspace/copilot-token.txt\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := PrepareBundle(PrepareBundleOptions{
+		Agent:                "copilot",
+		Mode:                 "strict",
+		WorkspacePath:        workspace,
+		PolicyPath:           policyPath,
+		RealHome:             realHome,
+		BundleParentOverride: filepath.Join(realHome, "host-inputs"),
+		ProcessPID:           os.Getpid(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "credentials.copilot_github_token source must be outside the mounted workspace") {
+		t.Fatalf("expected workspace credential rejection, got %v", err)
+	}
+}
+
 func TestPrepareBundleRequiresAgentAndMode(t *testing.T) {
 	if _, err := PrepareBundle(PrepareBundleOptions{Agent: "", Mode: "strict", RealHome: "/tmp"}); err == nil {
 		t.Fatalf("expected error for empty agent")

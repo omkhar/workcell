@@ -40,6 +40,21 @@ func TestParseTOMLSubsetRejectsForbiddenConstructs(t *testing.T) {
 			wantError: "duplicate key: common",
 		},
 		{
+			name:      "credentials_scalar_table_collision",
+			content:   "[credentials.codex_auth]\nsource = \"/tmp/a\"\n[credentials]\ncodex_auth = \"/tmp/b\"\n",
+			wantError: "duplicate key across table forms: credentials.codex_auth",
+		},
+		{
+			name:      "credentials_table_scalar_collision",
+			content:   "credentials = \"/tmp/a\"\n[credentials.codex_auth]\nsource = \"/tmp/b\"\n",
+			wantError: "credentials table conflicts with scalar key credentials",
+		},
+		{
+			name:      "duplicate_credentials_entry",
+			content:   "[credentials]\ncodex_auth = \"/tmp/a\"\n[credentials.codex_auth]\nsource = \"/tmp/b\"\n",
+			wantError: "duplicate credentials entry: codex_auth",
+		},
+		{
 			name:      "multi_line_basic_string",
 			content:   "version = \"\"\"hi\nthere\"\"\"\n",
 			wantError: "multi-line strings are not supported",
@@ -51,8 +66,8 @@ func TestParseTOMLSubsetRejectsForbiddenConstructs(t *testing.T) {
 		},
 		{
 			name:      "unsupported_scalar_credential_key",
-			content:   "[credentials]\ncopilot_github_token = \"/tmp/copilot-token.txt\"\n",
-			wantError: "credentials contains unsupported keys: copilot_github_token",
+			content:   "[credentials]\nnot_a_credential = \"/tmp/nope.txt\"\n",
+			wantError: "credentials contains unsupported keys: not_a_credential",
 		},
 	}
 	for _, r := range rows {

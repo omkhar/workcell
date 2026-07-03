@@ -9,6 +9,7 @@ through a native control-plane mapping.
 |---|---|---|---|---|
 | Codex | CLI | `~/.codex/config.toml`, `managed_config.toml`, `requirements.toml`, rules, MCP config, rendered `AGENTS.md` | `codex_auth` | direct staged `codex_auth` and `codex-home-auth-file` host reuse are supported |
 | Claude | Claude Code CLI | `~/.claude/settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, reviewed Bash hook | `claude_auth`, `claude_api_key`, `claude_mcp` | direct staged `claude_auth` and `claude_api_key` are supported; the built-in macOS resolver scaffold remains fail-closed |
+| GitHub Copilot CLI | CLI | Workcell-owned session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, and GitHub Copilot config/cache directories, host-mounted token handoff plus transient runtime handoff, logs, cache state, custom instructions disabled, and skill/dynamic-retrieval overrides blocked | `copilot_github_token` | supported Copilot token credential: a directly staged `copilot_github_token`; Workcell removes the token file and staged direct-mount copy from direct runtime mounts, passes a temporary handoff mount outside provider state, runs the Workcell entrypoint as PID 1 for token handoff launches, exports it as `COPILOT_GITHUB_TOKEN` only to the managed Copilot child after unlinking the runtime handoff file, and does not use host `gh` auth, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, or host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`, `~/.cache/github-copilot`) |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, rendered `GEMINI.md`, `.env`, OAuth creds, `projects.json`, trusted folders | `gemini_env`, `gemini_oauth`, `gemini_projects`, `gcloud_adc` | Gemini's own sandbox is not the Tier 1 boundary here; `gcloud_adc` is supplemental to Vertex config |
 
 ### Upstream change: Gemini CLI retirement on June 18, 2026
@@ -35,30 +36,27 @@ provider; sequencing is tracked in [ROADMAP.md](../ROADMAP.md).
 
 | Provider | Planned Tier 1 surface | Planned managed control plane | Planned auth input | Support status |
 |---|---|---|---|---|
-| GitHub Copilot CLI | `workcell --agent copilot --workspace ...` | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, `~/.copilot` config, permissions, sessions, logs, plugins, hooks, MCP/LSP state, and reviewed instruction imports | explicit staged token such as `copilot_github_token`, exported only to the managed child as `COPILOT_GITHUB_TOKEN` | fail-closed scaffold; not current support |
 | Google Antigravity CLI | `workcell --agent antigravity --workspace ...` | session-local provider home/cache, settings, permissions, subagents, plugins, MCP, sandbox state, hooks, and reviewed instruction imports once official CLI provenance is pinned | explicit staged Google auth material, exact key names still pending official install/auth implementation | fail-closed scaffold; not current support |
 
-The current sequencing plan for the Copilot parity track is
-[docs/copilot-linux-local-compat-plan.md](copilot-linux-local-compat-plan.md).
-That page is planning-only and does not change the supported provider set.
-
-Copilot support must land with the same evidence bar as the current providers:
-adapter baseline, auth/bootstrap explainability, unsafe-argument rejection,
-workspace control-plane masking, quickstart, scenario coverage, and live
-provider certification. Host `~/.copilot`, host keychains, `GH_TOKEN`,
-`GITHUB_TOKEN`, ambient GitHub CLI auth, and whole-home passthrough are not
-acceptable Tier 1 inputs.
+The Copilot parity plan at
+[docs/copilot-linux-local-compat-plan.md](copilot-linux-local-compat-plan.md)
+is historical planning context; the current support boundary is the table
+above and the quickstart in
+[docs/examples/quickstart-copilot.md](examples/quickstart-copilot.md).
 
 GitHub documents Copilot CLI as a terminal agent with interactive and
 programmatic modes, environment-token auth, configurable `COPILOT_HOME`, and
 permissive tool flags such as `--allow-all` and `--yolo`. Workcell treats
-those product surfaces as implementation inputs that must be mapped or blocked
-before support is claimed.
+those product surfaces as implementation inputs that must stay mapped or
+blocked by the Workcell adapter. Live provider-authenticated `copilot -p`
+certification remains a maintainer pre-signing gate for changes that promote
+or materially alter the Copilot support claim.
 
-Antigravity support must first pin an official install and auth path from
-Google, then land the same adapter, auth/bootstrap, unsafe-argument,
-control-plane masking, quickstart, scenario, and live-certification evidence
-before any Tier 1 support claim.
+Antigravity remains planned/fail-closed. Even where upstream CLI documentation
+exists, Workcell must still pin the supported install/auth path and land the
+same adapter, auth/bootstrap, unsafe-argument, control-plane masking,
+quickstart, scenario, and live-certification evidence before any Tier 1 support
+claim.
 
 For provider auth maturity and rollout caveats, see
 [docs/injection-policy.md](injection-policy.md) and

@@ -6,11 +6,10 @@
 
 Workcell runs coding agents inside a bounded local runtime on Apple Silicon
 macOS: a dedicated Colima VM plus a hardened container inside that VM. It ships
-Tier 1 adapters for Codex, Claude Code, and Gemini that seed each provider's
-native control plane without pretending provider config is the security
-boundary. GitHub Copilot CLI is the next committed provider-parity track, and
-Google Antigravity CLI is a queued follow-on; current releases do not support
-`--agent copilot` or `--agent antigravity`.
+Tier 1 adapters for Codex, Claude Code, GitHub Copilot CLI, and Gemini that
+seed each provider's native control plane without pretending provider config is
+the security boundary. Google Antigravity CLI remains a queued fail-closed
+follow-on; current releases do not support `--agent antigravity`.
 
 This project is for teams that want local agent velocity without turning the
 host home directory, keychain, provider state, or local sockets into the trust
@@ -49,12 +48,19 @@ boundary.
   preview-only `remote_vm/aws-ec2-ssm/compat` and
   `remote_vm/gcp-vm/compat` broker plans, and their live smokes remain
   certification-only
-- CLI surfaces for Codex, Claude, and upstream-served Gemini auth modes plus
-  host-side detached session control and inspection commands
-- GitHub Copilot CLI is the next planned provider-parity track, with Google
-  Antigravity CLI queued behind the same evidence bar; neither is launch-ready
-  until its adapter, auth path, quickstart, deterministic evidence, and live
-  certification land together
+- CLI surfaces for Codex, Claude, Copilot, and upstream-served Gemini auth
+  modes plus host-side detached session control and inspection commands
+- GitHub Copilot CLI uses explicit `copilot_github_token` staging through
+  reviewed host-side inputs, converts it to a host-mounted token handoff outside
+  mounted provider state, moves it through a transient runtime handoff file,
+  and exports its value as `COPILOT_GITHUB_TOKEN` only to the managed Copilot
+  child process, with isolated `COPILOT_HOME` and `COPILOT_CACHE_HOME`; host
+  `gh` auth, Copilot provider state (`~/.copilot`,
+  `~/.config/github-copilot`, `~/.cache/github-copilot`), keychains, and
+  whole-home state are not safe-path inputs
+- Google Antigravity CLI is queued behind the same evidence bar and remains
+  planned/fail-closed until Workcell ships adapter, auth, quickstart,
+  deterministic evidence, and live certification together
 - GitHub-hosted CI verifies repo shape, reproducibility, release posture, and
   secretless runtime behavior
 - GitHub-hosted CI verifies bundle install/uninstall and Homebrew
@@ -97,6 +103,17 @@ workcell auth set \
 workcell --agent codex --doctor --workspace /path/to/repo
 workcell --agent codex --inspect --workspace /path/to/repo
 workcell --agent codex --workspace /path/to/repo
+```
+
+For Copilot, use the provider-specific credential instead of the Codex auth
+file:
+
+```bash
+workcell auth set \
+  --agent copilot \
+  --credential copilot_github_token \
+  --source /Users/example/.config/workcell/copilot-github-token.txt
+workcell --agent copilot --workspace /path/to/repo
 ```
 
 See [docs/getting-started.md](docs/getting-started.md) for the release install
@@ -199,8 +216,8 @@ Workcell can stage:
 
 - common or provider-specific instruction fragments
 - provider-native credentials such as `codex_auth`, `claude_auth`,
-  `claude_api_key`, `claude_mcp`, `gemini_env`, `gemini_oauth`,
-  `gemini_projects`, and `gcloud_adc`
+  `claude_api_key`, `claude_mcp`, `copilot_github_token`, `gemini_env`,
+  `gemini_oauth`, `gemini_projects`, and `gcloud_adc`
 - scoped GitHub CLI credentials through `github_hosts` and `github_config`
 - SSH config, known hosts, and identities
 - explicit copied files or directories for non-reserved paths
@@ -208,10 +225,19 @@ Workcell can stage:
 It does not support whole-home passthrough, arbitrary environment-variable
 secret injection, or host socket forwarding on the safe path.
 
-Copilot and Antigravity credentials and provider-home state are not supported
-inputs yet. Their planned adapters must use explicit staged credentials,
-session-local home and cache paths, and reviewed provider-auth handling before
-they can join the supported provider set.
+Copilot auth is intentionally narrow: configure `copilot_github_token` and let
+Workcell stage it through reviewed host-side inputs. For an auth-required
+Copilot launch, the launcher removes the original staged token file from direct
+runtime mounts, passes a temporary host-mounted token handoff outside mounted
+provider state, the runtime entrypoint consumes it into a transient handoff
+file, unlinks the mounted file, and re-execs without the token in its
+environment. The wrapper unlinks that runtime file before exporting the value
+as `COPILOT_GITHUB_TOKEN` only to the managed Copilot child process.
+Workcell does not copy or pre-stage the token into `COPILOT_HOME`. Host `gh`
+auth, `GH_TOKEN`, `GITHUB_TOKEN`, host Copilot provider state (`~/.copilot`,
+`~/.config/github-copilot`, `~/.cache/github-copilot`), keychains, and
+whole-home state are not readiness or auth sources. Antigravity credentials and
+provider-home state are not supported inputs yet.
 
 See [docs/injection-policy.md](docs/injection-policy.md) and
 [docs/examples/injection-policy.toml](docs/examples/injection-policy.toml).
@@ -224,14 +250,14 @@ The by-provider bootstrap tiers and handoffs live in
 |---|---|---|---|
 | Codex | CLI | `~/.codex/config.toml`, `AGENTS.md`, rules, MCP config | [docs/examples/quickstart-codex.md](docs/examples/quickstart-codex.md) |
 | Claude | Claude Code CLI | `~/.claude/settings.json`, `CLAUDE.md`, `.mcp.json`, auth mirrors, hooks, host-side macOS auth resolver scaffold | [docs/examples/quickstart-claude.md](docs/examples/quickstart-claude.md) |
+| GitHub Copilot CLI | CLI | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, token handoff, custom instructions disabled, skill/dynamic-retrieval overrides blocked | [docs/examples/quickstart-copilot.md](docs/examples/quickstart-copilot.md) |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, `GEMINI.md`, `.env`, `projects.json` | [docs/examples/quickstart-gemini.md](docs/examples/quickstart-gemini.md) |
 
 Planned provider parity:
 
 | Provider | Target surface | Required before support |
 |---|---|---|
-| GitHub Copilot CLI | planned Tier 1 CLI adapter; not current support | `--agent copilot`, explicit token staging, session-local `COPILOT_HOME` and `COPILOT_CACHE_HOME`, unsafe-argument policy, quickstart, deterministic tests, and live `copilot -p` certification |
-| Google Antigravity CLI | planned Tier 1 CLI adapter; not current support | `--agent antigravity`, official install provenance, explicit Google auth staging, session-local provider home/cache, unsafe-argument policy, quickstart, deterministic tests, and live provider certification |
+| Google Antigravity CLI | planned fail-closed Tier 1 CLI adapter; not current support | `--agent antigravity`, pinned official install/auth provenance, explicit Google auth staging, session-local provider home/cache, unsafe-argument policy, quickstart, deterministic tests, and live provider certification |
 
 GUI and IDE surfaces are lower assurance unless they act only as clients to
 the same bounded runtime.
@@ -395,7 +421,9 @@ Tagged releases are rebuilt and verified before publication. The release path:
   targets the newest two GitHub-hosted Apple Silicon macOS runner labels
 - refuses to publish if any reviewed provider, Linux base image, Linux
   toolchain, or release-build pin is behind the latest tracked upstream
-- verifies the pinned Copilot provenance artifact against upstream GitHub release metadata while keeping Copilot launch unsupported; Antigravity gets the same gate before any future support claim
+- verifies pinned Codex, Claude, Copilot, and Gemini releases against upstream
+  metadata as part of the reviewed provider set; Antigravity gets the same
+  gate before any future support claim
 - publishes from the archived source bundle rather than the live checkout
 - gates publication on bundle and Homebrew install verification on
   GitHub-hosted Apple Silicon `macos-26` and `macos-15`
@@ -456,9 +484,8 @@ See [docs/provenance.md](docs/provenance.md) and
 
 - `runtime/`: VM and container boundary implementation
 - `policy/`: shared contract layer and hosted-control policy
-- `adapters/`: provider-native baselines for Codex, Claude, and Gemini, plus
-  fail-closed Copilot and Antigravity planning scaffolds (their directories are
-  not baselines until adapter support lands)
+- `adapters/`: provider-native baselines for Codex, Claude, Copilot, and
+  Gemini, plus fail-closed Antigravity planning scaffolding
 - `cmd/`: host-side and runtime-side Go entrypoints (the `workcell-*` binaries)
 - `internal/`: shared Go packages backing the `cmd/` binaries
 - `scripts/`: launcher, validation, release, audit, and bootstrap entrypoints

@@ -2,13 +2,17 @@ version = 1
 
 [functional.FR-001]
 title = "Managed provider launch"
-summary = "Workcell launches supported providers directly inside the managed Tier 1 runtime without a separate attach step."
-workflows = ["launch_managed"]
+summary = "Workcell launches supported providers directly inside the managed Tier 1 runtime without a separate attach step; Copilot support also requires live provider-e2e certification before support-claim commits."
+workflows = ["launch_managed", "launch_managed_copilot"]
 evidence = [
   "scripts/container-smoke.sh",
+  "scripts/provider-e2e.sh",
   "scripts/verify-invariants.sh",
+  "tests/scenarios/shared/test-agent-launch-smoke.sh",
   "tests/scenarios/shared/test-assurance-dry-run.sh",
   "tests/scenarios/shared/test-compat-target-dry-run.sh",
+  "tests/scenarios/shared/test-copilot-provider-e2e.sh",
+  "tests/scenarios/shared/test-copilot-session-dry-run.sh",
   "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh",
 ]
 docs = [
@@ -17,6 +21,7 @@ docs = [
   "docs/provider-matrix.md",
   "docs/examples/quickstart-codex.md",
   "docs/examples/quickstart-claude.md",
+  "docs/examples/quickstart-copilot.md",
   "docs/examples/quickstart-gemini.md",
 ]
 
@@ -144,6 +149,7 @@ workflows = [
   "session_delete",
 ]
 evidence = [
+  "tests/scenarios/shared/test-copilot-session-dry-run.sh",
   "tests/scenarios/shared/test-session-commands.sh",
   "internal/host/sessions/sessions_test.go",
 ]
@@ -292,6 +298,10 @@ summary = "Release artifacts, control-plane manifests, and signing metadata must
 evidence = [
   "scripts/verify-release-bundle.sh",
   "scripts/verify-control-plane-manifest.sh",
+  "scripts/verify-upstream-claude-release.sh",
+  "scripts/verify-upstream-codex-release.sh",
+  "scripts/verify-upstream-copilot-release.sh",
+  "scripts/verify-upstream-gemini-release.sh",
 ]
 docs = [
   "docs/provenance.md",

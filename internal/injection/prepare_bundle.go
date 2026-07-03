@@ -4,6 +4,7 @@
 package injection
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -26,6 +27,10 @@ type PrepareBundleOptions struct {
 	Agent string
 	// Mode is the agent execution mode (e.g. "auto", "manual"); required.
 	Mode string
+	// WorkspacePath is the host workspace mounted at /workspace. Credential
+	// sources must resolve outside this path so secrets are not also exposed
+	// through the workspace mount.
+	WorkspacePath string
 	// PolicyPath is an explicit injection-policy TOML path.  When empty
 	// and UseDefaultPolicy is true, the default
 	// DefaultInjectionPolicyPath is consulted.
@@ -243,6 +248,9 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 	if info, err := os.Stat(manifestPath); err != nil || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("Injection manifest was not rendered: %s", manifestPath)
 	}
+	if err := rejectWorkspaceCredentialSources(manifestPath, opts.WorkspacePath); err != nil {
+		return nil, err
+	}
 
 	mountSpecPath, err := launcher.CanonicalizePath(bundleRoot + ".mounts.json")
 	if err != nil {
@@ -286,6 +294,61 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 		InjectionProviderAuthReadyStates:    resolverLines[4],
 		InjectionSharedAuthReadyStates:      resolverLines[5],
 	}, nil
+}
+
+func rejectWorkspaceCredentialSources(manifestPath, workspacePath string) error {
+	if strings.TrimSpace(workspacePath) == "" {
+		return nil
+	}
+	if _, err := os.Stat(workspacePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat workspace for credential-source validation: %w", err)
+	}
+	workspace, err := filepath.EvalSymlinks(workspacePath)
+	if err != nil {
+		return fmt.Errorf("resolve workspace for credential-source validation: %w", err)
+	}
+	workspace = filepath.Clean(workspace)
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
+	}
+	var manifest struct {
+		Credentials map[string]struct {
+			Source string `json:"source"`
+		} `json:"credentials"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return err
+	}
+	for key, entry := range manifest.Credentials {
+		if strings.TrimSpace(entry.Source) == "" {
+			continue
+		}
+		source, err := filepath.EvalSymlinks(entry.Source)
+		if err != nil {
+			return fmt.Errorf("resolve credentials.%s source for workspace validation: %w", key, err)
+		}
+		source = filepath.Clean(source)
+		if pathWithin(workspace, source) {
+			return fmt.Errorf("credentials.%s source must be outside the mounted workspace: %s", key, source)
+		}
+	}
+	return nil
+}
+
+func pathWithin(root, candidate string) bool {
+	if root == "" || candidate == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // installSyntheticProbeEnv mirrors the bash branches that stage synthetic

@@ -14,9 +14,7 @@ const (
 	// planned fail-closed adapter, not a member of AllProviders until
 	// runtime support and certification evidence land.
 	Antigravity = "antigravity"
-	// Copilot is the GitHub Copilot CLI provider identifier. It is a
-	// planned fail-closed adapter, not a member of AllProviders until
-	// runtime support and certification evidence land.
+	// Copilot is the GitHub Copilot CLI provider identifier.
 	Copilot = "copilot"
 	// Gemini is the Google Gemini provider identifier.
 	Gemini = "gemini"
@@ -27,11 +25,11 @@ const (
 // AllProviders is the canonical iteration order for Workcell adapters.
 // Many call sites (validators, manifests, sort orders) depend on a stable
 // order; use this slice instead of declaring a local one.
-var AllProviders = []string{Claude, Codex, Gemini}
+var AllProviders = []string{Claude, Codex, Copilot, Gemini}
 
 // CredentialMetadataProviders is the canonical order for provider credential
-// metadata tables, including planned providers whose launch path is still
-// fail-closed. Membership here is not a support-tier claim.
+// metadata tables. Membership here is not a support-tier claim; planned
+// providers can appear here before they enter AllProviders.
 var CredentialMetadataProviders = []string{Claude, Codex, Copilot, Gemini}
 
 // DocumentKeys is the canonical rendering/validation order for managed

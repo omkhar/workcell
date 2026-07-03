@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/adapters"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
@@ -23,24 +24,15 @@ func renderCredentials(policy map[string]any, policyDir Path, agent, mode string
 	if !ok {
 		return nil, errors.New("credentials must be a TOML table")
 	}
-	if err := validateAllowedKeys(credentials, mapKeysSet([]string{
-		"codex_auth",
-		"claude_auth",
-		"claude_api_key",
-		"claude_mcp",
-		"gemini_env",
-		"gemini_oauth",
-		"gemini_projects",
-		"gcloud_adc",
-		"github_hosts",
-		"github_config",
-	}), "credentials"); err != nil {
+	if err := validateAllowedKeys(credentials, mapKeysSet(sortedKeys(credentialContainerPaths)), "credentials"); err != nil {
 		return nil, err
 	}
 
 	relevant := map[string]struct{}{}
-	for key := range sharedCredentialKeys {
-		relevant[key] = struct{}{}
+	if adapters.SharedCredentialsApplyToAgent(agent) {
+		for key := range sharedCredentialKeys {
+			relevant[key] = struct{}{}
+		}
 	}
 	if scoped, ok := agentScopedCredentialKeys[agent]; ok {
 		for key := range scoped {

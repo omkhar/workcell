@@ -142,6 +142,19 @@ run_with_support_override \
 grep -q '^target_kind=local_compat target_provider=docker-desktop target_id=desktop-linux target_assurance_class=compat runtime_api=docker workspace_transport=workspace-mount$' "${TMP_DIR}/compat-dry-run-supported.stderr"
 grep -Eq '^execution_path=managed-tier1 audit_log=.*/targets/local_compat/docker-desktop/wcl-workspace-[a-f0-9]+/workcell\.audit\.log$' "${TMP_DIR}/compat-dry-run-supported.stderr"
 
+run_with_support_override \
+  "compat-dry-run-supported-copilot" \
+  macos \
+  arm64 \
+  none \
+  none \
+  --target docker-desktop \
+  --agent copilot \
+  --dry-run
+grep -q '^target_kind=local_compat target_provider=docker-desktop target_id=desktop-linux target_assurance_class=compat runtime_api=docker workspace_transport=workspace-mount$' "${TMP_DIR}/compat-dry-run-supported-copilot.stderr"
+grep -q '^profile=.* mode=strict agent=copilot ' "${TMP_DIR}/compat-dry-run-supported-copilot.stderr"
+grep -Eq '^execution_path=managed-tier1 audit_log=.*/targets/local_compat/docker-desktop/wcl-workspace-[a-f0-9]+/workcell\.audit\.log$' "${TMP_DIR}/compat-dry-run-supported-copilot.stderr"
+
 if [[ "${EXPECTED_ALLOWED_MISSING}" == "none" ]]; then
   PATH="/usr/bin:/bin:/usr/sbin:/sbin" run_with_support_override \
     "compat-dry-run-supported-no-path-docker" \

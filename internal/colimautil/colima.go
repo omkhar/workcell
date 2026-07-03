@@ -43,6 +43,14 @@ func expectedReadOnlyCacheMounts() (map[string]bool, error) {
 	return expected, nil
 }
 
+func expectedTokenHandoffMount() (string, error) {
+	home, err := canonicalizeConfigPath(userHome())
+	if err != nil {
+		return "", err
+	}
+	return canonicalizeConfigPath(filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff"))
+}
+
 func validateManagedMounts(mountsRaw any, workspace, profile string) error {
 	expected, err := canonicalizeConfigPath(workspace)
 	if err != nil {
@@ -52,13 +60,19 @@ func validateManagedMounts(mountsRaw any, workspace, profile string) error {
 	if err != nil {
 		return err
 	}
+	tokenHandoffMount, err := expectedTokenHandoffMount()
+	if err != nil {
+		return err
+	}
 
 	mounts := yamlSlice(mountsRaw)
 	if len(mounts) == 0 {
 		return fmt.Errorf("unexpected configured Colima mounts: %v", mountsRaw)
 	}
-	writableCount := 0
-	writableMatches := 0
+	writableMounts := map[string]bool{
+		expected:          false,
+		tokenHandoffMount: false,
+	}
 	for _, entry := range mounts {
 		mount := yamlMap(entry)
 		if mount == nil {
@@ -77,11 +91,11 @@ func validateManagedMounts(mountsRaw any, workspace, profile string) error {
 		}
 
 		if yamlBool(mount, "writable") {
-			writableCount++
-			if location == expected {
-				writableMatches++
+			if _, ok := writableMounts[location]; ok {
+				writableMounts[location] = true
+				continue
 			}
-			continue
+			return fmt.Errorf("colima profile %s has an unexpected writable host mount: %s", profile, rawLocation)
 		}
 		if _, ok := cacheMounts[location]; ok {
 			cacheMounts[location] = true
@@ -90,8 +104,10 @@ func validateManagedMounts(mountsRaw any, workspace, profile string) error {
 		return fmt.Errorf("colima profile %s has an unexpected host mount: %s", profile, rawLocation)
 	}
 
-	if writableCount != 1 || writableMatches != 1 {
-		return fmt.Errorf("colima profile %s must mount only %s as writable", profile, expected)
+	for location, seen := range writableMounts {
+		if !seen {
+			return fmt.Errorf("colima profile %s is missing required writable Workcell mount: %s", profile, location)
+		}
 	}
 	for location, seen := range cacheMounts {
 		if !seen {
@@ -118,8 +134,13 @@ func ValidateProfileConfig(configPath, workspace, expectedCPU, expectedMemory, e
 	}
 
 	if err := validateManagedMounts(config["mounts"], workspace, "managed"); err != nil {
-		if strings.HasPrefix(err.Error(), "colima profile managed must mount only ") {
-			return fmt.Errorf("colima profile must mount only %s as writable in colima.yaml", expectedWorkspace)
+		if strings.Contains(err.Error(), "unexpected writable host mount") ||
+			strings.Contains(err.Error(), "missing required writable Workcell mount") {
+			tokenHandoffMount, tokenErr := expectedTokenHandoffMount()
+			if tokenErr != nil {
+				return tokenErr
+			}
+			return fmt.Errorf("colima profile must mount only %s and %s as writable in colima.yaml", expectedWorkspace, tokenHandoffMount)
 		}
 		return err
 	}

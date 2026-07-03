@@ -15,9 +15,10 @@ Remove Workcell-owned local install links and managed host state:
   - ~/.local/share/man/man1/workcell.1
   - ~/.local/state/workcell
   - Workcell-owned build cache roots
-  - ~/.colima/workcell-* profiles, matching _lima dirs, matching _lima/_disks dirs, and Workcell locks
+  - ~/.colima/workcell-* profiles, matching _lima dirs, matching _lima/_disks dirs, matching _store metadata, and Workcell locks
   - ~/Library/Caches/colima/workcell-host-inputs
   - ~/Library/Caches/colima/workcell-shadow
+  - ~/Library/Caches/colima/workcell-token-handoff
   - /tmp/workcell-docker.*, /tmp/workcell-provider-e2e.*, and /tmp/workcell-*.log/failed scratch
 
 Preserved on purpose:
@@ -83,6 +84,7 @@ MAN_PATH="${REAL_HOME}/.local/share/man/man1/workcell.1"
 STATE_ROOT="${REAL_HOME}/.local/state/workcell"
 INJECTION_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
 SHADOW_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
+TOKEN_HANDOFF_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-token-handoff"
 MACOS_CACHE_ROOT="${REAL_HOME}/Library/Caches/workcell"
 XDG_WORKCELL_CACHE_ROOT="${XDG_CACHE_HOME:-${REAL_HOME}/.cache}/workcell"
 
@@ -261,6 +263,7 @@ delete_managed_profile() {
   local colima_bin="$2"
   local profile_root="${COLIMA_HOME}/${profile}"
   local lima_root="${COLIMA_HOME}/_lima/colima-${profile}"
+  local store_path="${COLIMA_HOME}/_store/colima-${profile}.json"
 
   validate_profile_name "${profile}" || {
     preserve_path "unsafe profile name" "${profile}"
@@ -282,6 +285,7 @@ delete_managed_profile() {
 
   remove_path "${profile_root}"
   remove_path "${lima_root}"
+  remove_path "${store_path}"
   remove_path "${COLIMA_HOME}/locks/${profile}.lock"
 }
 
@@ -322,6 +326,18 @@ collect_profiles() {
             ;;
         esac
       done < <(find "${COLIMA_HOME}/locks" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+    fi
+
+    if [[ -d "${COLIMA_HOME}/_store" ]]; then
+      while IFS= read -r -d '' candidate; do
+        name="$(basename "${candidate}")"
+        case "${name}" in
+          colima-workcell-*.json)
+            name="${name#colima-}"
+            append_unique_value "${name%.json}"
+            ;;
+        esac
+      done < <(find "${COLIMA_HOME}/_store" -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/null)
     fi
   fi
 }
@@ -380,6 +396,7 @@ remove_workcell_symlink "${MAN_PATH}" "man/workcell.1" "man page"
 remove_path "${STATE_ROOT}"
 remove_path "${INJECTION_ROOT}"
 remove_path "${SHADOW_ROOT}"
+remove_path "${TOKEN_HANDOFF_ROOT}"
 remove_path "${MACOS_CACHE_ROOT}"
 remove_path "${XDG_WORKCELL_CACHE_ROOT}"
 

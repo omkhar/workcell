@@ -55,16 +55,13 @@ bootstrap path, support tier, and next-step fields for the selected
 credential.
 .SH OPTIONS
 .TP
-.B --agent codex|claude|gemini
+.B --agent codex|claude|copilot|gemini
 Select the provider to run. This option is required.
 The
-.B copilot
-and
 .B antigravity
-provider ids are recognized only as planned fail-closed adapters; current
-releases exit before supported runtime preparation. Copilot ships only a pinned
-non-executable runtime artifact for provenance and release verification; neither
-provider ships auth handoff or live certification evidence.
+provider id is recognized only as a planned fail-closed adapter; current
+releases exit before runtime preparation because no matching runtime, auth
+handoff, or live certification evidence is shipped.
 .TP
 .B --agent-autonomy yolo|prompt
 Select the provider approval posture. The default is
@@ -80,6 +77,7 @@ Append provider-native argv at launch. This option is repeatable and does not
 require repeating
 .BR codex ,
 .BR claude ,
+.BR copilot ,
 or
 .BR gemini
 in the provider argv. These values are still validated as ordinary user-supplied
@@ -535,8 +533,28 @@ docs such as
 and
 .BR GEMINI.md .
 .IP \(bu 2
-Provider-native credentials mounted read-only from their original host paths
-and copied into the ephemeral session home.
+Provider-native credentials mounted read-only from launcher-owned staging and
+copied into provider home only when provider-native files are required, or
+consumed directly by the wrapper for Copilot.
+.IP \(bu 2
+Copilot auth is staged only from
+.B copilot_github_token
+through reviewed host-side inputs. Auth-required launches convert it to a
+host-mounted token handoff outside mounted provider state, move it through a
+transient runtime handoff file, and export it only to the managed child process
+as
+.BR COPILOT_GITHUB_TOKEN ;
+host
+.BR gh
+auth, host keychains,
+.BR GH_TOKEN ,
+.BR GITHUB_TOKEN ,
+and host
+.I ~/.copilot ,
+.I ~/.config/github-copilot ,
+and
+.I ~/.cache/github-copilot
+are not safe-path auth sources.
 .IP \(bu 2
 Copied files or directories staged into
 .I /state/injected
@@ -621,6 +639,8 @@ Replace
 .B codex
 with
 .B claude
+,
+.B copilot
 or
 .B gemini
 for the corresponding provider.

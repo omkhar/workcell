@@ -793,9 +793,22 @@ jobs:
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
       - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
-      - run: ./scripts/update-upstream-pins.sh --apply
-      - run: |
-          ./scripts/update-upstream-pins.sh --check
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
           ./scripts/check-pinned-inputs.sh
       - run: |
           jq -n '{version:1}' > metadata.json
@@ -846,9 +859,22 @@ jobs:
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
       - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
-      - run: ./scripts/update-upstream-pins.sh --apply
-      - run: |
-          ./scripts/update-upstream-pins.sh --check
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
           ./scripts/check-pinned-inputs.sh
       - run: |
           jq -n '{version:1}' > metadata.json
@@ -894,9 +920,22 @@ jobs:
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
       - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
-      - run: ./scripts/update-upstream-pins.sh --apply
-      - run: |
-          ./scripts/update-upstream-pins.sh --check
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
           ./scripts/check-pinned-inputs.sh
       - run: |
           jq -n '{version:1}' > metadata.json
@@ -944,9 +983,22 @@ jobs:
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
       - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
-      - run: ./scripts/update-upstream-pins.sh --apply
-      - run: |
-          ./scripts/update-upstream-pins.sh --check
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
           ./scripts/check-pinned-inputs.sh
       - run: |
           jq -n '{version:1}' > metadata.json

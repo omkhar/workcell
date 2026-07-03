@@ -7,19 +7,19 @@
       "lane": "secretless",
       "platform": "any",
       "manual": false,
-      "providers": ["codex", "claude", "gemini"],
+      "providers": ["codex", "claude", "copilot", "gemini"],
       "persona": "developer",
       "test_file": "shared/test-auth-status.sh",
       "requires_credentials": false
     },
     {
       "id": "shared/agent-launch-smoke",
-      "description": "macOS secretless smoke launches Workcell-managed Codex, Claude, and Gemini entrypoints against the real runtime and version probes each provider",
+      "description": "macOS secretless smoke launches Workcell-managed Codex, Claude, Copilot, and Gemini entrypoints against the real runtime and version probes each provider",
       "lane": "secretless",
       "platform": "macos",
       "validation_tier": "certification",
       "manual": false,
-      "providers": ["codex", "claude", "gemini"],
+      "providers": ["codex", "claude", "copilot", "gemini"],
       "persona": "developer",
       "test_file": "shared/test-agent-launch-smoke.sh",
       "requires_credentials": false
@@ -31,7 +31,7 @@
       "platform": "macos",
       "validation_tier": "certification",
       "manual": false,
-      "providers": ["codex", "claude", "gemini"],
+      "providers": ["codex", "claude", "copilot", "gemini"],
       "persona": "developer",
       "test_file": "shared/test-docker-desktop-launch-smoke.sh",
       "requires_credentials": false
@@ -42,7 +42,7 @@
       "lane": "secretless",
       "platform": "any",
       "manual": false,
-      "providers": ["codex", "claude", "gemini"],
+      "providers": ["codex", "claude", "copilot", "gemini"],
       "persona": "developer",
       "test_file": "shared/test-auth-commands.sh",
       "requires_credentials": false
@@ -53,7 +53,7 @@
       "lane": "secretless",
       "platform": "any",
       "manual": false,
-      "providers": ["codex", "claude", "gemini"],
+      "providers": ["codex", "claude", "copilot", "gemini"],
       "persona": "developer",
       "test_file": "shared/test-policy-commands.sh",
       "requires_credentials": false
@@ -119,7 +119,7 @@
       "lane": "secretless",
       "platform": "any",
       "manual": false,
-      "providers": ["codex", "claude", "gemini"],
+      "providers": ["codex", "claude", "copilot", "gemini"],
       "persona": "developer",
       "test_file": "shared/test-assurance-dry-run.sh",
       "requires_credentials": false
@@ -130,7 +130,7 @@
       "lane": "secretless",
       "platform": "any",
       "manual": false,
-      "providers": ["codex", "claude", "gemini"],
+      "providers": ["codex", "claude", "copilot", "gemini"],
       "persona": "developer",
       "test_file": "shared/test-compat-target-dry-run.sh",
       "requires_credentials": false
@@ -182,6 +182,18 @@
       "requires_credentials": true
     },
     {
+      "id": "shared/copilot-provider-e2e",
+      "description": "Copilot provider-e2e certification proves explicit copilot_github_token staging, managed development-shell launch, and a non-destructive authenticated copilot -p probe",
+      "lane": "provider-e2e",
+      "platform": "macos",
+      "validation_tier": "certification",
+      "manual": false,
+      "providers": ["copilot"],
+      "persona": "validation-owner",
+      "test_file": "shared/test-copilot-provider-e2e.sh",
+      "requires_credentials": true
+    },
+    {
       "id": "shared/session-commands",
       "description": "Host-side session inventory and detached control-plane commands cover durable records plus public CLI attach/send/stop/delete lifecycle handling for running and terminal workloads",
       "lane": "secretless",
@@ -190,6 +202,17 @@
       "providers": ["codex", "claude", "gemini"],
       "persona": "developer",
       "test_file": "shared/test-session-commands.sh",
+      "requires_credentials": false
+    },
+    {
+      "id": "shared/copilot-session-dry-run",
+      "description": "Copilot detached-session evidence renders dry-run launch metadata without printing token material and exercises non-dry-run token handoff assembly, consumed-marker waiting, and cleanup",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["copilot"],
+      "persona": "developer",
+      "test_file": "shared/test-copilot-session-dry-run.sh",
       "requires_credentials": false
     },
     {

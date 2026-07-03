@@ -9,6 +9,8 @@ WORKCELL_RUNTIME_MODE_FILE="${WORKCELL_RUNTIME_STATE_DIR}/mode"
 WORKCELL_RUNTIME_PROFILE_FILE="${WORKCELL_RUNTIME_STATE_DIR}/profile"
 WORKCELL_RUNTIME_AUTONOMY_FILE="${WORKCELL_RUNTIME_STATE_DIR}/autonomy"
 WORKCELL_RUNTIME_ASSURANCE_FILE="${WORKCELL_RUNTIME_STATE_DIR}/session-assurance"
+# shellcheck disable=SC2034
+WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH="${WORKCELL_RUNTIME_STATE_DIR}/copilot-token-file"
 WORKCELL_APT_BROKER_ROOT="${WORKCELL_RUNTIME_STATE_DIR}/apt-broker"
 WORKCELL_APT_BROKER_REQUESTS_DIR="${WORKCELL_APT_BROKER_ROOT}/requests"
 WORKCELL_APT_BROKER_RESULTS_DIR="${WORKCELL_APT_BROKER_ROOT}/results"
@@ -27,7 +29,8 @@ workcell_pid1_env_value() {
   case "${key}" in
     WORKCELL_CONTAINER_MUTABILITY | WORKCELL_MODE | CODEX_PROFILE | \
       WORKCELL_AGENT_AUTONOMY | WORKCELL_SESSION_ASSURANCE | \
-      WORKCELL_HOST_UID | WORKCELL_HOST_GID | WORKCELL_HOST_USER) ;;
+      WORKCELL_HOST_UID | WORKCELL_HOST_GID | WORKCELL_HOST_USER | \
+      WORKCELL_COPILOT_AUTH_REQUIRED) ;;
     *)
       echo "Workcell internal error: unexpected key for pid1 env lookup: ${key}" >&2
       return 1
@@ -295,9 +298,9 @@ workcell_write_readonly_state_file() {
   local path="$1"
   local value="$2"
   local tmp_path
-  tmp_path="$(mktemp "${path}.tmp.XXXXXX")"
 
   mkdir -p "$(dirname "${path}")"
+  tmp_path="$(mktemp "${path}.tmp.XXXXXX")"
   printf '%s\n' "${value}" >"${tmp_path}"
   chmod 0444 "${tmp_path}"
   mv "${tmp_path}" "${path}"

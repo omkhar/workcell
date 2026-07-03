@@ -119,6 +119,16 @@ jobs:
           echo "image_manifest_digest=${manifest_digest}" >> "${GITHUB_OUTPUT}"
           echo "config_digest=${config_digest}" >> "${GITHUB_OUTPUT}"
 
+      - name: Verify upstream Copilot release on native arm64
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKCELL_COPILOT_RELEASE_HELP_MODE: native
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/verify-upstream-copilot-release.sh
+
   preflight-amd64-repro:
     name: Release reproducible image (amd64)
     # Build and reproducibility-verify the linux/amd64 runtime image in its own
@@ -188,6 +198,62 @@ jobs:
 
       - name: Run container smoke
         run: ./scripts/container-smoke.sh
+
+      - name: Verify upstream Copilot release inside runtime image
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:smoke
+          WORKCELL_COPILOT_RELEASE_HELP_MODE: docker
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/verify-upstream-copilot-release.sh
+
+  preflight-arm64-copilot-runtime:
+    name: Release Copilot runtime image probe (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - id: source_date
+        name: Compute source date epoch
+        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          cache-binary: false
+          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
+          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+
+      - name: Build arm64 runtime image for Copilot help probe
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        run: |
+          docker buildx build \
+            --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
+            --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+            --load \
+            --platform linux/arm64 \
+            --tag workcell:copilot-arm64-smoke \
+            -f runtime/container/Dockerfile \
+            .
+
+      - name: Verify upstream Copilot release inside arm64 runtime image
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:copilot-arm64-smoke
+          WORKCELL_COPILOT_RELEASE_HELP_MODE: docker
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/verify-upstream-copilot-release.sh
 
   preflight:
     name: Release preflight
@@ -363,6 +429,7 @@ jobs:
       - name: Verify upstream Copilot release
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          WORKCELL_COPILOT_RELEASE_HELP_MODE: native
         run: |
           token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
           (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
@@ -658,6 +725,7 @@ jobs:
     needs:
       - codeql-preflight
       - preflight
+      - preflight-arm64-copilot-runtime
       - preflight-container-smoke
       - install-verification
     environment:
@@ -716,6 +784,7 @@ jobs:
     needs:
       - codeql-preflight
       - preflight
+      - preflight-arm64-copilot-runtime
       - preflight-container-smoke
       - install-verification
       - build-arm64-image

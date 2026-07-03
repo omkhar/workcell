@@ -285,7 +285,7 @@ localized_quote_marker="\$\""
 process_substitution_in_marker='<('
 process_substitution_out_marker='>('
 shell_variable_expansion_regex="\\\$([[:alnum:]_]+|[#?*@!\$-])"
-home_control_regex="(^|[[:space:]'\";|&])(~|\$home|/state/agent-home)/(\\.claude|\\.codex|\\.gemini)(/|[[:space:]'\";|&]|$)"
+home_control_regex="(^|[[:space:]'\";|&])(~|\$home|/state/agent-home)/(\\.claude|\\.codex|\\.copilot|\\.gemini)(/|[[:space:]'\";|&]|$)"
 mcp_home_control_regex="(^|[[:space:]'\";|&])(~|\$home|/state/agent-home)/\\.mcp\\.json([[:space:]'\";|&]|$)"
 
 if grep_command '(^|[^[:alnum:]_./-])(git|/usr/bin/git|/usr/local/libexec/workcell/git|/usr/local/libexec/workcell/core/git|/usr/local/libexec/workcell/real/git)([^[:alnum:]_./-]|$)'; then
@@ -336,8 +336,8 @@ if grep_command '(^|[[:space:]'"'"'";|&])(eval)([[:space:]'"'"'";|&]|$)' ||
   fail "Do not use eval or shell variable expansion from the Claude Bash tool inside Workcell."
 fi
 
-if grep_dequoted_command '(^|[^[:alnum:]_./-])(codex|claude|gemini|/usr/local/libexec/workcell/core/codex|/usr/local/libexec/workcell/core/claude|/usr/local/libexec/workcell/core/gemini|/usr/local/libexec/workcell/provider-wrapper\.sh|/usr/local/libexec/workcell/real/codex|/usr/local/libexec/workcell/real/claude|/opt/workcell/providers/node_modules/\.bin/gemini|/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini\.js)([^[:alnum:]_./-]|$)' ||
-  grep_deescaped_command '(^|[^[:alnum:]_./-])(codex|claude|gemini|/usr/local/libexec/workcell/core/codex|/usr/local/libexec/workcell/core/claude|/usr/local/libexec/workcell/core/gemini|/usr/local/libexec/workcell/provider-wrapper\.sh|/usr/local/libexec/workcell/real/codex|/usr/local/libexec/workcell/real/claude|/opt/workcell/providers/node_modules/\.bin/gemini|/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini\.js)([^[:alnum:]_./-]|$)'; then
+if grep_dequoted_command '(^|[^[:alnum:]_./-])(codex|claude|copilot|gemini|/usr/local/libexec/workcell/core/codex|/usr/local/libexec/workcell/core/claude|/usr/local/libexec/workcell/core/copilot|/usr/local/libexec/workcell/core/gemini|/usr/local/libexec/workcell/provider-wrapper\.sh|/usr/local/libexec/workcell/real/codex|/usr/local/libexec/workcell/real/claude|/usr/local/libexec/workcell/real/copilot|/opt/workcell/providers/node_modules/\.bin/gemini|/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini\.js)([^[:alnum:]_./-]|$)' ||
+  grep_deescaped_command '(^|[^[:alnum:]_./-])(codex|claude|copilot|gemini|/usr/local/libexec/workcell/core/codex|/usr/local/libexec/workcell/core/claude|/usr/local/libexec/workcell/core/copilot|/usr/local/libexec/workcell/core/gemini|/usr/local/libexec/workcell/provider-wrapper\.sh|/usr/local/libexec/workcell/real/codex|/usr/local/libexec/workcell/real/claude|/usr/local/libexec/workcell/real/copilot|/opt/workcell/providers/node_modules/\.bin/gemini|/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini\.js)([^[:alnum:]_./-]|$)'; then
   fail "Do not launch nested coding-agent CLIs from the Claude Bash tool inside Workcell."
 fi
 
@@ -362,12 +362,12 @@ if grep_command 'git.*push.*(main|master)([[:space:]'"'"'";|&]|$)'; then
   fail "Use a feature branch, not a direct push to main or master."
 fi
 
-if grep_command '(^|[[:space:]'"'"'";|&])([^[:space:]'"'"'";|&]+/)?(agents\.md|claude\.md|gemini\.md|\.mcp\.json)([[:space:]'"'"'";|&]|$)' &&
+if grep_command '(^|[[:space:]'"'"'";|&])([^[:space:]'"'"'";|&]+/)?(agents\.md|claude\.md|copilot\.md|gemini\.md|\.mcp\.json)([[:space:]'"'"'";|&]|$)' &&
   ! control_plane_vcs_git_command_allowed; then
   fail "Do not read or modify workspace control files from Bash."
 fi
 
-if grep_command '(^|[[:space:]'"'"'";|&])([^[:space:]'"'"'";|&]+/)?(\.claude|\.codex|\.gemini|\.cursor|\.idea|\.vscode|\.zed)(/|[[:space:]'"'"'";|&]|$)' &&
+if grep_command '(^|[[:space:]'"'"'";|&])([^[:space:]'"'"'";|&]+/)?(\.claude|\.codex|\.copilot|\.gemini|\.cursor|\.idea|\.vscode|\.zed)(/|[[:space:]'"'"'";|&]|$)' &&
   ! control_plane_vcs_git_command_allowed; then
   fail "Do not read or modify workspace control directories from Bash."
 fi

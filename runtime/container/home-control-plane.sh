@@ -159,9 +159,12 @@ workcell_file_trace_path_is_sensitive() {
     "${HOME}/.azure"
     "${HOME}/.codex"
     "${HOME}/.claude"
+    "${HOME}/.copilot"
+    "${HOME}/.cache/github-copilot"
     "${HOME}/.config/aws"
     "${HOME}/.config/azure"
     "${HOME}/.config/claude-code"
+    "${HOME}/.config/github-copilot"
     "${HOME}/.config/docker"
     "${HOME}/.gemini"
     "${HOME}/.config/gcloud"
@@ -1158,6 +1161,12 @@ workcell_target_is_allowed() {
       /state/agent-home/.codex/* | \
       /state/agent-home/.claude | \
       /state/agent-home/.claude/* | \
+      /state/agent-home/.copilot | \
+      /state/agent-home/.copilot/* | \
+      /state/agent-home/.cache/github-copilot | \
+      /state/agent-home/.cache/github-copilot/* | \
+      /state/agent-home/.config/github-copilot | \
+      /state/agent-home/.config/github-copilot/* | \
       /state/agent-home/.config/claude-code | \
       /state/agent-home/.config/claude-code/* | \
       /state/agent-home/.gemini | \
@@ -1417,6 +1426,14 @@ seed_claude_home() {
   fi
 }
 
+seed_copilot_home() {
+  workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/copilot/"
+  workcell_prepare_session_directory "${COPILOT_HOME}" "Copilot home"
+  workcell_prepare_session_directory "${COPILOT_HOME}/logs" "Copilot logs directory"
+  workcell_prepare_session_directory "${COPILOT_CACHE_HOME}" "Copilot cache directory"
+  workcell_prepare_session_directory "${HOME}/.config/github-copilot" "Copilot config directory"
+}
+
 seed_gemini_home() {
   local workspace_root="${WORKSPACE:-/workspace}"
   local selected_auth_type=""
@@ -1473,6 +1490,9 @@ seed_agent_home() {
     claude)
       seed_claude_home
       ;;
+    copilot)
+      seed_copilot_home
+      ;;
     gemini)
       seed_gemini_home
       ;;
@@ -1481,7 +1501,9 @@ seed_agent_home() {
       ;;
   esac
 
-  workcell_seed_shared_credentials
+  if [[ "$1" != "copilot" ]]; then
+    workcell_seed_shared_credentials
+  fi
   workcell_apply_manifest_copies
   workcell_apply_manifest_ssh
 }

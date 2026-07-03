@@ -511,7 +511,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if _, _, err := requireRegex(runtimeDockerfile, `curl --ipv4 -fsSL "https://github\.com/github/copilot-cli/releases/download/v\$\{COPILOT_VERSION\}/copilot-\$\{COPILOT_PLATFORM\}\.tar\.gz"`, "Copilot native release download URL", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
-	if _, _, err := requireRegex(runtimeDockerfile, `install -m 0644 /tmp/copilot /usr/local/libexec/workcell/real/copilot`, "non-executable Copilot provenance artifact install", cfg.RuntimeDockerfilePath); err != nil {
+	if _, _, err := requireRegex(runtimeDockerfile, `echo "\$\{COPILOT_SHA256\}  /tmp/copilot\.tar\.gz" \| sha256sum -c -`, "Copilot native archive checksum verification", cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	if _, _, err := requireRegex(runtimeDockerfile, `install -m 0755 /tmp/copilot /usr/local/libexec/workcell/real/copilot`, "executable Copilot runtime artifact install", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
 	if _, match, err := requireRegex(runtimeDockerfile, `(?m)^\s*arm64\)\s+\\\s*CLAUDE_PLATFORM="([^"]+)";\s+\\\s*CLAUDE_SHA256="([0-9a-f]{64})";`, "arm64 Claude mapping", cfg.RuntimeDockerfilePath); err != nil {
@@ -1351,7 +1354,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 	}
 	for _, needle := range []string{
-		"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh",
+		`WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"`,
 		"unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN",
 	} {
 		if !strings.Contains(validateJob, needle) {

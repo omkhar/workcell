@@ -1,22 +1,65 @@
 #!/bin/bash -p
 
 readonly TRUSTED_HOST_PATH="/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+readonly RESTORE_ENV_FILE_VAR="WORKCELL_PROVIDER_E2E_RESTORE_ENV_FILE"
+readonly PRESERVED_SECRET_ENV_VARS=(
+  WORKCELL_E2E_CLAUDE_API_KEY
+  WORKCELL_E2E_CLAUDE_AUTH_JSON
+  WORKCELL_E2E_CLAUDE_MCP_JSON
+  WORKCELL_E2E_CODEX_AUTH_JSON
+  WORKCELL_E2E_COPILOT_GITHUB_TOKEN
+  WORKCELL_E2E_GCLOUD_ADC_JSON
+  WORKCELL_E2E_GEMINI_ENV
+  WORKCELL_E2E_GEMINI_OAUTH_JSON
+  WORKCELL_E2E_GEMINI_PROJECTS_JSON
+)
+
+write_restore_env_file() {
+  local restore_env_file="$1"
+  local env_name=""
+
+  : >"${restore_env_file}"
+  chmod 0600 "${restore_env_file}"
+  for env_name in "${PRESERVED_SECRET_ENV_VARS[@]}"; do
+    if [[ -n "${!env_name-}" ]]; then
+      declare -px "${env_name}" >>"${restore_env_file}"
+    fi
+  done
+}
+
 if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  RESTORE_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/workcell-provider-e2e-env.XXXXXX")"
+  cleanup_restore_env_file() {
+    rm -f -- "${RESTORE_ENV_FILE}"
+  }
+  trap cleanup_restore_env_file EXIT
+  write_restore_env_file "${RESTORE_ENV_FILE}"
   exec /usr/bin/env -i \
     PATH="${TRUSTED_HOST_PATH}" \
     HOME=/tmp \
     TMPDIR="${TMPDIR:-/tmp}" \
-    WORKCELL_E2E_CLAUDE_API_KEY="${WORKCELL_E2E_CLAUDE_API_KEY-}" \
-    WORKCELL_E2E_CLAUDE_AUTH_JSON="${WORKCELL_E2E_CLAUDE_AUTH_JSON-}" \
-    WORKCELL_E2E_CLAUDE_MCP_JSON="${WORKCELL_E2E_CLAUDE_MCP_JSON-}" \
-    WORKCELL_E2E_CODEX_AUTH_JSON="${WORKCELL_E2E_CODEX_AUTH_JSON-}" \
-    WORKCELL_E2E_GCLOUD_ADC_JSON="${WORKCELL_E2E_GCLOUD_ADC_JSON-}" \
-    WORKCELL_E2E_GEMINI_ENV="${WORKCELL_E2E_GEMINI_ENV-}" \
-    WORKCELL_E2E_GEMINI_OAUTH_JSON="${WORKCELL_E2E_GEMINI_OAUTH_JSON-}" \
-    WORKCELL_E2E_GEMINI_PROJECTS_JSON="${WORKCELL_E2E_GEMINI_PROJECTS_JSON-}" \
+    WORKCELL_COLIMA_DELETE_TIMEOUT_SECONDS="${WORKCELL_COLIMA_DELETE_TIMEOUT_SECONDS-}" \
+    WORKCELL_COLIMA_START_TIMEOUT_SECONDS="${WORKCELL_COLIMA_START_TIMEOUT_SECONDS-}" \
     WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT="${WORKCELL_PROVIDER_E2E_WORKCELL_SCRIPT-}" \
+    "${RESTORE_ENV_FILE_VAR}=${RESTORE_ENV_FILE}" \
     WORKCELL_SANITIZED_ENTRYPOINT=1 \
     /bin/bash -p "$0" "$@"
+fi
+if [[ -n "${WORKCELL_PROVIDER_E2E_RESTORE_ENV_FILE:-}" ]]; then
+  RESTORE_ENV_FILE="${WORKCELL_PROVIDER_E2E_RESTORE_ENV_FILE}"
+  [[ -f "${RESTORE_ENV_FILE}" ]] || {
+    echo "Provider E2E restore env file is missing." >&2
+    exit 2
+  }
+  cleanup_child_restore_env_file() {
+    rm -f -- "${RESTORE_ENV_FILE}"
+  }
+  trap cleanup_child_restore_env_file EXIT
+  # shellcheck disable=SC1090
+  source "${RESTORE_ENV_FILE}"
+  rm -f -- "${RESTORE_ENV_FILE}"
+  trap - EXIT
+  unset WORKCELL_PROVIDER_E2E_RESTORE_ENV_FILE RESTORE_ENV_FILE
 fi
 
 set -euo pipefail
@@ -30,6 +73,8 @@ COLIMA_PROFILE=""
 INJECTION_POLICY=""
 readonly PROBE_RESPONSE_TOKEN="WORKCELL_PROVIDER_E2E_OK"
 readonly SHELL_PROBE_RESPONSE_TOKEN="WORKCELL_PROVIDER_E2E_SHELL_OK"
+readonly E2E_VM_MEMORY_GIB=10
+readonly E2E_VM_DISK_GIB=80
 DRY_RUN=0
 REQUIRE_INJECTION=0
 GENERATED_POLICY=""
@@ -39,7 +84,7 @@ declare -a GENERATED_CREDENTIAL_KEYS=()
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") --agent codex|claude|gemini --workspace PATH [options]
+Usage: $(basename "$0") --agent codex|claude|copilot|gemini --workspace PATH [options]
 
 Run a small provider-focused Workcell credential and launch sequence:
 
@@ -49,7 +94,7 @@ Run a small provider-focused Workcell credential and launch sequence:
 4. Run a small provider-specific authenticated probe inside the strict runtime
 
 Options:
-  --agent <name>              Provider to exercise: codex, claude, or gemini
+  --agent <name>              Provider to exercise: codex, claude, copilot, or gemini
   --workspace <path>          Workspace to run against
   --injection-policy <path>   Optional explicit injection policy
   --colima-profile <name>     Optional managed Colima profile name
@@ -116,6 +161,7 @@ generate_policy_from_env() {
   local claude_auth_path=""
   local claude_api_key_path=""
   local claude_mcp_path=""
+  local copilot_github_token_path=""
   local gemini_env_path=""
   local gemini_oauth_path=""
   local gemini_projects_path=""
@@ -150,6 +196,13 @@ generate_policy_from_env() {
       [[ -n "${claude_api_key_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("claude_api_key")
       [[ -n "${claude_mcp_path}" ]] && GENERATED_CREDENTIAL_KEYS+=("claude_mcp")
       ;;
+    copilot)
+      [[ -n "${WORKCELL_E2E_COPILOT_GITHUB_TOKEN-}" ]] || return 0
+      ensure_tmp_root
+      policy_path="${TMP_ROOT}/policy.toml"
+      copilot_github_token_path="$(write_secret_file WORKCELL_E2E_COPILOT_GITHUB_TOKEN copilot-github-token.txt 1)"
+      GENERATED_CREDENTIAL_KEYS+=("copilot_github_token")
+      ;;
     gemini)
       if [[ -z "${WORKCELL_E2E_GEMINI_ENV-}" ]] && [[ -z "${WORKCELL_E2E_GEMINI_OAUTH_JSON-}" ]]; then
         return 0
@@ -182,6 +235,9 @@ generate_policy_from_env() {
       if [[ -n "${claude_mcp_path}" ]]; then
         printf 'claude_mcp = %s\n' "$(toml_quote "${claude_mcp_path}")" >>"${policy_path}"
       fi
+      ;;
+    copilot)
+      printf '[credentials.copilot_github_token]\nsource = %s\n' "$(toml_quote "${copilot_github_token_path}")" >>"${policy_path}"
       ;;
     gemini)
       if [[ -n "${gemini_env_path}" ]]; then
@@ -221,7 +277,14 @@ build_probe_prompt() {
 }
 
 build_shell_probe_command() {
-  printf 'git -c safe.directory=/workspace status --short >/tmp/workcell-provider-e2e-shell.out && printf '\''%%s\\n'\'' %q' "${SHELL_PROBE_RESPONSE_TOKEN}"
+  case "${AGENT}" in
+    copilot)
+      printf 'set -euo pipefail; git -c safe.directory=/workspace status --short >/tmp/workcell-provider-e2e-shell.out; test ! -e /opt/workcell/host-inputs/credentials/copilot-github-token.txt; if [[ -d /opt/workcell/host-injections/direct-mounts ]]; then ! find /opt/workcell/host-injections/direct-mounts -type f -print -quit | grep -q .; fi; printf '\''%%s\\n'\'' %q' "${SHELL_PROBE_RESPONSE_TOKEN}"
+      ;;
+    *)
+      printf 'git -c safe.directory=/workspace status --short >/tmp/workcell-provider-e2e-shell.out && printf '\''%%s\\n'\'' %q' "${SHELL_PROBE_RESPONSE_TOKEN}"
+      ;;
+  esac
 }
 
 shell_probe_output_matches_expected_token() {
@@ -242,11 +305,35 @@ probe_output_matches_expected_token() {
       grep -Eq "\"(result|response|text)\"[[:space:]]*:[[:space:]]*\"${PROBE_RESPONSE_TOKEN}\"" <<<"${output}" ||
         grep -qxF "${PROBE_RESPONSE_TOKEN}" <<<"${output}"
       ;;
+    copilot)
+      grep -Eq "\"(result|response|text)\"[[:space:]]*:[[:space:]]*\"${PROBE_RESPONSE_TOKEN}\"" <<<"${output}" ||
+        grep -qxF "${PROBE_RESPONSE_TOKEN}" <<<"${output}"
+      ;;
     gemini)
       grep -Eq "\"response\"[[:space:]]*:[[:space:]]*\"${PROBE_RESPONSE_TOKEN}\"" <<<"${output}" ||
         grep -qxF "${PROBE_RESPONSE_TOKEN}" <<<"${output}"
       ;;
   esac
+}
+
+output_contains_copilot_token_material() {
+  local output="$1"
+  local token="${WORKCELL_E2E_COPILOT_GITHUB_TOKEN:-}"
+
+  [[ "${AGENT}" == "copilot" ]] || return 1
+  [[ -n "${token}" ]] || return 1
+  grep -Fq -- "${token}" <<<"${output}"
+}
+
+emit_checked_output() {
+  local label="$1"
+  local output="$2"
+
+  if output_contains_copilot_token_material "${output}"; then
+    echo "Provider E2E ${label} output contained Copilot token material; suppressing output." >&2
+    exit 1
+  fi
+  printf '%s\n' "${output}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -292,7 +379,7 @@ done
 [[ -n "${AGENT}" ]] || die "Option --agent is required."
 [[ -n "${WORKSPACE}" ]] || die "Option --workspace is required."
 case "${AGENT}" in
-  codex | claude | gemini) ;;
+  codex | claude | copilot | gemini) ;;
   *)
     die "Unsupported agent: ${AGENT}"
     ;;
@@ -317,9 +404,10 @@ elif [[ -n "${GENERATED_POLICY}" ]]; then
 fi
 
 declare -a auth_status_cmd=("${common_args[@]}" "--auth-status")
-declare -a prepare_only_cmd=("${WORKCELL_SCRIPT}" "--prepare-only" "--agent" "${AGENT}" "--workspace" "${WORKSPACE}")
-declare -a shell_probe_cmd=("${WORKCELL_SCRIPT}" "--agent" "${AGENT}" "--mode" "development" "--workspace" "${WORKSPACE}")
-declare -a probe_cmd=("${WORKCELL_SCRIPT}" "--agent" "${AGENT}" "--workspace" "${WORKSPACE}")
+declare -a e2e_runtime_resource_args=("--vm-memory" "${E2E_VM_MEMORY_GIB}" "--vm-disk" "${E2E_VM_DISK_GIB}")
+declare -a prepare_only_cmd=("${WORKCELL_SCRIPT}" "--prepare-only" "--agent" "${AGENT}" "--workspace" "${WORKSPACE}" "${e2e_runtime_resource_args[@]}")
+declare -a shell_probe_cmd=("${WORKCELL_SCRIPT}" "--agent" "${AGENT}" "--mode" "development" "--workspace" "${WORKSPACE}" "${e2e_runtime_resource_args[@]}")
+declare -a probe_cmd=("${WORKCELL_SCRIPT}" "--agent" "${AGENT}" "--workspace" "${WORKSPACE}" "${e2e_runtime_resource_args[@]}")
 auth_status_output=""
 shell_probe_output=""
 probe_output=""
@@ -361,6 +449,13 @@ case "${AGENT}" in
       "--agent-arg" "$(build_probe_prompt)"
     )
     ;;
+  copilot)
+    probe_cmd+=(
+      "--agent-arg" "-p"
+      "--agent-arg" "$(build_probe_prompt)"
+      "--agent-arg" "-s"
+    )
+    ;;
   gemini)
     probe_cmd+=(
       "--agent-arg" "-p"
@@ -393,10 +488,10 @@ fi
 
 printf '[provider-e2e] auth-status (%s)\n' "${AGENT}"
 if ! auth_status_output="$("${auth_status_cmd[@]}" 2>&1)"; then
-  printf '%s\n' "${auth_status_output}" >&2
+  emit_checked_output "auth-status" "${auth_status_output}" >&2
   exit 1
 fi
-printf '%s\n' "${auth_status_output}"
+emit_checked_output "auth-status" "${auth_status_output}"
 if ! grep -q '^provider_auth_mode=' <<<"${auth_status_output}"; then
   die "Workcell auth-status did not report provider_auth_mode for ${AGENT}."
 fi
@@ -404,27 +499,36 @@ if grep -q '^provider_auth_mode=none$' <<<"${auth_status_output}"; then
   die "Workcell did not detect provider auth for ${AGENT}."
 fi
 printf '[provider-e2e] prepare-only (%s)\n' "${AGENT}"
-"${prepare_only_cmd[@]}"
-printf '[provider-e2e] development-shell (%s)\n' "${AGENT}"
 ensure_tmp_root
+prepare_only_output_path="${TMP_ROOT}/${AGENT}-prepare-only.out"
+if ! "${prepare_only_cmd[@]}" >"${prepare_only_output_path}" 2>&1; then
+  prepare_only_output="$(cat "${prepare_only_output_path}")"
+  emit_checked_output "prepare-only" "${prepare_only_output}" >&2
+  exit 1
+fi
+prepare_only_output="$(cat "${prepare_only_output_path}")"
+emit_checked_output "prepare-only" "${prepare_only_output}"
+printf '[provider-e2e] development-shell (%s)\n' "${AGENT}"
 shell_probe_output_path="${TMP_ROOT}/${AGENT}-shell-probe.out"
 if ! "${shell_probe_cmd[@]}" >"${shell_probe_output_path}" 2>&1; then
-  cat "${shell_probe_output_path}" >&2
+  shell_probe_output="$(cat "${shell_probe_output_path}")"
+  emit_checked_output "development-shell" "${shell_probe_output}" >&2
   exit 1
 fi
 shell_probe_output="$(cat "${shell_probe_output_path}")"
-printf '%s\n' "${shell_probe_output}"
+emit_checked_output "development-shell" "${shell_probe_output}"
 if ! shell_probe_output_matches_expected_token "${shell_probe_output}"; then
   die "Development shell probe did not emit the expected token for ${AGENT}."
 fi
 printf '[provider-e2e] live-probe (%s)\n' "${AGENT}"
 probe_output_path="${TMP_ROOT}/${AGENT}-probe.out"
 if ! "${probe_cmd[@]}" >"${probe_output_path}" 2>&1; then
-  cat "${probe_output_path}" >&2
+  probe_output="$(cat "${probe_output_path}")"
+  emit_checked_output "live-probe" "${probe_output}" >&2
   exit 1
 fi
 probe_output="$(cat "${probe_output_path}")"
-printf '%s\n' "${probe_output}"
+emit_checked_output "live-probe" "${probe_output}"
 if ! probe_output_matches_expected_token "${probe_output}"; then
   die "Provider probe did not emit the expected token for ${AGENT}."
 fi

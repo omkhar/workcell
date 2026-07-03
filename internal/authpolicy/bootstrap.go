@@ -75,6 +75,18 @@ func summarizeBootstrap(agent string, selected map[string]any, inputKinds, resol
 			}
 		}
 		return defaultBootstrapSummary(agent)
+	case providerid.Copilot:
+		if credentialStateIsReady(providerReadyStates["copilot_github_token"]) {
+			return bootstrapSummary{
+				state:    "ready",
+				path:     "direct-staged",
+				support:  "repo-required",
+				handoff:  "none",
+				doc:      "docs/examples/quickstart-copilot.md",
+				nextStep: "none",
+			}
+		}
+		return defaultBootstrapSummary(agent)
 	case providerid.Gemini:
 		for _, key := range []string{"gemini_env", "gemini_oauth"} {
 			if credentialStateIsReady(providerReadyStates[key]) {
@@ -133,6 +145,15 @@ func defaultBootstrapSummary(agent string) bootstrapSummary {
 			handoff:  "host-stage-file",
 			doc:      "docs/examples/quickstart-claude.md",
 			nextStep: "stage-reviewed-claude-auth-or-api-key",
+		}
+	case providerid.Copilot:
+		return bootstrapSummary{
+			state:    "not-configured",
+			path:     "direct-staged",
+			support:  "repo-required",
+			handoff:  "host-stage-file",
+			doc:      "docs/examples/quickstart-copilot.md",
+			nextStep: "stage-reviewed-copilot-token",
 		}
 	case providerid.Gemini:
 		return bootstrapSummary{
@@ -220,6 +241,15 @@ func bootstrapSummaryForCredential(agent, credential string, report credentialSe
 			handoff:  bootstrapHandoffForReadiness(report.readiness),
 			doc:      "docs/examples/quickstart-claude.md",
 			nextStep: bootstrapNextStepForReadiness(report.readiness, "stage-reviewed-claude-auth-or-api-key"),
+		}
+	case "copilot_github_token":
+		return bootstrapSummary{
+			state:    report.readiness,
+			path:     "direct-staged",
+			support:  "repo-required",
+			handoff:  bootstrapHandoffForReadiness(report.readiness),
+			doc:      "docs/examples/quickstart-copilot.md",
+			nextStep: bootstrapNextStepForReadiness(report.readiness, "stage-reviewed-copilot-token"),
 		}
 	case "gemini_env", "gemini_oauth", "gemini_projects":
 		return bootstrapSummary{

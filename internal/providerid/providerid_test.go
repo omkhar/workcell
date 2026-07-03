@@ -17,12 +17,12 @@ func TestPlannedAntigravityRemainsUnsupportedUntilCertified(t *testing.T) {
 	}
 }
 
-func TestPlannedCopilotRemainsUnsupportedUntilCertified(t *testing.T) {
+func TestCopilotIsSupportedProvider(t *testing.T) {
 	if Copilot != "copilot" {
 		t.Fatalf("Copilot = %q, want copilot", Copilot)
 	}
-	if IsValid(Copilot) {
-		t.Fatal("Copilot must stay out of the supported-provider set until runtime support and certification evidence land")
+	if !IsValid(Copilot) {
+		t.Fatal("Copilot must be in the supported-provider set after runtime support and certification evidence land")
 	}
 }
 
@@ -39,8 +39,8 @@ func TestAllProviderSetMatchesAllProviders(t *testing.T) {
 	if _, ok := set[Antigravity]; ok {
 		t.Fatal("AllProviderSet must not include planned providers before certification")
 	}
-	if _, ok := set[Copilot]; ok {
-		t.Fatal("AllProviderSet must not include planned Copilot before certification")
+	if _, ok := set[Copilot]; !ok {
+		t.Fatal("AllProviderSet must include supported Copilot")
 	}
 }
 

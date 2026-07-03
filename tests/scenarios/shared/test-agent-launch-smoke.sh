@@ -20,6 +20,7 @@ cleanup() {
       prepare.stdout prepare.stderr \
       codex.stdout codex.stderr codex.combined \
       claude.stdout claude.stderr claude.combined \
+      copilot.stdout copilot.stderr copilot.combined \
       gemini.stdout gemini.stderr gemini.combined; do
       [[ -f "${TMP_DIR}/${file}" ]] || continue
       printf -- '--- %s ---\n' "${file}" >&2
@@ -33,6 +34,7 @@ cleanup() {
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
   rm -rf "${REAL_HOME}/.colima/_lima/colima-${PROFILE}"
   rm -rf "${REAL_HOME}/.colima/_lima/_disks/colima-${PROFILE}"
+  rm -f "${REAL_HOME}/.colima/_store/colima-${PROFILE}.json"
   rm -rf "${TMP_DIR}"
   exit "${status}"
 }
@@ -48,6 +50,8 @@ printf '{"token":"claude-auth"}\n' >"${AUTH_ROOT}/claude-auth.json"
 chmod 0600 "${AUTH_ROOT}/claude-auth.json"
 printf 'claude-key\n' >"${AUTH_ROOT}/claude-api-key.txt"
 chmod 0600 "${AUTH_ROOT}/claude-api-key.txt"
+printf 'copilot-token\n' >"${AUTH_ROOT}/copilot-github-token.txt"
+chmod 0600 "${AUTH_ROOT}/copilot-github-token.txt"
 cat >"${AUTH_ROOT}/gemini.env" <<'EOF'
 GOOGLE_GENAI_USE_VERTEXAI=true
 GOOGLE_API_KEY=verify-google-key
@@ -61,6 +65,9 @@ codex_auth = "auth.json"
 claude_auth = "claude-auth.json"
 claude_api_key = "claude-api-key.txt"
 gemini_env = "gemini.env"
+
+[credentials.copilot_github_token]
+source = "copilot-github-token.txt"
 EOF
 
 prepare_runtime() {
@@ -82,6 +89,9 @@ expected_runtime_version() {
       ;;
     claude)
       sed -n 's/^ARG CLAUDE_VERSION=//p' "${ROOT_DIR}/runtime/container/Dockerfile"
+      ;;
+    copilot)
+      sed -n 's/^ARG COPILOT_VERSION=//p' "${ROOT_DIR}/runtime/container/Dockerfile"
       ;;
     gemini)
       jq -r '.dependencies["@google/gemini-cli"]' "${ROOT_DIR}/runtime/container/providers/package.json"
@@ -115,7 +125,7 @@ grep -q "^profile=${PROFILE} mode=strict agent=codex " "${TMP_DIR}/prepare.stder
 grep -q '^target_kind=local_vm target_provider=colima target_id='"${PROFILE}"' target_assurance_class=strict runtime_api=docker workspace_transport=workspace-mount$' "${TMP_DIR}/prepare.stderr"
 grep -q "Prepared runtime image recorded for profile ${PROFILE}. No session launched because --prepare-only was requested." "${TMP_DIR}/prepare.stderr"
 
-for agent in codex claude gemini; do
+for agent in codex claude copilot gemini; do
   expected_version="$(expected_runtime_version "${agent}")"
   run_agent_version_smoke "${agent}"
   grep -q "^profile=${PROFILE} mode=strict agent=${agent} " "${TMP_DIR}/${agent}.stderr"
