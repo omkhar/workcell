@@ -59,20 +59,22 @@ for f in "${md_files[@]}"; do
 done
 
 # --- Orphan docs/ check -----------------------------------------------------
-# A docs/*.md page is an orphan when its basename appears in no other tracked
-# (non-vendored) file: a markdown link, a script, the manpage, or a workflow all
-# count as a referrer. Index-style pages are referenced widely, so this stays
-# quiet on a healthy tree. Fails closed but distinguishes "no match" from a real
-# git error so an operational failure is not mistaken for an orphan storm.
+# A docs/*.md page is an orphan when no other tracked markdown file contains a
+# navigable link to it. A plain-text or code-span mention (in a scenario table,
+# a manifest, or a script) does not count: it does not let a reader reach the
+# page. Index-style pages are linked widely, so this stays quiet on a healthy
+# tree. Fails closed but distinguishes "no match" from a real git error so an
+# operational failure is not mistaken for an orphan storm.
 while IFS= read -r doc; do
   base="$(basename "${doc}")"
+  base_re="$(printf '%s' "${base}" | sed 's/\./\\./g')"
   set +e
-  git grep -qF "${base}" -- . ":!${doc}" "${vendor_pathspecs[@]}"
+  git grep -qE "\]\([^)]*${base_re}[)#]" -- '*.md' ":!${doc}" "${vendor_pathspecs[@]}"
   rc=$?
   set -e
   case "${rc}" in
     0) : ;;
-    1) note "orphan doc: ${doc} is referenced by no other tracked file" ;;
+    1) note "orphan doc: ${doc} is linked from no other tracked markdown file" ;;
     *) echo "check-doc-links: git grep failed (rc=${rc}) while scanning for ${base}" >&2; exit "${rc}" ;;
   esac
 done < <(git ls-files 'docs/*.md')
