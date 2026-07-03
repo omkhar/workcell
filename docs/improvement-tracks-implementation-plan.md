@@ -36,8 +36,9 @@ Milestone Train; versions are indicative and may split.
 
 The milestone ordering answers the current landscape directly:
 
-- repo-defined MCP servers are a proven one-keypress RCE class across all
-  four supported provider CLIs → A2 lands first (v0.12)
+- repo-defined MCP servers are a proven one-keypress RCE class across three
+  of the four supported provider CLIs (Claude Code, Gemini CLI, Copilot CLI
+  per the TrustFall disclosure) → A2 lands first (v0.12)
 - per-session egress allowlists are table stakes in every adjacent runtime
   and in national-agency MCP guidance → A1 is the headline of v0.13
 - microVM-per-session backends with warm starts are the mainstream

@@ -101,8 +101,9 @@ does not gate 1.0.
 The competitive context shaping this bar: microVM-per-session runtimes with
 warm starts and per-session egress allowlists are now the mainstream
 comparison point; OS-level sandbox competitors have shipped bypass CVEs;
-repo-defined MCP servers are a proven one-keypress RCE class across all four
-currently supported provider CLIs; and enterprises evaluate agent runtimes
+repo-defined MCP servers are a proven one-keypress RCE class across three of
+the four currently supported provider CLIs; and enterprises evaluate agent
+runtimes
 against OWASP agentic guidance, SIEM-ready audit export, and SLSA supply-chain
 levels. Workcell's 1.0 bar leans into its differentiators — the strongest
 local boundary, staged credentials, host-side signing, signed evidence, and
@@ -416,8 +417,10 @@ expectations — lives in
 ### Track A: Boundary Depth And Agent-Threat Defenses
 
 The external threat picture moved fast in 2025–2026: one-keypress RCE via
-repo-defined MCP servers across all four supported provider CLIs (TrustFall),
-prompt injection through PR titles and comments (CVE-2025-66032), recurring
+repo-defined MCP servers across three of the four supported provider CLIs —
+Claude Code, Gemini CLI, and Copilot CLI (the TrustFall disclosure; Codex CLI
+was not in the disclosed set), prompt injection through PR titles and
+comments against agent PR-review integrations, recurring
 npm worm campaigns (Shai-Hulud and successors), and sandbox-bypass CVEs in
 OS-level sandboxes (Seatbelt/bubblewrap). Workcell's VM-plus-container
 boundary and staged-credential model match the containment doctrine the
