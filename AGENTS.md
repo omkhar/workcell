@@ -169,3 +169,9 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - Keep one shared boundary and many thin adapters. Do not hide provider
   differences behind a fake universal abstraction.
 - Prefer small scripts and plain configuration over framework-heavy machinery.
+- Language boundaries: Rust is for the runtime syscall-interception shim and its
+  exec guards; Go is for host- and runtime-side policy, state, and orchestration
+  logic and the `workcell-*` tools; shell is thin glue that detects the host,
+  scrubs the environment, dispatches to the Go tools, and launches the runtime.
+  New logic defaults to Go. Growing a shell script past glue, or adding Rust
+  outside the shim, needs an explicit justification in the same change.
