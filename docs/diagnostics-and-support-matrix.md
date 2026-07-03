@@ -21,10 +21,10 @@ page explains each field and how an operator should act on the resolved row.
 | `support_matrix_reason` | Human-readable reason string for the resolved status. |
 <!-- support-matrix-fields:end -->
 
-The matrix `target_kind`, `target_provider`, and `target_assurance_class`
-columns are not emitted as `--doctor`/`--inspect` fields; read them from the
-matched row in
-[`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv).
+`--inspect` and `--doctor` also print additional launch-state fields,
+including `target_kind`, `target_provider`, and `target_assurance_class` for
+the selected target. Use those to confirm which non-default target was
+resolved.
 
 ## Triage decision tree
 
