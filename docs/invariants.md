@@ -48,8 +48,8 @@ provider homes as reviewed inputs. The masked set is the provider files
 `.github/mcp.json`, and `.github/copilot-instructions.md`; the provider,
 Copilot, and IDE directories `.codex/`, `.claude/`, `.copilot/`,
 `.gemini/`, `.github/instructions/`, `.github/copilot/`,
-`.github/agents/`, `.github/skills/`, `.agents/skills/`, `.vscode/`, `.idea/`,
-`.cursor/`, and `.zed/`; and git execution-control paths (`hooks`, `config`,
+`.github/hooks/`, `.github/agents/`, `.github/skills/`, `.agents/skills/`,
+`.vscode/`, `.idea/`, `.cursor/`, and `.zed/`; and git execution-control paths (`hooks`, `config`,
 `config.worktree`, and `worktrees` for the workspace repo and its
 submodules). The workspace should not be able to quietly take over the
 runtime control plane.
@@ -57,7 +57,7 @@ runtime control plane.
 The Copilot adapter explicitly accounts for Copilot-specific repo control-plane
 files such as `.github/copilot-instructions.md`, `.github/instructions/**`,
 `.github/mcp.json`, `.github/copilot/settings*.json`, and repo-local skill
-directories by masking them on the safe path and launching Copilot with custom
+and hook directories by masking them on the safe path and launching Copilot with custom
 instructions disabled while blocking skill/dynamic-retrieval overrides. The
 planned Antigravity adapter must do the same for Antigravity-specific settings,
 plugin, MCP, hook, and instruction files before it can claim support.

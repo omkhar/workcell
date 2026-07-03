@@ -7444,6 +7444,9 @@ git_index_control_plane_dir_roots() {
       .github/copilot/*)
         printf '%s\0' ".github/copilot"
         ;;
+      .github/hooks/*)
+        printf '%s\0' ".github/hooks"
+        ;;
       .github/agents/*)
         printf '%s\0' ".github/agents"
         ;;
@@ -7482,6 +7485,9 @@ git_index_control_plane_dir_roots() {
         ;;
       */.github/copilot/*)
         printf '%s\0' "${path%%/.github/copilot/*}/.github/copilot"
+        ;;
+      */.github/hooks/*)
+        printf '%s\0' "${path%%/.github/hooks/*}/.github/hooks"
         ;;
       */.github/agents/*)
         printf '%s\0' "${path%%/.github/agents/*}/.github/agents"
@@ -7692,7 +7698,7 @@ prepare_workspace_control_plane_shadow() {
         \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .copilot -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
     )
 
-    for rel in .github/instructions .github/copilot .github/agents .github/skills .agents/skills; do
+    for rel in .github/instructions .github/copilot .github/hooks .github/agents .github/skills .agents/skills; do
       register_workspace_control_plane_dir_mount "${workspace}" "${rel}"
     done
 
@@ -7708,7 +7714,7 @@ prepare_workspace_control_plane_shadow() {
         \( -name .git -type d -prune \) -o \
         \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .copilot -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
     )
-    for rel in .github/instructions .github/copilot .github/agents .github/skills .agents/skills; do
+    for rel in .github/instructions .github/copilot .github/hooks .github/agents .github/skills .agents/skills; do
       if [[ -d "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
         add_shadow_dir_mount "${workspace}" "${rel}"
       fi

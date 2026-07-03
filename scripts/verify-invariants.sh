@@ -6055,13 +6055,15 @@ git init -q -b master "${MASK_VERIFY_WORKSPACE}"
 printf '# root agent marker\n' >"${MASK_VERIFY_WORKSPACE}/AGENTS.md"
 mkdir -p "${MASK_VERIFY_WORKSPACE}/.codex"
 printf 'profile = "strict"\n' >"${MASK_VERIFY_WORKSPACE}/.codex/config.toml"
-mkdir -p "${MASK_VERIFY_WORKSPACE}/.github/skills/example" "${MASK_VERIFY_WORKSPACE}/.agents/skills/example"
+mkdir -p "${MASK_VERIFY_WORKSPACE}/.github/hooks" "${MASK_VERIFY_WORKSPACE}/.github/skills/example" "${MASK_VERIFY_WORKSPACE}/.agents/skills/example"
+printf '# masked Copilot hook fixture\n' >"${MASK_VERIFY_WORKSPACE}/.github/hooks/pre-prompt"
 printf '# masked Copilot skill fixture\n' >"${MASK_VERIFY_WORKSPACE}/.github/skills/example/SKILL.md"
 printf '# masked agent skill fixture\n' >"${MASK_VERIFY_WORKSPACE}/.agents/skills/example/SKILL.md"
-mkdir -p "${MASK_VERIFY_WORKSPACE}/nested/.github/skills/indexed" "${MASK_VERIFY_WORKSPACE}/nested/.agents/skills/indexed"
+mkdir -p "${MASK_VERIFY_WORKSPACE}/nested/.github/hooks/indexed" "${MASK_VERIFY_WORKSPACE}/nested/.github/skills/indexed" "${MASK_VERIFY_WORKSPACE}/nested/.agents/skills/indexed"
+printf '# indexed Copilot hook fixture\n' >"${MASK_VERIFY_WORKSPACE}/nested/.github/hooks/indexed/pre-prompt"
 printf '# indexed Copilot skill fixture\n' >"${MASK_VERIFY_WORKSPACE}/nested/.github/skills/indexed/SKILL.md"
 printf '# indexed agent skill fixture\n' >"${MASK_VERIFY_WORKSPACE}/nested/.agents/skills/indexed/SKILL.md"
-git -C "${MASK_VERIFY_WORKSPACE}" add nested/.github/skills/indexed/SKILL.md nested/.agents/skills/indexed/SKILL.md
+git -C "${MASK_VERIFY_WORKSPACE}" add nested/.github/hooks/indexed/pre-prompt nested/.github/skills/indexed/SKILL.md nested/.agents/skills/indexed/SKILL.md
 rm -rf "${MASK_VERIFY_WORKSPACE}/nested/.github" "${MASK_VERIFY_WORKSPACE}/nested/.agents"
 printf '# nested agent marker\n' >"${MASK_VERIFY_WORKSPACE}/nested/AGENTS.md"
 printf '{\n  "masked": true\n}\n' >"${MASK_VERIFY_WORKSPACE}/nested/.claude/settings.json"
@@ -6161,14 +6163,14 @@ for required in "--user" "HOME=/state/agent-home" "CODEX_HOME=/state/agent-home/
   fi
 done
 
-for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.git/config:ro" "/workspace/.github/skills:ro" "/workspace/.agents/skills:ro"; do
+for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.git/config:ro" "/workspace/.github/hooks:ro" "/workspace/.github/skills:ro" "/workspace/.agents/skills:ro"; do
   if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
     echo "Missing workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
   fi
 done
 
-for required in "/workspace/nested/.claude:ro" "/workspace/nested/.github/skills:ro" "/workspace/nested/.agents/skills:ro" "/workspace/.alt/.git/config:ro"; do
+for required in "/workspace/nested/.claude:ro" "/workspace/nested/.github/hooks:ro" "/workspace/nested/.github/skills:ro" "/workspace/nested/.agents/skills:ro" "/workspace/.alt/.git/config:ro"; do
   if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
     echo "Missing nested workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
@@ -6197,6 +6199,7 @@ grep -q 'workspace_control_plane=readonly-vcs' /tmp/workcell-control-plane-vcs.s
 grep -q 'execution_path=lower-assurance-control-plane-vcs' /tmp/workcell-control-plane-vcs.stderr
 grep -q 'WORKCELL_ALLOW_CONTROL_PLANE_VCS=1' /tmp/workcell-control-plane-vcs.stdout
 grep -q -- "${MASK_VERIFY_WORKSPACE}/AGENTS.md:/workspace/AGENTS.md:ro" /tmp/workcell-control-plane-vcs.stdout
+grep -q -- "${MASK_VERIFY_WORKSPACE}/.github/hooks:/workspace/.github/hooks:ro" /tmp/workcell-control-plane-vcs.stdout
 
 PUBLISH_PR_FIXTURE="${BARRIER_VERIFY_ROOT}/publish-pr-fixture"
 mkdir -p "${PUBLISH_PR_FIXTURE}"
