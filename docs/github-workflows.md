@@ -1,7 +1,9 @@
 # GitHub Workflow Design
 
 Workcell keeps the workflow set narrow and reviewable. GitHub automation should
-reinforce the runtime boundary and release posture, not replace them.
+reinforce the runtime boundary and release posture, not replace them. Artifact
+retention for these workflows is documented and drift-checked in
+[retention-policy.md](retention-policy.md).
 
 Workcell also keeps a machine-checked lane inventory so local parity and
 GitHub-only behavior do not drift silently:

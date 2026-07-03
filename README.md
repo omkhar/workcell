@@ -469,6 +469,7 @@ See [docs/provenance.md](docs/provenance.md) and
 | Host expansion readiness | [docs/host-expansion-readiness.md](docs/host-expansion-readiness.md) |
 | Provenance and signing | [docs/provenance.md](docs/provenance.md) |
 | GitHub automation | [docs/github-workflows.md](docs/github-workflows.md) |
+| Artifact retention policy | [docs/retention-policy.md](docs/retention-policy.md) |
 
 ### Project docs
 
