@@ -54,11 +54,16 @@ for f in "${md_files[@]}"; do
       note "broken link: ${f} -> ${target} (missing ${resolved})"
       continue
     fi
-    # The target exists; require it to stay within the repository checkout so a
-    # traversal such as ../../etc/passwd cannot pass by matching a host file.
-    canon="$(cd "$(dirname "${resolved}")" && pwd -P)/$(basename "${resolved}")"
+    # The target exists; canonicalize it fully (resolving any trailing ..) and
+    # require it to stay within the repository checkout so a traversal such as
+    # ../../etc/passwd or ../../.. cannot pass by matching a host path.
+    if [[ -d "${resolved}" ]]; then
+      canon="$(cd "${resolved}" && pwd -P)"
+    else
+      canon="$(cd "$(dirname "${resolved}")" && pwd -P)/$(basename "${resolved}")"
+    fi
     case "${canon}" in
-      "${ROOT_DIR}"/*) : ;;
+      "${ROOT_DIR}"|"${ROOT_DIR}"/*) : ;;
       *) note "link escapes repository: ${f} -> ${target}" ;;
     esac
   done < <(
