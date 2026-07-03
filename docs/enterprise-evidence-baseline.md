@@ -63,6 +63,7 @@ claims that Workcell is certified against those frameworks.
 | ISO 27001 configuration and change management | operator contract, requirements traceability, signed commits, PR-parity validation |
 | ISO 27001 logging and monitoring | session records, audit logs, hosted-control audits, release attestations |
 | ISO 27001 secure development and supplier controls | pinned upstream verification, reproducible builds, SBOM publication, vulnerability reporting |
+| OWASP Top 10 for Agentic Applications (2026) | [owasp-agentic-mapping.md](owasp-agentic-mapping.md) — a conservative posture map, not a conformance claim |
 
 ## Quality Gate
 

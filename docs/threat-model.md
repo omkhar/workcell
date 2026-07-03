@@ -56,6 +56,9 @@ published provenance story.
 - signed commits, branch rulesets, and hosted-control audits
 - Sigstore-based release signing plus GitHub attestations in the canonical repo
 
+For how these controls map to the OWASP Top 10 for Agentic Applications
+(2026), see [owasp-agentic-mapping.md](owasp-agentic-mapping.md).
+
 ## Residual risks
 
 - the full macOS boundary is still a local exercise, not a GitHub-hosted
