@@ -287,7 +287,10 @@ Other defaults that matter:
   PRs stay reviewable; `main` is the only supported PR base by default, and
   non-`main` bases remain an explicit lower-assurance draft-only escape hatch
   with an explicit preflight warning that repo-owned PR checks are not expected
-  for that base
+  for that base; reviewed, live-certified adapter support PRs may use the
+  bounded `approved-large-certified-adapter` label plus
+  `--approved-large-certified-adapter` publication flag when they cannot be
+  split without invalidating certification evidence
 - completed and aborted launches are recorded as durable host-side session
   records that you can inspect with `workcell session ...`
 - `workcell session diff` compares the current workspace against the clean git
@@ -349,6 +352,12 @@ workcell --gc
 workcell --logs audit --colima-profile wcl-...
 # Lower-level host publication helper for repositories without a repo wrapper.
 workcell publish-pr --workspace /path/to/repo --branch feature/name \
+  --title-file /tmp/pr-title.txt \
+  --body-file /tmp/pr-body.md \
+  --commit-message-file /tmp/commit-message.txt
+# Reviewed exception: live-certified adapter PRs that cannot be split.
+workcell publish-pr --workspace /path/to/repo --branch feature/name \
+  --approved-large-certified-adapter \
   --title-file /tmp/pr-title.txt \
   --body-file /tmp/pr-body.md \
   --commit-message-file /tmp/commit-message.txt

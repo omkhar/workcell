@@ -17,6 +17,8 @@ import (
 	"github.com/omkhar/workcell/internal/shellproto"
 )
 
+const approvedLargeCertifiedAdapterLabel = "approved-large-certified-adapter"
+
 // PublishPRMain is the in-process entry point invoked by the launcher
 // subcommand publish-pr-cli. It mirrors scripts/workcell publish_pr_main
 // end-to-end: parse args, resolve the workspace + git/gh binaries, run
@@ -160,9 +162,15 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		"--max-areas", "8",
 		"--max-binaries", "0",
 	}
+	if opts.ApprovedLargeCertifiedAdapter {
+		shapeCmd = append(shapeCmd, "--allow-certified-adapter-shape")
+	}
 	pushCmd := clone("push", "--no-verify", "-u", "origin", opts.Branch)
 
 	prCmd := []string{ctx.HostGhBin, "pr", "create", "--base", opts.Base, "--head", opts.Branch, "--title", preflight.TitleText}
+	if opts.ApprovedLargeCertifiedAdapter {
+		prCmd = append(prCmd, "--label", approvedLargeCertifiedAdapterLabel)
+	}
 	draft := !preflight.Ready
 	if draft {
 		prCmd = append(prCmd, "--draft")

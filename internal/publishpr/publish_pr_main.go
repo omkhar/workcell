@@ -68,6 +68,9 @@ type Options struct {
 	// Ready, when true, flips the gh PR off draft (publish_pr_main's
 	// `--ready` flag).
 	Ready bool
+	// ApprovedLargeCertifiedAdapter allows a larger but still bounded
+	// PR-shape gate for reviewed, live-certified adapter support PRs.
+	ApprovedLargeCertifiedAdapter bool
 	// DryRun, when true, prints the planned host commands instead of
 	// executing them; output shape is asserted by
 	// tests/scenarios/shared/test-publish-pr-dry-run.sh.
@@ -181,6 +184,8 @@ func ParseArgs(args []string) (*Options, error) {
 			i++
 		case "--ready":
 			opts.Ready = true
+		case "--approved-large-certified-adapter":
+			opts.ApprovedLargeCertifiedAdapter = true
 		case "--dry-run":
 			opts.DryRun = true
 		case "-h", "--help":

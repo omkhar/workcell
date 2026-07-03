@@ -22,6 +22,8 @@ const usageText = "Usage: workcell publish-pr [options]\n" +
 	"  --commit-message TEXT         Commit message to sign and publish\n" +
 	"  --commit-message-file PATH    Read the commit message from PATH\n" +
 	"  --ready                       Create a ready PR instead of a draft PR\n" +
+	"  --approved-large-certified-adapter\n" +
+	"                                Allow the bounded large certified-adapter PR shape\n" +
 	"  --dry-run                     Print the planned host commands and exit\n" +
 	"  -h, --help                    Show this help text\n" +
 	"\n" +
@@ -31,6 +33,9 @@ const usageText = "Usage: workcell publish-pr [options]\n" +
 	"    and publication stay outside the Tier 1 container boundary.\n" +
 	"  - It blocks over-broad branch diffs before push so published PRs stay\n" +
 	"    reviewable by a human without juggling unrelated concerns.\n" +
+	"  - --approved-large-certified-adapter is limited to reviewed adapter PRs\n" +
+	"    with live certification evidence and still rejects binaries and changes\n" +
+	"    beyond the certified-adapter size budget.\n" +
 	"  - By default publish-pr only supports --base main because repo-owned PR\n" +
 	"    workflows and hosted controls only cover main-based review units.\n" +
 	"  - --allow-non-main-base is an explicit lower-assurance escape hatch: the PR\n" +

@@ -17,12 +17,17 @@ GitHub-only behavior do not drift silently:
 
 That inventory underpins the local `./scripts/pre-merge.sh` profiles and the
 repo-local `./scripts/repo-publish-pr.sh` publication gate.
+For the narrow certified-adapter exception, local parity evidence must be
+generated with `./scripts/pre-merge.sh --profile pr-parity --label
+approved-large-certified-adapter`; host publication must use `workcell
+publish-pr --approved-large-certified-adapter` through the repo wrapper, which
+adds the matching `approved-large-certified-adapter` PR label.
 
 ## Workflow inventory
 
 | Workflow | Purpose |
 |---|---|
-| `ci.yml` | repository validation, smoke, reproducibility, pin verification, and upstream release re-verification on pushes and PRs; package install/uninstall verification runs only on pushes to `main`, manual dispatch, and PRs labeled `approved-heavy-ci` |
+| `ci.yml` | repository validation, smoke, reproducibility, pin verification, and upstream release re-verification on pushes and PRs; package install/uninstall verification runs only on pushes to `main`, manual dispatch, and PRs labeled `approved-heavy-ci`; the PR-shape job accepts `approved-large-certified-adapter` only for bounded, reviewed, live-certified adapter support PRs |
 | `pr-base-policy.yml` | trusted base-branch guard that keeps `main` as the supported ready-PR base and leaves non-`main` PR bases as draft-only lower-assurance review units |
 | `docs.yml` | fast spelling and manpage feedback for docs-only changes |
 | `security.yml` | repo-owned workflow contract checks, dependency review, and `zizmor` |

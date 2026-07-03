@@ -41,6 +41,7 @@ func TestUsageTextDocumentsRequiredFlags(t *testing.T) {
 		"--commit-message TEXT",
 		"--commit-message-file PATH",
 		"--ready",
+		"--approved-large-certified-adapter",
 		"--dry-run",
 		"-h, --help",
 	} {
@@ -55,6 +56,7 @@ func TestUsageTextDocumentsNotes(t *testing.T) {
 	got := UsageText()
 	for _, want := range []string{
 		"publish-pr runs on the host, not inside the Workcell container.",
+		"--approved-large-certified-adapter is limited to reviewed adapter PRs",
 		"--allow-non-main-base is an explicit lower-assurance escape hatch",
 		"Host-side git commands explicitly bypass repo hooks during publication",
 		"The default snapshot is worktree",

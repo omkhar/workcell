@@ -70,6 +70,9 @@ state:
   - `release-preflight` for the additional mirrored release-facing lanes
 - `./scripts/repo-publish-pr.sh` for `main`-based PR publication after fresh
   local `pr-parity` evidence exists
+  - reviewed, live-certified adapter support PRs that cannot be split use
+    `--label approved-large-certified-adapter` for local parity and
+    `--approved-large-certified-adapter` during host publication
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
 They also now cover canonical requirement traceability, host-side policy
