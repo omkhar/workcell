@@ -2,27 +2,30 @@
 
 This page records how long each GitHub Actions workflow keeps its uploaded
 artifacts and why, and how to verify a release after those artifacts expire.
-The retention values below are enforced against the workflows by
-`scripts/check-retention-policy.sh`, which also requires every
-`actions/upload-artifact` step to set an explicit `retention-days` (so no
-artifact silently inherits the repository default), so the documented policy
-and the workflow configuration cannot drift apart.
 
-## Retention by workflow
+The machine-enforced source of truth is
+[`policy/retention-policy.json`](../policy/retention-policy.json), which binds
+each artifact name to its required `retention-days`. The
+`workcell-citools check-retention-policy` validator (run by
+`scripts/check-workflows.sh` in both local `pre-merge`/`pr-parity` and the
+`security.yml` lane) asserts that every `actions/upload-artifact` step sets an
+explicit `retention-days` (so no artifact silently inherits the repository
+default) and that each uploaded artifact's retention matches the policy exactly.
+Binding per artifact name — rather than per workflow — means moving a retention
+value from one artifact to another is still caught. The table below mirrors that
+policy for readability.
 
-Each row lists the retention value of every artifact upload in that workflow,
-including repeats (so `7, 90, 90` means one 7-day upload and two 90-day
-uploads). The drift check compares these multisets exactly.
+## Retention by artifact
 
-<!-- retention-policy:begin -->
-| Workflow | retention-days |
-|---|---|
-| ci.yml | 7 |
-| release.yml | 7, 90, 90 |
-| security.yml | 5 |
-| scorecard.yml | 5 |
-| upstream-refresh.yml | 7 |
-<!-- retention-policy:end -->
+| Workflow | Artifact | retention-days |
+|---|---|---|
+| ci.yml | workcell-ci-install-candidate | 7 |
+| release.yml | workcell-release-preflight | 90 |
+| release.yml | workcell-release-install-candidate | 90 |
+| release.yml | workcell-release-artifacts | 7 |
+| security.yml | zizmor-sarif | 5 |
+| scorecard.yml | scorecard-sarif | 5 |
+| upstream-refresh.yml | upstream-refresh-candidate | 7 |
 
 ## Rationale
 
