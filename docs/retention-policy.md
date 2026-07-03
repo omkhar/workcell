@@ -3,8 +3,10 @@
 This page records how long each GitHub Actions workflow keeps its uploaded
 artifacts and why, and how to verify a release after those artifacts expire.
 The retention values below are enforced against the workflows by
-`scripts/check-retention-policy.sh` so the documented policy and the workflow
-configuration cannot drift apart.
+`scripts/check-retention-policy.sh`, which also requires every
+`actions/upload-artifact` step to set an explicit `retention-days` (so no
+artifact silently inherits the repository default), so the documented policy
+and the workflow configuration cannot drift apart.
 
 ## Retention by workflow
 
@@ -15,6 +17,7 @@ configuration cannot drift apart.
 | release.yml | 7, 90 |
 | security.yml | 5 |
 | scorecard.yml | 5 |
+| upstream-refresh.yml | 7 |
 <!-- retention-policy:end -->
 
 ## Rationale
@@ -34,6 +37,11 @@ configuration cannot drift apart.
   SARIF backups. The authoritative copies are ingested into GitHub code
   scanning and the Scorecard dashboard; the artifact is a short-lived
   convenience copy, not the system of record.
+- **`upstream-refresh.yml` — 7 days.** The `upstream-refresh-candidate` bundle
+  (`patch`, `diffstat`, `metadata.json`) is an advisory operator signal for a
+  reviewed upstream-pin refresh, not integrity evidence; the authoritative
+  refresh PR is created later on the host. Seven days covers the review window
+  for a candidate before it is regenerated.
 
 ## Verifying a release after artifacts expire
 

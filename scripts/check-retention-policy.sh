@@ -68,6 +68,18 @@ for wf_path in .github/workflows/*.yml; do
   fi
 done
 
+# 3. Every actions/upload-artifact step must set an explicit retention-days, so
+# no uploaded artifact silently inherits the repository default. Counting keys
+# per workflow catches an upload added without its own retention-days.
+for wf_path in .github/workflows/*.yml; do
+  uploads="$(grep -cE '^[[:space:]]*uses:[[:space:]]*actions/upload-artifact@' "${wf_path}" || true)"
+  [[ "${uploads}" -gt 0 ]] || continue
+  retentions="$(grep -cE '^[[:space:]]*retention-days:' "${wf_path}" || true)"
+  if [[ "${retentions}" -lt "${uploads}" ]]; then
+    note "$(basename "${wf_path}") has ${uploads} upload-artifact step(s) but only ${retentions} retention-days setting(s); every upload must set explicit retention-days"
+  fi
+done
+
 if [[ "${failures}" -gt 0 ]]; then
   echo "check-retention-policy: FAILED with ${failures} issue(s)" >&2
   exit 1
