@@ -26,14 +26,13 @@ note() { echo "check-doc-links: $*" >&2; failures=$((failures + 1)); }
 # Vendored and generated trees are not our docs; exclude the same paths the
 # docs spelling job and .codespellrc skip.
 excluded='^(runtime/container/rust/vendor|runtime/container/providers/node_modules|runtime/container/rust/target|dist|tmp)/'
-vendor_pathspecs=(
-  ':!runtime/container/rust/vendor'
-  ':!runtime/container/providers/node_modules'
-  ':!runtime/container/rust/target'
-  ':!dist'
-  ':!tmp'
-)
 mapfile -t md_files < <(git ls-files '*.md' | grep -vE "${excluded}" || true)
+
+# Records, per link-target basename, the markdown files that navigably link it.
+# Populated from fence-stripped content in the link loop so the orphan check
+# below reuses the same view of who links whom (a link inside a code fence is
+# not a navigable reference and must not keep a page out of the orphan set).
+declare -A linked_by
 
 # --- Broken relative-link check ---------------------------------------------
 for f in "${md_files[@]}"; do
@@ -46,6 +45,8 @@ for f in "${md_files[@]}"; do
     # Drop any #fragment; only the path portion is validated.
     path="${target%%#*}"
     [[ -n "${path}" ]] || continue
+    # Record this navigable link (fence-stripped) for the orphan check.
+    linked_by["$(basename "${path}")"]+=" ${f}"
     # GitHub resolves relative links against the linking file's directory only.
     if [[ ! -e "${dir}/${path}" ]]; then
       note "broken link: ${f} -> ${target} (missing ${dir}/${path})"
@@ -59,24 +60,25 @@ for f in "${md_files[@]}"; do
 done
 
 # --- Orphan docs/ check -----------------------------------------------------
-# A docs/*.md page is an orphan when no other tracked markdown file contains a
-# navigable link to it. A plain-text or code-span mention (in a scenario table,
-# a manifest, or a script) does not count: it does not let a reader reach the
-# page. Index-style pages are linked widely, so this stays quiet on a healthy
-# tree. Fails closed but distinguishes "no match" from a real git error so an
-# operational failure is not mistaken for an orphan storm.
+# A docs/*.md page is an orphan when no other tracked markdown file navigably
+# links to it. A plain-text or code-span mention, or a link that only appears
+# inside a fenced code sample, does not count: it does not let a reader reach
+# the page. Membership is taken from linked_by, populated above from the same
+# fence-stripped scan used for broken-link detection, so both checks agree on
+# what a navigable link is. Index-style pages are linked widely, so this stays
+# quiet on a healthy tree.
 while IFS= read -r doc; do
   base="$(basename "${doc}")"
-  base_re="$(printf '%s' "${base}" | sed 's/\./\\./g')"
-  set +e
-  git grep -qE "\]\([^)]*${base_re}[)#]" -- '*.md' ":!${doc}" "${vendor_pathspecs[@]}"
-  rc=$?
-  set -e
-  case "${rc}" in
-    0) : ;;
-    1) note "orphan doc: ${doc} is linked from no other tracked markdown file" ;;
-    *) echo "check-doc-links: git grep failed (rc=${rc}) while scanning for ${base}" >&2; exit "${rc}" ;;
-  esac
+  others=0
+  for referrer in ${linked_by["${base}"]:-}; do
+    if [[ "${referrer}" != "${doc}" ]]; then
+      others=1
+      break
+    fi
+  done
+  if [[ "${others}" -eq 0 ]]; then
+    note "orphan doc: ${doc} is linked from no other tracked markdown file"
+  fi
 done < <(git ls-files 'docs/*.md')
 
 if [[ "${failures}" -gt 0 ]]; then
