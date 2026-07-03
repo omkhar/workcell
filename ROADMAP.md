@@ -107,8 +107,9 @@ runtimes
 against OWASP agentic guidance, SIEM-ready audit export, and SLSA supply-chain
 levels. Workcell's 1.0 bar leans into its differentiators — the strongest
 local boundary, staged credentials, host-side signing, signed evidence, and
-honest support labels — while closing the speed, parallelism, and egress-policy
-gaps competitors treat as table stakes.
+honest support labels — while closing the speed and parallelism gaps
+competitors treat as table stakes and surfacing controls it already ships,
+such as per-session egress allowlisting.
 
 ### 1.0 Release Criteria
 
@@ -119,7 +120,8 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
    injection-policy schema, and session-record and export formats are
    versioned, frozen, and covered by a published deprecation policy (G1); the
    manpage and CLI reference are complete for the frozen surface.
-2. Boundary assurance: per-session egress policy (A1), repo-defined MCP and
+2. Boundary assurance: egress policy depth and target parity (A1),
+   repo-defined MCP and
    agent-config containment (A2), hardening-profile conformance (A6),
    expanded fuzzing (A3), documented unsafe-code invariants (A4), and signed
    session audit records (A5) are landed; a third-party boundary audit is
@@ -426,14 +428,20 @@ OS-level sandboxes (Seatbelt/bubblewrap). Workcell's VM-plus-container
 boundary and staged-credential model match the containment doctrine the
 strongest vendors now publish; these items deepen that lead.
 
-- **A1 (now, L): Per-session network egress policy.** Add a default-deny
-  egress lane with explicit domain allowlists as first-class per-session
-  policy, enforced outside the agent process (proxy or VM-level filtering),
-  with the allowlist recorded in the session record. Egress allowlisting is
-  the control every adjacent runtime now treats as core, and NSA MCP guidance
-  recommends filtering outgoing proxies for external MCP connections. Today
-  the strict lane has a reviewed network posture but no operator-visible
-  per-session allowlist artifact.
+- **A1 (now, M): Egress policy depth and target parity.** Strict Colima
+  launches already enforce default-deny, per-session egress allowlisting:
+  the strict profile sets `NETWORK_POLICY=allowlist`, the launcher computes
+  per-session `ALLOW_ENDPOINTS`, VM-level enforcement applies them, and the
+  endpoints are printed and recorded in the session audit. A1 is the delta
+  on top of that shipped control: an operator-facing policy surface for
+  reviewed per-session allowlist extensions and tightenings, a published
+  policy artifact documenting the mechanism (with A6), evaluation of
+  domain/DNS-level and proxy-based filtering for finer-grained control, and
+  explicit parity labeling for targets where allowlist enforcement does not
+  apply. Egress allowlisting is the control every adjacent runtime now
+  treats as core, and NSA MCP guidance recommends filtering outgoing
+  proxies; Workcell should surface and extend the control it already ships
+  rather than build a duplicate lane.
 - **A2 (now, M): Repo-defined MCP and agent-config containment.** Extend
   workspace control-plane masking into an explicit reviewed policy for
   repo-local MCP server definitions, tool configs, and instruction files:

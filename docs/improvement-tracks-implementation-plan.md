@@ -40,7 +40,9 @@ The milestone ordering answers the current landscape directly:
   of the four supported provider CLIs (Claude Code, Gemini CLI, Copilot CLI
   per the TrustFall disclosure) → A2 lands first (v0.12)
 - per-session egress allowlists are table stakes in every adjacent runtime
-  and in national-agency MCP guidance → A1 is the headline of v0.13
+  and in national-agency MCP guidance; strict Colima launches already enforce
+  default-deny allowlisting → A1 (v0.13) documents, extends, and brings
+  target parity to that shipped control instead of building a duplicate lane
 - microVM-per-session backends with warm starts are the mainstream
   comparison point → C1/C2 anchor v0.14
 - parallel worktree-per-agent sessions are the 2026 unit of agent work →
@@ -183,22 +185,29 @@ them.
 
 ## Milestone v0.13: Boundary Depth And Stability
 
-### A1: Per-Session Network Egress Policy
+### A1: Egress Policy Depth And Target Parity
 
-- Steps: design review first — enforcement point options (VM-level filtering
-  versus a proxy outside the agent process), policy schema (per-session
-  domain allowlist, default-deny in `strict`), and session-record fields;
-  implement behind a reviewed policy surface with fail-closed diagnostics;
-  record the effective allowlist in the session record; document operator
-  workflow and rollback.
-- Exit gates: deterministic tests prove default-deny and allowlisted flows;
-  scenario coverage for blocked/allowed egress; docs (injection policy,
-  invariants, threat model) updated; no weakening of existing posture when
-  the feature is off.
+Strict Colima launches already enforce default-deny, per-session egress
+allowlisting (`runtime/profiles/strict.env` sets `NETWORK_POLICY=allowlist`;
+the launcher computes per-session `ALLOW_ENDPOINTS`, applies them through the
+VM-level egress helper, and prints and audits the endpoint set). A1 is the
+delta on that shipped control, not a new lane.
+
+- Steps: document the shipped mechanism as a reviewed policy artifact
+  alongside A6; design review for the delta — an operator-facing
+  injection-policy surface for reviewed per-session allowlist extensions and
+  tightenings, domain/DNS-level and proxy-based filtering options for
+  finer-grained control, and enforcement-parity labeling for targets where
+  the allowlist helper does not apply; implement the reviewed delta with
+  fail-closed diagnostics.
+- Exit gates: the shipped mechanism is documented and covered by
+  deterministic tests (blocked/allowed flows, audited endpoint recording);
+  operator extensions flow through the reviewed policy path; targets without
+  allowlist enforcement are explicitly labeled; docs (injection policy,
+  invariants, threat model) updated; no weakening of the shipped default.
 - Validation: unit plus scenario tests; live boundary exercise on the strict
-  path before any support-visible claim.
-- Size: L. Dependencies: design review; A6 profiles help but are not
-  blocking.
+  path for the delta before any support-visible claim.
+- Size: M. Dependencies: design review; coordinates with A6 artifacts.
 
 ### A3: Fuzzing Expansion And Continuous Fuzzing
 
