@@ -318,6 +318,11 @@ delta on that shipped control, not a new lane.
 
 ### C1: Apple `container` Backend Evaluation (macOS 26+)
 
+Context: Apple's Containerization framework reached 1.0.0 in June 2026 — one
+lightweight VM per container on Virtualization.framework, sub-second boot, a
+frozen 1.0 API, Apple Silicon only, macOS 26 baseline. Per-session VM
+isolation would be a stronger and lighter boundary than one shared Colima VM.
+
 - Steps: spike behind the existing target-kind contract as
   `local_vm/apple-container`; map lifecycle, mounts, networking, and
   diagnostics onto the shared conformance harness; measure boundary
