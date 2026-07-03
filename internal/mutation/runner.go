@@ -4,6 +4,7 @@
 package mutation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,7 +13,23 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 )
+
+const defaultMutantTimeout = 10 * time.Minute
+
+// mutantTimeout bounds a single mutant's scoped test run so one hung mutant
+// cannot consume the whole (CI-gated) mutation lane. Overridable via
+// WORKCELL_MUTANT_TIMEOUT (a Go duration such as "15m") for slow/loaded runners.
+func mutantTimeout() time.Duration {
+	if raw := os.Getenv("WORKCELL_MUTANT_TIMEOUT"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultMutantTimeout
+}
 
 type mutationCase struct {
 	relativePath string
@@ -134,25 +151,63 @@ var rustMutations = []mutationCase{
 	},
 }
 
+// Result summarizes a mutation run: how many mutants were killed (the scoped
+// test suite failed, as it should) out of the total attempted, plus the labels
+// of any survivors (mutants the tests failed to catch).
+type Result struct {
+	Killed    int
+	Total     int
+	Survivors []string
+}
+
+// Score returns the percentage of mutants killed, or 0 when no mutants ran.
+func (r Result) Score() float64 {
+	if r.Total == 0 {
+		return 0
+	}
+	return float64(r.Killed) / float64(r.Total) * 100
+}
+
+// Run executes every mutation case and returns an error if any mutant survived
+// or the harness failed. It is the strict all-or-nothing variant (any survivor
+// fails), intentionally independent of the reviewed baseline policy that
+// CheckScore applies; callers wanting the baseline gate use RunScored +
+// CheckScore instead.
 func Run(repoRoot string) error {
-	if err := runGoHelperMutations(repoRoot); err != nil {
-		return err
+	result, err := RunScored(repoRoot)
+	if len(result.Survivors) > 0 {
+		err = errors.Join(err, fmt.Errorf("mutation coverage did not catch: %s", strings.Join(result.Survivors, ", ")))
 	}
-	if err := runRustGuardMutations(repoRoot); err != nil {
-		return err
+	return err
+}
+
+// RunScored executes every mutation case and reports the kill counts. A non-nil
+// error indicates a harness failure (a mutant that could not be evaluated), not
+// a surviving mutant; survivors are reported in Result.Survivors.
+func RunScored(repoRoot string) (Result, error) {
+	goKilled, goTotal, goSurvivors, goErr := runGoHelperMutations(repoRoot)
+	rustKilled, rustTotal, rustSurvivors, rustErr := runRustGuardMutations(repoRoot)
+	survivors := make([]string, 0, len(goSurvivors)+len(rustSurvivors))
+	survivors = append(survivors, goSurvivors...)
+	survivors = append(survivors, rustSurvivors...)
+	result := Result{
+		Killed:    goKilled + rustKilled,
+		Total:     goTotal + rustTotal,
+		Survivors: survivors,
 	}
-	return nil
+	return result, errors.Join(goErr, rustErr)
 }
 
 // runGoHelperMutations runs all Go mutation cases in parallel. Each case
 // operates in its own isolated temp directory so there is no shared state.
-func runGoHelperMutations(repoRoot string) error {
+func runGoHelperMutations(repoRoot string) (killed, total int, survivors []string, err error) {
 	type result struct {
 		label string
 		err   error
 		pass  bool // true means mutation was NOT caught (test passed when it should fail)
 	}
 
+	total = len(goHelperMutations)
 	results := make(chan result, len(goHelperMutations))
 	var wg sync.WaitGroup
 
@@ -191,7 +246,6 @@ func runGoHelperMutations(repoRoot string) error {
 	wg.Wait()
 	close(results)
 
-	var failures []string
 	var harnessErrors []error
 	for r := range results {
 		if r.err != nil {
@@ -199,24 +253,24 @@ func runGoHelperMutations(repoRoot string) error {
 			continue
 		}
 		if r.pass {
-			failures = append(failures, r.label)
+			survivors = append(survivors, r.label)
+		} else {
+			killed++
 		}
 	}
-	if len(failures) > 0 {
-		harnessErrors = append(harnessErrors, fmt.Errorf("go helper mutation coverage did not catch: %s", strings.Join(failures, ", ")))
-	}
-	return errors.Join(harnessErrors...)
+	return killed, total, survivors, errors.Join(harnessErrors...)
 }
 
 // runRustGuardMutations runs all Rust mutation cases in parallel. Each case
 // operates in its own isolated temp directory so there is no shared state.
-func runRustGuardMutations(repoRoot string) error {
+func runRustGuardMutations(repoRoot string) (killed, total int, survivors []string, err error) {
 	type result struct {
 		label string
 		err   error
 		pass  bool
 	}
 
+	total = len(rustMutations)
 	results := make(chan result, len(rustMutations))
 	var wg sync.WaitGroup
 
@@ -259,7 +313,6 @@ func runRustGuardMutations(repoRoot string) error {
 	wg.Wait()
 	close(results)
 
-	var failures []string
 	var harnessErrors []error
 	for r := range results {
 		if r.err != nil {
@@ -267,13 +320,12 @@ func runRustGuardMutations(repoRoot string) error {
 			continue
 		}
 		if r.pass {
-			failures = append(failures, r.label)
+			survivors = append(survivors, r.label)
+		} else {
+			killed++
 		}
 	}
-	if len(failures) > 0 {
-		harnessErrors = append(harnessErrors, fmt.Errorf("rust mutation coverage did not catch: %s", strings.Join(failures, ", ")))
-	}
-	return errors.Join(harnessErrors...)
+	return killed, total, survivors, errors.Join(harnessErrors...)
 }
 
 type commandSpec struct {
@@ -283,7 +335,10 @@ type commandSpec struct {
 }
 
 func runCommand(cwd string, spec commandSpec) (int, error) {
-	cmd := exec.Command(spec.Path, spec.Args...)
+	timeout := mutantTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...)
 	cmd.Dir = cwd
 	if spec.Env != nil {
 		env := os.Environ()
@@ -294,9 +349,23 @@ func runCommand(cwd string, spec commandSpec) (int, error) {
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	// Put the child in its own process group and, on timeout, kill the whole
+	// group so a hung `go test`/`cargo test` cannot orphan its compiled test
+	// binary (a grandchild) that would keep burning CI resources.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 10 * time.Second
 	err := cmd.Run()
 	if err == nil {
 		return 0, nil
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		return 0, fmt.Errorf("mutation command timed out after %s: %s %s", timeout, spec.Path, strings.Join(spec.Args, " "))
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
