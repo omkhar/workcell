@@ -21,6 +21,9 @@ on:
       - "man/**"
       - "policy/**"
       - "runtime/**"
+      - "scripts/check-doc-links.sh"
+      - "scripts/check-doc-support-matrix-fields.sh"
+      - "scripts/ci/job-docs.sh"
       - "verify/**"
       - "workflows/**"
   pull_request:
@@ -43,6 +46,9 @@ on:
       - "man/**"
       - "policy/**"
       - "runtime/**"
+      - "scripts/check-doc-links.sh"
+      - "scripts/check-doc-support-matrix-fields.sh"
+      - "scripts/ci/job-docs.sh"
       - "verify/**"
       - "workflows/**"
   workflow_dispatch:

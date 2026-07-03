@@ -291,6 +291,9 @@
           "man/**",
           "policy/**",
           "runtime/**",
+          "scripts/check-doc-links.sh",
+          "scripts/check-doc-support-matrix-fields.sh",
+          "scripts/ci/job-docs.sh",
           "verify/**",
           "workflows/**"
         ],
@@ -311,6 +314,9 @@
           "man/**",
           "policy/**",
           "runtime/**",
+          "scripts/check-doc-links.sh",
+          "scripts/check-doc-support-matrix-fields.sh",
+          "scripts/ci/job-docs.sh",
           "verify/**",
           "workflows/**"
         ]
