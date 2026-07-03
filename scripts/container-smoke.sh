@@ -3264,12 +3264,17 @@ EOF
 	    exit 1
 	  fi
 	  grep -q "Unsupported Workcell launcher invocation for copilot: /usr/local/libexec/workcell/core/launcher" /tmp/provider-launcher-exec-a.out
-	  ln -sf /usr/local/libexec/workcell/core/launcher /workspace/tmp/copilot
+	  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
+	    set -euo pipefail
+	    mkdir -p /workspace/tmp
+	    ln -sf /usr/local/libexec/workcell/core/launcher /workspace/tmp/copilot
+	  '
 	  if /workspace/tmp/copilot --version >/tmp/provider-launcher-workspace-symlink.out 2>&1; then
 	    echo "expected workspace symlink launcher invocation to fail" >&2
 	    exit 1
 	  fi
 	  grep -q "Unsupported Workcell launcher invocation for copilot: /workspace/tmp/copilot" /tmp/provider-launcher-workspace-symlink.out
+	  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups rm -f /workspace/tmp/copilot
 	  cat <<'EOF' >/tmp/workcell-development-wrapper-bashenv.sh
 unset BASH_ENV
 unset ENV
