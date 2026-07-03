@@ -27,6 +27,11 @@ The longer-lived runtime-target and deployment-reach program lives in
 [`docs/runtime-target-expansion-plan.md`](docs/runtime-target-expansion-plan.md).
 The deterministic phase breakdown lives in
 [`docs/runtime-target-phase-plan.md`](docs/runtime-target-phase-plan.md).
+Cross-cutting engineering, security-depth, and adoption improvements from the
+2026-07 repository review live in
+[Engineering And Ecosystem Improvement Tracks](#engineering-and-ecosystem-improvement-tracks)
+below. The release program that sequences those tracks, the remaining feature
+work, and the 1.0 criteria lives in [Path To 1.0](#path-to-10) below.
 
 ## Product Direction
 
@@ -81,6 +86,88 @@ The deterministic phase breakdown lives in
   input to those modes rather than a standalone path), and an Antigravity
   adapter is a committed follow-on provider-parity track behind the same
   Tier 1 evidence bar (see [docs/provider-matrix.md](docs/provider-matrix.md)).
+
+## Path To 1.0
+
+Workcell 1.0 is a contract-stability and assurance claim, not a
+platform-reach claim. 1.0 means: the public operator contract is frozen under
+semantic versioning, the reviewed macOS boundary is certified and audit-ready,
+the supported provider set covers the current agent ecosystem, day-two
+operations are proven, and the release path meets the supply-chain bar
+enterprise buyers require. Platform expansion — Linux operator hosts, Windows,
+managed workstations — continues after 1.0 through the phase gates below and
+does not gate 1.0.
+
+The competitive context shaping this bar: microVM-per-session runtimes with
+warm starts and per-session egress allowlists are now the mainstream
+comparison point; OS-level sandbox competitors have shipped bypass CVEs;
+repo-defined MCP servers are a proven one-keypress RCE class across three of
+the four currently supported provider CLIs; and enterprises evaluate agent
+runtimes
+against OWASP agentic guidance, SIEM-ready audit export, and SLSA supply-chain
+levels. Workcell's 1.0 bar leans into its differentiators — the strongest
+local boundary, staged credentials, host-side signing, signed evidence, and
+honest support labels — while closing the speed and parallelism gaps
+competitors treat as table stakes and surfacing controls it already ships,
+such as per-session egress allowlisting.
+
+### 1.0 Release Criteria
+
+1.0 ships when all of the following hold. Item identifiers refer to the
+improvement tracks below; `G` items are the 1.0 contract-and-operations track.
+
+1. Contract stability: CLI flags and stable output lines, exit codes, the
+   injection-policy schema, and session-record and export formats are
+   versioned, frozen, and covered by a published deprecation policy (G1); the
+   manpage and CLI reference are complete for the frozen surface.
+2. Boundary assurance: egress policy depth and target parity (A1),
+   repo-defined MCP and
+   agent-config containment (A2), hardening-profile conformance (A6),
+   expanded fuzzing (A3), documented unsafe-code invariants (A4), and signed
+   session audit records (A5) are landed; a third-party boundary audit is
+   scheduled or complete (B7).
+3. Platform: `macos/arm64` strict (Colima) and compat (Docker Desktop) are
+   certified on the release matrix; the Apple `container` backend decision
+   (C1) is recorded either way; session start latency targets (C2) are met
+   and published; native parallel sessions (C3) work on the strict path.
+4. Providers: the Tier 1 set covers the current agent ecosystem — Codex,
+   Claude Code, GitHub Copilot CLI, Gemini, and Google Antigravity CLI —
+   each through the same Tier 1 evidence bar. If upstream instability blocks
+   Antigravity live certification, 1.0 may ship with the fail-closed scaffold
+   plus an explicit recorded scope decision instead of a support claim.
+5. Operations: install, upgrade, uninstall, rollback, `--gc`, and support
+   bundles (G2) are proven end to end on the release matrix (G3).
+6. Release assurance: dual-control releases (B2), mutation-score gating
+   (B3), SLSA L3 gaps closed or explicitly dispositioned (B1), OpenSSF Best
+   Practices badge (B7), and a real-boundary certification lane (B6) are in
+   place.
+7. Adoption surface: tiered docs (E1), architecture diagrams (E2), a
+   rendered docs site with demos and reproducible benchmarks (E6), and the
+   support-tier and diagnostics guides (E3) are live.
+8. Readiness review: a cross-lens 1.0 gate review (G4) — product,
+   enterprise/security, adapter-maintainer, validation, docs/contract, and
+   release lenses — records no unresolved P0/P1 findings, and every support
+   matrix row matches shipped behavior.
+
+### Milestone Train
+
+Milestones are sequencing buckets on the existing release cadence; versions
+are indicative and may split. Per-item steps, exit gates, and dependencies
+live in
+[`docs/improvement-tracks-implementation-plan.md`](docs/improvement-tracks-implementation-plan.md).
+
+| Milestone | Theme | Contents |
+|---|---|---|
+| v0.12 | Containment and hygiene | A2, A7, B3, B4, B5, D1, D2, E3, E4 |
+| v0.13 | Boundary depth and stability | A1, A3, A4, B1, B7 (badge), C5, D8, E1, E2, F3, G1 (inventory) |
+| v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E6, E7, G2, Antigravity Tier 1 adapter track |
+| v0.15 | Enterprise evidence and release assurance | A5, A6, B2, B6, C3, D5, D7, F1, G3 |
+| v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
+| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B7 (audit completion), F2 |
+
+Phase 13 (Linux `amd64` `local_compat` certification candidate) may land
+before or after 1.0 depending on certification evidence; it does not gate
+1.0 and 1.0 creates no Linux claim.
 
 ## Next Provider And Target Phases
 
@@ -310,6 +397,159 @@ Exit gates:
   inbound public SSH on the reviewed path
 - AWS, GCP, and Azure expectations are compared across identity, private
   networking, tags, quotas, costs, logs, key management, and data residency
+
+## Engineering And Ecosystem Improvement Tracks
+
+Recorded 2026-07-03 from a full review of the repository (documentation,
+Rust/Go/shell source, tests, CI, and release workflows) combined with external
+research on the 2025–2026 agent-sandboxing ecosystem, competing runtimes,
+disclosed agent-CLI vulnerabilities, and emerging enterprise standards. These
+tracks are direction and sequencing, not support claims. Every item lands
+under the same evidence bar as the phases above: docs, deterministic tests,
+diagnostics, and (where applicable) live certification travel with the change.
+
+Horizons: `now` (next one to three releases), `next` (after the current
+provider and target phases stabilize), `later` (post-1.0 or gated on earlier
+items). Sizes: S/M/L. Milestone assignment for every item lives in the
+[Milestone Train](#milestone-train) under Path To 1.0, and the per-item
+implementation plan — steps, exit gates, dependencies, and validation
+expectations — lives in
+[`docs/improvement-tracks-implementation-plan.md`](docs/improvement-tracks-implementation-plan.md).
+
+### Track A: Boundary Depth And Agent-Threat Defenses
+
+The external threat picture moved fast in 2025–2026: one-keypress RCE via
+repo-defined MCP servers across three of the four supported provider CLIs —
+Claude Code, Gemini CLI, and Copilot CLI (the TrustFall disclosure; Codex CLI
+was not in the disclosed set), prompt injection through PR titles and
+comments against agent PR-review integrations, recurring
+npm worm campaigns (Shai-Hulud and successors), and sandbox-bypass CVEs in
+OS-level sandboxes (Seatbelt/bubblewrap). Workcell's VM-plus-container
+boundary and staged-credential model match the containment doctrine the
+strongest vendors now publish; these items deepen that lead.
+
+- **A1 (now, M):** egress policy depth and target parity — document, extend,
+  and parity-label the shipped strict default-deny allowlist rather than
+  build a duplicate lane
+- **A2 (now, M):** repo-defined MCP and agent-config containment,
+  deny-by-default in `strict` with acknowledged, audited exceptions
+- **A3 (now, M):** fuzzing expansion across the Rust shim and Go parsers,
+  wired into continuous fuzzing
+- **A4 (now, S):** `SAFETY:` documentation for every unsafe Rust block plus a
+  pre-audit checklist
+- **A5 (next, M):** signed, tamper-evident session audit records verifiable
+  from outside the agent
+- **A6 (next, M):** documented syscall/filesystem hardening profile with a
+  deterministic conformance check
+- **A7 (now, S):** OWASP Agentic Top 10 control mapping feeding the Phase 11
+  evidence packet
+
+### Track B: Supply Chain And Release Assurance
+
+CI is already strong: all 72 action references SHA-pinned, workflows start
+from `permissions: {}`, reproducible builds verified on amd64 and arm64,
+keyless Sigstore signing, SBOMs, and GitHub attestations. These items close
+the remaining gaps between that posture and the level enterprises will ask a
+security-boundary product to prove.
+
+- **B1 (now, M):** SLSA v1.0 gap analysis published in the provenance docs
+- **B2 (next, M):** dual-control release approval before 1.0
+- **B3 (now, M):** scheduled mutation-score lane with published score and
+  baseline regression gate, beyond today's release-preflight-only run
+- **B4 (now, S):** centralized tool pins and a permitted-GitHub-actions
+  allowlist check
+- **B5 (now, S):** audit-trail retention policy with extended
+  release-evidence retention and post-expiry attestation/Rekor guidance
+- **B6 (next, L):** real-boundary certification lane on Apple Silicon runner
+  infrastructure, gated on the CI threat model
+- **B7 (now, S → later, L):** OpenSSF Best Practices badge now; funded
+  third-party boundary audit post-1.0
+- **B8 (next, M):** CI efficiency and reliability program — nightly
+  reproducibility split, retries, flake tracking, cost visibility
+- **B9 (next, M):** CI/CD threat model covering secrets, runner trust tiers,
+  attestation assumptions, and signing-compromise response
+
+### Track C: Runtime Platform Evolution
+
+- **C1 (next, L):** Apple `container` backend evaluation (macOS 26+) as
+  `local_vm/apple-container` with a recorded go/no-go; Colima stays the
+  reviewed default below macOS 26
+- **C2 (next, M):** session start latency program with cached images, an
+  optional kept-warm lane, and published reproducible benchmarks
+- **C3 (next, L):** native parallel sessions — one agent per worktree,
+  branch, and isolated runtime, with session-record linkage
+- **C4 (later, L):** container tooling inside the boundary as an explicit
+  labeled lane that never weakens the outer boundary
+- **C5 (now, S):** syscall-shim performance baselines for the hooked
+  exec/spawn paths
+
+### Track D: Code Health And Consolidation
+
+The Go tree is in good shape (28.8k source lines, 82% test-to-code ratio,
+three direct dependencies). The concentration risks are a 2,288-line
+monolithic Rust interception library, a 8,910-line launcher script, a
+9,131-line `verify-invariants.sh`, and widespread helper duplication across
+120 shell scripts (for example, 25 separate `cleanup()` definitions).
+
+- **D1 (now, S):** language-boundary doctrine — Rust for the shim, Go for
+  logic, shell as thin glue
+- **D2 (now, M):** shared shell helper library plus a shellcheck lane over
+  all scripts
+- **D3 (next, L):** migrate the `verify-invariants` and `container-smoke`
+  orchestration from bash to Go, keeping scenario parity
+- **D4 (next, M):** modularize the launcher and document its contract
+- **D5 (next, L):** modularize the Rust interception library into focused
+  modules
+- **D6 (later, M):** split oversized Go validators per format
+- **D7 (next, M):** property-based session-lifecycle tests, Go benchmarks,
+  and a shell unit-test lane
+- **D8 (now, S):** stability contracts for internal APIs, CLI surfaces, and
+  a unified exit-code contract
+
+### Track E: Documentation And Adoption
+
+- **E1 (now, M):** tiered documentation entry points and a slimmer README
+- **E2 (now, M):** maintained architecture diagrams in the system design doc
+- **E3 (now, S):** support-tier legend and a `--doctor`/`--inspect`
+  diagnostics interpretation guide
+- **E4 (now, S):** docs CI depth — link checking, orphan detection, status
+  labels, freshness markers
+- **E5 (next, M):** injection-policy annotated schema with complete
+  per-provider examples
+- **E6 (next, M):** adoption growth kit — docs site, terminal demos, Homebrew
+  tap, isolation-model architecture post backed by benchmarks
+- **E7 (next, S):** contributor runbook depth and substantive adapter READMEs
+
+### Track F: Enterprise And Standards Alignment
+
+- **F1 (next, M):** OCSF-mapped audit export — the concrete Phase 17 format
+  decision
+- **F2 (later, M):** SPIFFE-style per-session identity groundwork feeding
+  Phase 15
+- **F3 (now, S):** standards watchlist (MCP spec line, OWASP agentic
+  guidance, agent-identity drafts) with a review cadence
+
+### Track G: 1.0 Contract And Operations
+
+These items exist specifically to make 1.0 a truthful claim: a frozen public
+contract and proven day-two operations.
+
+- **G1 (next, M):** public contract inventory, freeze, and deprecation
+  policy — inventory early, freeze at 1.0-rc
+- **G2 (next, M):** `workcell support-bundle` command with documented
+  redaction rules
+- **G3 (next, M):** install lifecycle proof — install, upgrade, uninstall,
+  rollback, and `--gc` as repeatable evidence
+- **G4 (later, S):** recorded cross-lens 1.0 readiness gate review with all
+  scope decisions explicit
+
+### Sequencing Summary
+
+Sequencing for all tracks now lives in the
+[Milestone Train](#milestone-train) under Path To 1.0. The v0.12 milestone
+(A2, A7, B3, B4, B5, D1, D2, E3, E4) is the suggested first slice: high
+impact, small-to-medium effort, no new support claims, and each item is
+independently shippable.
 
 ## Adoption Workstreams
 
