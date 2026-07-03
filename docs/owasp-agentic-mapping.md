@@ -8,7 +8,9 @@ reviewers, not a certification, an audit result, or a claim of conformance.
 Workcell is a runtime boundary, not an agent-safety layer. It does not prevent
 prompt injection, goal hijack, or context poisoning inside the agent — it
 contains their blast radius by keeping host credentials, host state, and
-publication authority outside the boundary the agent runs in. Verdicts here are
+host-side publication authority outside the boundary the agent runs in. (An
+operator can still explicitly inject specific credentials into a session, which
+shifts some of these boundaries — see ASI03 and ASI10.) Verdicts here are
 deliberately conservative:
 
 - **Covered** — the boundary structurally addresses the category (isolation,
