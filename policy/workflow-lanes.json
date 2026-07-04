@@ -351,6 +351,27 @@
       "github_only_reason": "hosted controls require GitHub-hosted policy state and token-backed audit access"
     },
     {
+      "id": "mutation.yml/mutation",
+      "workflow_path": ".github/workflows/mutation.yml",
+      "workflow_name": "Mutation",
+      "job_id": "mutation",
+      "job_name": "Mutation score",
+      "workflow_events": [
+        "pull_request",
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled heavy mutation-harness lane run in the validator image; the mutation-score gate already runs locally in the release-preflight validate profile"
+    },
+    {
       "id": "pin-hygiene.yml/pinned-inputs",
       "workflow_path": ".github/workflows/pin-hygiene.yml",
       "workflow_name": "Pin Hygiene",

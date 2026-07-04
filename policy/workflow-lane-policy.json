@@ -85,6 +85,12 @@
       "local_mode": "none",
       "github_only_reason": "hosted controls require GitHub-hosted policy state and token-backed audit access"
     },
+    "mutation.yml/mutation": {
+      "profiles": ["release-preflight"],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled heavy mutation-harness lane run in the validator image; the mutation-score gate already runs locally in the release-preflight validate profile"
+    },
     "pin-hygiene.yml/pinned-inputs": {
       "profiles": ["release-preflight"],
       "authority": "release-only",
