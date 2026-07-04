@@ -498,13 +498,13 @@ func TestCheckPinnedInputsRejectsOffAllowlistAction(t *testing.T) {
 	t.Parallel()
 
 	cfg := writePinnedInputsFixture(t)
-	// Inject a DASH-LESS `uses:` line (as if it were a second key of a step led
-	// by `- name:`), which the scan must cover — not only `- uses:` first-key
-	// steps. SHA-shaped so it passes the pin check and reaches the allowlist check.
+	// Use a QUOTED step key (`- "uses":`), which GitHub treats as the `uses` key
+	// but a raw-line scan would miss. Parsing the YAML must still catch it.
+	// SHA-shaped so it passes the pin check and reaches the allowlist check.
 	rewriteFile(t, filepath.Join(cfg.WorkflowsDir, "ci.yml"), func(content string) string {
 		return strings.Replace(content,
-			"\n      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
-			"\n      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0\n        uses: evilorg/evil-action@0000000000000000000000000000000000000000",
+			"- uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+			`- "uses": evilorg/evil-action@0000000000000000000000000000000000000000`,
 			1)
 	})
 

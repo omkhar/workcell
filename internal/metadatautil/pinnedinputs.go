@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,13 +22,10 @@ var (
 	aptInstallPattern     = regexp.MustCompile(`apt-get install -y --no-install-recommends(?s:(.*?))&&`)
 	// pinnedReleaseTagPattern matches an exact vMAJOR.MINOR.PATCH release tag.
 	pinnedReleaseTagPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
-	// usesLinePattern matches EVERY workflow `uses:` line — whether `uses:` is the
-	// first step key (`- uses:`) or a later key (a step led by `- name:`/`- if:`).
-	// actionRefPattern then requires the captured reference to be a pinned
-	// owner/repo action; anything else (docker://, local ./, unpinned, malformed)
-	// is rejected by default, so the scan is default-deny rather than only
-	// inspecting refs that already look well-formed.
-	usesLinePattern  = regexp.MustCompile(`(?m)^\s*(?:-\s+)?uses:\s*(\S+)`)
+	// Every `uses:` reference is extracted by parsing the workflow YAML (see
+	// extractWorkflowUses), then validated here: actionRefPattern requires a
+	// pinned owner/repo action; anything else (docker://, local ./, unpinned,
+	// malformed) is rejected by default, so the scan is default-deny.
 	actionRefPattern = regexp.MustCompile(`^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)@([^\s#]+)$`)
 	commitShaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
@@ -53,6 +51,49 @@ type PinnedInputsConfig struct {
 // readText, isHexDigest, hexDigestPattern live in core.go.
 // requireStringSliceTable lives in hostedcontrols.go
 // (canonical post-collapse; same package-internal symbols all consumers share).
+
+type usesScanWorkflow struct {
+	Jobs map[string]usesScanJob `yaml:"jobs"`
+}
+
+type usesScanJob struct {
+	Uses  string         `yaml:"uses"`
+	Steps []usesScanStep `yaml:"steps"`
+}
+
+type usesScanStep struct {
+	Uses string `yaml:"uses"`
+}
+
+// extractWorkflowUses parses a workflow and returns every `uses:` reference
+// (job-level reusable-workflow calls and step-level actions), in deterministic
+// order. Parsing the YAML — rather than scanning raw lines — means quoted keys
+// (`"uses":`), dash-less step keys, and odd spacing all resolve to the same
+// `uses` field, so no textual form can slip an action past the allowlist.
+func extractWorkflowUses(workflowText string) ([]string, error) {
+	var doc usesScanWorkflow
+	if err := yaml.Unmarshal([]byte(workflowText), &doc); err != nil {
+		return nil, err
+	}
+	jobNames := make([]string, 0, len(doc.Jobs))
+	for name := range doc.Jobs {
+		jobNames = append(jobNames, name)
+	}
+	sort.Strings(jobNames)
+	var refs []string
+	for _, name := range jobNames {
+		job := doc.Jobs[name]
+		if strings.TrimSpace(job.Uses) != "" {
+			refs = append(refs, job.Uses)
+		}
+		for _, step := range job.Steps {
+			if strings.TrimSpace(step.Uses) != "" {
+				refs = append(refs, step.Uses)
+			}
+		}
+	}
+	return refs, nil
+}
 
 // loadAllowedActions reads the reviewed GitHub Actions allowlist as a set of
 // permitted owner/repo identities.
@@ -1430,8 +1471,11 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		if regexp.MustCompile(`secrets\.[A-Z0-9_]*(?:PAT|PERSONAL_ACCESS_TOKEN)\b|GH_PAT\b|PERSONAL_ACCESS_TOKEN\b`).MatchString(workflowText) {
 			return fmt.Errorf("%s must not contain long-lived personal access tokens", workflowPath)
 		}
-		for _, usesLine := range usesLinePattern.FindAllStringSubmatch(workflowText, -1) {
-			ref := usesLine[1]
+		usesRefs, err := extractWorkflowUses(workflowText)
+		if err != nil {
+			return fmt.Errorf("%s: %w", workflowPath, err)
+		}
+		for _, ref := range usesRefs {
 			action := actionRefPattern.FindStringSubmatch(ref)
 			if action == nil {
 				return fmt.Errorf("%s has an unsupported uses: reference %q; only pinned owner/repo actions are permitted (no docker:// or local ./ actions)", workflowPath, ref)
