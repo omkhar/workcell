@@ -72,6 +72,45 @@ var (
 	}()
 )
 
+// validateNetworkPolicy fails closed on an invalid [network] table before any
+// credential is resolved, matching the render-time check in
+// internal/injection.renderNetwork: only allow_endpoints/deny_endpoints are
+// accepted (a mode-shaped key such as network_policy is rejected), and every
+// endpoint must match the shared enforcement-helper grammar.
+func validateNetworkPolicy(policy map[string]any) error {
+	raw, ok := policy["network"]
+	if !ok || raw == nil {
+		return nil
+	}
+	network, ok := raw.(map[string]any)
+	if !ok {
+		return errors.New("network must be a TOML table")
+	}
+	if err := validateAllowedKeys(network, map[string]struct{}{"allow_endpoints": {}, "deny_endpoints": {}}, "network"); err != nil {
+		return err
+	}
+	for _, key := range []string{"allow_endpoints", "deny_endpoints"} {
+		value, ok := network[key]
+		if !ok || value == nil {
+			continue
+		}
+		items, ok := value.([]any)
+		if !ok {
+			return fmt.Errorf("network.%s must be an array of host:port strings", key)
+		}
+		for _, item := range items {
+			endpoint, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("network.%s must be an array of host:port strings; found non-string element: %v", key, item)
+			}
+			if err := injectionpolicy.ValidateEgressEndpoint(endpoint, "network."+key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func credentialKeyUnion(scoped map[string]map[string]struct{}, shared map[string]struct{}) map[string]struct{} {
 	out := make(map[string]struct{})
 	for key := range shared {
@@ -226,6 +265,14 @@ func run(cfg config) error {
 		return err
 	}
 	policy = rebasePolicyFragment(policy, filepath.Dir(policyPath))
+	// Validate the [network] surface fail-closed BEFORE resolving or
+	// materializing any credential. Otherwise a mode-shaped or malformed
+	// [network] would be admitted here (it is on the resolver whitelist) and the
+	// resolver could stage credentials and write a resolved policy before the
+	// later render rejects it, leaving a staged bundle the caller cannot clean up.
+	if err := validateNetworkPolicy(policy); err != nil {
+		return err
+	}
 	credentials, ok := policy["credentials"]
 	if credentials == nil {
 		credentials = map[string]any{}
