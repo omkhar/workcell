@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -40,6 +41,12 @@ func LoadScorePolicy(path string) (ScorePolicy, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&raw); err != nil {
 		return ScorePolicy{}, fmt.Errorf("%s: %w", path, err)
+	}
+	// Reject trailing content so a policy with two top-level values (for example
+	// a stale baseline followed by the reviewed one) cannot silently gate on the
+	// first object.
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return ScorePolicy{}, fmt.Errorf("%s must contain a single JSON object", path)
 	}
 	if raw.Version == nil {
 		return ScorePolicy{}, fmt.Errorf("%s must set version", path)

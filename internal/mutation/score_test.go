@@ -106,4 +106,10 @@ func TestLoadScorePolicy(t *testing.T) {
 	if _, err := LoadScorePolicy(missing); err == nil || !strings.Contains(err.Error(), "baseline_score") {
 		t.Fatalf("expected missing-baseline error, got: %v", err)
 	}
+
+	// Two top-level objects must not silently gate on the first (stale) one.
+	trailing := write("trailing.json", `{"version":1,"baseline_score":50}{"version":1,"baseline_score":100}`)
+	if _, err := LoadScorePolicy(trailing); err == nil || !strings.Contains(err.Error(), "single JSON object") {
+		t.Fatalf("expected trailing-content error, got: %v", err)
+	}
 }
