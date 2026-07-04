@@ -101,6 +101,27 @@ func TestCheckPublicContractRejectsBogusOutputPrefix(t *testing.T) {
 	}
 }
 
+// TestCheckPublicContractRejectsSubstringOnlyPrefix pins the key-boundary
+// requirement: a prefix that appears in the source only as the tail of a
+// longer key (e.g. "surance=" inside "assurance="/"current_assurance=") is
+// never emitted at a real boundary and must be rejected, even though a plain
+// substring search would have spuriously accepted it.
+func TestCheckPublicContractRejectsSubstringOnlyPrefix(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	contractPath := mutatedContractCopy(t, root,
+		`"assurance=",`,
+		`"assurance=", "surance=",`,
+	)
+
+	err := CheckPublicContract(root, contractPath)
+	if err == nil {
+		t.Fatal("CheckPublicContract() unexpectedly succeeded with a substring-only prefix")
+	}
+	if !strings.Contains(err.Error(), "surance=") {
+		t.Fatalf("CheckPublicContract() error = %v, want mention of substring-only prefix surance=", err)
+	}
+}
+
 func TestCheckPublicContractRejectsBogusInjectionTable(t *testing.T) {
 	root := publicContractRepoRoot(t)
 	// Rename a real accepted table to one the parser does not accept: the

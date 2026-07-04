@@ -237,18 +237,28 @@ func excludeGoTestFiles(paths []string) []string {
 	return filtered
 }
 
-// outputLinePrefixEmitted reports whether prefix is emitted as a literal
-// string somewhere in sources, OR — for the shellproto emitter, which
-// builds "key=value\n" lines from a bare Go string key rather than a
-// literal "key=" substring (see internal/shellproto.WriteField) — as a
-// quoted key literal in a file that also references the shellproto
-// package. Without this second form, a prefix such as "publish_pr_url="
-// (internal/publishpr/publish_pr_cli.go's shellproto.Field{Key:
-// "publish_pr_url"}) would be invisible to a plain substring search even
-// though it is exactly what shellproto guarantees gets printed.
+// outputLinePrefixEmitted reports whether prefix is emitted at a key
+// boundary (the start of the source, or immediately after a non-identifier
+// byte such as a quote, space, or newline) somewhere in sources, OR — for
+// the shellproto emitter, which builds "key=value\n" lines from a bare Go
+// string key rather than a literal "key=" substring (see
+// internal/shellproto.WriteField) — as a quoted key literal in a file that
+// also references the shellproto package. Without this second form, a
+// prefix such as "publish_pr_url=" (internal/publishpr/publish_pr_cli.go's
+// shellproto.Field{Key: "publish_pr_url"}) would be invisible even though
+// it is exactly what shellproto guarantees gets printed.
+//
+// The boundary requirement (rather than a plain substring match) is what
+// stops a documented prefix such as "assurance=" from being spuriously
+// satisfied by a longer key that merely ends in it — e.g.
+// "current_assurance=" / "cache_assurance=" / "autonomy_assurance=". With a
+// substring match, deleting the real "assurance=" output would still pass;
+// with the boundary match it correctly fails. The quoted-key shellproto
+// form already carries a leading-quote boundary, so it needs no change.
 func outputLinePrefixEmitted(sources []string, prefix string) bool {
+	boundary := regexp.MustCompile(`(?:^|[^A-Za-z0-9_])` + regexp.QuoteMeta(prefix))
 	for _, source := range sources {
-		if strings.Contains(source, prefix) {
+		if boundary.MatchString(source) {
 			return true
 		}
 	}

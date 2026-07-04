@@ -102,13 +102,16 @@ The full stable output-line prefix set enforced by `policy/public-contract.toml`
 | Prefix | Emitted by |
 |--------|------------|
 | `host_os=` | `internal/host/supportmatrix`, `scripts/workcell` |
+| `host_arch=` | `internal/host/supportmatrix`, `scripts/workcell` |
 | `support_matrix_status=` | `internal/host/supportmatrix`, `scripts/workcell` |
 | `provider_bootstrap_` | `internal/authpolicy`, `scripts/workcell` |
 | `target_kind=` | `internal/host/sessions`, `scripts/workcell` |
+| `target_provider=` | `internal/host/sessions`, `scripts/workcell` |
 | `workspace=` | `internal/host/sessions`, `scripts/workcell` |
 | `assurance=` | `internal/host/sessions`, `scripts/workcell` |
 | `publish_pr_url=` | `internal/publishpr` (via `internal/shellproto`) |
 | `mutation score:` | `cmd/workcell-citools` |
+| `surviving mutants:` | `cmd/workcell-citools` |
 | `record_digest=` | `scripts/workcell` |
 | `prev_digest=` | `scripts/workcell` |
 
