@@ -50,3 +50,13 @@ classification = "public"
 source = "/Users/example/.config/workcell/repo-token.txt"
 target = "~/.config/workcell/token.txt"
 classification = "secret"
+
+# Operator egress extension/tightening. allow_endpoints are ADDED to the
+# host-computed default-deny allowlist; deny_endpoints are REMOVED from it
+# (deny wins). This surface can only extend or tighten the allowlist — it can
+# never set NETWORK_POLICY, disable the allowlist, or switch to unrestricted.
+# Endpoints must be host:port or [ipv6]:port and are enforced only on the
+# colima target. See docs/egress-policy.md.
+[network]
+allow_endpoints = ["registry.internal.example:443"]
+deny_endpoints = ["chatgpt.com:443"]

@@ -29,6 +29,7 @@ Secret-bearing inputs are handled more carefully than public inputs:
 | `[credentials]` | provider-native auth, MCP, and shared GitHub CLI state |
 | `[ssh]` | SSH config, known hosts, and identity files |
 | `[[copies]]` | explicit copied files or directories for non-reserved targets |
+| `[network]` | extend or tighten the per-session egress allowlist |
 | `includes = [...]` | compose a policy from smaller operator-owned fragments |
 
 `workcell auth init|set|unset|status` manages the entrypoint policy file only.
@@ -130,6 +131,31 @@ acceptable implicit safe-path inputs.
 Future Antigravity credential keys are planned, not supported keys in current
 releases. They must not appear in operator policy until the matching adapter,
 validation, and docs land.
+
+## Network egress (`[network]`)
+
+The optional `[network]` table lets an operator extend or tighten the
+per-session egress allowlist through the reviewed policy path:
+
+```toml
+[network]
+allow_endpoints = ["registry.internal.example:443"]  # add to the allowlist
+deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlist
+```
+
+- `allow_endpoints` are added (unioned) to the host-computed default-deny
+  allowlist.
+- `deny_endpoints` are removed from it. Deny wins over allow: a denied endpoint
+  is dropped even when a provider would otherwise require it.
+- Endpoints must be `host:port` or `[ipv6]:port`, port 1-65535, host
+  `^[A-Za-z0-9.-]+$` (no leading dot, no `..`). A malformed endpoint, empty
+  string, unknown key under `[network]`, or non-array value fails the launch
+  closed.
+- `[network]` can only extend or tighten the allowlist. It cannot set
+  `NETWORK_POLICY`, disable the allowlist, or switch to an unrestricted posture.
+- Enforcement of the allowlist is colima-only; see
+  [docs/egress-policy.md](egress-policy.md) for the mechanism and the
+  enforcement-parity table.
 
 ## Instruction precedence
 

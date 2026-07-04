@@ -212,6 +212,7 @@ options.
 | Provider bootstrap matrix | [docs/provider-bootstrap-matrix.md](docs/provider-bootstrap-matrix.md) |
 | Adapter control planes | [docs/adapter-control-planes.md](docs/adapter-control-planes.md) |
 | Injection policy | [docs/injection-policy.md](docs/injection-policy.md) |
+| Egress policy | [docs/egress-policy.md](docs/egress-policy.md) |
 | Validation coverage | [docs/validation-scenarios.md](docs/validation-scenarios.md) |
 | Requirements validation | [docs/requirements-validation.md](docs/requirements-validation.md) |
 | Scenario gaps | [docs/scenario-gaps.md](docs/scenario-gaps.md) |
