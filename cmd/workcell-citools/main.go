@@ -89,6 +89,7 @@ func subcommands() []subcommand {
 		{"validate-operator-contract", "ROOT_DIR CONTRACT_PATH REQUIREMENTS_PATH", 3, 3, cmdValidateOperatorContract},
 		{"scan-credential-patterns", "ROOT_DIR", 1, 1, cmdScanCredentialPatterns},
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
+		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
 	}
 }
@@ -433,6 +434,29 @@ func cmdRunMutationTests(_ []string) error {
 		return err
 	}
 	return mutation.Run(root)
+}
+
+// cmdMutationScore runs the mutation harness, prints the score (so a wrapper can
+// surface it in a CI job summary), and fails when the score drops below the
+// reviewed baseline in POLICY_PATH.
+func cmdMutationScore(args []string) error {
+	root, err := citoolsRepoRoot()
+	if err != nil {
+		return err
+	}
+	policy, err := mutation.LoadScorePolicy(args[0])
+	if err != nil {
+		return err
+	}
+	result, err := mutation.RunScored(root)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("mutation score: %.2f%% (%d/%d killed)\n", result.Score(), result.Killed, result.Total)
+	if len(result.Survivors) > 0 {
+		fmt.Printf("surviving mutants: %s\n", strings.Join(result.Survivors, ", "))
+	}
+	return mutation.CheckScore(result, policy)
 }
 
 // citoolsRepoRoot returns the repo root by walking two `..`

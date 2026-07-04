@@ -282,6 +282,14 @@ Useful commands:
 ./scripts/verify-scenario-coverage.sh
 ```
 
+Release preflight also runs `./scripts/verify-mutation-score.sh`, which executes
+the mutation harness and fails when the mutation score drops below the reviewed
+baseline in [`policy/mutation-score-policy.json`](../policy/mutation-score-policy.json)
+(currently 100%: every mutant is caught). The policy also pins the reviewed
+mutant count (`expected_mutants`), so the score cannot be met by shrinking the
+mutant set. A drop in either is a diff a reviewer must approve, so a release
+cannot silently regress the mutation safety net.
+
 When a release touches the local runtime boundary or launch path, also run the
 local certification lane on a machine that has the live runtime prerequisites:
 

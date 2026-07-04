@@ -176,6 +176,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/update-provider-pins.sh"
   "${ROOT_DIR}/scripts/verify-coverage.sh"
   "${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
+  "${ROOT_DIR}/scripts/verify-mutation-score.sh"
   "${ROOT_DIR}/scripts/validate-repo.sh"
   "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
@@ -384,7 +385,7 @@ fi
 )
 
 if [[ "${VALIDATION_PROFILE}" == "release-preflight" ]]; then
-  "${ROOT_DIR}/scripts/run-mutation-tests.sh"
+  "${ROOT_DIR}/scripts/verify-mutation-score.sh"
   "${ROOT_DIR}/scripts/verify-coverage.sh"
 fi
 
