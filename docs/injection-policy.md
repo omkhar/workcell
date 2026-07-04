@@ -134,8 +134,20 @@ validation, and docs land.
 
 ## Network egress (`[network]`)
 
-The optional `[network]` table lets an operator extend or tighten the
-per-session egress allowlist:
+`strict` mode ships a default-deny, per-session egress allowlist — the reviewed
+policy artifact for this control. On the `colima` target the launcher enforces it
+as a fail-closed, dual-stack firewall: `scripts/workcell` computes
+`ALLOW_ENDPOINTS` (the union of reviewed sources — provider/auth-recovery/broker
+endpoints, credential-derived endpoints, `[network].allow_endpoints`, profile
+`EXTRA_ENDPOINTS`, and `snapshot.debian.org:443`), de-dupes it, subtracts
+`[network].deny_endpoints`, and hands it to `scripts/colima-egress-allowlist.sh`,
+which programs `iptables`/`ip6tables` `DOCKER-USER` rules that ACCEPT each allowed
+`host:port` (IPv4 and IPv6) and `DROP` the rest. If `ip6tables` is unavailable the
+helper aborts rather than leave IPv6 unfiltered. Only the colima target applies
+these rules; the dispatch never changes based on policy content.
+
+Operators extend or tighten the allowlist only through the `[network]` table,
+never by disabling the default:
 
 ```toml
 [network]
@@ -143,10 +155,41 @@ allow_endpoints = ["registry.internal.example:443"]  # add to the allowlist
 deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlist
 ```
 
-`allow_endpoints` are unioned into the default-deny allowlist; `deny_endpoints`
-are removed (deny wins). `[network]` can only extend or tighten the allowlist,
-never disable it. See [docs/egress-policy.md](egress-policy.md) for the grammar,
-no-weakening invariant, scope, and enforcement-parity table.
+- `allow_endpoints` are unioned into the allowlist (they extend, never replace
+  the reviewed provider/credential endpoints).
+- `deny_endpoints` are subtracted by endpoint entry after every allow source, so
+  a denied `host:port` is removed even when a provider needs it (deny wins).
+- Each endpoint must be `host:port` or `[ipv6]:port` (port 1-65535, host
+  `^[A-Za-z0-9.-]+$`, no leading dot or `..`, IP-shaped hosts must be real IPs),
+  validated with the same grammar `scripts/colima-egress-allowlist.sh` applies.
+- Fail-closed: a malformed endpoint, empty string, unknown `[network]` key, or
+  non-array value aborts with an error naming the offending value.
+
+**No-weakening invariant:** `[network]` can only contribute endpoint lists; it
+cannot set `NETWORK_POLICY`, disable the allowlist, or switch to an unrestricted
+posture, so an injection policy never weakens the shipped default-deny allowlist.
+
+**Scope:** `deny_endpoints` tighten IP-level VM/container egress (the session and
+the bootstrap build container). Two boundaries follow — a denied host sharing an
+IP with an allowed endpoint (e.g. a shared CDN) stays reachable at the IP layer,
+and the launcher's host-side rebuild fetches (release-URL resolution) are not
+gated. To fully block a host, drop overlapping allow_endpoints and prebuild the
+image.
+
+Per-session enforcement is a `colima`-only property; other targets rely on their
+own network controls and do not receive the `DOCKER-USER` allowlist. The launch
+summary prints an `egress_enforcement=` line next to `network_policy=...
+endpoints=...`:
+
+| Target | `egress_enforcement` | Per-session allowlist enforced |
+|---|---|---|
+| `colima` (allowlist) | `allowlist` | yes — `iptables`/`ip6tables` default-deny in `DOCKER-USER` |
+| `colima` (unrestricted, e.g. breakglass) | `none` | no — allowlist not applied |
+| `docker-desktop` | `none` | no — relies on Docker Desktop / host controls |
+| `aws-ec2-ssm` (preview) | `none` | no — relies on the VM's security groups |
+| `gcp-vm` (preview) | `none` | no — relies on the VM's own firewall |
+
+`egress_enforcement=allowlist` prints only for `colima` + allowlist, else `none`.
 
 ## Instruction precedence
 

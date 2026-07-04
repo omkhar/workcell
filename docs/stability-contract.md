@@ -127,8 +127,8 @@ policy TOML document: `documents`, `ssh`, `credentials`, `network`
 (single-bracket tables), and `copies` (the one supported `[[array-of-table]]`).
 Any other top-level table name is rejected. `[network]` carries only the egress
 `allow_endpoints`/`deny_endpoints` lists and cannot change the network-policy
-mode (see `docs/egress-policy.md`); see `docs/injection-policy.md` for the
-per-table schema.
+mode; see `docs/injection-policy.md` for the per-table schema and the egress
+mechanism.
 
 ## Durable session-record fields
 

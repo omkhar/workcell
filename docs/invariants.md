@@ -77,7 +77,7 @@ allowlist (the launch summary states which with an `egress_enforcement=` label);
 other targets rely on their own controls. Operators may extend or tighten the
 allowlist only through the reviewed injection-policy `[network]` surface
 (`allow_endpoints`/`deny_endpoints`), which can never disable the default or
-change `NETWORK_POLICY`. See [docs/egress-policy.md](egress-policy.md).
+change `NETWORK_POLICY`. See the [`[network]` egress section](injection-policy.md#network-egress-network).
 
 ## 5. Destructive or trust-widening actions need defense in depth
 
