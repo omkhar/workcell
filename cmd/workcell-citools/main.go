@@ -87,6 +87,7 @@ func subcommands() []subcommand {
 		{"validate-toml", "FILE [FILE...]", 1, -1, cmdValidateTOML},
 		{"validate-requirements", "ROOT_DIR REQUIREMENTS_PATH", 2, 2, cmdValidateRequirements},
 		{"validate-operator-contract", "ROOT_DIR CONTRACT_PATH REQUIREMENTS_PATH", 3, 3, cmdValidateOperatorContract},
+		{"validate-public-contract", "ROOT_DIR CONTRACT_PATH", 2, 2, cmdValidatePublicContract},
 		{"scan-credential-patterns", "ROOT_DIR", 1, 1, cmdScanCredentialPatterns},
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
 		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
@@ -419,6 +420,10 @@ func cmdValidateRequirements(args []string) error {
 
 func cmdValidateOperatorContract(args []string) error {
 	return metadatautil.ValidateOperatorContract(args[0], args[1], args[2])
+}
+
+func cmdValidatePublicContract(args []string) error {
+	return metadatautil.CheckPublicContract(args[0], args[1])
 }
 
 func cmdScanCredentialPatterns(args []string) error {

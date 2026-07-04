@@ -21,6 +21,9 @@ echo "[ci/docs] pinned input policy"
 echo "[ci/docs] support-matrix field parity"
 "${ROOT_DIR}/scripts/check-doc-support-matrix-fields.sh"
 
+echo "[ci/docs] public contract drift check"
+"${ROOT_DIR}/scripts/check-public-contract.sh"
+
 echo "[ci/docs] markdown link and orphan check"
 "${ROOT_DIR}/scripts/check-doc-links.sh"
 
