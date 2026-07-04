@@ -8328,6 +8328,13 @@ PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
 PROFILE_PREEXISTED=0
 PROFILE_MARKER_WORKSPACE=""
 BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
+# A1: operator [network].deny_endpoints must win during image bootstrap too, not
+# only for the session allowlist. Subtract the deny list from the bootstrap
+# endpoints so a denied endpoint is unreachable during a rebuild/first launch,
+# preserving deny-wins across NEEDS_REBUILD and stale-marker paths.
+if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
+  BOOTSTRAP_ENDPOINTS="$(subtract_endpoint_list "${BOOTSTRAP_ENDPOINTS}" "${INJECTION_DENY_ENDPOINTS}")"
+fi
 EGRESS_HELPER="${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
