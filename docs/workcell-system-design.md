@@ -170,11 +170,13 @@ Repo-local control-plane paths such as:
 - `.gemini/`
 - mutable git hook and config paths
 
-are masked or shadowed by Workcell over the workspace. Of these, only the
-provider documentation files — `AGENTS.md` plus the active provider's own file
-(`CLAUDE.md` or `GEMINI.md`) — are additionally imported into the managed
-provider home as reviewed inputs; the remaining paths are neutralized in the
-workspace but not reseeded into the provider home.
+are masked or shadowed by Workcell over the workspace. Of these, the provider
+documentation files may additionally be imported into the managed provider home
+as reviewed inputs, and which files are imported depends on the adapter: Codex
+imports `AGENTS.md`; Claude and Gemini import `AGENTS.md` plus their own file
+(`CLAUDE.md` or `GEMINI.md`); Copilot imports none, because its custom-instruction
+surface is intentionally disabled. The remaining control-plane paths are
+neutralized in the workspace but not reseeded into the provider home.
 
 For tracked files, the shadow path can materialize content from the git index
 instead of live mutable workspace state. That narrows the gap between what the
@@ -189,7 +191,7 @@ flowchart LR
     idx["git index<br/>tracked files"] -. materialize .-> mask
     docs --> mask["Masked / shadowed<br/>over /workspace"]
     other --> mask
-    docs --> home["Imported into managed provider home<br/>as reviewed inputs<br/>AGENTS.md + the active provider doc"]
+    docs -. "Codex/Claude/Gemini only<br/>(Copilot imports none)" .-> home["Imported into managed provider home<br/>as reviewed inputs"]
 ```
 
 ### 5. Injection and Credential Flow
