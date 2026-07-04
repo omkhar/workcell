@@ -88,6 +88,29 @@ tracked in [ROADMAP.md](ROADMAP.md).
 See [SUPPORT.md](SUPPORT.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
 [CITATION.cff](CITATION.cff) for the contributor and operator contract.
 
+## Choose your path
+
+Pick the entry point that matches what you need. Each is a short labeled list of
+links; the full index is in the [Docs map](#docs-map) below.
+
+- **Operators — run Workcell locally**: [5-minute path](#5-minute-path) ·
+  [install options](docs/install.md) ·
+  [onboarding and auth](docs/onboarding-and-auth.md) ·
+  [provider quickstarts](docs/provider-quickstarts.md) ·
+  [command reference](#command-reference) ·
+  [mode map](docs/mode-map.md) ·
+  [safe-path expectations](docs/safe-path-expectations.md)
+- **Enterprise evaluators — assess the assurance model**:
+  [enterprise evidence baseline](docs/enterprise-evidence-baseline.md) ·
+  [threat model](docs/threat-model.md) ·
+  [security invariants](docs/invariants.md) ·
+  [support tiers](docs/support-tiers.md) ·
+  [enterprise rollout](docs/enterprise-rollout.md)
+- **Contributors — work on Workcell**: [repository layout](#repository-layout) ·
+  [contributor workflow](CONTRIBUTING.md) ·
+  [agent guidelines](AGENTS.md) ·
+  [improvement-tracks plan](docs/improvement-tracks-implementation-plan.md)
+
 ## 5-minute path
 
 Install Workcell, create the host-side auth policy, inspect the derived
@@ -122,11 +145,10 @@ local-first product, see [docs/enterprise-rollout.md](docs/enterprise-rollout.md
 Use [policy/host-support-matrix.tsv](policy/host-support-matrix.tsv) to interpret the
 host support boundary that `--doctor` and `--inspect` report.
 
-## Install options
+## Install
 
-### Tagged release bundle
-
-Download a tagged release bundle, unpack it, and run the supported installer:
+On Apple Silicon macOS, download a tagged release bundle, unpack it, and run the
+supported installer:
 
 ```bash
 tar -xzf workcell-vX.Y.Z.tar.gz
@@ -134,317 +156,47 @@ cd workcell-vX.Y.Z
 ./scripts/install.sh
 ```
 
-On Apple Silicon macOS, `./scripts/install.sh` installs only the missing
-required Homebrew formulas (`colima`, `docker`, `gh`, `git`, `go`) before it
-links the launcher. Use `./scripts/install.sh --no-install-deps` to leave the
-system unchanged and get a warning summary of anything still missing.
+`./scripts/install.sh` installs only the missing required Homebrew formulas
+(`colima`, `docker`, `gh`, `git`, `go`) before it links the launcher.
 
-### Tagged Homebrew formula asset
+For the Homebrew formula asset, the source checkout path, and the full host
+requirements, see [docs/install.md](docs/install.md).
 
-Tagged releases can publish a versioned `workcell.rb` asset. Download it from
-the release page and install it locally with Homebrew:
+## Command reference
 
-```bash
-curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/workcell.rb
-brew install --formula ./workcell.rb
-```
+The supported commands at a glance; follow the links for the full behavior and
+options.
 
-The formula declares the same required host dependencies: `colima`, `docker`,
-`gh`, `git`, and `go`.
-
-### Source checkout
-
-For contributors and local repo review:
-
-```bash
-git clone https://github.com/omkhar/workcell.git
-cd workcell
-./scripts/install.sh
-```
-
-`./scripts/install.sh` is the supported installer entrypoint. The
-`scripts/install-workcell.sh` helper remains an internal implementation detail.
-
-## Requirements
-
-- **macOS** (Apple Silicon only). Workcell manages a dedicated
-  [Colima](https://github.com/abiosoft/colima) VM profile using Apple's
-  Virtualization.Framework. Linux and Windows host platforms are not currently
-  supported.
-- **Homebrew** available on the host if you want the installer to auto-install
-  missing required packages.
-- Required host packages: `colima`, `docker`, `gh`, `git`, and `go`.
-  `./scripts/install.sh` installs only the missing ones on supported macOS
-  hosts by default, or you can install them yourself with
-  `brew install colima docker gh git go`.
-
-## Onboarding and auth
-
-The supported way to feed stable inputs into sessions is an explicit injection
-policy, usually at `~/.config/workcell/injection-policy.toml`.
-
-Use the host-side auth helpers instead of hand-editing the common case:
-
-```bash
-workcell auth init
-workcell auth set --agent codex --credential codex_auth --source /path/to/auth.json
-workcell auth status --agent codex
-workcell auth unset --agent codex --credential codex_auth
-workcell policy validate
-workcell why --agent codex --mode strict --credential codex_auth
-workcell --agent codex --auth-status --workspace /path/to/repo
-```
-
-`workcell auth status` shows the host policy view. `--auth-status` shows the
-derived launch view after selector evaluation and preprocessing.
-`workcell policy show|validate|diff` inspects the merged host policy, and
-`workcell why` explains why one credential is selected, out of scope, filtered,
-or still only configured on the host side.
-
-Direct staged credentials are the primary supported auth path today. Built-in
-resolver coverage now includes Codex host-auth reuse through
-`codex-home-auth-file`, while the Claude macOS resolver remains a fail-closed
-scaffold until a supported export path exists.
-
-`workcell auth status` and `workcell --auth-status` print
-`provider_bootstrap_*` lines, and `workcell why` prints `bootstrap_*` lines for
-the selected credential. Use those fields with
-[docs/provider-bootstrap-matrix.md](docs/provider-bootstrap-matrix.md) to see
-whether a path is repo-required, certification-only, or manual.
-
-Workcell can stage:
-
-- common or provider-specific instruction fragments
-- provider-native credentials such as `codex_auth`, `claude_auth`,
-  `claude_api_key`, `claude_mcp`, `copilot_github_token`, `gemini_env`,
-  `gemini_oauth`, `gemini_projects`, and `gcloud_adc`
-- scoped GitHub CLI credentials through `github_hosts` and `github_config`
-- SSH config, known hosts, and identities
-- explicit copied files or directories for non-reserved paths
-
-It does not support whole-home passthrough, arbitrary environment-variable
-secret injection, or host socket forwarding on the safe path.
-
-Copilot auth is intentionally narrow: configure `copilot_github_token` and let
-Workcell stage it through reviewed host-side inputs. For an auth-required
-Copilot launch, the launcher removes the original staged token file from direct
-runtime mounts, passes a temporary host-mounted token handoff outside mounted
-provider state, the runtime entrypoint consumes it into a transient handoff
-file, unlinks the mounted file, and re-execs without the token in its
-environment. The wrapper unlinks that runtime file before exporting the value
-as `COPILOT_GITHUB_TOKEN` only to the managed Copilot child process.
-Workcell does not copy or pre-stage the token into `COPILOT_HOME`. Host `gh`
-auth, `GH_TOKEN`, `GITHUB_TOKEN`, host Copilot provider state (`~/.copilot`,
-`~/.config/github-copilot`, `~/.cache/github-copilot`), keychains, and
-whole-home state are not readiness or auth sources. Antigravity credentials and
-provider-home state are not supported inputs yet.
-
-See [docs/injection-policy.md](docs/injection-policy.md) and
-[docs/examples/injection-policy.toml](docs/examples/injection-policy.toml).
-The by-provider bootstrap tiers and handoffs live in
-[docs/provider-bootstrap-matrix.md](docs/provider-bootstrap-matrix.md).
-
-## Provider quickstarts
-
-| Provider | Tier 1 surface today | Native control plane | Quickstart |
-|---|---|---|---|
-| Codex | CLI | `~/.codex/config.toml`, `AGENTS.md`, rules, MCP config | [docs/examples/quickstart-codex.md](docs/examples/quickstart-codex.md) |
-| Claude | Claude Code CLI | `~/.claude/settings.json`, `CLAUDE.md`, `.mcp.json`, auth mirrors, hooks, host-side macOS auth resolver scaffold | [docs/examples/quickstart-claude.md](docs/examples/quickstart-claude.md) |
-| GitHub Copilot CLI | CLI | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, token handoff, custom instructions disabled, skill/dynamic-retrieval overrides blocked | [docs/examples/quickstart-copilot.md](docs/examples/quickstart-copilot.md) |
-| Gemini | Gemini CLI | `~/.gemini/settings.json`, `GEMINI.md`, `.env`, `projects.json` | [docs/examples/quickstart-gemini.md](docs/examples/quickstart-gemini.md) |
-
-Planned provider parity:
-
-| Provider | Target surface | Required before support |
-|---|---|---|
-| Google Antigravity CLI | planned fail-closed Tier 1 CLI adapter; not current support | `--agent antigravity`, pinned official install/auth provenance, explicit Google auth staging, session-local provider home/cache, unsafe-argument policy, quickstart, deterministic tests, and live provider certification |
-
-GUI and IDE surfaces are lower assurance unless they act only as clients to
-the same bounded runtime.
-
-See [docs/injection-policy.md](docs/injection-policy.md) for provider auth
-maturity and [docs/enterprise-rollout.md](docs/enterprise-rollout.md) for the
-current team rollout model.
-
-## Mode map
-
-Workcell uses two terms throughout the docs:
-
-- `Tier 1`: a provider CLI running fully inside the bounded Workcell runtime
-- `strict`: the default managed Tier 1 runtime mode
-
-`--mode` selects one of four lanes:
-
-| `--mode` | Intended use | Key properties |
-|---|---|---|
-| `strict` | default provider lane | bounded VM plus container, reviewed network posture, repo control-plane masking, provider-focused entrypoint, `--agent-autonomy yolo` by default |
-| `development` | managed interactive development lane | same boundary and masking as `strict`, managed non-provider command execution, broader dependency egress, visibly lower assurance than `strict` |
-| `build` | image preparation and dependency refresh | broader egress for rebuild and preparation work |
-| `breakglass` | explicit higher-trust debugging path | requires `--ack-breakglass=YYYY-MM-DD` using today's UTC date; visibly lower assurance |
-
-`--container-mutability` is orthogonal to `--mode`: `ephemeral` (the
-default) allows package-manager mutations and labels the session
-`managed-mutable`, while `readonly` blocks package-manager writes and
-gives the strongest managed posture available — `--mode strict
---container-mutability readonly` is the lane to pick when no
-lower-assurance downgrade is acceptable.
-
-Other defaults that matter:
-
-- `--agent` is always required; there is no default provider
-- `--agent-autonomy yolo` is the default; `--agent-autonomy prompt` is the
-  explicit lower-assurance opt-out
-- `--cache-profile off` is the default
-- `--cache-profile standard` keeps a workspace-scoped persistent non-secret
-  cache plane for package and compiler caches, but it is an explicit
-  lower-assurance path
-- strict launches prepare the reviewed runtime image automatically when needed
-- interactive launches show a spinner with elapsed time by default; use
-  `--no-spinner` to force plain heartbeat updates instead
-- `--prepare` and `--prepare-only` remain useful when you want to make that step explicit
-
-## Safe-path expectations
-
-- Workcell launches the selected provider directly inside the bounded runtime
-- there is no separate "start a container, then attach the agent" step
-- `publish-pr` runs on the host so signed commits, signed-range verification,
-  and GitHub publication stay outside the Tier 1 container, and it blocks
-  unsigned publish ranges and over-broad branch diffs before push so published
-  PRs stay reviewable; `main` is the only supported PR base by default, and
-  non-`main` bases remain an explicit lower-assurance draft-only escape hatch
-  with an explicit preflight warning that repo-owned PR checks are not expected
-  for that base; reviewed, live-certified adapter support PRs may use the
-  bounded `approved-large-certified-adapter` label plus
-  `--approved-large-certified-adapter` publication flag when they cannot be
-  split without invalidating certification evidence
-- completed and aborted launches are recorded as durable host-side session
-  records that you can inspect with `workcell session ...`
-- `workcell session diff` compares the current workspace against the clean git
-  base recorded at launch and fails closed when the launch started dirty, when
-  no launch git base was recorded, or when the workspace is not a self-contained
-  git worktree
-- `--debug-log`, `--file-trace-log`, and `--audit-transcript` are explicit
-  lower-assurance operator choices and are off by default
-
-Useful operator flows:
-
-For changes to this repository, publish main-based PRs through the repo wrapper
-after fresh local parity evidence:
-
-```bash
-./scripts/pre-merge.sh --profile pr-parity
-./scripts/repo-publish-pr.sh --workspace /path/to/repo --branch feature/name \
-  --title-file /tmp/pr-title.txt \
-  --body-file /tmp/pr-body.md \
-  --commit-message-file /tmp/commit-message.txt
-```
-
-`workcell publish-pr` is the lower-level host-side helper. Use it directly for
-operator repositories that do not carry Workcell's repo-local parity wrapper,
-or for the explicitly lower-assurance non-`main` draft path.
-
-Use `--target colima|docker-desktop|aws-ec2-ssm|gcp-vm` to select the managed
-runtime backend.
-
-```bash
-workcell --agent codex --prepare --workspace /path/to/repo
-workcell --agent codex --prepare-only --workspace /path/to/repo
-workcell --target docker-desktop --agent codex --workspace /path/to/repo
-workcell --target aws-ec2-ssm --target-id i-1234567890abcdef0 --agent codex --workspace /path/to/repo --dry-run
-workcell --target gcp-vm --target-id workcell-phase8-cert --agent codex --workspace /path/to/repo --dry-run
-workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
-workcell session list
-workcell session list --verbose
-workcell session start --agent codex --workspace /path/to/repo
-workcell session delete --id SESSION_ID
-workcell session attach --id 20260408T120000Z-1a2b3c4d
-workcell session send --id 20260408T120000Z-1a2b3c4d --message "continue with tests"
-workcell session stop --id 20260408T120000Z-1a2b3c4d
-workcell session show --id 20260408T120000Z-1a2b3c4d
-workcell session show --id 20260408T120000Z-1a2b3c4d --text
-workcell session logs --id 20260408T120000Z-1a2b3c4d --kind audit
-workcell session timeline --id 20260408T120000Z-1a2b3c4d
-workcell session diff --id 20260408T120000Z-1a2b3c4d
-workcell session export --id 20260408T120000Z-1a2b3c4d --output /tmp/workcell-session.json
-workcell policy show
-workcell policy diff
-workcell why --agent codex --mode strict --credential codex_auth
-workcell --agent codex --doctor --workspace /path/to/repo
-workcell --agent codex --inspect --workspace /path/to/repo
-workcell --agent codex --auth-status --workspace /path/to/repo
-workcell --gc
-./scripts/update-upstream-pins.sh --check
-./scripts/publish-provider-bump-pr.sh
-workcell --logs audit --colima-profile wcl-...
-# Lower-level host publication helper for repositories without a repo wrapper.
-workcell publish-pr --workspace /path/to/repo --branch feature/name \
-  --title-file /tmp/pr-title.txt \
-  --body-file /tmp/pr-body.md \
-  --commit-message-file /tmp/commit-message.txt
-# Reviewed exception: live-certified adapter PRs that cannot be split.
-workcell publish-pr --workspace /path/to/repo --branch feature/name \
-  --approved-large-certified-adapter \
-  --title-file /tmp/pr-title.txt \
-  --body-file /tmp/pr-body.md \
-  --commit-message-file /tmp/commit-message.txt
-# Lower-assurance exception: non-main bases stay draft-only.
-workcell publish-pr --workspace /path/to/repo --branch feature/name \
-  --base feature/review-stack --allow-non-main-base \
-  --title-file /tmp/pr-title.txt \
-  --body-file /tmp/pr-body.md \
-  --commit-message-file /tmp/commit-message.txt
-```
-
-For the preview-only AWS and GCP remote VM broker paths and their certification
-gates, see [docs/aws-ec2-ssm-preview.md](docs/aws-ec2-ssm-preview.md) and
-[docs/gcp-vm-preview.md](docs/gcp-vm-preview.md).
-
-`workcell session list --verbose` adds target, workspace transport, git branch,
-and worktree columns without changing the default compact inventory view.
-`workcell session show --text` renders stable key=value lines for the same
-target-aware record, and `workcell session start|send|stop` emit stable
-key=value summaries so host-side detached control stays scriptable.
-`workcell --gc` removes stale Workcell-owned temp scratch, disposable
-session-audit directories, broken latest-log pointers, and over-budget runtime
-image cache entries without deleting durable session records. It also removes
-stale regenerateable Workcell build cache entries.
-
-## Release posture
-
-Tagged releases are rebuilt and verified before publication. The release path:
-
-- reruns validation, smoke, and reproducibility checks
-- reruns repo-mounted validator and release-helper paths under an explicit
-  caller UID/GID with isolated writable home, cache, and tmp roots instead of
-  relying on ambient container-root defaults, including passwd-less caller UIDs
-- verifies from GitHub-owned sources that the release install matrix still
-  targets the newest two GitHub-hosted Apple Silicon macOS runner labels
-- refuses to publish if any reviewed provider, Linux base image, Linux
-  toolchain, or release-build pin is behind the latest tracked upstream
-- verifies pinned Codex, Claude, Copilot, and Gemini releases against upstream
-  metadata as part of the reviewed provider set; Antigravity gets the same
-  gate before any future support claim
-- publishes from the archived source bundle rather than the live checkout
-- gates publication on bundle and Homebrew install verification on
-  GitHub-hosted Apple Silicon `macos-26` and `macos-15`
-- signs the image, source bundle, Homebrew formula asset, published image
-  digest file, checksums, build-input manifest, control-plane manifest,
-  builder-environment manifest, and both SBOMs with keyless Sigstore/Cosign
-- publishes GitHub-native attestations when the reviewed hosted controls say
-  the repository visibility and GitHub plan support them for every published
-  primary release artifact, as an additional verification surface rather than a
-  replacement for Sigstore
-
-That install matrix is the current release-gated support window. Other macOS
-versions may work, but they are not currently proven by tagged-release CI.
-
-Forks can keep the GitHub attestation gates off. The upstream repo treats
-those settings as hosted control-plane state and audits them accordingly.
-
-See [docs/provenance.md](docs/provenance.md) and
-[docs/github-workflows.md](docs/github-workflows.md).
+- `workcell --agent <name> --workspace /path/to/repo` — launch a managed agent
+  session (see the [5-minute path](#5-minute-path) and
+  [provider quickstarts](docs/provider-quickstarts.md)).
+- `--target colima|docker-desktop|aws-ec2-ssm|gcp-vm` — select the runtime
+  backend ([safe-path expectations](docs/safe-path-expectations.md)).
+- `--prepare` and `--prepare-only` — pre-build the runtime image before, or
+  instead of, launching ([safe-path expectations](docs/safe-path-expectations.md)).
+- `--doctor`, `--inspect`, and `--auth-status` — inspect host readiness, a
+  resolved launch plan, and auth posture
+  ([onboarding and auth](docs/onboarding-and-auth.md)).
+- `workcell why` — explain a credential or configuration decision
+  ([onboarding and auth](docs/onboarding-and-auth.md)).
+- `workcell session` — manage detached sessions, including
+  `workcell session start`, `workcell session list`, and
+  `workcell session diff` ([safe-path expectations](docs/safe-path-expectations.md)).
+- `workcell publish-pr` — the host-side PR publication helper
+  ([safe-path expectations](docs/safe-path-expectations.md)).
 
 ## Docs map
+
+### Operator reference
+
+| Topic | File |
+|---|---|
+| Install and requirements | [docs/install.md](docs/install.md) |
+| Onboarding and auth | [docs/onboarding-and-auth.md](docs/onboarding-and-auth.md) |
+| Provider quickstarts | [docs/provider-quickstarts.md](docs/provider-quickstarts.md) |
+| Mode map | [docs/mode-map.md](docs/mode-map.md) |
+| Safe-path expectations | [docs/safe-path-expectations.md](docs/safe-path-expectations.md) |
+| Release posture | [docs/release-posture.md](docs/release-posture.md) |
 
 ### Product and security docs
 
@@ -457,6 +209,7 @@ See [docs/provenance.md](docs/provenance.md) and
 | Threat model | [docs/threat-model.md](docs/threat-model.md) |
 | OWASP agentic mapping | [docs/owasp-agentic-mapping.md](docs/owasp-agentic-mapping.md) |
 | Provider matrix | [docs/provider-matrix.md](docs/provider-matrix.md) |
+| Provider bootstrap matrix | [docs/provider-bootstrap-matrix.md](docs/provider-bootstrap-matrix.md) |
 | Adapter control planes | [docs/adapter-control-planes.md](docs/adapter-control-planes.md) |
 | Injection policy | [docs/injection-policy.md](docs/injection-policy.md) |
 | Validation coverage | [docs/validation-scenarios.md](docs/validation-scenarios.md) |
@@ -466,7 +219,10 @@ See [docs/provenance.md](docs/provenance.md) and
 | Session supervisor design | [docs/workcell-session-supervisor-design.md](docs/workcell-session-supervisor-design.md) |
 | Managed workstation contract | [docs/managed-workstation-contract.md](docs/managed-workstation-contract.md) |
 | Enterprise evidence baseline | [docs/enterprise-evidence-baseline.md](docs/enterprise-evidence-baseline.md) |
+| Enterprise rollout | [docs/enterprise-rollout.md](docs/enterprise-rollout.md) |
 | Host expansion readiness | [docs/host-expansion-readiness.md](docs/host-expansion-readiness.md) |
+| AWS EC2 SSM preview | [docs/aws-ec2-ssm-preview.md](docs/aws-ec2-ssm-preview.md) |
+| GCP VM preview | [docs/gcp-vm-preview.md](docs/gcp-vm-preview.md) |
 | Provenance and signing | [docs/provenance.md](docs/provenance.md) |
 | GitHub automation | [docs/github-workflows.md](docs/github-workflows.md) |
 | Artifact retention policy | [docs/retention-policy.md](docs/retention-policy.md) |
