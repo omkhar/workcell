@@ -206,13 +206,17 @@ func outputLineSearchCorpus(rootDir string) ([]string, error) {
 	relativePaths = append(relativePaths, cmdFiles...)
 	relativePaths = append(relativePaths, filepath.Join("scripts", "workcell"))
 
-	// _test.go files are excluded: they are not emitters, and (critically)
-	// this package's own public_contract_test.go builds mutated contract
-	// fixtures containing deliberately-bogus prefix literals for negative
-	// controls — without this exclusion, walking internal/ would let a
-	// test's own "bogus prefix" string literal satisfy the very check the
-	// test is trying to prove fails.
-	relativePaths = excludeGoTestFiles(relativePaths)
+	// Two classes of file are excluded from the emitter corpus because they
+	// mention contract prefixes without emitting them, and would otherwise
+	// let the check pass even after the real emitter is deleted — exactly the
+	// drift it exists to catch:
+	//   - _test.go files: not emitters, and this package's own
+	//     public_contract_test.go builds mutated fixtures with deliberately
+	//     bogus prefix literals for the negative controls.
+	//   - this validator's own source: its doc comments necessarily quote the
+	//     contract prefixes ("assurance=", "mutation score:", ...) to explain
+	//     the check, so leaving it in would self-satisfy those entries.
+	relativePaths = excludeNonEmitterFiles(relativePaths)
 
 	sources := make([]string, 0, len(relativePaths))
 	for _, relPath := range relativePaths {
@@ -225,11 +229,18 @@ func outputLineSearchCorpus(rootDir string) ([]string, error) {
 	return sources, nil
 }
 
-// excludeGoTestFiles drops every path ending in "_test.go" from paths.
-func excludeGoTestFiles(paths []string) []string {
+// contractValidatorSourceFile is this validator's own source file, relative
+// to the repo root. Its doc comments quote the contract prefixes to explain
+// the check, so it is excluded from the emitter corpus (see
+// outputLineSearchCorpus).
+var contractValidatorSourceFile = filepath.Join("internal", "metadatautil", "public_contract.go")
+
+// excludeNonEmitterFiles drops every "_test.go" path and this validator's own
+// source file — both mention contract prefixes without emitting them.
+func excludeNonEmitterFiles(paths []string) []string {
 	filtered := make([]string, 0, len(paths))
 	for _, path := range paths {
-		if strings.HasSuffix(path, "_test.go") {
+		if strings.HasSuffix(path, "_test.go") || path == contractValidatorSourceFile {
 			continue
 		}
 		filtered = append(filtered, path)

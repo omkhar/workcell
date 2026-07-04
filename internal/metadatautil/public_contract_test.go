@@ -122,6 +122,28 @@ func TestCheckPublicContractRejectsSubstringOnlyPrefix(t *testing.T) {
 	}
 }
 
+// TestExcludeNonEmitterFilesDropsSelfAndTests pins the corpus exclusions
+// that keep the output-prefix scan honest: the validator's own source (whose
+// doc comments quote the contract prefixes) and _test.go fixtures must never
+// be searched, or they would self-satisfy the very drift the check catches.
+func TestExcludeNonEmitterFilesDropsSelfAndTests(t *testing.T) {
+	in := []string{
+		contractValidatorSourceFile,
+		"internal/host/sessions/sessions.go",
+		"internal/metadatautil/public_contract_test.go",
+		"cmd/workcell-citools/main.go",
+	}
+	out := excludeNonEmitterFiles(in)
+	for _, p := range out {
+		if p == contractValidatorSourceFile || strings.HasSuffix(p, "_test.go") {
+			t.Fatalf("excludeNonEmitterFiles kept a non-emitter file %q: %v", p, out)
+		}
+	}
+	if len(out) != 2 {
+		t.Fatalf("excludeNonEmitterFiles kept %v, want the 2 real emitter files", out)
+	}
+}
+
 func TestCheckPublicContractRejectsBogusInjectionTable(t *testing.T) {
 	root := publicContractRepoRoot(t)
 	// Rename a real accepted table to one the parser does not accept: the
