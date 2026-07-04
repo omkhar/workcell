@@ -18,16 +18,13 @@ dual-stack, default-deny firewall inside the runtime VM:
 2. The launcher hands that endpoint list to
    `scripts/colima-egress-allowlist.sh`, which programs `iptables` and
    `ip6tables` rules in the `DOCKER-USER` chain of the Colima VM.
-3. The rules ACCEPT established/related return traffic and each allowed
-   `host:port` (resolved to IPv4 and IPv6 addresses), then end with an explicit
-   `DROP`. Anything not on the allowlist is denied.
+3. The rules ACCEPT established/related traffic and each allowed `host:port`
+   (resolved to IPv4 and IPv6), then end with an explicit `DROP`.
 4. Enforcement is fail-closed and dual-stack: if `ip6tables` is unavailable the
-   helper aborts rather than leaving IPv6 egress unfiltered, so a session never
-   silently loses IPv6 containment.
+   helper aborts rather than leave IPv6 egress unfiltered.
 
-The allowlist matches on `host:port`. Only the colima target applies these
-rules; the launcher does not change the enforcement dispatch based on policy
-content.
+Only the colima target applies these rules; the dispatch never changes based on
+policy content.
 
 ## Endpoint sources
 
@@ -47,9 +44,8 @@ The combined list is de-duplicated, then every endpoint in
 
 ## Operator `[network]` surface
 
-Operators extend or tighten the per-session allowlist only through the reviewed
-injection-policy path, never by disabling the default. The injection policy
-accepts a top-level `[network]` table:
+Operators extend or tighten the allowlist only through the reviewed
+injection-policy `[network]` table, never by disabling the default:
 
 ```toml
 [network]
@@ -57,29 +53,24 @@ allow_endpoints = ["registry.internal.example:443"]  # add to the allowlist
 deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlist
 ```
 
-- `allow_endpoints` are unioned into the computed allowlist. They extend it;
-  they never replace the reviewed provider/credential endpoints.
-- `deny_endpoints` are subtracted from the computed allowlist after every allow
-  source is combined. Deny wins: if an operator denies an endpoint a provider
-  would otherwise need, it is removed. That is an intentional operator
-  tightening, not a bug.
-- Each endpoint must be `host:port` or `[ipv6]:port`, with a port in 1-65535 and
-  a host matching `^[A-Za-z0-9.-]+$` (no leading dot, no `..`). This grammar is
-  validated in the injection path with the same rules
-  `scripts/colima-egress-allowlist.sh` applies, so an endpoint the policy
-  accepts is one the enforcement helper accepts.
-- The surface is fail-closed: a malformed endpoint, an empty string, an unknown
-  key under `[network]`, or a non-array value aborts the launch with an error
-  that names the offending value.
+- `allow_endpoints` are unioned into the computed allowlist (they extend, never
+  replace the reviewed provider/credential endpoints).
+- `deny_endpoints` are subtracted after every allow source is combined. Deny
+  wins — denying an endpoint a provider needs removes it (an intentional
+  tightening, not a bug).
+- Each endpoint must be `host:port` or `[ipv6]:port` (port 1-65535, host
+  `^[A-Za-z0-9.-]+$`, no leading dot or `..`, IP-shaped hosts must be real IPs),
+  validated with the same grammar `scripts/colima-egress-allowlist.sh` applies.
+- Fail-closed: a malformed endpoint, empty string, unknown `[network]` key, or
+  non-array value aborts with an error naming the offending value.
 
 ### No-weakening invariant
 
-The `[network]` surface can only contribute endpoint lists. It cannot set
-`NETWORK_POLICY`, switch to an unrestricted posture, or disable the allowlist.
-`allow_endpoints` only ever adds endpoints and `deny_endpoints` only ever
-removes them; there is no policy key or code path through which `[network]`
-changes the enforcement mode. The shipped default-deny allowlist is never
-weakened by an injection policy.
+The `[network]` surface can only contribute endpoint lists — `allow_endpoints`
+adds, `deny_endpoints` removes. It cannot set `NETWORK_POLICY`, disable the
+allowlist, or switch to an unrestricted posture: no policy key or code path lets
+`[network]` change the enforcement mode, so an injection policy never weakens the
+shipped default-deny allowlist.
 
 ## Enforcement parity
 
@@ -97,11 +88,9 @@ Other targets rely on their own network controls and do not receive the
 | `gcp-vm` (preview) | `none` | no — relies on the VM's own firewall / network controls |
 
 `egress_enforcement=allowlist` prints only when `TARGET_BACKEND == colima` and
-`NETWORK_POLICY == allowlist`; every other combination prints
-`egress_enforcement=none`. The label sits next to the existing
-`network_policy=... endpoints=...` summary line so operators can see at a glance
-whether the session is actually enforced or is relying on the target's own
-controls.
+`NETWORK_POLICY == allowlist`; every other combination prints `none`. The label
+sits next to the `network_policy=... endpoints=...` summary line so operators see
+at a glance whether the session is enforced or relying on the target's controls.
 
 ## Related docs
 

@@ -143,19 +143,11 @@ allow_endpoints = ["registry.internal.example:443"]  # add to the allowlist
 deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlist
 ```
 
-- `allow_endpoints` are added (unioned) to the host-computed default-deny
-  allowlist.
-- `deny_endpoints` are removed from it. Deny wins over allow: a denied endpoint
-  is dropped even when a provider would otherwise require it.
-- Endpoints must be `host:port` or `[ipv6]:port`, port 1-65535, host
-  `^[A-Za-z0-9.-]+$` (no leading dot, no `..`). A malformed endpoint, empty
-  string, unknown key under `[network]`, or non-array value fails the launch
-  closed.
-- `[network]` can only extend or tighten the allowlist. It cannot set
-  `NETWORK_POLICY`, disable the allowlist, or switch to an unrestricted posture.
-- Enforcement of the allowlist is colima-only; see
-  [docs/egress-policy.md](egress-policy.md) for the mechanism and the
-  enforcement-parity table.
+`allow_endpoints` are unioned into the default-deny allowlist; `deny_endpoints`
+are removed (deny wins). `[network]` can only extend or tighten the allowlist —
+it cannot set `NETWORK_POLICY`, disable it, or switch to unrestricted — and is
+validated fail-closed. See [docs/egress-policy.md](egress-policy.md) for the
+endpoint grammar, the no-weakening invariant, and the enforcement-parity table.
 
 ## Instruction precedence
 
