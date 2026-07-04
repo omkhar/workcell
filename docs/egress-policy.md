@@ -32,8 +32,7 @@ policy content.
 
 - provider endpoints for the selected agent
 - target/broker endpoints for the runtime backend
-- credential-derived endpoints (for example the Google auth endpoints a Gemini
-  OAuth/ADC credential requires)
+- credential-derived endpoints (e.g. the Google auth endpoints a Gemini OAuth/ADC credential requires)
 - provider auth-recovery endpoints
 - injection-policy `[network].allow_endpoints` (operator extension)
 - `EXTRA_ENDPOINTS` from the profile

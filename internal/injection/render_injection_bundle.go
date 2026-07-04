@@ -148,8 +148,7 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 	}
 
 	// Validate [network] before any render step that writes into outputRoot;
-	// renderNetwork has no side effects, so an invalid [network] fails closed
-	// here without leaving staged injection material behind.
+	// renderNetwork has no side effects, so invalid [network] fails closed here.
 	networkAllowEndpoints, networkDenyEndpoints, err := renderNetwork(policy)
 	if err != nil {
 		return err

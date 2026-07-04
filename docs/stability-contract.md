@@ -121,10 +121,12 @@ enforced separately, by set-equality against `SessionShowLines`
 
 ## Injection-policy supported tables
 
-`internal/injection` accepts exactly four top-level tables in an injection
-policy TOML document: `documents`, `ssh`, `credentials` (single-bracket
-tables), and `copies` (the one supported `[[array-of-table]]`). Any other
-top-level table name is rejected. See `docs/injection-policy.md` for the
+`internal/injection` accepts exactly five top-level tables in an injection
+policy TOML document: `documents`, `ssh`, `credentials`, `network`
+(single-bracket tables), and `copies` (the one supported `[[array-of-table]]`).
+Any other top-level table name is rejected. `[network]` carries only the egress
+`allow_endpoints`/`deny_endpoints` lists and cannot change the network-policy
+mode (see `docs/egress-policy.md`); see `docs/injection-policy.md` for the
 per-table schema.
 
 ## Durable session-record fields
