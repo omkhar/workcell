@@ -1261,26 +1261,26 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	_, securityActionlintVersionMatch, err := requireRegex(securityWorkflow, `(?m)^\s*ACTIONLINT_VERSION:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$`, "security actionlint version", ".github/workflows/security.yml")
+	securityActionlintVersion, err := requireUniformWorkflowEnv(securityWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "security actionlint version", ".github/workflows/security.yml")
 	if err != nil {
 		return err
 	}
-	_, releaseActionlintVersionMatch, err := requireRegex(releaseWorkflow, `(?m)^\s*ACTIONLINT_VERSION:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$`, "release actionlint version", ".github/workflows/release.yml")
+	releaseActionlintVersion, err := requireUniformWorkflowEnv(releaseWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "release actionlint version", ".github/workflows/release.yml")
 	if err != nil {
 		return err
 	}
-	if securityActionlintVersionMatch[1] != releaseActionlintVersionMatch[1] {
+	if securityActionlintVersion != releaseActionlintVersion {
 		return errors.New("ACTIONLINT_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
 	}
-	_, securityActionlintSHAMatch, err := requireRegex(securityWorkflow, `(?m)^\s*ACTIONLINT_SHA256:\s*([0-9a-f]{64})\s*$`, "security actionlint sha", ".github/workflows/security.yml")
+	securityActionlintSHA, err := requireUniformWorkflowEnv(securityWorkflow, "ACTIONLINT_SHA256", `[0-9a-f]{64}`, "security actionlint sha", ".github/workflows/security.yml")
 	if err != nil {
 		return err
 	}
-	_, releaseActionlintSHAMatch, err := requireRegex(releaseWorkflow, `(?m)^\s*ACTIONLINT_SHA256:\s*([0-9a-f]{64})\s*$`, "release actionlint sha", ".github/workflows/release.yml")
+	releaseActionlintSHA, err := requireUniformWorkflowEnv(releaseWorkflow, "ACTIONLINT_SHA256", `[0-9a-f]{64}`, "release actionlint sha", ".github/workflows/release.yml")
 	if err != nil {
 		return err
 	}
-	if securityActionlintSHAMatch[1] != releaseActionlintSHAMatch[1] {
+	if securityActionlintSHA != releaseActionlintSHA {
 		return errors.New("ACTIONLINT_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
 	}
 	securityZizmorVersion, err := requireUniformWorkflowEnv(securityWorkflow, "ZIZMOR_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "security zizmor version", ".github/workflows/security.yml")
@@ -1319,8 +1319,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		{"WORKCELL_BUILDKIT_IMAGE", ciBuildkitImage, pins.Buildkit},
 		{"WORKCELL_QEMU_IMAGE", ciQEMUImage, pins.QEMU},
 		{"WORKCELL_SYFT_VERSION", releaseSyftVersion, pins.Syft},
-		{"ACTIONLINT_VERSION", securityActionlintVersionMatch[1], pins.ActionlintVersion},
-		{"ACTIONLINT_SHA256", securityActionlintSHAMatch[1], pins.ActionlintSHA256},
+		{"ACTIONLINT_VERSION", securityActionlintVersion, pins.ActionlintVersion},
+		{"ACTIONLINT_SHA256", securityActionlintSHA, pins.ActionlintSHA256},
 		{"ZIZMOR_VERSION", securityZizmorVersion, pins.ZizmorVersion},
 		{"ZIZMOR_SHA256", securityZizmorSHA, pins.ZizmorSHA256},
 	} {
