@@ -180,6 +180,12 @@ func TestSubtractEndpointListRemovesDeniedEndpoints(t *testing.T) {
 			want:  "github.com:443",
 		},
 		{
+			name:  "trailing-dot FQDN allow removed by bare deny",
+			allow: "chatgpt.com.:443 github.com:443",
+			deny:  "chatgpt.com:443",
+			want:  "github.com:443",
+		},
+		{
 			name:  "empty deny leaves allow untouched",
 			allow: "github.com:443 api.github.com:443",
 			deny:  "",
