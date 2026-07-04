@@ -156,6 +156,18 @@ func TestSubtractEndpointListRemovesDeniedEndpoints(t *testing.T) {
 			want:  "github.com:443 api.github.com:443",
 		},
 		{
+			name:  "deny matches provider endpoint case-insensitively",
+			allow: "github.com:443 chatgpt.com:443",
+			deny:  "CHATGPT.COM:443",
+			want:  "github.com:443",
+		},
+		{
+			name:  "mixed-case allow removed by lower-case deny",
+			allow: "API.GitHub.com:443 github.com:443",
+			deny:  "api.github.com:443",
+			want:  "github.com:443",
+		},
+		{
 			name:  "empty deny leaves allow untouched",
 			allow: "github.com:443 api.github.com:443",
 			deny:  "",

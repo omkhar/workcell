@@ -150,13 +150,17 @@ func DedupeEndpointList(raw string) string {
 // would otherwise require it.  The function only ever REMOVES endpoints; it
 // can never add one, so it cannot weaken the allowlist.
 func SubtractEndpointList(allow, deny string) string {
+	// DNS hostnames and IPv6 literal hex are case-insensitive and the port is
+	// numeric, so compare on a lower-cased key. Otherwise a deny like
+	// CHATGPT.COM:443 would fail to remove the provider's chatgpt.com:443 and
+	// silently leave a denied endpoint reachable — a deny-wins bypass.
 	denied := make(map[string]struct{})
 	for _, entry := range strings.Fields(deny) {
-		denied[entry] = struct{}{}
+		denied[strings.ToLower(entry)] = struct{}{}
 	}
 	kept := make([]string, 0)
 	for _, entry := range strings.Fields(allow) {
-		if _, ok := denied[entry]; ok {
+		if _, ok := denied[strings.ToLower(entry)]; ok {
 			continue
 		}
 		kept = append(kept, entry)
