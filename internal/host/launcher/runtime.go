@@ -151,11 +151,10 @@ func DedupeEndpointList(raw string) string {
 // would otherwise require it.  The function only ever REMOVES endpoints; it
 // can never add one, so it cannot weaken the allowlist.
 func SubtractEndpointList(allow, deny string) string {
-	// Compare on a canonical key so any deny that is semantically equal to a
-	// computed endpoint wins, regardless of surface form (host case, IPv6
-	// literal spelling, or a port with leading zeros). Otherwise a deny like
-	// CHATGPT.COM:443 or chatgpt.com:0443 would fail to remove the provider's
-	// chatgpt.com:443 and silently leave a denied endpoint reachable.
+	// Compare on a canonical key so a deny semantically equal to a computed
+	// endpoint wins regardless of surface form (host case/trailing dot, IPv6
+	// spelling, leading-zero port); otherwise CHATGPT.COM:443 would fail to
+	// remove chatgpt.com:443 and leave a denied endpoint reachable.
 	denied := make(map[string]struct{})
 	for _, entry := range strings.Fields(deny) {
 		denied[canonicalEndpoint(entry)] = struct{}{}

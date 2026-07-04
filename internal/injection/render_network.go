@@ -13,20 +13,12 @@ import (
 // renderNetwork parses the optional top-level `[network]` injection-policy
 // table and returns the operator-declared allow/deny endpoint lists.
 //
-// The `[network]` surface can ONLY contribute endpoint lists.  It has no path
-// to NETWORK_POLICY, the enforcement mode, or the default-deny allowlist
-// mechanism: renderNetwork returns endpoint slices and nothing else, and the
-// shell caller uses `allow_endpoints` to EXTEND the computed allowlist and
-// `deny_endpoints` to TIGHTEN it (deny wins).  There is deliberately no return
-// value or side effect through which a policy could disable the allowlist or
-// switch to an unrestricted posture — the no-weakening invariant for A1.
-//
-// Every endpoint is validated to the SAME host:port / [ipv6]:port grammar the
-// enforcement helper scripts/colima-egress-allowlist.sh applies
-// (validate_endpoint, lines ~186-231), so an endpoint this policy accepts is
-// one the helper will also accept.  Validation is fail-closed: any malformed
-// endpoint, empty string, unknown key under `[network]`, or non-array value
-// aborts the render with an error that names the offending value.
+// The `[network]` surface can ONLY contribute endpoint lists: renderNetwork
+// returns endpoint slices and nothing else, with no path to NETWORK_POLICY or
+// the enforcement mode. `allow_endpoints` EXTENDS the allowlist, `deny_endpoints`
+// TIGHTENS it (deny wins) — the no-weakening invariant for A1. Validation is
+// fail-closed (shared injectionpolicy.ValidateEgressEndpoint grammar; unknown
+// keys / non-array values rejected), naming the offending value.
 func renderNetwork(policy map[string]any) (allowEndpoints, denyEndpoints []string, err error) {
 	raw, ok := policy["network"]
 	if !ok || raw == nil {

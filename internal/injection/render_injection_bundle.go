@@ -147,10 +147,9 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 		}
 	}
 
-	// Validate/parse [network] BEFORE any render step with filesystem side
-	// effects (documents/copies/ssh write into outputRoot). renderNetwork has no
-	// side effects, so a malformed or mode-shaped [network] fails closed here
-	// without leaving staged injection material behind.
+	// Validate [network] before any render step that writes into outputRoot;
+	// renderNetwork has no side effects, so an invalid [network] fails closed
+	// here without leaving staged injection material behind.
 	networkAllowEndpoints, networkDenyEndpoints, err := renderNetwork(policy)
 	if err != nil {
 		return err

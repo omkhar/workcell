@@ -265,11 +265,9 @@ func run(cfg config) error {
 		return err
 	}
 	policy = rebasePolicyFragment(policy, filepath.Dir(policyPath))
-	// Validate the [network] surface fail-closed BEFORE resolving or
-	// materializing any credential. Otherwise a mode-shaped or malformed
-	// [network] would be admitted here (it is on the resolver whitelist) and the
-	// resolver could stage credentials and write a resolved policy before the
-	// later render rejects it, leaving a staged bundle the caller cannot clean up.
+	// Validate [network] fail-closed before resolving any credential; otherwise
+	// an invalid [network] (on the resolver whitelist) could stage credentials
+	// and write a resolved policy before the later render rejects it.
 	if err := validateNetworkPolicy(policy); err != nil {
 		return err
 	}

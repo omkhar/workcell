@@ -7009,13 +7009,11 @@ subtract_endpoint_list() {
   go_hostutil helper subtract-endpoints "$1" "$2"
 }
 
-# fail_empty_egress_after_deny aborts, fail-closed, when [network].deny_endpoints
-# has removed every computed egress endpoint on the enforced colima allowlist
-# path. A session with no allowed egress cannot reach any provider API or
-# registry, so this reports a clear, actionable diagnostic (which deny caused it,
-# and how to widen it) instead of letting the enforcement helper reject the empty
-# list with a low-level "Missing endpoint list" error. Enforcement stays strict:
-# the launch does not proceed, so no unbounded egress is ever installed.
+# fail_empty_egress_after_deny aborts fail-closed when [network].deny_endpoints
+# removed every computed endpoint on the enforced colima allowlist path: a
+# zero-egress session cannot reach any provider, so report an actionable
+# diagnostic instead of the helper's low-level empty-list error. The launch does
+# not proceed, so no unbounded egress is ever installed.
 fail_empty_egress_after_deny() {
   local phase="$1"
   echo "workcell: injection-policy [network].deny_endpoints removed every ${phase} egress endpoint on the strict colima allowlist path." >&2
@@ -8344,15 +8342,11 @@ PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
 PROFILE_PREEXISTED=0
 PROFILE_MARKER_WORKSPACE=""
 BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
-# A1: operator [network].deny_endpoints must win during image bootstrap too, not
-# only for the session allowlist. Subtract the deny list from the bootstrap
-# endpoints so a denied endpoint is unreachable during a rebuild/first launch,
-# preserving deny-wins across NEEDS_REBUILD and stale-marker paths.
+# A1: deny_endpoints must win for bootstrap egress too. The empty-after-deny
+# check is deferred to the bootstrap-apply sites below (reached only when a
+# rebuild applies bootstrap egress), so denying all bootstrap hosts while relying
+# on an already-prepared image still launches.
 if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
-  # deny-wins for bootstrap egress too. The empty-after-deny check is deferred to
-  # the bootstrap-apply sites below, which only run when a rebuild actually
-  # applies bootstrap egress — a policy may intentionally deny all bootstrap
-  # hosts while relying on an already-prepared image, and that must still launch.
   BOOTSTRAP_ENDPOINTS="$(subtract_endpoint_list "${BOOTSTRAP_ENDPOINTS}" "${INJECTION_DENY_ENDPOINTS}")"
 fi
 EGRESS_HELPER="${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
@@ -8518,9 +8512,8 @@ ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(targ
 if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
   ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:443")"
 fi
-# A1: operator [network].deny_endpoints tighten the allowlist. Subtract last so
-# deny wins over every allow source (providers, brokers, credentials, injection
-# extras). This only removes endpoints; it never changes NETWORK_POLICY.
+# A1: subtract deny_endpoints last so deny wins over every allow source; this
+# only removes endpoints and never changes NETWORK_POLICY.
 if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
   ALLOW_ENDPOINTS="$(subtract_endpoint_list "${ALLOW_ENDPOINTS}" "${INJECTION_DENY_ENDPOINTS}")"
   if [[ -z "${ALLOW_ENDPOINTS}" ]] && [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then

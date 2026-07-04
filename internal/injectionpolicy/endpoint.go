@@ -12,14 +12,11 @@ import (
 )
 
 // The patterns below mirror scripts/colima-egress-allowlist.sh's
-// validate_endpoint (lines ~191-226) so every injection-policy engine
-// (internal/authpolicy validate/show, internal/authresolve, and
-// internal/injection render) accepts the same egress-endpoint grammar the
-// enforcement helper accepts — with one deliberate tightening: a bracketed host
-// must parse as a real IPv6 literal (below), which the helper's char-set-only
-// check does not verify. Since all operator endpoints pass through this
-// validator before reaching the helper, that keeps a malformed bracketed
-// literal from ever reaching `ip6tables`.
+// validate_endpoint so every injection-policy engine (authpolicy validate/show,
+// authresolve, and injection render) accepts the same grammar the helper does —
+// with one tightening: an IP-shaped host (bracketed, or bare dotted-numeric)
+// must parse as a real IP (below). All operator endpoints pass this validator
+// before reaching the helper, so a malformed literal never reaches iptables.
 var (
 	ipv6EndpointPattern = regexp.MustCompile(`^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$`)
 	hostEndpointPattern = regexp.MustCompile(`^([^:]+):([0-9]{1,5})$`)
@@ -49,11 +46,8 @@ func ValidateEgressEndpoint(endpoint, label string) error {
 		return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
 	}
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		// A bracketed host must be a real IPv6 literal: parse it and reject an
-		// IPv4-in-brackets ([1.2.3.4]) or garbage ([::::]). The enforcement
-		// helper passes bracketed hosts straight to `ip6tables -d`, which
-		// requires a valid IPv6 address, so validating the literal here keeps
-		// policy-acceptance fail-closed rather than failing mid-launch.
+		// A bracketed host must be a real IPv6 literal (the helper passes it to
+		// ip6tables -d): reject IPv4-in-brackets and garbage here, fail-closed.
 		ipv6Host := host[1 : len(host)-1]
 		if ip := net.ParseIP(ipv6Host); ip == nil || ip.To4() != nil {
 			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
@@ -69,8 +63,7 @@ func ValidateEgressEndpoint(endpoint, label string) error {
 			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
 		}
 		// A dotted-numeric host is an attempted IPv4 literal (the helper treats
-		// it as an address); require every octet to be a real 0-255 value so
-		// 999.999.999.999 fails at policy acceptance, not mid-launch.
+		// it as an address); require it to be a real IPv4 (rejects 999.999...).
 		if ipv4ShapedPattern.MatchString(host) && net.ParseIP(host) == nil {
 			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
 		}

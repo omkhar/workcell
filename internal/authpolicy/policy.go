@@ -181,12 +181,10 @@ func validatePolicyDocuments(policy map[string]any) error {
 	return validateAllowedKeys(documents, DocumentKeySet, "documents")
 }
 
-// validatePolicyNetwork fails closed on an invalid [network] table so
-// `workcell policy validate` rejects exactly what launch rejects: only
-// allow_endpoints/deny_endpoints are accepted (a mode-shaped key such as
-// network_policy is rejected as unsupported), and every endpoint must match the
-// enforcement-helper grammar. This is the acceptance-time counterpart to the
-// render-time check in internal/injection.renderNetwork.
+// validatePolicyNetwork fails closed on an invalid [network] so `workcell policy
+// validate` rejects exactly what launch rejects: only allow_endpoints/
+// deny_endpoints are accepted (network_policy etc. rejected) and every endpoint
+// must match the shared grammar. Acceptance-time counterpart to renderNetwork.
 func validatePolicyNetwork(policy map[string]any) error {
 	raw, ok := policy["network"]
 	if !ok || raw == nil {
