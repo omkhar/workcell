@@ -38,8 +38,7 @@ policy content.
 - `EXTRA_ENDPOINTS` from the profile
 - `snapshot.debian.org:443` for ephemeral-container package refresh
 
-The combined list is de-duplicated, then every endpoint in
-`[network].deny_endpoints` is subtracted (deny wins).
+The combined list is de-duplicated, then `[network].deny_endpoints` is subtracted.
 
 ## Operator `[network]` surface
 
@@ -54,9 +53,11 @@ deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlis
 
 - `allow_endpoints` are unioned into the computed allowlist (they extend, never
   replace the reviewed provider/credential endpoints).
-- `deny_endpoints` are subtracted after every allow source is combined. Deny
-  wins — denying an endpoint a provider needs removes it (an intentional
-  tightening, not a bug).
+- `deny_endpoints` are subtracted by endpoint entry after every allow source, so
+  a denied `host:port` is removed even when a provider needs it. Enforcement is
+  IP-level, so this drops the entry, not the address: a denied host sharing an IP
+  with an allowed endpoint (e.g. a shared CDN) can still be reachable at the IP
+  layer — to fully block a host, also drop allow_endpoints that resolve to it.
 - Each endpoint must be `host:port` or `[ipv6]:port` (port 1-65535, host
   `^[A-Za-z0-9.-]+$`, no leading dot or `..`, IP-shaped hosts must be real IPs),
   validated with the same grammar `scripts/colima-egress-allowlist.sh` applies.
