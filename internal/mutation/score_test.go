@@ -30,7 +30,7 @@ func TestResultScore(t *testing.T) {
 }
 
 func TestCheckScorePassesAtBaseline(t *testing.T) {
-	err := CheckScore(Result{Killed: 14, Total: 14}, ScorePolicy{Version: 1, BaselineScore: 100})
+	err := CheckScore(Result{Killed: 14, Total: 14}, ScorePolicy{Version: 1, BaselineScore: 100, ExpectedMutants: 14})
 	if err != nil {
 		t.Fatalf("expected pass at baseline, got: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestCheckScorePassesAtBaseline(t *testing.T) {
 func TestCheckScoreTripsOnSurvivor(t *testing.T) {
 	err := CheckScore(
 		Result{Killed: 13, Total: 14, Survivors: []string{"go/injection/example"}},
-		ScorePolicy{Version: 1, BaselineScore: 100},
+		ScorePolicy{Version: 1, BaselineScore: 100, ExpectedMutants: 14},
 	)
 	if err == nil {
 		t.Fatal("expected the gate to trip on a surviving mutant, got nil")
@@ -52,7 +52,7 @@ func TestCheckScoreTripsOnSurvivor(t *testing.T) {
 }
 
 func TestCheckScoreRejectsEmptyRun(t *testing.T) {
-	if err := CheckScore(Result{}, ScorePolicy{Version: 1, BaselineScore: 100}); err == nil {
+	if err := CheckScore(Result{}, ScorePolicy{Version: 1, BaselineScore: 100, ExpectedMutants: 14}); err == nil {
 		t.Fatal("expected error when no mutants were evaluated")
 	}
 }
@@ -61,9 +61,19 @@ func TestCheckScoreRejectsEmptyRun(t *testing.T) {
 // where a mutant errored (killed+survivors < total) must not be scored, even
 // though killed/total alone would look like a passing 13/13.
 func TestCheckScoreRejectsIncompleteRun(t *testing.T) {
-	err := CheckScore(Result{Killed: 13, Total: 14}, ScorePolicy{Version: 1, BaselineScore: 100})
+	err := CheckScore(Result{Killed: 13, Total: 14}, ScorePolicy{Version: 1, BaselineScore: 100, ExpectedMutants: 14})
 	if err == nil || !strings.Contains(err.Error(), "incomplete mutation run") {
 		t.Fatalf("expected incomplete-run error, got: %v", err)
+	}
+}
+
+// TestCheckScoreDetectsShrunkMutantSet proves a percentage baseline cannot be
+// met by removing a mutant: 13/13 killed is still 100%, but the reviewed set is
+// 14, so the gate must trip.
+func TestCheckScoreDetectsShrunkMutantSet(t *testing.T) {
+	err := CheckScore(Result{Killed: 13, Total: 13}, ScorePolicy{Version: 1, BaselineScore: 100, ExpectedMutants: 14})
+	if err == nil || !strings.Contains(err.Error(), "mutant set changed") {
+		t.Fatalf("expected mutant-set-changed error, got: %v", err)
 	}
 }
 
@@ -77,7 +87,7 @@ func TestLoadScorePolicy(t *testing.T) {
 		return p
 	}
 
-	valid := write("valid.json", `{"version":1,"baseline_score":100.0}`)
+	valid := write("valid.json", `{"version":1,"baseline_score":100.0,"expected_mutants":14}`)
 	policy, err := LoadScorePolicy(valid)
 	if err != nil {
 		t.Fatalf("valid policy: %v", err)
@@ -86,12 +96,12 @@ func TestLoadScorePolicy(t *testing.T) {
 		t.Fatalf("baseline = %v, want 100", policy.BaselineScore)
 	}
 
-	badVersion := write("badver.json", `{"version":2,"baseline_score":100}`)
+	badVersion := write("badver.json", `{"version":2,"baseline_score":100,"expected_mutants":14}`)
 	if _, err := LoadScorePolicy(badVersion); err == nil || !strings.Contains(err.Error(), "version 1") {
 		t.Fatalf("expected version error, got: %v", err)
 	}
 
-	outOfRange := write("range.json", `{"version":1,"baseline_score":150}`)
+	outOfRange := write("range.json", `{"version":1,"baseline_score":150,"expected_mutants":14}`)
 	if _, err := LoadScorePolicy(outOfRange); err == nil || !strings.Contains(err.Error(), "between 0 and 100") {
 		t.Fatalf("expected range error, got: %v", err)
 	}
@@ -105,6 +115,11 @@ func TestLoadScorePolicy(t *testing.T) {
 	missing := write("missing.json", `{"version":1}`)
 	if _, err := LoadScorePolicy(missing); err == nil || !strings.Contains(err.Error(), "baseline_score") {
 		t.Fatalf("expected missing-baseline error, got: %v", err)
+	}
+
+	missingCount := write("missingcount.json", `{"version":1,"baseline_score":100}`)
+	if _, err := LoadScorePolicy(missingCount); err == nil || !strings.Contains(err.Error(), "expected_mutants") {
+		t.Fatalf("expected missing-expected_mutants error, got: %v", err)
 	}
 
 	// Two top-level objects must not silently gate on the first (stale) one.
