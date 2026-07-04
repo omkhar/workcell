@@ -171,6 +171,15 @@ func TestOutputLinePrefixEmitterAnchor(t *testing.T) {
 	if outputLinePrefixEmitted([]string{`fmt.Sprintf("current_assurance=%s", s)`}, "assurance=") {
 		t.Fatal("current_assurance= must not satisfy assurance=")
 	}
+	// shellproto fallback: a real Field{Key: "..."} in a shellproto file
+	// satisfies the prefix; a bare quoted key (e.g. an error-message string)
+	// does not.
+	if !outputLinePrefixEmitted([]string{`import "…/shellproto"` + "\n" + `w.WriteFields(shellproto.Field{Key: "publish_pr_url", Value: u})`}, "publish_pr_url=") {
+		t.Fatal("shellproto Field{Key: \"publish_pr_url\"} should satisfy publish_pr_url=")
+	}
+	if outputLinePrefixEmitted([]string{`import "…/shellproto"` + "\n" + `missing := "publish_pr_url"`}, "publish_pr_url=") {
+		t.Fatal("a bare quoted key in a shellproto file must not satisfy publish_pr_url=")
+	}
 }
 
 // TestExcludeNonEmitterFilesDropsSelfAndTests pins the corpus exclusions

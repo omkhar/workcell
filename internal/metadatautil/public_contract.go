@@ -314,9 +314,15 @@ func outputLinePrefixEmitted(sources []string, prefix string) bool {
 		}
 	}
 	if key, ok := strings.CutSuffix(prefix, "="); ok {
-		quotedKey := `"` + key + `"`
+		// A shellproto emitter builds "key=value\n" from a Field literal
+		// `shellproto.Field{Key: "key", …}` rather than a "key=" string
+		// literal. Anchor to that construction (a `Key: "key"` in a
+		// shellproto-importing file) rather than any occurrence of the bare
+		// quoted key, so an unrelated `missing := "workspace"` error string
+		// does not count as an emitter.
+		fieldKey := regexp.MustCompile(`Key:\s*"` + regexp.QuoteMeta(key) + `"`)
 		for _, source := range sources {
-			if strings.Contains(source, "shellproto") && strings.Contains(source, quotedKey) {
+			if strings.Contains(source, "shellproto") && fieldKey.MatchString(source) {
 				return true
 			}
 		}
