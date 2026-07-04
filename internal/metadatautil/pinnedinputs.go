@@ -115,6 +115,13 @@ func loadToolPins(path string) (toolPins, error) {
 	if err != nil {
 		return toolPins{}, err
 	}
+	return parseToolPins(text, path)
+}
+
+// parseToolPins parses the [tool_pins] table out of already-read TOML text and
+// requires every pin to be present. Split from loadToolPins so the parse path
+// (which handles attacker-influenceable policy text) can be fuzzed directly.
+func parseToolPins(text, path string) (toolPins, error) {
 	root, err := tomlsubset.Parse(text, path)
 	if err != nil {
 		return toolPins{}, err
