@@ -1,0 +1,65 @@
+name: Fuzz
+
+# Scheduled and on-demand Go fuzzing lane. The fuzz targets and their seed
+# corpora already run as regression tests on every PR via the normal `go test`
+# lanes; this workflow spends an extended, time-bounded budget mutating those
+# seeds to hunt for parser panics without adding a heavy harness to the PR path.
+# A crash writes a testdata/fuzz/<Target>/<hash> reproducer and fails the lane;
+# commit the reproducer, fix the parser, and re-run (see docs/fuzzing.md).
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+env:
+  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+  WORKCELL_BUILDX_VERSION: v0.35.0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Go fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
+
+      # Run the fuzz targets inside the validator image so they use the reviewed
+      # pinned Go toolchain rather than the runner's ambient Go.
+      - name: Run Go fuzz targets
+        env:
+          WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
+          WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: validator-main
+        run: ./scripts/ci/job-fuzz.sh
+
+      # A crash writes the failing input under <pkg>/testdata/fuzz/<Target>/<hash>
+      # in the bind-mounted workspace. Persist it before the runner workspace is
+      # discarded so triage has the exact reproducer to commit (see docs/fuzzing.md).
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-reproducers
+          path: internal/**/testdata/fuzz/**
+          if-no-files-found: ignore
+          retention-days: 14

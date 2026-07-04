@@ -554,8 +554,19 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 }
 
 func ValidateControlPlaneManifest(manifestPath string) error {
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
+	}
+	return validateControlPlaneManifestBytes(data)
+}
+
+// validateControlPlaneManifestBytes validates already-read control-plane
+// manifest JSON. Split from ValidateControlPlaneManifest so the parse and
+// validation path can be fuzzed directly on arbitrary bytes.
+func validateControlPlaneManifestBytes(data []byte) error {
 	var manifest map[string]any
-	if err := readJSONFile(manifestPath, &manifest); err != nil {
+	if err := json.Unmarshal(data, &manifest); err != nil {
 		return err
 	}
 	schemaVersion, ok := manifest["schema_version"].(float64)
