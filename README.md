@@ -484,6 +484,7 @@ See [docs/provenance.md](docs/provenance.md) and
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
 | Security reporting | [SECURITY.md](SECURITY.md) |
 | Stability and exit-code contract | [docs/stability-contract.md](docs/stability-contract.md) |
+| Standards watchlist | [docs/standards-watchlist.md](docs/standards-watchlist.md) |
 
 ## Repository layout
 
