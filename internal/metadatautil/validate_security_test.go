@@ -72,6 +72,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"policy/github-hosted-controls.toml",
 		"policy/provider-bumps.toml",
 		"policy/allowed-actions.toml",
+		"policy/tool-pins.toml",
 		"runtime/container/Dockerfile",
 		"runtime/container/providers/package.json",
 		"runtime/container/providers/package-lock.json",
@@ -514,6 +515,48 @@ func TestCheckPinnedInputsRejectsOffAllowlistAction(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "allowlist") || !strings.Contains(err.Error(), "evilorg/evil-action") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want off-allowlist rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsToolPinPolicyDrift(t *testing.T) {
+	t.Parallel()
+
+	// Cover a plain version pin, an image pin (special chars), and a
+	// regex-extracted pin. The mutation is derived from whatever value the
+	// fixture holds, so a routine pin bump does not require editing this test.
+	for _, key := range []string{"cosign", "buildkit", "zizmor_sha256"} {
+		key := key
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			cfg := writePinnedInputsFixture(t)
+			toolPinsPath := filepath.Join(filepath.Dir(cfg.ProviderBumpPolicyPath), "tool-pins.toml")
+			pattern := regexp.MustCompile(`(?m)^(` + regexp.QuoteMeta(key) + ` = )"[^"]*"`)
+			rewriteFile(t, toolPinsPath, func(content string) string {
+				updated := pattern.ReplaceAllString(content, `${1}"policy-drift-sentinel"`)
+				if updated == content {
+					t.Fatalf("fixture policy/tool-pins.toml has no %q pin to mutate", key)
+				}
+				return updated
+			})
+			err := metadatautil.CheckPinnedInputs(cfg)
+			if err == nil || !strings.Contains(err.Error(), "does not match policy/tool-pins.toml") {
+				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want tool-pin policy drift rejection", err)
+			}
+		})
+	}
+}
+
+func TestCheckPinnedInputsRejectsUnknownToolPinKey(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	toolPinsPath := filepath.Join(filepath.Dir(cfg.ProviderBumpPolicyPath), "tool-pins.toml")
+	rewriteFile(t, toolPinsPath, func(content string) string {
+		return strings.Replace(content, "[tool_pins]", "[tool_pins]\nbogus = \"x\"", 1)
+	})
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want unknown-key rejection", err)
 	}
 }
 

@@ -1,0 +1,18 @@
+# Reviewed chokepoint for the CI/release tool pins. The pin values also live
+# inline in the workflows; `check-pinned-inputs` asserts every workflow copy
+# equals the value here, and `scripts/update-upstream-pins.sh` rewrites the
+# workflows and this file together on a bump. This is the human-reviewed record
+# of the intended pins, kept in lockstep with the workflows — not a single
+# source that replaces the inline values. Values are stored exactly as they
+# appear in the workflow env (actionlint/zizmor versions have no leading `v`).
+
+[tool_pins]
+cosign = "v3.1.1"
+buildx = "v0.35.0"
+buildkit = "moby/buildkit:buildx-stable-1@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f"
+qemu = "tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
+syft = "v1.46.0"
+actionlint_version = "1.7.12"
+actionlint_sha256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+zizmor_version = "1.26.1"
+zizmor_sha256 = "8556289a64e7aaf2400cd516f61a471aa91c5902cc56ad96a82fd12f90c2ef73"
