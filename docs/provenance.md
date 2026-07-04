@@ -151,10 +151,10 @@ configuration, stale tracking refs, and replacement refs as trust shortcuts.
 
 ## SLSA v1.0 Build-track gap analysis
 
-SLSA v1.0 splits its requirements into tracks. This section assesses the release
-build against the **Build track** (levels L1-L3). Source-integrity controls such
-as two-person review live in the separate **Source track** and are covered as a
-non-goal below.
+SLSA v1.0 defines only the **Build track** (levels L1-L3); source-integrity
+controls such as two-person review are not part of SLSA v1.0 (a Source track is
+expected in a later version). This section assesses the release build against the
+Build track and notes source-integrity posture separately as out of scope.
 
 Reproducibility and hermeticity are *not* Build L1-L3 requirements in v1.0; they
 are additive properties. Workcell's reproducibility work is credit beyond the
@@ -167,7 +167,7 @@ L3.**
 
 | Requirement | Status | Mechanism |
 |---|---|---|
-| Provenance describes the platform, process, and top-level inputs | Met | BuildKit SLSA provenance (`provenance: mode=max`) on both image builds; bare `actions/attest` SLSA build-provenance predicates for the image and every release blob; deterministic `workcell-build-inputs.json`, `workcell-control-plane.json`, and `workcell-builder-environment.json` manifests |
+| Provenance describes the platform, process, and top-level inputs | Met | BuildKit SLSA provenance (`provenance: mode=max`) on both image builds; bare `actions/attest` SLSA build-provenance predicates for the image digest and seven release blobs (source bundle, Homebrew formula, image-digest file, the deterministic `workcell-build-inputs.json` / `workcell-control-plane.json` / `workcell-builder-environment.json` manifests, and `SHA256SUMS`); the source and image SBOMs additionally carry SBOM attestations. Cosign signs these plus the `.sigstore.json`-bundled assets |
 | Consistent build process | Met | one tag-triggered workflow builds a SHA-pinned Dockerfile with digest-pinned base images and toolchains |
 | Provenance distributed to consumers | Met | Sigstore bundles and SLSA attestations are published as release assets and pushed to the registry; verification is documented above |
 
@@ -204,15 +204,17 @@ stage is hermetic (vendored crates, `cargo build --locked --offline`).
 Hermeticity is not a Build L1-L3 requirement; closing it (vendoring the remaining
 inputs and building with the network disabled) is optional hardening.
 
-### Source-track note (two-person review)
+### Source-integrity note (two-person review, outside SLSA v1.0)
 
-Two-person review is a Source-track control and is a structural non-goal in
-single-maintainer mode. The release path nonetheless raises source-integrity
+Two-person review is a source-integrity control outside SLSA v1.0's Build track
+(SLSA v1.0 has no Source track; one is expected in a later version). It is a
+structural non-goal in single-maintainer mode. The release path nonetheless
+raises source-integrity
 assurance through signed annotated release tags (verified via GitHub's API and
 locally), a tag-ancestry check requiring the tag commit to be on `main`, a
 "main checks green" gate before publish, signed publish commits verified across
 the branch range, and a gated `release` deployment environment. These do not
-satisfy, and are not claimed to satisfy, Source-track two-person review.
+satisfy, and are not claimed to satisfy, two-person review.
 
 ### Caveats
 
