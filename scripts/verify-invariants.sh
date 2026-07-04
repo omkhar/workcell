@@ -3163,6 +3163,7 @@ fi
 for dispatch_check in \
   "${ROOT_DIR}/.github/workflows/ci.yml:./scripts/ci/job-validate.sh --profile pr-parity" \
   "${ROOT_DIR}/.github/workflows/docs.yml:./scripts/ci/job-docs.sh" \
+  "${ROOT_DIR}/.github/workflows/mutation.yml:./scripts/ci/job-mutation.sh" \
   "${ROOT_DIR}/scripts/pre-merge.sh:scripts/ci/job-validate.sh" \
   "${ROOT_DIR}/scripts/pre-merge.sh:scripts/ci/job-docs.sh"; do
   dispatch_file="${dispatch_check%%:*}"
@@ -3176,6 +3177,7 @@ done
 for caller in \
   "${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh" \
   "${ROOT_DIR}/scripts/ci/run-docs-in-validator.sh" \
+  "${ROOT_DIR}/scripts/ci/run-mutation-in-validator.sh" \
   "${ROOT_DIR}/scripts/ci/job-validate.sh" \
   "${ROOT_DIR}/.github/workflows/release.yml"; do
   for required in \
