@@ -24,7 +24,7 @@ codes = ["0", "1", "2", "3", "124", "126", "127", "128"]
 # Stable key=value / prefixed output lines consumed by tests, CI, or other
 # tooling. See docs/stability-contract.md "Stable machine-readable output".
 [output_lines]
-prefixes = ["host_os=", "host_arch=", "support_matrix_status=", "provider_bootstrap_", "target_kind=", "target_provider=", "workspace=", "assurance=", "publish_pr_url=", "mutation score:", "surviving mutants:", "record_digest=", "prev_digest=", "egress_enforcement="]
+prefixes = ["host_os=", "host_arch=", "support_matrix_status=", "provider_bootstrap_", "target_kind=", "target_provider=", "workspace=", "assurance=", "publish_pr_url=", "mutation score:", "surviving mutants:", "record_digest=", "prev_digest="]
 
 # The json tags of internal/host/sessions/sessions.go's SessionRecord and
 # SessionExport structs.
