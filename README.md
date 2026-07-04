@@ -171,9 +171,9 @@ options.
   session (see the [5-minute path](#5-minute-path) and
   [provider quickstarts](docs/provider-quickstarts.md)).
 - `--target colima|docker-desktop|aws-ec2-ssm|gcp-vm` — select the runtime
-  backend ([mode map](docs/mode-map.md)).
+  backend ([safe-path expectations](docs/safe-path-expectations.md)).
 - `--prepare` and `--prepare-only` — pre-build the runtime image before, or
-  instead of, launching ([mode map](docs/mode-map.md)).
+  instead of, launching ([safe-path expectations](docs/safe-path-expectations.md)).
 - `--doctor`, `--inspect`, and `--auth-status` — inspect host readiness, a
   resolved launch plan, and auth posture
   ([onboarding and auth](docs/onboarding-and-auth.md)).
