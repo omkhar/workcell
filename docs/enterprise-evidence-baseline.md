@@ -13,7 +13,7 @@ support claims.
 
 | Area | Current source |
 |---|---|
-| Architecture and data flow | [workcell-system-design.md](workcell-system-design.md), [invariants.md](invariants.md), [adapter-control-planes.md](adapter-control-planes.md) |
+| Architecture and data flow | [workcell-system-design.md](workcell-system-design.md) (with boundary-stack, policy-to-injection, and control-plane masking diagrams), [invariants.md](invariants.md), [adapter-control-planes.md](adapter-control-planes.md) |
 | Runtime and target boundaries | [remote-vm-contract.md](remote-vm-contract.md), [managed-workstation-contract.md](managed-workstation-contract.md), [host-expansion-readiness.md](host-expansion-readiness.md), [policy/host-support-matrix.tsv](../policy/host-support-matrix.tsv) |
 | Threat model and non-protections | [threat-model.md](threat-model.md), [invariants.md](invariants.md), [enterprise-rollout.md](enterprise-rollout.md) |
 | Validation evidence | [validation-scenarios.md](validation-scenarios.md), [requirements-validation.md](requirements-validation.md), [use-case-matrix.md](use-case-matrix.md) |
