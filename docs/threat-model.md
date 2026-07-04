@@ -59,6 +59,10 @@ published provenance story.
 For how these controls map to the OWASP Top 10 for Agentic Applications
 (2026), see [owasp-agentic-mapping.md](owasp-agentic-mapping.md).
 
+The Rust `unsafe` surface behind the exec/syscall interception boundary is
+inventoried, with its soundness invariants and a reviewer checklist, in
+[unsafe-code-audit-checklist.md](unsafe-code-audit-checklist.md).
+
 ## Residual risks
 
 - the full macOS boundary is still a local exercise, not a GitHub-hosted
