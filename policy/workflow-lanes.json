@@ -365,11 +365,11 @@
         "approved-heavy-ci"
       ],
       "profiles": [
-        "release-preflight"
+        "pr-parity"
       ],
-      "authority": "github-only",
+      "authority": "pr-parity",
       "local_mode": "none",
-      "github_only_reason": "scheduled heavy mutation-harness lane run in the validator image; the mutation-score gate already runs locally in the release-preflight validate profile"
+      "github_only_reason": "scheduled heavy mutation-harness lane run in the validator image; approved-heavy-ci PR runs are surfaced in pr-parity plans, and the mutation-score gate already runs locally in the release-preflight validate profile"
     },
     {
       "id": "pin-hygiene.yml/pinned-inputs",
