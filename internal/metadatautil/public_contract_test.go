@@ -182,6 +182,54 @@ func TestOutputLinePrefixEmitterAnchor(t *testing.T) {
 	}
 }
 
+// TestStripCommentsRemovesCommentProse pins that comment forms are dropped so
+// they cannot satisfy the emitter/exit-site scans, while real code survives.
+func TestStripCommentsRemovesCommentProse(t *testing.T) {
+	got := stripComments("os.Exit(2) // fallback exit 3 here\n/* exit 4 */\n# exit 5\n#!/bin/bash\n\tcode := \"${#a[@]}\"\n")
+	if !strings.Contains(got, "os.Exit(2)") {
+		t.Fatalf("stripComments dropped real code: %q", got)
+	}
+	for _, ghost := range []string{"exit 3", "exit 4", "exit 5"} {
+		if strings.Contains(got, ghost) {
+			t.Fatalf("stripComments left comment prose %q: %q", ghost, got)
+		}
+	}
+	if !strings.Contains(got, "#!/bin/bash") || !strings.Contains(got, "${#a[@]}") {
+		t.Fatalf("stripComments corrupted shebang or inline #: %q", got)
+	}
+}
+
+func TestCheckPublicContractRejectsTableMovedToScalar(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	// Move a real table (copies) into scalar_root_keys: the flattened union
+	// still equals the gate, but the table-specific check must fail. Two
+	// independent line edits (a comment separates them in the real policy).
+	original, err := os.ReadFile(filepath.Join(root, "policy", "public-contract.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := string(original)
+	for _, sub := range []struct{ from, to string }{
+		{`"credentials", "copies"]`, `"credentials"]`},
+		{`scalar_root_keys = ["version", "includes"]`, `scalar_root_keys = ["version", "includes", "copies"]`},
+	} {
+		if !strings.Contains(mutated, sub.from) {
+			t.Fatalf("mutation substring %q not found", sub.from)
+		}
+		mutated = strings.Replace(mutated, sub.from, sub.to, 1)
+	}
+	contractPath := filepath.Join(t.TempDir(), "public-contract.toml")
+	if err := os.WriteFile(contractPath, []byte(mutated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CheckPublicContract(root, contractPath); err == nil {
+		t.Fatal("CheckPublicContract() unexpectedly succeeded with a table moved into scalar_root_keys")
+	} else if !strings.Contains(err.Error(), "copies") {
+		t.Fatalf("CheckPublicContract() error = %v, want mention of copies", err)
+	}
+}
+
 // TestExcludeNonEmitterFilesDropsSelfAndTests pins the corpus exclusions
 // that keep the output-prefix scan honest: the validator's own source (whose
 // doc comments quote the contract prefixes) and _test.go fixtures must never

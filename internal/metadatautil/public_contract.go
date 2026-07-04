@@ -139,6 +139,33 @@ func requiredStringSliceTable(document map[string]any, contractPath, table, key 
 	return values, nil
 }
 
+// blockCommentPattern matches Go/Rust `/* … */` block comments.
+var blockCommentPattern = regexp.MustCompile(`(?s)/\*.*?\*/`)
+
+// stripComments removes comment prose from source so an explanatory comment
+// mentioning an exit form (`// … exit 2 …`) or a contract prefix cannot be
+// mistaken for a real emitter/exit site. It drops Go/Rust `/* */` and `//`
+// comments and shell full-line `#` comments (leaving inline `#` — e.g.
+// `${#arr[@]}` — and shebangs intact). It is a lexical approximation: a
+// string literal that itself contains `//` is truncated, which is harmless
+// because such strings never carry the exit constructs or quoted
+// format-string prefixes the scans look for.
+func stripComments(source string) string {
+	source = blockCommentPattern.ReplaceAllString(source, " ")
+	var b strings.Builder
+	for _, line := range strings.Split(source, "\n") {
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		if trimmed := strings.TrimLeft(line, " \t"); strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "#!") {
+			line = ""
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // checkExitCodes asserts that every documented exit code is emitted at an
 // actual exit site in exitCodeSourceFiles — an `os.Exit(N)`, a
 // cliexit.ExitCodeError{Code: N}, a `return N`, a shell `exit N`, or the
@@ -153,7 +180,7 @@ func checkExitCodes(rootDir, contractPath string, codes []string) error {
 		if err != nil {
 			return fmt.Errorf("%s exit_codes: %w", contractPath, err)
 		}
-		source.WriteString(text)
+		source.WriteString(stripComments(text))
 		source.WriteByte('\n')
 	}
 	combined := source.String()
@@ -257,7 +284,9 @@ func outputLineSearchCorpus(rootDir string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		sources = append(sources, text)
+		// Strip comments so a prefix mentioned only in a comment (rather than
+		// a real emitter string) cannot satisfy the check.
+		sources = append(sources, stripComments(text))
 	}
 	return sources, nil
 }
@@ -409,13 +438,68 @@ func checkInjectionTables(rootDir, contractPath string, tables, scalarRootKeys [
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}
 
+	// 1. The full root-key set (tables + scalars) must equal the authoritative
+	//    allowedRootPolicyKeys gate, so no accepted root key is dropped.
 	gateKeys, err := mapStringSetKeys(source, "allowedRootPolicyKeys", bundlePath)
 	if err != nil {
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}
-
 	contractKeys := append(append([]string{}, tables...), scalarRootKeys...)
-	return assertSetsEqual(contractPath, "injection_tables.tables + scalar_root_keys", "the allowedRootPolicyKeys gate in "+bundlePath, gateKeys, contractKeys)
+	if err := assertSetsEqual(contractPath, "injection_tables.tables + scalar_root_keys", "the allowedRootPolicyKeys gate in "+bundlePath, gateKeys, contractKeys); err != nil {
+		return err
+	}
+
+	// 2. Separately, [injection_tables].tables must equal the actual accepted
+	//    TABLE names — the `name != …` guard in documentToInjectionMap (single-
+	//    bracket tables) and the `tableName != …` guard in extractCopiesBlocks
+	//    (the one array-of-tables) — so moving a table into scalar_root_keys (or
+	//    vice versa) fails even though the flattened union would still match.
+	renderPolicyPath := filepath.Join(rootDir, "internal", "injection", "render_policy_load.go")
+	policySource, err := readText(renderPolicyPath)
+	if err != nil {
+		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
+	}
+	singleBracketTables, err := functionScopedMatches(policySource, "documentToInjectionMap", `name != "([a-zA-Z0-9_]+)"`, renderPolicyPath)
+	if err != nil {
+		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
+	}
+	arrayTables, err := functionScopedMatches(policySource, "extractCopiesBlocks", `tableName != "([a-zA-Z0-9_]+)"`, renderPolicyPath)
+	if err != nil {
+		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
+	}
+	codeTables := append(append([]string{}, singleBracketTables...), arrayTables...)
+	return assertSetsEqual(contractPath, "injection_tables.tables", "the accepted table names in "+renderPolicyPath, codeTables, tables)
+}
+
+// functionScopedMatches runs pattern over the body of the top-level function
+// funcName in source (from its `func funcName(` line up to the next line that
+// is solely `}`), returning each match's first capture group with duplicates
+// removed.
+func functionScopedMatches(source, funcName, pattern, path string) ([]string, error) {
+	marker := "func " + funcName + "("
+	start := strings.Index(source, marker)
+	if start == -1 {
+		return nil, fmt.Errorf("%s: function %s not found", path, funcName)
+	}
+	rest := source[start:]
+	end := strings.Index(rest, "\n}\n")
+	if end == -1 {
+		return nil, fmt.Errorf("%s: function %s has no closing brace", path, funcName)
+	}
+	body := rest[:end]
+
+	re := regexp.MustCompile(pattern)
+	matches := re.FindAllStringSubmatch(body, -1)
+	seen := map[string]struct{}{}
+	names := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if _, ok := seen[match[1]]; ok {
+			continue
+		}
+		seen[match[1]] = struct{}{}
+		names = append(names, match[1])
+	}
+	return names, nil
 }
 
 // mapStringSetKeys extracts the string keys of a `varName = map[string]struct{}{
