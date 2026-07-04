@@ -168,6 +168,18 @@ func TestSubtractEndpointListRemovesDeniedEndpoints(t *testing.T) {
 			want:  "github.com:443",
 		},
 		{
+			name:  "leading-zero port deny matches canonical port",
+			allow: "chatgpt.com:443 github.com:443",
+			deny:  "chatgpt.com:0443",
+			want:  "github.com:443",
+		},
+		{
+			name:  "compressed IPv6 literal deny matches expanded form",
+			allow: "[2001:db8::1]:443 github.com:443",
+			deny:  "[2001:0db8:0000::1]:443",
+			want:  "github.com:443",
+		},
+		{
 			name:  "empty deny leaves allow untouched",
 			allow: "github.com:443 api.github.com:443",
 			deny:  "",

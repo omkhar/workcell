@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -150,22 +151,42 @@ func DedupeEndpointList(raw string) string {
 // would otherwise require it.  The function only ever REMOVES endpoints; it
 // can never add one, so it cannot weaken the allowlist.
 func SubtractEndpointList(allow, deny string) string {
-	// DNS hostnames and IPv6 literal hex are case-insensitive and the port is
-	// numeric, so compare on a lower-cased key. Otherwise a deny like
-	// CHATGPT.COM:443 would fail to remove the provider's chatgpt.com:443 and
-	// silently leave a denied endpoint reachable — a deny-wins bypass.
+	// Compare on a canonical key so any deny that is semantically equal to a
+	// computed endpoint wins, regardless of surface form (host case, IPv6
+	// literal spelling, or a port with leading zeros). Otherwise a deny like
+	// CHATGPT.COM:443 or chatgpt.com:0443 would fail to remove the provider's
+	// chatgpt.com:443 and silently leave a denied endpoint reachable.
 	denied := make(map[string]struct{})
 	for _, entry := range strings.Fields(deny) {
-		denied[strings.ToLower(entry)] = struct{}{}
+		denied[canonicalEndpoint(entry)] = struct{}{}
 	}
 	kept := make([]string, 0)
 	for _, entry := range strings.Fields(allow) {
-		if _, ok := denied[strings.ToLower(entry)]; ok {
+		if _, ok := denied[canonicalEndpoint(entry)]; ok {
 			continue
 		}
 		kept = append(kept, entry)
 	}
 	return strings.Join(kept, " ")
+}
+
+// canonicalEndpoint returns a normalized host:port key for equality comparison:
+// the host is lower-cased and, when it is an IP literal, rendered in its
+// canonical form; the port has any leading zeros stripped. Inputs that are not
+// valid host:port fall back to a lower-cased copy so comparison stays total.
+func canonicalEndpoint(endpoint string) string {
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return strings.ToLower(endpoint)
+	}
+	host = strings.ToLower(host)
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	if n, err := strconv.Atoi(port); err == nil {
+		port = strconv.Itoa(n)
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func ResolveEndpoints(raw string) ([]string, error) {
