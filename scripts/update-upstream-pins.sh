@@ -46,6 +46,7 @@ RUST_TOOLCHAIN_PATH="${ROOT_DIR}/runtime/container/rust/rust-toolchain.toml"
 CARGO_MANIFEST_PATH="${ROOT_DIR}/runtime/container/rust/Cargo.toml"
 CI_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/ci.yml"
 DOCS_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/docs.yml"
+MUTATION_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/mutation.yml"
 VALIDATOR_IMAGE_SCRIPT_PATH="${ROOT_DIR}/scripts/ci/build-validator-image.sh"
 PIN_HYGIENE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/pin-hygiene.yml"
 RELEASE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/release.yml"
@@ -583,6 +584,8 @@ current_buildkit_image="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_BUI
 current_buildx_version="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
 current_docs_buildkit_image="$(extract_yaml_scalar "${DOCS_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
 current_docs_buildx_version="$(extract_yaml_scalar "${DOCS_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
+current_mutation_buildkit_image="$(extract_yaml_scalar "${MUTATION_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
+current_mutation_buildx_version="$(extract_yaml_scalar "${MUTATION_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
 current_validator_image_buildkit_fallback="$(awk -v prefix="BUILDKIT_IMAGE=\"\${WORKCELL_BUILDKIT_IMAGE:-" '
   index($0, prefix) == 1 {
     value = substr($0, length(prefix) + 1)
@@ -659,6 +662,8 @@ for current_target_pair in \
   "${current_buildx_version}|${target_buildx_version}" \
   "${current_docs_buildkit_image}|${target_buildkit_image}" \
   "${current_docs_buildx_version}|${target_buildx_version}" \
+  "${current_mutation_buildkit_image}|${target_buildkit_image}" \
+  "${current_mutation_buildx_version}|${target_buildx_version}" \
   "${current_validator_image_buildkit_fallback}|${target_buildkit_image}" \
   "${current_cosign_version}|${target_cosign_version}" \
   "${current_upstream_refresh_cosign_version}|${target_cosign_version}" \
@@ -769,6 +774,8 @@ replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_QEMU_IMAGE:' "  WORKC
 
 replace_line_with_prefix "${DOCS_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  WORKCELL_BUILDKIT_IMAGE: ${target_buildkit_image}"
 replace_line_with_prefix "${DOCS_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
+replace_line_with_prefix "${MUTATION_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  WORKCELL_BUILDKIT_IMAGE: ${target_buildkit_image}"
+replace_line_with_prefix "${MUTATION_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
 replace_line_with_prefix "${VALIDATOR_IMAGE_SCRIPT_PATH}" "BUILDKIT_IMAGE=\"\${WORKCELL_BUILDKIT_IMAGE:-" "BUILDKIT_IMAGE=\"\${WORKCELL_BUILDKIT_IMAGE:-${target_buildkit_image}}\""
 
 replace_line_with_prefix "${PIN_HYGIENE_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"
