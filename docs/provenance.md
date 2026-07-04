@@ -107,7 +107,8 @@ the same image with GitHub attestation tooling:
 
 ```bash
 gh attestation verify oci://ghcr.io/omkhar/workcell@sha256:DIGEST \
-  --repo omkhar/workcell
+  --repo omkhar/workcell \
+  --signer-workflow omkhar/workcell/.github/workflows/release.yml
 ```
 
 ## Verifying release assets
@@ -134,7 +135,8 @@ If you want GitHub's attestation view for the source bundle and the canonical
 repo published GitHub attestations for that release:
 
 ```bash
-gh attestation verify workcell-VERSION.tar.gz --repo omkhar/workcell
+gh attestation verify workcell-VERSION.tar.gz --repo omkhar/workcell \
+  --signer-workflow omkhar/workcell/.github/workflows/release.yml
 ```
 
 ## Host-side PR publication
@@ -169,7 +171,7 @@ L3.**
 |---|---|---|
 | Provenance describes the platform, process, and top-level inputs | Met | BuildKit SLSA provenance (`provenance: mode=max`) on both image builds; bare `actions/attest` SLSA build-provenance predicates for the image digest and seven release blobs (source bundle, Homebrew formula, image-digest file, the deterministic `workcell-build-inputs.json` / `workcell-control-plane.json` / `workcell-builder-environment.json` manifests, and `SHA256SUMS`); the source and image SBOMs additionally carry SBOM attestations. Cosign signs these plus the `.sigstore.json`-bundled assets |
 | Consistent build process | Met | one tag-triggered workflow builds a SHA-pinned Dockerfile with digest-pinned base images and toolchains |
-| Provenance distributed to consumers | Met | Sigstore bundles and SLSA attestations are published as release assets and pushed to the registry; verification is documented above |
+| Provenance distributed to consumers | Met | Cosign `.sigstore.json` bundles are published as downloadable release assets; the image SLSA/SBOM attestations are pushed to the registry (OCI), and the file attestations are held in GitHub's attestation store and retrieved with `gh attestation verify` (not as downloadable assets); verification is documented above |
 
 ### Build L2 — hosted platform, authentic provenance
 
@@ -177,7 +179,7 @@ L3.**
 |---|---|---|
 | Build runs on hosted, dedicated infrastructure | Met | all build and publish jobs run on GitHub-hosted runners; the release path uses no self-hosted runners |
 | Provenance tied to the platform by signature | Met | keyless cosign signing and GitHub attestations, both via GitHub OIDC and Fulcio short-lived certificates (no long-lived signing key) |
-| Downstream verification validates authenticity | Met | documented verifier commands pin the certificate identity to the release workflow at a tag ref and the GitHub OIDC issuer |
+| Downstream verification validates authenticity | Met | the documented cosign commands pin the certificate identity to the release workflow at a tag ref and the GitHub OIDC issuer; the `gh attestation verify` examples pin the signer workflow with `--signer-workflow` |
 
 Build L2 is the highest level Workcell claims today.
 
@@ -197,10 +199,12 @@ lands, Workcell claims Build L2.
 ### Hermeticity
 
 The image build is **pinned, integrity-checked, reproducible, and
-network-dependent — not hermetic**. It performs live network fetches (Debian
-snapshot apt, `npm ci`, and provider-binary downloads), each pinned by digest or
-snapshot date and verified against a hardcoded checksum. Only the Rust compile
-stage is hermetic (vendored crates, `cargo build --locked --offline`).
+network-dependent — not hermetic**. It performs live network fetches: `apt`
+packages from a pinned Debian snapshot (verified by apt's signed repository
+metadata, not a repo-hardcoded checksum), `npm ci`, and provider-binary
+downloads. The TLS-bootstrap `.deb`s and provider tarballs are additionally
+verified against repo-hardcoded `sha256sum` values. Only the Rust compile stage
+is hermetic (vendored crates, `cargo build --locked --offline`).
 Hermeticity is not a Build L1-L3 requirement; closing it (vendoring the remaining
 inputs and building with the network disabled) is optional hardening.
 
