@@ -8517,7 +8517,8 @@ fi
 # only removes endpoints and never changes NETWORK_POLICY.
 if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
   ALLOW_ENDPOINTS="$(subtract_endpoint_list "${ALLOW_ENDPOINTS}" "${INJECTION_DENY_ENDPOINTS}")"
-  if [[ -z "${ALLOW_ENDPOINTS}" ]] && [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+  # Fatal only for an actual session launch; --prepare-only needs no session egress.
+  if [[ -z "${ALLOW_ENDPOINTS}" ]] && [[ "${PREPARE_ONLY}" -ne 1 ]] && [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
     fail_empty_egress_after_deny "session"
   fi
 fi

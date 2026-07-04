@@ -62,8 +62,7 @@ func ValidateEgressEndpoint(endpoint, label string) error {
 		if strings.Contains(host, "..") {
 			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
 		}
-		// A dotted-numeric host is an attempted IPv4 literal (the helper treats
-		// it as an address); require it to be a real IPv4 (rejects 999.999...).
+		// A dotted-numeric host is an attempted IPv4 literal; require a real IPv4.
 		if ipv4ShapedPattern.MatchString(host) && net.ParseIP(host) == nil {
 			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
 		}
