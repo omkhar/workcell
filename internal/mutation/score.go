@@ -4,6 +4,7 @@
 package mutation
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,16 +22,32 @@ type ScorePolicy struct {
 	BaselineScore float64 `json:"baseline_score"`
 }
 
-// LoadScorePolicy reads and validates a version-1 mutation-score policy.
+// LoadScorePolicy reads and validates a version-1 mutation-score policy. It
+// rejects unknown fields and a missing baseline_score so a typo (for example
+// `baseline-score`) or omission cannot silently leave the gate at an effective
+// 0% baseline that would let surviving mutants pass.
 func LoadScorePolicy(path string) (ScorePolicy, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return ScorePolicy{}, err
 	}
-	var policy ScorePolicy
-	if err := json.Unmarshal(content, &policy); err != nil {
+	// Pointers distinguish "field absent" from "field set to zero".
+	var raw struct {
+		Version       *int     `json:"version"`
+		BaselineScore *float64 `json:"baseline_score"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(content))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&raw); err != nil {
 		return ScorePolicy{}, fmt.Errorf("%s: %w", path, err)
 	}
+	if raw.Version == nil {
+		return ScorePolicy{}, fmt.Errorf("%s must set version", path)
+	}
+	if raw.BaselineScore == nil {
+		return ScorePolicy{}, fmt.Errorf("%s must set baseline_score", path)
+	}
+	policy := ScorePolicy{Version: *raw.Version, BaselineScore: *raw.BaselineScore}
 	if policy.Version != 1 {
 		return ScorePolicy{}, fmt.Errorf("%s must use version 1", path)
 	}

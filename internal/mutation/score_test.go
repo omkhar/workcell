@@ -95,4 +95,15 @@ func TestLoadScorePolicy(t *testing.T) {
 	if _, err := LoadScorePolicy(outOfRange); err == nil || !strings.Contains(err.Error(), "between 0 and 100") {
 		t.Fatalf("expected range error, got: %v", err)
 	}
+
+	// A typo in the key must not silently default the baseline to 0%.
+	typo := write("typo.json", `{"version":1,"baseline-score":100}`)
+	if _, err := LoadScorePolicy(typo); err == nil {
+		t.Fatal("expected error for unknown field baseline-score")
+	}
+
+	missing := write("missing.json", `{"version":1}`)
+	if _, err := LoadScorePolicy(missing); err == nil || !strings.Contains(err.Error(), "baseline_score") {
+		t.Fatalf("expected missing-baseline error, got: %v", err)
+	}
 }
