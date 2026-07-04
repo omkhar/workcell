@@ -18,9 +18,10 @@ path = "src/bin/workcell-launcher.rs"
 libc = "0.2.177"
 
 [lints.clippy]
-# A4: every `unsafe {}` block (and unsafe extern block) must carry a `// SAFETY:`
-# comment stating the invariant that makes it sound. This is a restriction lint
-# (allow by default), enabled here as the enforcement for the unsafe-code audit.
+# A4: every `unsafe {}` block must carry a `// SAFETY:` comment stating the
+# invariant that makes it sound. This is a restriction lint (allow by default),
+# enabled here as the enforcement for the unsafe-code audit. Note this lint does
+# NOT cover `unsafe extern` blocks; those are guarded in scripts/validate-repo.sh.
 undocumented_unsafe_blocks = "deny"
 
 [profile.release]

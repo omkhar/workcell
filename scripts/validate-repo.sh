@@ -386,6 +386,16 @@ fi
   cargo test --locked --offline
 )
 
+# A4: clippy::undocumented_unsafe_blocks enforces `// SAFETY:` on `unsafe {}`
+# blocks but NOT on `unsafe extern "C" {` blocks. Guard those explicitly so a new
+# undocumented FFI declaration also fails CI.
+while IFS=: read -r extern_file extern_line _; do
+  if ! sed -n "$((extern_line - 1))p" "${extern_file}" | grep -q '// SAFETY:'; then
+    echo "unsafe extern block missing a preceding // SAFETY: comment at ${extern_file}:${extern_line}" >&2
+    exit 1
+  fi
+done < <(grep -rnE 'unsafe extern "C" \{' "${ROOT_DIR}/runtime/container/rust/src")
+
 if [[ "${VALIDATION_PROFILE}" == "release-preflight" ]]; then
   "${ROOT_DIR}/scripts/verify-mutation-score.sh"
   "${ROOT_DIR}/scripts/verify-coverage.sh"

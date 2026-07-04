@@ -15,6 +15,10 @@ libc, or an external security audit.
   `runtime/container/rust/Cargo.toml`, checked by
   `cargo clippy --all-targets --locked --offline -- -D warnings` in
   `scripts/validate-repo.sh`. A new undocumented `unsafe` block fails CI.
+- That clippy lint does not cover `unsafe extern "C" {` blocks, so
+  `scripts/validate-repo.sh` additionally requires a preceding `// SAFETY:`
+  comment on every `unsafe extern` block. A new undocumented FFI declaration
+  fails CI too.
 - `#![deny(unsafe_op_in_unsafe_fn)]` (`lib.rs`) forces every operation inside an
   `unsafe fn` into an explicit `unsafe {}` block, so no unsafe operation is
   implicitly covered by the function signature.
