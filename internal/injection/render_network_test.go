@@ -199,6 +199,9 @@ func TestValidateEgressEndpointMirrorsHelperGrammar(t *testing.T) {
 		"has space:443",
 		"host:443:443",
 		"[bad::host:443",
+		"[1.2.3.4]:443",
+		"[::::]:443",
+		"[nothex!]:443",
 		"host.example:",
 		"host.example:abc",
 	}
