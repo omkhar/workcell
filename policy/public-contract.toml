@@ -37,3 +37,8 @@ export_fields = ["session", "audit_records"]
 # single-bracket tables; copies is the one supported [[array-of-table]]).
 [injection_tables]
 tables = ["documents", "ssh", "credentials", "copies"]
+# The non-table scalar root keys the loader also accepts. tables + these must
+# equal the authoritative allowedRootPolicyKeys gate in
+# internal/injection/render_injection_bundle.go (validated before any table
+# parsing runs), so dropping a key from that gate fails this check.
+scalar_root_keys = ["version", "includes"]

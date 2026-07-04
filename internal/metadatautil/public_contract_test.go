@@ -213,3 +213,23 @@ func TestCheckPublicContractRejectsBogusInjectionTable(t *testing.T) {
 		t.Fatalf("CheckPublicContract() error = %v, want mention of both bogus_injection_table and copies", err)
 	}
 }
+
+// TestCheckPublicContractRejectsMissingScalarRootKey pins that the check
+// compares against the authoritative allowedRootPolicyKeys gate: dropping a
+// scalar root key (version/includes) the gate still accepts must fail as a
+// stale entry, catching drift the later table-name scrape would have missed.
+func TestCheckPublicContractRejectsMissingScalarRootKey(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	contractPath := mutatedContractCopy(t, root,
+		`scalar_root_keys = ["version", "includes"]`,
+		`scalar_root_keys = ["includes"]`,
+	)
+
+	err := CheckPublicContract(root, contractPath)
+	if err == nil {
+		t.Fatal("CheckPublicContract() unexpectedly succeeded with a missing scalar root key")
+	}
+	if !strings.Contains(err.Error(), "version") {
+		t.Fatalf("CheckPublicContract() error = %v, want mention of the missing gate key version", err)
+	}
+}

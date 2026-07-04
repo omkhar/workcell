@@ -27,11 +27,12 @@ var exitCodeSourceFiles = []string{
 }
 
 type publicContract struct {
-	ExitCodes           []string
-	OutputLinePrefixes  []string
-	SessionRecordFields []string
-	SessionExportFields []string
-	InjectionTables     []string
+	ExitCodes               []string
+	OutputLinePrefixes      []string
+	SessionRecordFields     []string
+	SessionExportFields     []string
+	InjectionTables         []string
+	InjectionScalarRootKeys []string
 }
 
 // CheckPublicContract validates that contractPath (policy/public-contract.toml)
@@ -63,7 +64,7 @@ func CheckPublicContract(rootDir, contractPath string) error {
 	if err := checkSessionRecordFields(rootDir, contractPath, contract.SessionRecordFields, contract.SessionExportFields); err != nil {
 		return err
 	}
-	if err := checkInjectionTables(rootDir, contractPath, contract.InjectionTables); err != nil {
+	if err := checkInjectionTables(rootDir, contractPath, contract.InjectionTables, contract.InjectionScalarRootKeys); err != nil {
 		return err
 	}
 	return nil
@@ -108,13 +109,18 @@ func loadPublicContract(contractPath string) (publicContract, error) {
 	if err != nil {
 		return publicContract{}, err
 	}
+	injectionScalarRootKeys, err := requiredStringSliceTable(document, contractPath, "injection_tables", "scalar_root_keys")
+	if err != nil {
+		return publicContract{}, err
+	}
 
 	return publicContract{
-		ExitCodes:           exitCodes,
-		OutputLinePrefixes:  outputLinePrefixes,
-		SessionRecordFields: sessionRecordFields,
-		SessionExportFields: sessionExportFields,
-		InjectionTables:     injectionTables,
+		ExitCodes:               exitCodes,
+		OutputLinePrefixes:      outputLinePrefixes,
+		SessionRecordFields:     sessionRecordFields,
+		SessionExportFields:     sessionExportFields,
+		InjectionTables:         injectionTables,
+		InjectionScalarRootKeys: injectionScalarRootKeys,
 	}, nil
 }
 
@@ -381,64 +387,66 @@ func structJSONFields(source, structName, path string) ([]string, error) {
 	return fields, nil
 }
 
-// checkInjectionTables asserts that [injection_tables].tables exactly
-// matches the injection-policy top-level table whitelist accepted by
-// internal/injection/render_policy_load.go: the `name != "documents" &&
-// name != "ssh" && name != "credentials"` guard in documentToInjectionMap
-// (single-bracket tables) and the `tableName != "copies"` guard in
-// extractCopiesBlocks (the one supported [[array-of-table]]). Both guards
-// reject every name outside their listed set, so the literals extracted
-// from each `!=` chain are the complete accepted whitelist, not merely an
-// example subset.
-func checkInjectionTables(rootDir, contractPath string, tables []string) error {
-	renderPolicyPath := filepath.Join(rootDir, "internal", "injection", "render_policy_load.go")
-	source, err := readText(renderPolicyPath)
+// checkInjectionTables asserts that the injection-policy contract matches the
+// authoritative root-key gate `allowedRootPolicyKeys` in
+// internal/injection/render_injection_bundle.go — the map validated (via
+// validateAllowedKeys) before any table parsing runs, so it is the first and
+// definitive gate on which top-level keys a policy may carry. The contract's
+// [injection_tables].tables (documents/ssh/credentials/copies) plus its
+// declared scalar_root_keys (version/includes) must set-equal that map's
+// keys; dropping a key from the gate then fails this check (a later
+// `name != …` chain scrape would miss that, since the gate rejects first).
+func checkInjectionTables(rootDir, contractPath string, tables, scalarRootKeys []string) error {
+	bundlePath := filepath.Join(rootDir, "internal", "injection", "render_injection_bundle.go")
+	source, err := readText(bundlePath)
 	if err != nil {
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}
 
-	singleBracketTables, err := functionScopedMatches(source, "documentToInjectionMap", `name != "([a-zA-Z0-9_]+)"`, renderPolicyPath)
-	if err != nil {
-		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
-	}
-	arrayTables, err := functionScopedMatches(source, "extractCopiesBlocks", `tableName != "([a-zA-Z0-9_]+)"`, renderPolicyPath)
+	gateKeys, err := mapStringSetKeys(source, "allowedRootPolicyKeys", bundlePath)
 	if err != nil {
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}
 
-	codeTables := append(append([]string{}, singleBracketTables...), arrayTables...)
-	return assertSetsEqual(contractPath, "injection_tables.tables", "the accepted table names in "+renderPolicyPath, codeTables, tables)
+	contractKeys := append(append([]string{}, tables...), scalarRootKeys...)
+	return assertSetsEqual(contractPath, "injection_tables.tables + scalar_root_keys", "the allowedRootPolicyKeys gate in "+bundlePath, gateKeys, contractKeys)
 }
 
-// functionScopedMatches runs pattern over the body of the top-level
-// function funcName in source (from its `func funcName(` line up to the
-// next line consisting solely of `}`), returning each match's first
-// capture group in first-seen order with duplicates removed.
-func functionScopedMatches(source, funcName, pattern, path string) ([]string, error) {
-	marker := "func " + funcName + "("
+// mapStringSetKeys extracts the string keys of a `varName = map[string]struct{}{
+// "k": {}, … }` literal in source, scoped to that variable's block.
+func mapStringSetKeys(source, varName, path string) ([]string, error) {
+	marker := varName + " = map[string]struct{}{"
 	start := strings.Index(source, marker)
 	if start == -1 {
-		return nil, fmt.Errorf("%s: function %s not found", path, funcName)
+		return nil, fmt.Errorf("%s: map %s not found", path, varName)
 	}
-	rest := source[start:]
-	end := strings.Index(rest, "\n}\n")
-	if end == -1 {
-		return nil, fmt.Errorf("%s: function %s has no closing brace", path, funcName)
-	}
-	body := rest[:end]
-
-	re := regexp.MustCompile(pattern)
-	matches := re.FindAllStringSubmatch(body, -1)
-	seen := map[string]struct{}{}
-	names := make([]string, 0, len(matches))
-	for _, match := range matches {
-		if _, ok := seen[match[1]]; ok {
-			continue
+	// The marker ends at the map's opening brace; brace-count to its match so
+	// the `{}` set values (each self-balancing) do not terminate the scan early.
+	bodyStart := start + len(marker)
+	depth := 1
+	i := bodyStart
+	for ; i < len(source) && depth > 0; i++ {
+		switch source[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
 		}
-		seen[match[1]] = struct{}{}
-		names = append(names, match[1])
 	}
-	return names, nil
+	if depth != 0 {
+		return nil, fmt.Errorf("%s: map %s has no closing brace", path, varName)
+	}
+	body := source[bodyStart : i-1]
+
+	matches := regexp.MustCompile(`"([a-zA-Z0-9_]+)":`).FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("%s: map %s has no keys", path, varName)
+	}
+	keys := make([]string, 0, len(matches))
+	for _, match := range matches {
+		keys = append(keys, match[1])
+	}
+	return keys, nil
 }
 
 // assertSetsEqual reports an error naming both any code-but-not-doc
