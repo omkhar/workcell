@@ -96,6 +96,7 @@ var (
 		"ssh":         {},
 		"copies":      {},
 		"credentials": {},
+		"network":     {},
 	}
 )
 
@@ -162,6 +163,10 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 	if err != nil {
 		return err
 	}
+	networkAllowEndpoints, networkDenyEndpoints, err := renderNetwork(policy)
+	if err != nil {
+		return err
+	}
 
 	policySHA, err := effectivePolicySHA256(policySources, Path(resolvedOutputRoot), renderedDocuments, renderedCopies, renderedCredentials, renderedSSH)
 	if err != nil {
@@ -171,11 +176,19 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 	manifest := map[string]any{
 		"version": 1,
 		"metadata": map[string]any{
-			"policy_entrypoint":   policyEntrypoint,
-			"policy_sha256":       policySHA,
-			"policy_sources":      policySources,
-			"credential_keys":     sortedKeys(renderedCredentials),
-			"extra_endpoints":     deriveCredentialExtraEndpoints(renderedCredentials),
+			"policy_entrypoint": policyEntrypoint,
+			"policy_sha256":     policySHA,
+			"policy_sources":    policySources,
+			"credential_keys":   sortedKeys(renderedCredentials),
+			// extra_endpoints unions the credential-derived endpoints with the
+			// operator-declared [network].allow_endpoints (A1): the union+sort
+			// means neither source clobbers the other, and both only ADD to the
+			// host-computed allowlist.  deny_endpoints carries
+			// [network].deny_endpoints, which the shell caller SUBTRACTS from
+			// the allowlist (deny wins).  Neither field can affect the policy
+			// mode — see renderNetwork's no-weakening contract.
+			"extra_endpoints":     mergeEndpointLists(deriveCredentialExtraEndpoints(renderedCredentials), networkAllowEndpoints),
+			"deny_endpoints":      networkDenyEndpoints,
 			"secret_copy_targets": secretCopyTargets(renderedCopies),
 			"ssh_enabled":         len(renderedSSH) > 0,
 			"ssh_config_assurance": func() string {

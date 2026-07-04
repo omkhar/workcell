@@ -122,6 +122,20 @@ documents:
 		}
 	}
 
+	// [network] survives the resolver unchanged so the injection layer sees the
+	// merged allow/deny endpoint lists and applies the authoritative
+	// host:port validation.  The resolver only passes the lists through.
+	if network, ok := policy["network"].(map[string]any); ok && len(network) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, "[network]")
+		var renderErr error
+		lines, renderErr = renderOrderedThenSorted(lines, network,
+			[]string{"allow_endpoints", "deny_endpoints"})
+		if renderErr != nil {
+			return "", renderErr
+		}
+	}
+
 	return strings.Join(lines, "\n") + "\n", nil
 }
 

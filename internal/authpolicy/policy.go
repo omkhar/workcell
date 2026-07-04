@@ -46,6 +46,7 @@ var (
 		"ssh":         {},
 		"copies":      {},
 		"credentials": {},
+		"network":     {},
 	}
 	managedRootMarker = ".workcell-managed-root"
 )
@@ -336,7 +337,7 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 			}
 			continue
 		}
-		if name != "documents" && name != "ssh" && name != "credentials" {
+		if name != "documents" && name != "ssh" && name != "credentials" && name != "network" {
 			return nil, die(fmt.Sprintf("%s:%d: unsupported table [%s]", policyPath, table.Line, name))
 		}
 		targetRaw, exists := root[name]
@@ -555,6 +556,33 @@ func mergePolicyFragment(base map[string]any, addition map[string]any, sourcePat
 		destinationCopies, _ := base["copies"].([]any)
 		destinationCopies = append(destinationCopies, copies...)
 		base["copies"] = destinationCopies
+	}
+	// [network] endpoint lists are unioned across fragments (not
+	// duplicate-rejected), matching the injection and resolver layers. This
+	// surface only carries endpoint lists; it never sets a network-policy mode.
+	if networkRaw, ok := addition["network"]; ok {
+		network, ok := networkRaw.(map[string]any)
+		if !ok {
+			return die(fmt.Sprintf("injection policy fragment must keep network as a table: %s", sourcePath))
+		}
+		destination, _ := base["network"].(map[string]any)
+		if destination == nil {
+			destination = map[string]any{}
+			base["network"] = destination
+		}
+		for key, value := range network {
+			existing, present := destination[key]
+			if !present {
+				destination[key] = value
+				continue
+			}
+			existingList, existingOK := existing.([]any)
+			additionList, additionOK := value.([]any)
+			if !existingOK || !additionOK {
+				return die(fmt.Sprintf("injection policy fragments declare conflicting non-array network.%s: %s", key, sourcePath))
+			}
+			destination[key] = append(existingList, additionList...)
+		}
 	}
 	return nil
 }
@@ -905,6 +933,36 @@ func renderPolicyTOML(policy map[string]any) (string, error) {
 				}
 				lines = append(lines, key+" = "+rendered)
 			}
+		}
+	}
+
+	if network, ok := policy["network"].(map[string]any); ok && len(network) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, "[network]")
+		orderedSet := map[string]struct{}{}
+		for _, key := range []string{"allow_endpoints", "deny_endpoints"} {
+			orderedSet[key] = struct{}{}
+			if value, ok := network[key]; ok {
+				rendered, err := renderTOMLValue(value)
+				if err != nil {
+					return "", err
+				}
+				lines = append(lines, key+" = "+rendered)
+			}
+		}
+		extras := make([]string, 0)
+		for key := range network {
+			if _, ok := orderedSet[key]; !ok {
+				extras = append(extras, key)
+			}
+		}
+		slices.Sort(extras)
+		for _, key := range extras {
+			rendered, err := renderTOMLValue(network[key])
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, key+" = "+rendered)
 		}
 	}
 

@@ -143,6 +143,27 @@ func DedupeEndpointList(raw string) string {
 	return strings.Join(ordered, " ")
 }
 
+// SubtractEndpointList removes every endpoint present in deny from allow,
+// preserving allow's order.  This implements the A1 operator-tightening
+// semantics: a policy's [network].deny_endpoints wins over the host-computed
+// allowlist, so an endpoint an operator denies is removed even when a provider
+// would otherwise require it.  The function only ever REMOVES endpoints; it
+// can never add one, so it cannot weaken the allowlist.
+func SubtractEndpointList(allow, deny string) string {
+	denied := make(map[string]struct{})
+	for _, entry := range strings.Fields(deny) {
+		denied[entry] = struct{}{}
+	}
+	kept := make([]string, 0)
+	for _, entry := range strings.Fields(allow) {
+		if _, ok := denied[entry]; ok {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return strings.Join(kept, " ")
+}
+
 func ResolveEndpoints(raw string) ([]string, error) {
 	endpoints := strings.Fields(raw)
 	results := make([]string, 0)

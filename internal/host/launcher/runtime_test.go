@@ -135,3 +135,58 @@ func TestValidateContainerSecurityOptionsAcceptsCanonical(t *testing.T) {
 		t.Fatalf("ValidateContainerSecurityOptions error = %v, want nil for canonical HostConfig.SecurityOpt", err)
 	}
 }
+
+// TestSubtractEndpointListRemovesDeniedEndpoints pins the A1 operator-tightening
+// contract: SubtractEndpointList removes exactly the denied endpoints from the
+// allow list (deny wins), preserves the surviving order, and never adds an
+// endpoint — so it can only ever tighten the allowlist, never weaken it.
+func TestSubtractEndpointListRemovesDeniedEndpoints(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		allow string
+		deny  string
+		want  string
+	}{
+		{
+			name:  "deny wins over a provider-required endpoint",
+			allow: "github.com:443 chatgpt.com:443 api.github.com:443",
+			deny:  "chatgpt.com:443",
+			want:  "github.com:443 api.github.com:443",
+		},
+		{
+			name:  "empty deny leaves allow untouched",
+			allow: "github.com:443 api.github.com:443",
+			deny:  "",
+			want:  "github.com:443 api.github.com:443",
+		},
+		{
+			name:  "deny entry not present is a no-op",
+			allow: "github.com:443",
+			deny:  "not-in-allow.example:443",
+			want:  "github.com:443",
+		},
+		{
+			name:  "multiple denies",
+			allow: "a.example:443 b.example:443 c.example:443",
+			deny:  "a.example:443 c.example:443",
+			want:  "b.example:443",
+		},
+		{
+			name:  "deny cannot add endpoints",
+			allow: "",
+			deny:  "attacker.example:443",
+			want:  "",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := SubtractEndpointList(tc.allow, tc.deny); got != tc.want {
+				t.Fatalf("SubtractEndpointList(%q, %q) = %q, want %q", tc.allow, tc.deny, got, tc.want)
+			}
+		})
+	}
+}

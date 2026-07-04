@@ -173,6 +173,7 @@ for agent in codex claude copilot gemini; do
   grep -q '^agent_autonomy=prompt$' "${TMP_DIR}/prompt-${agent}.stderr"
   grep -q '^autonomy_assurance=lower-assurance-prompt-autonomy$' "${TMP_DIR}/prompt-${agent}.stderr"
   grep -q '^workspace_control_plane=masked$' "${TMP_DIR}/prompt-${agent}.stderr"
+  grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/prompt-${agent}.stderr"
   grep -q '^execution_path=managed-tier1 audit_log=' "${TMP_DIR}/prompt-${agent}.stderr"
 done
 
@@ -221,6 +222,7 @@ for agent in codex claude copilot gemini; do
   grep -q "^profile=.* mode=breakglass agent=${agent} " "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^workspace_control_plane=unmasked$' "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^network_policy=unrestricted ' "${TMP_DIR}/breakglass-${agent}.stderr"
+  grep -q '^egress_enforcement=none$' "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^execution_path=lower-assurance-breakglass audit_log=' "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^autonomy_assurance=managed-yolo$' "${TMP_DIR}/breakglass-${agent}.stderr"
   grep -q '^session_assurance_initial=managed-mutable$' "${TMP_DIR}/breakglass-${agent}.stderr"
@@ -298,5 +300,63 @@ for agent in codex claude copilot gemini; do
   grep -q '^workspace_control_plane=readonly-vcs$' "${TMP_DIR}/control-plane-vcs-${agent}.stderr"
   grep -q '^execution_path=lower-assurance-control-plane-vcs audit_log=' "${TMP_DIR}/control-plane-vcs-${agent}.stderr"
 done
+
+# A1 egress-policy [network] surface: allow_endpoints extend the allowlist and
+# deny_endpoints tighten it (deny wins). Assert the operator allow endpoint is
+# present in the printed endpoints= list, the denied endpoint is absent, and the
+# colima+strict path reports egress_enforcement=allowlist.
+NETWORK_POLICY_FILE="${TMP_DIR}/network-policy.toml"
+cat >"${NETWORK_POLICY_FILE}" <<'EOF'
+version = 1
+[network]
+allow_endpoints = ["registry.internal.example:443", "telemetry.internal.example:443"]
+deny_endpoints = ["telemetry.internal.example:443"]
+EOF
+HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
+  "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --injection-policy "${NETWORK_POLICY_FILE}" \
+  --workspace "${WORKSPACE}" \
+  --dry-run \
+  >"${TMP_DIR}/network-endpoints.stdout" 2>"${TMP_DIR}/network-endpoints.stderr"
+grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/network-endpoints.stderr"
+network_line="$(grep '^network_policy=' "${TMP_DIR}/network-endpoints.stderr")"
+case "${network_line}" in
+  *"registry.internal.example:443"*) : ;;
+  *)
+    echo "network allow_endpoints entry missing from printed allowlist: ${network_line}" >&2
+    exit 1
+    ;;
+esac
+case "${network_line}" in
+  *"telemetry.internal.example:443"*)
+    echo "network deny_endpoints entry was not removed from the printed allowlist: ${network_line}" >&2
+    exit 1
+    ;;
+esac
+
+# The [network] surface must not be able to weaken the allowlist: a policy that
+# tries to set a network-policy mode under [network] must fail closed.
+NETWORK_WEAKEN_FILE="${TMP_DIR}/network-weaken.toml"
+cat >"${NETWORK_WEAKEN_FILE}" <<'EOF'
+version = 1
+[network]
+network_policy = "unrestricted"
+EOF
+set +e
+HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
+  "${ROOT_DIR}/scripts/workcell" \
+  --agent codex \
+  --injection-policy "${NETWORK_WEAKEN_FILE}" \
+  --workspace "${WORKSPACE}" \
+  --dry-run \
+  >"${TMP_DIR}/network-weaken.stdout" 2>"${TMP_DIR}/network-weaken.stderr"
+weaken_rc=$?
+set -e
+if [[ "${weaken_rc}" -eq 0 ]]; then
+  echo "[network] with a network_policy key must fail closed, but launch was accepted" >&2
+  exit 1
+fi
+grep -q 'unsupported keys' "${TMP_DIR}/network-weaken.stderr"
 
 echo "Assurance dry-run scenario passed"

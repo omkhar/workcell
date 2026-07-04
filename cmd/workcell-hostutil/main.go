@@ -266,6 +266,7 @@ func helperSubcommands() []helperSubcommand {
 		{"validate-container-security-options", 1, 1, cmdHelperValidateContainerSecurityOptions},
 		{"canonicalize-tool-path", 1, 1, cmdHelperCanonicalizeToolPath},
 		{"dedupe-endpoints", 1, 1, cmdHelperDedupeEndpoints},
+		{"subtract-endpoints", 2, 2, cmdHelperSubtractEndpoints},
 		{"resolve-endpoints", 1, 1, cmdHelperResolveEndpoints},
 		{"support-matrix-eval", 8, 8, cmdHelperSupportMatrixEval},
 		{"profile-path", 1, -1, cmdHelperProfilePath},
@@ -729,6 +730,11 @@ func cmdHelperCanonicalizeToolPath(args []string) error {
 
 func cmdHelperDedupeEndpoints(args []string) error {
 	fmt.Println(launcher.DedupeEndpointList(args[0]))
+	return nil
+}
+
+func cmdHelperSubtractEndpoints(args []string) error {
+	fmt.Println(launcher.SubtractEndpointList(args[0], args[1]))
 	return nil
 }
 

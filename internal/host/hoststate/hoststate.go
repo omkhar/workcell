@@ -115,6 +115,7 @@ func ManifestMetadataLines(manifestPath string) ([]string, error) {
 		boolTo01(metadata["ssh_enabled"]),
 		stringOrDefault(metadata["ssh_config_assurance"], "off"),
 		strings.Join(stringSlice(metadata["secret_copy_targets"]), ","),
+		strings.Join(stringSlice(metadata["deny_endpoints"]), " "),
 	}, nil
 }
 

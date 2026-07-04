@@ -172,6 +172,39 @@ func mergePolicyFragment(base, addition map[string]any, sourcePath string) error
 		}
 	}
 
+	// [network] endpoint lists are unioned across fragments (unlike the
+	// duplicate-rejecting tables above), then re-rendered into the resolved
+	// policy for the injection layer to validate.  This surface only carries
+	// endpoint lists; it can never introduce a network-policy mode.
+	if network := addition["network"]; network != nil {
+		networkMap, ok := network.(map[string]any)
+		if !ok {
+			return fmt.Errorf("injection policy fragment must keep network as a table: %s", sourcePath)
+		}
+		dest, ok := base["network"]
+		if !ok {
+			dest = map[string]any{}
+			base["network"] = dest
+		}
+		destMap, ok := dest.(map[string]any)
+		if !ok {
+			return fmt.Errorf("injection policy merge corrupted network: %s", sourcePath)
+		}
+		for key, value := range networkMap {
+			existing, present := destMap[key]
+			if !present {
+				destMap[key] = value
+				continue
+			}
+			existingList, existingOK := existing.([]any)
+			additionList, additionOK := value.([]any)
+			if !existingOK || !additionOK {
+				return fmt.Errorf("injection policy fragments declare conflicting non-array network.%s: %s", key, sourcePath)
+			}
+			destMap[key] = append(existingList, additionList...)
+		}
+	}
+
 	copies := addition["copies"]
 	if copies == nil {
 		return nil
@@ -407,7 +440,7 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 			}
 			continue
 		}
-		if name != "documents" && name != "ssh" && name != "credentials" {
+		if name != "documents" && name != "ssh" && name != "credentials" && name != "network" {
 			return nil, fmt.Errorf("%s:%d: unsupported table [%s]", policyPath, table.Line, name)
 		}
 		targetRaw, exists := root[name]

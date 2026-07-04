@@ -51,6 +51,7 @@ var (
 		"ssh":         {},
 		"copies":      {},
 		"credentials": {},
+		"network":     {},
 	}
 	documentKeys        = providerid.DocumentKeySet()
 	credentialEntryKeys = map[string]struct{}{

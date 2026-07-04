@@ -384,6 +384,7 @@ INJECTION_CREDENTIAL_RESOLUTION_STATES=""
 INJECTION_PROVIDER_AUTH_READY_STATES=""
 INJECTION_SHARED_AUTH_READY_STATES=""
 INJECTION_EXTRA_ENDPOINTS=""
+INJECTION_DENY_ENDPOINTS=""
 INJECTION_SSH_ENABLED=0
 INJECTION_SECRET_COPY_TARGETS=""
 PROFILE_LOCK_DIR=""
@@ -2290,6 +2291,7 @@ emit_preview_remote_vm_dry_run() {
   fi
   printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
   printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
+  printf 'egress_enforcement=%s\n' "$(egress_enforcement_label)" >&2
   printf 'remote_access_model=brokered remote_broker=%s inbound_public_ssh=blocked live_smoke=certification-only\n' \
     "$(preview_remote_vm_broker "${TARGET_BACKEND}")" >&2
   printf 'remote_workspace_materialization=explicit reviewed_host_copy=1\n' >&2
@@ -4962,6 +4964,7 @@ prepare_injection_bundle() {
   INJECTION_PROVIDER_AUTH_READY_STATES=""
   INJECTION_SHARED_AUTH_READY_STATES=""
   INJECTION_EXTRA_ENDPOINTS=""
+  INJECTION_DENY_ENDPOINTS=""
   INJECTION_SSH_ENABLED=0
   INJECTION_SSH_CONFIG_ASSURANCE="off"
   INJECTION_SECRET_COPY_TARGETS=""
@@ -5014,6 +5017,7 @@ prepare_injection_bundle() {
       INJECTION_PROVIDER_AUTH_READY_STATES) INJECTION_PROVIDER_AUTH_READY_STATES="${value}" ;;
       INJECTION_SHARED_AUTH_READY_STATES) INJECTION_SHARED_AUTH_READY_STATES="${value}" ;;
       INJECTION_EXTRA_ENDPOINTS) INJECTION_EXTRA_ENDPOINTS="${value}" ;;
+      INJECTION_DENY_ENDPOINTS) INJECTION_DENY_ENDPOINTS="${value}" ;;
       INJECTION_SSH_ENABLED) INJECTION_SSH_ENABLED="${value}" ;;
       INJECTION_SSH_CONFIG_ASSURANCE) INJECTION_SSH_CONFIG_ASSURANCE="${value}" ;;
       INJECTION_SECRET_COPY_TARGETS) INJECTION_SECRET_COPY_TARGETS="${value}" ;;
@@ -6995,6 +6999,29 @@ dedupe_endpoint_list() {
   go_hostutil helper dedupe-endpoints "$1"
 }
 
+# subtract_endpoint_list removes every endpoint in the second (deny) list from
+# the first (allow) list, preserving allow order. Deny wins over allow: an
+# operator-declared [network].deny_endpoints entry is removed from the computed
+# allowlist even when a provider needs it. This only ever TIGHTENS the
+# allowlist; it can never add an endpoint or change NETWORK_POLICY.
+subtract_endpoint_list() {
+  go_hostutil helper subtract-endpoints "$1" "$2"
+}
+
+# egress_enforcement_label reports whether the launch actually enforces the
+# per-session default-deny allowlist. Only the colima target applies the
+# iptables/ip6tables DOCKER-USER allowlist (scripts/colima-egress-allowlist.sh),
+# and only when NETWORK_POLICY=allowlist. Every other target (docker-desktop,
+# aws-ec2-ssm, gcp-vm) relies on its own network controls, so this prints
+# 'none' to make the parity gap explicit on the launch summary.
+egress_enforcement_label() {
+  if [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+    printf 'allowlist\n'
+  else
+    printf 'none\n'
+  fi
+}
+
 build_runtime_host_aliases() {
   local endpoint_list="$1"
   local host=""
@@ -8464,6 +8491,12 @@ ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(targ
 if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
   ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:443")"
 fi
+# A1: operator [network].deny_endpoints tighten the allowlist. Subtract last so
+# deny wins over every allow source (providers, brokers, credentials, injection
+# extras). This only removes endpoints; it never changes NETWORK_POLICY.
+if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
+  ALLOW_ENDPOINTS="$(subtract_endpoint_list "${ALLOW_ENDPOINTS}" "${INJECTION_DENY_ENDPOINTS}")"
+fi
 if target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
   emit_preview_remote_vm_dry_run
   exit 0
@@ -8686,6 +8719,7 @@ if [[ -n "${INJECTION_POLICY_SHA256}" ]]; then
 fi
 printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
 printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
+printf 'egress_enforcement=%s\n' "$(egress_enforcement_label)" >&2
 printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then

@@ -299,7 +299,7 @@ func documentToInjectionMap(doc *tomlsubset.Document, policyPath string) (map[st
 			}
 			continue
 		}
-		if name != "documents" && name != "ssh" && name != "credentials" {
+		if name != "documents" && name != "ssh" && name != "credentials" && name != "network" {
 			return nil, fmt.Errorf("%s:%d: unsupported table [%s]", policyPath, table.Line, name)
 		}
 		targetRaw, exists := root[name]
@@ -474,6 +474,47 @@ func mergePolicyFragment(base, addition map[string]any, sourcePath Path) error {
 		destinationCopies, _ := base["copies"].([]any)
 		destinationCopies = append(destinationCopies, copyList...)
 		base["copies"] = destinationCopies
+	}
+	if err := mergeNetworkFragment(base, addition, sourcePath); err != nil {
+		return err
+	}
+	return nil
+}
+
+// mergeNetworkFragment folds an included fragment's `[network]` table into the
+// merged policy.  Unlike documents/ssh/credentials (which reject a key that is
+// declared twice), the network endpoint lists are UNIONED across fragments so
+// several operator-owned fragments can each contribute allow/deny endpoints.
+// Values are preserved as-is (renderNetwork validates the merged result), so
+// an unknown key or non-array value still surfaces as a fail-closed error at
+// render time.  Nothing here can introduce a policy-mode setting: `[network]`
+// only ever carries endpoint lists.
+func mergeNetworkFragment(base, addition map[string]any, sourcePath Path) error {
+	raw, ok := addition["network"]
+	if !ok || raw == nil {
+		return nil
+	}
+	network, ok := raw.(map[string]any)
+	if !ok {
+		return fmt.Errorf("injection policy fragment must keep network as a table: %s", sourcePath)
+	}
+	destination, _ := base["network"].(map[string]any)
+	if destination == nil {
+		destination = map[string]any{}
+		base["network"] = destination
+	}
+	for key, value := range network {
+		existing, present := destination[key]
+		if !present {
+			destination[key] = value
+			continue
+		}
+		existingList, errExisting := anySlice(existing, "network."+key)
+		additionList, errAddition := anySlice(value, "network."+key)
+		if errExisting != nil || errAddition != nil {
+			return fmt.Errorf("injection policy fragments declare conflicting non-array network.%s: %s", key, sourcePath)
+		}
+		destination[key] = append(existingList, additionList...)
 	}
 	return nil
 }

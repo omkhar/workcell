@@ -109,8 +109,13 @@ type PrepareBundleResult struct {
 	// state lines (INJECTION_SHARED_AUTH_READY_STATES).
 	InjectionSharedAuthReadyStates string
 	// InjectionExtraEndpoints carries any additional endpoint URLs the
-	// policy declared (INJECTION_EXTRA_ENDPOINTS).
+	// policy declared, including the union of credential-derived endpoints
+	// and [network].allow_endpoints (INJECTION_EXTRA_ENDPOINTS).
 	InjectionExtraEndpoints string
+	// InjectionDenyEndpoints carries the [network].deny_endpoints list the
+	// policy declared; the shell caller subtracts these from the computed
+	// allowlist (INJECTION_DENY_ENDPOINTS).
+	InjectionDenyEndpoints string
 	// InjectionSSHEnabled is "1" when the policy enables SSH
 	// passthrough, "0" otherwise (INJECTION_SSH_ENABLED).
 	InjectionSSHEnabled string
@@ -275,8 +280,8 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(manifestLines) < 6 || len(resolverLines) < 6 {
-		return nil, errors.New("manifest or resolver metadata returned fewer than six lines")
+	if len(manifestLines) < 7 || len(resolverLines) < 6 {
+		return nil, errors.New("manifest metadata returned fewer than seven lines or resolver metadata returned fewer than six lines")
 	}
 
 	return &PrepareBundleResult{
@@ -289,6 +294,7 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 		InjectionSSHEnabled:                 manifestLines[3],
 		InjectionSSHConfigAssurance:         manifestLines[4],
 		InjectionSecretCopyTargets:          manifestLines[5],
+		InjectionDenyEndpoints:              manifestLines[6],
 		InjectionCredentialInputKinds:       resolverLines[0],
 		InjectionCredentialResolvers:        resolverLines[1],
 		InjectionCredentialMaterialization:  resolverLines[2],
@@ -488,6 +494,7 @@ func FormatBundleResultForShell(result *PrepareBundleResult) (string, error) {
 		shellproto.Field{Key: "INJECTION_PROVIDER_AUTH_READY_STATES", Value: result.InjectionProviderAuthReadyStates},
 		shellproto.Field{Key: "INJECTION_SHARED_AUTH_READY_STATES", Value: result.InjectionSharedAuthReadyStates},
 		shellproto.Field{Key: "INJECTION_EXTRA_ENDPOINTS", Value: result.InjectionExtraEndpoints},
+		shellproto.Field{Key: "INJECTION_DENY_ENDPOINTS", Value: result.InjectionDenyEndpoints},
 		shellproto.Field{Key: "INJECTION_SSH_ENABLED", Value: result.InjectionSSHEnabled},
 		shellproto.Field{Key: "INJECTION_SSH_CONFIG_ASSURANCE", Value: result.InjectionSSHConfigAssurance},
 		shellproto.Field{Key: "INJECTION_SECRET_COPY_TARGETS", Value: result.InjectionSecretCopyTargets},
