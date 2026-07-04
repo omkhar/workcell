@@ -58,10 +58,15 @@ in `policy/workflow-lane-policy.json` and reflected in `policy/workflow-lanes.js
 
 When the fuzzer finds a crash it writes a reproducer file at
 `testdata/fuzz/<Target>/<hash>` next to the target's package and fails the run.
+On the scheduled lane the failing job uploads those files as the
+`fuzz-reproducers` artifact before the runner workspace is discarded, so the
+exact input survives the run.
 To triage:
 
-1. Commit the reproducer file. It becomes a permanent regression seed and, once
-   fixed, guards against the crash returning.
+1. Retrieve the reproducer — from the failing run's `fuzz-reproducers` artifact
+   for a scheduled-lane crash, or from your working tree for a local one — and
+   commit it. It becomes a permanent regression seed and, once fixed, guards
+   against the crash returning.
 2. Reproduce it directly: `go test ./<package>/ -run='^<Target>$/<hash>$'`.
 3. Fix the parser so the input returns an error instead of panicking.
 4. Re-run the target with `-fuzz` to confirm the crash is gone and no new one
