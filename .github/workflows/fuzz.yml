@@ -1,0 +1,53 @@
+name: Fuzz
+
+# Scheduled and on-demand Go fuzzing lane. The fuzz targets and their seed
+# corpora already run as regression tests on every PR via the normal `go test`
+# lanes; this workflow spends an extended, time-bounded budget mutating those
+# seeds to hunt for parser panics without adding a heavy harness to the PR path.
+# A crash writes a testdata/fuzz/<Target>/<hash> reproducer and fails the lane;
+# commit the reproducer, fix the parser, and re-run (see docs/fuzzing.md).
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Go fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Fuzz extractWorkflowUses
+        run: go test ./internal/metadatautil/ -run '^$' -fuzz='^FuzzExtractWorkflowUses$' -fuzztime=3m
+
+      - name: Fuzz parseToolPins
+        run: go test ./internal/metadatautil/ -run '^$' -fuzz='^FuzzParseToolPins$' -fuzztime=3m
+
+      - name: Fuzz validateControlPlaneManifestBytes
+        run: go test ./internal/metadatautil/ -run '^$' -fuzz='^FuzzValidateControlPlaneManifest$' -fuzztime=3m
+
+      - name: Fuzz tomlsubset Parse
+        run: go test ./internal/tomlsubset/ -run '^$' -fuzz='^FuzzParse$' -fuzztime=3m
+
+      - name: Fuzz isAllowedSystemSymlink
+        run: go test ./internal/injection/ -run '^$' -fuzz='^FuzzIsAllowedSystemSymlink$' -fuzztime=3m
+
+      - name: Fuzz parseSSHDirective
+        run: go test ./internal/injection/ -run '^$' -fuzz='^FuzzParseSSHDirective$' -fuzztime=3m

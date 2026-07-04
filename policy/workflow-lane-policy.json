@@ -79,6 +79,11 @@
       "local_script": "scripts/ci/job-docs.sh",
       "local_order": 30
     },
+    "fuzz.yml/fuzz": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled heavy Go fuzzing sweep; the fuzz targets and their seed corpora already run as regression tests locally and in every PR via go test, while the extended time-bounded mutation budget runs on a weekly GitHub cadence"
+    },
     "hosted-controls.yml/verify-hosted-controls": {
       "profiles": ["release-preflight"],
       "authority": "github-only",

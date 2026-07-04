@@ -341,6 +341,20 @@
       "local_order": 30
     },
     {
+      "id": "fuzz.yml/fuzz",
+      "workflow_path": ".github/workflows/fuzz.yml",
+      "workflow_name": "Fuzz",
+      "job_id": "fuzz",
+      "job_name": "Go fuzz",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled heavy Go fuzzing sweep; the fuzz targets and their seed corpora already run as regression tests locally and in every PR via go test, while the extended time-bounded mutation budget runs on a weekly GitHub cadence"
+    },
+    {
       "id": "hosted-controls.yml/verify-hosted-controls",
       "workflow_path": ".github/workflows/hosted-controls.yml",
       "workflow_name": "Hosted controls",
