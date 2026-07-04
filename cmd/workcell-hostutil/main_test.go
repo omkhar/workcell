@@ -10,9 +10,33 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
+
+// TestUsageReturnsExitCode2 pins the D8 exit-code contract: top-level usage
+// errors (missing/unknown command, and the per-group path/release/helper
+// usage) carry ExitCodeError{Code:2} so main() exits 2, matching the other
+// workcell Go CLIs. Previously these returned plain errors and exited 1.
+func TestUsageReturnsExitCode2(t *testing.T) {
+	for _, args := range [][]string{
+		nil,
+		{"definitely-not-a-subcommand"},
+		{"path"},
+		{"release"},
+		{"helper"},
+	} {
+		err := run(args)
+		ec, ok := cliexit.IsExitCodeError(err)
+		if !ok || ec.Code != 2 {
+			t.Fatalf("run(%v) = %v (ok=%v), want ExitCodeError{Code:2}", args, err, ok)
+		}
+		if !strings.Contains(ec.Error(), "usage:") {
+			t.Fatalf("run(%v) message = %q, want usage text", args, ec.Error())
+		}
+	}
+}
 
 func TestRunHelperSessionTimeline(t *testing.T) {
 	colimaRoot := t.TempDir()
