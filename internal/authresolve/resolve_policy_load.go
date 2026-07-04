@@ -173,9 +173,8 @@ func mergePolicyFragment(base, addition map[string]any, sourcePath string) error
 	}
 
 	// [network] endpoint lists are unioned across fragments (unlike the
-	// duplicate-rejecting tables above), then re-rendered into the resolved
-	// policy for the injection layer to validate.  This surface only carries
-	// endpoint lists; it can never introduce a network-policy mode.
+	// duplicate-rejecting tables above) and re-rendered for the injection layer
+	// to validate; this surface carries only endpoint lists, never a mode.
 	if network := addition["network"]; network != nil {
 		networkMap, ok := network.(map[string]any)
 		if !ok {

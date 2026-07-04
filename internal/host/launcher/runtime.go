@@ -179,9 +179,8 @@ func canonicalEndpoint(endpoint string) string {
 		return strings.ToLower(endpoint)
 	}
 	host = strings.ToLower(host)
-	// A trailing-dot FQDN (chatgpt.com.) denotes the same host as chatgpt.com in
-	// DNS, so strip trailing dots before comparison. The grammar already rejects
-	// leading dots and "..", so this is the last host spelling to normalize.
+	// A trailing-dot FQDN (chatgpt.com.) is the same DNS host as chatgpt.com;
+	// strip trailing dots (the grammar already rejects leading dots and "..").
 	host = strings.TrimRight(host, ".")
 	if ip := net.ParseIP(host); ip != nil {
 		host = ip.String()

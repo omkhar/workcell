@@ -114,6 +114,7 @@ The full stable output-line prefix set enforced by `policy/public-contract.toml`
 | `surviving mutants:` | `cmd/workcell-citools` |
 | `record_digest=` | `scripts/workcell` |
 | `prev_digest=` | `scripts/workcell` |
+| `egress_enforcement=` | `scripts/workcell` |
 
 The complete set of `key=` prefixes in the `session show --text` summary is
 enforced separately, by set-equality against `SessionShowLines`

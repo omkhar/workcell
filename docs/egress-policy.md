@@ -15,13 +15,12 @@ dual-stack, default-deny firewall inside the runtime VM:
 1. The host launcher (`scripts/workcell`) computes `ALLOW_ENDPOINTS` — the union
    of every reviewed endpoint source (below), de-duplicated, then tightened by
    any operator deny list.
-2. The launcher hands that endpoint list to
-   `scripts/colima-egress-allowlist.sh`, which programs `iptables` and
-   `ip6tables` rules in the `DOCKER-USER` chain of the Colima VM.
+2. The launcher hands that list to `scripts/colima-egress-allowlist.sh`, which
+   programs `iptables`/`ip6tables` rules in the VM's `DOCKER-USER` chain.
 3. The rules ACCEPT established/related traffic and each allowed `host:port`
    (resolved to IPv4 and IPv6), then end with an explicit `DROP`.
-4. Enforcement is fail-closed and dual-stack: if `ip6tables` is unavailable the
-   helper aborts rather than leave IPv6 egress unfiltered.
+4. Fail-closed and dual-stack: if `ip6tables` is unavailable the helper aborts
+   rather than leave IPv6 egress unfiltered.
 
 Only the colima target applies these rules; the dispatch never changes based on
 policy content.
@@ -54,15 +53,19 @@ deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlis
 - `allow_endpoints` are unioned into the computed allowlist (they extend, never
   replace the reviewed provider/credential endpoints).
 - `deny_endpoints` are subtracted by endpoint entry after every allow source, so
-  a denied `host:port` is removed even when a provider needs it. Enforcement is
-  IP-level, so this drops the entry, not the address: a denied host sharing an IP
-  with an allowed endpoint (e.g. a shared CDN) can still be reachable at the IP
-  layer — to fully block a host, also drop allow_endpoints that resolve to it.
+  a denied `host:port` is removed even when a provider needs it (deny wins; see
+  scope below).
 - Each endpoint must be `host:port` or `[ipv6]:port` (port 1-65535, host
   `^[A-Za-z0-9.-]+$`, no leading dot or `..`, IP-shaped hosts must be real IPs),
   validated with the same grammar `scripts/colima-egress-allowlist.sh` applies.
 - Fail-closed: a malformed endpoint, empty string, unknown `[network]` key, or
   non-array value aborts with an error naming the offending value.
+
+Scope: `deny_endpoints` tighten IP-level VM/container egress (the session and the
+bootstrap build container). Two boundaries follow — a denied host sharing an IP
+with an allowed endpoint (e.g. a shared CDN) stays reachable at the IP layer, and
+the launcher's host-side fetches during an image rebuild (release-URL resolution)
+are not gated by `[network]`. To fully block a host, also drop overlapping allow_endpoints and restrict rebuilds with a prebuilt image or host controls.
 
 ### No-weakening invariant
 
@@ -74,10 +77,9 @@ shipped default-deny allowlist.
 
 ## Enforcement parity
 
-Per-session allowlist enforcement is a property of the `colima` target only.
-Other targets rely on their own network controls and do not receive the
-`DOCKER-USER` allowlist. The launch summary makes this explicit with an
-`egress_enforcement=` line:
+Per-session allowlist enforcement is a property of the `colima` target only;
+other targets do not receive the `DOCKER-USER` allowlist. The launch summary
+makes this explicit with an `egress_enforcement=` line:
 
 | Target | `egress_enforcement` | Per-session allowlist enforced |
 |---|---|---|
@@ -88,13 +90,11 @@ Other targets rely on their own network controls and do not receive the
 | `gcp-vm` (preview) | `none` | no — relies on the VM's own firewall / network controls |
 
 `egress_enforcement=allowlist` prints only when `TARGET_BACKEND == colima` and
-`NETWORK_POLICY == allowlist`; every other combination prints `none`. The label
-sits next to the `network_policy=... endpoints=...` summary line so operators see
-at a glance whether the session is enforced or relying on the target's controls.
+`NETWORK_POLICY == allowlist`; every other combination prints `none`, next to the
+`network_policy=... endpoints=...` summary line.
 
 ## Related docs
 
 - [Injection policy](injection-policy.md) documents the `[network]` key
   alongside the other reviewed injection surfaces.
 - [Security invariants](invariants.md) records the network-posture invariant.
-- [Threat model](threat-model.md) covers egress control in the abuse-path model.

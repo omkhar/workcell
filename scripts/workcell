@@ -8342,10 +8342,11 @@ PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
 PROFILE_PREEXISTED=0
 PROFILE_MARKER_WORKSPACE=""
 BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
-# A1: deny_endpoints must win for bootstrap egress too. The empty-after-deny
-# check is deferred to the bootstrap-apply sites below (reached only when a
-# rebuild applies bootstrap egress), so denying all bootstrap hosts while relying
-# on an already-prepared image still launches.
+# A1: tighten the bootstrap build container's VM egress by deny_endpoints too
+# (does NOT gate host-side release-URL curls; see docs/egress-policy.md scope).
+# The empty-after-deny check is deferred to the bootstrap-apply sites below
+# (reached only on a rebuild), so denying all bootstrap hosts while relying on a
+# prepared image still launches.
 if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
   BOOTSTRAP_ENDPOINTS="$(subtract_endpoint_list "${BOOTSTRAP_ENDPOINTS}" "${INJECTION_DENY_ENDPOINTS}")"
 fi

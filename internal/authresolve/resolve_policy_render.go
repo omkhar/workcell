@@ -122,9 +122,8 @@ documents:
 		}
 	}
 
-	// [network] survives the resolver unchanged so the injection layer sees the
-	// merged allow/deny endpoint lists and applies the authoritative
-	// host:port validation.  The resolver only passes the lists through.
+	// [network] passes through the resolver unchanged; the injection layer applies
+	// the authoritative host:port validation on the merged allow/deny lists.
 	if network, ok := policy["network"].(map[string]any); ok && len(network) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, "[network]")
