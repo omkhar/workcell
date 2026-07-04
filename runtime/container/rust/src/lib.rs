@@ -19,6 +19,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::OnceLock;
 
+// SAFETY: matches libc's process-global char **environ; reads assume no concurrent setenv/putenv mutation.
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
 }
@@ -252,12 +253,14 @@ fn path_is_current_process_fd_path(path: &str) -> Option<c_int> {
         ["proc", "self", "fd", fd] => fd.parse::<c_int>().ok(),
         ["proc", "thread-self", "fd", fd] => fd.parse::<c_int>().ok(),
         ["proc", pid, "fd", fd]
+            // SAFETY: getpid() is a niladic syscall with no preconditions and no invalid return.
             if parse_nonnegative_long(pid) == Some(unsafe { libc::getpid() as i64 }) =>
         {
             fd.parse::<c_int>().ok()
         }
         ["proc", "self", "task", _tid, "fd", fd] => fd.parse::<c_int>().ok(),
         ["proc", pid, "task", _tid, "fd", fd]
+            // SAFETY: getpid() is a niladic syscall with no preconditions and no invalid return.
             if parse_nonnegative_long(pid) == Some(unsafe { libc::getpid() as i64 }) =>
         {
             fd.parse::<c_int>().ok()
@@ -298,10 +301,12 @@ fn collect_cstring_array(ptr: *const *const c_char) -> Vec<String> {
 
     let mut index = 0usize;
     loop {
+        // SAFETY: ptr is a non-null, NUL-sentinel-terminated char** (exec ABI / libc environ); index walks up to the sentinel checked below.
         let current = unsafe { *ptr.add(index) };
         if current.is_null() {
             break;
         }
+        // SAFETY: current is a valid NUL-terminated C string element of the exec argv/envp/environ array.
         let entry = unsafe { CStr::from_ptr(current) }
             .to_string_lossy()
             .into_owned();
@@ -313,6 +318,7 @@ fn collect_cstring_array(ptr: *const *const c_char) -> Vec<String> {
 
 fn effective_env_ptr(envp: *const *const c_char) -> *const *const c_char {
     if envp.is_null() {
+        // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
         unsafe { environ.cast() }
     } else {
         envp
@@ -338,6 +344,7 @@ fn resolve_command_via_path_value(command: &str, path_value: Option<&str>) -> Op
             continue;
         };
 
+        // SAFETY: cstring is a live NUL-terminated CString valid for the call; access only reads the path.
         let executable = unsafe { libc::access(cstring.as_ptr(), libc::X_OK) == 0 };
         if !executable {
             continue;
@@ -653,6 +660,7 @@ fn approved_wrapper_requires_native_launcher_parent(wrapper: ApprovedWrapper) ->
 }
 
 fn current_process_parent_is_approved_native_launcher() -> bool {
+    // SAFETY: getppid() is a niladic syscall with no preconditions.
     let parent_pid = unsafe { libc::getppid() };
     if parent_pid < 1 {
         return false;
@@ -1429,6 +1437,7 @@ fn env_has_unsafe_git_override(env_entries: &[String]) -> bool {
 }
 
 fn report(message: &str) {
+    // SAFETY: message is a live &str valid for len bytes (write is read-only); errno_location() returns libc's valid errno slot.
     unsafe {
         libc::write(
             libc::STDERR_FILENO,
@@ -1441,11 +1450,13 @@ fn report(message: &str) {
 
 #[cfg(target_os = "linux")]
 unsafe fn errno_location() -> *mut c_int {
+    // SAFETY: __errno_location() takes no arguments and always returns a valid per-thread errno pointer.
     unsafe { libc::__errno_location() }
 }
 
 #[cfg(target_os = "macos")]
 unsafe fn errno_location() -> *mut c_int {
+    // SAFETY: __error() takes no arguments and always returns a valid per-thread errno pointer.
     unsafe { libc::__error() }
 }
 
@@ -1472,44 +1483,55 @@ fn report_workcell_launcher_loader_env_block() {
 }
 
 unsafe fn load_symbol<T: Copy>(name: &CStr) -> T {
+    // SAFETY: name is a valid NUL-terminated c-string literal; dlsym reads it and returns the RTLD_NEXT symbol address or null.
     let symbol = unsafe { libc::dlsym(libc::RTLD_NEXT, name.as_ptr().cast()) };
     assert!(!symbol.is_null(), "missing required symbol {:?}", name);
+    // SAFETY: symbol is non-null (asserted) and pointer-sized; T is a same-width extern "C" fn pointer, so reinterpreting the address is valid on POSIX.
     unsafe { mem::transmute_copy(&symbol) }
 }
 
 fn execve_fn() -> ExecveFn {
+    // SAFETY: c"execve" is a valid C-string literal and matches the ExecveFn ABI resolved into this OnceLock.
     *EXECVE_FN.get_or_init(|| unsafe { load_symbol(c"execve") })
 }
 
 fn execv_fn() -> ExecvFn {
+    // SAFETY: c"execv" is a valid C-string literal and matches the ExecvFn ABI resolved into this OnceLock.
     *EXECV_FN.get_or_init(|| unsafe { load_symbol(c"execv") })
 }
 
 fn execvp_fn() -> ExecvpFn {
+    // SAFETY: c"execvp" is a valid C-string literal and matches the ExecvpFn ABI resolved into this OnceLock.
     *EXECVP_FN.get_or_init(|| unsafe { load_symbol(c"execvp") })
 }
 
 fn execvpe_fn() -> ExecvpeFn {
+    // SAFETY: c"execvpe" is a valid C-string literal and matches the ExecvpeFn ABI resolved into this OnceLock.
     *EXECVPE_FN.get_or_init(|| unsafe { load_symbol(c"execvpe") })
 }
 
 fn execveat_fn() -> ExecveatFn {
+    // SAFETY: c"execveat" is a valid C-string literal and matches the ExecveatFn ABI resolved into this OnceLock.
     *EXECVEAT_FN.get_or_init(|| unsafe { load_symbol(c"execveat") })
 }
 
 fn fexecve_fn() -> FexecveFn {
+    // SAFETY: c"fexecve" is a valid C-string literal and matches the FexecveFn ABI resolved into this OnceLock.
     *FEXECVE_FN.get_or_init(|| unsafe { load_symbol(c"fexecve") })
 }
 
 fn posix_spawn_fn() -> PosixSpawnFn {
+    // SAFETY: c"posix_spawn" is a valid C-string literal and matches the PosixSpawnFn ABI resolved into this OnceLock.
     *POSIX_SPAWN_FN.get_or_init(|| unsafe { load_symbol(c"posix_spawn") })
 }
 
 fn posix_spawnp_fn() -> PosixSpawnpFn {
+    // SAFETY: c"posix_spawnp" is a valid C-string literal and matches the PosixSpawnpFn ABI resolved into this OnceLock.
     *POSIX_SPAWNP_FN.get_or_init(|| unsafe { load_symbol(c"posix_spawnp") })
 }
 
 fn real_syscall_fn() -> SyscallFn {
+    // SAFETY: c"syscall" is a valid C-string literal and matches the SyscallFn ABI resolved into this OnceLock.
     *REAL_SYSCALL_FN.get_or_init(|| unsafe { load_symbol(c"syscall") })
 }
 
@@ -1517,6 +1539,7 @@ fn c_path_string(path: *const c_char) -> String {
     if path.is_null() {
         String::new()
     } else {
+        // SAFETY: path is non-null (checked above) and a NUL-terminated C string from the exec ABI.
         unsafe { CStr::from_ptr(path) }
             .to_string_lossy()
             .into_owned()
@@ -1547,9 +1570,11 @@ fn is_git_execveat_target(dirfd: c_int, pathname: &str, flags: c_int) -> bool {
         return false;
     };
     let mut stat_buf = MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: c_path is a live NUL-terminated CString; stat_buf.as_mut_ptr() is a valid writable stat buffer for fstatat.
     if unsafe { libc::fstatat(dirfd, c_path.as_ptr(), stat_buf.as_mut_ptr(), 0) } != 0 {
         return false;
     }
+    // SAFETY: fstatat returned 0, so the kernel fully initialized stat_buf.
     let stat_buf = unsafe { stat_buf.assume_init() };
 
     let Some(signature) = stat_signature_from_stat(&stat_buf) else {
@@ -1572,6 +1597,7 @@ pub unsafe extern "C" fn workcell_syscall_shim(
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         if number == SYS_EXECVE {
+            // SAFETY: number==SYS_execve, so arg1..arg3 are the (path, argv, envp) pointers of the execve ABI.
             return unsafe {
                 execve(
                     arg1 as *const c_char,
@@ -1581,6 +1607,7 @@ pub unsafe extern "C" fn workcell_syscall_shim(
             };
         }
         if number == SYS_EXECVEAT {
+            // SAFETY: number==SYS_execveat, so arg1..arg5 are (dirfd, pathname, argv, envp, flags) per the execveat ABI.
             return unsafe {
                 execveat(
                     arg1 as c_int,
@@ -1593,6 +1620,7 @@ pub unsafe extern "C" fn workcell_syscall_shim(
         }
     }
 
+    // SAFETY: forwards the original syscall number and its 6 register args unchanged to the real libc syscall().
     unsafe { real_syscall_fn()(number, arg1, arg2, arg3, arg4, arg5, arg6) }
 }
 
@@ -1627,6 +1655,7 @@ pub unsafe extern "C" fn execve(
         return -1;
     }
 
+    // SAFETY: forwards the caller's original, unmodified execve arguments to the real libc execve resolved via RTLD_NEXT.
     unsafe { execve_fn()(path, argv, envp) }
 }
 
@@ -1634,6 +1663,7 @@ pub unsafe extern "C" fn execve(
 pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) -> c_int {
     let path_string = c_path_string(path);
     let args = collect_cstring_array(argv);
+    // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
     let env_entries = collect_cstring_array(unsafe { environ.cast() });
 
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
@@ -1657,6 +1687,7 @@ pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) 
         return -1;
     }
 
+    // SAFETY: forwards the caller's original, unmodified execv arguments to the real libc execv resolved via RTLD_NEXT.
     unsafe { execv_fn()(path, argv) }
 }
 
@@ -1664,6 +1695,7 @@ pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) 
 pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char) -> c_int {
     let file_string = c_path_string(file);
     let args = collect_cstring_array(argv);
+    // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
     let env_entries = collect_cstring_array(unsafe { environ.cast() });
     let effective_path = resolve_exec_search_target(&file_string, &env_entries);
 
@@ -1688,6 +1720,7 @@ pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char)
         return -1;
     }
 
+    // SAFETY: forwards the caller's original, unmodified execvp arguments to the real libc execvp resolved via RTLD_NEXT.
     unsafe { execvp_fn()(file, argv) }
 }
 
@@ -1723,6 +1756,7 @@ pub unsafe extern "C" fn execvpe(
         return -1;
     }
 
+    // SAFETY: forwards the caller's original, unmodified execvpe arguments to the real libc execvpe resolved via RTLD_NEXT.
     unsafe { execvpe_fn()(file, argv, envp) }
 }
 
@@ -1769,6 +1803,7 @@ pub unsafe extern "C" fn execveat(
         let mut native_launcher_target = false;
 
         if let Ok(c_path) = CString::new(pathname_string.as_bytes()) {
+            // SAFETY: c_path is a live NUL-terminated CString; assume_init runs only on fstatat==0; candidate_fd (O_CLOEXEC) is owned, checked >=0, and closed exactly once after use.
             unsafe {
                 let mut stat_buf = MaybeUninit::<libc::stat>::uninit();
                 if libc::fstatat(dirfd, c_path.as_ptr(), stat_buf.as_mut_ptr(), 0) == 0
@@ -1850,6 +1885,7 @@ pub unsafe extern "C" fn execveat(
         return -1;
     }
 
+    // SAFETY: forwards the caller's original, unmodified execveat arguments to the real libc execveat resolved via RTLD_NEXT.
     unsafe { execveat_fn()(dirfd, pathname, argv, envp, flags) }
 }
 
@@ -1893,6 +1929,7 @@ pub unsafe extern "C" fn fexecve(
         return -1;
     }
 
+    // SAFETY: forwards the caller's original, unmodified fexecve arguments to the real libc fexecve resolved via RTLD_NEXT.
     unsafe { fexecve_fn()(fd, argv, envp) }
 }
 
@@ -1930,6 +1967,7 @@ pub unsafe extern "C" fn posix_spawn(
         return libc::EPERM;
     }
 
+    // SAFETY: forwards the caller's original, unmodified posix_spawn arguments to the real libc posix_spawn resolved via RTLD_NEXT.
     unsafe { posix_spawn_fn()(pid, path, file_actions, attrp, argv, envp) }
 }
 
@@ -1968,6 +2006,7 @@ pub unsafe extern "C" fn posix_spawnp(
         return libc::EPERM;
     }
 
+    // SAFETY: forwards the caller's original, unmodified posix_spawnp arguments to the real libc posix_spawnp resolved via RTLD_NEXT.
     unsafe { posix_spawnp_fn()(pid, file, file_actions, attrp, argv, envp) }
 }
 
@@ -2110,6 +2149,7 @@ mod tests {
         );
         assert_eq!(path_is_current_process_fd_path("/proc/self/fd/9"), Some(9));
         assert_eq!(
+            // SAFETY: getpid() has no preconditions (test-only).
             path_is_current_process_fd_path(&format!("/proc/{}/fd/4", unsafe { libc::getpid() })),
             Some(4)
         );

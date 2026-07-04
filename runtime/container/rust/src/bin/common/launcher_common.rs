@@ -9,6 +9,7 @@ use std::os::unix::ffi::OsStrExt;
 #[cfg(not(test))]
 use std::sync::atomic::{AtomicI32, Ordering};
 
+// SAFETY: matches libc's process-global char **environ; reads assume no concurrent setenv/putenv mutation.
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
 }
@@ -49,12 +50,14 @@ impl fmt::Display for NulArgumentError {
 pub fn sanitize_env() {
     for key in SANITIZED_ENV_KEYS {
         // Rust 2024 makes process-global env mutation unsafe.
+        // SAFETY: called during single-threaded launcher startup before any thread or child is spawned; no concurrent env access.
         unsafe { env::remove_var(key) };
     }
 }
 
 pub fn set_env_var(key: &str, value: &str) {
     // Rust 2024 makes process-global env mutation unsafe.
+    // SAFETY: single-threaded startup env mutation; no other thread can be reading the environment.
     unsafe { env::set_var(key, value) };
 }
 
@@ -92,6 +95,7 @@ pub fn exec_request(exec_args: &[CString], script_path: &str) -> i32 {
     let mut argv: Vec<*const c_char> = exec_args.iter().map(|arg| arg.as_ptr()).collect();
     argv.push(std::ptr::null());
 
+    // SAFETY: exec_args is a live non-empty Vec<CString> backing the NULL-terminated argv; environ is libc-initialized; single-threaded.
     let rc = unsafe { libc::execve(exec_args[0].as_ptr(), argv.as_ptr(), environ.cast()) };
     let errno = std::io::Error::last_os_error()
         .raw_os_error()
@@ -108,6 +112,7 @@ pub fn exec_request(exec_args: &[CString], script_path: &str) -> i32 {
 extern "C" fn forward_signal_to_managed_child(signal: libc::c_int) {
     let pid = MANAGED_CHILD_PID.load(Ordering::SeqCst);
     if pid > 0 {
+        // SAFETY: kill() is async-signal-safe; pid>0 read via SeqCst atomic; a stale pid yields harmless ESRCH.
         unsafe {
             libc::kill(pid, signal);
         }
@@ -117,11 +122,13 @@ extern "C" fn forward_signal_to_managed_child(signal: libc::c_int) {
 #[cfg(not(test))]
 fn install_signal_forwarding() {
     for signal in [libc::SIGINT, libc::SIGTERM] {
+        // SAFETY: libc::sigaction is a repr(C) POD; all-zeroes is a valid initial value.
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
         // Linux libc exposes the sa_handler/sa_sigaction union as this field;
         // SA_SIGINFO stays clear so the kernel treats it as a one-arg handler.
         action.sa_sigaction = forward_signal_to_managed_child as *const () as libc::sighandler_t;
         action.sa_flags = 0;
+        // SAFETY: &action/&mut sa_mask are valid; handler is a real extern "C" fn with SA_SIGINFO clear (one-arg ABI); null oldact is allowed.
         unsafe {
             libc::sigemptyset(&mut action.sa_mask);
             libc::sigaction(signal, &action, std::ptr::null_mut());
@@ -132,6 +139,7 @@ fn install_signal_forwarding() {
 #[cfg(not(test))]
 pub fn spawn_and_wait_request(exec_args: &[CString], script_path: &str) -> i32 {
     install_signal_forwarding();
+    // SAFETY: fork() takes no arguments; child/parent dispatched on the returned pid.
     let pid = unsafe { libc::fork() };
     if pid < 0 {
         let errno = std::io::Error::last_os_error()
@@ -150,6 +158,7 @@ pub fn spawn_and_wait_request(exec_args: &[CString], script_path: &str) -> i32 {
         let mut argv: Vec<*const c_char> = exec_args.iter().map(|arg| arg.as_ptr()).collect();
         argv.push(std::ptr::null());
 
+        // SAFETY: in the forked child; exec_args backs the NULL-terminated argv, environ is libc's env; execve is async-signal-safe.
         let rc = unsafe { libc::execve(exec_args[0].as_ptr(), argv.as_ptr(), environ.cast()) };
         let errno = std::io::Error::last_os_error()
             .raw_os_error()
@@ -158,12 +167,14 @@ pub fn spawn_and_wait_request(exec_args: &[CString], script_path: &str) -> i32 {
         if rc != 0 {
             eprintln!("{}", format_exec_error(script_path, errno));
         }
+        // SAFETY: _exit() is async-signal-safe and terminates the failed child without running at-exit handlers.
         unsafe { libc::_exit(exit_code_for_errno(errno)) };
     }
 
     MANAGED_CHILD_PID.store(pid, Ordering::SeqCst);
     loop {
         let mut status = 0;
+        // SAFETY: waitpid writes only through the valid &mut status int; pid is the live child from fork().
         let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
         if waited < 0 {
             let errno = std::io::Error::last_os_error()

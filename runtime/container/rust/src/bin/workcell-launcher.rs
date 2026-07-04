@@ -104,10 +104,12 @@ fn build_exec_args(
 
 #[cfg(target_os = "linux")]
 fn current_execfn() -> Option<OsString> {
+    // SAFETY: getauxval(AT_EXECFN) has no preconditions; returns 0 when absent (checked below).
     let value = unsafe { libc::getauxval(libc::AT_EXECFN) };
     if value == 0 {
         return None;
     }
+    // SAFETY: value is non-zero (checked), a kernel-provided NUL-terminated C string valid for the process lifetime.
     let c_value = unsafe { std::ffi::CStr::from_ptr(value as *const libc::c_char) };
     Some(OsStr::from_bytes(c_value.to_bytes()).to_owned())
 }
@@ -468,6 +470,7 @@ mod tests {
         launcher_common::set_env_var("WORKCELL_COPILOT_AUTH_REQUIRED", "maybe");
         assert_eq!(copilot_auth_required_for_pid1("workcell-entrypoint"), None);
 
+        // SAFETY: test-only env cleanup; the test does not run concurrently with other environment access.
         unsafe { env::remove_var("WORKCELL_COPILOT_AUTH_REQUIRED") };
     }
 
