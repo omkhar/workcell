@@ -762,8 +762,33 @@ or
 .B gemini
 for the corresponding provider.
 .SH EXIT STATUS
-The command exits non-zero on validation failures, unsupported modes, missing
-dependencies, or runtime launch errors.
+.TP
+.B 0
+Success.
+.TP
+.B 2
+Usage or precondition error: missing or unknown command, wrong arity, bad
+option, or an unmet precondition.
+.TP
+.B 1
+Runtime error: an operation was attempted and failed.
+.TP
+.B 124
+A colima operation timed out.
+.TP
+.B 126
+The launcher refused a fail-closed policy block, or the target is not
+executable.
+.TP
+.B 127
+The launcher could not find the target.
+.TP
+.B 128+N
+A supervised child was terminated by signal N.
+.PP
+Other codes are passed through unchanged from a supervised child. The full
+cross-surface exit-code convention is documented in
+.I docs/stability-contract.md .
 .SH SEE ALSO
 .BR colima (1),
 .BR docker (1)

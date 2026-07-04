@@ -483,6 +483,7 @@ See [docs/provenance.md](docs/provenance.md) and
 | Roadmap | [ROADMAP.md](ROADMAP.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
 | Security reporting | [SECURITY.md](SECURITY.md) |
+| Stability and exit-code contract | [docs/stability-contract.md](docs/stability-contract.md) |
 
 ## Repository layout
 
