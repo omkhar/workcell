@@ -29,13 +29,11 @@ policy content.
 
 `ALLOW_ENDPOINTS` is assembled from these reviewed sources:
 
-- provider endpoints for the selected agent
-- target/broker endpoints for the runtime backend
-- credential-derived endpoints (e.g. the Google auth endpoints a Gemini OAuth/ADC credential requires)
-- provider auth-recovery endpoints
+- provider, auth-recovery, and target/broker endpoints for the agent and backend
+- credential-derived endpoints (e.g. Google auth for a Gemini OAuth/ADC credential)
 - injection-policy `[network].allow_endpoints` (operator extension)
-- `EXTRA_ENDPOINTS` from the profile
-- `snapshot.debian.org:443` for ephemeral-container package refresh
+- `EXTRA_ENDPOINTS` from the profile, and `snapshot.debian.org:443` for
+  ephemeral-container package refresh
 
 The combined list is de-duplicated, then `[network].deny_endpoints` is subtracted.
 
@@ -64,8 +62,8 @@ deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlis
 Scope: `deny_endpoints` tighten IP-level VM/container egress (the session and the
 bootstrap build container). Two boundaries follow — a denied host sharing an IP
 with an allowed endpoint (e.g. a shared CDN) stays reachable at the IP layer, and
-the launcher's host-side fetches during an image rebuild (release-URL resolution)
-are not gated by `[network]`. To fully block a host, also drop overlapping allow_endpoints and restrict rebuilds with a prebuilt image or host controls.
+the launcher's host-side rebuild fetches (release-URL resolution) are not gated.
+To fully block a host, drop overlapping allow_endpoints and prebuild the image.
 
 ### No-weakening invariant
 

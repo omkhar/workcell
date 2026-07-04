@@ -8807,7 +8807,12 @@ validate_runtime_security_posture
 restore_runtime_egress() {
   if [[ "${TARGET_BACKEND}" == "colima" ]]; then
     if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
-      "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
+      # An emptied allowlist only reaches here on --prepare-only (an actual
+      # launch aborted at the empty-egress guard); the helper rejects an empty
+      # list and `clear` means unrestricted, so leave the build-time egress.
+      if [[ -n "${ALLOW_ENDPOINTS}" ]]; then
+        "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
+      fi
     else
       "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
     fi

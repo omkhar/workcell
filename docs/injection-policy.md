@@ -135,7 +135,7 @@ validation, and docs land.
 ## Network egress (`[network]`)
 
 The optional `[network]` table lets an operator extend or tighten the
-per-session egress allowlist through the reviewed policy path:
+per-session egress allowlist:
 
 ```toml
 [network]
@@ -144,10 +144,9 @@ deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlis
 ```
 
 `allow_endpoints` are unioned into the default-deny allowlist; `deny_endpoints`
-are removed (deny wins). `[network]` can only extend or tighten the allowlist —
-it cannot set `NETWORK_POLICY`, disable it, or switch to unrestricted — and is
-validated fail-closed. See [docs/egress-policy.md](egress-policy.md) for the
-endpoint grammar, the no-weakening invariant, and the enforcement-parity table.
+are removed (deny wins). `[network]` can only extend or tighten the allowlist,
+never disable it. See [docs/egress-policy.md](egress-policy.md) for the grammar,
+no-weakening invariant, scope, and enforcement-parity table.
 
 ## Instruction precedence
 

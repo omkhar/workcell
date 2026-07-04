@@ -12,11 +12,10 @@ import (
 )
 
 // The patterns below mirror scripts/colima-egress-allowlist.sh's
-// validate_endpoint so every injection-policy engine (authpolicy validate/show,
-// authresolve, and injection render) accepts the same grammar the helper does —
-// with one tightening: an IP-shaped host (bracketed, or bare dotted-numeric)
-// must parse as a real IP (below). All operator endpoints pass this validator
-// before reaching the helper, so a malformed literal never reaches iptables.
+// validate_endpoint so every injection-policy engine accepts the same grammar
+// the helper does — with one tightening: an IP-shaped host (bracketed or bare
+// dotted-numeric) must parse as a real IP (below). All operator endpoints pass
+// this validator first, so a malformed literal never reaches iptables.
 var (
 	ipv6EndpointPattern = regexp.MustCompile(`^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$`)
 	hostEndpointPattern = regexp.MustCompile(`^([^:]+):([0-9]{1,5})$`)

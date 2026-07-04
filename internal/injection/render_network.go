@@ -10,11 +10,8 @@ import (
 	"github.com/omkhar/workcell/internal/injectionpolicy"
 )
 
-// renderNetwork parses the optional top-level `[network]` injection-policy
-// table and returns the operator-declared allow/deny endpoint lists.
-//
-// The `[network]` surface can ONLY contribute endpoint lists: renderNetwork
-// returns endpoint slices and nothing else, with no path to NETWORK_POLICY or
+// renderNetwork parses the optional top-level `[network]` table and returns only
+// the operator-declared allow/deny endpoint slices — no path to NETWORK_POLICY or
 // the enforcement mode. `allow_endpoints` EXTENDS the allowlist, `deny_endpoints`
 // TIGHTENS it (deny wins) — the no-weakening invariant for A1. Validation is
 // fail-closed (shared injectionpolicy.ValidateEgressEndpoint grammar; unknown
