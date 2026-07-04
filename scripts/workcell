@@ -6521,6 +6521,7 @@ run_runtime_image_build_with_retries() {
       fi
       validate_runtime_security_posture
       if [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+        [[ -n "${BOOTSTRAP_ENDPOINTS}" ]] || fail_empty_egress_after_deny "bootstrap"
         "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
       fi
     fi
@@ -8348,10 +8349,11 @@ BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
 # endpoints so a denied endpoint is unreachable during a rebuild/first launch,
 # preserving deny-wins across NEEDS_REBUILD and stale-marker paths.
 if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
+  # deny-wins for bootstrap egress too. The empty-after-deny check is deferred to
+  # the bootstrap-apply sites below, which only run when a rebuild actually
+  # applies bootstrap egress — a policy may intentionally deny all bootstrap
+  # hosts while relying on an already-prepared image, and that must still launch.
   BOOTSTRAP_ENDPOINTS="$(subtract_endpoint_list "${BOOTSTRAP_ENDPOINTS}" "${INJECTION_DENY_ENDPOINTS}")"
-  if [[ -z "${BOOTSTRAP_ENDPOINTS}" ]] && [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
-    fail_empty_egress_after_deny "bootstrap"
-  fi
 fi
 EGRESS_HELPER="${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
 HOST_UID="$(id -u)"
@@ -8858,6 +8860,7 @@ if [[ "${NETWORK_POLICY}" == "allowlist" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; t
   BOOTSTRAP_APPLIED=1
   printf 'bootstrap_policy=allowlist endpoints=%s\n' "${BOOTSTRAP_ENDPOINTS}" >&2
   if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    [[ -n "${BOOTSTRAP_ENDPOINTS}" ]] || fail_empty_egress_after_deny "bootstrap"
     "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
   fi
 elif [[ "${NETWORK_POLICY}" != "allowlist" ]] && [[ "${TARGET_BACKEND}" == "colima" ]]; then
