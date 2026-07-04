@@ -21,10 +21,15 @@ var (
 	aptInstallPattern     = regexp.MustCompile(`apt-get install -y --no-install-recommends(?s:(.*?))&&`)
 	// pinnedReleaseTagPattern matches an exact vMAJOR.MINOR.PATCH release tag.
 	pinnedReleaseTagPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
-	// workflowUsesPattern and commitShaPattern scan workflow `uses:` refs for a
-	// pinned 40-hex commit SHA; both run inside the per-workflow scan loop.
-	workflowUsesPattern = regexp.MustCompile(`(?m)^\s*-\s+uses:\s+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)`)
-	commitShaPattern    = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	// usesLinePattern matches EVERY workflow `uses:` line — whether `uses:` is the
+	// first step key (`- uses:`) or a later key (a step led by `- name:`/`- if:`).
+	// actionRefPattern then requires the captured reference to be a pinned
+	// owner/repo action; anything else (docker://, local ./, unpinned, malformed)
+	// is rejected by default, so the scan is default-deny rather than only
+	// inspecting refs that already look well-formed.
+	usesLinePattern  = regexp.MustCompile(`(?m)^\s*(?:-\s+)?uses:\s*(\S+)`)
+	actionRefPattern = regexp.MustCompile(`^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)@([^\s#]+)$`)
+	commitShaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
 type PinnedInputsConfig struct {
@@ -49,8 +54,37 @@ type PinnedInputsConfig struct {
 // requireStringSliceTable lives in hostedcontrols.go
 // (canonical post-collapse; same package-internal symbols all consumers share).
 
+// loadAllowedActions reads the reviewed GitHub Actions allowlist as a set of
+// permitted owner/repo identities.
+func loadAllowedActions(path string) (map[string]bool, error) {
+	text, err := readText(path)
+	if err != nil {
+		return nil, err
+	}
+	root, err := tomlsubset.Parse(text, path)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := requireStringSliceTable(root, "actions", "allowed", path)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("%s must list at least one allowed action", path)
+	}
+	allowed := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		allowed[entry] = true
+	}
+	return allowed, nil
+}
+
 func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	allowedActions, err := loadAllowedActions(filepath.Join(repoRoot, "policy", "allowed-actions.toml"))
+	if err != nil {
+		return err
+	}
 	goModPath := filepath.Join(repoRoot, "go.mod")
 	cargoManifestPath := filepath.Join(repoRoot, "runtime", "container", "rust", "Cargo.toml")
 	installDevToolsScriptPath := filepath.Join(repoRoot, "scripts", "install-dev-tools.sh")
@@ -927,7 +961,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requirePinnedBaseImage(ciBuildkitImage, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml"); err != nil {
 		return err
 	}
-	for _, workflowPath := range mustGlob(filepath.Join(cfg.WorkflowsDir, "*.yml")) {
+	for _, workflowPath := range workflowYAMLFiles(cfg.WorkflowsDir) {
 		workflowText, err := readText(workflowPath)
 		if err != nil {
 			return err
@@ -1380,7 +1414,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
 		}
 	}
-	for _, workflowPath := range mustGlob(filepath.Join(cfg.WorkflowsDir, "*.yml")) {
+	for _, workflowPath := range workflowYAMLFiles(cfg.WorkflowsDir) {
 		workflowText, err := readText(workflowPath)
 		if err != nil {
 			return err
@@ -1396,9 +1430,19 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		if regexp.MustCompile(`secrets\.[A-Z0-9_]*(?:PAT|PERSONAL_ACCESS_TOKEN)\b|GH_PAT\b|PERSONAL_ACCESS_TOKEN\b`).MatchString(workflowText) {
 			return fmt.Errorf("%s must not contain long-lived personal access tokens", workflowPath)
 		}
-		for _, match := range workflowUsesPattern.FindAllStringSubmatch(workflowText, -1) {
-			if !commitShaPattern.MatchString(match[2]) {
-				return fmt.Errorf("%s must pin GitHub Actions by full commit SHA; found %s@%s", workflowPath, match[1], match[2])
+		for _, usesLine := range usesLinePattern.FindAllStringSubmatch(workflowText, -1) {
+			ref := usesLine[1]
+			action := actionRefPattern.FindStringSubmatch(ref)
+			if action == nil {
+				return fmt.Errorf("%s has an unsupported uses: reference %q; only pinned owner/repo actions are permitted (no docker:// or local ./ actions)", workflowPath, ref)
+			}
+			if !commitShaPattern.MatchString(action[2]) {
+				return fmt.Errorf("%s must pin GitHub Actions by full commit SHA; found %s@%s", workflowPath, action[1], action[2])
+			}
+			segments := strings.SplitN(action[1], "/", 3)
+			ownerRepo := segments[0] + "/" + segments[1]
+			if !allowedActions[ownerRepo] {
+				return fmt.Errorf("%s uses action %q which is not in the reviewed allowlist policy/allowed-actions.toml", workflowPath, ownerRepo)
 			}
 		}
 	}
@@ -1543,4 +1587,10 @@ func mustGlob(pattern string) []string {
 		panic(err)
 	}
 	return matches
+}
+
+// workflowYAMLFiles returns every workflow file, covering both `.yml` and
+// `.yaml` (GitHub executes either), so a `.yaml` workflow cannot dodge the scan.
+func workflowYAMLFiles(dir string) []string {
+	return append(mustGlob(filepath.Join(dir, "*.yml")), mustGlob(filepath.Join(dir, "*.yaml"))...)
 }
