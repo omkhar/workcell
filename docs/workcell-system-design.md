@@ -170,8 +170,11 @@ Repo-local control-plane paths such as:
 - `.gemini/`
 - mutable git hook and config paths
 
-are masked or shadowed by Workcell and then imported into the managed provider
-home as reviewed inputs.
+are masked or shadowed by Workcell over the workspace. Of these, only the
+provider documentation files — `AGENTS.md` plus the active provider's own file
+(`CLAUDE.md` or `GEMINI.md`) — are additionally imported into the managed
+provider home as reviewed inputs; the remaining paths are neutralized in the
+workspace but not reseeded into the provider home.
 
 For tracked files, the shadow path can materialize content from the git index
 instead of live mutable workspace state. That narrows the gap between what the
@@ -180,11 +183,13 @@ operator reviewed and what the runtime consumes.
 ```mermaid
 flowchart LR
     subgraph repo["Repo-local control plane — mutable workspace"]
-        files["AGENTS.md · CLAUDE.md · GEMINI.md<br/>.mcp.json · .codex/ · .claude/ · .gemini/<br/>mutable git hooks + config"]
+        docs["AGENTS.md · CLAUDE.md · GEMINI.md<br/>provider docs"]
+        other[".mcp.json · .codex/ · .claude/ · .gemini/<br/>mutable git hooks + config"]
     end
     idx["git index<br/>tracked files"] -. materialize .-> mask
-    files --> mask["Masked / shadowed<br/>by Workcell"]
-    mask --> home["Managed provider home<br/>reviewed inputs"]
+    docs --> mask["Masked / shadowed<br/>over /workspace"]
+    other --> mask
+    docs --> home["Imported into managed provider home<br/>as reviewed inputs<br/>AGENTS.md + the active provider doc"]
 ```
 
 ### 5. Injection and Credential Flow
