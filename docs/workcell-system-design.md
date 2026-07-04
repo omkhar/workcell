@@ -118,6 +118,21 @@ The supported safe path is two-tier:
 1. a dedicated Colima VM on the host
 2. a hardened agent container inside that VM
 
+```mermaid
+flowchart TB
+    subgraph host["macOS host — control plane"]
+        cli["workcell CLI + host-side helpers"]
+        subgraph vm["Dedicated Colima VM"]
+            subgraph ctr["Hardened agent container<br/>no-new-privileges · cap-drop ALL · pids-limit<br/>tmpfs /tmp /run /state"]
+                provider["Provider agent<br/>Codex / Claude / Copilot / Gemini"]
+                ws["/workspace<br/>selected mount"]
+                provider --- ws
+            end
+        end
+    end
+    cli --> vm --> ctr
+```
+
 The container launch path applies controls such as:
 
 - Docker `--init` for launches that do not require PID 1 environment scrubbing
@@ -155,12 +170,29 @@ Repo-local control-plane paths such as:
 - `.gemini/`
 - mutable git hook and config paths
 
-are masked or shadowed by Workcell and then imported into the managed provider
-home as reviewed inputs.
+are masked or shadowed by Workcell over the workspace. Of these, the provider
+documentation files may additionally be imported into the managed provider home
+as reviewed inputs, and which files are imported depends on the adapter: Codex
+imports `AGENTS.md`; Claude and Gemini import `AGENTS.md` plus their own file
+(`CLAUDE.md` or `GEMINI.md`); Copilot imports none, because its custom-instruction
+surface is intentionally disabled. The remaining control-plane paths are
+neutralized in the workspace but not reseeded into the provider home.
 
 For tracked files, the shadow path can materialize content from the git index
 instead of live mutable workspace state. That narrows the gap between what the
 operator reviewed and what the runtime consumes.
+
+```mermaid
+flowchart LR
+    subgraph repo["Repo-local control plane — mutable workspace"]
+        docs["AGENTS.md · CLAUDE.md · GEMINI.md<br/>provider docs"]
+        other[".mcp.json · .codex/ · .claude/ · .gemini/<br/>mutable git hooks + config"]
+    end
+    idx["git index<br/>tracked files"] -. materialize .-> mask
+    docs --> mask["Masked / shadowed<br/>over /workspace"]
+    other --> mask
+    docs -. "Codex/Claude/Gemini only<br/>(Copilot imports none)" .-> home["Imported into managed provider home<br/>as reviewed inputs"]
+```
 
 ### 5. Injection and Credential Flow
 
@@ -174,6 +206,16 @@ The flow is:
 3. render a staged injection bundle and manifest
 4. mount the staged bundle into controlled runtime paths
 5. reseed the managed provider home from approved sources
+
+```mermaid
+flowchart TD
+    policy["Injection policy<br/>loaded on host"] --> resolve["Resolve credential sources<br/>+ selector scope"]
+    resolve --> render["Render staged bundle<br/>+ manifest"]
+    render --> mount["Mount bundle into<br/>controlled runtime paths"]
+    mount --> reseed["Reseed managed<br/>provider home"]
+    reseed --> agent["Provider agent"]
+    guard["Secrets classified + staged ·<br/>target paths enumerated ·<br/>reserved provider-home paths protected"] -. governs .-> render
+```
 
 Important properties of the current implementation:
 
