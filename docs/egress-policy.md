@@ -77,19 +77,17 @@ shipped default-deny allowlist.
 
 Per-session allowlist enforcement is a property of the `colima` target only;
 other targets do not receive the `DOCKER-USER` allowlist. The launch summary
-makes this explicit with an `egress_enforcement=` line:
+prints an `egress_enforcement=` line next to `network_policy=... endpoints=...`:
 
 | Target | `egress_enforcement` | Per-session allowlist enforced |
 |---|---|---|
 | `colima` (allowlist) | `allowlist` | yes — `iptables`/`ip6tables` default-deny in `DOCKER-USER` |
 | `colima` (unrestricted, e.g. breakglass) | `none` | no — allowlist not applied |
-| `docker-desktop` | `none` | no — relies on Docker Desktop / host network controls |
-| `aws-ec2-ssm` (preview) | `none` | no — relies on the VM's own security groups / network controls |
-| `gcp-vm` (preview) | `none` | no — relies on the VM's own firewall / network controls |
+| `docker-desktop` | `none` | no — relies on Docker Desktop / host controls |
+| `aws-ec2-ssm` (preview) | `none` | no — relies on the VM's security groups |
+| `gcp-vm` (preview) | `none` | no — relies on the VM's own firewall |
 
-`egress_enforcement=allowlist` prints only when `TARGET_BACKEND == colima` and
-`NETWORK_POLICY == allowlist`; every other combination prints `none`, next to the
-`network_policy=... endpoints=...` summary line.
+`egress_enforcement=allowlist` prints only for `colima` + allowlist, else `none`.
 
 ## Related docs
 
