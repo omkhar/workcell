@@ -153,10 +153,12 @@ configuration, stale tracking refs, and replacement refs as trust shortcuts.
 
 ## SLSA v1.0 Build-track gap analysis
 
-SLSA v1.0 defines only the **Build track** (levels L1-L3); source-integrity
-controls such as two-person review are not part of SLSA v1.0 (a Source track is
-expected in a later version). This section assesses the release build against the
-Build track and notes source-integrity posture separately as out of scope.
+SLSA v1.0 defines only the **Build track** (levels L1-L3); it has no Source
+track. Source-integrity controls such as two-person review belong to SLSA's
+Source track, which was added in a later version (v1.2, as Source L4 two-party
+review). This analysis is scoped to the v1.0 Build track, so the current Source
+track is out of scope and not claimed; source-integrity posture is noted
+separately below.
 
 Reproducibility and hermeticity are *not* Build L1-L3 requirements in v1.0; they
 are additive properties. Workcell's reproducibility work is credit beyond the
@@ -210,8 +212,9 @@ inputs and building with the network disabled) is optional hardening.
 
 ### Source-integrity note (two-person review, outside SLSA v1.0)
 
-Two-person review is a source-integrity control outside SLSA v1.0's Build track
-(SLSA v1.0 has no Source track; one is expected in a later version). It is a
+Two-person review is a source-integrity control outside SLSA v1.0's Build track.
+It belongs to SLSA's Source track (added in v1.2 as Source L4 two-party review),
+which this v1.0 Build-track analysis does not claim. It is a
 structural non-goal in single-maintainer mode. The release path nonetheless
 raises source-integrity
 assurance through signed annotated release tags (verified via GitHub's API and
