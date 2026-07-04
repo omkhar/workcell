@@ -49,10 +49,13 @@ ordinary unit tests so only the fuzzer runs.
 ## Scheduled lane
 
 `.github/workflows/fuzz.yml` runs weekly and on demand. It gives each target a
-few minutes of fuzzing on a GitHub-hosted runner, exercising every target above.
-The lane is not on the PR path — the seed corpus already gates PRs through the
-normal `go test` lanes — so it stays a scheduled, heavy sweep. It is registered
-in `policy/workflow-lane-policy.json` and reflected in `policy/workflow-lanes.json`.
+few minutes of fuzzing, exercising every target above. The lane runs the targets
+inside the validator image (via `scripts/ci/job-fuzz.sh` →
+`scripts/ci/run-fuzz-in-validator.sh`) so it uses the reviewed, pinned Go
+toolchain rather than the runner's ambient Go. The lane is not on the PR path —
+the seed corpus already gates PRs through the normal `go test` lanes — so it
+stays a scheduled, heavy sweep. It is registered in
+`policy/workflow-lane-policy.json` and reflected in `policy/workflow-lanes.json`.
 
 ## Crash triage
 
