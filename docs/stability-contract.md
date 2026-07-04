@@ -115,6 +115,10 @@ The full stable output-line prefix set enforced by `policy/public-contract.toml`
 | `record_digest=` | `scripts/workcell` |
 | `prev_digest=` | `scripts/workcell` |
 
+The complete set of `key=` prefixes in the `session show --text` summary is
+enforced separately, by set-equality against `SessionShowLines`
+(`policy/public-contract.toml` `[session_show_prefixes]`).
+
 ## Injection-policy supported tables
 
 `internal/injection` accepts exactly four top-level tables in an injection

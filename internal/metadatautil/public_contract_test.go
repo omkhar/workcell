@@ -199,6 +199,21 @@ func TestStripCommentsRemovesCommentProse(t *testing.T) {
 	}
 }
 
+func TestCheckPublicContractRejectsMissingSessionShowPrefix(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	contractPath := mutatedContractCopy(t, root,
+		`, "display_workspace="`,
+		``,
+	)
+	err := CheckPublicContract(root, contractPath)
+	if err == nil {
+		t.Fatal("CheckPublicContract() unexpectedly succeeded with a missing session-show prefix")
+	}
+	if !strings.Contains(err.Error(), "display_workspace=") {
+		t.Fatalf("CheckPublicContract() error = %v, want mention of display_workspace=", err)
+	}
+}
+
 func TestCheckPublicContractRejectsTableMovedToScalar(t *testing.T) {
 	root := publicContractRepoRoot(t)
 	// Move a real table (copies) into scalar_root_keys: the flattened union

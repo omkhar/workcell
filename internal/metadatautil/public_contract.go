@@ -29,6 +29,7 @@ var exitCodeSourceFiles = []string{
 type publicContract struct {
 	ExitCodes               []string
 	OutputLinePrefixes      []string
+	SessionShowPrefixes     []string
 	SessionRecordFields     []string
 	SessionExportFields     []string
 	InjectionTables         []string
@@ -59,6 +60,9 @@ func CheckPublicContract(rootDir, contractPath string) error {
 		return err
 	}
 	if err := checkOutputLinePrefixes(rootDir, contractPath, contract.OutputLinePrefixes); err != nil {
+		return err
+	}
+	if err := checkSessionShowPrefixes(rootDir, contractPath, contract.SessionShowPrefixes); err != nil {
 		return err
 	}
 	if err := checkSessionRecordFields(rootDir, contractPath, contract.SessionRecordFields, contract.SessionExportFields); err != nil {
@@ -97,6 +101,10 @@ func loadPublicContract(contractPath string) (publicContract, error) {
 	if err != nil {
 		return publicContract{}, err
 	}
+	sessionShowPrefixes, err := requiredStringSliceTable(document, contractPath, "session_show_prefixes", "prefixes")
+	if err != nil {
+		return publicContract{}, err
+	}
 	sessionRecordFields, err := requiredStringSliceTable(document, contractPath, "session_record_fields", "fields")
 	if err != nil {
 		return publicContract{}, err
@@ -117,6 +125,7 @@ func loadPublicContract(contractPath string) (publicContract, error) {
 	return publicContract{
 		ExitCodes:               exitCodes,
 		OutputLinePrefixes:      outputLinePrefixes,
+		SessionShowPrefixes:     sessionShowPrefixes,
 		SessionRecordFields:     sessionRecordFields,
 		SessionExportFields:     sessionExportFields,
 		InjectionTables:         injectionTables,
@@ -362,6 +371,27 @@ func outputLinePrefixEmitted(sources []string, prefix string) bool {
 // structJSONFieldPattern extracts the tag name out of a `json:"name"` or
 // `json:"name,omitempty"` struct tag.
 var structJSONFieldPattern = regexp.MustCompile(`json:"([a-zA-Z0-9_]+)(?:,[^"]*)?"`)
+
+// checkSessionShowPrefixes asserts that [session_show_prefixes].prefixes
+// set-equals the complete set of `key=` literals emitted by
+// internal/host/sessions.SessionShowLines (the `session show --text` summary),
+// so renaming, adding, or dropping a summary line fails the check.
+func checkSessionShowPrefixes(rootDir, contractPath string, prefixes []string) error {
+	sessionsPath := filepath.Join(rootDir, "internal", "host", "sessions", "sessions.go")
+	source, err := readText(sessionsPath)
+	if err != nil {
+		return fmt.Errorf("%s session_show_prefixes: %w", contractPath, err)
+	}
+	keys, err := functionScopedMatches(source, "SessionShowLines", `"([a-z_]+)=`, sessionsPath)
+	if err != nil {
+		return fmt.Errorf("%s session_show_prefixes: %w", contractPath, err)
+	}
+	codePrefixes := make([]string, 0, len(keys))
+	for _, key := range keys {
+		codePrefixes = append(codePrefixes, key+"=")
+	}
+	return assertSetsEqual(contractPath, "session_show_prefixes.prefixes", "the key= lines emitted by SessionShowLines in "+sessionsPath, codePrefixes, prefixes)
+}
 
 // checkSessionRecordFields asserts that [session_record_fields].fields and
 // .export_fields exactly match the json tags of SessionRecord and

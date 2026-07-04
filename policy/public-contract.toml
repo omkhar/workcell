@@ -35,6 +35,13 @@ export_fields = ["session", "audit_records"]
 # The injection-policy top-level table whitelist accepted by
 # internal/injection/render_policy_load.go (documents/ssh/credentials are
 # single-bracket tables; copies is the one supported [[array-of-table]]).
+# The complete set of key= prefixes emitted by internal/host/sessions
+# SessionShowLines (the `workcell session show --text` summary). Enforced by
+# set-equality against that function, so renaming or dropping a summary line
+# fails the check.
+[session_show_prefixes]
+prefixes = ["session_id=", "profile=", "target_kind=", "target_provider=", "target_id=", "target_summary=", "target_assurance_class=", "runtime_api=", "control=", "agent=", "mode=", "ui=", "execution_path=", "status=", "live_status=", "assurance=", "workspace_transport=", "workspace=", "display_workspace=", "display_worktree=", "display_git_branch=", "workspace_origin=", "workspace_root=", "worktree_path=", "git_branch=", "git_head=", "git_base=", "container_name=", "monitor_pid=", "started_at=", "observed_at=", "finished_at=", "exit_status=", "initial_assurance=", "current_assurance=", "final_assurance=", "workspace_control_plane=", "session_audit_dir=", "audit_log_path=", "debug_log_path=", "file_trace_log_path=", "transcript_log_path="]
+
 [injection_tables]
 tables = ["documents", "ssh", "credentials", "copies"]
 # The non-table scalar root keys the loader also accepts. tables + these must
