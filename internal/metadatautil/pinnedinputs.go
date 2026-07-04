@@ -95,6 +95,66 @@ func extractWorkflowUses(workflowText string) ([]string, error) {
 	return refs, nil
 }
 
+// toolPins is the reviewed canonical set of CI/release tool pins that are
+// otherwise duplicated inline across workflows.
+type toolPins struct {
+	Cosign            string
+	Buildx            string
+	Buildkit          string
+	QEMU              string
+	Syft              string
+	ActionlintVersion string
+	ActionlintSHA256  string
+	ZizmorVersion     string
+	ZizmorSHA256      string
+}
+
+// loadToolPins reads policy/tool-pins.toml and requires every pin to be present.
+func loadToolPins(path string) (toolPins, error) {
+	text, err := readText(path)
+	if err != nil {
+		return toolPins{}, err
+	}
+	root, err := tomlsubset.Parse(text, path)
+	if err != nil {
+		return toolPins{}, err
+	}
+	table, ok := root["tool_pins"].(map[string]any)
+	if !ok {
+		return toolPins{}, fmt.Errorf("%s must define a [tool_pins] table", path)
+	}
+	var pins toolPins
+	fields := []struct {
+		key string
+		dst *string
+	}{
+		{"cosign", &pins.Cosign},
+		{"buildx", &pins.Buildx},
+		{"buildkit", &pins.Buildkit},
+		{"qemu", &pins.QEMU},
+		{"syft", &pins.Syft},
+		{"actionlint_version", &pins.ActionlintVersion},
+		{"actionlint_sha256", &pins.ActionlintSHA256},
+		{"zizmor_version", &pins.ZizmorVersion},
+		{"zizmor_sha256", &pins.ZizmorSHA256},
+	}
+	known := make(map[string]bool, len(fields))
+	for _, field := range fields {
+		known[field.key] = true
+		value, ok := MustString(table[field.key])
+		if !ok || strings.TrimSpace(value) == "" {
+			return toolPins{}, fmt.Errorf("%s [tool_pins] must set a non-empty %s", path, field.key)
+		}
+		*field.dst = value
+	}
+	for key := range table {
+		if !known[key] {
+			return toolPins{}, fmt.Errorf("%s [tool_pins] has an unknown key %q", path, key)
+		}
+	}
+	return pins, nil
+}
+
 // loadAllowedActions reads the reviewed GitHub Actions allowlist as a set of
 // permitted owner/repo identities.
 func loadAllowedActions(path string) (map[string]bool, error) {
@@ -125,6 +185,19 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	allowedActions, err := loadAllowedActions(filepath.Join(repoRoot, "policy", "allowed-actions.toml"))
 	if err != nil {
 		return err
+	}
+	pins, err := loadToolPins(filepath.Join(repoRoot, "policy", "tool-pins.toml"))
+	if err != nil {
+		return err
+	}
+	// requirePolicyPin binds a workflow's canonical tool pin to policy/tool-pins.toml
+	// so bumping a tool is a reviewed change to that one file. The existing
+	// cross-file asserts then keep every other workflow copy in lockstep.
+	requirePolicyPin := func(name, actual, policyValue string) error {
+		if actual != policyValue {
+			return fmt.Errorf("%s pin %q does not match policy/tool-pins.toml %q; the workflow and the policy must stay in lockstep (scripts/update-upstream-pins.sh rewrites both)", name, actual, policyValue)
+		}
+		return nil
 	}
 	goModPath := filepath.Join(repoRoot, "go.mod")
 	cargoManifestPath := filepath.Join(repoRoot, "runtime", "container", "rust", "Cargo.toml")
@@ -1231,6 +1304,29 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	if securityZizmorSHA != releaseZizmorSHA {
 		return errors.New("ZIZMOR_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
+	}
+	// Bind each tool's canonical workflow value to policy/tool-pins.toml. Run
+	// after the cross-file asserts above so a workflow-vs-workflow mismatch is
+	// reported as such; this catches the case where every workflow copy agrees
+	// but drifts from the reviewed policy.
+	for _, check := range []struct {
+		name        string
+		actual      string
+		policyValue string
+	}{
+		{"WORKCELL_COSIGN_VERSION", ciCosignVersion, pins.Cosign},
+		{"WORKCELL_BUILDX_VERSION", ciBuildxVersion, pins.Buildx},
+		{"WORKCELL_BUILDKIT_IMAGE", ciBuildkitImage, pins.Buildkit},
+		{"WORKCELL_QEMU_IMAGE", ciQEMUImage, pins.QEMU},
+		{"WORKCELL_SYFT_VERSION", releaseSyftVersion, pins.Syft},
+		{"ACTIONLINT_VERSION", securityActionlintVersionMatch[1], pins.ActionlintVersion},
+		{"ACTIONLINT_SHA256", securityActionlintSHAMatch[1], pins.ActionlintSHA256},
+		{"ZIZMOR_VERSION", securityZizmorVersion, pins.ZizmorVersion},
+		{"ZIZMOR_SHA256", securityZizmorSHA, pins.ZizmorSHA256},
+	} {
+		if err := requirePolicyPin(check.name, check.actual, check.policyValue); err != nil {
+			return err
+		}
 	}
 	for _, workflow := range []struct {
 		text string

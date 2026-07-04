@@ -123,6 +123,15 @@ proves the integrity of a specific ref; the allowlist restricts which action
 publishers may run at all, so introducing a new action — even a correctly
 pinned one — requires a reviewed change to that policy.
 
+The CI/release tool pins (cosign, buildx, buildkit, QEMU, syft, actionlint,
+zizmor) have a reviewed chokepoint in
+[`policy/tool-pins.toml`](../policy/tool-pins.toml). The values still live inline
+in the workflows; `check-pinned-inputs` asserts every workflow copy equals the
+policy, and `scripts/update-upstream-pins.sh` rewrites the workflows and the
+policy together on a bump. The policy is the human-reviewed record kept in
+lockstep with the workflows, so a pin can never move without a reviewed diff to
+that file.
+
 `ci.yml` and `docs.yml` use the same explicit nonroot validator contract when
 they bind-mount the repository: the workflow computes the caller UID/GID,
 passes isolated writable roots, and creates those paths inside the validator

@@ -72,6 +72,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"policy/github-hosted-controls.toml",
 		"policy/provider-bumps.toml",
 		"policy/allowed-actions.toml",
+		"policy/tool-pins.toml",
 		"runtime/container/Dockerfile",
 		"runtime/container/providers/package.json",
 		"runtime/container/providers/package-lock.json",
@@ -514,6 +515,51 @@ func TestCheckPinnedInputsRejectsOffAllowlistAction(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "allowlist") || !strings.Contains(err.Error(), "evilorg/evil-action") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want off-allowlist rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsToolPinPolicyDrift(t *testing.T) {
+	t.Parallel()
+
+	// Cover a plain version pin, an image pin (special chars), and a
+	// regex-extracted pin, so every binding shape is exercised.
+	cases := []struct {
+		name string
+		from string
+		to   string
+	}{
+		{"cosign", `cosign = "v3.1.1"`, `cosign = "v9.9.9"`},
+		{"buildkit-image", "@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f", "@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+		{"zizmor-sha", `zizmor_sha256 = "8556289a64e7aaf2400cd516f61a471aa91c5902cc56ad96a82fd12f90c2ef73"`, `zizmor_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"`},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := writePinnedInputsFixture(t)
+			toolPinsPath := filepath.Join(filepath.Dir(cfg.ProviderBumpPolicyPath), "tool-pins.toml")
+			rewriteFile(t, toolPinsPath, func(content string) string {
+				return strings.Replace(content, tc.from, tc.to, 1)
+			})
+			err := metadatautil.CheckPinnedInputs(cfg)
+			if err == nil || !strings.Contains(err.Error(), "does not match policy/tool-pins.toml") {
+				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want tool-pin policy drift rejection", err)
+			}
+		})
+	}
+}
+
+func TestCheckPinnedInputsRejectsUnknownToolPinKey(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	toolPinsPath := filepath.Join(filepath.Dir(cfg.ProviderBumpPolicyPath), "tool-pins.toml")
+	rewriteFile(t, toolPinsPath, func(content string) string {
+		return strings.Replace(content, "[tool_pins]", "[tool_pins]\nbogus = \"x\"", 1)
+	})
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want unknown-key rejection", err)
 	}
 }
 

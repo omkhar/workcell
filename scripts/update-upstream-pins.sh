@@ -51,6 +51,7 @@ PIN_HYGIENE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/pin-hygiene.yml"
 RELEASE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/release.yml"
 SECURITY_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/security.yml"
 UPSTREAM_REFRESH_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/upstream-refresh.yml"
+TOOL_PINS_POLICY_PATH="${ROOT_DIR}/policy/tool-pins.toml"
 
 mode="summary"
 
@@ -786,6 +787,18 @@ replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ACTIONLINT_SHA25
 replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ACTIONLINT_VERSION:' "          ACTIONLINT_VERSION: ${target_actionlint_version}"
 replace_all_lines_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_SHA256:' "          ZIZMOR_SHA256: ${target_zizmor_sha}"
 replace_all_lines_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_VERSION:' "          ZIZMOR_VERSION: ${target_zizmor_version}"
+
+# Keep the reviewed canonical pin policy in lockstep with the workflow edits,
+# before check-pinned-inputs (below) asserts the two agree.
+replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'cosign = ' "cosign = \"${target_cosign_version}\""
+replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'buildx = ' "buildx = \"${target_buildx_version}\""
+replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'buildkit = ' "buildkit = \"${target_buildkit_image}\""
+replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'qemu = ' "qemu = \"${target_qemu_image}\""
+replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'syft = ' "syft = \"${target_syft_version}\""
+replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'actionlint_version = ' "actionlint_version = \"${target_actionlint_version}\""
+replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'actionlint_sha256 = ' "actionlint_sha256 = \"${target_actionlint_sha}\""
+replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'zizmor_version = ' "zizmor_version = \"${target_zizmor_version}\""
+replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'zizmor_sha256 = ' "zizmor_sha256 = \"${target_zizmor_sha}\""
 
 "${ROOT_DIR}/scripts/update-provider-pins.sh" --apply
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
