@@ -5,6 +5,15 @@ This document records which parts of Workcell's surface are stable ahead of
 binaries, and the shell entrypoint. It is the pre-1.0 compatibility reference;
 G1 extends it into the versioned 1.0 contract.
 
+**Contract version: 1.** The machine-checkable companion to this document is
+`policy/public-contract.toml`, enforced by `workcell-citools
+validate-public-contract` (`internal/metadatautil.CheckPublicContract`). It
+asserts that every exit code and output-line prefix documented below is
+actually emitted somewhere in the source tree, and that the session-record
+field list and injection-policy table list below exactly match the
+`SessionRecord`/`SessionExport` JSON shape and the injection-policy table
+whitelist in code.
+
 "Stable" means the shape is not expected to change without a deprecation note.
 "Experimental" means it may change or be removed. Absence from this document is
 not a stability promise.
@@ -86,6 +95,48 @@ contract-like `key=value` / structured output:
 - `mutation score: NN.NN% (k/t killed)` and `surviving mutants: …`.
 - audit digest lines: `record_digest=`, `prev_digest=`.
 - `scenario-manifest` TSV rows (tab-delimited).
+
+The full stable output-line prefix set enforced by `policy/public-contract.toml`
+`[output_lines].prefixes`:
+
+| Prefix | Emitted by |
+|--------|------------|
+| `host_os=` | `internal/host/supportmatrix`, `scripts/workcell` |
+| `support_matrix_status=` | `internal/host/supportmatrix`, `scripts/workcell` |
+| `provider_bootstrap_` | `internal/authpolicy`, `scripts/workcell` |
+| `target_kind=` | `internal/host/sessions`, `scripts/workcell` |
+| `workspace=` | `internal/host/sessions`, `scripts/workcell` |
+| `assurance=` | `internal/host/sessions`, `scripts/workcell` |
+| `publish_pr_url=` | `internal/publishpr` (via `internal/shellproto`) |
+| `mutation score:` | `cmd/workcell-citools` |
+| `record_digest=` | `scripts/workcell` |
+| `prev_digest=` | `scripts/workcell` |
+
+## Injection-policy supported tables
+
+`internal/injection` accepts exactly four top-level tables in an injection
+policy TOML document: `documents`, `ssh`, `credentials` (single-bracket
+tables), and `copies` (the one supported `[[array-of-table]]`). Any other
+top-level table name is rejected. See `docs/injection-policy.md` for the
+per-table schema.
+
+## Durable session-record fields
+
+`internal/host/sessions.SessionRecord`'s JSON field set (`session show`,
+`session export`, and the on-disk session record file):
+
+`version`, `session_id`, `profile`, `target_kind`, `target_provider`,
+`target_id`, `target_assurance_class`, `runtime_api`, `workspace_transport`,
+`agent`, `mode`, `status`, `ui`, `execution_path`, `workspace`,
+`workspace_origin`, `workspace_root`, `worktree_path`, `git_branch`,
+`git_head`, `git_base`, `container_name`, `monitor_pid`, `live_status`,
+`session_audit_dir`, `audit_log_path`, `debug_log_path`,
+`file_trace_log_path`, `transcript_log_path`, `started_at`, `observed_at`,
+`finished_at`, `exit_status`, `initial_assurance`, `current_assurance`,
+`final_assurance`, `workspace_control_plane`.
+
+`SessionExport` (`session export`) wraps this in `session` and adds
+`audit_records`.
 
 ## Internal Go APIs
 

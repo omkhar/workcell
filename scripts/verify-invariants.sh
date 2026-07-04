@@ -264,6 +264,7 @@ detected_verify_host_distro_version() {
 HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
+  "${ROOT_DIR}/scripts/check-public-contract.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/generate-control-plane-manifest.sh"

@@ -294,6 +294,7 @@
           "runtime/**",
           "scripts/check-doc-links.sh",
           "scripts/check-doc-support-matrix-fields.sh",
+          "scripts/check-public-contract.sh",
           "scripts/ci/job-docs.sh",
           "verify/**",
           "workflows/**"
@@ -318,6 +319,7 @@
           "runtime/**",
           "scripts/check-doc-links.sh",
           "scripts/check-doc-support-matrix-fields.sh",
+          "scripts/check-public-contract.sh",
           "scripts/ci/job-docs.sh",
           "verify/**",
           "workflows/**"

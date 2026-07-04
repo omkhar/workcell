@@ -1,0 +1,39 @@
+# Public contract inventory (G1 part 1).
+#
+# Machine-checkable companion to docs/stability-contract.md, enforced by
+# `workcell-citools validate-public-contract` (internal/metadatautil's
+# CheckPublicContract). Every set below must exactly match (or, for
+# exit_codes/output_lines, be a subset emitted by) the corresponding
+# authoritative source location; see CheckPublicContract for the exact
+# assertions and error messages.
+#
+# This does NOT duplicate policy/operator-contract.toml's CLI-flag/help-text
+# parity checks — that remains operator-contract's job. This file covers the
+# lower-level cross-surface primitives: process exit codes, stable
+# machine-readable output-line prefixes, the durable session-record JSON
+# shape, and the injection-policy table whitelist.
+
+[meta]
+version = "1"
+
+# Exit codes documented across scripts/workcell, the four Go CLI mains, and
+# the Rust launcher. 128 stands for the 128+N supervised-child-signal base.
+[exit_codes]
+codes = ["0", "1", "2", "3", "124", "126", "127", "128"]
+
+# Stable key=value / prefixed output lines consumed by tests, CI, or other
+# tooling. See docs/stability-contract.md "Stable machine-readable output".
+[output_lines]
+prefixes = ["host_os=", "support_matrix_status=", "provider_bootstrap_", "target_kind=", "workspace=", "assurance=", "publish_pr_url=", "mutation score:", "record_digest=", "prev_digest="]
+
+# The json tags of internal/host/sessions/sessions.go's SessionRecord and
+# SessionExport structs.
+[session_record_fields]
+fields = ["version", "session_id", "profile", "target_kind", "target_provider", "target_id", "target_assurance_class", "runtime_api", "workspace_transport", "agent", "mode", "status", "ui", "execution_path", "workspace", "workspace_origin", "workspace_root", "worktree_path", "git_branch", "git_head", "git_base", "container_name", "monitor_pid", "live_status", "session_audit_dir", "audit_log_path", "debug_log_path", "file_trace_log_path", "transcript_log_path", "started_at", "observed_at", "finished_at", "exit_status", "initial_assurance", "current_assurance", "final_assurance", "workspace_control_plane"]
+export_fields = ["session", "audit_records"]
+
+# The injection-policy top-level table whitelist accepted by
+# internal/injection/render_policy_load.go (documents/ssh/credentials are
+# single-bracket tables; copies is the one supported [[array-of-table]]).
+[injection_tables]
+tables = ["documents", "ssh", "credentials", "copies"]
