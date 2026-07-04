@@ -24,6 +24,10 @@ var (
 	ipv6EndpointPattern = regexp.MustCompile(`^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$`)
 	hostEndpointPattern = regexp.MustCompile(`^([^:]+):([0-9]{1,5})$`)
 	hostLabelPattern    = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
+	// A host made only of digits and dots is an attempted dotted IPv4 literal,
+	// which the enforcement helper routes to `iptables -d` as an address rather
+	// than resolving via DNS. Such a host must therefore be a real IPv4.
+	ipv4ShapedPattern = regexp.MustCompile(`^[0-9.]+$`)
 )
 
 // ValidateEgressEndpoint enforces the enforcement-helper grammar: a bracketed
@@ -62,6 +66,12 @@ func ValidateEgressEndpoint(endpoint, label string) error {
 			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
 		}
 		if strings.Contains(host, "..") {
+			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
+		}
+		// A dotted-numeric host is an attempted IPv4 literal (the helper treats
+		// it as an address); require every octet to be a real 0-255 value so
+		// 999.999.999.999 fails at policy acceptance, not mid-launch.
+		if ipv4ShapedPattern.MatchString(host) && net.ParseIP(host) == nil {
 			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
 		}
 	}
