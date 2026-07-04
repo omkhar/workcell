@@ -4,14 +4,26 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/colimautil"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		// Honor the canonical cliexit.ExitCodeError so usage errors exit
+		// 2 (matching workcell-citools/-hostutil/-runtimeutil) instead of
+		// collapsing every failure to 1.
+		var ec *cliexit.ExitCodeError
+		if errors.As(err, &ec) {
+			if msg := ec.Error(); msg != "" {
+				fmt.Fprintln(os.Stderr, msg)
+			}
+			os.Exit(ec.Code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -39,5 +51,5 @@ func run(args []string) error {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: workcell-colimautil <validate-runtime-mounts|validate-profile-config> [args...]")
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-colimautil <validate-runtime-mounts|validate-profile-config> [args...]"}
 }

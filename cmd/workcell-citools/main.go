@@ -102,7 +102,9 @@ func subcommands() []subcommand {
 
 func main() {
 	if len(os.Args) < 2 {
-		die(rootUsageError(""))
+		// A missing top-level command is a usage error (exit 2), matching
+		// the wrong-arity path below and the other workcell Go CLIs (D8).
+		dieUsage(rootUsageError(""))
 	}
 	// scenario-manifest preserves the bash contract of distinct exit
 	// codes for usage (2) vs. runtime (1) errors that
@@ -132,7 +134,8 @@ func main() {
 		}
 		return
 	}
-	die(rootUsageError(os.Args[1]))
+	// An unknown top-level command is a usage error (exit 2).
+	dieUsage(rootUsageError(os.Args[1]))
 }
 
 func rootUsageError(badCommand string) error {

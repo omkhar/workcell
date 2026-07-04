@@ -986,16 +986,21 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 	return opts, nil
 }
 
+// The top-level and per-group usage helpers return an ExitCodeError with
+// Code 2 so usage/precondition failures exit 2 across every workcell Go CLI
+// (workcell-citools, -runtimeutil, and the delegated -hostutil subcommands
+// already do); previously these returned plain errors and collapsed to the
+// exit-1 fallback, an intra-binary inconsistency (D8).
 func usage() error {
-	return fmt.Errorf("usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli> [args...]")
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli> [args...]"}
 }
 
 func pathUsage() error {
-	return fmt.Errorf("usage: workcell-hostutil path <home|resolve> [--base DIR] [PATH]")
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil path <home|resolve> [--base DIR] [PATH]"}
 }
 
 func releaseUsage() error {
-	return fmt.Errorf("usage: workcell-hostutil release <create-payload|metadata|encode-name|bundle-manifest> [args...]")
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil release <create-payload|metadata|encode-name|bundle-manifest> [args...]"}
 }
 
 func helperUsage() error {
@@ -1004,7 +1009,7 @@ func helperUsage() error {
 	for _, sub := range subs {
 		names = append(names, sub.name)
 	}
-	return fmt.Errorf("usage: workcell-hostutil helper <%s> [args...]", strings.Join(names, "|"))
+	return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("usage: workcell-hostutil helper <%s> [args...]", strings.Join(names, "|"))}
 }
 
 func parseSessionRoots(args []string) ([]string, []string, error) {
