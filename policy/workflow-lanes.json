@@ -288,7 +288,9 @@
           "SECURITY.md",
           "SUPPORT.md",
           "adapters/**",
+          "cmd/**",
           "docs/**",
+          "internal/**",
           "man/**",
           "policy/**",
           "runtime/**",
@@ -296,6 +298,7 @@
           "scripts/check-doc-support-matrix-fields.sh",
           "scripts/check-public-contract.sh",
           "scripts/ci/job-docs.sh",
+          "scripts/workcell",
           "verify/**",
           "workflows/**"
         ],
@@ -313,7 +316,9 @@
           "SECURITY.md",
           "SUPPORT.md",
           "adapters/**",
+          "cmd/**",
           "docs/**",
+          "internal/**",
           "man/**",
           "policy/**",
           "runtime/**",
@@ -321,6 +326,7 @@
           "scripts/check-doc-support-matrix-fields.sh",
           "scripts/check-public-contract.sh",
           "scripts/ci/job-docs.sh",
+          "scripts/workcell",
           "verify/**",
           "workflows/**"
         ]

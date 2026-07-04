@@ -122,6 +122,32 @@ func TestCheckPublicContractRejectsSubstringOnlyPrefix(t *testing.T) {
 	}
 }
 
+// TestOutputLinePrefixEmitterAnchor pins that a documented prefix is only
+// satisfied by a quoted format-string emitter, not by a shell variable
+// assignment or sed pattern that merely mentions the key.
+func TestOutputLinePrefixEmitterAnchor(t *testing.T) {
+	// A quoted emitter satisfies the prefix.
+	if !outputLinePrefixEmitted([]string{`printf 'record_digest=%q ' "${d}"`}, "record_digest=") {
+		t.Fatal("quoted emitter should satisfy record_digest=")
+	}
+	if !outputLinePrefixEmitted([]string{`fmt.Sprintf("assurance=%s", s)`}, "assurance=") {
+		t.Fatal("quoted emitter should satisfy assurance=")
+	}
+	// A bare variable assignment or sed pattern must NOT satisfy it.
+	for _, nonEmitter := range []string{
+		`  local record_digest=""`,
+		`prev_digest="$(sed -n 's/.*record_digest=\([^ ]*\).*/\1/p' "${p}")"`,
+	} {
+		if outputLinePrefixEmitted([]string{nonEmitter}, "record_digest=") {
+			t.Fatalf("non-emitter reference %q must not satisfy record_digest=", nonEmitter)
+		}
+	}
+	// A longer key ending in the prefix must NOT satisfy it.
+	if outputLinePrefixEmitted([]string{`fmt.Sprintf("current_assurance=%s", s)`}, "assurance=") {
+		t.Fatal("current_assurance= must not satisfy assurance=")
+	}
+}
+
 // TestExcludeNonEmitterFilesDropsSelfAndTests pins the corpus exclusions
 // that keep the output-prefix scan honest: the validator's own source (whose
 // doc comments quote the contract prefixes) and _test.go fixtures must never

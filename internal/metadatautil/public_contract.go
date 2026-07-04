@@ -259,17 +259,23 @@ func excludeNonEmitterFiles(paths []string) []string {
 // shellproto.Field{Key: "publish_pr_url"}) would be invisible even though
 // it is exactly what shellproto guarantees gets printed.
 //
-// The boundary requirement (rather than a plain substring match) is what
-// stops a documented prefix such as "assurance=" from being spuriously
-// satisfied by a longer key that merely ends in it — e.g.
-// "current_assurance=" / "cache_assurance=" / "autonomy_assurance=". With a
-// substring match, deleting the real "assurance=" output would still pass;
-// with the boundary match it correctly fails. The quoted-key shellproto
-// form already carries a leading-quote boundary, so it needs no change.
+// The match requires the prefix to be immediately preceded by a quote
+// (a `"` or `'`), i.e. to begin a Go/shell format-string literal such as
+// `fmt.Sprintf("assurance=%s", …)` or `printf 'record_digest=%q '`. This
+// anchors the check to actual emitters and rejects two false-positive
+// classes a plain substring or word-boundary match would accept:
+//   - longer keys that merely end in the prefix ("current_assurance=",
+//     "cache_assurance="), whose quote sits before the longer key; and
+//   - non-emitting references such as shell variable assignments
+//     (`local record_digest=…`) and sed patterns (`.*record_digest=`),
+//     whose prefix is preceded by whitespace or a metacharacter.
+// So deleting the real emitter — while leaving those references behind —
+// correctly fails the check. The quoted-key shellproto form below carries
+// its own leading-quote anchor.
 func outputLinePrefixEmitted(sources []string, prefix string) bool {
-	boundary := regexp.MustCompile(`(?:^|[^A-Za-z0-9_])` + regexp.QuoteMeta(prefix))
+	quoted := regexp.MustCompile(`["']` + regexp.QuoteMeta(prefix))
 	for _, source := range sources {
-		if boundary.MatchString(source) {
+		if quoted.MatchString(source) {
 			return true
 		}
 	}
