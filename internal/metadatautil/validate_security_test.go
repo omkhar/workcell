@@ -71,12 +71,15 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"adapters/codex/mcp/config.toml",
 		"policy/github-hosted-controls.toml",
 		"policy/provider-bumps.toml",
+		"policy/allowed-actions.toml",
 		"runtime/container/Dockerfile",
 		"runtime/container/providers/package.json",
 		"runtime/container/providers/package-lock.json",
 		"runtime/container/rust/Cargo.toml",
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/ci/build-validator-image.sh",
+		"scripts/ci/job-pin-hygiene.sh",
+		"scripts/ci/job-validate.sh",
 		"scripts/install-dev-tools.sh",
 		"scripts/verify-github-hosted-controls.sh",
 		"tools/markdownlint/package.json",
@@ -488,6 +491,43 @@ func TestCheckPinnedInputsRejectsDocsBuildxVersionDrift(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "WORKCELL_BUILDX_VERSION") || !strings.Contains(err.Error(), "docs.yml") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want docs.yml buildx drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsOffAllowlistAction(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	// Use a QUOTED step key (`- "uses":`), which GitHub treats as the `uses` key
+	// but a raw-line scan would miss. Parsing the YAML must still catch it.
+	// SHA-shaped so it passes the pin check and reaches the allowlist check.
+	rewriteFile(t, filepath.Join(cfg.WorkflowsDir, "ci.yml"), func(content string) string {
+		return strings.Replace(content,
+			"- uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+			`- "uses": evilorg/evil-action@0000000000000000000000000000000000000000`,
+			1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil {
+		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a dash-less off-allowlist action")
+	}
+	if !strings.Contains(err.Error(), "allowlist") || !strings.Contains(err.Error(), "evilorg/evil-action") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want off-allowlist rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsUnsupportedUsesForm(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	rewriteFile(t, filepath.Join(cfg.WorkflowsDir, "ci.yml"), func(content string) string {
+		return strings.Replace(content, "- uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", "- uses: docker://ghcr.io/evil/image:latest", 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil || !strings.Contains(err.Error(), "unsupported uses:") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want unsupported-uses rejection", err)
 	}
 }
 

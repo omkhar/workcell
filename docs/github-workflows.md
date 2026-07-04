@@ -115,6 +115,14 @@ feeds its digests into the preflight manifest, while the amd64 image is verified
 natively in `preflight`. `check-pinned-inputs` rejects any reintroduction of
 `docker/setup-qemu-action` into the release workflow.
 
+`check-pinned-inputs` also gates the GitHub Actions supply chain: every `uses:`
+must be pinned by full commit SHA, and its `owner/repo` must appear in the
+reviewed allowlist
+[`policy/allowed-actions.toml`](../policy/allowed-actions.toml). SHA-pinning
+proves the integrity of a specific ref; the allowlist restricts which action
+publishers may run at all, so introducing a new action — even a correctly
+pinned one — requires a reviewed change to that policy.
+
 `ci.yml` and `docs.yml` use the same explicit nonroot validator contract when
 they bind-mount the repository: the workflow computes the caller UID/GID,
 passes isolated writable roots, and creates those paths inside the validator

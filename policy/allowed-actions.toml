@@ -1,0 +1,29 @@
+# Reviewed allowlist of GitHub Actions permitted in `.github/workflows/*.yml`.
+#
+# Every `uses: <owner>/<repo>[/<subpath>]@<sha>` in a workflow must have its
+# `<owner>/<repo>` listed here. This is additive to the existing requirement
+# that every action be pinned by full commit SHA (enforced by
+# `workcell-citools check-pinned-inputs`): SHA-pinning proves integrity of a
+# ref, while this allowlist restricts *which* actions may appear at all, so a
+# new (even correctly-pinned) action cannot be introduced without a reviewed
+# change to this file.
+#
+# Adding an entry is a deliberate supply-chain decision: the action's publisher
+# is now trusted to run in Workcell's CI with whatever permissions the calling
+# job grants.
+
+[actions]
+allowed = [
+  "actions/attest",
+  "actions/checkout",
+  "actions/dependency-review-action",
+  "actions/download-artifact",
+  "actions/upload-artifact",
+  "anchore/sbom-action",
+  "docker/build-push-action",
+  "docker/login-action",
+  "docker/setup-buildx-action",
+  "github/codeql-action",
+  "ossf/scorecard-action",
+  "sigstore/cosign-installer",
+]
