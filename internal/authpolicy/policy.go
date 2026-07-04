@@ -181,6 +181,46 @@ func validatePolicyDocuments(policy map[string]any) error {
 	return validateAllowedKeys(documents, DocumentKeySet, "documents")
 }
 
+// validatePolicyNetwork fails closed on an invalid [network] table so
+// `workcell policy validate` rejects exactly what launch rejects: only
+// allow_endpoints/deny_endpoints are accepted (a mode-shaped key such as
+// network_policy is rejected as unsupported), and every endpoint must match the
+// enforcement-helper grammar. This is the acceptance-time counterpart to the
+// render-time check in internal/injection.renderNetwork.
+func validatePolicyNetwork(policy map[string]any) error {
+	raw, ok := policy["network"]
+	if !ok || raw == nil {
+		return nil
+	}
+	network, ok := raw.(map[string]any)
+	if !ok {
+		return die("network must be a TOML table")
+	}
+	if err := validateAllowedKeys(network, map[string]struct{}{"allow_endpoints": {}, "deny_endpoints": {}}, "network"); err != nil {
+		return err
+	}
+	for _, key := range []string{"allow_endpoints", "deny_endpoints"} {
+		value, ok := network[key]
+		if !ok || value == nil {
+			continue
+		}
+		items, ok := value.([]any)
+		if !ok {
+			return die(fmt.Sprintf("network.%s must be an array of host:port strings", key))
+		}
+		for _, item := range items {
+			endpoint, ok := item.(string)
+			if !ok {
+				return die(fmt.Sprintf("network.%s must be an array of host:port strings; found non-string element: %v", key, item))
+			}
+			if err := injectionpolicy.ValidateEgressEndpoint(endpoint, "network."+key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func validatePolicyCredentials(policy map[string]any) error {
 	raw, ok := policy["credentials"]
 	if !ok || raw == nil {
@@ -360,6 +400,9 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 		return nil, err
 	}
 	if err := validatePolicyCredentials(root); err != nil {
+		return nil, err
+	}
+	if err := validatePolicyNetwork(root); err != nil {
 		return nil, err
 	}
 	return root, nil
@@ -675,6 +718,9 @@ func loadPolicyBundleWithState(policyPath string, entrypointRoot string, activeS
 	if err := validatePolicyCredentials(merged); err != nil {
 		return nil, nil, err
 	}
+	if err := validatePolicyNetwork(merged); err != nil {
+		return nil, nil, err
+	}
 	sourceSHA, err := policySHA256(resolvedPolicyPath)
 	if err != nil {
 		return nil, nil, err
@@ -706,6 +752,9 @@ func loadRawPolicy(policyPath string) (map[string]any, error) {
 		return nil, err
 	}
 	if err := validatePolicyCredentials(loaded); err != nil {
+		return nil, err
+	}
+	if err := validatePolicyNetwork(loaded); err != nil {
 		return nil, err
 	}
 	version := 1
@@ -794,6 +843,9 @@ func renderPolicyTOML(policy map[string]any) (string, error) {
 		return "", err
 	}
 	if err := validatePolicyCredentials(policy); err != nil {
+		return "", err
+	}
+	if err := validatePolicyNetwork(policy); err != nil {
 		return "", err
 	}
 

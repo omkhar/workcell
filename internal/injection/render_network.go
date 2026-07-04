@@ -6,9 +6,8 @@ package injection
 import (
 	"errors"
 	"fmt"
-	"regexp"
-	"strconv"
-	"strings"
+
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 )
 
 // renderNetwork parses the optional top-level `[network]` injection-policy
@@ -65,7 +64,7 @@ func parseNetworkEndpointList(network map[string]any, key string) ([]string, err
 	}
 	set := map[string]struct{}{}
 	for _, endpoint := range items {
-		if err := validateEgressEndpoint(endpoint, "network."+key); err != nil {
+		if err := injectionpolicy.ValidateEgressEndpoint(endpoint, "network."+key); err != nil {
 			return nil, err
 		}
 		set[endpoint] = struct{}{}
@@ -109,54 +108,4 @@ func mergeEndpointLists(lists ...[]string) []string {
 		}
 	}
 	return sortedKeys(set)
-}
-
-// The three patterns below mirror scripts/colima-egress-allowlist.sh's
-// validate_endpoint (lines ~191-226) byte-for-byte so the Go policy gate and
-// the shell enforcement helper accept exactly the same endpoint grammar.
-var (
-	ipv6EndpointPattern = regexp.MustCompile(`^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$`)
-	hostEndpointPattern = regexp.MustCompile(`^([^:]+):([0-9]{1,5})$`)
-	hostLabelPattern    = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
-	ipv6BodyPattern     = regexp.MustCompile(`^[0-9A-Fa-f:.]+$`)
-)
-
-// validateEgressEndpoint enforces the enforcement-helper grammar: a
-// bracketed `[ipv6]:port` form, or a `host:port` form whose host matches
-// ^[A-Za-z0-9.-]+$, does not start with a dot, and contains no `..`; the port
-// must be a 1-5 digit number in the 1-65535 range.  Errors name the offending
-// endpoint so an operator can see exactly which value was rejected.
-func validateEgressEndpoint(endpoint, label string) error {
-	var host, port string
-	if m := ipv6EndpointPattern.FindStringSubmatch(endpoint); m != nil {
-		host = "[" + m[1] + "]"
-		port = m[2]
-	} else if m := hostEndpointPattern.FindStringSubmatch(endpoint); m != nil {
-		host = m[1]
-		port = m[2]
-	}
-	if host == "" {
-		return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
-	}
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		ipv6Host := host[1 : len(host)-1]
-		if !ipv6BodyPattern.MatchString(ipv6Host) {
-			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
-		}
-	} else {
-		if !hostLabelPattern.MatchString(host) {
-			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
-		}
-		if strings.HasPrefix(host, ".") {
-			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
-		}
-		if strings.Contains(host, "..") {
-			return fmt.Errorf("%s has an invalid endpoint host: %q", label, endpoint)
-		}
-	}
-	portNum, err := strconv.Atoi(port)
-	if err != nil || portNum < 1 || portNum > 65535 {
-		return fmt.Errorf("%s has an invalid endpoint port: %q", label, endpoint)
-	}
-	return nil
 }

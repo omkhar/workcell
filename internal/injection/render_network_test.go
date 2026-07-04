@@ -4,6 +4,7 @@
 package injection
 
 import (
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -182,8 +183,8 @@ func TestValidateEgressEndpointMirrorsHelperGrammar(t *testing.T) {
 		"host.example:65535",
 	}
 	for _, endpoint := range valid {
-		if err := validateEgressEndpoint(endpoint, "network.allow_endpoints"); err != nil {
-			t.Fatalf("validateEgressEndpoint(%q) unexpected error: %v", endpoint, err)
+		if err := injectionpolicy.ValidateEgressEndpoint(endpoint, "network.allow_endpoints"); err != nil {
+			t.Fatalf("injectionpolicy.ValidateEgressEndpoint(%q) unexpected error: %v", endpoint, err)
 		}
 	}
 	invalid := []string{
@@ -202,8 +203,8 @@ func TestValidateEgressEndpointMirrorsHelperGrammar(t *testing.T) {
 		"host.example:abc",
 	}
 	for _, endpoint := range invalid {
-		if err := validateEgressEndpoint(endpoint, "network.allow_endpoints"); err == nil {
-			t.Fatalf("validateEgressEndpoint(%q) accepted an invalid endpoint", endpoint)
+		if err := injectionpolicy.ValidateEgressEndpoint(endpoint, "network.allow_endpoints"); err == nil {
+			t.Fatalf("injectionpolicy.ValidateEgressEndpoint(%q) accepted an invalid endpoint", endpoint)
 		}
 	}
 }
