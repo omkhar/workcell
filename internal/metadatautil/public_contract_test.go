@@ -122,6 +122,31 @@ func TestCheckPublicContractRejectsSubstringOnlyPrefix(t *testing.T) {
 	}
 }
 
+// TestExitCodeEmitterAnchor pins that an exit code is only satisfied by a
+// real exit construct, not by an unrelated standalone numeric literal such
+// as an arity check or slice index.
+func TestExitCodeEmitterAnchor(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		code string
+		want bool
+	}{
+		{"os.Exit", `os.Exit(3)`, "3", true},
+		{"ExitCodeError", `return &cliexit.ExitCodeError{Code: 3}`, "3", true},
+		{"shell exit", `  exit 2`, "2", true},
+		{"return literal", `return 128 + sig`, "128", true},
+		{"launcher branch", `if e == ENOENT { 127 } else { 126 }`, "126", true},
+		{"timeout const", `const ColimaTimeoutExitCode = 124`, "124", true},
+		{"arity constant is not an exit", `if len(args) == 3 {`, "3", false},
+		{"slice index is not an exit", `parts[2]`, "2", false},
+	} {
+		if got := exitCodeEmitted(tc.src, tc.code); got != tc.want {
+			t.Errorf("%s: exitCodeEmitted(%q, %q) = %v, want %v", tc.name, tc.src, tc.code, got, tc.want)
+		}
+	}
+}
+
 // TestOutputLinePrefixEmitterAnchor pins that a documented prefix is only
 // satisfied by a quoted format-string emitter, not by a shell variable
 // assignment or sed pattern that merely mentions the key.

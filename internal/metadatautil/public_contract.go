@@ -133,14 +133,13 @@ func requiredStringSliceTable(document map[string]any, contractPath, table, key 
 	return values, nil
 }
 
-// checkExitCodes asserts that every documented exit code is emitted
-// somewhere in exitCodeSourceFiles as a whole "word" (not a substring of a
-// larger number), i.e. it is at least plausibly a real exit-code literal
-// and not merely undocumented. 0/1/2 are close to trivially satisfied
-// (they are common CLI usage/success/runtime-error codes emitted via
-// die()/dieUsage() and "exit 0"/"exit 1"/"exit 2" throughout
-// scripts/workcell); 3/124/126/127/128 each have a narrow, specific
-// anchor (see the G1 audit).
+// checkExitCodes asserts that every documented exit code is emitted at an
+// actual exit site in exitCodeSourceFiles — an `os.Exit(N)`, a
+// cliexit.ExitCodeError{Code: N}, a `return N`, a shell `exit N`, or the
+// Rust launcher's bare status literals — rather than merely appearing as a
+// standalone number. A plain word-boundary match on the digit would leave a
+// documented code satisfied by unrelated arity/index constants even after
+// the only real producer is removed.
 func checkExitCodes(rootDir, contractPath string, codes []string) error {
 	var source strings.Builder
 	for _, relPath := range exitCodeSourceFiles {
@@ -157,12 +156,40 @@ func checkExitCodes(rootDir, contractPath string, codes []string) error {
 		if strings.TrimSpace(code) == "" {
 			return fmt.Errorf("%s exit_codes entries may not be empty", contractPath)
 		}
-		pattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(code) + `\b`)
-		if !pattern.MatchString(combined) {
-			return fmt.Errorf("%s exit code %s is not emitted anywhere in %s", contractPath, code, strings.Join(exitCodeSourceFiles, ", "))
+		if !exitCodeEmitted(combined, code) {
+			return fmt.Errorf("%s exit code %s is not emitted at any exit site in %s", contractPath, code, strings.Join(exitCodeSourceFiles, ", "))
 		}
 	}
 	return nil
+}
+
+// exitCodeEmitted reports whether code appears at a real exit construct in
+// combined. The generic forms cover the Go and shell exit paths; the
+// launcher-literal forms cover the Rust launcher's bare status expressions
+// (errno branch results `{ 126 }` / `{ 127 }`, the `128 + WTERMSIG` signal
+// base) and the named colima-timeout constant `= 124`.
+func exitCodeEmitted(combined, code string) bool {
+	n := regexp.QuoteMeta(code)
+	patterns := []string{
+		`Code:\s*` + n + `\b`, // cliexit.ExitCodeError{Code: N}
+		`os\.Exit\(` + n + `\)`,
+		`\bexit\s+` + n + `\b`,   // shell exit N
+		`\breturn\s+` + n + `\b`, // Go / Rust return N
+	}
+	switch code {
+	case "124":
+		patterns = append(patterns, `=\s*124\b`) // const ColimaTimeoutExitCode = 124
+	case "126", "127":
+		patterns = append(patterns, `\{\s*`+n+`\s*\}`) // errno branch result
+	case "128":
+		patterns = append(patterns, `\b128\s*\+`) // 128 + WTERMSIG signal base
+	}
+	for _, p := range patterns {
+		if regexp.MustCompile(p).MatchString(combined) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkOutputLinePrefixes asserts that every documented output-line prefix
