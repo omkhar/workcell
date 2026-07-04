@@ -83,6 +83,7 @@ evidence = [
 ]
 docs = [
   "README.md",
+  "docs/safe-path-expectations.md",
   "docs/provenance.md",
   "man/workcell.1",
 ]
@@ -124,6 +125,7 @@ evidence = [
 ]
 docs = [
   "README.md",
+  "docs/onboarding-and-auth.md",
   "man/workcell.1",
   "docs/injection-policy.md",
   "docs/provider-bootstrap-matrix.md",
@@ -155,6 +157,7 @@ evidence = [
 ]
 docs = [
   "README.md",
+  "docs/safe-path-expectations.md",
   "man/workcell.1",
   "docs/workcell-session-supervisor-design.md",
   "docs/workcell-system-design.md",
