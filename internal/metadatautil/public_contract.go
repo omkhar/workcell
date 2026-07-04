@@ -269,6 +269,7 @@ func excludeNonEmitterFiles(paths []string) []string {
 //   - non-emitting references such as shell variable assignments
 //     (`local record_digest=…`) and sed patterns (`.*record_digest=`),
 //     whose prefix is preceded by whitespace or a metacharacter.
+//
 // So deleting the real emitter — while leaving those references behind —
 // correctly fails the check. The quoted-key shellproto form below carries
 // its own leading-quote anchor.
