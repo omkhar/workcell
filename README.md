@@ -97,6 +97,7 @@ links; the full index is in the [Docs map](#docs-map) below.
   [install options](docs/install.md) ·
   [onboarding and auth](docs/onboarding-and-auth.md) ·
   [provider quickstarts](docs/provider-quickstarts.md) ·
+  [command reference](#command-reference) ·
   [mode map](docs/mode-map.md) ·
   [safe-path expectations](docs/safe-path-expectations.md)
 - **Enterprise evaluators — assess the assurance model**:
@@ -160,6 +161,29 @@ cd workcell-vX.Y.Z
 
 For the Homebrew formula asset, the source checkout path, and the full host
 requirements, see [docs/install.md](docs/install.md).
+
+## Command reference
+
+The supported commands at a glance; follow the links for the full behavior and
+options.
+
+- `workcell --agent <name> --workspace /path/to/repo` — launch a managed agent
+  session (see the [5-minute path](#5-minute-path) and
+  [provider quickstarts](docs/provider-quickstarts.md)).
+- `--target colima|docker-desktop|aws-ec2-ssm|gcp-vm` — select the runtime
+  backend ([mode map](docs/mode-map.md)).
+- `--prepare` and `--prepare-only` — pre-build the runtime image before, or
+  instead of, launching ([mode map](docs/mode-map.md)).
+- `--doctor`, `--inspect`, and `--auth-status` — inspect host readiness, a
+  resolved launch plan, and auth posture
+  ([onboarding and auth](docs/onboarding-and-auth.md)).
+- `workcell why` — explain a credential or configuration decision
+  ([onboarding and auth](docs/onboarding-and-auth.md)).
+- `workcell session` — manage detached sessions, including
+  `workcell session start`, `workcell session list`, and
+  `workcell session diff` ([safe-path expectations](docs/safe-path-expectations.md)).
+- `workcell publish-pr` — the host-side PR publication helper
+  ([safe-path expectations](docs/safe-path-expectations.md)).
 
 ## Docs map
 
