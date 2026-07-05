@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 # Pinned exactly so the scheduled lane's dependency graph does not drift on a new
 # semver-compatible release; the full transitive graph is pinned by the committed
-# Cargo.lock (built with --locked in .github/workflows/fuzz.yml).
+# Cargo.lock, whose currency the lane enforces with `cargo metadata --locked`.
 libfuzzer-sys = "=0.4.13"
 
 [dependencies.workcell-runtime]

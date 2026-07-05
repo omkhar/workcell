@@ -122,11 +122,13 @@ jobs:
           cfg.write_text(text)
           PY
 
-      # Build all targets with the committed fuzz/Cargo.lock enforced so a
-      # semver-compatible upstream release cannot silently change the lane; a
-      # stale lock fails here rather than drifting the dependency graph.
-      - name: Build fuzz targets with the pinned lockfile
-        run: cargo +nightly fuzz build --locked
+      # Enforce the committed fuzz/Cargo.lock: `cargo metadata --locked` resolves
+      # the dependency graph and fails if the lock is stale or would change, so a
+      # semver-compatible upstream release cannot silently drift the lane. (cargo
+      # fuzz build has no --locked flag, and cargo then uses the committed lock
+      # for the build below.)
+      - name: Verify the fuzz lockfile is current
+        run: cargo +nightly metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
 
       # Each target runs on its checked-in seed corpus, mutated for the budget.
       # A crash makes `cargo fuzz run` exit non-zero and fails the lane.
