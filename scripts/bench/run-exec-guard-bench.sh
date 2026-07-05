@@ -72,12 +72,18 @@ field() {
   printf '%s\n' "$1" | sed -n "s/.*[[:space:]]$2=\([0-9]*\).*/\1/p"
 }
 
+# A controlled PATH whose first entry holds the target, so the execvp mode's
+# bare-name launch resolves deterministically (and exercises PATH search) rather
+# than depending on the ambient PATH.
+TARGET_DIR="$(cd "$(dirname "${TARGET}")" && pwd)"
+BENCH_PATH="${TARGET_DIR}:/usr/bin:/bin"
+
 run_bench() {
   # $1 mode, $2 preload flag (0/1)
   if [ "$2" -eq 1 ]; then
-    LD_PRELOAD="${SO_PATH}" "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
+    PATH="${BENCH_PATH}" LD_PRELOAD="${SO_PATH}" "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
   else
-    "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
+    PATH="${BENCH_PATH}" "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
   fi
 }
 

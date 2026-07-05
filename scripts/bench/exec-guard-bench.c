@@ -121,7 +121,10 @@ static int launch_once(enum mode mode, const char *target, char *const argv[]) {
             execv(target, argv);
             break;
         case MODE_EXECVP:
-            execvp(target, argv);
+            /* Exec the BARE command name (argv[0]), not the absolute target, so
+             * execvp -- and the guard's own resolver -- exercise PATH search.
+             * The caller sets a PATH that resolves this name. */
+            execvp(argv[0], argv);
             break;
         default:
             break;
@@ -183,6 +186,15 @@ int main(int argc, char **argv) {
     const char *base = strrchr(target, '/');
     base = base != NULL ? base + 1 : target;
     char *const child_argv[] = {(char *)base, NULL};
+
+    /* The guard is already resident in THIS process (loaded via LD_PRELOAD at
+     * our own startup), so its exec/spawn hooks still fire after this. Removing
+     * LD_PRELOAD from the environment the measured children inherit stops each
+     * child from re-loading the .so, so the hooked-vs-unhooked delta isolates
+     * the guard's classification cost rather than also charging every child the
+     * dynamic loader's one-time cost of mapping the preload. This is a no-op for
+     * the unhooked baseline (LD_PRELOAD is unset there). */
+    unsetenv("LD_PRELOAD");
 
     for (long i = 0; i < warmup; i++) {
         if (launch_once(mode, target, child_argv) != 0) {

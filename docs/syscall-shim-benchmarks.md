@@ -50,6 +50,19 @@ mode -- once unhooked (plain libc) and once with `LD_PRELOAD` set to the built
 `libworkcell_exec_guard.so` -- and reports the delta. The same fork/exec/wait
 structure is on both sides, so the delta isolates the guard's added latency.
 
+The harness removes `LD_PRELOAD` from the environment (via `unsetenv`) before the
+measured launches. The guard is already resident in the harness from its own
+startup, so its hooks still fire and classify every launch; scrubbing the
+variable only stops each measured child from **re-loading** the `.so`. Without
+this, every hooked sample would also charge the dynamic loader's one-time cost of
+mapping the preload into the short-lived `/bin/true` child, and the delta would
+be a mix of classifier cost and per-child loader cost. The published numbers are
+therefore the guard's **classification** overhead; a real container additionally
+pays that per-launch loader cost, amortized over each child's lifetime. The
+`execvp` mode launches a **bare** command name against a controlled `PATH` (the
+driver sets `PATH` so the target's directory resolves it) so it exercises the
+guard's `PATH`-search resolution rather than an absolute-path fast path.
+
 Variance is controlled by:
 
 - **Warmup.** `WORKCELL_BENCH_WARMUP` samples run and are discarded before
@@ -76,11 +89,11 @@ Variance is controlled by:
 
 ## Results
 
-**Status: measured on the `bench.yml` lane** (`ubuntu-latest` GitHub-hosted
-runner, release cdylib, glibc). These are shared-runner relative overheads, not
-absolute guarantees; re-measure on the target host for absolute figures. The
-guard adds ~440us (~76%) per `exec*` launch and ~205us (~42%) per `posix_spawn`
-on the allow path, dominated by the classification of the resolved target.
+**Status: being re-measured on the `bench.yml` lane** after the methodology fix
+that scrubs `LD_PRELOAD` from measured children and makes `execvp` use `PATH`
+search; the tables below are refreshed from that run. Numbers are shared-runner
+relative overheads, not absolute guarantees; re-measure on the target host for
+absolute figures.
 
 ### Allow-path overhead (median of 5000 samples, 2 runs)
 
