@@ -9077,6 +9077,9 @@ done
 # (D3): internal/gitconfigblocklist behind the workcell-citools
 # git-config-blocklist-parity subcommand preserves the exact exit codes
 # and stderr messages of the former inline awk+grep implementation.
-go_verify_citools git-config-blocklist-parity "${ROOT_DIR}"
+# `|| exit 1` matches the former inline block's `exit 1` on a violated
+# invariant: it handles the failure so the top-level ERR trap does not fire and
+# append trap diagnostics, preserving the exact failure stderr surface.
+go_verify_citools git-config-blocklist-parity "${ROOT_DIR}" || exit 1
 
 echo "Workcell invariant verification passed."
