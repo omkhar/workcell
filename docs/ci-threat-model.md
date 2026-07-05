@@ -272,7 +272,7 @@ Residual risk is rated after the existing mitigation.
 | 6 | **Provenance / attestation forgery** | Attestations bound to the release workflow identity via OIDC; consumers pin `--certificate-identity` / `--signer-workflow`; Rekor transparency; fail-closed attestation pinned by policy | Medium: **Build L2, not L3** — a compromised build step in the same job could get a genuine attestation over a forged digest; and no consumer is *forced* to verify (threat 8) |
 | 7 | **Cache poisoning** from a fork PR into trusted builds | PR-keyed buildx cache scope distinct from `validator-main`; `mode=max` writes gated to `push` events | Low |
 | 8 | **Unverified consumer install** — user runs an artifact that was never verified | Verification commands documented in [provenance.md](provenance.md); immutable releases; `SHA256SUMS` signed | High (by design today): installers do not verify; verification is manual/opt-in — the single most valuable gap to close (tracked toward B6) |
-| 9 | **Malicious change reaches a release** without review | Signed-commits + anti-rewrite branch ruleset; tag ruleset on `refs/tags/v*`; required status checks; `pr-base-policy.yml` forces `main` base; publish gated on tag-on-green-main and the `release` environment approval; publish rebuilds from the archived source bundle | Medium: **single-maintainer** — the tag signer and the release approver are the same identity; no two-person review (a SLSA Source-track control, out of scope for v1.0 Build) |
+| 9 | **Malicious change reaches a release** without review | Signed-commits + anti-rewrite branch ruleset; tag ruleset on `refs/tags/v*`; required status checks; `pr-base-policy.yml` forces `main` base; publish gated on tag-on-green-main and the `release` environment approval; the amd64 image is rebuilt from the archived source bundle (`context: dist/release-source`) | Medium: **single-maintainer** — the tag signer and the release approver are the same identity; no two-person review (a SLSA Source-track control, out of scope for v1.0 Build). The **arm64** image is built from the checked-out release tag (`context: .`), not the repackaged source archive, so only amd64 gets the archive-rebuild property; both platforms still derive from the same signed, immutable tag |
 | 10 | **Oversized/obfuscated PR** hides a malicious diff | `scripts/check-pr-shape.sh` caps PRs at ≤25 files, ≤1200 changed lines, ≤8 areas, 0 binaries (reviewed override raises limits for certified-adapter PRs only) | Low |
 | 11 | **Stored token leaks via script logging** | Token is environment-scoped read-only metadata; passed by env, never echoed by the workflow | Low: depends on `run-hosted-controls-audit.sh` never running `set -x` over the token |
 
@@ -358,7 +358,11 @@ tracked or accepted deliberately:
    it requires moving the build into an isolated trusted reusable workflow (or
    `slsa-github-generator`). Self-documented in [provenance.md](provenance.md).
 3. **Build is not hermetic (threat 2).** Live `apt`/`npm ci`/provider fetches
-   during the image build are not fully repo-digest-pinned.
+   during the image build are not fully repo-digest-pinned. Relatedly, only the
+   amd64 image is rebuilt from the archived source bundle; the arm64 image builds
+   from the checked-out release tag (`context: .`), so the archive-rebuild
+   provenance property is amd64-only (both platforms still derive from the same
+   signed tag).
 4. **No CI-runner egress hardening (threat 4).** No `step-security/harden-runner`
    or equivalent restricts network egress on GitHub-hosted runners, so a
    compromised step has open egress. (The product's own runtime sandbox has a
