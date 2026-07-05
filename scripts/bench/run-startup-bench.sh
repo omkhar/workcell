@@ -70,6 +70,18 @@ validate_int() {
   fi
 }
 
+# Probe that an auto-detected runtime's daemon is actually usable (a cheap,
+# read-only status call), not just that the client binary exists. Returns
+# non-zero when the runtime is unusable so detection falls through to the skip.
+runtime_usable() {
+  case "$1" in
+    docker) docker info ;;
+    colima) colima status ;;
+    container) container system status ;;
+    *) return 1 ;;
+  esac >/dev/null 2>&1
+}
+
 [ -x "${HARNESS}" ] || {
   echo "run-startup-bench: harness not found or not executable: ${HARNESS}" >&2
   exit 1
@@ -92,8 +104,13 @@ if [ -n "${SAMPLES}" ]; then
 else
   detected="${WORKCELL_STARTUP_RUNTIME:-}"
   if [ -z "${detected}" ]; then
+    # Auto-detect only selects a runtime whose daemon is actually usable: a host
+    # can have the client binary installed with no working runtime, which would
+    # otherwise pick live mode and then hard-fail instead of skipping cleanly. An
+    # explicit WORKCELL_STARTUP_RUNTIME override skips this probe (respected as-is).
     for candidate in colima container docker; do
-      if command -v "${candidate}" >/dev/null 2>&1; then
+      command -v "${candidate}" >/dev/null 2>&1 || continue
+      if runtime_usable "${candidate}"; then
         detected="${candidate}"
         break
       fi
@@ -144,6 +161,16 @@ validate_int "WORKCELL_STARTUP_ITERATIONS" "${ITERATIONS}" 1
 validate_int "WORKCELL_STARTUP_WARMUP" "${WARMUP}" 0
 validate_int "WORKCELL_STARTUP_RUNS" "${RUNS}" 1
 validate_int "WORKCELL_STARTUP_STABILITY_PCT" "${STABILITY_PCT}" 0
+
+# A gated, publishable live capture needs cross-run repeatability evidence, so
+# require at least two runs: with one run the stability section is skipped and a
+# 0 exit would misleadingly read as "gate passed". Dry-run canned mode may use
+# whatever RUNS the canned data implies -- it is a rehearsal, never publishable.
+if [ "${DRY_RUN}" -eq 0 ] && [ "${RUNS}" -lt 2 ]; then
+  echo "run-startup-bench: a live run requires WORKCELL_STARTUP_RUNS >= 2 for" \
+    "cross-run stability evidence (got ${RUNS}); a single run is not publishable." >&2
+  exit 1
+fi
 
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/startup-bench.XXXXXX")"
 trap 'rm -rf "${WORKDIR}"' EXIT
@@ -266,31 +293,47 @@ if [ "${RUNS}" -ge 2 ]; then
 
   all_runs="${WORKDIR}/all-runs"
   cat "${WORKDIR}"/run-* >"${all_runs}"
-  worst="$(awk -v thr="${STABILITY_PCT}" '
+  # Emit "<worst-spread%> <degenerate-flag>" on stdout; the per-mode rows go to
+  # the report via stderr. A zero median in any run is a degenerate/broken
+  # measurement (a 0 ns session start is impossible), not a 0% spread -- flag it
+  # so the gate fails instead of reading STABLE.
+  gate_line="$(awk -v thr="${STABILITY_PCT}" '
     { m = $1; v = $2
       if (!(m in seen)) { order[++k] = m; seen[m] = 1; min[m] = v; max[m] = v }
       if (v < min[m]) min[m] = v
       if (v > max[m]) max[m] = v }
     END {
-      worst = 0
+      worst = 0; degenerate = 0
       for (i = 1; i <= k; i++) {
         m = order[i]; s = max[m] - min[m]
-        p = (min[m] > 0) ? s * 100.0 / min[m] : 0
-        verdict = (p > thr) ? "UNSTABLE" : "STABLE"
-        if (p > worst) worst = p
-        printf "| %s | %d | %d | %d | %.1f | %s |\n", m, min[m], max[m], s, p, verdict > "/dev/stderr"
+        if (min[m] <= 0) {
+          degenerate = 1
+          printf "| %s | %d | %d | %d | n/a | UNSTABLE |\n", m, min[m], max[m], s > "/dev/stderr"
+        } else {
+          p = s * 100.0 / min[m]
+          verdict = (p > thr) ? "UNSTABLE" : "STABLE"
+          if (p > worst) worst = p
+          printf "| %s | %d | %d | %d | %.1f | %s |\n", m, min[m], max[m], s, p, verdict > "/dev/stderr"
+        }
       }
-      printf "%.1f", worst
+      printf "%.1f %d", worst, degenerate
     }
   ' "${all_runs}" 2>>"${REPORT}")"
   echo >>"${REPORT}"
+  worst="${gate_line%% *}"
+  degenerate="${gate_line##* }"
 
-  if awk -v w="${worst}" -v thr="${STABILITY_PCT}" 'BEGIN { exit (w > thr) ? 0 : 1 }'; then
+  if [ "${degenerate}" -eq 1 ]; then
+    GATE_STATUS="UNSTABLE"
+  elif awk -v w="${worst}" -v thr="${STABILITY_PCT}" 'BEGIN { exit (w > thr) ? 0 : 1 }'; then
     GATE_STATUS="UNSTABLE"
   fi
   {
     if [ "${GATE_STATUS}" = "STABLE" ]; then
       echo "Stability gate: STABLE (max cross-run median spread ${worst}% <= ${STABILITY_PCT}%)."
+    elif [ "${degenerate}" -eq 1 ]; then
+      echo "Stability gate: UNSTABLE (a mode reported a zero median across runs" \
+        "-- degenerate measurement, not a fast start)."
     else
       echo "Stability gate: UNSTABLE (max cross-run median spread ${worst}% > ${STABILITY_PCT}%)."
     fi
@@ -305,6 +348,10 @@ if [ -n "${OUTPUT_PATH}" ]; then
 fi
 
 if [ "${GATE_STATUS}" = "UNSTABLE" ]; then
-  echo "run-startup-bench: cross-run stability gate FAILED (spread ${worst}% > ${STABILITY_PCT}%)" >&2
+  if [ "${degenerate:-0}" -eq 1 ]; then
+    echo "run-startup-bench: cross-run stability gate FAILED (degenerate zero median)" >&2
+  else
+    echo "run-startup-bench: cross-run stability gate FAILED (spread ${worst}% > ${STABILITY_PCT}%)" >&2
+  fi
   exit 2
 fi

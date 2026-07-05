@@ -66,6 +66,18 @@ warm-lane priming — and the numbers, though they may look stable, are not
 publishable. (The canned dry run below needs no prep hooks; this requirement
 applies only to live runs.)
 
+Auto-detection only selects a runtime whose daemon is actually **usable** (a
+cheap read-only status probe — `docker info` / `colima status` /
+`container system status`), not merely that the client binary is installed. A
+host with the client but no working runtime falls through to the clean CI-safe
+skip (exit `0`) rather than selecting live mode and then failing. An explicit
+`WORKCELL_STARTUP_RUNTIME` override is respected as-is and skips the probe.
+
+A live run also **requires** `WORKCELL_STARTUP_RUNS >= 2`: the stability gate
+needs cross-run evidence, so a single-run capture — which would skip the gate yet
+still exit `0` — is rejected up front and is not publishable. (The canned dry run
+may use whatever `RUNS` the data implies; it is a rehearsal, never publishable.)
+
 For `cold` the driver re-runs `WORKCELL_STARTUP_COLD_PREP` before **every**
 measured sample and times each start on its own with warmup `0`, then aggregates
 the per-sample timings through the same stats core. A single session start warms
@@ -92,6 +104,10 @@ median, and it **fails** (non-zero exit) if any mode exceeds
 `WORKCELL_STARTUP_STABILITY_PCT` (default 15%). A published number is only
 trustworthy if it repeats; this gate is the evidence that it does. It mirrors the
 C5 cross-run stability check, made enforcing.
+
+A zero median in any run is treated as a **degenerate** measurement and fails the
+gate outright — a 0 ns session start is impossible, so it signals a broken clock
+or harness rather than a 0% spread that would otherwise read as `STABLE`.
 
 ### Runner caveats
 
