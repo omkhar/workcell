@@ -3691,17 +3691,17 @@ support_bundle_main() {
         shift
         ;;
       --output)
+        # Reject a trailing --output here (exit 2): passing the bare flag through
+        # would let it swallow an appended trusted-context flag as its value.
         if [[ $# -lt 2 ]]; then
-          # No value: pass the bare flag through so the Go parser emits the
-          # documented usage error (exit 2) rather than set -e aborting shift 2.
-          args+=("$1")
-          shift
-        else
-          local val="$2"
-          [[ -n "${val}" && "${val}" != /* ]] && val="${invocation_pwd}/${val}"
-          args+=("--output" "${val}")
-          shift 2
+          echo "Option --output requires a value." >&2
+          usage >&2
+          exit 2
         fi
+        local val="$2"
+        [[ -n "${val}" && "${val}" != /* ]] && val="${invocation_pwd}/${val}"
+        args+=("--output" "${val}")
+        shift 2
         ;;
       *)
         args+=("$1")

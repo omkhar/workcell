@@ -71,7 +71,8 @@ Every value is produced under these rules (also embedded in each bundle under
   environment dumps or command-output blobs
 
 The output shape is deterministic (stable field order, sorted lists), so two
-bundles from the same host state are byte-identical and easy to diff.
+bundles from the same host state differ only in the `generated_at` timestamp
+and are easy to diff.
 
 ### Sharing it safely
 
