@@ -31,6 +31,14 @@
  * measurement.
  */
 
+/* CLOCK_MONOTONIC/clock_gettime and posix_spawn are POSIX; glibc hides them
+ * under strict -std=c11 unless a feature-test macro is set (macOS exposes them
+ * by default, and this macro would hide _NSGetEnviron there, so scope it to
+ * non-Apple). Must precede every system header. */
+#if !defined(__APPLE__)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <errno.h>
 #include <math.h>
 #include <spawn.h>
