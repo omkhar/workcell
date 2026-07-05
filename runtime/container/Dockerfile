@@ -72,13 +72,13 @@ RUN fetch_snapshot_bootstrap_package() { \
        rm -f /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb; \
      } \
   && bootstrap_snapshot_tls \
-  && rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] https://snapshot-cloudflare.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] https://snapshot-cloudflare.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] https://snapshot-cloudflare.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && rm -f /etc/apt/sources.list.d/debian.sources \
+  && set_snapshot_sources() { \
+       local host="$1"; \
+       printf 'deb [check-valid-until=no] https://%s/archive/debian/%s trixie main\n' "${host}" "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list; \
+       printf 'deb [check-valid-until=no] https://%s/archive/debian/%s trixie-updates main\n' "${host}" "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list; \
+       printf 'deb [check-valid-until=no] https://%s/archive/debian-security/%s trixie-security main\n' "${host}" "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list; \
+     } \
   && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/99workcell-snapshot \
   && apt_indexes_have_runtime_packages() { \
        apt-cache show --no-all-versions \
@@ -120,6 +120,7 @@ RUN fetch_snapshot_bootstrap_package() { \
        && return 0; \
      } \
   && for attempt in 1 2 3 4 5; do \
+       if [[ $((attempt % 2)) -eq 1 ]]; then set_snapshot_sources snapshot-cloudflare.debian.org; else set_snapshot_sources snapshot.debian.org; fi; \
        if DEBIAN_FRONTEND=noninteractive apt-get update \
          && apt_indexes_have_runtime_packages \
          && install_runtime_packages; then \
