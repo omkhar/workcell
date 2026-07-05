@@ -22,6 +22,7 @@ policy for readability.
 | ci.yml | workcell-ci-install-candidate | 7 |
 | fuzz.yml | fuzz-reproducers | 14 |
 | fuzz.yml | rust-fuzz-reproducers | 14 |
+| fuzz.yml | rust-fuzz-lockfile | 14 |
 | release.yml | workcell-release-preflight | 90 |
 | release.yml | workcell-release-install-candidate | 90 |
 | release.yml | workcell-release-artifacts | 7 |
@@ -49,7 +50,9 @@ policy for readability.
   needed to reproduce and fix the defect. Fourteen days spans the weekly cadence
   with margin, so a crash from one run is still retrievable for triage after the
   next run; the durable copy is the reproducer once committed as a regression
-  seed (see [fuzzing.md](fuzzing.md)).
+  seed (see [fuzzing.md](fuzzing.md)). The `rust-fuzz-lockfile` artifact carries the
+resolved `fuzz/Cargo.lock` from each run; it is the committed lock's drift
+evidence and is kept the same **14 days** as the reproducers.
 - **`security.yml` — 5 days.** The `zizmor` audit job itself is the enforcement
   gate: it fails the workflow on any finding. The `zizmor-sarif` upload is a
   short-lived supplementary export of that run and is **not** ingested into

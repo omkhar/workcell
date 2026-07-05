@@ -142,6 +142,7 @@ jobs:
           name: rust-fuzz-lockfile
           path: runtime/container/rust/fuzz/Cargo.lock
           if-no-files-found: warn
+          retention-days: 14
 
       # A crash writes its minimized reproducer under fuzz/artifacts/<target>/.
       # Persist it before the runner workspace is discarded so triage has the

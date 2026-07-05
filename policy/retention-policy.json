@@ -6,7 +6,8 @@
     },
     "fuzz.yml": {
       "fuzz-reproducers": 14,
-      "rust-fuzz-reproducers": 14
+      "rust-fuzz-reproducers": 14,
+      "rust-fuzz-lockfile": 14
     },
     "release.yml": {
       "workcell-release-preflight": 90,
