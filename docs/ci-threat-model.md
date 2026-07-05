@@ -66,9 +66,13 @@ This is a current-state property enforced indirectly rather than by a single
 - `scripts/verify-github-macos-release-test-runners.sh` confirms the macOS
   labels match GitHub's authoritative `runner-images` list, so the release
   matrix cannot silently target a stale or fake label;
-- the exact `runs-on:` labels for `ci.yml` and `release.yml` are pinned in
-  `internal/metadatautil/pinnedinputs.go`, so a PR cannot swap a hosted label
-  for a `self-hosted` one without a reviewed diff to that pin set.
+- `internal/metadatautil/pinnedinputs.go` pins specific runner label sets — the
+  CI reproducible-build matrix, the macOS install/release matrices, and the
+  presence of an arm64 release runner — so those cannot silently swap to
+  `self-hosted` without a reviewed diff to the pin set. It is **not** a global
+  guard over every `runs-on:` value: a job outside those checked sets (e.g. the
+  `release` publish job) could change its runner without tripping a pinned-input
+  diff, and relies on review instead (see the known gap on the self-hosted ban).
 
 There is no policy rule that outright rejects the string `self-hosted`; the
 guarantee rests on label pinning plus review. This is called out again under
@@ -95,9 +99,9 @@ All 13 workflows share a hardened baseline:
 
 Only the release path escalates. The highest-privilege job is the `release`
 (publish) job in [`release.yml`](../.github/workflows/release.yml), which holds
-`id-token: write`, `attestations: write`, `contents: write`, and
-`packages: write` at once (OIDC signing, GitHub release creation, and GHCR
-push). That job — and the native arm64 image build/push job — run only inside
+`id-token: write`, `attestations: write`, `artifact-metadata: write`,
+`contents: write`, and `packages: write` at once (OIDC signing, attestation and
+artifact-metadata publication, GitHub release creation, and GHCR push). That job — and the native arm64 image build/push job — run only inside
 the `release` deployment environment, which requires human approval and
 disallows admin bypass (see `[release_environment]` in the hosted-control
 policy). A handful of scanning jobs hold `security-events: write` for SARIF
@@ -107,10 +111,13 @@ these are the expected minimum for those tools.
 One non-release workflow also holds a write scope:
 [`upstream-refresh.yml`](../.github/workflows/upstream-refresh.yml) grants its
 scheduled/manual job `issues: write` to update a single rolling tracking issue
-with the latest upstream-candidate status (it keeps `contents: read`). This
-cannot publish artifacts, sign, or push code — its only mutation is issue
-metadata — but auditors inventorying non-read `GITHUB_TOKEN` scopes should count
-it alongside the release path.
+with the latest upstream-candidate status (it keeps `contents: read`). When it
+detects changes it also uploads an internal `upstream-refresh-candidate`
+workflow artifact (the candidate patch, diffstat, and metadata) for maintainer
+review. It cannot publish **release** or signed artifacts, sign, or push code —
+its mutations are the tracking issue and that review-only workflow artifact — but
+auditors inventorying non-read `GITHUB_TOKEN` scopes and artifact channels should
+count it alongside the release path.
 
 ### Untrusted-fork boundary
 
