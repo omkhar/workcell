@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "fbfe69fb7901b5afcff7dc304024c4bee50d4be81186494baca4fa56bd4621fe"
+      "sha256": "6e5f82003d66f31a48fb6e2295cb15cec2bc391a3d58fdf21093c89cb4547c08"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -22,7 +22,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/go-hostutil.sh",
-      "sha256": "d640acf4833ea78378db353fad430c574f500bbbc5bc9cbfde07e96b842b8020"
+      "sha256": "775d3dd6e5d946229d6eb38ccfcc36f6a89711662c4fcd2df9d097a8741e0116"
     },
     {
       "repo_path": "scripts/lib/render_injection_bundle",

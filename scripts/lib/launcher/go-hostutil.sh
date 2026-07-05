@@ -13,15 +13,20 @@
 # scripts/lib/launcher/host-exec.sh.  They depend only on
 # ensure_go_run_env plus the GOPATH/GOMODCACHE/GOCACHE it exports
 # (scripts/lib/go-run-env.sh), run_clean_host_command_in_dir
-# (scripts/lib/launcher/host-exec.sh), and the readonly ROOT_DIR and
-# HOST_GO_BIN globals set in scripts/workcell — all sourced or assigned
-# before the first wrapper call — so they are a self-contained,
-# behaviour-preserving unit.  run_go_hostutil_preserve_exit additionally
+# (scripts/lib/launcher/host-exec.sh), and the readonly ROOT_DIR global
+# set in scripts/workcell — all sourced or assigned before the first
+# wrapper call — so they are a self-contained, behaviour-preserving unit.
+# HOST_GO_BIN is resolved by this module (below) since it is the sole
+# consumer; resolve_fixed_host_tool comes from the host-exec.sh module
+# sourced immediately before this one.
+# run_go_hostutil_preserve_exit additionally
 # recovers the Go child's real exit code from its `exit status N` stderr
 # trailer.  go_hostutil_publish_pr forwards an explicit allowlist of
 # terminal/GnuPG/SSH/XDG/GitHub environment variables (read at call time)
 # so host-side PR publication can reach the operator's credentials.  See
 # docs/launcher-contract.md for the module contract.
+
+HOST_GO_BIN="$(resolve_fixed_host_tool go /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go)"
 
 go_hostutil() {
   ensure_go_run_env

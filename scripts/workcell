@@ -70,10 +70,6 @@ source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
 source "${ROOT_DIR}/scripts/lib/launcher/host-exec.sh"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh"
-# HOST_GO_BIN is consumed by the go-hostutil.sh wrappers sourced above; the
-# source=/dev/null directive hides that cross-file use from ShellCheck.
-# shellcheck disable=SC2034
-HOST_GO_BIN="$(resolve_fixed_host_tool go /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go)"
 REAL_HOME="$(resolve_workcell_real_home)"
 case "$(uname -s 2>/dev/null || true)" in
   Darwin)
