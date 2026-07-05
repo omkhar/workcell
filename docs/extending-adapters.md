@@ -138,6 +138,13 @@ unsafe flag, or promote a planned adapter such as `antigravity`.
      `workcell --agent <new>` fails before or during runtime prep (rejected as an
      `Unsupported agent/ui combination`, or not routed through the managed
      provider wrapper), so the registry edits alone are not enough.
+   - Exec-guard the binary (security): a provider that installs a direct runtime
+     binary must also be added to `PROTECTED_RUNTIME_PATHS`
+     (`runtime/container/rust/src/lib.rs`) and the development-mode blocklist
+     (`development_wrapper_protected_runtime_match` and the provider
+     command-name case in `runtime/container/development-wrapper.sh`). Otherwise
+     `/usr/local/libexec/workcell/real/<new>` can be executed directly, bypassing
+     the managed wrapper and its unsafe-argument rejection.
    - Guardrail: `internal/providerid/providerid_test.go` asserts a planned
      provider stays out of the supported set until support lands.
 
