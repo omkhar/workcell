@@ -1,8 +1,8 @@
 target
 artifacts
 coverage
-# Cargo.lock for this non-shipping fuzz harness is resolved by the scheduled
-# fuzz lane from the pinned lib dependency; it is not vendored with the crate.
-Cargo.lock
+# Cargo.lock IS checked in (not ignored): it pins the fuzz harness dependency
+# graph so the scheduled lane is reproducible and cannot drift on a new
+# semver-compatible release. The lane builds with --locked to enforce it.
 # NOTE: corpus/ is intentionally NOT ignored — the seed corpora are checked in
 # as regression seeds (see docs/fuzzing.md).

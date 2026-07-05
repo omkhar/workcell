@@ -8,7 +8,10 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+# Pinned exactly so the scheduled lane's dependency graph does not drift on a new
+# semver-compatible release; the full transitive graph is pinned by the committed
+# Cargo.lock (built with --locked in .github/workflows/fuzz.yml).
+libfuzzer-sys = "=0.4.13"
 
 [dependencies.workcell-runtime]
 path = ".."

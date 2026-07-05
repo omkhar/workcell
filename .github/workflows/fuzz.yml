@@ -132,6 +132,17 @@ jobs:
               -max_total_time="${WORKCELL_RUST_FUZZTIME}"
           done
 
+      # The build above resolves and writes fuzz/Cargo.lock; upload it so the
+      # pinned dependency graph can be committed (see docs/fuzzing.md). Runs even
+      # on a crash so the lock is captured regardless of the fuzzing outcome.
+      - name: Upload fuzz lockfile
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-fuzz-lockfile
+          path: runtime/container/rust/fuzz/Cargo.lock
+          if-no-files-found: warn
+
       # A crash writes its minimized reproducer under fuzz/artifacts/<target>/.
       # Persist it before the runner workspace is discarded so triage has the
       # exact input to commit (see docs/fuzzing.md).
