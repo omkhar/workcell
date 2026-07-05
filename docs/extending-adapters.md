@@ -67,6 +67,11 @@ substitute your real key and target.
    `workcell_copy_manifest_credential_file <key> "${HOME}/<target>"` (the Gemini
    block near the other `gemini_*` seeds is the pattern). Validate the file shape
    if the provider requires it.
+   - If the credential is optional or mode-filtered, guard the copy so an absent
+     credential does not abort the whole seed path: `home-control-plane.sh` runs
+     under `set -e` and `workcell_copy_manifest_credential_file` returns non-zero
+     when the key has no mount path, so follow the existing seeds' `|| true` or
+     `if ! ...` pattern rather than a bare call.
    - Invariant [§1](invariants.md#1-host-secrets-stay-outside-the-default-trust-boundary):
      the credential is copied from a read-only mount into session-local state and
      the direct mount is not persisted back into the baseline.
@@ -164,13 +169,14 @@ unsafe flag, or promote a planned adapter such as `antigravity`.
    `runtime/container/home-control-plane.sh` from the immutable baseline under
    `adapters/<name>/`, explicit injection inputs, and masked workspace imports.
    Mask any repo-local provider control-plane files the provider reads.
-   - Wire the manifest: adapter baseline files under `adapters/<name>/` are
-     verified at seed time via `workcell_verify_control_plane_prefix`, so add
-     them to the manifest source (`internal/metadatautil/core.go`) and
-     regenerate `runtime/container/control-plane-manifest.json` (then run
-     `scripts/verify-control-plane-manifest.sh`). Without this, `workcell --agent
-     <new>` aborts during home seeding on a missing/mismatched entry even after
-     the registry and launcher wiring are done.
+   - Wire the manifest: `runtime/container/control-plane-manifest.json` (generated
+     from `internal/metadatautil/core.go`) is the inventory of adapter baseline
+     files; `workcell_verify_control_plane_prefix` only checks the entries it
+     already lists, so it will not by itself catch a baseline file you forgot to
+     register. The required gate is `scripts/verify-control-plane-manifest.sh`,
+     which regenerates the manifest and diffs it against the committed file — so
+     add the new baseline files to the manifest source, regenerate, and run that
+     check, or an unlisted baseline file slips through.
    - Invariant [§3](invariants.md#3-repo-policy-must-not-silently-widen-trust):
      repo content must not retake the control plane.
 
