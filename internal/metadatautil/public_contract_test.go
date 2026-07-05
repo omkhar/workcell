@@ -88,8 +88,8 @@ func TestCheckPublicContractRejectsMissingSessionRecordField(t *testing.T) {
 func TestCheckPublicContractRejectsBogusOutputPrefix(t *testing.T) {
 	root := publicContractRepoRoot(t)
 	contractPath := mutatedContractCopy(t, root,
-		`"prev_digest="]`,
-		`"prev_digest=", "totally_bogus_prefix_zz="]`,
+		`"egress_enforcement="]`,
+		`"egress_enforcement=", "totally_bogus_prefix_zz="]`,
 	)
 
 	err := CheckPublicContract(root, contractPath)
@@ -225,7 +225,7 @@ func TestCheckPublicContractRejectsTableMovedToScalar(t *testing.T) {
 	}
 	mutated := string(original)
 	for _, sub := range []struct{ from, to string }{
-		{`"credentials", "copies"]`, `"credentials"]`},
+		{`"copies", "network"]`, `"network"]`},
 		{`scalar_root_keys = ["version", "includes"]`, `scalar_root_keys = ["version", "includes", "copies"]`},
 	} {
 		if !strings.Contains(mutated, sub.from) {
@@ -273,8 +273,8 @@ func TestCheckPublicContractRejectsBogusInjectionTable(t *testing.T) {
 	// set-equality check must report it both as stale (in contract, not in
 	// code) and orphaned (in code, not in contract).
 	contractPath := mutatedContractCopy(t, root,
-		`"copies"]`,
-		`"bogus_injection_table"]`,
+		`"copies", "network"]`,
+		`"bogus_injection_table", "network"]`,
 	)
 
 	err := CheckPublicContract(root, contractPath)

@@ -114,6 +114,7 @@ The full stable output-line prefix set enforced by `policy/public-contract.toml`
 | `surviving mutants:` | `cmd/workcell-citools` |
 | `record_digest=` | `scripts/workcell` |
 | `prev_digest=` | `scripts/workcell` |
+| `egress_enforcement=` | `scripts/workcell` |
 
 The complete set of `key=` prefixes in the `session show --text` summary is
 enforced separately, by set-equality against `SessionShowLines`
@@ -121,11 +122,13 @@ enforced separately, by set-equality against `SessionShowLines`
 
 ## Injection-policy supported tables
 
-`internal/injection` accepts exactly four top-level tables in an injection
-policy TOML document: `documents`, `ssh`, `credentials` (single-bracket
-tables), and `copies` (the one supported `[[array-of-table]]`). Any other
-top-level table name is rejected. See `docs/injection-policy.md` for the
-per-table schema.
+`internal/injection` accepts exactly five top-level tables in an injection
+policy TOML document: `documents`, `ssh`, `credentials`, `network`
+(single-bracket tables), and `copies` (the one supported `[[array-of-table]]`).
+Any other top-level table name is rejected. `[network]` carries only the egress
+`allow_endpoints`/`deny_endpoints` lists and cannot change the network-policy
+mode; see `docs/injection-policy.md` for the per-table schema and the egress
+mechanism.
 
 ## Durable session-record fields
 

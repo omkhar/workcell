@@ -24,7 +24,7 @@ codes = ["0", "1", "2", "3", "124", "126", "127", "128"]
 # Stable key=value / prefixed output lines consumed by tests, CI, or other
 # tooling. See docs/stability-contract.md "Stable machine-readable output".
 [output_lines]
-prefixes = ["host_os=", "host_arch=", "support_matrix_status=", "provider_bootstrap_", "target_kind=", "target_provider=", "workspace=", "assurance=", "publish_pr_url=", "mutation score:", "surviving mutants:", "record_digest=", "prev_digest="]
+prefixes = ["host_os=", "host_arch=", "support_matrix_status=", "provider_bootstrap_", "target_kind=", "target_provider=", "workspace=", "assurance=", "publish_pr_url=", "mutation score:", "surviving mutants:", "record_digest=", "prev_digest=", "egress_enforcement="]
 
 # The json tags of internal/host/sessions/sessions.go's SessionRecord and
 # SessionExport structs.
@@ -43,7 +43,7 @@ export_fields = ["session", "audit_records"]
 prefixes = ["session_id=", "profile=", "target_kind=", "target_provider=", "target_id=", "target_summary=", "target_assurance_class=", "runtime_api=", "control=", "agent=", "mode=", "ui=", "execution_path=", "status=", "live_status=", "assurance=", "workspace_transport=", "workspace=", "display_workspace=", "display_worktree=", "display_git_branch=", "workspace_origin=", "workspace_root=", "worktree_path=", "git_branch=", "git_head=", "git_base=", "container_name=", "monitor_pid=", "started_at=", "observed_at=", "finished_at=", "exit_status=", "initial_assurance=", "current_assurance=", "final_assurance=", "workspace_control_plane=", "session_audit_dir=", "audit_log_path=", "debug_log_path=", "file_trace_log_path=", "transcript_log_path="]
 
 [injection_tables]
-tables = ["documents", "ssh", "credentials", "copies"]
+tables = ["documents", "ssh", "credentials", "copies", "network"]
 # The non-table scalar root keys the loader also accepts. tables + these must
 # equal the authoritative allowedRootPolicyKeys gate in
 # internal/injection/render_injection_bundle.go (validated before any table

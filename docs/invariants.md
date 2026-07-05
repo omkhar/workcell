@@ -68,6 +68,17 @@ plugin, MCP, hook, and instruction files before it can claim support.
 profiles. Workcell
 does not rely on provider prompts to describe network posture after the fact.
 
+`strict` sets `NETWORK_POLICY=allowlist`, and on the `colima` target the launcher
+enforces it as a fail-closed, dual-stack, default-deny egress firewall:
+`iptables`/`ip6tables` rules in the VM's `DOCKER-USER` chain ACCEPT only the
+reviewed `host:port` allowlist and `DROP` the rest, aborting rather than run
+without IPv6 containment. Only the colima target applies this per-session
+allowlist (the launch summary states which with an `egress_enforcement=` label);
+other targets rely on their own controls. Operators may extend or tighten the
+allowlist only through the reviewed injection-policy `[network]` surface
+(`allow_endpoints`/`deny_endpoints`), which can never disable the default or
+change `NETWORK_POLICY`. See the [`[network]` egress section](injection-policy.md#network-egress-network).
+
 ## 5. Destructive or trust-widening actions need defense in depth
 
 The runtime boundary is primary, but Workcell also uses provider-side defenses

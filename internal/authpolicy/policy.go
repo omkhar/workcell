@@ -46,6 +46,7 @@ var (
 		"ssh":         {},
 		"copies":      {},
 		"credentials": {},
+		"network":     {},
 	}
 	managedRootMarker = ".workcell-managed-root"
 )
@@ -178,6 +179,43 @@ func validatePolicyDocuments(policy map[string]any) error {
 		return die("documents must be a TOML table")
 	}
 	return validateAllowedKeys(documents, DocumentKeySet, "documents")
+}
+
+// validatePolicyNetwork is the acceptance-time counterpart to renderNetwork:
+// `workcell policy validate` accepts only allow_endpoints/deny_endpoints
+// (network_policy etc. rejected), each matching the shared grammar.
+func validatePolicyNetwork(policy map[string]any) error {
+	raw, ok := policy["network"]
+	if !ok || raw == nil {
+		return nil
+	}
+	network, ok := raw.(map[string]any)
+	if !ok {
+		return die("network must be a TOML table")
+	}
+	if err := validateAllowedKeys(network, map[string]struct{}{"allow_endpoints": {}, "deny_endpoints": {}}, "network"); err != nil {
+		return err
+	}
+	for _, key := range []string{"allow_endpoints", "deny_endpoints"} {
+		value, ok := network[key]
+		if !ok || value == nil {
+			continue
+		}
+		items, ok := value.([]any)
+		if !ok {
+			return die(fmt.Sprintf("network.%s must be an array of host:port strings", key))
+		}
+		for _, item := range items {
+			endpoint, ok := item.(string)
+			if !ok {
+				return die(fmt.Sprintf("network.%s must be an array of host:port strings; found non-string element: %v", key, item))
+			}
+			if err := injectionpolicy.ValidateEgressEndpoint(endpoint, "network."+key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func validatePolicyCredentials(policy map[string]any) error {
@@ -336,7 +374,7 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 			}
 			continue
 		}
-		if name != "documents" && name != "ssh" && name != "credentials" {
+		if name != "documents" && name != "ssh" && name != "credentials" && name != "network" {
 			return nil, die(fmt.Sprintf("%s:%d: unsupported table [%s]", policyPath, table.Line, name))
 		}
 		targetRaw, exists := root[name]
@@ -359,6 +397,9 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 		return nil, err
 	}
 	if err := validatePolicyCredentials(root); err != nil {
+		return nil, err
+	}
+	if err := validatePolicyNetwork(root); err != nil {
 		return nil, err
 	}
 	return root, nil
@@ -556,6 +597,33 @@ func mergePolicyFragment(base map[string]any, addition map[string]any, sourcePat
 		destinationCopies = append(destinationCopies, copies...)
 		base["copies"] = destinationCopies
 	}
+	// [network] endpoint lists are unioned across fragments (not
+	// duplicate-rejected), matching the injection and resolver layers. This
+	// surface only carries endpoint lists; it never sets a network-policy mode.
+	if networkRaw, ok := addition["network"]; ok {
+		network, ok := networkRaw.(map[string]any)
+		if !ok {
+			return die(fmt.Sprintf("injection policy fragment must keep network as a table: %s", sourcePath))
+		}
+		destination, _ := base["network"].(map[string]any)
+		if destination == nil {
+			destination = map[string]any{}
+			base["network"] = destination
+		}
+		for key, value := range network {
+			existing, present := destination[key]
+			if !present {
+				destination[key] = value
+				continue
+			}
+			existingList, existingOK := existing.([]any)
+			additionList, additionOK := value.([]any)
+			if !existingOK || !additionOK {
+				return die(fmt.Sprintf("injection policy fragments declare conflicting non-array network.%s: %s", key, sourcePath))
+			}
+			destination[key] = append(existingList, additionList...)
+		}
+	}
 	return nil
 }
 
@@ -647,6 +715,9 @@ func loadPolicyBundleWithState(policyPath string, entrypointRoot string, activeS
 	if err := validatePolicyCredentials(merged); err != nil {
 		return nil, nil, err
 	}
+	if err := validatePolicyNetwork(merged); err != nil {
+		return nil, nil, err
+	}
 	sourceSHA, err := policySHA256(resolvedPolicyPath)
 	if err != nil {
 		return nil, nil, err
@@ -678,6 +749,9 @@ func loadRawPolicy(policyPath string) (map[string]any, error) {
 		return nil, err
 	}
 	if err := validatePolicyCredentials(loaded); err != nil {
+		return nil, err
+	}
+	if err := validatePolicyNetwork(loaded); err != nil {
 		return nil, err
 	}
 	version := 1
@@ -766,6 +840,9 @@ func renderPolicyTOML(policy map[string]any) (string, error) {
 		return "", err
 	}
 	if err := validatePolicyCredentials(policy); err != nil {
+		return "", err
+	}
+	if err := validatePolicyNetwork(policy); err != nil {
 		return "", err
 	}
 
@@ -905,6 +982,36 @@ func renderPolicyTOML(policy map[string]any) (string, error) {
 				}
 				lines = append(lines, key+" = "+rendered)
 			}
+		}
+	}
+
+	if network, ok := policy["network"].(map[string]any); ok && len(network) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, "[network]")
+		orderedSet := map[string]struct{}{}
+		for _, key := range []string{"allow_endpoints", "deny_endpoints"} {
+			orderedSet[key] = struct{}{}
+			if value, ok := network[key]; ok {
+				rendered, err := renderTOMLValue(value)
+				if err != nil {
+					return "", err
+				}
+				lines = append(lines, key+" = "+rendered)
+			}
+		}
+		extras := make([]string, 0)
+		for key := range network {
+			if _, ok := orderedSet[key]; !ok {
+				extras = append(extras, key)
+			}
+		}
+		slices.Sort(extras)
+		for _, key := range extras {
+			rendered, err := renderTOMLValue(network[key])
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, key+" = "+rendered)
 		}
 	}
 

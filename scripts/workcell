@@ -384,6 +384,7 @@ INJECTION_CREDENTIAL_RESOLUTION_STATES=""
 INJECTION_PROVIDER_AUTH_READY_STATES=""
 INJECTION_SHARED_AUTH_READY_STATES=""
 INJECTION_EXTRA_ENDPOINTS=""
+INJECTION_DENY_ENDPOINTS=""
 INJECTION_SSH_ENABLED=0
 INJECTION_SECRET_COPY_TARGETS=""
 PROFILE_LOCK_DIR=""
@@ -2290,6 +2291,7 @@ emit_preview_remote_vm_dry_run() {
   fi
   printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
   printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
+  printf 'egress_enforcement=%s\n' "$(egress_enforcement_label)" >&2
   printf 'remote_access_model=brokered remote_broker=%s inbound_public_ssh=blocked live_smoke=certification-only\n' \
     "$(preview_remote_vm_broker "${TARGET_BACKEND}")" >&2
   printf 'remote_workspace_materialization=explicit reviewed_host_copy=1\n' >&2
@@ -4962,6 +4964,7 @@ prepare_injection_bundle() {
   INJECTION_PROVIDER_AUTH_READY_STATES=""
   INJECTION_SHARED_AUTH_READY_STATES=""
   INJECTION_EXTRA_ENDPOINTS=""
+  INJECTION_DENY_ENDPOINTS=""
   INJECTION_SSH_ENABLED=0
   INJECTION_SSH_CONFIG_ASSURANCE="off"
   INJECTION_SECRET_COPY_TARGETS=""
@@ -5014,6 +5017,7 @@ prepare_injection_bundle() {
       INJECTION_PROVIDER_AUTH_READY_STATES) INJECTION_PROVIDER_AUTH_READY_STATES="${value}" ;;
       INJECTION_SHARED_AUTH_READY_STATES) INJECTION_SHARED_AUTH_READY_STATES="${value}" ;;
       INJECTION_EXTRA_ENDPOINTS) INJECTION_EXTRA_ENDPOINTS="${value}" ;;
+      INJECTION_DENY_ENDPOINTS) INJECTION_DENY_ENDPOINTS="${value}" ;;
       INJECTION_SSH_ENABLED) INJECTION_SSH_ENABLED="${value}" ;;
       INJECTION_SSH_CONFIG_ASSURANCE) INJECTION_SSH_CONFIG_ASSURANCE="${value}" ;;
       INJECTION_SECRET_COPY_TARGETS) INJECTION_SECRET_COPY_TARGETS="${value}" ;;
@@ -6517,6 +6521,7 @@ run_runtime_image_build_with_retries() {
       fi
       validate_runtime_security_posture
       if [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+        [[ -n "${BOOTSTRAP_ENDPOINTS}" ]] || fail_empty_egress_after_deny "bootstrap"
         "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
       fi
     fi
@@ -6993,6 +6998,42 @@ credential_extra_endpoints() {
 
 dedupe_endpoint_list() {
   go_hostutil helper dedupe-endpoints "$1"
+}
+
+# subtract_endpoint_list removes every endpoint in the second (deny) list from
+# the first (allow) list, preserving allow order. Deny wins over allow: an
+# operator-declared [network].deny_endpoints entry is removed from the computed
+# allowlist even when a provider needs it. This only ever TIGHTENS the
+# allowlist; it can never add an endpoint or change NETWORK_POLICY.
+subtract_endpoint_list() {
+  go_hostutil helper subtract-endpoints "$1" "$2"
+}
+
+# fail_empty_egress_after_deny aborts fail-closed when [network].deny_endpoints
+# removed every computed endpoint on the enforced colima allowlist path: a
+# zero-egress session cannot reach any provider, so report an actionable
+# diagnostic instead of the helper's low-level empty-list error. The launch does
+# not proceed, so no unbounded egress is ever installed.
+fail_empty_egress_after_deny() {
+  local phase="$1"
+  echo "workcell: injection-policy [network].deny_endpoints removed every ${phase} egress endpoint on the strict colima allowlist path." >&2
+  echo "  A session with no allowed egress cannot reach any provider or registry." >&2
+  echo "  Remove a deny_endpoints entry, or add the required host:port to allow_endpoints." >&2
+  exit 1
+}
+
+# egress_enforcement_label reports whether the launch actually enforces the
+# per-session default-deny allowlist. Only the colima target applies the
+# iptables/ip6tables DOCKER-USER allowlist (scripts/colima-egress-allowlist.sh),
+# and only when NETWORK_POLICY=allowlist. Every other target (docker-desktop,
+# aws-ec2-ssm, gcp-vm) relies on its own network controls, so this prints
+# 'none' to make the parity gap explicit on the launch summary.
+egress_enforcement_label() {
+  if [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+    printf 'allowlist\n'
+  else
+    printf 'none\n'
+  fi
 }
 
 build_runtime_host_aliases() {
@@ -8301,6 +8342,14 @@ PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
 PROFILE_PREEXISTED=0
 PROFILE_MARKER_WORKSPACE=""
 BOOTSTRAP_ENDPOINTS="$(bootstrap_endpoints)"
+# A1: tighten the bootstrap build container's VM egress by deny_endpoints too
+# (does NOT gate host-side release-URL curls; see docs/egress-policy.md scope).
+# The empty-after-deny check is deferred to the bootstrap-apply sites below
+# (reached only on a rebuild), so denying all bootstrap hosts while relying on a
+# prepared image still launches.
+if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
+  BOOTSTRAP_ENDPOINTS="$(subtract_endpoint_list "${BOOTSTRAP_ENDPOINTS}" "${INJECTION_DENY_ENDPOINTS}")"
+fi
 EGRESS_HELPER="${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
@@ -8463,6 +8512,15 @@ fi
 ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(target_broker_endpoints "${TARGET_BACKEND}") $(credential_extra_endpoints) $(provider_auth_recovery_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS:-}")"
 if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
   ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:443")"
+fi
+# A1: subtract deny_endpoints last so deny wins over every allow source; this
+# only removes endpoints and never changes NETWORK_POLICY.
+if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
+  ALLOW_ENDPOINTS="$(subtract_endpoint_list "${ALLOW_ENDPOINTS}" "${INJECTION_DENY_ENDPOINTS}")"
+  # Fatal only for an actual session launch; --prepare-only needs no session egress.
+  if [[ -z "${ALLOW_ENDPOINTS}" ]] && [[ "${PREPARE_ONLY}" -ne 1 ]] && [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+    fail_empty_egress_after_deny "session"
+  fi
 fi
 if target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
   emit_preview_remote_vm_dry_run
@@ -8686,6 +8744,7 @@ if [[ -n "${INJECTION_POLICY_SHA256}" ]]; then
 fi
 printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
 printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
+printf 'egress_enforcement=%s\n' "$(egress_enforcement_label)" >&2
 printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
@@ -8748,7 +8807,11 @@ validate_runtime_security_posture
 restore_runtime_egress() {
   if [[ "${TARGET_BACKEND}" == "colima" ]]; then
     if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
-      "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
+      # Empty only reaches here via --prepare-only (a launch aborts at the
+      # empty-egress guard); helper rejects empty and `clear` = unrestricted.
+      if [[ -n "${ALLOW_ENDPOINTS}" ]]; then
+        "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
+      fi
     else
       "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
     fi
@@ -8796,6 +8859,7 @@ if [[ "${NETWORK_POLICY}" == "allowlist" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]]; t
   BOOTSTRAP_APPLIED=1
   printf 'bootstrap_policy=allowlist endpoints=%s\n' "${BOOTSTRAP_ENDPOINTS}" >&2
   if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    [[ -n "${BOOTSTRAP_ENDPOINTS}" ]] || fail_empty_egress_after_deny "bootstrap"
     "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
   fi
 elif [[ "${NETWORK_POLICY}" != "allowlist" ]] && [[ "${TARGET_BACKEND}" == "colima" ]]; then

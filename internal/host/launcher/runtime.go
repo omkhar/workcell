@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -141,6 +142,53 @@ func DedupeEndpointList(raw string) string {
 		ordered = append(ordered, entry)
 	}
 	return strings.Join(ordered, " ")
+}
+
+// SubtractEndpointList removes every endpoint present in deny from allow,
+// preserving allow's order.  This implements the A1 operator-tightening
+// semantics: a policy's [network].deny_endpoints wins over the host-computed
+// allowlist, so an endpoint an operator denies is removed even when a provider
+// would otherwise require it.  The function only ever REMOVES endpoints; it
+// can never add one, so it cannot weaken the allowlist.
+func SubtractEndpointList(allow, deny string) string {
+	// Compare on a canonical key so a deny semantically equal to a computed
+	// endpoint wins regardless of surface form (host case/trailing dot, IPv6
+	// spelling, leading-zero port); otherwise CHATGPT.COM:443 would fail to
+	// remove chatgpt.com:443 and leave a denied endpoint reachable.
+	denied := make(map[string]struct{})
+	for _, entry := range strings.Fields(deny) {
+		denied[canonicalEndpoint(entry)] = struct{}{}
+	}
+	kept := make([]string, 0)
+	for _, entry := range strings.Fields(allow) {
+		if _, ok := denied[canonicalEndpoint(entry)]; ok {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return strings.Join(kept, " ")
+}
+
+// canonicalEndpoint returns a normalized host:port key for equality comparison:
+// the host is lower-cased and, when it is an IP literal, rendered in its
+// canonical form; the port has any leading zeros stripped. Inputs that are not
+// valid host:port fall back to a lower-cased copy so comparison stays total.
+func canonicalEndpoint(endpoint string) string {
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return strings.ToLower(endpoint)
+	}
+	host = strings.ToLower(host)
+	// A trailing-dot FQDN (chatgpt.com.) is the same DNS host as chatgpt.com;
+	// strip trailing dots (the grammar already rejects leading dots and "..").
+	host = strings.TrimRight(host, ".")
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	if n, err := strconv.Atoi(port); err == nil {
+		port = strconv.Itoa(n)
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func ResolveEndpoints(raw string) ([]string, error) {
