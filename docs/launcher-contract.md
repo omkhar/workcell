@@ -22,12 +22,12 @@ recognises. Every claim here is derived from `scripts/workcell`,
 
 The launcher avoids bare, unpinned `PATH` lookups for host binaries: every host
 tool is either absolute-resolved or run by name on the pinned `TRUSTED_HOST_PATH`
-(never an inherited `PATH`). Some tools (`go`, `colima`, and `git`'s
+(never an inherited `PATH`). Most tools (`go`, `colima`, `docker`, and `git`'s
 `HOST_GIT_BIN`) are absolute-resolved through one of two resolvers, both of which
 abort the launch (printing `Missing trusted host tool: <name>` to stderr and
-exiting `1`) when no trusted candidate is executable; others (`docker` in the main
-path, and `git`/`curl` via `run_clean_host_command`) are run by name on
-`TRUSTED_HOST_PATH`, as the rows and notes below detail. The two resolvers are:
+exiting `1`) when no trusted candidate is executable; a couple (`git` and `curl`
+via `run_clean_host_command`) are instead run by name on `TRUSTED_HOST_PATH`, as
+the rows and notes below detail. The two resolvers are:
 
 - `resolve_fixed_host_tool <name> <candidate>...`
   (`scripts/lib/launcher/host-exec.sh`) returns the first caller-supplied candidate
@@ -46,20 +46,20 @@ path, and `git`/`curl` via `run_clean_host_command`) are run by name on
 | --- | --- | --- | --- |
 | `go` | `resolve_fixed_host_tool` (`go-hostutil.sh:29`) | `/opt/homebrew/bin/go`, `/usr/local/go/bin/go`, `/usr/local/bin/go`, `/usr/bin/go` | Runs the `workcell-hostutil` and `workcell-colimautil` Go programs via `go run` (see `HOST_GO_BIN`). |
 | `colima` | `resolve_host_tool` (`workcell:625,670,5492`); `resolve_host_tool_optional` probe (`workcell:6713`) | `/opt/homebrew/bin/colima`, `/usr/local/bin/colima` | Manages the Colima VM profile that backs the container runtime (`HOST_COLIMA_BIN`). |
-| `docker` | In the main launch path `HOST_DOCKER_BIN` is set to the **bare name `docker`** (`workcell:8136`) and run on `TRUSTED_HOST_PATH` via `run_workcell_docker_client_command` (`scripts/lib/trusted-docker-client.sh:151`); specific sub-paths instead resolve it with `resolve_host_tool_optional` (`workcell:850,1663,6721`) | `/opt/homebrew/bin/docker`, `/usr/local/bin/docker`, `/Applications/Docker.app/Contents/Resources/bin/docker` (only when a sub-path resolves it) | Drives the container runtime. |
+| `docker` | Fail-closed `resolve_host_tool`: a transient `HOST_DOCKER_BIN="docker"` default (`workcell:8136`) is **overridden** by `prepare_current_target_docker_client` (called in the main launch path at `workcell:8352`), which resolves it to an absolute, canonical-validated path (`resolve_host_tool docker`, `workcell:866`) before any Docker use; other sub-paths probe with `resolve_host_tool_optional` (`workcell:850,1663,6721`) | `/opt/homebrew/bin/docker`, `/usr/local/bin/docker`, `/Applications/Docker.app/Contents/Resources/bin/docker` | Drives the container runtime (`HOST_DOCKER_BIN`), run via `run_workcell_docker_client_command` (`trusted-docker-client.sh:151`). |
 | `git` | `resolve_host_tool` → absolute `HOST_GIT_BIN` (`workcell:4462,8135`); **also** invoked by name via `run_clean_host_command` (`workcell:7092,7163,7190,7213,7232,7372`) | `/usr/bin/git`, `/opt/homebrew/bin/git`, `/usr/local/bin/git` | Inspects and extracts the launch workspace repository. |
 | `curl` | **sanitised-PATH by name only** (no absolute resolve) via `run_clean_host_command` (`workcell:6241,6270`) | found on `TRUSTED_HOST_PATH` inside the sanitised `env -i` | Best-effort `HEAD` preflight for release URLs; **optional** — absence is swallowed (`\|\| true`), not fatal. |
 
 A resolver-backed tool that is absent aborts the launch rather than falling back
 to an attacker-controlled binary — but the resolvers differ in strength, as above:
-`resolve_host_tool` (`colima`, and `git`'s `HOST_GIT_BIN`) validates the canonical
-target, while `resolve_fixed_host_tool` (`go`) trusts its literal fixed paths.
-Several tools are instead run **by name on the sanitised `TRUSTED_HOST_PATH`**
-rather than absolute-resolved: `git` and `curl` via `run_clean_host_command`, and
-`docker` in the main launch path (`HOST_DOCKER_BIN="docker"`). These stay confined
-to the trusted `PATH` but are **not** canonical-target-validated and **not**
-fail-closed — e.g. a missing `curl` leaves the preflight URL empty rather than
-raising `Missing trusted host tool`, so `curl` is optional, not required.
+`resolve_host_tool` (`colima`, `docker`, and `git`'s `HOST_GIT_BIN`) validates the
+canonical target, while `resolve_fixed_host_tool` (`go`) trusts its literal fixed
+paths. Two tools are instead run **by name on the sanitised `TRUSTED_HOST_PATH`**
+rather than absolute-resolved: `git` (in its `run_clean_host_command` uses) and
+`curl`. These stay confined to the trusted `PATH` but are **not**
+canonical-target-validated and **not** fail-closed — e.g. a missing `curl` leaves
+the preflight URL empty rather than raising `Missing trusted host tool`, so `curl`
+is optional, not required.
 
 `go` additionally has a **second, differently-scoped** resolution path: the
 `--audit-transcript` PTY helper (`scripts/lib/pty_transcript`, `workcell:8778`)
