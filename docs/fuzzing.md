@@ -82,6 +82,18 @@ rustup toolchain install nightly
 cargo install cargo-fuzz --version 0.13.2 --locked
 ```
 
+The exec-guard crate pins crates.io to a vendored directory for its reproducible
+shipping build (`runtime/container/rust/.cargo/config.toml`), and the
+non-shipping fuzz crate's extra dependency (`libfuzzer-sys`) is not vendored. A
+local fuzz build therefore needs crates.io access for that one dependency, so
+`cargo +nightly fuzz build` will fail dependency resolution against the vendored
+config unless you first override it. Apply the same swap the scheduled lane uses
+(see the `Rust fuzz` job in [`.github/workflows/fuzz.yml`](../.github/workflows/fuzz.yml)):
+in `runtime/container/rust/.cargo/config.toml`, temporarily change
+`replace-with = "vendored-sources"` to a `crates-io-remote` source backed by
+`sparse+https://index.crates.io/`. Do this locally only and **do not commit it** —
+the committed vendored config is what release builds use.
+
 Then, from `runtime/container/rust/`, build all targets or run one on its seed
 corpus for a bounded budget:
 
@@ -89,13 +101,6 @@ corpus for a bounded budget:
 cargo +nightly fuzz build
 cargo +nightly fuzz run path_classification -- -max_total_time=25
 ```
-
-The exec-guard crate vendors crates.io for its reproducible shipping build, so
-the non-shipping fuzz crate's extra dependency (`libfuzzer-sys`) is not in
-`vendor/`. Building the fuzz crate therefore requires crates.io access for that
-one dependency, the same way the Go lane fetches its modules at fuzz time; the
-scheduled lane scopes this to the fuzz build and never touches the committed
-vendored config used by release builds.
 
 ## Scheduled lane
 
