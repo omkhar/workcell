@@ -118,9 +118,11 @@ executes from `${ROOT_DIR}` under the sanitised `env -i` host environment. Every
 helper depends only on `ensure_go_run_env` plus the `GOPATH`/`GOMODCACHE`/
 `GOCACHE` it exports (`scripts/lib/go-run-env.sh`),
 `run_clean_host_command_in_dir` (`scripts/lib/launcher/host-exec.sh`), and the
-readonly `ROOT_DIR` and `HOST_GO_BIN` globals set in `scripts/workcell` — all
-sourced or assigned before the first wrapper call — which makes the module
-self-contained.
+`ROOT_DIR` global set in `scripts/workcell`. `HOST_GO_BIN` is resolved by this
+module itself (via `resolve_fixed_host_tool` from `host-exec.sh`, sourced
+immediately before), since these wrappers are its sole consumer — so every
+dependency is sourced or assigned before the first wrapper call, which makes the
+module self-contained.
 
 ### `go_hostutil()`
 
