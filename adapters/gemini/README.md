@@ -54,8 +54,11 @@ Additional in-container session targets: `~/.gemini/.env`,
 - Unsafe-argument policy (`reject_unsafe_gemini_args` in
   `runtime/container/provider-policy.sh`): the wrapper blocks
   `--*dangerously*`, `--*bypass*permission*`, `--sandbox`, `--add-dir`,
-  `-y`/`--yolo`, and in-session `--approval-mode` overrides. `breakglass`
-  exempts these.
+  `-y`/`--yolo`, and in-session `--approval-mode` overrides. These are rejected in
+  **every** mode including `breakglass`: `provider-wrapper.sh` re-checks arguments
+  (`WORKCELL_WRAPPER_CONTEXT=1`), so `container-smoke.sh` confirms breakglass
+  overrides still fail. Breakglass raises the sandbox floor, not the unsafe-flag
+  policy.
 
 ## See also
 
