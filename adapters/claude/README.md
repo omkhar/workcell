@@ -29,7 +29,12 @@ See [../../docs/injection-policy.md](../../docs/injection-policy.md).
 
 Repo baselines under `adapters/claude/`:
 
-- `managed-settings.json`: reviewed settings seeded to `~/.claude/settings.json`.
+- `.claude/settings.json`: reviewed session settings seeded to
+  `~/.claude/settings.json` by `workcell_render_claude_settings` — this is the
+  file to edit for session-home settings changes.
+- `managed-settings.json`: the separate enterprise managed-policy file, installed
+  and verified at `/etc/claude-code/managed-settings.json` (it is **not** the
+  session-home `~/.claude/settings.json`).
 - `CLAUDE.md`: managed baseline rendered into `~/.claude/CLAUDE.md`.
 - `mcp-template.json`: MCP template seeded to `~/.mcp.json`. The default template
   is empty — no live MCP servers ship in the baseline.
