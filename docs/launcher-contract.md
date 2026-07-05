@@ -73,14 +73,21 @@ absent.
 The launcher pins its own process environment before doing any work, then
 derives a small set of host-context variables.
 
-**Pinned `PATH`.** The launcher re-execs itself with a cleared environment. The
-shebang (`scripts/workcell:1`) is
+**Pinned `PATH`.** On direct execution the launcher re-execs itself with a
+**cleared** environment: the shebang (`scripts/workcell:1`) is
 `#!/usr/bin/env -S -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash`,
 so `env -i` discards the inherited environment and starts `bash` with only the
-fixed `PATH` and cleared `BASH_ENV`/`ENV`. That same string is then frozen as
-`readonly TRUSTED_HOST_PATH` and re-exported as `PATH` (`scripts/workcell:5-6`),
-and it is the `PATH` handed to every sanitised host command via
-`env -i PATH="${TRUSTED_HOST_PATH}"` (`host-exec.sh:49,77`).
+fixed `PATH` and cleared `BASH_ENV`/`ENV`. **This wholesale clear only happens
+when the shebang is honored.** When the launcher is instead invoked as
+`bash scripts/workcell` / `/bin/bash -p scripts/workcell` — the form the repo's own
+verify-invariants and publish-pr harnesses use — the shebang is bypassed, `env -i`
+never runs, and the inherited environment is *not* wholesale cleared; there, only
+the explicit `scrub_host_process_env` list (below) plus the `PATH` reset apply, so
+security reasoning must not assume unlisted variables are absent on that path. In
+both cases the `PATH` string is frozen as `readonly TRUSTED_HOST_PATH` and
+re-exported as `PATH` (`scripts/workcell:5-6`), and it is the `PATH` handed to
+every sanitised host command via `env -i PATH="${TRUSTED_HOST_PATH}"`
+(`host-exec.sh:49,77`).
 
 **Scrubbed variables.** `scrub_host_process_env` (`scripts/workcell:7-30`, called
 at `scripts/workcell:32`) unsets, in order:
