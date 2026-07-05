@@ -1,0 +1,147 @@
+{
+  "schema_version": "1",
+  "tool": "workcell support-bundle",
+  "generated_at": "2026-07-05T12:00:00Z",
+  "redaction": {
+    "policy_version": "1",
+    "rules": [
+      "credential file contents are never read; only path, presence, and size/mtime metadata are recorded",
+      "workspace and agent output are never collected; log bodies are referenced by pointer only",
+      "token, key, password, secret, and credential material is masked by pattern (JWT, GitHub/OpenAI/Google/AWS/Slack tokens, PEM private keys, Bearer headers) and by secret-named key=value pairs",
+      "the operator home-directory prefix is rewritten to ~ so the local username never leaks through paths",
+      "only structured, enumerated diagnostic fields are emitted; no raw environment dumps or command output blobs"
+    ]
+  },
+  "install": {
+    "available": true,
+    "gaps": null,
+    "launcher_path": "~/src/workcell/scripts/workcell",
+    "launcher_present": true,
+    "repo_root": "~/src/workcell",
+    "repo_root_present": true,
+    "version": "v0.11.2",
+    "host_os": "darwin",
+    "host_arch": "arm64"
+  },
+  "policy": {
+    "available": true,
+    "gaps": null,
+    "repo_policy_dir": "~/src/workcell/policy",
+    "repo_policy_files": [
+      "allowed-actions.toml",
+      "github-hosted-controls.toml",
+      "host-support-matrix.tsv",
+      "requirements.toml"
+    ],
+    "user_injection_policy_path": "~/.config/workcell/injection-policy.toml",
+    "user_injection_policy_present": true,
+    "hosted_controls_present": true
+  },
+  "target": {
+    "available": true,
+    "gaps": [
+      "live colima/VM status is not collected; run `workcell --doctor` for live target state"
+    ],
+    "workcell_state_root": "~/.local/state/workcell",
+    "workcell_state_root_present": true,
+    "colima_state_root": "~/.colima",
+    "colima_state_root_present": true,
+    "colima_profiles": [
+      {
+        "name": "wcl-strict",
+        "dir": "~/.colima/wcl-strict",
+        "colima_config_present": true,
+        "lima_dir_present": true
+      }
+    ]
+  },
+  "providers": {
+    "available": true,
+    "gaps": null,
+    "providers": [
+      {
+        "id": "claude",
+        "supported": true,
+        "adapter_dir_present": true,
+        "credential_keys": [
+          "claude_api_key",
+          "claude_auth",
+          "claude_mcp"
+        ]
+      },
+      {
+        "id": "codex",
+        "supported": true,
+        "adapter_dir_present": true,
+        "credential_keys": [
+          "codex_auth"
+        ]
+      },
+      {
+        "id": "copilot",
+        "supported": true,
+        "adapter_dir_present": true,
+        "credential_keys": [
+          "copilot_github_token"
+        ]
+      },
+      {
+        "id": "gemini",
+        "supported": true,
+        "adapter_dir_present": true,
+        "credential_keys": [
+          "gcloud_adc",
+          "gemini_env",
+          "gemini_oauth",
+          "gemini_projects"
+        ]
+      },
+      {
+        "id": "antigravity",
+        "supported": false,
+        "adapter_dir_present": true,
+        "credential_keys": null
+      }
+    ]
+  },
+  "sessions": {
+    "available": true,
+    "gaps": null,
+    "total": 1,
+    "status_counts": [
+      {
+        "status": "running",
+        "count": 1
+      }
+    ],
+    "sessions": [
+      {
+        "session_id": "sess-abc123",
+        "status": "running",
+        "live_status": "running",
+        "profile": "wcl-strict",
+        "target_kind": "vm",
+        "target_provider": "colima",
+        "agent": "codex",
+        "mode": "strict",
+        "started_at": "2026-07-04T09:00:00Z",
+        "workspace": "~/src/workcell",
+        "audit_log_present": true
+      }
+    ],
+    "truncated": false
+  },
+  "audit_pointers": {
+    "available": true,
+    "gaps": null,
+    "pointers": [
+      {
+        "session_id": "sess-abc123",
+        "path": "~/.colima/wcl-strict/workcell.audit.log",
+        "present": true,
+        "size_bytes": 63,
+        "modified_at": "2026-07-04T09:30:00Z"
+      }
+    ]
+  }
+}
