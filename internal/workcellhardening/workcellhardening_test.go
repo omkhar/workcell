@@ -179,6 +179,113 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// configSafetyHappyLauncher is a minimal scripts/workcell that satisfies
+// all four config-safety invariants: no test-harness host tool override
+// support, no unsafe YAML.load_file parsing, both the COLIMA_STATE_ROOT
+// assignment and the COLIMA_HOME pin, and a REAL_HOME assignment.
+// Individual negative cases mutate one property of this baseline.
+const configSafetyHappyLauncher = `#!/bin/bash
+set -euo pipefail
+REAL_HOME="$(host_real_home)"
+COLIMA_STATE_ROOT="${REAL_HOME}/.workcell/colima"
+run_host_colima() {
+  COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+}
+`
+
+func TestCheckConfigSafety(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string // "" means expect success
+	}{
+		{
+			name: "happy path all invariants hold",
+			body: configSafetyHappyLauncher,
+		},
+		{
+			// kindRegexAbsent: WORKCELL_DOCKER_BIN= present trips check #1.
+			name:    "WORKCELL_DOCKER_BIN override present",
+			body:    configSafetyHappyLauncher + "\nWORKCELL_DOCKER_BIN=/usr/bin/docker\n",
+			wantErr: "Unexpected test-harness host tool override support remains in scripts/workcell",
+		},
+		{
+			// kindRegexAbsent: bare WORKCELL_TEST_HARNESS (no `=`) also trips.
+			name:    "WORKCELL_TEST_HARNESS present",
+			body:    configSafetyHappyLauncher + "\nif [ -n \"${WORKCELL_TEST_HARNESS:-}\" ]; then :; fi\n",
+			wantErr: "Unexpected test-harness host tool override support remains in scripts/workcell",
+		},
+		{
+			// kindRegexAbsent: WORKCELL_GIT_BIN= (alternation branch) trips.
+			name:    "WORKCELL_GIT_BIN override present",
+			body:    configSafetyHappyLauncher + "\nWORKCELL_GIT_BIN=/usr/bin/git\n",
+			wantErr: "Unexpected test-harness host tool override support remains in scripts/workcell",
+		},
+		{
+			// kindRegexAbsent negative: an unrelated WORKCELL_*_BIN= that is
+			// NOT one of GIT/COLIMA/DOCKER/RUBY must NOT trip the regex, so
+			// the check still passes.  This pins that the alternation group is
+			// respected rather than matching any WORKCELL_*_BIN=.
+			name: "unrelated WORKCELL_FOO_BIN does not trip regex",
+			body: configSafetyHappyLauncher + "\nWORKCELL_FOO_BIN=/usr/bin/foo\n",
+		},
+		{
+			// kindAbsent: unsafe YAML.load_file present trips check #2.
+			name:    "YAML.load_file present",
+			body:    configSafetyHappyLauncher + "\nprofile = YAML.load_file(path)\n",
+			wantErr: "scripts/workcell still uses unsafe YAML.load_file parsing for managed profile validation",
+		},
+		{
+			// kindPresent: the COLIMA_HOME pin removed (COLIMA_STATE_ROOT
+			// assignment still present) fails the second half of the guard
+			// with the shared message.
+			name:    "missing COLIMA_HOME pin",
+			body:    strings.Replace(configSafetyHappyLauncher, `COLIMA_HOME="${COLIMA_STATE_ROOT}" `, "", 1),
+			wantErr: "Expected scripts/workcell to pin Colima state operations to one COLIMA_HOME root",
+		},
+		{
+			// kindPresent: the COLIMA_STATE_ROOT assignment removed fails the
+			// first half of the guard with the same shared message.
+			name:    "missing COLIMA_STATE_ROOT assignment",
+			body:    strings.Replace(configSafetyHappyLauncher, "COLIMA_STATE_ROOT=", "STATE_ROOT=", 1),
+			wantErr: "Expected scripts/workcell to pin Colima state operations to one COLIMA_HOME root",
+		},
+		{
+			// kindPresent: the REAL_HOME assignment removed fails check #4.
+			name:    "missing REAL_HOME",
+			body:    strings.Replace(configSafetyHappyLauncher, "REAL_HOME=", "HOME_DIR=", 1),
+			wantErr: "Expected scripts/workcell to derive the real host home independently of caller HOME",
+		},
+		{
+			// A missing launcher is empty content: the negative checks pass
+			// and the first affirmative check (COLIMA_STATE_ROOT pin) fires,
+			// mirroring `rg -q` returning non-zero on a missing file.
+			name:    "missing launcher",
+			body:    "",
+			wantErr: "Expected scripts/workcell to pin Colima state operations to one COLIMA_HOME root",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeLauncher(t, tc.body)
+			err := CheckConfigSafety(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckConfigSafety() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckConfigSafety() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckConfigSafety() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestExtractNamedFunctionBlock pins the sed-range extraction semantics
 // the run_host_colima check depends on: the block runs from the `NAME()`
 // opening line through the first line beginning with `}` (inclusive), and

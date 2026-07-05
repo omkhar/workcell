@@ -900,25 +900,18 @@ for file in \
   check_file "${file}"
 done
 
-if rg -q 'WORKCELL_TEST_HARNESS|WORKCELL_(GIT|COLIMA|DOCKER|RUBY)_BIN=' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Unexpected test-harness host tool override support remains in scripts/workcell" >&2
-  exit 1
-fi
-
-if rg -q 'YAML\.load_file' "${ROOT_DIR}/scripts/workcell"; then
-  echo "scripts/workcell still uses unsafe YAML.load_file parsing for managed profile validation" >&2
-  exit 1
-fi
-
-if ! rg -q 'COLIMA_STATE_ROOT=' "${ROOT_DIR}/scripts/workcell" || ! rg -q 'COLIMA_HOME="\$\{COLIMA_STATE_ROOT\}"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to pin Colima state operations to one COLIMA_HOME root" >&2
-  exit 1
-fi
-
-if ! rg -q 'REAL_HOME=' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to derive the real host home independently of caller HOME" >&2
-  exit 1
-fi
+# scripts/workcell config-safety invariants: no test-harness host tool
+# override support remains, no unsafe YAML.load_file profile parsing, the
+# Colima state operations are pinned to one COLIMA_HOME root, and the real
+# host home is derived independently of the caller's HOME.  Migrated to Go
+# (D3): internal/workcellhardening.CheckConfigSafety behind the
+# workcell-citools workcell-config-safety subcommand preserves the exact
+# exit codes and stderr messages of the former inline rg block, including
+# the genuine-regex vs. fixed-string matching semantics per check.
+# `|| exit 1` matches the former inline block's `exit 1` on a violated
+# invariant: it handles the failure so the top-level ERR trap does not fire and
+# append trap diagnostics, preserving the exact failure stderr surface.
+go_verify_citools workcell-config-safety "${ROOT_DIR}" || exit 1
 
 toml_section_assignments() {
   local file="$1"
