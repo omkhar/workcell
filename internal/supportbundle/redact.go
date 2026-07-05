@@ -48,11 +48,11 @@ var (
 	// diagnostic fields stay legible.
 	// Values: a double- or single-quoted string (honoring backslash escapes, so
 	// password="abc\"def" is masked whole) or a bare unquoted token.
-	keyValueSecretRe = regexp.MustCompile(`(?i)((?:[a-z0-9_.-]*(?:password|passwd|passphrase|secret|token|credential)[a-z0-9_.-]*|(?:api|access|private|session)[_-]?key)"?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s"',]+)`)
+	keyValueSecretRe = regexp.MustCompile(`(?i)((?:[a-z0-9_.-]*(?:password|passwd|passphrase|secret|token|credential)[a-z0-9_.-]*|(?:api|access|private|session)[_-]?key)\\?"?\s*[:=]\s*)(\\"(?:\\.|[^"\\])*\\"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s"',]+)`)
 	jwtRe            = regexp.MustCompile(`eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]*`)
 	githubTokenRe    = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,255}`)
 	githubPatRe      = regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,255}`)
-	slackTokenRe     = regexp.MustCompile(`(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}`)
+	slackTokenRe     = regexp.MustCompile(`(?:(?:xox[baprs]|xapp|xwfp)-|xoxe[.-])[A-Za-z0-9._-]{10,}`)
 	awsKeyRe         = regexp.MustCompile(`(?:AKIA|ASIA)[0-9A-Z]{16}`)
 	openaiKeyRe      = regexp.MustCompile(`sk-[A-Za-z0-9_-]{20,}`)
 	googleKeyRe      = regexp.MustCompile(`AIza[0-9A-Za-z_-]{20,}`)

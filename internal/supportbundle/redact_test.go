@@ -27,6 +27,8 @@ var knownSecrets = []struct {
 	{"aws session key", "ASIA" + "IOSFODNN7EXAMPLE"},
 	{"slack token", "xoxb-" + "1234567890-abcdefghijklmnop"},
 	{"slack app token", "xapp-" + "1-A012B345C-6789012345-abcdef0123456789"},
+	{"slack workflow token", "xwfp-" + "0123456789.abcdef0123456789"},
+	{"slack rotation token", "xoxe." + "xoxp-1-0123456789abcdef0123456789"},
 	{"jwt", "eyJhbGciOiJIUzI1NiJ9." + "eyJzdWIiOiIxMjM0NSJ9.abcDEF-_1234567890xyz"},
 }
 
@@ -112,6 +114,9 @@ func TestRedactorMasksSecretNamedKeyValues(t *testing.T) {
 		{"refresh_token=refreshsecretvalue", []string{"refreshsecretvalue"}},
 		// escaped quote inside a quoted value must not leak the suffix.
 		{`password="abc\"defsecret"`, []string{"defsecret", `abc\"defsecret`}},
+		// shell/JSON-escaped OUTER quotes on the value and the key.
+		{`password=\"escapedvalsecret\"`, []string{"escapedvalsecret"}},
+		{`{\"password\":\"jsonescsecret\"}`, []string{"jsonescsecret"}},
 	}
 	for _, tc := range cases {
 		out := r.String(tc.in)
