@@ -134,7 +134,7 @@ wrappers are guaranteed a *defined* cache root, not necessarily the default one.
 ### Exit codes
 
 The launcher's **own** exit codes — those it originates for its own
-skip/failure conditions — are four:
+skip/failure conditions — are:
 
 | Code | Meaning | Representative sources |
 | --- | --- | --- |
@@ -142,17 +142,19 @@ skip/failure conditions — are four:
 | `1` | General failure. In particular, the trusted-tool resolvers abort here when a required host tool is missing. | `host-exec.sh` `resolve_fixed_host_tool`, `workcell:6676` `resolve_host_tool` |
 | `2` | Usage / validation / precondition guard failure — by far the most common code. Covers invalid CLI arguments, mode-requirement violations, reserved-variable rejection, a missing host working directory, and Colima profile validation failures. | `workcell:8151,8155` (reserved vars), `workcell:8614-8616` (profile validation), `run_clean_host_command_in_dir` missing-dir (`host-exec.sh`) |
 | `88` | Test-only fault injection: a simulated crash immediately after a managed-profile refresh, used by harness recovery tests. Reached only through the hidden CLI flag below. | `maybe_fail_after_profile_refresh_for_tests` (`workcell:2625`) |
+| `124` | A managed operation timed out — e.g. `colima start` exceeding `WORKCELL_COLIMA_START_TIMEOUT_SECONDS`. The timeout wrapper returns `124` and `set -e` propagates it, so the launcher itself exits `124` (matching `stability-contract.md`). | `run_command_with_debug_log` / `start_managed_profile` timeout path |
 
-Those four are the only *literal* codes the launcher originates
-(`grep -nE 'exit [0-9]' scripts/workcell` yields only `0`, `1`, `2`, and the
-single `88`). Beyond them, a normal end-to-end invocation **passes the supervised
-child's exit status through unchanged** — a completed session exits with the
-container's status (`exit "${DOCKER_STATUS}"`, `workcell:8797`), a build failure
-with `${BUILD_STATUS}` (`workcell:8698`), and session subcommands propagate their
-helper's status (`exit $?`, e.g. `workcell:4182,4188`). An end-to-end run can
-therefore surface any status in `0`–`255` (including `128+N` for a signalled
-child), as [`stability-contract.md`](stability-contract.md) documents; the four
-codes above are the launcher's own, distinct from that passthrough.
+`0`/`1`/`2`/`88` are the *literal* `exit` codes in `scripts/workcell`
+(`grep -nE 'exit [0-9]'`); `124` is originated indirectly, via `set -e`
+propagating a timeout wrapper's non-zero return. Beyond the codes it originates,
+a normal end-to-end invocation also **passes the supervised child's exit status
+through unchanged** — a completed session exits with the container's status
+(`exit "${DOCKER_STATUS}"`, `workcell:8797`), a build failure with
+`${BUILD_STATUS}` (`workcell:8698`), and session subcommands propagate their
+helper's status (`exit $?`, e.g. `workcell:4182,4188`). So an end-to-end run can
+surface any status in `0`–`255` (including `128+N` for a signalled child);
+[`stability-contract.md`](stability-contract.md) is the authoritative exit-code
+reference.
 
 ### Test override flags
 
