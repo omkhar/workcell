@@ -307,11 +307,14 @@ func collectSessions(cfg Config, r Redactor) SessionsSection {
 		counts[status]++
 	}
 	for status, count := range counts {
-		s.StatusCounts = append(s.StatusCounts, StatusCount{Status: status, Count: count})
+		s.StatusCounts = append(s.StatusCounts, StatusCount{Status: r.String(status), Count: count})
 	}
 	sort.Slice(s.StatusCounts, func(i, j int) bool { return s.StatusCounts[i].Status < s.StatusCounts[j].Status })
 
-	sort.Slice(records, func(i, j int) bool { return records[i].SessionID < records[j].SessionID })
+	// Newest-first: session IDs are timestamp-prefixed, so descending order keeps
+	// the most recent sessions (the ones most likely under investigation) when
+	// truncating, and is deterministic for the golden shape.
+	sort.Slice(records, func(i, j int) bool { return records[i].SessionID > records[j].SessionID })
 	limit := len(records)
 	if limit > maxSessionSummaries {
 		limit = maxSessionSummaries
@@ -319,16 +322,19 @@ func collectSessions(cfg Config, r Redactor) SessionsSection {
 		s.note(fmt.Sprintf("session summaries truncated to %d of %d records", maxSessionSummaries, len(records)))
 	}
 	for _, rec := range records[:limit] {
+		// Every string field goes through the redactor: validateSessionRecord
+		// only rejects newlines, so a hand-edited/malformed durable record could
+		// carry token-shaped text in any of these fields.
 		s.Sessions = append(s.Sessions, SessionSummary{
 			SessionID:       r.String(rec.SessionID),
-			Status:          rec.Status,
-			LiveStatus:      rec.LiveStatus,
+			Status:          r.String(rec.Status),
+			LiveStatus:      r.String(rec.LiveStatus),
 			Profile:         r.String(rec.Profile),
-			TargetKind:      rec.TargetKind,
-			TargetProvider:  rec.TargetProvider,
-			Agent:           rec.Agent,
-			Mode:            rec.Mode,
-			StartedAt:       rec.StartedAt,
+			TargetKind:      r.String(rec.TargetKind),
+			TargetProvider:  r.String(rec.TargetProvider),
+			Agent:           r.String(rec.Agent),
+			Mode:            r.String(rec.Mode),
+			StartedAt:       r.String(rec.StartedAt),
 			Workspace:       r.String(rec.Workspace),
 			AuditLogPresent: rec.AuditLogPath != "" && fileExists(rec.AuditLogPath),
 		})
