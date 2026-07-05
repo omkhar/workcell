@@ -24,7 +24,9 @@ The CI/CD pipeline protects:
 - **Released-artifact integrity and provenance** — the runtime image published
   to GHCR, the source bundle, the Homebrew formula, `SHA256SUMS`, the
   deterministic build-input / control-plane / builder-environment manifests, and
-  both SPDX SBOMs, plus their Sigstore bundles and GitHub attestations.
+  both SPDX SBOMs, plus the Sigstore bundles and GitHub attestations that cover
+  the release (the SBOMs are attached to the image/source attestation subjects
+  rather than attested as standalone files — see [Attestation](#what-is-produced)).
 - **The chain of trust that lets a consumer verify those artifacts** — the
   keyless Sigstore identity bound to the release workflow, the GitHub attestation
   signer identity, and the maintainer's git commit/tag signing key.
@@ -101,6 +103,14 @@ disallows admin bypass (see `[release_environment]` in the hosted-control
 policy). A handful of scanning jobs hold `security-events: write` for SARIF
 upload, and `scorecard.yml` holds `id-token: write` for Scorecard provenance;
 these are the expected minimum for those tools.
+
+One non-release workflow also holds a write scope:
+[`upstream-refresh.yml`](../.github/workflows/upstream-refresh.yml) grants its
+scheduled/manual job `issues: write` to update a single rolling tracking issue
+with the latest upstream-candidate status (it keeps `contents: read`). This
+cannot publish artifacts, sign, or push code — its only mutation is issue
+metadata — but auditors inventorying non-read `GITHUB_TOKEN` scopes should count
+it alongside the release path.
 
 ### Untrusted-fork boundary
 
@@ -206,12 +216,18 @@ model.
   Signing uses GitHub OIDC → Fulcio (short-lived certificate) → Rekor
   transparency log, with `COSIGN_YES: "true"` and **no `--key` flag**. There is
   **no long-lived cosign private key** to steal.
-- **GitHub-native attestations** (`actions/attest`) for the image digest, both
-  SBOMs, the source bundle, the Homebrew formula, the image-digest file, the
-  three deterministic manifests, and `SHA256SUMS`. Fail-closed: absent an
-  explicit opt-out (`WORKCELL_RELEASE_NO_ATTEST`, pinned to `false` in
+- **GitHub-native attestations** (`actions/attest`) for the image digest, the
+  source bundle, the Homebrew formula, the image-digest file, the three
+  deterministic manifests, and `SHA256SUMS`. Fail-closed: absent an explicit
+  opt-out (`WORKCELL_RELEASE_NO_ATTEST`, pinned to `false` in
   [`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml)),
   every release attests.
+- **SBOM attestations** (`actions/attest-sbom`) that attach each SPDX-JSON SBOM
+  to the **image-digest and source-bundle subjects** — the SBOM *describes* those
+  subjects; the `.spdx.json` files are not themselves attestation subjects.
+  Verify them via the image/source subject (`gh attestation verify <image>`), not
+  by pointing `gh attestation verify` at a `.spdx.json` file. The SBOM files are
+  additionally Cosign-signed as blobs (see the signatures above).
 - **BuildKit SLSA provenance** (`mode=max`) plus **SPDX-JSON SBOMs** (syft) for
   source and image.
 
@@ -299,8 +315,11 @@ the maintainer host or key is compromised:
 1. **Revoke** the GPG key (publish a revocation certificate to the keyservers)
    and remove it from the GitHub account's verified signing keys.
 2. **Generate** a new signing key, add it to GitHub, and update local signing
-   config. Re-sign the current `HEAD`/release tag if it was signed with the
-   revoked key.
+   config. Do **not** move, delete, or re-sign an existing release tag — that
+   violates the immutable-release rule in [`releasing.md`](releasing.md) ("Never
+   move or rewrite an existing release tag") and destroys the audit trail.
+   Instead, if a published release is implicated, cut a **superseding release**:
+   a new signed commit on `main` and a new signed tag under the new key.
 3. **Audit** recent commits/tags for signatures made after the suspected
    compromise; treat any that verify only under the revoked key as suspect and
    re-review those changes.
