@@ -56,6 +56,15 @@ confined to the trusted `PATH`, but **not** absolute-resolved and **not**
 fail-closed — a missing `curl` leaves the preflight URL empty rather than raising
 `Missing trusted host tool`, so `curl` is optional, not required.
 
+`go` additionally has a **second, weaker** resolution path: the
+`--audit-transcript` PTY helper (`scripts/lib/pty_transcript`, `workcell:8778`)
+sources `go-run-env.sh`, whose Go-binary resolver honours a pre-set
+`WORKCELL_GO_BIN`, then `command -v go`, then the fixed candidates
+(`go-run-env.sh:47-71`). Unlike `resolve_fixed_host_tool` this does not abort and
+is not confined to fixed trusted paths, and `WORKCELL_GO_BIN` is not in the scrub
+list — so on the shebang-bypassed `bash` path an inherited `WORKCELL_GO_BIN` can
+select the `go` used for the transcript.
+
 This table covers the tools every **local** launch resolves; a few prerequisites
 sit outside it. Remote-preview backends probe extra tools via
 `missing_launch_host_tools_csv` (`scripts/workcell:6708`) — `aws` and
@@ -157,14 +166,19 @@ than the gate that decides whether it is **honoured** (see their rows).
 | --- | --- | --- |
 | `WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT` | Two distinct effects: (a) at startup its presence (`=1`) makes `scrub_host_process_env` **skip unsetting** the four support-matrix vars; (b) it is one condition the detectors check before honouring those overrides. | Effect (a) is gated **only** on the `=1` marker (`workcell:12-17`) — *not* parent-verified. Effect (b) additionally requires `support_matrix_host_override_allowed` to confirm a recognised validation-harness parent (`host-detect.sh`). |
 | `WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS` / `_ARCH` / `_DISTRO` / `_DISTRO_VERSION` | Forces the detected host OS / arch / distro / distro version. | **Unset at startup only when the `SANITIZED_ENTRYPOINT` marker is absent** (`workcell:12-17`); with the marker set they survive startup even under a non-harness parent, but the detectors **honour** them only when `support_matrix_host_override_allowed` returns `0` (marker **and** recognised parent). So on the shebang-bypassed `bash scripts/workcell` path they can be *present but ignored*, not guaranteed absent. |
-| `WORKCELL_TEST_CODEX_AUTH_FILE` | Points the harness at a fixture Codex auth file (consumed by test subprocesses, never by the launcher). | If non-empty in the launcher's own environment the launcher **refuses to run**: `exit 2`, "reserved for the Workcell test harness" (`workcell:8150-8152`). |
-| `WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE` | Points the harness at a fixture Claude keychain export (consumed by test subprocesses, never by the launcher). | Same reject-on-presence guard: `exit 2` (`workcell:8153-8156`). |
+| `WORKCELL_TEST_CODEX_AUTH_FILE` | Reserved harness variable name — **rejected legacy input**, not a credential override: no launcher resolver consumes it (the Codex resolver no longer recognises it; see `docs/security/`). | If non-empty in the launcher's own environment the launcher **refuses to run**: `exit 2`, "reserved for the Workcell test harness" (`workcell:8150-8152`). |
+| `WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE` | Reserved harness variable name; not consumed as a credential override by the launcher. | Same reject-on-presence guard: `exit 2` (`workcell:8153-8156`). |
 | `WORKCELL_TEST_FAIL_AFTER_PROFILE_REFRESH` | Would request the mid-refresh fault injection. | The env variable is **unconditionally unset** at startup (`workcell:11`). The fault is reachable only through the hidden CLI flag `--test-fail-after-profile-refresh`, which sets the internal `TEST_FAIL_AFTER_PROFILE_REFRESH=1` (`workcell:7883-7884`) and triggers `exit 88`. |
 
-Because the support-matrix overrides depend on both an explicit marker variable
-and a verified parent entrypoint, and the credential-fixture variables cause an
-outright abort when present, an operator cannot use any of these to spoof the
-detected host or redirect credential handling.
+These gates are **harness conventions, not a security boundary against a local
+operator**. The support-matrix "parent" check is a *substring match* on the parent
+process command line (below), not a verified process identity, so a caller who
+controls their own process tree can construct a matching command line. It deters
+accidental leakage from an ordinary launch; it is not a defence against deliberate
+spoofing by someone who already runs the launcher (who, being local, controls that
+environment anyway). The credential-fixture variables are stricter — they force an
+`exit 2` abort whenever present. The authoritative host/credential threat model
+lives in the security docs under `docs/security/`, not here.
 
 ## Host detection (`host-detect.sh`)
 
