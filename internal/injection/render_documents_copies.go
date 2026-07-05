@@ -15,6 +15,11 @@ import (
 	"github.com/omkhar/workcell/internal/providerid"
 )
 
+// allowedCopyEntryKeys is the parser-accepted key set for a single `[[copies]]`
+// entry, shared as a single source of truth between renderCopies and the
+// schema-doc drift test.
+var allowedCopyEntryKeys = mapKeysSet([]string{"source", "target", "classification", "providers", "modes"})
+
 func renderDocuments(policy map[string]any, outputRoot, policyDir Path) (map[string]string, error) {
 	raw := policy["documents"]
 	if raw == nil {
@@ -66,7 +71,7 @@ func renderCopies(policy map[string]any, outputRoot, policyDir Path, agent, mode
 		if !ok {
 			return nil, errors.New("each copies entry must be a table")
 		}
-		if err := validateAllowedKeys(entry, mapKeysSet([]string{"source", "target", "classification", "providers", "modes"}), "copies entry"); err != nil {
+		if err := validateAllowedKeys(entry, allowedCopyEntryKeys, "copies entry"); err != nil {
 			return nil, err
 		}
 		ok, err := selectedFor(entry["providers"], agent, "copies.providers", supportedAgents)

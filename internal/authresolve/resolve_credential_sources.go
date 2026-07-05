@@ -53,8 +53,15 @@ var (
 		"credentials": {},
 		"network":     {},
 	}
-	documentKeys        = providerid.DocumentKeySet()
-	credentialEntryKeys = map[string]struct{}{
+	documentKeys = providerid.DocumentKeySet()
+	// CredentialEntryKeys is the set of keys accepted in a
+	// `[credentials.<name>]` table before credential resolution — the
+	// resolver form.  It is the exact set validateAllowedKeys enforces in
+	// run() for the table-shaped credential entry, and it is exported read-only
+	// so the injection-policy schema drift check
+	// (internal/injection/schema_doc_drift_test.go) can cross-check the
+	// documented resolver-form key table against this parser set.
+	CredentialEntryKeys = map[string]struct{}{
 		"source":          {},
 		"resolver":        {},
 		"materialization": {},
@@ -320,7 +327,7 @@ func run(cfg config) error {
 			continue
 		}
 
-		if err := validateAllowedKeys(rawMap, credentialEntryKeys, "credentials."+key); err != nil {
+		if err := validateAllowedKeys(rawMap, CredentialEntryKeys, "credentials."+key); err != nil {
 			return err
 		}
 		resolverName, _ := rawMap["resolver"].(string)

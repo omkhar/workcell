@@ -10,6 +10,12 @@ import (
 	"github.com/omkhar/workcell/internal/injectionpolicy"
 )
 
+// allowedNetworkKeys is the parser-accepted key set for the `[network]` table.
+// It is the single source of truth shared by renderNetwork and the schema-doc
+// drift test (schema_doc_drift_test.go), so documented keys and accepted keys
+// cannot diverge silently.
+var allowedNetworkKeys = mapKeysSet([]string{"allow_endpoints", "deny_endpoints"})
+
 // renderNetwork parses the optional top-level `[network]` table and returns only
 // the operator-declared allow/deny endpoint slices — no path to NETWORK_POLICY or
 // the enforcement mode. `allow_endpoints` EXTENDS the allowlist, `deny_endpoints`
@@ -25,7 +31,7 @@ func renderNetwork(policy map[string]any) (allowEndpoints, denyEndpoints []strin
 	if !ok {
 		return nil, nil, errors.New("network must be a TOML table")
 	}
-	if err := validateAllowedKeys(network, mapKeysSet([]string{"allow_endpoints", "deny_endpoints"}), "network"); err != nil {
+	if err := validateAllowedKeys(network, allowedNetworkKeys, "network"); err != nil {
 		return nil, nil, err
 	}
 	allowEndpoints, err = parseNetworkEndpointList(network, "allow_endpoints")
