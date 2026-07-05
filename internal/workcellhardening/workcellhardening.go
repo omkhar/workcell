@@ -8,6 +8,10 @@
 // fixtures).  It also re-implements the adjacent config-safety block (the
 // four scripts/workcell checks between the check_file loop and
 // toml_section_assignments) via CheckConfigSafety; see configSafetyChecks.
+// It also re-implements the adjacent runtime/gc block (the ten
+// scripts/workcell checks between the SSH-collision check and the
+// start_managed_profile mount function-block group) via
+// CheckRuntimeInvariants; see runtimeInvariantChecks.
 //
 // Each invariant pins one property of the host launcher scripts/workcell:
 // that run_host_colima restores the real host HOME, that the shebang
@@ -60,6 +64,11 @@ const (
 	// the top-level bash function body named functionName, mirroring
 	// function_block_contains_fixed (sed-range extraction + grep -Fq).
 	kindFunctionBlock checkKind = iota
+	// kindFunctionBlockAbsent requires needle (a fixed string) NOT to
+	// appear inside the top-level bash function body named functionName,
+	// mirroring a negated `function_block_contains_fixed` under a `||`
+	// guard (present inside the block is a violation → exit 1).
+	kindFunctionBlockAbsent
 	// kindFirstLineRegex requires the launcher's first line to match the
 	// anchored regex, mirroring `head -n1 ... | grep -q '^...$'`.
 	kindFirstLineRegex
@@ -246,12 +255,131 @@ func CheckConfigSafety(rootDir string) error {
 	return evaluate(rootDir, configSafetyChecks)
 }
 
+// runtimeInvariantChecks lists the ten scripts/workcell runtime/gc
+// invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the SSH-collision check
+// and the start_managed_profile mount function-block group), so a
+// reviewer can diff the two one-to-one.
+//
+// Every `rg` pattern in this block is metacharacter-free after
+// unescaping (the DOCKER_CONFIG probe escapes every `$ { } .`, and the
+// `--self-*-probe` / `strict mode …` / `go_colimautil …` probes contain
+// no active regex metacharacters), so each reduces to fixed-string
+// containment — kindPresent for affirmative `rg -q`, kindAbsent for the
+// negated DOCKER_CONFIG guard.
+//
+// The runtime_build_codex_arch guard was one shell `if` joining three
+// function_block_contains_fixed probes with `||` under a single message:
+// the first two are affirmative (musl assets must be present) and the
+// third is NEGATED (a gnu asset present is a violation).  It is expressed
+// here as two kindFunctionBlock checks plus one kindFunctionBlockAbsent
+// check sharing that message, which is behaviourally identical (any of
+// the three failing yields the same stderr and exit 1).
+//
+// Two other guards each joined two affirmative `rg -q` probes with `||`
+// under one message (the --gc runtime-image/temp cleanup pair); they are
+// expressed as two ordered kindPresent checks sharing that message, which
+// is behaviourally identical (either missing probe yields the same
+// stderr and exit 1).
+var runtimeInvariantChecks = []check{
+	{
+		kind:    kindPresent,
+		pattern: "setup_workcell_trusted_docker_client",
+		message: "Expected scripts/workcell to seed a trusted Docker client state before host Docker use",
+	},
+	{
+		// kindAbsent: the shell's rg pattern
+		// `DOCKER_CONFIG="\$\{REAL_HOME\}/\.docker"` escapes every
+		// metacharacter, so it is fixed-string containment of the literal
+		// assignment (present is a violation).
+		kind:    kindAbsent,
+		pattern: `DOCKER_CONFIG="${REAL_HOME}/.docker"`,
+		message: "scripts/workcell still pins DOCKER_CONFIG to the real host home",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "buildx_cmd build",
+		message: "Expected scripts/workcell to invoke buildx through the trusted absolute plugin path",
+	},
+	{
+		// kindFunctionBlock (musl aarch64 asset must be present).
+		kind:         kindFunctionBlock,
+		functionName: "runtime_build_codex_arch",
+		pattern:      "aarch64-unknown-linux-musl",
+		message:      "Expected scripts/workcell Codex release probe to resolve musl release assets",
+	},
+	{
+		// kindFunctionBlock (musl x86_64 asset must be present).
+		kind:         kindFunctionBlock,
+		functionName: "runtime_build_codex_arch",
+		pattern:      "x86_64-unknown-linux-musl",
+		message:      "Expected scripts/workcell Codex release probe to resolve musl release assets",
+	},
+	{
+		// kindFunctionBlockAbsent (the NEGATED sub-condition): a gnu asset
+		// inside the block is a violation.  Shares the pair's message.
+		kind:         kindFunctionBlockAbsent,
+		functionName: "runtime_build_codex_arch",
+		pattern:      "unknown-linux-gnu",
+		message:      "Expected scripts/workcell Codex release probe to resolve musl release assets",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "--self-docker-probe",
+		message: "Expected scripts/workcell to expose a hidden self-docker probe for invariant testing",
+	},
+	{
+		// kindPresent (first half of the --gc cleanup guard).
+		kind:    kindPresent,
+		pattern: "prune_runtime_image_cache_dir",
+		message: "Expected scripts/workcell --gc to cover bounded runtime-image cache and Workcell-owned temp cleanup",
+	},
+	{
+		// kindPresent (second half): shares the first half's message.
+		kind:    kindPresent,
+		pattern: "cleanup_workcell_temp_root",
+		message: "Expected scripts/workcell --gc to cover bounded runtime-image cache and Workcell-owned temp cleanup",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "--self-staging-probe",
+		message: "Expected scripts/workcell to expose a hidden staging probe for invariant testing",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "strict mode requires --prepare when you explicitly request --rebuild.",
+		message: "Expected scripts/workcell to reject explicit strict-mode image rebuild requests",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "go_colimautil validate-profile-config",
+		message: "Expected scripts/workcell to validate managed Colima config through the dedicated Go helper",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "go_colimautil validate-runtime-mounts",
+		message: "Expected scripts/workcell to validate managed Lima mounts through the dedicated Go helper",
+	},
+}
+
+// CheckRuntimeInvariants runs the ten scripts/workcell runtime/gc
+// invariants against the repo rooted at rootDir, in the shell's original
+// order.  It returns nil when every invariant holds (the shell's exit 0),
+// or an error whose message equals the shell's stderr for the first
+// violated invariant (the shell's exit 1).
+func CheckRuntimeInvariants(rootDir string) error {
+	return evaluate(rootDir, runtimeInvariantChecks)
+}
+
 // holds reports whether the invariant is satisfied by the launcher text.
 func (c check) holds(text string) bool {
 	switch c.kind {
 	case kindFunctionBlock:
 		block := extractNamedFunctionBlock(text, c.functionName)
 		return strings.Contains(block, c.pattern)
+	case kindFunctionBlockAbsent:
+		block := extractNamedFunctionBlock(text, c.functionName)
+		return !strings.Contains(block, c.pattern)
 	case kindFirstLineRegex:
 		return regexp.MustCompile(c.pattern).MatchString(firstLine(text))
 	case kindPresent:
