@@ -6,6 +6,16 @@
       "local_mode": "none",
       "github_only_reason": "optional exec-guard microbenchmark lane; it builds the cdylib and times the LD_PRELOAD shim's classification overhead on Linux, which the macOS host baseline cannot mirror, so the reviewed numbers come from this scheduled/on-demand GitHub lane"
     },
+    "ci-insights.yml/cost-report": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled read-only CI cost-visibility report; it aggregates per-workflow wall-clock from the GitHub Actions run history via the runs API and writes to the job summary, so it depends on GitHub-hosted run metadata and never gates a PR or release"
+    },
+    "ci-insights.yml/flaky-report": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled read-only flake report; it reads GitHub-hosted workflow-run history and the tracked flaky-test issue list to surface flake candidates in the job summary, so it depends on GitHub-hosted metadata and never gates a PR or release"
+    },
     "ci.yml/container-smoke": {
       "profiles": ["repo-core", "pr-parity", "release-preflight"],
       "authority": "repo-core",

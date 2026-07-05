@@ -1,0 +1,63 @@
+name: CI insights
+
+# Scheduled, read-only CI observability lane. It never gates PRs or releases; it
+# produces two weekly reports into each run's job summary so CI health and spend
+# stay visible:
+#   - Flaky-test report: open `flaky-test`-labeled issues plus workflow runs that
+#     were re-run or failed in the lookback window (scripts/ci/flaky-report.sh).
+#   - CI cost report: per-workflow wall-clock over the window
+#     (scripts/ci/cost-report.sh).
+# See docs/ci-efficiency-and-reliability.md.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  flaky-report:
+    name: Flaky-test report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read # Read workflow-run history for the empirical flake signal.
+      contents: read # Check out the report scripts.
+      issues: read # Read the tracked flaky-test issue list.
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Generate flaky-test report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./scripts/ci/flaky-report.sh | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  cost-report:
+    name: CI cost report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read # Read workflow-run history for wall-clock aggregation.
+      contents: read # Check out the report scripts.
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Generate CI cost report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./scripts/ci/cost-report.sh | tee -a "${GITHUB_STEP_SUMMARY}"
