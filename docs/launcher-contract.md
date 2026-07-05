@@ -46,7 +46,7 @@ path, and `git`/`curl` via `run_clean_host_command`) are run by name on
 | --- | --- | --- | --- |
 | `go` | `resolve_fixed_host_tool` (`go-hostutil.sh:29`) | `/opt/homebrew/bin/go`, `/usr/local/go/bin/go`, `/usr/local/bin/go`, `/usr/bin/go` | Runs the `workcell-hostutil` and `workcell-colimautil` Go programs via `go run` (see `HOST_GO_BIN`). |
 | `colima` | `resolve_host_tool` (`workcell:625,670,5492`); `resolve_host_tool_optional` probe (`workcell:6713`) | `/opt/homebrew/bin/colima`, `/usr/local/bin/colima` | Manages the Colima VM profile that backs the container runtime (`HOST_COLIMA_BIN`). |
-| `docker` | In the main launch path `HOST_DOCKER_BIN` is set to the **bare name `docker`** (`workcell:8385`) and run on `TRUSTED_HOST_PATH` via `run_workcell_docker_client_command` (`workcell:1895`); specific sub-paths instead resolve it with `resolve_host_tool_optional` (`workcell:1099,1912`) | `/opt/homebrew/bin/docker`, `/usr/local/bin/docker`, `/Applications/Docker.app/Contents/Resources/bin/docker` (only when a sub-path resolves it) | Drives the container runtime. |
+| `docker` | In the main launch path `HOST_DOCKER_BIN` is set to the **bare name `docker`** (`workcell:8136`) and run on `TRUSTED_HOST_PATH` via `run_workcell_docker_client_command` (`scripts/lib/trusted-docker-client.sh:151`); specific sub-paths instead resolve it with `resolve_host_tool_optional` (`workcell:850,1663,6721`) | `/opt/homebrew/bin/docker`, `/usr/local/bin/docker`, `/Applications/Docker.app/Contents/Resources/bin/docker` (only when a sub-path resolves it) | Drives the container runtime. |
 | `git` | `resolve_host_tool` → absolute `HOST_GIT_BIN` (`workcell:4462,8135`); **also** invoked by name via `run_clean_host_command` (`workcell:7092,7163,7190,7213,7232,7372`) | `/usr/bin/git`, `/opt/homebrew/bin/git`, `/usr/local/bin/git` | Inspects and extracts the launch workspace repository. |
 | `curl` | **sanitised-PATH by name only** (no absolute resolve) via `run_clean_host_command` (`workcell:6241,6270`) | found on `TRUSTED_HOST_PATH` inside the sanitised `env -i` | Best-effort `HEAD` preflight for release URLs; **optional** — absence is swallowed (`\|\| true`), not fatal. |
 
@@ -72,8 +72,12 @@ accepted) and `WORKCELL_GO_BIN` is not in the scrub list, so on the
 shebang-bypassed `bash` path an inherited `WORKCELL_GO_BIN` can select the `go`
 used for the transcript.
 
-This table covers the tools every **local** launch resolves; a few prerequisites
-sit outside it. Remote-preview backends probe extra tools via
+This table covers the host tools a **local** launch may resolve; the exact set
+depends on the target backend — `missing_launch_host_tools_csv` probes `colima`
+only when `TARGET_BACKEND == "colima"`, whereas a Docker Desktop target
+(`--target docker-desktop`) probes Docker/its context instead, and `curl` is used
+only by the best-effort release-URL preflight. Beyond per-launch resolution, a few
+prerequisites sit outside this table entirely. Remote-preview backends probe extra tools via
 `missing_launch_host_tools_csv` (`scripts/workcell:6708`) — `aws` and
 `session-manager-plugin` for the `aws-ec2-ssm` backend, `gcloud` for `gcp-vm`.
 Image builds require a system `docker-buildx` plugin binary
@@ -185,7 +189,7 @@ than the gate that decides whether it is **honoured** (see their rows).
 | `WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT` | Two distinct effects: (a) at startup its presence (`=1`) makes `scrub_host_process_env` **skip unsetting** the four support-matrix vars; (b) it is one condition the detectors check before honouring those overrides. | Effect (a) is gated **only** on the `=1` marker (`workcell:12-17`) — *not* parent-verified. Effect (b) additionally requires `support_matrix_host_override_allowed` to confirm a recognised validation-harness parent (`host-detect.sh`). |
 | `WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS` / `_ARCH` / `_DISTRO` / `_DISTRO_VERSION` | Forces the detected host OS / arch / distro / distro version. | **Unset at startup only when the `SANITIZED_ENTRYPOINT` marker is absent** (`workcell:12-17`); with the marker set they survive startup even under a non-harness parent, but the detectors **honour** them only when `support_matrix_host_override_allowed` returns `0` (marker **and** recognised parent). So on the shebang-bypassed `bash scripts/workcell` path they can be *present but ignored*, not guaranteed absent. |
 | `WORKCELL_TEST_CODEX_AUTH_FILE` | Reserved harness variable name — **rejected legacy input**, not a credential override: no launcher resolver consumes it (the Codex resolver no longer recognises it; see `docs/security/`). | If non-empty in the launcher's own environment the launcher **refuses to run**: `exit 2`, "reserved for the Workcell test harness" (`workcell:8150-8152`). |
-| `WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE` | **Dual role.** An *operator-supplied* value is rejected; but the launcher's own self-staging probe (`--synthetic-claude-export`, `workcell:5053`) sets this var **internally** so the Claude credential resolver materialises the synthetic export (`internal/injection/prepare_bundle.go:434`, `internal/authresolve/resolve_provider_credentials.go:16`). | Reject-on-presence guard for *inherited* operator input: `exit 2` if set in the launcher's own env (`workcell:8403-8404`). The internal staging happens later, inside bundle prep, after that guard. |
+| `WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE` | **Dual role.** An *operator-supplied* value is rejected; but the launcher's own self-staging probe (`--synthetic-claude-export`, `workcell:4804`) sets this var **internally** so the Claude credential resolver materialises the synthetic export (`internal/injection/prepare_bundle.go:434`, `internal/authresolve/resolve_provider_credentials.go:16`). | Reject-on-presence guard for *inherited* operator input: `exit 2` if set in the launcher's own env (`workcell:8154-8156`). The internal staging happens later, inside bundle prep, after that guard. |
 | `WORKCELL_TEST_FAIL_AFTER_PROFILE_REFRESH` | Would request the mid-refresh fault injection. | The env variable is **unconditionally unset** at startup (`workcell:11`). The fault is reachable only through the hidden CLI flag `--test-fail-after-profile-refresh`, which sets the internal `TEST_FAIL_AFTER_PROFILE_REFRESH=1` (`workcell:7883-7884`) and triggers `exit 88`. |
 
 These gates are **harness conventions, not a security boundary against a local
