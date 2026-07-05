@@ -2,10 +2,13 @@
 #
 # run-startup-bench.sh -- drive the session-start latency benchmark (C2).
 #
-# For each mode (cold, warm) it runs a per-mode prep hook to establish the
-# runtime state, then times WORKCELL_STARTUP_ITERATIONS full session starts of
-# the target command via scripts/bench/startup-bench.sh, reporting the median,
-# p90 and spread. The whole measurement is repeated for WORKCELL_STARTUP_RUNS
+# For each mode (cold, cache-hit, warm) it runs a per-mode prep hook to
+# establish the runtime state, then times WORKCELL_STARTUP_ITERATIONS full
+# session starts of the target command via scripts/bench/startup-bench.sh,
+# reporting the median, p90 and spread. The `cold` mode forces warmup to 0 so a
+# discarded warmup launch cannot spend the freshly-evicted state -- every cold
+# sample is measured against cold-prepped state, not a warmed start.
+# The whole measurement is repeated for WORKCELL_STARTUP_RUNS
 # passes so a reviewer can confirm the numbers are stable across runs, and the
 # driver FAILS if the run-to-run spread of any mode's median exceeds the
 # stability threshold -- the C2 sibling of the C5 cross-run validation gate.
@@ -20,12 +23,13 @@
 #
 # Configuration (all optional, via environment):
 #   WORKCELL_STARTUP_ITERATIONS  measured samples per mode (default 5)
-#   WORKCELL_STARTUP_WARMUP      discarded warmup samples (default 1)
+#   WORKCELL_STARTUP_WARMUP      discarded warmup samples (default 1; forced to 0 for cold)
 #   WORKCELL_STARTUP_RUNS        full measurement passes (default 2)
 #   WORKCELL_STARTUP_STABILITY_PCT  max allowed cross-run median spread (default 15)
 #   WORKCELL_STARTUP_CMD         session-start command to time (required live)
-#   WORKCELL_STARTUP_COLD_PREP   shell run before the cold pass (evict cache/warm lane)
-#   WORKCELL_STARTUP_WARM_PREP   shell run before the warm pass (prime cache/warm lane)
+#   WORKCELL_STARTUP_COLD_PREP   shell run before the cold pass (evict cache + stop warm lane)
+#   WORKCELL_STARTUP_CACHE_HIT_PREP  shell run before the cache-hit pass (prime cache, no warm lane)
+#   WORKCELL_STARTUP_WARM_PREP   shell run before the warm pass (prime cache + warm lane)
 #   WORKCELL_STARTUP_RUNTIME     override runtime detection (a name, or "none")
 #   WORKCELL_STARTUP_SAMPLES_NS  canned samples -> dry-run, no runtime needed.
 #                                A ';' splits per-run groups (each ';'-segment is
@@ -36,9 +40,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.."
 ROOT_DIR="$(cd "${ROOT_DIR}" && pwd)"
-HARNESS="${ROOT_DIR}/scripts/bench/startup-bench.sh"
+# WORKCELL_STARTUP_HARNESS overrides the harness path (test seam only).
+HARNESS="${WORKCELL_STARTUP_HARNESS:-${ROOT_DIR}/scripts/bench/startup-bench.sh}"
 
-MODES="cold warm"
+MODES="cold cache-hit warm"
 ITERATIONS="${WORKCELL_STARTUP_ITERATIONS:-5}"
 WARMUP="${WORKCELL_STARTUP_WARMUP:-1}"
 RUNS="${WORKCELL_STARTUP_RUNS:-2}"
@@ -104,6 +109,7 @@ field() {
 prep_mode() {
   case "$1" in
     cold) eval "${WORKCELL_STARTUP_COLD_PREP:-:}" ;;
+    cache-hit) eval "${WORKCELL_STARTUP_CACHE_HIT_PREP:-:}" ;;
     warm) eval "${WORKCELL_STARTUP_WARM_PREP:-:}" ;;
   esac
 }
@@ -111,15 +117,25 @@ prep_mode() {
 # Invoke the harness for one mode. In dry-run the canned samples for this run
 # are passed straight through; live, the configured session command is timed.
 run_harness() {
-  # $1 mode, $2 run index (1-based)
+  # $1 mode, $2 run index (1-based), $3 warmup for this mode
   if [ "${DRY_RUN}" -eq 1 ]; then
     local gi=$(($2 - 1))
     [ "${gi}" -lt "${#SAMPLE_GROUPS[@]}" ] || gi=$((${#SAMPLE_GROUPS[@]} - 1))
-    WORKCELL_STARTUP_SAMPLES_NS="${SAMPLE_GROUPS[gi]}" "${HARNESS}" "$1" "${ITERATIONS}" "${WARMUP}"
+    WORKCELL_STARTUP_SAMPLES_NS="${SAMPLE_GROUPS[gi]}" "${HARNESS}" "$1" "${ITERATIONS}" "$3"
   else
     # shellcheck disable=SC2086  # WORKCELL_STARTUP_CMD is an intentional word-split command
-    "${HARNESS}" "$1" "${ITERATIONS}" "${WARMUP}" -- ${WORKCELL_STARTUP_CMD}
+    "${HARNESS}" "$1" "${ITERATIONS}" "$3" -- ${WORKCELL_STARTUP_CMD}
   fi
+}
+
+# Effective warmup for a mode. Cold must reflect a true first start, so its
+# freshly-evicted state cannot be spent on a discarded warmup launch; warm and
+# cache-hit keep the configured warmup to settle first-touch page-cache costs.
+mode_warmup() {
+  case "$1" in
+    cold) echo 0 ;;
+    *) echo "${WARMUP}" ;;
+  esac
 }
 
 {
@@ -129,7 +145,7 @@ run_harness() {
   echo "- host: $(uname -srm)"
   echo "- online CPUs: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo unknown)"
   echo "- runtime: ${RUNTIME}"
-  echo "- iterations: ${ITERATIONS} (warmup ${WARMUP}) x ${RUNS} run(s)"
+  echo "- iterations: ${ITERATIONS} (warmup ${WARMUP}; cold forces warmup 0) x ${RUNS} run(s)"
   echo "- stability threshold: ${STABILITY_PCT}% cross-run median spread"
   echo
 } >"${REPORT}"
@@ -148,7 +164,7 @@ while [ "${run_index}" -le "${RUNS}" ]; do
 
   for mode in ${MODES}; do
     prep_mode "${mode}"
-    line="$(run_harness "${mode}" "${run_index}")"
+    line="$(run_harness "${mode}" "${run_index}" "$(mode_warmup "${mode}")")"
     med="$(field "${line}" median_ns)"
     p90="$(field "${line}" p90_ns)"
     mean="$(field "${line}" mean_ns)"

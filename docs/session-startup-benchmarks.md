@@ -51,10 +51,17 @@ comparable:
 
 The driver (`scripts/bench/run-startup-bench.sh`) establishes each mode's runtime
 state through a per-mode prep hook (`WORKCELL_STARTUP_COLD_PREP` /
-`WORKCELL_STARTUP_WARM_PREP` — e.g. evicting the cached image and stopping the
-kept-warm session for `cold`, or pre-pulling and priming the warm lane for
-`warm`), then times the configured `WORKCELL_STARTUP_CMD` for that mode. The
-whole measurement is repeated for `WORKCELL_STARTUP_RUNS` passes.
+`WORKCELL_STARTUP_CACHE_HIT_PREP` / `WORKCELL_STARTUP_WARM_PREP` — e.g. evicting
+the cached image and stopping the kept-warm session for `cold`, pre-pulling the
+image but leaving the warm lane down for `cache-hit`, or pre-pulling and priming
+the warm lane for `warm`), then times the configured `WORKCELL_STARTUP_CMD` for
+that mode. The whole measurement is repeated for `WORKCELL_STARTUP_RUNS` passes.
+
+For `cold` the driver forces the warmup count to `0`: a discarded warmup launch
+would spend the freshly-evicted state, so with any warmup every measured `cold`
+sample would actually be a warmed start. The `warm` and `cache-hit` modes keep
+the configured `WORKCELL_STARTUP_WARMUP` to settle first-touch page-cache and
+loader costs before measuring.
 
 ### The cross-run stability gate
 
@@ -74,6 +81,11 @@ C5 cross-run stability check, made enforcing.
 - The `cold` mode depends on the prep hook genuinely evicting cached state. If the
   hook is a no-op the `cold` and `warm` numbers converge — that is a
   misconfiguration, not a fast cold start.
+- Because a session start warms the cache it touches, only the first `cold` sample
+  runs against a fully evicted state; the driver runs `cold` with warmup `0` so
+  that first measured sample is a true first start. For a strict per-sample cold
+  median, make `WORKCELL_STARTUP_COLD_PREP` re-evict on every invocation and drive
+  `cold` with `WORKCELL_STARTUP_ITERATIONS=1` across more `WORKCELL_STARTUP_RUNS`.
 - Session start includes VM boot, which is noisier than a userspace microbenchmark;
   expect a wider stddev than the C5 exec-guard numbers and keep the stability
   threshold accordingly.
@@ -122,6 +134,7 @@ From the repository root on a host with a container runtime:
 # Wire the prep hooks and the session-start command to your runtime, then:
 export WORKCELL_STARTUP_CMD='./scripts/workcell <your session-start args>'
 export WORKCELL_STARTUP_COLD_PREP='<evict cached image + stop kept-warm session>'
+export WORKCELL_STARTUP_CACHE_HIT_PREP='<pre-pull image, no kept-warm session>'
 export WORKCELL_STARTUP_WARM_PREP='<pre-pull image + prime kept-warm session>'
 export WORKCELL_STARTUP_OUTPUT=session-startup-results.md
 
@@ -129,10 +142,11 @@ export WORKCELL_STARTUP_OUTPUT=session-startup-results.md
 ./scripts/bench/run-startup-bench.sh
 ```
 
-Tunable via environment: `WORKCELL_STARTUP_ITERATIONS`, `WORKCELL_STARTUP_WARMUP`,
-`WORKCELL_STARTUP_RUNS`, `WORKCELL_STARTUP_STABILITY_PCT`, `WORKCELL_STARTUP_CMD`,
-`WORKCELL_STARTUP_COLD_PREP`, `WORKCELL_STARTUP_WARM_PREP`, and
-`WORKCELL_STARTUP_OUTPUT`.
+Tunable via environment: `WORKCELL_STARTUP_ITERATIONS`, `WORKCELL_STARTUP_WARMUP`
+(forced to `0` for `cold`), `WORKCELL_STARTUP_RUNS`,
+`WORKCELL_STARTUP_STABILITY_PCT`, `WORKCELL_STARTUP_CMD`,
+`WORKCELL_STARTUP_COLD_PREP`, `WORKCELL_STARTUP_CACHE_HIT_PREP`,
+`WORKCELL_STARTUP_WARM_PREP`, and `WORKCELL_STARTUP_OUTPUT`.
 
 ### Dry run without a runtime
 

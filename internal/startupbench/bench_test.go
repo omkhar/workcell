@@ -190,6 +190,71 @@ func TestDriverDryRunUnstableFailsGate(t *testing.T) {
 	}
 }
 
+func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
+	// Regression for the C2 driver findings:
+	//   P1 -- cold must not spend its freshly-evicted state on a discarded
+	//         warmup launch, so the driver forces warmup=0 for cold while other
+	//         modes keep the configured warmup.
+	//   P2 -- the driver must drive the documented three-mode set, including
+	//         cache-hit, not just cold+warm.
+	// A stub harness (wired via the WORKCELL_STARTUP_HARNESS test seam) records
+	// the mode + warmup it was invoked with so we can assert the argv the driver
+	// actually passes on the live path.
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "harness.log")
+	stub := filepath.Join(dir, "stub-harness.sh")
+	script := "#!/usr/bin/env bash\n" +
+		"set -euo pipefail\n" +
+		"mode=\"$1\"; iters=\"$2\"; warmup=\"$3\"\n" +
+		"printf '%s %s\\n' \"$mode\" \"$warmup\" >> \"${HARNESS_LOG}\"\n" +
+		"printf 'mode=%s n=%s mean_ns=1 median_ns=1 p90_ns=1 stddev_ns=0 min_ns=1 max_ns=1\\n' \"$mode\" \"$iters\"\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub harness: %v", err)
+	}
+	env := map[string]string{
+		"HARNESS_LOG":                 logPath,
+		"WORKCELL_STARTUP_HARNESS":    stub,
+		"WORKCELL_STARTUP_RUNTIME":    "colima", // bypass the no-runtime skip
+		"WORKCELL_STARTUP_CMD":        "true",
+		"WORKCELL_STARTUP_ITERATIONS": "2",
+		"WORKCELL_STARTUP_WARMUP":     "1",
+		"WORKCELL_STARTUP_RUNS":       "1",
+	}
+	code, out := runScript(t, driver, env)
+	if code != 0 {
+		t.Fatalf("driver exit %d: %s", code, out)
+	}
+	if !strings.Contains(out, "| cache-hit |") {
+		t.Errorf("report missing cache-hit row (P2): %s", out)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read harness log: %v", err)
+	}
+	warmupByMode := map[string]string{}
+	for _, ln := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		parts := strings.Fields(ln)
+		if len(parts) == 2 {
+			warmupByMode[parts[0]] = parts[1]
+		}
+	}
+	for _, mode := range []string{"cold", "cache-hit", "warm"} {
+		if _, ok := warmupByMode[mode]; !ok {
+			t.Errorf("driver never invoked harness for mode %q; saw %v", mode, warmupByMode)
+		}
+	}
+	if got := warmupByMode["cold"]; got != "0" {
+		t.Errorf("cold warmup = %q, want 0 (P1: cold must not warm before measuring)", got)
+	}
+	if got := warmupByMode["warm"]; got != "1" {
+		t.Errorf("warm warmup = %q, want 1 (configured warmup preserved)", got)
+	}
+	if got := warmupByMode["cache-hit"]; got != "1" {
+		t.Errorf("cache-hit warmup = %q, want 1 (configured warmup preserved)", got)
+	}
+}
+
 func TestDriverStabilityThresholdIsConfigurable(t *testing.T) {
 	// The same 20->21 spread (5%%) passes at the default threshold but a 1%%
 	// threshold rejects it, proving the gate reads the configured bound.
