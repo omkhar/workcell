@@ -274,17 +274,16 @@ fi
 go vet ./...
 go test ./...
 
-# Short-budget fuzz pass on parser/security boundaries. Seed corpora
-# already run via `go test ./...`; this pass exercises the random
-# generator briefly so the per-PR signal catches obvious regressions
-# in tomlsubset.Parse, injection.isSafeRelativeSymlinkTarget, and
-# injection.parseSSHDirective.
-FUZZ_TIME="${WORKCELL_FUZZ_TIME:-15s}"
-if [[ "${FUZZ_TIME}" != "0" ]]; then
-  go test -run='^$' -fuzz=FuzzParse -fuzztime="${FUZZ_TIME}" ./internal/tomlsubset
-  go test -run='^$' -fuzz=FuzzIsSafeRelativeSymlinkTarget -fuzztime="${FUZZ_TIME}" ./internal/injection
-  go test -run='^$' -fuzz=FuzzParseSSHDirective -fuzztime="${FUZZ_TIME}" ./internal/injection
-fi
+# The deterministic fuzz seed corpora already run above via `go test ./...`
+# as regression tests on every PR, which is the release-relevant assurance.
+# The nondeterministic active-fuzzing *time budget* deliberately does not run
+# on this PR-blocking path: active fuzzing is a time-bounded discovery hunt,
+# not a deterministic gate, and running it here made PRs flaky (spurious
+# per-input timeouts with no reproducer) without adding release assurance. The
+# extended active budget runs on the scheduled fuzz lane
+# (.github/workflows/fuzz.yml -> scripts/ci/job-fuzz.sh), which exercises the
+# same targets (FuzzParse, FuzzParseSSHDirective, and the injection/metadata
+# parsers). See docs/fuzzing.md and docs/ci-efficiency-and-reliability.md.
 
 "${ROOT_DIR}/scripts/check-dead-code.sh"
 "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"
