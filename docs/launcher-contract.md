@@ -20,10 +20,10 @@ recognises. Every claim here is derived from `scripts/workcell`,
 
 ### Required host tools
 
-The launcher never trusts a bare `PATH` lookup for a host binary. It resolves
-each tool to an absolute path through one of two resolvers, both of which abort
-the launch (printing `Missing trusted host tool: <name>` to stderr and exiting
-`1`) when no trusted candidate is executable:
+The launcher never trusts a bare `PATH` lookup for a host binary. Its core tools
+(`go`, `colima`, `docker`) are resolved to an absolute path through one of two
+resolvers, both of which abort the launch (printing `Missing trusted host tool:
+<name>` to stderr and exiting `1`) when no trusted candidate is executable:
 
 - `resolve_fixed_host_tool <name> <candidate>...`
   (`scripts/lib/launcher/host-exec.sh`) considers only the fixed, caller-supplied
@@ -39,12 +39,17 @@ the launch (printing `Missing trusted host tool: <name>` to stderr and exiting
 | `go` | `resolve_fixed_host_tool` (`go-hostutil.sh:29`) | `/opt/homebrew/bin/go`, `/usr/local/go/bin/go`, `/usr/local/bin/go`, `/usr/bin/go` | Runs the `workcell-hostutil` and `workcell-colimautil` Go programs via `go run` (see `HOST_GO_BIN`). |
 | `colima` | `resolve_host_tool` (`workcell:625,670,5492`); `resolve_host_tool_optional` probe (`workcell:6713`) | `/opt/homebrew/bin/colima`, `/usr/local/bin/colima` | Manages the Colima VM profile that backs the container runtime (`HOST_COLIMA_BIN`). |
 | `docker` | `resolve_host_tool` (`workcell:866,3654,3722,3786,4028,4215`); `resolve_host_tool_optional` probe (`workcell:850,1663,6721`) | `/opt/homebrew/bin/docker`, `/usr/local/bin/docker`, `/Applications/Docker.app/Contents/Resources/bin/docker` | Drives the container runtime (`HOST_DOCKER_BIN`). |
-| `git` | `resolve_host_tool` (`workcell:4462,8135`); also invoked by name through `run_clean_host_command` (`workcell:7092,7163,7190,7213,7232,7372`) | `/usr/bin/git`, `/opt/homebrew/bin/git`, `/usr/local/bin/git` | Inspects and extracts the launch workspace repository (`HOST_GIT_BIN`). |
-| `curl` | invoked by name through `run_clean_host_command` (`workcell:6241,6270`) | resolved from `TRUSTED_HOST_PATH` inside the sanitised `env -i` | Performs `HEAD` preflight reachability checks. |
+| `git` | `resolve_host_tool` → absolute `HOST_GIT_BIN` (`workcell:4462,8135`); **also** invoked by name via `run_clean_host_command` (`workcell:7092,7163,7190,7213,7232,7372`) | `/usr/bin/git`, `/opt/homebrew/bin/git`, `/usr/local/bin/git` | Inspects and extracts the launch workspace repository. |
+| `curl` | **sanitised-PATH by name only** (no absolute resolve) via `run_clean_host_command` (`workcell:6241,6270`) | found on `TRUSTED_HOST_PATH` inside the sanitised `env -i` | Best-effort `HEAD` preflight for release URLs; **optional** — absence is swallowed (`\|\| true`), not fatal. |
 
-All resolutions restrict the binary to the trusted host tool directories, so a
-required tool that is absent from those locations aborts the launch rather than
-falling back to an attacker-controlled binary.
+The two absolute resolvers restrict the binary to the trusted host-tool
+directories, so a resolver-backed tool (`go`, `colima`, `docker`, and `git`'s
+`HOST_GIT_BIN`) that is absent aborts the launch rather than falling back to an
+attacker-controlled binary. The `run_clean_host_command <tool>` invocations of
+`git` and `curl` instead look the name up on the sanitised `TRUSTED_HOST_PATH` at
+call time: still confined to the trusted `PATH`, but **not** absolute-resolved and
+**not** fail-closed — a missing `curl` leaves the preflight URL empty rather than
+raising `Missing trusted host tool`, so `curl` is optional, not required.
 
 ### Environment expectations
 
@@ -90,7 +95,8 @@ an unsanitised host home or Go cache root (`workcell:80-85`).
 
 ### Exit codes
 
-The launcher uses four numeric exit codes:
+The launcher's **own** exit codes — those it originates for its own
+skip/failure conditions — are four:
 
 | Code | Meaning | Representative sources |
 | --- | --- | --- |
@@ -99,8 +105,16 @@ The launcher uses four numeric exit codes:
 | `2` | Usage / validation / precondition guard failure — by far the most common code. Covers invalid CLI arguments, mode-requirement violations, reserved-variable rejection, a missing host working directory, and Colima profile validation failures. | `workcell:8151,8155` (reserved vars), `workcell:8614-8616` (profile validation), `run_clean_host_command_in_dir` missing-dir (`host-exec.sh`) |
 | `88` | Test-only fault injection: a simulated crash immediately after a managed-profile refresh, used by harness recovery tests. Reached only through the hidden CLI flag below. | `maybe_fail_after_profile_refresh_for_tests` (`workcell:2625`) |
 
-There are no other codes: `grep -nE 'exit [0-9]' scripts/workcell` yields only
-`0`, `1`, `2`, and the single `88`.
+Those four are the only *literal* codes the launcher originates
+(`grep -nE 'exit [0-9]' scripts/workcell` yields only `0`, `1`, `2`, and the
+single `88`). Beyond them, a normal end-to-end invocation **passes the supervised
+child's exit status through unchanged** — a completed session exits with the
+container's status (`exit "${DOCKER_STATUS}"`, `workcell:8797`), a build failure
+with `${BUILD_STATUS}` (`workcell:8698`), and session subcommands propagate their
+helper's status (`exit $?`, e.g. `workcell:4182,4188`). An end-to-end run can
+therefore surface any status in `0`–`255` (including `128+N` for a signalled
+child), as [`stability-contract.md`](stability-contract.md) documents; the four
+codes above are the launcher's own, distinct from that passthrough.
 
 ### Test override flags
 
