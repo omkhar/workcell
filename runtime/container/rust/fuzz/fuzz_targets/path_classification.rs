@@ -17,8 +17,11 @@ fuzz_target!(|data: &[u8]| {
     };
     fuzz_api::classify_protected_runtime_path(s);
     let _ = fuzz_api::path_points_to_dynamic_loader(s);
-    // NUL-split the same bytes into an argv vector so the loader classifier
-    // sees realistic multi-arg `ld.so` invocations.
+    // NUL-split into an argv vector and classify with the FIRST component as the
+    // executed loader path (as the guard sees it), so realistic
+    // `ld.so <interp> <program>` shapes are actually exercised instead of the
+    // whole blob (whose trailing component would hide the loader).
     let args: Vec<String> = s.split('\0').map(String::from).collect();
-    fuzz_api::classify_loader_target(s, &args);
+    let loader_path = args.first().map_or("", String::as_str);
+    fuzz_api::classify_loader_target(loader_path, &args);
 });
