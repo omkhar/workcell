@@ -89,8 +89,9 @@ substitute your real key and target.
 
 > **The registration spans layers — grep to find them all.** A credential key is
 > also referenced by the host auth-management surfaces: `workcell auth set`
-> staging destinations (`canonicalCredentialDestinations` in
-> `internal/authpolicy/staging.go`) and `--auth-status` ordering/summaries
+> staging destinations (`canonicalCredentialDestinations`, declared in
+> `internal/authpolicy/manage.go` and consumed by `staging.go`) and
+> `--auth-status` ordering/summaries
 > (`statusOrder`, `bootstrapSummaryForCredential` in `internal/authpolicy/`),
 > plus the hard-coded `supported_credential_keys` list in `scripts/workcell`.
 > These sites are intentionally spread across the validation, resolution,
@@ -156,6 +157,13 @@ unsafe flag, or promote a planned adapter such as `antigravity`.
    `runtime/container/home-control-plane.sh` from the immutable baseline under
    `adapters/<name>/`, explicit injection inputs, and masked workspace imports.
    Mask any repo-local provider control-plane files the provider reads.
+   - Wire the manifest: adapter baseline files under `adapters/<name>/` are
+     verified at seed time via `workcell_verify_control_plane_prefix`, so add
+     them to the manifest source (`internal/metadatautil/core.go`) and
+     regenerate `runtime/container/control-plane-manifest.json` (then run
+     `scripts/verify-control-plane-manifest.sh`). Without this, `workcell --agent
+     <new>` aborts during home seeding on a missing/mismatched entry even after
+     the registry and launcher wiring are done.
    - Invariant [§3](invariants.md#3-repo-policy-must-not-silently-widen-trust):
      repo content must not retake the control plane.
 
