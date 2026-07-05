@@ -78,7 +78,10 @@ The Rust targets need the nightly toolchain (libFuzzer's sanitizer/coverage
 codegen) and `cargo-fuzz`:
 
 ```sh
-rustup toolchain install nightly
+# Use the same dated nightly the scheduled lane pins
+# (WORKCELL_RUST_FUZZ_NIGHTLY in .github/workflows/fuzz.yml) so local runs match
+# CI; bump both together and refresh fuzz/Cargo.lock when moving it.
+rustup toolchain install nightly-2026-07-02
 cargo install cargo-fuzz --version 0.13.2 --locked
 ```
 
@@ -86,7 +89,7 @@ The exec-guard crate pins crates.io to a vendored directory for its reproducible
 shipping build (`runtime/container/rust/.cargo/config.toml`), and the
 non-shipping fuzz crate's extra dependency (`libfuzzer-sys`) is not vendored. A
 local fuzz build therefore needs crates.io access for that one dependency, so
-`cargo +nightly fuzz build` will fail dependency resolution against the vendored
+`cargo +nightly-2026-07-02 fuzz build` will fail dependency resolution against the vendored
 config unless you first override it. Apply the same override the scheduled lane
 uses (see the `Rust fuzz` job in [`.github/workflows/fuzz.yml`](../.github/workflows/fuzz.yml)):
 in `runtime/container/rust/.cargo/config.toml`, temporarily **remove** (or comment
@@ -100,8 +103,8 @@ Then, from `runtime/container/rust/`, build all targets or run one on its seed
 corpus for a bounded budget:
 
 ```sh
-cargo +nightly fuzz build
-cargo +nightly fuzz run path_classification -- -max_total_time=25
+cargo +nightly-2026-07-02 fuzz build
+cargo +nightly-2026-07-02 fuzz run path_classification -- -max_total_time=25
 ```
 
 ## Scheduled lane
@@ -151,12 +154,12 @@ To triage, from `runtime/container/rust/`:
    artifact for a scheduled-lane crash, or from `fuzz/artifacts/<target>/` for a
    local one.
 2. Reproduce it directly by replaying the single input:
-   `cargo +nightly fuzz run <target> fuzz/artifacts/<target>/<crash-file>`.
-3. Optionally minimize it further: `cargo +nightly fuzz tmin <target>
+   `cargo +nightly-2026-07-02 fuzz run <target> fuzz/artifacts/<target>/<crash-file>`.
+3. Optionally minimize it further: `cargo +nightly-2026-07-02 fuzz tmin <target>
    fuzz/artifacts/<target>/<crash-file>`.
 4. Decide whether the crash is a real classifier bug (fix `src/lib.rs` so the
    input is handled instead of panicking) or an over-aggressive target (fix the
    harness). Add the minimized input to `fuzz/corpus/<target>/` as a permanent
    regression seed.
-5. Re-run the target (`cargo +nightly fuzz run <target> -- -max_total_time=60`)
+5. Re-run the target (`cargo +nightly-2026-07-02 fuzz run <target> -- -max_total_time=60`)
    to confirm the crash is gone and no new one appears.

@@ -23,6 +23,10 @@ defaults:
 env:
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
   WORKCELL_BUILDX_VERSION: v0.35.0
+  # Dated nightly so a new upstream nightly cannot silently change or break the
+  # only lane that builds the Rust fuzz targets. Bump deliberately (and refresh
+  # fuzz/Cargo.lock if needed); see docs/fuzzing.md.
+  WORKCELL_RUST_FUZZ_NIGHTLY: nightly-2026-07-02
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -88,8 +92,8 @@ jobs:
       - name: Install nightly toolchain
         working-directory: .
         run: |
-          rustup toolchain install nightly --profile minimal --no-self-update
-          rustup run nightly rustc --version
+          rustup toolchain install "${WORKCELL_RUST_FUZZ_NIGHTLY}" --profile minimal --no-self-update
+          rustup run "${WORKCELL_RUST_FUZZ_NIGHTLY}" rustc --version
 
       # cargo-fuzz is installed from the crate root (outside runtime/container/
       # rust), so the exec-guard crate's vendored-sources config does not apply
@@ -128,7 +132,7 @@ jobs:
       # fuzz build has no --locked flag, and cargo then uses the committed lock
       # for the build below.)
       - name: Verify the fuzz lockfile is current
-        run: cargo +nightly metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
+        run: cargo "+${WORKCELL_RUST_FUZZ_NIGHTLY}" metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
 
       # Each target runs on its checked-in seed corpus, mutated for the budget.
       # A crash makes `cargo fuzz run` exit non-zero and fails the lane.
@@ -136,7 +140,7 @@ jobs:
         run: |
           for target in path_classification env_filtering git_config_parsing; do
             echo "[fuzz] ${target} (${WORKCELL_RUST_FUZZTIME}s)"
-            cargo +nightly fuzz run "${target}" -- \
+            cargo "+${WORKCELL_RUST_FUZZ_NIGHTLY}" fuzz run "${target}" -- \
               -max_total_time="${WORKCELL_RUST_FUZZTIME}"
           done
 
