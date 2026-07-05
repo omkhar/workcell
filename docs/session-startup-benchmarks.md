@@ -57,11 +57,22 @@ image but leaving the warm lane down for `cache-hit`, or pre-pulling and priming
 the warm lane for `warm`), then times the configured `WORKCELL_STARTUP_CMD` for
 that mode. The whole measurement is repeated for `WORKCELL_STARTUP_RUNS` passes.
 
-For `cold` the driver forces the warmup count to `0`: a discarded warmup launch
-would spend the freshly-evicted state, so with any warmup every measured `cold`
-sample would actually be a warmed start. The `warm` and `cache-hit` modes keep
-the configured `WORKCELL_STARTUP_WARMUP` to settle first-touch page-cache and
-loader costs before measuring.
+For `cold` the driver re-runs `WORKCELL_STARTUP_COLD_PREP` before **every**
+measured sample and times each start on its own with warmup `0`, then aggregates
+the per-sample timings through the same stats core. A single session start warms
+the cache the next start would otherwise hit, so evicting only once before the
+pass would leave just the first sample genuinely cold; the per-sample re-prep
+keeps every `cold` sample a true first start. The cold-prep hook must therefore
+be **repeatable** — it runs once per measured sample, not once per pass. The
+`warm` and `cache-hit` modes legitimately share one prep for the whole pass and
+keep the configured `WORKCELL_STARTUP_WARMUP` to settle first-touch page-cache
+and loader costs before measuring.
+
+`WORKCELL_STARTUP_CMD` is parsed with shell quoting into the target argv, so an
+argument containing spaces keeps its boundary. Quote such arguments exactly as
+you would on a shell command line — e.g.
+`WORKCELL_STARTUP_CMD="./scripts/workcell --workspace '/path/with space'"` reaches
+the target as three argv elements, not four word-split tokens.
 
 ### The cross-run stability gate
 
@@ -81,11 +92,10 @@ C5 cross-run stability check, made enforcing.
 - The `cold` mode depends on the prep hook genuinely evicting cached state. If the
   hook is a no-op the `cold` and `warm` numbers converge — that is a
   misconfiguration, not a fast cold start.
-- Because a session start warms the cache it touches, only the first `cold` sample
-  runs against a fully evicted state; the driver runs `cold` with warmup `0` so
-  that first measured sample is a true first start. For a strict per-sample cold
-  median, make `WORKCELL_STARTUP_COLD_PREP` re-evict on every invocation and drive
-  `cold` with `WORKCELL_STARTUP_ITERATIONS=1` across more `WORKCELL_STARTUP_RUNS`.
+- The cold-prep hook runs once per measured `cold` sample (not once per pass), so
+  it must be **repeatable and idempotent** — every invocation has to leave the
+  same fully-evicted, no-warm-lane state. A hook that only evicts on its first
+  call will silently measure cache-hits for the remaining samples.
 - Session start includes VM boot, which is noisier than a userspace microbenchmark;
   expect a wider stddev than the C5 exec-guard numbers and keep the stability
   threshold accordingly.
@@ -132,6 +142,9 @@ From the repository root on a host with a container runtime:
 
 ```sh
 # Wire the prep hooks and the session-start command to your runtime, then:
+# WORKCELL_STARTUP_CMD is parsed with shell quoting; quote args with spaces,
+# e.g. ...--workspace '/path/with space'. WORKCELL_STARTUP_COLD_PREP is re-run
+# before every cold sample, so make it repeatable (idempotent eviction).
 export WORKCELL_STARTUP_CMD='./scripts/workcell <your session-start args>'
 export WORKCELL_STARTUP_COLD_PREP='<evict cached image + stop kept-warm session>'
 export WORKCELL_STARTUP_CACHE_HIT_PREP='<pre-pull image, no kept-warm session>'

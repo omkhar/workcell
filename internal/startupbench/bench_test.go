@@ -255,6 +255,92 @@ func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
 	}
 }
 
+func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
+	// Regression for the C2 cold-prep finding: a single session start warms the
+	// cache the next sample would otherwise hit, so evicting once before the
+	// whole pass leaves only the first sample genuinely cold. The driver must
+	// re-run WORKCELL_STARTUP_COLD_PREP before EVERY measured cold sample, while
+	// warm/cache-hit legitimately share one prep for their whole pass. The prep
+	// hooks append a byte per invocation so we can count them; the dry-run path
+	// exercises the same re-prep loop without a runtime.
+	dir := t.TempDir()
+	coldF := filepath.Join(dir, "cold")
+	warmF := filepath.Join(dir, "warm")
+	chF := filepath.Join(dir, "cachehit")
+	env := map[string]string{
+		"WORKCELL_STARTUP_SAMPLES_NS":     "10 20 30",
+		"WORKCELL_STARTUP_RUNS":           "1",
+		"WORKCELL_STARTUP_COLD_PREP":      "printf c >> " + coldF,
+		"WORKCELL_STARTUP_WARM_PREP":      "printf w >> " + warmF,
+		"WORKCELL_STARTUP_CACHE_HIT_PREP": "printf h >> " + chF,
+	}
+	code, out := runScript(t, driver, env)
+	if code != 0 {
+		t.Fatalf("driver exit %d: %s", code, out)
+	}
+	countPreps := func(path string) int {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read prep counter %s: %v", path, err)
+		}
+		return len(data)
+	}
+	// Three canned cold samples -> three cold preps (one per measured sample).
+	if got := countPreps(coldF); got != 3 {
+		t.Errorf("cold prep ran %d time(s), want 3 (once per measured sample)", got)
+	}
+	if got := countPreps(warmF); got != 1 {
+		t.Errorf("warm prep ran %d time(s), want 1 (one prep for the whole pass)", got)
+	}
+	if got := countPreps(chF); got != 1 {
+		t.Errorf("cache-hit prep ran %d time(s), want 1 (one prep for the whole pass)", got)
+	}
+	// The per-sample samples are aggregated through the harness stats core, so
+	// the cold row must still read like a normal n=3 distribution.
+	if !strings.Contains(out, "| cold | 20 | 30 | 20 |") {
+		t.Errorf("aggregated cold row missing/incorrect: %s", out)
+	}
+}
+
+func TestDriverPreservesCommandArgv(t *testing.T) {
+	// Regression for the WORKCELL_STARTUP_CMD word-splitting finding: an argument
+	// with spaces (e.g. --workspace '/path/with space') must reach the target as
+	// a single argv element, not be split/globbed. A recorder script writes the
+	// argv it was launched with; the last launch wins (it truncates each time),
+	// so the constant command leaves a deterministic argv regardless of mode.
+	dir := t.TempDir()
+	argvF := filepath.Join(dir, "argv")
+	rec := filepath.Join(dir, "record.sh")
+	script := "#!/usr/bin/env bash\n" +
+		"set -euo pipefail\n" +
+		": > \"${ARGV_FILE}\"\n" +
+		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"${ARGV_FILE}\"; done\n"
+	if err := os.WriteFile(rec, []byte(script), 0o755); err != nil {
+		t.Fatalf("write recorder: %v", err)
+	}
+	env := map[string]string{
+		"ARGV_FILE":                   argvF,
+		"WORKCELL_STARTUP_RUNTIME":    "colima", // bypass the no-runtime skip
+		"WORKCELL_STARTUP_CMD":        rec + " alpha 'beta gamma'",
+		"WORKCELL_STARTUP_ITERATIONS": "1",
+		"WORKCELL_STARTUP_WARMUP":     "0",
+		"WORKCELL_STARTUP_RUNS":       "1",
+	}
+	code, out := runScript(t, driver, env)
+	if code != 0 {
+		t.Fatalf("driver exit %d: %s", code, out)
+	}
+	data, err := os.ReadFile(argvF)
+	if err != nil {
+		t.Fatalf("read argv file: %v", err)
+	}
+	got := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	want := []string{"alpha", "beta gamma"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("target argv = %q, want %q (word-splitting would break the spaced arg)\n%s", got, want, out)
+	}
+}
+
 func TestDriverStabilityThresholdIsConfigurable(t *testing.T) {
 	// The same 20->21 spread (5%%) passes at the default threshold but a 1%%
 	// threshold rejects it, proving the gate reads the configured bound.

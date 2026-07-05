@@ -5,9 +5,10 @@
 # For each mode (cold, cache-hit, warm) it runs a per-mode prep hook to
 # establish the runtime state, then times WORKCELL_STARTUP_ITERATIONS full
 # session starts of the target command via scripts/bench/startup-bench.sh,
-# reporting the median, p90 and spread. The `cold` mode forces warmup to 0 so a
-# discarded warmup launch cannot spend the freshly-evicted state -- every cold
-# sample is measured against cold-prepped state, not a warmed start.
+# reporting the median, p90 and spread. The `cold` mode re-runs its prep hook
+# before every measured sample and times each start on its own (warmup 0), so a
+# session start warming the cache cannot turn later samples into cache-hits --
+# every cold sample reflects a genuine first start, not a warmed one.
 # The whole measurement is repeated for WORKCELL_STARTUP_RUNS
 # passes so a reviewer can confirm the numbers are stable across runs, and the
 # driver FAILS if the run-to-run spread of any mode's median exceeds the
@@ -26,8 +27,11 @@
 #   WORKCELL_STARTUP_WARMUP      discarded warmup samples (default 1; forced to 0 for cold)
 #   WORKCELL_STARTUP_RUNS        full measurement passes (default 2)
 #   WORKCELL_STARTUP_STABILITY_PCT  max allowed cross-run median spread (default 15)
-#   WORKCELL_STARTUP_CMD         session-start command to time (required live)
-#   WORKCELL_STARTUP_COLD_PREP   shell run before the cold pass (evict cache + stop warm lane)
+#   WORKCELL_STARTUP_CMD         session-start command to time (required live);
+#                                parsed with shell quoting, so quote args with
+#                                spaces (e.g. --workspace '/path/with space')
+#   WORKCELL_STARTUP_COLD_PREP   shell re-run before EACH cold sample (evict cache
+#                                + stop warm lane); must be repeatable
 #   WORKCELL_STARTUP_CACHE_HIT_PREP  shell run before the cache-hit pass (prime cache, no warm lane)
 #   WORKCELL_STARTUP_WARM_PREP   shell run before the warm pass (prime cache + warm lane)
 #   WORKCELL_STARTUP_RUNTIME     override runtime detection (a name, or "none")
@@ -94,6 +98,11 @@ else
       "time) is required for a live run." >&2
     exit 1
   fi
+  # Parse WORKCELL_STARTUP_CMD into an argv array honoring shell quoting, so an
+  # argument with spaces (e.g. --workspace '/path/with space') keeps its boundary
+  # instead of being word-split or glob-expanded. This is the documented contract:
+  # quote such arguments in WORKCELL_STARTUP_CMD as you would on a shell line.
+  eval "CMD_ARGV=( ${WORKCELL_STARTUP_CMD} )"
 fi
 
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/startup-bench.XXXXXX")"
@@ -114,28 +123,49 @@ prep_mode() {
   esac
 }
 
-# Invoke the harness for one mode. In dry-run the canned samples for this run
-# are passed straight through; live, the configured session command is timed.
+# Invoke the harness for one warm/cache-hit mode: those modes legitimately share
+# a single prep for the whole pass. In dry-run the canned samples for this run
+# are passed straight through; live, the parsed session command is timed.
 run_harness() {
-  # $1 mode, $2 run index (1-based), $3 warmup for this mode
+  # $1 mode, $2 run index (1-based)
   if [ "${DRY_RUN}" -eq 1 ]; then
     local gi=$(($2 - 1))
     [ "${gi}" -lt "${#SAMPLE_GROUPS[@]}" ] || gi=$((${#SAMPLE_GROUPS[@]} - 1))
-    WORKCELL_STARTUP_SAMPLES_NS="${SAMPLE_GROUPS[gi]}" "${HARNESS}" "$1" "${ITERATIONS}" "$3"
+    WORKCELL_STARTUP_SAMPLES_NS="${SAMPLE_GROUPS[gi]}" "${HARNESS}" "$1" "${ITERATIONS}" "${WARMUP}"
   else
-    # shellcheck disable=SC2086  # WORKCELL_STARTUP_CMD is an intentional word-split command
-    "${HARNESS}" "$1" "${ITERATIONS}" "$3" -- ${WORKCELL_STARTUP_CMD}
+    "${HARNESS}" "$1" "${ITERATIONS}" "${WARMUP}" -- "${CMD_ARGV[@]}"
   fi
 }
 
-# Effective warmup for a mode. Cold must reflect a true first start, so its
-# freshly-evicted state cannot be spent on a discarded warmup launch; warm and
-# cache-hit keep the configured warmup to settle first-touch page-cache costs.
-mode_warmup() {
-  case "$1" in
-    cold) echo 0 ;;
-    *) echo "${WARMUP}" ;;
-  esac
+# Measure the cold mode with a genuine first start per sample. A single session
+# start warms the cache the next start would otherwise hit, so evicting once
+# before the pass would leave only the first sample cold. Re-run the cold-prep
+# hook before EACH measured sample, time each start on its own (warmup 0), then
+# aggregate the samples through the harness stats core so the reported cold row
+# matches the other modes exactly. Emits the same key=value stats line.
+measure_cold() {
+  # $1 run index (1-based)
+  local samples=() one
+  if [ "${DRY_RUN}" -eq 1 ]; then
+    local gi=$(($1 - 1))
+    [ "${gi}" -lt "${#SAMPLE_GROUPS[@]}" ] || gi=$((${#SAMPLE_GROUPS[@]} - 1))
+    local canned_arr=() canned
+    read -ra canned_arr <<<"${SAMPLE_GROUPS[gi]}"
+    for canned in "${canned_arr[@]}"; do
+      prep_mode cold
+      one="$(WORKCELL_STARTUP_SAMPLES_NS="${canned}" "${HARNESS}" cold 1 0)"
+      samples+=("$(field "${one}" min_ns)")
+    done
+  else
+    local i=0
+    while [ "${i}" -lt "${ITERATIONS}" ]; do
+      prep_mode cold
+      one="$("${HARNESS}" cold 1 0 -- "${CMD_ARGV[@]}")"
+      samples+=("$(field "${one}" min_ns)")
+      i=$((i + 1))
+    done
+  fi
+  WORKCELL_STARTUP_SAMPLES_NS="${samples[*]}" "${HARNESS}" cold "${#samples[@]}" 0
 }
 
 {
@@ -145,7 +175,7 @@ mode_warmup() {
   echo "- host: $(uname -srm)"
   echo "- online CPUs: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo unknown)"
   echo "- runtime: ${RUNTIME}"
-  echo "- iterations: ${ITERATIONS} (warmup ${WARMUP}; cold forces warmup 0) x ${RUNS} run(s)"
+  echo "- iterations: ${ITERATIONS} (warmup ${WARMUP}; cold re-preps + warmup 0 per sample) x ${RUNS} run(s)"
   echo "- stability threshold: ${STABILITY_PCT}% cross-run median spread"
   echo
 } >"${REPORT}"
@@ -163,8 +193,12 @@ while [ "${run_index}" -le "${RUNS}" ]; do
   } >>"${REPORT}"
 
   for mode in ${MODES}; do
-    prep_mode "${mode}"
-    line="$(run_harness "${mode}" "${run_index}" "$(mode_warmup "${mode}")")"
+    if [ "${mode}" = "cold" ]; then
+      line="$(measure_cold "${run_index}")"
+    else
+      prep_mode "${mode}"
+      line="$(run_harness "${mode}" "${run_index}")"
+    fi
     med="$(field "${line}" median_ns)"
     p90="$(field "${line}" p90_ns)"
     mean="$(field "${line}" mean_ns)"
