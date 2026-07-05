@@ -26,12 +26,16 @@ resolvers, both of which abort the launch (printing `Missing trusted host tool:
 <name>` to stderr and exiting `1`) when no trusted candidate is executable:
 
 - `resolve_fixed_host_tool <name> <candidate>...`
-  (`scripts/lib/launcher/host-exec.sh`) considers only the fixed, caller-supplied
-  absolute candidate paths — there is no `PATH` fallback.
+  (`scripts/lib/launcher/host-exec.sh`) returns the first caller-supplied candidate
+  that is executable (`-x`) — no `PATH` fallback, but also **no canonicalisation**:
+  it trusts the literal candidate path as written, so a fixed candidate that is a
+  symlink is followed by the kernel without re-validating the target. Trust here
+  rests on those hard-coded paths not being attacker-writable.
 - `resolve_host_tool <name> <candidate>...` (`scripts/workcell`) tries the fixed
-  candidates first, then falls back to `type -P <name>`, but every path (and its
-  canonicalised form) must pass `is_trusted_host_tool_path` before it is
-  accepted. Its `resolve_host_tool_optional` sibling is identical but returns `1`
+  candidates first, then falls back to `type -P <name>`, but every path **and its
+  canonicalised form** must pass `is_trusted_host_tool_path` before it is accepted
+  (`workcell:6660-6661`), so it cannot resolve to a target outside the trusted
+  prefixes. Its `resolve_host_tool_optional` sibling is identical but returns `1`
   instead of aborting, so it is used for non-fatal capability probes.
 
 | Tool | Resolver | Candidate paths | Purpose |
@@ -42,14 +46,23 @@ resolvers, both of which abort the launch (printing `Missing trusted host tool:
 | `git` | `resolve_host_tool` → absolute `HOST_GIT_BIN` (`workcell:4462,8135`); **also** invoked by name via `run_clean_host_command` (`workcell:7092,7163,7190,7213,7232,7372`) | `/usr/bin/git`, `/opt/homebrew/bin/git`, `/usr/local/bin/git` | Inspects and extracts the launch workspace repository. |
 | `curl` | **sanitised-PATH by name only** (no absolute resolve) via `run_clean_host_command` (`workcell:6241,6270`) | found on `TRUSTED_HOST_PATH` inside the sanitised `env -i` | Best-effort `HEAD` preflight for release URLs; **optional** — absence is swallowed (`\|\| true`), not fatal. |
 
-The two absolute resolvers restrict the binary to the trusted host-tool
-directories, so a resolver-backed tool (`go`, `colima`, `docker`, and `git`'s
-`HOST_GIT_BIN`) that is absent aborts the launch rather than falling back to an
-attacker-controlled binary. The `run_clean_host_command <tool>` invocations of
-`git` and `curl` instead look the name up on the sanitised `TRUSTED_HOST_PATH` at
-call time: still confined to the trusted `PATH`, but **not** absolute-resolved and
-**not** fail-closed — a missing `curl` leaves the preflight URL empty rather than
-raising `Missing trusted host tool`, so `curl` is optional, not required.
+A resolver-backed tool that is absent aborts the launch rather than falling back
+to an attacker-controlled binary — but the two resolvers differ in strength, as
+above: `resolve_host_tool` (`colima`, `docker`, `git`'s `HOST_GIT_BIN`) validates
+the canonical target, while `resolve_fixed_host_tool` (`go`) trusts its literal
+fixed paths. The `run_clean_host_command <tool>` invocations of `git` and `curl`
+instead look the name up on the sanitised `TRUSTED_HOST_PATH` at call time: still
+confined to the trusted `PATH`, but **not** absolute-resolved and **not**
+fail-closed — a missing `curl` leaves the preflight URL empty rather than raising
+`Missing trusted host tool`, so `curl` is optional, not required.
+
+This table covers the tools every **local** launch resolves. Two prerequisites
+sit outside it. Remote-preview backends probe extra tools via
+`missing_launch_host_tools_csv` (`scripts/workcell:6708`) — `aws` and
+`session-manager-plugin` for the `aws-ec2-ssm` backend, `gcloud` for `gcp-vm` —
+and image builds require a system `docker-buildx` plugin binary
+(`ensure_workcell_trusted_buildx`, `scripts/lib/trusted-docker-client.sh`), which
+aborts with `Missing trusted docker-buildx binary` when none is found.
 
 ### Environment expectations
 
