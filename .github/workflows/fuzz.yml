@@ -112,14 +112,13 @@ jobs:
           cfg = pathlib.Path(".cargo/config.toml")
           text = cfg.read_text()
           assert 'replace-with = "vendored-sources"' in text, "vendored-sources anchor missing"
-          text = text.replace(
-              'replace-with = "vendored-sources"',
-              'replace-with = "crates-io-remote"',
-          )
-          text += (
-              '\n[source.crates-io-remote]\n'
-              'registry = "sparse+https://index.crates.io/"\n'
-          )
+          # Drop the vendored-sources replacement so crates.io resolves the
+          # unvendored libfuzzer-sys from its default registry for this
+          # non-shipping fuzz build only. Do NOT add a custom source pointing at
+          # the crates.io index: cargo rejects that as a self-referential
+          # duplicate of the built-in crates-io source. The committed config on
+          # disk is discarded with the runner workspace after the job.
+          text = text.replace('replace-with = "vendored-sources"\n', '')
           cfg.write_text(text)
           PY
 
