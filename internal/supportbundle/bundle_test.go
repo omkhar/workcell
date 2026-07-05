@@ -36,7 +36,16 @@ type fixtureOptions struct {
 	sessionStatus     string // when "", no session record is written
 	sessionLiveStatus string
 	sessionWorkspace  string // overrides the session workspace field
+	sessionProfile    string // overrides the session profile field
+	sessionID         string // overrides the session ID field
 	writeAuditLog     bool
+}
+
+func firstNonEmpty(v, fallback string) string {
+	if v != "" {
+		return v
+	}
+	return fallback
 }
 
 func buildFixture(t *testing.T, opts fixtureOptions) Config {
@@ -112,8 +121,8 @@ func buildFixture(t *testing.T, opts fixtureOptions) Config {
 		}
 		rec := sessions.SessionRecord{
 			Version:              1,
-			SessionID:            "sess-abc123",
-			Profile:              "wcl-strict",
+			SessionID:            firstNonEmpty(opts.sessionID, "sess-abc123"),
+			Profile:              firstNonEmpty(opts.sessionProfile, "wcl-strict"),
 			TargetKind:           "vm",
 			TargetProvider:       "colima",
 			TargetID:             "default",

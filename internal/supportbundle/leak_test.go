@@ -26,6 +26,10 @@ func TestNoSecretLeaksThroughPipeline(t *testing.T) {
 		sessionStatus:    "running",
 		writeAuditLog:    true,
 		sessionWorkspace: "/srv/repos/" + ghToken + "-project",
+		// User-influenceable identifiers (e.g. --colima-profile) can carry
+		// token-shaped text; they must be redacted before marshaling too.
+		sessionProfile: ghToken + "-profile",
+		sessionID:      "sess-" + ghToken,
 	})
 
 	out, err := Collect(cfg).JSON()

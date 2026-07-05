@@ -198,11 +198,11 @@ func collectColimaProfiles(cfg Config, r Redactor, sec *Section) []TargetProfile
 		if cfgErr != nil || limaErr != nil {
 			// A directory whose name fails profile validation is not a
 			// managed profile; record it as a bare entry without probing.
-			profiles = append(profiles, TargetProfile{Name: profile, Dir: r.String(filepath.Join(root, profile))})
+			profiles = append(profiles, TargetProfile{Name: r.String(profile), Dir: r.String(filepath.Join(root, profile))})
 			continue
 		}
 		profiles = append(profiles, TargetProfile{
-			Name:                profile,
+			Name:                r.String(profile),
 			Dir:                 r.String(filepath.Join(root, profile)),
 			ColimaConfigPresent: fileExists(configPath),
 			LimaDirPresent:      dirExists(limaDir),
@@ -320,10 +320,10 @@ func collectSessions(cfg Config, r Redactor) SessionsSection {
 	}
 	for _, rec := range records[:limit] {
 		s.Sessions = append(s.Sessions, SessionSummary{
-			SessionID:       rec.SessionID,
+			SessionID:       r.String(rec.SessionID),
 			Status:          rec.Status,
 			LiveStatus:      rec.LiveStatus,
-			Profile:         rec.Profile,
+			Profile:         r.String(rec.Profile),
 			TargetKind:      rec.TargetKind,
 			TargetProvider:  rec.TargetProvider,
 			Agent:           rec.Agent,
@@ -370,7 +370,7 @@ func collectAuditPointers(cfg Config, r Redactor) AuditSection {
 			continue
 		}
 		ptr := AuditPointer{
-			SessionID: rec.SessionID,
+			SessionID: r.String(rec.SessionID),
 			Path:      r.String(rec.AuditLogPath),
 		}
 		if info, statErr := os.Stat(rec.AuditLogPath); statErr == nil && !info.IsDir() {
