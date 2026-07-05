@@ -14,23 +14,28 @@ import (
 
 // TestCollectSessionsKeepsNewestOnTruncation guards the truncation-order fix:
 // past maxSessionSummaries records the bundle must keep the NEWEST sessions
-// (timestamp-prefixed IDs), not the oldest, so the session under investigation
-// is present.
+// (by StartedAt), not the oldest, so the session under investigation is present.
 func TestCollectSessionsKeepsNewestOnTruncation(t *testing.T) {
 	cfg := buildFixture(t, fixtureOptions{sessionStatus: "running"})
 	dir := filepath.Join(cfg.ColimaStateRoot, "wcl-strict")
-	rec := sessions.SessionRecord{Version: 1, Profile: "wcl-strict", TargetKind: "vm", TargetProvider: "colima", TargetID: "default", TargetAssuranceClass: "strict", RuntimeAPI: "docker", WorkspaceTransport: "direct", Agent: "codex", Mode: "strict", Status: "running", Workspace: cfg.RepoRoot, StartedAt: "2026-07-04T09:00:00Z"}
+	rec := sessions.SessionRecord{Version: 1, Profile: "wcl-strict", TargetKind: "vm", TargetProvider: "colima", TargetID: "default", TargetAssuranceClass: "strict", RuntimeAPI: "docker", WorkspaceTransport: "direct", Agent: "codex", Mode: "strict", Status: "running", Workspace: cfg.RepoRoot}
 	total := maxSessionSummaries + 5
+	// IDs are deliberately NOT timestamp-ordered: the record with the newest
+	// StartedAt gets the lexicographically smallest ID, so a sort on session ID
+	// would drop it. Truncation must key off StartedAt (newest-first).
 	for i := 1; i <= total; i++ {
-		rec.SessionID = fmt.Sprintf("sess-2026%06d", i) // zero-padded: lexicographic == chronological
-		writeSessionRecord(t, dir, rec.SessionID+".json", rec)
+		rec.SessionID = fmt.Sprintf("sess-id-%06d", total-i)     // decreasing with time
+		rec.StartedAt = fmt.Sprintf("2026-07-04T09:%02d:00Z", i) // increasing
+		writeSessionRecord(t, dir, fmt.Sprintf("s%03d.json", i), rec)
 	}
+	newest := fmt.Sprintf("sess-id-%06d", 0)       // i == total: latest StartedAt
+	oldest := fmt.Sprintf("sess-id-%06d", total-1) // i == 1: earliest StartedAt
 	out, err := Collect(cfg).JSON()
 	if err != nil {
 		t.Fatalf("JSON: %v", err)
 	}
-	if r := string(out); !strings.Contains(r, fmt.Sprintf("sess-2026%06d", total)) || strings.Contains(r, fmt.Sprintf("sess-2026%06d", 1)) {
-		t.Fatalf("truncation kept the wrong sessions (want newest, dropped oldest)")
+	if r := string(out); !strings.Contains(r, newest) || strings.Contains(r, oldest) {
+		t.Fatalf("truncation did not key off StartedAt (want %s kept, %s dropped)", newest, oldest)
 	}
 }
 

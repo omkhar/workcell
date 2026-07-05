@@ -3703,6 +3703,17 @@ support_bundle_main() {
         args+=("--output" "${val}")
         shift 2
         ;;
+      --repo-root | --repo-root=* | --launcher | --launcher=* | \
+        --real-home | --real-home=* | --workcell-state-root | --workcell-state-root=* | \
+        --colima-state-root | --colima-state-root=* | --host-os | --host-os=* | \
+        --host-arch | --host-arch=*)
+        # These context flags are supplied by the launcher itself; a user-supplied
+        # copy could corrupt the redaction root (or, left dangling, swallow the
+        # trusted flag appended below as its value). Reject them outright.
+        echo "Option ${1%%=*} is set by the launcher and cannot be passed on the command line." >&2
+        usage >&2
+        exit 2
+        ;;
       *)
         args+=("$1")
         shift

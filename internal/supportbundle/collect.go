@@ -311,10 +311,10 @@ func collectSessions(cfg Config, r Redactor) SessionsSection {
 	}
 	sort.Slice(s.StatusCounts, func(i, j int) bool { return s.StatusCounts[i].Status < s.StatusCounts[j].Status })
 
-	// Newest-first: session IDs are timestamp-prefixed, so descending order keeps
-	// the most recent sessions (the ones most likely under investigation) when
-	// truncating, and is deterministic for the golden shape.
-	sort.Slice(records, func(i, j int) bool { return records[i].SessionID > records[j].SessionID })
+	// ListSessionRecordsInRoots already returns records newest-first by StartedAt
+	// (deterministically), so truncation keeps the most recent sessions — the
+	// ones most likely under investigation — without a fragile re-sort on session
+	// IDs, which need not be timestamp-ordered.
 	limit := len(records)
 	if limit > maxSessionSummaries {
 		limit = maxSessionSummaries
@@ -371,9 +371,8 @@ func collectAuditPointers(cfg Config, r Redactor) AuditSection {
 		return s
 	}
 	s.Available = true
-	// Newest-first and capped like the session summaries so a long-lived host
-	// cannot produce an unbounded bundle of stale pointers.
-	sort.Slice(records, func(i, j int) bool { return records[i].SessionID > records[j].SessionID })
+	// records are already newest-first by StartedAt; cap to the recent window so
+	// a long-lived host cannot produce an unbounded bundle of stale pointers.
 	if len(records) > maxSessionSummaries {
 		records = records[:maxSessionSummaries]
 	}
