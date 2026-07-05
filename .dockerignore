@@ -8,3 +8,6 @@
 !tools/markdownlint/**
 runtime/container/providers/node_modules/
 runtime/container/rust/target/
+runtime/container/rust/fuzz/target/
+runtime/container/rust/fuzz/artifacts/
+runtime/container/rust/fuzz/coverage/

@@ -1,0 +1,38 @@
+[package]
+name = "workcell-runtime-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# Pinned exactly so the scheduled lane's dependency graph does not drift on a new
+# semver-compatible release; the full transitive graph is pinned by the committed
+# Cargo.lock, whose currency the lane enforces with `cargo metadata --locked`.
+libfuzzer-sys = "=0.4.13"
+
+[dependencies.workcell-runtime]
+path = ".."
+
+[[bin]]
+name = "path_classification"
+path = "fuzz_targets/path_classification.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "env_filtering"
+path = "fuzz_targets/env_filtering.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_config_parsing"
+path = "fuzz_targets/git_config_parsing.rs"
+test = false
+doc = false
+bench = false

@@ -1163,9 +1163,16 @@ fn resolve_exec_search_target(file: &str, env_entries: &[String]) -> String {
 }
 
 fn git_config_key_has_prefix_and_suffix(key: &str, prefix: &str, suffix: &str) -> bool {
+    // `prefix`/`suffix` are ASCII, so slice with char-boundary-safe `get`: a git
+    // config key with a multibyte character straddling the byte offset returns
+    // `None` (correctly no match) instead of panicking on a non-boundary index.
     key.len() > prefix.len() + suffix.len()
-        && key[..prefix.len()].eq_ignore_ascii_case(prefix)
-        && key[key.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+        && key
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        && key
+            .get(key.len() - suffix.len()..)
+            .is_some_and(|tail| tail.eq_ignore_ascii_case(suffix))
 }
 
 fn git_config_key_is_blocked(key: &str) -> bool {
@@ -1184,7 +1191,10 @@ fn git_config_key_is_blocked(key: &str) -> bool {
             | "sequence.editor"
     ) || git_config_key_has_prefix_and_suffix(key, "credential.", ".helper")
         || git_config_key_has_prefix_and_suffix(key, "includeif.", ".path")
-        || key.len() > 6 && key[..6].eq_ignore_ascii_case("pager.")
+        || (key.len() > 6
+            && key
+                .get(..6)
+                .is_some_and(|head| head.eq_ignore_ascii_case("pager.")))
 }
 
 fn git_config_spec_is_blocked(spec: &str) -> bool {
@@ -2010,6 +2020,70 @@ pub unsafe extern "C" fn posix_spawnp(
     unsafe { posix_spawnp_fn()(pid, file, file_actions, attrp, argv, envp) }
 }
 
+/// Fuzzing-only re-exports of the internal exec-guard classifiers and parsers.
+///
+/// Compiled only under `--cfg fuzzing`, which cargo-fuzz sets for the fuzz
+/// build (see `fuzz/`), so this surface never exists in the shipped `cdylib`
+/// nor in the normal `cargo build`/`cargo test` builds. Keeping the underlying
+/// functions private everywhere else preserves the exec-guard's hardened API;
+/// this module only widens visibility for the in-repo fuzz targets.
+#[cfg(fuzzing)]
+pub mod fuzz_api {
+    //! Thin `pub` wrappers over the private classifiers/parsers. They forward to
+    //! the internal functions (visible here because this module is a crate
+    //! descendant) and reduce results to primitives, so the private
+    //! `ProtectedRuntime` type is never leaked into the public interface. The
+    //! fuzzer only needs the code paths exercised, not the classification value.
+
+    /// Fuzz `classify_protected_runtime_path`; the classification is discarded.
+    pub fn classify_protected_runtime_path(path: &str) {
+        let _ = super::classify_protected_runtime_path(path);
+    }
+
+    /// Fuzz `classify_loader_target`; the classification is discarded.
+    pub fn classify_loader_target(path: &str, args: &[String]) {
+        let _ = super::classify_loader_target(path, args);
+    }
+
+    /// Fuzz `path_points_to_dynamic_loader`.
+    pub fn path_points_to_dynamic_loader(path: &str) -> bool {
+        super::path_points_to_dynamic_loader(path)
+    }
+
+    /// Fuzz `path_from_env_entries`.
+    pub fn path_from_env_entries(env_entries: &[String]) -> Option<String> {
+        super::path_from_env_entries(env_entries)
+    }
+
+    /// Fuzz `resolve_command_via_path_value`.
+    pub fn resolve_command_via_path_value(
+        command: &str,
+        path_value: Option<&str>,
+    ) -> Option<String> {
+        super::resolve_command_via_path_value(command, path_value)
+    }
+
+    /// Fuzz `env_has_unsafe_git_override`.
+    pub fn env_has_unsafe_git_override(env_entries: &[String]) -> bool {
+        super::env_has_unsafe_git_override(env_entries)
+    }
+
+    /// Fuzz `git_config_spec_is_blocked`.
+    pub fn git_config_spec_is_blocked(spec: &str) -> bool {
+        super::git_config_spec_is_blocked(spec)
+    }
+
+    /// Fuzz `git_config_key_is_blocked`.
+    pub fn git_config_key_is_blocked(key: &str) -> bool {
+        super::git_config_key_is_blocked(key)
+    }
+
+    /// Fuzz `git_config_spec_value_is_explicit_safe`.
+    pub fn git_config_spec_value_is_explicit_safe(key: &str, value: &str) -> bool {
+        super::git_config_spec_value_is_explicit_safe(key, value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2184,6 +2258,25 @@ mod tests {
     fn git_config_key_is_blocked_blocks_core_fsmonitor() {
         assert!(git_config_key_is_blocked("core.fsmonitor"));
         assert!(git_config_key_is_blocked("Core.FsMonitor"));
+    }
+
+    #[test]
+    fn git_config_key_checks_do_not_panic_on_multibyte_boundaries() {
+        // Regression (found by the env_filtering fuzz target): git config keys
+        // with a multibyte character straddling a prefix/suffix byte offset used
+        // to panic on a non-char-boundary slice. They must classify without
+        // panicking; a multibyte char where an ASCII prefix/suffix is expected
+        // simply does not match.
+        assert!(!git_config_key_is_blocked("pager\u{00e9}x")); // 'é' straddles byte 6
+        assert!(!git_config_key_is_blocked("cr\u{00e9}dential.x.helper"));
+        assert!(!git_config_key_is_blocked("includeif.\u{00e9}.pat\u{00e9}"));
+        assert!(!git_config_spec_is_blocked("pager\u{00e9}x=1"));
+        assert!(!env_has_unsafe_git_override(&[
+            "GIT_CONFIG_PARAMETERS='pager\u{00e9}x=1'".to_string()
+        ]));
+        // The ASCII cases still classify correctly after the fix.
+        assert!(git_config_key_is_blocked("pager.diff"));
+        assert!(git_config_key_is_blocked("credential.example.helper"));
     }
 
     #[test]

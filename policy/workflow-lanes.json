@@ -355,6 +355,20 @@
       "github_only_reason": "scheduled heavy Go fuzzing sweep; the fuzz targets and their seed corpora already run as regression tests locally and in every PR via go test, while the extended time-bounded mutation budget runs on a weekly GitHub cadence"
     },
     {
+      "id": "fuzz.yml/rust-fuzz",
+      "workflow_path": ".github/workflows/fuzz.yml",
+      "workflow_name": "Fuzz",
+      "job_id": "rust-fuzz",
+      "job_name": "Rust fuzz",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled heavy Rust cargo-fuzz sweep of the exec-guard classifiers; needs the nightly libFuzzer toolchain and a time-bounded mutation budget, so it runs on the weekly GitHub cadence rather than the PR path"
+    },
+    {
       "id": "hosted-controls.yml/verify-hosted-controls",
       "workflow_path": ".github/workflows/hosted-controls.yml",
       "workflow_name": "Hosted controls",

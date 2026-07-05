@@ -1,11 +1,13 @@
 name: Fuzz
 
-# Scheduled and on-demand Go fuzzing lane. The fuzz targets and their seed
+# Scheduled and on-demand fuzzing lane for the Go parsers (`Go fuzz`) and the
+# Rust exec-guard classifiers (`Rust fuzz`). The Go targets and their seed
 # corpora already run as regression tests on every PR via the normal `go test`
 # lanes; this workflow spends an extended, time-bounded budget mutating those
 # seeds to hunt for parser panics without adding a heavy harness to the PR path.
-# A crash writes a testdata/fuzz/<Target>/<hash> reproducer and fails the lane;
-# commit the reproducer, fix the parser, and re-run (see docs/fuzzing.md).
+# A crash writes a reproducer (Go: testdata/fuzz/<Target>/<hash>; Rust:
+# runtime/container/rust/fuzz/artifacts/<target>/) and fails the lane; commit
+# the reproducer, fix the parser, and re-run (see docs/fuzzing.md).
 
 on:
   schedule:
@@ -21,6 +23,10 @@ defaults:
 env:
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
   WORKCELL_BUILDX_VERSION: v0.35.0
+  # Dated nightly so a new upstream nightly cannot silently change or break the
+  # only lane that builds the Rust fuzz targets. Bump deliberately (and refresh
+  # fuzz/Cargo.lock if needed); see docs/fuzzing.md.
+  WORKCELL_RUST_FUZZ_NIGHTLY: nightly-2026-07-02
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -61,5 +67,103 @@ jobs:
         with:
           name: fuzz-reproducers
           path: internal/**/testdata/fuzz/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  rust-fuzz:
+    name: Rust fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: runtime/container/rust
+    env:
+      # Per-target wall-clock budget; three A3 exec-guard classifier targets.
+      WORKCELL_RUST_FUZZTIME: "180"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # libFuzzer needs the nightly toolchain (sanitizer + coverage codegen).
+      # rustup ships preinstalled on ubuntu-latest, so no extra pinned action.
+      - name: Install nightly toolchain
+        working-directory: .
+        run: |
+          rustup toolchain install "${WORKCELL_RUST_FUZZ_NIGHTLY}" --profile minimal --no-self-update
+          rustup run "${WORKCELL_RUST_FUZZ_NIGHTLY}" rustc --version
+
+      # cargo-fuzz is installed from the crate root (outside runtime/container/
+      # rust), so the exec-guard crate's vendored-sources config does not apply
+      # to this install; it fetches the pinned cargo-fuzz from crates.io.
+      - name: Install cargo-fuzz
+        working-directory: .
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+
+      # The exec-guard crate vendors crates.io for its reproducible *shipping*
+      # cdylib build (runtime/container/rust/.cargo/config.toml). The
+      # non-shipping fuzz crate additionally needs `libfuzzer-sys`, which is not
+      # vendored, so — exactly like the Go lane's `go mod download` — this lane
+      # resolves it from crates.io for the fuzz build only. The override is
+      # applied to an ephemeral CI checkout and never touches the committed
+      # vendored config used by release builds.
+      - name: Enable crates.io for the non-shipping fuzz build
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          cfg = pathlib.Path(".cargo/config.toml")
+          text = cfg.read_text()
+          assert 'replace-with = "vendored-sources"' in text, "vendored-sources anchor missing"
+          # Drop the vendored-sources replacement so crates.io resolves the
+          # unvendored libfuzzer-sys from its default registry for this
+          # non-shipping fuzz build only. Do NOT add a custom source pointing at
+          # the crates.io index: cargo rejects that as a self-referential
+          # duplicate of the built-in crates-io source. The committed config on
+          # disk is discarded with the runner workspace after the job.
+          text = text.replace('replace-with = "vendored-sources"\n', '')
+          cfg.write_text(text)
+          PY
+
+      # Enforce the committed fuzz/Cargo.lock: `cargo metadata --locked` resolves
+      # the dependency graph and fails if the lock is stale or would change, so a
+      # semver-compatible upstream release cannot silently drift the lane. (cargo
+      # fuzz build has no --locked flag, and cargo then uses the committed lock
+      # for the build below.)
+      - name: Verify the fuzz lockfile is current
+        run: cargo "+${WORKCELL_RUST_FUZZ_NIGHTLY}" metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
+
+      # Each target runs on its checked-in seed corpus, mutated for the budget.
+      # A crash makes `cargo fuzz run` exit non-zero and fails the lane.
+      - name: Run Rust fuzz targets
+        run: |
+          for target in path_classification env_filtering git_config_parsing; do
+            echo "[fuzz] ${target} (${WORKCELL_RUST_FUZZTIME}s)"
+            cargo "+${WORKCELL_RUST_FUZZ_NIGHTLY}" fuzz run "${target}" -- \
+              -max_total_time="${WORKCELL_RUST_FUZZTIME}"
+          done
+
+      # The build above resolves and writes fuzz/Cargo.lock; upload it so the
+      # pinned dependency graph can be committed (see docs/fuzzing.md). Runs even
+      # on a crash so the lock is captured regardless of the fuzzing outcome.
+      - name: Upload fuzz lockfile
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-fuzz-lockfile
+          path: runtime/container/rust/fuzz/Cargo.lock
+          if-no-files-found: warn
+          retention-days: 14
+
+      # A crash writes its minimized reproducer under fuzz/artifacts/<target>/.
+      # Persist it before the runner workspace is discarded so triage has the
+      # exact input to commit (see docs/fuzzing.md).
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-fuzz-reproducers
+          path: runtime/container/rust/fuzz/artifacts/**
           if-no-files-found: ignore
           retention-days: 14

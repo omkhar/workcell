@@ -1,0 +1,8 @@
+target
+artifacts
+coverage
+# Cargo.lock IS checked in (not ignored): it pins the fuzz harness dependency
+# graph so the scheduled lane is reproducible and cannot drift on a new
+# semver-compatible release. The lane runs `cargo metadata --locked` to enforce it.
+# NOTE: corpus/ is intentionally NOT ignored — the seed corpora are checked in
+# as regression seeds (see docs/fuzzing.md).

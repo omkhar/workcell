@@ -8,7 +8,7 @@ publish = false
 [lib]
 name = "workcell_exec_guard"
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "workcell-launcher"
@@ -16,6 +16,12 @@ path = "src/bin/workcell-launcher.rs"
 
 [dependencies]
 libc = "0.2.177"
+
+[lints.rust]
+# `cfg(fuzzing)` is set by cargo-fuzz for the fuzz build (see `fuzz/`) to gate
+# the `fuzz_api` re-export module. Register it so the normal build/test/clippy
+# lanes do not warn about the otherwise-unknown cfg name.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 
 [lints.clippy]
 # A4: every `unsafe {}` block must carry a `// SAFETY:` comment stating the
