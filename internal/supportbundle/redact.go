@@ -40,7 +40,11 @@ var (
 	// keyValueSecretRe masks the value after a secret-named key. The key name
 	// must strongly indicate a secret; bare "auth" is intentionally excluded
 	// so diagnostic fields like auth_status stay legible.
-	keyValueSecretRe = regexp.MustCompile(`(?i)((?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|session[_-]?key|credential)"?\s*[:=]\s*)("?)([^\s"',]+)`)
+	// The value alternates over a double-quoted string (which may contain
+	// spaces), a single-quoted string, or a bare unquoted token, so quoted
+	// passphrases like password="two words" or password='hunter2' are masked as
+	// a whole rather than partially or skipped.
+	keyValueSecretRe = regexp.MustCompile(`(?i)((?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|session[_-]?key|credential)"?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s"',]+)`)
 	jwtRe            = regexp.MustCompile(`eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]*`)
 	githubTokenRe    = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,255}`)
 	githubPatRe      = regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,255}`)
@@ -92,7 +96,7 @@ func (r Redactor) String(s string) string {
 		s = strings.ReplaceAll(s, r.Home, "~")
 	}
 	// Secret-named key=value first so the whole value is masked as a unit.
-	s = keyValueSecretRe.ReplaceAllString(s, `${1}${2}[REDACTED]`)
+	s = keyValueSecretRe.ReplaceAllString(s, `${1}[REDACTED]`)
 	for _, sr := range secretReplacers {
 		s = sr.re.ReplaceAllString(s, sr.repl)
 	}

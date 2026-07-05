@@ -74,20 +74,30 @@ func TestRedactorMasksBearer(t *testing.T) {
 
 func TestRedactorMasksSecretNamedKeyValues(t *testing.T) {
 	r := NewRedactor("")
-	cases := []string{
-		"password=hunter2trailing",
-		"api_key: myplaintextapikeyvalue",
-		"client_secret = s3cr3tvalueforclient",
-		`"session_key":"abcdef012345sessionvalue"`,
+	// Each case pairs an input with the sensitive fragments that must not survive.
+	// The single-quoted and spaced double-quoted forms are regressions for a
+	// value group that previously skipped quoted values or masked only the first
+	// word of a quoted passphrase.
+	cases := []struct {
+		in    string
+		leaks []string
+	}{
+		{"password=hunter2trailing", []string{"hunter2trailing"}},
+		{"api_key: myplaintextapikeyvalue", []string{"myplaintextapikeyvalue"}},
+		{"client_secret = s3cr3tvalueforclient", []string{"s3cr3tvalueforclient"}},
+		{`"session_key":"abcdef012345sessionvalue"`, []string{"abcdef012345sessionvalue"}},
+		{"password='hunter2single'", []string{"hunter2single"}},
+		{`password="two words here"`, []string{"two words here", "words here", "words"}},
+		{"token='multi word secret'", []string{"multi word secret", "word secret", "secret"}},
 	}
-	for _, in := range cases {
-		out := r.String(in)
+	for _, tc := range cases {
+		out := r.String(tc.in)
 		if !strings.Contains(out, "[REDACTED]") {
-			t.Fatalf("expected redaction of %q, got %q", in, out)
+			t.Fatalf("expected redaction of %q, got %q", tc.in, out)
 		}
-		for _, leak := range []string{"hunter2trailing", "myplaintextapikeyvalue", "s3cr3tvalueforclient", "abcdef012345sessionvalue"} {
+		for _, leak := range tc.leaks {
 			if strings.Contains(out, leak) {
-				t.Fatalf("secret value leaked from %q: %q", in, out)
+				t.Fatalf("secret value leaked from %q: %q", tc.in, out)
 			}
 		}
 	}
