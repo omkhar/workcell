@@ -125,9 +125,13 @@ The pull-request lanes (`ci.yml`, `security.yml`, `codeql.yml`, `mutation.yml`,
 `docs.yml`) run on the plain `pull_request` trigger. That means fork PR code
 executes with a **read-only** `GITHUB_TOKEN` and no access to environment-scoped
 secrets, so a malicious fork PR cannot exfiltrate the one stored secret or push
-anything. Heavy lanes (CodeQL, mutation, install verification) are additionally
-gated behind an `approved-heavy-ci` label so a fork cannot spend expensive
-compute or reach conditional code paths without maintainer opt-in.
+anything. Several heavy lanes (CodeQL, mutation, install verification) are additionally
+gated behind an `approved-heavy-ci` label so a fork cannot reach those paths
+without maintainer opt-in. This gate is **not** universal: the
+`reproducible-build-platform` lane in `ci.yml` runs its two ~45-minute image
+rebuilds on every `pull_request` (after `pr-shape`), so a fork PR can still
+consume that compute — a cost/DoS consideration, not a secret-exposure one,
+since the token and push boundaries above still hold.
 
 **The only `pull_request_target` workflow is
 [`pr-base-policy.yml`](../.github/workflows/pr-base-policy.yml)**, and it is the
@@ -155,7 +159,7 @@ long-lived stored secret** in the whole workflow set:
 
 | Secret | Used in | Scope | Purpose | Sensitivity |
 |---|---|---|---|---|
-| `WORKCELL_HOSTED_CONTROLS_TOKEN` | [`hosted-controls.yml`](../.github/workflows/hosted-controls.yml), [`release.yml`](../.github/workflows/release.yml) preflight | **Environment-scoped** (`hosted-controls-audit`), `allow_admin_bypass = false`, `deployment_branches = ["main"]`, `deployment_tags = ["v*"]` | Read-only admin-metadata token so `scripts/run-hosted-controls-audit.sh` can read rulesets, environments, and variables that the default `GITHUB_TOKEN` cannot | Read-only; **cannot sign, publish, or push** |
+| `WORKCELL_HOSTED_CONTROLS_TOKEN` | [`hosted-controls.yml`](../.github/workflows/hosted-controls.yml), [`release.yml`](../.github/workflows/release.yml) preflight | **Environment-scoped** (`hosted-controls-audit`), `allow_admin_bypass = false`, `deployment_branches = ["main"]`, `deployment_tags = ["v*"]` | Provisioned as a read-only admin-metadata token so `scripts/run-hosted-controls-audit.sh` can read rulesets, environments, and variables that the default `GITHUB_TOKEN` cannot | **Intended** read-only. The repo checks the secret's *name* and *environment*, not the granted token scopes — GitHub does not expose a consuming repo's ability to introspect a PAT/App token's scopes — so read-only is a **provisioning discipline, not a repo-enforced guarantee**. Provision it with least privilege accordingly |
 
 Everything else is ephemeral and auto-minted:
 
