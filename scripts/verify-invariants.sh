@@ -185,7 +185,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
 go_verify_citools() {
-  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools "$@"
+  # `go run` appends its own `exit status N` trailer to stderr when the compiled
+  # binary exits non-zero (see `go help run`). Strip just that trailer line so a
+  # failed migrated check's stderr matches the former inline shell checks exactly
+  # (D3 parity), while preserving the binary's real exit code.
+  local citools_stderr citools_rc=0
+  citools_stderr="$(mktemp "${TMPDIR:-/tmp}/workcell-citools-stderr.XXXXXX")"
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools "$@" 2>"${citools_stderr}" || citools_rc=$?
+  grep -vE '^exit status [0-9]+$' "${citools_stderr}" >&2 || true
+  rm -f "${citools_stderr}"
+  return "${citools_rc}"
 }
 
 go_verify_hostutil() {
