@@ -1,6 +1,9 @@
 {
   "version": 1,
   "artifacts": {
+    "bench.yml": {
+      "exec-guard-bench-results": 14
+    },
     "ci.yml": {
       "workcell-ci-install-candidate": 7
     },

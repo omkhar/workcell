@@ -38,6 +38,7 @@ adds the matching `approved-large-certified-adapter` PR label.
 | `pin-hygiene.yml` | scheduled re-validation of pinned inputs plus upstream refresh drift across providers, Linux base images, toolchains, and release-build pins |
 | `mutation.yml` | weekly-cron, manual, and `approved-heavy-ci`-gated lane that runs the mutation-score gate in the validator image via `scripts/ci/job-mutation.sh` and `scripts/ci/run-mutation-in-validator.sh` (GitHub-only; the same gate also runs locally in the release-preflight validate profile) |
 | `fuzz.yml` | weekly-cron and manual lane that spends an extended, time-bounded budget fuzzing the Go parser targets whose seed corpora already run as regression tests on every PR; see [fuzzing.md](fuzzing.md) |
+| `bench.yml` | optional weekly-cron and manual lane that builds the exec-guard cdylib and times the LD_PRELOAD shim's allow-path classification overhead against the unhooked libc baseline across two runs; not on the PR path; see [syscall-shim-benchmarks.md](syscall-shim-benchmarks.md) |
 | `upstream-refresh.yml` | scheduled and manual candidate generation for reviewed upstream pins, with later signed host-side PR publication |
 | `hosted-controls.yml` | drift detection for GitHub-hosted controls that live outside git |
 | `release.yml` | tagged release preflight, publication, signatures, SBOMs, manifests, and attestations |

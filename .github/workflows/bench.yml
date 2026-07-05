@@ -1,0 +1,71 @@
+name: Bench
+
+# Optional, non-PR-blocking microbenchmark lane for the workcell_exec_guard
+# LD_PRELOAD shim (runtime/container/rust). It builds the exec-guard cdylib,
+# then times the guard's ALLOW-path classification overhead on the interposed
+# exec/spawn family calls against the unhooked libc baseline
+# (scripts/bench/run-exec-guard-bench.sh), repeating the measurement across two
+# runs to demonstrate the numbers are stable. Results are printed to the job log
+# and uploaded as an artifact; the reviewed baseline numbers and methodology
+# live in docs/syscall-shim-benchmarks.md. This lane is scheduled and on-demand
+# only -- it never runs on the PR path.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exec-guard-bench:
+    name: exec-guard bench
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # Build the shipping cdylib from its committed vendored sources (offline,
+      # locked). rustup honors the crate's rust-toolchain.toml pin, so the guard
+      # is built with the same reviewed toolchain the release image uses. --lib
+      # builds only the library targets, producing libworkcell_exec_guard.so.
+      - name: Build the exec-guard cdylib
+        working-directory: runtime/container/rust
+        run: |
+          rustup show >/dev/null
+          cargo build --release --locked --offline --lib
+
+      # Two full measurement passes (WORKCELL_BENCH_RUNS=2) so the cross-run
+      # stability of the hooked-median numbers is visible in the log and the
+      # uploaded report -- the C5 validation gate.
+      - name: Run exec-guard microbenchmark
+        env:
+          WORKCELL_BENCH_ITERATIONS: "5000"
+          WORKCELL_BENCH_WARMUP: "500"
+          WORKCELL_BENCH_RUNS: "2"
+          WORKCELL_BENCH_OUTPUT: exec-guard-bench-results.md
+        run: ./scripts/bench/run-exec-guard-bench.sh
+
+      # Persist the Markdown report before the runner workspace is discarded so
+      # the measured numbers can be reviewed and transcribed into
+      # docs/syscall-shim-benchmarks.md.
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exec-guard-bench-results
+          path: exec-guard-bench-results.md
+          if-no-files-found: warn
+          retention-days: 14

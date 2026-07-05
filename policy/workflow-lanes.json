@@ -3,6 +3,20 @@
   "policy": "policy/workflow-lane-policy.json",
   "lanes": [
     {
+      "id": "bench.yml/exec-guard-bench",
+      "workflow_path": ".github/workflows/bench.yml",
+      "workflow_name": "Bench",
+      "job_id": "exec-guard-bench",
+      "job_name": "exec-guard bench",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "optional exec-guard microbenchmark lane; it builds the cdylib and times the LD_PRELOAD shim's classification overhead on Linux, which the macOS host baseline cannot mirror, so the reviewed numbers come from this scheduled/on-demand GitHub lane"
+    },
+    {
       "id": "ci.yml/container-smoke",
       "workflow_path": ".github/workflows/ci.yml",
       "workflow_name": "CI",
