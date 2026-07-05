@@ -226,7 +226,10 @@ Adapters should stay thin. A new or changed adapter should:
 4. update the provider matrix and adapter-control-plane docs
 
 See [workflows/adapter-porting.md](workflows/adapter-porting.md) for the
-porting checklist.
+porting checklist and
+[docs/extending-adapters.md](docs/extending-adapters.md) for worked examples
+(adding a credential type, extending an adapter) annotated with the invariants
+each step touches.
 
 ## Package naming
 
