@@ -17,6 +17,34 @@
       "github_only_reason": "optional exec-guard microbenchmark lane; it builds the cdylib and times the LD_PRELOAD shim's classification overhead on Linux, which the macOS host baseline cannot mirror, so the reviewed numbers come from this scheduled/on-demand GitHub lane"
     },
     {
+      "id": "ci-insights.yml/cost-report",
+      "workflow_path": ".github/workflows/ci-insights.yml",
+      "workflow_name": "CI insights",
+      "job_id": "cost-report",
+      "job_name": "CI cost report",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled read-only CI cost-visibility report; it aggregates per-workflow wall-clock from the GitHub Actions run history via the runs API and writes to the job summary, so it depends on GitHub-hosted run metadata and never gates a PR or release"
+    },
+    {
+      "id": "ci-insights.yml/flaky-report",
+      "workflow_path": ".github/workflows/ci-insights.yml",
+      "workflow_name": "CI insights",
+      "job_id": "flaky-report",
+      "job_name": "Flaky-test report",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled read-only flake report; it reads GitHub-hosted workflow-run history and the tracked flaky-test issue list to surface flake candidates in the job summary, so it depends on GitHub-hosted metadata and never gates a PR or release"
+    },
+    {
       "id": "ci.yml/container-smoke",
       "workflow_path": ".github/workflows/ci.yml",
       "workflow_name": "CI",
@@ -141,6 +169,9 @@
         "push",
         "workflow_dispatch"
       ],
+      "required_labels": [
+        "approved-heavy-ci"
+      ],
       "profiles": [
         "pr-parity",
         "release-preflight",
@@ -166,6 +197,9 @@
         "pull_request",
         "push",
         "workflow_dispatch"
+      ],
+      "required_labels": [
+        "approved-heavy-ci"
       ],
       "profiles": [
         "pr-parity",

@@ -92,7 +92,7 @@ jobs:
       - name: Install nightly toolchain
         working-directory: .
         run: |
-          rustup toolchain install "${WORKCELL_RUST_FUZZ_NIGHTLY}" --profile minimal --no-self-update
+          ./scripts/retry.sh rustup toolchain install "${WORKCELL_RUST_FUZZ_NIGHTLY}" --profile minimal --no-self-update
           rustup run "${WORKCELL_RUST_FUZZ_NIGHTLY}" rustc --version
 
       # cargo-fuzz is installed from the crate root (outside runtime/container/
@@ -100,7 +100,7 @@ jobs:
       # to this install; it fetches the pinned cargo-fuzz from crates.io.
       - name: Install cargo-fuzz
         working-directory: .
-        run: cargo install cargo-fuzz --version 0.13.2 --locked
+        run: ./scripts/retry.sh cargo install cargo-fuzz --version 0.13.2 --locked
 
       # The exec-guard crate vendors crates.io for its reproducible *shipping*
       # cdylib build (runtime/container/rust/.cargo/config.toml). The
