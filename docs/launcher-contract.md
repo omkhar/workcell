@@ -56,13 +56,17 @@ confined to the trusted `PATH`, but **not** absolute-resolved and **not**
 fail-closed — a missing `curl` leaves the preflight URL empty rather than raising
 `Missing trusted host tool`, so `curl` is optional, not required.
 
-This table covers the tools every **local** launch resolves. Two prerequisites
+This table covers the tools every **local** launch resolves; a few prerequisites
 sit outside it. Remote-preview backends probe extra tools via
 `missing_launch_host_tools_csv` (`scripts/workcell:6708`) — `aws` and
-`session-manager-plugin` for the `aws-ec2-ssm` backend, `gcloud` for `gcp-vm` —
-and image builds require a system `docker-buildx` plugin binary
+`session-manager-plugin` for the `aws-ec2-ssm` backend, `gcloud` for `gcp-vm`.
+Image builds require a system `docker-buildx` plugin binary
 (`ensure_workcell_trusted_buildx`, `scripts/lib/trusted-docker-client.sh`), which
-aborts with `Missing trusted docker-buildx binary` when none is found.
+aborts with `Missing trusted docker-buildx binary` when none is found. And the
+`workcell publish-pr` subcommand resolves `gh` on its non-dry-run path (required;
+via the Go publish helper `internal/publishpr`, `ResolveHostTool(ctx, "gh", true,
+…)`), failing with `Missing trusted host tool: gh` at publication time if it is
+absent.
 
 ### Environment expectations
 
