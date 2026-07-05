@@ -1,0 +1,1 @@
+GIT_CONFIG_PARAMETERS='core.fsmonitor=false'

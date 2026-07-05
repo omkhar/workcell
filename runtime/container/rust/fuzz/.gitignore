@@ -1,0 +1,8 @@
+target
+artifacts
+coverage
+# Cargo.lock for this non-shipping fuzz harness is resolved by the scheduled
+# fuzz lane from the pinned lib dependency; it is not vendored with the crate.
+Cargo.lock
+# NOTE: corpus/ is intentionally NOT ignored — the seed corpora are checked in
+# as regression seeds (see docs/fuzzing.md).

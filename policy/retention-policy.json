@@ -5,7 +5,8 @@
       "workcell-ci-install-candidate": 7
     },
     "fuzz.yml": {
-      "fuzz-reproducers": 14
+      "fuzz-reproducers": 14,
+      "rust-fuzz-reproducers": 14
     },
     "release.yml": {
       "workcell-release-preflight": 90,

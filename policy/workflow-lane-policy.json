@@ -84,6 +84,11 @@
       "local_mode": "none",
       "github_only_reason": "scheduled heavy Go fuzzing sweep; the fuzz targets and their seed corpora already run as regression tests locally and in every PR via go test, while the extended time-bounded mutation budget runs on a weekly GitHub cadence"
     },
+    "fuzz.yml/rust-fuzz": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "scheduled heavy Rust cargo-fuzz sweep of the exec-guard classifiers; needs the nightly libFuzzer toolchain and a time-bounded mutation budget, so it runs on the weekly GitHub cadence rather than the PR path"
+    },
     "hosted-controls.yml/verify-hosted-controls": {
       "profiles": ["release-preflight"],
       "authority": "github-only",
