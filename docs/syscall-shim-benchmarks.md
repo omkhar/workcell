@@ -89,29 +89,30 @@ Variance is controlled by:
 
 ## Results
 
-**Status: being re-measured on the `bench.yml` lane** after the methodology fix
-that scrubs `LD_PRELOAD` from measured children and makes `execvp` use `PATH`
-search; the tables below are refreshed from that run. Numbers are shared-runner
-relative overheads, not absolute guarantees; re-measure on the target host for
-absolute figures.
+**Status: measured on the `bench.yml` lane** (`ubuntu-latest` GitHub-hosted
+runner, release cdylib, glibc). Numbers are shared-runner relative overheads, not
+absolute guarantees; re-measure on the target host for absolute figures. On the
+allow path the guard's classification adds ~265us (~48%) per `exec*` launch and
+~57us (~12%) per `posix_spawn`; a real container additionally pays the amortized
+per-child cost of loading the preloaded `.so` into each launched process.
 
 ### Allow-path overhead (median of 5000 samples, 2 runs)
 
 | Mode | Unhooked median (ns) | Hooked median (ns) | Delta (ns) | Delta (%) |
 |---|---|---|---|---|
-| `execve` | 575336 | 1015989 | 440653 | 76.6 |
-| `execv` | 570947 | 1009646 | 438699 | 76.8 |
-| `execvp` | 573745 | 1013812 | 440067 | 76.7 |
-| `posix_spawn` | 486236 | 691238 | 205002 | 42.2 |
+| `execve` | 553855 | 818320 | 264465 | 47.7 |
+| `execv` | 551629 | 818568 | 266939 | 48.4 |
+| `execvp` | 565185 | 827073 | 261888 | 46.3 |
+| `posix_spawn` | 467863 | 524429 | 56566 | 12.1 |
 
 ### Cross-run stability (hooked median)
 
 | Mode | Min (ns) | Max (ns) | Spread (ns) | Spread (%) |
 |---|---|---|---|---|
-| `execve` | 1015989 | 1019361 | 3372 | 0.3 |
-| `execv` | 1009497 | 1009646 | 149 | 0.0 |
-| `execvp` | 1013812 | 1016247 | 2435 | 0.2 |
-| `posix_spawn` | 691238 | 693251 | 2013 | 0.3 |
+| `execve` | 818320 | 826893 | 8573 | 1.0 |
+| `execv` | 815793 | 818568 | 2775 | 0.3 |
+| `execvp` | 824098 | 827073 | 2975 | 0.4 |
+| `posix_spawn` | 524429 | 524850 | 421 | 0.1 |
 
 ## Filling in the numbers
 

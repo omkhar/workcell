@@ -14,14 +14,6 @@ on:
   schedule:
     - cron: "0 8 * * 1"
   workflow_dispatch:
-  # TEMPORARY (C5, removed before merge): re-measure on this PR after the
-  # methodology fix, since workflow_dispatch cannot target a workflow not yet on
-  # the default branch.
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/bench.yml"
-      - "scripts/bench/**"
 
 permissions: {}
 
