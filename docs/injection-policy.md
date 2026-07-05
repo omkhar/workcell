@@ -140,6 +140,14 @@ provisioned for Copilot (Copilot opts out of shared credentials).
 | `modes` | array of mode ids | optional | all credential keys | all modes | restrict the entry to the listed modes |
 <!-- schema:credentials-entry:end -->
 
+> **Scope:** this table lists the credential-entry keys accepted by the
+> injection-policy validator *after* credential resolution, and it is
+> machine-checked against that validator. Resolver-backed sources — for example
+> `codex-home-auth-file` and `claude-macos-keychain` — additionally accept
+> `resolver` and `materialization` keys, which the credential resolver
+> (`internal/authresolve`) consumes to produce `source` before this validation;
+> they are out of scope for this post-resolution table.
+
 ### `[ssh]` keys
 
 <!-- schema:ssh:begin -->
