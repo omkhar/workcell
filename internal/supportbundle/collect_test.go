@@ -39,14 +39,19 @@ func TestCollectSessionsKeepsNewestOnTruncation(t *testing.T) {
 // file metadata (presence/size/mtime) recorded.
 func TestCollectAuditPointersSkipsOutOfStatePaths(t *testing.T) {
 	cfg := buildFixture(t, fixtureOptions{sessionStatus: "running"})
-	outside := filepath.Join(t.TempDir(), "id_rsa")
-	mustWrite(t, outside, "PRIVATE")
+	ssh := filepath.Join(cfg.RealHome, ".ssh")
+	mustMkdir(t, ssh)
+	mustWrite(t, filepath.Join(ssh, "id_rsa"), "PRIVATE")
 	dir := filepath.Join(cfg.ColimaStateRoot, "wcl-strict")
-	rec := sessions.SessionRecord{Version: 1, SessionID: "sess-evil", Profile: "wcl-strict", TargetKind: "vm", TargetProvider: "colima", TargetID: "default", TargetAssuranceClass: "strict", RuntimeAPI: "docker", WorkspaceTransport: "direct", Agent: "codex", Mode: "strict", Status: "running", Workspace: cfg.RepoRoot, StartedAt: "2026-07-04T09:00:00Z", AuditLogPath: outside}
-	writeSessionRecord(t, dir, "sess-evil.json", rec)
-	for _, p := range Collect(cfg).AuditPointers.Pointers {
-		if p.SessionID == "sess-evil" && p.Present {
-			t.Fatalf("statted an out-of-state audit path %q", outside)
+	// Directly outside the state tree, and via a ".." traversal that textually
+	// starts under a state root; both must be refused before statting.
+	for i, p := range []string{filepath.Join(ssh, "id_rsa"), filepath.Join(cfg.ColimaStateRoot, "..", ".ssh", "id_rsa")} {
+		rec := sessions.SessionRecord{Version: 1, SessionID: fmt.Sprintf("sess-evil%d", i), Profile: "wcl-strict", TargetKind: "vm", TargetProvider: "colima", TargetID: "default", TargetAssuranceClass: "strict", RuntimeAPI: "docker", WorkspaceTransport: "direct", Agent: "codex", Mode: "strict", Status: "running", Workspace: cfg.RepoRoot, StartedAt: "2026-07-04T09:00:00Z", AuditLogPath: p}
+		writeSessionRecord(t, dir, rec.SessionID+".json", rec)
+	}
+	for _, ptr := range Collect(cfg).AuditPointers.Pointers {
+		if strings.HasPrefix(ptr.SessionID, "sess-evil") && ptr.Present {
+			t.Fatalf("statted an out-of-state audit path (session %s)", ptr.SessionID)
 		}
 	}
 }

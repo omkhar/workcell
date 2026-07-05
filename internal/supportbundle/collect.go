@@ -400,13 +400,32 @@ func collectAuditPointers(cfg Config, r Redactor) AuditSection {
 }
 
 // pathUnderRoots reports whether p is exactly, or a descendant of, one of roots.
+// Both sides are canonicalized first so a value like <root>/../.ssh/id_rsa (or a
+// symlink under a root) cannot slip through the prefix check.
 func pathUnderRoots(p string, roots []string) bool {
+	cp := canonicalPath(p)
 	for _, root := range roots {
-		if root != "" && (p == root || strings.HasPrefix(p, root+string(filepath.Separator))) {
+		if root == "" {
+			continue
+		}
+		cr := canonicalPath(root)
+		if cp == cr || strings.HasPrefix(cp, cr+string(filepath.Separator)) {
 			return true
 		}
 	}
 	return false
+}
+
+// canonicalPath absolutizes p, resolves symlinks when it exists, and otherwise
+// cleans it (collapsing ".." traversal) so string-prefix comparisons are sound.
+func canonicalPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return filepath.Clean(p)
 }
 
 func stateRoots(cfg Config) []string {

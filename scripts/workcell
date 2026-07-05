@@ -3677,7 +3677,31 @@ session_usage() {
 # run_go_hostutil_preserve_exit recovers the child's real exit code from its
 # "exit status N" trailer so usage failures keep their code-2 contract.
 support_bundle_main() {
-  local rc=0
+  local rc=0 invocation_pwd="${PWD}"
+  # The helper runs from ROOT_DIR, so absolutize a relative --output against the
+  # operator's current directory before delegating; otherwise the bundle would
+  # be written into (or fail against) the install checkout instead of their cwd.
+  local -a args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output=*)
+        local val="${1#--output=}"
+        [[ -n "${val}" && "${val}" != /* ]] && val="${invocation_pwd}/${val}"
+        args+=("--output=${val}")
+        shift
+        ;;
+      --output)
+        local val="${2:-}"
+        [[ -n "${val}" && "${val}" != /* ]] && val="${invocation_pwd}/${val}"
+        args+=("--output" "${val}")
+        shift 2
+        ;;
+      *)
+        args+=("$1")
+        shift
+        ;;
+    esac
+  done
   run_go_hostutil_preserve_exit support-bundle-cli \
     "--repo-root=${ROOT_DIR}" \
     "--launcher=${BASH_SOURCE[0]}" \
@@ -3686,7 +3710,7 @@ support_bundle_main() {
     "--colima-state-root=${COLIMA_STATE_ROOT:-}" \
     "--host-os=$(detected_host_os)" \
     "--host-arch=$(detected_host_arch)" \
-    "$@" || rc=$?
+    "${args[@]}" || rc=$?
   exit "${rc}"
 }
 
