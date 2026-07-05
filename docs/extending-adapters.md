@@ -40,7 +40,11 @@ substitute your real key and target.
 
 2. **(Optional) Register a host resolver.** Only if the key is resolver-backed,
    add it to `allowedResolvers` in
-   `internal/authresolve/resolve_credential_sources.go`. Resolvers materialize to
+   `internal/authresolve/resolve_credential_sources.go`, and add the matching
+   `resolveCredential` and `ProbeResolverReadiness` cases in
+   `resolve_provider_credentials.go` — the `allowedResolvers` entry only makes
+   policy validation accept the name; without the resolution/probe cases, launch
+   returns `unsupported credential resolver`. Resolvers materialize to
    ordinary files under the per-launch injection bundle host-side; they never
    pass Keychain or host-agent access into the runtime.
    - Invariant [§1 host secrets stay outside the default trust boundary](invariants.md#1-host-secrets-stay-outside-the-default-trust-boundary):
@@ -82,6 +86,18 @@ substitute your real key and target.
 
 6. **Test.** Extend `internal/adapters/adapters_test.go` and the injection render
    tests, then run `go test ./internal/adapters/... ./internal/injection/...`.
+
+> **The registration spans layers — grep to find them all.** A credential key is
+> also referenced by the host auth-management surfaces: `workcell auth set`
+> staging destinations (`canonicalCredentialDestinations` in
+> `internal/authpolicy/staging.go`) and `--auth-status` ordering/summaries
+> (`statusOrder`, `bootstrapSummaryForCredential` in `internal/authpolicy/`),
+> plus the hard-coded `supported_credential_keys` list in `scripts/workcell`.
+> These sites are intentionally spread across the validation, resolution,
+> staging, and status layers, so grep the tree for an existing key (for example
+> `codex_auth`) and mirror every hit — a key that lands only in the registry
+> renders from hand-written TOML but fails `workcell auth set` or reports
+> `provider_auth_mode=none`.
 
 ### Checklist touched (add a credential type)
 
@@ -156,6 +172,10 @@ unsafe flag, or promote a planned adapter such as `antigravity`.
    scenario/smoke path. No adapter change is complete without matching invariant
    coverage ([../workflows/adapter-porting.md](../workflows/adapter-porting.md),
    step 6).
+   - Promotion gate: before `provider-matrix.md` claims a supported Tier 1, run
+     the live provider certification (`provider-e2e`) — deterministic tests and a
+     smoke path are necessary but not sufficient. A supported-tier claim without
+     that live-certification evidence is exactly what the release gate forbids.
 
 7. **Update the docs in the same change.** Update
    [provider-matrix.md](provider-matrix.md),
