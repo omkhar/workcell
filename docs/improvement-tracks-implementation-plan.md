@@ -387,8 +387,8 @@ isolation would be a stronger and lighter boundary than one shared Colima VM.
 
 - Steps: split `scripts/workcell` (8,910 lines) into sourced modules (host
   detection, environment scrubbing, wrapper assembly, dispatch); write
-  `docs/launcher-contract.md` (required tools, environment expectations,
-  exit codes, test override flags).
+  [`launcher-contract.md`](launcher-contract.md) (required tools, environment
+  expectations, exit codes, test override flags).
 - Exit gates: behavior-identical on the scenario suite; contract doc matches
   implementation.
 - Validation: scenario suite before/after; bats coverage for extracted
