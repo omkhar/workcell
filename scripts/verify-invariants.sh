@@ -2766,7 +2766,7 @@ WORKCELL_COLIMA_TIMEOUT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-colima-timeout-
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" terminate_process_tree_by_pid
   printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_go_hostutil_preserve_exit
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" run_go_hostutil_preserve_exit
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_host_colima_with_timeout
   printf '\n'
@@ -2843,12 +2843,12 @@ WORKCELL_RUNTIME_BUILD_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-runtime-bu
 } >"${WORKCELL_RUNTIME_BUILD_RETRY_HARNESS}"
 bash "${WORKCELL_RUNTIME_BUILD_RETRY_HARNESS}"
 
-if ! rg -q 'run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env' "${ROOT_DIR}/scripts/workcell" ||
-  ! rg -q 'GOPATH="\$\{GOPATH\}"' "${ROOT_DIR}/scripts/workcell" ||
-  ! rg -q 'GOMODCACHE="\$\{GOMODCACHE\}"' "${ROOT_DIR}/scripts/workcell" ||
-  ! rg -q 'GOCACHE="\$\{GOCACHE\}"' "${ROOT_DIR}/scripts/workcell" ||
-  ! rg -q '"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches" >&2
+if ! rg -q 'run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" ||
+  ! rg -q 'GOPATH="\$\{GOPATH\}"' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" ||
+  ! rg -q 'GOMODCACHE="\$\{GOMODCACHE\}"' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" ||
+  ! rg -q 'GOCACHE="\$\{GOCACHE\}"' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" ||
+  ! rg -q '"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh"; then
+  echo "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches" >&2
   exit 1
 fi
 
