@@ -20,10 +20,14 @@ recognises. Every claim here is derived from `scripts/workcell`,
 
 ### Required host tools
 
-The launcher never trusts a bare `PATH` lookup for a host binary. Its core tools
-(`go`, `colima`, `docker`) are resolved to an absolute path through one of two
-resolvers, both of which abort the launch (printing `Missing trusted host tool:
-<name>` to stderr and exiting `1`) when no trusted candidate is executable:
+The launcher avoids bare, unpinned `PATH` lookups for host binaries: every host
+tool is either absolute-resolved or run by name on the pinned `TRUSTED_HOST_PATH`
+(never an inherited `PATH`). Some tools (`go`, `colima`, and `git`'s
+`HOST_GIT_BIN`) are absolute-resolved through one of two resolvers, both of which
+abort the launch (printing `Missing trusted host tool: <name>` to stderr and
+exiting `1`) when no trusted candidate is executable; others (`docker` in the main
+path, and `git`/`curl` via `run_clean_host_command`) are run by name on
+`TRUSTED_HOST_PATH`, as the rows and notes below detail. The two resolvers are:
 
 - `resolve_fixed_host_tool <name> <candidate>...`
   (`scripts/lib/launcher/host-exec.sh`) returns the first caller-supplied candidate
