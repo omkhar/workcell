@@ -89,13 +89,22 @@ derives a small set of host-context variables.
 `#!/usr/bin/env -S -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash`,
 so `env -i` discards the inherited environment and starts `bash` with only the
 fixed `PATH` and cleared `BASH_ENV`/`ENV`. **This wholesale clear only happens
-when the shebang is honored.** When the launcher is instead invoked as
-`bash scripts/workcell` / `/bin/bash -p scripts/workcell` — the form the repo's own
-verify-invariants and publish-pr harnesses use — the shebang is bypassed, `env -i`
-never runs, and the inherited environment is *not* wholesale cleared; there, only
-the explicit `scrub_host_process_env` list (below) plus the `PATH` reset apply, so
-security reasoning must not assume unlisted variables are absent on that path. In
-both cases the `PATH` string is frozen as `readonly TRUSTED_HOST_PATH` and
+when the shebang is honored.** When the launcher is instead invoked directly by an
+interpreter the shebang is bypassed, `env -i` never runs, and only the explicit
+`scrub_host_process_env` list (below) plus the `PATH` reset apply — and the two
+such forms differ on startup-file vectors:
+
+- `/bin/bash -p scripts/workcell` (the privileged form the repo's own
+  verify-invariants and publish-pr harnesses use) ignores `BASH_ENV`/`ENV`, so
+  those vectors are inert even before the scrub.
+- plain `bash scripts/workcell` (no `-p`) **processes `BASH_ENV` before the script
+  body runs**, so a `BASH_ENV` startup-file injection has already executed by the
+  time `scrub_host_process_env` unsets the variable — the scrub is *not* a defence
+  against it on that path.
+
+Either way, security reasoning must not assume unlisted variables are absent on a
+shebang-bypassed launch. In both cases the `PATH` string is frozen as
+`readonly TRUSTED_HOST_PATH` and
 re-exported as `PATH` (`scripts/workcell:5-6`), and it is the `PATH` handed to
 every sanitised host command via `env -i PATH="${TRUSTED_HOST_PATH}"`
 (`host-exec.sh:49,77`).
@@ -171,7 +180,7 @@ than the gate that decides whether it is **honoured** (see their rows).
 | `WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT` | Two distinct effects: (a) at startup its presence (`=1`) makes `scrub_host_process_env` **skip unsetting** the four support-matrix vars; (b) it is one condition the detectors check before honouring those overrides. | Effect (a) is gated **only** on the `=1` marker (`workcell:12-17`) — *not* parent-verified. Effect (b) additionally requires `support_matrix_host_override_allowed` to confirm a recognised validation-harness parent (`host-detect.sh`). |
 | `WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS` / `_ARCH` / `_DISTRO` / `_DISTRO_VERSION` | Forces the detected host OS / arch / distro / distro version. | **Unset at startup only when the `SANITIZED_ENTRYPOINT` marker is absent** (`workcell:12-17`); with the marker set they survive startup even under a non-harness parent, but the detectors **honour** them only when `support_matrix_host_override_allowed` returns `0` (marker **and** recognised parent). So on the shebang-bypassed `bash scripts/workcell` path they can be *present but ignored*, not guaranteed absent. |
 | `WORKCELL_TEST_CODEX_AUTH_FILE` | Reserved harness variable name — **rejected legacy input**, not a credential override: no launcher resolver consumes it (the Codex resolver no longer recognises it; see `docs/security/`). | If non-empty in the launcher's own environment the launcher **refuses to run**: `exit 2`, "reserved for the Workcell test harness" (`workcell:8150-8152`). |
-| `WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE` | Reserved harness variable name; not consumed as a credential override by the launcher. | Same reject-on-presence guard: `exit 2` (`workcell:8153-8156`). |
+| `WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE` | **Dual role.** An *operator-supplied* value is rejected; but the launcher's own self-staging probe (`--synthetic-claude-export`, `workcell:5053`) sets this var **internally** so the Claude credential resolver materialises the synthetic export (`internal/injection/prepare_bundle.go:434`, `internal/authresolve/resolve_provider_credentials.go:16`). | Reject-on-presence guard for *inherited* operator input: `exit 2` if set in the launcher's own env (`workcell:8403-8404`). The internal staging happens later, inside bundle prep, after that guard. |
 | `WORKCELL_TEST_FAIL_AFTER_PROFILE_REFRESH` | Would request the mid-refresh fault injection. | The env variable is **unconditionally unset** at startup (`workcell:11`). The fault is reachable only through the hidden CLI flag `--test-fail-after-profile-refresh`, which sets the internal `TEST_FAIL_AFTER_PROFILE_REFRESH=1` (`workcell:7883-7884`) and triggers `exit 88`. |
 
 These gates are **harness conventions, not a security boundary against a local
