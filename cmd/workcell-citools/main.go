@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/gitconfigblocklist"
 	"github.com/omkhar/workcell/internal/metadatautil"
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
@@ -92,6 +93,7 @@ func subcommands() []subcommand {
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
 		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
+		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
 	}
 }
 
@@ -488,4 +490,12 @@ func citoolsRepoRoot() (string, error) {
 // cmdTreeCompare absorbs the former workcell-tree-compare binary.
 func cmdTreeCompare(args []string) error {
 	return paritytree.CompareDirectoryTrees(args[0], args[1])
+}
+
+// cmdGitConfigBlocklistParity runs the git-config blocklist parity
+// invariant migrated out of scripts/verify-invariants.sh; it fails
+// (exit 1 via die()) with the shell's original stderr messages when a
+// TOML key or prefix/suffix pattern is missing from any enforcer.
+func cmdGitConfigBlocklistParity(args []string) error {
+	return gitconfigblocklist.Check(args[0])
 }

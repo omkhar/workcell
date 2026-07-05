@@ -9073,67 +9073,13 @@ done
 # policy/git-config-blocklist.toml must appear in all three enforcement
 # points (the host launcher, the in-container git wrapper, and the
 # in-container LD_PRELOAD exec guard) so adding a key requires editing
-# the TOML and getting all three updates in one PR.
-GIT_BLOCKLIST_TOML="${ROOT_DIR}/policy/git-config-blocklist.toml"
-GIT_BLOCKLIST_ENFORCERS=(
-  "${ROOT_DIR}/scripts/workcell"
-  "${ROOT_DIR}/runtime/container/bin/git"
-  "${ROOT_DIR}/runtime/container/rust/src/lib.rs"
-)
-git_blocklist_keys=()
-while IFS= read -r key; do
-  git_blocklist_keys+=("${key}")
-done < <(awk '
-  /^keys[[:space:]]*=[[:space:]]*\[/ { in_keys = 1; next }
-  in_keys && /^\]/ { in_keys = 0; next }
-  in_keys && /^[[:space:]]*"/ {
-    sub(/^[[:space:]]*"/, "")
-    sub(/",?[[:space:]]*$/, "")
-    print
-  }
-' "${GIT_BLOCKLIST_TOML}")
-if ((${#git_blocklist_keys[@]} == 0)); then
-  echo "policy/git-config-blocklist.toml had no [keys] entries; parity check needs at least one" >&2
-  exit 1
-fi
-for enforcer in "${GIT_BLOCKLIST_ENFORCERS[@]}"; do
-  if [[ ! -r "${enforcer}" ]]; then
-    echo "git-config blocklist enforcer missing or unreadable: ${enforcer}" >&2
-    exit 1
-  fi
-  for key in "${git_blocklist_keys[@]}"; do
-    if ! grep -Fq -- "${key}" "${enforcer}"; then
-      echo "git-config blocklist key '${key}' from policy/git-config-blocklist.toml is missing in ${enforcer}" >&2
-      echo "Add the same key to that enforcer or remove it from the TOML." >&2
-      exit 1
-    fi
-  done
-done
-git_blocklist_prefix_suffix=()
-while IFS=$'\t' read -r prefix suffix; do
-  git_blocklist_prefix_suffix+=("${prefix}|${suffix}")
-done < <(awk '
-  /^\[\[prefix_suffix_patterns\]\]/ { in_block = 1; prefix = ""; suffix = ""; next }
-  in_block && /^prefix[[:space:]]*=[[:space:]]*"/ { sub(/^prefix[[:space:]]*=[[:space:]]*"/, ""); sub(/"[[:space:]]*$/, ""); prefix = $0; next }
-  in_block && /^suffix[[:space:]]*=[[:space:]]*"/ { sub(/^suffix[[:space:]]*=[[:space:]]*"/, ""); sub(/"[[:space:]]*$/, ""); suffix = $0; next }
-  in_block && (/^\[\[/ || /^[[:space:]]*$/) {
-    if (prefix != "" && suffix != "") { printf "%s\t%s\n", prefix, suffix }
-    in_block = (/^\[\[prefix_suffix_patterns\]\]/) ? 1 : 0
-    prefix = ""; suffix = ""
-  }
-  END {
-    if (in_block && prefix != "" && suffix != "") { printf "%s\t%s\n", prefix, suffix }
-  }
-' "${GIT_BLOCKLIST_TOML}")
-for pattern in "${git_blocklist_prefix_suffix[@]}"; do
-  prefix="${pattern%|*}"
-  suffix="${pattern#*|}"
-  for enforcer in "${GIT_BLOCKLIST_ENFORCERS[@]}"; do
-    if ! grep -Fq -- "${prefix}" "${enforcer}" || ! grep -Fq -- "${suffix}" "${enforcer}"; then
-      echo "git-config blocklist prefix+suffix pattern '${prefix}*${suffix}' missing in ${enforcer}" >&2
-      exit 1
-    fi
-  done
-done
+# the TOML and getting all three updates in one PR.  Migrated to Go
+# (D3): internal/gitconfigblocklist behind the workcell-citools
+# git-config-blocklist-parity subcommand preserves the exact exit codes
+# and stderr messages of the former inline awk+grep implementation.
+# `|| exit 1` matches the former inline block's `exit 1` on a violated
+# invariant: it handles the failure so the top-level ERR trap does not fire and
+# append trap diagnostics, preserving the exact failure stderr surface.
+go_verify_citools git-config-blocklist-parity "${ROOT_DIR}" || exit 1
 
 echo "Workcell invariant verification passed."
