@@ -9,8 +9,8 @@ forwards -- and the methodology and rerun steps behind those numbers.
 The numbers are produced by the optional `bench.yml` GitHub lane on Linux, not
 on the macOS development host: the shim reads `/proc` and interposes the
 glibc/musl symbols, so its overhead only exists on Linux. The results table
-below is therefore seeded with **placeholders** until a lane run fills it in
-(see [Filling in the numbers](#filling-in-the-numbers)).
+below holds the measured values from that lane; rerun it to refresh them (see
+[Filling in the numbers](#filling-in-the-numbers)).
 
 ## What the guard hooks, and what the harness measures
 
@@ -76,26 +76,29 @@ Variance is controlled by:
 
 ## Results
 
-**Status: placeholders -- to be filled from a `bench.yml` lane run.** These are
-not measured numbers. Do not cite them until replaced (see below).
+**Status: measured on the `bench.yml` lane** (`ubuntu-latest` GitHub-hosted
+runner, release cdylib, glibc). These are shared-runner relative overheads, not
+absolute guarantees; re-measure on the target host for absolute figures. The
+guard adds ~440us (~76%) per `exec*` launch and ~205us (~42%) per `posix_spawn`
+on the allow path, dominated by the classification of the resolved target.
 
 ### Allow-path overhead (median of 5000 samples, 2 runs)
 
 | Mode | Unhooked median (ns) | Hooked median (ns) | Delta (ns) | Delta (%) |
 |---|---|---|---|---|
-| `execve` | TODO | TODO | TODO | TODO |
-| `execv` | TODO | TODO | TODO | TODO |
-| `execvp` | TODO | TODO | TODO | TODO |
-| `posix_spawn` | TODO | TODO | TODO | TODO |
+| `execve` | 575336 | 1015989 | 440653 | 76.6 |
+| `execv` | 570947 | 1009646 | 438699 | 76.8 |
+| `execvp` | 573745 | 1013812 | 440067 | 76.7 |
+| `posix_spawn` | 486236 | 691238 | 205002 | 42.2 |
 
 ### Cross-run stability (hooked median)
 
 | Mode | Min (ns) | Max (ns) | Spread (ns) | Spread (%) |
 |---|---|---|---|---|
-| `execve` | TODO | TODO | TODO | TODO |
-| `execv` | TODO | TODO | TODO | TODO |
-| `execvp` | TODO | TODO | TODO | TODO |
-| `posix_spawn` | TODO | TODO | TODO | TODO |
+| `execve` | 1015989 | 1019361 | 3372 | 0.3 |
+| `execv` | 1009497 | 1009646 | 149 | 0.0 |
+| `execvp` | 1013812 | 1016247 | 2435 | 0.2 |
+| `posix_spawn` | 691238 | 693251 | 2013 | 0.3 |
 
 ## Filling in the numbers
 
