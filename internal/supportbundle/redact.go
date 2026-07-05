@@ -52,7 +52,7 @@ var (
 	jwtRe            = regexp.MustCompile(`eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]*`)
 	githubTokenRe    = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,255}`)
 	githubPatRe      = regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,255}`)
-	slackTokenRe     = regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`)
+	slackTokenRe     = regexp.MustCompile(`(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}`)
 	awsKeyRe         = regexp.MustCompile(`(?:AKIA|ASIA)[0-9A-Z]{16}`)
 	openaiKeyRe      = regexp.MustCompile(`sk-[A-Za-z0-9_-]{20,}`)
 	googleKeyRe      = regexp.MustCompile(`AIza[0-9A-Za-z_-]{20,}`)
@@ -64,8 +64,10 @@ type secretReplacer struct {
 }
 
 // secretReplacers with a static replacement string (no capture groups).
+// pemPrivateKeyRe is NOT here: it runs before the key=value rule in String()
+// because a PEM block spans spaces/newlines that the key=value value group would
+// otherwise truncate.
 var secretReplacers = []secretReplacer{
-	{pemPrivateKeyRe, "[REDACTED-PRIVATE-KEY]"},
 	{bearerRe, "Bearer [REDACTED]"},
 	{githubTokenRe, "[REDACTED-TOKEN]"},
 	{githubPatRe, "[REDACTED-TOKEN]"},
@@ -99,7 +101,11 @@ func (r Redactor) String(s string) string {
 	if r.Home != "" {
 		s = strings.ReplaceAll(s, r.Home, "~")
 	}
-	// Secret-named key=value first so the whole value is masked as a unit.
+	// PEM private-key blocks first: they span spaces and newlines, so the
+	// key=value rule below would truncate the header (e.g. private_key=-----BEGIN
+	// ...) and defeat pemPrivateKeyRe if it ran afterward.
+	s = pemPrivateKeyRe.ReplaceAllString(s, "[REDACTED-PRIVATE-KEY]")
+	// Secret-named key=value next so the whole value is masked as a unit.
 	s = keyValueSecretRe.ReplaceAllString(s, `${1}[REDACTED]`)
 	for _, sr := range secretReplacers {
 		s = sr.re.ReplaceAllString(s, sr.repl)

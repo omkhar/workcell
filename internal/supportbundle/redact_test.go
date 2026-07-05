@@ -26,6 +26,7 @@ var knownSecrets = []struct {
 	{"aws access key", "AKIA" + "IOSFODNN7EXAMPLE"},
 	{"aws session key", "ASIA" + "IOSFODNN7EXAMPLE"},
 	{"slack token", "xoxb-" + "1234567890-abcdefghijklmnop"},
+	{"slack app token", "xapp-" + "1-A012B345C-6789012345-abcdef0123456789"},
 	{"jwt", "eyJhbGciOiJIUzI1NiJ9." + "eyJzdWIiOiIxMjM0NSJ9.abcDEF-_1234567890xyz"},
 }
 
@@ -58,6 +59,21 @@ func TestRedactorMasksPEMPrivateKey(t *testing.T) {
 	}
 	if !strings.Contains(out, "[REDACTED-PRIVATE-KEY]") {
 		t.Fatalf("expected private-key marker, got %q", out)
+	}
+}
+
+// TestRedactorMasksPEMInSecretAssignment guards the ordering fix: a PEM block as
+// the value of a secret-named key must be redacted whole, not truncated at the
+// first space by the key=value rule (which would leave the key body/trailer).
+func TestRedactorMasksPEMInSecretAssignment(t *testing.T) {
+	r := NewRedactor("")
+	pem := "-----BEGIN RSA PRIVATE KEY-----\n" + "MIIEpAIBAAKCAQEA0secretkeymaterial\n" + "-----END RSA PRIVATE KEY-----"
+	out := r.String("private_key=" + pem)
+	if strings.Contains(out, "secretkeymaterial") || strings.Contains(out, "PRIVATE KEY") {
+		t.Fatalf("PEM body leaked from secret assignment: %q", out)
+	}
+	if !strings.Contains(out, "[REDACTED") {
+		t.Fatalf("expected redaction marker, got %q", out)
 	}
 }
 
