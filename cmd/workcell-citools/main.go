@@ -97,6 +97,7 @@ func subcommands() []subcommand {
 		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
 		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, cmdWorkcellHardeningInvariants},
 		{"workcell-config-safety", "ROOT_DIR", 1, 1, cmdWorkcellConfigSafety},
+		{"workcell-runtime-invariants", "ROOT_DIR", 1, 1, cmdWorkcellRuntimeInvariants},
 	}
 }
 
@@ -517,4 +518,12 @@ func cmdWorkcellHardeningInvariants(args []string) error {
 // violated invariant.
 func cmdWorkcellConfigSafety(args []string) error {
 	return workcellhardening.CheckConfigSafety(args[0])
+}
+
+// cmdWorkcellRuntimeInvariants runs the ten scripts/workcell runtime/gc
+// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1
+// via die()) with the shell's original stderr message for the first
+// violated invariant.
+func cmdWorkcellRuntimeInvariants(args []string) error {
+	return workcellhardening.CheckRuntimeInvariants(args[0])
 }

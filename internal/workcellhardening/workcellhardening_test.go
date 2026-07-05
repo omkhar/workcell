@@ -286,6 +286,184 @@ func TestCheckConfigSafety(t *testing.T) {
 	}
 }
 
+// runtimeHappyLauncher is a minimal scripts/workcell that satisfies all
+// ten runtime/gc invariants: the trusted Docker client seed, no
+// DOCKER_CONFIG pin to the real host home, the buildx_cmd invocation, a
+// runtime_build_codex_arch body resolving both musl assets (and no gnu
+// asset), both hidden probes, both --gc cleanup helpers, the strict-mode
+// rebuild rejection, and both go_colimautil validators.  Individual
+// negative cases mutate one property of this baseline.
+const runtimeHappyLauncher = `#!/bin/bash
+set -euo pipefail
+
+setup_workcell_trusted_docker_client() {
+  DOCKER_CONFIG="${TRUSTED_DOCKER_CONFIG}"
+}
+
+runtime_build_image() {
+  buildx_cmd build --tag workcell/runtime .
+}
+
+runtime_build_codex_arch() {
+  case "${server_arch}" in
+    arm64 | aarch64) printf 'aarch64-unknown-linux-musl\n' ;;
+    amd64 | x86_64) printf 'x86_64-unknown-linux-musl\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+handle_flags() {
+  case "$1" in
+    --self-docker-probe) run_self_docker_probe ;;
+    --self-staging-probe) run_self_staging_probe ;;
+  esac
+}
+
+gc() {
+  prune_runtime_image_cache_dir
+  cleanup_workcell_temp_root
+}
+
+reject_rebuild() {
+  die "strict mode requires --prepare when you explicitly request --rebuild."
+}
+
+validate_managed_config() {
+  go_colimautil validate-profile-config "${config}"
+  go_colimautil validate-runtime-mounts "${config}"
+}
+`
+
+func TestCheckRuntimeInvariants(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string // "" means expect success
+	}{
+		{
+			name: "happy path all invariants hold",
+			body: runtimeHappyLauncher,
+		},
+		{
+			// kindPresent: trusted Docker client seed removed.
+			name:    "missing trusted Docker client seed",
+			body:    strings.Replace(runtimeHappyLauncher, "setup_workcell_trusted_docker_client", "setup_other", 1),
+			wantErr: "Expected scripts/workcell to seed a trusted Docker client state before host Docker use",
+		},
+		{
+			// kindAbsent: pinning DOCKER_CONFIG to the real host home is a
+			// violation.
+			name:    "DOCKER_CONFIG pinned to real home present",
+			body:    runtimeHappyLauncher + "\nDOCKER_CONFIG=\"${REAL_HOME}/.docker\"\n",
+			wantErr: "scripts/workcell still pins DOCKER_CONFIG to the real host home",
+		},
+		{
+			// kindPresent: buildx_cmd build removed.
+			name:    "missing buildx_cmd build",
+			body:    strings.Replace(runtimeHappyLauncher, "buildx_cmd build", "buildx build", 1),
+			wantErr: "Expected scripts/workcell to invoke buildx through the trusted absolute plugin path",
+		},
+		{
+			// kindFunctionBlock: aarch64 musl asset removed from the block.
+			name:    "missing aarch64 musl asset",
+			body:    strings.Replace(runtimeHappyLauncher, "aarch64-unknown-linux-musl", "aarch64-unknown-linux-foo", 1),
+			wantErr: "Expected scripts/workcell Codex release probe to resolve musl release assets",
+		},
+		{
+			// kindFunctionBlock: x86_64 musl asset removed from the block.
+			name:    "missing x86_64 musl asset",
+			body:    strings.Replace(runtimeHappyLauncher, "x86_64-unknown-linux-musl", "x86_64-unknown-linux-foo", 1),
+			wantErr: "Expected scripts/workcell Codex release probe to resolve musl release assets",
+		},
+		{
+			// kindFunctionBlockAbsent (the NEGATED sub-condition): a gnu asset
+			// inside the block is a violation even though both musl assets
+			// remain present.
+			name:    "gnu asset present in codex arch block",
+			body:    strings.Replace(runtimeHappyLauncher, "*) return 1 ;;", "*) printf 'x86_64-unknown-linux-gnu\\n'; return 1 ;;", 1),
+			wantErr: "Expected scripts/workcell Codex release probe to resolve musl release assets",
+		},
+		{
+			// kindFunctionBlockAbsent scoping: a gnu asset OUTSIDE the
+			// runtime_build_codex_arch body must NOT trip the block-scoped
+			// negative check, so the invariant still holds.
+			name: "gnu asset only outside codex arch block",
+			body: runtimeHappyLauncher + "\ncomment_note() { : 'x86_64-unknown-linux-gnu'; }\n",
+		},
+		{
+			// kindPresent: hidden self-docker probe removed.
+			name:    "missing self-docker probe",
+			body:    strings.Replace(runtimeHappyLauncher, "--self-docker-probe", "--self-docker-off", 1),
+			wantErr: "Expected scripts/workcell to expose a hidden self-docker probe for invariant testing",
+		},
+		{
+			// kindPresent (first half of --gc guard): runtime-image cache prune
+			// helper removed.
+			name:    "missing runtime image cache prune",
+			body:    strings.Replace(runtimeHappyLauncher, "prune_runtime_image_cache_dir", "prune_other", 1),
+			wantErr: "Expected scripts/workcell --gc to cover bounded runtime-image cache and Workcell-owned temp cleanup",
+		},
+		{
+			// kindPresent (second half of --gc guard): temp-root cleanup helper
+			// removed.
+			name:    "missing temp root cleanup",
+			body:    strings.Replace(runtimeHappyLauncher, "cleanup_workcell_temp_root", "cleanup_other", 1),
+			wantErr: "Expected scripts/workcell --gc to cover bounded runtime-image cache and Workcell-owned temp cleanup",
+		},
+		{
+			// kindPresent: hidden self-staging probe removed.
+			name:    "missing self-staging probe",
+			body:    strings.Replace(runtimeHappyLauncher, "--self-staging-probe", "--self-staging-off", 1),
+			wantErr: "Expected scripts/workcell to expose a hidden staging probe for invariant testing",
+		},
+		{
+			// kindPresent: strict-mode rebuild rejection message removed.
+			name:    "missing strict-mode rebuild rejection",
+			body:    strings.Replace(runtimeHappyLauncher, "strict mode requires --prepare when you explicitly request --rebuild.", "strict mode message changed", 1),
+			wantErr: "Expected scripts/workcell to reject explicit strict-mode image rebuild requests",
+		},
+		{
+			// kindPresent: profile-config validator removed.
+			name:    "missing validate-profile-config",
+			body:    strings.Replace(runtimeHappyLauncher, "go_colimautil validate-profile-config", "go_colimautil validate-other", 1),
+			wantErr: "Expected scripts/workcell to validate managed Colima config through the dedicated Go helper",
+		},
+		{
+			// kindPresent: runtime-mounts validator removed.
+			name:    "missing validate-runtime-mounts",
+			body:    strings.Replace(runtimeHappyLauncher, "go_colimautil validate-runtime-mounts", "go_colimautil validate-other-mounts", 1),
+			wantErr: "Expected scripts/workcell to validate managed Lima mounts through the dedicated Go helper",
+		},
+		{
+			// A missing launcher is empty content: the negative checks pass and
+			// the first affirmative check (trusted Docker client seed) fires,
+			// mirroring `rg -q` returning non-zero on a missing file.
+			name:    "missing launcher",
+			body:    "",
+			wantErr: "Expected scripts/workcell to seed a trusted Docker client state before host Docker use",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeLauncher(t, tc.body)
+			err := CheckRuntimeInvariants(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckRuntimeInvariants() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckRuntimeInvariants() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckRuntimeInvariants() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestExtractNamedFunctionBlock pins the sed-range extraction semantics
 // the run_host_colima check depends on: the block runs from the `NAME()`
 // opening line through the first line beginning with `}` (inclusive), and
