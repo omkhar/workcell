@@ -2,13 +2,11 @@
 #
 # run-startup-bench.sh -- drive the session-start latency benchmark (C2).
 #
-# For each mode (cold, cache-hit, warm) it runs a per-mode prep hook to establish
-# the runtime state, then times WORKCELL_STARTUP_ITERATIONS full session starts of
-# the target command via scripts/bench/startup-bench.sh. `cold` re-preps before
-# every measured sample (warmup 0) so no sample is a cache-hit. The measurement is
-# repeated for WORKCELL_STARTUP_RUNS passes and the driver FAILS if any mode's
-# run-to-run median spread exceeds the stability threshold -- the C2 sibling of
-# the C5 cross-run gate.
+# For each mode (cold, cache-hit, warm) it runs a per-mode prep hook, then times
+# WORKCELL_STARTUP_ITERATIONS session starts via scripts/bench/startup-bench.sh.
+# `cold` re-preps before every measured sample (warmup 0) so no sample is a
+# cache-hit. Repeated for WORKCELL_STARTUP_RUNS passes; the driver FAILS if any
+# mode's run-to-run median spread exceeds the stability threshold (C5's sibling).
 #
 # CI/offline safety: session starts need a live runtime; when none is available
 # the driver exits 0 with a clear skip message. WORKCELL_STARTUP_SAMPLES_NS
@@ -28,10 +26,9 @@
 #   WORKCELL_STARTUP_CACHE_HIT_PREP  shell run before the cache-hit pass (prime cache, no warm lane)
 #   WORKCELL_STARTUP_WARM_PREP   shell run before the warm pass (prime cache + warm lane)
 #   WORKCELL_STARTUP_RUNTIME     override runtime detection (a name, or "none")
-#   WORKCELL_STARTUP_SAMPLES_NS  canned samples -> dry-run, no runtime needed.
-#                                A ';' splits per-run groups (each ';'-segment is
-#                                one run's samples), which drives RUNS and lets a
-#                                dry run rehearse an unstable cross-run spread.
+#   WORKCELL_STARTUP_SAMPLES_NS  canned samples -> dry-run, no runtime needed; a
+#                                ';' splits per-run groups (each is one run) and
+#                                drives RUNS, so a dry run can rehearse instability
 #   WORKCELL_STARTUP_OUTPUT      also write the Markdown report to this file
 set -euo pipefail
 
@@ -96,9 +93,8 @@ if [ -n "${SAMPLES}" ]; then
 else
   detected="${WORKCELL_STARTUP_RUNTIME:-}"
   if [ -z "${detected}" ]; then
-    # Only select a runtime whose daemon is usable (an installed client with no
-    # working daemon would else pick live mode then hard-fail). An explicit
-    # WORKCELL_STARTUP_RUNTIME override skips this probe.
+    # Only select a runtime whose daemon is usable (else an installed-but-dead
+    # client picks live mode then hard-fails). Explicit override skips the probe.
     for candidate in colima container docker; do
       command -v "${candidate}" >/dev/null 2>&1 || continue
       if runtime_usable "${candidate}"; then
@@ -121,10 +117,8 @@ else
       "time) is required for a live run." >&2
     exit 1
   fi
-  # Live runs must establish each driven mode's documented runtime state. A
-  # missing prep hook would leave prep_mode a no-op, so the harness would measure
-  # whatever state happened to be present -- no real cold eviction or warm-lane
-  # priming -- yet still exit STABLE with publishable-looking numbers. Fail fast.
+  # Live runs must establish each mode's runtime state; a missing prep hook would
+  # leave prep_mode a no-op and measure arbitrary state as publishable. Fail fast.
   for mode in ${MODES}; do
     case "${mode}" in
       cold) prep_var="WORKCELL_STARTUP_COLD_PREP" ;;
@@ -140,14 +134,12 @@ else
   done
   # Parse WORKCELL_STARTUP_CMD into an argv array honoring shell quoting, so an
   # argument with spaces (e.g. --workspace '/path/with space') keeps its boundary
-  # instead of being word-split or glob-expanded. This is the documented contract:
-  # quote such arguments in WORKCELL_STARTUP_CMD as you would on a shell line.
+  # instead of being word-split/globbed. Quote such args as on a shell line.
   eval "CMD_ARGV=( ${WORKCELL_STARTUP_CMD} )"
 fi
 
-# Numeric controls must be sane before benchmarking: RUNS=0 or a non-integer
-# would otherwise silently produce no measurements or a misleading STABLE. RUNS
-# is validated after any dry-run per-group override above.
+# Numeric controls must be sane before benchmarking (RUNS=0 or a non-integer would
+# else produce no measurements or a misleading STABLE); RUNS after any override.
 validate_int "WORKCELL_STARTUP_ITERATIONS" "${ITERATIONS}" 1
 validate_int "WORKCELL_STARTUP_WARMUP" "${WARMUP}" 0
 validate_int "WORKCELL_STARTUP_RUNS" "${RUNS}" 1
@@ -171,18 +163,19 @@ field() {
   printf '%s\n' "$1" | sed -n "s/.*[[:space:]]$2=\([0-9]*\).*/\1/p"
 }
 
-# Run the per-mode prep hook that establishes cold vs warm runtime state.
+# Run the per-mode prep hook that establishes cold vs warm runtime state. Hook
+# stdout (e.g. `docker pull` progress) goes to stderr so it cannot pollute the
+# report on stdout; the exit status is preserved.
 prep_mode() {
   case "$1" in
     cold) eval "${WORKCELL_STARTUP_COLD_PREP:-:}" ;;
     cache-hit) eval "${WORKCELL_STARTUP_CACHE_HIT_PREP:-:}" ;;
     warm) eval "${WORKCELL_STARTUP_WARM_PREP:-:}" ;;
-  esac
+  esac >&2
 }
 
-# Invoke the harness for one warm/cache-hit mode: those modes legitimately share
-# a single prep for the whole pass. In dry-run the canned samples for this run
-# are passed straight through; live, the parsed session command is timed.
+# Invoke the harness for one warm/cache-hit mode (they share one prep per pass):
+# dry-run passes this run's canned samples; live times the parsed session command.
 run_harness() {
   # $1 mode, $2 run index (1-based)
   if [ "${DRY_RUN}" -eq 1 ]; then
@@ -194,12 +187,9 @@ run_harness() {
   fi
 }
 
-# Measure the cold mode with a genuine first start per sample. A single session
-# start warms the cache the next start would otherwise hit, so evicting once
-# before the pass would leave only the first sample cold. Re-run the cold-prep
-# hook before EACH measured sample, time each start on its own (warmup 0), then
-# aggregate the samples through the harness stats core so the reported cold row
-# matches the other modes exactly. Emits the same key=value stats line.
+# Measure cold with a genuine first start per sample: re-run the cold-prep hook
+# before EACH measured sample (a start warms the cache the next would hit), time
+# each on its own (warmup 0), then aggregate through the harness stats core.
 measure_cold() {
   # $1 run index (1-based)
   if [ "${DRY_RUN}" -eq 1 ]; then
@@ -269,9 +259,8 @@ while [ "${run_index}" -le "${RUNS}" ]; do
   run_index=$((run_index + 1))
 done
 
-# Cross-run stability gate: for each mode, the spread of the median across all
-# runs as a percentage of the smallest run's median. If any mode exceeds the
-# threshold the run is not reproducible and the driver fails.
+# Cross-run stability gate: per mode, the median spread across runs as a percent
+# of the smallest run's median; if any mode exceeds the threshold the driver fails.
 GATE_STATUS="STABLE"
 if [ "${RUNS}" -ge 2 ]; then
   {

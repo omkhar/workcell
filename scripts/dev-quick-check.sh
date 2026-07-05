@@ -26,6 +26,8 @@ require_tool rustfmt
 require_cargo_subcommand clippy
 
 shell_files=(
+  "${ROOT_DIR}/scripts/bench/run-startup-bench.sh"
+  "${ROOT_DIR}/scripts/bench/startup-bench.sh"
   "${ROOT_DIR}/scripts/bootstrap-dev.sh"
   "${ROOT_DIR}/scripts/check-dead-code.sh"
   "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"

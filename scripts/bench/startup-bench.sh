@@ -2,33 +2,22 @@
 #
 # startup-bench.sh -- session-start latency microbenchmark harness (C2).
 #
-# Times one "session start" latency sample -- the wall-clock cost of launching a
-# workcell session -- for a single mode (cold / warm / cache-hit), repeated for a
-# reproducible N-sample median + p90. A small, dependency-free measurement core;
-# the driver (run-startup-bench.sh) orchestrates the passes and stability gate.
-# See docs/session-startup-benchmarks.md. The sample unit is one full launch (not
-# a micro-loop). Stats conventions match the C5 exec-guard harness exactly:
+# Times session-start latency for one mode (cold / warm / cache-hit) over an
+# N-sample median + p90. A small, dependency-free core; run-startup-bench.sh
+# orchestrates the passes and stability gate. See docs/session-startup-benchmarks.md.
+# Stats conventions match the C5 exec-guard harness exactly:
 #   median = sorted[floor(n/2)]        (0-based)
 #   p90    = sorted[floor(n*9/10)]     (0-based, clamped to n-1)
-#   mean   = sum/n
-#   stddev = sqrt(sumsq/n - mean^2)    (population)
+#   mean   = sum/n ; stddev = sqrt(sumsq/n - mean^2)  (population)
 #
-# Usage:
-#   startup-bench.sh <mode> <iterations> <warmup> [--] [target-cmd ...]
-#     mode        one of: cold warm cache-hit
-#     iterations  measured samples (each = one full target launch)
-#     warmup      discarded warmup launches run before measurement
-#     target-cmd  the session-start command to time (e.g. ./scripts/workcell ...)
+# Usage: startup-bench.sh <mode> <iterations> <warmup> [--] [target-cmd ...]
+#   mode cold|warm|cache-hit; iterations/warmup = measured/discarded launches.
+# Dry-run: if WORKCELL_STARTUP_SAMPLES_NS is a whitespace-separated list of
+# non-negative integers, those are the samples verbatim and NO command launches
+# (how the driver/unit tests exercise the stats core with no runtime).
 #
-# Dry-run path: if WORKCELL_STARTUP_SAMPLES_NS is a whitespace-separated list of
-# non-negative integers, those are the measured samples verbatim and NO command
-# is launched -- how the driver/unit tests exercise the stats core with no runtime.
-#
-# Output (one line, key=value pairs, all times in nanoseconds):
-#   mode=<mode> n=<count> mean_ns=<m> median_ns=<md> p90_ns=<p> \
-#     stddev_ns=<s> min_ns=<lo> max_ns=<hi>
-#
-# A failed target launch (non-zero exit) aborts with a non-zero status and no
+# Output (one line, ns): mode=<> n=<> mean_ns=<> median_ns=<> p90_ns=<> \
+#   stddev_ns=<> min_ns=<> max_ns=<>. A failed launch aborts non-zero with no
 # numbers, so a broken session start can never masquerade as a measurement.
 set -euo pipefail
 
@@ -105,29 +94,24 @@ fi
 [ "$#" -ge 1 ] || die "no target command given (and WORKCELL_STARTUP_SAMPLES_NS unset)"
 [ "${ITERATIONS}" -ge 1 ] || die "iterations must be >= 1 for a live measurement"
 
-# Pick a monotonic-enough nanosecond clock. GNU date has %N; macOS date does
-# not, so fall back to perl/python for sub-second resolution.
+# Pick a MONOTONIC nanosecond clock (mirrors the C5 exec-guard CLOCK_MONOTONIC).
+# Wall-clock (`date +%s%N`) is unusable: an NTP step or sleep/wake mid-launch
+# could make end-start negative or absorb the step. perl/python3 expose
+# CLOCK_MONOTONIC; plain `date` does not, so it is not a fallback.
 CLOCK=""
-probe="$(date +%s%N 2>/dev/null || true)"
-case "${probe}" in
-  '' | *[!0-9]*) ;;
-  *) CLOCK="date" ;;
-esac
-if [ -z "${CLOCK}" ]; then
-  if command -v perl >/dev/null 2>&1; then
-    CLOCK="perl"
-  elif command -v python3 >/dev/null 2>&1; then
-    CLOCK="python3"
-  else
-    die "no nanosecond clock available (need GNU date, perl, or python3)"
-  fi
+if command -v perl >/dev/null 2>&1 &&
+  perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e1 >/dev/null 2>&1; then
+  CLOCK="perl"
+elif command -v python3 >/dev/null 2>&1; then
+  CLOCK="python3"
+else
+  die "no monotonic nanosecond clock (need perl Time::HiRes or python3)"
 fi
 
 now_ns() {
   case "${CLOCK}" in
-    date) date +%s%N ;;
-    perl) perl -MTime::HiRes=time -e 'printf "%.0f", Time::HiRes::time() * 1e9' ;;
-    python3) python3 -c 'import time; print(int(time.time() * 1e9))' ;;
+    perl) perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%.0f", clock_gettime(CLOCK_MONOTONIC) * 1e9' ;;
+    python3) python3 -c 'import time; print(time.monotonic_ns())' ;;
   esac
 }
 

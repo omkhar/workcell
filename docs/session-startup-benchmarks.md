@@ -2,17 +2,12 @@
 
 Workcell starts an isolated session by resolving the runtime image, booting the
 container runtime (Colima today, Apple `container` under evaluation in C1), and
-completing the supervisor handshake before an agent can run. **C2** is the
-program that measures that start latency, drives it down with cached images and
-an optional kept-warm lane, and publishes reproducible numbers. This page
-records the methodology and the rerun steps; it is the C2 sibling of
-[syscall-shim-benchmarks.md](syscall-shim-benchmarks.md) (C5).
-
-The numbers are produced on a host with a live container runtime, not in the
-PR-blocking CI lanes (a real session start needs a booted VM). The results tables
-below are **placeholders pending a live capture** — see
-[Filling in the numbers](#filling-in-the-numbers). Do not treat the template
-values as measured.
+completing the supervisor handshake. **C2** measures that start latency and drives
+it down with cached images and an optional kept-warm lane — the sibling of
+[syscall-shim-benchmarks.md](syscall-shim-benchmarks.md) (C5). Numbers are captured
+on a host with a live runtime, not in PR CI (a real start needs a booted VM); the
+results tables below are **placeholders pending a live capture**
+([Filling in the numbers](#filling-in-the-numbers)) — not measured values.
 
 ## What is measured
 
@@ -31,12 +26,12 @@ image-cache win from the kept-warm-lane win so each is credited independently.
 
 ## Methodology
 
-The harness (`scripts/bench/startup-bench.sh`) times one mode: it runs the
-session-start command `WORKCELL_STARTUP_WARMUP` times (discarded) to settle
-first-touch page-cache and loader costs, then `WORKCELL_STARTUP_ITERATIONS`
-measured times, and reports the sample distribution. The stats conventions match
-the C5 exec-guard harness exactly, so the two pages' numbers are directly
-comparable:
+The harness (`scripts/bench/startup-bench.sh`) times one mode: `WORKCELL_STARTUP_
+WARMUP` discarded launches settle first-touch page-cache/loader costs, then
+`WORKCELL_STARTUP_ITERATIONS` measured launches are timed on a **monotonic** clock
+(`CLOCK_MONOTONIC`, so an NTP step or sleep/wake mid-launch can't corrupt a
+sample). Stats conventions match the C5 exec-guard harness, so the pages compare
+directly:
 
 - **median** (`sorted[floor(n/2)]`, the outlier-robust headline), **p90**
   (`sorted[floor(n*9/10)]` clamped, the tail a slow start shows), **mean/stddev**
@@ -91,10 +86,9 @@ signals a broken clock rather than a 0% spread that would read as `STABLE`.
 
 ## Results
 
-**Status: numbers pending live capture.** The tables below are templates — a
-sustained upstream mirror outage blocking the image build left no live runtime to
-capture real figures. Replace the `TODO` cells once a live run is captured (see
-[Filling in the numbers](#filling-in-the-numbers)). Do not fabricate values.
+**Status: numbers pending live capture.** Replace the `TODO` cells once a live run
+is captured (see [Filling in the numbers](#filling-in-the-numbers)); do not
+fabricate values.
 
 ### Start latency by mode (median of N samples, R runs)
 
