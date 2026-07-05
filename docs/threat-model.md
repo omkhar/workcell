@@ -49,6 +49,11 @@ published provenance story.
 ## Controls
 
 - dedicated VM plus container boundary
+- default-deny per-session egress allowlist on the managed colima path
+  (fail-closed, dual-stack `iptables`/`ip6tables` in `DOCKER-USER`); operator
+  extensions flow only through the reviewed injection-policy `[network]` surface,
+  which can tighten or extend the allowlist but never disable it or change the
+  network-policy mode (see [injection-policy.md](injection-policy.md#network-egress-network))
 - explicit runtime profiles with separate assurance labels
 - masking and re-seeding of provider control-plane files
 - explicit injection-policy inputs instead of ambient host passthrough
