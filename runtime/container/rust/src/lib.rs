@@ -2010,6 +2010,70 @@ pub unsafe extern "C" fn posix_spawnp(
     unsafe { posix_spawnp_fn()(pid, file, file_actions, attrp, argv, envp) }
 }
 
+/// Fuzzing-only re-exports of the internal exec-guard classifiers and parsers.
+///
+/// Compiled only under `--cfg fuzzing`, which cargo-fuzz sets for the fuzz
+/// build (see `fuzz/`), so this surface never exists in the shipped `cdylib`
+/// nor in the normal `cargo build`/`cargo test` builds. Keeping the underlying
+/// functions private everywhere else preserves the exec-guard's hardened API;
+/// this module only widens visibility for the in-repo fuzz targets.
+#[cfg(fuzzing)]
+pub mod fuzz_api {
+    //! Thin `pub` wrappers over the private classifiers/parsers. They forward to
+    //! the internal functions (visible here because this module is a crate
+    //! descendant) and reduce results to primitives, so the private
+    //! `ProtectedRuntime` type is never leaked into the public interface. The
+    //! fuzzer only needs the code paths exercised, not the classification value.
+
+    /// Fuzz `classify_protected_runtime_path`; the classification is discarded.
+    pub fn classify_protected_runtime_path(path: &str) {
+        let _ = super::classify_protected_runtime_path(path);
+    }
+
+    /// Fuzz `classify_loader_target`; the classification is discarded.
+    pub fn classify_loader_target(path: &str, args: &[String]) {
+        let _ = super::classify_loader_target(path, args);
+    }
+
+    /// Fuzz `path_points_to_dynamic_loader`.
+    pub fn path_points_to_dynamic_loader(path: &str) -> bool {
+        super::path_points_to_dynamic_loader(path)
+    }
+
+    /// Fuzz `path_from_env_entries`.
+    pub fn path_from_env_entries(env_entries: &[String]) -> Option<String> {
+        super::path_from_env_entries(env_entries)
+    }
+
+    /// Fuzz `resolve_command_via_path_value`.
+    pub fn resolve_command_via_path_value(
+        command: &str,
+        path_value: Option<&str>,
+    ) -> Option<String> {
+        super::resolve_command_via_path_value(command, path_value)
+    }
+
+    /// Fuzz `env_has_unsafe_git_override`.
+    pub fn env_has_unsafe_git_override(env_entries: &[String]) -> bool {
+        super::env_has_unsafe_git_override(env_entries)
+    }
+
+    /// Fuzz `git_config_spec_is_blocked`.
+    pub fn git_config_spec_is_blocked(spec: &str) -> bool {
+        super::git_config_spec_is_blocked(spec)
+    }
+
+    /// Fuzz `git_config_key_is_blocked`.
+    pub fn git_config_key_is_blocked(key: &str) -> bool {
+        super::git_config_key_is_blocked(key)
+    }
+
+    /// Fuzz `git_config_spec_value_is_explicit_safe`.
+    pub fn git_config_spec_value_is_explicit_safe(key: &str, value: &str) -> bool {
+        super::git_config_spec_value_is_explicit_safe(key, value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
