@@ -49,9 +49,16 @@ func TestCollectAuditPointersSkipsOutOfStatePaths(t *testing.T) {
 		rec := sessions.SessionRecord{Version: 1, SessionID: fmt.Sprintf("sess-evil%d", i), Profile: "wcl-strict", TargetKind: "vm", TargetProvider: "colima", TargetID: "default", TargetAssuranceClass: "strict", RuntimeAPI: "docker", WorkspaceTransport: "direct", Agent: "codex", Mode: "strict", Status: "running", Workspace: cfg.RepoRoot, StartedAt: "2026-07-04T09:00:00Z", AuditLogPath: p}
 		writeSessionRecord(t, dir, rec.SessionID+".json", rec)
 	}
-	for _, ptr := range Collect(cfg).AuditPointers.Pointers {
+	b := Collect(cfg)
+	for _, ptr := range b.AuditPointers.Pointers {
 		if strings.HasPrefix(ptr.SessionID, "sess-evil") && ptr.Present {
-			t.Fatalf("statted an out-of-state audit path (session %s)", ptr.SessionID)
+			t.Fatalf("statted an out-of-state audit path (pointer %s)", ptr.SessionID)
+		}
+	}
+	// The session summary's audit_log_present must not probe the file either.
+	for _, s := range b.Sessions.Sessions {
+		if strings.HasPrefix(s.SessionID, "sess-evil") && s.AuditLogPresent {
+			t.Fatalf("session summary probed an out-of-state audit path (%s)", s.SessionID)
 		}
 	}
 }

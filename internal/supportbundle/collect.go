@@ -336,7 +336,7 @@ func collectSessions(cfg Config, r Redactor) SessionsSection {
 			Mode:            r.String(rec.Mode),
 			StartedAt:       r.String(rec.StartedAt),
 			Workspace:       r.String(rec.Workspace),
-			AuditLogPresent: rec.AuditLogPath != "" && fileExists(rec.AuditLogPath),
+			AuditLogPresent: rec.AuditLogPath != "" && pathUnderRoots(rec.AuditLogPath, roots) && fileExists(rec.AuditLogPath),
 		})
 	}
 	return s
