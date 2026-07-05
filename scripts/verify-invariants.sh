@@ -185,7 +185,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
 go_verify_citools() {
-  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools "$@"
+  # `go run` appends its own `exit status N` trailer to stderr when the compiled
+  # binary exits non-zero (see `go help run`). Strip just that trailer line so a
+  # failed migrated check's stderr matches the former inline shell checks exactly
+  # (D3 parity), while preserving the binary's real exit code.
+  local citools_stderr citools_rc=0
+  citools_stderr="$(mktemp "${TMPDIR:-/tmp}/workcell-citools-stderr.XXXXXX")"
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools "$@" 2>"${citools_stderr}" || citools_rc=$?
+  grep -vE '^exit status [0-9]+$' "${citools_stderr}" >&2 || true
+  rm -f "${citools_stderr}"
+  return "${citools_rc}"
 }
 
 go_verify_hostutil() {
@@ -1486,60 +1495,20 @@ fi
 
 rm -rf "${codex_managed_config_tmpdir}"
 
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "run_host_colima" "HOME=\"\${REAL_HOME}\""; then
-  echo "Expected run_host_colima to restore the real host HOME instead of the Docker client sandbox home" >&2
-  exit 1
-fi
-
-if ! head -n 1 "${ROOT_DIR}/scripts/workcell" | grep -q '^#!/usr/bin/env -S -i PATH=.* BASH_ENV= ENV= /bin/bash$'; then
-  echo "Expected scripts/workcell to use env -S -i with an absolute /bin/bash and cleared host environment" >&2
-  exit 1
-fi
-
-if ! rg -q 'scrub_host_process_env' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to scrub hostile host process environment before host tool lookup" >&2
-  exit 1
-fi
-
-if ! rg -q 'unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to scrub hostile Perl environment before host tool lookup" >&2
-  exit 1
-fi
-
-if ! rg -q 'DYLD_\*' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to scrub DYLD_* variables before host tool lookup" >&2
-  exit 1
-fi
-
-if rg -q 'shasum -a 256' "${ROOT_DIR}/scripts/workcell"; then
-  echo "scripts/workcell still uses Perl-backed shasum for profile hashing" >&2
-  exit 1
-fi
-
-if ! rg -q 'unset DOCKER_CONTEXT' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to scrub caller Docker context overrides before binding the managed daemon" >&2
-  exit 1
-fi
-
-if ! rg -q 'unset DOCKER_CLI_PLUGIN_EXTRA_DIRS' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to scrub caller Docker CLI plugin overrides" >&2
-  exit 1
-fi
-
-if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to source the trusted Docker client helper" >&2
-  exit 1
-fi
-
-if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/shellproto\.sh"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to source the shellproto helper" >&2
-  exit 1
-fi
-
-if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/sessionctl-shim\.sh"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to source the sessionctl shim helper" >&2
-  exit 1
-fi
+# scripts/workcell host-launcher hardening invariants: run_host_colima
+# restores the real host HOME, the shebang clears the host environment,
+# the process/Perl/DYLD/Docker environment scrubbers are present,
+# Perl-backed shasum is absent, and the trusted Docker client /
+# shellproto / sessionctl-shim helpers are sourced.  Migrated to Go
+# (D3): internal/workcellhardening behind the workcell-citools
+# workcell-hardening-invariants subcommand preserves the exact exit
+# codes and stderr messages of the former inline function_block /
+# head+grep / rg block, including the fixed-string vs. anchored-regex
+# matching semantics per check.
+# `|| exit 1` matches the former inline block's `exit 1` on a violated
+# invariant: it handles the failure so the top-level ERR trap does not fire and
+# append trap diagnostics, preserving the exact failure stderr surface.
+go_verify_citools workcell-hardening-invariants "${ROOT_DIR}" || exit 1
 
 INSTALL_DEPS_VERIFY_BIN="${BARRIER_VERIFY_ROOT}/install-deps-bin"
 INSTALL_DEPS_LOG="${BARRIER_VERIFY_ROOT}/install-deps-brew.log"

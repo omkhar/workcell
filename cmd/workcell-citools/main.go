@@ -30,6 +30,7 @@ import (
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
 	"github.com/omkhar/workcell/internal/scenarios"
+	"github.com/omkhar/workcell/internal/workcellhardening"
 )
 
 func die(err error) {
@@ -94,6 +95,7 @@ func subcommands() []subcommand {
 		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
 		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
+		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, cmdWorkcellHardeningInvariants},
 	}
 }
 
@@ -498,4 +500,12 @@ func cmdTreeCompare(args []string) error {
 // TOML key or prefix/suffix pattern is missing from any enforcer.
 func cmdGitConfigBlocklistParity(args []string) error {
 	return gitconfigblocklist.Check(args[0])
+}
+
+// cmdWorkcellHardeningInvariants runs the eleven scripts/workcell
+// hardening-invariant checks migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
+// shell's original stderr message for the first violated invariant.
+func cmdWorkcellHardeningInvariants(args []string) error {
+	return workcellhardening.Check(args[0])
 }
