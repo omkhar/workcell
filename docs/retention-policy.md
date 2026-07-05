@@ -19,6 +19,7 @@ policy for readability.
 
 | Workflow | Artifact | retention-days |
 |---|---|---|
+| bench.yml | exec-guard-bench-results | 14 |
 | ci.yml | workcell-ci-install-candidate | 7 |
 | fuzz.yml | fuzz-reproducers | 14 |
 | fuzz.yml | rust-fuzz-reproducers | 14 |
@@ -40,6 +41,13 @@ policy for readability.
   because every file in it is also published as a permanent GitHub Release
   asset in the next step, so a long-lived workflow-artifact copy would be pure
   redundant storage.
+- **`bench.yml` — 14 days.** The `exec-guard-bench-results` upload is the
+  Markdown report from a scheduled or on-demand microbenchmark run (the
+  exec-guard allow-path overhead and its cross-run stability). It is triage and
+  transcription evidence, not integrity provenance: the durable copy is the
+  reviewed baseline in [syscall-shim-benchmarks.md](syscall-shim-benchmarks.md).
+  Fourteen days spans the weekly cadence with margin, matching the sibling
+  `fuzz.yml` evidence artifacts.
 - **`ci.yml` — 7 days.** The CI install candidate is a transient
   per-PR/per-push build; it is only useful while the change is in flight, and
   the durable release evidence is produced by `release.yml`.
