@@ -108,31 +108,33 @@ else
   die "no monotonic nanosecond clock (need perl Time::HiRes or python3)"
 fi
 
-now_ns() {
-  case "${CLOCK}" in
-    perl) perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%.0f", clock_gettime(CLOCK_MONOTONIC) * 1e9' ;;
-    python3) python3 -c 'import time; print(time.monotonic_ns())' ;;
-  esac
-}
+# Time the WHOLE loop inside ONE long-lived process (like C5's in-process loop) so
+# no per-sample interpreter launch sits in a measured interval -- only the target's
+# fork/exec. Args (warmup iterations -- target...); target is exec'd (no shell) so
+# quoting survives, output discarded, non-zero launch aborts.
+# shellcheck disable=SC2016  # perl/python program text: $vars are NOT shell expansions
+timing_perl='use strict; use warnings; use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);
+my $warm = shift @ARGV; my $iter = shift @ARGV;
+sub launch { my $p = fork; die "fork failed\n" unless defined $p;
+  if (!$p) { open STDOUT, ">", "/dev/null"; open STDERR, ">", "/dev/null"; exec { $ARGV[0] } @ARGV; exit 127 }
+  waitpid $p, 0; die "target launch failed\n" if $? }
+launch() for (1 .. $warm);
+for (1 .. $iter) { my $t = clock_gettime(CLOCK_MONOTONIC); launch(); printf "%.0f\n", (clock_gettime(CLOCK_MONOTONIC) - $t) * 1e9 }'
+# shellcheck disable=SC2016  # python program text: $-free, quotes intentional
+timing_python='import sys, time, subprocess
+warm = int(sys.argv[1]); iters = int(sys.argv[2]); argv = sys.argv[3:]
+def launch():
+    if subprocess.call(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
+        sys.exit("target launch failed")
+for _ in range(warm):
+    launch()
+for _ in range(iters):
+    t = time.monotonic_ns(); launch(); print(time.monotonic_ns() - t)'
 
-launch() {
-  "$@" >/dev/null 2>&1 || die "target launch failed (exit $?): $*"
-}
+case "${CLOCK}" in
+  perl) raw="$(perl -e "${timing_perl}" -- "${WARMUP}" "${ITERATIONS}" "$@")" || die "target launch failed during timing" ;;
+  python3) raw="$(python3 -c "${timing_python}" "${WARMUP}" "${ITERATIONS}" "$@")" || die "target launch failed during timing" ;;
+esac
 
-warm_index=0
-while [ "${warm_index}" -lt "${WARMUP}" ]; do
-  launch "$@"
-  warm_index=$((warm_index + 1))
-done
-
-samples=()
-sample_index=0
-while [ "${sample_index}" -lt "${ITERATIONS}" ]; do
-  start="$(now_ns)"
-  launch "$@"
-  end="$(now_ns)"
-  samples+=("$((end - start))")
-  sample_index=$((sample_index + 1))
-done
-
-emit "${samples[@]}"
+[ -n "${raw}" ] || die "no samples produced"
+printf 'mode=%s %s\n' "${MODE}" "$(printf '%s\n' "${raw}" | stats)"

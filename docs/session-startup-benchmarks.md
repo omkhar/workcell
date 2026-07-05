@@ -28,10 +28,11 @@ image-cache win from the kept-warm-lane win so each is credited independently.
 
 The harness (`scripts/bench/startup-bench.sh`) times one mode: `WORKCELL_STARTUP_
 WARMUP` discarded launches settle first-touch page-cache/loader costs, then
-`WORKCELL_STARTUP_ITERATIONS` measured launches are timed on a **monotonic** clock
-(`CLOCK_MONOTONIC`, so an NTP step or sleep/wake mid-launch can't corrupt a
-sample). Stats conventions match the C5 exec-guard harness, so the pages compare
-directly:
+`WORKCELL_STARTUP_ITERATIONS` measured launches run inside one long-lived timer
+process (like C5's in-process loop) on a **monotonic** clock (`CLOCK_MONOTONIC`),
+so neither an NTP step/sleep-wake nor a per-sample interpreter launch corrupts or
+inflates a sample. Stats conventions match the C5 exec-guard harness, so the pages
+compare directly:
 
 - **median** (`sorted[floor(n/2)]`, the outlier-robust headline), **p90**
   (`sorted[floor(n*9/10)]` clamped, the tail a slow start shows), **mean/stddev**
@@ -57,11 +58,11 @@ Live runs are guarded so a misconfigured capture cannot look publishable:
 - **`WORKCELL_STARTUP_RUNS >= 2`** — the stability gate needs cross-run evidence,
   so a single-run capture is rejected.
 
-For `cold` the driver re-runs `WORKCELL_STARTUP_COLD_PREP` before **every**
-measured sample (warmup `0`) and aggregates the per-sample timings — a start warms
-the cache the next start would hit, so evicting once per pass would leave only the
-first sample truly cold, and the cold-prep hook must be **repeatable**. `warm` and
-`cache-hit` share one prep per pass and keep `WORKCELL_STARTUP_WARMUP`.
+For `cold` **and `cache-hit`** the driver re-runs the mode's prep hook before
+**every** measured sample (warmup `0`) and aggregates the per-sample timings — a
+start warms the cache/lane the next start would spend, so prepping once per pass
+would leave only the first sample genuine; those hooks must be **repeatable**.
+Only `warm` legitimately shares one prep per pass and keeps `WORKCELL_STARTUP_WARMUP`.
 
 `WORKCELL_STARTUP_CMD` is parsed with shell quoting, so a spaced argument keeps its
 boundary (`--workspace '/path/with space'` stays one argv element, not word-split
@@ -79,10 +80,9 @@ signals a broken clock rather than a 0% spread that would read as `STABLE`.
 
 ### Runner caveats
 
-- Numbers are **relative** to the measuring host's hardware and runtime backend;
-  treat the cold-vs-warm delta, not the absolute medians, as the portable signal.
-- Session start includes VM boot, which is noisier than a userspace microbenchmark;
-  expect a wider stddev than the C5 exec-guard numbers.
+Numbers are **relative** to the host's hardware and runtime backend, so treat the
+cold-vs-warm delta (not absolute medians) as the portable signal; session start
+includes VM boot, so expect a wider stddev than the C5 exec-guard numbers.
 
 ## Results
 
@@ -108,23 +108,19 @@ fabricate values.
 
 ## Filling in the numbers
 
-1. On a host with a live container runtime, wire the prep hooks and session
-   command, then run the driver (see [Rerunning](#rerunning)) with
-   `WORKCELL_STARTUP_OUTPUT` set to capture the report.
-2. Confirm the run exits `0` (stability gate passed, numbers reproducible). A
-   non-zero exit means the spread was too wide to publish — investigate first.
-3. Transcribe the report's per-mode medians, p90s and stability table into the
-   tables above, fill `vs cold` with the deltas, and record the host, runtime
-   backend, and `N`/`R`.
+On a host with a live runtime, run the driver (see [Rerunning](#rerunning)) with
+`WORKCELL_STARTUP_OUTPUT` set. A `0` exit means the stability gate passed and the
+numbers are reproducible (non-zero means the spread was too wide — fix first).
+Transcribe the report's medians, p90s and stability table into the tables above,
+fill `vs cold`, and record the host, runtime backend, and `N`/`R`.
 
 ## Rerunning
 
 From the repository root on a host with a container runtime:
 
 ```sh
-# Wire the prep hooks + session-start command to your runtime. WORKCELL_STARTUP_CMD
-# is shell-quoted (quote args with spaces); COLD_PREP is re-run per sample (make
-# it idempotent); a live run needs all three prep hooks and RUNS >= 2.
+# A live run needs all three prep hooks and RUNS >= 2. WORKCELL_STARTUP_CMD is
+# shell-quoted; COLD_PREP/CACHE_HIT_PREP re-run per sample, so make them idempotent.
 export WORKCELL_STARTUP_CMD='./scripts/workcell <your session-start args>'
 export WORKCELL_STARTUP_COLD_PREP='<evict cached image + stop kept-warm session>'
 export WORKCELL_STARTUP_CACHE_HIT_PREP='<pre-pull image, no kept-warm session>'
@@ -136,19 +132,17 @@ export WORKCELL_STARTUP_OUTPUT=session-startup-results.md
 ```
 
 Tunable via environment: `WORKCELL_STARTUP_ITERATIONS`, `WORKCELL_STARTUP_WARMUP`
-(forced to `0` for `cold`), `WORKCELL_STARTUP_RUNS`,
+(forced to `0` for `cold`/`cache-hit`), `WORKCELL_STARTUP_RUNS`,
 `WORKCELL_STARTUP_STABILITY_PCT`, `WORKCELL_STARTUP_CMD`, the three `*_PREP` hooks,
-and `WORKCELL_STARTUP_OUTPUT`. The numeric controls are validated up front
-(`ITERATIONS`/`RUNS` integers `>= 1`, `WARMUP`/`STABILITY_PCT` integers `>= 0`);
-anything else fails fast rather than silently misreporting.
+and `WORKCELL_STARTUP_OUTPUT`. Numeric controls are validated up front
+(`ITERATIONS`/`RUNS` `>= 1`, `WARMUP`/`STABILITY_PCT` `>= 0`); anything else fails
+fast rather than silently misreporting.
 
 ### Dry run without a runtime
 
-The driver is CI-safe: with no runtime available it prints a clear message and
-exits `0` (skip, not fail). To rehearse the full report and stability gate on any
-host — no runtime needed — feed canned samples. The canned dry run needs no prep
-hooks and never executes them, so any `WORKCELL_STARTUP_*_PREP` still exported
-from a previous live run is ignored:
+The driver is CI-safe: with no runtime it exits `0` with a clear skip message. To
+rehearse the full report and stability gate on any host, feed canned samples — the
+dry run runs no prep hooks (any exported `*_PREP` is ignored) and times nothing:
 
 ```sh
 # One stable run set (gate passes, exit 0):
@@ -158,9 +152,8 @@ WORKCELL_STARTUP_SAMPLES_NS='10 20 30 40 50' ./scripts/bench/run-startup-bench.s
 WORKCELL_STARTUP_SAMPLES_NS='10 20 30;100 200 300' ./scripts/bench/run-startup-bench.sh
 ```
 
-This canned path is what the unit tests in `internal/startupbench` use to pin the
-median/p90/stddev math, the stability gate, and the skip behavior without a
-container build or a live VM.
+The unit tests in `internal/startupbench` use this canned path (plus benign live
+targets) to pin the stats math, the gate, and the guards without a container.
 
 ## Where this fits
 

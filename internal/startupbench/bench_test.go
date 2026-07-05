@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -25,28 +26,33 @@ func repoRoot(tb testing.TB) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
 
-// runScriptSplit runs a bench script with args + extra env, returning exit code,
-// stdout and stderr separately. The child env is built explicitly (not inherited)
-// so a stray exported WORKCELL_STARTUP_* can't leak in: only PATH/HOME/TMPDIR +
-// test-set keys are carried (a test key overrides the base).
-func runScriptSplit(tb testing.TB, relScript string, env map[string]string, args ...string) (int, string, string) {
-	tb.Helper()
-	root := repoRoot(tb)
-	cmd := exec.Command(filepath.Join(root, filepath.FromSlash(relScript)), args...)
-	cmd.Dir = root
+// hermeticEnv builds an explicit child env (not inherited) so a stray exported
+// WORKCELL_STARTUP_* can't leak in: only PATH/HOME/TMPDIR + extra (which overrides).
+func hermeticEnv(extra map[string]string) []string {
 	base := map[string]string{"PATH": os.Getenv("PATH")}
 	for _, k := range []string{"HOME", "TMPDIR"} {
 		if v, ok := os.LookupEnv(k); ok {
 			base[k] = v
 		}
 	}
-	for k, v := range env {
+	for k, v := range extra {
 		base[k] = v
 	}
-	cmd.Env = make([]string, 0, len(base))
+	env := make([]string, 0, len(base))
 	for k, v := range base {
-		cmd.Env = append(cmd.Env, k+"="+v)
+		env = append(env, k+"="+v)
 	}
+	return env
+}
+
+// runScriptSplit runs a bench script with args + extra env, returning exit code,
+// stdout and stderr separately, with a hermetic child environment.
+func runScriptSplit(tb testing.TB, relScript string, env map[string]string, args ...string) (int, string, string) {
+	tb.Helper()
+	root := repoRoot(tb)
+	cmd := exec.Command(filepath.Join(root, filepath.FromSlash(relScript)), args...)
+	cmd.Dir = root
+	cmd.Env = hermeticEnv(env)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -190,6 +196,38 @@ func TestHarnessLivePathTimesTarget(t *testing.T) {
 	}
 }
 
+func TestHarnessTimesLaunchesInOneProcess(t *testing.T) {
+	// The measured loop must run in ONE long-lived timer process. Each launch
+	// records its parent PID: all share one PPID (the timer) != the harness's.
+	dir := t.TempDir()
+	ppidF := filepath.Join(dir, "ppids")
+	rec := filepath.Join(dir, "ppid.sh")
+	writeExec(t, rec, "#!/usr/bin/env bash\necho \"$PPID\" >> \""+ppidF+"\"\n")
+	root := repoRoot(t)
+	cmd := exec.Command(filepath.Join(root, filepath.FromSlash(harness)), "warm", "3", "0", "--", rec)
+	cmd.Dir = root
+	cmd.Env = hermeticEnv(nil)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(ppidF)
+	if err != nil {
+		t.Fatalf("read ppids: %v", err)
+	}
+	ppids := strings.Fields(string(data))
+	if len(ppids) != 3 {
+		t.Fatalf("want 3 launches, got %d: %q", len(ppids), data)
+	}
+	if harnessPid := strconv.Itoa(cmd.Process.Pid); ppids[0] == harnessPid {
+		t.Errorf("target parent == harness pid %s: launches ran in the harness shell, not a dedicated in-process timer", harnessPid)
+	}
+	for _, p := range ppids[1:] {
+		if p != ppids[0] {
+			t.Errorf("launches had different parents %v; want a single timer process", ppids)
+		}
+	}
+}
+
 func TestDriverSkipsWithoutRuntime(t *testing.T) {
 	code, out := runScript(t, driver, map[string]string{"WORKCELL_STARTUP_RUNTIME": "none"})
 	if code != 0 {
@@ -234,8 +272,7 @@ func TestDriverDryRunUnstableFailsGate(t *testing.T) {
 }
 
 func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
-	// cold forces warmup=0; the driver drives all three modes incl. cache-hit. A
-	// stub harness (WORKCELL_STARTUP_HARNESS seam) records the mode + warmup it got.
+	// cold/cache-hit force warmup=0 (re-prep per sample), only warm keeps it; a stub harness logs each mode's warmup.
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "harness.log")
 	stub := filepath.Join(dir, "stub-harness.sh")
@@ -274,19 +311,18 @@ func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
 		}
 	}
 	if got := warmupByMode["cold"]; got != "0" {
-		t.Errorf("cold warmup = %q, want 0 (P1: cold must not warm before measuring)", got)
+		t.Errorf("cold warmup = %q, want 0 (must not warm before measuring)", got)
+	}
+	if got := warmupByMode["cache-hit"]; got != "0" {
+		t.Errorf("cache-hit warmup = %q, want 0 (re-preps per sample like cold)", got)
 	}
 	if got := warmupByMode["warm"]; got != "1" {
 		t.Errorf("warm warmup = %q, want 1 (configured warmup preserved)", got)
 	}
-	if got := warmupByMode["cache-hit"]; got != "1" {
-		t.Errorf("cache-hit warmup = %q, want 1 (configured warmup preserved)", got)
-	}
 }
 
 func TestRunScriptEnvIsHermetic(t *testing.T) {
-	// A stray exported WORKCELL_STARTUP_* must not leak in: a no-runtime run must
-	// still cleanly SKIP (not become a dry run) nor run the leaked hook.
+	// A stray exported WORKCELL_STARTUP_* must not leak in: a no-runtime run must still SKIP (not a dry run) nor run the hook.
 	t.Setenv("WORKCELL_STARTUP_SAMPLES_NS", "999")
 	t.Setenv("WORKCELL_STARTUP_COLD_PREP", "echo LEAKED_PREP_RAN")
 	code, out := runScript(t, driver, map[string]string{"WORKCELL_STARTUP_RUNTIME": "none"})
@@ -301,9 +337,8 @@ func TestRunScriptEnvIsHermetic(t *testing.T) {
 	}
 }
 
-func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
-	// cold re-runs COLD_PREP per sample (a start warms the cache); warm/cache-hit
-	// share one prep. Hooks append a byte per call so we count invocations.
+func TestDriverColdAndCacheHitRepPerSample(t *testing.T) {
+	// cold/cache-hit re-run their prep hook per sample, warm once per pass; hooks append a byte per call.
 	dir := t.TempDir()
 	coldF := filepath.Join(dir, "cold")
 	warmF := filepath.Join(dir, "warm")
@@ -326,19 +361,18 @@ func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
 		}
 		return len(data)
 	}
-	// 3 cold samples x 2 runs -> 6 cold preps; warm/cache-hit share one prep per
-	// pass -> 2 each.
+	// 3 samples x 2 runs -> 6 preps each for cold/cache-hit; warm -> 2 (one/pass).
 	if got := countPreps(coldF); got != 6 {
-		t.Errorf("cold prep ran %d time(s), want 6 (once per measured sample x 2 runs)", got)
+		t.Errorf("cold prep ran %d time(s), want 6 (per measured sample x 2 runs)", got)
+	}
+	if got := countPreps(chF); got != 6 {
+		t.Errorf("cache-hit prep ran %d time(s), want 6 (per measured sample x 2 runs)", got)
 	}
 	if got := countPreps(warmF); got != 2 {
 		t.Errorf("warm prep ran %d time(s), want 2 (one prep per pass x 2 runs)", got)
 	}
-	if got := countPreps(chF); got != 2 {
-		t.Errorf("cache-hit prep ran %d time(s), want 2 (one prep per pass x 2 runs)", got)
-	}
-	if !strings.Contains(out, "| cold |") || !strings.Contains(out, " 3 |") {
-		t.Errorf("aggregated cold row missing/incorrect: %s", out)
+	if !strings.Contains(out, "| cache-hit |") || !strings.Contains(out, " 3 |") {
+		t.Errorf("aggregated cache-hit row missing/incorrect: %s", out)
 	}
 }
 
@@ -366,8 +400,7 @@ func TestDriverDryRunSkipsPrep(t *testing.T) {
 }
 
 func TestDriverPrepOutputStaysOffReport(t *testing.T) {
-	// A prep hook's stdout (e.g. `docker pull` progress) must go to stderr, not the
-	// report on stdout, or `run.sh > report.md` yields unparseable Markdown.
+	// A prep hook's stdout (e.g. `docker pull`) must go to stderr, not the stdout report (else `run.sh > report.md` breaks).
 	env := liveEnv(map[string]string{
 		"WORKCELL_STARTUP_COLD_PREP":      "echo PREP_STDOUT_MARKER",
 		"WORKCELL_STARTUP_CACHE_HIT_PREP": "echo PREP_STDOUT_MARKER",
@@ -415,8 +448,7 @@ func TestDriverRejectsInvalidNumericControls(t *testing.T) {
 }
 
 func TestDriverPreservesCommandArgv(t *testing.T) {
-	// WORKCELL_STARTUP_CMD is shell-quoted: a spaced arg (--workspace '/a b') must
-	// reach the target as one argv element. The recorder leaves the last launch.
+	// Shell-quoted CMD: a spaced arg (--workspace '/a b') must reach as one element.
 	dir := t.TempDir()
 	argvF := filepath.Join(dir, "argv")
 	rec := filepath.Join(dir, "record.sh")
@@ -446,8 +478,7 @@ func TestDriverPreservesCommandArgv(t *testing.T) {
 }
 
 func TestDriverLiveRequiresPrepHooks(t *testing.T) {
-	// On a LIVE run a missing mode prep hook must fail fast (naming the mode +
-	// env var); the dry-run path needs no prep hooks and must keep passing.
+	// On a LIVE run a missing mode prep hook must fail fast (naming mode + env var); dry-run needs none.
 	live := map[string]string{
 		"WORKCELL_STARTUP_RUNTIME": "colima", // bypass the no-runtime skip
 		"WORKCELL_STARTUP_CMD":     "true",
@@ -473,8 +504,7 @@ func TestDriverLiveRequiresPrepHooks(t *testing.T) {
 }
 
 func TestDriverSkipsWhenRuntimeClientButNoDaemon(t *testing.T) {
-	// A host with the runtime client but no usable daemon must cleanly skip (exit
-	// 0). Fake clients that exist but whose health probe fails, first on PATH.
+	// Runtime client present but daemon unusable must cleanly skip. Fake clients whose health probe fails, first on PATH.
 	dir := t.TempDir()
 	for _, name := range []string{"colima", "container", "docker"} {
 		writeExec(t, filepath.Join(dir, name), "#!/usr/bin/env bash\nexit 1\n")
@@ -513,8 +543,7 @@ func TestDriverLiveRequiresTwoRuns(t *testing.T) {
 }
 
 func TestDriverZeroMedianIsUnstable(t *testing.T) {
-	// A median of 0 in one run and nonzero in another is degenerate (a 0 ns start
-	// is impossible), not a 0% spread that reads STABLE; the gate must fail.
+	// A 0 median in one run vs nonzero in another is degenerate (impossible), not a 0% spread; the gate must fail.
 	code, out := runScript(t, driver,
 		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "0 0 0;10 20 30"})
 	if code != 2 {
