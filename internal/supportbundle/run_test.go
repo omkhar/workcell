@@ -70,6 +70,27 @@ func TestRunOutputFile(t *testing.T) {
 	}
 }
 
+// TestRunOutputTightensExistingMode guards that overwriting a pre-existing,
+// group/world-readable target still yields a 0600 bundle (os.WriteFile keeps the
+// existing mode, so the explicit chmod is load-bearing).
+func TestRunOutputTightensExistingMode(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "bundle.json")
+	if err := os.WriteFile(out, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := Run([]string{"--output", out}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run(--output): %v", err)
+	}
+	info, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("overwritten bundle perms = %v, want 0600", perm)
+	}
+}
+
 func TestRunOutputEqualsForm(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "b.json")

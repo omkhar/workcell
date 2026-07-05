@@ -98,6 +98,12 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	if err := os.WriteFile(output, rendered, 0o600); err != nil {
 		return err
 	}
+	// os.WriteFile keeps an existing file's mode, so enforce 0600 explicitly: an
+	// already-present group/world-readable target must not leave the diagnostics
+	// bundle readable to other local users.
+	if err := os.Chmod(output, 0o600); err != nil {
+		return err
+	}
 	fmt.Fprintf(stdout, "wrote support bundle to %s\n", output)
 	return nil
 }
