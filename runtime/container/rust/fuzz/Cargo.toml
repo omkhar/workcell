@@ -14,8 +14,22 @@ libfuzzer-sys = "0.4"
 path = ".."
 
 [[bin]]
-name = "fuzz_target_1"
-path = "fuzz_targets/fuzz_target_1.rs"
+name = "path_classification"
+path = "fuzz_targets/path_classification.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "env_filtering"
+path = "fuzz_targets/env_filtering.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_config_parsing"
+path = "fuzz_targets/git_config_parsing.rs"
 test = false
 doc = false
 bench = false
