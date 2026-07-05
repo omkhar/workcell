@@ -56,14 +56,16 @@ confined to the trusted `PATH`, but **not** absolute-resolved and **not**
 fail-closed — a missing `curl` leaves the preflight URL empty rather than raising
 `Missing trusted host tool`, so `curl` is optional, not required.
 
-`go` additionally has a **second, weaker** resolution path: the
+`go` additionally has a **second, differently-scoped** resolution path: the
 `--audit-transcript` PTY helper (`scripts/lib/pty_transcript`, `workcell:8778`)
 sources `go-run-env.sh`, whose Go-binary resolver honours a pre-set
 `WORKCELL_GO_BIN`, then `command -v go`, then the fixed candidates
-(`go-run-env.sh:47-71`). Unlike `resolve_fixed_host_tool` this does not abort and
-is not confined to fixed trusted paths, and `WORKCELL_GO_BIN` is not in the scrub
-list — so on the shebang-bypassed `bash` path an inherited `WORKCELL_GO_BIN` can
-select the `go` used for the transcript.
+(`go-run-env.sh:47-71`). Like the fixed resolver it is **fail-closed** — it exits
+`1` with `Missing required tool: go` when none is found (`go-run-env.sh:66-68`) —
+but it is **not confined to fixed trusted paths** (a `command -v go` hit is
+accepted) and `WORKCELL_GO_BIN` is not in the scrub list, so on the
+shebang-bypassed `bash` path an inherited `WORKCELL_GO_BIN` can select the `go`
+used for the transcript.
 
 This table covers the tools every **local** launch resolves; a few prerequisites
 sit outside it. Remote-preview backends probe extra tools via
