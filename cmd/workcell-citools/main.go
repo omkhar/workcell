@@ -98,6 +98,7 @@ func subcommands() []subcommand {
 		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, cmdWorkcellHardeningInvariants},
 		{"workcell-config-safety", "ROOT_DIR", 1, 1, cmdWorkcellConfigSafety},
 		{"workcell-runtime-invariants", "ROOT_DIR", 1, 1, cmdWorkcellRuntimeInvariants},
+		{"workcell-managed-profile-staging", "ROOT_DIR", 1, 1, cmdWorkcellManagedProfileStaging},
 	}
 }
 
@@ -526,4 +527,12 @@ func cmdWorkcellConfigSafety(args []string) error {
 // violated invariant.
 func cmdWorkcellRuntimeInvariants(args []string) error {
 	return workcellhardening.CheckRuntimeInvariants(args[0])
+}
+
+// cmdWorkcellManagedProfileStaging runs the three scripts/workcell
+// managed-profile staging/cleanup checks migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
+// shell's original stderr message for the first violated invariant.
+func cmdWorkcellManagedProfileStaging(args []string) error {
+	return workcellhardening.CheckManagedProfileStaging(args[0])
 }

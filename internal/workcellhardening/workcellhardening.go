@@ -12,6 +12,10 @@
 // scripts/workcell checks between the SSH-collision check and the
 // start_managed_profile mount function-block group) via
 // CheckRuntimeInvariants; see runtimeInvariantChecks.
+// It also re-implements the adjacent managed-profile staging/cleanup block
+// (the three scripts/workcell checks between the runtime-invariants group
+// and the WORKCELL_COLIMA_TIMEOUT_HARNESS fixture) via
+// CheckManagedProfileStaging; see managedProfileStagingChecks.
 //
 // Each invariant pins one property of the host launcher scripts/workcell:
 // that run_host_colima restores the real host HOME, that the shebang
@@ -376,6 +380,144 @@ var runtimeInvariantChecks = []check{
 // violated invariant (the shell's exit 1).
 func CheckRuntimeInvariants(rootDir string) error {
 	return evaluate(rootDir, runtimeInvariantChecks)
+}
+
+// managedProfileStagingChecks lists the three scripts/workcell
+// managed-profile staging/cleanup invariants in the same order as the
+// former inline block in scripts/verify-invariants.sh (the block between
+// the runtime-invariants group and the WORKCELL_COLIMA_TIMEOUT_HARNESS
+// fixture), so a reviewer can diff the two one-to-one.
+//
+// Each of the three former shell `if` guards joined several
+// function_block_contains_fixed / `rg -q` probes with `||` under a single
+// message; they are expressed here as ordered checks sharing that message,
+// which is behaviourally identical (any probe failing yields the same
+// stderr and exit 1 as the corresponding shell `if`).  Every probe is
+// metacharacter-free after unescaping, so each is fixed-string
+// containment: kindFunctionBlock for the block-scoped
+// function_block_contains_fixed probes, kindPresent for the affirmative
+// `rg -q`, and kindAbsent for the negated `rg -q` (present is a
+// violation).
+//
+// The scoping of each block-scoped probe mirrors the shell's second
+// argument to function_block_contains_fixed: the mount and
+// staging-cache-root probes scope to start_managed_profile; the
+// staging-cache-root probes also scope to prepare_injection_bundle and
+// prepare_workspace_control_plane_shadow; and the fail-closed cleanup
+// probes scope to cleanup_default_injection_bundles.
+var managedProfileStagingChecks = []check{
+	// Guard 1: managed Colima launch mounts all three staging cache roots
+	// (host-inputs, shadow, token-handoff) with the reviewed access modes.
+	{
+		kind:         kindFunctionBlock,
+		functionName: "start_managed_profile",
+		pattern:      "workcell-host-inputs",
+		message:      "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "start_managed_profile",
+		pattern:      "workcell-shadow",
+		message:      "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "start_managed_profile",
+		pattern:      "workcell-token-handoff",
+		message:      "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "start_managed_profile",
+		pattern:      `--mount "${host_inputs_root}"`,
+		message:      "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "start_managed_profile",
+		pattern:      `--mount "${shadow_root}"`,
+		message:      "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "start_managed_profile",
+		pattern:      `--mount "${token_handoff_root}:w"`,
+		message:      "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+	},
+	// Guard 2: staging cache roots reject symlinked host components before
+	// staging or mounting.  The reject_symlinked_colima_staging_cache_roots
+	// probe is a whole-file `rg -q` (kindPresent); the three
+	// prepare_colima_staging_cache_roots probes are block-scoped to the
+	// three functions that must call it before staging or mounting.
+	{
+		kind:    kindPresent,
+		pattern: "reject_symlinked_colima_staging_cache_roots",
+		message: "Expected Workcell staging cache roots to reject symlinked host components before staging or mounting",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "prepare_injection_bundle",
+		pattern:      "prepare_colima_staging_cache_roots",
+		message:      "Expected Workcell staging cache roots to reject symlinked host components before staging or mounting",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "prepare_workspace_control_plane_shadow",
+		pattern:      "prepare_colima_staging_cache_roots",
+		message:      "Expected Workcell staging cache roots to reject symlinked host components before staging or mounting",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "start_managed_profile",
+		pattern:      "prepare_colima_staging_cache_roots",
+		message:      "Expected Workcell staging cache roots to reject symlinked host components before staging or mounting",
+	},
+	// Guard 3: stale injection cleanup fails closed when the default bundle
+	// parent is rejected.  The bare
+	// `cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"`
+	// call (unbraced command substitution, no fail-closed capture) is a
+	// violation, so it is a negated `rg -q` (kindAbsent: present → exit 1);
+	// the four fail-closed probes are block-scoped to
+	// cleanup_default_injection_bundles.
+	{
+		kind:    kindAbsent,
+		pattern: `cleanup_stale_injection_bundles "$(default_injection_bundle_parent)"`,
+		message: "Expected stale injection cleanup to fail closed when the default bundle parent is rejected",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "cleanup_default_injection_bundles",
+		pattern:      `bundle_parent="$(default_injection_bundle_parent)" || return $?`,
+		message:      "Expected stale injection cleanup to fail closed when the default bundle parent is rejected",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "cleanup_default_injection_bundles",
+		pattern:      `token_handoff_parent="$(default_copilot_token_handoff_parent)" || return $?`,
+		message:      "Expected stale injection cleanup to fail closed when the default bundle parent is rejected",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "cleanup_default_injection_bundles",
+		pattern:      `cleanup_stale_injection_bundles "${bundle_parent}"`,
+		message:      "Expected stale injection cleanup to fail closed when the default bundle parent is rejected",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "cleanup_default_injection_bundles",
+		pattern:      `cleanup_stale_injection_bundles "${token_handoff_parent}"`,
+		message:      "Expected stale injection cleanup to fail closed when the default bundle parent is rejected",
+	},
+}
+
+// CheckManagedProfileStaging runs the three scripts/workcell
+// managed-profile staging/cleanup invariants against the repo rooted at
+// rootDir, in the shell's original order.  It returns nil when every
+// invariant holds (the shell's exit 0), or an error whose message equals
+// the shell's stderr for the first violated invariant (the shell's exit
+// 1).
+func CheckManagedProfileStaging(rootDir string) error {
+	return evaluate(rootDir, managedProfileStagingChecks)
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.

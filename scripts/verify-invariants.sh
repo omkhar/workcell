@@ -2661,30 +2661,21 @@ fi
 # invariant: it handles the failure so the top-level ERR trap does not fire and
 # append trap diagnostics, preserving the exact failure stderr surface.
 go_verify_citools workcell-runtime-invariants "${ROOT_DIR}" || exit 1
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'workcell-host-inputs' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'workcell-shadow' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'workcell-token-handoff' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" "--mount \"\${host_inputs_root}\"" ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" "--mount \"\${shadow_root}\"" ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" "--mount \"\${token_handoff_root}:w\""; then
-  echo "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes" >&2
-  exit 1
-fi
-if ! rg -q 'reject_symlinked_colima_staging_cache_roots' "${ROOT_DIR}/scripts/workcell" ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_injection_bundle" 'prepare_colima_staging_cache_roots' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_workspace_control_plane_shadow" 'prepare_colima_staging_cache_roots' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'prepare_colima_staging_cache_roots'; then
-  echo "Expected Workcell staging cache roots to reject symlinked host components before staging or mounting" >&2
-  exit 1
-fi
-if rg -q 'cleanup_stale_injection_bundles "\$\(default_injection_bundle_parent\)"' "${ROOT_DIR}/scripts/workcell" ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "cleanup_default_injection_bundles" "bundle_parent=\"\$(default_injection_bundle_parent)\" || return \$?" ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "cleanup_default_injection_bundles" "token_handoff_parent=\"\$(default_copilot_token_handoff_parent)\" || return \$?" ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "cleanup_default_injection_bundles" "cleanup_stale_injection_bundles \"\${bundle_parent}\"" ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "cleanup_default_injection_bundles" "cleanup_stale_injection_bundles \"\${token_handoff_parent}\""; then
-  echo "Expected stale injection cleanup to fail closed when the default bundle parent is rejected" >&2
-  exit 1
-fi
+# Assert the managed-profile staging/cleanup invariants: managed Colima
+# launch mounts all three staging cache roots (host-inputs, shadow,
+# token-handoff) with the reviewed access modes, the staging cache roots
+# reject symlinked host components before staging or mounting, and stale
+# injection cleanup fails closed when the default bundle parent is
+# rejected.  Migrated to Go (D3): internal/workcellhardening behind the
+# workcell-citools workcell-managed-profile-staging subcommand preserves
+# the exact exit codes and stderr messages of the former inline
+# function_block_contains_fixed / rg block, including the fixed-string
+# matching semantics (every pattern is metacharacter-free after
+# unescaping) and the negated bare-parent cleanup sub-condition.
+# `|| exit 1` matches the former inline block's `exit 1` on a violated
+# invariant: it handles the failure so the top-level ERR trap does not fire and
+# append trap diagnostics, preserving the exact failure stderr surface.
+go_verify_citools workcell-managed-profile-staging "${ROOT_DIR}" || exit 1
 
 WORKCELL_COLIMA_TIMEOUT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-colima-timeout-harness.sh"
 {
