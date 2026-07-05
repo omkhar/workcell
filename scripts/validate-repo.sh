@@ -131,6 +131,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/check-public-contract.sh"
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/ci-plan.sh"
+  "${ROOT_DIR}/scripts/bench/run-exec-guard-bench.sh"
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/check-workflows.sh"
   "${ROOT_DIR}/scripts/ci/build-validator-image.sh"
