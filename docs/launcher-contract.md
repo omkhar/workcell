@@ -108,3 +108,52 @@ command from a caller-supplied working directory. Called as
 prints `Missing host working directory: <dir>` to stderr and exits `2`. With no
 command arguments it is a no-op returning `0`. `HOME` resolution and the pinned
 `PATH`/locale are identical to `run_clean_host_command()`.
+
+## Go/Colima host-utility wrappers (`go-hostutil.sh`)
+
+`scripts/lib/launcher/go-hostutil.sh` invokes the `workcell-hostutil` and
+`workcell-colimautil` Go programs on the host via `go run`, always routed
+through `run_clean_host_command_in_dir` (from `host-exec.sh`) so the child
+executes from `${ROOT_DIR}` under the sanitised `env -i` host environment. Every
+helper depends only on `ensure_go_run_env` plus the `GOPATH`/`GOMODCACHE`/
+`GOCACHE` it exports (`scripts/lib/go-run-env.sh`),
+`run_clean_host_command_in_dir` (`scripts/lib/launcher/host-exec.sh`), and the
+`ROOT_DIR` global set in `scripts/workcell`. `HOST_GO_BIN` is resolved by this
+module itself (via `resolve_fixed_host_tool` from `host-exec.sh`, sourced
+immediately before), since these wrappers are its sole consumer — so every
+dependency is sourced or assigned before the first wrapper call, which makes the
+module self-contained.
+
+### `go_hostutil()`
+
+Runs `workcell-hostutil` on the host. Calls `ensure_go_run_env`, then executes
+`"${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"` from `${ROOT_DIR}` via
+`run_clean_host_command_in_dir`, forwarding only `GOPATH`/`GOMODCACHE`/`GOCACHE`
+into the sanitised environment. All other host context must be passed on argv
+because the `env -i` boundary strips inherited environment variables.
+
+### `run_go_hostutil_preserve_exit()`
+
+Wraps `go_hostutil()` and recovers the Go child's real exit code. It captures
+the child's stderr to a temp file (cleaned up via a `RETURN` trap and
+explicitly), and if the stderr ends in an `exit status N` trailer emitted by
+`go run`, it substitutes `N` for the generic exit code `1` and strips the
+trailer from the forwarded stderr. Non-trailer stderr is re-emitted unchanged
+and the resolved exit code is returned.
+
+### `go_hostutil_publish_pr()`
+
+Same `go run ./cmd/workcell-hostutil` invocation as `go_hostutil()`, but forwards
+an explicit allowlist of terminal, GnuPG, SSH, XDG, and GitHub environment
+variables (for example `TERM`, `GPG_TTY`, `GNUPGHOME`, `SSH_AUTH_SOCK`,
+`GIT_ASKPASS`, the `XDG_*` dirs, `GH_TOKEN`/`GITHUB_TOKEN`, `GH_HOST`,
+`GH_CONFIG_DIR`) — each added only when non-empty — so host-side PR publication
+can reach the operator's credentials and interactive signing agents while the
+rest of the environment stays sanitised.
+
+### `go_colimautil()`
+
+Runs `workcell-colimautil` on the host. Identical structure to `go_hostutil()`
+(`ensure_go_run_env`, forwarding `GOPATH`/`GOMODCACHE`/`GOCACHE` from
+`${ROOT_DIR}` via `run_clean_host_command_in_dir`), targeting
+`./cmd/workcell-colimautil` instead.

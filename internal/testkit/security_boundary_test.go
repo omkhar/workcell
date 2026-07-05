@@ -185,15 +185,30 @@ func TestWorkcellBootstrapResolvesRealHomeBeforeGoHostutil(t *testing.T) {
 		t.Fatalf("%s exports WORKCELL_GO_CACHE_ROOT before REAL_HOME is resolved", scriptPath)
 	}
 
-	goHostutilIndex := strings.Index(script, `go_hostutil() {`)
-	if goHostutilIndex == -1 {
-		t.Fatalf("%s must define go_hostutil", scriptPath)
+	// go_hostutil now lives in scripts/lib/launcher/go-hostutil.sh, so it
+	// becomes defined at the point scripts/workcell sources that module. The
+	// ordering invariant therefore targets the source line: the module must be
+	// sourced only after REAL_HOME is resolved and WORKCELL_GO_CACHE_ROOT is
+	// exported, so the go_hostutil/go_colimautil wrappers can never run with an
+	// unsanitised host home or Go cache root.
+	goHostutilSourceIndex := strings.Index(script, `source "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh"`)
+	if goHostutilSourceIndex == -1 {
+		t.Fatalf("%s must source scripts/lib/launcher/go-hostutil.sh", scriptPath)
 	}
-	if realHomeIndex > goHostutilIndex {
-		t.Fatalf("%s resolves REAL_HOME after go_hostutil is defined; want bootstrap home resolved first", scriptPath)
+	if realHomeIndex > goHostutilSourceIndex {
+		t.Fatalf("%s resolves REAL_HOME after go-hostutil.sh is sourced; want bootstrap home resolved first", scriptPath)
 	}
-	if cacheRootIndex > goHostutilIndex {
-		t.Fatalf("%s exports WORKCELL_GO_CACHE_ROOT after go_hostutil is defined; want cache root fixed first", scriptPath)
+	if cacheRootIndex > goHostutilSourceIndex {
+		t.Fatalf("%s exports WORKCELL_GO_CACHE_ROOT after go-hostutil.sh is sourced; want cache root fixed first", scriptPath)
+	}
+
+	modulePath := filepath.Join(repoRoot(t), "scripts", "lib", "launcher", "go-hostutil.sh")
+	moduleContent, err := os.ReadFile(modulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(moduleContent), `go_hostutil() {`) {
+		t.Fatalf("%s must define go_hostutil", modulePath)
 	}
 }
 

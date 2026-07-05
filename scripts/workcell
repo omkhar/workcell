@@ -68,7 +68,6 @@ source "${ROOT_DIR}/scripts/lib/sessionctl-shim.sh"
 source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/launcher/host-exec.sh"
-HOST_GO_BIN="$(resolve_fixed_host_tool go /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go)"
 REAL_HOME="$(resolve_workcell_real_home)"
 case "$(uname -s 2>/dev/null || true)" in
   Darwin)
@@ -78,81 +77,12 @@ case "$(uname -s 2>/dev/null || true)" in
     export WORKCELL_GO_CACHE_ROOT="${XDG_CACHE_HOME:-${REAL_HOME}/.cache}/workcell/go"
     ;;
 esac
-go_hostutil() {
-  ensure_go_run_env
-  run_clean_host_command_in_dir "${ROOT_DIR}" env \
-    GOPATH="${GOPATH}" \
-    GOMODCACHE="${GOMODCACHE}" \
-    GOCACHE="${GOCACHE}" \
-    "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
-}
-
-run_go_hostutil_preserve_exit() {
-  local stderr_file=""
-  local stderr_capture=""
-  local rc=0
-
-  stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-hostutil-stderr.XXXXXX")"
-  trap 'rm -f "${stderr_file}"' RETURN
-  go_hostutil "$@" 2>"${stderr_file}" || rc=$?
-  stderr_capture="$(cat "${stderr_file}")"
-  rm -f "${stderr_file}"
-  trap - RETURN
-
-  if [[ "${stderr_capture}" =~ (^|$'\n')exit\ status\ ([0-9]+)$ ]]; then
-    if [[ ${rc} -eq 1 ]]; then
-      rc="${BASH_REMATCH[2]}"
-    fi
-    if [[ -z "${BASH_REMATCH[1]}" ]]; then
-      stderr_capture=""
-    else
-      stderr_capture="${stderr_capture%$'\n'exit status [0-9]*}"
-    fi
-  fi
-  if [[ -n "${stderr_capture}" ]]; then
-    printf '%s\n' "${stderr_capture}" >&2
-  fi
-  return "${rc}"
-}
-
-go_hostutil_publish_pr() {
-  ensure_go_run_env
-  local -a env_args=(
-    "GOPATH=${GOPATH}"
-    "GOMODCACHE=${GOMODCACHE}"
-    "GOCACHE=${GOCACHE}"
-  )
-
-  [[ -n "${TERM:-}" ]] && env_args+=("TERM=${TERM}")
-  [[ -n "${GPG_TTY:-}" ]] && env_args+=("GPG_TTY=${GPG_TTY}")
-  [[ -n "${GNUPGHOME:-}" ]] && env_args+=("GNUPGHOME=${GNUPGHOME}")
-  [[ -n "${SSH_AUTH_SOCK:-}" ]] && env_args+=("SSH_AUTH_SOCK=${SSH_AUTH_SOCK}")
-  [[ -n "${SSH_AGENT_PID:-}" ]] && env_args+=("SSH_AGENT_PID=${SSH_AGENT_PID}")
-  [[ -n "${SSH_ASKPASS:-}" ]] && env_args+=("SSH_ASKPASS=${SSH_ASKPASS}")
-  [[ -n "${GIT_ASKPASS:-}" ]] && env_args+=("GIT_ASKPASS=${GIT_ASKPASS}")
-  [[ -n "${XDG_CONFIG_HOME:-}" ]] && env_args+=("XDG_CONFIG_HOME=${XDG_CONFIG_HOME}")
-  [[ -n "${XDG_STATE_HOME:-}" ]] && env_args+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
-  [[ -n "${XDG_CACHE_HOME:-}" ]] && env_args+=("XDG_CACHE_HOME=${XDG_CACHE_HOME}")
-  [[ -n "${XDG_DATA_HOME:-}" ]] && env_args+=("XDG_DATA_HOME=${XDG_DATA_HOME}")
-  [[ -n "${XDG_RUNTIME_DIR:-}" ]] && env_args+=("XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}")
-  [[ -n "${GH_TOKEN:-}" ]] && env_args+=("GH_TOKEN=${GH_TOKEN}")
-  [[ -n "${GITHUB_TOKEN:-}" ]] && env_args+=("GITHUB_TOKEN=${GITHUB_TOKEN}")
-  [[ -n "${GH_HOST:-}" ]] && env_args+=("GH_HOST=${GH_HOST}")
-  [[ -n "${GH_CONFIG_DIR:-}" ]] && env_args+=("GH_CONFIG_DIR=${GH_CONFIG_DIR}")
-
-  run_clean_host_command_in_dir "${ROOT_DIR}" env \
-    "${env_args[@]}" \
-    "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
-}
-
-go_colimautil() {
-  ensure_go_run_env
-  run_clean_host_command_in_dir "${ROOT_DIR}" env \
-    GOPATH="${GOPATH}" \
-    GOMODCACHE="${GOMODCACHE}" \
-    GOCACHE="${GOCACHE}" \
-    "${HOST_GO_BIN}" run ./cmd/workcell-colimautil "$@"
-}
+# Sourced after REAL_HOME and WORKCELL_GO_CACHE_ROOT are established so the
+# go_hostutil/go_colimautil wrappers this module defines can never be invoked
+# with an unsanitised host home or Go cache root (security ordering invariant;
+# see internal/testkit/security_boundary_test.go).
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh"
 
 HOST_GIT_BIN=""
 HOST_COLIMA_BIN=""

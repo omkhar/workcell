@@ -469,6 +469,7 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		"scripts/lib/extract_direct_mounts",
 		"scripts/lib/launcher/host-detect.sh",
 		"scripts/lib/launcher/host-exec.sh",
+		"scripts/lib/launcher/go-hostutil.sh",
 		"scripts/lib/render_injection_bundle",
 		"scripts/lib/sessionctl-shim.sh",
 		"scripts/lib/shellproto.sh",
