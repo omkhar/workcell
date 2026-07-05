@@ -11,6 +11,10 @@ import (
 	"strings"
 )
 
+// allowedSSHKeys is the parser-accepted key set for the `[ssh]` table, shared
+// as a single source of truth between renderSSH and the schema-doc drift test.
+var allowedSSHKeys = mapKeysSet([]string{"enabled", "config", "known_hosts", "identities", "providers", "modes", "allow_unsafe_config"})
+
 func renderSSH(policy map[string]any, outputRoot, policyDir Path, agent, mode string) (map[string]any, error) {
 	raw := policy["ssh"]
 	if raw == nil {
@@ -20,7 +24,7 @@ func renderSSH(policy map[string]any, outputRoot, policyDir Path, agent, mode st
 	if !ok {
 		return nil, errors.New("ssh must be a TOML table")
 	}
-	if err := validateAllowedKeys(ssh, mapKeysSet([]string{"enabled", "config", "known_hosts", "identities", "providers", "modes", "allow_unsafe_config"}), "ssh"); err != nil {
+	if err := validateAllowedKeys(ssh, allowedSSHKeys, "ssh"); err != nil {
 		return nil, err
 	}
 	enabledRaw, hasEnabled := ssh["enabled"]

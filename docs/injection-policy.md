@@ -68,6 +68,121 @@ Today, `claude-macos-keychain` is a fail-closed resolver scaffold: it lets you
 record the intended host-side auth source in policy, but Workcell still aborts
 launch unless a supported export path exists.
 
+## Schema reference
+
+This is the annotated, machine-checked schema for the injection policy. Every
+key below is grounded in the parser's accepted set, and a drift check
+(`TestInjectionPolicyDocSchemaMatchesParser` in
+`internal/injection/schema_doc_drift_test.go`) fails CI if a key is documented
+here but not accepted by the parser, or accepted by the parser but not
+documented here. "Applies to" names the provider(s) that actually consume a key;
+any provider's credential key still parses in a shared policy but is only
+provisioned for its owning provider.
+
+### Root keys
+
+<!-- schema:root:begin -->
+| Key | Type | Required | Applies to | Default | Meaning |
+|---|---|---|---|---|---|
+| `version` | integer | optional | all providers | `1` | policy schema version; only `1` is accepted |
+| `includes` | array of path strings | optional | all providers | none | compose the policy from operator-owned fragment files (resolved relative to the including file, kept within the entrypoint tree, no include cycles or repeats) |
+| `documents` | table | optional | see `[documents]` keys | none | instruction fragments layered into provider docs |
+| `credentials` | table | optional | see `[credentials]` keys | none | provider-native auth, MCP, and shared GitHub CLI state |
+| `ssh` | table | optional | all providers | none | SSH config, known hosts, and identity files |
+| `copies` | array of `[[copies]]` tables | optional | all providers | none | explicit copied files or directories for non-reserved targets |
+| `network` | table | optional | all providers (enforced on `colima`) | none | extend or tighten the per-session egress allowlist |
+<!-- schema:root:end -->
+
+### `[documents]` keys
+
+Copilot deliberately has no document key: managed Copilot custom instructions
+are disabled, so there is no `documents.copilot`.
+
+<!-- schema:documents:begin -->
+| Key | Type | Required | Applies to | Default | Meaning |
+|---|---|---|---|---|---|
+| `common` | path string | optional | all providers with native docs | none | provider-neutral instruction fragment (`documents.common`) |
+| `codex` | path string | optional | Codex | none | Codex-specific instruction fragment |
+| `claude` | path string | optional | Claude | none | Claude-specific instruction fragment |
+| `gemini` | path string | optional | Gemini | none | Gemini-specific instruction fragment |
+<!-- schema:documents:end -->
+
+### `[credentials]` keys
+
+Each credential value is either a direct path string or a table (see credential
+entry sub-keys). `github_hosts` and `github_config` are shared GitHub CLI state:
+they must use the table form and set a `providers` list, and they are never
+provisioned for Copilot (Copilot opts out of shared credentials).
+
+<!-- schema:credentials:begin -->
+| Key | Type | Required | Applies to | Default | Meaning |
+|---|---|---|---|---|---|
+| `claude_auth` | path string or entry table | optional | Claude | none | Claude auth mirrors under `~/.claude/`, `~/.claude.json`, `~/.config/claude-code/` |
+| `claude_api_key` | path string or entry table | optional | Claude | none | helper-backed Claude API key access |
+| `claude_mcp` | path string or entry table | optional | Claude | none | reviewed Claude MCP config (`~/.mcp.json`) |
+| `codex_auth` | path string or entry table | optional | Codex | none | persisted Codex auth (`~/.codex/auth.json`) |
+| `copilot_github_token` | path string or entry table | optional | Copilot | none | staged GitHub token handoff, exported only as `COPILOT_GITHUB_TOKEN` to the managed child |
+| `gemini_env` | path string or entry table | optional | Gemini | none | Gemini API key, GCA, or Vertex configuration (`~/.gemini/.env`) |
+| `gemini_oauth` | path string or entry table | optional | Gemini | none | cached Gemini OAuth state (`~/.gemini/oauth_creds.json`) |
+| `gemini_projects` | path string or entry table | optional | Gemini | none | persisted Gemini project registry (`~/.gemini/projects.json`) |
+| `gcloud_adc` | path string or entry table | optional | Gemini | none | supplemental Vertex credential (`~/.config/gcloud/application_default_credentials.json`) |
+| `github_hosts` | entry table (requires `providers`) | optional | shared: Claude, Codex, Gemini | none | shared GitHub CLI auth (`~/.config/gh/hosts.yml`); not provisioned for Copilot |
+| `github_config` | entry table (requires `providers`) | optional | shared: Claude, Codex, Gemini | none | shared GitHub CLI config (`~/.config/gh/config.yml`); not provisioned for Copilot |
+<!-- schema:credentials:end -->
+
+### Credential entry sub-keys (`[credentials.<name>]` table form)
+
+<!-- schema:credentials-entry:begin -->
+| Key | Type | Required | Applies to | Default | Meaning |
+|---|---|---|---|---|---|
+| `source` | path string | required in table form | all credential keys | none | host path to the credential material; must live outside the mounted workspace |
+| `providers` | array of provider ids | optional (required for `github_hosts` and `github_config`) | all credential keys | in-scope providers | restrict the entry to the listed providers |
+| `modes` | array of mode ids | optional | all credential keys | all modes | restrict the entry to the listed modes |
+<!-- schema:credentials-entry:end -->
+
+### `[ssh]` keys
+
+<!-- schema:ssh:begin -->
+| Key | Type | Required | Applies to | Default | Meaning |
+|---|---|---|---|---|---|
+| `enabled` | boolean | optional | all providers | inferred from material presence | explicit on/off switch; `false` disables SSH injection even when material is present |
+| `config` | path string | optional | all providers | none | SSH config file; rejected if it contains risky directives unless `allow_unsafe_config` is set |
+| `known_hosts` | path string | optional | all providers | none | `known_hosts` file (must not be group/world-writable) |
+| `identities` | array of path strings | optional | all providers | none | private-key identity files (owner-only; basenames must not collide with reserved SSH files) |
+| `providers` | array of provider ids | optional | all providers | all providers | scope the SSH block to the listed providers |
+| `modes` | array of mode ids | optional | all providers | all modes | scope the SSH block to the listed modes |
+| `allow_unsafe_config` | boolean | optional | all providers | `false` | accept a lower-assurance config that would otherwise be rejected for risky directives |
+<!-- schema:ssh:end -->
+
+### `[[copies]]` entry keys
+
+<!-- schema:copies:begin -->
+| Key | Type | Required | Applies to | Default | Meaning |
+|---|---|---|---|---|---|
+| `source` | path string | required | all providers | none | host file or directory to copy |
+| `target` | container path string | required | all providers | none | destination under `/state/agent-home` or `/state/injected`; must not be a reserved control-plane path |
+| `classification` | string (`public` or `secret`) | required | all providers | none | selects handling and file modes; `secret` sources are staged read-only and owner-validated |
+| `providers` | array of provider ids | optional | all providers | all providers | scope the copy to the listed providers |
+| `modes` | array of mode ids | optional | all providers | all modes | scope the copy to the listed modes |
+<!-- schema:copies:end -->
+
+### `[network]` keys
+
+<!-- schema:network:begin -->
+| Key | Type | Required | Applies to | Default | Meaning |
+|---|---|---|---|---|---|
+| `allow_endpoints` | array of `host:port` strings | optional | all providers (enforced on `colima`) | none | endpoints unioned into the allowlist (extend only) |
+| `deny_endpoints` | array of `host:port` strings | optional | all providers (enforced on `colima`) | none | endpoints subtracted from the allowlist after every allow source (deny wins) |
+<!-- schema:network:end -->
+
+### Selector value domains
+
+`providers` and `modes` selectors (in `[credentials.<name>]`, `[ssh]`, and
+`[[copies]]`) accept only these values:
+
+- `providers`: `claude`, `codex`, `copilot`, `gemini`
+- `modes`: `strict`, `development`, `build`, `breakglass`
+
 ## Provider auth maturity
 
 Direct staged credential files are the primary supported auth path today.
@@ -195,6 +310,88 @@ endpoints=...`:
 | `gcp-vm` (preview) | `none` | no — relies on the VM's own firewall |
 
 `egress_enforcement=allowlist` prints only for `colima` + allowlist, else `none`.
+
+## Example policies
+
+The example paths below are illustrative host locations; keep every source
+outside the mounted workspace and owner-only. See
+[docs/examples/injection-policy.toml](./examples/injection-policy.toml) for a
+combined document, credential, and copy example.
+
+### Codex
+
+```toml
+version = 1
+
+[credentials]
+codex_auth = "/home/op/secrets/codex-auth.json"
+```
+
+### Claude
+
+```toml
+version = 1
+
+[credentials]
+claude_auth = "/home/op/secrets/claude-auth.json"
+claude_mcp  = "/home/op/secrets/claude-mcp.json"
+```
+
+### GitHub Copilot CLI
+
+```toml
+version = 1
+
+[credentials]
+copilot_github_token = "/home/op/secrets/copilot-github-token.txt"
+```
+
+### Gemini
+
+```toml
+version = 1
+
+[credentials]
+gemini_env   = "/home/op/secrets/gemini.env"
+gemini_oauth = "/home/op/secrets/gemini-oauth.json"
+```
+
+### Multi-provider, single host
+
+One policy file on a single workstation can serve every provider. Provider-native
+credential keys are only provisioned for their owning provider, so they need no
+selector; shared GitHub CLI state must use the table form with an explicit
+`providers` list and is never provisioned for Copilot.
+
+```toml
+version = 1
+
+# Provider-native auth: each key is only provisioned for its owning provider.
+[credentials]
+codex_auth           = "/home/op/secrets/codex-auth.json"
+claude_auth          = "/home/op/secrets/claude-auth.json"
+copilot_github_token = "/home/op/secrets/copilot-github-token.txt"
+gemini_env           = "/home/op/secrets/gemini.env"
+
+# Shared GitHub CLI state must use the table form and scope its providers.
+# Copilot is intentionally excluded: it never receives shared gh state.
+[credentials.github_hosts]
+source    = "/home/op/secrets/gh-hosts.yml"
+providers = ["codex", "claude", "gemini"]
+
+[credentials.github_config]
+source    = "/home/op/secrets/gh-config.yml"
+providers = ["codex", "claude", "gemini"]
+
+# One shared instruction fragment plus a Codex-only delta.
+[documents]
+common = "/home/op/policy/common.md"
+codex  = "/home/op/policy/codex.md"
+
+# Extend the reviewed egress allowlist for an internal registry.
+[network]
+allow_endpoints = ["registry.internal.example:443"]
+```
 
 ## Instruction precedence
 

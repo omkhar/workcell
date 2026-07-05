@@ -15,6 +15,11 @@ import (
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
+// allowedCredentialEntryKeys is the parser-accepted key set for a table-form
+// credential entry (`[credentials.<name>]`), shared as a single source of truth
+// between renderCredentials and the schema-doc drift test.
+var allowedCredentialEntryKeys = mapKeysSet([]string{"source", "providers", "modes"})
+
 func renderCredentials(policy map[string]any, policyDir Path, agent, mode string) (map[string]map[string]string, error) {
 	raw := policy["credentials"]
 	if raw == nil {
@@ -52,7 +57,7 @@ func renderCredentials(policy map[string]any, policyDir Path, agent, mode string
 		sourceRaw := rawValue
 		entry, isTable := rawValue.(map[string]any)
 		if isTable {
-			if err := validateAllowedKeys(entry, mapKeysSet([]string{"source", "providers", "modes"}), "credentials."+key); err != nil {
+			if err := validateAllowedKeys(entry, allowedCredentialEntryKeys, "credentials."+key); err != nil {
 				return nil, err
 			}
 			sourceRaw = entry["source"]
