@@ -96,6 +96,7 @@ func subcommands() []subcommand {
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
 		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
 		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, cmdWorkcellHardeningInvariants},
+		{"workcell-config-safety", "ROOT_DIR", 1, 1, cmdWorkcellConfigSafety},
 	}
 }
 
@@ -508,4 +509,12 @@ func cmdGitConfigBlocklistParity(args []string) error {
 // shell's original stderr message for the first violated invariant.
 func cmdWorkcellHardeningInvariants(args []string) error {
 	return workcellhardening.Check(args[0])
+}
+
+// cmdWorkcellConfigSafety runs the four scripts/workcell config-safety
+// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1
+// via die()) with the shell's original stderr message for the first
+// violated invariant.
+func cmdWorkcellConfigSafety(args []string) error {
+	return workcellhardening.CheckConfigSafety(args[0])
 }
