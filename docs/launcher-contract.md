@@ -114,8 +114,13 @@ at `scripts/workcell:32`) unsets, in order:
 | `GOPATH` / `GOMODCACHE` / `GOCACHE` (exported) | `${cache_root}/gopath`, `/mod-cache`, `/build-cache` under `WORKCELL_GO_CACHE_ROOT` | `ensure_go_run_env` in `go-run-env.sh:30-44` (honours pre-set values) |
 
 `REAL_HOME` and `WORKCELL_GO_CACHE_ROOT` are deliberately established *before*
-`go-hostutil.sh` is sourced, so the Go host-utility wrappers can never run with
-an unsanitised host home or Go cache root (`workcell:80-85`).
+`go-hostutil.sh` is sourced (`workcell:80-85`), so the wrappers never run before
+the host home and default Go cache root are fixed. This is an **ordering**
+guarantee, not full confinement: `ensure_go_run_env` **honours a pre-set**
+`GOPATH`/`GOMODCACHE`/`GOCACHE` (`go-run-env.sh:33-35`), and those three are not in
+the `scrub_host_process_env` list, so on the shebang-bypassed
+`bash scripts/workcell` path (above) a caller-supplied Go cache can persist — the
+wrappers are guaranteed a *defined* cache root, not necessarily the default one.
 
 ### Exit codes
 
@@ -142,13 +147,16 @@ codes above are the launcher's own, distinct from that passthrough.
 
 ### Test override flags
 
-These variables exist for the validation harness / CI, not for operators. They
-are gated so they cannot be smuggled in through a normal launch.
+These variables exist for the validation harness / CI, not for operators. Each is
+gated — hard-rejected, unconditionally unset, or ignored unless its harness
+conditions hold — so a normal launch cannot *act* on one. Note the gate that
+decides whether a value is **scrubbed** is, for the support-matrix vars, weaker
+than the gate that decides whether it is **honoured** (see their rows).
 
 | Flag | Overrides | Gating |
 | --- | --- | --- |
-| `WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT` | Enables the host-detection overrides below (and suppresses their startup scrub). | Honoured only when set to `1` **and** `support_matrix_host_override_allowed` also confirms the parent process is a recognised validation-harness entrypoint (`host-detect.sh`). |
-| `WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS` / `_ARCH` / `_DISTRO` / `_DISTRO_VERSION` | Forces the detected host OS / arch / distro / distro version. | Honoured only when `support_matrix_host_override_allowed` returns `0`; otherwise unset by `scrub_host_process_env` at startup (`workcell:12-17`). |
+| `WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT` | Two distinct effects: (a) at startup its presence (`=1`) makes `scrub_host_process_env` **skip unsetting** the four support-matrix vars; (b) it is one condition the detectors check before honouring those overrides. | Effect (a) is gated **only** on the `=1` marker (`workcell:12-17`) — *not* parent-verified. Effect (b) additionally requires `support_matrix_host_override_allowed` to confirm a recognised validation-harness parent (`host-detect.sh`). |
+| `WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS` / `_ARCH` / `_DISTRO` / `_DISTRO_VERSION` | Forces the detected host OS / arch / distro / distro version. | **Unset at startup only when the `SANITIZED_ENTRYPOINT` marker is absent** (`workcell:12-17`); with the marker set they survive startup even under a non-harness parent, but the detectors **honour** them only when `support_matrix_host_override_allowed` returns `0` (marker **and** recognised parent). So on the shebang-bypassed `bash scripts/workcell` path they can be *present but ignored*, not guaranteed absent. |
 | `WORKCELL_TEST_CODEX_AUTH_FILE` | Points the harness at a fixture Codex auth file (consumed by test subprocesses, never by the launcher). | If non-empty in the launcher's own environment the launcher **refuses to run**: `exit 2`, "reserved for the Workcell test harness" (`workcell:8150-8152`). |
 | `WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE` | Points the harness at a fixture Claude keychain export (consumed by test subprocesses, never by the launcher). | Same reject-on-presence guard: `exit 2` (`workcell:8153-8156`). |
 | `WORKCELL_TEST_FAIL_AFTER_PROFILE_REFRESH` | Would request the mid-refresh fault injection. | The env variable is **unconditionally unset** at startup (`workcell:11`). The fault is reachable only through the hidden CLI flag `--test-fail-after-profile-refresh`, which sets the internal `TEST_FAIL_AFTER_PROFILE_REFRESH=1` (`workcell:7883-7884`) and triggers `exit 88`. |
