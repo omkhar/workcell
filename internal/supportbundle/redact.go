@@ -56,6 +56,9 @@ var (
 	awsKeyRe         = regexp.MustCompile(`(?:AKIA|ASIA)[0-9A-Z]{16}`)
 	openaiKeyRe      = regexp.MustCompile(`sk-[A-Za-z0-9_-]{20,}`)
 	googleKeyRe      = regexp.MustCompile(`AIza[0-9A-Za-z_-]{20,}`)
+	// Google OAuth access tokens (ya29.) from Gemini / gcloud ADC flows; the repo
+	// classifies these as credentials in metadatautil.credentialPatterns.
+	googleOAuthRe = regexp.MustCompile(`ya29\.[0-9A-Za-z_-]+`)
 )
 
 type secretReplacer struct {
@@ -75,6 +78,7 @@ var secretReplacers = []secretReplacer{
 	{awsKeyRe, "[REDACTED-TOKEN]"},
 	{openaiKeyRe, "[REDACTED-TOKEN]"},
 	{googleKeyRe, "[REDACTED-TOKEN]"},
+	{googleOAuthRe, "[REDACTED-TOKEN]"},
 	{jwtRe, "[REDACTED-JWT]"},
 }
 

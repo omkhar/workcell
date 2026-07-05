@@ -23,6 +23,7 @@ var knownSecrets = []struct {
 	{"github pat", "github_pat_" + "11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz0123456789ABCDEFGHIJ"},
 	{"openai key", "sk-" + "proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD"},
 	{"google api key", "AIza" + "SyA1234567890abcdefghijklmnopqrstuv"},
+	{"google oauth token", "ya29." + "a0AbCdEf1234567890_-abcdefghijklmnop"},
 	{"aws access key", "AKIA" + "IOSFODNN7EXAMPLE"},
 	{"aws session key", "ASIA" + "IOSFODNN7EXAMPLE"},
 	{"slack token", "xoxb-" + "1234567890-abcdefghijklmnop"},
