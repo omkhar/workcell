@@ -98,6 +98,23 @@ else
       "time) is required for a live run." >&2
     exit 1
   fi
+  # Live runs must establish each driven mode's documented runtime state. A
+  # missing prep hook would leave prep_mode a no-op, so the harness would measure
+  # whatever state happened to be present -- no real cold eviction or warm-lane
+  # priming -- yet still exit STABLE with publishable-looking numbers. Fail fast.
+  for mode in ${MODES}; do
+    case "${mode}" in
+      cold) prep_var="WORKCELL_STARTUP_COLD_PREP" ;;
+      cache-hit) prep_var="WORKCELL_STARTUP_CACHE_HIT_PREP" ;;
+      warm) prep_var="WORKCELL_STARTUP_WARM_PREP" ;;
+    esac
+    if [ -z "${!prep_var:-}" ]; then
+      echo "run-startup-bench: live run requires a prep hook for mode '${mode}':" \
+        "set ${prep_var} to establish the ${mode} runtime state. Without it the" \
+        "harness measures arbitrary state and the numbers are not publishable." >&2
+      exit 1
+    fi
+  done
   # Parse WORKCELL_STARTUP_CMD into an argv array honoring shell quoting, so an
   # argument with spaces (e.g. --workspace '/path/with space') keeps its boundary
   # instead of being word-split or glob-expanded. This is the documented contract:

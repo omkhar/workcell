@@ -219,6 +219,10 @@ func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
 		"WORKCELL_STARTUP_ITERATIONS": "2",
 		"WORKCELL_STARTUP_WARMUP":     "1",
 		"WORKCELL_STARTUP_RUNS":       "1",
+		// Live runs require each driven mode's prep hook; no-ops suffice here.
+		"WORKCELL_STARTUP_COLD_PREP":      ":",
+		"WORKCELL_STARTUP_CACHE_HIT_PREP": ":",
+		"WORKCELL_STARTUP_WARM_PREP":      ":",
 	}
 	code, out := runScript(t, driver, env)
 	if code != 0 {
@@ -325,6 +329,10 @@ func TestDriverPreservesCommandArgv(t *testing.T) {
 		"WORKCELL_STARTUP_ITERATIONS": "1",
 		"WORKCELL_STARTUP_WARMUP":     "0",
 		"WORKCELL_STARTUP_RUNS":       "1",
+		// Live runs require each driven mode's prep hook; no-ops suffice here.
+		"WORKCELL_STARTUP_COLD_PREP":      ":",
+		"WORKCELL_STARTUP_CACHE_HIT_PREP": ":",
+		"WORKCELL_STARTUP_WARM_PREP":      ":",
 	}
 	code, out := runScript(t, driver, env)
 	if code != 0 {
@@ -338,6 +346,37 @@ func TestDriverPreservesCommandArgv(t *testing.T) {
 	want := []string{"alpha", "beta gamma"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("target argv = %q, want %q (word-splitting would break the spaced arg)\n%s", got, want, out)
+	}
+}
+
+func TestDriverLiveRequiresPrepHooks(t *testing.T) {
+	// Regression for the prep-hook finding: on a LIVE run, a missing mode prep
+	// hook must fail fast (naming the mode + env var) instead of silently
+	// measuring whatever runtime state is present and emitting publishable-looking
+	// numbers. The dry-run path needs no prep hooks and must keep passing.
+	live := map[string]string{
+		"WORKCELL_STARTUP_RUNTIME": "colima", // bypass the no-runtime skip
+		"WORKCELL_STARTUP_CMD":     "true",
+		// WORKCELL_STARTUP_COLD_PREP deliberately omitted.
+		"WORKCELL_STARTUP_CACHE_HIT_PREP": ":",
+		"WORKCELL_STARTUP_WARM_PREP":      ":",
+	}
+	code, out := runScript(t, driver, live)
+	if code == 0 {
+		t.Fatalf("live run with a missing cold prep hook should fail, got exit 0: %s", out)
+	}
+	if !strings.Contains(out, "WORKCELL_STARTUP_COLD_PREP") || !strings.Contains(out, "cold") {
+		t.Errorf("missing-prep error must name the mode and the env var: %s", out)
+	}
+
+	// Dry-run still works with no prep hooks set.
+	code, out = runScript(t, driver,
+		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30 40 50"})
+	if code != 0 {
+		t.Fatalf("dry-run with no prep hooks should pass, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "Stability gate: STABLE") {
+		t.Errorf("dry-run should still produce a stable report: %s", out)
 	}
 }
 

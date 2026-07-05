@@ -57,6 +57,15 @@ image but leaving the warm lane down for `cache-hit`, or pre-pulling and priming
 the warm lane for `warm`), then times the configured `WORKCELL_STARTUP_CMD` for
 that mode. The whole measurement is repeated for `WORKCELL_STARTUP_RUNS` passes.
 
+A live run **requires** the prep hook for every driven mode: if any of
+`WORKCELL_STARTUP_COLD_PREP`, `WORKCELL_STARTUP_CACHE_HIT_PREP`, or
+`WORKCELL_STARTUP_WARM_PREP` is unset the driver fails fast (naming the missing
+mode and variable) rather than running. Without a mode's hook the harness would
+measure whatever runtime state happened to be present — no real cold eviction or
+warm-lane priming — and the numbers, though they may look stable, are not
+publishable. (The canned dry run below needs no prep hooks; this requirement
+applies only to live runs.)
+
 For `cold` the driver re-runs `WORKCELL_STARTUP_COLD_PREP` before **every**
 measured sample and times each start on its own with warmup `0`, then aggregates
 the per-sample timings through the same stats core. A single session start warms
