@@ -324,6 +324,9 @@ func TestInstallWorkcellDebugWrapperSkipsSessionCommands(t *testing.T) {
 	for _, want := range []string{
 		"session)",
 		"SKIP_AUTO_DEBUG=1",
+		// The support-bundle diagnostics command emits clean JSON on stdout
+		// and must not have --debug-log/--rebuild injected by the wrapper.
+		"support-bundle)",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)

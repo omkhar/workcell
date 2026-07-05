@@ -110,6 +110,7 @@ workflows = [
   "launch_logs",
   "launch_auth_status",
   "launch_gc",
+  "support_bundle",
 ]
 evidence = [
   "scripts/verify-invariants.sh",
@@ -122,6 +123,9 @@ evidence = [
   "tests/scenarios/shared/test-agent-launch-smoke.sh",
   "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh",
   "tests/scenarios/shared/test-session-commands.sh",
+  "internal/supportbundle/leak_test.go",
+  "internal/supportbundle/bundle_test.go",
+  "internal/supportbundle/collect_test.go",
 ]
 docs = [
   "README.md",
@@ -130,6 +134,7 @@ docs = [
   "docs/injection-policy.md",
   "docs/provider-bootstrap-matrix.md",
   "docs/validation-scenarios.md",
+  "SUPPORT.md",
 ]
 
 [functional.FR-007]

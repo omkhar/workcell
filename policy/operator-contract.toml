@@ -371,6 +371,20 @@ evidence = ["scripts/verify-invariants.sh", "tests/scenarios/shared/test-session
 requirements = ["functional.FR-006"]
 target_state = "retain"
 
+[workflows.support_bundle]
+title = "Host-side support bundle"
+support = "supported"
+canonical = "workcell support-bundle"
+discoverability = ["top-level-help", "subcommand-help:support-bundle", "manpage"]
+docs = ["SUPPORT.md", "man/workcell.1"]
+evidence = [
+  "internal/supportbundle/leak_test.go",
+  "internal/supportbundle/bundle_test.go",
+  "internal/supportbundle/collect_test.go",
+]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
 [workflows.cache_profile_standard]
 title = "Opt-in persistent cache plane"
 support = "supported"

@@ -371,6 +371,12 @@ func collectAuditPointers(cfg Config, r Redactor) AuditSection {
 		return s
 	}
 	s.Available = true
+	// Newest-first and capped like the session summaries so a long-lived host
+	// cannot produce an unbounded bundle of stale pointers.
+	sort.Slice(records, func(i, j int) bool { return records[i].SessionID > records[j].SessionID })
+	if len(records) > maxSessionSummaries {
+		records = records[:maxSessionSummaries]
+	}
 	for _, rec := range records {
 		if rec.AuditLogPath == "" {
 			continue
@@ -379,15 +385,28 @@ func collectAuditPointers(cfg Config, r Redactor) AuditSection {
 			SessionID: r.String(rec.SessionID),
 			Path:      r.String(rec.AuditLogPath),
 		}
-		if info, statErr := os.Stat(rec.AuditLogPath); statErr == nil && !info.IsDir() {
-			ptr.Present = true
-			ptr.SizeBytes = info.Size()
-			ptr.ModifiedAt = info.ModTime().UTC().Format(time.RFC3339)
+		// Only stat a path under a discovered state root: a malformed record
+		// could aim audit_log_path at an unrelated file (e.g. ~/.ssh/id_rsa).
+		if pathUnderRoots(rec.AuditLogPath, roots) {
+			if info, statErr := os.Stat(rec.AuditLogPath); statErr == nil && !info.IsDir() {
+				ptr.Present = true
+				ptr.SizeBytes = info.Size()
+				ptr.ModifiedAt = info.ModTime().UTC().Format(time.RFC3339)
+			}
 		}
 		s.Pointers = append(s.Pointers, ptr)
 	}
-	sort.Slice(s.Pointers, func(i, j int) bool { return s.Pointers[i].SessionID < s.Pointers[j].SessionID })
 	return s
+}
+
+// pathUnderRoots reports whether p is exactly, or a descendant of, one of roots.
+func pathUnderRoots(p string, roots []string) bool {
+	for _, root := range roots {
+		if root != "" && (p == root || strings.HasPrefix(p, root+string(filepath.Separator))) {
+			return true
+		}
+	}
+	return false
 }
 
 func stateRoots(cfg Config) []string {
