@@ -55,6 +55,9 @@ jobs:
           ACTIONLINT_VERSION: 1.7.12
         run: |
           curl -fsSL \
+            --retry 3 \
+            --retry-delay 2 \
+            --retry-connrefused \
             --max-time 60 \
             --connect-timeout 15 \
             --max-filesize 209715200 \
@@ -72,6 +75,9 @@ jobs:
           ZIZMOR_VERSION: 1.26.1
         run: |
           curl -fsSL \
+            --retry 3 \
+            --retry-delay 2 \
+            --retry-connrefused \
             --max-time 60 \
             --connect-timeout 15 \
             --max-filesize 209715200 \
@@ -105,6 +111,9 @@ jobs:
           ZIZMOR_VERSION: 1.26.1
         run: |
           curl -fsSL \
+            --retry 3 \
+            --retry-delay 2 \
+            --retry-connrefused \
             --max-time 60 \
             --connect-timeout 15 \
             --max-filesize 209715200 \
