@@ -48,7 +48,7 @@ var (
 	// diagnostic fields stay legible.
 	// Values: a double- or single-quoted string (honoring backslash escapes, so
 	// password="abc\"def" is masked whole) or a bare unquoted token.
-	keyValueSecretRe = regexp.MustCompile(`(?i)((?:[a-z0-9_.-]*(?:password|passwd|passphrase|secret|token|credential)[a-z0-9_.-]*|(?:api|access|private|session)[_-]?key)\\?"?\s*[:=]\s*)(\\"(?:\\.|[^"\\])*\\"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s"',]+)`)
+	keyValueSecretRe = regexp.MustCompile(`(?i)((?:[a-z0-9_.-]*(?:password|passwd|passphrase|secret|token|credential)[a-z0-9_.-]*|(?:api|access|private|session)[_-]?key)\\?['"]?\s*[:=]\s*)(\\"(?:\\.|[^"\\])*\\"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s"',]+)`)
 	jwtRe            = regexp.MustCompile(`eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]*`)
 	githubTokenRe    = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,255}`)
 	githubPatRe      = regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,255}`)
@@ -104,13 +104,24 @@ func NewRedactor(home string) Redactor {
 		// Boundary = a path separator, end-of-string, or a delimiter that cannot
 		// continue a filename (whitespace/quote/structural punctuation). "." "-"
 		// "_" and alphanumerics are excluded because they can extend a component.
-		r.homeRe = regexp.MustCompile(regexp.QuoteMeta(home) + `(/|[\s"':;,=)\]}]|$)`)
+		r.homeRe = regexp.MustCompile(regexp.QuoteMeta(home) + `(/|[\s"':;,=)\]}\\]|$)`)
 	}
 	return r
 }
 
 // String applies the full redaction pipeline: home rewrite, then the
 // secret-named key=value rule, then every single-token pattern.
+//
+// This pattern masking is DEFENSE IN DEPTH, not the primary guarantee. The
+// support bundle's primary protection is collect-by-construction: it never reads
+// credential-file contents, workspace files, or log bodies — only structured,
+// enumerated metadata (paths, presence, sizes, enums) — so secrets do not enter
+// the bundle to begin with (see the collector and redactionRules). The patterns
+// here backstop the few free-form strings that remain (paths, error text). They
+// cover the common secret formats and quoting/escaping forms, but a regex over
+// arbitrarily-escaped free-form text cannot be exhaustive; do not rely on this
+// layer alone for a field that could carry adversarially-encoded secrets — keep
+// such a field out of the bundle at the collector instead.
 func (r Redactor) String(s string) string {
 	if s == "" {
 		return s

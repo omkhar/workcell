@@ -118,6 +118,9 @@ func TestRedactorMasksSecretNamedKeyValues(t *testing.T) {
 		// shell/JSON-escaped OUTER quotes on the value and the key.
 		{`password=\"escapedvalsecret\"`, []string{"escapedvalsecret"}},
 		{`{\"password\":\"jsonescsecret\"}`, []string{"jsonescsecret"}},
+		// single-quoted mapping keys (Python/YAML-ish dumps).
+		{`{'password':'singlequotekeysecret'}`, []string{"singlequotekeysecret"}},
+		{`'api_key': 'singlequoteapisecret'`, []string{"singlequoteapisecret"}},
 	}
 	for _, tc := range cases {
 		out := r.String(tc.in)
@@ -173,12 +176,13 @@ func TestRedactorHomeTrailingSlashNormalized(t *testing.T) {
 func TestRedactorHomePrefixBoundary(t *testing.T) {
 	r := NewRedactor("/Users/al")
 	cases := map[string]string{
-		"/Users/alice/.colima/x": "/Users/alice/.colima/x", // different user: untouched
-		"/Users/al/.colima/x":    "~/.colima/x",            // exact home + separator
-		"/Users/al":              "~",                      // exact home at end
-		"cwd=/Users/al done":     "cwd=~ done",             // home at a whitespace boundary
-		`"/Users/al"`:            `"~"`,                    // home at a quote boundary
-		"/Users/al.config":       "/Users/al.config",       // "." can continue a component: untouched
+		"/Users/alice/.colima/x":   "/Users/alice/.colima/x", // different user: untouched
+		"/Users/al/.colima/x":      "~/.colima/x",            // exact home + separator
+		"/Users/al":                "~",                      // exact home at end
+		"cwd=/Users/al done":       "cwd=~ done",             // home at a whitespace boundary
+		`"/Users/al"`:              `"~"`,                    // home at a quote boundary
+		"/Users/al.config":         "/Users/al.config",       // "." can continue a component: untouched
+		`{\"home\":\"/Users/al\"}`: `{\"home\":\"~\"}`,       // exact home before an escaped quote
 	}
 	for in, want := range cases {
 		if got := r.String(in); got != want {
