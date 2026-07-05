@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/providerid"
 )
 
@@ -42,9 +43,13 @@ func schemaScopeSets() map[string]map[string]struct{} {
 		"documents":         providerid.DocumentKeySet(),
 		"credentials":       mapKeysSet(sortedKeys(credentialContainerPaths)),
 		"credentials-entry": allowedCredentialEntryKeys,
-		"ssh":               allowedSSHKeys,
-		"copies":            allowedCopyEntryKeys,
-		"network":           allowedNetworkKeys,
+		// Resolver form (pre-resolution) is validated by the credential
+		// resolver, not the injection renderer, so it is grounded against the
+		// authresolve set instead of the post-resolution renderer set above.
+		"credentials-entry-resolver": authresolve.CredentialEntryKeys,
+		"ssh":                        allowedSSHKeys,
+		"copies":                     allowedCopyEntryKeys,
+		"network":                    allowedNetworkKeys,
 	}
 }
 

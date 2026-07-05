@@ -132,6 +132,32 @@ provisioned for Copilot (Copilot opts out of shared credentials).
 
 ### Credential entry sub-keys (`[credentials.<name>]` table form)
 
+A `[credentials.<name>]` table is validated in two stages, and each stage
+accepts a different key set. Both key sets below are machine-checked against
+their respective parser.
+
+**Resolver form (pre-resolution).** This is the operator-authored table the
+credential resolver (`internal/authresolve`) reads *before* rendering. It may
+name a built-in host `resolver` (for example `codex-home-auth-file` or
+`claude-macos-keychain`) instead of a direct `source`; the resolver
+materializes the credential into a file and rewrites the entry to a `source`
+path for the next stage.
+
+<!-- schema:credentials-entry-resolver:begin -->
+| Key | Type | Required | Applies to | Default | Meaning |
+|---|---|---|---|---|---|
+| `source` | path string | one of `source` or `resolver` is required | all credential keys | none | host path to the credential material; must live outside the mounted workspace; mutually exclusive with `resolver` |
+| `resolver` | string (`codex-home-auth-file` for `codex_auth`, `claude-macos-keychain` for `claude_auth`) | one of `source` or `resolver` is required | resolver-backed credential keys | none | built-in host resolver that materializes the credential before rendering; mutually exclusive with `source` |
+| `materialization` | string (`ephemeral` or `persistent`) | optional | resolver-backed credential keys | `ephemeral` | how the resolved credential is materialized; must stay `ephemeral` for resolver-backed auth |
+| `providers` | array of provider ids | optional (required for `github_hosts` and `github_config`) | all credential keys | in-scope providers | restrict the entry to the listed providers |
+| `modes` | array of mode ids | optional | all credential keys | all modes | restrict the entry to the listed modes |
+<!-- schema:credentials-entry-resolver:end -->
+
+**Rendered form (post-resolution).** After resolution the resolver strips
+`resolver` and `materialization` and writes a `source` path, so the
+injection-policy renderer accepts only the keys below. A direct-source policy
+(no `resolver`) is already in this form and passes straight through.
+
 <!-- schema:credentials-entry:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
@@ -140,13 +166,12 @@ provisioned for Copilot (Copilot opts out of shared credentials).
 | `modes` | array of mode ids | optional | all credential keys | all modes | restrict the entry to the listed modes |
 <!-- schema:credentials-entry:end -->
 
-> **Scope:** this table lists the credential-entry keys accepted by the
-> injection-policy validator *after* credential resolution, and it is
-> machine-checked against that validator. Resolver-backed sources — for example
-> `codex-home-auth-file` and `claude-macos-keychain` — additionally accept
-> `resolver` and `materialization` keys, which the credential resolver
-> (`internal/authresolve`) consumes to produce `source` before this validation;
-> they are out of scope for this post-resolution table.
+> **Scope:** the resolver-form table is machine-checked against the credential
+> resolver's accepted key set (`CredentialEntryKeys` in `internal/authresolve`);
+> the rendered-form table is machine-checked against the injection-policy
+> renderer's post-resolution key set (`internal/injection`). `resolver` and
+> `materialization` are consumed by the resolver to produce `source` and are not
+> accepted by the post-resolution renderer.
 
 ### `[ssh]` keys
 
