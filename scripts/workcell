@@ -3691,10 +3691,17 @@ support_bundle_main() {
         shift
         ;;
       --output)
-        local val="${2:-}"
-        [[ -n "${val}" && "${val}" != /* ]] && val="${invocation_pwd}/${val}"
-        args+=("--output" "${val}")
-        shift 2
+        if [[ $# -lt 2 ]]; then
+          # No value: pass the bare flag through so the Go parser emits the
+          # documented usage error (exit 2) rather than set -e aborting shift 2.
+          args+=("$1")
+          shift
+        else
+          local val="$2"
+          [[ -n "${val}" && "${val}" != /* ]] && val="${invocation_pwd}/${val}"
+          args+=("--output" "${val}")
+          shift 2
+        fi
         ;;
       *)
         args+=("$1")

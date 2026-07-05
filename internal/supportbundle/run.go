@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,6 +51,7 @@ hand; each falls back to the matching environment/default when omitted:
 func Run(args []string, stdout, stderr io.Writer) error {
 	cfg := Config{Now: time.Now()}
 	output := ""
+	outputSet := false
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -62,9 +64,9 @@ func Run(args []string, stdout, stderr io.Writer) error {
 			if !ok {
 				return usageError("--output requires a value")
 			}
-			output, i = value, next
+			output, i, outputSet = value, next, true
 		case strings.HasPrefix(arg, "--output="):
-			output = strings.TrimPrefix(arg, "--output=")
+			output, outputSet = strings.TrimPrefix(arg, "--output="), true
 		default:
 			key, value, hasEq := strings.Cut(arg, "=")
 			if !hasEq {
@@ -82,7 +84,10 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	if output != "" && strings.TrimSpace(output) == "" {
+	// An explicitly supplied but empty --output is a usage error, not a silent
+	// fall-through to stdout that would dump the private bundle where automation
+	// expected a file.
+	if outputSet && strings.TrimSpace(output) == "" {
 		return usageError("--output path may not be blank")
 	}
 
@@ -91,21 +96,39 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if output == "" {
+	if !outputSet {
 		_, err := stdout.Write(rendered)
 		return err
 	}
-	if err := os.WriteFile(output, rendered, 0o600); err != nil {
-		return err
-	}
-	// os.WriteFile keeps an existing file's mode, so enforce 0600 explicitly: an
-	// already-present group/world-readable target must not leave the diagnostics
-	// bundle readable to other local users.
-	if err := os.Chmod(output, 0o600); err != nil {
+	if err := writeBundleFile(output, rendered); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "wrote support bundle to %s\n", output)
 	return nil
+}
+
+// writeBundleFile writes the bundle to a sibling 0600 temp file and renames it
+// into place, so the diagnostics are never briefly readable under a pre-existing
+// target's looser mode (the file is created 0600 and only then made visible).
+func writeBundleFile(output string, rendered []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(output), ".support-bundle-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(rendered); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, output)
 }
 
 func applyContextFlag(cfg *Config, key, value string) error {

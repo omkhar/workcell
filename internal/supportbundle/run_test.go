@@ -115,6 +115,17 @@ func TestRunMissingValueIsUsageError(t *testing.T) {
 	assertUsageError(t, err)
 }
 
+// TestRunEmptyOutputIsUsageError guards that an explicitly empty --output is a
+// usage error, not a silent fall-through that dumps the private bundle to stdout.
+func TestRunEmptyOutputIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"--output="}, &stdout, &stderr)
+	assertUsageError(t, err)
+	if stdout.Len() > 0 {
+		t.Fatalf("empty --output dumped bundle to stdout: %q", stdout.String())
+	}
+}
+
 func assertUsageError(t *testing.T, err error) {
 	t.Helper()
 	var ec *cliexit.ExitCodeError
