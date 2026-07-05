@@ -84,6 +84,11 @@ const (
 	// alternation with active metacharacters), unlike kindAbsent's
 	// fixed-string containment.
 	kindRegexAbsent
+	// kindRegexPresent requires the regexp pattern to match somewhere in the
+	// launcher, mirroring an affirmative `rg -q REGEX` whose REGEX contains an
+	// active metacharacter (e.g. a trailing `.` meaning any char), unlike
+	// kindPresent's fixed-string containment.
+	kindRegexPresent
 )
 
 // check is one hardening invariant: how to match, what to match, which
@@ -346,7 +351,9 @@ var runtimeInvariantChecks = []check{
 		message: "Expected scripts/workcell to expose a hidden staging probe for invariant testing",
 	},
 	{
-		kind:    kindPresent,
+		// rg treats the trailing `.` as "any char", so match it as a regex for
+		// exact `rg -q` parity (the only active metacharacter in the pattern).
+		kind:    kindRegexPresent,
 		pattern: "strict mode requires --prepare when you explicitly request --rebuild.",
 		message: "Expected scripts/workcell to reject explicit strict-mode image rebuild requests",
 	},
@@ -388,6 +395,8 @@ func (c check) holds(text string) bool {
 		return !strings.Contains(text, c.pattern)
 	case kindRegexAbsent:
 		return !regexp.MustCompile(c.pattern).MatchString(text)
+	case kindRegexPresent:
+		return regexp.MustCompile(c.pattern).MatchString(text)
 	default:
 		return false
 	}
