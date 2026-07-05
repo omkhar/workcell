@@ -335,6 +335,23 @@ case "${network_line}" in
     ;;
 esac
 
+# A1 follow-up: an explicit empty endpoint list is a valid deny-all (drop-all)
+# allowlist, not an error. The --prepare-only path applies this so a prewarmed
+# VM is left with no egress. Assert the helper's `plan` for an empty list emits
+# the final DROP and no per-endpoint ACCEPT (only ESTABLISHED/RELATED).
+EGRESS_DROP_ALL_PLAN="$("${ROOT_DIR}/scripts/colima-egress-allowlist.sh" plan drop-all-fixture "" 2>/dev/null)"
+case "${EGRESS_DROP_ALL_PLAN}" in
+  *"WORKCELL_EGRESS -j DROP"*) : ;;
+  *)
+    echo "empty egress plan did not emit the default DROP rule" >&2
+    exit 1
+    ;;
+esac
+if printf '%s\n' "${EGRESS_DROP_ALL_PLAN}" | grep -q -- '--dport [0-9]* -j ACCEPT'; then
+  echo "empty egress plan unexpectedly emitted a per-endpoint ACCEPT rule" >&2
+  exit 1
+fi
+
 # The [network] surface must not be able to weaken the allowlist: a policy that
 # tries to set a network-policy mode under [network] must fail closed.
 NETWORK_WEAKEN_FILE="${TMP_DIR}/network-weaken.toml"

@@ -524,20 +524,23 @@ case "${COMMAND}" in
     clear_rules
     ;;
   plan)
-    ENDPOINTS="${3:-}"
-    [[ -n "${ENDPOINTS}" ]] || {
-      echo "Missing endpoint list for plan" >&2
+    # An explicit empty endpoint list is a valid deny-all (drop-all) allowlist:
+    # build_allowlist_rules emits only the ESTABLISHED/RELATED accept and the
+    # final DROP. Only a missing argument is a usage error.
+    [[ $# -ge 3 ]] || {
+      echo "Missing endpoint list argument for plan" >&2
       exit 1
     }
+    ENDPOINTS="${3}"
     build_allowlist_rules "${ENDPOINTS}"
     render_allowlist_plan
     ;;
   apply)
-    ENDPOINTS="${3:-}"
-    [[ -n "${ENDPOINTS}" ]] || {
-      echo "Missing endpoint list for apply" >&2
+    [[ $# -ge 3 ]] || {
+      echo "Missing endpoint list argument for apply" >&2
       exit 1
     }
+    ENDPOINTS="${3}"
     validate_endpoints "${ENDPOINTS}"
     run_in_vm "$(render_allowlist_apply_plan)"
     ;;

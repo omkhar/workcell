@@ -8807,11 +8807,12 @@ validate_runtime_security_posture
 restore_runtime_egress() {
   if [[ "${TARGET_BACKEND}" == "colima" ]]; then
     if [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
-      # Empty only reaches here via --prepare-only (a launch aborts at the
-      # empty-egress guard); helper rejects empty and `clear` = unrestricted.
-      if [[ -n "${ALLOW_ENDPOINTS}" ]]; then
-        "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
-      fi
+      # An empty ALLOW_ENDPOINTS only reaches here via --prepare-only (a launch
+      # aborts at the empty-egress guard). The helper treats an empty list as a
+      # deny-all allowlist, so the idle prewarmed VM is left with no egress
+      # rather than the broader build-time allowlist (`clear` would mean
+      # unrestricted, so it is not used here).
+      "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${ALLOW_ENDPOINTS}"
     else
       "${EGRESS_HELPER}" clear "${COLIMA_PROFILE}"
     fi
