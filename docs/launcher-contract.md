@@ -71,3 +71,40 @@ its value verbatim:
 These variables are reserved for the validation harness. The launcher scrubs
 them from the host process environment unless the sanitized-entrypoint marker
 is set, so they cannot be smuggled in by an operator to spoof the detected host.
+
+## Trusted host-command execution (`host-exec.sh`)
+
+`scripts/lib/launcher/host-exec.sh` resolves fixed, trusted host tools and runs
+host commands under a sanitised environment. Every helper depends only on
+`env`/`cd` builtins, the readonly `TRUSTED_HOST_PATH`, `REAL_HOME` (used with a
+fallback), and `resolve_workcell_real_home` (from
+`scripts/lib/trusted-docker-client.sh`) — no other launcher function — which
+makes the module self-contained.
+
+### `resolve_fixed_host_tool()`
+
+Resolves a trusted host tool from an allowlist of absolute candidate paths.
+Called as `resolve_fixed_host_tool <name> <candidate>...`; prints the first
+candidate that is executable (`-x`) and returns `0`. If no candidate is
+executable it prints `Missing trusted host tool: <name>` to stderr and exits
+`1`. Only fixed, caller-supplied absolute paths are considered, so the resolved
+binary never depends on a `PATH` search.
+
+### `run_clean_host_command()`
+
+Runs a host command under a sanitised environment. With no arguments it is a
+no-op returning `0`. Otherwise it resolves the host home (`REAL_HOME`, falling
+back to `resolve_workcell_real_home`, then `/` if neither is a directory),
+`cd`s into that home, and execs the command via `env -i` with only
+`PATH="${TRUSTED_HOST_PATH}"`, `HOME`, and `LC_ALL=C`/`LANG=C` set. The command
+runs in a subshell so the launcher's own working directory and environment are
+unaffected, and the command's exit status is propagated.
+
+### `run_clean_host_command_in_dir()`
+
+Same sanitised `env -i` execution as `run_clean_host_command()`, but runs the
+command from a caller-supplied working directory. Called as
+`run_clean_host_command_in_dir <dir> <cmd>...`. If `<dir>` is not a directory it
+prints `Missing host working directory: <dir>` to stderr and exits `2`. With no
+command arguments it is a no-op returning `0`. `HOME` resolution and the pinned
+`PATH`/locale are identical to `run_clean_host_command()`.
