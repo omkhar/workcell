@@ -86,14 +86,27 @@ var secretReplacers = []secretReplacer{
 // Redactor (empty home) still masks every secret pattern; only the home
 // rewrite is skipped when Home is empty.
 type Redactor struct {
-	// Home is the absolute operator home directory; every occurrence is
-	// rewritten to "~" before secret masking runs.
+	// Home is the absolute operator home directory; each occurrence at a path
+	// boundary is rewritten to "~" before secret masking runs.
 	Home string
+	// homeRe matches Home only at a component boundary (followed by a path
+	// separator, end-of-string, or a non-path delimiter) so a home that is a
+	// string prefix of a longer component (Home=/Users/al vs /Users/alice) is
+	// not corrupted into ~ice. nil when Home is empty.
+	homeRe *regexp.Regexp
 }
 
 // NewRedactor returns a Redactor rooted at home.
 func NewRedactor(home string) Redactor {
-	return Redactor{Home: strings.TrimRight(home, "/")}
+	home = strings.TrimRight(home, "/")
+	r := Redactor{Home: home}
+	if home != "" {
+		// Boundary = a path separator, end-of-string, or a delimiter that cannot
+		// continue a filename (whitespace/quote/structural punctuation). "." "-"
+		// "_" and alphanumerics are excluded because they can extend a component.
+		r.homeRe = regexp.MustCompile(regexp.QuoteMeta(home) + `(/|[\s"':;,=)\]}]|$)`)
+	}
+	return r
 }
 
 // String applies the full redaction pipeline: home rewrite, then the
@@ -102,8 +115,8 @@ func (r Redactor) String(s string) string {
 	if s == "" {
 		return s
 	}
-	if r.Home != "" {
-		s = strings.ReplaceAll(s, r.Home, "~")
+	if r.homeRe != nil {
+		s = r.homeRe.ReplaceAllString(s, "~$1")
 	}
 	// PEM private-key blocks first: they span spaces and newlines, so the
 	// key=value rule below would truncate the header (e.g. private_key=-----BEGIN

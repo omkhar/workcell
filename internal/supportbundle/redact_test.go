@@ -167,6 +167,26 @@ func TestRedactorHomeTrailingSlashNormalized(t *testing.T) {
 	}
 }
 
+// TestRedactorHomePrefixBoundary guards the component-boundary fix: a home that
+// is a string prefix of a longer component must not be rewritten mid-component
+// (which would corrupt the path and leak the suffix of another local username).
+func TestRedactorHomePrefixBoundary(t *testing.T) {
+	r := NewRedactor("/Users/al")
+	cases := map[string]string{
+		"/Users/alice/.colima/x": "/Users/alice/.colima/x", // different user: untouched
+		"/Users/al/.colima/x":    "~/.colima/x",            // exact home + separator
+		"/Users/al":              "~",                      // exact home at end
+		"cwd=/Users/al done":     "cwd=~ done",             // home at a whitespace boundary
+		`"/Users/al"`:            `"~"`,                    // home at a quote boundary
+		"/Users/al.config":       "/Users/al.config",       // "." can continue a component: untouched
+	}
+	for in, want := range cases {
+		if got := r.String(in); got != want {
+			t.Fatalf("home boundary: String(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestRedactorPreservesDiagnosticText guards against over-redaction: fields
 // that matter for diagnosis (sha digests, enum values, ordinary paths) must
 // survive so the bundle stays useful.
