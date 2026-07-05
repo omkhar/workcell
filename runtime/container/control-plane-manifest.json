@@ -13,6 +13,10 @@
       "sha256": "b7dc19f58db225fb695b87ada176c65be9b13edc5ecf43138eda8d01aa6eb879"
     },
     {
+      "repo_path": "scripts/lib/launcher/host-detect.sh",
+      "sha256": "318ac47025849d41e98b775e8d0d4209ae4ba80e1eeebfa393244ebc24d36fbe"
+    },
+    {
       "repo_path": "scripts/lib/render_injection_bundle",
       "sha256": "f1057951d6f65e12d82a7bc2b5002afde5664670d8f4ed7d9bc289bbec5f5901"
     },
