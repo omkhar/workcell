@@ -28,7 +28,9 @@ Every supported adapter follows the same shape:
   auth passthrough (see [`../docs/injection-policy.md`](../docs/injection-policy.md)
   and [`../docs/invariants.md`](../docs/invariants.md))
 - provider-native unsafe-flag rejection in the wrapper
-  (`runtime/container/provider-policy.sh`), exempted only by `breakglass`
+  (`runtime/container/provider-policy.sh`), enforced in **every** mode — the
+  wrapper re-checks arguments (`WORKCELL_WRAPPER_CONTEXT=1`) so even `breakglass`
+  cannot pass them; breakglass raises the sandbox floor, not the unsafe-flag policy
 
 The cross-adapter mapping tables live in
 [`../docs/adapter-control-planes.md`](../docs/adapter-control-planes.md).

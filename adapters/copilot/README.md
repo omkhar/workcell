@@ -53,7 +53,11 @@ directories. In-container reserved session targets: `~/.copilot`,
   subcommands and a broad set of trust-widening flags (MCP toolset/config,
   `--allow-all*`, `--allow-tool`/`--allow-url`, `--add-dir`, `--dynamic-retrieval`,
   `--no-custom-instructions`, `--remote`/`--share*`/`--worktree`, `--yolo`,
-  bundled short options, and more). `breakglass` exempts these.
+  bundled short options, and more). These are rejected in **every** mode
+  including `breakglass`: `provider-wrapper.sh` re-checks arguments
+  (`WORKCELL_WRAPPER_CONTEXT=1`), so `container-smoke.sh` confirms breakglass
+  overrides still fail. Breakglass raises the sandbox floor, not the unsafe-flag
+  policy.
 - Plugin, MCP, custom-agent, hook, skill, dynamic-retrieval, and remote-session
   expansion each stay blocked on the default path until a separate Workcell
   review unit and validation evidence land.

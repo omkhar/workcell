@@ -58,8 +58,12 @@ and `~/.mcp.json` (`ReservedTargets` in `internal/adapters/data.go`).
   `--dangerously-skip-permissions`, `--add-dir`, `--allowedTools`,
   `--mcp-config`, `--plugin-dir`, `--settings`, `--setting-sources`,
   `--system-prompt`, `--append-system-prompt`, in-session `--permission-mode`
-  overrides, and the `install`/`update` lifecycle commands. `breakglass` exempts
-  these.
+  overrides, and the `install`/`update` lifecycle commands. These are rejected in
+  **every** mode including `breakglass`: `provider-wrapper.sh` re-checks arguments
+  (it sets `WORKCELL_WRAPPER_CONTEXT=1`, which makes the breakglass exemption
+  inapplicable), so `container-smoke.sh` confirms breakglass overrides still fail.
+  Breakglass raises the container sandbox floor, not the provider unsafe-flag
+  policy.
 - The wrapper scrubs provider env such as `CLAUDE_CONFIG_DIR`, `GH_TOKEN`,
   `GITHUB_TOKEN`, and the OpenTelemetry variables before launch
   (`runtime/container/provider-wrapper.sh`).

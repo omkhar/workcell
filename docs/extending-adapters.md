@@ -114,8 +114,11 @@ unsafe flag, or promote a planned adapter such as `antigravity`.
    `reject_unsafe_<name>_args` in `runtime/container/provider-policy.sh` (and wire
    a new provider into `validate_command_args` and
    `runtime/container/provider-wrapper.sh`). Block provider-native flags and
-   subcommands that widen trust; `provider_policy_allows_breakglass` is the only
-   exemption.
+   subcommands that widen trust. The only code-level exemption is
+   `provider_policy_allows_breakglass`, but it is false inside
+   `provider-wrapper.sh` (which always sets `WORKCELL_WRAPPER_CONTEXT=1`), so the
+   wrapper re-check rejects these flags even in a `breakglass` session —
+   `container-smoke.sh` asserts breakglass overrides still fail.
    - Invariant [§3 repo policy must not silently widen trust](invariants.md#3-repo-policy-must-not-silently-widen-trust)
      and [§5 destructive or trust-widening actions need defense in depth](invariants.md#5-destructive-or-trust-widening-actions-need-defense-in-depth).
 

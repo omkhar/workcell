@@ -60,7 +60,11 @@ In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
   `--ask-for-approval`, `--add-dir`, `--search`, `--remote`, `--enable`/
   `--disable`, `--cd`, `--sandbox danger-full-access`, reserved `--config`
   overrides, off-mode `--profile` values, and `app`/`app-server`/`cloud`/`mcp`/
-  `sandbox` subcommands outside the managed GUI path. `breakglass` exempts these.
+  `sandbox` subcommands outside the managed GUI path. These are rejected in
+  **every** mode including `breakglass`: `provider-wrapper.sh` re-checks arguments
+  (`WORKCELL_WRAPPER_CONTEXT=1`), so `container-smoke.sh` confirms breakglass
+  overrides still fail. Breakglass raises the sandbox floor, not the unsafe-flag
+  policy.
 - Final branch publication stays on the host through `workcell publish-pr`, not
   from inside the container session.
 
