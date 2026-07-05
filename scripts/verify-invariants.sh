@@ -3056,6 +3056,11 @@ if ! rg -q 'snapshot\.debian\.org:443' "${ROOT_DIR}/scripts/workcell"; then
   exit 1
 fi
 
+if ! rg -q 'snapshot-cloudflare\.debian\.org:443' "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected scripts/workcell bootstrap endpoints to allow the snapshot-cloudflare.debian.org CDN mirror" >&2
+  exit 1
+fi
+
 if rg -q 'static\.rust-lang\.org:443' "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected scripts/workcell bootstrap endpoints to avoid unused static.rust-lang.org egress" >&2
   exit 1

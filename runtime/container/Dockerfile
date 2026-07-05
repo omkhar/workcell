@@ -30,11 +30,12 @@ ENV npm_config_update_notifier=false
 
 # hadolint ignore=DL3008
 RUN fetch_snapshot_bootstrap_package() { \
-      local url="$1"; \
+      local path="$1"; \
       local output="$2"; \
-      local attempt=""; \
+      local attempt="" host=""; \
       for attempt in 1 2 3 4 5 6 7 8; do \
-        if node --dns-result-order=ipv4first -e 'const fs = require("fs"); (async () => { const [url, output] = process.argv.slice(1); const response = await fetch(url); if (!response.ok) { throw new Error("unexpected status " + response.status + " for " + url); } const file = fs.createWriteStream(output); for await (const chunk of response.body) { file.write(chunk); } file.end(); await new Promise((resolve, reject) => { file.on("finish", resolve); file.on("error", reject); }); })().catch((error) => { console.error(error.stack || error); process.exit(1); });' "${url}" "${output}"; then \
+        if [[ $((attempt % 2)) -eq 1 ]]; then host="snapshot-cloudflare.debian.org"; else host="snapshot.debian.org"; fi; \
+        if node --dns-result-order=ipv4first -e 'const fs = require("fs"); (async () => { const [url, output] = process.argv.slice(1); const response = await fetch(url); if (!response.ok) { throw new Error("unexpected status " + response.status + " for " + url); } const file = fs.createWriteStream(output); for await (const chunk of response.body) { file.write(chunk); } file.end(); await new Promise((resolve, reject) => { file.on("finish", resolve); file.on("error", reject); }); })().catch((error) => { console.error(error.stack || error); process.exit(1); });' "https://${host}/${path}" "${output}"; then \
           return 0; \
         fi; \
         rm -f "${output}"; \
@@ -48,11 +49,11 @@ RUN fetch_snapshot_bootstrap_package() { \
        local openssl_url="" openssl_sha256="" ca_url="" ca_sha256=""; \
        case "$(dpkg --print-architecture)" in \
          amd64) \
-           openssl_url="https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb"; \
+           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb"; \
            openssl_sha256="233d6d1f6ff00509cba554365e7cfb3be36db1dea57291eeb248f2c04d62719d"; \
            ;; \
          arm64) \
-           openssl_url="https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb"; \
+           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb"; \
            openssl_sha256="92dfcdc213cd7a5e6aa34a1ac9660a59e56838d12876f4b34599f8fea39cb432"; \
            ;; \
          *) \
@@ -60,7 +61,7 @@ RUN fetch_snapshot_bootstrap_package() { \
            exit 1; \
            ;; \
        esac; \
-       ca_url="https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb"; \
+       ca_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb"; \
        ca_sha256="ef590f89563aa4b46c8260d49d1cea0fc1b181d19e8df3782694706adf05c184"; \
        fetch_snapshot_bootstrap_package "${openssl_url}" /tmp/workcell-bootstrap-openssl.deb \
        && echo "${openssl_sha256}  /tmp/workcell-bootstrap-openssl.deb" | sha256sum -c - \
@@ -71,10 +72,13 @@ RUN fetch_snapshot_bootstrap_package() { \
        rm -f /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb; \
      } \
   && bootstrap_snapshot_tls \
-  && rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s trixie-updates main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
-  && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list \
+  && rm -f /etc/apt/sources.list.d/debian.sources \
+  && set_snapshot_sources() { \
+       local host="$1"; \
+       printf 'deb [check-valid-until=no] https://%s/archive/debian/%s trixie main\n' "${host}" "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list; \
+       printf 'deb [check-valid-until=no] https://%s/archive/debian/%s trixie-updates main\n' "${host}" "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list; \
+       printf 'deb [check-valid-until=no] https://%s/archive/debian-security/%s trixie-security main\n' "${host}" "${DEBIAN_SNAPSHOT}" >> /etc/apt/sources.list; \
+     } \
   && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/99workcell-snapshot \
   && apt_indexes_have_runtime_packages() { \
        apt-cache show --no-all-versions \
@@ -116,6 +120,7 @@ RUN fetch_snapshot_bootstrap_package() { \
        && return 0; \
      } \
   && for attempt in 1 2 3 4 5; do \
+       if [[ $((attempt % 2)) -eq 1 ]]; then set_snapshot_sources snapshot-cloudflare.debian.org; else set_snapshot_sources snapshot.debian.org; fi; \
        if DEBIAN_FRONTEND=noninteractive apt-get update \
          && apt_indexes_have_runtime_packages \
          && install_runtime_packages; then \

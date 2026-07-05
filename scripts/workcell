@@ -7844,7 +7844,7 @@ prepare_workspace_control_plane_shadow() {
 }
 
 bootstrap_endpoints() {
-  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 production.cloudfront.docker.com:443 docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 storage.googleapis.com:443 snapshot.debian.org:443"
+  echo "auth.docker.io:443 docker.io:443 index.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 production.cloudfront.docker.com:443 docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 registry.npmjs.org:443 storage.googleapis.com:443 snapshot-cloudflare.debian.org:443 snapshot.debian.org:443"
 }
 
 AGENT=""
@@ -8582,7 +8582,7 @@ fi
 
 ALLOW_ENDPOINTS="$(dedupe_endpoint_list "$(provider_endpoints "${AGENT}") $(target_broker_endpoints "${TARGET_BACKEND}") $(credential_extra_endpoints) $(provider_auth_recovery_extra_endpoints) ${INJECTION_EXTRA_ENDPOINTS} ${EXTRA_ENDPOINTS:-}")"
 if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ "${CONTAINER_MUTABILITY}" == "ephemeral" ]]; then
-  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot.debian.org:443")"
+  ALLOW_ENDPOINTS="$(dedupe_endpoint_list "${ALLOW_ENDPOINTS} snapshot-cloudflare.debian.org:443 snapshot.debian.org:443")"
 fi
 # A1: subtract deny_endpoints last so deny wins over every allow source; this
 # only removes endpoints and never changes NETWORK_POLICY.
