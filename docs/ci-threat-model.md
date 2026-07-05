@@ -200,9 +200,12 @@ was previously undocumented. The cadence and steps are:
 **`WORKCELL_HOSTED_CONTROLS_TOKEN` — rotate every 90 days and immediately on any
 suspected exposure:**
 
-1. Mint a replacement fine-grained token (or GitHub App installation token)
-   with the same read-only administration/metadata scopes and an expiry ≤ 90
-   days.
+1. Mint a replacement **fine-grained PAT** with the same read-only
+   administration/metadata scopes and an expiry ≤ 90 days. Do **not** store a
+   GitHub App *installation* token here — those expire after ~1 hour and the
+   scheduled/preflight jobs would fail on a stale secret; if a GitHub App is
+   preferred, store the App's credentials and mint the installation token at
+   workflow runtime instead.
 2. Update the secret in the `hosted-controls-audit` environment
    (Settings → Environments), not at repo scope.
 3. Trigger `hosted-controls.yml` via `workflow_dispatch` and confirm the audit
@@ -252,9 +255,10 @@ attestations, and SBOMs comprehensively, but **nothing in CI or in the
 installer verifies Workcell's own release outputs**. The release workflow
 verifies inputs and reproducibility (tag signature via
 `check-release-tag-signature.sh`, byte-for-byte bundle reproducibility via
-`verify-release-bundle.sh`, publish-range commit signatures via
-`check-publish-commit-signatures.sh`) but does not re-run `cosign verify` or
-`gh attestation verify` on the artifacts it just signed. The installers
+`verify-release-bundle.sh`) but does not re-run `cosign verify` or
+`gh attestation verify` on the artifacts it just signed. (Publish-range commit
+signatures are checked separately by `check-publish-commit-signatures.sh` on the
+host-side publish-PR path, not by the release workflow.) The installers
 (`install.sh` → `install-workcell.sh`) install from the local checkout and do
 **not** download or verify a signed release artifact.
 
