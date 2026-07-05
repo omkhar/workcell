@@ -33,7 +33,16 @@ func runScript(tb testing.TB, relScript string, env map[string]string, args ...s
 	root := repoRoot(tb)
 	cmd := exec.Command(filepath.Join(root, filepath.FromSlash(relScript)), args...)
 	cmd.Dir = root
-	cmd.Env = os.Environ()
+	// Hermetic environment: build the child env explicitly instead of inheriting
+	// os.Environ(), so a developer's exported WORKCELL_STARTUP_* (or any other
+	// stray var) cannot leak in and change behavior. Carry only the few vars the
+	// bench scripts need to locate tools and temp space, plus what the test sets.
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	for _, k := range []string{"HOME", "TMPDIR"} {
+		if v, ok := os.LookupEnv(k); ok {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -259,20 +268,42 @@ func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
 	}
 }
 
+func TestRunScriptEnvIsHermetic(t *testing.T) {
+	// A developer's exported WORKCELL_STARTUP_* must not leak into the script
+	// driver tests. Export a stray SAMPLES_NS + prep hook in the parent process;
+	// a no-runtime run must still cleanly SKIP (not turn into a canned dry run)
+	// and must not execute the leaked prep hook.
+	t.Setenv("WORKCELL_STARTUP_SAMPLES_NS", "999")
+	t.Setenv("WORKCELL_STARTUP_COLD_PREP", "echo LEAKED_PREP_RAN")
+	code, out := runScript(t, driver, map[string]string{"WORKCELL_STARTUP_RUNTIME": "none"})
+	if code != 0 {
+		t.Fatalf("hermetic skip run should exit 0, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "skipping") || !strings.Contains(out, "no container runtime") {
+		t.Errorf("stray WORKCELL_STARTUP_SAMPLES_NS leaked (expected a clean skip): %s", out)
+	}
+	if strings.Contains(out, "LEAKED_PREP_RAN") {
+		t.Errorf("stray prep hook leaked into the run: %s", out)
+	}
+}
+
 func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
 	// Regression for the C2 cold-prep finding: a single session start warms the
 	// cache the next sample would otherwise hit, so evicting once before the
 	// whole pass leaves only the first sample genuinely cold. The driver must
 	// re-run WORKCELL_STARTUP_COLD_PREP before EVERY measured cold sample, while
-	// warm/cache-hit legitimately share one prep for their whole pass. The prep
-	// hooks append a byte per invocation so we can count them; the dry-run path
-	// exercises the same re-prep loop without a runtime.
+	// warm/cache-hit legitimately share one prep for their whole pass. Verified on
+	// the live path (prep is dry-run-suppressed), timing a benign command; the
+	// prep hooks append a byte per invocation so we can count them.
 	dir := t.TempDir()
 	coldF := filepath.Join(dir, "cold")
 	warmF := filepath.Join(dir, "warm")
 	chF := filepath.Join(dir, "cachehit")
 	env := map[string]string{
-		"WORKCELL_STARTUP_SAMPLES_NS":     "10 20 30",
+		"WORKCELL_STARTUP_RUNTIME":        "colima", // bypass the no-runtime skip
+		"WORKCELL_STARTUP_CMD":            "true",
+		"WORKCELL_STARTUP_ITERATIONS":     "3",
+		"WORKCELL_STARTUP_WARMUP":         "0",
 		"WORKCELL_STARTUP_RUNS":           "1",
 		"WORKCELL_STARTUP_COLD_PREP":      "printf c >> " + coldF,
 		"WORKCELL_STARTUP_WARM_PREP":      "printf w >> " + warmF,
@@ -289,7 +320,7 @@ func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
 		}
 		return len(data)
 	}
-	// Three canned cold samples -> three cold preps (one per measured sample).
+	// Three measured cold samples -> three cold preps (one per sample).
 	if got := countPreps(coldF); got != 3 {
 		t.Errorf("cold prep ran %d time(s), want 3 (once per measured sample)", got)
 	}
@@ -299,10 +330,64 @@ func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
 	if got := countPreps(chF); got != 1 {
 		t.Errorf("cache-hit prep ran %d time(s), want 1 (one prep for the whole pass)", got)
 	}
-	// The per-sample samples are aggregated through the harness stats core, so
+	// The per-sample timings are aggregated through the harness stats core, so
 	// the cold row must still read like a normal n=3 distribution.
-	if !strings.Contains(out, "| cold | 20 | 30 | 20 |") {
+	if !strings.Contains(out, "| cold |") || !strings.Contains(out, " 3 |") {
 		t.Errorf("aggregated cold row missing/incorrect: %s", out)
+	}
+}
+
+func TestDriverDryRunSkipsPrep(t *testing.T) {
+	// A canned dry run must NEVER execute prep hooks, even if an operator has live
+	// hooks exported from a previous run. The hooks would append to a marker file;
+	// after a dry run that file must not exist.
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "prep-ran")
+	env := map[string]string{
+		"WORKCELL_STARTUP_SAMPLES_NS":     "10 20 30 40 50",
+		"WORKCELL_STARTUP_COLD_PREP":      "printf c >> " + marker,
+		"WORKCELL_STARTUP_WARM_PREP":      "printf w >> " + marker,
+		"WORKCELL_STARTUP_CACHE_HIT_PREP": "printf h >> " + marker,
+	}
+	code, out := runScript(t, driver, env)
+	if code != 0 {
+		t.Fatalf("dry run should exit 0, got %d: %s", code, out)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		data, _ := os.ReadFile(marker)
+		t.Errorf("dry run executed prep hook(s) (marker = %q); dry runs must skip prep", data)
+	}
+	if !strings.Contains(out, "Stability gate: STABLE") {
+		t.Errorf("dry run should still produce a stable report: %s", out)
+	}
+}
+
+func TestDriverRejectsInvalidNumericControls(t *testing.T) {
+	// RUNS=0 / non-numeric controls could make the driver exit 0 with no
+	// benchmarking or a misleading STABLE, so each numeric control is validated as
+	// an integer at/above its floor. Uses the canned dry-run path so no runtime is
+	// needed; validation runs regardless of live vs dry-run.
+	cases := []struct{ name, key, val string }{
+		{"RUNS_zero", "WORKCELL_STARTUP_RUNS", "0"},
+		{"RUNS_nonnumeric", "WORKCELL_STARTUP_RUNS", "abc"},
+		{"ITERATIONS_zero", "WORKCELL_STARTUP_ITERATIONS", "0"},
+		{"WARMUP_negative", "WORKCELL_STARTUP_WARMUP", "-1"},
+		{"STABILITY_PCT_nonnumeric", "WORKCELL_STARTUP_STABILITY_PCT", "5x"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := map[string]string{
+				"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30",
+				c.key:                         c.val,
+			}
+			code, out := runScript(t, driver, env)
+			if code == 0 {
+				t.Fatalf("expected non-zero exit for %s=%s, got 0: %s", c.key, c.val, out)
+			}
+			if !strings.Contains(out, c.key) {
+				t.Errorf("error should name the offending control %s: %s", c.key, out)
+			}
+		})
 	}
 }
 

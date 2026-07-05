@@ -168,13 +168,19 @@ Tunable via environment: `WORKCELL_STARTUP_ITERATIONS`, `WORKCELL_STARTUP_WARMUP
 (forced to `0` for `cold`), `WORKCELL_STARTUP_RUNS`,
 `WORKCELL_STARTUP_STABILITY_PCT`, `WORKCELL_STARTUP_CMD`,
 `WORKCELL_STARTUP_COLD_PREP`, `WORKCELL_STARTUP_CACHE_HIT_PREP`,
-`WORKCELL_STARTUP_WARM_PREP`, and `WORKCELL_STARTUP_OUTPUT`.
+`WORKCELL_STARTUP_WARM_PREP`, and `WORKCELL_STARTUP_OUTPUT`. The numeric controls
+are validated up front — `WORKCELL_STARTUP_ITERATIONS` and `WORKCELL_STARTUP_RUNS`
+must be integers `>= 1`, and `WORKCELL_STARTUP_WARMUP` /
+`WORKCELL_STARTUP_STABILITY_PCT` integers `>= 0`; anything else fails fast rather
+than silently producing no measurements or a misleading `STABLE`.
 
 ### Dry run without a runtime
 
 The driver is CI-safe: with no runtime available it prints a clear message and
 exits `0` (skip, not fail). To rehearse the full report and stability gate on any
-host — no runtime needed — feed canned samples:
+host — no runtime needed — feed canned samples. The canned dry run needs no prep
+hooks and never executes them, so any `WORKCELL_STARTUP_*_PREP` still exported
+from a previous live run is ignored:
 
 ```sh
 # One stable run set (gate passes, exit 0):

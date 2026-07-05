@@ -55,6 +55,21 @@ STABILITY_PCT="${WORKCELL_STARTUP_STABILITY_PCT:-15}"
 OUTPUT_PATH="${WORKCELL_STARTUP_OUTPUT:-}"
 SAMPLES="${WORKCELL_STARTUP_SAMPLES_NS:-}"
 
+# Validate a numeric driver control is an integer at/above a floor; fail fast.
+validate_int() {
+  # $1 env var name, $2 value, $3 floor
+  case "$2" in
+    '' | *[!0-9]*)
+      echo "run-startup-bench: $1 must be an integer, got '$2'." >&2
+      exit 1
+      ;;
+  esac
+  if [ "$2" -lt "$3" ]; then
+    echo "run-startup-bench: $1 must be >= $3, got '$2'." >&2
+    exit 1
+  fi
+}
+
 [ -x "${HARNESS}" ] || {
   echo "run-startup-bench: harness not found or not executable: ${HARNESS}" >&2
   exit 1
@@ -122,6 +137,14 @@ else
   eval "CMD_ARGV=( ${WORKCELL_STARTUP_CMD} )"
 fi
 
+# Numeric controls must be sane before benchmarking: RUNS=0 or a non-integer
+# would otherwise silently produce no measurements or a misleading STABLE. RUNS
+# is validated after any dry-run per-group override above.
+validate_int "WORKCELL_STARTUP_ITERATIONS" "${ITERATIONS}" 1
+validate_int "WORKCELL_STARTUP_WARMUP" "${WARMUP}" 0
+validate_int "WORKCELL_STARTUP_RUNS" "${RUNS}" 1
+validate_int "WORKCELL_STARTUP_STABILITY_PCT" "${STABILITY_PCT}" 0
+
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/startup-bench.XXXXXX")"
 trap 'rm -rf "${WORKDIR}"' EXIT
 REPORT="${WORKDIR}/report.md"
@@ -162,26 +185,20 @@ run_harness() {
 # matches the other modes exactly. Emits the same key=value stats line.
 measure_cold() {
   # $1 run index (1-based)
-  local samples=() one
   if [ "${DRY_RUN}" -eq 1 ]; then
+    # Dry-run: canned samples, no prep, no launch -- emit the group's stats.
     local gi=$(($1 - 1))
     [ "${gi}" -lt "${#SAMPLE_GROUPS[@]}" ] || gi=$((${#SAMPLE_GROUPS[@]} - 1))
-    local canned_arr=() canned
-    read -ra canned_arr <<<"${SAMPLE_GROUPS[gi]}"
-    for canned in "${canned_arr[@]}"; do
-      prep_mode cold
-      one="$(WORKCELL_STARTUP_SAMPLES_NS="${canned}" "${HARNESS}" cold 1 0)"
-      samples+=("$(field "${one}" min_ns)")
-    done
-  else
-    local i=0
-    while [ "${i}" -lt "${ITERATIONS}" ]; do
-      prep_mode cold
-      one="$("${HARNESS}" cold 1 0 -- "${CMD_ARGV[@]}")"
-      samples+=("$(field "${one}" min_ns)")
-      i=$((i + 1))
-    done
+    WORKCELL_STARTUP_SAMPLES_NS="${SAMPLE_GROUPS[gi]}" "${HARNESS}" cold "${ITERATIONS}" 0
+    return
   fi
+  local samples=() one i=0
+  while [ "${i}" -lt "${ITERATIONS}" ]; do
+    prep_mode cold
+    one="$("${HARNESS}" cold 1 0 -- "${CMD_ARGV[@]}")"
+    samples+=("$(field "${one}" min_ns)")
+    i=$((i + 1))
+  done
   WORKCELL_STARTUP_SAMPLES_NS="${samples[*]}" "${HARNESS}" cold "${#samples[@]}" 0
 }
 
@@ -213,7 +230,9 @@ while [ "${run_index}" -le "${RUNS}" ]; do
     if [ "${mode}" = "cold" ]; then
       line="$(measure_cold "${run_index}")"
     else
-      prep_mode "${mode}"
+      # Dry-run uses canned samples, so it must not execute any prep hook (an
+      # operator may have live hooks exported from a previous run).
+      [ "${DRY_RUN}" -eq 1 ] || prep_mode "${mode}"
       line="$(run_harness "${mode}" "${run_index}")"
     fi
     med="$(field "${line}" median_ns)"
