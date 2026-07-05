@@ -154,10 +154,13 @@ Everything else is ephemeral and auto-minted:
 
 - **`GITHUB_TOKEN` / `github.token`** — used for `gh api` calls and GHCR login
   via the pinned `docker/login-action`. Auto-issued per job, expires when the
-  job ends. Where it is handed to a script, the workflows use a hardened pattern:
-  write the token to a `mktemp` file under `umask 077`, `unset GITHUB_TOKEN
-  GH_TOKEN`, pass the path via `WORKCELL_GITHUB_API_TOKEN_FILE`, and `rm -f` it
-  on an `EXIT` trap. No workflow echoes a token.
+  job ends. When handed to a script it is either consumed directly from the
+  environment by `gh api` (e.g. `check-release-tag-signature.sh`) or, where a
+  script isolates it, written to a `mktemp` file under `umask 077` with
+  `GITHUB_TOKEN`/`GH_TOKEN` unset and the path passed via
+  `WORKCELL_GITHUB_API_TOKEN_FILE`, `rm -f`'d on an `EXIT` trap. Both are
+  acceptable for an auto-expiring job token; no workflow echoes a token. (The
+  file pattern matters more for the long-lived stored token below.)
 - **OIDC `id-token`** — minted for keyless signing/attestation in `release.yml`
   and for Scorecard provenance. Short-lived; never stored.
 
@@ -222,8 +225,8 @@ model.
   opt-out (`WORKCELL_RELEASE_NO_ATTEST`, pinned to `false` in
   [`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml)),
   every release attests.
-- **SBOM attestations** (`actions/attest-sbom`) that attach each SPDX-JSON SBOM
-  to the **image-digest and source-bundle subjects** — the SBOM *describes* those
+- **SBOM attestations** (`actions/attest` with `sbom-path`) that attach each
+  SPDX-JSON SBOM to the **image-digest and source-bundle subjects** — the SBOM *describes* those
   subjects; the `.spdx.json` files are not themselves attestation subjects.
   Verify them via the image/source subject (`gh attestation verify <image>`), not
   by pointing `gh attestation verify` at a `.spdx.json` file. The SBOM files are
