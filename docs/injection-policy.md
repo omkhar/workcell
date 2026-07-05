@@ -139,7 +139,8 @@ policy artifact for this control. On the `colima` target the launcher enforces i
 as a fail-closed, dual-stack firewall: `scripts/workcell` computes
 `ALLOW_ENDPOINTS` (the union of reviewed sources — provider/auth-recovery/broker
 endpoints, credential-derived endpoints, `[network].allow_endpoints`, profile
-`EXTRA_ENDPOINTS`, and `snapshot.debian.org:443`), de-dupes it, subtracts
+`EXTRA_ENDPOINTS`, and the Debian snapshot mirrors
+`snapshot-cloudflare.debian.org:443` and `snapshot.debian.org:443`), de-dupes it, subtracts
 `[network].deny_endpoints`, and hands it to `scripts/colima-egress-allowlist.sh`,
 which programs `iptables`/`ip6tables` `DOCKER-USER` rules that ACCEPT each allowed
 `host:port` (IPv4 and IPv6) and `DROP` the rest. If `ip6tables` is unavailable the
@@ -159,6 +160,10 @@ deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlis
   the reviewed provider/credential endpoints).
 - `deny_endpoints` are subtracted by endpoint entry after every allow source, so
   a denied `host:port` is removed even when a provider needs it (deny wins).
+  Because the match is exact, blocking the automatic Debian snapshot egress
+  requires denying **both** mirror endpoints —
+  `snapshot-cloudflare.debian.org:443` and `snapshot.debian.org:443` — since
+  denying only one still leaves the other reachable.
 - Each endpoint must be `host:port` or `[ipv6]:port` (port 1-65535, host
   `^[A-Za-z0-9.-]+$`, no leading dot or `..`, IP-shaped hosts must be real IPs),
   validated with the same grammar `scripts/colima-egress-allowlist.sh` applies.
