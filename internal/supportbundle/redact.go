@@ -40,11 +40,15 @@ var (
 	// keyValueSecretRe masks the value after a secret-named key. The key name
 	// must strongly indicate a secret; bare "auth" is intentionally excluded
 	// so diagnostic fields like auth_status stay legible.
-	// The value alternates over a double-quoted string (which may contain
-	// spaces), a single-quoted string, or a bare unquoted token, so quoted
-	// passphrases like password="two words" or password='hunter2' are masked as
-	// a whole rather than partially or skipped.
-	keyValueSecretRe = regexp.MustCompile(`(?i)((?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|session[_-]?key|credential)"?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s"',]+)`)
+	// Key names: the secret-bearing stems (password/secret/token/credential/
+	// passphrase) may appear anywhere in the identifier, so compound names like
+	// secret_key, SECRET_KEY_BASE, or app_password_field match; plus the explicit
+	// *_key forms whose stem is not itself secret-named. Bare "auth" and generic
+	// "*_key" (e.g. public_key, cache_key) are deliberately excluded so
+	// diagnostic fields stay legible.
+	// Values: a double- or single-quoted string (honoring backslash escapes, so
+	// password="abc\"def" is masked whole) or a bare unquoted token.
+	keyValueSecretRe = regexp.MustCompile(`(?i)((?:[a-z0-9_.-]*(?:password|passwd|passphrase|secret|token|credential)[a-z0-9_.-]*|(?:api|access|private|session)[_-]?key)"?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s"',]+)`)
 	jwtRe            = regexp.MustCompile(`eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]*`)
 	githubTokenRe    = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,255}`)
 	githubPatRe      = regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,255}`)

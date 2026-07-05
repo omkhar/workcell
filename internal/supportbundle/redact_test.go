@@ -89,6 +89,13 @@ func TestRedactorMasksSecretNamedKeyValues(t *testing.T) {
 		{"password='hunter2single'", []string{"hunter2single"}},
 		{`password="two words here"`, []string{"two words here", "words here", "words"}},
 		{"token='multi word secret'", []string{"multi word secret", "word secret", "secret"}},
+		// secret-bearing stem anywhere in the key name (common env/config fields).
+		{"secret_key=plainsecretvalue", []string{"plainsecretvalue"}},
+		{"SECRET_KEY_BASE=basesecretvalue", []string{"basesecretvalue"}},
+		{"app_password_field: fieldsecretvalue", []string{"fieldsecretvalue"}},
+		{"refresh_token=refreshsecretvalue", []string{"refreshsecretvalue"}},
+		// escaped quote inside a quoted value must not leak the suffix.
+		{`password="abc\"defsecret"`, []string{"defsecret", `abc\"defsecret`}},
 	}
 	for _, tc := range cases {
 		out := r.String(tc.in)
@@ -99,6 +106,23 @@ func TestRedactorMasksSecretNamedKeyValues(t *testing.T) {
 			if strings.Contains(out, leak) {
 				t.Fatalf("secret value leaked from %q: %q", tc.in, out)
 			}
+		}
+	}
+}
+
+func TestRedactorKeepsNonSecretFieldsLegible(t *testing.T) {
+	r := NewRedactor("")
+	// These key names are not secret-bearing; their values must survive so
+	// diagnostics stay readable (no over-redaction from the broadened rule).
+	legible := []string{
+		"auth_status=ok",
+		"public_key=id-abc123",
+		"cache_key=warm",
+		"sort_key=ascending",
+	}
+	for _, in := range legible {
+		if out := r.String(in); strings.Contains(out, "[REDACTED]") {
+			t.Fatalf("over-redacted a non-secret field %q -> %q", in, out)
 		}
 	}
 }
