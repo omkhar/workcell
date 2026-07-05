@@ -115,6 +115,23 @@ func TestRunMissingValueIsUsageError(t *testing.T) {
 	assertUsageError(t, err)
 }
 
+// TestRunContextIsLastWins guards the assumption the launcher relies on: trusted
+// context appended after the operator's args wins, so a user-supplied duplicate
+// (e.g. --real-home) cannot override the real redaction root.
+func TestRunContextIsLastWins(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := Run([]string{"--host-os=attacker", "--host-os=darwin"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var b Bundle
+	if err := json.Unmarshal(stdout.Bytes(), &b); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if b.Install.HostOS != "darwin" {
+		t.Fatalf("last --host-os did not win: got %q, want darwin", b.Install.HostOS)
+	}
+}
+
 // TestRunEmptyOutputIsUsageError guards that an explicitly empty --output is a
 // usage error, not a silent fall-through that dumps the private bundle to stdout.
 func TestRunEmptyOutputIsUsageError(t *testing.T) {

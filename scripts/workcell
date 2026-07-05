@@ -3709,15 +3709,18 @@ support_bundle_main() {
         ;;
     esac
   done
+  # Trusted launcher context comes AFTER the operator's args so a user-supplied
+  # duplicate (e.g. --real-home /tmp) cannot override the real redaction root:
+  # supportbundle.Run is last-wins, so the trusted values here take precedence.
   run_go_hostutil_preserve_exit support-bundle-cli \
+    "${args[@]}" \
     "--repo-root=${ROOT_DIR}" \
     "--launcher=${BASH_SOURCE[0]}" \
     "--real-home=${REAL_HOME}" \
     "--workcell-state-root=${WORKCELL_STATE_ROOT:-}" \
     "--colima-state-root=${COLIMA_STATE_ROOT:-}" \
     "--host-os=$(detected_host_os)" \
-    "--host-arch=$(detected_host_arch)" \
-    "${args[@]}" || rc=$?
+    "--host-arch=$(detected_host_arch)" || rc=$?
   exit "${rc}"
 }
 
