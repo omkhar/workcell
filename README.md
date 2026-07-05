@@ -207,6 +207,7 @@ options.
 | Diagnostics and support matrix | [docs/diagnostics-and-support-matrix.md](docs/diagnostics-and-support-matrix.md) |
 | Security invariants | [docs/invariants.md](docs/invariants.md) |
 | Threat model | [docs/threat-model.md](docs/threat-model.md) |
+| CI/CD threat model | [docs/ci-threat-model.md](docs/ci-threat-model.md) |
 | OWASP agentic mapping | [docs/owasp-agentic-mapping.md](docs/owasp-agentic-mapping.md) |
 | Provider matrix | [docs/provider-matrix.md](docs/provider-matrix.md) |
 | Provider bootstrap matrix | [docs/provider-bootstrap-matrix.md](docs/provider-bootstrap-matrix.md) |

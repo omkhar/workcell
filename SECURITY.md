@@ -53,6 +53,12 @@ the three enforcement points (`scripts/workcell`,
 Adding a key requires editing the TOML and updating each enforcer in
 the same PR.
 
+## CI/CD threat model
+
+The [CI/CD threat model](docs/ci-threat-model.md) covers the build and release
+pipeline: runner trust tiers, secrets handling and rotation, attestation
+verification assumptions, and the signing-compromise incident response runbook.
+
 ## Supported branch
 
 Security fixes are applied to `main`. There are no long-lived release branches.
