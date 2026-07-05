@@ -107,7 +107,7 @@ func collectPolicy(cfg Config, r Redactor) PolicySection {
 
 	s := PolicySection{
 		RepoPolicyDir:              r.String(policyDir),
-		RepoPolicyFiles:            listPolicyFiles(policyDir),
+		RepoPolicyFiles:            r.Strings(listPolicyFiles(policyDir)),
 		UserInjectionPolicyPath:    r.String(userPolicy),
 		UserInjectionPolicyPresent: userPolicy != "" && fileExists(userPolicy),
 		HostedControlsPresent:      policyDir != "" && fileExists(filepath.Join(policyDir, "github-hosted-controls.toml")),
