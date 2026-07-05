@@ -107,6 +107,11 @@ unsafe flag, or promote a planned adapter such as `antigravity`.
    `providers` in `internal/adapters/data.go` with its credential keys, container
    paths, and reserved targets. A directory without a registry row stays a
    fail-closed scaffold (see the `antigravity` README).
+   - Also wire the host launcher: `scripts/workcell` validates the agent name
+     against a fixed set and hard-codes unsupported providers to exit early, and
+     the same set backs the `--help`, `workcell why`, and `--auth-status`
+     surfaces. Until the launcher accepts the id, `workcell --agent <new>` fails
+     before any runtime preparation, so the registry edits alone are not enough.
    - Guardrail: `internal/providerid/providerid_test.go` asserts a planned
      provider stays out of the supported set until support lands.
 
