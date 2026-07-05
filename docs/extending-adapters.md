@@ -71,6 +71,11 @@ substitute your real key and target.
    provider-auth-maturity table in [injection-policy.md](injection-policy.md),
    update [adapter-control-planes.md](adapter-control-planes.md) if the managed
    file set changes, and add the key to the adapter's `README.md` auth section.
+   - Also update the operator status surface: `print_injection_status` in
+     `scripts/workcell` prints a hard-coded `supported_credential_keys=...` list
+     when no policy is loaded, so a new key is accepted by the table-driven Go
+     paths but missing from `workcell --auth-status` guidance until that list is
+     updated too.
    - Threat-model note: an undocumented credential path is exactly the "trust
      widened without review" case CONTRIBUTING flags — keep the docs in the same
      change.
@@ -107,11 +112,15 @@ unsafe flag, or promote a planned adapter such as `antigravity`.
    `providers` in `internal/adapters/data.go` with its credential keys, container
    paths, and reserved targets. A directory without a registry row stays a
    fail-closed scaffold (see the `antigravity` README).
-   - Also wire the host launcher: `scripts/workcell` validates the agent name
-     against a fixed set and hard-codes unsupported providers to exit early, and
-     the same set backs the `--help`, `workcell why`, and `--auth-status`
-     surfaces. Until the launcher accepts the id, `workcell --agent <new>` fails
-     before any runtime preparation, so the registry edits alone are not enough.
+   - Also wire the host launcher and runtime dispatch: `scripts/workcell`
+     validates the agent name against a fixed set (which also backs `--help`,
+     `workcell why`, and `--auth-status`), and `runtime/container/entrypoint.sh`,
+     the Rust core-launcher, and the Dockerfile core-wrapper symlinks map default
+     launches and managed-wrapper routing for the same fixed
+     `codex|claude|copilot|gemini` set. Until all of these accept the id,
+     `workcell --agent <new>` fails before or during runtime prep (rejected as an
+     `Unsupported agent/ui combination`, or not routed through the managed
+     provider wrapper), so the registry edits alone are not enough.
    - Guardrail: `internal/providerid/providerid_test.go` asserts a planned
      provider stays out of the supported set until support lands.
 
