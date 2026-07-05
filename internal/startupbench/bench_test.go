@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-// Package startupbench holds the tests that pin the pure logic of the C2
-// session-start latency benchmark scripts (scripts/bench/startup-bench.sh and
-// scripts/bench/run-startup-bench.sh): the median/p90/stddev math, the
-// cross-run stability gate, and the skip-when-no-runtime behavior. These run
-// under `go test ./...` and need no container runtime.
+// Package startupbench pins the pure logic of the C2 session-start latency bench
+// scripts (median/p90/stddev math, stability gate, driver skip/validation guards)
+// so it runs under `go test ./...` with no runtime.
 package startupbench
 
 import (
@@ -26,18 +24,15 @@ func repoRoot(tb testing.TB) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
 
-// runScript runs a bench script with the given args and extra environment,
-// returning its exit code and combined stdout+stderr.
+// runScript runs a bench script with args + extra env, returning exit code and
+// combined output. The child env is built explicitly (not inherited) so a stray
+// exported WORKCELL_STARTUP_* can't leak in: only PATH/HOME/TMPDIR + test-set keys
+// are carried (a test key overrides the base).
 func runScript(tb testing.TB, relScript string, env map[string]string, args ...string) (int, string) {
 	tb.Helper()
 	root := repoRoot(tb)
 	cmd := exec.Command(filepath.Join(root, filepath.FromSlash(relScript)), args...)
 	cmd.Dir = root
-	// Hermetic environment: build the child env explicitly instead of inheriting
-	// os.Environ(), so a developer's exported WORKCELL_STARTUP_* (or any other
-	// stray var) cannot leak in and change behavior. Carry only the few vars the
-	// bench scripts need to locate tools and temp space, plus what the test sets
-	// (a test-supplied key -- e.g. PATH -- overrides the base, with no duplicate).
 	base := map[string]string{"PATH": os.Getenv("PATH")}
 	for _, k := range []string{"HOME", "TMPDIR"} {
 		if v, ok := os.LookupEnv(k); ok {
@@ -62,6 +57,14 @@ func runScript(tb testing.TB, relScript string, env map[string]string, args ...s
 	return -1, ""
 }
 
+// writeExec writes an executable helper script for a test.
+func writeExec(tb testing.TB, path, script string) {
+	tb.Helper()
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		tb.Fatalf("write %s: %v", path, err)
+	}
+}
+
 const harness = "scripts/bench/startup-bench.sh"
 const driver = "scripts/bench/run-startup-bench.sh"
 
@@ -77,8 +80,8 @@ func parseFields(line string) map[string]string {
 }
 
 func TestHarnessStatsOddSampleSet(t *testing.T) {
-	// Deliberately unsorted; the harness sorts before computing. n=5 so median
-	// is the 3rd value and p90 (index floor(5*9/10)=4) is the max.
+	// Deliberately unsorted; the harness sorts first. n=5 so median is the 3rd
+	// value and p90 (index floor(5*9/10)=4) is the max.
 	code, out := runScript(t, harness,
 		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "50 10 40 20 30"},
 		"cold", "0", "0")
@@ -142,9 +145,8 @@ func TestHarnessRejectsNonIntegerSample(t *testing.T) {
 }
 
 func TestHarnessLivePathTimesTarget(t *testing.T) {
-	// No canned samples: the harness times a benign target. This exercises the
-	// real clock + timing pipeline and confirms n == iterations with a
-	// non-negative median. Values are host-dependent, so we assert structure.
+	// No canned samples: times a benign target, exercising the real clock. Values
+	// are host-dependent, so we assert structure (n and the fields present).
 	code, out := runScript(t, harness, nil, "warm", "3", "1", "--", "true")
 	if code != 0 {
 		t.Fatalf("exit %d, out=%q", code, out)
@@ -189,8 +191,8 @@ func TestDriverDryRunStablePasses(t *testing.T) {
 }
 
 func TestDriverDryRunUnstableFailsGate(t *testing.T) {
-	// Two ';'-separated per-run groups with very different medians (20 vs 200)
-	// blow past the default 15%% stability threshold, so the gate must fail.
+	// Two per-run groups with very different medians (20 vs 200) blow past the
+	// default 15% threshold, so the gate must fail.
 	code, out := runScript(t, driver,
 		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30;100 200 300"})
 	if code != 2 {
@@ -205,35 +207,24 @@ func TestDriverDryRunUnstableFailsGate(t *testing.T) {
 }
 
 func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
-	// Regression for the C2 driver findings:
-	//   P1 -- cold must not spend its freshly-evicted state on a discarded
-	//         warmup launch, so the driver forces warmup=0 for cold while other
-	//         modes keep the configured warmup.
-	//   P2 -- the driver must drive the documented three-mode set, including
-	//         cache-hit, not just cold+warm.
-	// A stub harness (wired via the WORKCELL_STARTUP_HARNESS test seam) records
-	// the mode + warmup it was invoked with so we can assert the argv the driver
-	// actually passes on the live path.
+	// cold forces warmup=0; the driver drives all three modes incl. cache-hit. A
+	// stub harness (WORKCELL_STARTUP_HARNESS seam) records the mode + warmup it got.
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "harness.log")
 	stub := filepath.Join(dir, "stub-harness.sh")
-	script := "#!/usr/bin/env bash\n" +
-		"set -euo pipefail\n" +
-		"mode=\"$1\"; iters=\"$2\"; warmup=\"$3\"\n" +
-		"printf '%s %s\\n' \"$mode\" \"$warmup\" >> \"${HARNESS_LOG}\"\n" +
-		"printf 'mode=%s n=%s mean_ns=1 median_ns=1 p90_ns=1 stddev_ns=0 min_ns=1 max_ns=1\\n' \"$mode\" \"$iters\"\n"
-	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
-		t.Fatalf("write stub harness: %v", err)
-	}
+	writeExec(t, stub, "#!/usr/bin/env bash\n"+
+		"set -euo pipefail\n"+
+		"mode=\"$1\"; iters=\"$2\"; warmup=\"$3\"\n"+
+		"printf '%s %s\\n' \"$mode\" \"$warmup\" >> \"${HARNESS_LOG}\"\n"+
+		"printf 'mode=%s n=%s mean_ns=1 median_ns=1 p90_ns=1 stddev_ns=0 min_ns=1 max_ns=1\\n' \"$mode\" \"$iters\"\n")
 	env := map[string]string{
-		"HARNESS_LOG":                 logPath,
-		"WORKCELL_STARTUP_HARNESS":    stub,
-		"WORKCELL_STARTUP_RUNTIME":    "colima", // bypass the no-runtime skip
-		"WORKCELL_STARTUP_CMD":        "true",
-		"WORKCELL_STARTUP_ITERATIONS": "2",
-		"WORKCELL_STARTUP_WARMUP":     "1",
-		"WORKCELL_STARTUP_RUNS":       "2", // live runs require >= 2; stub output is constant so the gate stays STABLE
-		// Live runs require each driven mode's prep hook; no-ops suffice here.
+		"HARNESS_LOG":                     logPath,
+		"WORKCELL_STARTUP_HARNESS":        stub,
+		"WORKCELL_STARTUP_RUNTIME":        "colima", // bypass the no-runtime skip
+		"WORKCELL_STARTUP_CMD":            "true",
+		"WORKCELL_STARTUP_ITERATIONS":     "2",
+		"WORKCELL_STARTUP_WARMUP":         "1",
+		"WORKCELL_STARTUP_RUNS":           "2", // live requires >=2; stub output is constant so the gate stays STABLE
 		"WORKCELL_STARTUP_COLD_PREP":      ":",
 		"WORKCELL_STARTUP_CACHE_HIT_PREP": ":",
 		"WORKCELL_STARTUP_WARM_PREP":      ":",
@@ -245,7 +236,6 @@ func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
 	if !strings.Contains(out, "| cache-hit |") {
 		t.Errorf("report missing cache-hit row (P2): %s", out)
 	}
-
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read harness log: %v", err)
@@ -274,10 +264,8 @@ func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
 }
 
 func TestRunScriptEnvIsHermetic(t *testing.T) {
-	// A developer's exported WORKCELL_STARTUP_* must not leak into the script
-	// driver tests. Export a stray SAMPLES_NS + prep hook in the parent process;
-	// a no-runtime run must still cleanly SKIP (not turn into a canned dry run)
-	// and must not execute the leaked prep hook.
+	// A stray exported WORKCELL_STARTUP_* must not leak in: a no-runtime run must
+	// still cleanly SKIP (not become a canned dry run) or run the leaked hook.
 	t.Setenv("WORKCELL_STARTUP_SAMPLES_NS", "999")
 	t.Setenv("WORKCELL_STARTUP_COLD_PREP", "echo LEAKED_PREP_RAN")
 	code, out := runScript(t, driver, map[string]string{"WORKCELL_STARTUP_RUNTIME": "none"})
@@ -293,13 +281,8 @@ func TestRunScriptEnvIsHermetic(t *testing.T) {
 }
 
 func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
-	// Regression for the C2 cold-prep finding: a single session start warms the
-	// cache the next sample would otherwise hit, so evicting once before the
-	// whole pass leaves only the first sample genuinely cold. The driver must
-	// re-run WORKCELL_STARTUP_COLD_PREP before EVERY measured cold sample, while
-	// warm/cache-hit legitimately share one prep for their whole pass. Verified on
-	// the live path (prep is dry-run-suppressed), timing a benign command; the
-	// prep hooks append a byte per invocation so we can count them.
+	// cold re-runs COLD_PREP before every measured sample (a start warms the cache);
+	// warm/cache-hit share one prep. Hooks append a byte per call so we count them.
 	dir := t.TempDir()
 	coldF := filepath.Join(dir, "cold")
 	warmF := filepath.Join(dir, "warm")
@@ -309,9 +292,9 @@ func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
 		"WORKCELL_STARTUP_CMD":        "true",
 		"WORKCELL_STARTUP_ITERATIONS": "3",
 		"WORKCELL_STARTUP_WARMUP":     "0",
-		"WORKCELL_STARTUP_RUNS":       "2", // live runs require >= 2 runs
-		// The gate would be noisy timing `true`; this test is about prep counts,
-		// so widen the threshold so the (real) stability gate never flakes.
+		"WORKCELL_STARTUP_RUNS":       "2",
+		// This test is about prep counts, not stability; widen the threshold so
+		// the (real) gate timing `true` never flakes.
 		"WORKCELL_STARTUP_STABILITY_PCT":  "100000000",
 		"WORKCELL_STARTUP_COLD_PREP":      "printf c >> " + coldF,
 		"WORKCELL_STARTUP_WARM_PREP":      "printf w >> " + warmF,
@@ -328,8 +311,8 @@ func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
 		}
 		return len(data)
 	}
-	// 3 measured cold samples x 2 runs -> 6 cold preps (one per sample), while
-	// warm/cache-hit share one prep per pass -> 2 each across the two runs.
+	// 3 cold samples x 2 runs -> 6 cold preps; warm/cache-hit share one prep per
+	// pass -> 2 each.
 	if got := countPreps(coldF); got != 6 {
 		t.Errorf("cold prep ran %d time(s), want 6 (once per measured sample x 2 runs)", got)
 	}
@@ -339,17 +322,14 @@ func TestDriverColdRepsPerMeasuredSample(t *testing.T) {
 	if got := countPreps(chF); got != 2 {
 		t.Errorf("cache-hit prep ran %d time(s), want 2 (one prep per pass x 2 runs)", got)
 	}
-	// The per-sample timings are aggregated through the harness stats core, so
-	// the cold row must still read like a normal n=3 distribution.
 	if !strings.Contains(out, "| cold |") || !strings.Contains(out, " 3 |") {
 		t.Errorf("aggregated cold row missing/incorrect: %s", out)
 	}
 }
 
 func TestDriverDryRunSkipsPrep(t *testing.T) {
-	// A canned dry run must NEVER execute prep hooks, even if an operator has live
-	// hooks exported from a previous run. The hooks would append to a marker file;
-	// after a dry run that file must not exist.
+	// A canned dry run must NEVER execute prep hooks, even with live hooks
+	// exported; the marker file must not exist afterward.
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "prep-ran")
 	env := map[string]string{
@@ -372,10 +352,8 @@ func TestDriverDryRunSkipsPrep(t *testing.T) {
 }
 
 func TestDriverRejectsInvalidNumericControls(t *testing.T) {
-	// RUNS=0 / non-numeric controls could make the driver exit 0 with no
-	// benchmarking or a misleading STABLE, so each numeric control is validated as
-	// an integer at/above its floor. Uses the canned dry-run path so no runtime is
-	// needed; validation runs regardless of live vs dry-run.
+	// RUNS=0 / non-numeric controls could exit 0 with no benchmarking or a
+	// misleading STABLE, so each control is validated as an integer at its floor.
 	cases := []struct{ name, key, val string }{
 		{"RUNS_zero", "WORKCELL_STARTUP_RUNS", "0"},
 		{"RUNS_nonnumeric", "WORKCELL_STARTUP_RUNS", "abc"},
@@ -401,32 +379,24 @@ func TestDriverRejectsInvalidNumericControls(t *testing.T) {
 }
 
 func TestDriverPreservesCommandArgv(t *testing.T) {
-	// Regression for the WORKCELL_STARTUP_CMD word-splitting finding: an argument
-	// with spaces (e.g. --workspace '/path/with space') must reach the target as
-	// a single argv element, not be split/globbed. A recorder script writes the
-	// argv it was launched with; the last launch wins (it truncates each time),
-	// so the constant command leaves a deterministic argv regardless of mode.
+	// WORKCELL_STARTUP_CMD is shell-quoted: a spaced arg (--workspace '/a b') must
+	// reach the target as one argv element. The recorder leaves the last launch.
 	dir := t.TempDir()
 	argvF := filepath.Join(dir, "argv")
 	rec := filepath.Join(dir, "record.sh")
-	script := "#!/usr/bin/env bash\n" +
-		"set -euo pipefail\n" +
-		": > \"${ARGV_FILE}\"\n" +
-		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"${ARGV_FILE}\"; done\n"
-	if err := os.WriteFile(rec, []byte(script), 0o755); err != nil {
-		t.Fatalf("write recorder: %v", err)
-	}
+	writeExec(t, rec, "#!/usr/bin/env bash\n"+
+		"set -euo pipefail\n"+
+		": > \"${ARGV_FILE}\"\n"+
+		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"${ARGV_FILE}\"; done\n")
 	env := map[string]string{
 		"ARGV_FILE":                   argvF,
 		"WORKCELL_STARTUP_RUNTIME":    "colima", // bypass the no-runtime skip
 		"WORKCELL_STARTUP_CMD":        rec + " alpha 'beta gamma'",
 		"WORKCELL_STARTUP_ITERATIONS": "1",
 		"WORKCELL_STARTUP_WARMUP":     "0",
-		"WORKCELL_STARTUP_RUNS":       "2", // live runs require >= 2 runs
-		// This test is about argv boundaries, not stability; widen the threshold
-		// so the (real) gate timing the recorder never flakes.
-		"WORKCELL_STARTUP_STABILITY_PCT": "100000000",
-		// Live runs require each driven mode's prep hook; no-ops suffice here.
+		"WORKCELL_STARTUP_RUNS":       "2",
+		// About argv boundaries, not stability; widen the threshold.
+		"WORKCELL_STARTUP_STABILITY_PCT":  "100000000",
 		"WORKCELL_STARTUP_COLD_PREP":      ":",
 		"WORKCELL_STARTUP_CACHE_HIT_PREP": ":",
 		"WORKCELL_STARTUP_WARM_PREP":      ":",
@@ -447,10 +417,8 @@ func TestDriverPreservesCommandArgv(t *testing.T) {
 }
 
 func TestDriverLiveRequiresPrepHooks(t *testing.T) {
-	// Regression for the prep-hook finding: on a LIVE run, a missing mode prep
-	// hook must fail fast (naming the mode + env var) instead of silently
-	// measuring whatever runtime state is present and emitting publishable-looking
-	// numbers. The dry-run path needs no prep hooks and must keep passing.
+	// On a LIVE run a missing mode prep hook must fail fast (naming the mode +
+	// env var); the dry-run path needs no prep hooks and must keep passing.
 	live := map[string]string{
 		"WORKCELL_STARTUP_RUNTIME": "colima", // bypass the no-runtime skip
 		"WORKCELL_STARTUP_CMD":     "true",
@@ -465,8 +433,6 @@ func TestDriverLiveRequiresPrepHooks(t *testing.T) {
 	if !strings.Contains(out, "WORKCELL_STARTUP_COLD_PREP") || !strings.Contains(out, "cold") {
 		t.Errorf("missing-prep error must name the mode and the env var: %s", out)
 	}
-
-	// Dry-run still works with no prep hooks set.
 	code, out = runScript(t, driver,
 		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30 40 50"})
 	if code != 0 {
@@ -478,24 +444,15 @@ func TestDriverLiveRequiresPrepHooks(t *testing.T) {
 }
 
 func TestDriverSkipsWhenRuntimeClientButNoDaemon(t *testing.T) {
-	// A host with the runtime CLIENT installed but no usable daemon must fall
-	// through to the clean CI-safe skip (exit 0), not select live mode and then
-	// error on the missing command/prep hooks. Fake colima/container/docker
-	// clients that exist (so `command -v` finds them) but whose health probe
-	// fails (exit 1); shadow any real ones by putting the fakes first on PATH.
+	// A host with the runtime client but no usable daemon must cleanly skip (exit
+	// 0). Fake clients that exist but whose health probe fails, first on PATH.
 	dir := t.TempDir()
 	for _, name := range []string{"colima", "container", "docker"} {
-		// Every invocation (incl. the health probe) fails; existence still lets
-		// `command -v` succeed.
-		if err := os.WriteFile(filepath.Join(dir, name),
-			[]byte("#!/usr/bin/env bash\nexit 1\n"), 0o755); err != nil {
-			t.Fatalf("write fake %s: %v", name, err)
-		}
+		writeExec(t, filepath.Join(dir, name), "#!/usr/bin/env bash\nexit 1\n")
 	}
 	env := map[string]string{
-		// Fakes first, then the real system bins the driver needs (bash/date/...).
+		// Fakes first, then the real system bins the driver needs.
 		"PATH": dir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		// No WORKCELL_STARTUP_RUNTIME (force auto-detect), no SAMPLES_NS.
 	}
 	code, out := runScript(t, driver, env)
 	if code != 0 {
@@ -507,9 +464,7 @@ func TestDriverSkipsWhenRuntimeClientButNoDaemon(t *testing.T) {
 }
 
 func TestDriverLiveRequiresTwoRuns(t *testing.T) {
-	// A single-run live capture has no repeatability evidence; the docs say exit 0
-	// means the stability gate passed, so a live run must require RUNS >= 2 and
-	// fail fast. The canned dry-run path may use whatever RUNS the data implies.
+	// A single-run live capture has no repeatability evidence, so RUNS >= 2 is required.
 	live := map[string]string{
 		"WORKCELL_STARTUP_RUNTIME":        "colima", // bypass the no-runtime skip
 		"WORKCELL_STARTUP_CMD":            "true",
@@ -525,9 +480,7 @@ func TestDriverLiveRequiresTwoRuns(t *testing.T) {
 	if !strings.Contains(out, "WORKCELL_STARTUP_RUNS") || !strings.Contains(out, ">= 2") {
 		t.Errorf("error should require RUNS >= 2 for a live run: %s", out)
 	}
-
-	// Dry-run with a single canned group and RUNS=1 is a rehearsal, not gated or
-	// publishable, and must keep working.
+	// Dry-run with RUNS=1 is a rehearsal, not gated, and must keep working.
 	code, out = runScript(t, driver, map[string]string{
 		"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30 40 50",
 		"WORKCELL_STARTUP_RUNS":       "1",
@@ -538,9 +491,8 @@ func TestDriverLiveRequiresTwoRuns(t *testing.T) {
 }
 
 func TestDriverZeroMedianIsUnstable(t *testing.T) {
-	// A median of 0 in one run and nonzero in another is a degenerate/broken
-	// measurement (a 0 ns session start is impossible), not a 0%% spread that
-	// reads as STABLE. The gate must fail (exit 2).
+	// A median of 0 in one run and nonzero in another is degenerate (a 0 ns start
+	// is impossible), not a 0% spread that reads STABLE; the gate must fail.
 	code, out := runScript(t, driver,
 		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "0 0 0;10 20 30"})
 	if code != 2 {
@@ -555,8 +507,7 @@ func TestDriverZeroMedianIsUnstable(t *testing.T) {
 }
 
 func TestDriverStabilityThresholdIsConfigurable(t *testing.T) {
-	// The same 20->21 spread (5%%) passes at the default threshold but a 1%%
-	// threshold rejects it, proving the gate reads the configured bound.
+	// The same 5% spread passes the default threshold but a 1% threshold rejects it.
 	env := map[string]string{
 		"WORKCELL_STARTUP_SAMPLES_NS":    "10 20 30;11 21 31",
 		"WORKCELL_STARTUP_STABILITY_PCT": "1",

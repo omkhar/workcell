@@ -2,22 +2,16 @@
 #
 # startup-bench.sh -- session-start latency microbenchmark harness (C2).
 #
-# Times one "session start" latency sample -- the wall-clock cost of launching
-# a workcell session -- for a single mode (cold / warm / cache-hit), repeated
-# for a reproducible N-sample median + p90. It is the C2 sibling of the C5
-# exec-guard harness (scripts/bench/exec-guard-bench.c): a small, dependency-
-# free measurement core whose numbers a reviewer can reproduce. The driver
-# (scripts/bench/run-startup-bench.sh) orchestrates the cold vs warm passes and
-# the cross-run stability gate. See docs/session-startup-benchmarks.md.
-#
-# A "session start" is expensive (image resolve + VM/runtime boot + supervisor
-# handshake), so the sample unit is one full launch of the target command, not
-# a tight micro-loop. The stats conventions match the C5 harness exactly:
+# Times one "session start" latency sample -- the wall-clock cost of launching a
+# workcell session -- for a single mode (cold / warm / cache-hit), repeated for a
+# reproducible N-sample median + p90. A small, dependency-free measurement core;
+# the driver (run-startup-bench.sh) orchestrates the passes and stability gate.
+# See docs/session-startup-benchmarks.md. The sample unit is one full launch (not
+# a micro-loop). Stats conventions match the C5 exec-guard harness exactly:
 #   median = sorted[floor(n/2)]        (0-based)
 #   p90    = sorted[floor(n*9/10)]     (0-based, clamped to n-1)
 #   mean   = sum/n
 #   stddev = sqrt(sumsq/n - mean^2)    (population)
-# so cold/warm numbers are directly comparable to the exec-guard baselines.
 #
 # Usage:
 #   startup-bench.sh <mode> <iterations> <warmup> [--] [target-cmd ...]
@@ -26,11 +20,9 @@
 #     warmup      discarded warmup launches run before measurement
 #     target-cmd  the session-start command to time (e.g. ./scripts/workcell ...)
 #
-# Deterministic / dry-run path: if WORKCELL_STARTUP_SAMPLES_NS is set to a
-# whitespace-separated list of positive integers, those are used as the measured
-# samples verbatim and NO command is launched. This makes the stats core
-# reproducible in CI and unit tests without a live runtime, and is how the
-# driver feeds canned data for a dry run.
+# Dry-run path: if WORKCELL_STARTUP_SAMPLES_NS is a whitespace-separated list of
+# non-negative integers, those are the measured samples verbatim and NO command
+# is launched -- how the driver/unit tests exercise the stats core with no runtime.
 #
 # Output (one line, key=value pairs, all times in nanoseconds):
 #   mode=<mode> n=<count> mean_ns=<m> median_ns=<md> p90_ns=<p> \

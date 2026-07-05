@@ -2,25 +2,18 @@
 #
 # run-startup-bench.sh -- drive the session-start latency benchmark (C2).
 #
-# For each mode (cold, cache-hit, warm) it runs a per-mode prep hook to
-# establish the runtime state, then times WORKCELL_STARTUP_ITERATIONS full
-# session starts of the target command via scripts/bench/startup-bench.sh,
-# reporting the median, p90 and spread. The `cold` mode re-runs its prep hook
-# before every measured sample and times each start on its own (warmup 0), so a
-# session start warming the cache cannot turn later samples into cache-hits --
-# every cold sample reflects a genuine first start, not a warmed one.
-# The whole measurement is repeated for WORKCELL_STARTUP_RUNS
-# passes so a reviewer can confirm the numbers are stable across runs, and the
-# driver FAILS if the run-to-run spread of any mode's median exceeds the
-# stability threshold -- the C2 sibling of the C5 cross-run validation gate.
+# For each mode (cold, cache-hit, warm) it runs a per-mode prep hook to establish
+# the runtime state, then times WORKCELL_STARTUP_ITERATIONS full session starts of
+# the target command via scripts/bench/startup-bench.sh. `cold` re-preps before
+# every measured sample (warmup 0) so no sample is a cache-hit. The measurement is
+# repeated for WORKCELL_STARTUP_RUNS passes and the driver FAILS if any mode's
+# run-to-run median spread exceeds the stability threshold -- the C2 sibling of
+# the C5 cross-run gate.
 #
-# CI/offline safety: session starts need a live container runtime (Colima or an
-# Apple `container` VM). When none is available the driver prints a clear
-# message and exits 0 (skip, not fail), so it is safe to invoke as a dry run on
-# any host. Supplying WORKCELL_STARTUP_SAMPLES_NS switches the driver into a
-# canned dry-run that exercises the full report + stability gate without a
-# runtime (used by the unit tests and for local rehearsal).
-# See docs/session-startup-benchmarks.md.
+# CI/offline safety: session starts need a live runtime; when none is available
+# the driver exits 0 with a clear skip message. WORKCELL_STARTUP_SAMPLES_NS
+# switches to a canned dry-run that exercises the report + gate with no runtime
+# (used by the unit tests). See docs/session-startup-benchmarks.md.
 #
 # Configuration (all optional, via environment):
 #   WORKCELL_STARTUP_ITERATIONS  measured samples per mode (default 5)
@@ -70,9 +63,8 @@ validate_int() {
   fi
 }
 
-# Probe that an auto-detected runtime's daemon is actually usable (a cheap,
-# read-only status call), not just that the client binary exists. Returns
-# non-zero when the runtime is unusable so detection falls through to the skip.
+# Probe that an auto-detected runtime's daemon is usable (cheap read-only status),
+# not just that the client binary exists, so detection can fall through to skip.
 runtime_usable() {
   case "$1" in
     docker) docker info ;;
@@ -104,10 +96,9 @@ if [ -n "${SAMPLES}" ]; then
 else
   detected="${WORKCELL_STARTUP_RUNTIME:-}"
   if [ -z "${detected}" ]; then
-    # Auto-detect only selects a runtime whose daemon is actually usable: a host
-    # can have the client binary installed with no working runtime, which would
-    # otherwise pick live mode and then hard-fail instead of skipping cleanly. An
-    # explicit WORKCELL_STARTUP_RUNTIME override skips this probe (respected as-is).
+    # Only select a runtime whose daemon is usable (an installed client with no
+    # working daemon would else pick live mode then hard-fail). An explicit
+    # WORKCELL_STARTUP_RUNTIME override skips this probe.
     for candidate in colima container docker; do
       command -v "${candidate}" >/dev/null 2>&1 || continue
       if runtime_usable "${candidate}"; then
@@ -162,10 +153,9 @@ validate_int "WORKCELL_STARTUP_WARMUP" "${WARMUP}" 0
 validate_int "WORKCELL_STARTUP_RUNS" "${RUNS}" 1
 validate_int "WORKCELL_STARTUP_STABILITY_PCT" "${STABILITY_PCT}" 0
 
-# A gated, publishable live capture needs cross-run repeatability evidence, so
-# require at least two runs: with one run the stability section is skipped and a
-# 0 exit would misleadingly read as "gate passed". Dry-run canned mode may use
-# whatever RUNS the canned data implies -- it is a rehearsal, never publishable.
+# A publishable live capture needs cross-run evidence: with one run the stability
+# section is skipped and a 0 exit would misleadingly read as "gate passed". Dry-run
+# canned mode may use whatever RUNS the data implies (a rehearsal, not publishable).
 if [ "${DRY_RUN}" -eq 0 ] && [ "${RUNS}" -lt 2 ]; then
   echo "run-startup-bench: a live run requires WORKCELL_STARTUP_RUNS >= 2 for" \
     "cross-run stability evidence (got ${RUNS}); a single run is not publishable." >&2
