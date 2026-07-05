@@ -415,6 +415,7 @@ Usage: workcell [options] [-- provider-args...]
        workcell auth <init|set|unset|status> [options]
        workcell policy <show|validate|diff> [options]
        workcell why --credential KEY --agent NAME [options]
+       workcell support-bundle [options]
 
 Options:
   --agent codex|claude|copilot|gemini
@@ -533,6 +534,7 @@ Workflows:
     workcell publish-pr --workspace /path/to/repo --branch feature/name \
       --title-file /path/to/pr-title.txt --body-file /path/to/pr-body.md \
       --commit-message-file /path/to/commit-message.txt
+    workcell support-bundle --output /path/to/workcell-support-bundle.json
     workcell gc
 
 Workcell launches the selected provider directly inside the bounded runtime.
@@ -3667,6 +3669,70 @@ publish_pr_main() {
 
 session_usage() {
   go_hostutil session-usage
+}
+
+# support_bundle_main collects the host-side diagnostics bundle (roadmap G2).
+# All host context is forwarded on argv because go_hostutil routes through
+# run_clean_host_command (env -i); the Go collector never reads process env.
+# run_go_hostutil_preserve_exit recovers the child's real exit code from its
+# "exit status N" trailer so usage failures keep their code-2 contract.
+support_bundle_main() {
+  local rc=0 invocation_pwd="${PWD}"
+  # The helper runs from ROOT_DIR, so absolutize a relative --output against the
+  # operator's current directory before delegating; otherwise the bundle would
+  # be written into (or fail against) the install checkout instead of their cwd.
+  local -a args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output=*)
+        local val="${1#--output=}"
+        [[ -n "${val}" && "${val}" != /* ]] && val="${invocation_pwd}/${val}"
+        args+=("--output=${val}")
+        shift
+        ;;
+      --output)
+        # Reject a trailing --output here (exit 2): passing the bare flag through
+        # would let it swallow an appended trusted-context flag as its value.
+        if [[ $# -lt 2 ]]; then
+          echo "Option --output requires a value." >&2
+          usage >&2
+          exit 2
+        fi
+        local val="$2"
+        [[ -n "${val}" && "${val}" != /* ]] && val="${invocation_pwd}/${val}"
+        args+=("--output" "${val}")
+        shift 2
+        ;;
+      --repo-root | --repo-root=* | --launcher | --launcher=* | \
+        --real-home | --real-home=* | --workcell-state-root | --workcell-state-root=* | \
+        --colima-state-root | --colima-state-root=* | --host-os | --host-os=* | \
+        --host-arch | --host-arch=*)
+        # These context flags are supplied by the launcher itself; a user-supplied
+        # copy could corrupt the redaction root (or, left dangling, swallow the
+        # trusted flag appended below as its value). Reject them outright.
+        echo "Option ${1%%=*} is set by the launcher and cannot be passed on the command line." >&2
+        usage >&2
+        exit 2
+        ;;
+      *)
+        args+=("$1")
+        shift
+        ;;
+    esac
+  done
+  # Trusted launcher context comes AFTER the operator's args so a user-supplied
+  # duplicate (e.g. --real-home /tmp) cannot override the real redaction root:
+  # supportbundle.Run is last-wins, so the trusted values here take precedence.
+  run_go_hostutil_preserve_exit support-bundle-cli \
+    "${args[@]}" \
+    "--repo-root=${ROOT_DIR}" \
+    "--launcher=${BASH_SOURCE[0]}" \
+    "--real-home=${REAL_HOME}" \
+    "--workcell-state-root=${WORKCELL_STATE_ROOT:-}" \
+    "--colima-state-root=${COLIMA_STATE_ROOT:-}" \
+    "--host-os=$(detected_host_os)" \
+    "--host-arch=$(detected_host_arch)" || rc=$?
+  exit "${rc}"
 }
 
 session_git_metadata_lines() {
@@ -7915,6 +7981,11 @@ fi
 if [[ "${1:-}" == "why" ]]; then
   shift
   why_main "$@"
+fi
+
+if [[ "${1:-}" == "support-bundle" ]]; then
+  shift
+  support_bundle_main "$@"
 fi
 
 if [[ $# -gt 0 ]]; then

@@ -311,10 +311,10 @@ func collectSessions(cfg Config, r Redactor) SessionsSection {
 	}
 	sort.Slice(s.StatusCounts, func(i, j int) bool { return s.StatusCounts[i].Status < s.StatusCounts[j].Status })
 
-	// Newest-first: session IDs are timestamp-prefixed, so descending order keeps
-	// the most recent sessions (the ones most likely under investigation) when
-	// truncating, and is deterministic for the golden shape.
-	sort.Slice(records, func(i, j int) bool { return records[i].SessionID > records[j].SessionID })
+	// ListSessionRecordsInRoots already returns records newest-first by StartedAt
+	// (deterministically), so truncation keeps the most recent sessions — the
+	// ones most likely under investigation — without a fragile re-sort on session
+	// IDs, which need not be timestamp-ordered.
 	limit := len(records)
 	if limit > maxSessionSummaries {
 		limit = maxSessionSummaries
@@ -336,7 +336,7 @@ func collectSessions(cfg Config, r Redactor) SessionsSection {
 			Mode:            r.String(rec.Mode),
 			StartedAt:       r.String(rec.StartedAt),
 			Workspace:       r.String(rec.Workspace),
-			AuditLogPresent: rec.AuditLogPath != "" && fileExists(rec.AuditLogPath),
+			AuditLogPresent: rec.AuditLogPath != "" && pathUnderRoots(rec.AuditLogPath, roots) && fileExists(rec.AuditLogPath),
 		})
 	}
 	return s
@@ -371,6 +371,11 @@ func collectAuditPointers(cfg Config, r Redactor) AuditSection {
 		return s
 	}
 	s.Available = true
+	// records are already newest-first by StartedAt; cap to the recent window so
+	// a long-lived host cannot produce an unbounded bundle of stale pointers.
+	if len(records) > maxSessionSummaries {
+		records = records[:maxSessionSummaries]
+	}
 	for _, rec := range records {
 		if rec.AuditLogPath == "" {
 			continue
@@ -379,15 +384,47 @@ func collectAuditPointers(cfg Config, r Redactor) AuditSection {
 			SessionID: r.String(rec.SessionID),
 			Path:      r.String(rec.AuditLogPath),
 		}
-		if info, statErr := os.Stat(rec.AuditLogPath); statErr == nil && !info.IsDir() {
-			ptr.Present = true
-			ptr.SizeBytes = info.Size()
-			ptr.ModifiedAt = info.ModTime().UTC().Format(time.RFC3339)
+		// Only stat a path under a discovered state root: a malformed record
+		// could aim audit_log_path at an unrelated file (e.g. ~/.ssh/id_rsa).
+		if pathUnderRoots(rec.AuditLogPath, roots) {
+			if info, statErr := os.Stat(rec.AuditLogPath); statErr == nil && !info.IsDir() {
+				ptr.Present = true
+				ptr.SizeBytes = info.Size()
+				ptr.ModifiedAt = info.ModTime().UTC().Format(time.RFC3339)
+			}
 		}
 		s.Pointers = append(s.Pointers, ptr)
 	}
-	sort.Slice(s.Pointers, func(i, j int) bool { return s.Pointers[i].SessionID < s.Pointers[j].SessionID })
 	return s
+}
+
+// pathUnderRoots reports whether p is exactly, or a descendant of, one of roots.
+// Both sides are canonicalized first so a value like <root>/../.ssh/id_rsa (or a
+// symlink under a root) cannot slip through the prefix check.
+func pathUnderRoots(p string, roots []string) bool {
+	cp := canonicalPath(p)
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		cr := canonicalPath(root)
+		if cp == cr || strings.HasPrefix(cp, cr+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalPath absolutizes p, resolves symlinks when it exists, and otherwise
+// cleans it (collapsing ".." traversal) so string-prefix comparisons are sound.
+func canonicalPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return filepath.Clean(p)
 }
 
 func stateRoots(cfg Config) []string {

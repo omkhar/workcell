@@ -19,6 +19,9 @@ workcell \- bounded runtime launcher for coding agents
 .br
 .B workcell why
 --credential \fIKEY\fR --agent \fINAME\fR [\fIoptions\fR]
+.br
+.B workcell support-bundle
+[\fIoptions\fR]
 .SH DESCRIPTION
 .B workcell
 starts the selected coding agent inside a bounded local runtime with explicit
@@ -53,6 +56,17 @@ Explain why a credential is selected, filtered, or still only configured for a
 specific agent and mode without starting the runtime. The output also includes
 bootstrap path, support tier, and next-step fields for the selected
 credential.
+.TP
+.B workcell support-bundle
+Collect a redacted host-side diagnostics bundle (install, policy, target,
+provider, session, and audit-pointer evidence) as a single deterministic JSON
+document, without starting the runtime. Credential material and workspace or
+agent content are never included; see
+.B SUPPORT.md
+for the redaction guarantees. Use
+.B --output
+.I PATH
+to write the bundle to a file instead of standard output.
 .SH OPTIONS
 .TP
 .B --agent codex|claude|copilot|gemini

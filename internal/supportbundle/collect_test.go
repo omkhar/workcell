@@ -4,9 +4,69 @@
 package supportbundle
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/host/sessions"
 )
+
+// TestCollectSessionsKeepsNewestOnTruncation guards the truncation-order fix:
+// past maxSessionSummaries records the bundle must keep the NEWEST sessions
+// (by StartedAt), not the oldest, so the session under investigation is present.
+func TestCollectSessionsKeepsNewestOnTruncation(t *testing.T) {
+	cfg := buildFixture(t, fixtureOptions{sessionStatus: "running"})
+	dir := filepath.Join(cfg.ColimaStateRoot, "wcl-strict")
+	rec := sessions.SessionRecord{Version: 1, Profile: "wcl-strict", TargetKind: "vm", TargetProvider: "colima", TargetID: "default", TargetAssuranceClass: "strict", RuntimeAPI: "docker", WorkspaceTransport: "direct", Agent: "codex", Mode: "strict", Status: "running", Workspace: cfg.RepoRoot}
+	total := maxSessionSummaries + 5
+	// IDs are deliberately NOT timestamp-ordered: the record with the newest
+	// StartedAt gets the lexicographically smallest ID, so a sort on session ID
+	// would drop it. Truncation must key off StartedAt (newest-first).
+	for i := 1; i <= total; i++ {
+		rec.SessionID = fmt.Sprintf("sess-id-%06d", total-i)     // decreasing with time
+		rec.StartedAt = fmt.Sprintf("2026-07-04T09:%02d:00Z", i) // increasing
+		writeSessionRecord(t, dir, fmt.Sprintf("s%03d.json", i), rec)
+	}
+	newest := fmt.Sprintf("sess-id-%06d", 0)       // i == total: latest StartedAt
+	oldest := fmt.Sprintf("sess-id-%06d", total-1) // i == 1: earliest StartedAt
+	out, err := Collect(cfg).JSON()
+	if err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	if r := string(out); !strings.Contains(r, newest) || strings.Contains(r, oldest) {
+		t.Fatalf("truncation did not key off StartedAt (want %s kept, %s dropped)", newest, oldest)
+	}
+}
+
+// TestCollectAuditPointersSkipsOutOfStatePaths guards the audit-path fix: a
+// record whose audit_log_path points outside the state tree must not have its
+// file metadata (presence/size/mtime) recorded.
+func TestCollectAuditPointersSkipsOutOfStatePaths(t *testing.T) {
+	cfg := buildFixture(t, fixtureOptions{sessionStatus: "running"})
+	ssh := filepath.Join(cfg.RealHome, ".ssh")
+	mustMkdir(t, ssh)
+	mustWrite(t, filepath.Join(ssh, "id_rsa"), "PRIVATE")
+	dir := filepath.Join(cfg.ColimaStateRoot, "wcl-strict")
+	// Directly outside the state tree, and via a ".." traversal that textually
+	// starts under a state root; both must be refused before statting.
+	for i, p := range []string{filepath.Join(ssh, "id_rsa"), filepath.Join(cfg.ColimaStateRoot, "..", ".ssh", "id_rsa")} {
+		rec := sessions.SessionRecord{Version: 1, SessionID: fmt.Sprintf("sess-evil%d", i), Profile: "wcl-strict", TargetKind: "vm", TargetProvider: "colima", TargetID: "default", TargetAssuranceClass: "strict", RuntimeAPI: "docker", WorkspaceTransport: "direct", Agent: "codex", Mode: "strict", Status: "running", Workspace: cfg.RepoRoot, StartedAt: "2026-07-04T09:00:00Z", AuditLogPath: p}
+		writeSessionRecord(t, dir, rec.SessionID+".json", rec)
+	}
+	b := Collect(cfg)
+	for _, ptr := range b.AuditPointers.Pointers {
+		if strings.HasPrefix(ptr.SessionID, "sess-evil") && ptr.Present {
+			t.Fatalf("statted an out-of-state audit path (pointer %s)", ptr.SessionID)
+		}
+	}
+	// The session summary's audit_log_present must not probe the file either.
+	for _, s := range b.Sessions.Sessions {
+		if strings.HasPrefix(s.SessionID, "sess-evil") && s.AuditLogPresent {
+			t.Fatalf("session summary probed an out-of-state audit path (%s)", s.SessionID)
+		}
+	}
+}
 
 // The scenario tests below cover one failure class each (install, policy,
 // target, provider, runtime) and assert the bundle carries the evidence a
