@@ -107,10 +107,9 @@ on the allow path, dominated by the classification of the resolved target.
 2. Download the `exec-guard-bench-results` artifact (or read the job log): it is
    the Markdown report the driver emits, including both per-run tables and the
    cross-run stability table.
-3. Transcribe the two runs' medians into the tables above, replacing every
-   `TODO`, and confirm the stability spread is small (single-digit percent) --
-   that is the evidence the lane produces stable numbers across two runs.
-4. Remove the placeholder status note once the tables hold measured values.
+3. Transcribe the two runs' medians into the tables above, and confirm the
+   stability spread stays small (single-digit percent) -- that is the evidence
+   the lane produces stable numbers across two runs.
 
 ## Rerunning locally (Linux only)
 
