@@ -125,13 +125,14 @@ The pull-request lanes (`ci.yml`, `security.yml`, `codeql.yml`, `mutation.yml`,
 `docs.yml`) run on the plain `pull_request` trigger. That means fork PR code
 executes with a **read-only** `GITHUB_TOKEN` and no access to environment-scoped
 secrets, so a malicious fork PR cannot exfiltrate the one stored secret or push
-anything. Several heavy lanes (CodeQL, mutation, install verification) are additionally
-gated behind an `approved-heavy-ci` label so a fork cannot reach those paths
-without maintainer opt-in. This gate is **not** universal: the
-`reproducible-build-platform` lane in `ci.yml` runs its two ~45-minute image
-rebuilds on every `pull_request` (after `pr-shape`), so a fork PR can still
-consume that compute — a cost/DoS consideration, not a secret-exposure one,
-since the token and push boundaries above still hold.
+anything. The heavy lanes (CodeQL, mutation, install verification, and the
+`reproducible-build-platform` 2×~45-minute rebuilds) are gated behind an
+`approved-heavy-ci` label so an unreviewed fork PR cannot spend that compute
+without maintainer opt-in. Reproducibility assurance is not lost: the gated
+rebuild still runs on every post-merge `main` push and is re-verified natively in
+`release.yml` preflight, and the required aggregate `Reproducible build` check
+(`if: always()`) passes green-on-skip for unlabeled PRs while still failing on any
+real build failure.
 
 **The only `pull_request_target` workflow is
 [`pr-base-policy.yml`](../.github/workflows/pr-base-policy.yml)**, and it is the

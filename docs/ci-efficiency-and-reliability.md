@@ -6,9 +6,14 @@ that keeps CI health observable. It complements
 [github-workflows.md](github-workflows.md), which is the authoritative workflow
 inventory.
 
-The prime directive throughout: **every check moved off the PR-blocking path
-still runs before release.** Each change below names the nightly / post-merge /
-release-preflight mechanism that preserves the guarantee.
+The prime directive throughout: **no release-gating assurance is lost.** Every
+*deterministic* check moved off the PR-blocking path still runs before release
+(on the post-merge `main` push and/or re-verified in `release.yml` preflight);
+each change below names that mechanism. The one exception is **active fuzzing**,
+which is a nondeterministic discovery hunt, not a release gate — its release-time
+assurance is the deterministic seed-corpus regression (still run on every PR and
+at preflight via `go test`), while the extended active budget runs on the
+scheduled `fuzz.yml` lane and is intentionally *not* a `release.yml` dependency.
 
 ## PR wall-clock reductions
 
