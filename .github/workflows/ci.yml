@@ -231,6 +231,13 @@ jobs:
 
   reproducible-build-platform:
     name: Reproducible build (${{ matrix.platform_name }})
+    # Heavy: two ~45-minute no-cache double-builds. Gate the fork-PR trigger
+    # behind the approved-heavy-ci label (mirroring install-verification, CodeQL,
+    # and mutation) so an unreviewed fork PR cannot spend this compute on demand.
+    # Release-time reproducibility assurance is preserved independently: every
+    # push to main still runs this job, and release.yml re-verifies reproducibility
+    # natively in preflight-amd64-repro / preflight-arm64-repro before publish.
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'approved-heavy-ci') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     # Only gated on pr-shape (not validate): the reproducible build runs its own
@@ -277,7 +284,15 @@ jobs:
         env:
           REPRO_BUILD_RESULT: ${{ needs.reproducible-build-platform.result }}
         run: |
-          if [[ "${REPRO_BUILD_RESULT}" != "success" ]]; then
-            echo "Expected per-platform reproducible builds to succeed, got ${REPRO_BUILD_RESULT}" >&2
-            exit 1
-          fi
+          # 'skipped' is a pass: on an unlabeled fork PR the heavy per-platform
+          # builds are label-gated off, and reproducibility is re-verified on the
+          # post-merge main push and independently in release preflight. Any real
+          # outcome other than success/skipped (failure, cancelled) still fails
+          # this required check.
+          case "${REPRO_BUILD_RESULT}" in
+            success | skipped) ;;
+            *)
+              echo "Expected per-platform reproducible builds to succeed or be skipped, got ${REPRO_BUILD_RESULT}" >&2
+              exit 1
+              ;;
+          esac

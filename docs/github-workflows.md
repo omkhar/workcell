@@ -29,7 +29,7 @@ adds the matching `approved-large-certified-adapter` PR label.
 
 | Workflow | Purpose |
 |---|---|
-| `ci.yml` | repository validation, smoke, reproducibility, pin verification, and upstream release re-verification on pushes and PRs; package install/uninstall verification runs only on pushes to `main`, manual dispatch, and PRs labeled `approved-heavy-ci`; the PR-shape job accepts `approved-large-certified-adapter` only for bounded, reviewed, live-certified adapter support PRs |
+| `ci.yml` | repository validation, smoke, reproducibility, pin verification, and upstream release re-verification on pushes and PRs; package install/uninstall verification and the heavy per-platform reproducible-build lanes run only on pushes to `main`, manual dispatch, and PRs labeled `approved-heavy-ci`; the PR-shape job accepts `approved-large-certified-adapter` only for bounded, reviewed, live-certified adapter support PRs |
 | `pr-base-policy.yml` | trusted base-branch guard that keeps `main` as the supported ready-PR base and leaves non-`main` PR bases as draft-only lower-assurance review units |
 | `docs.yml` | fast spelling and manpage feedback for docs-only changes |
 | `security.yml` | repo-owned workflow contract checks, dependency review, and `zizmor` |
@@ -108,9 +108,17 @@ Other macOS versions are not install-gated today.
 ## Required reproducibility
 
 `ci.yml` keeps the branch-protected `Reproducible build` context tied to the
-actual platform checks. The native amd64 and arm64 reproducible-build lanes run
-for pull requests, and the aggregate required context fails unless the
-per-platform matrix succeeds.
+actual platform checks. The native amd64 and arm64 reproducible-build lanes are
+heavy (two ~45-minute no-cache double-builds), so they run on pushes to `main`,
+manual dispatch, and pull requests labeled `approved-heavy-ci` — the same
+heavy-lane gate that CodeQL, mutation, and install verification use — rather
+than on every fork PR ungated. On an unlabeled pull request the per-platform
+matrix is skipped and the aggregate `Reproducible build` context passes on that
+`skipped` result; on a push to `main`, a labeled PR, or dispatch it fails unless
+the per-platform matrix succeeds. Release-time reproducibility assurance is
+preserved independently of the PR path: every post-merge push to `main` runs the
+per-platform lanes, and `release.yml` re-verifies reproducibility natively in
+`preflight-amd64-repro` / `preflight-arm64-repro` before publish (see below).
 
 `release.yml` uses the same native-runner split: the `preflight-arm64-repro`
 job reproducibility-verifies the arm64 runtime image on `ubuntu-24.04-arm` and
