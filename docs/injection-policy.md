@@ -332,7 +332,7 @@ combined document, credential, and copy example.
 version = 1
 
 [credentials]
-codex_auth = "/home/op/secrets/codex-auth.json"
+codex_auth = "/home/example/secrets/codex-auth.json"
 ```
 
 ### Claude
@@ -341,8 +341,8 @@ codex_auth = "/home/op/secrets/codex-auth.json"
 version = 1
 
 [credentials]
-claude_auth = "/home/op/secrets/claude-auth.json"
-claude_mcp  = "/home/op/secrets/claude-mcp.json"
+claude_auth = "/home/example/secrets/claude-auth.json"
+claude_mcp  = "/home/example/secrets/claude-mcp.json"
 ```
 
 ### GitHub Copilot CLI
@@ -351,7 +351,7 @@ claude_mcp  = "/home/op/secrets/claude-mcp.json"
 version = 1
 
 [credentials]
-copilot_github_token = "/home/op/secrets/copilot-github-token.txt"
+copilot_github_token = "/home/example/secrets/copilot-github-token.txt"
 ```
 
 ### Gemini
@@ -360,8 +360,8 @@ copilot_github_token = "/home/op/secrets/copilot-github-token.txt"
 version = 1
 
 [credentials]
-gemini_env   = "/home/op/secrets/gemini.env"
-gemini_oauth = "/home/op/secrets/gemini-oauth.json"
+gemini_env   = "/home/example/secrets/gemini.env"
+gemini_oauth = "/home/example/secrets/gemini-oauth.json"
 ```
 
 ### Multi-provider, single host
@@ -376,25 +376,25 @@ version = 1
 
 # Provider-native auth: each key is only provisioned for its owning provider.
 [credentials]
-codex_auth           = "/home/op/secrets/codex-auth.json"
-claude_auth          = "/home/op/secrets/claude-auth.json"
-copilot_github_token = "/home/op/secrets/copilot-github-token.txt"
-gemini_env           = "/home/op/secrets/gemini.env"
+codex_auth           = "/home/example/secrets/codex-auth.json"
+claude_auth          = "/home/example/secrets/claude-auth.json"
+copilot_github_token = "/home/example/secrets/copilot-github-token.txt"
+gemini_env           = "/home/example/secrets/gemini.env"
 
 # Shared GitHub CLI state must use the table form and scope its providers.
 # Copilot is intentionally excluded: it never receives shared gh state.
 [credentials.github_hosts]
-source    = "/home/op/secrets/gh-hosts.yml"
+source    = "/home/example/secrets/gh-hosts.yml"
 providers = ["codex", "claude", "gemini"]
 
 [credentials.github_config]
-source    = "/home/op/secrets/gh-config.yml"
+source    = "/home/example/secrets/gh-config.yml"
 providers = ["codex", "claude", "gemini"]
 
 # One shared instruction fragment plus a Codex-only delta.
 [documents]
-common = "/home/op/policy/common.md"
-codex  = "/home/op/policy/codex.md"
+common = "/home/example/policy/common.md"
+codex  = "/home/example/policy/codex.md"
 
 # Extend the reviewed egress allowlist for an internal registry.
 [network]
