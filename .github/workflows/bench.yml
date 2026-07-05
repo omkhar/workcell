@@ -14,6 +14,14 @@ on:
   schedule:
     - cron: "0 8 * * 1"
   workflow_dispatch:
+  # TEMPORARY (C5, will be removed before merge): run on this PR to produce the
+  # first reviewed baseline numbers, since workflow_dispatch cannot target a
+  # workflow that is not yet on the default branch.
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/bench.yml"
+      - "scripts/bench/**"
 
 permissions: {}
 
