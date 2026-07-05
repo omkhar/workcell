@@ -2644,58 +2644,23 @@ if ! grep -q 'reserved SSH file' /tmp/workcell-injection-bad-ssh.out; then
   exit 1
 fi
 
-if ! rg -q 'setup_workcell_trusted_docker_client' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to seed a trusted Docker client state before host Docker use" >&2
-  exit 1
-fi
-
-if rg -q 'DOCKER_CONFIG="\$\{REAL_HOME\}/\.docker"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "scripts/workcell still pins DOCKER_CONFIG to the real host home" >&2
-  exit 1
-fi
-
-if ! rg -q 'buildx_cmd build' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to invoke buildx through the trusted absolute plugin path" >&2
-  exit 1
-fi
-
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "runtime_build_codex_arch" "aarch64-unknown-linux-musl" ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "runtime_build_codex_arch" "x86_64-unknown-linux-musl" ||
-  function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "runtime_build_codex_arch" "unknown-linux-gnu"; then
-  echo "Expected scripts/workcell Codex release probe to resolve musl release assets" >&2
-  exit 1
-fi
-
-if ! rg -q -- '--self-docker-probe' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to expose a hidden self-docker probe for invariant testing" >&2
-  exit 1
-fi
-
-if ! rg -q 'prune_runtime_image_cache_dir' "${ROOT_DIR}/scripts/workcell" ||
-  ! rg -q 'cleanup_workcell_temp_root' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell --gc to cover bounded runtime-image cache and Workcell-owned temp cleanup" >&2
-  exit 1
-fi
-
-if ! rg -q -- '--self-staging-probe' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to expose a hidden staging probe for invariant testing" >&2
-  exit 1
-fi
-
-if ! rg -q 'strict mode requires --prepare when you explicitly request --rebuild.' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to reject explicit strict-mode image rebuild requests" >&2
-  exit 1
-fi
-
-if ! rg -q 'go_colimautil validate-profile-config' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to validate managed Colima config through the dedicated Go helper" >&2
-  exit 1
-fi
-
-if ! rg -q 'go_colimautil validate-runtime-mounts' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to validate managed Lima mounts through the dedicated Go helper" >&2
-  exit 1
-fi
+# scripts/workcell runtime/gc invariants: the trusted Docker client seed
+# precedes host Docker use, DOCKER_CONFIG is not pinned to the real host
+# home, buildx runs through the trusted absolute plugin path, the Codex
+# release probe resolves musl (not gnu) assets, the hidden self-docker /
+# self-staging probes exist, --gc covers the bounded runtime-image cache
+# and Workcell-owned temp cleanup, explicit strict-mode image rebuilds are
+# rejected, and managed Colima config / Lima mounts validate through the
+# dedicated Go helpers.  Migrated to Go (D3): internal/workcellhardening
+# behind the workcell-citools workcell-runtime-invariants subcommand
+# preserves the exact exit codes and stderr messages of the former inline
+# rg / function_block_contains_fixed block, including the fixed-string
+# matching semantics (every pattern is metacharacter-free after
+# unescaping) and the negated runtime_build_codex_arch gnu sub-condition.
+# `|| exit 1` matches the former inline block's `exit 1` on a violated
+# invariant: it handles the failure so the top-level ERR trap does not fire and
+# append trap diagnostics, preserving the exact failure stderr surface.
+go_verify_citools workcell-runtime-invariants "${ROOT_DIR}" || exit 1
 if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'workcell-host-inputs' ||
   ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'workcell-shadow' ||
   ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "start_managed_profile" 'workcell-token-handoff' ||
