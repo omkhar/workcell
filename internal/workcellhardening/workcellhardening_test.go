@@ -4201,3 +4201,258 @@ func TestCheckValidatorWritableStateRealRepo(t *testing.T) {
 		t.Fatalf("CheckValidatorWritableState(real repo) = %v, want nil", err)
 	}
 }
+
+// hostutilEgressRgHappyGoHostutil is a minimal scripts/lib/launcher/go-hostutil.sh
+// satisfying all five bootstrap-Go invariants: the escaped-literal patterns match
+// the literal ${ROOT_DIR}/${GOPATH}/${HOST_GO_BIN}/"$@" tokens.
+const hostutilEgressRgHappyGoHostutil = `#!/bin/bash
+set -euo pipefail
+run_clean_host_command_in_dir "${ROOT_DIR}" env \
+  GOPATH="${GOPATH}" \
+  GOMODCACHE="${GOMODCACHE}" \
+  GOCACHE="${GOCACHE}" \
+  "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
+`
+
+// hostutilEgressRgHappyEntrypoint is a minimal runtime/container/entrypoint.sh
+// satisfying the four entrypoint invariants: it does NOT inject a default Codex
+// --cd override or default AGENT_NAME to codex, and it traps INT/TERM.
+const hostutilEgressRgHappyEntrypoint = `#!/bin/bash
+set -euo pipefail
+trap 'workcell_run_command_with_file_trace_signal INT' INT
+trap 'workcell_run_command_with_file_trace_signal TERM' TERM
+`
+
+// hostutilEgressRgHappyColima is a minimal scripts/colima-egress-allowlist.sh
+// satisfying all twelve colima-egress invariants: the first line is the cleared
+// env -S -i shebang, it does not trust PATH (no command -v/type -P/which ), and
+// it scrubs the environment before invoking the Go runtime helper.
+const hostutilEgressRgHappyColima = `#!/usr/bin/env -S -i PATH=/usr/bin BASH_ENV= ENV= /bin/bash
+set -euo pipefail
+REAL_HOME=/Users/real
+scrub_host_process_env
+unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT
+unset DYLD_*
+is_trusted_host_tool_path
+run_clean_repo_command env \
+  GOPATH="${GOPATH}" \
+  GOMODCACHE="${GOMODCACHE}" \
+  GOCACHE="${GOCACHE}" \
+  "${GO_BIN}" run ./cmd/workcell-runtimeutil "$@"
+`
+
+// writeHostutilEgressRgRepo materializes a fake repo with the three target files
+// set to their respective bodies; a body of "" means "do not create that file"
+// (unreadable-target case).
+func writeHostutilEgressRgRepo(t *testing.T, goHostutil, entrypoint, colima string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(goHostutilRelPath, goHostutil)
+	write(entrypointRelPath, entrypoint)
+	write(colimaEgressAllowlistRelPath, colima)
+	return root
+}
+
+func TestCheckHostutilEgressRg(t *testing.T) {
+	tests := []struct {
+		name       string
+		goHostutil string
+		entrypoint string
+		colima     string
+		wantErr    string // "" means expect success
+	}{
+		{
+			name:       "happy path all invariants hold",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     hostutilEgressRgHappyColima,
+		},
+		{
+			// kindRegexPresent, escaped-literal ${ROOT_DIR} pattern: the bootstrap
+			// invocation removed.
+			name:       "go-hostutil missing scrubbed bootstrap invocation",
+			goHostutil: strings.Replace(hostutilEgressRgHappyGoHostutil, `run_clean_host_command_in_dir "${ROOT_DIR}" env`, `run_clean_host_command_in_dir env`, 1),
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     hostutilEgressRgHappyColima,
+			wantErr:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		},
+		{
+			// kindRegexPresent, escaped-literal "$@" pattern (fifth probe of the
+			// shared-message guard): the HOST_GO_BIN run line removed.
+			name:       "go-hostutil missing HOST_GO_BIN run",
+			goHostutil: strings.Replace(hostutilEgressRgHappyGoHostutil, `"${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"`, `go run ./cmd/workcell-hostutil "$@"`, 1),
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     hostutilEgressRgHappyColima,
+			wantErr:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		},
+		{
+			// kindRegexAbsent: a default Codex --cd override present is a violation.
+			name:       "entrypoint injects default codex --cd override",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: hostutilEgressRgHappyEntrypoint + "set -- codex --cd /work\n",
+			colima:     hostutilEgressRgHappyColima,
+			wantErr:    "runtime/container/entrypoint.sh still injects a blocked default Codex --cd override",
+		},
+		{
+			// kindRegexAbsent, escaped-literal pattern: AGENT_NAME defaulting to
+			// codex present is a violation.
+			name:       "entrypoint defaults AGENT_NAME to codex",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: hostutilEgressRgHappyEntrypoint + `AGENT_NAME="${AGENT_NAME:-codex}"` + "\n",
+			colima:     hostutilEgressRgHappyColima,
+			wantErr:    "runtime/container/entrypoint.sh still defaults AGENT_NAME to codex",
+		},
+		{
+			// kindRegexPresent (first probe of the trap guard): INT trap removed.
+			name:       "entrypoint missing INT trap",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: strings.Replace(hostutilEgressRgHappyEntrypoint, `trap 'workcell_run_command_with_file_trace_signal INT' INT`, `trap - INT`, 1),
+			colima:     hostutilEgressRgHappyColima,
+			wantErr:    "Expected runtime/container/entrypoint.sh to trap INT/TERM and finalize file-trace shutdown before exit",
+		},
+		{
+			// kindRegexAbsent, GENUINE `|` alternation: any of command -v / type -P
+			// / which present means PATH is trusted (a violation).
+			name:       "colima trusts PATH via command -v",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     hostutilEgressRgHappyColima + "tool=$(command -v git)\n",
+			wantErr:    "scripts/colima-egress-allowlist.sh still trusts PATH for executed host tools",
+		},
+		{
+			// kindRegexAbsent, third alternative of the `|` guard: `which ` present
+			// is likewise a violation, proving the alternation is a real regex.
+			name:       "colima trusts PATH via which",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     hostutilEgressRgHappyColima + "tool=$(which git)\n",
+			wantErr:    "scripts/colima-egress-allowlist.sh still trusts PATH for executed host tools",
+		},
+		{
+			// kindFirstLineRegex: a non-cleared shebang fails the anchored
+			// first-line probe.
+			name:       "colima non-cleared shebang",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     strings.Replace(hostutilEgressRgHappyColima, "#!/usr/bin/env -S -i PATH=/usr/bin BASH_ENV= ENV= /bin/bash", "#!/bin/bash", 1),
+			wantErr:    "Expected scripts/colima-egress-allowlist.sh to use env -S -i with an absolute /bin/bash and cleared host environment",
+		},
+		{
+			// kindRegexPresent, escaped-literal DYLD_\* pattern: the DYLD_* scrub
+			// removed.
+			name:       "colima missing DYLD scrub",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     strings.Replace(hostutilEgressRgHappyColima, "unset DYLD_*", "unset OTHER", 1),
+			wantErr:    "Expected scripts/colima-egress-allowlist.sh to scrub DYLD_* variables before host tool lookup",
+		},
+		{
+			// kindRegexPresent (fifth probe of the Go-runtime guard): the runtimeutil
+			// run line removed.
+			name:       "colima missing Go runtime invocation",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     strings.Replace(hostutilEgressRgHappyColima, `"${GO_BIN}" run ./cmd/workcell-runtimeutil "$@"`, `go run ./cmd/workcell-runtimeutil "$@"`, 1),
+			wantErr:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
+		},
+		{
+			// A missing go-hostutil.sh is empty content: the first affirmative probe
+			// fails, mirroring `rg -q` returning non-zero on a missing file.
+			name:       "missing go-hostutil",
+			goHostutil: "",
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     hostutilEgressRgHappyColima,
+			wantErr:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		},
+		{
+			// A missing entrypoint.sh is empty content: the two kindRegexAbsent
+			// probes pass on empty content, but the affirmative trap probe fails,
+			// mirroring `rg -q` returning non-zero on a missing file.
+			name:       "missing entrypoint",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: "",
+			colima:     hostutilEgressRgHappyColima,
+			wantErr:    "Expected runtime/container/entrypoint.sh to trap INT/TERM and finalize file-trace shutdown before exit",
+		},
+		{
+			// A missing colima helper is empty content: the launcher/entrypoint
+			// probes pass, the kindRegexAbsent PATH-trust probe passes, but the
+			// affirmative REAL_HOME probe fails.
+			name:       "missing colima helper",
+			goHostutil: hostutilEgressRgHappyGoHostutil,
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     "",
+			wantErr:    "Expected scripts/colima-egress-allowlist.sh to derive the real host home independently of caller HOME",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeHostutilEgressRgRepo(t, tc.goHostutil, tc.entrypoint, tc.colima)
+			err := CheckHostutilEgressRg(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckHostutilEgressRg() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckHostutilEgressRg() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckHostutilEgressRg() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckHostutilEgressRgCount(t *testing.T) {
+	got := len(hostutilEgressRgChecks)
+	const want = 21
+	if got != want {
+		t.Fatalf("hostutilEgressRgChecks has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckHostutilEgressRgLineParity proves the per-line evaluator does not let
+// an escaped-literal pattern match across a newline: the HOST_GO_BIN run pattern
+// matches its intact single line but must NOT match when split by a newline,
+// mirroring ripgrep's default (non-multiline) behaviour.
+func TestCheckHostutilEgressRgLineParity(t *testing.T) {
+	pat := `"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"`
+	if !regexMatchesAnyLine(pat, `"${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"`) {
+		t.Fatalf("expected the intact HOST_GO_BIN run line to match")
+	}
+	if regexMatchesAnyLine(pat, "\"${HOST_GO_BIN}\" run ./cmd/workcell-hostutil\n\"$@\"") {
+		t.Fatalf("a HOST_GO_BIN run split across a newline must NOT match (rg is line-oriented)")
+	}
+}
+
+// TestCheckHostutilEgressRgRealRepo asserts that the real
+// scripts/lib/launcher/go-hostutil.sh, runtime/container/entrypoint.sh, and
+// scripts/colima-egress-allowlist.sh in this repository satisfy all twenty-one
+// hostutil / entrypoint / colima-egress invariants.  This is the key guard
+// against a mis-transcribed regex or a wrong target file: if any Go pattern
+// diverges from the actual file contents, this test fails with the guard's
+// stderr message.
+func TestCheckHostutilEgressRgRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, goHostutilRelPath)); err != nil {
+		t.Skipf("real scripts/lib/launcher/go-hostutil.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckHostutilEgressRg(repoRoot); err != nil {
+		t.Fatalf("CheckHostutilEgressRg(real repo) = %v, want nil", err)
+	}
+}
