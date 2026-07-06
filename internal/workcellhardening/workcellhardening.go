@@ -4271,6 +4271,195 @@ func CheckGeminiSettingsGuards(rootDir string) error {
 	return evaluate(rootDir, geminiSettingsGuardChecks)
 }
 
+// hostGateScriptRelPaths lists, in the HOST_GATE_SCRIPTS array's order, the
+// twenty-two host-gate scripts that must carry an absolute privileged Bash
+// shebang and self-sanitize their host entrypoint before running release or
+// boundary checks.  The shell array elements were "${ROOT_DIR}/<relpath>", so
+// each element rendered the ABSOLUTE path once ${ROOT_DIR} expanded; the
+// repo-relative form here is both the read target (targetFile) and the tail of
+// the reconstructed absolute message path.
+var hostGateScriptRelPaths = []string{
+	"scripts/build-and-test.sh",
+	"scripts/check-pinned-inputs.sh",
+	"scripts/check-public-contract.sh",
+	"scripts/container-smoke.sh",
+	"scripts/generate-build-input-manifest.sh",
+	"scripts/generate-control-plane-manifest.sh",
+	"scripts/generate-builder-environment-manifest.sh",
+	"scripts/generate-release-checksums.sh",
+	"scripts/publish-provider-bump-pr.sh",
+	"scripts/publish-upstream-refresh-pr.sh",
+	"scripts/update-upstream-pins.sh",
+	"scripts/update-provider-pins.sh",
+	"scripts/publish-github-release.sh",
+	"scripts/verify-build-input-manifest.sh",
+	"scripts/verify-control-plane-manifest.sh",
+	"scripts/verify-github-macos-release-test-runners.sh",
+	"scripts/verify-release-bundle.sh",
+	"scripts/verify-reproducible-build.sh",
+	"scripts/verify-upstream-claude-release.sh",
+	"scripts/verify-upstream-codex-release.sh",
+	"scripts/verify-upstream-copilot-release.sh",
+	"scripts/verify-upstream-gemini-release.sh",
+}
+
+// hostGateEntrypointSanitizeChecks builds the forty-four host-gate entrypoint
+// invariants for the repo rooted at rootDir, in the shell's original order.  The
+// migrated `for script in "${HOST_GATE_SCRIPTS[@]}"` loop body ran two ordered
+// checks per iteration, so for each script (in array order) this emits the
+// first-line shebang check followed by the entrypoint self-sanitize check,
+// preserving the loop's per-iteration first-violation order exactly.
+//
+//   - The shebang probe was `head -n 1 "${script}" | grep -q '^#!/bin/bash -p$'`,
+//     an anchored first-line regex → kindFirstLineRegex with the pattern verbatim
+//     (no active metacharacters besides the anchors).
+//   - The entrypoint probe was `rg -q 'WORKCELL_SANITIZED_ENTRYPOINT|trusted-entrypoint\.sh'`,
+//     a genuine `|` alternation (the `\.` matches a literal dot) → kindRegexPresent
+//     with the pattern verbatim, matched per line for rg parity.
+//
+// The shell echoes interpolated ${script}, whose value was the array element
+// "${ROOT_DIR}/<relpath>" — i.e. the ABSOLUTE path once ${ROOT_DIR} expands.  Each
+// message is therefore constructed as "Expected " + rootDir + "/" + relpath + " ...",
+// using literal string concatenation (not filepath.Join) to reproduce the shell's
+// byte-exact rendering.  The read target stays the repo-relative path via
+// targetFile, so evaluate reads the same file the message names.
+func hostGateEntrypointSanitizeChecks(rootDir string) []check {
+	cs := make([]check, 0, len(hostGateScriptRelPaths)*2)
+	for _, rel := range hostGateScriptRelPaths {
+		script := rootDir + "/" + rel
+		cs = append(cs,
+			check{
+				kind:       kindFirstLineRegex,
+				pattern:    `^#!/bin/bash -p$`,
+				message:    "Expected " + script + " to use an absolute privileged Bash shebang before self-sanitizing its host entrypoint",
+				targetFile: rel,
+			},
+			check{
+				kind:       kindRegexPresent,
+				pattern:    `WORKCELL_SANITIZED_ENTRYPOINT|trusted-entrypoint\.sh`,
+				message:    "Expected " + script + " to self-sanitize its host entrypoint before running release or boundary checks",
+				targetFile: rel,
+			},
+		)
+	}
+	return cs
+}
+
+// CheckHostGateEntrypointSanitize runs the forty-four host-gate entrypoint
+// invariants (an absolute privileged Bash shebang and an entrypoint
+// self-sanitize probe for each of the twenty-two HOST_GATE_SCRIPTS) against the
+// repo rooted at rootDir, in the shell's original order.  It returns nil when
+// every invariant holds (the shell's exit 0), or an error whose message equals
+// the shell's stderr for the first violated invariant (the shell's exit 1).
+func CheckHostGateEntrypointSanitize(rootDir string) error {
+	return evaluate(rootDir, hostGateEntrypointSanitizeChecks(rootDir))
+}
+
+// precommitUpstreamPinGateChecks holds the single repo pre-commit hook invariant
+// migrated out of scripts/verify-invariants.sh (the lone
+// `if ! rg -q 'scripts/update-upstream-pins\.sh" --check' "${REPO_PRECOMMIT_HOOK}"`
+// guard, where REPO_PRECOMMIT_HOOK="${ROOT_DIR}/.githooks/pre-commit").  The
+// shell message interpolated no path, so it is a static kindRegexPresent check
+// whose pattern's only metacharacter (`\.`) is an escaped literal dot; the
+// pattern is kept verbatim and matched per line for rg parity.
+var precommitUpstreamPinGateChecks = []check{
+	{
+		kind:       kindRegexPresent,
+		pattern:    `scripts/update-upstream-pins\.sh" --check`,
+		message:    "Expected repo pre-commit hook to gate commits on pending pinned upstream updates",
+		targetFile: ".githooks/pre-commit",
+	},
+}
+
+// CheckPrecommitUpstreamPinGate runs the single repo pre-commit hook
+// upstream-pin-gate invariant against the repo rooted at rootDir.  It returns nil
+// when the hook gates commits on pending pinned upstream updates (the shell's
+// exit 0), or an error whose message equals the shell's stderr (the shell's exit
+// 1).
+func CheckPrecommitUpstreamPinGate(rootDir string) error {
+	return evaluate(rootDir, precommitUpstreamPinGateChecks)
+}
+
+// trustedDockerClientScriptRelPaths lists, in the shell loops' order, the four
+// scripts that must source the trusted Docker client helper, seed a trusted
+// client state, drop the caller HOME across their sanitized entrypoint re-exec,
+// and invoke buildx through the trusted absolute plugin path.  The shell loop
+// elements were "${ROOT_DIR}/<relpath>", so each rendered the ABSOLUTE path once
+// ${ROOT_DIR} expanded.
+var trustedDockerClientScriptRelPaths = []string{
+	"scripts/container-smoke.sh",
+	"scripts/generate-builder-environment-manifest.sh",
+	"scripts/verify-release-bundle.sh",
+	"scripts/verify-reproducible-build.sh",
+}
+
+// trustedDockerClientRgChecks builds the sixteen trusted-Docker-client
+// invariants for the repo rooted at rootDir, in the shell's original order: the
+// first `for script` loop's three ordered `! rg -q` probes (source the helper,
+// seed trusted client state, drop caller HOME) for each script, followed by the
+// second `for script` loop's single `! rg -q 'buildx_cmd '` probe for each
+// script.  Splitting into two loops (rather than four probes per script)
+// reproduces the shell's first-violation ordering exactly.
+//
+// Every pattern is kept verbatim as a regex and matched per line for rg parity:
+// the source-helper probe escapes `\$ \{ \} \.` to match the literal
+// `$ { } .`, while the setup / HOME / buildx probes are metacharacter-free and
+// so reduce to fixed-string matching under regexMatchesAnyLine.
+//
+// The shell echoes interpolated ${script}, whose value was the loop element
+// "${ROOT_DIR}/<relpath>" — the ABSOLUTE path once ${ROOT_DIR} expands.  Each
+// message is therefore constructed as "Expected " + rootDir + "/" + relpath + " ...",
+// using literal string concatenation (not filepath.Join) to reproduce the
+// shell's byte-exact rendering.  The read target stays the repo-relative path via
+// targetFile, so evaluate reads the same file the message names.
+func trustedDockerClientRgChecks(rootDir string) []check {
+	cs := make([]check, 0, len(trustedDockerClientScriptRelPaths)*4)
+	for _, rel := range trustedDockerClientScriptRelPaths {
+		script := rootDir + "/" + rel
+		cs = append(cs,
+			check{
+				kind:       kindRegexPresent,
+				pattern:    `source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"`,
+				message:    "Expected " + script + " to source the trusted Docker client helper",
+				targetFile: rel,
+			},
+			check{
+				kind:       kindRegexPresent,
+				pattern:    `setup_workcell_trusted_docker_client`,
+				message:    "Expected " + script + " to seed a trusted Docker client state before using Docker",
+				targetFile: rel,
+			},
+			check{
+				kind:       kindRegexPresent,
+				pattern:    `HOME=/tmp`,
+				message:    "Expected " + script + " to stop preserving caller HOME across its sanitized entrypoint re-exec",
+				targetFile: rel,
+			},
+		)
+	}
+	for _, rel := range trustedDockerClientScriptRelPaths {
+		script := rootDir + "/" + rel
+		cs = append(cs, check{
+			kind:       kindRegexPresent,
+			pattern:    `buildx_cmd `,
+			message:    "Expected " + script + " to invoke buildx through the trusted absolute plugin path",
+			targetFile: rel,
+		})
+	}
+	return cs
+}
+
+// CheckTrustedDockerClientRg runs the sixteen trusted-Docker-client invariants
+// (source-helper, seed-client-state, drop-caller-HOME, and buildx-trusted-path
+// probes across container-smoke.sh, generate-builder-environment-manifest.sh,
+// verify-release-bundle.sh and verify-reproducible-build.sh) against the repo
+// rooted at rootDir, in the shell's original order.  It returns nil when every
+// invariant holds (the shell's exit 0), or an error whose message equals the
+// shell's stderr for the first violated invariant (the shell's exit 1).
+func CheckTrustedDockerClientRg(rootDir string) error {
+	return evaluate(rootDir, trustedDockerClientRgChecks(rootDir))
+}
+
 // violationMessage returns the stderr string the shell emitted for a violated
 // check.  For most checks this is the static message; filesystem checks that
 // interpolated the absolute ${ROOT_DIR}/<path> into their shell message set
