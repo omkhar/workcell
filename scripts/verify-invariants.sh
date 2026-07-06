@@ -7836,19 +7836,13 @@ fi
 for settings_path in \
   "${ROOT_DIR}/adapters/claude/.claude/settings.json" \
   "${ROOT_DIR}/adapters/claude/managed-settings.json"; do
-  if ! jq -e '.enableAllProjectMcpServers == false' "${settings_path}" >/dev/null; then
-    echo "$(basename "${settings_path}") settings must disable auto-enabled project MCP servers" >&2
-    exit 1
-  fi
+  go_verify_citools workcell-claude-mcp-project-servers "${settings_path}" || exit 1
   if ! jq -e '.hooks.PreToolUse[0].hooks[0].command == "/opt/workcell/adapters/claude/hooks/guard-bash.sh"' "${settings_path}" >/dev/null; then
     echo "$(basename "${settings_path}") settings must use the managed guard-bash.sh hook" >&2
     exit 1
   fi
 done
-if ! jq -e '.disableBypassPermissionsMode == "allow"' "${ROOT_DIR}/adapters/claude/managed-settings.json" >/dev/null; then
-  echo "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary" >&2
-  exit 1
-fi
+go_verify_citools workcell-claude-managed-bypass "${ROOT_DIR}" || exit 1
 if ! jq -e '.tools.allowed == []' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null; then
   echo "Gemini adapter must not seed allowed tools" >&2
   exit 1
@@ -7861,14 +7855,7 @@ if jq -e '.security.auth.selectedType' "${ROOT_DIR}/adapters/gemini/.gemini/sett
   echo "Gemini adapter baseline must not hardcode a selected auth type" >&2
   exit 1
 fi
-if ! jq -e '.security.folderTrust.enabled == false' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null; then
-  echo "Gemini adapter must disable Gemini folder trust inside the managed runtime" >&2
-  exit 1
-fi
-if ! jq -e '.tools.shell.enableInteractiveShell == false' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null; then
-  echo "Gemini adapter must disable interactive shell mode" >&2
-  exit 1
-fi
+go_verify_citools workcell-gemini-settings-guards "${ROOT_DIR}" || exit 1
 if ! jq -e '.advanced.excludedEnvVars | type == "array"' "${ROOT_DIR}/adapters/gemini/.gemini/settings.json" >/dev/null; then
   echo "Gemini adapter must exclude sensitive environment variables" >&2
   exit 1

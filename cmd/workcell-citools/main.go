@@ -131,6 +131,9 @@ func subcommands() []subcommand {
 		{"workcell-validate-repo-scenario-refs", "ROOT_DIR", 1, 1, cmdWorkcellValidateRepoScenarioRefs},
 		{"workcell-precommit-hook-exec", "ROOT_DIR", 1, 1, cmdWorkcellPrecommitHookExec},
 		{"workcell-docs-examples-dir", "ROOT_DIR", 1, 1, cmdWorkcellDocsExamplesDir},
+		{"workcell-claude-mcp-project-servers", "SETTINGS_PATH", 1, 1, cmdWorkcellClaudeMcpProjectServers},
+		{"workcell-claude-managed-bypass", "ROOT_DIR", 1, 1, cmdWorkcellClaudeManagedBypass},
+		{"workcell-gemini-settings-guards", "ROOT_DIR", 1, 1, cmdWorkcellGeminiSettingsGuards},
 	}
 }
 
@@ -837,4 +840,31 @@ func cmdWorkcellPrecommitHookExec(args []string) error {
 // original stderr message when the invariant is violated.
 func cmdWorkcellDocsExamplesDir(args []string) error {
 	return workcellhardening.CheckDocsExamplesDir(args[0])
+}
+
+// cmdWorkcellClaudeMcpProjectServers runs the single `jq -e`
+// project-MCP-servers check migrated out of the scripts/verify-invariants.sh
+// settings_path loop; unlike the other workcell-* subcommands it takes the
+// settings FILE path (the loop calls it once per claude settings file, in
+// place), and it fails (exit 1 via die()) with the shell's original per-file
+// stderr message (the file's basename plus the fixed suffix) when the invariant
+// is violated.
+func cmdWorkcellClaudeMcpProjectServers(args []string) error {
+	return workcellhardening.CheckClaudeMcpProjectServers(args[0])
+}
+
+// cmdWorkcellClaudeManagedBypass runs the single Claude managed-settings
+// bypass-permissions `jq -e` check migrated out of scripts/verify-invariants.sh;
+// it fails (exit 1 via die()) with the shell's original stderr message when the
+// invariant is violated.
+func cmdWorkcellClaudeManagedBypass(args []string) error {
+	return workcellhardening.CheckClaudeManagedBypass(args[0])
+}
+
+// cmdWorkcellGeminiSettingsGuards runs the two Gemini adapter-settings `jq -e`
+// checks (folder-trust disabled, interactive-shell disabled) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellGeminiSettingsGuards(args []string) error {
+	return workcellhardening.CheckGeminiSettingsGuards(args[0])
 }

@@ -5,6 +5,7 @@ package workcellhardening
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -6206,5 +6207,265 @@ func TestCheckDocsExamplesDirRealRepo(t *testing.T) {
 	}
 	if err := CheckDocsExamplesDir(repoRoot); err != nil {
 		t.Fatalf("CheckDocsExamplesDir(real repo) = %v, want nil", err)
+	}
+}
+
+// --- kindJSONExprEval + jq -e adapter-settings migration (D3) ---
+
+// jsonExprCheck builds a bare kindJSONExprEval check for the holds() unit tests.
+func jsonExprCheck(path, expectedRaw string) check {
+	return check{kind: kindJSONExprEval, jsonPath: path, jsonExpectedRaw: expectedRaw}
+}
+
+// TestJSONExprEvalHolds exercises kindJSONExprEval's jq-typed `==` semantics
+// directly: string equality, boolean equality that must reject the string
+// "false", numeric equality, nested paths, missing-key/explicit-null rendering
+// as jq null (never equal to a scalar), and invalid-JSON / non-object-index
+// error cases that mirror jq's non-zero exit.
+func TestJSONExprEvalHolds(t *testing.T) {
+	const doc = `{
+		"str": "allow",
+		"boolFalse": false,
+		"boolTrue": true,
+		"num": 5,
+		"strFalse": "false",
+		"nullField": null,
+		"nested": {"deep": {"enabled": false}},
+		"scalar": "x"
+	}`
+	tests := []struct {
+		name     string
+		path     string
+		expected string
+		want     bool
+	}{
+		{"string match", ".str", `"allow"`, true},
+		{"string mismatch", ".str", `"deny"`, false},
+		{"bool false match", ".boolFalse", "false", true},
+		{"bool false does not match string false", ".strFalse", "false", false},
+		{"string false vs string false matches", ".strFalse", `"false"`, true},
+		{"bool true match", ".boolTrue", "true", true},
+		{"bool true mismatch against false", ".boolTrue", "false", false},
+		{"number match", ".num", "5", true},
+		{"number match float form", ".num", "5.0", true},
+		{"number mismatch", ".num", "6", false},
+		{"nested path match", ".nested.deep.enabled", "false", true},
+		{"missing key renders null not equal to false", ".missing", "false", false},
+		{"missing key not equal to null literal string", ".missing", `"null"`, false},
+		{"explicit null not equal to false", ".nullField", "false", false},
+		{"missing nested under missing parent", ".missing.child", "false", false},
+		{"indexing a scalar with a key is a jq error", ".scalar.child", `"x"`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := jsonExprCheck(tt.path, tt.expected).holds(doc, "")
+			if got != tt.want {
+				t.Fatalf("holds(%s == %s) = %v, want %v", tt.path, tt.expected, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestJSONExprEvalInvalidJSON asserts an unparseable target file is a violation,
+// mirroring jq's error exit under the `if !` guard.
+func TestJSONExprEvalInvalidJSON(t *testing.T) {
+	if jsonExprCheck(".str", `"allow"`).holds("{not valid json", "") {
+		t.Fatal("holds() on invalid JSON = true, want false (jq error → violation)")
+	}
+	if jsonExprCheck(".str", `"allow"`).holds("", "") {
+		t.Fatal("holds() on empty file = true, want false (jq error → violation)")
+	}
+}
+
+// TestJSONExprEvalDifferentialJQ pins kindJSONExprEval's holds() to the real
+// `jq -e 'EXPR' FILE` exit code across a matrix of documents and expressions, so
+// any drift from jq's typed `==` fails here.  Skipped if jq is unavailable.
+func TestJSONExprEvalDifferentialJQ(t *testing.T) {
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq not installed; skipping differential parity test")
+	}
+	docs := []string{
+		`{"x":"allow"}`,
+		`{"x":false}`,
+		`{"x":"false"}`,
+		`{"x":true}`,
+		`{"x":5}`,
+		`{"x":null}`,
+		`{"y":1}`,
+		`{"a":{"b":false}}`,
+	}
+	exprs := []struct{ path, expectedRaw string }{
+		{".x", `"allow"`},
+		{".x", "false"},
+		{".x", "true"},
+		{".x", "5"},
+		{".a.b", "false"},
+		{".missing", "false"},
+	}
+	for _, doc := range docs {
+		for _, e := range exprs {
+			name := doc + " | " + e.path + "==" + e.expectedRaw
+			t.Run(name, func(t *testing.T) {
+				f := filepath.Join(t.TempDir(), "d.json")
+				if err := os.WriteFile(f, []byte(doc), 0o644); err != nil {
+					t.Fatalf("write fixture: %v", err)
+				}
+				cmd := exec.Command(jqPath, "-e", e.path+" == "+e.expectedRaw, f)
+				runErr := cmd.Run()
+				jqTruthy := runErr == nil // jq -e exit 0 ⇔ expression true
+				got := jsonExprCheck(e.path, e.expectedRaw).holds(doc, "")
+				if got != jqTruthy {
+					t.Fatalf("holds()=%v but jq -e truthy=%v for %s", got, jqTruthy, name)
+				}
+			})
+		}
+	}
+}
+
+// writeAdapterSettingsRepo writes a rootDir seeded with the two adapter settings
+// files the migrated jq -e groups read, from the provided JSON bodies.
+func writeAdapterSettingsRepo(t *testing.T, claudeManaged, gemini string) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		claudeManagedSettingsRelPath: claudeManaged,
+		geminiSettingsRelPath:        gemini,
+	}
+	for rel, body := range files {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return root
+}
+
+const happyClaudeManaged = `{"disableBypassPermissionsMode":"allow"}`
+const happyGeminiSettings = `{"security":{"folderTrust":{"enabled":false}},"tools":{"shell":{"enableInteractiveShell":false}}}`
+
+func TestCheckClaudeManagedBypass(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{"happy path", happyClaudeManaged, ""},
+		{"wrong string value", `{"disableBypassPermissionsMode":"deny"}`, "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary"},
+		{"missing field", `{}`, "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary"},
+		{"boolean not string", `{"disableBypassPermissionsMode":true}`, "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := writeAdapterSettingsRepo(t, tt.body, happyGeminiSettings)
+			assertCheckErr(t, "CheckClaudeManagedBypass", CheckClaudeManagedBypass(root), tt.wantErr)
+		})
+	}
+}
+
+func TestCheckGeminiSettingsGuards(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{"happy path", happyGeminiSettings, ""},
+		{"folder trust enabled", `{"security":{"folderTrust":{"enabled":true}},"tools":{"shell":{"enableInteractiveShell":false}}}`, "Gemini adapter must disable Gemini folder trust inside the managed runtime"},
+		{"folder trust string false rejected", `{"security":{"folderTrust":{"enabled":"false"}},"tools":{"shell":{"enableInteractiveShell":false}}}`, "Gemini adapter must disable Gemini folder trust inside the managed runtime"},
+		{"folder trust missing", `{"tools":{"shell":{"enableInteractiveShell":false}}}`, "Gemini adapter must disable Gemini folder trust inside the managed runtime"},
+		{"interactive shell enabled", `{"security":{"folderTrust":{"enabled":false}},"tools":{"shell":{"enableInteractiveShell":true}}}`, "Gemini adapter must disable interactive shell mode"},
+		{"interactive shell missing", `{"security":{"folderTrust":{"enabled":false}},"tools":{"shell":{}}}`, "Gemini adapter must disable interactive shell mode"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := writeAdapterSettingsRepo(t, happyClaudeManaged, tt.body)
+			assertCheckErr(t, "CheckGeminiSettingsGuards", CheckGeminiSettingsGuards(root), tt.wantErr)
+		})
+	}
+}
+
+func TestCheckClaudeMcpProjectServers(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		fileName string
+		wantErr  string
+	}{
+		{"happy managed", `{"enableAllProjectMcpServers":false}`, "managed-settings.json", ""},
+		{"happy user settings", `{"enableAllProjectMcpServers":false}`, "settings.json", ""},
+		{"true is a violation", `{"enableAllProjectMcpServers":true}`, "settings.json", "settings.json settings must disable auto-enabled project MCP servers"},
+		{"missing field", `{}`, "managed-settings.json", "managed-settings.json settings must disable auto-enabled project MCP servers"},
+		{"basename preserved for nested path", `{"enableAllProjectMcpServers":true}`, "managed-settings.json", "managed-settings.json settings must disable auto-enabled project MCP servers"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tt.fileName)
+			if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+				t.Fatalf("write %s: %v", path, err)
+			}
+			assertCheckErr(t, "CheckClaudeMcpProjectServers", CheckClaudeMcpProjectServers(path), tt.wantErr)
+		})
+	}
+}
+
+// TestCheckClaudeMcpProjectServersMissingFile asserts a missing file is a
+// violation with the basename-prefixed message (jq errors on a missing file →
+// non-zero exit → the `if !` guard fires).
+func TestCheckClaudeMcpProjectServersMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	assertCheckErr(t, "CheckClaudeMcpProjectServers", CheckClaudeMcpProjectServers(path),
+		"settings.json settings must disable auto-enabled project MCP servers")
+}
+
+// TestAdapterSettingsChecksCount guards the migrated check counts so an
+// accidental add/drop is caught.
+func TestAdapterSettingsChecksCount(t *testing.T) {
+	if got := len(claudeManagedBypassChecks); got != 1 {
+		t.Fatalf("claudeManagedBypassChecks has %d checks, want 1", got)
+	}
+	if got := len(geminiSettingsGuardChecks); got != 2 {
+		t.Fatalf("geminiSettingsGuardChecks has %d checks, want 2", got)
+	}
+}
+
+// TestAdapterSettingsChecksRealRepo asserts the real adapter settings files in
+// this repository satisfy all migrated jq -e invariants — the guard against a
+// mis-transcribed path, message, or RHS literal.
+func TestAdapterSettingsChecksRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, claudeManagedSettingsRelPath)); err != nil {
+		t.Skipf("real %s not found: %v", claudeManagedSettingsRelPath, err)
+	}
+	if err := CheckClaudeManagedBypass(repoRoot); err != nil {
+		t.Fatalf("CheckClaudeManagedBypass(real repo) = %v, want nil", err)
+	}
+	if err := CheckGeminiSettingsGuards(repoRoot); err != nil {
+		t.Fatalf("CheckGeminiSettingsGuards(real repo) = %v, want nil", err)
+	}
+	for _, rel := range []string{"adapters/claude/.claude/settings.json", claudeManagedSettingsRelPath} {
+		if err := CheckClaudeMcpProjectServers(filepath.Join(repoRoot, rel)); err != nil {
+			t.Fatalf("CheckClaudeMcpProjectServers(real %s) = %v, want nil", rel, err)
+		}
+	}
+}
+
+// assertCheckErr fails unless got matches the wantErr expectation ("" = nil).
+func assertCheckErr(t *testing.T, label string, got error, wantErr string) {
+	t.Helper()
+	if wantErr == "" {
+		if got != nil {
+			t.Fatalf("%s = %v, want nil", label, got)
+		}
+		return
+	}
+	if got == nil {
+		t.Fatalf("%s = nil, want error %q", label, wantErr)
+	}
+	if got.Error() != wantErr {
+		t.Fatalf("%s = %q, want %q", label, got.Error(), wantErr)
 	}
 }
