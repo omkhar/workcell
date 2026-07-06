@@ -8286,40 +8286,18 @@ if ! sed -n '/^acquire_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | a
   exit 1
 fi
 
-# shellcheck disable=SC2016
-for needle in \
-  'workspace_runtime_probe_path()' \
-  'validate_colima_runtime_workspace_view()' \
-  'validate_colima_runtime_workspace_view "${profile}" "${workspace}"' \
-  'Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents.' \
-  'Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view.'; do
-  if ! grep -Fq -- "${needle}" "${ROOT_DIR}/scripts/workcell"; then
-    echo "Expected workcell mount-view validation snippet missing: ${needle}" >&2
-    exit 1
-  fi
-done
-
-# shellcheck disable=SC2016
-for needle in 'cd "${home}" &&' 'cd / &&' 'LIMA_WORKDIR=/'; do
-  if ! grep -Fq -- "${needle}" "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-    echo "Expected egress helper safe-cwd snippet missing: ${needle}" >&2
-    exit 1
-  fi
-done
-
-for token in '--inspect' 'print_inspect_state' 'provider_native_sandbox_configured' 'provider_native_sandbox_effective' 'provider_native_sandbox_reason' 'codex' 'claude' 'gemini'; do
-  if ! grep -Fq -- "${token}" "${ROOT_DIR}/scripts/workcell"; then
-    echo "Expected workcell to contain --inspect contract token: ${token}" >&2
-    exit 1
-  fi
-done
-
-for field in workspace network_policy session_assurance_initial provider_native_sandbox_configured provider_native_sandbox_effective provider_native_sandbox_reason codex claude gemini; do
-  if ! grep -Fq -- "${field}" "${ROOT_DIR}/scripts/workcell" && ! grep -Fq -- "${field}" "${ROOT_DIR}/runtime/container/assurance.sh"; then
-    echo "Expected audit log field referenced in control scripts: ${field}" >&2
-    exit 1
-  fi
-done
+# The four contiguous grep-based loops that asserted the workcell mount-view
+# validation snippets, the colima-egress-allowlist safe-cwd snippets, the
+# --inspect contract tokens (all in scripts/workcell), and the audit-log fields
+# (present in scripts/workcell OR runtime/container/assurance.sh) were migrated
+# to Go (D3): internal/workcellhardening behind the workcell-citools
+# workcell-inspect-assurance-loops subcommand preserves the exact exit codes and
+# stderr messages of the former inline grep loops (the field loop is a
+# kindPresentInAnyFile check over both files, mirroring the `! grep && ! grep`
+# absent-from-BOTH guard).  `|| exit 1` matches the former loops' `exit 1` on a
+# violated invariant: it handles the failure so the top-level ERR trap does not
+# fire and append trap diagnostics, preserving the exact failure stderr surface.
+go_verify_citools workcell-inspect-assurance-loops "${ROOT_DIR}" || exit 1
 
 if [[ ! -d "${ROOT_DIR}/docs/examples" ]]; then
   echo "docs/examples/ must exist" >&2

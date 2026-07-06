@@ -112,6 +112,7 @@ func subcommands() []subcommand {
 		{"workcell-copilot-unsafe-flags", "ROOT_DIR", 1, 1, cmdWorkcellCopilotUnsafeFlags},
 		{"workcell-copilot-release-verify", "ROOT_DIR", 1, 1, cmdWorkcellCopilotReleaseVerify},
 		{"workcell-adapter-rule-guard-bash", "ROOT_DIR", 1, 1, cmdWorkcellAdapterRuleGuardBash},
+		{"workcell-inspect-assurance-loops", "ROOT_DIR", 1, 1, cmdWorkcellInspectAssuranceLoops},
 	}
 }
 
@@ -651,4 +652,12 @@ func cmdWorkcellCopilotReleaseVerify(args []string) error {
 // invariant.
 func cmdWorkcellAdapterRuleGuardBash(args []string) error {
 	return workcellhardening.CheckAdapterRuleGuardBash(args[0])
+}
+
+// cmdWorkcellInspectAssuranceLoops runs the twenty-five --inspect /
+// session-assurance checks migrated out of scripts/verify-invariants.sh; it
+// fails (exit 1 via die()) with the shell's original stderr message for the
+// first violated invariant.
+func cmdWorkcellInspectAssuranceLoops(args []string) error {
+	return workcellhardening.CheckInspectAssuranceLoops(args[0])
 }
