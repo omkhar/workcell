@@ -116,6 +116,7 @@ func subcommands() []subcommand {
 		{"workcell-validator-writable-state", "ROOT_DIR", 1, 1, cmdWorkcellValidatorWritableState},
 		{"workcell-hostutil-egress-rg", "ROOT_DIR", 1, 1, cmdWorkcellHostutilEgressRg},
 		{"workcell-dockerfile-pins", "ROOT_DIR", 1, 1, cmdWorkcellDockerfilePins},
+		{"workcell-validator-dispatch-loops", "ROOT_DIR", 1, 1, cmdWorkcellValidatorDispatchLoops},
 	}
 }
 
@@ -688,4 +689,13 @@ func cmdWorkcellHostutilEgressRg(args []string) error {
 // original stderr message for the first violated invariant.
 func cmdWorkcellDockerfilePins(args []string) error {
 	return workcellhardening.CheckDockerfilePins(args[0])
+}
+
+// cmdWorkcellValidatorDispatchLoops runs the thirteen validator-dispatch checks
+// (validator Dockerfile ENV pins, validate-repo Cargo-target externalization,
+// and CI-dispatch entrypoint wiring) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellValidatorDispatchLoops(args []string) error {
+	return workcellhardening.CheckValidatorDispatchLoops(args[0])
 }

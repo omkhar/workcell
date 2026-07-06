@@ -4655,3 +4655,162 @@ func TestCheckDockerfilePinsRealRepo(t *testing.T) {
 		t.Fatalf("CheckDockerfilePins(real repo) = %v, want nil", err)
 	}
 }
+
+// validatorDispatchLoopsHappyFiles returns the six-file fixture map that
+// satisfies all thirteen validator-dispatch invariants: the validator Dockerfile
+// carries every ENV pin, scripts/validate-repo.sh carries both Cargo-target
+// externalization needles, and each dispatch target file carries its needle
+// (scripts/pre-merge.sh carries both of its needles).  Needle bodies are built
+// from the exported slices so the fixture stays in lockstep with the migration.
+func validatorDispatchLoopsHappyFiles() map[string]string {
+	return map[string]string{
+		validatorDockerfileRelPath: "FROM debian\n" + strings.Join(validatorEnvPinNeedles, "\n") + "\n",
+		validateRepoRelPath: "#!/usr/bin/env bash\n" +
+			`WORKCELL_VALIDATE_CACHE_HOME="${WORKCELL_VALIDATE_CACHE_HOME:-${XDG_CACHE_HOME}/workcell/validate}"` + "\n" +
+			`CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${WORKCELL_VALIDATE_CACHE_HOME}/cargo-target}"` + "\n",
+		ciWorkflowRelPath:       "steps:\n  - run: ./scripts/ci/job-validate.sh --profile pr-parity\n",
+		docsWorkflowRelPath:     "steps:\n  - run: ./scripts/ci/job-docs.sh\n",
+		mutationWorkflowRelPath: "steps:\n  - run: ./scripts/ci/job-mutation.sh\n",
+		preMergeRelPath:         "#!/usr/bin/env bash\nscripts/ci/job-validate.sh\nscripts/ci/job-docs.sh\n",
+	}
+}
+
+func TestCheckValidatorDispatchLoops(t *testing.T) {
+	root := t.TempDir()
+
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string // "" means expect success; absolute-path messages use the shared root
+	}{
+		{
+			name:   "happy path all invariants hold",
+			mutate: func(map[string]string) {},
+		},
+		{
+			// ENV-pin loop: the first needle removed from the validator
+			// Dockerfile fails with the interpolated absolute-path message.
+			name: "validator Dockerfile missing HOME pin",
+			mutate: func(files map[string]string) {
+				files[validatorDockerfileRelPath] = strings.Replace(files[validatorDockerfileRelPath], "ENV HOME=/home/workcell\n", "", 1)
+			},
+			wantErr: "Expected " + root + "/" + validatorDockerfileRelPath + " to pin its default nonroot writable state under /home/workcell (ENV HOME=/home/workcell)",
+		},
+		{
+			// ENV-pin loop: a middle needle removed fires with its own message,
+			// proving the per-needle interpolation.
+			name: "validator Dockerfile missing GOMODCACHE pin",
+			mutate: func(files map[string]string) {
+				files[validatorDockerfileRelPath] = strings.Replace(files[validatorDockerfileRelPath], "ENV GOMODCACHE=/home/workcell/.cache/go-mod\n", "", 1)
+			},
+			wantErr: "Expected " + root + "/" + validatorDockerfileRelPath + " to pin its default nonroot writable state under /home/workcell (ENV GOMODCACHE=/home/workcell/.cache/go-mod)",
+		},
+		{
+			// A missing validator Dockerfile is empty content: the first
+			// affirmative ENV pin fails, mirroring grep on a missing file.
+			name: "validator Dockerfile missing",
+			mutate: func(files map[string]string) {
+				files[validatorDockerfileRelPath] = ""
+			},
+			wantErr: "Expected " + root + "/" + validatorDockerfileRelPath + " to pin its default nonroot writable state under /home/workcell (ENV HOME=/home/workcell)",
+		},
+		{
+			// validate-repo || guard: the first probe (cache-home) removed fires
+			// the shared message.
+			name: "validate-repo missing cache-home probe",
+			mutate: func(files map[string]string) {
+				files[validateRepoRelPath] = strings.Replace(files[validateRepoRelPath], `WORKCELL_VALIDATE_CACHE_HOME="${WORKCELL_VALIDATE_CACHE_HOME:-${XDG_CACHE_HOME}/workcell/validate}"`+"\n", "", 1)
+			},
+			wantErr: "Expected scripts/validate-repo.sh to externalize Cargo target writes under the Workcell-owned validation cache",
+		},
+		{
+			// validate-repo || guard: the second probe (cargo-target) removed
+			// fires the same shared message, proving either missing probe yields
+			// identical stderr.
+			name: "validate-repo missing cargo-target probe",
+			mutate: func(files map[string]string) {
+				files[validateRepoRelPath] = strings.Replace(files[validateRepoRelPath], `CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${WORKCELL_VALIDATE_CACHE_HOME}/cargo-target}"`+"\n", "", 1)
+			},
+			wantErr: "Expected scripts/validate-repo.sh to externalize Cargo target writes under the Workcell-owned validation cache",
+		},
+		{
+			// dispatch loop: the ci.yml needle removed fires with the
+			// interpolated absolute-path + needle message.
+			name: "ci workflow missing dispatch needle",
+			mutate: func(files map[string]string) {
+				files[ciWorkflowRelPath] = "steps:\n  - run: echo noop\n"
+			},
+			wantErr: "Expected " + root + "/" + ciWorkflowRelPath + " to dispatch validator parity through the shared CI entrypoints (./scripts/ci/job-validate.sh --profile pr-parity)",
+		},
+		{
+			// dispatch loop: the second pre-merge needle (job-docs) removed while
+			// the first (job-validate) stays fires the job-docs message, proving
+			// both same-file probes are distinct checks.
+			name: "pre-merge missing job-docs dispatch needle",
+			mutate: func(files map[string]string) {
+				files[preMergeRelPath] = "#!/usr/bin/env bash\nscripts/ci/job-validate.sh\n"
+			},
+			wantErr: "Expected " + root + "/" + preMergeRelPath + " to dispatch validator parity through the shared CI entrypoints (scripts/ci/job-docs.sh)",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := validatorDispatchLoopsHappyFiles()
+			tc.mutate(files)
+			for rel, body := range files {
+				path := filepath.Join(root, rel)
+				if body == "" {
+					os.Remove(path)
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+				}
+				if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+					t.Fatalf("write %s: %v", path, err)
+				}
+			}
+			err := CheckValidatorDispatchLoops(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckValidatorDispatchLoops() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckValidatorDispatchLoops() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckValidatorDispatchLoops() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckValidatorDispatchLoopsCount asserts the generated check list contains
+// exactly thirteen invariants: six validator-Dockerfile ENV pins, two
+// validate-repo Cargo-target probes, and five CI-dispatch probes.
+func TestCheckValidatorDispatchLoopsCount(t *testing.T) {
+	got := len(validatorDispatchLoopsChecks("/repo"))
+	const want = 13
+	if got != want {
+		t.Fatalf("validatorDispatchLoopsChecks(...) has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckValidatorDispatchLoopsRealRepo asserts that the real
+// tools/validator/Dockerfile, scripts/validate-repo.sh, the three lane
+// workflows, and scripts/pre-merge.sh in this repository satisfy all thirteen
+// validator-dispatch invariants.  This is the key guard against a
+// mis-transcribed needle or a wrong target file: if any Go pattern diverges from
+// the actual file contents, this test fails with the guard's stderr message.
+func TestCheckValidatorDispatchLoopsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, validatorDockerfileRelPath)); err != nil {
+		t.Skipf("real tools/validator/Dockerfile not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckValidatorDispatchLoops(repoRoot); err != nil {
+		t.Fatalf("CheckValidatorDispatchLoops(real repo) = %v, want nil", err)
+	}
+}

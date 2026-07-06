@@ -2935,39 +2935,7 @@ go_verify_citools workcell-bootstrap-egress "${ROOT_DIR}" || exit 1
 # surface.
 go_verify_citools workcell-dockerfile-pins "${ROOT_DIR}" || exit 1
 
-validator_dockerfile="${ROOT_DIR}/tools/validator/Dockerfile"
-for required in \
-  'ENV HOME=/home/workcell' \
-  'ENV XDG_CACHE_HOME=/home/workcell/.cache' \
-  'ENV GOCACHE=/home/workcell/.cache/go-build' \
-  'ENV GOMODCACHE=/home/workcell/.cache/go-mod' \
-  'ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target' \
-  'ENV TMPDIR=/home/workcell/.tmp'; do
-  if ! grep -Fq "${required}" "${validator_dockerfile}"; then
-    echo "Expected ${validator_dockerfile} to pin its default nonroot writable state under /home/workcell (${required})" >&2
-    exit 1
-  fi
-done
-
-if ! grep -Fq "WORKCELL_VALIDATE_CACHE_HOME=\"\${WORKCELL_VALIDATE_CACHE_HOME:-\${XDG_CACHE_HOME}/workcell/validate}\"" "${ROOT_DIR}/scripts/validate-repo.sh" ||
-  ! grep -Fq "CARGO_TARGET_DIR=\"\${CARGO_TARGET_DIR:-\${WORKCELL_VALIDATE_CACHE_HOME}/cargo-target}\"" "${ROOT_DIR}/scripts/validate-repo.sh"; then
-  echo "Expected scripts/validate-repo.sh to externalize Cargo target writes under the Workcell-owned validation cache" >&2
-  exit 1
-fi
-
-for dispatch_check in \
-  "${ROOT_DIR}/.github/workflows/ci.yml:./scripts/ci/job-validate.sh --profile pr-parity" \
-  "${ROOT_DIR}/.github/workflows/docs.yml:./scripts/ci/job-docs.sh" \
-  "${ROOT_DIR}/.github/workflows/mutation.yml:./scripts/ci/job-mutation.sh" \
-  "${ROOT_DIR}/scripts/pre-merge.sh:scripts/ci/job-validate.sh" \
-  "${ROOT_DIR}/scripts/pre-merge.sh:scripts/ci/job-docs.sh"; do
-  dispatch_file="${dispatch_check%%:*}"
-  dispatch_required="${dispatch_check#*:}"
-  if ! grep -Fq -- "${dispatch_required}" "${dispatch_file}"; then
-    echo "Expected ${dispatch_file} to dispatch validator parity through the shared CI entrypoints (${dispatch_required})" >&2
-    exit 1
-  fi
-done
+go_verify_citools workcell-validator-dispatch-loops "${ROOT_DIR}" || exit 1
 
 for caller in \
   "${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh" \
