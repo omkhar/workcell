@@ -836,3 +836,16 @@ func TestExtractNamedFunctionBlock(t *testing.T) {
 		t.Fatalf("extractNamedFunctionBlock for a missing function should be empty")
 	}
 }
+
+func TestRegexMatchesAnyLineIsLineBounded(t *testing.T) {
+	// A negated char class must not consume a newline, mirroring ripgrep's
+	// default (non-multiline) behaviour — otherwise a broken cross-line R2
+	// endpoint would spuriously match.
+	pat := `docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443`
+	if !regexMatchesAnyLine(pat, "docker-images-prod.abc123.r2.cloudflarestorage.com:443") {
+		t.Fatalf("expected a valid single-line R2 endpoint to match")
+	}
+	if regexMatchesAnyLine(pat, "docker-images-prod.\n.r2.cloudflarestorage.com:443") {
+		t.Fatalf("a cross-newline R2 endpoint must NOT match (rg is line-oriented)")
+	}
+}

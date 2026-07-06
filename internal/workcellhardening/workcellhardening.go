@@ -675,12 +675,27 @@ func (c check) holds(text string) bool {
 	case kindAbsent:
 		return !strings.Contains(text, c.pattern)
 	case kindRegexAbsent:
-		return !regexp.MustCompile(c.pattern).MatchString(text)
+		return !regexMatchesAnyLine(c.pattern, text)
 	case kindRegexPresent:
-		return regexp.MustCompile(c.pattern).MatchString(text)
+		return regexMatchesAnyLine(c.pattern, text)
 	default:
 		return false
 	}
+}
+
+// regexMatchesAnyLine reports whether pattern matches any single line of text,
+// emulating ripgrep's default line-oriented matching: without `--multiline`, an
+// `rg` match cannot cross a line terminator, so a negated class like `[^.]+`
+// never spans a newline. Matching whole-file would let such a class consume `\n`
+// and diverge from the migrated `rg -q` probe.
+func regexMatchesAnyLine(pattern, text string) bool {
+	re := regexp.MustCompile(pattern)
+	for _, line := range strings.Split(text, "\n") {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // firstLine returns text up to (but excluding) the first newline,
