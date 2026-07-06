@@ -5531,6 +5531,19 @@ func TestCheckDualStackApplyPlan(t *testing.T) {
 			},
 			wantErr: "Expected dual-stack allowlist apply plan to avoid host-resolved endpoint rules",
 		},
+		{
+			name: "bare clear_rules present in render block",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], `getent ahosts "${host}"`, "getent ahosts \"${host}\"\n  clear_rules", 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply plan to avoid invoking clear_rules during render",
+		},
+		{
+			name: "clear_rules only in a different function passes",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], "apply_allowlist() {\n", "apply_allowlist() {\n  clear_rules\n", 1)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -5552,7 +5565,7 @@ func TestCheckDualStackApplyPlan(t *testing.T) {
 }
 
 func TestCheckDualStackApplyPlanCount(t *testing.T) {
-	if got, want := len(dualStackApplyPlanChecks), 7; got != want {
+	if got, want := len(dualStackApplyPlanChecks), 8; got != want {
 		t.Fatalf("dualStackApplyPlanChecks has %d checks, want %d", got, want)
 	}
 }
@@ -5985,5 +5998,213 @@ func TestCheckValidateRepoScenarioRefsRealRepo(t *testing.T) {
 	}
 	if err := CheckValidateRepoScenarioRefs(repoRoot); err != nil {
 		t.Fatalf("CheckValidateRepoScenarioRefs(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 dir/exec/clear_rules sweep: new-kind direct tests ---
+
+// TestKindFunctionBlockRegexAbsent exercises kindFunctionBlockRegexAbsent's
+// holds() directly: a regex match on any line of the named function block is a
+// violation (holds=false); a pattern absent from the block, or present only in a
+// DIFFERENT function, holds (true).
+func TestKindFunctionBlockRegexAbsent(t *testing.T) {
+	c := check{
+		kind:         kindFunctionBlockRegexAbsent,
+		functionName: "render_allowlist_apply_plan",
+		pattern:      `^[[:space:]]*clear_rules$`,
+	}
+	inBlock := "render_allowlist_apply_plan() {\n  clear_rules\n}\n"
+	if c.holds(inBlock, "") {
+		t.Fatalf("holds()=true for pattern present in block, want false (violation)")
+	}
+	absent := "render_allowlist_apply_plan() {\n  render_clear_plan\n}\n"
+	if !c.holds(absent, "") {
+		t.Fatalf("holds()=false for pattern absent from block, want true")
+	}
+	otherFunc := "render_allowlist_apply_plan() {\n  render_clear_plan\n}\n" +
+		"other_func() {\n  clear_rules\n}\n"
+	if !c.holds(otherFunc, "") {
+		t.Fatalf("holds()=false for pattern present only in a different function, want true")
+	}
+}
+
+// TestKindDirExists exercises kindDirExists's holds() directly: an existing
+// directory holds (true); a missing path or a path that is a regular file (not a
+// directory) is a violation (holds=false).
+func TestKindDirExists(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "present"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "afile"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"directory present", "present", true},
+		{"path missing", "missing", false},
+		{"path is a file not a dir", "afile", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := check{kind: kindDirExists, targetPath: tc.path}
+			if got := c.holds("", root); got != tc.want {
+				t.Fatalf("holds()=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestKindExecutable exercises kindExecutable's holds() directly: an existing
+// file with an execute bit holds (true); a file with no execute bit, or a
+// missing path, is a violation (holds=false).
+func TestKindExecutable(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "exec"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write exec: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "plain"), []byte("data\n"), 0o644); err != nil {
+		t.Fatalf("write plain: %v", err)
+	}
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"executable file", "exec", true},
+		{"non-executable file", "plain", false},
+		{"path missing", "missing", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := check{kind: kindExecutable, targetPath: tc.path}
+			if got := c.holds("", root); got != tc.want {
+				t.Fatalf("holds()=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// --- D3 dir/exec sweep: pre-commit hook executable subcommand ---
+
+func TestCheckPrecommitHookExec(t *testing.T) {
+	hookRel := ".githooks/pre-commit"
+	tests := []struct {
+		name    string
+		mode    os.FileMode
+		write   bool
+		wantErr bool
+	}{
+		{name: "executable hook holds", mode: 0o755, write: true},
+		{name: "non-executable hook fails", mode: 0o644, write: true, wantErr: true},
+		{name: "missing hook fails", write: false, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tt.write {
+				path := filepath.Join(root, hookRel)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				if err := os.WriteFile(path, []byte("#!/bin/bash\n"), tt.mode); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			}
+			err := CheckPrecommitHookExec(root)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("CheckPrecommitHookExec() = %v, want nil", err)
+				}
+				return
+			}
+			wantMsg := "Expected executable repo pre-commit hook: " + root + "/" + hookRel
+			if err == nil || err.Error() != wantMsg {
+				t.Fatalf("CheckPrecommitHookExec() = %v, want %q", err, wantMsg)
+			}
+		})
+	}
+}
+
+func TestCheckPrecommitHookExecCount(t *testing.T) {
+	if got, want := len(precommitHookExecChecks), 1; got != want {
+		t.Fatalf("precommitHookExecChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckPrecommitHookExecRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, ".githooks/pre-commit")); err != nil {
+		t.Skipf("real .githooks/pre-commit not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckPrecommitHookExec(repoRoot); err != nil {
+		t.Fatalf("CheckPrecommitHookExec(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 dir sweep: docs/examples directory subcommand ---
+
+func TestCheckDocsExamplesDir(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(root string) error
+		wantErr bool
+	}{
+		{
+			name:  "directory present holds",
+			setup: func(root string) error { return os.MkdirAll(filepath.Join(root, "docs", "examples"), 0o755) },
+		},
+		{
+			name:    "directory missing fails",
+			setup:   func(string) error { return nil },
+			wantErr: true,
+		},
+		{
+			name: "path is a file not a dir fails",
+			setup: func(root string) error {
+				if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+					return err
+				}
+				return os.WriteFile(filepath.Join(root, "docs", "examples"), []byte("x"), 0o644)
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := tt.setup(root); err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			err := CheckDocsExamplesDir(root)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("CheckDocsExamplesDir() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != "docs/examples/ must exist" {
+				t.Fatalf("CheckDocsExamplesDir() = %v, want %q", err, "docs/examples/ must exist")
+			}
+		})
+	}
+}
+
+func TestCheckDocsExamplesDirCount(t *testing.T) {
+	if got, want := len(docsExamplesDirChecks), 1; got != want {
+		t.Fatalf("docsExamplesDirChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckDocsExamplesDirRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, "docs/examples")); err != nil {
+		t.Skipf("real docs/examples not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckDocsExamplesDir(repoRoot); err != nil {
+		t.Fatalf("CheckDocsExamplesDir(real repo) = %v, want nil", err)
 	}
 }

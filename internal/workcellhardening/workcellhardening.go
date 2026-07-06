@@ -58,6 +58,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 )
 
 // launcherRelPath is the repo-relative path to the host launcher every
@@ -342,6 +343,30 @@ const (
 	// this scopes to a Go function via extractGoFunctionBlock so the same
 	// literal appearing in an unrelated helper or a comment cannot satisfy it.
 	kindGoFunctionBlock
+	// kindFunctionBlockRegexAbsent requires the regexp pattern NOT to match
+	// any line inside the top-level bash function body named functionName,
+	// mirroring a NEGATED function_block_contains_regex guard
+	// (`if function_block_contains_regex FILE FUNC PATTERN; then ... exit 1`):
+	// extractNamedFunctionBlock scopes to the block, then regexMatchesAnyLine
+	// tests each line, so a match inside the block is a violation (present →
+	// exit 1).  Unlike kindFunctionBlockAbsent's fixed-string containment the
+	// pattern is a genuine regular expression, and unlike kindFunctionBlockRegex
+	// the sense is inverted (present is the violation, not absent).
+	kindFunctionBlockRegexAbsent
+	// kindDirExists requires the repo-relative path targetPath to be an
+	// existing directory under rootDir, mirroring `if [[ ! -d "${ROOT_DIR}/PATH" ]]`
+	// (a missing path or a non-directory is a violation → exit 1).  Unlike the
+	// content kinds this is a FILESYSTEM check: evaluate stats
+	// filepath.Join(rootDir, targetPath) via holds rather than reading the path
+	// as file content.
+	kindDirExists
+	// kindExecutable requires the repo-relative path targetPath to be
+	// executable by the current user under rootDir, mirroring
+	// `if [[ ! -x "${ROOT_DIR}/PATH" ]]` (a missing or non-executable path is a
+	// violation → exit 1).  Like kindDirExists this is a FILESYSTEM check: it
+	// mirrors Bash `-x` via syscall.Access(path, X_OK) — the same access(2)
+	// primitive Bash uses — rather than reading content or inspecting mode bits.
+	kindExecutable
 )
 
 // check is one hardening invariant: how to match, what to match, which
@@ -371,6 +396,19 @@ type check struct {
 	// by kindCountAtLeast (every other kind ignores it), mirroring the N in
 	// the shell's `grep -Fc ... -lt N` count guard.
 	minCount int
+	// targetPath is the repo-relative path a filesystem check (kindDirExists /
+	// kindExecutable) stats under rootDir.  It is used only by those two kinds
+	// (every other kind reads file content via targetFile / targetFiles); the
+	// filesystem kinds never read the path as content, so leaving targetFile
+	// empty for them does not trigger a launcherRelPath read.
+	targetPath string
+	// messageIncludesTargetPath, when true, appends the absolute target path
+	// (rootDir + "/" + targetPath) to message when evaluate builds the
+	// violation error, mirroring a shell message that interpolated the full
+	// ${ROOT_DIR}/<path> literal (the pre-commit hook executable check emitted
+	// "Expected executable repo pre-commit hook: ${REPO_PRECOMMIT_HOOK}", i.e.
+	// the absolute hook path).  It is used only by filesystem kinds.
+	messageIncludesTargetPath bool
 }
 
 // checks lists the eleven invariants in the same order as the former
@@ -460,7 +498,12 @@ func Check(rootDir string) error {
 // and negated `rg -q` on a missing file all produce no match, so
 // affirmative (kindPresent/kindRegexPresent/kindFunctionBlock/
 // kindFirstLineRegex) checks fail while negative
-// (kindAbsent/kindRegexAbsent/kindFunctionBlockAbsent) checks pass.
+// (kindAbsent/kindRegexAbsent/kindFunctionBlockAbsent/
+// kindFunctionBlockRegexAbsent) checks pass.
+//
+// The filesystem kinds (kindDirExists/kindExecutable) do not read content:
+// evaluate stats rootDir/targetPath, mirroring the shell's `[[ ! -d ]]` /
+// `[[ ! -x ]]` tests, so a missing path is a violation for both.
 func evaluate(rootDir string, cs []check) error {
 	cache := make(map[string]string)
 	readTarget := func(rel string) string {
@@ -483,13 +526,22 @@ func evaluate(rootDir string, cs []check) error {
 			// file, and is violated only when it is false for every file.
 			satisfied := false
 			for _, rel := range c.targetFiles {
-				if c.holds(readTarget(rel)) {
+				if c.holds(readTarget(rel), rootDir) {
 					satisfied = true
 					break
 				}
 			}
 			if !satisfied {
-				return errors.New(c.message)
+				return errors.New(c.violationMessage(rootDir))
+			}
+			continue
+		}
+		if c.kind == kindDirExists || c.kind == kindExecutable {
+			// Filesystem kinds stat rootDir/targetPath instead of reading a
+			// file's content, mirroring the shell's `[[ ! -d ]]` / `[[ ! -x ]]`
+			// path tests; holds ignores the (empty) text argument for them.
+			if !c.holds("", rootDir) {
+				return errors.New(c.violationMessage(rootDir))
 			}
 			continue
 		}
@@ -497,8 +549,8 @@ func evaluate(rootDir string, cs []check) error {
 		if rel == "" {
 			rel = launcherRelPath
 		}
-		if !c.holds(readTarget(rel)) {
-			return errors.New(c.message)
+		if !c.holds(readTarget(rel), rootDir) {
+			return errors.New(c.violationMessage(rootDir))
 		}
 	}
 	return nil
@@ -3689,16 +3741,14 @@ func CheckSmokeChownTar(rootDir string) error {
 	return evaluate(rootDir, smokeChownTarChecks)
 }
 
-// dualStackApplyPlanChecks lists the seven dual-stack allowlist-apply-plan
+// dualStackApplyPlanChecks lists the eight dual-stack allowlist-apply-plan
 // invariants in the same order as the contiguous inline run in
 // scripts/verify-invariants.sh (the run between the bracketed-IPv6-literal
-// egress-plan exec probes and the NEGATED render_allowlist_apply_plan
-// clear_rules function-block-regex guard).  Only this contiguous run of seven is
-// migrated: the immediately following guard negates a GENUINE regex
-// (`^[[:space:]]*clear_rules$`) inside a function block, for which no
-// function-block-regex-absent kind exists, and the run_in_vm awk-ordering block
-// after it is not a simple grep/rg check; both stay inline to preserve
-// first-failure order.
+// egress-plan exec probes and the run_in_vm awk-ordering block).  The eighth
+// check is the former NEGATED render_allowlist_apply_plan clear_rules
+// function-block-regex guard, migrated via kindFunctionBlockRegexAbsent now that
+// the kind exists; only the run_in_vm awk-ordering block after it stays inline
+// (it is not a simple grep/rg check), preserving first-failure order.
 //
 // All seven read scripts/colima-egress-allowlist.sh via the per-check targetFile
 // field.  Matching semantics mirror the shell exactly:
@@ -3774,9 +3824,24 @@ var dualStackApplyPlanChecks = []check{
 		message:      "Expected dual-stack allowlist apply plan to avoid host-resolved endpoint rules",
 		targetFile:   colimaEgressAllowlistRelPath,
 	},
+	{
+		// kindFunctionBlockRegexAbsent: the shell's negated
+		// function_block_contains_regex tested the render_allowlist_apply_plan
+		// block for a bare `clear_rules` line via the GENUINE regex
+		// `^[[:space:]]*clear_rules$` (a line that is only optional leading
+		// whitespace followed by `clear_rules`); a match inside the block is a
+		// violation.  render_clear_plan and render_allowlist_apply_plan do not
+		// match the anchored pattern, so neither the in-block clear-plan call nor
+		// the block's own opening line can false-match.
+		kind:         kindFunctionBlockRegexAbsent,
+		functionName: "render_allowlist_apply_plan",
+		pattern:      `^[[:space:]]*clear_rules$`,
+		message:      "Expected dual-stack allowlist apply plan to avoid invoking clear_rules during render",
+		targetFile:   colimaEgressAllowlistRelPath,
+	},
 }
 
-// CheckDualStackApplyPlan runs the seven dual-stack allowlist-apply-plan
+// CheckDualStackApplyPlan runs the eight dual-stack allowlist-apply-plan
 // invariants against the repo rooted at rootDir, in the shell's original order.
 // It returns nil when every invariant holds (the shell's exit 0), or an error
 // whose message equals the shell's stderr for the first violated invariant (the
@@ -3974,8 +4039,70 @@ func CheckValidateRepoScenarioRefs(rootDir string) error {
 	return evaluate(rootDir, validateRepoScenarioRefsChecks)
 }
 
-// holds reports whether the invariant is satisfied by the launcher text.
-func (c check) holds(text string) bool {
+// precommitHookExecChecks holds the single repo pre-commit hook executable
+// invariant migrated out of scripts/verify-invariants.sh (the lone
+// `if [[ ! -x "${REPO_PRECOMMIT_HOOK}" ]]` guard, where
+// REPO_PRECOMMIT_HOOK="${ROOT_DIR}/.githooks/pre-commit").  It is a kindExecutable
+// filesystem check that stats rootDir/.githooks/pre-commit; the shell message
+// interpolated the absolute hook path (${REPO_PRECOMMIT_HOOK}), so
+// messageIncludesTargetPath appends rootDir + "/" + targetPath to reproduce it
+// byte-for-byte.
+var precommitHookExecChecks = []check{
+	{
+		kind:                      kindExecutable,
+		targetPath:                ".githooks/pre-commit",
+		message:                   "Expected executable repo pre-commit hook: ",
+		messageIncludesTargetPath: true,
+	},
+}
+
+// CheckPrecommitHookExec runs the single repo pre-commit hook executable
+// invariant against the repo rooted at rootDir.  It returns nil when the hook
+// exists and is executable (the shell's exit 0), or an error whose message
+// equals the shell's stderr (the shell's exit 1) — the fixed prefix plus the
+// absolute hook path.
+func CheckPrecommitHookExec(rootDir string) error {
+	return evaluate(rootDir, precommitHookExecChecks)
+}
+
+// docsExamplesDirChecks holds the single docs/examples directory invariant
+// migrated out of scripts/verify-invariants.sh (the lone
+// `if [[ ! -d "${ROOT_DIR}/docs/examples" ]]` guard).  It is a kindDirExists
+// filesystem check that stats rootDir/docs/examples; the shell message was a
+// static "docs/examples/ must exist" with no path interpolation.
+var docsExamplesDirChecks = []check{
+	{
+		kind:       kindDirExists,
+		targetPath: "docs/examples",
+		message:    "docs/examples/ must exist",
+	},
+}
+
+// CheckDocsExamplesDir runs the single docs/examples directory invariant against
+// the repo rooted at rootDir.  It returns nil when docs/examples/ exists as a
+// directory (the shell's exit 0), or an error whose message equals the shell's
+// stderr (the shell's exit 1).
+func CheckDocsExamplesDir(rootDir string) error {
+	return evaluate(rootDir, docsExamplesDirChecks)
+}
+
+// violationMessage returns the stderr string the shell emitted for a violated
+// check.  For most checks this is the static message; filesystem checks that
+// interpolated the absolute ${ROOT_DIR}/<path> into their shell message set
+// messageIncludesTargetPath so the joined path is appended here (raw
+// concatenation of rootDir + "/" + targetPath, mirroring the shell's literal
+// "${ROOT_DIR}/<path>" expansion byte-for-byte).
+func (c check) violationMessage(rootDir string) string {
+	if c.messageIncludesTargetPath {
+		return c.message + rootDir + "/" + c.targetPath
+	}
+	return c.message
+}
+
+// holds reports whether the invariant is satisfied.  Content kinds inspect
+// text (the target file's contents); filesystem kinds (kindDirExists /
+// kindExecutable) ignore text and stat rootDir/targetPath instead.
+func (c check) holds(text, rootDir string) bool {
 	switch c.kind {
 	case kindFunctionBlock:
 		block := extractNamedFunctionBlock(text, c.functionName)
@@ -3986,6 +4113,25 @@ func (c check) holds(text string) bool {
 	case kindFunctionBlockRegex:
 		block := extractNamedFunctionBlock(text, c.functionName)
 		return regexMatchesAnyLine(c.pattern, block)
+	case kindFunctionBlockRegexAbsent:
+		// Negated function_block_contains_regex: a regex match on any line of
+		// the extracted block is a violation, so the invariant holds only when
+		// the pattern matches no line of the block.
+		block := extractNamedFunctionBlock(text, c.functionName)
+		return !regexMatchesAnyLine(c.pattern, block)
+	case kindDirExists:
+		// `[[ ! -d "${ROOT_DIR}/PATH" ]]`: holds only when the path exists and
+		// is a directory.
+		info, err := os.Stat(filepath.Join(rootDir, c.targetPath))
+		return err == nil && info.IsDir()
+	case kindExecutable:
+		// `[[ ! -x "${ROOT_DIR}/PATH" ]]`: holds only when the path is
+		// executable by the current user. Bash `-x` is defined via access(2)
+		// with X_OK ("executable by you"), which honours owner/group/other
+		// selection and ACLs — not "any execute bit set" — so mirror it with
+		// syscall.Access rather than inspecting Mode() bits. A missing path
+		// yields ENOENT, so this correctly returns false.
+		return syscall.Access(filepath.Join(rootDir, c.targetPath), 0x1) == nil
 	case kindGoFunctionBlock:
 		block := extractGoFunctionBlock(text, c.functionName)
 		return strings.Contains(block, c.pattern)

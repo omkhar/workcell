@@ -129,6 +129,8 @@ func subcommands() []subcommand {
 		{"workcell-copilot-token-handoff-cleanup", "ROOT_DIR", 1, 1, cmdWorkcellCopilotTokenHandoffCleanup},
 		{"workcell-provider-token-unlink", "ROOT_DIR", 1, 1, cmdWorkcellProviderTokenUnlink},
 		{"workcell-validate-repo-scenario-refs", "ROOT_DIR", 1, 1, cmdWorkcellValidateRepoScenarioRefs},
+		{"workcell-precommit-hook-exec", "ROOT_DIR", 1, 1, cmdWorkcellPrecommitHookExec},
+		{"workcell-docs-examples-dir", "ROOT_DIR", 1, 1, cmdWorkcellDocsExamplesDir},
 	}
 }
 
@@ -818,4 +820,21 @@ func cmdWorkcellProviderTokenUnlink(args []string) error {
 // violated invariant.
 func cmdWorkcellValidateRepoScenarioRefs(args []string) error {
 	return workcellhardening.CheckValidateRepoScenarioRefs(args[0])
+}
+
+// cmdWorkcellPrecommitHookExec runs the single repo pre-commit hook executable
+// check (${ROOT_DIR}/.githooks/pre-commit must exist and be executable) migrated
+// out of scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
+// shell's original stderr message (the fixed prefix plus the absolute hook path)
+// when the invariant is violated.
+func cmdWorkcellPrecommitHookExec(args []string) error {
+	return workcellhardening.CheckPrecommitHookExec(args[0])
+}
+
+// cmdWorkcellDocsExamplesDir runs the single docs/examples directory check
+// (${ROOT_DIR}/docs/examples must exist as a directory) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message when the invariant is violated.
+func cmdWorkcellDocsExamplesDir(args []string) error {
+	return workcellhardening.CheckDocsExamplesDir(args[0])
 }
