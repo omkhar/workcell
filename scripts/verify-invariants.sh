@@ -3153,16 +3153,7 @@ if grep -Fq "\${ROOT_DIR}/tmp/workcell-repro" "${ROOT_DIR}/scripts/verify-reprod
   exit 1
 fi
 
-if ! rg -q '"bootstrap_applied=\$\{BOOTSTRAP_APPLIED\}"' "${ROOT_DIR}/scripts/workcell" ||
-  ! rg -q '"bootstrap_endpoints=\$\(\[\[ "\$\{BOOTSTRAP_APPLIED\}" -eq 1 \]\] && printf '\''%s'\'' "\$\{BOOTSTRAP_ENDPOINTS\}" \|\| printf '\'''\''\)"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell audit records to include bootstrap network metadata" >&2
-  exit 1
-fi
-
-if ! rg -q 'bootstrap_policy=allowlist endpoints=%s' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to announce temporary bootstrap network policy activation" >&2
-  exit 1
-fi
+go_verify_citools workcell-bootstrap-audit "${ROOT_DIR}" || exit 1
 
 if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "validate_colima_profile" 'validate_colima_profile_config'; then
   echo "Expected validate_colima_profile to re-check the managed Colima config before reusing a running profile" >&2

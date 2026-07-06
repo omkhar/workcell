@@ -818,6 +818,102 @@ func TestCheckBootstrapEgress(t *testing.T) {
 	}
 }
 
+// bootstrapAuditHappyLauncher is a minimal scripts/workcell that satisfies
+// all three bootstrap-audit-metadata invariants: the two audit-record
+// fields (bootstrap_applied and bootstrap_endpoints) and the temporary
+// bootstrap network policy activation announcement.  Individual negative
+// cases mutate one property of this baseline.  Literal B (the
+// bootstrap_endpoints field) is reproduced here byte-for-byte from
+// scripts/workcell so a mis-transcription is caught by both the negative
+// cases and TestCheckBootstrapAuditMetadataRealRepo.
+const bootstrapAuditHappyLauncher = `#!/bin/bash
+set -euo pipefail
+
+write_audit_record() {
+  emit_record \
+    "bootstrap_applied=${BOOTSTRAP_APPLIED}" \
+    "bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')"
+}
+
+announce_bootstrap_policy() {
+  printf 'bootstrap_policy=allowlist endpoints=%s\n' "${BOOTSTRAP_ENDPOINTS}" >&2
+}
+`
+
+func TestCheckBootstrapAuditMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		launcher string
+		wantErr  string // "" means expect success
+	}{
+		{
+			name:     "happy path all invariants hold",
+			launcher: bootstrapAuditHappyLauncher,
+		},
+		{
+			// kindPresent (Literal A): the bootstrap_applied audit field removed.
+			name:     "missing bootstrap_applied field",
+			launcher: strings.Replace(bootstrapAuditHappyLauncher, `"bootstrap_applied=${BOOTSTRAP_APPLIED}"`, `"other_applied=${BOOTSTRAP_APPLIED}"`, 1),
+			wantErr:  "Expected scripts/workcell audit records to include bootstrap network metadata",
+		},
+		{
+			// kindPresent (Literal B): the bootstrap_endpoints audit field removed.
+			name:     "missing bootstrap_endpoints field",
+			launcher: strings.Replace(bootstrapAuditHappyLauncher, `bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')`, `bootstrap_endpoints=`, 1),
+			wantErr:  "Expected scripts/workcell audit records to include bootstrap network metadata",
+		},
+		{
+			// kindPresent: the bootstrap-policy activation announcement removed.
+			name:     "missing bootstrap policy announcement",
+			launcher: strings.Replace(bootstrapAuditHappyLauncher, "bootstrap_policy=allowlist endpoints=%s", "bootstrap_policy=off endpoints=%s", 1),
+			wantErr:  "Expected scripts/workcell to announce temporary bootstrap network policy activation",
+		},
+		{
+			// A missing launcher is empty content: the first affirmative check
+			// (bootstrap_applied) fires, mirroring `rg -q` returning non-zero on a
+			// missing file.
+			name:     "missing launcher",
+			launcher: "",
+			wantErr:  "Expected scripts/workcell audit records to include bootstrap network metadata",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeBootstrapRepo(t, tc.launcher, "")
+			err := CheckBootstrapAuditMetadata(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckBootstrapAuditMetadata() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckBootstrapAuditMetadata() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckBootstrapAuditMetadata() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckBootstrapAuditMetadataRealRepo asserts that the real
+// scripts/workcell in this repository satisfies all three
+// bootstrap-audit-metadata invariants.  This is the key guard against a
+// mis-transcribed Literal B: if the Go pattern is not a byte-exact
+// substring of the actual audit record, this test fails with the guard's
+// stderr message.
+func TestCheckBootstrapAuditMetadataRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckBootstrapAuditMetadata(repoRoot); err != nil {
+		t.Fatalf("CheckBootstrapAuditMetadata(real repo) = %v, want nil", err)
+	}
+}
+
 // TestExtractNamedFunctionBlock pins the sed-range extraction semantics
 // the run_host_colima check depends on: the block runs from the `NAME()`
 // opening line through the first line beginning with `}` (inclusive), and

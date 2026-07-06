@@ -100,6 +100,7 @@ func subcommands() []subcommand {
 		{"workcell-runtime-invariants", "ROOT_DIR", 1, 1, cmdWorkcellRuntimeInvariants},
 		{"workcell-managed-profile-staging", "ROOT_DIR", 1, 1, cmdWorkcellManagedProfileStaging},
 		{"workcell-bootstrap-egress", "ROOT_DIR", 1, 1, cmdWorkcellBootstrapEgress},
+		{"workcell-bootstrap-audit", "ROOT_DIR", 1, 1, cmdWorkcellBootstrapAudit},
 	}
 }
 
@@ -544,4 +545,12 @@ func cmdWorkcellManagedProfileStaging(args []string) error {
 // violated invariant.
 func cmdWorkcellBootstrapEgress(args []string) error {
 	return workcellhardening.CheckBootstrapEgress(args[0])
+}
+
+// cmdWorkcellBootstrapAudit runs the two scripts/workcell
+// bootstrap-audit-metadata checks migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
+// shell's original stderr message for the first violated invariant.
+func cmdWorkcellBootstrapAudit(args []string) error {
+	return workcellhardening.CheckBootstrapAuditMetadata(args[0])
 }
