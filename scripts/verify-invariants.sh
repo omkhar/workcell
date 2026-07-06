@@ -83,23 +83,6 @@ host_path_within_root() {
   [[ "${candidate_cmp}" == "${root_cmp}" ]] || [[ "${candidate_cmp}" == "${root_cmp}/"* ]]
 }
 
-extract_named_function_block() {
-  local file_path="$1"
-  local function_name="$2"
-
-  sed -n "/^${function_name}()/,/^}/p" "${file_path}"
-}
-
-function_block_contains_regex() {
-  local file_path="$1"
-  local function_name="$2"
-  local regex="$3"
-  local block_text=""
-
-  block_text="$(extract_named_function_block "${file_path}" "${function_name}")"
-  grep -q -- "${regex}" <<<"${block_text}"
-}
-
 script_supports_command_flag() {
   local script_help=""
 
@@ -7988,20 +7971,17 @@ if rg -n '/Users/example/\.(codex|config/(gh|gcloud)|ssh)(/|")|/Users/example/Li
   exit 1
 fi
 
-if [[ ! -f "${ROOT_DIR}/tests/scenarios/manifest.json" ]]; then
-  echo "tests/scenarios/manifest.json must exist" >&2
-  exit 1
-fi
-
-for scenario_script in \
-  "${ROOT_DIR}/scripts/run-scenario-tests.sh" \
-  "${ROOT_DIR}/scripts/verify-scenario-coverage.sh" \
-  "${ROOT_DIR}/scripts/verify-control-plane-parity.sh"; do
-  if [[ ! -x "${scenario_script}" ]]; then
-    echo "Expected executable scenario script: ${scenario_script}" >&2
-    exit 1
-  fi
-done
+# Assert the scenario harness is present: tests/scenarios/manifest.json exists
+# as a regular file, and the three scenario scripts exist and are executable.
+# Migrated to Go (D3): internal/workcellhardening behind the workcell-citools
+# workcell-scenario-scripts-present subcommand preserves the exact exit codes and
+# stderr messages of the former inline `[[ ! -f ]]` manifest guard (a
+# kindFileExists filesystem check) and the `for scenario_script in ...; do
+# [[ ! -x "${scenario_script}" ]]; done` loop (three kindExecutable checks whose
+# message interpolates the absolute ${ROOT_DIR}/<path> script path).  `|| exit 1`
+# matches the former guards' `exit 1`.  The following guard-bash.sh PreToolUse
+# `jq -e` array/pipe check stays inline.
+go_verify_citools workcell-scenario-scripts-present "${ROOT_DIR}" || exit 1
 
 if ! jq -e '[.hooks.PreToolUse[]?.hooks[0].command? // empty] | any(type == "string" and endswith("guard-bash.sh"))' "${ROOT_DIR}/adapters/claude/managed-settings.json" >/dev/null; then
   echo "guard-bash.sh hook must be registered in managed-settings.json PreToolUse" >&2

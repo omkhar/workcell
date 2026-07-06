@@ -131,6 +131,7 @@ func subcommands() []subcommand {
 		{"workcell-validate-repo-scenario-refs", "ROOT_DIR", 1, 1, cmdWorkcellValidateRepoScenarioRefs},
 		{"workcell-precommit-hook-exec", "ROOT_DIR", 1, 1, cmdWorkcellPrecommitHookExec},
 		{"workcell-docs-examples-dir", "ROOT_DIR", 1, 1, cmdWorkcellDocsExamplesDir},
+		{"workcell-scenario-scripts-present", "ROOT_DIR", 1, 1, cmdWorkcellScenarioScriptsPresent},
 		{"workcell-claude-mcp-project-servers", "SETTINGS_PATH", 1, 1, cmdWorkcellClaudeMcpProjectServers},
 		{"workcell-claude-managed-bypass", "ROOT_DIR", 1, 1, cmdWorkcellClaudeManagedBypass},
 		{"workcell-gemini-settings-guards", "ROOT_DIR", 1, 1, cmdWorkcellGeminiSettingsGuards},
@@ -869,6 +870,17 @@ func cmdWorkcellPrecommitHookExec(args []string) error {
 // original stderr message when the invariant is violated.
 func cmdWorkcellDocsExamplesDir(args []string) error {
 	return workcellhardening.CheckDocsExamplesDir(args[0])
+}
+
+// cmdWorkcellScenarioScriptsPresent runs the four scenario-harness filesystem
+// checks (${ROOT_DIR}/tests/scenarios/manifest.json must exist as a regular
+// file, and the three scenario scripts under ${ROOT_DIR}/scripts must exist and
+// be executable) migrated out of scripts/verify-invariants.sh; it fails (exit 1
+// via die()) with the shell's original stderr message for the first violated
+// invariant (the manifest's static message, or the scenario-script prefix plus
+// the absolute script path).
+func cmdWorkcellScenarioScriptsPresent(args []string) error {
+	return workcellhardening.CheckScenarioScriptsPresent(args[0])
 }
 
 // cmdWorkcellClaudeMcpProjectServers runs the single `jq -e`

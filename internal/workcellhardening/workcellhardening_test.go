@@ -6250,6 +6250,151 @@ func TestCheckDocsExamplesDirRealRepo(t *testing.T) {
 	}
 }
 
+// --- D3 file sweep: scenario-scripts-present subcommand ---
+
+// TestKindFileExists exercises kindFileExists's holds() directly: an existing
+// regular file holds (true); a missing path or a directory (not a regular file)
+// is a violation (holds=false), mirroring Bash `[[ -f ]]`.
+func TestKindFileExists(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "regular"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "adir"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"regular file present", "regular", true},
+		{"path missing", "missing", false},
+		{"path is a directory not a regular file", "adir", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := check{kind: kindFileExists, targetPath: tc.path}
+			if got := c.holds("", root); got != tc.want {
+				t.Fatalf("holds()=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// scenarioScriptsRelPaths are the four repo-relative paths the group checks, in
+// the shell's original order (manifest first, then the three scenario scripts).
+var scenarioScriptsRelPaths = []string{
+	"tests/scenarios/manifest.json",
+	"scripts/run-scenario-tests.sh",
+	"scripts/verify-scenario-coverage.sh",
+	"scripts/verify-control-plane-parity.sh",
+}
+
+// writeScenarioHarness populates root with a valid scenario harness: a regular
+// manifest.json plus the three executable scenario scripts.
+func writeScenarioHarness(t *testing.T, root string) {
+	t.Helper()
+	manifest := filepath.Join(root, "tests/scenarios/manifest.json")
+	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(manifest, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+	for _, rel := range scenarioScriptsRelPaths[1:] {
+		if err := os.WriteFile(filepath.Join(root, rel), []byte("#!/bin/bash\n"), 0o755); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+}
+
+func TestCheckScenarioScriptsPresent(t *testing.T) {
+	t.Run("full harness holds", func(t *testing.T) {
+		root := t.TempDir()
+		writeScenarioHarness(t, root)
+		if err := CheckScenarioScriptsPresent(root); err != nil {
+			t.Fatalf("CheckScenarioScriptsPresent() = %v, want nil", err)
+		}
+	})
+	t.Run("missing manifest fails with static message", func(t *testing.T) {
+		root := t.TempDir()
+		writeScenarioHarness(t, root)
+		if err := os.Remove(filepath.Join(root, "tests/scenarios/manifest.json")); err != nil {
+			t.Fatalf("remove: %v", err)
+		}
+		err := CheckScenarioScriptsPresent(root)
+		if err == nil || err.Error() != "tests/scenarios/manifest.json must exist" {
+			t.Fatalf("CheckScenarioScriptsPresent() = %v, want %q", err, "tests/scenarios/manifest.json must exist")
+		}
+	})
+	t.Run("manifest that is a directory fails", func(t *testing.T) {
+		root := t.TempDir()
+		writeScenarioHarness(t, root)
+		manifest := filepath.Join(root, "tests/scenarios/manifest.json")
+		if err := os.Remove(manifest); err != nil {
+			t.Fatalf("remove: %v", err)
+		}
+		if err := os.MkdirAll(manifest, 0o755); err != nil {
+			t.Fatalf("mkdir manifest dir: %v", err)
+		}
+		err := CheckScenarioScriptsPresent(root)
+		if err == nil || err.Error() != "tests/scenarios/manifest.json must exist" {
+			t.Fatalf("CheckScenarioScriptsPresent() = %v, want %q", err, "tests/scenarios/manifest.json must exist")
+		}
+	})
+	// Each scenario script, when non-executable or missing, must fail with the
+	// prefix plus the ABSOLUTE ${ROOT_DIR}/<path> script path, byte-for-byte.
+	for _, rel := range scenarioScriptsRelPaths[1:] {
+		rel := rel
+		t.Run("non-executable "+rel+" fails with absolute path", func(t *testing.T) {
+			root := t.TempDir()
+			writeScenarioHarness(t, root)
+			if err := os.Chmod(filepath.Join(root, rel), 0o644); err != nil {
+				t.Fatalf("chmod: %v", err)
+			}
+			wantMsg := "Expected executable scenario script: " + root + "/" + rel
+			err := CheckScenarioScriptsPresent(root)
+			if err == nil || err.Error() != wantMsg {
+				t.Fatalf("CheckScenarioScriptsPresent() = %v, want %q", err, wantMsg)
+			}
+		})
+		t.Run("missing "+rel+" fails with absolute path", func(t *testing.T) {
+			root := t.TempDir()
+			writeScenarioHarness(t, root)
+			if err := os.Remove(filepath.Join(root, rel)); err != nil {
+				t.Fatalf("remove: %v", err)
+			}
+			wantMsg := "Expected executable scenario script: " + root + "/" + rel
+			err := CheckScenarioScriptsPresent(root)
+			if err == nil || err.Error() != wantMsg {
+				t.Fatalf("CheckScenarioScriptsPresent() = %v, want %q", err, wantMsg)
+			}
+		})
+	}
+}
+
+func TestCheckScenarioScriptsPresentCount(t *testing.T) {
+	if got, want := len(scenarioScriptsPresentChecks), 4; got != want {
+		t.Fatalf("scenarioScriptsPresentChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckScenarioScriptsPresentRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	for _, rel := range scenarioScriptsRelPaths {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err != nil {
+			t.Skipf("real %s not found at %s: %v", rel, repoRoot, err)
+		}
+	}
+	if err := CheckScenarioScriptsPresent(repoRoot); err != nil {
+		t.Fatalf("CheckScenarioScriptsPresent(real repo) = %v, want nil", err)
+	}
+}
+
 // --- kindJSONExprEval + jq -e adapter-settings migration (D3) ---
 
 // jsonExprCheck builds a bare kindJSONExprEval check for the holds() unit tests.
