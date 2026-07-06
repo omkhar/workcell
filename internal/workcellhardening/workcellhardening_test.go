@@ -287,6 +287,16 @@ func TestCheckConfigSafety(t *testing.T) {
 	}
 }
 
+func TestCheckConfigSafetyRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckConfigSafety(repoRoot); err != nil {
+		t.Fatalf("CheckConfigSafety(real repo) = %v, want nil", err)
+	}
+}
+
 // runtimeHappyLauncher is a minimal scripts/workcell that satisfies all
 // ten runtime/gc invariants: the trusted Docker client seed, no
 // DOCKER_CONFIG pin to the real host home, the buildx_cmd invocation, a
@@ -465,6 +475,16 @@ func TestCheckRuntimeInvariants(t *testing.T) {
 	}
 }
 
+func TestCheckRuntimeInvariantsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckRuntimeInvariants(repoRoot); err != nil {
+		t.Fatalf("CheckRuntimeInvariants(real repo) = %v, want nil", err)
+	}
+}
+
 // managedProfileStagingHappyLauncher is a minimal scripts/workcell that
 // satisfies all three managed-profile staging/cleanup invariants: a
 // start_managed_profile body mounting all three staging cache roots (with
@@ -610,6 +630,16 @@ func TestCheckManagedProfileStaging(t *testing.T) {
 				t.Fatalf("CheckManagedProfileStaging() error = %q, want %q", err.Error(), tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestCheckManagedProfileStagingRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckManagedProfileStaging(repoRoot); err != nil {
+		t.Fatalf("CheckManagedProfileStaging(real repo) = %v, want nil", err)
 	}
 }
 
@@ -816,6 +846,16 @@ func TestCheckBootstrapEgress(t *testing.T) {
 				t.Fatalf("CheckBootstrapEgress() error = %q, want %q", err.Error(), tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestCheckBootstrapEgressRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckBootstrapEgress(repoRoot); err != nil {
+		t.Fatalf("CheckBootstrapEgress(real repo) = %v, want nil", err)
 	}
 }
 
