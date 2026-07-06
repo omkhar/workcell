@@ -118,6 +118,7 @@ func subcommands() []subcommand {
 		{"workcell-dockerfile-pins", "ROOT_DIR", 1, 1, cmdWorkcellDockerfilePins},
 		{"workcell-validator-dispatch-loops", "ROOT_DIR", 1, 1, cmdWorkcellValidatorDispatchLoops},
 		{"workcell-caller-required-contracts", "ROOT_DIR", 1, 1, cmdWorkcellCallerRequiredContracts},
+		{"workcell-fnblock-goblock-gitenv", "ROOT_DIR", 1, 1, cmdWorkcellFnBlockGoBlockGitEnv},
 	}
 }
 
@@ -708,4 +709,13 @@ func cmdWorkcellValidatorDispatchLoops(args []string) error {
 // pair.
 func cmdWorkcellCallerRequiredContracts(args []string) error {
 	return workcellhardening.CheckCallerRequiredContracts(args[0])
+}
+
+// cmdWorkcellFnBlockGoBlockGitEnv runs the six fnblock/goblock/gitenv checks
+// (two bash function-block regex probes, one Go function-block fixed-string
+// probe, and three git-env object-store-redirection pins) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellFnBlockGoBlockGitEnv(args []string) error {
+	return workcellhardening.CheckFnBlockGoBlockGitEnv(args[0])
 }

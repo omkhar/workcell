@@ -4950,3 +4950,244 @@ func TestCheckCallerRequiredContractsRealRepo(t *testing.T) {
 		t.Fatalf("CheckCallerRequiredContracts(real repo) = %v, want nil", err)
 	}
 }
+
+// writeFnBlockGoBlockGitEnvRepo materializes a repo from a rel-path->body map,
+// skipping empty bodies (so a test can simulate a missing target file).
+func writeFnBlockGoBlockGitEnvRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for rel, body := range files {
+		if body == "" {
+			continue
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return root
+}
+
+// fnBlockGoBlockGitEnvHappyFiles returns the five-file fixture map that
+// satisfies all six fnblock/goblock/gitenv invariants: the bash launcher
+// carries both function-block regex needles inside their named functions, the
+// Go host-exec file carries the fixed needle inside ResolveExistingExecutableOrDie,
+// and the git shim carries all three git-env literals.
+func fnBlockGoBlockGitEnvHappyFiles() map[string]string {
+	launcher := "#!/usr/bin/env bash\n" +
+		"validate_colima_profile() {\n" +
+		"  validate_colima_profile_config \"$@\"\n" +
+		"}\n" +
+		"git_alias_value_is_blocked() {\n" +
+		"  git_commit_short_arg_is_no_verify \"${token}\"\n" +
+		"}\n"
+	hostExec := "package publishpr\n\n" +
+		"func ResolveExistingExecutableOrDie(ctx *BashContext, rawPath, label string) (string, error) {\n" +
+		"\tcanonical := CanonicalizeHostToolPath(rawPath)\n" +
+		"\tif canonical == \"\" || !IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx) {\n" +
+		"\t\treturn \"\", errUntrusted\n" +
+		"\t}\n" +
+		"\treturn canonical, nil\n" +
+		"}\n"
+	gitShim := "#!/usr/bin/env bash\n"
+	for _, v := range fnBlockGoBlockGitEnvGitEnvVars {
+		gitShim += "[[ -n \"${" + v + ":-}\" ]] && exit 1\n"
+	}
+	return map[string]string{
+		launcherRelPath:        launcher,
+		hostExecRelPath:        hostExec,
+		containerBinGitRelPath: gitShim,
+	}
+}
+
+func TestCheckFnBlockGoBlockGitEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string // "" means expect success
+	}{
+		{
+			name:   "happy path all invariants hold",
+			mutate: func(map[string]string) {},
+		},
+		{
+			// function-block regex #1: rename the needle inside
+			// validate_colima_profile so grep -q no longer matches in-block.
+			name: "colima function-block needle missing",
+			mutate: func(files map[string]string) {
+				files[launcherRelPath] = strings.Replace(files[launcherRelPath], "validate_colima_profile_config \"$@\"", "renamed_helper \"$@\"", 1)
+			},
+			wantErr: "Expected validate_colima_profile to re-check the managed Colima config before reusing a running profile",
+		},
+		{
+			// function-block regex #2.
+			name: "git-alias function-block needle missing",
+			mutate: func(files map[string]string) {
+				files[launcherRelPath] = strings.Replace(files[launcherRelPath], "git_commit_short_arg_is_no_verify", "renamed_parser", 1)
+			},
+			wantErr: "Expected git_alias_value_is_blocked to reuse the precise short-option no-verify parser",
+		},
+		{
+			// go-function-block: needle absent entirely.
+			name: "goblock needle absent",
+			mutate: func(files map[string]string) {
+				files[hostExecRelPath] = strings.Replace(files[hostExecRelPath], "!IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)", "false", 1)
+			},
+			wantErr: "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths",
+		},
+		{
+			// go-function-block SCOPING: needle present, but only inside a
+			// DIFFERENT top-level function, so it must not satisfy the check.
+			name: "goblock needle only in a different function",
+			mutate: func(files map[string]string) {
+				files[hostExecRelPath] = "package publishpr\n\n" +
+					"func ResolveExistingExecutableOrDie(ctx *BashContext, rawPath, label string) (string, error) {\n" +
+					"\treturn canonical, nil\n" +
+					"}\n\n" +
+					"func other() {\n" +
+					"\t_ = !IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)\n" +
+					"}\n"
+			},
+			wantErr: "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths",
+		},
+		{
+			// go-function-block COMMENT-STRIPPING: needle present inside the
+			// right function but only in a // line comment, so it must not
+			// satisfy the check.
+			name: "goblock needle only in a line comment",
+			mutate: func(files map[string]string) {
+				files[hostExecRelPath] = "package publishpr\n\n" +
+					"func ResolveExistingExecutableOrDie(ctx *BashContext, rawPath, label string) (string, error) {\n" +
+					"\t// !IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)\n" +
+					"\treturn canonical, nil\n" +
+					"}\n"
+			},
+			wantErr: "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths",
+		},
+		{
+			name: "git-env first var missing",
+			mutate: func(files map[string]string) {
+				files[containerBinGitRelPath] = strings.Replace(files[containerBinGitRelPath], `"${GIT_OBJECT_DIRECTORY:-}"`, `"${GIT_OBJECT_DIRECTORY_X:-}"`, 1)
+			},
+			wantErr: "Expected runtime/container/bin/git to block GIT_OBJECT_DIRECTORY to prevent object-store redirection",
+		},
+		{
+			name: "git-env middle var missing",
+			mutate: func(files map[string]string) {
+				files[containerBinGitRelPath] = strings.Replace(files[containerBinGitRelPath], `"${GIT_ALTERNATE_OBJECT_DIRECTORIES:-}"`, `"${GIT_ALTERNATE_OBJECT_DIRECTORIES_X:-}"`, 1)
+			},
+			wantErr: "Expected runtime/container/bin/git to block GIT_ALTERNATE_OBJECT_DIRECTORIES to prevent object-store redirection",
+		},
+		{
+			name: "git-env last var missing",
+			mutate: func(files map[string]string) {
+				files[containerBinGitRelPath] = strings.Replace(files[containerBinGitRelPath], `"${GIT_INDEX_FILE:-}"`, `"${GIT_INDEX_FILE_X:-}"`, 1)
+			},
+			wantErr: "Expected runtime/container/bin/git to block GIT_INDEX_FILE to prevent object-store redirection",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := fnBlockGoBlockGitEnvHappyFiles()
+			tt.mutate(files)
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckFnBlockGoBlockGitEnv(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckFnBlockGoBlockGitEnv() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckFnBlockGoBlockGitEnv() = nil, want error %q", tt.wantErr)
+			}
+			if err.Error() != tt.wantErr {
+				t.Fatalf("CheckFnBlockGoBlockGitEnv() = %q, want %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckFnBlockGoBlockGitEnvCount(t *testing.T) {
+	got := len(fnBlockGoBlockGitEnvChecks())
+	const want = 6
+	if got != want {
+		t.Fatalf("fnBlockGoBlockGitEnvChecks() has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckFnBlockGoBlockGitEnvRealRepo asserts that the five real target files
+// in this repository satisfy all eight fnblock/goblock/gitenv invariants.  This
+// is the key guard against a mis-transcribed needle or wrong target file: if any
+// Go needle diverges from the actual file contents, this test fails with the
+// guard's stderr message.
+func TestCheckFnBlockGoBlockGitEnvRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, hostExecRelPath)); err != nil {
+		t.Skipf("real internal/publishpr/host_exec.go not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckFnBlockGoBlockGitEnv(repoRoot); err != nil {
+		t.Fatalf("CheckFnBlockGoBlockGitEnv(real repo) = %v, want nil", err)
+	}
+}
+
+// TestExtractGoFunctionBlock exercises extractGoFunctionBlock's parity with the
+// awk in go_function_block_contains_fixed: func-scoped extraction, exact `}`
+// termination, and // / /* */ (including multi-line) comment stripping.
+func TestExtractGoFunctionBlock(t *testing.T) {
+	tests := []struct {
+		name        string
+		text        string
+		fn          string
+		wantContain string
+		notContain  string
+	}{
+		{
+			name:        "scopes to the named function and stops at exact closing brace",
+			text:        "func A() {\n\tkeep\n}\n\nfunc B() {\n\tother\n}\n",
+			fn:          "A",
+			wantContain: "keep",
+			notContain:  "other",
+		},
+		{
+			name:       "does not include a needle from a later function",
+			text:       "func A() {\n\treturn\n}\n\nfunc B() {\n\tNEEDLE\n}\n",
+			fn:         "A",
+			notContain: "NEEDLE",
+		},
+		{
+			name:        "strips a // line comment",
+			text:        "func A() {\n\t// NEEDLE\n\tcode\n}\n",
+			fn:          "A",
+			wantContain: "code",
+			notContain:  "NEEDLE",
+		},
+		{
+			name:        "strips a multi-line /* */ block comment",
+			text:        "func A() {\n\t/* NEEDLE\n\tstill in comment NEEDLE2 */\n\tcode\n}\n",
+			fn:          "A",
+			wantContain: "code",
+			notContain:  "NEEDLE",
+		},
+		{
+			name:        "keeps code sharing a line after a closed block comment",
+			text:        "func A() {\n\t/* c */ keep\n}\n",
+			fn:          "A",
+			wantContain: "keep",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractGoFunctionBlock(tt.text, tt.fn)
+			if tt.wantContain != "" && !strings.Contains(got, tt.wantContain) {
+				t.Fatalf("extractGoFunctionBlock(...) = %q, want it to contain %q", got, tt.wantContain)
+			}
+			if tt.notContain != "" && strings.Contains(got, tt.notContain) {
+				t.Fatalf("extractGoFunctionBlock(...) = %q, want it NOT to contain %q", got, tt.notContain)
+			}
+		})
+	}
+}

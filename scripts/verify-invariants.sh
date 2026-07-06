@@ -2943,32 +2943,7 @@ go_verify_citools workcell-validator-writable-state "${ROOT_DIR}" || exit 1
 
 go_verify_citools workcell-bootstrap-audit "${ROOT_DIR}" || exit 1
 
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "validate_colima_profile" 'validate_colima_profile_config'; then
-  echo "Expected validate_colima_profile to re-check the managed Colima config before reusing a running profile" >&2
-  exit 1
-fi
-
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "git_alias_value_is_blocked" 'git_commit_short_arg_is_no_verify'; then
-  echo "Expected git_alias_value_is_blocked to reuse the precise short-option no-verify parser" >&2
-  exit 1
-fi
-
-# resolve_existing_executable_or_die migrated to Go
-# (publishpr.ResolveExistingExecutableOrDie); assert the Go owner still
-# rejects untrusted host executable paths on both raw and canonical forms.
-if ! go_function_block_contains_fixed "${ROOT_DIR}/internal/publishpr/host_exec.go" "ResolveExistingExecutableOrDie" '!IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)'; then
-  echo "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths" >&2
-  exit 1
-fi
-
-for _git_env_var in GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE; do
-  # shellcheck disable=SC2016
-  printf -v _git_env_literal '"${%s:-}"' "${_git_env_var}"
-  if ! grep -Fq -- "${_git_env_literal}" "${ROOT_DIR}/runtime/container/bin/git"; then
-    echo "Expected runtime/container/bin/git to block ${_git_env_var} to prevent object-store redirection" >&2
-    exit 1
-  fi
-done
+go_verify_citools workcell-fnblock-goblock-gitenv "${ROOT_DIR}" || exit 1
 
 go_verify_citools workcell-git-index-shadow "${ROOT_DIR}" || exit 1
 
