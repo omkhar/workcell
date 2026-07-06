@@ -111,6 +111,7 @@ func subcommands() []subcommand {
 		{"workcell-copilot-policy-wrapper", "ROOT_DIR", 1, 1, cmdWorkcellCopilotPolicyWrapper},
 		{"workcell-copilot-unsafe-flags", "ROOT_DIR", 1, 1, cmdWorkcellCopilotUnsafeFlags},
 		{"workcell-copilot-release-verify", "ROOT_DIR", 1, 1, cmdWorkcellCopilotReleaseVerify},
+		{"workcell-adapter-rule-guard-bash", "ROOT_DIR", 1, 1, cmdWorkcellAdapterRuleGuardBash},
 	}
 }
 
@@ -642,4 +643,12 @@ func cmdWorkcellCopilotUnsafeFlags(args []string) error {
 // invariant.
 func cmdWorkcellCopilotReleaseVerify(args []string) error {
 	return workcellhardening.CheckCopilotReleaseVerify(args[0])
+}
+
+// cmdWorkcellAdapterRuleGuardBash runs the eighteen adapter-rule / Bash-guard
+// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
+// die()) with the shell's original stderr message for the first violated
+// invariant.
+func cmdWorkcellAdapterRuleGuardBash(args []string) error {
+	return workcellhardening.CheckAdapterRuleGuardBash(args[0])
 }

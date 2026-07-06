@@ -8253,50 +8253,7 @@ fi
 go_verify_citools workcell-copilot-policy-wrapper "${ROOT_DIR}" || exit 1
 go_verify_citools workcell-copilot-unsafe-flags "${ROOT_DIR}" || exit 1
 go_verify_citools workcell-copilot-release-verify "${ROOT_DIR}" || exit 1
-if [[ "$(grep -Fc 'WORKCELL_COPILOT_RELEASE_HELP_MODE: native' "${ROOT_DIR}/.github/workflows/release.yml")" -lt 2 ]]; then
-  echo "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes" >&2
-  exit 1
-fi
-for codex_rule_file in \
-  "${ROOT_DIR}/adapters/codex/managed_config.toml" \
-  "${ROOT_DIR}/adapters/codex/requirements.toml"; do
-  if ! grep -Fq '/usr/local/libexec/workcell/provider-wrapper.sh' "${codex_rule_file}"; then
-    echo "Expected $(basename "${codex_rule_file}") to block direct provider-wrapper launches" >&2
-    exit 1
-  fi
-  if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${codex_rule_file}"; then
-    echo "Expected $(basename "${codex_rule_file}") to block the native Claude binary path" >&2
-    exit 1
-  fi
-  if ! grep -Fq '/usr/local/libexec/workcell/core/copilot' "${codex_rule_file}" ||
-    ! grep -Fq '/usr/local/libexec/workcell/real/copilot' "${codex_rule_file}"; then
-    echo "Expected $(basename "${codex_rule_file}") to block Copilot provider mediation bypass paths" >&2
-    exit 1
-  fi
-  if grep -Fq '@anthropic-ai/claude-code/cli.js' "${codex_rule_file}"; then
-    echo "$(basename "${codex_rule_file}") should not reference the removed Claude npm entrypoint" >&2
-    exit 1
-  fi
-done
-if ! grep -Fq '/usr/local/libexec/workcell/provider-wrapper\.sh' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
-  echo "Expected Claude Bash guard to block direct provider-wrapper launches" >&2
-  exit 1
-fi
-if ! grep -Fq '/usr/local/libexec/workcell/real/claude' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
-  echo "Expected Claude Bash guard to block direct native Claude binary launches" >&2
-  exit 1
-fi
-if ! grep -Fq '/usr/local/libexec/workcell/core/copilot' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh" ||
-  ! grep -Fq '/usr/local/libexec/workcell/real/copilot' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh" ||
-  ! grep -Fq '\\.copilot' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh" ||
-  ! grep -Fq 'copilot\.md' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
-  echo "Expected Claude Bash guard to block Copilot provider and home control-plane bypass paths" >&2
-  exit 1
-fi
-if grep -Fq '@anthropic-ai/claude-code/cli.js' "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"; then
-  echo "Claude Bash guard should not reference the removed Claude npm entrypoint" >&2
-  exit 1
-fi
+go_verify_citools workcell-adapter-rule-guard-bash "${ROOT_DIR}" || exit 1
 
 if ! awk '
   /^[[:space:]]*acquire_profile_lock "\$\{COLIMA_PROFILE\}"$/ { seen_lock = 1; next }
