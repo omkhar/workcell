@@ -3182,31 +3182,7 @@ for _git_env_var in GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_IN
   fi
 done
 
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "git_index_materialize_regular_file" 'cat-file blob'; then
-  echo "Expected git_index_materialize_regular_file to materialize tracked blobs without checkout-index" >&2
-  exit 1
-fi
-
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "git_index_materialize_regular_file" 'failed to read tracked blob'; then
-  echo "Expected git_index_materialize_regular_file to fail closed when a tracked control-plane blob is unreadable" >&2
-  exit 1
-fi
-
-# shellcheck disable=SC2016
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "git_index_materialize_regular_file" 'rm -f "${destination_path}"'; then
-  echo "Expected git_index_materialize_regular_file to remove partially materialized files after blob read failures" >&2
-  exit 1
-fi
-
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "git_index_populate_shadow_dir" '*/../*'; then
-  echo "Expected git_index_populate_shadow_dir to reject unsafe index paths before shadow materialization" >&2
-  exit 1
-fi
-
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "sanitize_shadowed_git_config" 'git_config_key_is_blocked'; then
-  echo "Expected sanitize_shadowed_git_config to reuse the shared blocked git-config key matcher" >&2
-  exit 1
-fi
+go_verify_citools workcell-git-index-shadow "${ROOT_DIR}" || exit 1
 
 # shellcheck disable=SC2016
 if ! grep -Fq -- '-path "${ROOT_DIR}/.venv" -prune -o' "${ROOT_DIR}/scripts/validate-repo.sh"; then
