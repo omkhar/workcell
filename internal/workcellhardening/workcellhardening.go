@@ -218,6 +218,29 @@ const claudeGuardBashRelPath = "adapters/claude/hooks/guard-bash.sh"
 // `grep -Fq -- FIELD scripts/workcell runtime/container/assurance.sh`.
 const assuranceRelPath = "runtime/container/assurance.sh"
 
+// validateRepoRelPath is the repo-relative path to the in-validator repo
+// validation script.  The validator-dispatch block reads this file (via the
+// per-check targetFile field) for its Cargo-target externalization invariant,
+// mirroring the shell `grep -Fq` probes that ran against
+// ${ROOT_DIR}/scripts/validate-repo.sh.
+const validateRepoRelPath = "scripts/validate-repo.sh"
+
+// ciWorkflowRelPath, docsWorkflowRelPath, and mutationWorkflowRelPath are the
+// repo-relative paths to the three lane workflows the validator-dispatch block's
+// dispatch loop probes (via the per-check targetFile field), mirroring the shell
+// `grep -Fq --` probes that ran against ${ROOT_DIR}/.github/workflows/ci.yml,
+// docs.yml, and mutation.yml.
+const ciWorkflowRelPath = ".github/workflows/ci.yml"
+const docsWorkflowRelPath = ".github/workflows/docs.yml"
+const mutationWorkflowRelPath = ".github/workflows/mutation.yml"
+
+// preMergeRelPath is the repo-relative path to the pre-merge helper.  The
+// validator-dispatch block's dispatch loop reads this file twice (via the
+// per-check targetFile field) for its job-validate and job-docs dispatch
+// invariants, mirroring the shell `grep -Fq --` probes that ran against
+// ${ROOT_DIR}/scripts/pre-merge.sh.
+const preMergeRelPath = "scripts/pre-merge.sh"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -3199,6 +3222,109 @@ func dockerfilePinsChecks(rootDir string) []check {
 // shell's stderr for the first violated invariant (the shell's exit 1).
 func CheckDockerfilePins(rootDir string) error {
 	return evaluate(rootDir, dockerfilePinsChecks(rootDir))
+}
+
+// validatorEnvPinNeedles lists, in the shell for-loop's order, the six ENV pins
+// the validator Dockerfile must carry so its default nonroot writable state
+// lives under /home/workcell.  Each was a fixed `grep -Fq "${required}"` literal
+// in the migrated `for required in ...; do` loop.
+var validatorEnvPinNeedles = []string{
+	"ENV HOME=/home/workcell",
+	"ENV XDG_CACHE_HOME=/home/workcell/.cache",
+	"ENV GOCACHE=/home/workcell/.cache/go-build",
+	"ENV GOMODCACHE=/home/workcell/.cache/go-mod",
+	"ENV CARGO_TARGET_DIR=/home/workcell/.cache/cargo-target",
+	"ENV TMPDIR=/home/workcell/.tmp",
+}
+
+// dispatchSpec pairs one dispatch-loop target file with the fixed `grep -Fq --`
+// needle that file must contain.  The shell `for dispatch_check in ...` loop
+// carried each pair as a single "FILE:NEEDLE" element split on its first colon;
+// preserving the slice order keeps first-violation parity.
+type dispatchSpec struct {
+	relPath string
+	needle  string
+}
+
+// validatorDispatchSpecs lists the five dispatch-loop probes in the shell
+// loop's order.  Each element's file path was ${ROOT_DIR}/<relPath> (the shell
+// split "${dispatch_check%%:*}"), and its needle was the loop's
+// "${dispatch_check#*:}"; both scripts/pre-merge.sh entries reuse preMergeRelPath
+// with distinct needles, mirroring the two pre-merge dispatch probes.
+var validatorDispatchSpecs = []dispatchSpec{
+	{ciWorkflowRelPath, "./scripts/ci/job-validate.sh --profile pr-parity"},
+	{docsWorkflowRelPath, "./scripts/ci/job-docs.sh"},
+	{mutationWorkflowRelPath, "./scripts/ci/job-mutation.sh"},
+	{preMergeRelPath, "scripts/ci/job-validate.sh"},
+	{preMergeRelPath, "scripts/ci/job-docs.sh"},
+}
+
+// validatorDispatchLoopsChecks builds the thirteen validator-dispatch invariants
+// for the repo rooted at rootDir, in the shell's original order: the six
+// validator-Dockerfile ENV-pin probes, the two validate-repo Cargo-target
+// externalization probes, then the five CI-dispatch probes.
+//
+// Two of the three migrated blocks echoed the loop's file variable, whose value
+// was ${ROOT_DIR}/<relpath> — i.e. the ABSOLUTE path once ${ROOT_DIR} expands.
+// Those messages are therefore constructed dynamically as
+// "Expected " + rootDir + "/" + relpath + " ...", using literal string
+// concatenation (not filepath.Join) to reproduce the shell's byte-exact
+// rendering.  The read target stays the repo-relative path via targetFile, so
+// evaluate reads the same file the message names.
+//
+// The validate-repo probe was one shell `if` guarding two `! grep -Fq` probes
+// joined by `||` under a single fixed message; it is expressed here as two
+// ordered kindPresent checks sharing that message, which is behaviourally
+// identical (either missing probe yields the same stderr and exit 1).
+func validatorDispatchLoopsChecks(rootDir string) []check {
+	cs := make([]check, 0, len(validatorEnvPinNeedles)+2+len(validatorDispatchSpecs))
+
+	validatorDF := rootDir + "/" + validatorDockerfileRelPath
+	for _, needle := range validatorEnvPinNeedles {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    needle,
+			message:    "Expected " + validatorDF + " to pin its default nonroot writable state under /home/workcell (" + needle + ")",
+			targetFile: validatorDockerfileRelPath,
+		})
+	}
+
+	const validateRepoMsg = "Expected scripts/validate-repo.sh to externalize Cargo target writes under the Workcell-owned validation cache"
+	cs = append(cs,
+		check{
+			kind:       kindPresent,
+			pattern:    `WORKCELL_VALIDATE_CACHE_HOME="${WORKCELL_VALIDATE_CACHE_HOME:-${XDG_CACHE_HOME}/workcell/validate}"`,
+			message:    validateRepoMsg,
+			targetFile: validateRepoRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    `CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${WORKCELL_VALIDATE_CACHE_HOME}/cargo-target}"`,
+			message:    validateRepoMsg,
+			targetFile: validateRepoRelPath,
+		},
+	)
+
+	for _, spec := range validatorDispatchSpecs {
+		df := rootDir + "/" + spec.relPath
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    spec.needle,
+			message:    "Expected " + df + " to dispatch validator parity through the shared CI entrypoints (" + spec.needle + ")",
+			targetFile: spec.relPath,
+		})
+	}
+
+	return cs
+}
+
+// CheckValidatorDispatchLoops runs the thirteen validator-dispatch invariants
+// against the repo rooted at rootDir, in the shell's original order.  It returns
+// nil when every invariant holds (the shell's exit 0), or an error whose message
+// equals the shell's stderr for the first violated invariant (the shell's exit
+// 1).
+func CheckValidatorDispatchLoops(rootDir string) error {
+	return evaluate(rootDir, validatorDispatchLoopsChecks(rootDir))
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.
