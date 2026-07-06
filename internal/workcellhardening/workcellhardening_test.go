@@ -464,6 +464,154 @@ func TestCheckRuntimeInvariants(t *testing.T) {
 	}
 }
 
+// managedProfileStagingHappyLauncher is a minimal scripts/workcell that
+// satisfies all three managed-profile staging/cleanup invariants: a
+// start_managed_profile body mounting all three staging cache roots (with
+// the staging-cache-root reject call), a top-level
+// reject_symlinked_colima_staging_cache_roots definition, the
+// prepare_colima_staging_cache_roots call inside the three preparing
+// functions, no bare unbraced default-parent cleanup call, and a
+// cleanup_default_injection_bundles body that captures both parents
+// fail-closed before cleaning them.  Individual negative cases mutate one
+// property of this baseline.
+const managedProfileStagingHappyLauncher = `#!/bin/bash
+set -euo pipefail
+
+reject_symlinked_colima_staging_cache_roots() {
+  : reject symlinks
+}
+
+prepare_injection_bundle() {
+  prepare_colima_staging_cache_roots
+}
+
+prepare_workspace_control_plane_shadow() {
+  prepare_colima_staging_cache_roots
+}
+
+start_managed_profile() {
+  prepare_colima_staging_cache_roots
+  host_inputs_root="${cache}/workcell-host-inputs"
+  shadow_root="${cache}/workcell-shadow"
+  token_handoff_root="${cache}/workcell-token-handoff"
+  colima start \
+    --mount "${host_inputs_root}" \
+    --mount "${shadow_root}" \
+    --mount "${token_handoff_root}:w"
+}
+
+cleanup_default_injection_bundles() {
+  local bundle_parent token_handoff_parent
+  bundle_parent="$(default_injection_bundle_parent)" || return $?
+  token_handoff_parent="$(default_copilot_token_handoff_parent)" || return $?
+  cleanup_stale_injection_bundles "${bundle_parent}"
+  cleanup_stale_injection_bundles "${token_handoff_parent}"
+}
+`
+
+func TestCheckManagedProfileStaging(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string // "" means expect success
+	}{
+		{
+			name: "happy path all invariants hold",
+			body: managedProfileStagingHappyLauncher,
+		},
+		{
+			// kindFunctionBlock: host-inputs mount root removed from the
+			// start_managed_profile body (guard 1).
+			name:    "missing host-inputs mount root",
+			body:    strings.Replace(managedProfileStagingHappyLauncher, `--mount "${host_inputs_root}" \`+"\n", "", 1),
+			wantErr: "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+		},
+		{
+			// kindFunctionBlock: token-handoff write mount removed (guard 1).
+			name:    "missing token-handoff write mount",
+			body:    strings.Replace(managedProfileStagingHappyLauncher, `--mount "${token_handoff_root}:w"`, `--mount "${token_handoff_root}"`, 1),
+			wantErr: "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+		},
+		{
+			// kindFunctionBlock scoping: the workcell-shadow cache-root name
+			// exists in the file but OUTSIDE start_managed_profile, so the
+			// block-scoped guard must still fail.
+			name: "shadow root only outside start_managed_profile body",
+			body: strings.Replace(managedProfileStagingHappyLauncher, `  shadow_root="${cache}/workcell-shadow"`+"\n", "", 1) +
+				"\ndecoy() {\n  echo workcell-shadow\n}\n",
+			wantErr: "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+		},
+		{
+			// kindPresent: the reject_symlinked_colima_staging_cache_roots
+			// helper removed entirely (guard 2, whole-file probe).
+			name:    "missing reject_symlinked helper",
+			body:    strings.Replace(managedProfileStagingHappyLauncher, "reject_symlinked_colima_staging_cache_roots", "reject_other", 2),
+			wantErr: "Expected Workcell staging cache roots to reject symlinked host components before staging or mounting",
+		},
+		{
+			// kindFunctionBlock: prepare_colima_staging_cache_roots call removed
+			// from prepare_injection_bundle (guard 2), while the other functions
+			// keep theirs.
+			name: "missing staging-cache-root call in prepare_injection_bundle",
+			body: strings.Replace(managedProfileStagingHappyLauncher,
+				"prepare_injection_bundle() {\n  prepare_colima_staging_cache_roots\n}",
+				"prepare_injection_bundle() {\n  :\n}", 1),
+			wantErr: "Expected Workcell staging cache roots to reject symlinked host components before staging or mounting",
+		},
+		{
+			// kindAbsent: a bare unbraced default-parent cleanup call is a
+			// violation (guard 3), even though every fail-closed probe remains.
+			name:    "bare default-parent cleanup call present",
+			body:    managedProfileStagingHappyLauncher + "\ncleanup_stale_injection_bundles \"$(default_injection_bundle_parent)\"\n",
+			wantErr: "Expected stale injection cleanup to fail closed when the default bundle parent is rejected",
+		},
+		{
+			// kindFunctionBlock: the fail-closed bundle_parent capture removed
+			// from cleanup_default_injection_bundles (guard 3).
+			name:    "missing fail-closed bundle_parent capture",
+			body:    strings.Replace(managedProfileStagingHappyLauncher, `  bundle_parent="$(default_injection_bundle_parent)" || return $?`+"\n", "", 1),
+			wantErr: "Expected stale injection cleanup to fail closed when the default bundle parent is rejected",
+		},
+		{
+			// kindFunctionBlock scoping: the fail-closed token-handoff capture
+			// exists OUTSIDE cleanup_default_injection_bundles, so the
+			// block-scoped guard must still fail.
+			name: "token-handoff capture only outside cleanup function",
+			body: strings.Replace(managedProfileStagingHappyLauncher,
+				`  token_handoff_parent="$(default_copilot_token_handoff_parent)" || return $?`+"\n", "", 1) +
+				"\ndecoy() {\n  token_handoff_parent=\"$(default_copilot_token_handoff_parent)\" || return $?\n}\n",
+			wantErr: "Expected stale injection cleanup to fail closed when the default bundle parent is rejected",
+		},
+		{
+			// A missing launcher is empty content: the negative (kindAbsent)
+			// guard-3 probe passes but the first affirmative check (guard 1's
+			// host-inputs mount) fires, mirroring the shell's first `if`.
+			name:    "missing launcher",
+			body:    "",
+			wantErr: "Expected managed Colima launch to mount Workcell staging cache roots with reviewed access modes",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeLauncher(t, tc.body)
+			err := CheckManagedProfileStaging(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckManagedProfileStaging() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckManagedProfileStaging() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckManagedProfileStaging() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestExtractNamedFunctionBlock pins the sed-range extraction semantics
 // the run_host_colima check depends on: the block runs from the `NAME()`
 // opening line through the first line beginning with `}` (inclusive), and
