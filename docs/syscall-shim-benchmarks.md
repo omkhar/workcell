@@ -4,7 +4,9 @@ The `workcell_exec_guard` LD_PRELOAD shim (`runtime/container/rust/src/lib.rs`)
 interposes the libc exec/spawn family and classifies every launch before
 forwarding it to the real entry point. This page records the added latency that
 classification costs on the **allow path** -- a launch the guard permits and
-forwards -- and the methodology and rerun steps behind those numbers.
+forwards -- and the methodology and rerun steps behind those numbers. Its
+sibling page, [session-startup-benchmarks.md](session-startup-benchmarks.md),
+records the **C2** session-start latency baselines.
 
 The numbers are produced by the optional `bench.yml` GitHub lane on Linux, not
 on the macOS development host: the shim reads `/proc` and interposes the
