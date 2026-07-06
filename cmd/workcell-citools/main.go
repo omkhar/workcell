@@ -133,7 +133,9 @@ func subcommands() []subcommand {
 		{"workcell-docs-examples-dir", "ROOT_DIR", 1, 1, cmdWorkcellDocsExamplesDir},
 		{"workcell-scenario-scripts-present", "ROOT_DIR", 1, 1, cmdWorkcellScenarioScriptsPresent},
 		{"workcell-claude-mcp-project-servers", "SETTINGS_PATH", 1, 1, cmdWorkcellClaudeMcpProjectServers},
+		{"workcell-claude-guard-bash-hook", "SETTINGS_PATH", 1, 1, cmdWorkcellClaudeGuardBashHook},
 		{"workcell-claude-managed-bypass", "ROOT_DIR", 1, 1, cmdWorkcellClaudeManagedBypass},
+		{"workcell-gemini-settings-baseline", "ROOT_DIR", 1, 1, cmdWorkcellGeminiSettingsBaseline},
 		{"workcell-gemini-settings-guards", "ROOT_DIR", 1, 1, cmdWorkcellGeminiSettingsGuards},
 		{"workcell-hostgate-entrypoint-sanitize", "ROOT_DIR", 1, 1, cmdWorkcellHostGateEntrypointSanitize},
 		{"workcell-precommit-upstream-pin-gate", "ROOT_DIR", 1, 1, cmdWorkcellPrecommitUpstreamPinGate},
@@ -894,6 +896,16 @@ func cmdWorkcellClaudeMcpProjectServers(args []string) error {
 	return workcellhardening.CheckClaudeMcpProjectServers(args[0])
 }
 
+// cmdWorkcellClaudeGuardBashHook runs the array-index `jq -e` guard-bash-hook
+// check migrated out of the scripts/verify-invariants.sh settings_path loop;
+// like cmdWorkcellClaudeMcpProjectServers it takes the settings FILE path (the
+// loop calls it once per Claude settings file, in place), and it fails (exit 1
+// via die()) with the shell's original per-file stderr message (the file's
+// basename plus the fixed suffix) when the invariant is violated.
+func cmdWorkcellClaudeGuardBashHook(args []string) error {
+	return workcellhardening.CheckClaudeGuardBashHook(args[0])
+}
+
 // cmdWorkcellClaudeManagedBypass runs the single Claude managed-settings
 // bypass-permissions `jq -e` check migrated out of scripts/verify-invariants.sh;
 // it fails (exit 1 via die()) with the shell's original stderr message when the
@@ -902,10 +914,20 @@ func cmdWorkcellClaudeManagedBypass(args []string) error {
 	return workcellhardening.CheckClaudeManagedBypass(args[0])
 }
 
-// cmdWorkcellGeminiSettingsGuards runs the two Gemini adapter-settings `jq -e`
-// checks (folder-trust disabled, interactive-shell disabled) migrated out of
+// cmdWorkcellGeminiSettingsBaseline runs the three Gemini adapter-settings
+// baseline `jq -e` checks (no seeded allowed tools, no seeded allowed MCP
+// servers, no hardcoded selected auth type) migrated out of
 // scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
 // original stderr message for the first violated invariant.
+func cmdWorkcellGeminiSettingsBaseline(args []string) error {
+	return workcellhardening.CheckGeminiSettingsBaseline(args[0])
+}
+
+// cmdWorkcellGeminiSettingsGuards runs the three Gemini adapter-settings `jq -e`
+// checks (folder-trust disabled, interactive-shell disabled, excludedEnvVars is
+// an array) migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
+// die()) with the shell's original stderr message for the first violated
+// invariant.
 func cmdWorkcellGeminiSettingsGuards(args []string) error {
 	return workcellhardening.CheckGeminiSettingsGuards(args[0])
 }
