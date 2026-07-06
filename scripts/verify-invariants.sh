@@ -8250,76 +8250,7 @@ if ! grep -Fq "rm -f -- \"\${token_file}\"" "${ROOT_DIR}/runtime/container/provi
   echo "Expected provider wrapper to unlink the runtime Copilot token handoff file before managed exec" >&2
   exit 1
 fi
-if ! grep -Fq 'unset WORKCELL_COPILOT_GITHUB_TOKEN' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to discard the host-side Copilot token handoff variable before exec" >&2
-  exit 1
-fi
-if ! grep -Fq 'unset WORKCELL_COPILOT_TOKEN_FILE' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to discard the Copilot token handoff path before exec" >&2
-  exit 1
-fi
-if ! grep -Fq "COPILOT_GITHUB_TOKEN=\"\${copilot_github_token}\"" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to expose Copilot auth only as COPILOT_GITHUB_TOKEN to the managed child" >&2
-  exit 1
-fi
-if ! grep -Fq 'COPILOT_ENABLE_HTTP2=false' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to pin Copilot HTTP/2 off on the managed path" >&2
-  exit 1
-fi
-if ! grep -Fq -- '--secret-env-vars=GH_TOKEN,GITHUB_TOKEN,COPILOT_GITHUB_TOKEN' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to declare Copilot/GitHub token env as provider secrets" >&2
-  exit 1
-fi
-if ! grep -Fq -- '--disallow-temp-dir' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to deny Copilot temp-dir access on the managed path" >&2
-  exit 1
-fi
-if ! grep -Fq -- '"--available-tools=view,create,edit,apply_patch,grep,glob"' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to keep Copilot prompt/yolo tool grants shell-free" >&2
-  exit 1
-fi
-if grep -Eq -- '--available-tools=[^"]*(shell|bash|run|exec)' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Provider wrapper must not grant Copilot shell-like tools on the safe path" >&2
-  exit 1
-fi
-if grep -Fq -- '--allow-all-tools' "${ROOT_DIR}/runtime/container/provider-wrapper.sh" ||
-  grep -Fq -- '--allow-all-paths' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Provider wrapper must not grant Copilot all tools or all paths on the safe path" >&2
-  exit 1
-fi
-if ! grep -Fq "exec /usr/local/libexec/workcell/real/copilot \\" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to launch the pinned native Copilot binary" >&2
-  exit 1
-fi
-if ! grep -Fq "Workcell blocked Claude lifecycle command: \${arg}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
-  echo "Expected provider policy to reject native Claude lifecycle commands that bypass the pinned image" >&2
-  exit 1
-fi
-if ! grep -Fq "Workcell blocked Copilot lifecycle/control-plane command: \${arg}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
-  echo "Expected provider policy to reject native Copilot lifecycle/control-plane commands" >&2
-  exit 1
-fi
-if ! grep -Fq -- '-p | --prompt)' "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
-  echo "Expected provider policy to treat only Copilot -p/--prompt as value-taking prompt flags" >&2
-  exit 1
-fi
-if ! grep -Fq "attached_prompt_value=\"\${arg:2}\"" "${ROOT_DIR}/runtime/container/provider-policy.sh" ||
-  ! grep -Fq "attached_prompt_value=\"\${arg#--prompt=}\"" "${ROOT_DIR}/runtime/container/provider-policy.sh" ||
-  ! grep -Fq 'workcell-copilot-policy-attached-short-prompt-allow-tool.out' "${ROOT_DIR}/scripts/container-smoke.sh" ||
-  ! grep -Fq 'workcell-copilot-policy-attached-long-prompt-allow-tool.out' "${ROOT_DIR}/scripts/container-smoke.sh"; then
-  echo "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values" >&2
-  exit 1
-fi
-if ! grep -Fq -- '-[!-]?*)' "${ROOT_DIR}/runtime/container/provider-policy.sh" ||
-  ! grep -Fq "Workcell blocked bundled Copilot short options: \${arg}" "${ROOT_DIR}/runtime/container/provider-policy.sh" ||
-  ! grep -Fq 'workcell-copilot-policy-bundled-short-options.out' "${ROOT_DIR}/scripts/container-smoke.sh"; then
-  echo "Expected provider policy and smoke coverage to reject bundled Copilot short options" >&2
-  exit 1
-fi
-if grep -Fq -- '-p | --prompt | -i | --interactive)' "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
-  echo "Expected provider policy not to treat Copilot -i/--interactive as prompt aliases" >&2
-  exit 1
-fi
+go_verify_citools workcell-copilot-policy-wrapper "${ROOT_DIR}" || exit 1
 for unsafe_copilot_flag in \
   '--config-dir' \
   '--allow-tool' \
