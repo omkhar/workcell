@@ -5191,3 +5191,378 @@ func TestExtractGoFunctionBlock(t *testing.T) {
 		})
 	}
 }
+
+// --- D3 simple-clusters sweep: buildx-builder-trust ---
+
+// buildxBuilderTrustHappyFiles returns the six-file fixture map that satisfies
+// all eight buildx-builder-trust invariants.
+func buildxBuilderTrustHappyFiles() map[string]string {
+	return map[string]string{
+		verifyReleaseBundleRelPath:     "#!/usr/bin/env bash\nBUILDX_BUILDER=\"workcell-release-${ctx}\"\n",
+		buildAndTestRelPath:            "#!/usr/bin/env bash\n: \"${WORKCELL_KEEP_VALIDATOR_IMAGE:-}\"\n",
+		jobValidateRelPath:             "#!/usr/bin/env bash\ncleanup_workcell_validator_image\n",
+		jobDocsRelPath:                 "#!/usr/bin/env bash\ncleanup_workcell_validator_image\n",
+		verifyReproducibleBuildRelPath: "#!/usr/bin/env bash\n: \"${WORKCELL_REPRO_OWNS_BUILDER:-}\"\n",
+		trustedDockerClientRelPath:     "#!/usr/bin/env bash\nbuildx_expected_endpoints() { :; }\ndocker context inspect \"${DOCKER_CONTEXT_NAME}\" --format '{{.x}}'\n",
+		colimaEgressAllowlistRelPath:   "#!/usr/bin/env bash\nCOLIMA_HOME=\"${colima_home}\"\n",
+	}
+}
+
+func TestCheckBuildxBuilderTrust(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string
+	}{
+		{name: "happy path all invariants hold", mutate: func(map[string]string) {}},
+		{
+			name: "release builder needle missing",
+			mutate: func(f map[string]string) {
+				f[verifyReleaseBundleRelPath] = strings.Replace(f[verifyReleaseBundleRelPath], `BUILDX_BUILDER="workcell-release-`, `BUILDX_BUILDER="other-`, 1)
+			},
+			wantErr: "Expected verify-release-bundle.sh to choose a deterministic context-scoped Buildx builder by default",
+		},
+		{
+			name: "keep-validator-image needle missing",
+			mutate: func(f map[string]string) {
+				f[buildAndTestRelPath] = strings.Replace(f[buildAndTestRelPath], "WORKCELL_KEEP_VALIDATOR_IMAGE", "X", 1)
+			},
+			wantErr: "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+		},
+		{
+			name: "job-validate cleanup needle missing",
+			mutate: func(f map[string]string) {
+				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], "cleanup_workcell_validator_image", "X", 1)
+			},
+			wantErr: "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+		},
+		{
+			name: "job-docs cleanup needle missing",
+			mutate: func(f map[string]string) {
+				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], "cleanup_workcell_validator_image", "X", 1)
+			},
+			wantErr: "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+		},
+		{
+			name: "repro-owns-builder needle missing",
+			mutate: func(f map[string]string) {
+				f[verifyReproducibleBuildRelPath] = strings.Replace(f[verifyReproducibleBuildRelPath], "WORKCELL_REPRO_OWNS_BUILDER", "X", 1)
+			},
+			wantErr: "Expected reproducible-build validation to remove its default Workcell-owned Buildx builder on exit",
+		},
+		{
+			name: "buildx-expected-endpoints needle missing",
+			mutate: func(f map[string]string) {
+				f[trustedDockerClientRelPath] = strings.Replace(f[trustedDockerClientRelPath], "buildx_expected_endpoints()", "renamed()", 1)
+			},
+			wantErr: "Expected trusted-docker-client.sh to compute accepted Buildx endpoints from the active Docker context or host",
+		},
+		{
+			name: "docker-context-inspect needle missing",
+			mutate: func(f map[string]string) {
+				f[trustedDockerClientRelPath] = strings.Replace(f[trustedDockerClientRelPath], `docker context inspect "${DOCKER_CONTEXT_NAME}" --format`, "X", 1)
+			},
+			wantErr: "Expected trusted-docker-client.sh to resolve Docker context host URIs when validating existing Buildx builders",
+		},
+		{
+			name: "colima-home pin needle missing",
+			mutate: func(f map[string]string) {
+				f[colimaEgressAllowlistRelPath] = strings.Replace(f[colimaEgressAllowlistRelPath], `COLIMA_HOME="${colima_home}"`, "X", 1)
+			},
+			wantErr: "Expected scripts/colima-egress-allowlist.sh to pin COLIMA_HOME while operating on Lima state",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := buildxBuilderTrustHappyFiles()
+			tt.mutate(files)
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckBuildxBuilderTrust(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckBuildxBuilderTrust() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckBuildxBuilderTrust() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckBuildxBuilderTrustCount(t *testing.T) {
+	if got, want := len(buildxBuilderTrustChecks), 8; got != want {
+		t.Fatalf("buildxBuilderTrustChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckBuildxBuilderTrustRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, verifyReleaseBundleRelPath)); err != nil {
+		t.Skipf("real scripts/verify-release-bundle.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckBuildxBuilderTrust(repoRoot); err != nil {
+		t.Fatalf("CheckBuildxBuilderTrust(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 simple-clusters sweep: doc-scan / go-vcs ---
+
+func docScanGoVcsHappyFiles() map[string]string {
+	return map[string]string{
+		validateRepoRelPath: "#!/usr/bin/env bash\nfind . -path \"${ROOT_DIR}/.venv\" -prune -o -print\n",
+		goRunEnvRelPath:     "#!/usr/bin/env bash\ngo build -buildvcs=false -o \"${output_path}\" ./cmd\n",
+	}
+}
+
+func TestCheckDocScanGoVcs(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string
+	}{
+		{name: "happy path all invariants hold", mutate: func(map[string]string) {}},
+		{
+			name: "venv-prune needle missing",
+			mutate: func(f map[string]string) {
+				f[validateRepoRelPath] = strings.Replace(f[validateRepoRelPath], `-path "${ROOT_DIR}/.venv" -prune -o`, "-print", 1)
+			},
+			wantErr: "Expected validate-repo.sh to prune repo-local virtualenv content from documentation scans",
+		},
+		{
+			name: "buildvcs needle missing",
+			mutate: func(f map[string]string) {
+				f[goRunEnvRelPath] = strings.Replace(f[goRunEnvRelPath], `build -buildvcs=false -o "${output_path}"`, "build -o out", 1)
+			},
+			wantErr: "Expected build_go_tool_in_repo to disable Go VCS stamping in untrusted repos",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := docScanGoVcsHappyFiles()
+			tt.mutate(files)
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckDocScanGoVcs(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckDocScanGoVcs() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckDocScanGoVcs() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckDocScanGoVcsCount(t *testing.T) {
+	if got, want := len(docScanGoVcsChecks), 2; got != want {
+		t.Fatalf("docScanGoVcsChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckDocScanGoVcsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, validateRepoRelPath)); err != nil {
+		t.Skipf("real scripts/validate-repo.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckDocScanGoVcs(repoRoot); err != nil {
+		t.Fatalf("CheckDocScanGoVcs(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 simple-clusters sweep: container-smoke chown/tar ---
+
+// smokeChownTarHappyFiles returns a container-smoke.sh fixture that contains
+// NONE of the three forbidden constructs, so all three absence invariants hold.
+func smokeChownTarHappyFiles() map[string]string {
+	return map[string]string{
+		containerSmokeRelPath: "#!/usr/bin/env bash\nstage_workspace_via_cp\n",
+	}
+}
+
+func TestCheckSmokeChownTar(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string
+	}{
+		{name: "happy path all invariants hold", mutate: func(map[string]string) {}},
+		{
+			name: "raw recursive chown present",
+			mutate: func(f map[string]string) {
+				f[containerSmokeRelPath] += "chown -R \"${HOST_UID}:${HOST_GID}\" \"${target_path}\"\n"
+			},
+			wantErr: "Expected scripts/container-smoke.sh to avoid raw recursive chown on host-managed paths",
+		},
+		{
+			name: "tar-based staging present",
+			mutate: func(f map[string]string) {
+				f[containerSmokeRelPath] += "tar --null -T \"${path_list_filtered}\" -cf -\n"
+			},
+			wantErr: "Expected scripts/container-smoke.sh to avoid tar-based smoke workspace staging",
+		},
+		{
+			name: "tar-based extraction present",
+			mutate: func(f map[string]string) {
+				f[containerSmokeRelPath] += "tar -xf -\n"
+			},
+			wantErr: "Expected scripts/container-smoke.sh to avoid tar-based extraction for smoke workspace staging",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := smokeChownTarHappyFiles()
+			tt.mutate(files)
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckSmokeChownTar(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckSmokeChownTar() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckSmokeChownTar() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckSmokeChownTarCount(t *testing.T) {
+	if got, want := len(smokeChownTarChecks), 3; got != want {
+		t.Fatalf("smokeChownTarChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckSmokeChownTarRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, containerSmokeRelPath)); err != nil {
+		t.Skipf("real scripts/container-smoke.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckSmokeChownTar(repoRoot); err != nil {
+		t.Fatalf("CheckSmokeChownTar(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 simple-clusters sweep: dual-stack allowlist apply plan ---
+
+// dualStackApplyPlanHappyFiles returns a colima-egress-allowlist.sh fixture that
+// satisfies all seven dual-stack allowlist-apply-plan invariants: a line-anchored
+// render_clear_plan definition, a render_allowlist_apply_plan block that renders
+// the clear plan, resolves endpoint IPs in the VM (getent ahosts) and never calls
+// render_allowlist_plan, an ip6tables preflight, and the guarded run_in_vm apply.
+func dualStackApplyPlanHappyFiles() map[string]string {
+	body := "#!/usr/bin/env bash\n" +
+		"render_clear_plan() {\n" +
+		"  echo clear\n" +
+		"}\n" +
+		"render_allowlist_apply_plan() {\n" +
+		"  local plan\n" +
+		"  plan=\"$(render_clear_plan)\"\n" +
+		"  resolve_vm_endpoint_ips \"${endpoints}\"\n" +
+		"  getent ahosts \"${host}\"\n" +
+		"}\n" +
+		"apply_allowlist() {\n" +
+		"  if ! type ip6tables >/dev/null 2>&1; then\n" +
+		"    return 1\n" +
+		"  fi\n" +
+		"  run_in_vm \"$(render_allowlist_apply_plan)\"\n" +
+		"}\n"
+	return map[string]string{colimaEgressAllowlistRelPath: body}
+}
+
+func TestCheckDualStackApplyPlan(t *testing.T) {
+	rel := colimaEgressAllowlistRelPath
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string
+	}{
+		{name: "happy path all invariants hold", mutate: func(map[string]string) {}},
+		{
+			name: "guarded apply path missing",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], `run_in_vm "$(render_allowlist_apply_plan)"`, "direct_apply", 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply path to use the guarded apply plan",
+		},
+		{
+			name: "ip6tables preflight missing",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], "if ! type ip6tables >/dev/null 2>&1; then", "if false; then", 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply plan to preflight ip6tables before rewriting rules",
+		},
+		{
+			name: "render_clear_plan definition missing",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], "render_clear_plan() {", "xrender_clear_plan() {", 1)
+			},
+			wantErr: "Expected dual-stack allowlist helper to render clear rules in the VM apply plan",
+		},
+		{
+			name: "in-block render_clear_plan call missing",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], `plan="$(render_clear_plan)"`, `plan="$(render_empty)"`, 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply plan to include render_clear_plan",
+		},
+		{
+			name: "resolve_vm_endpoint_ips missing",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], `resolve_vm_endpoint_ips "${endpoints}"`, "noop", 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply plan to resolve hostnames inside the VM before applying rules",
+		},
+		{
+			name: "getent ahosts missing",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], `getent ahosts "${host}"`, "noop", 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply plan to use VM DNS results for hostname endpoints",
+		},
+		{
+			name: "host-resolved render_allowlist_plan present in block",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], `getent ahosts "${host}"`, "getent ahosts \"${host}\"\n  render_allowlist_plan", 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply plan to avoid host-resolved endpoint rules",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := dualStackApplyPlanHappyFiles()
+			tt.mutate(files)
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckDualStackApplyPlan(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckDualStackApplyPlan() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckDualStackApplyPlan() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckDualStackApplyPlanCount(t *testing.T) {
+	if got, want := len(dualStackApplyPlanChecks), 7; got != want {
+		t.Fatalf("dualStackApplyPlanChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckDualStackApplyPlanRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, colimaEgressAllowlistRelPath)); err != nil {
+		t.Skipf("real scripts/colima-egress-allowlist.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckDualStackApplyPlan(repoRoot); err != nil {
+		t.Fatalf("CheckDualStackApplyPlan(real repo) = %v, want nil", err)
+	}
+}
