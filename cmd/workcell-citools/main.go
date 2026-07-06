@@ -99,6 +99,7 @@ func subcommands() []subcommand {
 		{"workcell-config-safety", "ROOT_DIR", 1, 1, cmdWorkcellConfigSafety},
 		{"workcell-runtime-invariants", "ROOT_DIR", 1, 1, cmdWorkcellRuntimeInvariants},
 		{"workcell-managed-profile-staging", "ROOT_DIR", 1, 1, cmdWorkcellManagedProfileStaging},
+		{"workcell-bootstrap-egress", "ROOT_DIR", 1, 1, cmdWorkcellBootstrapEgress},
 	}
 }
 
@@ -535,4 +536,12 @@ func cmdWorkcellRuntimeInvariants(args []string) error {
 // shell's original stderr message for the first violated invariant.
 func cmdWorkcellManagedProfileStaging(args []string) error {
 	return workcellhardening.CheckManagedProfileStaging(args[0])
+}
+
+// cmdWorkcellBootstrapEgress runs the nine bootstrap egress-endpoint
+// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1
+// via die()) with the shell's original stderr message for the first
+// violated invariant.
+func cmdWorkcellBootstrapEgress(args []string) error {
+	return workcellhardening.CheckBootstrapEgress(args[0])
 }

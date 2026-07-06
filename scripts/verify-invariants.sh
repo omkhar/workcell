@@ -2969,48 +2969,22 @@ if ! rg -q 'COLIMA_HOME="\$\{colima_home\}"' "${ROOT_DIR}/scripts/colima-egress-
   exit 1
 fi
 
-if ! rg -q 'snapshot\.debian\.org:443' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell bootstrap endpoints to allow snapshot.debian.org" >&2
-  exit 1
-fi
-
-if ! rg -q 'snapshot-cloudflare\.debian\.org:443' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell bootstrap endpoints to allow the snapshot-cloudflare.debian.org CDN mirror" >&2
-  exit 1
-fi
-
-if rg -q 'static\.rust-lang\.org:443' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell bootstrap endpoints to avoid unused static.rust-lang.org egress" >&2
-  exit 1
-fi
-
-if ! rg -q 'docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on Cloudflare R2" >&2
-  exit 1
-fi
-
-if ! rg -q 'production\.cloudfront\.docker\.com:443' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on CloudFront" >&2
-  exit 1
-fi
-
-if ! rg -q '^ARG COPILOT_RELEASE_URL=' "${ROOT_DIR}/runtime/container/Dockerfile"; then
-  echo "Expected runtime Dockerfile to accept a host-resolved Copilot release URL override" >&2
-  exit 1
-fi
-if ! rg -q 'resolve_copilot_release_url\(\)' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell to resolve Copilot release URLs on the host before runtime builds" >&2
-  exit 1
-fi
-if ! rg -q -- '--build-arg "COPILOT_RELEASE_URL=\$\{copilot_release_url\}"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell runtime builds to pass host-resolved Copilot release URLs into Docker" >&2
-  exit 1
-fi
-
-if rg -q 'snapshot\.debian\.org:80' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:80 egress" >&2
-  exit 1
-fi
+# Assert the bootstrap egress-endpoint invariants: scripts/workcell allows
+# the two Debian snapshot mirrors and the two Docker blob-storage CDNs
+# (Cloudflare R2 and CloudFront) on :443, avoids the unused
+# static.rust-lang.org:443 and snapshot.debian.org:80 egress entries, and
+# wires the host-resolved Copilot release URL override (the runtime
+# Dockerfile ARG, the resolve_copilot_release_url helper, and the
+# --build-arg pass-through).  Migrated to Go (D3): internal/workcellhardening
+# behind the workcell-citools workcell-bootstrap-egress subcommand preserves
+# the exact exit codes and stderr messages of the former inline rg block,
+# including the fixed-string matching semantics (seven metacharacter-free
+# probes), the genuine R2 subdomain-wildcard regex, and the line-anchored
+# Dockerfile ARG regex read from runtime/container/Dockerfile.  `|| exit 1`
+# matches the former inline block's `exit 1` on a violated invariant: it
+# handles the failure so the top-level ERR trap does not fire and append trap
+# diagnostics, preserving the exact failure stderr surface.
+go_verify_citools workcell-bootstrap-egress "${ROOT_DIR}" || exit 1
 
 for dockerfile in \
   "${ROOT_DIR}/runtime/container/Dockerfile" \

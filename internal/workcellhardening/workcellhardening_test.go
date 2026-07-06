@@ -612,6 +612,212 @@ func TestCheckManagedProfileStaging(t *testing.T) {
 	}
 }
 
+// bootstrapEgressHappyLauncher is a minimal scripts/workcell that
+// satisfies the eight launcher-scoped bootstrap egress invariants: both
+// Debian snapshot mirrors and both Docker blob-storage CDNs on :443, no
+// unused static.rust-lang.org:443 or snapshot.debian.org:80 egress, the
+// resolve_copilot_release_url helper, and the --build-arg pass-through.
+// Individual negative cases mutate one property of this baseline.
+const bootstrapEgressHappyLauncher = `#!/bin/bash
+set -euo pipefail
+
+bootstrap_egress_endpoints() {
+  cat <<'EOF'
+snapshot.debian.org:443
+snapshot-cloudflare.debian.org:443
+docker-images-prod.abc123.r2.cloudflarestorage.com:443
+production.cloudfront.docker.com:443
+EOF
+}
+
+resolve_copilot_release_url() {
+  : resolve on host
+}
+
+runtime_build() {
+  buildx_cmd build --build-arg "COPILOT_RELEASE_URL=${copilot_release_url}" .
+}
+`
+
+// bootstrapEgressHappyDockerfile is a minimal runtime/container/Dockerfile
+// that satisfies the one Dockerfile-scoped invariant: a line-anchored
+// `ARG COPILOT_RELEASE_URL=` override.
+const bootstrapEgressHappyDockerfile = `# syntax=docker/dockerfile:1
+FROM debian:trixie-slim
+ARG COPILOT_RELEASE_URL=https://example.invalid/copilot.tar.gz
+RUN : install
+`
+
+// writeBootstrapRepo materializes a fake repo with scripts/workcell set to
+// launcher and runtime/container/Dockerfile set to dockerfile; a body of ""
+// means "do not create that file" (unreadable-target case).
+func writeBootstrapRepo(t *testing.T, launcher, dockerfile string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(launcherRelPath, launcher)
+	write(dockerfileRelPath, dockerfile)
+	return root
+}
+
+func TestCheckBootstrapEgress(t *testing.T) {
+	tests := []struct {
+		name       string
+		launcher   string
+		dockerfile string
+		wantErr    string // "" means expect success
+	}{
+		{
+			name:       "happy path all invariants hold",
+			launcher:   bootstrapEgressHappyLauncher,
+			dockerfile: bootstrapEgressHappyDockerfile,
+		},
+		{
+			// kindPresent: the snapshot.debian.org:443 endpoint removed.
+			name:       "missing snapshot.debian.org endpoint",
+			launcher:   strings.Replace(bootstrapEgressHappyLauncher, "snapshot.debian.org:443\n", "", 1),
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell bootstrap endpoints to allow snapshot.debian.org",
+		},
+		{
+			// kindPresent: the snapshot-cloudflare mirror removed.
+			name:       "missing snapshot-cloudflare mirror",
+			launcher:   strings.Replace(bootstrapEgressHappyLauncher, "snapshot-cloudflare.debian.org:443\n", "", 1),
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell bootstrap endpoints to allow the snapshot-cloudflare.debian.org CDN mirror",
+		},
+		{
+			// kindAbsent: an unused static.rust-lang.org:443 egress entry is a
+			// violation.
+			name:       "static.rust-lang.org egress present",
+			launcher:   bootstrapEgressHappyLauncher + "static.rust-lang.org:443\n",
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell bootstrap endpoints to avoid unused static.rust-lang.org egress",
+		},
+		{
+			// kindRegexPresent: the R2 host removed entirely.
+			name:       "missing R2 blob-storage host",
+			launcher:   strings.Replace(bootstrapEgressHappyLauncher, "docker-images-prod.abc123.r2.cloudflarestorage.com:443\n", "", 1),
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on Cloudflare R2",
+		},
+		{
+			// kindRegexPresent semantics: the `[^.]+` subdomain wildcard spans
+			// exactly one dotless segment, so a host with an extra dotted
+			// segment (docker-images-prod.a.b.r2...) does NOT match and the
+			// check fails, pinning that the wildcard is not `.*`.
+			name:       "R2 host with dotted subdomain does not match",
+			launcher:   strings.Replace(bootstrapEgressHappyLauncher, "docker-images-prod.abc123.r2.cloudflarestorage.com:443", "docker-images-prod.a.b.r2.cloudflarestorage.com:443", 1),
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on Cloudflare R2",
+		},
+		{
+			// kindRegexPresent negative control: a single dotless subdomain
+			// segment other than abc123 still matches, so the invariant holds.
+			name:       "R2 host with different single subdomain still matches",
+			launcher:   strings.Replace(bootstrapEgressHappyLauncher, "docker-images-prod.abc123.r2.cloudflarestorage.com:443", "docker-images-prod.xyz789.r2.cloudflarestorage.com:443", 1),
+			dockerfile: bootstrapEgressHappyDockerfile,
+		},
+		{
+			// kindPresent: the CloudFront blob-storage host removed.
+			name:       "missing CloudFront blob-storage host",
+			launcher:   strings.Replace(bootstrapEgressHappyLauncher, "production.cloudfront.docker.com:443\n", "", 1),
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on CloudFront",
+		},
+		{
+			// kindRegexPresent against the Dockerfile: the ARG override line
+			// removed.
+			name:       "missing Dockerfile ARG override",
+			launcher:   bootstrapEgressHappyLauncher,
+			dockerfile: strings.Replace(bootstrapEgressHappyDockerfile, "ARG COPILOT_RELEASE_URL=https://example.invalid/copilot.tar.gz\n", "", 1),
+			wantErr:    "Expected runtime Dockerfile to accept a host-resolved Copilot release URL override",
+		},
+		{
+			// kindRegexPresent multiline anchoring: the ARG text appears in the
+			// Dockerfile but NOT at a line start (embedded in a RUN echo), so
+			// the `(?m)^ARG ...` anchor must still fail.
+			name:     "Dockerfile ARG text not at line start",
+			launcher: bootstrapEgressHappyLauncher,
+			dockerfile: "# syntax=docker/dockerfile:1\nFROM debian:trixie-slim\n" +
+				"RUN echo \"ARG COPILOT_RELEASE_URL=set-at-runtime\"\n",
+			wantErr: "Expected runtime Dockerfile to accept a host-resolved Copilot release URL override",
+		},
+		{
+			// A missing Dockerfile is empty content: the launcher-scoped checks
+			// pass but the Dockerfile-scoped ARG regex fails, mirroring `rg -q`
+			// returning non-zero on a missing file.  Exercises the per-check
+			// target-file read against a distinct absent file.
+			name:       "missing Dockerfile",
+			launcher:   bootstrapEgressHappyLauncher,
+			dockerfile: "",
+			wantErr:    "Expected runtime Dockerfile to accept a host-resolved Copilot release URL override",
+		},
+		{
+			// kindPresent: the resolve_copilot_release_url helper removed.
+			name:       "missing resolve_copilot_release_url helper",
+			launcher:   strings.Replace(bootstrapEgressHappyLauncher, "resolve_copilot_release_url()", "resolve_other()", 1),
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell to resolve Copilot release URLs on the host before runtime builds",
+		},
+		{
+			// kindPresent: the --build-arg Copilot release URL pass-through
+			// removed.
+			name:       "missing Copilot release URL build-arg",
+			launcher:   strings.Replace(bootstrapEgressHappyLauncher, `--build-arg "COPILOT_RELEASE_URL=${copilot_release_url}"`, `--build-arg "OTHER=${copilot_release_url}"`, 1),
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell runtime builds to pass host-resolved Copilot release URLs into Docker",
+		},
+		{
+			// kindAbsent: an unused snapshot.debian.org:80 (plaintext) egress
+			// entry is a violation, even though snapshot.debian.org:443 remains.
+			name:       "snapshot.debian.org:80 egress present",
+			launcher:   bootstrapEgressHappyLauncher + "snapshot.debian.org:80\n",
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:80 egress",
+		},
+		{
+			// A missing launcher is empty content: the negative checks pass and
+			// the first affirmative check (snapshot.debian.org:443) fires,
+			// mirroring `rg -q` returning non-zero on a missing file.
+			name:       "missing launcher",
+			launcher:   "",
+			dockerfile: bootstrapEgressHappyDockerfile,
+			wantErr:    "Expected scripts/workcell bootstrap endpoints to allow snapshot.debian.org",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeBootstrapRepo(t, tc.launcher, tc.dockerfile)
+			err := CheckBootstrapEgress(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckBootstrapEgress() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckBootstrapEgress() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckBootstrapEgress() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestExtractNamedFunctionBlock pins the sed-range extraction semantics
 // the run_host_colima check depends on: the block runs from the `NAME()`
 // opening line through the first line beginning with `}` (inclusive), and
@@ -628,5 +834,18 @@ func TestExtractNamedFunctionBlock(t *testing.T) {
 	}
 	if extractNamedFunctionBlock(src, "absent") != "" {
 		t.Fatalf("extractNamedFunctionBlock for a missing function should be empty")
+	}
+}
+
+func TestRegexMatchesAnyLineIsLineBounded(t *testing.T) {
+	// A negated char class must not consume a newline, mirroring ripgrep's
+	// default (non-multiline) behaviour — otherwise a broken cross-line R2
+	// endpoint would spuriously match.
+	pat := `docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443`
+	if !regexMatchesAnyLine(pat, "docker-images-prod.abc123.r2.cloudflarestorage.com:443") {
+		t.Fatalf("expected a valid single-line R2 endpoint to match")
+	}
+	if regexMatchesAnyLine(pat, "docker-images-prod.\n.r2.cloudflarestorage.com:443") {
+		t.Fatalf("a cross-newline R2 endpoint must NOT match (rg is line-oriented)")
 	}
 }
