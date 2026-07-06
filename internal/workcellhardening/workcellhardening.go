@@ -16,6 +16,12 @@
 // (the three scripts/workcell checks between the runtime-invariants group
 // and the WORKCELL_COLIMA_TIMEOUT_HARNESS fixture) via
 // CheckManagedProfileStaging; see managedProfileStagingChecks.
+// It also re-implements the adjacent bootstrap egress-endpoint block (the
+// nine checks between the colima-egress-allowlist COLIMA_HOME pin check and
+// the per-Dockerfile snapshot CA-bundle loop) via CheckBootstrapEgress;
+// see bootstrapEgressChecks.  Eight of those read scripts/workcell; the
+// Copilot-release-URL-override probe reads runtime/container/Dockerfile via
+// the per-check targetFile field.
 //
 // Each invariant pins one property of the host launcher scripts/workcell:
 // that run_host_colima restores the real host HOME, that the shebang
@@ -55,9 +61,16 @@ import (
 )
 
 // launcherRelPath is the repo-relative path to the host launcher every
-// check inspects.  The shell hard-coded ${ROOT_DIR}/scripts/workcell for
-// each of head/grep/rg/function_block_contains_fixed.
+// check inspects by default.  The shell hard-coded
+// ${ROOT_DIR}/scripts/workcell for each of
+// head/grep/rg/function_block_contains_fixed.
 const launcherRelPath = "scripts/workcell"
+
+// dockerfileRelPath is the repo-relative path to the runtime container
+// Dockerfile.  Only the bootstrap-egress Copilot-release-URL-override
+// invariant reads this file instead of scripts/workcell; every other
+// check leaves check.targetFile empty and so defaults to launcherRelPath.
+const dockerfileRelPath = "runtime/container/Dockerfile"
 
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
@@ -96,13 +109,21 @@ const (
 )
 
 // check is one hardening invariant: how to match, what to match, which
-// function to scope to (kindFunctionBlock only), and the exact stderr
-// message the shell emitted on violation.
+// function to scope to (kindFunctionBlock only), which repo-relative file
+// to read (empty means launcherRelPath), and the exact stderr message the
+// shell emitted on violation.
 type check struct {
 	kind         checkKind
 	functionName string
 	pattern      string
 	message      string
+	// targetFile is the repo-relative file this check reads.  An empty
+	// value defaults to launcherRelPath (scripts/workcell), so every
+	// existing check keeps its original read target unchanged; only the
+	// bootstrap-egress Copilot-release-URL-override invariant sets it (to
+	// dockerfileRelPath), mirroring the shell probe that ran `rg` against
+	// ${ROOT_DIR}/runtime/container/Dockerfile instead of scripts/workcell.
+	targetFile string
 }
 
 // checks lists the eleven invariants in the same order as the former
@@ -181,22 +202,39 @@ func Check(rootDir string) error {
 	return evaluate(rootDir, checks)
 }
 
-// evaluate reads scripts/workcell under rootDir and returns the first
-// violated check's message (as an error), or nil when all hold.  A
-// missing or unreadable launcher is treated as empty content, exactly as
-// the shell behaved: head/grep/rg/function_block_contains_fixed and
-// negated `rg -q` on a missing file all produce no match, so affirmative
-// (kindPresent/kindFunctionBlock/kindFirstLineRegex) checks fail while
-// negative (kindAbsent/kindRegexAbsent) checks pass.
+// evaluate reads each check's target file under rootDir (defaulting to
+// scripts/workcell) and returns the first violated check's message (as an
+// error), or nil when all hold.  Distinct target files are read at most
+// once and cached, so a group that mixes scripts/workcell and
+// runtime/container/Dockerfile probes reads each file a single time.
+//
+// A missing or unreadable target file is treated as empty content,
+// exactly as the shell behaved: head/grep/rg/function_block_contains_fixed
+// and negated `rg -q` on a missing file all produce no match, so
+// affirmative (kindPresent/kindRegexPresent/kindFunctionBlock/
+// kindFirstLineRegex) checks fail while negative
+// (kindAbsent/kindRegexAbsent/kindFunctionBlockAbsent) checks pass.
 func evaluate(rootDir string, cs []check) error {
-	content, err := os.ReadFile(filepath.Join(rootDir, launcherRelPath))
-	if err != nil {
-		content = nil
+	cache := make(map[string]string)
+	readTarget := func(rel string) string {
+		if text, ok := cache[rel]; ok {
+			return text
+		}
+		content, err := os.ReadFile(filepath.Join(rootDir, rel))
+		if err != nil {
+			content = nil
+		}
+		text := string(content)
+		cache[rel] = text
+		return text
 	}
-	text := string(content)
 
 	for _, c := range cs {
-		if !c.holds(text) {
+		rel := c.targetFile
+		if rel == "" {
+			rel = launcherRelPath
+		}
+		if !c.holds(readTarget(rel)) {
 			return errors.New(c.message)
 		}
 	}
@@ -518,6 +556,107 @@ var managedProfileStagingChecks = []check{
 // 1).
 func CheckManagedProfileStaging(rootDir string) error {
 	return evaluate(rootDir, managedProfileStagingChecks)
+}
+
+// bootstrapEgressChecks lists the nine bootstrap egress-endpoint
+// invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the
+// colima-egress-allowlist COLIMA_HOME pin check and the per-Dockerfile
+// snapshot CA-bundle loop), so a reviewer can diff the two one-to-one.
+//
+// Eight probes read scripts/workcell (the default target); the
+// Copilot-release-URL-override probe reads runtime/container/Dockerfile
+// (targetFile: dockerfileRelPath), mirroring the one shell `rg` that ran
+// against the Dockerfile rather than the launcher.
+//
+// Matching semantics mirror the shell exactly:
+//   - The seven fixed-string probes had every rg metacharacter escaped
+//     (`snapshot\.debian\.org:443`, `resolve_copilot_release_url\(\)`,
+//     `--build-arg "COPILOT_RELEASE_URL=\$\{copilot_release_url\}"`, ...),
+//     so they reduce to fixed-string containment: kindPresent for the
+//     affirmative `rg -q`, kindAbsent for the two negated guards
+//     (static.rust-lang.org:443 and snapshot.debian.org:80 present are
+//     violations).
+//   - The R2 blob-storage probe is a genuine regex — its `[^.]+` is a
+//     one-or-more-non-dot subdomain wildcard — so it is kindRegexPresent
+//     with the pattern verbatim.  RE2 matches the same hosts as rg (e.g.
+//     docker-images-prod.abc123.r2.cloudflarestorage.com:443).
+//   - The Dockerfile Copilot-release probe anchored `^ARG` to a line
+//     start; rg is line-based, so in Go it is a kindRegexPresent with a
+//     multiline `(?m)^ARG COPILOT_RELEASE_URL=` pattern that anchors to any
+//     line start of the Dockerfile.
+var bootstrapEgressChecks = []check{
+	{
+		kind:    kindPresent,
+		pattern: "snapshot.debian.org:443",
+		message: "Expected scripts/workcell bootstrap endpoints to allow snapshot.debian.org",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "snapshot-cloudflare.debian.org:443",
+		message: "Expected scripts/workcell bootstrap endpoints to allow the snapshot-cloudflare.debian.org CDN mirror",
+	},
+	{
+		// kindAbsent: an unused static.rust-lang.org egress entry is a
+		// violation (present → exit 1).
+		kind:    kindAbsent,
+		pattern: "static.rust-lang.org:443",
+		message: "Expected scripts/workcell bootstrap endpoints to avoid unused static.rust-lang.org egress",
+	},
+	{
+		// kindRegexPresent: the `[^.]+` subdomain wildcard is a genuine
+		// regex, so this matches as a regex rather than a fixed string.
+		kind:    kindRegexPresent,
+		pattern: `docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443`,
+		message: "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on Cloudflare R2",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "production.cloudfront.docker.com:443",
+		message: "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on CloudFront",
+	},
+	{
+		// kindRegexPresent against runtime/container/Dockerfile: the shell's
+		// line-anchored `^ARG COPILOT_RELEASE_URL=` becomes a multiline
+		// `(?m)^ARG ...` so `^` anchors to any Dockerfile line start.
+		kind:       kindRegexPresent,
+		pattern:    `(?m)^ARG COPILOT_RELEASE_URL=`,
+		message:    "Expected runtime Dockerfile to accept a host-resolved Copilot release URL override",
+		targetFile: dockerfileRelPath,
+	},
+	{
+		// kindPresent: the shell's `resolve_copilot_release_url\(\)` escaped
+		// its parens, so it is fixed-string containment of the literal
+		// `resolve_copilot_release_url()`.
+		kind:    kindPresent,
+		pattern: "resolve_copilot_release_url()",
+		message: "Expected scripts/workcell to resolve Copilot release URLs on the host before runtime builds",
+	},
+	{
+		// kindPresent: the shell's
+		// `--build-arg "COPILOT_RELEASE_URL=\$\{copilot_release_url\}"`
+		// escaped every metacharacter, so it is fixed-string containment of
+		// the literal --build-arg invocation.
+		kind:    kindPresent,
+		pattern: `--build-arg "COPILOT_RELEASE_URL=${copilot_release_url}"`,
+		message: "Expected scripts/workcell runtime builds to pass host-resolved Copilot release URLs into Docker",
+	},
+	{
+		// kindAbsent: an unused snapshot.debian.org:80 (plaintext) egress
+		// entry is a violation (present → exit 1).
+		kind:    kindAbsent,
+		pattern: "snapshot.debian.org:80",
+		message: "Expected scripts/workcell bootstrap endpoints to avoid unused snapshot.debian.org:80 egress",
+	},
+}
+
+// CheckBootstrapEgress runs the nine bootstrap egress-endpoint invariants
+// against the repo rooted at rootDir, in the shell's original order.  It
+// returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant
+// (the shell's exit 1).
+func CheckBootstrapEgress(rootDir string) error {
+	return evaluate(rootDir, bootstrapEgressChecks)
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.
