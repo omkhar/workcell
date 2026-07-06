@@ -113,6 +113,7 @@ func subcommands() []subcommand {
 		{"workcell-copilot-release-verify", "ROOT_DIR", 1, 1, cmdWorkcellCopilotReleaseVerify},
 		{"workcell-adapter-rule-guard-bash", "ROOT_DIR", 1, 1, cmdWorkcellAdapterRuleGuardBash},
 		{"workcell-inspect-assurance-loops", "ROOT_DIR", 1, 1, cmdWorkcellInspectAssuranceLoops},
+		{"workcell-validator-writable-state", "ROOT_DIR", 1, 1, cmdWorkcellValidatorWritableState},
 	}
 }
 
@@ -660,4 +661,12 @@ func cmdWorkcellAdapterRuleGuardBash(args []string) error {
 // first violated invariant.
 func cmdWorkcellInspectAssuranceLoops(args []string) error {
 	return workcellhardening.CheckInspectAssuranceLoops(args[0])
+}
+
+// cmdWorkcellValidatorWritableState runs the twenty-three validator
+// writable-state isolation checks migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellValidatorWritableState(args []string) error {
+	return workcellhardening.CheckValidatorWritableState(args[0])
 }

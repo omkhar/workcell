@@ -4019,3 +4019,185 @@ func TestCheckInspectAssuranceLoopsRealRepo(t *testing.T) {
 		t.Fatalf("CheckInspectAssuranceLoops(real repo) = %v, want nil", err)
 	}
 }
+
+// writeValidatorWritableStateRepo materializes a fake repo populated with the
+// six target files the validator-writable-state block reads.  A body of ""
+// means "do not create the file" (unreadable-file case).
+func writeValidatorWritableStateRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for rel, body := range files {
+		if body == "" {
+			continue
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return root
+}
+
+// validatorWritableStateHappyFiles returns the six-file fixture map that
+// satisfies all twenty-three invariants: each file that carries affirmative
+// grep -Fq needles contains every one of them, and none of the four files
+// contains its forbidden ${ROOT_DIR}/tmp/workcell-* temp-root snippet.  The
+// needle bodies are built from the exported needle slices so the fixture stays
+// in lockstep with the migration.
+func validatorWritableStateHappyFiles() map[string]string {
+	return map[string]string{
+		buildAndTestRelPath:               "#!/usr/bin/env bash\n" + strings.Join(buildAndTestValidatorIsolationNeedles, "\n") + "\n",
+		trustedDockerClientRelPath:        "#!/usr/bin/env bash\n" + `fallback_home="${fallback_parent%/}/workcell-home-${uid}"` + "\n",
+		verifyReleaseBundleRelPath:        "#!/usr/bin/env bash\n" + strings.Join(releaseBundleValidatorIsolationNeedles, "\n") + "\n",
+		verifyBuildInputManifestRelPath:   "#!/usr/bin/env bash\n",
+		verifyControlPlaneManifestRelPath: "#!/usr/bin/env bash\n",
+		verifyReproducibleBuildRelPath:    "#!/usr/bin/env bash\n",
+	}
+}
+
+func TestCheckValidatorWritableState(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string // "" means expect success
+	}{
+		{
+			name:   "happy path all invariants hold",
+			mutate: func(map[string]string) {},
+		},
+		{
+			// build-and-test loop: a removed needle fails with the interpolated
+			// per-needle message (first needle).
+			name: "build-and-test missing UID needle",
+			mutate: func(files map[string]string) {
+				files[buildAndTestRelPath] = strings.Replace(files[buildAndTestRelPath], "WORKCELL_BUILD_AND_TEST_VALIDATOR_UID=\n", "", 1)
+			},
+			wantErr: "Expected scripts/build-and-test.sh --docker to launch validator work under an explicit caller UID/GID with isolated writable state (WORKCELL_BUILD_AND_TEST_VALIDATOR_UID=)",
+		},
+		{
+			// build-and-test loop: the last needle (the mkdir line) removed fails
+			// with its interpolated message.
+			name: "build-and-test missing mkdir needle",
+			mutate: func(files map[string]string) {
+				files[buildAndTestRelPath] = strings.Replace(files[buildAndTestRelPath], `mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"`, "", 1)
+			},
+			wantErr: `Expected scripts/build-and-test.sh --docker to launch validator work under an explicit caller UID/GID with isolated writable state (mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}")`,
+		},
+		{
+			// A missing scripts/build-and-test.sh is empty content: the first
+			// affirmative needle fails.
+			name: "build-and-test file missing",
+			mutate: func(files map[string]string) {
+				files[buildAndTestRelPath] = ""
+			},
+			wantErr: "Expected scripts/build-and-test.sh --docker to launch validator work under an explicit caller UID/GID with isolated writable state (WORKCELL_BUILD_AND_TEST_VALIDATOR_UID=)",
+		},
+		{
+			// trusted-docker-client isolated-home probe: removed needle fails with
+			// the fixed message.
+			name: "trusted-docker-client missing isolated home",
+			mutate: func(files map[string]string) {
+				files[trustedDockerClientRelPath] = "#!/usr/bin/env bash\n"
+			},
+			wantErr: "Expected trusted-docker-client.sh to synthesize an isolated home for passwd-less caller UIDs",
+		},
+		{
+			// verify-release-bundle loop: a removed needle fails with the
+			// interpolated per-needle message.
+			name: "verify-release-bundle missing validator user needle",
+			mutate: func(files map[string]string) {
+				files[verifyReleaseBundleRelPath] = strings.Replace(files[verifyReleaseBundleRelPath], `--user "${validator_uid}:${validator_gid}"`, "", 1)
+			},
+			wantErr: `Expected scripts/verify-release-bundle.sh to build bundles in the validator under an explicit caller UID/GID with isolated writable state (--user "${validator_uid}:${validator_gid}")`,
+		},
+		{
+			// build-input-manifest mounted-repo-write guard: the forbidden
+			// temp-root snippet present is a violation.
+			name: "verify-build-input-manifest writes under mounted repo",
+			mutate: func(files map[string]string) {
+				files[verifyBuildInputManifestRelPath] += "tmp=\"${ROOT_DIR}/tmp/workcell-build-input-nested\"\n"
+			},
+			wantErr: "Expected verify-build-input-manifest.sh nested-source checks to avoid writing under the mounted repo",
+		},
+		{
+			// control-plane-manifest mounted-repo-write guard.
+			name: "verify-control-plane-manifest writes under mounted repo",
+			mutate: func(files map[string]string) {
+				files[verifyControlPlaneManifestRelPath] += "tmp=\"${ROOT_DIR}/tmp/workcell-control-plane-nested\"\n"
+			},
+			wantErr: "Expected verify-control-plane-manifest.sh nested-source checks to avoid writing under the mounted repo",
+		},
+		{
+			// release-bundle mounted-repo-write guard: the same file also carries
+			// the eight affirmative needles, which remain satisfied, so the
+			// negated temp-root guard is what fires.
+			name: "verify-release-bundle writes under mounted repo",
+			mutate: func(files map[string]string) {
+				files[verifyReleaseBundleRelPath] += "tmp=\"${ROOT_DIR}/tmp/workcell-release-bundle\"\n"
+			},
+			wantErr: "Expected verify-release-bundle.sh temp roots to avoid writing under the mounted repo",
+		},
+		{
+			// reproducible-build mounted-repo-write guard.
+			name: "verify-reproducible-build writes under mounted repo",
+			mutate: func(files map[string]string) {
+				files[verifyReproducibleBuildRelPath] += "tmp=\"${ROOT_DIR}/tmp/workcell-repro\"\n"
+			},
+			wantErr: "Expected verify-reproducible-build.sh OCI exports to avoid writing under the mounted repo",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := validatorWritableStateHappyFiles()
+			tc.mutate(files)
+			root := writeValidatorWritableStateRepo(t, files)
+			err := CheckValidatorWritableState(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckValidatorWritableState() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckValidatorWritableState() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckValidatorWritableState() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckValidatorWritableStateCount asserts the generated check list contains
+// exactly twenty-three invariants, guarding against an accidentally truncated or
+// duplicated migration of the two loops, the isolated-home probe, and the four
+// mounted-repo-write guards.
+func TestCheckValidatorWritableStateCount(t *testing.T) {
+	got := len(validatorWritableStateChecks())
+	const want = 23
+	if got != want {
+		t.Fatalf("validatorWritableStateChecks() has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckValidatorWritableStateRealRepo asserts that the real
+// scripts/build-and-test.sh, scripts/lib/trusted-docker-client.sh,
+// scripts/verify-release-bundle.sh, scripts/verify-build-input-manifest.sh,
+// scripts/verify-control-plane-manifest.sh, and scripts/verify-reproducible-build.sh
+// in this repository satisfy all twenty-three validator writable-state
+// invariants.  This is the key guard against a mis-transcribed needle or a wrong
+// target file: if any Go pattern diverges from the actual file contents, this
+// test fails with the guard's stderr message.
+func TestCheckValidatorWritableStateRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, buildAndTestRelPath)); err != nil {
+		t.Skipf("real scripts/build-and-test.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckValidatorWritableState(repoRoot); err != nil {
+		t.Fatalf("CheckValidatorWritableState(real repo) = %v, want nil", err)
+	}
+}

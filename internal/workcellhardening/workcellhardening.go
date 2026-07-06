@@ -2732,6 +2732,169 @@ func CheckInspectAssuranceLoops(rootDir string) error {
 	return evaluate(rootDir, inspectAssuranceLoopsChecks())
 }
 
+// buildAndTestRelPath is the repo-relative path to the build-and-test
+// driver.  The validator-writable-state block reads this file (via the
+// per-check targetFile field) for its --docker caller-UID/GID isolation
+// probes, mirroring the shell `grep -Fq` loop that ran against
+// ${ROOT_DIR}/scripts/build-and-test.sh.
+const buildAndTestRelPath = "scripts/build-and-test.sh"
+
+// trustedDockerClientRelPath is the repo-relative path to the trusted
+// Docker client helper.  Only the validator-writable-state isolated-home
+// probe reads this file (via the per-check targetFile field), mirroring the
+// shell `grep -Fq` that ran against
+// ${ROOT_DIR}/scripts/lib/trusted-docker-client.sh.
+const trustedDockerClientRelPath = "scripts/lib/trusted-docker-client.sh"
+
+// verifyReleaseBundleRelPath is the repo-relative path to the release-bundle
+// verifier.  The validator-writable-state block reads this file (via the
+// per-check targetFile field) for its caller-UID/GID isolation probes and its
+// mounted-repo-write-avoidance probe, mirroring the shell `grep -Fq` loop and
+// guard that ran against ${ROOT_DIR}/scripts/verify-release-bundle.sh.
+const verifyReleaseBundleRelPath = "scripts/verify-release-bundle.sh"
+
+// verifyBuildInputManifestRelPath is the repo-relative path to the
+// build-input-manifest verifier.  Only the validator-writable-state
+// mounted-repo-write-avoidance probe reads this file (via the per-check
+// targetFile field), mirroring the shell `grep -Fq` guard that ran against
+// ${ROOT_DIR}/scripts/verify-build-input-manifest.sh.
+const verifyBuildInputManifestRelPath = "scripts/verify-build-input-manifest.sh"
+
+// verifyControlPlaneManifestRelPath is the repo-relative path to the
+// control-plane-manifest verifier.  Only the validator-writable-state
+// mounted-repo-write-avoidance probe reads this file (via the per-check
+// targetFile field), mirroring the shell `grep -Fq` guard that ran against
+// ${ROOT_DIR}/scripts/verify-control-plane-manifest.sh.
+const verifyControlPlaneManifestRelPath = "scripts/verify-control-plane-manifest.sh"
+
+// verifyReproducibleBuildRelPath is the repo-relative path to the
+// reproducible-build verifier.  Only the validator-writable-state
+// mounted-repo-write-avoidance probe reads this file (via the per-check
+// targetFile field), mirroring the shell `grep -Fq` guard that ran against
+// ${ROOT_DIR}/scripts/verify-reproducible-build.sh.
+const verifyReproducibleBuildRelPath = "scripts/verify-reproducible-build.sh"
+
+// buildAndTestValidatorIsolationNeedles lists the ten fixed-string snippets
+// the shell's `for required in ...; do grep -Fq -- "${required}"
+// scripts/build-and-test.sh; done` loop asserted are present, in the shell's
+// verbatim order.  Each needle reproduces the shell double-quoted literal
+// byte-exact (`\$`→`$`, `\"`→`"`, `\${...}`→`${...}`).
+var buildAndTestValidatorIsolationNeedles = []string{
+	"WORKCELL_BUILD_AND_TEST_VALIDATOR_UID=",
+	"WORKCELL_BUILD_AND_TEST_VALIDATOR_GID=",
+	`--user "${WORKCELL_BUILD_AND_TEST_VALIDATOR_UID}:${WORKCELL_BUILD_AND_TEST_VALIDATOR_GID}"`,
+	`-e HOME="${WORKCELL_BUILD_AND_TEST_VALIDATOR_HOME}"`,
+	`-e XDG_CACHE_HOME="${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}"`,
+	`-e GOCACHE="${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/go-build"`,
+	`-e GOMODCACHE="${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/go-mod"`,
+	`-e CARGO_TARGET_DIR="${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/cargo-target"`,
+	`-e TMPDIR="${WORKCELL_BUILD_AND_TEST_VALIDATOR_TMP}"`,
+	`mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"`,
+}
+
+// releaseBundleValidatorIsolationNeedles lists the eight fixed-string snippets
+// the shell's `for required in ...; do grep -Fq -- "${required}"
+// scripts/verify-release-bundle.sh; done` loop asserted are present, in the
+// shell's verbatim order.  Each needle reproduces the shell double-quoted
+// literal byte-exact.
+var releaseBundleValidatorIsolationNeedles = []string{
+	`--user "${validator_uid}:${validator_gid}"`,
+	`-e HOME="${validator_home}"`,
+	`-e XDG_CACHE_HOME="${validator_cache_root}"`,
+	`-e GOCACHE="${validator_cache_root}/go-build"`,
+	`-e GOMODCACHE="${validator_cache_root}/go-mod"`,
+	`-e CARGO_TARGET_DIR="${validator_cache_root}/cargo-target"`,
+	`-e TMPDIR="${validator_tmpdir}"`,
+	`mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"`,
+}
+
+// validatorWritableStateChecks returns the twenty-three validator
+// writable-state isolation invariants in the same order as the former inline
+// block in scripts/verify-invariants.sh (the block between the
+// build-and-test.sh caller-UID/GID loop's predecessor — the
+// verify-release-bundle.sh validator loop — and the
+// go_verify_citools workcell-bootstrap-audit dispatch), so a reviewer can diff
+// the two one-to-one.
+//
+// The block asserts that validator work runs under an explicit caller UID/GID
+// with isolated writable state, and that the manifest/bundle verifiers avoid
+// writing under the mounted repo:
+//
+//   - The ten build-and-test.sh probes and eight verify-release-bundle.sh
+//     probes came from two `for required in ...; do grep -Fq -- "${required}"
+//     FILE; done` loops whose stderr interpolated the needle into a shared
+//     per-file message; because every needle is a fixed `grep -Fq` literal,
+//     each check is kindPresent with the message computed verbatim as the
+//     shell's "Expected ... isolated writable state (${required})".
+//   - The trusted-docker-client.sh isolated-home probe is a single affirmative
+//     `grep -Fq` (kindPresent) with a fixed message.
+//   - The four mounted-repo-write-avoidance probes are NEGATED `grep -Fq`
+//     guards (`if grep -Fq X FILE; then ... exit 1`): the literal
+//     `${ROOT_DIR}/tmp/workcell-*` temp-root snippet present in the target is a
+//     violation, so each is kindAbsent (the `${` `}` are matched literally, as
+//     grep -Fq does).
+func validatorWritableStateChecks() []check {
+	cs := make([]check, 0, len(buildAndTestValidatorIsolationNeedles)+1+len(releaseBundleValidatorIsolationNeedles)+4)
+	for _, needle := range buildAndTestValidatorIsolationNeedles {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    needle,
+			message:    "Expected scripts/build-and-test.sh --docker to launch validator work under an explicit caller UID/GID with isolated writable state (" + needle + ")",
+			targetFile: buildAndTestRelPath,
+		})
+	}
+	cs = append(cs, check{
+		kind:       kindPresent,
+		pattern:    `fallback_home="${fallback_parent%/}/workcell-home-${uid}"`,
+		message:    "Expected trusted-docker-client.sh to synthesize an isolated home for passwd-less caller UIDs",
+		targetFile: trustedDockerClientRelPath,
+	})
+	for _, needle := range releaseBundleValidatorIsolationNeedles {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    needle,
+			message:    "Expected scripts/verify-release-bundle.sh to build bundles in the validator under an explicit caller UID/GID with isolated writable state (" + needle + ")",
+			targetFile: verifyReleaseBundleRelPath,
+		})
+	}
+	cs = append(cs,
+		check{
+			kind:       kindAbsent,
+			pattern:    "${ROOT_DIR}/tmp/workcell-build-input-nested",
+			message:    "Expected verify-build-input-manifest.sh nested-source checks to avoid writing under the mounted repo",
+			targetFile: verifyBuildInputManifestRelPath,
+		},
+		check{
+			kind:       kindAbsent,
+			pattern:    "${ROOT_DIR}/tmp/workcell-control-plane-nested",
+			message:    "Expected verify-control-plane-manifest.sh nested-source checks to avoid writing under the mounted repo",
+			targetFile: verifyControlPlaneManifestRelPath,
+		},
+		check{
+			kind:       kindAbsent,
+			pattern:    "${ROOT_DIR}/tmp/workcell-release-bundle",
+			message:    "Expected verify-release-bundle.sh temp roots to avoid writing under the mounted repo",
+			targetFile: verifyReleaseBundleRelPath,
+		},
+		check{
+			kind:       kindAbsent,
+			pattern:    "${ROOT_DIR}/tmp/workcell-repro",
+			message:    "Expected verify-reproducible-build.sh OCI exports to avoid writing under the mounted repo",
+			targetFile: verifyReproducibleBuildRelPath,
+		},
+	)
+	return cs
+}
+
+// CheckValidatorWritableState runs the twenty-three validator writable-state
+// isolation invariants against the repo rooted at rootDir, in the shell's
+// original order.  It returns nil when every invariant holds (the shell's exit
+// 0), or an error whose message equals the shell's stderr for the first
+// violated invariant (the shell's exit 1).
+func CheckValidatorWritableState(rootDir string) error {
+	return evaluate(rootDir, validatorWritableStateChecks())
+}
+
 // holds reports whether the invariant is satisfied by the launcher text.
 func (c check) holds(text string) bool {
 	switch c.kind {
