@@ -119,6 +119,10 @@ func subcommands() []subcommand {
 		{"workcell-validator-dispatch-loops", "ROOT_DIR", 1, 1, cmdWorkcellValidatorDispatchLoops},
 		{"workcell-caller-required-contracts", "ROOT_DIR", 1, 1, cmdWorkcellCallerRequiredContracts},
 		{"workcell-fnblock-goblock-gitenv", "ROOT_DIR", 1, 1, cmdWorkcellFnBlockGoBlockGitEnv},
+		{"workcell-buildx-builder-trust", "ROOT_DIR", 1, 1, cmdWorkcellBuildxBuilderTrust},
+		{"workcell-doc-scan-go-vcs", "ROOT_DIR", 1, 1, cmdWorkcellDocScanGoVcs},
+		{"workcell-smoke-chown-tar", "ROOT_DIR", 1, 1, cmdWorkcellSmokeChownTar},
+		{"workcell-dualstack-apply-plan", "ROOT_DIR", 1, 1, cmdWorkcellDualStackApplyPlan},
 	}
 }
 
@@ -718,4 +722,40 @@ func cmdWorkcellCallerRequiredContracts(args []string) error {
 // original stderr message for the first violated invariant.
 func cmdWorkcellFnBlockGoBlockGitEnv(args []string) error {
 	return workcellhardening.CheckFnBlockGoBlockGitEnv(args[0])
+}
+
+// cmdWorkcellBuildxBuilderTrust runs the eight buildx-builder-trust checks
+// (deterministic release builder, disposable validator-image cleanup across the
+// local lanes, reproducible-build builder teardown, trusted Buildx endpoint /
+// Docker-context resolution, and the colima-egress COLIMA_HOME pin) migrated out
+// of scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellBuildxBuilderTrust(args []string) error {
+	return workcellhardening.CheckBuildxBuilderTrust(args[0])
+}
+
+// cmdWorkcellDocScanGoVcs runs the two doc-scan / Go-VCS-stamping checks
+// (validate-repo venv-prune and go-run-env buildvcs disablement) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellDocScanGoVcs(args []string) error {
+	return workcellhardening.CheckDocScanGoVcs(args[0])
+}
+
+// cmdWorkcellSmokeChownTar runs the three container-smoke chown/tar checks (no
+// raw recursive chown, no tar-based staging or extraction) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellSmokeChownTar(args []string) error {
+	return workcellhardening.CheckSmokeChownTar(args[0])
+}
+
+// cmdWorkcellDualStackApplyPlan runs the seven dual-stack allowlist-apply-plan
+// checks (guarded apply path, ip6tables preflight, clear-plan render helper, and
+// the render_allowlist_apply_plan clear-plan/VM-resolution/no-host-resolution
+// function-block invariants) migrated out of scripts/verify-invariants.sh; it
+// fails (exit 1 via die()) with the shell's original stderr message for the first
+// violated invariant.
+func cmdWorkcellDualStackApplyPlan(args []string) error {
+	return workcellhardening.CheckDualStackApplyPlan(args[0])
 }

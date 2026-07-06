@@ -3502,6 +3502,282 @@ func CheckFnBlockGoBlockGitEnv(rootDir string) error {
 	return evaluate(rootDir, fnBlockGoBlockGitEnvChecks())
 }
 
+// jobDocsRelPath is the repo-relative path to the docs CI lane.  Only the
+// buildx-builder-trust validator-image-cleanup invariant reads this file (via
+// the per-check targetFile field), mirroring the shell `rg -q` that ran against
+// ${ROOT_DIR}/scripts/ci/job-docs.sh.
+const jobDocsRelPath = "scripts/ci/job-docs.sh"
+
+// goRunEnvRelPath is the repo-relative path to the Go run-env helper.  Only the
+// doc-scan-go-vcs Go-VCS-stamping invariant reads this file (via the per-check
+// targetFile field), mirroring the shell `grep -Fq` that ran against
+// ${ROOT_DIR}/scripts/lib/go-run-env.sh.
+const goRunEnvRelPath = "scripts/lib/go-run-env.sh"
+
+// buildxBuilderTrustChecks lists the eight buildx-builder-trust invariants in
+// the same order as the former inline block in scripts/verify-invariants.sh
+// (the block between the buildx_cmd trusted-plugin loop and the
+// colima-egress-allowlist COLIMA_HOME pin check that immediately precedes the
+// already-migrated workcell-bootstrap-egress call), so a reviewer can diff the
+// two one-to-one.
+//
+// Every probe was an affirmative whole-file `rg -q` and every rg pattern is
+// metacharacter-free after unescaping (the trusted-docker-client probes escape
+// `\( \)` and `\$ \{ \}`; the others carry no active metacharacters), so each
+// reduces to fixed-string containment (kindPresent).
+//
+// The validator-image-cleanup guard was one shell `if` joining three `rg -q`
+// probes with `||` under a single message (WORKCELL_KEEP_VALIDATOR_IMAGE in
+// build-and-test.sh, cleanup_workcell_validator_image in job-validate.sh and
+// job-docs.sh); it is expressed here as three ordered kindPresent checks sharing
+// that message, which is behaviourally identical (any missing probe yields the
+// same stderr and exit 1).  Each check reads its own target file via the
+// per-check targetFile field.
+var buildxBuilderTrustChecks = []check{
+	{
+		kind:       kindPresent,
+		pattern:    `BUILDX_BUILDER="workcell-release-`,
+		message:    "Expected verify-release-bundle.sh to choose a deterministic context-scoped Buildx builder by default",
+		targetFile: verifyReleaseBundleRelPath,
+	},
+	{
+		// kindPresent (first probe of the validator-image-cleanup guard).
+		kind:       kindPresent,
+		pattern:    "WORKCELL_KEEP_VALIDATOR_IMAGE",
+		message:    "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+		targetFile: buildAndTestRelPath,
+	},
+	{
+		// kindPresent (second probe): shares the guard's message.
+		kind:       kindPresent,
+		pattern:    "cleanup_workcell_validator_image",
+		message:    "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+		targetFile: jobValidateRelPath,
+	},
+	{
+		// kindPresent (third probe): shares the guard's message.
+		kind:       kindPresent,
+		pattern:    "cleanup_workcell_validator_image",
+		message:    "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+		targetFile: jobDocsRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "WORKCELL_REPRO_OWNS_BUILDER",
+		message:    "Expected reproducible-build validation to remove its default Workcell-owned Buildx builder on exit",
+		targetFile: verifyReproducibleBuildRelPath,
+	},
+	{
+		// kindPresent: the shell's `buildx_expected_endpoints\(\)` escaped its
+		// parens, so it is fixed-string containment of the literal
+		// `buildx_expected_endpoints()`.
+		kind:       kindPresent,
+		pattern:    "buildx_expected_endpoints()",
+		message:    "Expected trusted-docker-client.sh to compute accepted Buildx endpoints from the active Docker context or host",
+		targetFile: trustedDockerClientRelPath,
+	},
+	{
+		// kindPresent: the shell's
+		// `docker context inspect "\$\{DOCKER_CONTEXT_NAME\}" --format` escaped
+		// every metacharacter, so it is fixed-string containment of the literal
+		// invocation.
+		kind:       kindPresent,
+		pattern:    `docker context inspect "${DOCKER_CONTEXT_NAME}" --format`,
+		message:    "Expected trusted-docker-client.sh to resolve Docker context host URIs when validating existing Buildx builders",
+		targetFile: trustedDockerClientRelPath,
+	},
+	{
+		// kindPresent: the shell's `COLIMA_HOME="\$\{colima_home\}"` escaped every
+		// metacharacter, so it is fixed-string containment of the literal
+		// assignment.
+		kind:       kindPresent,
+		pattern:    `COLIMA_HOME="${colima_home}"`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to pin COLIMA_HOME while operating on Lima state",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+}
+
+// CheckBuildxBuilderTrust runs the eight buildx-builder-trust invariants against
+// the repo rooted at rootDir, in the shell's original order.  It returns nil when
+// every invariant holds (the shell's exit 0), or an error whose message equals
+// the shell's stderr for the first violated invariant (the shell's exit 1).
+func CheckBuildxBuilderTrust(rootDir string) error {
+	return evaluate(rootDir, buildxBuilderTrustChecks)
+}
+
+// docScanGoVcsChecks lists the two doc-scan / Go-VCS-stamping invariants in the
+// same order as the contiguous inline pair in scripts/verify-invariants.sh (the
+// two grep -Fq probes between the already-migrated workcell-git-index-shadow call
+// and the go_cache_root ensure_go_run_env exec block).  Only this contiguous pair
+// is migrated: the go_cache_root exec/`case $(uname -s)` block and the
+// publishpr.ValidateBaseName go_function_block probe that follow it stay inline in
+// the shell to preserve first-failure order (the exec block is not a simple
+// grep/rg check, so bundling across it would not be byte-exact).
+//
+// Both probes were fixed-string `grep -Fq` (the venv-prune needle carries a `${}`
+// the shell passed literally; the go-vcs needle escaped its `"` and `$`), so each
+// is kindPresent.  Each reads its own target file via the per-check targetFile
+// field.
+var docScanGoVcsChecks = []check{
+	{
+		kind:       kindPresent,
+		pattern:    `-path "${ROOT_DIR}/.venv" -prune -o`,
+		message:    "Expected validate-repo.sh to prune repo-local virtualenv content from documentation scans",
+		targetFile: validateRepoRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `build -buildvcs=false -o "${output_path}"`,
+		message:    "Expected build_go_tool_in_repo to disable Go VCS stamping in untrusted repos",
+		targetFile: goRunEnvRelPath,
+	},
+}
+
+// CheckDocScanGoVcs runs the two doc-scan / Go-VCS-stamping invariants against
+// the repo rooted at rootDir, in the shell's original order.  It returns nil when
+// every invariant holds (the shell's exit 0), or an error whose message equals
+// the shell's stderr for the first violated invariant (the shell's exit 1).
+func CheckDocScanGoVcs(rootDir string) error {
+	return evaluate(rootDir, docScanGoVcsChecks)
+}
+
+// smokeChownTarChecks lists the three container-smoke chown/tar invariants in the
+// same order as the former inline block in scripts/verify-invariants.sh (the
+// block between the container-smoke --self-entrypoint-probe exec fixture and the
+// container-smoke --self-test-host-path-hardening exec fixture), so a reviewer can
+// diff the two one-to-one.
+//
+// All three were NEGATED `if rg -q PATTERN; then ... exit 1` guards (a match is a
+// violation), and every rg pattern is metacharacter-free after unescaping (the
+// chown and tar-create probes escape `\$ \{ \}`; `tar -xf -` carries no active
+// metacharacters), so each reduces to negated fixed-string containment
+// (kindAbsent).  All three read scripts/container-smoke.sh via the per-check
+// targetFile field.
+var smokeChownTarChecks = []check{
+	{
+		kind:       kindAbsent,
+		pattern:    `chown -R "${HOST_UID}:${HOST_GID}" "${target_path}"`,
+		message:    "Expected scripts/container-smoke.sh to avoid raw recursive chown on host-managed paths",
+		targetFile: containerSmokeRelPath,
+	},
+	{
+		kind:       kindAbsent,
+		pattern:    `tar --null -T "${path_list_filtered}" -cf -`,
+		message:    "Expected scripts/container-smoke.sh to avoid tar-based smoke workspace staging",
+		targetFile: containerSmokeRelPath,
+	},
+	{
+		kind:       kindAbsent,
+		pattern:    "tar -xf -",
+		message:    "Expected scripts/container-smoke.sh to avoid tar-based extraction for smoke workspace staging",
+		targetFile: containerSmokeRelPath,
+	},
+}
+
+// CheckSmokeChownTar runs the three container-smoke chown/tar invariants against
+// the repo rooted at rootDir, in the shell's original order.  It returns nil when
+// every invariant holds (the shell's exit 0), or an error whose message equals
+// the shell's stderr for the first violated invariant (the shell's exit 1).
+func CheckSmokeChownTar(rootDir string) error {
+	return evaluate(rootDir, smokeChownTarChecks)
+}
+
+// dualStackApplyPlanChecks lists the seven dual-stack allowlist-apply-plan
+// invariants in the same order as the contiguous inline run in
+// scripts/verify-invariants.sh (the run between the bracketed-IPv6-literal
+// egress-plan exec probes and the NEGATED render_allowlist_apply_plan
+// clear_rules function-block-regex guard).  Only this contiguous run of seven is
+// migrated: the immediately following guard negates a GENUINE regex
+// (`^[[:space:]]*clear_rules$`) inside a function block, for which no
+// function-block-regex-absent kind exists, and the run_in_vm awk-ordering block
+// after it is not a simple grep/rg check; both stay inline to preserve
+// first-failure order.
+//
+// All seven read scripts/colima-egress-allowlist.sh via the per-check targetFile
+// field.  Matching semantics mirror the shell exactly:
+//   - The two whole-file affirmative `rg -q` probes escaped every metacharacter
+//     (`run_in_vm "\$\(render_allowlist_apply_plan\)"`) or carried none
+//     (`if ! type ip6tables >/dev/null 2>&1; then`), so they are fixed-string
+//     containment (kindPresent).
+//   - The render_clear_plan definition probe anchored `^render_clear_plan\(\)`
+//     to a line start with escaped parens, so it is a genuine (line-anchored)
+//     regex (kindRegexPresent) whose `\(\)` matches literal `()`.
+//   - The three affirmative function_block_contains_regex probes scope to
+//     render_allowlist_apply_plan (kindFunctionBlockRegex); their patterns
+//     (render_clear_plan, resolve_vm_endpoint_ips, getent ahosts) are
+//     metacharacter-free, so they behave like fixed-string containment today but
+//     keep genuine-regex semantics for parity with `grep -q`.
+//   - The NEGATED function_block_contains_regex probe for render_allowlist_plan
+//     has a metacharacter-free pattern, so its `grep -q` reduces to fixed-string
+//     containment; a match inside the block is a violation, expressed as
+//     kindFunctionBlockAbsent.
+var dualStackApplyPlanChecks = []check{
+	{
+		kind:       kindPresent,
+		pattern:    `run_in_vm "$(render_allowlist_apply_plan)"`,
+		message:    "Expected dual-stack allowlist apply path to use the guarded apply plan",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "if ! type ip6tables >/dev/null 2>&1; then",
+		message:    "Expected dual-stack allowlist apply plan to preflight ip6tables before rewriting rules",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		// kindRegexPresent: the shell's line-anchored `^render_clear_plan\(\)`
+		// keeps its `^` anchor; regexMatchesAnyLine anchors it to each line's
+		// start (rg's line-oriented default), and `\(\)` matches literal `()`.
+		kind:       kindRegexPresent,
+		pattern:    `^render_clear_plan\(\)`,
+		message:    "Expected dual-stack allowlist helper to render clear rules in the VM apply plan",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:         kindFunctionBlockRegex,
+		functionName: "render_allowlist_apply_plan",
+		pattern:      "render_clear_plan",
+		message:      "Expected dual-stack allowlist apply plan to include render_clear_plan",
+		targetFile:   colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:         kindFunctionBlockRegex,
+		functionName: "render_allowlist_apply_plan",
+		pattern:      "resolve_vm_endpoint_ips",
+		message:      "Expected dual-stack allowlist apply plan to resolve hostnames inside the VM before applying rules",
+		targetFile:   colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:         kindFunctionBlockRegex,
+		functionName: "render_allowlist_apply_plan",
+		pattern:      "getent ahosts",
+		message:      "Expected dual-stack allowlist apply plan to use VM DNS results for hostname endpoints",
+		targetFile:   colimaEgressAllowlistRelPath,
+	},
+	{
+		// kindFunctionBlockAbsent: the shell's negated
+		// function_block_contains_regex has a metacharacter-free pattern, so
+		// `grep -q` reduces to fixed-string containment; a match inside the
+		// render_allowlist_apply_plan block is a violation.  render_allowlist_plan
+		// is not a substring of the block's render_allowlist_apply_plan opening
+		// line, so the block name cannot false-match.
+		kind:         kindFunctionBlockAbsent,
+		functionName: "render_allowlist_apply_plan",
+		pattern:      "render_allowlist_plan",
+		message:      "Expected dual-stack allowlist apply plan to avoid host-resolved endpoint rules",
+		targetFile:   colimaEgressAllowlistRelPath,
+	},
+}
+
+// CheckDualStackApplyPlan runs the seven dual-stack allowlist-apply-plan
+// invariants against the repo rooted at rootDir, in the shell's original order.
+// It returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant (the
+// shell's exit 1).
+func CheckDualStackApplyPlan(rootDir string) error {
+	return evaluate(rootDir, dualStackApplyPlanChecks)
+}
+
 // holds reports whether the invariant is satisfied by the launcher text.
 func (c check) holds(text string) bool {
 	switch c.kind {

@@ -2870,37 +2870,19 @@ for script in \
   fi
 done
 
-if ! rg -q 'BUILDX_BUILDER="workcell-release-' "${ROOT_DIR}/scripts/verify-release-bundle.sh"; then
-  echo "Expected verify-release-bundle.sh to choose a deterministic context-scoped Buildx builder by default" >&2
-  exit 1
-fi
-
-if ! rg -q 'WORKCELL_KEEP_VALIDATOR_IMAGE' "${ROOT_DIR}/scripts/build-and-test.sh" ||
-  ! rg -q 'cleanup_workcell_validator_image' "${ROOT_DIR}/scripts/ci/job-validate.sh" ||
-  ! rg -q 'cleanup_workcell_validator_image' "${ROOT_DIR}/scripts/ci/job-docs.sh"; then
-  echo "Expected local validator lanes to remove disposable validator images unless explicitly retained" >&2
-  exit 1
-fi
-
-if ! rg -q 'WORKCELL_REPRO_OWNS_BUILDER' "${ROOT_DIR}/scripts/verify-reproducible-build.sh"; then
-  echo "Expected reproducible-build validation to remove its default Workcell-owned Buildx builder on exit" >&2
-  exit 1
-fi
-
-if ! rg -q 'buildx_expected_endpoints\(\)' "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"; then
-  echo "Expected trusted-docker-client.sh to compute accepted Buildx endpoints from the active Docker context or host" >&2
-  exit 1
-fi
-
-if ! rg -q 'docker context inspect "\$\{DOCKER_CONTEXT_NAME\}" --format' "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"; then
-  echo "Expected trusted-docker-client.sh to resolve Docker context host URIs when validating existing Buildx builders" >&2
-  exit 1
-fi
-
-if ! rg -q 'COLIMA_HOME="\$\{colima_home\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected scripts/colima-egress-allowlist.sh to pin COLIMA_HOME while operating on Lima state" >&2
-  exit 1
-fi
+# Assert the buildx-builder-trust invariants: verify-release-bundle.sh picks a
+# deterministic context-scoped Buildx builder, the local validator lanes remove
+# disposable validator images unless retained, reproducible-build validation tears
+# down its default Workcell-owned builder, trusted-docker-client.sh computes and
+# resolves accepted Buildx endpoints from the Docker context, and
+# colima-egress-allowlist.sh pins COLIMA_HOME while operating on Lima state.
+# Migrated to Go (D3): internal/workcellhardening behind the workcell-citools
+# workcell-buildx-builder-trust subcommand preserves the exact exit codes and
+# stderr messages of the former inline rg block (eight fixed-string presence
+# probes, including the three-probe validator-image-cleanup `||` guard that shares
+# one message across build-and-test.sh, job-validate.sh and job-docs.sh).
+# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
+go_verify_citools workcell-buildx-builder-trust "${ROOT_DIR}" || exit 1
 
 # Assert the bootstrap egress-endpoint invariants: scripts/workcell allows
 # the two Debian snapshot mirrors and the two Docker blob-storage CDNs
@@ -2947,16 +2929,17 @@ go_verify_citools workcell-fnblock-goblock-gitenv "${ROOT_DIR}" || exit 1
 
 go_verify_citools workcell-git-index-shadow "${ROOT_DIR}" || exit 1
 
-# shellcheck disable=SC2016
-if ! grep -Fq -- '-path "${ROOT_DIR}/.venv" -prune -o' "${ROOT_DIR}/scripts/validate-repo.sh"; then
-  echo "Expected validate-repo.sh to prune repo-local virtualenv content from documentation scans" >&2
-  exit 1
-fi
-
-if ! grep -Fq "build -buildvcs=false -o \"\${output_path}\"" "${ROOT_DIR}/scripts/lib/go-run-env.sh"; then
-  echo "Expected build_go_tool_in_repo to disable Go VCS stamping in untrusted repos" >&2
-  exit 1
-fi
+# Assert the doc-scan / Go-VCS-stamping invariants: validate-repo.sh prunes
+# repo-local virtualenv content from documentation scans, and build_go_tool_in_repo
+# (scripts/lib/go-run-env.sh) disables Go VCS stamping in untrusted repos.
+# Migrated to Go (D3): internal/workcellhardening behind the workcell-citools
+# workcell-doc-scan-go-vcs subcommand preserves the exact exit codes and stderr
+# messages of the former inline grep -Fq pair (two fixed-string presence probes).
+# Only this contiguous pair is migrated; the following go_cache_root
+# ensure_go_run_env exec block and the publishpr.ValidateBaseName
+# go_function_block probe stay inline to preserve first-failure order.  `|| exit 1`
+# matches the former inline block's `exit 1` on a violated invariant.
+go_verify_citools workcell-doc-scan-go-vcs "${ROOT_DIR}" || exit 1
 
 go_cache_root_expected=""
 case "$(uname -s)" in
@@ -3618,18 +3601,14 @@ if [[ -e "${CONTAINER_SMOKE_PATH_MARKER}" ]]; then
   exit 1
 fi
 
-if rg -q 'chown -R "\$\{HOST_UID\}:\$\{HOST_GID\}" "\$\{target_path\}"' "${ROOT_DIR}/scripts/container-smoke.sh"; then
-  echo "Expected scripts/container-smoke.sh to avoid raw recursive chown on host-managed paths" >&2
-  exit 1
-fi
-if rg -q 'tar --null -T "\$\{path_list_filtered\}" -cf -' "${ROOT_DIR}/scripts/container-smoke.sh"; then
-  echo "Expected scripts/container-smoke.sh to avoid tar-based smoke workspace staging" >&2
-  exit 1
-fi
-if rg -q 'tar -xf -' "${ROOT_DIR}/scripts/container-smoke.sh"; then
-  echo "Expected scripts/container-smoke.sh to avoid tar-based extraction for smoke workspace staging" >&2
-  exit 1
-fi
+# Assert the container-smoke chown/tar invariants on scripts/container-smoke.sh:
+# no raw recursive chown on host-managed paths, and no tar-based smoke workspace
+# staging or extraction.  Migrated to Go (D3): internal/workcellhardening behind
+# the workcell-citools workcell-smoke-chown-tar subcommand preserves the exact
+# exit codes and stderr messages of the former inline negated rg block (three
+# fixed-string absence probes).  `|| exit 1` matches the former inline block's
+# `exit 1` on a violated invariant.
+go_verify_citools workcell-smoke-chown-tar "${ROOT_DIR}" || exit 1
 
 if ! "${ROOT_DIR}/scripts/container-smoke.sh" --self-test-host-path-hardening \
   >/tmp/workcell-container-smoke-host-path-hardening.out 2>&1; then
@@ -3725,34 +3704,22 @@ if ! echo "${EGRESS_PLAN_IPV6_LITERAL}" | grep -q 'iptables -A WORKCELL_EGRESS -
   echo "Expected bracketed IPv6 literal endpoints to still default-drop IPv4 traffic" >&2
   exit 1
 fi
-if ! rg -q 'run_in_vm "\$\(render_allowlist_apply_plan\)"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected dual-stack allowlist apply path to use the guarded apply plan" >&2
-  exit 1
-fi
-if ! rg -q 'if ! type ip6tables >/dev/null 2>&1; then' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected dual-stack allowlist apply plan to preflight ip6tables before rewriting rules" >&2
-  exit 1
-fi
-if ! rg -q '^render_clear_plan\(\)' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected dual-stack allowlist helper to render clear rules in the VM apply plan" >&2
-  exit 1
-fi
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" 'render_clear_plan'; then
-  echo "Expected dual-stack allowlist apply plan to include render_clear_plan" >&2
-  exit 1
-fi
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" 'resolve_vm_endpoint_ips'; then
-  echo "Expected dual-stack allowlist apply plan to resolve hostnames inside the VM before applying rules" >&2
-  exit 1
-fi
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" 'getent ahosts'; then
-  echo "Expected dual-stack allowlist apply plan to use VM DNS results for hostname endpoints" >&2
-  exit 1
-fi
-if function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" 'render_allowlist_plan'; then
-  echo "Expected dual-stack allowlist apply plan to avoid host-resolved endpoint rules" >&2
-  exit 1
-fi
+# Assert the dual-stack allowlist-apply-plan invariants on
+# scripts/colima-egress-allowlist.sh: the guarded apply path runs the guarded
+# plan, the plan preflights ip6tables and renders a clear-rules helper, and
+# render_allowlist_apply_plan renders the clear plan, resolves endpoint IPs inside
+# the VM (getent ahosts) and avoids host-resolved endpoint rules.  Migrated to Go
+# (D3): internal/workcellhardening behind the workcell-citools
+# workcell-dualstack-apply-plan subcommand preserves the exact exit codes and
+# stderr messages of the former inline rg / function_block_contains_regex block,
+# including the two fixed-string rg probes, the line-anchored render_clear_plan
+# definition regex, the three affirmative function-block regex probes, and the
+# negated (metacharacter-free) render_allowlist_plan function-block probe.  The
+# following clear_rules guard (a negated function-block GENUINE regex) and the
+# run_in_vm awk-ordering block stay inline to preserve first-failure order.
+# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
+go_verify_citools workcell-dualstack-apply-plan "${ROOT_DIR}" || exit 1
+
 if function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" '^[[:space:]]*clear_rules$'; then
   echo "Expected dual-stack allowlist apply plan to avoid invoking clear_rules during render" >&2
   exit 1
