@@ -51,8 +51,9 @@
 //   - Line-count threshold (`[[ "$(grep -Fc NEEDLE f)" -lt N ]]`, counting
 //     matching LINES): kindCountAtLeast with minCount.
 //   - Filesystem state (no content read): kindDirExists (`[[ -d ]]`, os.Stat +
-//     IsDir) and kindExecutable (`[[ -x ]]`, syscall.Access with X_OK — the
-//     same access(2) primitive Bash's -x uses).
+//     IsDir), kindExecutable (`[[ -x ]]`, syscall.Access with X_OK — the
+//     same access(2) primitive Bash's -x uses), and kindFileExists (`[[ -f ]]`,
+//     os.Stat + Mode().IsRegular()).
 //   - Typed JSON expression (`jq -e '.a.b == <literal>'` on a static file):
 //     kindJSONExprEval, comparing with jq's type-aware == (see
 //     navigateJSONPath).
@@ -82,13 +83,9 @@
 // (1) Still-migratable static checks not yet ported — these CAN move here in
 // future increments and should not be read as "done":
 //
-//   - `head`/`rg`/`grep -Fq` helper loops over repo files (for example the
-//     host-gate script loop and the trusted-Docker client loops).
 //   - `jq -e` guards over STATIC settings files whose expressions go beyond
 //     `.<path> == <scalar>` (array equality `== []`, index `[0]`, truthiness,
 //     and `| type`), which need richer kindJSONExprEval support.
-//   - filesystem guards embedded in shell `for` loops (for example a
-//     `[[ ! -x "${scenario_script}" ]]` scan over a computed script list).
 //
 // (2) Checks that are NOT expressible as a static-file invariant and are
 // intentionally left in bash:
@@ -423,6 +420,16 @@ const (
 	// mirrors Bash `-x` via syscall.Access(path, X_OK) — the same access(2)
 	// primitive Bash uses — rather than reading content or inspecting mode bits.
 	kindExecutable
+	// kindFileExists requires the repo-relative path targetPath to be an
+	// existing REGULAR file under rootDir, mirroring
+	// `if [[ ! -f "${ROOT_DIR}/PATH" ]]` (a missing path, a directory, or any
+	// other non-regular file is a violation → exit 1).  Like kindDirExists /
+	// kindExecutable this is a FILESYSTEM check: evaluate stats
+	// filepath.Join(rootDir, targetPath) and holds requires os.Stat to succeed
+	// AND info.Mode().IsRegular() — the same "regular file" predicate Bash's -f
+	// uses (which, unlike -e, rejects directories) — rather than reading the
+	// path as file content.
+	kindFileExists
 	// kindJSONExprEval requires the jq comparison expression
 	// `<jsonPath> == <jsonExpectedRaw>` to evaluate TRUE against the target file
 	// parsed as JSON, mirroring a NEGATED `jq -e` guard
@@ -472,10 +479,10 @@ type check struct {
 	// the shell's `grep -Fc ... -lt N` count guard.
 	minCount int
 	// targetPath is the repo-relative path a filesystem check (kindDirExists /
-	// kindExecutable) stats under rootDir.  It is used only by those two kinds
-	// (every other kind reads file content via targetFile / targetFiles); the
-	// filesystem kinds never read the path as content, so leaving targetFile
-	// empty for them does not trigger a launcherRelPath read.
+	// kindExecutable / kindFileExists) stats under rootDir.  It is used only by
+	// those three kinds (every other kind reads file content via targetFile /
+	// targetFiles); the filesystem kinds never read the path as content, so
+	// leaving targetFile empty for them does not trigger a launcherRelPath read.
 	targetPath string
 	// jsonPath is the dotted JSON object path a kindJSONExprEval check navigates
 	// (e.g. ".security.folderTrust.enabled"), mirroring the left-hand side of the
@@ -586,9 +593,10 @@ func Check(rootDir string) error {
 // (kindAbsent/kindRegexAbsent/kindFunctionBlockAbsent/
 // kindFunctionBlockRegexAbsent) checks pass.
 //
-// The filesystem kinds (kindDirExists/kindExecutable) do not read content:
-// evaluate stats rootDir/targetPath, mirroring the shell's `[[ ! -d ]]` /
-// `[[ ! -x ]]` tests, so a missing path is a violation for both.
+// The filesystem kinds (kindDirExists/kindExecutable/kindFileExists) do not
+// read content: evaluate stats rootDir/targetPath, mirroring the shell's
+// `[[ ! -d ]]` / `[[ ! -x ]]` / `[[ ! -f ]]` tests, so a missing path is a
+// violation for all three.
 func evaluate(rootDir string, cs []check) error {
 	cache := make(map[string]string)
 	readTarget := func(rel string) string {
@@ -621,10 +629,11 @@ func evaluate(rootDir string, cs []check) error {
 			}
 			continue
 		}
-		if c.kind == kindDirExists || c.kind == kindExecutable {
+		if c.kind == kindDirExists || c.kind == kindExecutable || c.kind == kindFileExists {
 			// Filesystem kinds stat rootDir/targetPath instead of reading a
-			// file's content, mirroring the shell's `[[ ! -d ]]` / `[[ ! -x ]]`
-			// path tests; holds ignores the (empty) text argument for them.
+			// file's content, mirroring the shell's `[[ ! -d ]]` / `[[ ! -x ]]` /
+			// `[[ ! -f ]]` path tests; holds ignores the (empty) text argument
+			// for them.
 			if !c.holds("", rootDir) {
 				return errors.New(c.violationMessage(rootDir))
 			}
@@ -4171,6 +4180,58 @@ func CheckDocsExamplesDir(rootDir string) error {
 	return evaluate(rootDir, docsExamplesDirChecks)
 }
 
+// scenarioScriptsPresentChecks holds the four contiguous scenario-harness
+// filesystem invariants migrated out of scripts/verify-invariants.sh, in the
+// shell's original order.  The first is the lone
+// `if [[ ! -f "${ROOT_DIR}/tests/scenarios/manifest.json" ]]` guard (a
+// kindFileExists check that stats rootDir/tests/scenarios/manifest.json; the
+// shell message was a static "tests/scenarios/manifest.json must exist" with no
+// path interpolation).  The remaining three are the static
+// `for scenario_script in ...; do [[ ! -x "${scenario_script}" ]]; done` loop
+// over the three scenario scripts (kindExecutable checks); the shell message
+// interpolated the absolute ${scenario_script} (`${ROOT_DIR}/<path>`), so
+// messageIncludesTargetPath appends rootDir + "/" + targetPath to reproduce it
+// byte-for-byte.  The `jq -e` PreToolUse-hook guard that immediately follows the
+// loop in the shell (an array/pipe expression) stays inline in bash, so this
+// group is wired only across the four contiguous filesystem checks.
+var scenarioScriptsPresentChecks = []check{
+	{
+		kind:       kindFileExists,
+		targetPath: "tests/scenarios/manifest.json",
+		message:    "tests/scenarios/manifest.json must exist",
+	},
+	{
+		kind:                      kindExecutable,
+		targetPath:                "scripts/run-scenario-tests.sh",
+		message:                   "Expected executable scenario script: ",
+		messageIncludesTargetPath: true,
+	},
+	{
+		kind:                      kindExecutable,
+		targetPath:                "scripts/verify-scenario-coverage.sh",
+		message:                   "Expected executable scenario script: ",
+		messageIncludesTargetPath: true,
+	},
+	{
+		kind:                      kindExecutable,
+		targetPath:                "scripts/verify-control-plane-parity.sh",
+		message:                   "Expected executable scenario script: ",
+		messageIncludesTargetPath: true,
+	},
+}
+
+// CheckScenarioScriptsPresent runs the four scenario-harness filesystem
+// invariants (the tests/scenarios/manifest.json regular-file check plus the
+// three executable scenario-script checks) against the repo rooted at rootDir,
+// in the shell's original order.  It returns nil when every invariant holds (the
+// shell's exit 0), or an error whose message equals the shell's stderr for the
+// first violated invariant (the shell's exit 1) — for the manifest check the
+// static message, and for a scenario-script check the fixed prefix plus the
+// absolute ${ROOT_DIR}/<path> script path.
+func CheckScenarioScriptsPresent(rootDir string) error {
+	return evaluate(rootDir, scenarioScriptsPresentChecks)
+}
+
 // claudeManagedSettingsRelPath is the repo-relative path to the Claude adapter
 // managed-settings file.  The claude-managed-bypass check reads it for its
 // bypass-permissions invariant, mirroring the shell `jq -e` probe that ran
@@ -4475,7 +4536,8 @@ func (c check) violationMessage(rootDir string) string {
 
 // holds reports whether the invariant is satisfied.  Content kinds inspect
 // text (the target file's contents); filesystem kinds (kindDirExists /
-// kindExecutable) ignore text and stat rootDir/targetPath instead.
+// kindExecutable / kindFileExists) ignore text and stat rootDir/targetPath
+// instead.
 func (c check) holds(text, rootDir string) bool {
 	switch c.kind {
 	case kindFunctionBlock:
@@ -4506,6 +4568,13 @@ func (c check) holds(text, rootDir string) bool {
 		// syscall.Access rather than inspecting Mode() bits. A missing path
 		// yields ENOENT, so this correctly returns false.
 		return syscall.Access(filepath.Join(rootDir, c.targetPath), 0x1) == nil
+	case kindFileExists:
+		// `[[ ! -f "${ROOT_DIR}/PATH" ]]`: holds only when the path exists and
+		// is a regular file. Bash `-f` (unlike `-e`) rejects directories and
+		// other special files, so mirror it with info.Mode().IsRegular(); a
+		// missing path yields an error and correctly returns false.
+		info, err := os.Stat(filepath.Join(rootDir, c.targetPath))
+		return err == nil && info.Mode().IsRegular()
 	case kindGoFunctionBlock:
 		block := extractGoFunctionBlock(text, c.functionName)
 		return strings.Contains(block, c.pattern)
