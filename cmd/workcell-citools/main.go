@@ -105,6 +105,7 @@ func subcommands() []subcommand {
 		{"workcell-publish-pr-shadow", "ROOT_DIR", 1, 1, cmdWorkcellPublishPrShadow},
 		{"workcell-shadow-enum-egress", "ROOT_DIR", 1, 1, cmdWorkcellShadowEnumEgress},
 		{"workcell-home-seed-provider-wrapper", "ROOT_DIR", 1, 1, cmdWorkcellHomeSeedProviderWrapper},
+		{"workcell-copilot-token-handoff", "ROOT_DIR", 1, 1, cmdWorkcellCopilotTokenHandoff},
 	}
 }
 
@@ -589,4 +590,12 @@ func cmdWorkcellShadowEnumEgress(args []string) error {
 // original stderr message for the first violated invariant.
 func cmdWorkcellHomeSeedProviderWrapper(args []string) error {
 	return workcellhardening.CheckHomeSeedProviderWrapper(args[0])
+}
+
+// cmdWorkcellCopilotTokenHandoff runs the twenty-nine Copilot prefix-scrub /
+// token-handoff checks migrated out of scripts/verify-invariants.sh; it fails
+// (exit 1 via die()) with the shell's original stderr message for the first
+// violated invariant.
+func cmdWorkcellCopilotTokenHandoff(args []string) error {
+	return workcellhardening.CheckCopilotTokenHandoff(args[0])
 }

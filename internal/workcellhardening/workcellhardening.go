@@ -98,6 +98,14 @@ const providerWrapperRelPath = "runtime/container/provider-wrapper.sh"
 // ${ROOT_DIR}/runtime/container/development-wrapper.sh.
 const developmentWrapperRelPath = "runtime/container/development-wrapper.sh"
 
+// containerSmokeRelPath is the repo-relative path to the container smoke
+// harness.  Only the Copilot-token-handoff leaf-permission guard reads this
+// file (via the per-check targetFile field) for its
+// stage_copilot_token_handoff_dir chmod probes, mirroring the shell
+// function_block_contains_fixed probes that ran against
+// ${ROOT_DIR}/scripts/container-smoke.sh.
+const containerSmokeRelPath = "scripts/container-smoke.sh"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -1106,6 +1114,235 @@ func homeSeedProviderWrapperChecks() []check {
 // first violated invariant (the shell's exit 1).
 func CheckHomeSeedProviderWrapper(rootDir string) error {
 	return evaluate(rootDir, homeSeedProviderWrapperChecks())
+}
+
+// copilotTokenHandoffChecks returns the twenty-nine Copilot prefix-scrub /
+// token-handoff invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the
+// home-seed-provider-wrapper subcommand and the internal/host/hoststate
+// stale-cleanup guard), so a reviewer can diff the two one-to-one.
+//
+// The first eight checks migrate the shell's `for copilot_wrapper in
+// provider-wrapper.sh development-wrapper.sh; do ...; done` loop, which ran
+// four prefix-scrub probes per wrapper.  The shell looped wrapper-outer,
+// probe-inner, so the checks are emitted wrapper-major (provider's four
+// probes, then development's four) to reproduce the shell's first-failure
+// stderr exactly.  Two probes are affirmative (`if ! grep -Fq` → the prefix
+// scrub must be present → kindPresent); two are negated (`if grep -Fq` → a
+// duplicate OIDC/experiment loop present is a violation → kindAbsent).  Each
+// message interpolates basename(wrapper) exactly as the shell's
+// `$(basename "${copilot_wrapper}")` did.  Every needle is a double-quoted
+// shell literal whose only escape is `\$`→`$`, reproduced byte-exact.
+//
+// The two-file COPILOT_HOME guard was one shell `if grep -Fq NEEDLE
+// provider-wrapper.sh home-control-plane.sh; then ... exit 1` — a negated
+// probe across TWO files (present in EITHER is a violation).  It is expressed
+// here as two ordered kindAbsent checks (absent from provider-wrapper.sh,
+// then absent from home-control-plane.sh) sharing the one message, which is
+// behaviourally identical: either file containing the needle makes the
+// first-matching check fail with that shared stderr.
+//
+// The remaining guards mirror the shell exactly.  Each multi-probe `||`
+// guard (several `grep -Fq` / function_block_contains_fixed probes joined by
+// `||` under one message) becomes an ordered run of checks sharing that
+// message, which is behaviourally identical (any probe failing yields the
+// same stderr and exit 1).  Affirmative `if ! grep -Fq` probes are
+// kindPresent; affirmative `if ! function_block_contains_fixed` probes are
+// kindFunctionBlock (grep -Fq fixed-string containment inside the named
+// block); every needle is metacharacter-free after unescaping the shell
+// quoting (`\$`→`$`, `\"`→`"`), so each is fixed-string containment against
+// the per-check targetFile.
+func copilotTokenHandoffChecks() []check {
+	var cs []check
+	// Guard 1: the copilot_wrapper prefix-scrub loop (wrapper-outer,
+	// probe-inner).
+	for _, rel := range []string{providerWrapperRelPath, developmentWrapperRelPath} {
+		base := filepath.Base(rel)
+		cs = append(cs,
+			check{
+				kind:       kindPresent,
+				pattern:    "${!COPILOT_@}",
+				message:    "Expected " + base + " to scrub unknown future Copilot env variables by prefix",
+				targetFile: rel,
+			},
+			check{
+				kind:       kindPresent,
+				pattern:    "${!GITHUB_COPILOT_@}",
+				message:    "Expected " + base + " to scrub unknown future GitHub Copilot env variables by prefix",
+				targetFile: rel,
+			},
+			check{
+				// kindAbsent: a duplicate OIDC token loop present is a violation.
+				kind:       kindAbsent,
+				pattern:    "${!GITHUB_COPILOT_OIDC_MCP_TOKEN@}",
+				message:    base + " must rely on the GITHUB_COPILOT_ prefix scrub instead of a duplicate OIDC token loop",
+				targetFile: rel,
+			},
+			check{
+				// kindAbsent: a duplicate experiment loop present is a violation.
+				kind:       kindAbsent,
+				pattern:    "${!COPILOT_EXP_@}",
+				message:    base + " must rely on the COPILOT_ prefix scrub instead of a duplicate experiment loop",
+				targetFile: rel,
+			},
+		)
+	}
+	cs = append(cs, []check{
+		// Guard 2: the two-file COPILOT_HOME token-copy guard (negated grep
+		// across provider-wrapper.sh then home-control-plane.sh).
+		{
+			kind:       kindAbsent,
+			pattern:    "${COPILOT_HOME}/workcell-token",
+			message:    "Copilot auth token must not be copied into COPILOT_HOME",
+			targetFile: providerWrapperRelPath,
+		},
+		{
+			kind:       kindAbsent,
+			pattern:    "${COPILOT_HOME}/workcell-token",
+			message:    "Copilot auth token must not be copied into COPILOT_HOME",
+			targetFile: homeControlPlaneRelPath,
+		},
+		// Guard 3: launcher prepares the host-mounted token handoff.
+		{
+			kind:    kindPresent,
+			pattern: `prepare_copilot_token_handoff_mount "$@"`,
+			message: "Expected launcher to prepare a host-mounted Copilot token handoff before docker run",
+		},
+		// Guard 4: launcher removes the Copilot token direct mounts.
+		{
+			kind:    kindPresent,
+			pattern: `DIRECT_SOURCE_MOUNTS=("${filtered_mounts[@]}")`,
+			message: "Expected launcher to remove Copilot token direct mounts after host-side handoff preparation",
+		},
+		// Guard 5: host and runtime Copilot auth classifiers share the no-auth
+		// subcommand helper (five function-block probes across scripts/workcell
+		// and provider-wrapper.sh, sharing one message).
+		{
+			kind:         kindFunctionBlock,
+			functionName: "copilot_no_auth_invocation",
+			pattern:      `-h | --help | -v | --version | help | version | completion)`,
+			message:      "Expected host and runtime Copilot auth classifiers to share the no-auth subcommand helper",
+		},
+		{
+			kind:         kindFunctionBlock,
+			functionName: "copilot_no_auth_invocation",
+			pattern:      `-h | --help | -v | --version | help | version | completion)`,
+			message:      "Expected host and runtime Copilot auth classifiers to share the no-auth subcommand helper",
+			targetFile:   providerWrapperRelPath,
+		},
+		{
+			kind:         kindFunctionBlock,
+			functionName: "copilot_host_invocation_requires_auth",
+			pattern:      `if copilot_no_auth_invocation "$@"; then`,
+			message:      "Expected host and runtime Copilot auth classifiers to share the no-auth subcommand helper",
+		},
+		{
+			kind:         kindFunctionBlock,
+			functionName: "fail_fast_for_missing_copilot_auth",
+			pattern:      `if copilot_no_auth_invocation "$@"; then`,
+			message:      "Expected host and runtime Copilot auth classifiers to share the no-auth subcommand helper",
+		},
+		{
+			kind:         kindFunctionBlock,
+			functionName: "copilot_invocation_requires_auth",
+			pattern:      `if copilot_no_auth_invocation "$@"; then`,
+			message:      "Expected host and runtime Copilot auth classifiers to share the no-auth subcommand helper",
+			targetFile:   providerWrapperRelPath,
+		},
+		// Guard 6: token handoff directory lives in the dedicated writable
+		// Colima handoff root (two whole-file grep probes sharing one message).
+		{
+			kind:    kindPresent,
+			pattern: "workcell-token-handoff",
+			message: "Expected Copilot token handoff directory to live in the dedicated writable Colima handoff root",
+		},
+		{
+			kind:    kindPresent,
+			pattern: `COPILOT_TOKEN_HANDOFF_DIR="$(mktemp -d "${token_handoff_parent}/copilot-token-handoff.XXXXXX")"`,
+			message: "Expected Copilot token handoff directory to live in the dedicated writable Colima handoff root",
+		},
+		// Guard 7: token handoff writes re-check the guarded Colima handoff
+		// root at the write site (three function-block probes in
+		// prepare_copilot_token_handoff_mount sharing one message).
+		{
+			kind:         kindFunctionBlock,
+			functionName: "prepare_copilot_token_handoff_mount",
+			pattern:      `token_handoff_parent="$(default_copilot_token_handoff_parent)" || exit $?`,
+			message:      "Expected Copilot token handoff writes to re-check the guarded Colima handoff root at the write site",
+		},
+		{
+			kind:         kindFunctionBlock,
+			functionName: "prepare_copilot_token_handoff_mount",
+			pattern:      `chmod 0700 "${token_handoff_parent}"`,
+			message:      "Expected Copilot token handoff writes to re-check the guarded Colima handoff root at the write site",
+		},
+		{
+			kind:         kindFunctionBlock,
+			functionName: "prepare_copilot_token_handoff_mount",
+			pattern:      `reject_symlinked_colima_staging_cache_roots || exit $?`,
+			message:      "Expected Copilot token handoff writes to re-check the guarded Colima handoff root at the write site",
+		},
+		// Guard 8: token handoff leaf permissions support cap-dropped container
+		// root (four function-block probes: two in scripts/workcell's
+		// prepare_copilot_token_handoff_mount, two in container-smoke.sh's
+		// stage_copilot_token_handoff_dir, sharing one message).
+		{
+			kind:         kindFunctionBlock,
+			functionName: "prepare_copilot_token_handoff_mount",
+			pattern:      `chmod 0733 "${COPILOT_TOKEN_HANDOFF_DIR}"`,
+			message:      "Expected Copilot token handoff leaf permissions to support cap-dropped container root without exposing parent traversal",
+		},
+		{
+			kind:         kindFunctionBlock,
+			functionName: "prepare_copilot_token_handoff_mount",
+			pattern:      `chmod 0444 "${COPILOT_TOKEN_HANDOFF_FILE}"`,
+			message:      "Expected Copilot token handoff leaf permissions to support cap-dropped container root without exposing parent traversal",
+		},
+		{
+			kind:         kindFunctionBlock,
+			functionName: "stage_copilot_token_handoff_dir",
+			pattern:      `chmod 0733 "${token_handoff_dir}"`,
+			message:      "Expected Copilot token handoff leaf permissions to support cap-dropped container root without exposing parent traversal",
+			targetFile:   containerSmokeRelPath,
+		},
+		{
+			kind:         kindFunctionBlock,
+			functionName: "stage_copilot_token_handoff_dir",
+			pattern:      `chmod 0444 "${token_handoff_file}"`,
+			message:      "Expected Copilot token handoff leaf permissions to support cap-dropped container root without exposing parent traversal",
+			targetFile:   containerSmokeRelPath,
+		},
+		// Guard 9: detached launches wait for the wrapper-side consumed marker
+		// (two whole-file grep probes sharing one message).
+		{
+			kind:    kindPresent,
+			pattern: `COPILOT_TOKEN_HANDOFF_CONSUMED_FILE="${COPILOT_TOKEN_HANDOFF_DIR}/copilot-token-consumed"`,
+			message: "Expected detached Copilot launches to wait for the wrapper-side token consumed marker",
+		},
+		{
+			kind:    kindPresent,
+			pattern: `while [[ ! -e "${COPILOT_TOKEN_HANDOFF_CONSUMED_FILE}" ]]; do`,
+			message: "Expected detached Copilot launches to wait for the wrapper-side token consumed marker",
+		},
+		// Guard 10: token handoff removes the staged token copy from the mounted
+		// injection bundle (one function-block probe).
+		{
+			kind:         kindFunctionBlock,
+			functionName: "prepare_copilot_token_handoff_mount",
+			pattern:      `rm -f -- "${source_path}"`,
+			message:      "Expected Copilot token handoff to remove the staged token copy from the mounted injection bundle",
+		},
+	}...)
+	return cs
+}
+
+// CheckCopilotTokenHandoff runs the twenty-nine Copilot prefix-scrub /
+// token-handoff invariants against the repo rooted at rootDir, in the shell's
+// original order.  It returns nil when every invariant holds (the shell's exit
+// 0), or an error whose message equals the shell's stderr for the first
+// violated invariant (the shell's exit 1).
+func CheckCopilotTokenHandoff(rootDir string) error {
+	return evaluate(rootDir, copilotTokenHandoffChecks())
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.

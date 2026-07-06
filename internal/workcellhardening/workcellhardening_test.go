@@ -1617,3 +1617,335 @@ func TestCheckHomeSeedProviderWrapperRealRepo(t *testing.T) {
 		t.Fatalf("CheckHomeSeedProviderWrapper(real repo) = %v, want nil", err)
 	}
 }
+
+// copilotHandoffHappyLauncher is a minimal but structurally faithful
+// scripts/workcell satisfying every scripts/workcell-targeted Copilot
+// token-handoff invariant: the three no-auth classifier function blocks, the
+// prepare_copilot_token_handoff_mount write-site re-check + leaf-permission +
+// staged-copy-removal probes, the whole-file handoff-dir mktemp + token-handoff
+// marker probes, and the DIRECT_SOURCE_MOUNTS / prepare "$@" launcher wiring.
+const copilotHandoffHappyLauncher = `#!/usr/bin/env bash
+set -euo pipefail
+copilot_no_auth_invocation() {
+  case "$1" in
+  -h | --help | -v | --version | help | version | completion)
+    return 0 ;;
+  esac
+  return 1
+}
+copilot_host_invocation_requires_auth() {
+  if copilot_no_auth_invocation "$@"; then
+    return 1
+  fi
+}
+fail_fast_for_missing_copilot_auth() {
+  if copilot_no_auth_invocation "$@"; then
+    return 0
+  fi
+}
+prepare_copilot_token_handoff_mount() {
+  token_handoff_parent="$(default_copilot_token_handoff_parent)" || exit $?
+  chmod 0700 "${token_handoff_parent}"
+  reject_symlinked_colima_staging_cache_roots || exit $?
+  COPILOT_TOKEN_HANDOFF_DIR="$(mktemp -d "${token_handoff_parent}/copilot-token-handoff.XXXXXX")"
+  chmod 0733 "${COPILOT_TOKEN_HANDOFF_DIR}"
+  chmod 0444 "${COPILOT_TOKEN_HANDOFF_FILE}"
+  rm -f -- "${source_path}"
+}
+main() {
+  prepare_copilot_token_handoff_mount "$@"
+  DIRECT_SOURCE_MOUNTS=("${filtered_mounts[@]}")
+  : "workcell-token-handoff"
+  COPILOT_TOKEN_HANDOFF_CONSUMED_FILE="${COPILOT_TOKEN_HANDOFF_DIR}/copilot-token-consumed"
+  while [[ ! -e "${COPILOT_TOKEN_HANDOFF_CONSUMED_FILE}" ]]; do
+    sleep 1
+  done
+}
+`
+
+// copilotHandoffHappyProvider is a minimal runtime/container/provider-wrapper.sh
+// satisfying the four provider prefix-scrub probes (two present, two absent),
+// the negated COPILOT_HOME token-copy guard, and the two shared no-auth
+// classifier function blocks.
+const copilotHandoffHappyProvider = `#!/usr/bin/env bash
+set -euo pipefail
+unset "${!COPILOT_@}"
+unset "${!GITHUB_COPILOT_@}"
+copilot_no_auth_invocation() {
+  case "$1" in
+  -h | --help | -v | --version | help | version | completion)
+    return 0 ;;
+  esac
+  return 1
+}
+copilot_invocation_requires_auth() {
+  if copilot_no_auth_invocation "$@"; then
+    return 0
+  fi
+}
+`
+
+// copilotHandoffHappyDevelopment is a minimal
+// runtime/container/development-wrapper.sh satisfying the four development
+// prefix-scrub probes (the only invariants that read this second wrapper).
+const copilotHandoffHappyDevelopment = `#!/usr/bin/env bash
+set -euo pipefail
+unset "${!COPILOT_@}"
+unset "${!GITHUB_COPILOT_@}"
+`
+
+// copilotHandoffHappyHome is a minimal runtime/container/home-control-plane.sh
+// that satisfies the negated COPILOT_HOME token-copy guard (the needle is
+// absent).
+const copilotHandoffHappyHome = `#!/usr/bin/env bash
+set -euo pipefail
+: "home control plane"
+`
+
+// copilotHandoffHappySmoke is a minimal scripts/container-smoke.sh satisfying
+// the two stage_copilot_token_handoff_dir leaf-permission probes.
+const copilotHandoffHappySmoke = `#!/usr/bin/env bash
+set -euo pipefail
+stage_copilot_token_handoff_dir() {
+  chmod 0733 "${token_handoff_dir}"
+  chmod 0444 "${token_handoff_file}"
+}
+`
+
+// writeCopilotHandoffRepo materializes a fake repo with the five files this
+// group reads set to the given bodies; a body of "" means "do not create that
+// file" (unreadable-target case).
+func writeCopilotHandoffRepo(t *testing.T, launcher, provider, development, home, smoke string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(launcherRelPath, launcher)
+	write(providerWrapperRelPath, provider)
+	write(developmentWrapperRelPath, development)
+	write(homeControlPlaneRelPath, home)
+	write(containerSmokeRelPath, smoke)
+	return root
+}
+
+func TestCheckCopilotTokenHandoff(t *testing.T) {
+	tests := []struct {
+		name        string
+		launcher    string
+		provider    string
+		development string
+		home        string
+		smoke       string
+		wantErr     string // "" means expect success
+	}{
+		{
+			name:        "happy path all invariants hold",
+			launcher:    copilotHandoffHappyLauncher,
+			provider:    copilotHandoffHappyProvider,
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+		},
+		{
+			// Guard 1, provider probe A (kindPresent): the COPILOT_ prefix scrub
+			// removed from provider-wrapper.sh; message names that wrapper.
+			name:        "provider missing COPILOT prefix scrub",
+			launcher:    copilotHandoffHappyLauncher,
+			provider:    strings.Replace(copilotHandoffHappyProvider, `unset "${!COPILOT_@}"`, "true", 1),
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Expected provider-wrapper.sh to scrub unknown future Copilot env variables by prefix",
+		},
+		{
+			// Guard 1, provider probe C (kindAbsent): a duplicate OIDC token loop
+			// present in provider-wrapper.sh is a violation.
+			name:        "provider reintroduces duplicate OIDC loop",
+			launcher:    copilotHandoffHappyLauncher,
+			provider:    copilotHandoffHappyProvider + "unset \"${!GITHUB_COPILOT_OIDC_MCP_TOKEN@}\"\n",
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "provider-wrapper.sh must rely on the GITHUB_COPILOT_ prefix scrub instead of a duplicate OIDC token loop",
+		},
+		{
+			// Guard 1, development side: the GitHub Copilot prefix scrub removed
+			// from development-wrapper.sh only; the four provider probes and the
+			// provider side of the loop pass first, proving wrapper-major ordering.
+			name:        "development missing GitHub Copilot prefix scrub",
+			launcher:    copilotHandoffHappyLauncher,
+			provider:    copilotHandoffHappyProvider,
+			development: strings.Replace(copilotHandoffHappyDevelopment, `unset "${!GITHUB_COPILOT_@}"`, "true", 1),
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Expected development-wrapper.sh to scrub unknown future GitHub Copilot env variables by prefix",
+		},
+		{
+			// Guard 2, first file (provider-wrapper.sh): the token-copy needle
+			// present is a violation.
+			name:        "provider copies token into COPILOT_HOME",
+			launcher:    copilotHandoffHappyLauncher,
+			provider:    copilotHandoffHappyProvider + "cp token \"${COPILOT_HOME}/workcell-token\"\n",
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Copilot auth token must not be copied into COPILOT_HOME",
+		},
+		{
+			// Guard 2, second file (home-control-plane.sh): provider is clean, so
+			// the first Guard-2 check passes and the home-control-plane check fires,
+			// proving the two-file ordering (provider before home).
+			name:        "home control plane copies token into COPILOT_HOME",
+			launcher:    copilotHandoffHappyLauncher,
+			provider:    copilotHandoffHappyProvider,
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome + "cp token \"${COPILOT_HOME}/workcell-token\"\n",
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Copilot auth token must not be copied into COPILOT_HOME",
+		},
+		{
+			// Guard 3 (kindPresent, scripts/workcell): the prepare "$@" call removed.
+			name:        "launcher missing prepare token handoff call",
+			launcher:    strings.Replace(copilotHandoffHappyLauncher, `prepare_copilot_token_handoff_mount "$@"`, "true", 1),
+			provider:    copilotHandoffHappyProvider,
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Expected launcher to prepare a host-mounted Copilot token handoff before docker run",
+		},
+		{
+			// Guard 5, scripts/workcell function-block probe: the no-auth subcommand
+			// case removed from copilot_no_auth_invocation.
+			name:        "launcher no-auth classifier missing shared helper",
+			launcher:    strings.Replace(copilotHandoffHappyLauncher, `-h | --help | -v | --version | help | version | completion)`, `-h)`, 1),
+			provider:    copilotHandoffHappyProvider,
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Expected host and runtime Copilot auth classifiers to share the no-auth subcommand helper",
+		},
+		{
+			// Guard 5, provider-wrapper.sh function-block probe: the shared helper
+			// call removed from copilot_invocation_requires_auth.
+			name:        "provider auth classifier missing shared helper",
+			launcher:    copilotHandoffHappyLauncher,
+			provider:    strings.Replace(copilotHandoffHappyProvider, `if copilot_no_auth_invocation "$@"; then`, "if false; then", 1),
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Expected host and runtime Copilot auth classifiers to share the no-auth subcommand helper",
+		},
+		{
+			// Guard 7, prepare_copilot_token_handoff_mount function-block probe: the
+			// write-site symlink re-check removed.
+			name:        "launcher missing write-site staging re-check",
+			launcher:    strings.Replace(copilotHandoffHappyLauncher, "reject_symlinked_colima_staging_cache_roots || exit $?", "true", 1),
+			provider:    copilotHandoffHappyProvider,
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Expected Copilot token handoff writes to re-check the guarded Colima handoff root at the write site",
+		},
+		{
+			// Guard 8, container-smoke.sh function-block probe (a different target
+			// file): the leaf-file chmod removed from stage_copilot_token_handoff_dir.
+			name:        "container smoke missing token leaf permission",
+			launcher:    copilotHandoffHappyLauncher,
+			provider:    copilotHandoffHappyProvider,
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       strings.Replace(copilotHandoffHappySmoke, `chmod 0444 "${token_handoff_file}"`, "true", 1),
+			wantErr:     "Expected Copilot token handoff leaf permissions to support cap-dropped container root without exposing parent traversal",
+		},
+		{
+			// Guard 9 (kindPresent, scripts/workcell): the consumed-marker wait loop
+			// removed.
+			name:        "launcher missing consumed marker wait",
+			launcher:    strings.Replace(copilotHandoffHappyLauncher, `while [[ ! -e "${COPILOT_TOKEN_HANDOFF_CONSUMED_FILE}" ]]; do`, "while false; do", 1),
+			provider:    copilotHandoffHappyProvider,
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Expected detached Copilot launches to wait for the wrapper-side token consumed marker",
+		},
+		{
+			// Guard 10, prepare_copilot_token_handoff_mount function-block probe: the
+			// staged-copy removal removed.
+			name:        "launcher missing staged token copy removal",
+			launcher:    strings.Replace(copilotHandoffHappyLauncher, `rm -f -- "${source_path}"`, "true", 1),
+			provider:    copilotHandoffHappyProvider,
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Expected Copilot token handoff to remove the staged token copy from the mounted injection bundle",
+		},
+		{
+			// A missing scripts/workcell is empty content: Guard 1 (wrappers) and
+			// Guard 2 pass, then Guard 3 (the first scripts/workcell probe) fails.
+			name:        "missing launcher",
+			launcher:    "",
+			provider:    copilotHandoffHappyProvider,
+			development: copilotHandoffHappyDevelopment,
+			home:        copilotHandoffHappyHome,
+			smoke:       copilotHandoffHappySmoke,
+			wantErr:     "Expected launcher to prepare a host-mounted Copilot token handoff before docker run",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeCopilotHandoffRepo(t, tc.launcher, tc.provider, tc.development, tc.home, tc.smoke)
+			err := CheckCopilotTokenHandoff(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckCopilotTokenHandoff() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckCopilotTokenHandoff() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckCopilotTokenHandoff() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckCopilotTokenHandoffCount asserts the generated check list contains
+// exactly twenty-nine invariants (eight prefix-scrub loop checks + twenty-one
+// remaining probes), guarding against an accidentally truncated loop or block.
+func TestCheckCopilotTokenHandoffCount(t *testing.T) {
+	got := len(copilotTokenHandoffChecks())
+	const want = 29
+	if got != want {
+		t.Fatalf("copilotTokenHandoffChecks() has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckCopilotTokenHandoffRealRepo asserts that the real scripts/workcell,
+// provider-wrapper.sh, development-wrapper.sh, home-control-plane.sh, and
+// container-smoke.sh in this repository satisfy all twenty-nine Copilot
+// token-handoff invariants.  This is the key guard against a mis-transcribed
+// needle or target file: if any Go pattern is not a byte-exact substring of the
+// actual file (or the wrong file), this test fails with the guard's stderr
+// message.
+func TestCheckCopilotTokenHandoffRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckCopilotTokenHandoff(repoRoot); err != nil {
+		t.Fatalf("CheckCopilotTokenHandoff(real repo) = %v, want nil", err)
+	}
+}

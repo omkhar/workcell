@@ -8237,77 +8237,7 @@ rm -f "${GEMINI_AUTH_SELECTION_HARNESS}"
 rm -f "${GEMINI_AUTH_SELECTION_STDOUT}" "${GEMINI_AUTH_SELECTION_STDERR}"
 
 go_verify_citools workcell-home-seed-provider-wrapper "${ROOT_DIR}" || exit 1
-for copilot_wrapper in \
-  "${ROOT_DIR}/runtime/container/provider-wrapper.sh" \
-  "${ROOT_DIR}/runtime/container/development-wrapper.sh"; do
-  if ! grep -Fq "\${!COPILOT_@}" "${copilot_wrapper}"; then
-    echo "Expected $(basename "${copilot_wrapper}") to scrub unknown future Copilot env variables by prefix" >&2
-    exit 1
-  fi
-  if ! grep -Fq "\${!GITHUB_COPILOT_@}" "${copilot_wrapper}"; then
-    echo "Expected $(basename "${copilot_wrapper}") to scrub unknown future GitHub Copilot env variables by prefix" >&2
-    exit 1
-  fi
-  if grep -Fq "\${!GITHUB_COPILOT_OIDC_MCP_TOKEN@}" "${copilot_wrapper}"; then
-    echo "$(basename "${copilot_wrapper}") must rely on the GITHUB_COPILOT_ prefix scrub instead of a duplicate OIDC token loop" >&2
-    exit 1
-  fi
-  if grep -Fq "\${!COPILOT_EXP_@}" "${copilot_wrapper}"; then
-    echo "$(basename "${copilot_wrapper}") must rely on the COPILOT_ prefix scrub instead of a duplicate experiment loop" >&2
-    exit 1
-  fi
-done
-if grep -Fq "\${COPILOT_HOME}/workcell-token" "${ROOT_DIR}/runtime/container/provider-wrapper.sh" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
-  echo "Copilot auth token must not be copied into COPILOT_HOME" >&2
-  exit 1
-fi
-if ! grep -Fq 'prepare_copilot_token_handoff_mount "$@"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected launcher to prepare a host-mounted Copilot token handoff before docker run" >&2
-  exit 1
-fi
-if ! grep -Fq "DIRECT_SOURCE_MOUNTS=(\"\${filtered_mounts[@]}\")" "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected launcher to remove Copilot token direct mounts after host-side handoff preparation" >&2
-  exit 1
-fi
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "copilot_no_auth_invocation" '-h | --help | -v | --version | help | version | completion)' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/runtime/container/provider-wrapper.sh" "copilot_no_auth_invocation" '-h | --help | -v | --version | help | version | completion)' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "copilot_host_invocation_requires_auth" 'if copilot_no_auth_invocation "$@"; then' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "fail_fast_for_missing_copilot_auth" 'if copilot_no_auth_invocation "$@"; then' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/runtime/container/provider-wrapper.sh" "copilot_invocation_requires_auth" 'if copilot_no_auth_invocation "$@"; then'; then
-  echo "Expected host and runtime Copilot auth classifiers to share the no-auth subcommand helper" >&2
-  exit 1
-fi
-# shellcheck disable=SC2016
-if ! grep -Fq 'workcell-token-handoff' "${ROOT_DIR}/scripts/workcell" ||
-  ! grep -Fq 'COPILOT_TOKEN_HANDOFF_DIR="$(mktemp -d "${token_handoff_parent}/copilot-token-handoff.XXXXXX")"' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected Copilot token handoff directory to live in the dedicated writable Colima handoff root" >&2
-  exit 1
-fi
-# shellcheck disable=SC2016
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'token_handoff_parent="$(default_copilot_token_handoff_parent)" || exit $?' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'chmod 0700 "${token_handoff_parent}"' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'reject_symlinked_colima_staging_cache_roots || exit $?'; then
-  echo "Expected Copilot token handoff writes to re-check the guarded Colima handoff root at the write site" >&2
-  exit 1
-fi
-# shellcheck disable=SC2016
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'chmod 0733 "${COPILOT_TOKEN_HANDOFF_DIR}"' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" 'chmod 0444 "${COPILOT_TOKEN_HANDOFF_FILE}"' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/container-smoke.sh" "stage_copilot_token_handoff_dir" 'chmod 0733 "${token_handoff_dir}"' ||
-  ! function_block_contains_fixed "${ROOT_DIR}/scripts/container-smoke.sh" "stage_copilot_token_handoff_dir" 'chmod 0444 "${token_handoff_file}"'; then
-  echo "Expected Copilot token handoff leaf permissions to support cap-dropped container root without exposing parent traversal" >&2
-  exit 1
-fi
-# shellcheck disable=SC2016
-if ! grep -Fq 'COPILOT_TOKEN_HANDOFF_CONSUMED_FILE="${COPILOT_TOKEN_HANDOFF_DIR}/copilot-token-consumed"' "${ROOT_DIR}/scripts/workcell" ||
-  ! grep -Fq 'while [[ ! -e "${COPILOT_TOKEN_HANDOFF_CONSUMED_FILE}" ]]; do' "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected detached Copilot launches to wait for the wrapper-side token consumed marker" >&2
-  exit 1
-fi
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "prepare_copilot_token_handoff_mount" "rm -f -- \"\${source_path}\""; then
-  echo "Expected Copilot token handoff to remove the staged token copy from the mounted injection bundle" >&2
-  exit 1
-fi
+go_verify_citools workcell-copilot-token-handoff "${ROOT_DIR}" || exit 1
 if ! grep -Fq 'copilotStandaloneTokenHandoffName' "${ROOT_DIR}/internal/host/hoststate/hoststate.go" ||
   ! grep -Fq 'copilotTokenHandoffBundleName' "${ROOT_DIR}/internal/host/hoststate/hoststate.go" ||
   ! grep -Fq 'removeCopilotTokenHandoffArtifacts' "${ROOT_DIR}/internal/host/hoststate/hoststate.go"; then
