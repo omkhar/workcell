@@ -4456,3 +4456,202 @@ func TestCheckHostutilEgressRgRealRepo(t *testing.T) {
 		t.Fatalf("CheckHostutilEgressRg(real repo) = %v, want nil", err)
 	}
 }
+
+// dockerfilePinsHappyBody is a minimal but structurally faithful Dockerfile
+// that satisfies all fifteen per-Dockerfile dockerfile-pin invariants: it pins
+// the snapshot CA bundle / amd64+arm64 OpenSSL bootstrap packages, the apt
+// retry/timeout settings, the retry-and-discard TLS bootstrap download loop, the
+// fail-closed download/checksum/dpkg chain, and the unprivileged `USER workcell`
+// default.  Each snippet sits on its own physical line so the per-line evaluator
+// (regexMatchesAnyLine, `rg` parity) matches it exactly as ripgrep would.  Both
+// fixture Dockerfiles use this baseline; individual negative cases mutate one
+// property of one file.
+const dockerfilePinsHappyBody = `FROM debian:trixie-slim
+ARG CA_DEB=ca-certificates_20250419_all.deb
+ARG OPENSSL_AMD64=openssl_3.5.5-1~deb13u1_amd64.deb
+ARG OPENSSL_ARM64=openssl_3.5.5-1~deb13u1_arm64.deb
+RUN echo 'Acquire::Retries "5";' >>/etc/apt/apt.conf
+RUN echo 'Acquire::http::Timeout "30";' >>/etc/apt/apt.conf
+RUN echo 'Acquire::https::Timeout "30";' >>/etc/apt/apt.conf
+RUN for attempt in 1 2 3; do \
+      rm -f "${output}"; \
+      sleep "$((attempt * 5))"; \
+    done
+RUN fetch_snapshot_bootstrap_package "${openssl_url}" /tmp/workcell-bootstrap-openssl.deb \
+    && echo "${openssl_sha256}  /tmp/workcell-bootstrap-openssl.deb" | sha256sum -c - \
+    && fetch_snapshot_bootstrap_package "${ca_url}" /tmp/workcell-bootstrap-ca-certificates.deb \
+    && echo "${ca_sha256}  /tmp/workcell-bootstrap-ca-certificates.deb" | sha256sum -c - \
+    && dpkg -i /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb
+USER workcell
+`
+
+func writeDockerfilePinsRepo(t *testing.T, runtimeDF, validatorDF string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(dockerfileRelPath, runtimeDF)
+	write(validatorDockerfileRelPath, validatorDF)
+	return root
+}
+
+func TestCheckDockerfilePins(t *testing.T) {
+	tests := []struct {
+		name        string
+		runtimeDF   string
+		validatorDF string
+		wantRel     string // "" means expect success
+		wantSuffix  string
+	}{
+		{
+			name:        "happy path all invariants hold",
+			runtimeDF:   dockerfilePinsHappyBody,
+			validatorDF: dockerfilePinsHappyBody,
+		},
+		{
+			// CA-pin probe missing from the runtime Dockerfile (first probe of
+			// the first Dockerfile → first violation).
+			name:        "runtime missing CA bundle pin",
+			runtimeDF:   strings.Replace(dockerfilePinsHappyBody, "ca-certificates_20250419_all.deb", "ca-certificates_OLD_all.deb", 1),
+			validatorDF: dockerfilePinsHappyBody,
+			wantRel:     dockerfileRelPath,
+			wantSuffix:  "to pin a snapshot CA bundle bootstrap package before HTTPS apt",
+		},
+		{
+			// arm64 OpenSSL pin missing from the validator Dockerfile: the runtime
+			// Dockerfile passes entirely first, then the validator's third probe
+			// fires, proving the Dockerfile-outer order.
+			name:        "validator missing arm64 OpenSSL pin",
+			runtimeDF:   dockerfilePinsHappyBody,
+			validatorDF: strings.Replace(dockerfilePinsHappyBody, "openssl_3.5.5-1~deb13u1_arm64.deb", "openssl_OLD_arm64.deb", 1),
+			wantRel:     validatorDockerfileRelPath,
+			wantSuffix:  "to pin the arm64 snapshot OpenSSL bootstrap package before HTTPS apt",
+		},
+		{
+			// apt HTTPS timeout pin missing from the runtime Dockerfile.
+			name:        "runtime missing apt HTTPS timeout",
+			runtimeDF:   strings.Replace(dockerfilePinsHappyBody, `Acquire::https::Timeout "30";`, "", 1),
+			validatorDF: dockerfilePinsHappyBody,
+			wantRel:     dockerfileRelPath,
+			wantSuffix:  "to pin apt HTTPS timeout for snapshot fetch resilience",
+		},
+		{
+			// retry/discard shared-message guard: the sleep probe removed from the
+			// validator Dockerfile yields the guard's shared message.
+			name:        "validator missing retry sleep",
+			runtimeDF:   dockerfilePinsHappyBody,
+			validatorDF: strings.Replace(dockerfilePinsHappyBody, `sleep "$((attempt * 5))";`, "", 1),
+			wantRel:     validatorDockerfileRelPath,
+			wantSuffix:  "snapshot TLS bootstrap downloads to retry and discard partial packages",
+		},
+		{
+			// fail-closed shared-message guard: the dpkg probe broken in the
+			// runtime Dockerfile yields the guard's shared message.
+			name:        "runtime broken fail-closed dpkg step",
+			runtimeDF:   strings.Replace(dockerfilePinsHappyBody, "dpkg -i /tmp/workcell-bootstrap-openssl.deb", "dpkgBROKEN -i /tmp/workcell-bootstrap-openssl.deb", 1),
+			validatorDF: dockerfilePinsHappyBody,
+			wantRel:     dockerfileRelPath,
+			wantSuffix:  "snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps",
+		},
+		{
+			// USER-default probe (second loop) missing from the validator
+			// Dockerfile: every pin probe passes for both Dockerfiles, then the
+			// validator's USER probe (last check) fires.
+			name:        "validator missing unprivileged USER default",
+			runtimeDF:   dockerfilePinsHappyBody,
+			validatorDF: strings.Replace(dockerfilePinsHappyBody, "USER workcell", "USER root", 1),
+			wantRel:     validatorDockerfileRelPath,
+			wantSuffix:  "to default to the named unprivileged workcell user",
+		},
+		{
+			// A missing runtime Dockerfile is empty content: its first probe fails,
+			// mirroring `rg -q` returning non-zero on a missing file.
+			name:        "runtime Dockerfile missing",
+			runtimeDF:   "",
+			validatorDF: dockerfilePinsHappyBody,
+			wantRel:     dockerfileRelPath,
+			wantSuffix:  "to pin a snapshot CA bundle bootstrap package before HTTPS apt",
+		},
+		{
+			// Both Dockerfiles broken: the runtime CA pin (first check overall)
+			// wins over the validator USER pin, proving the runtime-before-validator
+			// ordering.
+			name:        "both broken runtime wins",
+			runtimeDF:   strings.Replace(dockerfilePinsHappyBody, "ca-certificates_20250419_all.deb", "ca-certificates_OLD_all.deb", 1),
+			validatorDF: strings.Replace(dockerfilePinsHappyBody, "USER workcell", "USER root", 1),
+			wantRel:     dockerfileRelPath,
+			wantSuffix:  "to pin a snapshot CA bundle bootstrap package before HTTPS apt",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeDockerfilePinsRepo(t, tc.runtimeDF, tc.validatorDF)
+			err := CheckDockerfilePins(root)
+			if tc.wantRel == "" {
+				if err != nil {
+					t.Fatalf("CheckDockerfilePins() = %v, want nil", err)
+				}
+				return
+			}
+			want := "Expected " + root + "/" + tc.wantRel + " " + tc.wantSuffix
+			if err == nil {
+				t.Fatalf("CheckDockerfilePins() = nil, want error %q", want)
+			}
+			if err.Error() != want {
+				t.Fatalf("CheckDockerfilePins() error = %q, want %q", err.Error(), want)
+			}
+		})
+	}
+}
+
+// TestCheckDockerfilePinsCount asserts the generated check list contains exactly
+// thirty checks: fourteen snapshot-TLS-bootstrap pins plus one USER-default per
+// Dockerfile, across two Dockerfiles.
+func TestCheckDockerfilePinsCount(t *testing.T) {
+	got := len(dockerfilePinsChecks("/repo"))
+	const want = 30
+	if got != want {
+		t.Fatalf("dockerfilePinsChecks(...) has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckDockerfilePinsLineParity proves the per-line evaluator does not let an
+// escaped-literal fail-closed pattern match across a newline: the dpkg probe
+// matches its intact single line but must NOT match when split by a newline,
+// mirroring ripgrep's default (non-multiline) behaviour.
+func TestCheckDockerfilePinsLineParity(t *testing.T) {
+	pat := `&& dpkg -i /tmp/workcell-bootstrap-openssl\.deb /tmp/workcell-bootstrap-ca-certificates\.deb`
+	if !regexMatchesAnyLine(pat, "&& dpkg -i /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb") {
+		t.Fatalf("expected the intact dpkg fail-closed line to match")
+	}
+	if regexMatchesAnyLine(pat, "&& dpkg -i /tmp/workcell-bootstrap-openssl.deb\n/tmp/workcell-bootstrap-ca-certificates.deb") {
+		t.Fatalf("a dpkg step split across a newline must NOT match (rg is line-oriented)")
+	}
+}
+
+// TestCheckDockerfilePinsRealRepo asserts that the real
+// runtime/container/Dockerfile and tools/validator/Dockerfile in this repository
+// satisfy all thirty dockerfile-pin invariants.  This is the key guard against a
+// mis-transcribed regex or a wrong target file: if any Go pattern diverges from
+// the actual Dockerfile contents, this test fails with the guard's stderr
+// message.
+func TestCheckDockerfilePinsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, dockerfileRelPath)); err != nil {
+		t.Skipf("real runtime/container/Dockerfile not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckDockerfilePins(repoRoot); err != nil {
+		t.Fatalf("CheckDockerfilePins(real repo) = %v, want nil", err)
+	}
+}

@@ -72,6 +72,13 @@ const launcherRelPath = "scripts/workcell"
 // check leaves check.targetFile empty and so defaults to launcherRelPath.
 const dockerfileRelPath = "runtime/container/Dockerfile"
 
+// validatorDockerfileRelPath is the repo-relative path to the validator image
+// Dockerfile.  The dockerfile-pins block reads it alongside dockerfileRelPath
+// (via the per-check targetFile field) for its snapshot-TLS-bootstrap pin and
+// unprivileged-USER invariants, mirroring the shell `rg` probes that iterated
+// ${ROOT_DIR}/runtime/container/Dockerfile and ${ROOT_DIR}/tools/validator/Dockerfile.
+const validatorDockerfileRelPath = "tools/validator/Dockerfile"
+
 // colimaEgressAllowlistRelPath is the repo-relative path to the Colima
 // egress-allowlist helper.  Only the two shadow-enum-egress IPv6 invariants
 // read this file instead of scripts/workcell (via the per-check targetFile
@@ -3097,6 +3104,101 @@ var hostutilEgressRgChecks = []check{
 // first violated invariant (the shell's exit 1).
 func CheckHostutilEgressRg(rootDir string) error {
 	return evaluate(rootDir, hostutilEgressRgChecks)
+}
+
+// dockerfilePinRelPaths lists, in the shell loop's order, the two Dockerfiles
+// whose snapshot-TLS-bootstrap pins and unprivileged-USER default the migrated
+// block asserts: runtime/container/Dockerfile then tools/validator/Dockerfile.
+// Both shell `for dockerfile in ...; do ...; done` loops iterated exactly this
+// fixed pair, so preserving the order keeps first-violation parity.
+var dockerfilePinRelPaths = []string{dockerfileRelPath, validatorDockerfileRelPath}
+
+// dockerfilePinSpec pairs one `rg -q` pattern with the tail of the shell's echo
+// message (everything after "Expected ${dockerfile} ").  The pinInner guards
+// that joined several `! rg -q` probes with `||` under one message are expressed
+// as consecutive specs sharing the same messageSuffix, mirroring the shell (any
+// missing probe yields the same stderr and exit 1 as the corresponding `if`).
+type dockerfilePinSpec struct {
+	pattern       string
+	messageSuffix string
+}
+
+// dockerfilePinSpecs lists the fourteen per-Dockerfile snapshot-TLS-bootstrap
+// pin probes in the same order as the former inline `for dockerfile` loop in
+// scripts/verify-invariants.sh, so a reviewer can diff the two one-to-one.
+//
+// Every probe is an `rg -q` regex (line-oriented, matched per line via
+// regexMatchesAnyLine for `rg` parity), kept verbatim as a regex: the
+// escaped-literal patterns (`ca-certificates_20250419_all\.deb`,
+// `rm -f "\$\{output\}";`, `sleep "\$\(\(attempt \* 5\)\)";`, `\| sha256sum`,
+// ...) use the rg regex escapes `\. \$ \{ \} \( \) \* \|` to match the literal
+// chars; Go's regexp interprets the same escapes, so each pattern is used
+// byte-for-byte.
+//
+// The last eight specs form the two `||`-joined guards: three
+// retry/discard-partial probes sharing one message, then five fail-closed
+// download/checksum/dpkg probes sharing another.
+var dockerfilePinSpecs = []dockerfilePinSpec{
+	{`ca-certificates_20250419_all\.deb`, "to pin a snapshot CA bundle bootstrap package before HTTPS apt"},
+	{`openssl_3\.5\.5-1~deb13u1_amd64\.deb`, "to pin the amd64 snapshot OpenSSL bootstrap package before HTTPS apt"},
+	{`openssl_3\.5\.5-1~deb13u1_arm64\.deb`, "to pin the arm64 snapshot OpenSSL bootstrap package before HTTPS apt"},
+	{`Acquire::Retries "5";`, "to pin apt retry count for snapshot fetch resilience"},
+	{`Acquire::http::Timeout "30";`, "to pin apt HTTP timeout for snapshot fetch resilience"},
+	{`Acquire::https::Timeout "30";`, "to pin apt HTTPS timeout for snapshot fetch resilience"},
+	{`for attempt in 1 2 3; do`, "snapshot TLS bootstrap downloads to retry and discard partial packages"},
+	{`rm -f "\$\{output\}";`, "snapshot TLS bootstrap downloads to retry and discard partial packages"},
+	{`sleep "\$\(\(attempt \* 5\)\)";`, "snapshot TLS bootstrap downloads to retry and discard partial packages"},
+	{`fetch_snapshot_bootstrap_package "\$\{openssl_url\}" /tmp/workcell-bootstrap-openssl\.deb`, "snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps"},
+	{`&& echo "\$\{openssl_sha256\}  /tmp/workcell-bootstrap-openssl\.deb" \| sha256sum -c -`, "snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps"},
+	{`&& fetch_snapshot_bootstrap_package "\$\{ca_url\}" /tmp/workcell-bootstrap-ca-certificates\.deb`, "snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps"},
+	{`&& echo "\$\{ca_sha256\}  /tmp/workcell-bootstrap-ca-certificates\.deb" \| sha256sum -c -`, "snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps"},
+	{`&& dpkg -i /tmp/workcell-bootstrap-openssl\.deb /tmp/workcell-bootstrap-ca-certificates\.deb`, "snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps"},
+}
+
+// dockerfilePinsChecks builds the thirty dockerfile-pin invariants for the repo
+// rooted at rootDir, in the shell's original order: the fourteen
+// snapshot-TLS-bootstrap pins for each Dockerfile (first loop, both Dockerfiles)
+// followed by the unprivileged-USER default for each Dockerfile (second loop,
+// both Dockerfiles).
+//
+// The shell echoes interpolated the loop variable ${dockerfile}, whose value was
+// the array element "${ROOT_DIR}/<relpath>" — i.e. the ABSOLUTE path once
+// ${ROOT_DIR} expands.  Each message is therefore constructed dynamically here as
+// "Expected " + rootDir + "/" + relpath + " " + suffix, using literal string
+// concatenation (not filepath.Join) to reproduce the shell's byte-exact
+// rendering.  The read target stays the repo-relative path via targetFile, so
+// evaluate reads the same file the message names.
+func dockerfilePinsChecks(rootDir string) []check {
+	cs := make([]check, 0, len(dockerfilePinRelPaths)*(len(dockerfilePinSpecs)+1))
+	for _, rel := range dockerfilePinRelPaths {
+		df := rootDir + "/" + rel
+		for _, spec := range dockerfilePinSpecs {
+			cs = append(cs, check{
+				kind:       kindRegexPresent,
+				pattern:    spec.pattern,
+				message:    "Expected " + df + " " + spec.messageSuffix,
+				targetFile: rel,
+			})
+		}
+	}
+	for _, rel := range dockerfilePinRelPaths {
+		df := rootDir + "/" + rel
+		cs = append(cs, check{
+			kind:       kindRegexPresent,
+			pattern:    `^USER workcell$`,
+			message:    "Expected " + df + " to default to the named unprivileged workcell user",
+			targetFile: rel,
+		})
+	}
+	return cs
+}
+
+// CheckDockerfilePins runs the thirty dockerfile-pin invariants against the repo
+// rooted at rootDir, in the shell's original order.  It returns nil when every
+// invariant holds (the shell's exit 0), or an error whose message equals the
+// shell's stderr for the first violated invariant (the shell's exit 1).
+func CheckDockerfilePins(rootDir string) error {
+	return evaluate(rootDir, dockerfilePinsChecks(rootDir))
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.
