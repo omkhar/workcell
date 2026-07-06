@@ -253,6 +253,20 @@ const runValidateInValidatorRelPath = "scripts/ci/run-validate-in-validator.sh"
 const runDocsInValidatorRelPath = "scripts/ci/run-docs-in-validator.sh"
 const runMutationInValidatorRelPath = "scripts/ci/run-mutation-in-validator.sh"
 
+// hostExecRelPath is the repo-relative path to the Go host-exec owner that
+// inherited resolve_existing_executable_or_die from scripts/workcell.  The
+// fnblock-goblock-gitenv block reads this file (via the per-check targetFile
+// field) for its kindGoFunctionBlock probe, mirroring the shell
+// `go_function_block_contains_fixed ${ROOT_DIR}/internal/publishpr/host_exec.go`.
+const hostExecRelPath = "internal/publishpr/host_exec.go"
+
+// containerBinGitRelPath is the repo-relative path to the in-container git
+// shim.  The fnblock-goblock-gitenv block reads this file (via the per-check
+// targetFile field) for its three git-env object-store-redirection pins,
+// mirroring the shell `grep -Fq -- "${_git_env_literal}"
+// ${ROOT_DIR}/runtime/container/bin/git`.
+const containerBinGitRelPath = "runtime/container/bin/git"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -311,6 +325,16 @@ const (
 	// once), not the total number of occurrences, and the check is violated
 	// (returns the message) when that line count is < minCount.
 	kindCountAtLeast
+	// kindGoFunctionBlock requires needle (a fixed string) to appear inside
+	// the top-level Go function body named functionName, mirroring
+	// go_function_block_contains_fixed (awk extraction from the line
+	// beginning `func FUNC(` through the next line that is exactly `}`,
+	// with // line comments and /* */ block comments — including multi-line
+	// block comments — stripped, followed by grep -Fq).  Unlike
+	// kindFunctionBlock's bash sed-range extraction (extractNamedFunctionBlock),
+	// this scopes to a Go function via extractGoFunctionBlock so the same
+	// literal appearing in an unrelated helper or a comment cannot satisfy it.
+	kindGoFunctionBlock
 )
 
 // check is one hardening invariant: how to match, what to match, which
@@ -3408,6 +3432,76 @@ func CheckCallerRequiredContracts(rootDir string) error {
 	return evaluate(rootDir, callerRequiredContractsChecks(rootDir))
 }
 
+// fnBlockGoBlockGitEnvGitEnvVars lists the three git object-store environment
+// variables the in-container git shim must block, in the shell loop's original
+// order (`for _git_env_var in GIT_OBJECT_DIRECTORY
+// GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE`).
+var fnBlockGoBlockGitEnvGitEnvVars = []string{
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_INDEX_FILE",
+}
+
+// fnBlockGoBlockGitEnvChecks lists the six fnblock/goblock/gitenv invariants
+// migrated out of scripts/verify-invariants.sh, in the shell's original order:
+// two bash-function-block regex probes (scripts/workcell), one Go-function-block
+// fixed-string probe (publishpr.ResolveExistingExecutableOrDie), and the three
+// git-env object-store-redirection pins (runtime/container/bin/git).  These are
+// exactly the checks that ran BEFORE the go_verify_citools workcell-git-index-shadow
+// call; the validate-repo.sh venv-prune and go-run-env.sh buildvcs greps that
+// ran AFTER it remain inline in the shell to preserve first-failure order.  The
+// git-env pins reproduce the shell loop that built each needle with
+// `printf -v _git_env_literal '"${%s:-}"' "${_git_env_var}"`, i.e. the literal
+// `"${VAR:-}"`, and interpolated ${_git_env_var} into the message.
+func fnBlockGoBlockGitEnvChecks() []check {
+	cs := []check{
+		{
+			// kindFunctionBlockRegex (function_block_contains_regex): the
+			// pattern is a plain identifier with no regex metacharacters, so
+			// `grep -q` reduces to fixed-string containment within the bash
+			// validate_colima_profile block of scripts/workcell.
+			kind:         kindFunctionBlockRegex,
+			functionName: "validate_colima_profile",
+			pattern:      "validate_colima_profile_config",
+			message:      "Expected validate_colima_profile to re-check the managed Colima config before reusing a running profile",
+		},
+		{
+			kind:         kindFunctionBlockRegex,
+			functionName: "git_alias_value_is_blocked",
+			pattern:      "git_commit_short_arg_is_no_verify",
+			message:      "Expected git_alias_value_is_blocked to reuse the precise short-option no-verify parser",
+		},
+		{
+			// kindGoFunctionBlock (go_function_block_contains_fixed): scope the
+			// fixed needle to the Go ResolveExistingExecutableOrDie body so the
+			// same text in an unrelated helper or comment cannot satisfy it.
+			kind:         kindGoFunctionBlock,
+			functionName: "ResolveExistingExecutableOrDie",
+			pattern:      `!IsTrustedHostToolPath(rawPath, ctx) || !IsTrustedHostToolPath(canonical, ctx)`,
+			message:      "Expected publishpr.ResolveExistingExecutableOrDie to reject untrusted host executable paths",
+			targetFile:   hostExecRelPath,
+		},
+	}
+	for _, envVar := range fnBlockGoBlockGitEnvGitEnvVars {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    `"${` + envVar + `:-}"`,
+			message:    "Expected runtime/container/bin/git to block " + envVar + " to prevent object-store redirection",
+			targetFile: containerBinGitRelPath,
+		})
+	}
+	return cs
+}
+
+// CheckFnBlockGoBlockGitEnv runs the six fnblock/goblock/gitenv invariants
+// against the repo rooted at rootDir, in the shell's original order.  It returns
+// nil when every invariant holds (the shell's exit 0), or an error whose message
+// equals the shell's stderr for the first violated invariant (the shell's
+// exit 1).
+func CheckFnBlockGoBlockGitEnv(rootDir string) error {
+	return evaluate(rootDir, fnBlockGoBlockGitEnvChecks())
+}
+
 // holds reports whether the invariant is satisfied by the launcher text.
 func (c check) holds(text string) bool {
 	switch c.kind {
@@ -3420,6 +3514,9 @@ func (c check) holds(text string) bool {
 	case kindFunctionBlockRegex:
 		block := extractNamedFunctionBlock(text, c.functionName)
 		return regexMatchesAnyLine(c.pattern, block)
+	case kindGoFunctionBlock:
+		block := extractGoFunctionBlock(text, c.functionName)
+		return strings.Contains(block, c.pattern)
 	case kindFirstLineRegex:
 		return regexp.MustCompile(c.pattern).MatchString(firstLine(text))
 	case kindPresent:
@@ -3497,6 +3594,64 @@ func extractNamedFunctionBlock(text, name string) string {
 		out = append(out, line)
 		if strings.HasPrefix(line, "}") {
 			inBlock = false
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// goBlockInlineComment matches an inline /* ... */ block comment with no
+// embedded asterisk, mirroring the awk gsub(/\/\*[^*]*\*\//, "", line) in
+// go_function_block_contains_fixed.
+var goBlockInlineComment = regexp.MustCompile(`/\*[^*]*\*/`)
+
+// extractGoFunctionBlock replicates go_function_block_contains_fixed's awk
+// extraction: it returns the lines from the first line beginning with
+// `func NAME(` through the next line that is exactly `}` (both inclusive),
+// with comments stripped before matching so a needle appearing only in a
+// // line comment or a /* */ block comment (including a multi-line block
+// comment) inside the function cannot satisfy the fixed-string check.  Unlike
+// extractNamedFunctionBlock (bash sed-range, closing on any `^}` prefix), the
+// closing line here must equal `}` exactly, mirroring the awk `$0 == "}"`.
+// The result feeds a strings.Contains fixed-string check (grep -Fq parity).
+func extractGoFunctionBlock(text, name string) string {
+	openPrefix := "func " + name + "("
+	var out []string
+	inBlock := false
+	inComment := false
+	for _, orig := range strings.Split(text, "\n") {
+		if !inBlock {
+			if !strings.HasPrefix(orig, openPrefix) {
+				continue
+			}
+			inBlock = true
+		}
+		// Strip comments exactly as the awk does, in order: close any open
+		// block comment (greedy through the last `*/`), remove inline
+		// `/* ... */` comments, open a block comment at the first remaining
+		// `/*`, then drop a trailing `//` line comment.
+		line := orig
+		if inComment {
+			if idx := strings.LastIndex(line, "*/"); idx >= 0 {
+				line = line[idx+2:]
+				inComment = false
+			} else {
+				line = ""
+			}
+		}
+		line = goBlockInlineComment.ReplaceAllString(line, "")
+		if idx := strings.Index(line, "/*"); idx >= 0 {
+			line = line[:idx]
+			inComment = true
+		}
+		if idx := strings.Index(line, "//"); idx >= 0 {
+			line = line[:idx]
+		}
+		out = append(out, line)
+		// The exit test runs on the ORIGINAL line ($0 == "}"), after the
+		// comment-stripped line has been appended, so the closing brace line
+		// is included before extraction stops.
+		if orig == "}" {
+			break
 		}
 	}
 	return strings.Join(out, "\n")
