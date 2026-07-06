@@ -108,6 +108,7 @@ func subcommands() []subcommand {
 		{"workcell-copilot-token-handoff", "ROOT_DIR", 1, 1, cmdWorkcellCopilotTokenHandoff},
 		{"workcell-copilot-docker-run", "ROOT_DIR", 1, 1, cmdWorkcellCopilotDockerRun},
 		{"workcell-provider-launcher-authority", "ROOT_DIR", 1, 1, cmdWorkcellProviderLauncherAuthority},
+		{"workcell-copilot-policy-wrapper", "ROOT_DIR", 1, 1, cmdWorkcellCopilotPolicyWrapper},
 	}
 }
 
@@ -616,4 +617,12 @@ func cmdWorkcellCopilotDockerRun(args []string) error {
 // invariant.
 func cmdWorkcellProviderLauncherAuthority(args []string) error {
 	return workcellhardening.CheckProviderLauncherAuthority(args[0])
+}
+
+// cmdWorkcellCopilotPolicyWrapper runs the twenty-two Copilot-policy-wrapper
+// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
+// die()) with the shell's original stderr message for the first violated
+// invariant.
+func cmdWorkcellCopilotPolicyWrapper(args []string) error {
+	return workcellhardening.CheckCopilotPolicyWrapper(args[0])
 }

@@ -146,6 +146,13 @@ const runtimeUserRelPath = "runtime/container/runtime-user.sh"
 // ${ROOT_DIR}/runtime/container/rust/src/lib.rs.
 const rustLibRelPath = "runtime/container/rust/src/lib.rs"
 
+// providerPolicyRelPath is the repo-relative path to the runtime provider
+// policy helper.  The Copilot-policy-wrapper block reads this file (via the
+// per-check targetFile field) for its native-lifecycle-command and
+// prompt/short-option gating invariants, mirroring the shell probes that ran
+// against ${ROOT_DIR}/runtime/container/provider-policy.sh.
+const providerPolicyRelPath = "runtime/container/provider-policy.sh"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -1809,6 +1816,205 @@ func providerLauncherAuthorityChecks() []check {
 // shell's exit 1).
 func CheckProviderLauncherAuthority(rootDir string) error {
 	return evaluate(rootDir, providerLauncherAuthorityChecks())
+}
+
+// copilotPolicyWrapperChecks lists the twenty-two Copilot-policy-wrapper
+// invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the pinned-native-Claude-exec
+// `rm -f -- "${token_file}"` guard's successor `unset
+// WORKCELL_COPILOT_GITHUB_TOKEN` probe and the `for unsafe_copilot_flag` loop),
+// so a reviewer can diff the two one-to-one.
+//
+// The block reads three files via the per-check targetFile field: the runtime
+// provider wrapper (runtime/container/provider-wrapper.sh), the runtime provider
+// policy helper (runtime/container/provider-policy.sh), and the container smoke
+// harness (scripts/container-smoke.sh).  Every probe is a whole-file `grep -Fq`
+// fixed-string containment except one negated `grep -Eq` (kindRegexAbsent), so
+// each is kindPresent for the affirmative probes and kindAbsent for the two
+// negated fixed-string guards.
+//
+// The negated shell-tool grant guard is a genuine `grep -Eq` regular expression
+// (`--available-tools=[^"]*(shell|bash|run|exec)`), NOT a fixed string, so it is
+// kindRegexAbsent (a match is a violation → exit 1).
+//
+// Two former shell `if` guards each joined two `grep -Fq` probes with `||` under
+// a single message; they are expressed here as ordered checks sharing that
+// message, which is behaviourally identical (the first failing probe yields the
+// same stderr and exit 1 as the shell `if`):
+//   - the all-tools/all-paths guard, whose two probes are BOTH negated (either
+//     `--allow-all-tools` or `--allow-all-paths` present is a violation),
+//     matched here as two ordered kindAbsent checks sharing one message.  The
+//     shell short-circuits `grep A || grep B` to A-then-B, which the ordered
+//     checks reproduce.
+//
+// Two former shell `if ! grep A || ! grep B || ...` guards each joined multiple
+// affirmative probes across provider-policy.sh and container-smoke.sh under a
+// single message; they are expressed here as ordered kindPresent checks sharing
+// that message (the attached-prompt guard's four probes and the bundled
+// short-option guard's three probes), which is behaviourally identical (the
+// first missing probe yields the same stderr and exit 1).
+//
+// The double-quoted shell needles reproduce their literals byte-exact after
+// unescaping (`\"`→`"`, `\$`→`$`, `\\`→ a single trailing `\`), so the pinned
+// Copilot exec line keeps its trailing backslash and the `${arg}` /
+// `${copilot_github_token}` needles keep their literal parameter-expansion text.
+var copilotPolicyWrapperChecks = []check{
+	{
+		kind:       kindPresent,
+		pattern:    "unset WORKCELL_COPILOT_GITHUB_TOKEN",
+		message:    "Expected provider wrapper to discard the host-side Copilot token handoff variable before exec",
+		targetFile: providerWrapperRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "unset WORKCELL_COPILOT_TOKEN_FILE",
+		message:    "Expected provider wrapper to discard the Copilot token handoff path before exec",
+		targetFile: providerWrapperRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `COPILOT_GITHUB_TOKEN="${copilot_github_token}"`,
+		message:    "Expected provider wrapper to expose Copilot auth only as COPILOT_GITHUB_TOKEN to the managed child",
+		targetFile: providerWrapperRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "COPILOT_ENABLE_HTTP2=false",
+		message:    "Expected provider wrapper to pin Copilot HTTP/2 off on the managed path",
+		targetFile: providerWrapperRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "--secret-env-vars=GH_TOKEN,GITHUB_TOKEN,COPILOT_GITHUB_TOKEN",
+		message:    "Expected provider wrapper to declare Copilot/GitHub token env as provider secrets",
+		targetFile: providerWrapperRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "--disallow-temp-dir",
+		message:    "Expected provider wrapper to deny Copilot temp-dir access on the managed path",
+		targetFile: providerWrapperRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `"--available-tools=view,create,edit,apply_patch,grep,glob"`,
+		message:    "Expected provider wrapper to keep Copilot prompt/yolo tool grants shell-free",
+		targetFile: providerWrapperRelPath,
+	},
+	{
+		// kindRegexAbsent: the shell's `grep -Eq --
+		// '--available-tools=[^"]*(shell|bash|run|exec)'` is a genuine ERE, not
+		// a fixed string, so it must NOT match (present is a violation → exit 1).
+		kind:       kindRegexAbsent,
+		pattern:    `--available-tools=[^"]*(shell|bash|run|exec)`,
+		message:    "Provider wrapper must not grant Copilot shell-like tools on the safe path",
+		targetFile: providerWrapperRelPath,
+	},
+	// All-tools/all-paths guard (first probe, NEGATED): shares the pair's message.
+	{
+		kind:       kindAbsent,
+		pattern:    "--allow-all-tools",
+		message:    "Provider wrapper must not grant Copilot all tools or all paths on the safe path",
+		targetFile: providerWrapperRelPath,
+	},
+	// All-tools/all-paths guard (second probe, NEGATED): shares the pair's message.
+	{
+		kind:       kindAbsent,
+		pattern:    "--allow-all-paths",
+		message:    "Provider wrapper must not grant Copilot all tools or all paths on the safe path",
+		targetFile: providerWrapperRelPath,
+	},
+	{
+		// Pinned native Copilot exec line (trailing backslash preserved).
+		kind:       kindPresent,
+		pattern:    `exec /usr/local/libexec/workcell/real/copilot \`,
+		message:    "Expected provider wrapper to launch the pinned native Copilot binary",
+		targetFile: providerWrapperRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `Workcell blocked Claude lifecycle command: ${arg}`,
+		message:    "Expected provider policy to reject native Claude lifecycle commands that bypass the pinned image",
+		targetFile: providerPolicyRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `Workcell blocked Copilot lifecycle/control-plane command: ${arg}`,
+		message:    "Expected provider policy to reject native Copilot lifecycle/control-plane commands",
+		targetFile: providerPolicyRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "-p | --prompt)",
+		message:    "Expected provider policy to treat only Copilot -p/--prompt as value-taking prompt flags",
+		targetFile: providerPolicyRelPath,
+	},
+	// Attached-prompt guard (first probe): shares the group's message.
+	{
+		kind:       kindPresent,
+		pattern:    `attached_prompt_value="${arg:2}"`,
+		message:    "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
+		targetFile: providerPolicyRelPath,
+	},
+	// Attached-prompt guard (second probe): shares the group's message.
+	{
+		kind:       kindPresent,
+		pattern:    `attached_prompt_value="${arg#--prompt=}"`,
+		message:    "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
+		targetFile: providerPolicyRelPath,
+	},
+	// Attached-prompt guard (third probe, container-smoke.sh): shares the message.
+	{
+		kind:       kindPresent,
+		pattern:    "workcell-copilot-policy-attached-short-prompt-allow-tool.out",
+		message:    "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
+		targetFile: containerSmokeRelPath,
+	},
+	// Attached-prompt guard (fourth probe, container-smoke.sh): shares the message.
+	{
+		kind:       kindPresent,
+		pattern:    "workcell-copilot-policy-attached-long-prompt-allow-tool.out",
+		message:    "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
+		targetFile: containerSmokeRelPath,
+	},
+	// Bundled-short-option guard (first probe): shares the group's message.
+	{
+		kind:       kindPresent,
+		pattern:    "-[!-]?*)",
+		message:    "Expected provider policy and smoke coverage to reject bundled Copilot short options",
+		targetFile: providerPolicyRelPath,
+	},
+	// Bundled-short-option guard (second probe): shares the group's message.
+	{
+		kind:       kindPresent,
+		pattern:    `Workcell blocked bundled Copilot short options: ${arg}`,
+		message:    "Expected provider policy and smoke coverage to reject bundled Copilot short options",
+		targetFile: providerPolicyRelPath,
+	},
+	// Bundled-short-option guard (third probe, container-smoke.sh): shares the message.
+	{
+		kind:       kindPresent,
+		pattern:    "workcell-copilot-policy-bundled-short-options.out",
+		message:    "Expected provider policy and smoke coverage to reject bundled Copilot short options",
+		targetFile: containerSmokeRelPath,
+	},
+	{
+		// kindAbsent: the shell's `if grep -Fq -- '-p | --prompt | -i |
+		// --interactive)' ...; then ... exit 1` is a negated fixed-string guard
+		// (treating -i/--interactive as a prompt alias present is a violation).
+		kind:       kindAbsent,
+		pattern:    "-p | --prompt | -i | --interactive)",
+		message:    "Expected provider policy not to treat Copilot -i/--interactive as prompt aliases",
+		targetFile: providerPolicyRelPath,
+	},
+}
+
+// CheckCopilotPolicyWrapper runs the twenty-two Copilot-policy-wrapper invariants
+// against the repo rooted at rootDir, in the shell's original order.  It returns
+// nil when every invariant holds (the shell's exit 0), or an error whose message
+// equals the shell's stderr for the first violated invariant (the shell's exit 1).
+func CheckCopilotPolicyWrapper(rootDir string) error {
+	return evaluate(rootDir, copilotPolicyWrapperChecks)
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.
