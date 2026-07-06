@@ -2381,3 +2381,288 @@ func TestCheckCopilotDockerRunRealRepo(t *testing.T) {
 		t.Fatalf("CheckCopilotDockerRun(real repo) = %v, want nil", err)
 	}
 }
+
+// providerLauncherAuthorityHappyProviderWrapper is a minimal but structurally
+// faithful runtime/container/provider-wrapper.sh: it contains every affirmative
+// provider-wrapper needle (the authority marker, the parent-verification pair,
+// all twelve Gemini sandbox knobs, the pinned Claude/Gemini exec lines with their
+// trailing backslash, the Copilot token-handoff needles, and the staged-token
+// requirement) and NEITHER of the two negated needles (no caller-supplied
+// WORKCELL_COPILOT_TOKEN_FILE default, no WORKCELL_COPILOT_GITHUB_TOKEN:- env
+// fallback).
+const providerLauncherAuthorityHappyProviderWrapper = `#!/usr/bin/env bash
+set -euo pipefail
+export WORKCELL_PROVIDER_LAUNCHER_AUTHORITY=1
+workcell_provider_parent_is_launcher() {
+  local parent_exe
+  parent_exe="$(readlink "/proc/${PPID}/exe")"
+}
+unset GEMINI_SANDBOX
+unset GEMINI_SANDBOX_IMAGE
+unset GEMINI_SANDBOX_IMAGE_DEFAULT
+unset GEMINI_SANDBOX_PROXY_COMMAND
+unset BUILD_SANDBOX
+unset SANDBOX
+unset SANDBOX_FLAGS
+unset SANDBOX_MOUNTS
+unset SANDBOX_ENV
+unset SANDBOX_PORTS
+unset SANDBOX_SET_UID_GID
+unset SEATBELT_PROFILE
+unset GH_CONFIG_DIR
+copilot_github_token="$(workcell_load_copilot_github_token)"
+token_file="$(head -n1 "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}")"
+copilot_token_handoff_consumed_file="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}/copilot-token-consumed"
+: >"${copilot_token_handoff_consumed_file}"
+[[ -n "${token_file}" ]] || workcell_die "Copilot auth token handoff file is required."
+DISABLE_AUTOUPDATER=1 CLAUDE_CONFIG_DIR="${HOME}/.claude" exec /usr/local/libexec/workcell/real/claude \
+  --managed
+GEMINI_CLI_NO_RELAUNCH=1 GEMINI_SANDBOX=false exec /usr/local/libexec/workcell/real/node \
+  /usr/local/libexec/workcell/real/gemini
+`
+
+// providerLauncherAuthorityHappyWorkcellLauncher is a minimal
+// workcell-launcher.rs satisfying the authority-marker and
+// spawn_and_wait_request probes.
+const providerLauncherAuthorityHappyWorkcellLauncher = `fn main() {
+    std::env::set_var("WORKCELL_PROVIDER_LAUNCHER_AUTHORITY", "1");
+    spawn_and_wait_request(&request);
+}
+`
+
+// providerLauncherAuthorityHappyLauncherCommon is a minimal launcher_common.rs
+// satisfying the authority-marker sanitization probe.
+const providerLauncherAuthorityHappyLauncherCommon = `pub fn sanitize(env: &mut Env) {
+    env.remove("WORKCELL_PROVIDER_LAUNCHER_AUTHORITY");
+}
+`
+
+// providerLauncherAuthorityHappyLib is a minimal lib.rs satisfying the two
+// exec-guard probes.
+const providerLauncherAuthorityHappyLib = `fn guard() -> bool {
+    if !current_process_parent_is_approved_native_launcher() {
+        return false;
+    }
+    approved_wrapper_requires_native_launcher_parent()
+}
+`
+
+// writeProviderLauncherAuthorityRepo materializes a fake repo with the four
+// files this group reads set to the given bodies; a body of "" means "do not
+// create that file" (unreadable-target case).
+func writeProviderLauncherAuthorityRepo(t *testing.T, providerWrapper, workcellLauncher, launcherCommon, rustLib string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(providerWrapperRelPath, providerWrapper)
+	write(workcellLauncherRustRelPath, workcellLauncher)
+	write(launcherCommonRustRelPath, launcherCommon)
+	write(rustLibRelPath, rustLib)
+	return root
+}
+
+func TestCheckProviderLauncherAuthority(t *testing.T) {
+	tests := []struct {
+		name             string
+		providerWrapper  string
+		workcellLauncher string
+		launcherCommon   string
+		rustLib          string
+		wantErr          string // "" means expect success
+	}{
+		{
+			name:             "happy path all invariants hold",
+			providerWrapper:  providerLauncherAuthorityHappyProviderWrapper,
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+		},
+		{
+			// Check 1 (kindPresent, provider-wrapper.sh): the authority marker.
+			name:             "provider wrapper missing authority marker",
+			providerWrapper:  strings.Replace(providerLauncherAuthorityHappyProviderWrapper, "WORKCELL_PROVIDER_LAUNCHER_AUTHORITY", "WORKCELL_OTHER", 1),
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected provider wrapper to require the managed launcher authority marker",
+		},
+		{
+			// Check 2 (kindPresent, workcell-launcher.rs — a Rust-file target).
+			name:             "workcell-launcher missing authority marker",
+			providerWrapper:  providerLauncherAuthorityHappyProviderWrapper,
+			workcellLauncher: strings.Replace(providerLauncherAuthorityHappyWorkcellLauncher, "WORKCELL_PROVIDER_LAUNCHER_AUTHORITY", "WORKCELL_OTHER", 1),
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected workcell-launcher to set the provider-wrapper authority marker",
+		},
+		{
+			// Check 3 (kindPresent, launcher_common.rs — a Rust-file target).
+			name:             "launcher_common missing authority marker",
+			providerWrapper:  providerLauncherAuthorityHappyProviderWrapper,
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   strings.Replace(providerLauncherAuthorityHappyLauncherCommon, "WORKCELL_PROVIDER_LAUNCHER_AUTHORITY", "WORKCELL_OTHER", 1),
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected workcell-launcher env sanitization to discard caller-supplied provider authority markers",
+		},
+		{
+			// Check 4 (kindPresent, workcell-launcher.rs).
+			name:             "workcell-launcher missing spawn_and_wait_request",
+			providerWrapper:  providerLauncherAuthorityHappyProviderWrapper,
+			workcellLauncher: strings.Replace(providerLauncherAuthorityHappyWorkcellLauncher, "spawn_and_wait_request", "spawn_other", 1),
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected workcell-launcher to keep a native parent supervising shell wrappers",
+		},
+		{
+			// Check 5b (kindPresent, provider-wrapper.sh — second probe of the
+			// parent-verification multi-probe guard): proves the two ordered
+			// probes share one message.
+			name:             "provider wrapper missing readlink parent probe",
+			providerWrapper:  strings.Replace(providerLauncherAuthorityHappyProviderWrapper, `readlink "/proc/${PPID}/exe"`, `readlink "/proc/self/exe"`, 1),
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected provider wrapper to require a native Workcell launcher parent before managed provider launch",
+		},
+		{
+			// Check 6b (kindPresent, lib.rs — second probe of the exec-guard
+			// multi-probe pair on a Rust-file target): proves the two ordered
+			// probes share one message.
+			name:             "lib.rs missing approved-wrapper exec guard",
+			providerWrapper:  providerLauncherAuthorityHappyProviderWrapper,
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          strings.Replace(providerLauncherAuthorityHappyLib, "approved_wrapper_requires_native_launcher_parent", "other_guard", 1),
+			wantErr:          "Expected exec guard to reject protected runtime wrapper approval without a native launcher parent",
+		},
+		{
+			// One of the twelve Gemini sandbox scrub checks (resolved variable
+			// needle): the last knob removed proves the interpolated message.
+			name:             "provider wrapper missing gemini sandbox knob",
+			providerWrapper:  strings.Replace(providerLauncherAuthorityHappyProviderWrapper, "unset SEATBELT_PROFILE", "unset OTHER_PROFILE", 1),
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected provider wrapper to scrub Gemini sandbox env knob: unset SEATBELT_PROFILE",
+		},
+		{
+			// Escaped-exec needle (pinned Claude line, trailing backslash): drop
+			// the trailing backslash so the fixed-string containment fails.
+			name:             "provider wrapper missing pinned claude exec",
+			providerWrapper:  strings.Replace(providerLauncherAuthorityHappyProviderWrapper, `real/claude \`, `real/claude`, 1),
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected provider wrapper to launch the pinned native Claude binary with managed env",
+		},
+		{
+			// Escaped-exec needle (pinned Gemini node line, trailing backslash).
+			name:             "provider wrapper missing pinned gemini exec",
+			providerWrapper:  strings.Replace(providerLauncherAuthorityHappyProviderWrapper, `real/node \`, `real/node`, 1),
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected provider wrapper to pin Gemini native sandbox off on the managed path",
+		},
+		{
+			// Consumed-marker guard (second probe): the `: >"${...}"` write
+			// removed proves the two ordered probes share one message.
+			name:             "provider wrapper missing consumed-marker write",
+			providerWrapper:  strings.Replace(providerLauncherAuthorityHappyProviderWrapper, `: >"${copilot_token_handoff_consumed_file}"`, `: >/dev/null`, 1),
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected provider wrapper to write a host-visible Copilot token consumed marker",
+		},
+		{
+			// kindAbsent: a caller-supplied WORKCELL_COPILOT_TOKEN_FILE default
+			// present is a violation.
+			name:             "provider wrapper trusts caller token file",
+			providerWrapper:  providerLauncherAuthorityHappyProviderWrapper + "\nlocal token_file=\"${WORKCELL_COPILOT_TOKEN_FILE:-}\"\n",
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Provider wrapper must not trust caller-supplied WORKCELL_COPILOT_TOKEN_FILE",
+		},
+		{
+			// Staged-token guard (second probe, kindAbsent): a
+			// WORKCELL_COPILOT_GITHUB_TOKEN:- env fallback present is a violation.
+			// The first probe still holds, so this proves the mixed
+			// present/absent pair shares one message.
+			name:             "provider wrapper allows github token env fallback",
+			providerWrapper:  providerLauncherAuthorityHappyProviderWrapper + "\ncopilot_github_token=\"${WORKCELL_COPILOT_GITHUB_TOKEN:-}\"\n",
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected provider wrapper to require staged Copilot token files instead of caller-supplied token env fallbacks",
+		},
+		{
+			// A missing provider-wrapper.sh is empty content: the first
+			// affirmative provider-wrapper probe (the authority marker) fails.
+			name:             "missing provider wrapper",
+			providerWrapper:  "",
+			workcellLauncher: providerLauncherAuthorityHappyWorkcellLauncher,
+			launcherCommon:   providerLauncherAuthorityHappyLauncherCommon,
+			rustLib:          providerLauncherAuthorityHappyLib,
+			wantErr:          "Expected provider wrapper to require the managed launcher authority marker",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeProviderLauncherAuthorityRepo(t, tc.providerWrapper, tc.workcellLauncher, tc.launcherCommon, tc.rustLib)
+			err := CheckProviderLauncherAuthority(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckProviderLauncherAuthority() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckProviderLauncherAuthority() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckProviderLauncherAuthority() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckProviderLauncherAuthorityCount asserts the check list contains
+// exactly thirty invariants, guarding against an accidentally truncated or
+// duplicated migration of the shell block.
+func TestCheckProviderLauncherAuthorityCount(t *testing.T) {
+	got := len(providerLauncherAuthorityChecks())
+	const want = 30
+	if got != want {
+		t.Fatalf("providerLauncherAuthorityChecks() has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckProviderLauncherAuthorityRealRepo asserts that the real
+// provider-wrapper.sh, workcell-launcher.rs, launcher_common.rs, and lib.rs in
+// this repository satisfy all thirty provider-launcher-authority invariants.
+// This is the key guard against a mis-transcribed needle, a mis-resolved
+// variable needle, or a wrong target file: if any Go pattern is not a byte-exact
+// substring of the actual file (or the wrong file), this test fails with the
+// guard's stderr message.
+func TestCheckProviderLauncherAuthorityRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, providerWrapperRelPath)); err != nil {
+		t.Skipf("real provider-wrapper.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckProviderLauncherAuthority(repoRoot); err != nil {
+		t.Fatalf("CheckProviderLauncherAuthority(real repo) = %v, want nil", err)
+	}
+}

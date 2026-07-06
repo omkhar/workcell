@@ -139,6 +139,13 @@ const entrypointRelPath = "runtime/container/entrypoint.sh"
 // against ${ROOT_DIR}/runtime/container/runtime-user.sh.
 const runtimeUserRelPath = "runtime/container/runtime-user.sh"
 
+// rustLibRelPath is the repo-relative path to the runtime exec-guard Rust
+// library.  Only the provider-launcher-authority exec-guard invariant reads
+// this file (via the per-check targetFile field), mirroring the two shell
+// `grep -Fq` probes that ran against
+// ${ROOT_DIR}/runtime/container/rust/src/lib.rs.
+const rustLibRelPath = "runtime/container/rust/src/lib.rs"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -1591,6 +1598,217 @@ var copilotDockerRunChecks = []check{
 // shell's exit 1).
 func CheckCopilotDockerRun(rootDir string) error {
 	return evaluate(rootDir, copilotDockerRunChecks)
+}
+
+// geminiSandboxEnvKnobs lists the twelve Gemini sandbox env variables that the
+// shell's `for gemini_sandbox_env in ...` loop asserted the provider wrapper
+// scrubs.  Order matches the shell verbatim so the generated checks reproduce
+// the shell's first-failure stderr exactly.  Each knob is a fixed
+// single-quoted shell literal, matched by `grep -Fq`.
+var geminiSandboxEnvKnobs = []string{
+	"unset GEMINI_SANDBOX",
+	"unset GEMINI_SANDBOX_IMAGE",
+	"unset GEMINI_SANDBOX_IMAGE_DEFAULT",
+	"unset GEMINI_SANDBOX_PROXY_COMMAND",
+	"unset BUILD_SANDBOX",
+	"unset SANDBOX",
+	"unset SANDBOX_FLAGS",
+	"unset SANDBOX_MOUNTS",
+	"unset SANDBOX_ENV",
+	"unset SANDBOX_PORTS",
+	"unset SANDBOX_SET_UID_GID",
+	"unset SEATBELT_PROFILE",
+}
+
+// providerLauncherAuthorityChecks returns the thirty provider-launcher-authority
+// invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the Copilot / docker-run
+// group `go_verify_citools` call and the pinned-native-Claude-exec probe at the
+// `rm -f -- "${token_file}"` guard), so a reviewer can diff the two one-to-one.
+//
+// The block reads four files via the per-check targetFile field: the runtime
+// provider wrapper (runtime/container/provider-wrapper.sh), the workcell-launcher
+// Rust binary, the shared launcher_common.rs helper, and the exec-guard
+// runtime/container/rust/src/lib.rs.  Every probe is a whole-file `grep -Fq`
+// fixed-string containment, so each is kindPresent for the affirmative probes and
+// kindAbsent for the two negated guards (a caller-supplied WORKCELL_COPILOT_TOKEN_FILE
+// declaration or a WORKCELL_COPILOT_GITHUB_TOKEN env fallback present is a
+// violation).
+//
+// Three former shell `if` guards each joined two probes with `||` under a single
+// message; they are expressed here as ordered checks sharing that message, which
+// is behaviourally identical (the first failing probe yields the same stderr and
+// exit 1 as the shell `if`):
+//   - the parent-verification guard (workcell_provider_parent_is_launcher and the
+//     readlink "/proc/${PPID}/exe" probe, both against provider-wrapper.sh);
+//   - the exec-guard pair (current_process_parent_is_approved_native_launcher and
+//     approved_wrapper_requires_native_launcher_parent, both against lib.rs);
+//   - the consumed-marker guard (the copilot_token_handoff_consumed_file
+//     assignment and the `: >"${...}"` write, both against provider-wrapper.sh);
+//   - the staged-token guard, whose two probes are mixed present/absent: the
+//     first affirmative (the token_file handoff requirement must be present) and
+//     the second NEGATED (a WORKCELL_COPILOT_GITHUB_TOKEN:- env fallback present
+//     is a violation), matched here as kindPresent then kindAbsent sharing one
+//     message.  The shell short-circuits `! grep A || grep B` to A-then-B, which
+//     the ordered checks reproduce.
+//
+// The twelve Gemini sandbox scrub checks migrate the shell's
+// `for gemini_sandbox_env in ...; do grep -Fq -- "${gemini_sandbox_env}"
+// provider-wrapper.sh; done` loop.  Each message interpolates the knob exactly as
+// the shell's `echo "Expected provider wrapper to scrub Gemini sandbox env knob:
+// ${gemini_sandbox_env}"` did; every knob is a fixed-string `grep -Fq` needle
+// (kindPresent) read from provider-wrapper.sh.
+//
+// The three exec/handoff needles reproduce the shell double-quoted literals
+// byte-exact after unescaping (`\"`→`"`, `\$`→`$`, `\\`→ a single trailing `\`),
+// so the pinned-Claude and pinned-Gemini exec lines keep their trailing
+// backslash and the copilot_github_token assignment keeps its command
+// substitution.
+func providerLauncherAuthorityChecks() []check {
+	cs := []check{
+		{
+			kind:       kindPresent,
+			pattern:    "WORKCELL_PROVIDER_LAUNCHER_AUTHORITY",
+			message:    "Expected provider wrapper to require the managed launcher authority marker",
+			targetFile: providerWrapperRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    "WORKCELL_PROVIDER_LAUNCHER_AUTHORITY",
+			message:    "Expected workcell-launcher to set the provider-wrapper authority marker",
+			targetFile: workcellLauncherRustRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    "WORKCELL_PROVIDER_LAUNCHER_AUTHORITY",
+			message:    "Expected workcell-launcher env sanitization to discard caller-supplied provider authority markers",
+			targetFile: launcherCommonRustRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    "spawn_and_wait_request",
+			message:    "Expected workcell-launcher to keep a native parent supervising shell wrappers",
+			targetFile: workcellLauncherRustRelPath,
+		},
+		// Parent-verification guard (first probe): shares the pair's message.
+		{
+			kind:       kindPresent,
+			pattern:    "workcell_provider_parent_is_launcher",
+			message:    "Expected provider wrapper to require a native Workcell launcher parent before managed provider launch",
+			targetFile: providerWrapperRelPath,
+		},
+		// Parent-verification guard (second probe): shares the pair's message.
+		{
+			kind:       kindPresent,
+			pattern:    `readlink "/proc/${PPID}/exe"`,
+			message:    "Expected provider wrapper to require a native Workcell launcher parent before managed provider launch",
+			targetFile: providerWrapperRelPath,
+		},
+		// Exec-guard pair (first probe): shares the pair's message.
+		{
+			kind:       kindPresent,
+			pattern:    "current_process_parent_is_approved_native_launcher",
+			message:    "Expected exec guard to reject protected runtime wrapper approval without a native launcher parent",
+			targetFile: rustLibRelPath,
+		},
+		// Exec-guard pair (second probe): shares the pair's message.
+		{
+			kind:       kindPresent,
+			pattern:    "approved_wrapper_requires_native_launcher_parent",
+			message:    "Expected exec guard to reject protected runtime wrapper approval without a native launcher parent",
+			targetFile: rustLibRelPath,
+		},
+	}
+	// The twelve Gemini sandbox scrub checks (former `for` loop).
+	for _, knob := range geminiSandboxEnvKnobs {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    knob,
+			message:    "Expected provider wrapper to scrub Gemini sandbox env knob: " + knob,
+			targetFile: providerWrapperRelPath,
+		})
+	}
+	cs = append(cs,
+		// Pinned native Claude exec line (trailing backslash preserved).
+		check{
+			kind:       kindPresent,
+			pattern:    `DISABLE_AUTOUPDATER=1 CLAUDE_CONFIG_DIR="${HOME}/.claude" exec /usr/local/libexec/workcell/real/claude \`,
+			message:    "Expected provider wrapper to launch the pinned native Claude binary with managed env",
+			targetFile: providerWrapperRelPath,
+		},
+		// Pinned Gemini native sandbox-off exec line (trailing backslash preserved).
+		check{
+			kind:       kindPresent,
+			pattern:    `GEMINI_CLI_NO_RELAUNCH=1 GEMINI_SANDBOX=false exec /usr/local/libexec/workcell/real/node \`,
+			message:    "Expected provider wrapper to pin Gemini native sandbox off on the managed path",
+			targetFile: providerWrapperRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    `copilot_github_token="$(workcell_load_copilot_github_token)"`,
+			message:    "Expected provider wrapper to load Copilot auth from the staged host-side token handoff",
+			targetFile: providerWrapperRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    `token_file="$(head -n1 "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}")"`,
+			message:    "Expected provider wrapper to read the Copilot token handoff path from root-controlled runtime state",
+			targetFile: providerWrapperRelPath,
+		},
+		// Consumed-marker guard (first probe): shares the pair's message.
+		check{
+			kind:       kindPresent,
+			pattern:    `copilot_token_handoff_consumed_file="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}/copilot-token-consumed"`,
+			message:    "Expected provider wrapper to write a host-visible Copilot token consumed marker",
+			targetFile: providerWrapperRelPath,
+		},
+		// Consumed-marker guard (second probe): shares the pair's message.
+		check{
+			kind:       kindPresent,
+			pattern:    `: >"${copilot_token_handoff_consumed_file}"`,
+			message:    "Expected provider wrapper to write a host-visible Copilot token consumed marker",
+			targetFile: providerWrapperRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    "unset GH_CONFIG_DIR",
+			message:    "Expected provider wrapper to scrub GitHub CLI config directory overrides before provider launch",
+			targetFile: providerWrapperRelPath,
+		},
+		// kindAbsent: a caller-supplied WORKCELL_COPILOT_TOKEN_FILE default is a
+		// violation (present → exit 1).
+		check{
+			kind:       kindAbsent,
+			pattern:    `local token_file="${WORKCELL_COPILOT_TOKEN_FILE:-}"`,
+			message:    "Provider wrapper must not trust caller-supplied WORKCELL_COPILOT_TOKEN_FILE",
+			targetFile: providerWrapperRelPath,
+		},
+		// Staged-token guard (first probe, affirmative): shares the pair's message.
+		check{
+			kind:       kindPresent,
+			pattern:    `[[ -n "${token_file}" ]] || workcell_die "Copilot auth token handoff file is required."`,
+			message:    "Expected provider wrapper to require staged Copilot token files instead of caller-supplied token env fallbacks",
+			targetFile: providerWrapperRelPath,
+		},
+		// Staged-token guard (second probe, NEGATED): a WORKCELL_COPILOT_GITHUB_TOKEN
+		// env fallback present is a violation.  Shares the pair's message.
+		check{
+			kind:       kindAbsent,
+			pattern:    "WORKCELL_COPILOT_GITHUB_TOKEN:-",
+			message:    "Expected provider wrapper to require staged Copilot token files instead of caller-supplied token env fallbacks",
+			targetFile: providerWrapperRelPath,
+		},
+	)
+	return cs
+}
+
+// CheckProviderLauncherAuthority runs the thirty provider-launcher-authority
+// invariants against the repo rooted at rootDir, in the shell's original order.
+// It returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant (the
+// shell's exit 1).
+func CheckProviderLauncherAuthority(rootDir string) error {
+	return evaluate(rootDir, providerLauncherAuthorityChecks())
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.
