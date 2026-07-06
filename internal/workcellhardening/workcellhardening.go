@@ -180,6 +180,22 @@ const jobValidateRelPath = "scripts/ci/job-validate.sh"
 // ${ROOT_DIR}/.github/workflows/release.yml.
 const releaseWorkflowRelPath = ".github/workflows/release.yml"
 
+// codexManagedConfigRelPath and codexRequirementsRelPath are the repo-relative
+// paths to the two Codex adapter rule files.  The adapter-rule/guard-bash block
+// reads both (via the per-check targetFile field) for its provider-mediation
+// bypass-path invariants, mirroring the shell `grep -Fq` probes that ran against
+// ${ROOT_DIR}/adapters/codex/managed_config.toml and
+// ${ROOT_DIR}/adapters/codex/requirements.toml in the codex_rule_file loop.
+const codexManagedConfigRelPath = "adapters/codex/managed_config.toml"
+const codexRequirementsRelPath = "adapters/codex/requirements.toml"
+
+// claudeGuardBashRelPath is the repo-relative path to the Claude adapter Bash
+// guard hook.  The adapter-rule/guard-bash block reads this file (via the
+// per-check targetFile field) for its provider-mediation and home
+// control-plane bypass-path invariants, mirroring the shell `grep -Fq` probes
+// that ran against ${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh.
+const claudeGuardBashRelPath = "adapters/claude/hooks/guard-bash.sh"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -230,6 +246,14 @@ const (
 	// Unlike kindPresent's single targetFile, evaluate ORs the per-file
 	// containment predicate (holds) across every path in targetFiles.
 	kindPresentInAnyFile
+	// kindCountAtLeast requires the fixed string (pattern) to appear on AT
+	// LEAST minCount lines of the target file, mirroring the shell's
+	// `if [[ "$(grep -Fc 'NEEDLE' file)" -lt N ]]; then ... exit 1`.  As with
+	// `grep -Fc`, matching is line-oriented: holds counts how many lines
+	// CONTAIN the fixed needle (a line with two occurrences still counts
+	// once), not the total number of occurrences, and the check is violated
+	// (returns the message) when that line count is < minCount.
+	kindCountAtLeast
 )
 
 // check is one hardening invariant: how to match, what to match, which
@@ -254,6 +278,11 @@ type check struct {
 	// across these paths, mirroring the shell's multi-file
 	// `grep -Fq -- NEEDLE f1 f2`.
 	targetFiles []string
+	// minCount is the minimum number of lines of the target file that must
+	// contain pattern for a kindCountAtLeast check to hold.  It is used only
+	// by kindCountAtLeast (every other kind ignores it), mirroring the N in
+	// the shell's `grep -Fc ... -lt N` count guard.
+	minCount int
 }
 
 // checks lists the eleven invariants in the same order as the former
@@ -2432,6 +2461,151 @@ func CheckCopilotReleaseVerify(rootDir string) error {
 	return evaluate(rootDir, copilotReleaseVerifyChecks())
 }
 
+// adapterRuleGuardBashChecks lists the eighteen adapter-rule / Bash-guard
+// invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block starting at the release.yml
+// native-help count guard, through the codex_rule_file loop, and ending with
+// the Claude Bash guard checks), so a reviewer can diff the two one-to-one.
+//
+// The block reads four files via the per-check targetFile field:
+// .github/workflows/release.yml (the native-help count guard),
+// adapters/codex/managed_config.toml and adapters/codex/requirements.toml (the
+// codex_rule_file loop), and adapters/claude/hooks/guard-bash.sh (the Bash
+// guard checks).
+//
+// Two shell constructs are flattened into ordered checks sharing one message,
+// exactly as in the earlier groups:
+//
+//   - Each codex_rule_file probe-3 and the guard-bash multi-path probe were a
+//     single shell `if` guarding several `grep -Fq` probes joined by `||`
+//     (every needle must be present); each is expressed here as two/four
+//     ordered kindPresent checks sharing that probe's message, which is
+//     behaviourally identical (any missing needle yields the same stderr and
+//     exit 1 before later checks run).
+//   - The `if grep -Fq '@anthropic-ai/claude-code/cli.js'; then ... exit 1`
+//     probes (present is a violation) become kindAbsent checks.
+//
+// The codex_rule_file loop ran the same four probes against managed_config.toml
+// then requirements.toml, interpolating basename(file) into each message; the
+// file-outer / probe-inner order is preserved here.  The guard-bash
+// provider-wrapper needle is the regex-escaped `provider-wrapper\.sh` (a literal
+// backslash-dot, byte-for-byte as it appears inside the guard's regex), unlike
+// the codex loop's unescaped `provider-wrapper.sh`; the `\\.copilot` and
+// `copilot\.md` needles are likewise copied byte-exact from the guard regex.
+func adapterRuleGuardBashChecks() []check {
+	const guardBypassMessage = "Expected Claude Bash guard to block Copilot provider and home control-plane bypass paths"
+	cs := []check{
+		// Release-workflow native-help count guard: the native help-mode needle
+		// must appear on at least two lines (the amd64 and arm64 lanes).
+		{
+			kind:       kindCountAtLeast,
+			pattern:    "WORKCELL_COPILOT_RELEASE_HELP_MODE: native",
+			minCount:   2,
+			message:    "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes",
+			targetFile: releaseWorkflowRelPath,
+		},
+	}
+	// codex_rule_file loop: the same four probes against each rule file, with
+	// basename(file) interpolated into every message.  Probe 3 (the Copilot
+	// mediation-bypass guard) was a two-needle `||` and is two ordered
+	// kindPresent checks sharing one message.
+	for _, f := range []struct{ path, base string }{
+		{codexManagedConfigRelPath, "managed_config.toml"},
+		{codexRequirementsRelPath, "requirements.toml"},
+	} {
+		cs = append(cs,
+			check{
+				kind:       kindPresent,
+				pattern:    "/usr/local/libexec/workcell/provider-wrapper.sh",
+				message:    "Expected " + f.base + " to block direct provider-wrapper launches",
+				targetFile: f.path,
+			},
+			check{
+				kind:       kindPresent,
+				pattern:    "/usr/local/libexec/workcell/real/claude",
+				message:    "Expected " + f.base + " to block the native Claude binary path",
+				targetFile: f.path,
+			},
+			check{
+				kind:       kindPresent,
+				pattern:    "/usr/local/libexec/workcell/core/copilot",
+				message:    "Expected " + f.base + " to block Copilot provider mediation bypass paths",
+				targetFile: f.path,
+			},
+			check{
+				kind:       kindPresent,
+				pattern:    "/usr/local/libexec/workcell/real/copilot",
+				message:    "Expected " + f.base + " to block Copilot provider mediation bypass paths",
+				targetFile: f.path,
+			},
+			check{
+				kind:       kindAbsent,
+				pattern:    "@anthropic-ai/claude-code/cli.js",
+				message:    f.base + " should not reference the removed Claude npm entrypoint",
+				targetFile: f.path,
+			},
+		)
+	}
+	// Claude Bash guard checks.  The provider-wrapper needle carries the
+	// literal backslash-dot from the guard's regex; the multi-path probe (four
+	// needles under one `||` guard) becomes four ordered kindPresent checks
+	// sharing guardBypassMessage.
+	cs = append(cs,
+		check{
+			kind:       kindPresent,
+			pattern:    `/usr/local/libexec/workcell/provider-wrapper\.sh`,
+			message:    "Expected Claude Bash guard to block direct provider-wrapper launches",
+			targetFile: claudeGuardBashRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    "/usr/local/libexec/workcell/real/claude",
+			message:    "Expected Claude Bash guard to block direct native Claude binary launches",
+			targetFile: claudeGuardBashRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    "/usr/local/libexec/workcell/core/copilot",
+			message:    guardBypassMessage,
+			targetFile: claudeGuardBashRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    "/usr/local/libexec/workcell/real/copilot",
+			message:    guardBypassMessage,
+			targetFile: claudeGuardBashRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    `\\.copilot`,
+			message:    guardBypassMessage,
+			targetFile: claudeGuardBashRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    `copilot\.md`,
+			message:    guardBypassMessage,
+			targetFile: claudeGuardBashRelPath,
+		},
+		check{
+			kind:       kindAbsent,
+			pattern:    "@anthropic-ai/claude-code/cli.js",
+			message:    "Claude Bash guard should not reference the removed Claude npm entrypoint",
+			targetFile: claudeGuardBashRelPath,
+		},
+	)
+	return cs
+}
+
+// CheckAdapterRuleGuardBash runs the eighteen adapter-rule / Bash-guard
+// invariants against the repo rooted at rootDir, in the shell's original order.
+// It returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant (the
+// shell's exit 1).
+func CheckAdapterRuleGuardBash(rootDir string) error {
+	return evaluate(rootDir, adapterRuleGuardBashChecks())
+}
+
 // holds reports whether the invariant is satisfied by the launcher text.
 func (c check) holds(text string) bool {
 	switch c.kind {
@@ -2453,6 +2627,17 @@ func (c check) holds(text string) bool {
 		// ORs this across every path in targetFiles to reproduce grep's
 		// multi-file OR semantics.
 		return strings.Contains(text, c.pattern)
+	case kindCountAtLeast:
+		// Mirror `grep -Fc`: count how many LINES contain the fixed needle
+		// (a line with multiple occurrences still counts once), and hold only
+		// when that line count is at least minCount.
+		count := 0
+		for _, line := range strings.Split(text, "\n") {
+			if strings.Contains(line, c.pattern) {
+				count++
+			}
+		}
+		return count >= c.minCount
 	case kindAbsent:
 		return !strings.Contains(text, c.pattern)
 	case kindRegexAbsent:
