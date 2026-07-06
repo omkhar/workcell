@@ -195,6 +195,14 @@ const (
 	// extracted block via regexMatchesAnyLine for `grep`/`rg` line-oriented
 	// parity.
 	kindFunctionBlockRegex
+	// kindPresentInAnyFile requires the fixed string to appear in AT LEAST ONE
+	// of the files listed in targetFiles, mirroring `grep -Fq -- NEEDLE f1 f2`
+	// under a negated `if !` guard: grep scans every file and, with -q, exits 0
+	// as soon as the needle is found in ANY of them, so `! grep` (the
+	// violation) fires only when the needle is absent from ALL listed files.
+	// Unlike kindPresent's single targetFile, evaluate ORs the per-file
+	// containment predicate (holds) across every path in targetFiles.
+	kindPresentInAnyFile
 )
 
 // check is one hardening invariant: how to match, what to match, which
@@ -213,6 +221,12 @@ type check struct {
 	// dockerfileRelPath), mirroring the shell probe that ran `rg` against
 	// ${ROOT_DIR}/runtime/container/Dockerfile instead of scripts/workcell.
 	targetFile string
+	// targetFiles lists the repo-relative files a kindPresentInAnyFile check
+	// reads.  It is used only by kindPresentInAnyFile (every other kind reads a
+	// single file via targetFile); evaluate ORs the containment predicate
+	// across these paths, mirroring the shell's multi-file
+	// `grep -Fq -- NEEDLE f1 f2`.
+	targetFiles []string
 }
 
 // checks lists the eleven invariants in the same order as the former
@@ -319,6 +333,22 @@ func evaluate(rootDir string, cs []check) error {
 	}
 
 	for _, c := range cs {
+		if c.kind == kindPresentInAnyFile {
+			// Mirror `grep -Fq -- NEEDLE f1 f2`: the check holds when the
+			// per-file containment predicate (holds) is true for ANY listed
+			// file, and is violated only when it is false for every file.
+			satisfied := false
+			for _, rel := range c.targetFiles {
+				if c.holds(readTarget(rel)) {
+					satisfied = true
+					break
+				}
+			}
+			if !satisfied {
+				return errors.New(c.message)
+			}
+			continue
+		}
 		rel := c.targetFile
 		if rel == "" {
 			rel = launcherRelPath
@@ -2017,6 +2047,186 @@ func CheckCopilotPolicyWrapper(rootDir string) error {
 	return evaluate(rootDir, copilotPolicyWrapperChecks)
 }
 
+// copilotUnsafeLongFlags lists the sixteen fixed Copilot flags the shell's
+// `for unsafe_copilot_flag in ...` loop asserted the provider policy rejects.
+// Order matches the shell verbatim so the generated checks reproduce the
+// shell's first-failure stderr exactly.  Every flag is a fixed single-quoted
+// shell literal, matched by `grep -Fq`.
+var copilotUnsafeLongFlags = []string{
+	"--config-dir",
+	"--allow-tool",
+	"--allow-all-tools",
+	"--allow-all-mcp-server-instructions",
+	"--available-tools",
+	"--secret-env-vars",
+	"--no-auto-update",
+	"--no-remote",
+	"--no-remote-export",
+	"--disable-builtin-mcps",
+	"--disallow-temp-dir",
+	"--dynamic-retrieval",
+	"--interactive",
+	"--no-bash-env",
+	"--plan",
+	"--worktree",
+}
+
+// copilotUnsafeAttachedShortForms lists the five Copilot attached short-flag
+// forms the shell's `for unsafe_copilot_short_form in ...` loop asserted the
+// provider policy rejects.  `grep -Fq` treats the `?` and `*` glob characters
+// as LITERAL, so each is a fixed string (e.g. the literal `-c?*`), not a glob;
+// order matches the shell verbatim.
+var copilotUnsafeAttachedShortForms = []string{
+	"-c?*",
+	"-i?*",
+	"-a?*",
+	"-A?*",
+	"-w?*",
+}
+
+// copilotUnsafeBareShortForms lists the two Copilot bare short-flag case
+// snippets the shell's `for unsafe_copilot_bare_short in ...` loop asserted are
+// rejected and smoke-tested.  Each is a fixed single-quoted shell literal
+// (including its spaces, pipes, parens, and trailing `)`), matched by
+// `grep -Fq` across BOTH scripts/container-smoke.sh and
+// runtime/container/provider-policy.sh (a multi-file OR: present in either file
+// satisfies the check).  Order matches the shell verbatim.
+var copilotUnsafeBareShortForms = []string{
+	"copilot_short_flag in -C -i -n -r -w",
+	"-C | -i | -n | -r | -w)",
+}
+
+// copilotUnsafeFlagsChecks returns the thirty-one Copilot-unsafe-flag
+// invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the copilot-policy-wrapper
+// `go_verify_citools` call and the Copilot upstream-release-verifier
+// `# shellcheck disable=SC2016` group), so a reviewer can diff the two
+// one-to-one.
+//
+// The block reads six files via the per-check targetFile / targetFiles fields:
+// the runtime provider policy (runtime/container/provider-policy.sh), the
+// container smoke harness (scripts/container-smoke.sh), the runtime provider
+// wrapper (runtime/container/provider-wrapper.sh), the runtime development
+// wrapper (runtime/container/development-wrapper.sh), the exec-guard Rust
+// library (runtime/container/rust/src/lib.rs), and the shared launcher_common.rs
+// helper.
+//
+// Matching semantics mirror the shell exactly:
+//   - The three `for` loops each ran `grep -Fq -- NEEDLE ...`.  The first two
+//     loops probe a single file (provider-policy.sh), so each item is a
+//     kindPresent check whose message interpolates the loop variable exactly as
+//     the shell's `echo "... ${unsafe_copilot_flag}"` /
+//     `${unsafe_copilot_short_form}` did.  Every needle is fixed-string
+//     containment: `grep -Fq` treats the `?`/`*` glob characters in the short
+//     forms as literal.
+//   - The third loop ran `grep -Fq -- NEEDLE container-smoke.sh
+//     provider-policy.sh` — a multi-file grep whose `! grep` guard fails only
+//     when the needle is absent from BOTH files.  Each item is therefore a
+//     kindPresentInAnyFile check over those two files, sharing the loop's
+//     interpolated message.
+//   - The eight trailing guards are single-file `! grep -Fq NEEDLE file` probes
+//     (kindPresent, per-check targetFile).  Two former shell `if` guards each
+//     joined two `grep -Fq` probes with `||` under one message (the exec-guard
+//     wrapper-specific pair, both against rust/src/lib.rs; the forged-auth pair,
+//     against launcher_common.rs then container-smoke.sh); they are expressed as
+//     ordered kindPresent checks sharing that message, which is behaviourally
+//     identical (the first missing probe yields the same stderr and exit 1).
+func copilotUnsafeFlagsChecks() []check {
+	var cs []check
+	// Loop 1: sixteen fixed unsafe long flags rejected by provider-policy.sh.
+	for _, flag := range copilotUnsafeLongFlags {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    flag,
+			message:    "Expected provider policy to reject Copilot unsafe flag: " + flag,
+			targetFile: providerPolicyRelPath,
+		})
+	}
+	// Loop 2: five attached short-flag forms rejected by provider-policy.sh.
+	for _, form := range copilotUnsafeAttachedShortForms {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    form,
+			message:    "Expected provider policy to reject Copilot attached unsafe short flag: " + form,
+			targetFile: providerPolicyRelPath,
+		})
+	}
+	// Loop 3: two bare short-flag snippets present in container-smoke.sh OR
+	// provider-policy.sh (multi-file grep OR).
+	for _, form := range copilotUnsafeBareShortForms {
+		cs = append(cs, check{
+			kind:        kindPresentInAnyFile,
+			pattern:     form,
+			message:     "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: " + form,
+			targetFiles: []string{containerSmokeRelPath, providerPolicyRelPath},
+		})
+	}
+	cs = append(cs,
+		check{
+			kind:       kindPresent,
+			pattern:    "reject_unsafe_copilot_args",
+			message:    "Expected provider wrapper to re-check Copilot argv before launch",
+			targetFile: providerWrapperRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    `reject_protected_runtime_arguments "$@"`,
+			message:    "Expected development wrapper to reject loader-mediated protected runtime targets before exec",
+			targetFile: developmentWrapperRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    "development-wrapper-copilot-loader",
+			message:    "Expected container smoke to cover development-wrapper loader-mediated Copilot execution",
+			targetFile: containerSmokeRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    "workcell-copilot-real-copy",
+			message:    "Expected container smoke to cover development-wrapper execution of copied protected Copilot payloads",
+			targetFile: containerSmokeRelPath,
+		},
+		// Exec-guard wrapper-specific pair (first probe): shares the pair's message.
+		check{
+			kind:       kindPresent,
+			pattern:    "ApprovedWrapper::Development | ApprovedWrapper::None => false",
+			message:    "Expected exec guard to keep protected runtime authorization wrapper-specific",
+			targetFile: rustLibRelPath,
+		},
+		// Exec-guard wrapper-specific pair (second probe): shares the pair's message.
+		check{
+			kind:       kindPresent,
+			pattern:    "approved_wrapper_allows_runtime",
+			message:    "Expected exec guard to keep protected runtime authorization wrapper-specific",
+			targetFile: rustLibRelPath,
+		},
+		// Forged-auth pair (first probe, launcher_common.rs): shares the pair's message.
+		check{
+			kind:       kindPresent,
+			pattern:    "WORKCELL_COPILOT_GITHUB_TOKEN",
+			message:    "Expected launcher and smoke coverage to reject forged Copilot auth env",
+			targetFile: launcherCommonRustRelPath,
+		},
+		// Forged-auth pair (second probe, container-smoke.sh): shares the pair's message.
+		check{
+			kind:       kindPresent,
+			pattern:    "forged-copilot-token",
+			message:    "Expected launcher and smoke coverage to reject forged Copilot auth env",
+			targetFile: containerSmokeRelPath,
+		},
+	)
+	return cs
+}
+
+// CheckCopilotUnsafeFlags runs the thirty-one Copilot-unsafe-flag invariants
+// against the repo rooted at rootDir, in the shell's original order.  It returns
+// nil when every invariant holds (the shell's exit 0), or an error whose message
+// equals the shell's stderr for the first violated invariant (the shell's exit
+// 1).
+func CheckCopilotUnsafeFlags(rootDir string) error {
+	return evaluate(rootDir, copilotUnsafeFlagsChecks())
+}
+
 // holds reports whether the invariant is satisfied by the launcher text.
 func (c check) holds(text string) bool {
 	switch c.kind {
@@ -2032,6 +2242,11 @@ func (c check) holds(text string) bool {
 	case kindFirstLineRegex:
 		return regexp.MustCompile(c.pattern).MatchString(firstLine(text))
 	case kindPresent:
+		return strings.Contains(text, c.pattern)
+	case kindPresentInAnyFile:
+		// Per-file containment predicate for a single listed file; evaluate
+		// ORs this across every path in targetFiles to reproduce grep's
+		// multi-file OR semantics.
 		return strings.Contains(text, c.pattern)
 	case kindAbsent:
 		return !strings.Contains(text, c.pattern)

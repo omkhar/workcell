@@ -3017,3 +3017,346 @@ func TestCheckCopilotPolicyWrapperRealRepo(t *testing.T) {
 		t.Fatalf("CheckCopilotPolicyWrapper(real repo) = %v, want nil", err)
 	}
 }
+
+// copilotUnsafeFlagsHappyProviderPolicy is a minimal but structurally faithful
+// runtime/container/provider-policy.sh: it contains all sixteen unsafe long
+// flags, all five attached short-flag forms (with the `?*` glob characters as
+// literal text, matched by grep -Fq), and the second bare short-flag snippet
+// `-C | -i | -n | -r | -w)` (the FIRST bare snippet lives in the smoke harness,
+// so the two loop-3 items are deliberately split across the two files to prove
+// the OR across them is real).
+const copilotUnsafeFlagsHappyProviderPolicy = `#!/usr/bin/env bash
+copilot_policy() {
+  case "${arg}" in
+  --config-dir | --allow-tool | --allow-all-tools | --allow-all-mcp-server-instructions) ;;
+  --available-tools | --secret-env-vars | --no-auto-update | --no-remote | --no-remote-export) ;;
+  --disable-builtin-mcps | --disallow-temp-dir | --dynamic-retrieval | --interactive) ;;
+  --no-bash-env | --plan | --worktree) ;;
+  -c?* | -i?* | -a?* | -A?* | -w?*) ;;
+  -C | -i | -n | -r | -w) ;;
+  esac
+}
+`
+
+// copilotUnsafeFlagsHappySmoke is a minimal but structurally faithful
+// scripts/container-smoke.sh: it contains the FIRST bare short-flag snippet
+// `copilot_short_flag in -C -i -n -r -w` (its only home; provider-policy.sh has
+// the second), the development-wrapper loader coverage needles, and the
+// forged-auth smoke needle.
+const copilotUnsafeFlagsHappySmoke = `#!/usr/bin/env bash
+# copilot_short_flag in -C -i -n -r -w
+run_case development-wrapper-copilot-loader.out
+run_case workcell-copilot-real-copy.out
+run_case forged-copilot-token.out
+`
+
+// copilotUnsafeFlagsHappyProviderWrapper is a minimal but structurally faithful
+// runtime/container/provider-wrapper.sh containing the argv re-check needle.
+const copilotUnsafeFlagsHappyProviderWrapper = `#!/usr/bin/env bash
+reject_unsafe_copilot_args "$@"
+`
+
+// copilotUnsafeFlagsHappyDevelopmentWrapper is a minimal but structurally
+// faithful runtime/container/development-wrapper.sh containing the protected
+// runtime target rejection needle.
+const copilotUnsafeFlagsHappyDevelopmentWrapper = `#!/usr/bin/env bash
+reject_protected_runtime_arguments "$@"
+`
+
+// copilotUnsafeFlagsHappyRustLib is a minimal but structurally faithful
+// runtime/container/rust/src/lib.rs containing both exec-guard needles.
+const copilotUnsafeFlagsHappyRustLib = `pub fn approved_wrapper_allows_runtime(w: ApprovedWrapper) -> bool {
+    match w {
+        ApprovedWrapper::Development | ApprovedWrapper::None => false,
+        _ => true,
+    }
+}
+`
+
+// copilotUnsafeFlagsHappyLauncherCommon is a minimal but structurally faithful
+// runtime/container/rust/src/bin/common/launcher_common.rs containing the
+// forged-auth env needle.
+const copilotUnsafeFlagsHappyLauncherCommon = `pub const COPILOT_TOKEN_ENV: &str = "WORKCELL_COPILOT_GITHUB_TOKEN";
+`
+
+// writeCopilotUnsafeFlagsRepo materializes a fake repo with the six files this
+// group reads set to the given bodies; a body of "" means "do not create that
+// file" (unreadable-target case).
+func writeCopilotUnsafeFlagsRepo(t *testing.T, providerPolicy, smoke, providerWrapper, developmentWrapper, rustLib, launcherCommon string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(providerPolicyRelPath, providerPolicy)
+	write(containerSmokeRelPath, smoke)
+	write(providerWrapperRelPath, providerWrapper)
+	write(developmentWrapperRelPath, developmentWrapper)
+	write(rustLibRelPath, rustLib)
+	write(launcherCommonRustRelPath, launcherCommon)
+	return root
+}
+
+func TestCheckCopilotUnsafeFlags(t *testing.T) {
+	tests := []struct {
+		name               string
+		providerPolicy     string
+		smoke              string
+		providerWrapper    string
+		developmentWrapper string
+		rustLib            string
+		launcherCommon     string
+		wantErr            string // "" means expect success
+	}{
+		{
+			name:               "happy path all invariants hold",
+			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+		},
+		{
+			// Loop 1 (kindPresent, provider-policy.sh — first flag).
+			name:               "provider policy missing first unsafe long flag",
+			providerPolicy:     strings.Replace(copilotUnsafeFlagsHappyProviderPolicy, "--config-dir", "--other", 1),
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected provider policy to reject Copilot unsafe flag: --config-dir",
+		},
+		{
+			// Loop 1 (kindPresent, provider-policy.sh — last flag).
+			name:               "provider policy missing last unsafe long flag",
+			providerPolicy:     strings.Replace(copilotUnsafeFlagsHappyProviderPolicy, "--worktree", "--other", 1),
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected provider policy to reject Copilot unsafe flag: --worktree",
+		},
+		{
+			// Loop 2 (kindPresent, provider-policy.sh — literal `?*` short form).
+			name:               "provider policy missing attached short form",
+			providerPolicy:     strings.Replace(copilotUnsafeFlagsHappyProviderPolicy, "-a?*", "-a", 1),
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected provider policy to reject Copilot attached unsafe short flag: -a?*",
+		},
+		{
+			// Loop 3 (kindPresentInAnyFile): the first bare snippet lives only in the
+			// smoke harness, so removing it there (it is absent from the policy) makes
+			// it absent from BOTH files → violation.
+			name:               "bare short flag absent from both files",
+			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
+			smoke:              strings.Replace(copilotUnsafeFlagsHappySmoke, "copilot_short_flag in -C -i -n -r -w", "other", 1),
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: copilot_short_flag in -C -i -n -r -w",
+		},
+		{
+			// Guard (kindPresent, provider-wrapper.sh).
+			name:               "provider wrapper missing argv re-check",
+			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    strings.Replace(copilotUnsafeFlagsHappyProviderWrapper, "reject_unsafe_copilot_args", "other", 1),
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected provider wrapper to re-check Copilot argv before launch",
+		},
+		{
+			// Guard (kindPresent, development-wrapper.sh).
+			name:               "development wrapper missing protected target rejection",
+			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: strings.Replace(copilotUnsafeFlagsHappyDevelopmentWrapper, `reject_protected_runtime_arguments "$@"`, "other", 1),
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected development wrapper to reject loader-mediated protected runtime targets before exec",
+		},
+		{
+			// Guard (kindPresent, container-smoke.sh).
+			name:               "smoke missing development-wrapper loader coverage",
+			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
+			smoke:              strings.Replace(copilotUnsafeFlagsHappySmoke, "development-wrapper-copilot-loader", "other", 1),
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected container smoke to cover development-wrapper loader-mediated Copilot execution",
+		},
+		{
+			// Multi-probe guard (first probe): exec-guard wrapper-specific pair,
+			// rust/src/lib.rs.
+			name:               "exec guard missing wrapper-specific match arm",
+			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            strings.Replace(copilotUnsafeFlagsHappyRustLib, "ApprovedWrapper::Development | ApprovedWrapper::None => false", "_ => false", 1),
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected exec guard to keep protected runtime authorization wrapper-specific",
+		},
+		{
+			// Multi-probe guard (second probe): proves the two ordered probes share
+			// one message.
+			name:               "exec guard missing runtime authorization helper",
+			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            strings.Replace(copilotUnsafeFlagsHappyRustLib, "approved_wrapper_allows_runtime", "other_helper", 1),
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected exec guard to keep protected runtime authorization wrapper-specific",
+		},
+		{
+			// Multi-probe guard (first probe): forged-auth pair, launcher_common.rs.
+			name:               "launcher missing forged auth env token",
+			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     strings.Replace(copilotUnsafeFlagsHappyLauncherCommon, "WORKCELL_COPILOT_GITHUB_TOKEN", "OTHER_TOKEN", 1),
+			wantErr:            "Expected launcher and smoke coverage to reject forged Copilot auth env",
+		},
+		{
+			// Multi-probe guard (second probe, container-smoke.sh): shares the message.
+			name:               "smoke missing forged auth coverage",
+			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
+			smoke:              strings.Replace(copilotUnsafeFlagsHappySmoke, "forged-copilot-token", "other", 1),
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected launcher and smoke coverage to reject forged Copilot auth env",
+		},
+		{
+			// A missing provider-policy.sh is empty content: the first loop-1 probe
+			// fails (the --config-dir flag).
+			name:               "missing provider policy",
+			providerPolicy:     "",
+			smoke:              copilotUnsafeFlagsHappySmoke,
+			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
+			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
+			rustLib:            copilotUnsafeFlagsHappyRustLib,
+			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
+			wantErr:            "Expected provider policy to reject Copilot unsafe flag: --config-dir",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeCopilotUnsafeFlagsRepo(t, tc.providerPolicy, tc.smoke, tc.providerWrapper, tc.developmentWrapper, tc.rustLib, tc.launcherCommon)
+			err := CheckCopilotUnsafeFlags(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckCopilotUnsafeFlags() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckCopilotUnsafeFlags() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckCopilotUnsafeFlags() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckCopilotUnsafeFlagsBareShortFormOrSemantics exercises the new
+// kindPresentInAnyFile OR semantics directly against the loop-3 first bare
+// short-flag snippet: it must hold when the snippet is present in the smoke
+// harness only, when present in the provider policy only, and must fail only
+// when absent from BOTH files — mirroring `grep -Fq -- NEEDLE f1 f2`.
+func TestCheckCopilotUnsafeFlagsBareShortFormOrSemantics(t *testing.T) {
+	const snippet = "copilot_short_flag in -C -i -n -r -w"
+	// A policy body that still satisfies every non-loop-3 policy probe but does
+	// NOT contain the first bare snippet by default (the happy policy already
+	// omits it; the second bare snippet stays present so loop-3 item 2 holds).
+	policyWithout := copilotUnsafeFlagsHappyProviderPolicy
+	policyWith := copilotUnsafeFlagsHappyProviderPolicy + "\n  # " + snippet + "\n"
+	// A smoke body that satisfies every non-loop-3 smoke probe but omits the
+	// first bare snippet.
+	smokeWithout := strings.Replace(copilotUnsafeFlagsHappySmoke, snippet, "placeholder", 1)
+	smokeWith := copilotUnsafeFlagsHappySmoke
+
+	cases := []struct {
+		name    string
+		policy  string
+		smoke   string
+		wantErr bool
+	}{
+		{name: "present in smoke (file1) only", policy: policyWithout, smoke: smokeWith, wantErr: false},
+		{name: "present in policy (file2) only", policy: policyWith, smoke: smokeWithout, wantErr: false},
+		{name: "absent from both", policy: policyWithout, smoke: smokeWithout, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeCopilotUnsafeFlagsRepo(t, tc.policy, tc.smoke, copilotUnsafeFlagsHappyProviderWrapper, copilotUnsafeFlagsHappyDevelopmentWrapper, copilotUnsafeFlagsHappyRustLib, copilotUnsafeFlagsHappyLauncherCommon)
+			err := CheckCopilotUnsafeFlags(root)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("CheckCopilotUnsafeFlags() = nil, want OR-semantics violation")
+				}
+				want := "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: " + snippet
+				if err.Error() != want {
+					t.Fatalf("CheckCopilotUnsafeFlags() error = %q, want %q", err.Error(), want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CheckCopilotUnsafeFlags() = %v, want nil (needle present in one file)", err)
+			}
+		})
+	}
+}
+
+// TestCheckCopilotUnsafeFlagsCount asserts the check list contains exactly
+// thirty-one invariants, guarding against an accidentally truncated or
+// duplicated migration of the shell block.
+func TestCheckCopilotUnsafeFlagsCount(t *testing.T) {
+	got := len(copilotUnsafeFlagsChecks())
+	const want = 31
+	if got != want {
+		t.Fatalf("copilotUnsafeFlagsChecks() has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckCopilotUnsafeFlagsRealRepo asserts that the real provider-policy.sh,
+// container-smoke.sh, provider-wrapper.sh, development-wrapper.sh, lib.rs, and
+// launcher_common.rs in this repository satisfy all thirty-one
+// Copilot-unsafe-flag invariants.  This is the key guard against a
+// mis-transcribed needle or a wrong target file: if any Go pattern is not a
+// byte-exact substring of the actual file (or the wrong file), this test fails
+// with the guard's stderr message.
+func TestCheckCopilotUnsafeFlagsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, providerPolicyRelPath)); err != nil {
+		t.Skipf("real provider-policy.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckCopilotUnsafeFlags(repoRoot); err != nil {
+		t.Fatalf("CheckCopilotUnsafeFlags(real repo) = %v, want nil", err)
+	}
+}

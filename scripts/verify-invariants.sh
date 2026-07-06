@@ -8251,73 +8251,7 @@ if ! grep -Fq "rm -f -- \"\${token_file}\"" "${ROOT_DIR}/runtime/container/provi
   exit 1
 fi
 go_verify_citools workcell-copilot-policy-wrapper "${ROOT_DIR}" || exit 1
-for unsafe_copilot_flag in \
-  '--config-dir' \
-  '--allow-tool' \
-  '--allow-all-tools' \
-  '--allow-all-mcp-server-instructions' \
-  '--available-tools' \
-  '--secret-env-vars' \
-  '--no-auto-update' \
-  '--no-remote' \
-  '--no-remote-export' \
-  '--disable-builtin-mcps' \
-  '--disallow-temp-dir' \
-  '--dynamic-retrieval' \
-  '--interactive' \
-  '--no-bash-env' \
-  '--plan' \
-  '--worktree'; do
-  if ! grep -Fq -- "${unsafe_copilot_flag}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
-    echo "Expected provider policy to reject Copilot unsafe flag: ${unsafe_copilot_flag}" >&2
-    exit 1
-  fi
-done
-for unsafe_copilot_short_form in \
-  '-c?*' \
-  '-i?*' \
-  '-a?*' \
-  '-A?*' \
-  '-w?*'; do
-  if ! grep -Fq -- "${unsafe_copilot_short_form}" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
-    echo "Expected provider policy to reject Copilot attached unsafe short flag: ${unsafe_copilot_short_form}" >&2
-    exit 1
-  fi
-done
-for unsafe_copilot_bare_short in \
-  'copilot_short_flag in -C -i -n -r -w' \
-  '-C | -i | -n | -r | -w)'; do
-  if ! grep -Fq -- "${unsafe_copilot_bare_short}" "${ROOT_DIR}/scripts/container-smoke.sh" "${ROOT_DIR}/runtime/container/provider-policy.sh"; then
-    echo "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: ${unsafe_copilot_bare_short}" >&2
-    exit 1
-  fi
-done
-if ! grep -Fq 'reject_unsafe_copilot_args' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to re-check Copilot argv before launch" >&2
-  exit 1
-fi
-if ! grep -Fq 'reject_protected_runtime_arguments "$@"' "${ROOT_DIR}/runtime/container/development-wrapper.sh"; then
-  echo "Expected development wrapper to reject loader-mediated protected runtime targets before exec" >&2
-  exit 1
-fi
-if ! grep -Fq 'development-wrapper-copilot-loader' "${ROOT_DIR}/scripts/container-smoke.sh"; then
-  echo "Expected container smoke to cover development-wrapper loader-mediated Copilot execution" >&2
-  exit 1
-fi
-if ! grep -Fq 'workcell-copilot-real-copy' "${ROOT_DIR}/scripts/container-smoke.sh"; then
-  echo "Expected container smoke to cover development-wrapper execution of copied protected Copilot payloads" >&2
-  exit 1
-fi
-if ! grep -Fq 'ApprovedWrapper::Development | ApprovedWrapper::None => false' "${ROOT_DIR}/runtime/container/rust/src/lib.rs" ||
-  ! grep -Fq 'approved_wrapper_allows_runtime' "${ROOT_DIR}/runtime/container/rust/src/lib.rs"; then
-  echo "Expected exec guard to keep protected runtime authorization wrapper-specific" >&2
-  exit 1
-fi
-if ! grep -Fq 'WORKCELL_COPILOT_GITHUB_TOKEN' "${ROOT_DIR}/runtime/container/rust/src/bin/common/launcher_common.rs" ||
-  ! grep -Fq 'forged-copilot-token' "${ROOT_DIR}/scripts/container-smoke.sh"; then
-  echo "Expected launcher and smoke coverage to reject forged Copilot auth env" >&2
-  exit 1
-fi
+go_verify_citools workcell-copilot-unsafe-flags "${ROOT_DIR}" || exit 1
 # shellcheck disable=SC2016
 if ! grep -Fq 'COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-auto}"' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
   ! grep -Fq 'COPILOT_NATIVE_HELP_DONE=0' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
