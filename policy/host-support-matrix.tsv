@@ -4,6 +4,7 @@ macos	arm64	none	none	local_vm	colima	strict	supported	allowed	certification-onl
 macos	arm64	none	none	local_compat	docker-desktop	compat	supported	allowed	certification-only	none	apple-silicon-macos-docker-desktop-compat-reviewed-launch-host
 macos	arm64	none	none	remote_vm	aws-ec2-ssm	compat	preview-only	blocked	certification-only	none	apple-silicon-macos-aws-ec2-ssm-preview-certification-only
 macos	arm64	none	none	remote_vm	gcp-vm	compat	preview-only	blocked	certification-only	none	apple-silicon-macos-gcp-vm-preview-certification-only
+macos	arm64	none	none	local_vm	apple-container	per-session-vm	preview-only	blocked	certification-only	none	apple-silicon-macos-26-apple-container-evaluation-preview
 linux	amd64	any	any	local_vm	colima	strict	validation-host-only	blocked	repo-required	trusted-linux-amd64-validator	trusted-linux-amd64-validation-host-only
 linux	amd64	any	any	local_compat	docker-desktop	compat	unsupported	blocked	none	none	linux-docker-desktop-hosts-not-yet-reviewed
 linux	amd64	any	any	remote_vm	aws-ec2-ssm	compat	validation-host-only	blocked	repo-required	trusted-linux-amd64-validator	trusted-linux-amd64-aws-ec2-ssm-deterministic-preview
