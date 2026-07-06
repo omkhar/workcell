@@ -685,7 +685,7 @@ var bootstrapAuditMetadataChecks = []check{
 		// kindPresent (first half of the audit-record guard): the
 		// bootstrap_applied field.
 		kind:    kindPresent,
-		pattern: "bootstrap_applied=${BOOTSTRAP_APPLIED}",
+		pattern: `"bootstrap_applied=${BOOTSTRAP_APPLIED}"`,
 		message: "Expected scripts/workcell audit records to include bootstrap network metadata",
 	},
 	{
@@ -694,7 +694,7 @@ var bootstrapAuditMetadataChecks = []check{
 		// of the literal command substitution.  Shares the first half's
 		// message.
 		kind:    kindPresent,
-		pattern: `bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')`,
+		pattern: `"bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')"`,
 		message: "Expected scripts/workcell audit records to include bootstrap network metadata",
 	},
 	{

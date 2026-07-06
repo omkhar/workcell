@@ -863,6 +863,14 @@ func TestCheckBootstrapAuditMetadata(t *testing.T) {
 			wantErr:  "Expected scripts/workcell audit records to include bootstrap network metadata",
 		},
 		{
+			// The audit field must be QUOTED: dropping the leading `"` (which the
+			// old `rg` pattern required) leaves an unquoted command substitution
+			// that word-splits the endpoint list — the check must still fail.
+			name:     "unquoted bootstrap_endpoints field",
+			launcher: strings.Replace(bootstrapAuditHappyLauncher, `"bootstrap_endpoints=$(`, `bootstrap_endpoints=$(`, 1),
+			wantErr:  "Expected scripts/workcell audit records to include bootstrap network metadata",
+		},
+		{
 			// kindPresent: the bootstrap-policy activation announcement removed.
 			name:     "missing bootstrap policy announcement",
 			launcher: strings.Replace(bootstrapAuditHappyLauncher, "bootstrap_policy=allowlist endpoints=%s", "bootstrap_policy=off endpoints=%s", 1),
