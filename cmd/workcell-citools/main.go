@@ -123,6 +123,12 @@ func subcommands() []subcommand {
 		{"workcell-doc-scan-go-vcs", "ROOT_DIR", 1, 1, cmdWorkcellDocScanGoVcs},
 		{"workcell-smoke-chown-tar", "ROOT_DIR", 1, 1, cmdWorkcellSmokeChownTar},
 		{"workcell-dualstack-apply-plan", "ROOT_DIR", 1, 1, cmdWorkcellDualStackApplyPlan},
+		{"workcell-publish-base-refcheck", "ROOT_DIR", 1, 1, cmdWorkcellPublishBaseRefcheck},
+		{"workcell-runtime-security-posture", "ROOT_DIR", 1, 1, cmdWorkcellRuntimeSecurityPosture},
+		{"workcell-smoke-apt-broker-probe", "ROOT_DIR", 1, 1, cmdWorkcellSmokeAptBrokerProbe},
+		{"workcell-copilot-token-handoff-cleanup", "ROOT_DIR", 1, 1, cmdWorkcellCopilotTokenHandoffCleanup},
+		{"workcell-provider-token-unlink", "ROOT_DIR", 1, 1, cmdWorkcellProviderTokenUnlink},
+		{"workcell-validate-repo-scenario-refs", "ROOT_DIR", 1, 1, cmdWorkcellValidateRepoScenarioRefs},
 	}
 }
 
@@ -758,4 +764,58 @@ func cmdWorkcellSmokeChownTar(args []string) error {
 // violated invariant.
 func cmdWorkcellDualStackApplyPlan(args []string) error {
 	return workcellhardening.CheckDualStackApplyPlan(args[0])
+}
+
+// cmdWorkcellPublishBaseRefcheck runs the single publish-pr base-name check
+// (publishpr.ValidateBaseName validates the --base branch name through
+// checkRefFormat) migrated out of scripts/verify-invariants.sh; it fails (exit 1
+// via die()) with the shell's original stderr message when the invariant is
+// violated.
+func cmdWorkcellPublishBaseRefcheck(args []string) error {
+	return workcellhardening.CheckPublishBaseRefcheck(args[0])
+}
+
+// cmdWorkcellRuntimeSecurityPosture runs the two validate_runtime_security_posture
+// checks (daemon SecurityOptions and Docker Desktop compat SecurityOptions are
+// validated through the go_hostutil helper subcommands) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellRuntimeSecurityPosture(args []string) error {
+	return workcellhardening.CheckRuntimeSecurityPosture(args[0])
+}
+
+// cmdWorkcellSmokeAptBrokerProbe runs the six container-smoke apt-broker
+// slow-wait checks (scripts/container-smoke.sh keeps the Linux runtime
+// apt-broker slow-wait probe strings) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellSmokeAptBrokerProbe(args []string) error {
+	return workcellhardening.CheckSmokeAptBrokerProbe(args[0])
+}
+
+// cmdWorkcellCopilotTokenHandoffCleanup runs the three Copilot token-handoff
+// cleanup checks (hoststate.go covers stale Copilot token handoff directories in
+// host cleanup) migrated out of scripts/verify-invariants.sh; it fails (exit 1
+// via die()) with the shell's original stderr message for the first violated
+// invariant.
+func cmdWorkcellCopilotTokenHandoffCleanup(args []string) error {
+	return workcellhardening.CheckCopilotTokenHandoffCleanup(args[0])
+}
+
+// cmdWorkcellProviderTokenUnlink runs the single provider-wrapper token-unlink
+// check (the provider wrapper unlinks the runtime Copilot token handoff file
+// before managed exec) migrated out of scripts/verify-invariants.sh; it fails
+// (exit 1 via die()) with the shell's original stderr message when the invariant
+// is violated.
+func cmdWorkcellProviderTokenUnlink(args []string) error {
+	return workcellhardening.CheckProviderTokenUnlink(args[0])
+}
+
+// cmdWorkcellValidateRepoScenarioRefs runs the three scenario-script reference
+// checks (scripts/validate-repo.sh references the scenario-test / coverage /
+// control-plane-parity scripts) migrated out of scripts/verify-invariants.sh; it
+// fails (exit 1 via die()) with the shell's original stderr message for the first
+// violated invariant.
+func cmdWorkcellValidateRepoScenarioRefs(args []string) error {
+	return workcellhardening.CheckValidateRepoScenarioRefs(args[0])
 }
