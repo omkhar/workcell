@@ -2721,16 +2721,19 @@ bash "${WORKCELL_RUNTIME_BUILD_RETRY_HARNESS}"
 
 go_verify_citools workcell-hostutil-egress-rg "${ROOT_DIR}" || exit 1
 
-for script in "${HOST_GATE_SCRIPTS[@]}"; do
-  if ! head -n 1 "${script}" | grep -q '^#!/bin/bash -p$'; then
-    echo "Expected ${script} to use an absolute privileged Bash shebang before self-sanitizing its host entrypoint" >&2
-    exit 1
-  fi
-  if ! rg -q 'WORKCELL_SANITIZED_ENTRYPOINT|trusted-entrypoint\.sh' "${script}"; then
-    echo "Expected ${script} to self-sanitize its host entrypoint before running release or boundary checks" >&2
-    exit 1
-  fi
-done
+# Assert every host-gate script carries an absolute privileged Bash shebang and
+# self-sanitizes its host entrypoint before running release or boundary checks.
+# Migrated to Go (D3): internal/workcellhardening behind the workcell-citools
+# workcell-hostgate-entrypoint-sanitize subcommand preserves the exact exit codes
+# and stderr messages of the former inline `for script in "${HOST_GATE_SCRIPTS[@]}"`
+# loop, including its per-iteration order (the first-line shebang check, a
+# kindFirstLineRegex `^#!/bin/bash -p$` probe, then the entrypoint self-sanitize
+# check, a kindRegexPresent `WORKCELL_SANITIZED_ENTRYPOINT|trusted-entrypoint\.sh`
+# alternation matched per line for rg parity) and the ${script}-interpolated
+# messages (rendered as the absolute "${ROOT_DIR}/..." path exactly as the shell
+# loop variable held each HOST_GATE_SCRIPTS element).  `|| exit 1` matches the
+# former loop's `exit 1` on a violated invariant.
+go_verify_citools workcell-hostgate-entrypoint-sanitize "${ROOT_DIR}" || exit 1
 
 publish_temp_probe="$("${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh" --self-temp-root-probe)"
 publish_git_dir="$(git -C "${ROOT_DIR}" rev-parse --absolute-git-dir)"
@@ -2758,10 +2761,16 @@ rm -rf "${publish_temp_probe}"
 # guard's `exit 1` on a non-executable hook.  The following pre-commit hook rg /
 # fixture checks stay inline.
 go_verify_citools workcell-precommit-hook-exec "${ROOT_DIR}" || exit 1
-if ! rg -q 'scripts/update-upstream-pins\.sh" --check' "${REPO_PRECOMMIT_HOOK}"; then
-  echo "Expected repo pre-commit hook to gate commits on pending pinned upstream updates" >&2
-  exit 1
-fi
+# Assert the repo pre-commit hook gates commits on pending pinned upstream
+# updates.  Migrated to Go (D3): internal/workcellhardening behind the
+# workcell-citools workcell-precommit-upstream-pin-gate subcommand preserves the
+# exact exit code and stderr message of the former inline
+# `if ! rg -q 'scripts/update-upstream-pins\.sh" --check' "${REPO_PRECOMMIT_HOOK}"`
+# guard (a kindRegexPresent probe whose only metacharacter, `\.`, is an escaped
+# literal dot, read per line for rg parity from ${ROOT_DIR}/.githooks/pre-commit).
+# `|| exit 1` matches the former guard's `exit 1`.  The following pre-commit hook
+# fixture checks stay inline.
+go_verify_citools workcell-precommit-upstream-pin-gate "${ROOT_DIR}" || exit 1
 
 PRECOMMIT_FIXTURE_ROOT="$(mktemp -d)"
 mkdir -p "${PRECOMMIT_FIXTURE_ROOT}/.githooks" "${PRECOMMIT_FIXTURE_ROOT}/scripts"
@@ -2804,35 +2813,23 @@ chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh"
 HOME="${PRECOMMIT_FIXTURE_ROOT}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit-ok.out 2>&1
 rm -rf "${PRECOMMIT_FIXTURE_ROOT}"
 
-for script in \
-  "${ROOT_DIR}/scripts/container-smoke.sh" \
-  "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh" \
-  "${ROOT_DIR}/scripts/verify-release-bundle.sh" \
-  "${ROOT_DIR}/scripts/verify-reproducible-build.sh"; do
-  if ! rg -q 'source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"' "${script}"; then
-    echo "Expected ${script} to source the trusted Docker client helper" >&2
-    exit 1
-  fi
-  if ! rg -q 'setup_workcell_trusted_docker_client' "${script}"; then
-    echo "Expected ${script} to seed a trusted Docker client state before using Docker" >&2
-    exit 1
-  fi
-  if ! rg -q 'HOME=/tmp' "${script}"; then
-    echo "Expected ${script} to stop preserving caller HOME across its sanitized entrypoint re-exec" >&2
-    exit 1
-  fi
-done
-
-for script in \
-  "${ROOT_DIR}/scripts/container-smoke.sh" \
-  "${ROOT_DIR}/scripts/generate-builder-environment-manifest.sh" \
-  "${ROOT_DIR}/scripts/verify-release-bundle.sh" \
-  "${ROOT_DIR}/scripts/verify-reproducible-build.sh"; do
-  if ! rg -q 'buildx_cmd ' "${script}"; then
-    echo "Expected ${script} to invoke buildx through the trusted absolute plugin path" >&2
-    exit 1
-  fi
-done
+# Assert the trusted-Docker-client invariants across container-smoke.sh,
+# generate-builder-environment-manifest.sh, verify-release-bundle.sh and
+# verify-reproducible-build.sh: each sources the trusted Docker client helper,
+# seeds a trusted client state before using Docker, drops the caller HOME across
+# its sanitized entrypoint re-exec, and invokes buildx through the trusted
+# absolute plugin path.  Migrated to Go (D3): internal/workcellhardening behind
+# the workcell-citools workcell-trusted-docker-client-rg subcommand preserves the
+# exact exit codes and stderr messages of the former inline `for script` rg loops,
+# in their original order (the first loop's three ordered probes — source helper,
+# seed client state, drop caller HOME — per script, then the second loop's single
+# buildx probe per script), including the per-line (rg-parity) regex matching of
+# each pattern (the source-helper probe escapes `\$ \{ \} \.` to match literals;
+# the setup / HOME / buildx probes are metacharacter-free) and the
+# ${script}-interpolated messages (rendered as the absolute "${ROOT_DIR}/..." path
+# exactly as the shell loop variable held it).  `|| exit 1` matches the former
+# loops' `exit 1` on a violated invariant.
+go_verify_citools workcell-trusted-docker-client-rg "${ROOT_DIR}" || exit 1
 
 # Assert the buildx-builder-trust invariants: verify-release-bundle.sh picks a
 # deterministic context-scoped Buildx builder, the local validator lanes remove

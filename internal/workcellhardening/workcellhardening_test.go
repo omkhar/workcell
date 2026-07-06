@@ -6509,3 +6509,428 @@ func assertCheckErr(t *testing.T, label string, got error, wantErr string) {
 		t.Fatalf("%s = %q, want %q", label, got.Error(), wantErr)
 	}
 }
+
+// hostGateSanitizeHappyBody is a minimal host-gate script body that satisfies
+// both per-script invariants: an absolute privileged Bash shebang on line 1 and
+// the entrypoint self-sanitize sentinel on a later line.
+const hostGateSanitizeHappyBody = "#!/bin/bash -p\nWORKCELL_SANITIZED_ENTRYPOINT=1\n"
+
+// writeHostGateEntrypointRepo writes every HOST_GATE_SCRIPTS path under a fresh
+// temp root with the happy body, applying overrides by repo-relative path: a
+// non-empty override replaces that script's body, and an empty-string override
+// omits the file entirely (an empty-content / missing-file case).
+func writeHostGateEntrypointRepo(t *testing.T, overrides map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, rel := range hostGateScriptRelPaths {
+		body := hostGateSanitizeHappyBody
+		if o, ok := overrides[rel]; ok {
+			body = o
+		}
+		if body == "" {
+			continue
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return root
+}
+
+func TestCheckHostGateEntrypointSanitize(t *testing.T) {
+	const (
+		shebangSuffix    = " to use an absolute privileged Bash shebang before self-sanitizing its host entrypoint"
+		sanitizeSuffix   = " to self-sanitize its host entrypoint before running release or boundary checks"
+		firstScript      = "scripts/build-and-test.sh"
+		secondScript     = "scripts/check-pinned-inputs.sh"
+		fourthScript     = "scripts/container-smoke.sh"
+		lateScript       = "scripts/verify-release-bundle.sh"
+		noShebangBody    = "#!/bin/bash\nWORKCELL_SANITIZED_ENTRYPOINT=1\n"
+		noSentinelBody   = "#!/bin/bash -p\n# no sanitize sentinel here\n"
+		bothBrokenBody   = "#!/bin/bash\n# no sanitize sentinel here\n"
+		shebangSecondLn  = "# comment\n#!/bin/bash -p\nWORKCELL_SANITIZED_ENTRYPOINT=1\n"
+		trustedEntryBody = "#!/bin/bash -p\nexec ./scripts/lib/trusted-entrypoint.sh\n"
+	)
+	tests := []struct {
+		name       string
+		overrides  map[string]string
+		wantRel    string // "" means expect success
+		wantSuffix string
+	}{
+		{name: "happy path all invariants hold"},
+		{
+			name:       "trusted-entrypoint alternative satisfies sentinel",
+			overrides:  map[string]string{firstScript: trustedEntryBody},
+			wantSuffix: "", // the trusted-entrypoint.sh alternation half holds
+		},
+		{
+			// kindFirstLineRegex: a non-privileged shebang fails the anchored probe.
+			name:       "first script non-privileged shebang",
+			overrides:  map[string]string{firstScript: noShebangBody},
+			wantRel:    firstScript,
+			wantSuffix: shebangSuffix,
+		},
+		{
+			// kindRegexPresent: a good shebang but no self-sanitize sentinel.
+			name:       "first script missing entrypoint sentinel",
+			overrides:  map[string]string{firstScript: noSentinelBody},
+			wantRel:    firstScript,
+			wantSuffix: sanitizeSuffix,
+		},
+		{
+			// Per-script order: the shebang check precedes the sentinel check, so a
+			// script failing both yields the shebang message.
+			name:       "first script fails both shebang wins",
+			overrides:  map[string]string{firstScript: bothBrokenBody},
+			wantRel:    firstScript,
+			wantSuffix: shebangSuffix,
+		},
+		{
+			// firstLineRegex reads only line 1: a privileged shebang on line 2 does
+			// not satisfy the probe.
+			name:       "privileged shebang only on second line",
+			overrides:  map[string]string{firstScript: shebangSecondLn},
+			wantRel:    firstScript,
+			wantSuffix: shebangSuffix,
+		},
+		{
+			// Array order: an earlier bad script wins over a later bad one.
+			name: "earlier script wins over later",
+			overrides: map[string]string{
+				secondScript: noShebangBody,
+				lateScript:   noSentinelBody,
+			},
+			wantRel:    secondScript,
+			wantSuffix: shebangSuffix,
+		},
+		{
+			// A later script's sentinel failure fires once earlier scripts pass.
+			name:       "fourth script missing sentinel",
+			overrides:  map[string]string{fourthScript: noSentinelBody},
+			wantRel:    fourthScript,
+			wantSuffix: sanitizeSuffix,
+		},
+		{
+			// A missing file is empty content: the shebang probe fails first.
+			name:       "first script missing file",
+			overrides:  map[string]string{firstScript: ""},
+			wantRel:    firstScript,
+			wantSuffix: shebangSuffix,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeHostGateEntrypointRepo(t, tc.overrides)
+			err := CheckHostGateEntrypointSanitize(root)
+			if tc.wantRel == "" {
+				if err != nil {
+					t.Fatalf("CheckHostGateEntrypointSanitize() = %v, want nil", err)
+				}
+				return
+			}
+			want := "Expected " + root + "/" + tc.wantRel + tc.wantSuffix
+			if err == nil {
+				t.Fatalf("CheckHostGateEntrypointSanitize() = nil, want error %q", want)
+			}
+			if err.Error() != want {
+				t.Fatalf("CheckHostGateEntrypointSanitize() error = %q, want %q", err.Error(), want)
+			}
+		})
+	}
+}
+
+// TestCheckHostGateEntrypointSanitizeCount asserts the generated list contains
+// exactly forty-four checks: a shebang plus an entrypoint probe for each of the
+// twenty-two HOST_GATE_SCRIPTS.
+func TestCheckHostGateEntrypointSanitizeCount(t *testing.T) {
+	got := len(hostGateEntrypointSanitizeChecks("/repo"))
+	const want = 44
+	if got != want {
+		t.Fatalf("hostGateEntrypointSanitizeChecks(...) has %d checks, want %d", got, want)
+	}
+	if len(hostGateScriptRelPaths) != 22 {
+		t.Fatalf("hostGateScriptRelPaths has %d paths, want 22", len(hostGateScriptRelPaths))
+	}
+}
+
+// TestCheckHostGateEntrypointSanitizeLineParity proves the entrypoint alternation
+// is a genuine regex matched per line: each alternative matches within a single
+// line, and the `\.` matches a literal dot only (not an arbitrary character).
+func TestCheckHostGateEntrypointSanitizeLineParity(t *testing.T) {
+	pat := `WORKCELL_SANITIZED_ENTRYPOINT|trusted-entrypoint\.sh`
+	if !regexMatchesAnyLine(pat, "export WORKCELL_SANITIZED_ENTRYPOINT=1") {
+		t.Fatalf("expected the sentinel alternative to match")
+	}
+	if !regexMatchesAnyLine(pat, "exec ./scripts/lib/trusted-entrypoint.sh") {
+		t.Fatalf("expected the trusted-entrypoint.sh alternative to match")
+	}
+	if regexMatchesAnyLine(pat, "exec ./scripts/lib/trusted-entrypointXsh") {
+		t.Fatalf(`\. must match a literal dot only, not an arbitrary character`)
+	}
+}
+
+// TestCheckHostGateEntrypointSanitizeRealRepo asserts every real HOST_GATE_SCRIPTS
+// file in this repository satisfies both per-script invariants. This is the key
+// guard against a mis-transcribed pattern or a wrong target file.
+func TestCheckHostGateEntrypointSanitizeRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, hostGateScriptRelPaths[0])); err != nil {
+		t.Skipf("real %s not found at %s: %v", hostGateScriptRelPaths[0], repoRoot, err)
+	}
+	if err := CheckHostGateEntrypointSanitize(repoRoot); err != nil {
+		t.Fatalf("CheckHostGateEntrypointSanitize(real repo) = %v, want nil", err)
+	}
+}
+
+// writePrecommitUpstreamPinGateRepo writes .githooks/pre-commit with the given
+// body under a fresh temp root; an empty body omits the file entirely.
+func writePrecommitUpstreamPinGateRepo(t *testing.T, body string) string {
+	t.Helper()
+	root := t.TempDir()
+	if body == "" {
+		return root
+	}
+	path := filepath.Join(root, ".githooks", "pre-commit")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	return root
+}
+
+func TestCheckPrecommitUpstreamPinGate(t *testing.T) {
+	const wantErr = "Expected repo pre-commit hook to gate commits on pending pinned upstream updates"
+	happy := "#!/bin/bash\n\"${ROOT_DIR}/scripts/update-upstream-pins.sh\" --check\n"
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{name: "happy path pattern present", body: happy},
+		{
+			name:    "missing --check gate",
+			body:    "#!/bin/bash\n\"${ROOT_DIR}/scripts/update-upstream-pins.sh\" --apply\n",
+			wantErr: wantErr,
+		},
+		{
+			name:    "missing hook file",
+			body:    "",
+			wantErr: wantErr,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writePrecommitUpstreamPinGateRepo(t, tc.body)
+			err := CheckPrecommitUpstreamPinGate(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckPrecommitUpstreamPinGate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckPrecommitUpstreamPinGate() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckPrecommitUpstreamPinGate() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckPrecommitUpstreamPinGateCount(t *testing.T) {
+	got := len(precommitUpstreamPinGateChecks)
+	const want = 1
+	if got != want {
+		t.Fatalf("precommitUpstreamPinGateChecks has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckPrecommitUpstreamPinGateLineParity proves the pattern's `\.` is a
+// literal dot and that the probe matches within a single line (rg parity): a
+// pattern split across a newline must not match.
+func TestCheckPrecommitUpstreamPinGateLineParity(t *testing.T) {
+	pat := `scripts/update-upstream-pins\.sh" --check`
+	if !regexMatchesAnyLine(pat, `run "scripts/update-upstream-pins.sh" --check now`) {
+		t.Fatalf("expected the intact --check gate line to match")
+	}
+	if regexMatchesAnyLine(pat, "scripts/update-upstream-pins.sh\"\n--check") {
+		t.Fatalf("a gate split across a newline must NOT match (rg is line-oriented)")
+	}
+	if regexMatchesAnyLine(pat, `scripts/update-upstream-pinsXsh" --check`) {
+		t.Fatalf(`\. must match a literal dot only, not an arbitrary character`)
+	}
+}
+
+func TestCheckPrecommitUpstreamPinGateRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, ".githooks", "pre-commit")); err != nil {
+		t.Skipf("real .githooks/pre-commit not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckPrecommitUpstreamPinGate(repoRoot); err != nil {
+		t.Fatalf("CheckPrecommitUpstreamPinGate(real repo) = %v, want nil", err)
+	}
+}
+
+// trustedDockerClientHappyBody satisfies all four per-script probes: it sources
+// the helper, seeds the client state, drops caller HOME, and invokes buildx via
+// the trusted plugin path.
+const trustedDockerClientHappyBody = "source \"${ROOT_DIR}/scripts/lib/trusted-docker-client.sh\"\n" +
+	"setup_workcell_trusted_docker_client\n" +
+	"HOME=/tmp exec ./sanitized-reexec\n" +
+	"buildx_cmd build .\n"
+
+// writeTrustedDockerClientRepo writes every trusted-Docker-client script under a
+// fresh temp root with the happy body, applying overrides by repo-relative path:
+// a non-empty override replaces the body, an empty-string override omits the file.
+func writeTrustedDockerClientRepo(t *testing.T, overrides map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, rel := range trustedDockerClientScriptRelPaths {
+		body := trustedDockerClientHappyBody
+		if o, ok := overrides[rel]; ok {
+			body = o
+		}
+		if body == "" {
+			continue
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return root
+}
+
+func TestCheckTrustedDockerClientRg(t *testing.T) {
+	const (
+		sourceSuffix = " to source the trusted Docker client helper"
+		setupSuffix  = " to seed a trusted Docker client state before using Docker"
+		homeSuffix   = " to stop preserving caller HOME across its sanitized entrypoint re-exec"
+		buildxSuffix = " to invoke buildx through the trusted absolute plugin path"
+		firstScript  = "scripts/container-smoke.sh"
+		secondScript = "scripts/generate-builder-environment-manifest.sh"
+	)
+	drop := func(rel, needle string) map[string]string {
+		return map[string]string{rel: strings.Replace(trustedDockerClientHappyBody, needle, "# removed\n", 1)}
+	}
+	tests := []struct {
+		name       string
+		overrides  map[string]string
+		wantRel    string
+		wantSuffix string
+	}{
+		{name: "happy path all invariants hold"},
+		{
+			name:       "first script missing source helper",
+			overrides:  drop(firstScript, "source \"${ROOT_DIR}/scripts/lib/trusted-docker-client.sh\"\n"),
+			wantRel:    firstScript,
+			wantSuffix: sourceSuffix,
+		},
+		{
+			name:       "first script missing setup call",
+			overrides:  drop(firstScript, "setup_workcell_trusted_docker_client\n"),
+			wantRel:    firstScript,
+			wantSuffix: setupSuffix,
+		},
+		{
+			name:       "first script missing HOME drop",
+			overrides:  drop(firstScript, "HOME=/tmp exec ./sanitized-reexec\n"),
+			wantRel:    firstScript,
+			wantSuffix: homeSuffix,
+		},
+		{
+			name:       "first script missing buildx invocation",
+			overrides:  drop(firstScript, "buildx_cmd build .\n"),
+			wantRel:    firstScript,
+			wantSuffix: buildxSuffix,
+		},
+		{
+			// Loop order: the first loop's three probes run for every script before
+			// the second loop's buildx probe, so a first-script buildx failure loses
+			// to a second-script source failure.
+			name: "loop1 across scripts precedes loop2",
+			overrides: map[string]string{
+				firstScript:  strings.Replace(trustedDockerClientHappyBody, "buildx_cmd build .\n", "# removed\n", 1),
+				secondScript: strings.Replace(trustedDockerClientHappyBody, "source \"${ROOT_DIR}/scripts/lib/trusted-docker-client.sh\"\n", "# removed\n", 1),
+			},
+			wantRel:    secondScript,
+			wantSuffix: sourceSuffix,
+		},
+		{
+			// A missing file is empty content: the first (source) probe fails.
+			name:       "first script missing file",
+			overrides:  map[string]string{firstScript: ""},
+			wantRel:    firstScript,
+			wantSuffix: sourceSuffix,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeTrustedDockerClientRepo(t, tc.overrides)
+			err := CheckTrustedDockerClientRg(root)
+			if tc.wantRel == "" {
+				if err != nil {
+					t.Fatalf("CheckTrustedDockerClientRg() = %v, want nil", err)
+				}
+				return
+			}
+			want := "Expected " + root + "/" + tc.wantRel + tc.wantSuffix
+			if err == nil {
+				t.Fatalf("CheckTrustedDockerClientRg() = nil, want error %q", want)
+			}
+			if err.Error() != want {
+				t.Fatalf("CheckTrustedDockerClientRg() error = %q, want %q", err.Error(), want)
+			}
+		})
+	}
+}
+
+// TestCheckTrustedDockerClientRgCount asserts sixteen checks: three loop-one
+// probes plus one loop-two buildx probe for each of the four scripts.
+func TestCheckTrustedDockerClientRgCount(t *testing.T) {
+	got := len(trustedDockerClientRgChecks("/repo"))
+	const want = 16
+	if got != want {
+		t.Fatalf("trustedDockerClientRgChecks(...) has %d checks, want %d", got, want)
+	}
+	if len(trustedDockerClientScriptRelPaths) != 4 {
+		t.Fatalf("trustedDockerClientScriptRelPaths has %d paths, want 4", len(trustedDockerClientScriptRelPaths))
+	}
+}
+
+// TestCheckTrustedDockerClientRgLineParity proves the source-helper probe's
+// escaped `\$ \{ \} \.` match the literal `$ { } .` within a single line, and
+// that a match split across a newline does not hold (rg is line-oriented).
+func TestCheckTrustedDockerClientRgLineParity(t *testing.T) {
+	pat := `source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"`
+	if !regexMatchesAnyLine(pat, `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"`) {
+		t.Fatalf("expected the intact source-helper line to match")
+	}
+	if regexMatchesAnyLine(pat, "source \"${ROOT_DIR}/scripts/lib/\ntrusted-docker-client.sh\"") {
+		t.Fatalf("a source-helper line split across a newline must NOT match (rg is line-oriented)")
+	}
+	if regexMatchesAnyLine(pat, `source "XYROOT_DIRZ/scripts/lib/trusted-docker-client.sh"`) {
+		t.Fatalf(`escaped ${...} must match the literal $ { } characters only`)
+	}
+}
+
+func TestCheckTrustedDockerClientRgRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, trustedDockerClientScriptRelPaths[0])); err != nil {
+		t.Skipf("real %s not found at %s: %v", trustedDockerClientScriptRelPaths[0], repoRoot, err)
+	}
+	if err := CheckTrustedDockerClientRg(repoRoot); err != nil {
+		t.Fatalf("CheckTrustedDockerClientRg(real repo) = %v, want nil", err)
+	}
+}

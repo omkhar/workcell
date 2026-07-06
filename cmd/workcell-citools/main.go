@@ -134,6 +134,9 @@ func subcommands() []subcommand {
 		{"workcell-claude-mcp-project-servers", "SETTINGS_PATH", 1, 1, cmdWorkcellClaudeMcpProjectServers},
 		{"workcell-claude-managed-bypass", "ROOT_DIR", 1, 1, cmdWorkcellClaudeManagedBypass},
 		{"workcell-gemini-settings-guards", "ROOT_DIR", 1, 1, cmdWorkcellGeminiSettingsGuards},
+		{"workcell-hostgate-entrypoint-sanitize", "ROOT_DIR", 1, 1, cmdWorkcellHostGateEntrypointSanitize},
+		{"workcell-precommit-upstream-pin-gate", "ROOT_DIR", 1, 1, cmdWorkcellPrecommitUpstreamPinGate},
+		{"workcell-trusted-docker-client-rg", "ROOT_DIR", 1, 1, cmdWorkcellTrustedDockerClientRg},
 	}
 }
 
@@ -697,6 +700,32 @@ func cmdWorkcellValidatorWritableState(args []string) error {
 // first violated invariant.
 func cmdWorkcellHostutilEgressRg(args []string) error {
 	return workcellhardening.CheckHostutilEgressRg(args[0])
+}
+
+// cmdWorkcellHostGateEntrypointSanitize runs the forty-four host-gate entrypoint
+// checks (an absolute privileged Bash shebang and an entrypoint self-sanitize
+// probe for each of the twenty-two HOST_GATE_SCRIPTS) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellHostGateEntrypointSanitize(args []string) error {
+	return workcellhardening.CheckHostGateEntrypointSanitize(args[0])
+}
+
+// cmdWorkcellPrecommitUpstreamPinGate runs the single repo pre-commit hook
+// upstream-pin-gate check migrated out of scripts/verify-invariants.sh; it fails
+// (exit 1 via die()) with the shell's original stderr message when the hook does
+// not gate commits on pending pinned upstream updates.
+func cmdWorkcellPrecommitUpstreamPinGate(args []string) error {
+	return workcellhardening.CheckPrecommitUpstreamPinGate(args[0])
+}
+
+// cmdWorkcellTrustedDockerClientRg runs the sixteen trusted-Docker-client checks
+// (source-helper, seed-client-state, drop-caller-HOME, and buildx-trusted-path
+// probes across four release/build scripts) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellTrustedDockerClientRg(args []string) error {
+	return workcellhardening.CheckTrustedDockerClientRg(args[0])
 }
 
 // cmdWorkcellDockerfilePins runs the thirty dockerfile-pin checks
