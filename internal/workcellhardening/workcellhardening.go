@@ -79,6 +79,25 @@ const dockerfileRelPath = "runtime/container/Dockerfile"
 // ${ROOT_DIR}/scripts/colima-egress-allowlist.sh.
 const colimaEgressAllowlistRelPath = "scripts/colima-egress-allowlist.sh"
 
+// homeControlPlaneRelPath is the repo-relative path to the runtime home
+// control-plane seeding script.  The home-seed/provider-wrapper block reads
+// this file (via the per-check targetFile field) for its Gemini/Claude home
+// seeding invariants, mirroring the shell probes that ran against
+// ${ROOT_DIR}/runtime/container/home-control-plane.sh.
+const homeControlPlaneRelPath = "runtime/container/home-control-plane.sh"
+
+// providerWrapperRelPath is the repo-relative path to the runtime provider
+// wrapper.  The home-seed/provider-wrapper block reads this file for its
+// env-scrub invariants, mirroring the shell probes that ran against
+// ${ROOT_DIR}/runtime/container/provider-wrapper.sh.
+const providerWrapperRelPath = "runtime/container/provider-wrapper.sh"
+
+// developmentWrapperRelPath is the repo-relative path to the runtime
+// development wrapper.  Only the copilot_env scrub loop reads this file (as
+// the loop's second wrapper), mirroring the shell probes that ran against
+// ${ROOT_DIR}/runtime/container/development-wrapper.sh.
+const developmentWrapperRelPath = "runtime/container/development-wrapper.sh"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -946,6 +965,147 @@ var shadowEnumEgressChecks = []check{
 // invariant (the shell's exit 1).
 func CheckShadowEnumEgress(rootDir string) error {
 	return evaluate(rootDir, shadowEnumEgressChecks)
+}
+
+// copilotAmbientEnvKnobs lists the twenty-four Copilot/GitHub ambient env
+// variables that the shell's `for copilot_env in ...` loop asserted each
+// runtime wrapper scrubs.  Order matches the shell verbatim so the generated
+// checks reproduce the shell's first-failure stderr exactly.
+var copilotAmbientEnvKnobs = []string{
+	"unset GH_CONFIG_DIR",
+	"unset GH_HOST",
+	"unset GH_TOKEN",
+	"unset GITHUB_TOKEN",
+	"unset OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
+	"unset PLAIN_DIFF",
+	"unset USE_BUILTIN_RIPGREP",
+	"unset OTEL_EXPORTER_OTLP_ENDPOINT",
+	"unset OTEL_EXPORTER_OTLP_HEADERS",
+	"unset OTEL_EXPORTER_OTLP_PROTOCOL",
+	"unset OTEL_EXPORTER_OTLP_TIMEOUT",
+	"unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+	"unset OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+	"unset OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+	"unset OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",
+	"unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+	"unset OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+	"unset OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+	"unset OTEL_EXPORTER_OTLP_METRICS_TIMEOUT",
+	"unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+	"unset OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+	"unset OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
+	"unset OTEL_EXPORTER_OTLP_LOGS_TIMEOUT",
+	"unset OTEL_RESOURCE_ATTRIBUTES",
+}
+
+// homeSeedProviderWrapperChecks returns the fifty-seven home-seeding /
+// provider-wrapper env-scrub invariants in the same order as the former
+// inline block in scripts/verify-invariants.sh (the block between the
+// Gemini-auth-selection harness cleanup and the Copilot-prefix-scrub `for`
+// loop), so a reviewer can diff the two one-to-one.
+//
+// The nine leading probes are whole-file `grep -Fq` / `rg -q` checks:
+//   - The trustedFolders probe's shell `rg -q 'trustedFolders\.json'` escapes
+//     its only metacharacter (`\.`), so it reduces to fixed-string
+//     containment of the literal `trustedFolders.json` (kindPresent).
+//   - Five `grep -Fq` Gemini/Claude home-seeding probes and two affirmative
+//     `grep -Fq` provider-wrapper unset probes are fixed-string containment
+//     (kindPresent); their needles reproduce the shell double-quoted literals
+//     byte-exact (`\"`→`"`, `\$`→`$`, including the `|| true` suffix).
+//   - The `export HOME CODEX_HOME CLAUDE_CONFIG_DIR ...` probe is a NEGATED
+//     `grep -Fq` (present is a violation → kindAbsent).
+//
+// The forty-eight trailing checks migrate the shell's nested
+// `for copilot_env in ...; do for copilot_wrapper in ...; do
+// grep -Fq -- "${copilot_env}" "${copilot_wrapper}"; done; done` loop.  The
+// outer loop is the env knob (copilotAmbientEnvKnobs) and the inner loop is
+// the wrapper (provider-wrapper.sh then development-wrapper.sh), so the checks
+// are emitted knob-major to reproduce the shell's first-failure order.  Each
+// message interpolates basename(wrapper) and the knob exactly as the shell's
+// `echo "Expected $(basename "${copilot_wrapper}") to scrub Copilot/GitHub
+// ambient env knob: ${copilot_env}"` did; every knob is a fixed-string
+// `grep -Fq` needle (kindPresent) read from the per-check targetFile.
+func homeSeedProviderWrapperChecks() []check {
+	cs := []check{
+		{
+			// kindPresent: the shell's `rg -q 'trustedFolders\.json'` escapes
+			// its only metacharacter, so it is fixed-string containment.
+			kind:       kindPresent,
+			pattern:    "trustedFolders.json",
+			message:    "Expected Gemini home seeding to provision trustedFolders.json",
+			targetFile: homeControlPlaneRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    `workcell_reset_session_target "${HOME}/.gemini/settings.json" "Gemini settings"`,
+			message:    "Expected Gemini home seeding to reset settings.json through workcell_reset_session_target",
+			targetFile: homeControlPlaneRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    `workcell_set_gemini_tool_sandbox "${HOME}/.gemini/settings.json" false`,
+			message:    "Expected Gemini home seeding to pin the nested sandbox setting explicitly",
+			targetFile: homeControlPlaneRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    `workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude/.credentials.json" || true`,
+			message:    "Expected Claude home seeding to copy auth into .claude/.credentials.json",
+			targetFile: homeControlPlaneRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    `workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude/.claude.json" || true`,
+			message:    "Expected Claude home seeding to copy auth into .claude/.claude.json",
+			targetFile: homeControlPlaneRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    `workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude.json" || true`,
+			message:    "Expected Claude home seeding to copy auth into .claude.json",
+			targetFile: homeControlPlaneRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    "unset CLAUDE_CONFIG_DIR",
+			message:    "Expected provider wrapper to discard caller-supplied CLAUDE_CONFIG_DIR",
+			targetFile: providerWrapperRelPath,
+		},
+		{
+			// kindAbsent: exporting CLAUDE_CONFIG_DIR for non-Claude launches is
+			// a violation (present → exit 1).
+			kind:       kindAbsent,
+			pattern:    "export HOME CODEX_HOME CLAUDE_CONFIG_DIR TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY",
+			message:    "Provider wrapper should not export CLAUDE_CONFIG_DIR for non-Claude launches",
+			targetFile: providerWrapperRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    "unset DISABLE_AUTOUPDATER",
+			message:    "Expected provider wrapper to discard caller-supplied DISABLE_AUTOUPDATER",
+			targetFile: providerWrapperRelPath,
+		},
+	}
+	for _, knob := range copilotAmbientEnvKnobs {
+		for _, rel := range []string{providerWrapperRelPath, developmentWrapperRelPath} {
+			cs = append(cs, check{
+				kind:       kindPresent,
+				pattern:    knob,
+				message:    "Expected " + filepath.Base(rel) + " to scrub Copilot/GitHub ambient env knob: " + knob,
+				targetFile: rel,
+			})
+		}
+	}
+	return cs
+}
+
+// CheckHomeSeedProviderWrapper runs the fifty-seven home-seeding /
+// provider-wrapper env-scrub invariants against the repo rooted at rootDir, in
+// the shell's original order.  It returns nil when every invariant holds (the
+// shell's exit 0), or an error whose message equals the shell's stderr for the
+// first violated invariant (the shell's exit 1).
+func CheckHomeSeedProviderWrapper(rootDir string) error {
+	return evaluate(rootDir, homeSeedProviderWrapperChecks())
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.

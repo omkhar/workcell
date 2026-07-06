@@ -104,6 +104,7 @@ func subcommands() []subcommand {
 		{"workcell-git-index-shadow", "ROOT_DIR", 1, 1, cmdWorkcellGitIndexShadow},
 		{"workcell-publish-pr-shadow", "ROOT_DIR", 1, 1, cmdWorkcellPublishPrShadow},
 		{"workcell-shadow-enum-egress", "ROOT_DIR", 1, 1, cmdWorkcellShadowEnumEgress},
+		{"workcell-home-seed-provider-wrapper", "ROOT_DIR", 1, 1, cmdWorkcellHomeSeedProviderWrapper},
 	}
 }
 
@@ -580,4 +581,12 @@ func cmdWorkcellPublishPrShadow(args []string) error {
 // violated invariant.
 func cmdWorkcellShadowEnumEgress(args []string) error {
 	return workcellhardening.CheckShadowEnumEgress(args[0])
+}
+
+// cmdWorkcellHomeSeedProviderWrapper runs the fifty-seven home-seeding /
+// provider-wrapper env-scrub checks migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellHomeSeedProviderWrapper(args []string) error {
+	return workcellhardening.CheckHomeSeedProviderWrapper(args[0])
 }
