@@ -103,6 +103,7 @@ func subcommands() []subcommand {
 		{"workcell-bootstrap-audit", "ROOT_DIR", 1, 1, cmdWorkcellBootstrapAudit},
 		{"workcell-git-index-shadow", "ROOT_DIR", 1, 1, cmdWorkcellGitIndexShadow},
 		{"workcell-publish-pr-shadow", "ROOT_DIR", 1, 1, cmdWorkcellPublishPrShadow},
+		{"workcell-shadow-enum-egress", "ROOT_DIR", 1, 1, cmdWorkcellShadowEnumEgress},
 	}
 }
 
@@ -571,4 +572,12 @@ func cmdWorkcellGitIndexShadow(args []string) error {
 // violated invariant.
 func cmdWorkcellPublishPrShadow(args []string) error {
 	return workcellhardening.CheckPublishPrShadowMounts(args[0])
+}
+
+// cmdWorkcellShadowEnumEgress runs the seven scripts/workcell shadow-enumeration
+// / IPv6-egress checks migrated out of scripts/verify-invariants.sh; it fails
+// (exit 1 via die()) with the shell's original stderr message for the first
+// violated invariant.
+func cmdWorkcellShadowEnumEgress(args []string) error {
+	return workcellhardening.CheckShadowEnumEgress(args[0])
 }
