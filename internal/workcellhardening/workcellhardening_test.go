@@ -1174,6 +1174,185 @@ func TestCheckPublishPrShadowMountsRealRepo(t *testing.T) {
 	}
 }
 
+// shadowEnumEgressHappyLauncher is a minimal scripts/workcell that satisfies
+// the five launcher-scoped shadow-enumeration invariants: the whole-file .git
+// enumeration and all four submodule find-snippet needles.  Individual
+// negative cases mutate one property of this baseline.  The needles are
+// reproduced here byte-for-byte from scripts/workcell so a mis-transcription
+// is caught by both the negative cases and TestCheckShadowEnumEgressRealRepo.
+const shadowEnumEgressHappyLauncher = `#!/bin/bash
+set -euo pipefail
+
+prepare_workspace_control_plane_shadow() {
+  find "${workspace}" -type d -name .git -prune -print0
+  find "${workspace}/${git_rel}/modules" \
+    \( -type f -o -type l \) -name hooks \
+    -o \( -type f -o -type l \) \( -name config -o -name config.worktree \) \
+    -o \( -type f -o -type l \) -name worktrees
+}
+`
+
+// shadowEnumEgressHappyColima is a minimal scripts/colima-egress-allowlist.sh
+// that satisfies the two IPv6-egress invariants: it does not silently disable
+// IPv6 and it emits the ip6tables fail-closed message.  Individual negative
+// cases mutate one property of this baseline.
+const shadowEnumEgressHappyColima = `#!/bin/bash
+set -euo pipefail
+
+enforce_allowlist() {
+  if ! have_ip6tables; then
+    echo "requires ip6tables support to enforce dual-stack allowlist egress policy" >&2
+    return 1
+  fi
+}
+`
+
+// writeShadowEnumEgressRepo materializes a fake repo with scripts/workcell set
+// to launcher and scripts/colima-egress-allowlist.sh set to colima; a body of
+// "" means "do not create that file" (unreadable-target case).
+func writeShadowEnumEgressRepo(t *testing.T, launcher, colima string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(launcherRelPath, launcher)
+	write(colimaEgressAllowlistRelPath, colima)
+	return root
+}
+
+func TestCheckShadowEnumEgress(t *testing.T) {
+	tests := []struct {
+		name     string
+		launcher string
+		colima   string
+		wantErr  string // "" means expect success
+	}{
+		{
+			name:     "happy path all invariants hold",
+			launcher: shadowEnumEgressHappyLauncher,
+			colima:   shadowEnumEgressHappyColima,
+		},
+		{
+			// kindPresent: the whole-file .git enumeration removed.
+			name:     "missing git enumeration",
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `find "${workspace}" -type d -name .git -prune -print0`, `find "${workspace}" -print0`, 1),
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories",
+		},
+		{
+			// kindPresent (needle 1): the modules find snippet removed.  The
+			// wantErr proves the dynamic loop message text is preserved verbatim.
+			name:     "missing modules find needle",
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `find "${workspace}/${git_rel}/modules" \`, `find "${workspace}/other" \`, 1),
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: find "${workspace}/${git_rel}/modules" \`,
+		},
+		{
+			// kindPresent (needle 2): the hooks find snippet removed.
+			name:     "missing hooks needle",
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) -name hooks`, `-type l \) -name other`, 1),
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name hooks`,
+		},
+		{
+			// kindPresent (needle 3): the config/config.worktree find snippet
+			// removed.
+			name:     "missing config needle",
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) \( -name config -o -name config.worktree \)`, `-type l \) \( -name other \)`, 1),
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) \( -name config -o -name config.worktree \)`,
+		},
+		{
+			// kindPresent (needle 4): the worktrees find snippet removed.
+			name:     "missing worktrees needle",
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) -name worktrees`, `-type l \) -name other`, 1),
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
+		},
+		{
+			// kindAbsent against the colima helper: silently disabling IPv6 as a
+			// fallback is a violation (present → exit 1).
+			name:     "disable_ipv6 fallback present",
+			launcher: shadowEnumEgressHappyLauncher,
+			colima:   shadowEnumEgressHappyColima + "\ndisable_ipv6=1\n",
+			wantErr:  "Workcell should not silently disable IPv6 as a fallback for allowlist enforcement",
+		},
+		{
+			// kindPresent against the colima helper: the ip6tables fail-closed
+			// message removed.
+			name:     "missing ip6tables fail-closed message",
+			launcher: shadowEnumEgressHappyLauncher,
+			colima:   strings.Replace(shadowEnumEgressHappyColima, "requires ip6tables support to enforce dual-stack allowlist egress policy", "requires something else", 1),
+			wantErr:  "Expected allowlist egress helper to fail closed when dual-stack allowlist enforcement is unavailable",
+		},
+		{
+			// A missing launcher is empty content: the four whole-file needles
+			// (and the .git enumeration) fail, so the first affirmative check
+			// fires, mirroring `grep -Fq` returning non-zero on a missing file.
+			name:     "missing launcher",
+			launcher: "",
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories",
+		},
+		{
+			// A missing colima helper is empty content: the launcher-scoped
+			// checks pass, the kindAbsent disable_ipv6 probe passes, but the
+			// affirmative ip6tables message probe fails, mirroring `rg -q`
+			// returning non-zero on a missing file.  Exercises the per-check
+			// target-file read against a distinct absent file.
+			name:     "missing colima helper",
+			launcher: shadowEnumEgressHappyLauncher,
+			colima:   "",
+			wantErr:  "Expected allowlist egress helper to fail closed when dual-stack allowlist enforcement is unavailable",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeShadowEnumEgressRepo(t, tc.launcher, tc.colima)
+			err := CheckShadowEnumEgress(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckShadowEnumEgress() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckShadowEnumEgress() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckShadowEnumEgress() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckShadowEnumEgressRealRepo asserts that the real scripts/workcell and
+// scripts/colima-egress-allowlist.sh in this repository satisfy all seven
+// shadow-enumeration / IPv6-egress invariants.  This is the key guard against a
+// mis-transcribed find-snippet needle or colima-helper path: if any Go pattern
+// is not a byte-exact substring of the actual file, this test fails with the
+// guard's stderr message.
+func TestCheckShadowEnumEgressRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckShadowEnumEgress(repoRoot); err != nil {
+		t.Fatalf("CheckShadowEnumEgress(real repo) = %v, want nil", err)
+	}
+}
+
 // TestExtractNamedFunctionBlock pins the sed-range extraction semantics
 // the run_host_colima check depends on: the block runs from the `NAME()`
 // opening line through the first line beginning with `}` (inclusive), and

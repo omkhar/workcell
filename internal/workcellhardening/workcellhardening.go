@@ -72,6 +72,13 @@ const launcherRelPath = "scripts/workcell"
 // check leaves check.targetFile empty and so defaults to launcherRelPath.
 const dockerfileRelPath = "runtime/container/Dockerfile"
 
+// colimaEgressAllowlistRelPath is the repo-relative path to the Colima
+// egress-allowlist helper.  Only the two shadow-enum-egress IPv6 invariants
+// read this file instead of scripts/workcell (via the per-check targetFile
+// field), mirroring the two shell `rg` probes that ran against
+// ${ROOT_DIR}/scripts/colima-egress-allowlist.sh.
+const colimaEgressAllowlistRelPath = "scripts/colima-egress-allowlist.sh"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -854,6 +861,91 @@ var publishPrShadowMountChecks = []check{
 // violated invariant (the shell's exit 1).
 func CheckPublishPrShadowMounts(rootDir string) error {
 	return evaluate(rootDir, publishPrShadowMountChecks)
+}
+
+// shadowEnumEgressChecks lists the seven shadow-enumeration / IPv6-egress
+// invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the publish-PR /
+// shadow-mount group and the hostile-BASH_ENV runtime fixture), so a
+// reviewer can diff the two one-to-one.
+//
+// The first five are whole-file `grep -Fq` fixed-string containment probes
+// against scripts/workcell (the default target).  The last four of those
+// five came from a `for needle in ...; do grep -Fq -- "${needle}" ...; done`
+// loop whose stderr interpolated the needle into the message; because every
+// needle is a fixed single-quoted shell literal (backslashes and parens are
+// literal, matched by `grep -Fq`), each message is computed here verbatim as
+// "Expected prepare_workspace_control_plane_shadow to match snippet: " +
+// needle.
+//
+// The final two probes read scripts/colima-egress-allowlist.sh (via
+// targetFile), mirroring the two shell `rg` probes that ran against that
+// helper: the disable_ipv6=1 probe is NEGATED (present is a violation →
+// kindAbsent) and the ip6tables-support message probe is affirmative
+// (kindPresent).  Both rg patterns are metacharacter-free, so they reduce to
+// fixed-string containment.
+var shadowEnumEgressChecks = []check{
+	{
+		// kindPresent: the shell's `grep -Fq "find \"\${workspace}\" -type d
+		// -name .git -prune -print0"` is fixed-string containment of the
+		// literal .git enumeration.
+		kind:    kindPresent,
+		pattern: `find "${workspace}" -type d -name .git -prune -print0`,
+		message: "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories",
+	},
+	{
+		// Needle 1 of the former loop: the single-quoted shell literal
+		// `find "${workspace}/${git_rel}/modules" \` (trailing backslash is a
+		// literal character matched by grep -Fq).
+		kind:    kindPresent,
+		pattern: `find "${workspace}/${git_rel}/modules" \`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: find "${workspace}/${git_rel}/modules" \`,
+	},
+	{
+		// Needle 2 of the former loop.
+		kind:    kindPresent,
+		pattern: `-type l \) -name hooks`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name hooks`,
+	},
+	{
+		// Needle 3 of the former loop.
+		kind:    kindPresent,
+		pattern: `-type l \) \( -name config -o -name config.worktree \)`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) \( -name config -o -name config.worktree \)`,
+	},
+	{
+		// Needle 4 of the former loop.
+		kind:    kindPresent,
+		pattern: `-type l \) -name worktrees`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
+	},
+	{
+		// kindAbsent against scripts/colima-egress-allowlist.sh: silently
+		// disabling IPv6 as an allowlist-enforcement fallback is a violation
+		// (present → exit 1).
+		kind:       kindAbsent,
+		pattern:    "disable_ipv6=1",
+		message:    "Workcell should not silently disable IPv6 as a fallback for allowlist enforcement",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		// kindPresent against scripts/colima-egress-allowlist.sh: the helper
+		// must fail closed when dual-stack allowlist enforcement is
+		// unavailable.
+		kind:       kindPresent,
+		pattern:    "requires ip6tables support to enforce dual-stack allowlist egress policy",
+		message:    "Expected allowlist egress helper to fail closed when dual-stack allowlist enforcement is unavailable",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+}
+
+// CheckShadowEnumEgress runs the seven shadow-enumeration / IPv6-egress
+// invariants against the repo rooted at rootDir, in the shell's original
+// order.  It returns nil when every invariant holds (the shell's exit 0), or
+// an error whose message equals the shell's stderr for the first violated
+// invariant (the shell's exit 1).
+func CheckShadowEnumEgress(rootDir string) error {
+	return evaluate(rootDir, shadowEnumEgressChecks)
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.

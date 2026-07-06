@@ -3231,31 +3231,7 @@ fi
 
 go_verify_citools workcell-publish-pr-shadow "${ROOT_DIR}" || exit 1
 
-if ! grep -Fq "find \"\${workspace}\" -type d -name .git -prune -print0" "${ROOT_DIR}/scripts/workcell"; then
-  echo "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories" >&2
-  exit 1
-fi
-# shellcheck disable=SC1003,SC2016
-for needle in \
-  'find "${workspace}/${git_rel}/modules" \' \
-  '-type l \) -name hooks' \
-  '-type l \) \( -name config -o -name config.worktree \)' \
-  '-type l \) -name worktrees'; do
-  if ! grep -Fq -- "${needle}" "${ROOT_DIR}/scripts/workcell"; then
-    echo "Expected prepare_workspace_control_plane_shadow to match snippet: ${needle}" >&2
-    exit 1
-  fi
-done
-
-if rg -q 'disable_ipv6=1' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Workcell should not silently disable IPv6 as a fallback for allowlist enforcement" >&2
-  exit 1
-fi
-
-if ! rg -q 'requires ip6tables support to enforce dual-stack allowlist egress policy' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected allowlist egress helper to fail closed when dual-stack allowlist enforcement is unavailable" >&2
-  exit 1
-fi
+go_verify_citools workcell-shadow-enum-egress "${ROOT_DIR}" || exit 1
 
 HOST_BASH_ENV_PAYLOAD="${BARRIER_VERIFY_ROOT}/bashenv.sh"
 HOST_BASH_ENV_MARKER="${BARRIER_VERIFY_ROOT}/bashenv-ran"
