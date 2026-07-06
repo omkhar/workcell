@@ -2748,10 +2748,16 @@ case "${publish_temp_probe}" in
 esac
 rm -rf "${publish_temp_probe}"
 
-if [[ ! -x "${REPO_PRECOMMIT_HOOK}" ]]; then
-  echo "Expected executable repo pre-commit hook: ${REPO_PRECOMMIT_HOOK}" >&2
-  exit 1
-fi
+# Assert the repo pre-commit hook is executable.  Migrated to Go (D3):
+# internal/workcellhardening behind the workcell-citools
+# workcell-precommit-hook-exec subcommand preserves the exact exit code and
+# stderr message of the former inline `[[ ! -x "${REPO_PRECOMMIT_HOOK}" ]]` guard
+# (a kindExecutable filesystem check that stats ${ROOT_DIR}/.githooks/pre-commit
+# and emits the same "Expected executable repo pre-commit hook: <path>" message
+# with the absolute hook path interpolated).  `|| exit 1` matches the former
+# guard's `exit 1` on a non-executable hook.  The following pre-commit hook rg /
+# fixture checks stay inline.
+go_verify_citools workcell-precommit-hook-exec "${ROOT_DIR}" || exit 1
 if ! rg -q 'scripts/update-upstream-pins\.sh" --check' "${REPO_PRECOMMIT_HOOK}"; then
   echo "Expected repo pre-commit hook to gate commits on pending pinned upstream updates" >&2
   exit 1
@@ -3667,22 +3673,20 @@ fi
 # scripts/colima-egress-allowlist.sh: the guarded apply path runs the guarded
 # plan, the plan preflights ip6tables and renders a clear-rules helper, and
 # render_allowlist_apply_plan renders the clear plan, resolves endpoint IPs inside
-# the VM (getent ahosts) and avoids host-resolved endpoint rules.  Migrated to Go
-# (D3): internal/workcellhardening behind the workcell-citools
+# the VM (getent ahosts), avoids host-resolved endpoint rules, and does not invoke
+# clear_rules directly during render.  Migrated to Go (D3):
+# internal/workcellhardening behind the workcell-citools
 # workcell-dualstack-apply-plan subcommand preserves the exact exit codes and
 # stderr messages of the former inline rg / function_block_contains_regex block,
 # including the two fixed-string rg probes, the line-anchored render_clear_plan
-# definition regex, the three affirmative function-block regex probes, and the
-# negated (metacharacter-free) render_allowlist_plan function-block probe.  The
-# following clear_rules guard (a negated function-block GENUINE regex) and the
-# run_in_vm awk-ordering block stay inline to preserve first-failure order.
-# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
+# definition regex, the three affirmative function-block regex probes, the negated
+# (metacharacter-free) render_allowlist_plan function-block probe, and the negated
+# `^[[:space:]]*clear_rules$` function-block GENUINE regex (now migrated via the
+# kindFunctionBlockRegexAbsent kind).  Only the run_in_vm awk-ordering block below
+# stays inline to preserve first-failure order.  `|| exit 1` matches the former
+# inline block's `exit 1` on a violated invariant.
 go_verify_citools workcell-dualstack-apply-plan "${ROOT_DIR}" || exit 1
 
-if function_block_contains_regex "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" "render_allowlist_apply_plan" '^[[:space:]]*clear_rules$'; then
-  echo "Expected dual-stack allowlist apply plan to avoid invoking clear_rules during render" >&2
-  exit 1
-fi
 RUN_IN_VM_BLOCK="$(sed -n '/^run_in_vm()/,/^}/p' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh")"
 if ! printf '%s\n' "${RUN_IN_VM_BLOCK}" | awk '
   /initialize_host_tools/ && !host_init { host_init = NR }
@@ -7987,10 +7991,14 @@ fi
 # fire and append trap diagnostics, preserving the exact failure stderr surface.
 go_verify_citools workcell-inspect-assurance-loops "${ROOT_DIR}" || exit 1
 
-if [[ ! -d "${ROOT_DIR}/docs/examples" ]]; then
-  echo "docs/examples/ must exist" >&2
-  exit 1
-fi
+# Assert the docs/examples/ directory exists.  Migrated to Go (D3):
+# internal/workcellhardening behind the workcell-citools
+# workcell-docs-examples-dir subcommand preserves the exact exit code and stderr
+# message of the former inline `[[ ! -d "${ROOT_DIR}/docs/examples" ]]` guard (a
+# kindDirExists filesystem check that stats ${ROOT_DIR}/docs/examples).
+# `|| exit 1` matches the former guard's `exit 1` on a missing directory.  The
+# following docs/examples credential-scan rg check stays inline.
+go_verify_citools workcell-docs-examples-dir "${ROOT_DIR}" || exit 1
 if rg -n '/Users/example/\.(codex|config/(gh|gcloud)|ssh)(/|")|/Users/example/Library/Keychains' "${ROOT_DIR}/docs/examples"; then
   echo "docs/examples/ must use reviewed exported credential copies, not live host provider/auth state roots" >&2
   exit 1
