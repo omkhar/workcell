@@ -100,48 +100,6 @@ function_block_contains_regex() {
   grep -q -- "${regex}" <<<"${block_text}"
 }
 
-function_block_contains_fixed() {
-  local file_path="$1"
-  local function_name="$2"
-  local needle="$3"
-  local block_text=""
-
-  block_text="$(extract_named_function_block "${file_path}" "${function_name}")"
-  grep -Fq -- "${needle}" <<<"${block_text}"
-}
-
-# Scope a fixed-string assertion to one top-level Go function body, so an
-# invariant migrated from bash to Go cannot be satisfied by the same text
-# appearing in an unrelated helper elsewhere in the file or in a comment
-# (// line comments and /* */ block comments, including multi-line block
-# comments, are stripped before matching).
-go_function_block_contains_fixed() {
-  local file_path="$1"
-  local function_name="$2"
-  local needle="$3"
-
-  awk -v fn="func ${function_name}(" '
-    index($0, fn) == 1 { in_block = 1 }
-    in_block {
-      line = $0
-      if (in_comment) {
-        if (sub(/^.*\*\//, "", line)) {
-          in_comment = 0
-        } else {
-          line = ""
-        }
-      }
-      gsub(/\/\*[^*]*\*\//, "", line)
-      if (sub(/\/\*.*$/, "", line)) {
-        in_comment = 1
-      }
-      sub(/\/\/.*$/, "", line)
-      print line
-    }
-    in_block && $0 == "}" { exit }
-  ' "${file_path}" | grep -Fq -- "${needle}"
-}
-
 script_supports_command_flag() {
   local script_help=""
 
@@ -2969,11 +2927,12 @@ fi
 
 # validate_publish_base_name migrated to Go (publishpr.ValidateBaseName);
 # assert the Go owner still rejects base names that fail the trusted git
-# check-ref-format hook (the call itself, not just the signature).
-if ! go_function_block_contains_fixed "${ROOT_DIR}/internal/publishpr/publish_pr_main.go" "ValidateBaseName" '!checkRefFormat(base)'; then
-  echo "Expected publishpr.ValidateBaseName to validate the publish-pr --base branch name through checkRefFormat" >&2
-  exit 1
-fi
+# check-ref-format hook (the call itself, not just the signature).  Migrated to
+# Go (D3): internal/workcellhardening behind the workcell-citools
+# workcell-publish-base-refcheck subcommand preserves the exact exit code and
+# stderr message of the former inline go_function_block_contains_fixed probe.
+# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
+go_verify_citools workcell-publish-base-refcheck "${ROOT_DIR}" || exit 1
 
 go_verify_citools workcell-publish-pr-shadow "${ROOT_DIR}" || exit 1
 
@@ -5521,14 +5480,14 @@ if go_verify_hostutil helper validate-container-security-options '["no-new-privi
   echo "Expected helper validate-container-security-options to reject seccomp=unconfined" >&2
   exit 1
 fi
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "validate_runtime_security_posture" "go_hostutil helper validate-security-options"; then
-  echo "Expected validate_runtime_security_posture to validate daemon SecurityOptions through the helper subcommand" >&2
-  exit 1
-fi
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "validate_runtime_security_posture" "go_hostutil helper validate-compat-security-options"; then
-  echo "Expected validate_runtime_security_posture to validate Docker Desktop compat daemon SecurityOptions through the compat helper subcommand" >&2
-  exit 1
-fi
+# Assert validate_runtime_security_posture validates daemon SecurityOptions and
+# Docker Desktop compat SecurityOptions through the go_hostutil helper
+# subcommands.  Migrated to Go (D3): internal/workcellhardening behind the
+# workcell-citools workcell-runtime-security-posture subcommand preserves the
+# exact exit codes and stderr messages of the former inline
+# function_block_contains_fixed pair (two fixed-string function-body probes).
+# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
+go_verify_citools workcell-runtime-security-posture "${ROOT_DIR}" || exit 1
 
 if ! run_workcell_verify \
   --agent codex \
@@ -7032,18 +6991,14 @@ EOF
       echo "Expected package-mutation failure propagation verification run to succeed" >&2
       exit 1
     fi
-    for required in \
-      'slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh' \
-      '/bin/bash /usr/local/libexec/workcell/apt-broker.sh' \
-      'sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update' \
-      'slow-apt-helper-ok' \
-      'expected sudo-wrapper to wait for a slow apt broker request by default' \
-      'expected default apt broker waits to avoid timing out slow requests'; do
-      if ! grep -Fq -- "${required}" "${ROOT_DIR}/scripts/container-smoke.sh"; then
-        echo "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (${required})" >&2
-        exit 1
-      fi
-    done
+    # Assert scripts/container-smoke.sh keeps the Linux runtime apt-broker
+    # slow-wait probe strings.  Migrated to Go (D3): internal/workcellhardening
+    # behind the workcell-citools workcell-smoke-apt-broker-probe subcommand
+    # preserves the exact exit codes and stderr messages of the former inline
+    # `for required in ...; do grep -Fq -- "${required}" ...; done` loop (six
+    # fixed-string presence probes).  `|| exit 1` matches the former loop's
+    # `exit 1` on a violated invariant.
+    go_verify_citools workcell-smoke-apt-broker-probe "${ROOT_DIR}" || exit 1
     ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
     if ! run_workcell_verify \
       --agent codex \
@@ -7968,18 +7923,21 @@ rm -f "${GEMINI_AUTH_SELECTION_STDOUT}" "${GEMINI_AUTH_SELECTION_STDERR}"
 
 go_verify_citools workcell-home-seed-provider-wrapper "${ROOT_DIR}" || exit 1
 go_verify_citools workcell-copilot-token-handoff "${ROOT_DIR}" || exit 1
-if ! grep -Fq 'copilotStandaloneTokenHandoffName' "${ROOT_DIR}/internal/host/hoststate/hoststate.go" ||
-  ! grep -Fq 'copilotTokenHandoffBundleName' "${ROOT_DIR}/internal/host/hoststate/hoststate.go" ||
-  ! grep -Fq 'removeCopilotTokenHandoffArtifacts' "${ROOT_DIR}/internal/host/hoststate/hoststate.go"; then
-  echo "Expected stale Copilot token handoff directories to be covered by host cleanup" >&2
-  exit 1
-fi
+# Assert stale Copilot token handoff directories are covered by host cleanup in
+# internal/host/hoststate/hoststate.go.  Migrated to Go (D3):
+# internal/workcellhardening behind the workcell-citools
+# workcell-copilot-token-handoff-cleanup subcommand preserves the exact exit
+# code and stderr message of the former inline three-probe `grep -Fq` guard.
+# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
+go_verify_citools workcell-copilot-token-handoff-cleanup "${ROOT_DIR}" || exit 1
 go_verify_citools workcell-copilot-docker-run "${ROOT_DIR}" || exit 1
 go_verify_citools workcell-provider-launcher-authority "${ROOT_DIR}" || exit 1
-if ! grep -Fq "rm -f -- \"\${token_file}\"" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to unlink the runtime Copilot token handoff file before managed exec" >&2
-  exit 1
-fi
+# Assert the provider wrapper unlinks the runtime Copilot token handoff file
+# before managed exec.  Migrated to Go (D3): internal/workcellhardening behind
+# the workcell-citools workcell-provider-token-unlink subcommand preserves the
+# exact exit code and stderr message of the former inline `grep -Fq` probe.
+# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
+go_verify_citools workcell-provider-token-unlink "${ROOT_DIR}" || exit 1
 go_verify_citools workcell-copilot-policy-wrapper "${ROOT_DIR}" || exit 1
 go_verify_citools workcell-copilot-unsafe-flags "${ROOT_DIR}" || exit 1
 go_verify_citools workcell-copilot-release-verify "${ROOT_DIR}" || exit 1
@@ -8058,15 +8016,14 @@ if ! jq -e '[.hooks.PreToolUse[]?.hooks[0].command? // empty] | any(type == "str
   exit 1
 fi
 
-for scenario_script_basename in \
-  "run-scenario-tests.sh" \
-  "verify-scenario-coverage.sh" \
-  "verify-control-plane-parity.sh"; do
-  if ! grep -Fq -- "${scenario_script_basename}" "${ROOT_DIR}/scripts/validate-repo.sh"; then
-    echo "validate-repo.sh must reference ${scenario_script_basename}" >&2
-    exit 1
-  fi
-done
+# Assert scripts/validate-repo.sh references the scenario-test / coverage /
+# control-plane-parity scripts.  Migrated to Go (D3): internal/workcellhardening
+# behind the workcell-citools workcell-validate-repo-scenario-refs subcommand
+# preserves the exact exit codes and stderr messages of the former inline
+# `for scenario_script_basename in ...; do grep -Fq -- "${basename}" ...; done`
+# loop (three fixed-string presence probes).  `|| exit 1` matches the former
+# loop's `exit 1` on a violated invariant.
+go_verify_citools workcell-validate-repo-scenario-refs "${ROOT_DIR}" || exit 1
 
 # Concrete control-plane lockstep invariant: every policy/ file must be
 # mentioned in a user-facing doc surface so additions stay operator-visible.

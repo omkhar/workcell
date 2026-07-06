@@ -260,6 +260,13 @@ const runMutationInValidatorRelPath = "scripts/ci/run-mutation-in-validator.sh"
 // `go_function_block_contains_fixed ${ROOT_DIR}/internal/publishpr/host_exec.go`.
 const hostExecRelPath = "internal/publishpr/host_exec.go"
 
+// publishPrMainRelPath is the repo-relative path to the Go publish-pr owner
+// that inherited validate_publish_base_name from scripts/workcell.  The
+// publish-base-refcheck block reads this file (via the per-check targetFile
+// field) for its kindGoFunctionBlock probe, mirroring the shell
+// `go_function_block_contains_fixed ${ROOT_DIR}/internal/publishpr/publish_pr_main.go`.
+const publishPrMainRelPath = "internal/publishpr/publish_pr_main.go"
+
 // containerBinGitRelPath is the repo-relative path to the in-container git
 // shim.  The fnblock-goblock-gitenv block reads this file (via the per-check
 // targetFile field) for its three git-env object-store-redirection pins,
@@ -3776,6 +3783,195 @@ var dualStackApplyPlanChecks = []check{
 // shell's exit 1).
 func CheckDualStackApplyPlan(rootDir string) error {
 	return evaluate(rootDir, dualStackApplyPlanChecks)
+}
+
+// publishBaseRefcheckChecks holds the single publish-pr base-name invariant
+// migrated out of scripts/verify-invariants.sh (the lone
+// go_function_block_contains_fixed probe sitting between the ensure_go_run_env
+// cache-root exec block and the workcell-publish-pr-shadow group).  It mirrors
+// the shell's go_function_block_contains_fixed helper (awk function-body
+// extraction with comment stripping, then `grep -Fq`), scoping the fixed-string
+// containment to internal/publishpr/publish_pr_main.go's ValidateBaseName body
+// so the needle cannot be satisfied by unrelated text or a comment.
+var publishBaseRefcheckChecks = []check{
+	{
+		kind:         kindGoFunctionBlock,
+		functionName: "ValidateBaseName",
+		pattern:      "!checkRefFormat(base)",
+		message:      "Expected publishpr.ValidateBaseName to validate the publish-pr --base branch name through checkRefFormat",
+		targetFile:   publishPrMainRelPath,
+	},
+}
+
+// CheckPublishBaseRefcheck runs the single publish-pr base-name invariant
+// against the repo rooted at rootDir.  It returns nil when the invariant holds
+// (the shell's exit 0), or an error whose message equals the shell's stderr for
+// the violated invariant (the shell's exit 1).
+func CheckPublishBaseRefcheck(rootDir string) error {
+	return evaluate(rootDir, publishBaseRefcheckChecks)
+}
+
+// runtimeSecurityPostureChecks lists the two validate_runtime_security_posture
+// invariants in the same order as the contiguous inline pair in
+// scripts/verify-invariants.sh (the pair between the go_verify_hostutil
+// security-option exec fixtures and the prompt-autonomy dry-run exec block).
+// Both migrate function_block_contains_fixed (`grep -Fq` fixed-string
+// containment) scoped to the validate_runtime_security_posture body in
+// scripts/workcell (the default target), so each is a kindFunctionBlock probe.
+var runtimeSecurityPostureChecks = []check{
+	{
+		kind:         kindFunctionBlock,
+		functionName: "validate_runtime_security_posture",
+		pattern:      "go_hostutil helper validate-security-options",
+		message:      "Expected validate_runtime_security_posture to validate daemon SecurityOptions through the helper subcommand",
+	},
+	{
+		kind:         kindFunctionBlock,
+		functionName: "validate_runtime_security_posture",
+		pattern:      "go_hostutil helper validate-compat-security-options",
+		message:      "Expected validate_runtime_security_posture to validate Docker Desktop compat daemon SecurityOptions through the compat helper subcommand",
+	},
+}
+
+// CheckRuntimeSecurityPosture runs the two validate_runtime_security_posture
+// invariants against the repo rooted at rootDir, in the shell's original order.
+// It returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant (the
+// shell's exit 1).
+func CheckRuntimeSecurityPosture(rootDir string) error {
+	return evaluate(rootDir, runtimeSecurityPostureChecks)
+}
+
+// smokeAptBrokerProbeChecks lists the six container-smoke apt-broker slow-wait
+// invariants in the same order as the former inline
+// `for required in ...; do grep -Fq -- "${required}" container-smoke.sh; done`
+// loop in scripts/verify-invariants.sh.  Each iteration was a fixed-string
+// presence probe whose stderr interpolated the needle into the message, so each
+// message is computed here verbatim as
+// "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker
+// slow-wait probe (" + needle + ")".  All six read scripts/container-smoke.sh
+// via the per-check targetFile field.
+var smokeAptBrokerProbeChecks = func() []check {
+	needles := []string{
+		"slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh",
+		"/bin/bash /usr/local/libexec/workcell/apt-broker.sh",
+		"sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update",
+		"slow-apt-helper-ok",
+		"expected sudo-wrapper to wait for a slow apt broker request by default",
+		"expected default apt broker waits to avoid timing out slow requests",
+	}
+	cs := make([]check, 0, len(needles))
+	for _, needle := range needles {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    needle,
+			message:    "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (" + needle + ")",
+			targetFile: containerSmokeRelPath,
+		})
+	}
+	return cs
+}()
+
+// CheckSmokeAptBrokerProbe runs the six container-smoke apt-broker slow-wait
+// invariants against the repo rooted at rootDir, in the shell's original order.
+// It returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant (the
+// shell's exit 1).
+func CheckSmokeAptBrokerProbe(rootDir string) error {
+	return evaluate(rootDir, smokeAptBrokerProbeChecks)
+}
+
+// copilotTokenHandoffCleanupChecks lists the three Copilot token-handoff cleanup
+// invariants migrated out of scripts/verify-invariants.sh.  They came from one
+// multi-probe `if ! grep -Fq A || ! grep -Fq B || ! grep -Fq C; then ... exit 1`
+// guard against internal/host/hoststate/hoststate.go, so they are three ordered
+// kindPresent probes sharing the guard's single stderr message; ordering them
+// preserves the shell's first-failure (short-circuit) behavior.
+var copilotTokenHandoffCleanupChecks = []check{
+	{
+		kind:       kindPresent,
+		pattern:    "copilotStandaloneTokenHandoffName",
+		message:    "Expected stale Copilot token handoff directories to be covered by host cleanup",
+		targetFile: hoststateRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "copilotTokenHandoffBundleName",
+		message:    "Expected stale Copilot token handoff directories to be covered by host cleanup",
+		targetFile: hoststateRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "removeCopilotTokenHandoffArtifacts",
+		message:    "Expected stale Copilot token handoff directories to be covered by host cleanup",
+		targetFile: hoststateRelPath,
+	},
+}
+
+// CheckCopilotTokenHandoffCleanup runs the three Copilot token-handoff cleanup
+// invariants against the repo rooted at rootDir, in the shell's original order.
+// It returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant (the
+// shell's exit 1).
+func CheckCopilotTokenHandoffCleanup(rootDir string) error {
+	return evaluate(rootDir, copilotTokenHandoffCleanupChecks)
+}
+
+// providerTokenUnlinkChecks holds the single provider-wrapper token-unlink
+// invariant migrated out of scripts/verify-invariants.sh (the lone `grep -Fq`
+// probe between the workcell-provider-launcher-authority group and the
+// workcell-copilot-policy-wrapper group).  The shell needle
+// "rm -f -- \"\${token_file}\"" is the literal `rm -f -- "${token_file}"`,
+// matched as a fixed string against runtime/container/provider-wrapper.sh.
+var providerTokenUnlinkChecks = []check{
+	{
+		kind:       kindPresent,
+		pattern:    `rm -f -- "${token_file}"`,
+		message:    "Expected provider wrapper to unlink the runtime Copilot token handoff file before managed exec",
+		targetFile: providerWrapperRelPath,
+	},
+}
+
+// CheckProviderTokenUnlink runs the single provider-wrapper token-unlink
+// invariant against the repo rooted at rootDir.  It returns nil when the
+// invariant holds (the shell's exit 0), or an error whose message equals the
+// shell's stderr for the violated invariant (the shell's exit 1).
+func CheckProviderTokenUnlink(rootDir string) error {
+	return evaluate(rootDir, providerTokenUnlinkChecks)
+}
+
+// validateRepoScenarioRefsChecks lists the three scenario-script reference
+// invariants migrated out of scripts/verify-invariants.sh (the former
+// `for scenario_script_basename in ...; do grep -Fq -- "${basename}"
+// validate-repo.sh; done` loop).  Each iteration was a fixed-string presence
+// probe whose stderr interpolated the basename into the message, so each message
+// is computed here verbatim as "validate-repo.sh must reference " + basename.
+// All three read scripts/validate-repo.sh via the per-check targetFile field.
+var validateRepoScenarioRefsChecks = func() []check {
+	basenames := []string{
+		"run-scenario-tests.sh",
+		"verify-scenario-coverage.sh",
+		"verify-control-plane-parity.sh",
+	}
+	cs := make([]check, 0, len(basenames))
+	for _, basename := range basenames {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    basename,
+			message:    "validate-repo.sh must reference " + basename,
+			targetFile: validateRepoRelPath,
+		})
+	}
+	return cs
+}()
+
+// CheckValidateRepoScenarioRefs runs the three scenario-script reference
+// invariants against the repo rooted at rootDir, in the shell's original order.
+// It returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant (the
+// shell's exit 1).
+func CheckValidateRepoScenarioRefs(rootDir string) error {
+	return evaluate(rootDir, validateRepoScenarioRefsChecks)
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.

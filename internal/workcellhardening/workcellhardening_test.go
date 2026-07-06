@@ -5566,3 +5566,424 @@ func TestCheckDualStackApplyPlanRealRepo(t *testing.T) {
 		t.Fatalf("CheckDualStackApplyPlan(real repo) = %v, want nil", err)
 	}
 }
+
+// --- D3 final simple sweep: publish-pr base-name refcheck (goblock) ---
+
+// publishBaseRefcheckHappyFiles returns a publish_pr_main.go fixture whose
+// ValidateBaseName body carries the !checkRefFormat(base) needle, so the single
+// goblock invariant holds.
+func publishBaseRefcheckHappyFiles() map[string]string {
+	return map[string]string{
+		publishPrMainRelPath: "package publishpr\n\n" +
+			"func ValidateBaseName(base string, allowNonMainBase bool, checkRefFormat CheckRefFormatFunc) error {\n" +
+			"\tif checkRefFormat != nil && !checkRefFormat(base) {\n" +
+			"\t\treturn errInvalidBase\n" +
+			"\t}\n" +
+			"\treturn nil\n" +
+			"}\n",
+	}
+}
+
+func TestCheckPublishBaseRefcheck(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string
+	}{
+		{name: "happy path invariant holds", mutate: func(map[string]string) {}},
+		{
+			name: "checkRefFormat call missing from body",
+			mutate: func(f map[string]string) {
+				f[publishPrMainRelPath] = strings.Replace(f[publishPrMainRelPath], "!checkRefFormat(base)", "false", 1)
+			},
+			wantErr: "Expected publishpr.ValidateBaseName to validate the publish-pr --base branch name through checkRefFormat",
+		},
+		{
+			name: "needle only in a comment inside the body",
+			mutate: func(f map[string]string) {
+				f[publishPrMainRelPath] = strings.Replace(f[publishPrMainRelPath], "\tif checkRefFormat != nil && !checkRefFormat(base) {", "\t// !checkRefFormat(base)\n\tif false {", 1)
+			},
+			wantErr: "Expected publishpr.ValidateBaseName to validate the publish-pr --base branch name through checkRefFormat",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := publishBaseRefcheckHappyFiles()
+			tt.mutate(files)
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckPublishBaseRefcheck(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckPublishBaseRefcheck() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckPublishBaseRefcheck() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckPublishBaseRefcheckCount(t *testing.T) {
+	if got, want := len(publishBaseRefcheckChecks), 1; got != want {
+		t.Fatalf("publishBaseRefcheckChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckPublishBaseRefcheckRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, publishPrMainRelPath)); err != nil {
+		t.Skipf("real internal/publishpr/publish_pr_main.go not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckPublishBaseRefcheck(repoRoot); err != nil {
+		t.Fatalf("CheckPublishBaseRefcheck(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 final simple sweep: validate_runtime_security_posture (fnblock) ---
+
+// runtimeSecurityPostureHappyFiles returns a scripts/workcell fixture whose
+// validate_runtime_security_posture body carries both go_hostutil helper needles,
+// so the two fnblock invariants hold.
+func runtimeSecurityPostureHappyFiles() map[string]string {
+	return map[string]string{
+		launcherRelPath: "#!/usr/bin/env bash\n" +
+			"validate_runtime_security_posture() {\n" +
+			"  go_hostutil helper validate-security-options \"$@\"\n" +
+			"  go_hostutil helper validate-compat-security-options \"$@\"\n" +
+			"}\n",
+	}
+}
+
+func TestCheckRuntimeSecurityPosture(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string
+	}{
+		{name: "happy path all invariants hold", mutate: func(map[string]string) {}},
+		{
+			name: "security-options needle missing",
+			mutate: func(f map[string]string) {
+				f[launcherRelPath] = strings.Replace(f[launcherRelPath], "  go_hostutil helper validate-security-options \"$@\"\n", "", 1)
+			},
+			wantErr: "Expected validate_runtime_security_posture to validate daemon SecurityOptions through the helper subcommand",
+		},
+		{
+			name: "compat-security-options needle missing",
+			mutate: func(f map[string]string) {
+				f[launcherRelPath] = strings.Replace(f[launcherRelPath], "  go_hostutil helper validate-compat-security-options \"$@\"\n", "", 1)
+			},
+			wantErr: "Expected validate_runtime_security_posture to validate Docker Desktop compat daemon SecurityOptions through the compat helper subcommand",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := runtimeSecurityPostureHappyFiles()
+			tt.mutate(files)
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckRuntimeSecurityPosture(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckRuntimeSecurityPosture() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckRuntimeSecurityPosture() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckRuntimeSecurityPostureCount(t *testing.T) {
+	if got, want := len(runtimeSecurityPostureChecks), 2; got != want {
+		t.Fatalf("runtimeSecurityPostureChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckRuntimeSecurityPostureRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckRuntimeSecurityPosture(repoRoot); err != nil {
+		t.Fatalf("CheckRuntimeSecurityPosture(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 final simple sweep: container-smoke apt-broker slow-wait probe ---
+
+// smokeAptBrokerProbeHappyFiles returns a container-smoke.sh fixture that carries
+// all six apt-broker slow-wait probe strings, so all six invariants hold.
+func smokeAptBrokerProbeHappyFiles() map[string]string {
+	return map[string]string{
+		containerSmokeRelPath: "#!/usr/bin/env bash\n" +
+			"slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh\n" +
+			"/bin/bash /usr/local/libexec/workcell/apt-broker.sh\n" +
+			"sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update\n" +
+			"echo slow-apt-helper-ok\n" +
+			"# expected sudo-wrapper to wait for a slow apt broker request by default\n" +
+			"# expected default apt broker waits to avoid timing out slow requests\n",
+	}
+}
+
+func TestCheckSmokeAptBrokerProbe(t *testing.T) {
+	tests := []struct {
+		name    string
+		needle  string
+		wantErr string
+	}{
+		{name: "happy path all invariants hold"},
+		{
+			name:    "slow-apt-helper path probe missing",
+			needle:  "slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh)",
+		},
+		{
+			name:    "apt-broker invocation probe missing",
+			needle:  "/bin/bash /usr/local/libexec/workcell/apt-broker.sh",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (/bin/bash /usr/local/libexec/workcell/apt-broker.sh)",
+		},
+		{
+			name:    "apt-helper update probe missing",
+			needle:  "sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update)",
+		},
+		{
+			name:    "slow-apt-helper-ok probe missing",
+			needle:  "slow-apt-helper-ok",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (slow-apt-helper-ok)",
+		},
+		{
+			name:    "sudo-wrapper wait probe missing",
+			needle:  "expected sudo-wrapper to wait for a slow apt broker request by default",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (expected sudo-wrapper to wait for a slow apt broker request by default)",
+		},
+		{
+			name:    "default broker wait probe missing",
+			needle:  "expected default apt broker waits to avoid timing out slow requests",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (expected default apt broker waits to avoid timing out slow requests)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := smokeAptBrokerProbeHappyFiles()
+			if tt.needle != "" {
+				files[containerSmokeRelPath] = strings.Replace(files[containerSmokeRelPath], tt.needle, "", 1)
+			}
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckSmokeAptBrokerProbe(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckSmokeAptBrokerProbe() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckSmokeAptBrokerProbe() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckSmokeAptBrokerProbeCount(t *testing.T) {
+	if got, want := len(smokeAptBrokerProbeChecks), 6; got != want {
+		t.Fatalf("smokeAptBrokerProbeChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckSmokeAptBrokerProbeRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, containerSmokeRelPath)); err != nil {
+		t.Skipf("real scripts/container-smoke.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckSmokeAptBrokerProbe(repoRoot); err != nil {
+		t.Fatalf("CheckSmokeAptBrokerProbe(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 final simple sweep: Copilot token-handoff cleanup (hoststate) ---
+
+// copilotTokenHandoffCleanupHappyFiles returns a hoststate.go fixture carrying
+// all three Copilot token-handoff cleanup identifiers, so all three invariants
+// hold.
+func copilotTokenHandoffCleanupHappyFiles() map[string]string {
+	return map[string]string{
+		hoststateRelPath: "package hoststate\n\n" +
+			"const copilotStandaloneTokenHandoffName = \"copilot-standalone-token-handoff\"\n" +
+			"const copilotTokenHandoffBundleName = \"copilot-token-handoff\"\n" +
+			"func removeCopilotTokenHandoffArtifacts() error { return nil }\n",
+	}
+}
+
+func TestCheckCopilotTokenHandoffCleanup(t *testing.T) {
+	tests := []struct {
+		name    string
+		needle  string
+		wantErr string
+	}{
+		{name: "happy path all invariants hold"},
+		{name: "standalone handoff name missing", needle: "copilotStandaloneTokenHandoffName", wantErr: "Expected stale Copilot token handoff directories to be covered by host cleanup"},
+		{name: "bundle name missing", needle: "copilotTokenHandoffBundleName", wantErr: "Expected stale Copilot token handoff directories to be covered by host cleanup"},
+		{name: "removal helper missing", needle: "removeCopilotTokenHandoffArtifacts", wantErr: "Expected stale Copilot token handoff directories to be covered by host cleanup"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := copilotTokenHandoffCleanupHappyFiles()
+			if tt.needle != "" {
+				files[hoststateRelPath] = strings.Replace(files[hoststateRelPath], tt.needle, "renamed", 1)
+			}
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckCopilotTokenHandoffCleanup(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckCopilotTokenHandoffCleanup() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckCopilotTokenHandoffCleanup() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckCopilotTokenHandoffCleanupCount(t *testing.T) {
+	if got, want := len(copilotTokenHandoffCleanupChecks), 3; got != want {
+		t.Fatalf("copilotTokenHandoffCleanupChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckCopilotTokenHandoffCleanupRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, hoststateRelPath)); err != nil {
+		t.Skipf("real internal/host/hoststate/hoststate.go not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckCopilotTokenHandoffCleanup(repoRoot); err != nil {
+		t.Fatalf("CheckCopilotTokenHandoffCleanup(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 final simple sweep: provider-wrapper token unlink ---
+
+// providerTokenUnlinkHappyFiles returns a provider-wrapper.sh fixture carrying
+// the token-unlink needle, so the single invariant holds.
+func providerTokenUnlinkHappyFiles() map[string]string {
+	return map[string]string{
+		providerWrapperRelPath: "#!/usr/bin/env bash\n" +
+			"rm -f -- \"${token_file}\" || workcell_die \"could not remove\"\n",
+	}
+}
+
+func TestCheckProviderTokenUnlink(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string
+	}{
+		{name: "happy path invariant holds", mutate: func(map[string]string) {}},
+		{
+			name: "token unlink needle missing",
+			mutate: func(f map[string]string) {
+				f[providerWrapperRelPath] = strings.Replace(f[providerWrapperRelPath], "rm -f -- \"${token_file}\"", "true", 1)
+			},
+			wantErr: "Expected provider wrapper to unlink the runtime Copilot token handoff file before managed exec",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := providerTokenUnlinkHappyFiles()
+			tt.mutate(files)
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckProviderTokenUnlink(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckProviderTokenUnlink() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckProviderTokenUnlink() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckProviderTokenUnlinkCount(t *testing.T) {
+	if got, want := len(providerTokenUnlinkChecks), 1; got != want {
+		t.Fatalf("providerTokenUnlinkChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckProviderTokenUnlinkRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, providerWrapperRelPath)); err != nil {
+		t.Skipf("real runtime/container/provider-wrapper.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckProviderTokenUnlink(repoRoot); err != nil {
+		t.Fatalf("CheckProviderTokenUnlink(real repo) = %v, want nil", err)
+	}
+}
+
+// --- D3 final simple sweep: validate-repo scenario-script references ---
+
+// validateRepoScenarioRefsHappyFiles returns a validate-repo.sh fixture that
+// references all three scenario scripts, so all three invariants hold.
+func validateRepoScenarioRefsHappyFiles() map[string]string {
+	return map[string]string{
+		validateRepoRelPath: "#!/usr/bin/env bash\n" +
+			"run-scenario-tests.sh\n" +
+			"verify-scenario-coverage.sh\n" +
+			"verify-control-plane-parity.sh\n",
+	}
+}
+
+func TestCheckValidateRepoScenarioRefs(t *testing.T) {
+	tests := []struct {
+		name    string
+		needle  string
+		wantErr string
+	}{
+		{name: "happy path all invariants hold"},
+		{name: "run-scenario-tests reference missing", needle: "run-scenario-tests.sh", wantErr: "validate-repo.sh must reference run-scenario-tests.sh"},
+		{name: "verify-scenario-coverage reference missing", needle: "verify-scenario-coverage.sh", wantErr: "validate-repo.sh must reference verify-scenario-coverage.sh"},
+		{name: "verify-control-plane-parity reference missing", needle: "verify-control-plane-parity.sh", wantErr: "validate-repo.sh must reference verify-control-plane-parity.sh"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := validateRepoScenarioRefsHappyFiles()
+			if tt.needle != "" {
+				files[validateRepoRelPath] = strings.Replace(files[validateRepoRelPath], tt.needle, "", 1)
+			}
+			root := writeFnBlockGoBlockGitEnvRepo(t, files)
+			err := CheckValidateRepoScenarioRefs(root)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckValidateRepoScenarioRefs() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("CheckValidateRepoScenarioRefs() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckValidateRepoScenarioRefsCount(t *testing.T) {
+	if got, want := len(validateRepoScenarioRefsChecks), 3; got != want {
+		t.Fatalf("validateRepoScenarioRefsChecks has %d checks, want %d", got, want)
+	}
+}
+
+func TestCheckValidateRepoScenarioRefsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, validateRepoRelPath)); err != nil {
+		t.Skipf("real scripts/validate-repo.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckValidateRepoScenarioRefs(repoRoot); err != nil {
+		t.Fatalf("CheckValidateRepoScenarioRefs(real repo) = %v, want nil", err)
+	}
+}
