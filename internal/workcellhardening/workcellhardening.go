@@ -789,6 +789,73 @@ func CheckGitIndexShadow(rootDir string) error {
 	return evaluate(rootDir, gitIndexShadowChecks)
 }
 
+// publishPrShadowMountChecks lists the four scripts/workcell publish-PR /
+// shadow-mount invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the
+// publishpr.ValidateBaseName checkRefFormat check and the
+// prepare_workspace_control_plane_shadow `find ... -name .git` check), so a
+// reviewer can diff the two one-to-one.
+//
+// All four are block-scoped to a named function body, mirroring the shell's
+// function_block_contains_regex / function_block_contains_fixed helpers (both
+// use extract_named_function_block, i.e. `sed -n '/^NAME()/,/^}/p'`):
+//
+//   - The two kindFunctionBlockRegex checks migrate
+//     function_block_contains_regex (`grep -q` — a genuine regex).  The
+//     core.hooksPath probe's `.` characters are regex any-char metacharacters
+//     (as `grep`/`rg` would treat them), so the pattern is used verbatim as a
+//     regex.  The --no-verify probe is metacharacter-free, but it is kept a
+//     regex kind for fidelity with the shell's function_block_contains_regex.
+//   - The two kindFunctionBlock checks migrate function_block_contains_fixed
+//     (`grep -Fq` — fixed-string containment).  The add_shadow_git_config_mount
+//     needle is the literal `! -L "${source_path}"` (the shell wrote it as
+//     "! -L \"\${source_path}\""), matched as a fixed string.
+var publishPrShadowMountChecks = []check{
+	{
+		// kindFunctionBlockRegex: the `.` chars in core.hooksPath=/dev/null are
+		// regex any-char metacharacters, used verbatim as in the shell's
+		// function_block_contains_regex (`grep -q`).
+		kind:         kindFunctionBlockRegex,
+		functionName: "publish_pr_main",
+		pattern:      "core.hooksPath=/dev/null",
+		message:      "Expected publish_pr_main to disable repo hooks for host-side publish git commands",
+	},
+	{
+		// kindFunctionBlockRegex: metacharacter-free, but kept a regex kind for
+		// fidelity with the shell's function_block_contains_regex.
+		kind:         kindFunctionBlockRegex,
+		functionName: "publish_pr_main",
+		pattern:      "--no-verify",
+		message:      "Expected publish_pr_main to bypass repo hooks explicitly on host-side commit and push",
+	},
+	{
+		// kindFunctionBlock (function_block_contains_fixed): fixed-string
+		// containment of the symlink-free copy helper.
+		kind:         kindFunctionBlock,
+		functionName: "add_shadow_git_hooks_mount",
+		pattern:      "copy_tree_without_symlinks",
+		message:      "Expected add_shadow_git_hooks_mount to avoid copying symlinked hook content into the readonly shadow",
+	},
+	{
+		// kindFunctionBlock (function_block_contains_fixed): the shell needle
+		// "! -L \"\${source_path}\"" is the literal `! -L "${source_path}"`,
+		// matched as a fixed string.
+		kind:         kindFunctionBlock,
+		functionName: "add_shadow_git_config_mount",
+		pattern:      `! -L "${source_path}"`,
+		message:      "Expected add_shadow_git_config_mount to ignore symlinked git config files",
+	},
+}
+
+// CheckPublishPrShadowMounts runs the four scripts/workcell publish-PR /
+// shadow-mount invariants against the repo rooted at rootDir, in the shell's
+// original order.  It returns nil when every invariant holds (the shell's exit
+// 0), or an error whose message equals the shell's stderr for the first
+// violated invariant (the shell's exit 1).
+func CheckPublishPrShadowMounts(rootDir string) error {
+	return evaluate(rootDir, publishPrShadowMountChecks)
+}
+
 // holds reports whether the invariant is satisfied by the launcher text.
 func (c check) holds(text string) bool {
 	switch c.kind {

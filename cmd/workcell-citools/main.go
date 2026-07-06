@@ -102,6 +102,7 @@ func subcommands() []subcommand {
 		{"workcell-bootstrap-egress", "ROOT_DIR", 1, 1, cmdWorkcellBootstrapEgress},
 		{"workcell-bootstrap-audit", "ROOT_DIR", 1, 1, cmdWorkcellBootstrapAudit},
 		{"workcell-git-index-shadow", "ROOT_DIR", 1, 1, cmdWorkcellGitIndexShadow},
+		{"workcell-publish-pr-shadow", "ROOT_DIR", 1, 1, cmdWorkcellPublishPrShadow},
 	}
 }
 
@@ -562,4 +563,12 @@ func cmdWorkcellBootstrapAudit(args []string) error {
 // invariant.
 func cmdWorkcellGitIndexShadow(args []string) error {
 	return workcellhardening.CheckGitIndexShadow(args[0])
+}
+
+// cmdWorkcellPublishPrShadow runs the four scripts/workcell publish-PR /
+// shadow-mount checks migrated out of scripts/verify-invariants.sh; it fails
+// (exit 1 via die()) with the shell's original stderr message for the first
+// violated invariant.
+func cmdWorkcellPublishPrShadow(args []string) error {
+	return workcellhardening.CheckPublishPrShadowMounts(args[0])
 }

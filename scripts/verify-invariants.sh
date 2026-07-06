@@ -3229,25 +3229,7 @@ if ! go_function_block_contains_fixed "${ROOT_DIR}/internal/publishpr/publish_pr
   exit 1
 fi
 
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "publish_pr_main" 'core.hooksPath=/dev/null'; then
-  echo "Expected publish_pr_main to disable repo hooks for host-side publish git commands" >&2
-  exit 1
-fi
-
-if ! function_block_contains_regex "${ROOT_DIR}/scripts/workcell" "publish_pr_main" '--no-verify'; then
-  echo "Expected publish_pr_main to bypass repo hooks explicitly on host-side commit and push" >&2
-  exit 1
-fi
-
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "add_shadow_git_hooks_mount" "copy_tree_without_symlinks"; then
-  echo "Expected add_shadow_git_hooks_mount to avoid copying symlinked hook content into the readonly shadow" >&2
-  exit 1
-fi
-
-if ! function_block_contains_fixed "${ROOT_DIR}/scripts/workcell" "add_shadow_git_config_mount" "! -L \"\${source_path}\""; then
-  echo "Expected add_shadow_git_config_mount to ignore symlinked git config files" >&2
-  exit 1
-fi
+go_verify_citools workcell-publish-pr-shadow "${ROOT_DIR}" || exit 1
 
 if ! grep -Fq "find \"\${workspace}\" -type d -name .git -prune -print0" "${ROOT_DIR}/scripts/workcell"; then
   echo "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories" >&2

@@ -1055,6 +1055,125 @@ func TestCheckGitIndexShadowRealRepo(t *testing.T) {
 	}
 }
 
+// publishPrShadowHappyLauncher is a minimal scripts/workcell that satisfies
+// all four publish-PR / shadow-mount invariants: the core.hooksPath and
+// --no-verify regex checks inside publish_pr_main, the symlink-free copy helper
+// inside add_shadow_git_hooks_mount, and the symlink guard inside
+// add_shadow_git_config_mount.  Individual negative cases mutate one property
+// of this baseline.
+const publishPrShadowHappyLauncher = `#!/bin/bash
+set -euo pipefail
+
+publish_pr_main() {
+  git -c core.hooksPath=/dev/null commit --no-verify -m "publish"
+  git -c core.hooksPath=/dev/null push --no-verify
+}
+
+add_shadow_git_hooks_mount() {
+  local source_path="$1" source="$2"
+  copy_tree_without_symlinks "${source_path}" "${source}"
+}
+
+add_shadow_git_config_mount() {
+  local source_path="$1"
+  if [[ -f "${source_path}" && ! -L "${source_path}" ]]; then
+    return 0
+  fi
+}
+`
+
+func TestCheckPublishPrShadowMounts(t *testing.T) {
+	tests := []struct {
+		name     string
+		launcher string
+		wantErr  string // "" means expect success
+	}{
+		{
+			name:     "happy path all invariants hold",
+			launcher: publishPrShadowHappyLauncher,
+		},
+		{
+			// kindFunctionBlockRegex: the repo-hooks disable removed.
+			name:     "missing core.hooksPath disable",
+			launcher: strings.Replace(publishPrShadowHappyLauncher, "core.hooksPath=/dev/null", "core.editor=true", 2),
+			wantErr:  "Expected publish_pr_main to disable repo hooks for host-side publish git commands",
+		},
+		{
+			// kindFunctionBlockRegex: the explicit hook bypass removed.
+			name:     "missing --no-verify bypass",
+			launcher: strings.Replace(publishPrShadowHappyLauncher, "--no-verify", "--verbose", 2),
+			wantErr:  "Expected publish_pr_main to bypass repo hooks explicitly on host-side commit and push",
+		},
+		{
+			// kindFunctionBlock: the symlink-free copy helper removed.
+			name:     "missing symlink-free hooks copy",
+			launcher: strings.Replace(publishPrShadowHappyLauncher, "copy_tree_without_symlinks", "cp -r", 1),
+			wantErr:  "Expected add_shadow_git_hooks_mount to avoid copying symlinked hook content into the readonly shadow",
+		},
+		{
+			// kindFunctionBlock: the symlinked-config guard removed.
+			name:     "missing symlinked git config guard",
+			launcher: strings.Replace(publishPrShadowHappyLauncher, `! -L "${source_path}"`, `-e "${source_path}"`, 1),
+			wantErr:  "Expected add_shadow_git_config_mount to ignore symlinked git config files",
+		},
+		{
+			// Scoping proof: the core.hooksPath needle present in a DIFFERENT
+			// function body does not satisfy the publish_pr_main check, because
+			// extract_named_function_block scopes to the named function.  Here the
+			// needle is removed from publish_pr_main and reintroduced in an
+			// unrelated helper.
+			name: "core.hooksPath only in a different function",
+			launcher: strings.Replace(
+				strings.Replace(publishPrShadowHappyLauncher, "core.hooksPath=/dev/null", "core.editor=true", 2),
+				"set -euo pipefail",
+				"set -euo pipefail\n\nunrelated_helper() {\n  git -c core.hooksPath=/dev/null status\n}",
+				1,
+			),
+			wantErr: "Expected publish_pr_main to disable repo hooks for host-side publish git commands",
+		},
+		{
+			// A missing launcher is empty content: the first affirmative check
+			// (core.hooksPath disable) fires, mirroring function_block_contains_regex
+			// returning non-zero on a missing file.
+			name:     "missing launcher",
+			launcher: "",
+			wantErr:  "Expected publish_pr_main to disable repo hooks for host-side publish git commands",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeLauncher(t, tc.launcher)
+			err := CheckPublishPrShadowMounts(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckPublishPrShadowMounts() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckPublishPrShadowMounts() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckPublishPrShadowMounts() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckPublishPrShadowMountsRealRepo asserts that the real scripts/workcell
+// in this repository satisfies all four publish-PR / shadow-mount invariants,
+// guarding against a mis-transcribed needle or function name.
+func TestCheckPublishPrShadowMountsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckPublishPrShadowMounts(repoRoot); err != nil {
+		t.Fatalf("CheckPublishPrShadowMounts(real repo) = %v, want nil", err)
+	}
+}
+
 // TestExtractNamedFunctionBlock pins the sed-range extraction semantics
 // the run_host_colima check depends on: the block runs from the `NAME()`
 // opening line through the first line beginning with `}` (inclusive), and
