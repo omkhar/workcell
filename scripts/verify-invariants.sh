@@ -2919,57 +2919,21 @@ fi
 # diagnostics, preserving the exact failure stderr surface.
 go_verify_citools workcell-bootstrap-egress "${ROOT_DIR}" || exit 1
 
-for dockerfile in \
-  "${ROOT_DIR}/runtime/container/Dockerfile" \
-  "${ROOT_DIR}/tools/validator/Dockerfile"; do
-  if ! rg -q 'ca-certificates_20250419_all\.deb' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin a snapshot CA bundle bootstrap package before HTTPS apt" >&2
-    exit 1
-  fi
-  if ! rg -q 'openssl_3\.5\.5-1~deb13u1_amd64\.deb' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin the amd64 snapshot OpenSSL bootstrap package before HTTPS apt" >&2
-    exit 1
-  fi
-  if ! rg -q 'openssl_3\.5\.5-1~deb13u1_arm64\.deb' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin the arm64 snapshot OpenSSL bootstrap package before HTTPS apt" >&2
-    exit 1
-  fi
-  if ! rg -q 'Acquire::Retries "5";' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin apt retry count for snapshot fetch resilience" >&2
-    exit 1
-  fi
-  if ! rg -q 'Acquire::http::Timeout "30";' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin apt HTTP timeout for snapshot fetch resilience" >&2
-    exit 1
-  fi
-  if ! rg -q 'Acquire::https::Timeout "30";' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to pin apt HTTPS timeout for snapshot fetch resilience" >&2
-    exit 1
-  fi
-  if ! rg -q 'for attempt in 1 2 3; do' "${dockerfile}" ||
-    ! rg -q 'rm -f "\$\{output\}";' "${dockerfile}" ||
-    ! rg -q 'sleep "\$\(\(attempt \* 5\)\)";' "${dockerfile}"; then
-    echo "Expected ${dockerfile} snapshot TLS bootstrap downloads to retry and discard partial packages" >&2
-    exit 1
-  fi
-  if ! rg -q 'fetch_snapshot_bootstrap_package "\$\{openssl_url\}" /tmp/workcell-bootstrap-openssl\.deb' "${dockerfile}" ||
-    ! rg -q '&& echo "\$\{openssl_sha256\}  /tmp/workcell-bootstrap-openssl\.deb" \| sha256sum -c -' "${dockerfile}" ||
-    ! rg -q '&& fetch_snapshot_bootstrap_package "\$\{ca_url\}" /tmp/workcell-bootstrap-ca-certificates\.deb' "${dockerfile}" ||
-    ! rg -q '&& echo "\$\{ca_sha256\}  /tmp/workcell-bootstrap-ca-certificates\.deb" \| sha256sum -c -' "${dockerfile}" ||
-    ! rg -q '&& dpkg -i /tmp/workcell-bootstrap-openssl\.deb /tmp/workcell-bootstrap-ca-certificates\.deb' "${dockerfile}"; then
-    echo "Expected ${dockerfile} snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps" >&2
-    exit 1
-  fi
-done
-
-for dockerfile in \
-  "${ROOT_DIR}/runtime/container/Dockerfile" \
-  "${ROOT_DIR}/tools/validator/Dockerfile"; do
-  if ! rg -q '^USER workcell$' "${dockerfile}"; then
-    echo "Expected ${dockerfile} to default to the named unprivileged workcell user" >&2
-    exit 1
-  fi
-done
+# Assert the dockerfile-pin invariants across runtime/container/Dockerfile and
+# tools/validator/Dockerfile: each pins the snapshot CA bundle / amd64+arm64
+# OpenSSL bootstrap packages, the apt retry/timeout settings, the retry-and-
+# discard TLS bootstrap download loop, the fail-closed download/checksum/dpkg
+# chain, and the unprivileged `USER workcell` default.  Migrated to Go (D3):
+# internal/workcellhardening behind the workcell-citools workcell-dockerfile-pins
+# subcommand preserves the exact exit codes and stderr messages of the former
+# inline `for dockerfile` rg loops, including the per-line (`rg`-parity) regex
+# matching of every escaped-literal pattern and the ${dockerfile}-interpolated
+# messages (rendered as the absolute "${ROOT_DIR}/..." path exactly as the shell
+# loop variable held it).  `|| exit 1` matches the former inline block's `exit 1`
+# on a violated invariant: it handles the failure so the top-level ERR trap does
+# not fire and append trap diagnostics, preserving the exact failure stderr
+# surface.
+go_verify_citools workcell-dockerfile-pins "${ROOT_DIR}" || exit 1
 
 validator_dockerfile="${ROOT_DIR}/tools/validator/Dockerfile"
 for required in \

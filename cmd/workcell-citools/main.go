@@ -115,6 +115,7 @@ func subcommands() []subcommand {
 		{"workcell-inspect-assurance-loops", "ROOT_DIR", 1, 1, cmdWorkcellInspectAssuranceLoops},
 		{"workcell-validator-writable-state", "ROOT_DIR", 1, 1, cmdWorkcellValidatorWritableState},
 		{"workcell-hostutil-egress-rg", "ROOT_DIR", 1, 1, cmdWorkcellHostutilEgressRg},
+		{"workcell-dockerfile-pins", "ROOT_DIR", 1, 1, cmdWorkcellDockerfilePins},
 	}
 }
 
@@ -678,4 +679,13 @@ func cmdWorkcellValidatorWritableState(args []string) error {
 // first violated invariant.
 func cmdWorkcellHostutilEgressRg(args []string) error {
 	return workcellhardening.CheckHostutilEgressRg(args[0])
+}
+
+// cmdWorkcellDockerfilePins runs the thirty dockerfile-pin checks
+// (snapshot-TLS-bootstrap package/apt pins and unprivileged-USER defaults across
+// runtime/container/Dockerfile and tools/validator/Dockerfile) migrated out of
+// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
+// original stderr message for the first violated invariant.
+func cmdWorkcellDockerfilePins(args []string) error {
+	return workcellhardening.CheckDockerfilePins(args[0])
 }
