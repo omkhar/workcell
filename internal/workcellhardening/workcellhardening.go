@@ -99,12 +99,45 @@ const providerWrapperRelPath = "runtime/container/provider-wrapper.sh"
 const developmentWrapperRelPath = "runtime/container/development-wrapper.sh"
 
 // containerSmokeRelPath is the repo-relative path to the container smoke
-// harness.  Only the Copilot-token-handoff leaf-permission guard reads this
-// file (via the per-check targetFile field) for its
-// stage_copilot_token_handoff_dir chmod probes, mirroring the shell
-// function_block_contains_fixed probes that ran against
-// ${ROOT_DIR}/scripts/container-smoke.sh.
+// harness.  The Copilot-token-handoff leaf-permission guard reads this file
+// (via the per-check targetFile field) for its stage_copilot_token_handoff_dir
+// chmod probes, and the Copilot-docker-run group reads it for its
+// Docker-inspect-metadata leak probes, mirroring the shell probes that ran
+// against ${ROOT_DIR}/scripts/container-smoke.sh.
 const containerSmokeRelPath = "scripts/container-smoke.sh"
+
+// hoststateRelPath is the repo-relative path to the host-state Go source.
+// Only the Copilot-docker-run legacy-env-file-cleanup invariant reads this
+// file (via the per-check targetFile field), mirroring the shell `grep -Fq`
+// that ran against ${ROOT_DIR}/internal/host/hoststate/hoststate.go.
+const hoststateRelPath = "internal/host/hoststate/hoststate.go"
+
+// launcherCommonRustRelPath is the repo-relative path to the shared runtime
+// launcher Rust helper.  Only the Copilot-docker-run auth-metadata invariant
+// reads this file (via the per-check targetFile field), mirroring the shell
+// `grep -Fq` that ran against
+// ${ROOT_DIR}/runtime/container/rust/src/bin/common/launcher_common.rs.
+const launcherCommonRustRelPath = "runtime/container/rust/src/bin/common/launcher_common.rs"
+
+// workcellLauncherRustRelPath is the repo-relative path to the runtime
+// workcell-launcher Rust binary.  Only the Copilot-docker-run auth-metadata
+// invariant reads this file (via the per-check targetFile field), mirroring the
+// shell `grep -Fq` that ran against
+// ${ROOT_DIR}/runtime/container/rust/src/bin/workcell-launcher.rs.
+const workcellLauncherRustRelPath = "runtime/container/rust/src/bin/workcell-launcher.rs"
+
+// entrypointRelPath is the repo-relative path to the runtime container
+// entrypoint.  The Copilot-docker-run group reads this file (via the per-check
+// targetFile field) for its token-handoff staging / self-reexec / mapped-user
+// invariants, mirroring the shell probes that ran against
+// ${ROOT_DIR}/runtime/container/entrypoint.sh.
+const entrypointRelPath = "runtime/container/entrypoint.sh"
+
+// runtimeUserRelPath is the repo-relative path to the runtime user helper.
+// Only the Copilot-docker-run runtime-state-path invariant reads this file (via
+// the per-check targetFile field), mirroring the shell `grep -Fq` that ran
+// against ${ROOT_DIR}/runtime/container/runtime-user.sh.
+const runtimeUserRelPath = "runtime/container/runtime-user.sh"
 
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
@@ -1343,6 +1376,221 @@ func copilotTokenHandoffChecks() []check {
 // violated invariant (the shell's exit 1).
 func CheckCopilotTokenHandoff(rootDir string) error {
 	return evaluate(rootDir, copilotTokenHandoffChecks())
+}
+
+// copilotDockerRunChecks lists the twenty-five Copilot / docker-run
+// invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the
+// internal/host/hoststate stale-cleanup guard and the
+// WORKCELL_PROVIDER_LAUNCHER_AUTHORITY provider-launcher-authority group),
+// so a reviewer can diff the two one-to-one.
+//
+// Seven distinct files are read (via the per-check targetFile field, or the
+// default scripts/workcell launcher):
+//   - internal/host/hoststate/hoststate.go (legacy env-file cleanup probe)
+//   - scripts/workcell (the default launcher: env-file ban, PID-1 wiring,
+//     token-handoff mount, host-computed auth metadata, consumed-marker wait,
+//     /run/workcell tmpfs)
+//   - runtime/container/rust/src/bin/common/launcher_common.rs and
+//     runtime/container/rust/src/bin/workcell-launcher.rs (auth-metadata
+//     plumbing)
+//   - runtime/container/entrypoint.sh (staging, container-dir env, host token
+//     file read/unlink, runtime-state record, self-reexec, mapped-user
+//     creation, and the negated caller-token / chown / re-export guards)
+//   - scripts/container-smoke.sh (Docker-inspect metadata-leak proof)
+//   - runtime/container/runtime-user.sh (runtime-state token path)
+//
+// Matching semantics mirror the shell exactly.  Every affirmative probe was a
+// `grep -Fq`/`grep -Fq --` fixed-string containment (kindPresent); each needle
+// reproduces the shell double-quoted / single-quoted literal byte-exact
+// (`\"`→`"`, `\$`→`$`; single-quoted needles are verbatim including `${...}`,
+// `[[`, `(--init)`, `:rw`).  The two variable-needle probes resolve their
+// shell assignments to concrete literals:
+//   - copilot_container_dir_env_needle →
+//     `WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}"`
+//   - copilot_auth_required_env_needle →
+//     `WORKCELL_COPILOT_AUTH_REQUIRED="${COPILOT_AUTH_REQUIRED}"`
+//
+// Two whole-file negated `grep -Fq` guards (a caller-supplied token source and
+// a chown dependency present in entrypoint.sh) are kindAbsent (present → exit
+// 1).  The final guard was a `grep -Eq` genuine regex — its `.*` is an active
+// metacharacter, `\$` a literal `$` — so it is kindRegexAbsent with the pattern
+// verbatim (present → exit 1); regexMatchesAnyLine gives the same line-oriented
+// parity as `grep -E`.
+//
+// Each multi-probe `||` guard (several `grep -Fq` probes joined by `||` under
+// one message) becomes an ordered run of checks sharing that message, which is
+// behaviourally identical (any probe failing yields the same stderr and exit 1
+// as the corresponding shell `if`).
+var copilotDockerRunChecks = []check{
+	{
+		kind:       kindPresent,
+		pattern:    `strings.HasPrefix(suffix, "env.")`,
+		message:    "Expected legacy stale Copilot token env-file cleanup to cover production mktemp suffixes",
+		targetFile: hoststateRelPath,
+	},
+	{
+		// kindAbsent: a Docker --env-file for the Copilot token is a violation
+		// (Docker stores env-files in container metadata → exit 1).
+		kind:    kindAbsent,
+		pattern: `--env-file "${COPILOT_TOKEN`,
+		message: "Copilot auth must not use Docker env-files because Docker stores them in container metadata",
+	},
+	// PID-1 guard: three probes sharing one message.
+	{
+		kind:    kindPresent,
+		pattern: `if [[ -z "${COPILOT_TOKEN_HANDOFF_DIR}" ]]; then`,
+		message: "Expected Copilot token handoff launches to keep the Workcell entrypoint as PID 1",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "DOCKER_RUN_BASE+=(--init)",
+		message: "Expected Copilot token handoff launches to keep the Workcell entrypoint as PID 1",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "DOCKER_RUN_PREFIX_LEN=2",
+		message: "Expected Copilot token handoff launches to keep the Workcell entrypoint as PID 1",
+	},
+	{
+		kind:    kindPresent,
+		pattern: "${COPILOT_TOKEN_HANDOFF_DIR}:${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}:rw",
+		message: "Expected docker run to mount only the Copilot token handoff directory, not the original token source",
+	},
+	// Host-computed auth metadata guard: four probes across scripts/workcell,
+	// launcher_common.rs, and workcell-launcher.rs sharing one message.  The
+	// first two needles are the resolved shell variable needles.
+	{
+		kind:    kindPresent,
+		pattern: `WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}"`,
+		message: "Expected Copilot launches to pass validated host-computed auth metadata through PID 1 and scrub caller-supplied metadata before provider wrapper exec",
+	},
+	{
+		kind:    kindPresent,
+		pattern: `WORKCELL_COPILOT_AUTH_REQUIRED="${COPILOT_AUTH_REQUIRED}"`,
+		message: "Expected Copilot launches to pass validated host-computed auth metadata through PID 1 and scrub caller-supplied metadata before provider wrapper exec",
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "WORKCELL_COPILOT_AUTH_REQUIRED",
+		message:    "Expected Copilot launches to pass validated host-computed auth metadata through PID 1 and scrub caller-supplied metadata before provider wrapper exec",
+		targetFile: launcherCommonRustRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "copilot_auth_required_for_pid1(request.target_name)",
+		message:    "Expected Copilot launches to pass validated host-computed auth metadata through PID 1 and scrub caller-supplied metadata before provider wrapper exec",
+		targetFile: workcellLauncherRustRelPath,
+	},
+	{
+		kind:    kindPresent,
+		pattern: "wait_for_copilot_token_handoff_consumed",
+		message: "Expected detached Copilot launches to wait until the managed wrapper consumes the token handoff",
+	},
+	{
+		kind:    kindPresent,
+		pattern: `--tmpfs "/run/workcell:nosuid,nodev,size=4m,mode=755,uid=${HOST_UID},gid=${HOST_GID}"`,
+		message: "Expected readonly Copilot token handoff state to use a mapped-user writable /run/workcell tmpfs",
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `stage_copilot_token_handoff_file "$@"`,
+		message:    "Expected runtime entrypoint to stage the Copilot host handoff token into a transient runtime file",
+		targetFile: entrypointRelPath,
+	},
+	// Read-and-unlink guard: three entrypoint.sh probes sharing one message.
+	{
+		kind:       kindPresent,
+		pattern:    `WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR:-/opt/workcell/copilot-token-handoff}"`,
+		message:    "Expected runtime entrypoint to read and unlink the mounted Copilot token handoff file",
+		targetFile: entrypointRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `WORKCELL_COPILOT_HOST_TOKEN_FILE="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}/copilot-github-token.txt"`,
+		message:    "Expected runtime entrypoint to read and unlink the mounted Copilot token handoff file",
+		targetFile: entrypointRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `rm -f -- "${host_token_file}"`,
+		message:    "Expected runtime entrypoint to read and unlink the mounted Copilot token handoff file",
+		targetFile: entrypointRelPath,
+	},
+	// Metadata-leak proof guard: two container-smoke.sh probes sharing one
+	// message.
+	{
+		kind:       kindPresent,
+		pattern:    `COPILOT_METADATA_ENV="$(docker_cmd inspect`,
+		message:    "Expected container smoke to prove Copilot token material is absent from Docker inspect metadata",
+		targetFile: containerSmokeRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "Copilot token leaked into Docker container metadata",
+		message:    "Expected container smoke to prove Copilot token material is absent from Docker inspect metadata",
+		targetFile: containerSmokeRelPath,
+	},
+	// Runtime-state record guard: one runtime-user.sh probe + one entrypoint.sh
+	// probe sharing one message.
+	{
+		kind:       kindPresent,
+		pattern:    `WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH="${WORKCELL_RUNTIME_STATE_DIR}/copilot-token-file"`,
+		message:    "Expected runtime entrypoint to record the staged Copilot token path in root-controlled runtime state",
+		targetFile: runtimeUserRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `workcell_write_readonly_state_file "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}" "${token_file}"`,
+		message:    "Expected runtime entrypoint to record the staged Copilot token path in root-controlled runtime state",
+		targetFile: entrypointRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "exec env -u WORKCELL_COPILOT_GITHUB_TOKEN",
+		message:    "Expected runtime entrypoint to self-reexec without the Copilot token env variable",
+		targetFile: entrypointRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `setpriv --reuid "${uid}" --regid "${gid}" --init-groups /bin/bash -c`,
+		message:    "Expected runtime entrypoint to create the Copilot token handoff file as the mapped runtime user",
+		targetFile: entrypointRelPath,
+	},
+	{
+		// kindAbsent: accepting a caller-supplied WORKCELL_COPILOT_GITHUB_TOKEN
+		// as an auth source is a violation (present → exit 1).
+		kind:       kindAbsent,
+		pattern:    `token="${WORKCELL_COPILOT_GITHUB_TOKEN:-}"`,
+		message:    "Runtime entrypoint must not accept caller-supplied WORKCELL_COPILOT_GITHUB_TOKEN as a Copilot auth source",
+		targetFile: entrypointRelPath,
+	},
+	{
+		// kindAbsent: depending on chown for token-handoff ownership is a
+		// violation (present → exit 1).
+		kind:       kindAbsent,
+		pattern:    `chown "${uid}:${gid}"`,
+		message:    "Runtime entrypoint must not depend on chown for Copilot token handoff ownership",
+		targetFile: entrypointRelPath,
+	},
+	{
+		// kindRegexAbsent: the shell's `grep -Eq` genuine regex — `.*` is active,
+		// `\$` is a literal `$` — so reintroducing the Copilot token env variable
+		// when launching the provider child is a violation (present → exit 1).
+		kind:       kindRegexAbsent,
+		pattern:    `WORKCELL_COPILOT_GITHUB_TOKEN=.*"\$@"`,
+		message:    "Runtime entrypoint must not reintroduce the Copilot token env variable when launching the provider child",
+		targetFile: entrypointRelPath,
+	},
+}
+
+// CheckCopilotDockerRun runs the twenty-five Copilot / docker-run invariants
+// against the repo rooted at rootDir, in the shell's original order.  It
+// returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant (the
+// shell's exit 1).
+func CheckCopilotDockerRun(rootDir string) error {
+	return evaluate(rootDir, copilotDockerRunChecks)
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.

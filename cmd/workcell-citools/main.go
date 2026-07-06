@@ -106,6 +106,7 @@ func subcommands() []subcommand {
 		{"workcell-shadow-enum-egress", "ROOT_DIR", 1, 1, cmdWorkcellShadowEnumEgress},
 		{"workcell-home-seed-provider-wrapper", "ROOT_DIR", 1, 1, cmdWorkcellHomeSeedProviderWrapper},
 		{"workcell-copilot-token-handoff", "ROOT_DIR", 1, 1, cmdWorkcellCopilotTokenHandoff},
+		{"workcell-copilot-docker-run", "ROOT_DIR", 1, 1, cmdWorkcellCopilotDockerRun},
 	}
 }
 
@@ -598,4 +599,12 @@ func cmdWorkcellHomeSeedProviderWrapper(args []string) error {
 // violated invariant.
 func cmdWorkcellCopilotTokenHandoff(args []string) error {
 	return workcellhardening.CheckCopilotTokenHandoff(args[0])
+}
+
+// cmdWorkcellCopilotDockerRun runs the twenty-five Copilot / docker-run
+// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
+// die()) with the shell's original stderr message for the first violated
+// invariant.
+func cmdWorkcellCopilotDockerRun(args []string) error {
+	return workcellhardening.CheckCopilotDockerRun(args[0])
 }

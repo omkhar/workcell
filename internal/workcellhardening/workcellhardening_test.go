@@ -1949,3 +1949,435 @@ func TestCheckCopilotTokenHandoffRealRepo(t *testing.T) {
 		t.Fatalf("CheckCopilotTokenHandoff(real repo) = %v, want nil", err)
 	}
 }
+
+// copilotDockerRunHappyLauncher is a minimal but structurally faithful
+// scripts/workcell satisfying every launcher-targeted Copilot / docker-run
+// invariant: no Docker --env-file for the token, the PID-1 wiring, the
+// token-handoff bind mount, the two host-computed auth-metadata env exports
+// (the two resolved variable needles), the consumed-marker wait, and the
+// mapped-user /run/workcell tmpfs.
+const copilotDockerRunHappyLauncher = `#!/usr/bin/env bash
+set -euo pipefail
+main() {
+  if [[ -z "${COPILOT_TOKEN_HANDOFF_DIR}" ]]; then
+    return 1
+  fi
+  DOCKER_RUN_BASE+=(--init)
+  DOCKER_RUN_PREFIX_LEN=2
+  DOCKER_RUN_BASE+=(--mount "type=bind,source=${COPILOT_TOKEN_HANDOFF_DIR}:${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}:rw")
+  copilot_container_dir_env='WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}"'
+  copilot_auth_required_env='WORKCELL_COPILOT_AUTH_REQUIRED="${COPILOT_AUTH_REQUIRED}"'
+  DOCKER_RUN_BASE+=(--env "${copilot_container_dir_env}" --env "${copilot_auth_required_env}")
+  DOCKER_RUN_BASE+=(--tmpfs "/run/workcell:nosuid,nodev,size=4m,mode=755,uid=${HOST_UID},gid=${HOST_GID}")
+  wait_for_copilot_token_handoff_consumed
+}
+`
+
+// copilotDockerRunHappyHostState is a minimal internal/host/hoststate/hoststate.go
+// satisfying the legacy stale-env-file cleanup probe.
+const copilotDockerRunHappyHostState = `package hoststate
+
+func staleEnvFile(suffix string) bool {
+	return strings.HasPrefix(suffix, "env.")
+}
+`
+
+// copilotDockerRunHappyLauncherCommon is a minimal launcher_common.rs satisfying
+// the WORKCELL_COPILOT_AUTH_REQUIRED sanitization probe.
+const copilotDockerRunHappyLauncherCommon = `pub fn sanitize(env: &mut Env) {
+    env.remove("WORKCELL_COPILOT_AUTH_REQUIRED");
+}
+`
+
+// copilotDockerRunHappyWorkcellLauncher is a minimal workcell-launcher.rs
+// satisfying the copilot_auth_required_for_pid1 probe.
+const copilotDockerRunHappyWorkcellLauncher = `fn build(request: &Request) {
+    let required = copilot_auth_required_for_pid1(request.target_name);
+    let _ = required;
+}
+`
+
+// copilotDockerRunHappyEntrypoint is a minimal runtime/container/entrypoint.sh
+// satisfying the entrypoint-targeted probes (staging, container-dir env, host
+// token read/unlink, runtime-state record, self-reexec, mapped-user creation)
+// and NONE of the three negated guards (no caller-token source, no chown, no
+// re-exported token when launching the child).
+const copilotDockerRunHappyEntrypoint = `#!/usr/bin/env bash
+set -euo pipefail
+stage_copilot_token_handoff_file "$@"
+WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR:-/opt/workcell/copilot-token-handoff}"
+WORKCELL_COPILOT_HOST_TOKEN_FILE="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}/copilot-github-token.txt"
+host_token_file="${WORKCELL_COPILOT_HOST_TOKEN_FILE}"
+setpriv --reuid "${uid}" --regid "${gid}" --init-groups /bin/bash -c 'cat "${host_token_file}"'
+rm -f -- "${host_token_file}"
+workcell_write_readonly_state_file "${WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH}" "${token_file}"
+exec env -u WORKCELL_COPILOT_GITHUB_TOKEN /usr/local/bin/workcell-launcher "$@"
+`
+
+// copilotDockerRunHappySmoke is a minimal scripts/container-smoke.sh satisfying
+// the two Docker-inspect metadata-leak proof probes.
+const copilotDockerRunHappySmoke = `#!/usr/bin/env bash
+set -euo pipefail
+assert_no_metadata_leak() {
+  COPILOT_METADATA_ENV="$(docker_cmd inspect --format '{{json .Config.Env}}' "${container}")"
+  if grep -q "${token}" <<<"${COPILOT_METADATA_ENV}"; then
+    echo "Copilot token leaked into Docker container metadata" >&2
+    return 1
+  fi
+}
+`
+
+// copilotDockerRunHappyRuntimeUser is a minimal runtime/container/runtime-user.sh
+// satisfying the runtime-state token-path probe.
+const copilotDockerRunHappyRuntimeUser = `#!/usr/bin/env bash
+WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH="${WORKCELL_RUNTIME_STATE_DIR}/copilot-token-file"
+`
+
+// writeCopilotDockerRunRepo materializes a fake repo with the seven files this
+// group reads set to the given bodies; a body of "" means "do not create that
+// file" (unreadable-target case).
+func writeCopilotDockerRunRepo(t *testing.T, launcher, hostState, launcherCommon, workcellLauncher, entrypoint, smoke, runtimeUser string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(launcherRelPath, launcher)
+	write(hoststateRelPath, hostState)
+	write(launcherCommonRustRelPath, launcherCommon)
+	write(workcellLauncherRustRelPath, workcellLauncher)
+	write(entrypointRelPath, entrypoint)
+	write(containerSmokeRelPath, smoke)
+	write(runtimeUserRelPath, runtimeUser)
+	return root
+}
+
+func TestCheckCopilotDockerRun(t *testing.T) {
+	tests := []struct {
+		name             string
+		launcher         string
+		hostState        string
+		launcherCommon   string
+		workcellLauncher string
+		entrypoint       string
+		smoke            string
+		runtimeUser      string
+		wantErr          string // "" means expect success
+	}{
+		{
+			name:             "happy path all invariants hold",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+		},
+		{
+			// Check 1 (kindPresent, hoststate.go — a non-launcher file): the
+			// legacy env-file cleanup probe removed.
+			name:             "hoststate missing legacy env-file cleanup",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        strings.Replace(copilotDockerRunHappyHostState, `strings.HasPrefix(suffix, "env.")`, `strings.HasPrefix(suffix, "other.")`, 1),
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected legacy stale Copilot token env-file cleanup to cover production mktemp suffixes",
+		},
+		{
+			// Check 2 (kindAbsent, launcher): a Docker --env-file for the Copilot
+			// token present is a violation.
+			name:             "launcher uses docker env-file for token",
+			launcher:         copilotDockerRunHappyLauncher + "\nDOCKER_RUN_BASE+=(--env-file \"${COPILOT_TOKEN_ENV_FILE}\")\n",
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Copilot auth must not use Docker env-files because Docker stores them in container metadata",
+		},
+		{
+			// Check 3 (kindPresent, launcher — first probe of the PID-1 guard).
+			name:             "launcher missing token-handoff-dir guard",
+			launcher:         strings.Replace(copilotDockerRunHappyLauncher, `if [[ -z "${COPILOT_TOKEN_HANDOFF_DIR}" ]]; then`, "if false; then", 1),
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected Copilot token handoff launches to keep the Workcell entrypoint as PID 1",
+		},
+		{
+			// Check 5 (kindPresent, launcher — last probe of the PID-1 guard):
+			// proves the three ordered probes share one message.
+			name:             "launcher missing docker-run prefix len",
+			launcher:         strings.Replace(copilotDockerRunHappyLauncher, "DOCKER_RUN_PREFIX_LEN=2", "DOCKER_RUN_PREFIX_LEN=1", 1),
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected Copilot token handoff launches to keep the Workcell entrypoint as PID 1",
+		},
+		{
+			// Check 6 (kindPresent, launcher): the read-write handoff bind mount
+			// spec removed.
+			name:             "launcher missing token-handoff bind mount",
+			launcher:         strings.Replace(copilotDockerRunHappyLauncher, "${COPILOT_TOKEN_HANDOFF_DIR}:${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}:rw", "${SOME_OTHER_DIR}:/mnt:ro", 1),
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected docker run to mount only the Copilot token handoff directory, not the original token source",
+		},
+		{
+			// Check 7 (kindPresent, launcher — resolved variable needle 1): the
+			// container-dir auth-metadata env export removed.
+			name:             "launcher missing container-dir auth metadata env",
+			launcher:         strings.Replace(copilotDockerRunHappyLauncher, `WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}"`, `WORKCELL_OTHER="${x}"`, 1),
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected Copilot launches to pass validated host-computed auth metadata through PID 1 and scrub caller-supplied metadata before provider wrapper exec",
+		},
+		{
+			// Check 8 (kindPresent, launcher — resolved variable needle 2): the
+			// auth-required env export removed.
+			name:             "launcher missing auth-required env",
+			launcher:         strings.Replace(copilotDockerRunHappyLauncher, `WORKCELL_COPILOT_AUTH_REQUIRED="${COPILOT_AUTH_REQUIRED}"`, `WORKCELL_OTHER_REQUIRED="${x}"`, 1),
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected Copilot launches to pass validated host-computed auth metadata through PID 1 and scrub caller-supplied metadata before provider wrapper exec",
+		},
+		{
+			// Check 9 (kindPresent, launcher_common.rs — a non-launcher file):
+			// the auth-required sanitization probe removed.
+			name:             "launcher_common missing auth-required scrub",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   strings.Replace(copilotDockerRunHappyLauncherCommon, "WORKCELL_COPILOT_AUTH_REQUIRED", "WORKCELL_OTHER", 1),
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected Copilot launches to pass validated host-computed auth metadata through PID 1 and scrub caller-supplied metadata before provider wrapper exec",
+		},
+		{
+			// Check 10 (kindPresent, workcell-launcher.rs — a non-launcher file):
+			// the PID-1 auth classifier call removed.
+			name:             "workcell-launcher missing pid1 auth classifier",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: strings.Replace(copilotDockerRunHappyWorkcellLauncher, "copilot_auth_required_for_pid1(request.target_name)", "copilot_auth_required_for_pid1(other)", 1),
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected Copilot launches to pass validated host-computed auth metadata through PID 1 and scrub caller-supplied metadata before provider wrapper exec",
+		},
+		{
+			// Check 11 (kindPresent, launcher): the consumed-marker wait removed.
+			name:             "launcher missing consumed-marker wait",
+			launcher:         strings.Replace(copilotDockerRunHappyLauncher, "wait_for_copilot_token_handoff_consumed", "wait_for_other", 1),
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected detached Copilot launches to wait until the managed wrapper consumes the token handoff",
+		},
+		{
+			// Check 12 (kindPresent, launcher): the mapped-user /run/workcell
+			// tmpfs spec removed.
+			name:             "launcher missing run-workcell tmpfs",
+			launcher:         strings.Replace(copilotDockerRunHappyLauncher, "/run/workcell:nosuid,nodev,size=4m,mode=755,uid=${HOST_UID},gid=${HOST_GID}", "/run/workcell:rw", 1),
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected readonly Copilot token handoff state to use a mapped-user writable /run/workcell tmpfs",
+		},
+		{
+			// Check 13 (kindPresent, entrypoint.sh): the token staging call removed.
+			name:             "entrypoint missing token staging call",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       strings.Replace(copilotDockerRunHappyEntrypoint, `stage_copilot_token_handoff_file "$@"`, "true", 1),
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected runtime entrypoint to stage the Copilot host handoff token into a transient runtime file",
+		},
+		{
+			// Check 16 (kindPresent, entrypoint.sh — last probe of the read-and-
+			// unlink guard): the host token unlink removed.
+			name:             "entrypoint missing host token unlink",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       strings.Replace(copilotDockerRunHappyEntrypoint, `rm -f -- "${host_token_file}"`, "true", 1),
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected runtime entrypoint to read and unlink the mounted Copilot token handoff file",
+		},
+		{
+			// Check 18 (kindPresent, container-smoke.sh — last probe of the
+			// metadata-leak guard): the leak assertion message removed.
+			name:             "container smoke missing metadata leak assertion",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            strings.Replace(copilotDockerRunHappySmoke, "Copilot token leaked into Docker container metadata", "token leaked", 1),
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected container smoke to prove Copilot token material is absent from Docker inspect metadata",
+		},
+		{
+			// Check 19 (kindPresent, runtime-user.sh — first probe of the
+			// runtime-state guard): the runtime token-path variable removed.
+			name:             "runtime-user missing token file path",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      strings.Replace(copilotDockerRunHappyRuntimeUser, "WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH", "WORKCELL_OTHER", 1),
+			wantErr:          "Expected runtime entrypoint to record the staged Copilot token path in root-controlled runtime state",
+		},
+		{
+			// Check 23 (kindAbsent, entrypoint.sh): accepting a caller-supplied
+			// token source is a violation.
+			name:             "entrypoint accepts caller-supplied token",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint + "\ntoken=\"${WORKCELL_COPILOT_GITHUB_TOKEN:-}\"\n",
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Runtime entrypoint must not accept caller-supplied WORKCELL_COPILOT_GITHUB_TOKEN as a Copilot auth source",
+		},
+		{
+			// Check 25 (kindRegexAbsent, entrypoint.sh): reintroducing the token
+			// env variable on the provider-child launch line is a violation.  The
+			// `.*"$@"` regex matches only when the assignment precedes a `"$@"`
+			// on the same line, exercising the genuine-regex semantics.
+			name:             "entrypoint re-exports token launching child",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint + "\nWORKCELL_COPILOT_GITHUB_TOKEN=\"${token}\" exec provider-wrapper \"$@\"\n",
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Runtime entrypoint must not reintroduce the Copilot token env variable when launching the provider child",
+		},
+		{
+			// kindRegexAbsent negative control: the token variable name appears in
+			// entrypoint.sh (the check-21 `exec env -u` line) but NOT as an
+			// assignment before a `"$@"`, so the regex must NOT trip — the
+			// invariant still holds.  Pins that the check matches the assignment
+			// form rather than any mention of the variable.
+			name:             "token variable mention without re-export still holds",
+			launcher:         copilotDockerRunHappyLauncher,
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint + "\n# note: WORKCELL_COPILOT_GITHUB_TOKEN is scrubbed\n",
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+		},
+		{
+			// A missing scripts/workcell is empty content: check 1 (hoststate)
+			// passes, check 2 (kindAbsent on the empty launcher) passes, then
+			// check 3 (the first affirmative launcher probe) fails.
+			name:             "missing launcher",
+			launcher:         "",
+			hostState:        copilotDockerRunHappyHostState,
+			launcherCommon:   copilotDockerRunHappyLauncherCommon,
+			workcellLauncher: copilotDockerRunHappyWorkcellLauncher,
+			entrypoint:       copilotDockerRunHappyEntrypoint,
+			smoke:            copilotDockerRunHappySmoke,
+			runtimeUser:      copilotDockerRunHappyRuntimeUser,
+			wantErr:          "Expected Copilot token handoff launches to keep the Workcell entrypoint as PID 1",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeCopilotDockerRunRepo(t, tc.launcher, tc.hostState, tc.launcherCommon, tc.workcellLauncher, tc.entrypoint, tc.smoke, tc.runtimeUser)
+			err := CheckCopilotDockerRun(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckCopilotDockerRun() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckCopilotDockerRun() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckCopilotDockerRun() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckCopilotDockerRunCount asserts the check list contains exactly
+// twenty-five invariants, guarding against an accidentally truncated or
+// duplicated migration of the shell block.
+func TestCheckCopilotDockerRunCount(t *testing.T) {
+	got := len(copilotDockerRunChecks)
+	const want = 25
+	if got != want {
+		t.Fatalf("copilotDockerRunChecks has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckCopilotDockerRunRealRepo asserts that the real hoststate.go,
+// scripts/workcell, launcher_common.rs, workcell-launcher.rs, entrypoint.sh,
+// container-smoke.sh, and runtime-user.sh in this repository satisfy all
+// twenty-five Copilot / docker-run invariants.  This is the key guard against a
+// mis-transcribed needle, a mis-resolved variable needle, or a wrong target
+// file: if any Go pattern is not a byte-exact substring of the actual file (or
+// the wrong file), this test fails with the guard's stderr message.
+func TestCheckCopilotDockerRunRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckCopilotDockerRun(repoRoot); err != nil {
+		t.Fatalf("CheckCopilotDockerRun(real repo) = %v, want nil", err)
+	}
+}
