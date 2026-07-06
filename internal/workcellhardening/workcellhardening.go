@@ -196,6 +196,13 @@ const codexRequirementsRelPath = "adapters/codex/requirements.toml"
 // that ran against ${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh.
 const claudeGuardBashRelPath = "adapters/claude/hooks/guard-bash.sh"
 
+// assuranceRelPath is the repo-relative path to the in-container session
+// assurance script.  The inspect-assurance-loops block's audit-log-field loop
+// reads this file alongside scripts/workcell (via the kindPresentInAnyFile
+// targetFiles field), mirroring the shell's multi-file
+// `grep -Fq -- FIELD scripts/workcell runtime/container/assurance.sh`.
+const assuranceRelPath = "runtime/container/assurance.sh"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -2604,6 +2611,125 @@ func adapterRuleGuardBashChecks() []check {
 // shell's exit 1).
 func CheckAdapterRuleGuardBash(rootDir string) error {
 	return evaluate(rootDir, adapterRuleGuardBashChecks())
+}
+
+// inspectMountViewNeedles are the five workcell mount-view validation snippets
+// the shell's first `for needle in ...` loop required in scripts/workcell via
+// `grep -Fq -- "${needle}" "${ROOT_DIR}/scripts/workcell"`.  Each is fixed-string
+// containment (some carry `()` or `${...}` treated literally by `grep -F`).
+var inspectMountViewNeedles = []string{
+	"workspace_runtime_probe_path()",
+	"validate_colima_runtime_workspace_view()",
+	`validate_colima_runtime_workspace_view "${profile}" "${workspace}"`,
+	"Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents.",
+	"Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view.",
+}
+
+// inspectEgressSafeCwdNeedles are the three egress-helper safe-cwd snippets the
+// shell's second loop required in scripts/colima-egress-allowlist.sh via
+// `grep -Fq -- "${needle}" "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"`.
+var inspectEgressSafeCwdNeedles = []string{
+	`cd "${home}" &&`,
+	"cd / &&",
+	"LIMA_WORKDIR=/",
+}
+
+// inspectContractTokens are the eight --inspect contract tokens the shell's
+// `for token in ...` loop required in scripts/workcell via
+// `grep -Fq -- "${token}" "${ROOT_DIR}/scripts/workcell"`.
+var inspectContractTokens = []string{
+	"--inspect",
+	"print_inspect_state",
+	"provider_native_sandbox_configured",
+	"provider_native_sandbox_effective",
+	"provider_native_sandbox_reason",
+	"codex",
+	"claude",
+	"gemini",
+}
+
+// inspectAuditLogFields are the nine audit-log fields the shell's `for field in
+// ...` loop required in scripts/workcell OR runtime/container/assurance.sh.  Its
+// guard `! grep -Fq -- "$field" workcell && ! grep -Fq -- "$field" assurance.sh`
+// fails only when the field is absent from BOTH files, so each maps to a
+// kindPresentInAnyFile check over those two files.
+var inspectAuditLogFields = []string{
+	"workspace",
+	"network_policy",
+	"session_assurance_initial",
+	"provider_native_sandbox_configured",
+	"provider_native_sandbox_effective",
+	"provider_native_sandbox_reason",
+	"codex",
+	"claude",
+	"gemini",
+}
+
+// inspectAssuranceLoopsChecks lists the twenty-five --inspect / session-assurance
+// invariants in the same order as the four contiguous `for` loops they were
+// migrated from in scripts/verify-invariants.sh, so a reviewer can diff the two
+// one-to-one.
+//
+// Matching semantics mirror the shell exactly:
+//   - Loop 1 (mount-view) and Loop 3 (--inspect contract tokens) each ran
+//     `grep -Fq -- NEEDLE scripts/workcell`, so every item is a kindPresent
+//     check (default targetFile scripts/workcell) whose message interpolates the
+//     loop variable exactly as the shell's `echo` did.
+//   - Loop 2 (egress safe-cwd) ran `grep -Fq -- NEEDLE
+//     scripts/colima-egress-allowlist.sh`, so each item is a kindPresent check
+//     with targetFile colimaEgressAllowlistRelPath.
+//   - Loop 4 (audit-log field) ran `! grep -Fq FIELD workcell && ! grep -Fq
+//     FIELD assurance.sh` — a violation only when the field is absent from BOTH
+//     files — so each item is a kindPresentInAnyFile check over those two files.
+//
+// Every needle is fixed-string containment (`grep -Fq`), so glob/regex
+// metacharacters in the items are matched literally.
+func inspectAssuranceLoopsChecks() []check {
+	var cs []check
+	// Loop 1: mount-view validation snippets in scripts/workcell.
+	for _, needle := range inspectMountViewNeedles {
+		cs = append(cs, check{
+			kind:    kindPresent,
+			pattern: needle,
+			message: "Expected workcell mount-view validation snippet missing: " + needle,
+		})
+	}
+	// Loop 2: safe-cwd snippets in scripts/colima-egress-allowlist.sh.
+	for _, needle := range inspectEgressSafeCwdNeedles {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    needle,
+			message:    "Expected egress helper safe-cwd snippet missing: " + needle,
+			targetFile: colimaEgressAllowlistRelPath,
+		})
+	}
+	// Loop 3: --inspect contract tokens in scripts/workcell.
+	for _, token := range inspectContractTokens {
+		cs = append(cs, check{
+			kind:    kindPresent,
+			pattern: token,
+			message: "Expected workcell to contain --inspect contract token: " + token,
+		})
+	}
+	// Loop 4: audit-log fields present in scripts/workcell OR assurance.sh.
+	for _, field := range inspectAuditLogFields {
+		cs = append(cs, check{
+			kind:        kindPresentInAnyFile,
+			pattern:     field,
+			message:     "Expected audit log field referenced in control scripts: " + field,
+			targetFiles: []string{launcherRelPath, assuranceRelPath},
+		})
+	}
+	return cs
+}
+
+// CheckInspectAssuranceLoops runs the twenty-five --inspect / session-assurance
+// invariants against the repo rooted at rootDir, in the shell's original order.
+// It returns nil when every invariant holds (the shell's exit 0), or an error
+// whose message equals the shell's stderr for the first violated invariant (the
+// shell's exit 1).
+func CheckInspectAssuranceLoops(rootDir string) error {
+	return evaluate(rootDir, inspectAssuranceLoopsChecks())
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.

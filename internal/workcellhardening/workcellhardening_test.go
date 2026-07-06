@@ -3845,3 +3845,177 @@ func TestCheckAdapterRuleGuardBashRealRepo(t *testing.T) {
 		t.Fatalf("CheckAdapterRuleGuardBash(real repo) = %v, want nil", err)
 	}
 }
+
+// inspectAssuranceHappyWorkcell is a minimal scripts/workcell containing every
+// needle the mount-view loop, the --inspect contract-token loop, and the
+// audit-log-field loop require, so all three pass with an empty assurance.sh.
+const inspectAssuranceHappyWorkcell = `#!/usr/bin/env bash
+workspace_runtime_probe_path() { :; }
+validate_colima_runtime_workspace_view() { :; }
+validate_colima_runtime_workspace_view "${profile}" "${workspace}"
+# Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents.
+# Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view.
+workcell --inspect
+print_inspect_state
+provider_native_sandbox_configured
+provider_native_sandbox_effective
+provider_native_sandbox_reason
+codex claude gemini
+network_policy
+session_assurance_initial
+`
+
+// inspectAssuranceHappyColima is a minimal scripts/colima-egress-allowlist.sh
+// containing the three safe-cwd snippets the second loop requires.
+const inspectAssuranceHappyColima = `#!/usr/bin/env bash
+cd "${home}" &&
+cd / &&
+LIMA_WORKDIR=/
+`
+
+// writeInspectAssuranceRepo materializes a fake repo with the three files this
+// group reads set to the given bodies; a body of "" means "do not create that
+// file" (unreadable-target case).
+func writeInspectAssuranceRepo(t *testing.T, workcell, colima, assurance string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(launcherRelPath, workcell)
+	write(colimaEgressAllowlistRelPath, colima)
+	write(assuranceRelPath, assurance)
+	return root
+}
+
+func TestCheckInspectAssuranceLoops(t *testing.T) {
+	tests := []struct {
+		name      string
+		workcell  string
+		colima    string
+		assurance string
+		wantErr   string // "" means expect success
+	}{
+		{
+			name:      "happy path all invariants hold",
+			workcell:  inspectAssuranceHappyWorkcell,
+			colima:    inspectAssuranceHappyColima,
+			assurance: "#!/usr/bin/env bash\n",
+		},
+		{
+			// Loop 1 (mount-view): a removed snippet fails with the interpolated
+			// needle message.
+			name:      "workcell missing mount-view snippet",
+			workcell:  strings.Replace(inspectAssuranceHappyWorkcell, "workspace_runtime_probe_path()", "", 1),
+			colima:    inspectAssuranceHappyColima,
+			assurance: "#!/usr/bin/env bash\n",
+			wantErr:   "Expected workcell mount-view validation snippet missing: workspace_runtime_probe_path()",
+		},
+		{
+			// Loop 2 (egress safe-cwd): a removed snippet in the colima helper
+			// fails; the item carries `/` matched literally by grep -F.
+			name:      "colima helper missing safe-cwd snippet",
+			workcell:  inspectAssuranceHappyWorkcell,
+			colima:    strings.Replace(inspectAssuranceHappyColima, "LIMA_WORKDIR=/", "", 1),
+			assurance: "#!/usr/bin/env bash\n",
+			wantErr:   "Expected egress helper safe-cwd snippet missing: LIMA_WORKDIR=/",
+		},
+		{
+			// Loop 3 (--inspect contract tokens): a removed token in workcell fails.
+			name:      "workcell missing --inspect contract token",
+			workcell:  strings.Replace(inspectAssuranceHappyWorkcell, "print_inspect_state", "", 1),
+			colima:    inspectAssuranceHappyColima,
+			assurance: "#!/usr/bin/env bash\n",
+			wantErr:   "Expected workcell to contain --inspect contract token: print_inspect_state",
+		},
+		{
+			// Loop 4 (audit-log field) present-in-any: present in workcell only →
+			// pass (assurance.sh does not mention it).
+			name:      "audit field present in workcell only passes",
+			workcell:  inspectAssuranceHappyWorkcell,
+			colima:    inspectAssuranceHappyColima,
+			assurance: "#!/usr/bin/env bash\n",
+		},
+		{
+			// Loop 4 present-in-any: present in assurance.sh only → pass (the
+			// field is removed from workcell but the OR is satisfied by assurance).
+			name:      "audit field present in assurance only passes",
+			workcell:  strings.Replace(inspectAssuranceHappyWorkcell, "network_policy", "", 1),
+			colima:    inspectAssuranceHappyColima,
+			assurance: "#!/usr/bin/env bash\nnetwork_policy\n",
+		},
+		{
+			// Loop 4 present-in-any: absent from BOTH files → fail with the
+			// interpolated field message.
+			name:      "audit field absent from both files fails",
+			workcell:  strings.Replace(inspectAssuranceHappyWorkcell, "network_policy", "", 1),
+			colima:    inspectAssuranceHappyColima,
+			assurance: "#!/usr/bin/env bash\n",
+			wantErr:   "Expected audit log field referenced in control scripts: network_policy",
+		},
+		{
+			// A missing scripts/workcell is empty content: the first mount-view
+			// kindPresent check fails.
+			name:      "missing workcell file",
+			workcell:  "",
+			colima:    inspectAssuranceHappyColima,
+			assurance: "#!/usr/bin/env bash\n",
+			wantErr:   "Expected workcell mount-view validation snippet missing: workspace_runtime_probe_path()",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeInspectAssuranceRepo(t, tc.workcell, tc.colima, tc.assurance)
+			err := CheckInspectAssuranceLoops(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckInspectAssuranceLoops() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckInspectAssuranceLoops() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckInspectAssuranceLoops() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckInspectAssuranceLoopsCount asserts the check list contains exactly
+// twenty-five invariants, guarding against an accidentally truncated or
+// duplicated migration of the four shell loops.
+func TestCheckInspectAssuranceLoopsCount(t *testing.T) {
+	got := len(inspectAssuranceLoopsChecks())
+	const want = 25
+	if got != want {
+		t.Fatalf("inspectAssuranceLoopsChecks() has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckInspectAssuranceLoopsRealRepo asserts that the real scripts/workcell,
+// scripts/colima-egress-allowlist.sh, and runtime/container/assurance.sh in this
+// repository satisfy all twenty-five --inspect / session-assurance invariants.
+// This is the key guard against a mis-transcribed needle or a wrong target file:
+// if any Go pattern is not a byte-exact substring of the actual file(s), this
+// test fails with the guard's stderr message.
+func TestCheckInspectAssuranceLoopsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckInspectAssuranceLoops(repoRoot); err != nil {
+		t.Fatalf("CheckInspectAssuranceLoops(real repo) = %v, want nil", err)
+	}
+}
