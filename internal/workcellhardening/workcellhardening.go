@@ -659,6 +659,62 @@ func CheckBootstrapEgress(rootDir string) error {
 	return evaluate(rootDir, bootstrapEgressChecks)
 }
 
+// bootstrapAuditMetadataChecks lists the two scripts/workcell
+// bootstrap-audit-metadata invariants in the same order as the former
+// inline block in scripts/verify-invariants.sh (the block between the
+// verify-reproducible-build.sh OCI-export check and the
+// validate_colima_profile function-block group), so a reviewer can diff the
+// two one-to-one.
+//
+// The audit-record guard was one shell `if` joining two `rg -q` probes with
+// `||` under a single message; it is expressed here as two ordered
+// kindPresent checks sharing that message, which is behaviourally identical
+// (either missing probe yields the same stderr and exit 1, before the
+// bootstrap-policy check runs).  Both rg patterns escape every
+// metacharacter (`\$ \{ \} \( \[ \] \| \)`), so they reduce to fixed-string
+// containment of the literal audit-record fields (bootstrap_applied and
+// bootstrap_endpoints) emitted by scripts/workcell; the second field's
+// literal command substitution is reproduced verbatim in the check pattern
+// below.
+//
+// The bootstrap-policy guard's rg pattern
+// `bootstrap_policy=allowlist endpoints=%s` has no active metacharacters, so
+// it too is fixed-string containment.
+var bootstrapAuditMetadataChecks = []check{
+	{
+		// kindPresent (first half of the audit-record guard): the
+		// bootstrap_applied field.
+		kind:    kindPresent,
+		pattern: `"bootstrap_applied=${BOOTSTRAP_APPLIED}"`,
+		message: "Expected scripts/workcell audit records to include bootstrap network metadata",
+	},
+	{
+		// kindPresent (second half): the bootstrap_endpoints field.  The rg
+		// pattern escaped `$ ( [ ] | )`, so this is fixed-string containment
+		// of the literal command substitution.  Shares the first half's
+		// message.
+		kind:    kindPresent,
+		pattern: `"bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')"`,
+		message: "Expected scripts/workcell audit records to include bootstrap network metadata",
+	},
+	{
+		// kindPresent: the temporary bootstrap network policy activation
+		// announcement.
+		kind:    kindPresent,
+		pattern: "bootstrap_policy=allowlist endpoints=%s",
+		message: "Expected scripts/workcell to announce temporary bootstrap network policy activation",
+	},
+}
+
+// CheckBootstrapAuditMetadata runs the two scripts/workcell
+// bootstrap-audit-metadata invariants against the repo rooted at rootDir, in
+// the shell's original order.  It returns nil when every invariant holds
+// (the shell's exit 0), or an error whose message equals the shell's stderr
+// for the first violated invariant (the shell's exit 1).
+func CheckBootstrapAuditMetadata(rootDir string) error {
+	return evaluate(rootDir, bootstrapAuditMetadataChecks)
+}
+
 // holds reports whether the invariant is satisfied by the launcher text.
 func (c check) holds(text string) bool {
 	switch c.kind {
