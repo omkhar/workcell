@@ -17,10 +17,11 @@
 // stderr line on a multi-violation run is preserved, matching the original
 // script's exit-on-first-failure behaviour.
 //
-// One group is the exception to the rootDir convention:
-// CheckClaudeMcpProjectServers takes a single settings-file path (its
-// subcommand is registered as SETTINGS_PATH and invoked once per file inside a
-// shell for-loop over the claude settings paths), rather than a repo root.
+// Two groups are the exception to the rootDir convention:
+// CheckClaudeMcpProjectServers and CheckClaudeGuardBashHook each take a single
+// settings-file path (their subcommands are registered as SETTINGS_PATH and
+// invoked once per file inside a shell for-loop over the claude settings paths),
+// rather than a repo root.
 //
 // cmd/workcell-citools exposes each CheckXxx as a subcommand, and
 // scripts/verify-invariants.sh delegates to it in place with
@@ -55,8 +56,13 @@
 //     same access(2) primitive Bash's -x uses), and kindFileExists (`[[ -f ]]`,
 //     os.Stat + Mode().IsRegular()).
 //   - Typed JSON expression (`jq -e '.a.b == <literal>'` on a static file):
-//     kindJSONExprEval, comparing with jq's type-aware == (see
-//     navigateJSONPath).
+//     kindJSONExprEval, comparing with jq's type-aware == (see navigateJSONPath),
+//     which also supports array-index navigation (`.a[0].b`) and an empty-array
+//     RHS literal (`== []`).
+//   - Bare-path JSON truthiness (`jq -e '.a.b'` — exit 0 iff the value is neither
+//     null nor false): kindJSONPathTruthy, with jsonViolateWhenTruthy to express
+//     the inverted `if jq -e` polarity.
+//   - Piped JSON type test (`jq -e '.a.b | type == "T"'`): kindJSONTypeEquals.
 //
 // # Parity discipline
 //
@@ -83,9 +89,11 @@
 // (1) Still-migratable static checks not yet ported — these CAN move here in
 // future increments and should not be read as "done":
 //
-//   - `jq -e` guards over STATIC settings files whose expressions go beyond
-//     `.<path> == <scalar>` (array equality `== []`, index `[0]`, truthiness,
-//     and `| type`), which need richer kindJSONExprEval support.
+//   - None remaining for the adapter-settings `jq -e` guards: the static
+//     settings-file expressions that went beyond `.<path> == <scalar>` (array
+//     equality `== []`, array index `[0]`, bare-path truthiness, and `| type`)
+//     are now ported (see CheckClaudeGuardBashHook, CheckGeminiSettingsBaseline,
+//     and CheckGeminiSettingsGuards).
 //
 // (2) Checks that are NOT expressible as a static-file invariant and are
 // intentionally left in bash:
@@ -94,13 +102,18 @@
 //     GENERATED at runtime into a `mktemp -d` fixture directory (no static repo
 //     path for evaluate to read).
 //   - `jq -e` guards reading STDIN from a pipe (e.g. `execpolicy check | jq`).
+//   - the Claude guard-bash array-collection guard
+//     (`.hooks.*.hooks | any(type == "string" and endswith("guard-bash.sh"))`),
+//     which needs array iteration plus jq's `any`/`endswith` builtins — beyond a
+//     clean static port and left inline permanently.
 //   - awk/sed helper FUNCTIONS (toml-section and disk-space parsing) that are
 //     procedural infrastructure used by other checks, not invariants
 //     themselves.
 //
 // Group (2) would require re-introducing a jq/awk dependency in Go (defeating
 // the migration) or refactoring the runtime fixtures into static inputs — a
-// separate workstream. Group (1) is the remaining in-scope D3 tail.
+// separate workstream, or (for the any/endswith guard) is a permanent bash
+// residual. Group (1) is exhausted for the adapter-settings jq -e guards.
 package workcellhardening
 
 import (
@@ -110,6 +123,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -447,8 +461,36 @@ const (
 	// with a string key, mirrors jq's error exit (non-zero) under the `if !`
 	// guard → violation.  Unlike the string-rendering kinds this parses the file
 	// as structured JSON (encoding/json) and navigates the dotted object path via
-	// navigateJSONPath rather than matching text.
+	// navigateJSONPath rather than matching text.  navigateJSONPath also resolves
+	// array-index segments (`.a[0].b`), and jsonExpectedRaw may be an empty-array
+	// literal `[]` (which reflect.DeepEqual matches only against a JSON array of
+	// length zero), so `.tools.allowed == []` holds only for an empty array.
 	kindJSONExprEval
+	// kindJSONPathTruthy mirrors a BARE-PATH `jq -e '<jsonPath>' FILE` guard (no
+	// comparison operator).  jq -e exits 0 when the value at jsonPath is "truthy"
+	// (navigated successfully AND neither JSON null nor the boolean false) and
+	// non-zero otherwise: a falsy value (null/false, or a missing key that renders
+	// as null) exits 1, and a navigation type error or invalid JSON exits with an
+	// error code.  The truthiness predicate is therefore `text is valid JSON &&
+	// navigateJSONPath succeeds && leaf != nil && leaf != false`.
+	// jsonViolateWhenTruthy selects the shell polarity: false mirrors
+	// `if ! jq -e PATH` (holds iff truthy), true mirrors `if jq -e PATH; then …
+	// exit 1` (a truthy value is the VIOLATION, so holds iff NOT truthy) — the
+	// latter is the Gemini `.security.auth.selectedType` guard.  Because both a
+	// falsy value and a jq error make jq exit non-zero, they collapse to "not
+	// truthy", which the predicate already yields, so under jsonViolateWhenTruthy
+	// the invariant holds on a falsy value AND on a type error / invalid JSON,
+	// exactly as the `if jq -e` shell guard does.
+	kindJSONPathTruthy
+	// kindJSONTypeEquals mirrors `jq -e '<jsonPath> | type == "<T>"' FILE`: it
+	// pipes the leaf at jsonPath into jq's `type` builtin (which yields the string
+	// "null"/"boolean"/"number"/"string"/"array"/"object") and compares it to the
+	// JSON string literal jsonExpectedRaw (e.g. `"array"`).  Under the migrated
+	// `if ! jq -e` guard the invariant holds iff the leaf's jq type equals the
+	// expected type: a missing key or explicit null has type "null" (never the
+	// expected non-null type → violation), and a navigation type error or invalid
+	// JSON is jq's error exit → violation (navigateJSONPath returns (nil, false)).
+	kindJSONTypeEquals
 )
 
 // check is one hardening invariant: how to match, what to match, which
@@ -490,10 +532,17 @@ type check struct {
 	// kindJSONExprEval (every other kind matches text).
 	jsonPath string
 	// jsonExpectedRaw is the right-hand JSON literal of a kindJSONExprEval check,
-	// verbatim as it appeared in the jq expression (`"allow"`, `false`, `true`, or
-	// a number).  holds parses it as its own JSON value so the comparison is
-	// jq-typed; it is used only by kindJSONExprEval.
+	// verbatim as it appeared in the jq expression (`"allow"`, `false`, `true`, a
+	// number, or the empty-array literal `[]`).  holds parses it as its own JSON
+	// value so the comparison is jq-typed.  kindJSONTypeEquals reuses this field
+	// to hold the JSON string type literal it compares against (e.g. `"array"`).
 	jsonExpectedRaw string
+	// jsonViolateWhenTruthy inverts a kindJSONPathTruthy check's polarity.  When
+	// false (the default) the invariant holds iff the path is jq-truthy, mirroring
+	// `if ! jq -e PATH`; when true a jq-truthy path is the violation, mirroring
+	// `if jq -e PATH; then … exit 1` (the Gemini selectedType guard).  It is used
+	// only by kindJSONPathTruthy.
+	jsonViolateWhenTruthy bool
 	// messageIncludesTargetPath, when true, appends the absolute target path
 	// (rootDir + "/" + targetPath) to message when evaluate builds the
 	// violation error, mirroring a shell message that interpolated the full
@@ -4272,6 +4321,34 @@ func CheckClaudeMcpProjectServers(settingsPath string) error {
 	return nil
 }
 
+// CheckClaudeGuardBashHook runs the array-index `jq -e` guard-bash-hook invariant
+// migrated out of the scripts/verify-invariants.sh settings_path loop
+// (`.hooks.PreToolUse[0].hooks[0].command ==
+// "/opt/workcell/adapters/claude/hooks/guard-bash.sh"`).  Like
+// CheckClaudeMcpProjectServers it takes the settings FILE path directly (the loop
+// calls it once per Claude settings file, in place) and preserves the per-file
+// `$(basename …)` message by prefixing filepath.Base of the given path.  It
+// returns nil when the first PreToolUse hook command is the managed guard path
+// (the shell's exit 0), or an error whose message equals the shell's stderr for
+// that file (the shell's exit 1), including when the file is missing or not valid
+// JSON, or when the object/array path does not resolve to that string (jq's
+// non-zero exit under the `if !` guard).
+func CheckClaudeGuardBashHook(settingsPath string) error {
+	text := ""
+	if content, err := os.ReadFile(settingsPath); err == nil {
+		text = string(content)
+	}
+	c := check{
+		kind:            kindJSONExprEval,
+		jsonPath:        ".hooks.PreToolUse[0].hooks[0].command",
+		jsonExpectedRaw: `"/opt/workcell/adapters/claude/hooks/guard-bash.sh"`,
+	}
+	if !c.holds(text, "") {
+		return errors.New(filepath.Base(settingsPath) + " settings must use the managed guard-bash.sh hook")
+	}
+	return nil
+}
+
 // claudeManagedBypassChecks holds the single Claude managed-settings
 // bypass-permissions invariant migrated out of scripts/verify-invariants.sh (the
 // `if ! jq -e '.disableBypassPermissionsMode == "allow"'` guard).  It is a
@@ -4295,17 +4372,59 @@ func CheckClaudeManagedBypass(rootDir string) error {
 	return evaluate(rootDir, claudeManagedBypassChecks)
 }
 
-// geminiSettingsGuardChecks holds the two contiguous Gemini adapter-settings
+// geminiSettingsBaselineChecks holds the three contiguous Gemini adapter-settings
+// invariants migrated out of scripts/verify-invariants.sh between the
+// managed-bypass and folder-trust guards, in the shell's original order:
+// `.tools.allowed == []`, `.mcp.allowed == []` (empty-array equality — each holds
+// only when the field is a JSON array of length zero), and the
+// `.security.auth.selectedType` truthiness probe.  The selectedType guard used the
+// INVERTED `if jq -e` polarity (a present/truthy selected auth type is the
+// violation, and a null/absent value or a jq error passes), so it is a
+// kindJSONPathTruthy check with jsonViolateWhenTruthy set; the two array guards
+// reuse kindJSONExprEval with the `[]` literal.
+var geminiSettingsBaselineChecks = []check{
+	{
+		kind:            kindJSONExprEval,
+		targetFile:      geminiSettingsRelPath,
+		jsonPath:        ".tools.allowed",
+		jsonExpectedRaw: "[]",
+		message:         "Gemini adapter must not seed allowed tools",
+	},
+	{
+		kind:            kindJSONExprEval,
+		targetFile:      geminiSettingsRelPath,
+		jsonPath:        ".mcp.allowed",
+		jsonExpectedRaw: "[]",
+		message:         "Gemini adapter must not seed allowed MCP servers",
+	},
+	{
+		kind:                  kindJSONPathTruthy,
+		targetFile:            geminiSettingsRelPath,
+		jsonPath:              ".security.auth.selectedType",
+		jsonViolateWhenTruthy: true,
+		message:               "Gemini adapter baseline must not hardcode a selected auth type",
+	},
+}
+
+// CheckGeminiSettingsBaseline runs the three Gemini adapter-settings baseline
+// invariants (no seeded allowed tools, no seeded allowed MCP servers, no
+// hardcoded selected auth type) against the repo rooted at rootDir, in the
+// shell's original order.  It returns nil when all three hold (the shell's exit
+// 0), or an error whose message equals the shell's stderr for the first violated
+// invariant (the shell's exit 1).
+func CheckGeminiSettingsBaseline(rootDir string) error {
+	return evaluate(rootDir, geminiSettingsBaselineChecks)
+}
+
+// geminiSettingsGuardChecks holds the three contiguous Gemini adapter-settings
 // invariants migrated out of scripts/verify-invariants.sh (the
 // `.security.folderTrust.enabled == false` and
-// `.tools.shell.enableInteractiveShell == false` `jq -e` guards), in the shell's
-// original order.  Both are kindJSONExprEval checks whose RHS literal is the JSON
+// `.tools.shell.enableInteractiveShell == false` `jq -e` guards, followed by the
+// `.advanced.excludedEnvVars | type == "array"` pipe), in the shell's original
+// order.  The first two are kindJSONExprEval checks whose RHS literal is the JSON
 // boolean false, so each holds only when the field is boolean false — never the
-// string "false".  The deferred Gemini guards that surround them in the shell
-// (`.tools.allowed == []`, `.mcp.allowed == []`, the `.security.auth.selectedType`
-// truthiness probe, and the `.advanced.excludedEnvVars | type == "array"` pipe)
-// remain inline in bash, so this group is wired only across the two contiguous
-// migratable checks.
+// string "false"; the third is a kindJSONTypeEquals check that holds only when
+// the field's jq type is the string "array".
 var geminiSettingsGuardChecks = []check{
 	{
 		kind:            kindJSONExprEval,
@@ -4321,13 +4440,20 @@ var geminiSettingsGuardChecks = []check{
 		jsonExpectedRaw: "false",
 		message:         "Gemini adapter must disable interactive shell mode",
 	},
+	{
+		kind:            kindJSONTypeEquals,
+		targetFile:      geminiSettingsRelPath,
+		jsonPath:        ".advanced.excludedEnvVars",
+		jsonExpectedRaw: `"array"`,
+		message:         "Gemini adapter must exclude sensitive environment variables",
+	},
 }
 
-// CheckGeminiSettingsGuards runs the two Gemini adapter-settings invariants
+// CheckGeminiSettingsGuards runs the three Gemini adapter-settings invariants
 // against the repo rooted at rootDir, in the shell's original order.  It returns
-// nil when both fields are the JSON boolean false (the shell's exit 0), or an
-// error whose message equals the shell's stderr for the first violated invariant
-// (the shell's exit 1).
+// nil when both boolean fields are the JSON boolean false AND excludedEnvVars is
+// a JSON array (the shell's exit 0), or an error whose message equals the shell's
+// stderr for the first violated invariant (the shell's exit 1).
 func CheckGeminiSettingsGuards(rootDir string) error {
 	return evaluate(rootDir, geminiSettingsGuardChecks)
 }
@@ -4627,26 +4753,108 @@ func (c check) holds(text, rootDir string) bool {
 		// then reproduces jq's typed `==` (a string never equals a boolean, and
 		// 1 == 1.0 because both decode to float64).
 		return reflect.DeepEqual(leaf, expected)
+	case kindJSONPathTruthy:
+		// Mirror a bare-path `jq -e '<jsonPath>' FILE` guard.  truthy is true only
+		// when the file is valid JSON, the path navigates without a jq type error,
+		// and the leaf is neither JSON null nor boolean false — jq -e's exit-0
+		// condition ("last output is neither null nor false").  jsonViolateWhenTruthy
+		// selects the shell polarity (see the kind's doc comment); a falsy value and
+		// a navigation/parse error both yield truthy=false, so the inverted polarity
+		// holds on both, exactly as `if jq -e` does.
+		truthy := false
+		var root interface{}
+		if err := json.Unmarshal([]byte(text), &root); err == nil {
+			if leaf, ok := navigateJSONPath(root, c.jsonPath); ok {
+				truthy = leaf != nil && leaf != false
+			}
+		}
+		if c.jsonViolateWhenTruthy {
+			return !truthy
+		}
+		return truthy
+	case kindJSONTypeEquals:
+		// Mirror `jq -e '<jsonPath> | type == "<T>"' FILE`: invalid JSON or a
+		// navigation type error is jq's error exit → violation (holds false); a
+		// resolved leaf (including nil for a missing key or explicit null, which jq
+		// types as "null") holds iff its jq type equals the expected type string.
+		var root interface{}
+		if err := json.Unmarshal([]byte(text), &root); err != nil {
+			return false
+		}
+		leaf, ok := navigateJSONPath(root, c.jsonPath)
+		if !ok {
+			return false
+		}
+		var expected interface{}
+		if err := json.Unmarshal([]byte(c.jsonExpectedRaw), &expected); err != nil {
+			return false
+		}
+		expectedType, ok := expected.(string)
+		if !ok {
+			return false
+		}
+		return jqType(leaf) == expectedType
 	default:
 		return false
 	}
 }
 
-// navigateJSONPath walks the dotted object path (e.g. ".a.b.c") from root,
-// mirroring jq's traversal for the object-path subset used by the migrated
-// `jq -e` checks.  It returns (leaf, true) for a resolved value — including nil
-// for a missing key or an explicit null, because jq indexes an absent-or-null
-// value as null rather than erroring — and (nil, false) only when a segment
-// indexes a non-object scalar or array with a string key, which jq treats as an
-// error (non-zero exit).  A leading "." is stripped and "." (or "") returns root
-// unchanged.
+// jqType returns jq's `type` builtin string for a value decoded by
+// encoding/json ("null"/"boolean"/"number"/"string"/"array"/"object"),
+// mirroring how jq classifies the six JSON kinds.  A nil interface (a missing
+// key or explicit null) is "null".
+func jqType(v interface{}) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case float64:
+		return "number"
+	case string:
+		return "string"
+	case []interface{}:
+		return "array"
+	case map[string]interface{}:
+		return "object"
+	default:
+		return ""
+	}
+}
+
+// navigateJSONPath walks a jq path (e.g. ".a.b.c" or ".a[0].b") from root,
+// mirroring jq's traversal for the object-key + array-index subset used by the
+// migrated `jq -e` checks.  It returns (leaf, true) for a resolved value —
+// including nil for a missing key, an out-of-range array index, or an explicit
+// null, because jq indexes an absent/null value or a past-the-end array slot as
+// null rather than erroring — and (nil, false) only when a segment errors the
+// way jq does: indexing a non-object scalar or array with a string key, or
+// indexing a non-array scalar or object with a numeric index.  A leading "." is
+// stripped and "." (or "") returns root unchanged.
 func navigateJSONPath(root interface{}, path string) (interface{}, bool) {
 	current := root
-	for _, key := range splitJSONPath(path) {
+	for _, tok := range parseJSONPath(path) {
+		if tok.isIndex {
+			// jq numeric indexing: an array yields the element (out-of-range → null),
+			// null yields null, and any other type is a jq error (non-zero exit).
+			switch v := current.(type) {
+			case []interface{}:
+				if tok.index < 0 || tok.index >= len(v) {
+					current = nil
+				} else {
+					current = v[tok.index]
+				}
+			case nil:
+				current = nil
+			default:
+				return nil, false
+			}
+			continue
+		}
 		switch v := current.(type) {
 		case map[string]interface{}:
 			// An absent key yields the zero value nil, i.e. jq null.
-			current = v[key]
+			current = v[tok.key]
 		case nil:
 			// jq: `null | .key` → null, no error.
 			current = nil
@@ -4659,15 +4867,47 @@ func navigateJSONPath(root interface{}, path string) (interface{}, bool) {
 	return current, true
 }
 
-// splitJSONPath splits a dotted jq object path into its keys, dropping the
-// leading dot.  "." and "" yield no keys (the whole document).  It supports only
-// the simple identifier form (`.a.b.c`) that the migrated checks use.
-func splitJSONPath(path string) []string {
-	trimmed := strings.TrimPrefix(path, ".")
-	if trimmed == "" {
+// jsonPathToken is one navigation step of a jq path: either an object key
+// (isIndex false) or a zero-based array index (isIndex true).
+type jsonPathToken struct {
+	key     string
+	index   int
+	isIndex bool
+}
+
+// jsonPathTokenRE matches one navigation step of the jq path subset the migrated
+// checks use: a dotted identifier `.key` or a bracketed array index `[N]`.
+var jsonPathTokenRE = regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)|\[([0-9]+)\]`)
+
+// parseJSONPath tokenises a jq path (e.g. ".a.b[0].c") into its ordered
+// navigation steps, mirroring the object-key and array-index traversal the
+// migrated `jq -e` checks use.  A leading/whole-document "." (or "") yields no
+// tokens.  Only the simple `.identifier` and `[number]` forms are supported; if
+// any character is not consumed by a token (a malformed or unsupported path, or
+// the bare "." root) the result is nil, so navigation resolves the whole
+// document rather than silently dropping a segment.
+func parseJSONPath(path string) []jsonPathToken {
+	matches := jsonPathTokenRE.FindAllStringSubmatchIndex(path, -1)
+	tokens := make([]jsonPathToken, 0, len(matches))
+	consumed := 0
+	for _, m := range matches {
+		if m[0] != consumed {
+			return nil
+		}
+		consumed = m[1]
+		if m[2] >= 0 {
+			// `.key` capture group.
+			tokens = append(tokens, jsonPathToken{key: path[m[2]:m[3]]})
+		} else {
+			// `[number]` capture group.
+			n, _ := strconv.Atoi(path[m[4]:m[5]])
+			tokens = append(tokens, jsonPathToken{index: n, isIndex: true})
+		}
+	}
+	if consumed != len(path) {
 		return nil
 	}
-	return strings.Split(trimmed, ".")
+	return tokens
 }
 
 // regexMatchesAnyLine reports whether pattern matches any single line of text,

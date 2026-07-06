@@ -6479,6 +6479,15 @@ func TestJSONExprEvalDifferentialJQ(t *testing.T) {
 		`{"x":null}`,
 		`{"y":1}`,
 		`{"a":{"b":false}}`,
+		// Array-index navigation (`[0]`) and empty-array RHS (`== []`) fixtures.
+		`{"a":[{"b":"x"}]}`,
+		`{"a":[{"b":"y"}]}`,
+		`{"a":[]}`,
+		`{"a":{}}`,
+		`{"a":"scalar"}`,
+		`{"x":[]}`,
+		`{"x":[1]}`,
+		`{"hooks":{"PreToolUse":[{"hooks":[{"command":"/opt/workcell/adapters/claude/hooks/guard-bash.sh"}]}]}}`,
 	}
 	exprs := []struct{ path, expectedRaw string }{
 		{".x", `"allow"`},
@@ -6487,6 +6496,13 @@ func TestJSONExprEvalDifferentialJQ(t *testing.T) {
 		{".x", "5"},
 		{".a.b", "false"},
 		{".missing", "false"},
+		// Array-index navigation and empty-array literal exprs.
+		{".a[0].b", `"x"`},
+		{".a[0]", `"x"`},
+		{".a[1]", `"x"`},
+		{".x", "[]"},
+		{".tools.allowed", "[]"},
+		{".hooks.PreToolUse[0].hooks[0].command", `"/opt/workcell/adapters/claude/hooks/guard-bash.sh"`},
 	}
 	for _, doc := range docs {
 		for _, e := range exprs {
@@ -6506,6 +6522,230 @@ func TestJSONExprEvalDifferentialJQ(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestJSONPathTruthyHolds exercises kindJSONPathTruthy directly for both
+// polarities: a bare-path guard holds (default polarity) iff the value is neither
+// null nor false, and holds (inverted polarity) iff it is null/false/missing or a
+// navigation/parse error.
+func TestJSONPathTruthyHolds(t *testing.T) {
+	const path = ".s.a.t"
+	tests := []struct {
+		name        string
+		doc         string
+		wantTruthy  bool // holds under default polarity (`if ! jq -e`)
+		wantViolate bool // holds under inverted polarity (`if jq -e`)
+	}{
+		{"string truthy", `{"s":{"a":{"t":"oauth"}}}`, true, false},
+		{"explicit null", `{"s":{"a":{"t":null}}}`, false, true},
+		{"missing leaf", `{"s":{"a":{}}}`, false, true},
+		{"missing root", `{}`, false, true},
+		{"boolean false", `{"s":{"a":{"t":false}}}`, false, true},
+		{"boolean true", `{"s":{"a":{"t":true}}}`, true, false},
+		{"number zero is truthy", `{"s":{"a":{"t":0}}}`, true, false},
+		{"empty array is truthy", `{"s":{"a":{"t":[]}}}`, true, false},
+		{"navigation error passes inverted", `{"s":"scalar"}`, false, true},
+		{"invalid json passes inverted", `{not json`, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (check{kind: kindJSONPathTruthy, jsonPath: path}).holds(tt.doc, ""); got != tt.wantTruthy {
+				t.Fatalf("default polarity holds = %v, want %v", got, tt.wantTruthy)
+			}
+			if got := (check{kind: kindJSONPathTruthy, jsonPath: path, jsonViolateWhenTruthy: true}).holds(tt.doc, ""); got != tt.wantViolate {
+				t.Fatalf("inverted polarity holds = %v, want %v", got, tt.wantViolate)
+			}
+		})
+	}
+}
+
+// TestJSONPathTruthyDifferentialJQ pins kindJSONPathTruthy's holds() (both
+// polarities) to the real `jq -e '<path>' FILE` exit code: default polarity must
+// equal jq-truthy, inverted polarity must equal NOT jq-truthy (so a falsy value
+// AND a jq error both pass, exactly as `if jq -e` does).  Skipped if jq is
+// unavailable.
+func TestJSONPathTruthyDifferentialJQ(t *testing.T) {
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq not installed; skipping differential parity test")
+	}
+	const path = ".s.a.t"
+	docs := []string{
+		`{"s":{"a":{"t":"oauth"}}}`,
+		`{"s":{"a":{"t":null}}}`,
+		`{"s":{"a":{}}}`,
+		`{}`,
+		`{"s":{"a":{"t":false}}}`,
+		`{"s":{"a":{"t":true}}}`,
+		`{"s":{"a":{"t":0}}}`,
+		`{"s":{"a":{"t":[]}}}`,
+		`{"s":"scalar"}`,
+	}
+	for _, doc := range docs {
+		t.Run(doc, func(t *testing.T) {
+			f := filepath.Join(t.TempDir(), "d.json")
+			if err := os.WriteFile(f, []byte(doc), 0o644); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+			jqTruthy := exec.Command(jqPath, "-e", path, f).Run() == nil
+			if got := (check{kind: kindJSONPathTruthy, jsonPath: path}).holds(doc, ""); got != jqTruthy {
+				t.Fatalf("default polarity holds=%v but jq -e truthy=%v for %s", got, jqTruthy, doc)
+			}
+			if got := (check{kind: kindJSONPathTruthy, jsonPath: path, jsonViolateWhenTruthy: true}).holds(doc, ""); got != !jqTruthy {
+				t.Fatalf("inverted polarity holds=%v but !(jq -e truthy)=%v for %s", got, !jqTruthy, doc)
+			}
+		})
+	}
+}
+
+// TestJSONTypeEqualsDifferentialJQ pins kindJSONTypeEquals's holds() to the real
+// `jq -e '<path> | type == "<T>"' FILE` exit code across every jq type name and a
+// matrix of leaf kinds (including a navigation error), so any drift from jq's
+// `type` builtin fails here.  Skipped if jq is unavailable.
+func TestJSONTypeEqualsDifferentialJQ(t *testing.T) {
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq not installed; skipping differential parity test")
+	}
+	const path = ".adv.ex"
+	docs := []string{
+		`{"adv":{"ex":[]}}`,
+		`{"adv":{"ex":["A"]}}`,
+		`{"adv":{"ex":{}}}`,
+		`{"adv":{}}`,
+		`{}`,
+		`{"adv":{"ex":null}}`,
+		`{"adv":{"ex":"str"}}`,
+		`{"adv":{"ex":5}}`,
+		`{"adv":{"ex":true}}`,
+		`{"adv":"scalar"}`,
+	}
+	types := []string{"array", "object", "string", "number", "boolean", "null"}
+	for _, doc := range docs {
+		for _, typ := range types {
+			t.Run(doc+"|"+typ, func(t *testing.T) {
+				f := filepath.Join(t.TempDir(), "d.json")
+				if err := os.WriteFile(f, []byte(doc), 0o644); err != nil {
+					t.Fatalf("write fixture: %v", err)
+				}
+				expr := path + ` | type == "` + typ + `"`
+				jqTruthy := exec.Command(jqPath, "-e", expr, f).Run() == nil
+				c := check{kind: kindJSONTypeEquals, jsonPath: path, jsonExpectedRaw: `"` + typ + `"`}
+				if got := c.holds(doc, ""); got != jqTruthy {
+					t.Fatalf("holds()=%v but jq -e truthy=%v for %s | type==%q", got, jqTruthy, doc, typ)
+				}
+			})
+		}
+	}
+}
+
+// TestJSONTypeEqualsInvalidJSON asserts an unparseable target file is a violation
+// (holds false), mirroring jq's error exit under the `if !` guard.
+func TestJSONTypeEqualsInvalidJSON(t *testing.T) {
+	c := check{kind: kindJSONTypeEquals, jsonPath: ".adv.ex", jsonExpectedRaw: `"array"`}
+	if c.holds("{not valid json", "") {
+		t.Fatal("holds() on invalid JSON = true, want false")
+	}
+}
+
+// TestCheckClaudeGuardBashHook exercises the per-file guard-bash-hook check,
+// including the array-index navigation and the byte-exact basename-prefixed
+// violation message.
+func TestCheckClaudeGuardBashHook(t *testing.T) {
+	const good = `{"hooks":{"PreToolUse":[{"hooks":[{"command":"/opt/workcell/adapters/claude/hooks/guard-bash.sh"}]}]}}`
+	tests := []struct {
+		name     string
+		body     string
+		fileName string
+		wantErr  string
+	}{
+		{"happy managed", good, "managed-settings.json", ""},
+		{"happy user settings", good, "settings.json", ""},
+		{"wrong command", `{"hooks":{"PreToolUse":[{"hooks":[{"command":"/bin/sh"}]}]}}`, "settings.json", "settings.json settings must use the managed guard-bash.sh hook"},
+		{"missing hooks", `{}`, "managed-settings.json", "managed-settings.json settings must use the managed guard-bash.sh hook"},
+		{"empty PreToolUse array", `{"hooks":{"PreToolUse":[]}}`, "settings.json", "settings.json settings must use the managed guard-bash.sh hook"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tt.fileName)
+			if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+				t.Fatalf("write %s: %v", path, err)
+			}
+			assertCheckErr(t, "CheckClaudeGuardBashHook", CheckClaudeGuardBashHook(path), tt.wantErr)
+		})
+	}
+}
+
+// TestCheckClaudeGuardBashHookMissingFile asserts a missing file is a violation
+// with the basename-prefixed message (jq errors on a missing file → non-zero exit
+// → the `if !` guard fires).
+func TestCheckClaudeGuardBashHookMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	assertCheckErr(t, "CheckClaudeGuardBashHook", CheckClaudeGuardBashHook(path),
+		"settings.json settings must use the managed guard-bash.sh hook")
+}
+
+const happyGeminiBaseline = `{"tools":{"allowed":[]},"mcp":{"allowed":[]},"security":{"auth":{}}}`
+
+func TestCheckGeminiSettingsBaseline(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{"happy path", happyGeminiBaseline, ""},
+		{"selected auth type present rejected", `{"tools":{"allowed":[]},"mcp":{"allowed":[]},"security":{"auth":{"selectedType":"oauth"}}}`, "Gemini adapter baseline must not hardcode a selected auth type"},
+		{"selected auth type false passes", `{"tools":{"allowed":[]},"mcp":{"allowed":[]},"security":{"auth":{"selectedType":false}}}`, ""},
+		{"tools allowed non-empty", `{"tools":{"allowed":["Bash"]},"mcp":{"allowed":[]},"security":{"auth":{}}}`, "Gemini adapter must not seed allowed tools"},
+		{"tools allowed missing renders null", `{"mcp":{"allowed":[]},"security":{"auth":{}}}`, "Gemini adapter must not seed allowed tools"},
+		{"mcp allowed non-empty", `{"tools":{"allowed":[]},"mcp":{"allowed":["srv"]},"security":{"auth":{}}}`, "Gemini adapter must not seed allowed MCP servers"},
+		{"tools allowed object not array", `{"tools":{"allowed":{}},"mcp":{"allowed":[]},"security":{"auth":{}}}`, "Gemini adapter must not seed allowed tools"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := writeGeminiRepo(t, tt.body)
+			assertCheckErr(t, "CheckGeminiSettingsBaseline", CheckGeminiSettingsBaseline(root), tt.wantErr)
+		})
+	}
+}
+
+// TestCheckGeminiSettingsGuardsExcludedEnvVars covers the migrated
+// `| type == "array"` guard now folded into the guards group.
+func TestCheckGeminiSettingsGuardsExcludedEnvVars(t *testing.T) {
+	base := `{"security":{"folderTrust":{"enabled":false}},"tools":{"shell":{"enableInteractiveShell":false}}`
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{"array holds", base + `,"advanced":{"excludedEnvVars":["A"]}}`, ""},
+		{"empty array holds", base + `,"advanced":{"excludedEnvVars":[]}}`, ""},
+		{"object rejected", base + `,"advanced":{"excludedEnvVars":{}}}`, "Gemini adapter must exclude sensitive environment variables"},
+		{"missing rejected", base + `}`, "Gemini adapter must exclude sensitive environment variables"},
+		{"null rejected", base + `,"advanced":{"excludedEnvVars":null}}`, "Gemini adapter must exclude sensitive environment variables"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := writeGeminiRepo(t, tt.body)
+			assertCheckErr(t, "CheckGeminiSettingsGuards", CheckGeminiSettingsGuards(root), tt.wantErr)
+		})
+	}
+}
+
+// writeGeminiRepo writes a rootDir seeded only with the Gemini adapter settings
+// file (the sole file the baseline/guards groups read for these tests).
+func writeGeminiRepo(t *testing.T, gemini string) string {
+	t.Helper()
+	root := t.TempDir()
+	path := filepath.Join(root, geminiSettingsRelPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(gemini), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	return root
 }
 
 // writeAdapterSettingsRepo writes a rootDir seeded with the two adapter settings
@@ -6530,7 +6770,7 @@ func writeAdapterSettingsRepo(t *testing.T, claudeManaged, gemini string) string
 }
 
 const happyClaudeManaged = `{"disableBypassPermissionsMode":"allow"}`
-const happyGeminiSettings = `{"security":{"folderTrust":{"enabled":false}},"tools":{"shell":{"enableInteractiveShell":false}}}`
+const happyGeminiSettings = `{"security":{"folderTrust":{"enabled":false}},"tools":{"shell":{"enableInteractiveShell":false}},"advanced":{"excludedEnvVars":["AWS_SECRET_ACCESS_KEY"]}}`
 
 func TestCheckClaudeManagedBypass(t *testing.T) {
 	tests := []struct {
@@ -6612,8 +6852,11 @@ func TestAdapterSettingsChecksCount(t *testing.T) {
 	if got := len(claudeManagedBypassChecks); got != 1 {
 		t.Fatalf("claudeManagedBypassChecks has %d checks, want 1", got)
 	}
-	if got := len(geminiSettingsGuardChecks); got != 2 {
-		t.Fatalf("geminiSettingsGuardChecks has %d checks, want 2", got)
+	if got := len(geminiSettingsBaselineChecks); got != 3 {
+		t.Fatalf("geminiSettingsBaselineChecks has %d checks, want 3", got)
+	}
+	if got := len(geminiSettingsGuardChecks); got != 3 {
+		t.Fatalf("geminiSettingsGuardChecks has %d checks, want 3", got)
 	}
 }
 
@@ -6628,12 +6871,18 @@ func TestAdapterSettingsChecksRealRepo(t *testing.T) {
 	if err := CheckClaudeManagedBypass(repoRoot); err != nil {
 		t.Fatalf("CheckClaudeManagedBypass(real repo) = %v, want nil", err)
 	}
+	if err := CheckGeminiSettingsBaseline(repoRoot); err != nil {
+		t.Fatalf("CheckGeminiSettingsBaseline(real repo) = %v, want nil", err)
+	}
 	if err := CheckGeminiSettingsGuards(repoRoot); err != nil {
 		t.Fatalf("CheckGeminiSettingsGuards(real repo) = %v, want nil", err)
 	}
 	for _, rel := range []string{"adapters/claude/.claude/settings.json", claudeManagedSettingsRelPath} {
 		if err := CheckClaudeMcpProjectServers(filepath.Join(repoRoot, rel)); err != nil {
 			t.Fatalf("CheckClaudeMcpProjectServers(real %s) = %v, want nil", rel, err)
+		}
+		if err := CheckClaudeGuardBashHook(filepath.Join(repoRoot, rel)); err != nil {
+			t.Fatalf("CheckClaudeGuardBashHook(real %s) = %v, want nil", rel, err)
 		}
 	}
 }
