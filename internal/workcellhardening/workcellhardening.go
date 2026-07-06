@@ -1,55 +1,109 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-// Package workcellhardening re-implements the contiguous block of
-// scripts/workcell hardening-invariant checks that previously lived
-// inline in scripts/verify-invariants.sh (the eleven checks between the
-// codex-managed-config tmpdir cleanup and the install-deps barrier
-// fixtures).  It also re-implements the adjacent config-safety block (the
-// four scripts/workcell checks between the check_file loop and
-// toml_section_assignments) via CheckConfigSafety; see configSafetyChecks.
-// It also re-implements the adjacent runtime/gc block (the ten
-// scripts/workcell checks between the SSH-collision check and the
-// start_managed_profile mount function-block group) via
-// CheckRuntimeInvariants; see runtimeInvariantChecks.
-// It also re-implements the adjacent managed-profile staging/cleanup block
-// (the three scripts/workcell checks between the runtime-invariants group
-// and the WORKCELL_COLIMA_TIMEOUT_HARNESS fixture) via
-// CheckManagedProfileStaging; see managedProfileStagingChecks.
-// It also re-implements the adjacent bootstrap egress-endpoint block (the
-// nine checks between the colima-egress-allowlist COLIMA_HOME pin check and
-// the per-Dockerfile snapshot CA-bundle loop) via CheckBootstrapEgress;
-// see bootstrapEgressChecks.  Eight of those read scripts/workcell; the
-// Copilot-release-URL-override probe reads runtime/container/Dockerfile via
-// the per-check targetFile field.
+// Package workcellhardening provides Go-native, unit-tested implementations
+// of the static-invariant checks that previously lived inline in
+// scripts/verify-invariants.sh (roadmap item D3). It is the enforcement
+// mechanism behind the security invariants described in docs/invariants.md;
+// this package is about HOW those invariants are checked, not what they mean.
 //
-// Each invariant pins one property of the host launcher scripts/workcell:
-// that run_host_colima restores the real host HOME, that the shebang
-// clears the host environment, that the process/Perl/DYLD/Docker
-// environment scrubbers are present, that Perl-backed shasum is absent,
-// and that the trusted Docker client / shellproto / sessionctl-shim
-// helpers are sourced.
+// # Architecture
 //
-// This is a behaviour-preserving migration of the shell block: the file
-// read target, the fixed-string vs. regex matching semantics, the exit
-// codes, and the stderr messages match the original
-// function_block_contains_fixed / head+grep / rg implementation.  The
-// per-check matching semantics were chosen to faithfully mirror the
-// shell:
+// Each migrated group is a CheckXxx(rootDir) error function that delegates to
+// evaluate(rootDir, []check). A check declares one kind plus the fields that
+// kind consumes (targetFile / targetFiles / targetPath, pattern / functionName,
+// jsonPath / jsonExpected, minCount, message). evaluate runs the checks in
+// order and returns the first violation's message — so the byte-exact FIRST
+// stderr line on a multi-violation run is preserved, matching the original
+// script's exit-on-first-failure behaviour.
 //
-//   - The run_host_colima check reuses function_block_contains_fixed's
-//     sed-range extraction (see extractNamedFunctionBlock) followed by a
-//     grep -Fq fixed-string containment.
-//   - The shebang check applies an anchored regex to the FIRST line only,
-//     mirroring `head -n1 ... | grep -q '^...$'`.
-//   - The scrub/unset/DYLD/shasum checks use `rg` patterns that contain
-//     no active regex metacharacters (DYLD_\* is a literal `DYLD_*`), so
-//     they are fixed-string containment checks; shasum is negative
-//     (present is a violation).
-//   - The three `source "${ROOT_DIR}/scripts/lib/....sh"` checks use `rg`
-//     patterns whose metacharacters are all escaped (\$ \{ \} \.), so
-//     they too reduce to fixed-string containment on the literal source
-//     line.
+// One group is the exception to the rootDir convention:
+// CheckClaudeMcpProjectServers takes a single settings-file path (its
+// subcommand is registered as SETTINGS_PATH and invoked once per file inside a
+// shell for-loop over the claude settings paths), rather than a repo root.
+//
+// cmd/workcell-citools exposes each CheckXxx as a subcommand, and
+// scripts/verify-invariants.sh delegates to it in place with
+// `go_verify_citools <subcommand> "${ROOT_DIR}" || exit 1`. Because the script
+// still exits on the first failure, a migrated block must be a CONTIGUOUS run
+// of checks: a block that straddles an in-place shell check (or a deferred
+// check) is split so ordering is never changed (see the ordering discipline in
+// the D3 commit history / PR #422).
+//
+// # Check kinds
+//
+// The check.kind enum spans every matching idiom the shell used:
+//
+//   - Fixed-string containment: kindPresent / kindAbsent (grep -Fq).
+//   - Regex containment, evaluated PER LINE to mirror ripgrep's line-oriented
+//     semantics (a match cannot cross a newline): kindRegexPresent /
+//     kindRegexAbsent (see regexMatchesAnyLine), and kindFirstLineRegex for
+//     `head -n1 | grep -q '^...$'`.
+//   - Bash function-body scoping via extractNamedFunctionBlock (mirrors
+//     `sed -n '/^NAME()/,/^}/p'`): kindFunctionBlock / kindFunctionBlockAbsent
+//     (fixed) and kindFunctionBlockRegex / kindFunctionBlockRegexAbsent
+//     (per-line regex).
+//   - Go function-body scoping with comment stripping (mirrors the
+//     go_function_block_contains_fixed awk helper): kindGoFunctionBlock (see
+//     extractGoFunctionBlock).
+//   - Multi-file OR (`! grep -Fq NEEDLE f1 f2`, present in ANY listed file):
+//     kindPresentInAnyFile over targetFiles.
+//   - Line-count threshold (`[[ "$(grep -Fc NEEDLE f)" -lt N ]]`, counting
+//     matching LINES): kindCountAtLeast with minCount.
+//   - Filesystem state (no content read): kindDirExists (`[[ -d ]]`, os.Stat +
+//     IsDir) and kindExecutable (`[[ -x ]]`, syscall.Access with X_OK — the
+//     same access(2) primitive Bash's -x uses).
+//   - Typed JSON expression (`jq -e '.a.b == <literal>'` on a static file):
+//     kindJSONExprEval, comparing with jq's type-aware == (see
+//     navigateJSONPath).
+//
+// # Parity discipline
+//
+// Every migration is behaviour-preserving: the file read target, fixed-vs-regex
+// semantics, exit codes, and stderr messages match the shell byte-for-byte.
+// Regex kinds are per-line for rg parity; the go-function-block and JSON-expr
+// kinds are validated by differential tests that shell out to the real awk/jq.
+// Most groups also carry a real-repo assertion (a TestCheckXxxRealRepo that
+// runs the check against the actual repo files) plus a count guard, so a
+// mistranscribed needle or path is caught by CI. The earliest groups
+// (CheckConfigSafety, CheckRuntimeInvariants, CheckManagedProfileStaging,
+// CheckBootstrapEgress, and a couple of their peers) predate that pattern and
+// currently rely only on synthetic happy/negative fixtures; backfilling their
+// real-repo assertions is part of the remaining D3 tail.
+//
+// # Scope and residual
+//
+// A large set of scripts/verify-invariants.sh's static file-content,
+// JSON-structural, and filesystem invariants are implemented here (see the
+// CheckXxx functions), but the migration is INCOMPLETE: scripts/verify-invariants.sh
+// remains the source of truth and still runs a residual of inline checks. The
+// residual has two distinct groups.
+//
+// (1) Still-migratable static checks not yet ported — these CAN move here in
+// future increments and should not be read as "done":
+//
+//   - `head`/`rg`/`grep -Fq` helper loops over repo files (for example the
+//     host-gate script loop and the trusted-Docker client loops).
+//   - `jq -e` guards over STATIC settings files whose expressions go beyond
+//     `.<path> == <scalar>` (array equality `== []`, index `[0]`, truthiness,
+//     and `| type`), which need richer kindJSONExprEval support.
+//   - filesystem guards embedded in shell `for` loops (for example a
+//     `[[ ! -x "${scenario_script}" ]]` scan over a computed script list).
+//
+// (2) Checks that are NOT expressible as a static-file invariant and are
+// intentionally left in bash:
+//
+//   - `jq -r` field-equals guards over injection-bundle manifests that are
+//     GENERATED at runtime into a `mktemp -d` fixture directory (no static repo
+//     path for evaluate to read).
+//   - `jq -e` guards reading STDIN from a pipe (e.g. `execpolicy check | jq`).
+//   - awk/sed helper FUNCTIONS (toml-section and disk-space parsing) that are
+//     procedural infrastructure used by other checks, not invariants
+//     themselves.
+//
+// Group (2) would require re-introducing a jq/awk dependency in Go (defeating
+// the migration) or refactoring the runtime fixtures into static inputs — a
+// separate workstream. Group (1) is the remaining in-scope D3 tail.
 package workcellhardening
 
 import (
