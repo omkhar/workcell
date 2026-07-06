@@ -106,6 +106,14 @@ const (
 	// active metacharacter (e.g. a trailing `.` meaning any char), unlike
 	// kindPresent's fixed-string containment.
 	kindRegexPresent
+	// kindFunctionBlockRegex requires the regexp pattern to match inside the
+	// top-level bash function body named functionName, mirroring
+	// function_block_contains_regex (sed-range extraction + `grep -q` regex,
+	// NOT `grep -Fq`).  Unlike kindFunctionBlock's fixed-string containment,
+	// the pattern is a genuine regular expression, matched per-line within the
+	// extracted block via regexMatchesAnyLine for `grep`/`rg` line-oriented
+	// parity.
+	kindFunctionBlockRegex
 )
 
 // check is one hardening invariant: how to match, what to match, which
@@ -715,6 +723,72 @@ func CheckBootstrapAuditMetadata(rootDir string) error {
 	return evaluate(rootDir, bootstrapAuditMetadataChecks)
 }
 
+// gitIndexShadowChecks lists the five scripts/workcell git-index shadow
+// invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the runtime/container/bin/git
+// object-store-redirection loop and the validate-repo.sh virtualenv-prune
+// check), so a reviewer can diff the two one-to-one.
+//
+// All five are block-scoped to a named function body, mirroring the shell's
+// function_block_contains_regex / function_block_contains_fixed helpers (both
+// use extract_named_function_block, i.e. `sed -n '/^NAME()/,/^}/p'`):
+//
+//   - The three kindFunctionBlockRegex checks migrate
+//     function_block_contains_regex (`grep -q` — a genuine regex).  Their
+//     patterns (cat-file blob, failed to read tracked blob,
+//     git_config_key_is_blocked) contain no active regex metacharacters, so
+//     they behave like fixed-string containment today, but the kind is a
+//     genuine regex for correctness under future patterns.
+//   - The two kindFunctionBlock checks migrate function_block_contains_fixed
+//     (`grep -Fq` — fixed-string containment).  The git_index_populate_shadow_dir
+//     needle `*/../*` contains `*` which grep -Fq treats literally, so it is a
+//     fixed-string containment of the literal `*/../*`.
+var gitIndexShadowChecks = []check{
+	{
+		kind:         kindFunctionBlockRegex,
+		functionName: "git_index_materialize_regular_file",
+		pattern:      "cat-file blob",
+		message:      "Expected git_index_materialize_regular_file to materialize tracked blobs without checkout-index",
+	},
+	{
+		kind:         kindFunctionBlockRegex,
+		functionName: "git_index_materialize_regular_file",
+		pattern:      "failed to read tracked blob",
+		message:      "Expected git_index_materialize_regular_file to fail closed when a tracked control-plane blob is unreadable",
+	},
+	{
+		// kindFunctionBlock (function_block_contains_fixed): fixed-string
+		// containment of the literal partial-file cleanup.
+		kind:         kindFunctionBlock,
+		functionName: "git_index_materialize_regular_file",
+		pattern:      `rm -f "${destination_path}"`,
+		message:      "Expected git_index_materialize_regular_file to remove partially materialized files after blob read failures",
+	},
+	{
+		// kindFunctionBlock (function_block_contains_fixed): `grep -Fq` treats
+		// the `*` in `*/../*` literally, so this is fixed-string containment.
+		kind:         kindFunctionBlock,
+		functionName: "git_index_populate_shadow_dir",
+		pattern:      "*/../*",
+		message:      "Expected git_index_populate_shadow_dir to reject unsafe index paths before shadow materialization",
+	},
+	{
+		kind:         kindFunctionBlockRegex,
+		functionName: "sanitize_shadowed_git_config",
+		pattern:      "git_config_key_is_blocked",
+		message:      "Expected sanitize_shadowed_git_config to reuse the shared blocked git-config key matcher",
+	},
+}
+
+// CheckGitIndexShadow runs the five scripts/workcell git-index shadow
+// invariants against the repo rooted at rootDir, in the shell's original
+// order.  It returns nil when every invariant holds (the shell's exit 0), or
+// an error whose message equals the shell's stderr for the first violated
+// invariant (the shell's exit 1).
+func CheckGitIndexShadow(rootDir string) error {
+	return evaluate(rootDir, gitIndexShadowChecks)
+}
+
 // holds reports whether the invariant is satisfied by the launcher text.
 func (c check) holds(text string) bool {
 	switch c.kind {
@@ -724,6 +798,9 @@ func (c check) holds(text string) bool {
 	case kindFunctionBlockAbsent:
 		block := extractNamedFunctionBlock(text, c.functionName)
 		return !strings.Contains(block, c.pattern)
+	case kindFunctionBlockRegex:
+		block := extractNamedFunctionBlock(text, c.functionName)
+		return regexMatchesAnyLine(c.pattern, block)
 	case kindFirstLineRegex:
 		return regexp.MustCompile(c.pattern).MatchString(firstLine(text))
 	case kindPresent:

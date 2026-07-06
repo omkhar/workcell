@@ -922,6 +922,139 @@ func TestCheckBootstrapAuditMetadataRealRepo(t *testing.T) {
 	}
 }
 
+// gitIndexShadowHappyLauncher is a minimal scripts/workcell that satisfies
+// all five git-index shadow invariants: the two regex checks and the
+// partial-file cleanup inside git_index_materialize_regular_file, the unsafe
+// index-path rejection inside git_index_populate_shadow_dir, and the shared
+// blocked-key matcher reuse inside sanitize_shadowed_git_config.  Individual
+// negative cases mutate one property of this baseline.
+const gitIndexShadowHappyLauncher = `#!/bin/bash
+set -euo pipefail
+
+git_index_materialize_regular_file() {
+  local workspace="$1" oid="$2" destination_path="$3" relative_path="$4"
+  if ! run_clean_host_command git -C "${workspace}" cat-file blob "${oid}" >"${destination_path}"; then
+    rm -f "${destination_path}"
+    echo "Workcell blocked shadow materialization: failed to read tracked blob ${oid} for ${relative_path}" >&2
+    return 1
+  fi
+}
+
+git_index_populate_shadow_dir() {
+  local index_path="$1"
+  case "${index_path}" in
+    '' | /* | */../* | ../* | */..)
+      return 1
+      ;;
+  esac
+}
+
+sanitize_shadowed_git_config() {
+  local key="$1"
+  if git_config_key_is_blocked "${key}"; then
+    return 1
+  fi
+}
+`
+
+func TestCheckGitIndexShadow(t *testing.T) {
+	tests := []struct {
+		name     string
+		launcher string
+		wantErr  string // "" means expect success
+	}{
+		{
+			name:     "happy path all invariants hold",
+			launcher: gitIndexShadowHappyLauncher,
+		},
+		{
+			// kindFunctionBlockRegex: the cat-file blob materialization removed.
+			name:     "missing cat-file blob",
+			launcher: strings.Replace(gitIndexShadowHappyLauncher, "cat-file blob", "checkout-index", 1),
+			wantErr:  "Expected git_index_materialize_regular_file to materialize tracked blobs without checkout-index",
+		},
+		{
+			// kindFunctionBlockRegex: the fail-closed message removed.
+			name:     "missing failed to read tracked blob",
+			launcher: strings.Replace(gitIndexShadowHappyLauncher, "failed to read tracked blob", "read tracked blob", 1),
+			wantErr:  "Expected git_index_materialize_regular_file to fail closed when a tracked control-plane blob is unreadable",
+		},
+		{
+			// kindFunctionBlock: the partial-file cleanup removed.
+			name:     "missing partial-file cleanup",
+			launcher: strings.Replace(gitIndexShadowHappyLauncher, `rm -f "${destination_path}"`, `true`, 1),
+			wantErr:  "Expected git_index_materialize_regular_file to remove partially materialized files after blob read failures",
+		},
+		{
+			// kindFunctionBlock: the unsafe index-path rejection removed.
+			name:     "missing unsafe index path rejection",
+			launcher: strings.Replace(gitIndexShadowHappyLauncher, `*/../*`, `*/ok/*`, 1),
+			wantErr:  "Expected git_index_populate_shadow_dir to reject unsafe index paths before shadow materialization",
+		},
+		{
+			// kindFunctionBlockRegex: the shared blocked-key matcher reuse removed.
+			name:     "missing shared blocked-key matcher",
+			launcher: strings.Replace(gitIndexShadowHappyLauncher, "git_config_key_is_blocked", "always_false", 2),
+			wantErr:  "Expected sanitize_shadowed_git_config to reuse the shared blocked git-config key matcher",
+		},
+		{
+			// Scoping proof: the cat-file blob needle present in a DIFFERENT
+			// function body does not satisfy the git_index_materialize_regular_file
+			// check, because extract_named_function_block scopes to the named
+			// function.  Here the needle is moved out of
+			// git_index_materialize_regular_file into an unrelated helper.
+			name: "cat-file blob only in a different function",
+			launcher: strings.Replace(
+				strings.Replace(gitIndexShadowHappyLauncher, "cat-file blob", "checkout-index", 1),
+				"set -euo pipefail",
+				"set -euo pipefail\n\nunrelated_helper() {\n  git cat-file blob HEAD\n}",
+				1,
+			),
+			wantErr: "Expected git_index_materialize_regular_file to materialize tracked blobs without checkout-index",
+		},
+		{
+			// A missing launcher is empty content: the first affirmative check
+			// (cat-file blob) fires, mirroring function_block_contains_regex
+			// returning non-zero on a missing file.
+			name:     "missing launcher",
+			launcher: "",
+			wantErr:  "Expected git_index_materialize_regular_file to materialize tracked blobs without checkout-index",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeLauncher(t, tc.launcher)
+			err := CheckGitIndexShadow(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckGitIndexShadow() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckGitIndexShadow() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckGitIndexShadow() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckGitIndexShadowRealRepo asserts that the real scripts/workcell in
+// this repository satisfies all five git-index shadow invariants, guarding
+// against a mis-transcribed needle or function name.
+func TestCheckGitIndexShadowRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, launcherRelPath)); err != nil {
+		t.Skipf("real scripts/workcell not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckGitIndexShadow(repoRoot); err != nil {
+		t.Fatalf("CheckGitIndexShadow(real repo) = %v, want nil", err)
+	}
+}
+
 // TestExtractNamedFunctionBlock pins the sed-range extraction semantics
 // the run_host_colima check depends on: the block runs from the `NAME()`
 // opening line through the first line beginning with `}` (inclusive), and
