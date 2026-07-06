@@ -114,6 +114,7 @@ func subcommands() []subcommand {
 		{"workcell-adapter-rule-guard-bash", "ROOT_DIR", 1, 1, cmdWorkcellAdapterRuleGuardBash},
 		{"workcell-inspect-assurance-loops", "ROOT_DIR", 1, 1, cmdWorkcellInspectAssuranceLoops},
 		{"workcell-validator-writable-state", "ROOT_DIR", 1, 1, cmdWorkcellValidatorWritableState},
+		{"workcell-hostutil-egress-rg", "ROOT_DIR", 1, 1, cmdWorkcellHostutilEgressRg},
 	}
 }
 
@@ -669,4 +670,12 @@ func cmdWorkcellInspectAssuranceLoops(args []string) error {
 // original stderr message for the first violated invariant.
 func cmdWorkcellValidatorWritableState(args []string) error {
 	return workcellhardening.CheckValidatorWritableState(args[0])
+}
+
+// cmdWorkcellHostutilEgressRg runs the twenty-one hostutil / entrypoint /
+// colima-egress `rg` checks migrated out of scripts/verify-invariants.sh; it
+// fails (exit 1 via die()) with the shell's original stderr message for the
+// first violated invariant.
+func cmdWorkcellHostutilEgressRg(args []string) error {
+	return workcellhardening.CheckHostutilEgressRg(args[0])
 }

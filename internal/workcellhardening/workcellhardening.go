@@ -130,8 +130,16 @@ const workcellLauncherRustRelPath = "runtime/container/rust/src/bin/workcell-lau
 // entrypoint.  The Copilot-docker-run group reads this file (via the per-check
 // targetFile field) for its token-handoff staging / self-reexec / mapped-user
 // invariants, mirroring the shell probes that ran against
-// ${ROOT_DIR}/runtime/container/entrypoint.sh.
+// ${ROOT_DIR}/runtime/container/entrypoint.sh.  The hostutil/egress-rg block
+// also reads it for its Codex --cd / AGENT_NAME / file-trace-trap invariants.
 const entrypointRelPath = "runtime/container/entrypoint.sh"
+
+// goHostutilRelPath is the repo-relative path to the host launcher's Go
+// bootstrap helper.  Only the hostutil/egress-rg block reads this file (via the
+// per-check targetFile field) for its scrubbed-environment bootstrap-Go
+// invariants, mirroring the shell `rg` probes that ran against
+// ${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh.
+const goHostutilRelPath = "scripts/lib/launcher/go-hostutil.sh"
 
 // runtimeUserRelPath is the repo-relative path to the runtime user helper.
 // Only the Copilot-docker-run runtime-state-path invariant reads this file (via
@@ -2893,6 +2901,202 @@ func validatorWritableStateChecks() []check {
 // violated invariant (the shell's exit 1).
 func CheckValidatorWritableState(rootDir string) error {
 	return evaluate(rootDir, validatorWritableStateChecks())
+}
+
+// hostutilEgressRgChecks lists the twenty-one hostutil / entrypoint /
+// colima-egress `rg` invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the contiguous run of `rg`/`head`+`grep`
+// guards between the runtime-build-retry harness and the HOST_GATE_SCRIPTS
+// self-sanitizing loop), so a reviewer can diff the two one-to-one.  The block
+// ends at that HOST_GATE_SCRIPTS `for` loop, which iterates a dynamic array of
+// scripts rather than one fixed file and so falls outside the single-file
+// `rg`/`grep` shape migrated here.
+//
+// Every probe is an `rg -q` regex (line-oriented, matched per line via
+// regexMatchesAnyLine for `rg` parity), except the colima-egress shebang probe
+// which is a `head -n1 ... | grep -q '^...$'` first-line anchored regex
+// (kindFirstLineRegex).  Matching semantics mirror the shell exactly:
+//
+//   - Affirmative `if ! rg -q P` guards → kindRegexPresent (P must match).
+//   - Negated `if rg -q P; then ... exit 1` guards → kindRegexAbsent (P
+//     matching is a violation).  These are the two entrypoint probes
+//     (`set -- codex --cd `, `AGENT_NAME="\$\{AGENT_NAME:-codex\}"`) and the
+//     colima-egress PATH-trust probe.
+//
+// Unlike the earlier metacharacter-free blocks migrated as fixed-string
+// kindPresent/kindAbsent, these patterns are kept verbatim as regexes:
+//
+//   - The escaped-literal patterns (`"\$\{ROOT_DIR\}"`, `GOPATH="\$\{GOPATH\}"`,
+//     `"\$@"`, `AGENT_NAME="\$\{AGENT_NAME:-codex\}"`, `DYLD_\*`, ...) use the
+//     rg regex escapes `\$ \{ \} \*` to match the literal `$ { } *`; Go's
+//     regexp interprets the same escapes, so the pattern is used byte-for-byte.
+//   - The colima-egress PATH-trust probe `command -v|type -P|which ` is a
+//     genuine alternation (the `|` are real regex OR), so it is a true regex
+//     kindRegexAbsent (present is a violation).
+//
+// Three former shell `if` guards each joined several `! rg -q` probes with `||`
+// under a single message (the go-hostutil bootstrap-Go guard, the
+// entrypoint file-trace-trap guard, and the colima-egress Go-runtime guard);
+// they are expressed here as ordered kindRegexPresent checks sharing that
+// message, which is behaviourally identical (any missing probe yields the same
+// stderr and exit 1 as the corresponding shell `if`).
+//
+// Target files: five probes read scripts/lib/launcher/go-hostutil.sh, four read
+// runtime/container/entrypoint.sh, and twelve read
+// scripts/colima-egress-allowlist.sh (all via the per-check targetFile field).
+var hostutilEgressRgChecks = []check{
+	// Guard 1: go-hostutil.sh invokes the bootstrap Go helper from the repo
+	// root under a scrubbed environment with explicit Go caches (five ordered
+	// `! rg -q` probes sharing one message).
+	{
+		kind:       kindRegexPresent,
+		pattern:    `run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env`,
+		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		targetFile: goHostutilRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `GOPATH="\$\{GOPATH\}"`,
+		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		targetFile: goHostutilRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `GOMODCACHE="\$\{GOMODCACHE\}"`,
+		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		targetFile: goHostutilRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `GOCACHE="\$\{GOCACHE\}"`,
+		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		targetFile: goHostutilRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"`,
+		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		targetFile: goHostutilRelPath,
+	},
+	// entrypoint.sh must not inject a blocked default Codex --cd override
+	// (negated `if rg -q ...` → present is a violation).
+	{
+		kind:       kindRegexAbsent,
+		pattern:    `set -- codex --cd `,
+		message:    "runtime/container/entrypoint.sh still injects a blocked default Codex --cd override",
+		targetFile: entrypointRelPath,
+	},
+	// entrypoint.sh must not default AGENT_NAME to codex (negated `if rg -q`;
+	// the pattern escapes `$ { }` to match the literal assignment).
+	{
+		kind:       kindRegexAbsent,
+		pattern:    `AGENT_NAME="\$\{AGENT_NAME:-codex\}"`,
+		message:    "runtime/container/entrypoint.sh still defaults AGENT_NAME to codex",
+		targetFile: entrypointRelPath,
+	},
+	// Guard: entrypoint.sh traps INT/TERM and finalizes file-trace shutdown
+	// before exit (two ordered `! rg -q` probes sharing one message).
+	{
+		kind:       kindRegexPresent,
+		pattern:    `trap 'workcell_run_command_with_file_trace_signal INT' INT`,
+		message:    "Expected runtime/container/entrypoint.sh to trap INT/TERM and finalize file-trace shutdown before exit",
+		targetFile: entrypointRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `trap 'workcell_run_command_with_file_trace_signal TERM' TERM`,
+		message:    "Expected runtime/container/entrypoint.sh to trap INT/TERM and finalize file-trace shutdown before exit",
+		targetFile: entrypointRelPath,
+	},
+	// colima-egress-allowlist.sh must not trust PATH for executed host tools
+	// (negated `if rg -q`; `command -v|type -P|which ` is a genuine
+	// alternation, so present is a violation via kindRegexAbsent).
+	{
+		kind:       kindRegexAbsent,
+		pattern:    `command -v|type -P|which `,
+		message:    "scripts/colima-egress-allowlist.sh still trusts PATH for executed host tools",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `REAL_HOME=`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to derive the real host home independently of caller HOME",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	// First-line anchored regex mirroring `head -n1 ... | grep -q '^...$'`.
+	{
+		kind:       kindFirstLineRegex,
+		pattern:    `^#!/usr/bin/env -S -i PATH=.* BASH_ENV= ENV= /bin/bash$`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to use env -S -i with an absolute /bin/bash and cleared host environment",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `scrub_host_process_env`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to scrub hostile host process environment before host tool lookup",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to scrub hostile Perl environment before host tool lookup",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		// `DYLD_\*` escapes the `*`, matching the literal `DYLD_*`.
+		kind:       kindRegexPresent,
+		pattern:    `DYLD_\*`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to scrub DYLD_* variables before host tool lookup",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `is_trusted_host_tool_path`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to canonicalize and trust-check host tool paths",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	// Guard: colima-egress-allowlist.sh invokes Go runtime helpers under a
+	// scrubbed environment with explicit Go caches (five ordered `! rg -q`
+	// probes sharing one message).
+	{
+		kind:       kindRegexPresent,
+		pattern:    `run_clean_repo_command env`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `GOPATH="\$\{GOPATH\}"`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `GOMODCACHE="\$\{GOMODCACHE\}"`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `GOCACHE="\$\{GOCACHE\}"`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		pattern:    `"\$\{GO_BIN\}" run ./cmd/workcell-runtimeutil "\$@"`,
+		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
+		targetFile: colimaEgressAllowlistRelPath,
+	},
+}
+
+// CheckHostutilEgressRg runs the twenty-one hostutil / entrypoint /
+// colima-egress `rg` invariants against the repo rooted at rootDir, in the
+// shell's original order.  It returns nil when every invariant holds (the
+// shell's exit 0), or an error whose message equals the shell's stderr for the
+// first violated invariant (the shell's exit 1).
+func CheckHostutilEgressRg(rootDir string) error {
+	return evaluate(rootDir, hostutilEgressRgChecks)
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.

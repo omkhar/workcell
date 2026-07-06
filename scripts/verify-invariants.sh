@@ -2761,74 +2761,7 @@ WORKCELL_RUNTIME_BUILD_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-runtime-bu
 } >"${WORKCELL_RUNTIME_BUILD_RETRY_HARNESS}"
 bash "${WORKCELL_RUNTIME_BUILD_RETRY_HARNESS}"
 
-if ! rg -q 'run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" ||
-  ! rg -q 'GOPATH="\$\{GOPATH\}"' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" ||
-  ! rg -q 'GOMODCACHE="\$\{GOMODCACHE\}"' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" ||
-  ! rg -q 'GOCACHE="\$\{GOCACHE\}"' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" ||
-  ! rg -q '"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"' "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh"; then
-  echo "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches" >&2
-  exit 1
-fi
-
-if rg -q 'set -- codex --cd ' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
-  echo "runtime/container/entrypoint.sh still injects a blocked default Codex --cd override" >&2
-  exit 1
-fi
-
-if rg -q 'AGENT_NAME="\$\{AGENT_NAME:-codex\}"' "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
-  echo "runtime/container/entrypoint.sh still defaults AGENT_NAME to codex" >&2
-  exit 1
-fi
-
-if ! rg -q "trap 'workcell_run_command_with_file_trace_signal INT' INT" "${ROOT_DIR}/runtime/container/entrypoint.sh" ||
-  ! rg -q "trap 'workcell_run_command_with_file_trace_signal TERM' TERM" "${ROOT_DIR}/runtime/container/entrypoint.sh"; then
-  echo "Expected runtime/container/entrypoint.sh to trap INT/TERM and finalize file-trace shutdown before exit" >&2
-  exit 1
-fi
-
-if rg -q 'command -v|type -P|which ' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "scripts/colima-egress-allowlist.sh still trusts PATH for executed host tools" >&2
-  exit 1
-fi
-
-if ! rg -q 'REAL_HOME=' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected scripts/colima-egress-allowlist.sh to derive the real host home independently of caller HOME" >&2
-  exit 1
-fi
-
-if ! head -n 1 "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" | grep -q '^#!/usr/bin/env -S -i PATH=.* BASH_ENV= ENV= /bin/bash$'; then
-  echo "Expected scripts/colima-egress-allowlist.sh to use env -S -i with an absolute /bin/bash and cleared host environment" >&2
-  exit 1
-fi
-
-if ! rg -q 'scrub_host_process_env' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected scripts/colima-egress-allowlist.sh to scrub hostile host process environment before host tool lookup" >&2
-  exit 1
-fi
-
-if ! rg -q 'unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected scripts/colima-egress-allowlist.sh to scrub hostile Perl environment before host tool lookup" >&2
-  exit 1
-fi
-
-if ! rg -q 'DYLD_\*' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected scripts/colima-egress-allowlist.sh to scrub DYLD_* variables before host tool lookup" >&2
-  exit 1
-fi
-
-if ! rg -q 'is_trusted_host_tool_path' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected scripts/colima-egress-allowlist.sh to canonicalize and trust-check host tool paths" >&2
-  exit 1
-fi
-
-if ! rg -q 'run_clean_repo_command env' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
-  ! rg -q 'GOPATH="\$\{GOPATH\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
-  ! rg -q 'GOMODCACHE="\$\{GOMODCACHE\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
-  ! rg -q 'GOCACHE="\$\{GOCACHE\}"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" ||
-  ! rg -q '"\$\{GO_BIN\}" run ./cmd/workcell-runtimeutil "\$@"' "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"; then
-  echo "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches" >&2
-  exit 1
-fi
+go_verify_citools workcell-hostutil-egress-rg "${ROOT_DIR}" || exit 1
 
 for script in "${HOST_GATE_SCRIPTS[@]}"; do
   if ! head -n 1 "${script}" | grep -q '^#!/bin/bash -p$'; then
