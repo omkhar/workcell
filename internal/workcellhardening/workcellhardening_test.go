@@ -1384,3 +1384,236 @@ func TestRegexMatchesAnyLineIsLineBounded(t *testing.T) {
 		t.Fatalf("a cross-newline R2 endpoint must NOT match (rg is line-oriented)")
 	}
 }
+
+// homeSeedHappyHomeControlPlane is a minimal runtime/container/home-control-plane.sh
+// that satisfies all six leading home-seeding invariants.
+const homeSeedHappyHomeControlPlane = `#!/usr/bin/env bash
+set -euo pipefail
+workcell_seed_gemini_home() {
+  : "${HOME}/.gemini/trustedFolders.json"
+  workcell_reset_session_target "${HOME}/.gemini/settings.json" "Gemini settings"
+  workcell_set_gemini_tool_sandbox "${HOME}/.gemini/settings.json" false
+}
+workcell_seed_claude_home() {
+  workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude/.credentials.json" || true
+  workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude/.claude.json" || true
+  workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude.json" || true
+}
+`
+
+// homeSeedHappyProviderWrapper returns a minimal
+// runtime/container/provider-wrapper.sh satisfying the two affirmative unset
+// probes, the negated export probe (the export line is absent), and every
+// copilot_env knob.  The knobs come from the package var so the fixture cannot
+// drift out of sync with the checks.
+func homeSeedHappyProviderWrapper() string {
+	return "#!/usr/bin/env bash\nset -euo pipefail\nunset CLAUDE_CONFIG_DIR\nunset DISABLE_AUTOUPDATER\n" +
+		strings.Join(copilotAmbientEnvKnobs, "\n") + "\n"
+}
+
+// homeSeedHappyDevelopmentWrapper returns a minimal
+// runtime/container/development-wrapper.sh satisfying every copilot_env knob
+// (the only invariants that read this second wrapper).
+func homeSeedHappyDevelopmentWrapper() string {
+	return "#!/usr/bin/env bash\nset -euo pipefail\n" +
+		strings.Join(copilotAmbientEnvKnobs, "\n") + "\n"
+}
+
+// writeHomeSeedProviderWrapperRepo materializes a fake repo with the three
+// wrapper files set to the given bodies; a body of "" means "do not create
+// that file" (unreadable-target case).
+func writeHomeSeedProviderWrapperRepo(t *testing.T, home, provider, development string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(homeControlPlaneRelPath, home)
+	write(providerWrapperRelPath, provider)
+	write(developmentWrapperRelPath, development)
+	return root
+}
+
+func TestCheckHomeSeedProviderWrapper(t *testing.T) {
+	firstKnob := copilotAmbientEnvKnobs[0]                            // unset GH_CONFIG_DIR
+	lastKnob := copilotAmbientEnvKnobs[len(copilotAmbientEnvKnobs)-1] // unset OTEL_RESOURCE_ATTRIBUTES
+	exportLine := "export HOME CODEX_HOME CLAUDE_CONFIG_DIR TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY"
+
+	tests := []struct {
+		name        string
+		home        string
+		provider    string
+		development string
+		wantErr     string // "" means expect success
+	}{
+		{
+			name:        "happy path all invariants hold",
+			home:        homeSeedHappyHomeControlPlane,
+			provider:    homeSeedHappyProviderWrapper(),
+			development: homeSeedHappyDevelopmentWrapper(),
+		},
+		{
+			// kindPresent (home-control-plane): trustedFolders.json removed.
+			name:        "missing trustedFolders provisioning",
+			home:        strings.Replace(homeSeedHappyHomeControlPlane, "trustedFolders.json", "otherFolders.json", 1),
+			provider:    homeSeedHappyProviderWrapper(),
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Expected Gemini home seeding to provision trustedFolders.json",
+		},
+		{
+			// kindPresent (home-control-plane): the settings reset needle removed.
+			name:        "missing settings reset",
+			home:        strings.Replace(homeSeedHappyHomeControlPlane, `workcell_reset_session_target "${HOME}/.gemini/settings.json" "Gemini settings"`, "true", 1),
+			provider:    homeSeedHappyProviderWrapper(),
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Expected Gemini home seeding to reset settings.json through workcell_reset_session_target",
+		},
+		{
+			// kindPresent (home-control-plane): the .credentials.json copy removed.
+			name:        "missing claude credentials copy",
+			home:        strings.Replace(homeSeedHappyHomeControlPlane, `workcell_copy_manifest_credential_file claude_auth "${HOME}/.claude/.credentials.json" || true`, "true", 1),
+			provider:    homeSeedHappyProviderWrapper(),
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Expected Claude home seeding to copy auth into .claude/.credentials.json",
+		},
+		{
+			// kindPresent (provider-wrapper): the CLAUDE_CONFIG_DIR scrub removed.
+			name:        "missing CLAUDE_CONFIG_DIR scrub",
+			home:        homeSeedHappyHomeControlPlane,
+			provider:    strings.Replace(homeSeedHappyProviderWrapper(), "unset CLAUDE_CONFIG_DIR", "true", 1),
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Expected provider wrapper to discard caller-supplied CLAUDE_CONFIG_DIR",
+		},
+		{
+			// kindAbsent (provider-wrapper): exporting CLAUDE_CONFIG_DIR for
+			// non-Claude launches is a violation (present → exit 1).
+			name:        "forbidden CLAUDE_CONFIG_DIR export present",
+			home:        homeSeedHappyHomeControlPlane,
+			provider:    homeSeedHappyProviderWrapper() + exportLine + "\n",
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Provider wrapper should not export CLAUDE_CONFIG_DIR for non-Claude launches",
+		},
+		{
+			// kindPresent (provider-wrapper): the DISABLE_AUTOUPDATER scrub removed.
+			name:        "missing DISABLE_AUTOUPDATER scrub",
+			home:        homeSeedHappyHomeControlPlane,
+			provider:    strings.Replace(homeSeedHappyProviderWrapper(), "unset DISABLE_AUTOUPDATER", "true", 1),
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Expected provider wrapper to discard caller-supplied DISABLE_AUTOUPDATER",
+		},
+		{
+			// copilot_env loop, provider-wrapper side: the first knob removed from
+			// provider-wrapper.sh; the dynamic message names that wrapper + knob.
+			name:        "first knob missing from provider wrapper",
+			home:        homeSeedHappyHomeControlPlane,
+			provider:    strings.Replace(homeSeedHappyProviderWrapper(), firstKnob+"\n", "", 1),
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Expected provider-wrapper.sh to scrub Copilot/GitHub ambient env knob: " + firstKnob,
+		},
+		{
+			// copilot_env loop, development-wrapper side: the first knob removed
+			// from development-wrapper.sh only; the provider probe for that knob
+			// passes first, then the development probe fails, proving the inner
+			// wrapper ordering (provider before development).
+			name:        "first knob missing from development wrapper",
+			home:        homeSeedHappyHomeControlPlane,
+			provider:    homeSeedHappyProviderWrapper(),
+			development: strings.Replace(homeSeedHappyDevelopmentWrapper(), firstKnob+"\n", "", 1),
+			wantErr:     "Expected development-wrapper.sh to scrub Copilot/GitHub ambient env knob: " + firstKnob,
+		},
+		{
+			// copilot_env loop: a trailing knob removed from provider-wrapper.sh,
+			// proving the loop covers the full list, not just the head.
+			name:        "last knob missing from provider wrapper",
+			home:        homeSeedHappyHomeControlPlane,
+			provider:    strings.Replace(homeSeedHappyProviderWrapper(), lastKnob+"\n", "", 1),
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Expected provider-wrapper.sh to scrub Copilot/GitHub ambient env knob: " + lastKnob,
+		},
+		{
+			// A missing home-control-plane.sh is empty content: the first
+			// affirmative check (trustedFolders) fires, mirroring `rg -q`
+			// returning non-zero on a missing file.
+			name:        "missing home control plane",
+			home:        "",
+			provider:    homeSeedHappyProviderWrapper(),
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Expected Gemini home seeding to provision trustedFolders.json",
+		},
+		{
+			// A missing provider-wrapper.sh is empty content: the six
+			// home-control-plane checks pass, then the first provider probe
+			// (CLAUDE_CONFIG_DIR scrub) fails.
+			name:        "missing provider wrapper",
+			home:        homeSeedHappyHomeControlPlane,
+			provider:    "",
+			development: homeSeedHappyDevelopmentWrapper(),
+			wantErr:     "Expected provider wrapper to discard caller-supplied CLAUDE_CONFIG_DIR",
+		},
+		{
+			// A missing development-wrapper.sh is empty content: every single
+			// probe and the provider side of the first knob pass, then the
+			// development side of the first knob fails.
+			name:        "missing development wrapper",
+			home:        homeSeedHappyHomeControlPlane,
+			provider:    homeSeedHappyProviderWrapper(),
+			development: "",
+			wantErr:     "Expected development-wrapper.sh to scrub Copilot/GitHub ambient env knob: " + firstKnob,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeHomeSeedProviderWrapperRepo(t, tc.home, tc.provider, tc.development)
+			err := CheckHomeSeedProviderWrapper(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckHomeSeedProviderWrapper() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckHomeSeedProviderWrapper() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckHomeSeedProviderWrapper() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckHomeSeedProviderWrapperCoversAllKnobs asserts the generated check
+// list contains exactly nine leading probes plus two checks per copilot_env
+// knob (one per wrapper), guarding against an accidentally truncated loop.
+func TestCheckHomeSeedProviderWrapperCoversAllKnobs(t *testing.T) {
+	got := len(homeSeedProviderWrapperChecks())
+	want := 9 + 2*len(copilotAmbientEnvKnobs)
+	if got != want {
+		t.Fatalf("homeSeedProviderWrapperChecks() has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckHomeSeedProviderWrapperRealRepo asserts that the real
+// home-control-plane.sh, provider-wrapper.sh, and development-wrapper.sh in
+// this repository satisfy all fifty-seven home-seeding / provider-wrapper
+// invariants.  This is the key guard against a mis-transcribed needle or a
+// mis-typed knob: if any Go pattern is not a byte-exact substring of the
+// actual file, this test fails with the guard's stderr message.
+func TestCheckHomeSeedProviderWrapperRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, homeControlPlaneRelPath)); err != nil {
+		t.Skipf("real home-control-plane.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckHomeSeedProviderWrapper(repoRoot); err != nil {
+		t.Fatalf("CheckHomeSeedProviderWrapper(real repo) = %v, want nil", err)
+	}
+}

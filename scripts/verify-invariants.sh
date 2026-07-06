@@ -8236,76 +8236,7 @@ GEMINI_AUTH_SELECTION_STDERR="$(mktemp)"
 rm -f "${GEMINI_AUTH_SELECTION_HARNESS}"
 rm -f "${GEMINI_AUTH_SELECTION_STDOUT}" "${GEMINI_AUTH_SELECTION_STDERR}"
 
-if ! rg -q 'trustedFolders\.json' "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
-  echo "Expected Gemini home seeding to provision trustedFolders.json" >&2
-  exit 1
-fi
-if ! grep -Fq "workcell_reset_session_target \"\${HOME}/.gemini/settings.json\" \"Gemini settings\"" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
-  echo "Expected Gemini home seeding to reset settings.json through workcell_reset_session_target" >&2
-  exit 1
-fi
-if ! grep -Fq "workcell_set_gemini_tool_sandbox \"\${HOME}/.gemini/settings.json\" false" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
-  echo "Expected Gemini home seeding to pin the nested sandbox setting explicitly" >&2
-  exit 1
-fi
-if ! grep -Fq "workcell_copy_manifest_credential_file claude_auth \"\${HOME}/.claude/.credentials.json\" || true" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
-  echo "Expected Claude home seeding to copy auth into .claude/.credentials.json" >&2
-  exit 1
-fi
-if ! grep -Fq "workcell_copy_manifest_credential_file claude_auth \"\${HOME}/.claude/.claude.json\" || true" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
-  echo "Expected Claude home seeding to copy auth into .claude/.claude.json" >&2
-  exit 1
-fi
-if ! grep -Fq "workcell_copy_manifest_credential_file claude_auth \"\${HOME}/.claude.json\" || true" "${ROOT_DIR}/runtime/container/home-control-plane.sh"; then
-  echo "Expected Claude home seeding to copy auth into .claude.json" >&2
-  exit 1
-fi
-if ! grep -Fq 'unset CLAUDE_CONFIG_DIR' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to discard caller-supplied CLAUDE_CONFIG_DIR" >&2
-  exit 1
-fi
-if grep -Fq 'export HOME CODEX_HOME CLAUDE_CONFIG_DIR TMPDIR WORKCELL_MODE CODEX_PROFILE WORKCELL_AGENT_AUTONOMY WORKCELL_CONTAINER_MUTABILITY' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Provider wrapper should not export CLAUDE_CONFIG_DIR for non-Claude launches" >&2
-  exit 1
-fi
-if ! grep -Fq 'unset DISABLE_AUTOUPDATER' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo "Expected provider wrapper to discard caller-supplied DISABLE_AUTOUPDATER" >&2
-  exit 1
-fi
-for copilot_env in \
-  'unset GH_CONFIG_DIR' \
-  'unset GH_HOST' \
-  'unset GH_TOKEN' \
-  'unset GITHUB_TOKEN' \
-  'unset OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT' \
-  'unset PLAIN_DIFF' \
-  'unset USE_BUILTIN_RIPGREP' \
-  'unset OTEL_EXPORTER_OTLP_ENDPOINT' \
-  'unset OTEL_EXPORTER_OTLP_HEADERS' \
-  'unset OTEL_EXPORTER_OTLP_PROTOCOL' \
-  'unset OTEL_EXPORTER_OTLP_TIMEOUT' \
-  'unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT' \
-  'unset OTEL_EXPORTER_OTLP_TRACES_HEADERS' \
-  'unset OTEL_EXPORTER_OTLP_TRACES_PROTOCOL' \
-  'unset OTEL_EXPORTER_OTLP_TRACES_TIMEOUT' \
-  'unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT' \
-  'unset OTEL_EXPORTER_OTLP_METRICS_HEADERS' \
-  'unset OTEL_EXPORTER_OTLP_METRICS_PROTOCOL' \
-  'unset OTEL_EXPORTER_OTLP_METRICS_TIMEOUT' \
-  'unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT' \
-  'unset OTEL_EXPORTER_OTLP_LOGS_HEADERS' \
-  'unset OTEL_EXPORTER_OTLP_LOGS_PROTOCOL' \
-  'unset OTEL_EXPORTER_OTLP_LOGS_TIMEOUT' \
-  'unset OTEL_RESOURCE_ATTRIBUTES'; do
-  for copilot_wrapper in \
-    "${ROOT_DIR}/runtime/container/provider-wrapper.sh" \
-    "${ROOT_DIR}/runtime/container/development-wrapper.sh"; do
-    if ! grep -Fq -- "${copilot_env}" "${copilot_wrapper}"; then
-      echo "Expected $(basename "${copilot_wrapper}") to scrub Copilot/GitHub ambient env knob: ${copilot_env}" >&2
-      exit 1
-    fi
-  done
-done
+go_verify_citools workcell-home-seed-provider-wrapper "${ROOT_DIR}" || exit 1
 for copilot_wrapper in \
   "${ROOT_DIR}/runtime/container/provider-wrapper.sh" \
   "${ROOT_DIR}/runtime/container/development-wrapper.sh"; do
