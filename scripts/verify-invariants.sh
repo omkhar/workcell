@@ -2937,29 +2937,7 @@ go_verify_citools workcell-dockerfile-pins "${ROOT_DIR}" || exit 1
 
 go_verify_citools workcell-validator-dispatch-loops "${ROOT_DIR}" || exit 1
 
-for caller in \
-  "${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh" \
-  "${ROOT_DIR}/scripts/ci/run-docs-in-validator.sh" \
-  "${ROOT_DIR}/scripts/ci/run-mutation-in-validator.sh" \
-  "${ROOT_DIR}/scripts/ci/job-validate.sh" \
-  "${ROOT_DIR}/.github/workflows/release.yml"; do
-  for required in \
-    "validator_uid=\"\$(id -u)\"" \
-    "validator_gid=\"\$(id -g)\"" \
-    "--user \"\${validator_uid}:\${validator_gid}\"" \
-    "-e HOME=\"\${validator_home}\"" \
-    "-e XDG_CACHE_HOME=\"\${validator_cache}\"" \
-    "-e GOCACHE=\"\${validator_cache}/go-build\"" \
-    "-e GOMODCACHE=\"\${validator_cache}/go-mod\"" \
-    "-e CARGO_TARGET_DIR=\"\${validator_cache}/cargo-target\"" \
-    "-e TMPDIR=\"\${validator_tmp}\"" \
-    "mkdir -p \"\${HOME}\" \"\${XDG_CACHE_HOME}\" \"\${GOCACHE}\" \"\${GOMODCACHE}\" \"\${CARGO_TARGET_DIR}\" \"\${TMPDIR}\""; do
-    if ! grep -Fq -- "${required}" "${caller}"; then
-      echo "Expected ${caller} to launch validator work under an explicit caller UID/GID with isolated writable state (${required})" >&2
-      exit 1
-    fi
-  done
-done
+go_verify_citools workcell-caller-required-contracts "${ROOT_DIR}" || exit 1
 
 go_verify_citools workcell-validator-writable-state "${ROOT_DIR}" || exit 1
 

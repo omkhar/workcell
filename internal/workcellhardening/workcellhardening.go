@@ -241,6 +241,18 @@ const mutationWorkflowRelPath = ".github/workflows/mutation.yml"
 // ${ROOT_DIR}/scripts/pre-merge.sh.
 const preMergeRelPath = "scripts/pre-merge.sh"
 
+// runValidateInValidatorRelPath, runDocsInValidatorRelPath, and
+// runMutationInValidatorRelPath are the repo-relative paths to the three
+// in-validator lane launchers.  The caller-required-contracts block reads them
+// (via the per-check targetFile field) as the first three callers of its nested
+// caller×required loop, mirroring the shell `grep -Fq --` probes that ran
+// against ${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh,
+// run-docs-in-validator.sh, and run-mutation-in-validator.sh.  (jobValidateRelPath
+// and releaseWorkflowRelPath cover the remaining two callers.)
+const runValidateInValidatorRelPath = "scripts/ci/run-validate-in-validator.sh"
+const runDocsInValidatorRelPath = "scripts/ci/run-docs-in-validator.sh"
+const runMutationInValidatorRelPath = "scripts/ci/run-mutation-in-validator.sh"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -3325,6 +3337,75 @@ func validatorDispatchLoopsChecks(rootDir string) []check {
 // 1).
 func CheckValidatorDispatchLoops(rootDir string) error {
 	return evaluate(rootDir, validatorDispatchLoopsChecks(rootDir))
+}
+
+// callerRequiredContractsCallers lists, in the shell outer for-loop's order, the
+// five caller files that must each launch validator work under an explicit
+// caller UID/GID with isolated writable state.  The shell iterated
+// `for caller in "${ROOT_DIR}/<path>" ...`, so each caller's value was the
+// ABSOLUTE ${ROOT_DIR}/<relPath>; the repo-relative path here is both the
+// per-check read target (via targetFile) and the tail the message reconstructs.
+var callerRequiredContractsCallers = []string{
+	runValidateInValidatorRelPath,
+	runDocsInValidatorRelPath,
+	runMutationInValidatorRelPath,
+	jobValidateRelPath,
+	releaseWorkflowRelPath,
+}
+
+// callerRequiredContractsNeedles lists, in the shell inner for-loop's order, the
+// ten fixed strings each caller must contain.  Each was a fixed
+// `grep -Fq -- "${required}"` literal in the migrated `for required in ...; do`
+// loop; the shell's `\"`/`\$`/`\${` escapes render to the literal `"`/`$`/`${`
+// bytes captured here as Go raw strings.
+var callerRequiredContractsNeedles = []string{
+	`validator_uid="$(id -u)"`,
+	`validator_gid="$(id -g)"`,
+	`--user "${validator_uid}:${validator_gid}"`,
+	`-e HOME="${validator_home}"`,
+	`-e XDG_CACHE_HOME="${validator_cache}"`,
+	`-e GOCACHE="${validator_cache}/go-build"`,
+	`-e GOMODCACHE="${validator_cache}/go-mod"`,
+	`-e CARGO_TARGET_DIR="${validator_cache}/cargo-target"`,
+	`-e TMPDIR="${validator_tmp}"`,
+	`mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"`,
+}
+
+// callerRequiredContractsChecks builds the fifty caller-required invariants for
+// the repo rooted at rootDir by iterating the caller list (outer) over the
+// required-needle list (inner), exactly mirroring the shell's nested
+// `for caller in ...; do for required in ...; do` order so the first violated
+// (caller, required) pair matches the shell's first-failure exit.
+//
+// The shell echoed `${caller}`, whose value was ${ROOT_DIR}/<relPath> — i.e. the
+// ABSOLUTE path once ${ROOT_DIR} expands.  The message is therefore constructed
+// as "Expected " + rootDir + "/" + relPath + " ... (" + needle + ")" using
+// literal string concatenation (not filepath.Join) to reproduce the shell's
+// byte-exact rendering, while the read target stays the repo-relative path via
+// targetFile so evaluate reads the same file the message names.
+func callerRequiredContractsChecks(rootDir string) []check {
+	cs := make([]check, 0, len(callerRequiredContractsCallers)*len(callerRequiredContractsNeedles))
+	for _, rel := range callerRequiredContractsCallers {
+		caller := rootDir + "/" + rel
+		for _, needle := range callerRequiredContractsNeedles {
+			cs = append(cs, check{
+				kind:       kindPresent,
+				pattern:    needle,
+				message:    "Expected " + caller + " to launch validator work under an explicit caller UID/GID with isolated writable state (" + needle + ")",
+				targetFile: rel,
+			})
+		}
+	}
+	return cs
+}
+
+// CheckCallerRequiredContracts runs the fifty caller-required invariants against
+// the repo rooted at rootDir, in the shell's original caller-outer/required-inner
+// order.  It returns nil when every invariant holds (the shell's exit 0), or an
+// error whose message equals the shell's stderr for the first violated (caller,
+// required) pair (the shell's exit 1).
+func CheckCallerRequiredContracts(rootDir string) error {
+	return evaluate(rootDir, callerRequiredContractsChecks(rootDir))
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.

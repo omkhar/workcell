@@ -117,6 +117,7 @@ func subcommands() []subcommand {
 		{"workcell-hostutil-egress-rg", "ROOT_DIR", 1, 1, cmdWorkcellHostutilEgressRg},
 		{"workcell-dockerfile-pins", "ROOT_DIR", 1, 1, cmdWorkcellDockerfilePins},
 		{"workcell-validator-dispatch-loops", "ROOT_DIR", 1, 1, cmdWorkcellValidatorDispatchLoops},
+		{"workcell-caller-required-contracts", "ROOT_DIR", 1, 1, cmdWorkcellCallerRequiredContracts},
 	}
 }
 
@@ -698,4 +699,13 @@ func cmdWorkcellDockerfilePins(args []string) error {
 // original stderr message for the first violated invariant.
 func cmdWorkcellValidatorDispatchLoops(args []string) error {
 	return workcellhardening.CheckValidatorDispatchLoops(args[0])
+}
+
+// cmdWorkcellCallerRequiredContracts runs the fifty caller-required checks (five
+// CI caller files × ten UID/GID-and-isolated-writable-state needles) migrated
+// out of scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
+// shell's original stderr message for the first violated (caller, required)
+// pair.
+func cmdWorkcellCallerRequiredContracts(args []string) error {
+	return workcellhardening.CheckCallerRequiredContracts(args[0])
 }

@@ -4814,3 +4814,139 @@ func TestCheckValidatorDispatchLoopsRealRepo(t *testing.T) {
 		t.Fatalf("CheckValidatorDispatchLoops(real repo) = %v, want nil", err)
 	}
 }
+
+// callerRequiredContractsHappyFiles returns the five-file fixture map that
+// satisfies all fifty caller-required invariants: every caller file carries all
+// ten required needles (joined by newlines so grep-style containment holds).
+// Needle bodies are built from the exported slices so the fixture stays in
+// lockstep with the migration.
+func callerRequiredContractsHappyFiles() map[string]string {
+	files := make(map[string]string, len(callerRequiredContractsCallers))
+	body := "#!/usr/bin/env bash\n" + strings.Join(callerRequiredContractsNeedles, "\n") + "\n"
+	for _, rel := range callerRequiredContractsCallers {
+		files[rel] = body
+	}
+	return files
+}
+
+func TestCheckCallerRequiredContracts(t *testing.T) {
+	root := t.TempDir()
+
+	tests := []struct {
+		name    string
+		mutate  func(files map[string]string)
+		wantErr string // "" means expect success; absolute-path messages use the shared root
+	}{
+		{
+			name:   "happy path all invariants hold",
+			mutate: func(map[string]string) {},
+		},
+		{
+			// Outer=first caller, inner=first needle: removing the UID needle from
+			// the first caller fires the interpolated absolute-path + needle
+			// message, proving caller-outer/needle-inner interpolation.
+			name: "first caller missing UID needle",
+			mutate: func(files map[string]string) {
+				files[runValidateInValidatorRelPath] = strings.Replace(files[runValidateInValidatorRelPath], `validator_uid="$(id -u)"`+"\n", "", 1)
+			},
+			wantErr: "Expected " + root + "/" + runValidateInValidatorRelPath + " to launch validator work under an explicit caller UID/GID with isolated writable state (validator_uid=\"$(id -u)\")",
+		},
+		{
+			// A middle caller missing a middle needle: proves the loop advances
+			// through earlier callers/needles before firing.
+			name: "third caller missing GOCACHE needle",
+			mutate: func(files map[string]string) {
+				files[runMutationInValidatorRelPath] = strings.Replace(files[runMutationInValidatorRelPath], `-e GOCACHE="${validator_cache}/go-build"`+"\n", "", 1)
+			},
+			wantErr: "Expected " + root + "/" + runMutationInValidatorRelPath + " to launch validator work under an explicit caller UID/GID with isolated writable state (-e GOCACHE=\"${validator_cache}/go-build\")",
+		},
+		{
+			// The last caller (release.yml) missing the last needle (mkdir -p):
+			// the final (caller, required) pair fires, proving the full traversal.
+			name: "release workflow missing mkdir needle",
+			mutate: func(files map[string]string) {
+				files[releaseWorkflowRelPath] = strings.Replace(files[releaseWorkflowRelPath], `mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"`+"\n", "", 1)
+			},
+			wantErr: "Expected " + root + "/" + releaseWorkflowRelPath + " to launch validator work under an explicit caller UID/GID with isolated writable state (mkdir -p \"${HOME}\" \"${XDG_CACHE_HOME}\" \"${GOCACHE}\" \"${GOMODCACHE}\" \"${CARGO_TARGET_DIR}\" \"${TMPDIR}\")",
+		},
+		{
+			// caller-outer ordering: when the FIRST caller is entirely missing
+			// (empty content) its first needle fires before any later caller runs,
+			// even though a later caller is also broken.
+			name: "first caller missing wins over later caller",
+			mutate: func(files map[string]string) {
+				files[runValidateInValidatorRelPath] = ""
+				files[jobValidateRelPath] = "#!/usr/bin/env bash\n"
+			},
+			wantErr: "Expected " + root + "/" + runValidateInValidatorRelPath + " to launch validator work under an explicit caller UID/GID with isolated writable state (validator_uid=\"$(id -u)\")",
+		},
+		{
+			// needle-inner ordering within a single caller: an EARLIER needle
+			// missing wins over a later one in the same file.
+			name: "earlier needle wins within a caller",
+			mutate: func(files map[string]string) {
+				files[runDocsInValidatorRelPath] = strings.Replace(files[runDocsInValidatorRelPath], `validator_gid="$(id -g)"`+"\n", "", 1)
+				files[runDocsInValidatorRelPath] = strings.Replace(files[runDocsInValidatorRelPath], `-e TMPDIR="${validator_tmp}"`+"\n", "", 1)
+			},
+			wantErr: "Expected " + root + "/" + runDocsInValidatorRelPath + " to launch validator work under an explicit caller UID/GID with isolated writable state (validator_gid=\"$(id -g)\")",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := callerRequiredContractsHappyFiles()
+			tc.mutate(files)
+			for rel, body := range files {
+				path := filepath.Join(root, rel)
+				if body == "" {
+					os.Remove(path)
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+				}
+				if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+					t.Fatalf("write %s: %v", path, err)
+				}
+			}
+			err := CheckCallerRequiredContracts(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckCallerRequiredContracts() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckCallerRequiredContracts() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckCallerRequiredContracts() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckCallerRequiredContractsCount asserts the generated check list contains
+// exactly fifty invariants: five caller files × ten required needles.
+func TestCheckCallerRequiredContractsCount(t *testing.T) {
+	got := len(callerRequiredContractsChecks("/repo"))
+	const want = 50
+	if got != want {
+		t.Fatalf("callerRequiredContractsChecks(...) has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckCallerRequiredContractsRealRepo asserts that the five real caller
+// files in this repository satisfy all fifty caller-required invariants.  This is
+// the key guard against a mis-transcribed needle or a wrong target file: if any
+// Go needle diverges from the actual file contents, this test fails with the
+// guard's stderr message.
+func TestCheckCallerRequiredContractsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, runValidateInValidatorRelPath)); err != nil {
+		t.Skipf("real scripts/ci/run-validate-in-validator.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckCallerRequiredContracts(repoRoot); err != nil {
+		t.Fatalf("CheckCallerRequiredContracts(real repo) = %v, want nil", err)
+	}
+}
