@@ -3360,3 +3360,236 @@ func TestCheckCopilotUnsafeFlagsRealRepo(t *testing.T) {
 		t.Fatalf("CheckCopilotUnsafeFlags(real repo) = %v, want nil", err)
 	}
 }
+
+// copilotReleaseVerifyHappyVerifier is a minimal but structurally faithful
+// scripts/verify-upstream-copilot-release.sh: it contains all six help-mode
+// needles (including the escaped whole-flag `grep -Eq` matcher, matched here as
+// a fixed string) and all eleven managed flags.
+const copilotReleaseVerifyHappyVerifier = `#!/usr/bin/env bash
+COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-auto}"
+COPILOT_NATIVE_HELP_DONE=0
+COPILOT_DOCKER_HELP_DONE=0
+copilot_help_mode() {
+  case "${COPILOT_HELP_MODE}" in
+  auto | native | docker | checksum) ;;
+  esac
+  [[ "${COPILOT_HELP_MODE}" == "checksum" ]] && return 0
+}
+copilot_flag_present() {
+  grep -Eq -- "(^|[^[:alnum:]_-])${flag}([^[:alnum:]_-]|$)" <<<"${help_output}"
+}
+MANAGED_FLAGS=(
+  --allow-tool
+  --available-tools
+  --disable-builtin-mcps
+  --disallow-temp-dir
+  --log-dir
+  --no-ask-user
+  --no-auto-update
+  --no-custom-instructions
+  --no-remote
+  --no-remote-export
+  --secret-env-vars
+)
+`
+
+// copilotReleaseVerifyHappyUpdatePins is a minimal but structurally faithful
+// scripts/update-provider-pins.sh containing the checksum-only verify needle.
+const copilotReleaseVerifyHappyUpdatePins = `#!/usr/bin/env bash
+WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
+`
+
+// copilotReleaseVerifyHappyJobValidate is a minimal but structurally faithful
+// scripts/ci/job-validate.sh containing the checksum-only verify needle.
+const copilotReleaseVerifyHappyJobValidate = `#!/usr/bin/env bash
+WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
+`
+
+// copilotReleaseVerifyHappyReleaseYML is a minimal but structurally faithful
+// .github/workflows/release.yml containing the docker/smoke and arm64 release-
+// help needles.
+const copilotReleaseVerifyHappyReleaseYML = `name: release
+jobs:
+  container-smoke:
+    env:
+      WORKCELL_COPILOT_RELEASE_HELP_MODE: docker
+      WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:smoke
+  preflight-arm64-copilot-runtime:
+    env:
+      WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:copilot-arm64-smoke
+`
+
+// writeCopilotReleaseVerifyRepo materializes a fake repo with the four files
+// this group reads set to the given bodies; a body of "" means "do not create
+// that file" (unreadable-target case).
+func writeCopilotReleaseVerifyRepo(t *testing.T, verifier, updatePins, jobValidate, releaseYML string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		if body == "" {
+			return
+		}
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(verifyUpstreamCopilotReleaseRelPath, verifier)
+	write(updateProviderPinsRelPath, updatePins)
+	write(jobValidateRelPath, jobValidate)
+	write(releaseWorkflowRelPath, releaseYML)
+	return root
+}
+
+func TestCheckCopilotReleaseVerify(t *testing.T) {
+	tests := []struct {
+		name        string
+		verifier    string
+		updatePins  string
+		jobValidate string
+		releaseYML  string
+		wantErr     string // "" means expect success
+	}{
+		{
+			name:        "happy path all invariants hold",
+			verifier:    copilotReleaseVerifyHappyVerifier,
+			updatePins:  copilotReleaseVerifyHappyUpdatePins,
+			jobValidate: copilotReleaseVerifyHappyJobValidate,
+			releaseYML:  copilotReleaseVerifyHappyReleaseYML,
+		},
+		{
+			// Help-mode guard (first probe): shares the group message.
+			name:        "verifier missing help-mode default",
+			verifier:    strings.Replace(copilotReleaseVerifyHappyVerifier, `COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-auto}"`, "COPILOT_HELP_MODE=auto", 1),
+			updatePins:  copilotReleaseVerifyHappyUpdatePins,
+			jobValidate: copilotReleaseVerifyHappyJobValidate,
+			releaseYML:  copilotReleaseVerifyHappyReleaseYML,
+			wantErr:     "Expected Copilot upstream release verifier to track native/Docker help probes separately, support checksum-only paths, and match whole safety flags",
+		},
+		{
+			// Help-mode guard (sixth probe): the escaped whole-flag `grep -Eq`
+			// matcher, matched as a fixed string.
+			name:        "verifier missing whole-flag grep -Eq matcher",
+			verifier:    strings.Replace(copilotReleaseVerifyHappyVerifier, `grep -Eq -- "(^|[^[:alnum:]_-])${flag}([^[:alnum:]_-]|$)"`, "grep -Fq -- \"${flag}\"", 1),
+			updatePins:  copilotReleaseVerifyHappyUpdatePins,
+			jobValidate: copilotReleaseVerifyHappyJobValidate,
+			releaseYML:  copilotReleaseVerifyHappyReleaseYML,
+			wantErr:     "Expected Copilot upstream release verifier to track native/Docker help probes separately, support checksum-only paths, and match whole safety flags",
+		},
+		{
+			// Managed-flag loop item (kindPresent, interpolated message).
+			name:        "verifier missing managed flag",
+			verifier:    strings.Replace(copilotReleaseVerifyHappyVerifier, "--allow-tool", "--other-flag", 1),
+			updatePins:  copilotReleaseVerifyHappyUpdatePins,
+			jobValidate: copilotReleaseVerifyHappyJobValidate,
+			releaseYML:  copilotReleaseVerifyHappyReleaseYML,
+			wantErr:     "Expected Copilot upstream release verifier to require managed flag: --allow-tool",
+		},
+		{
+			// Checksum-only guard (first probe, update-provider-pins.sh).
+			name:        "update-provider-pins missing checksum needle",
+			verifier:    copilotReleaseVerifyHappyVerifier,
+			updatePins:  strings.Replace(copilotReleaseVerifyHappyUpdatePins, "WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum", "WORKCELL_COPILOT_RELEASE_HELP_MODE=docker", 1),
+			jobValidate: copilotReleaseVerifyHappyJobValidate,
+			releaseYML:  copilotReleaseVerifyHappyReleaseYML,
+			wantErr:     "Expected provider bump and routine validate paths to use checksum-only Copilot release verification before smoke images exist",
+		},
+		{
+			// Checksum-only guard (second probe, job-validate.sh): proves the two
+			// ordered probes share one message.
+			name:        "job-validate missing checksum needle",
+			verifier:    copilotReleaseVerifyHappyVerifier,
+			updatePins:  copilotReleaseVerifyHappyUpdatePins,
+			jobValidate: strings.Replace(copilotReleaseVerifyHappyJobValidate, "WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum", "WORKCELL_COPILOT_RELEASE_HELP_MODE=docker", 1),
+			releaseYML:  copilotReleaseVerifyHappyReleaseYML,
+			wantErr:     "Expected provider bump and routine validate paths to use checksum-only Copilot release verification before smoke images exist",
+		},
+		{
+			// Container-smoke guard (first probe, release.yml).
+			name:        "release yml missing docker help mode",
+			verifier:    copilotReleaseVerifyHappyVerifier,
+			updatePins:  copilotReleaseVerifyHappyUpdatePins,
+			jobValidate: copilotReleaseVerifyHappyJobValidate,
+			releaseYML:  strings.Replace(copilotReleaseVerifyHappyReleaseYML, "WORKCELL_COPILOT_RELEASE_HELP_MODE: docker", "WORKCELL_COPILOT_RELEASE_HELP_MODE: native", 1),
+			wantErr:     "Expected release container-smoke job to force Copilot release help verification inside the runtime image",
+		},
+		{
+			// Container-smoke guard (second probe, release.yml): shares the message.
+			name:        "release yml missing smoke help image",
+			verifier:    copilotReleaseVerifyHappyVerifier,
+			updatePins:  copilotReleaseVerifyHappyUpdatePins,
+			jobValidate: copilotReleaseVerifyHappyJobValidate,
+			releaseYML:  strings.Replace(copilotReleaseVerifyHappyReleaseYML, "WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:smoke", "WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:other", 1),
+			wantErr:     "Expected release container-smoke job to force Copilot release help verification inside the runtime image",
+		},
+		{
+			// Arm64 guard (second probe, release.yml): the arm64 smoke image.
+			name:        "release yml missing arm64 help image",
+			verifier:    copilotReleaseVerifyHappyVerifier,
+			updatePins:  copilotReleaseVerifyHappyUpdatePins,
+			jobValidate: copilotReleaseVerifyHappyJobValidate,
+			releaseYML:  strings.Replace(copilotReleaseVerifyHappyReleaseYML, "WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:copilot-arm64-smoke", "WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:other-arm64", 1),
+			wantErr:     "Expected release workflow to verify Copilot release help inside an arm64 runtime image before publication",
+		},
+		{
+			// A missing verifier file is empty content: the first help-mode probe
+			// fails.
+			name:        "missing verifier file",
+			verifier:    "",
+			updatePins:  copilotReleaseVerifyHappyUpdatePins,
+			jobValidate: copilotReleaseVerifyHappyJobValidate,
+			releaseYML:  copilotReleaseVerifyHappyReleaseYML,
+			wantErr:     "Expected Copilot upstream release verifier to track native/Docker help probes separately, support checksum-only paths, and match whole safety flags",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeCopilotReleaseVerifyRepo(t, tc.verifier, tc.updatePins, tc.jobValidate, tc.releaseYML)
+			err := CheckCopilotReleaseVerify(root)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckCopilotReleaseVerify() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckCopilotReleaseVerify() = nil, want error %q", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("CheckCopilotReleaseVerify() error = %q, want %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckCopilotReleaseVerifyCount asserts the check list contains exactly
+// twenty-four invariants, guarding against an accidentally truncated or
+// duplicated migration of the shell block.
+func TestCheckCopilotReleaseVerifyCount(t *testing.T) {
+	got := len(copilotReleaseVerifyChecks())
+	const want = 24
+	if got != want {
+		t.Fatalf("copilotReleaseVerifyChecks() has %d checks, want %d", got, want)
+	}
+}
+
+// TestCheckCopilotReleaseVerifyRealRepo asserts that the real
+// verify-upstream-copilot-release.sh, update-provider-pins.sh, job-validate.sh,
+// and release.yml in this repository satisfy all twenty-four Copilot
+// upstream-release verifier invariants.  This is the key guard against a
+// mis-transcribed needle or a wrong target file: if any Go pattern is not a
+// byte-exact substring of the actual file (or the wrong file), this test fails
+// with the guard's stderr message.
+func TestCheckCopilotReleaseVerifyRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, verifyUpstreamCopilotReleaseRelPath)); err != nil {
+		t.Skipf("real verify-upstream-copilot-release.sh not found at %s: %v", repoRoot, err)
+	}
+	if err := CheckCopilotReleaseVerify(repoRoot); err != nil {
+		t.Fatalf("CheckCopilotReleaseVerify(real repo) = %v, want nil", err)
+	}
+}

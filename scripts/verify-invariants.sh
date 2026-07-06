@@ -8252,50 +8252,7 @@ if ! grep -Fq "rm -f -- \"\${token_file}\"" "${ROOT_DIR}/runtime/container/provi
 fi
 go_verify_citools workcell-copilot-policy-wrapper "${ROOT_DIR}" || exit 1
 go_verify_citools workcell-copilot-unsafe-flags "${ROOT_DIR}" || exit 1
-# shellcheck disable=SC2016
-if ! grep -Fq 'COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-auto}"' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
-  ! grep -Fq 'COPILOT_NATIVE_HELP_DONE=0' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
-  ! grep -Fq 'COPILOT_DOCKER_HELP_DONE=0' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
-  ! grep -Fq 'auto | native | docker | checksum)' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
-  ! grep -Fq '[[ "${COPILOT_HELP_MODE}" == "checksum" ]] && return 0' "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh" ||
-  ! grep -Fq "grep -Eq -- \"(^|[^[:alnum:]_-])\${flag}([^[:alnum:]_-]|\$)\"" "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"; then
-  echo "Expected Copilot upstream release verifier to track native/Docker help probes separately, support checksum-only paths, and match whole safety flags" >&2
-  exit 1
-fi
-for copilot_release_help_flag in \
-  '--allow-tool' \
-  '--available-tools' \
-  '--disable-builtin-mcps' \
-  '--disallow-temp-dir' \
-  '--log-dir' \
-  '--no-ask-user' \
-  '--no-auto-update' \
-  '--no-custom-instructions' \
-  '--no-remote' \
-  '--no-remote-export' \
-  '--secret-env-vars'; do
-  if ! grep -Fq -- "${copilot_release_help_flag}" "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"; then
-    echo "Expected Copilot upstream release verifier to require managed flag: ${copilot_release_help_flag}" >&2
-    exit 1
-  fi
-done
-copilot_checksum_verify_needle="WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum \"\${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh\""
-if ! grep -Fq "${copilot_checksum_verify_needle}" "${ROOT_DIR}/scripts/update-provider-pins.sh" ||
-  ! grep -Fq "${copilot_checksum_verify_needle}" "${ROOT_DIR}/scripts/ci/job-validate.sh"; then
-  echo "Expected provider bump and routine validate paths to use checksum-only Copilot release verification before smoke images exist" >&2
-  exit 1
-fi
-if ! grep -Fq 'WORKCELL_COPILOT_RELEASE_HELP_MODE: docker' "${ROOT_DIR}/.github/workflows/release.yml" ||
-  ! grep -Fq 'WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:smoke' "${ROOT_DIR}/.github/workflows/release.yml"; then
-  echo "Expected release container-smoke job to force Copilot release help verification inside the runtime image" >&2
-  exit 1
-fi
-if ! grep -Fq 'preflight-arm64-copilot-runtime:' "${ROOT_DIR}/.github/workflows/release.yml" ||
-  ! grep -Fq 'WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:copilot-arm64-smoke' "${ROOT_DIR}/.github/workflows/release.yml" ||
-  ! grep -Fq 'preflight-arm64-copilot-runtime' "${ROOT_DIR}/.github/workflows/release.yml"; then
-  echo "Expected release workflow to verify Copilot release help inside an arm64 runtime image before publication" >&2
-  exit 1
-fi
+go_verify_citools workcell-copilot-release-verify "${ROOT_DIR}" || exit 1
 if [[ "$(grep -Fc 'WORKCELL_COPILOT_RELEASE_HELP_MODE: native' "${ROOT_DIR}/.github/workflows/release.yml")" -lt 2 ]]; then
   echo "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes" >&2
   exit 1

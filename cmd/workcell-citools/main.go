@@ -110,6 +110,7 @@ func subcommands() []subcommand {
 		{"workcell-provider-launcher-authority", "ROOT_DIR", 1, 1, cmdWorkcellProviderLauncherAuthority},
 		{"workcell-copilot-policy-wrapper", "ROOT_DIR", 1, 1, cmdWorkcellCopilotPolicyWrapper},
 		{"workcell-copilot-unsafe-flags", "ROOT_DIR", 1, 1, cmdWorkcellCopilotUnsafeFlags},
+		{"workcell-copilot-release-verify", "ROOT_DIR", 1, 1, cmdWorkcellCopilotReleaseVerify},
 	}
 }
 
@@ -633,4 +634,12 @@ func cmdWorkcellCopilotPolicyWrapper(args []string) error {
 // with the shell's original stderr message for the first violated invariant.
 func cmdWorkcellCopilotUnsafeFlags(args []string) error {
 	return workcellhardening.CheckCopilotUnsafeFlags(args[0])
+}
+
+// cmdWorkcellCopilotReleaseVerify runs the twenty-four Copilot upstream-release
+// verifier checks migrated out of scripts/verify-invariants.sh; it fails (exit 1
+// via die()) with the shell's original stderr message for the first violated
+// invariant.
+func cmdWorkcellCopilotReleaseVerify(args []string) error {
+	return workcellhardening.CheckCopilotReleaseVerify(args[0])
 }
