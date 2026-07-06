@@ -153,6 +153,33 @@ const rustLibRelPath = "runtime/container/rust/src/lib.rs"
 // against ${ROOT_DIR}/runtime/container/provider-policy.sh.
 const providerPolicyRelPath = "runtime/container/provider-policy.sh"
 
+// verifyUpstreamCopilotReleaseRelPath is the repo-relative path to the Copilot
+// upstream-release verifier.  The Copilot-release-verify block reads this file
+// (via the per-check targetFile field) for its help-mode / checksum-path /
+// whole-flag-match invariants and its managed-flag loop, mirroring the shell
+// `grep -Fq` probes that ran against
+// ${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh.
+const verifyUpstreamCopilotReleaseRelPath = "scripts/verify-upstream-copilot-release.sh"
+
+// updateProviderPinsRelPath is the repo-relative path to the provider-pin bump
+// script.  Only the Copilot-release-verify checksum-only invariant reads this
+// file (via the per-check targetFile field), mirroring the shell `grep -Fq`
+// that ran against ${ROOT_DIR}/scripts/update-provider-pins.sh.
+const updateProviderPinsRelPath = "scripts/update-provider-pins.sh"
+
+// jobValidateRelPath is the repo-relative path to the routine CI validate job.
+// Only the Copilot-release-verify checksum-only invariant reads this file (via
+// the per-check targetFile field), mirroring the shell `grep -Fq` that ran
+// against ${ROOT_DIR}/scripts/ci/job-validate.sh.
+const jobValidateRelPath = "scripts/ci/job-validate.sh"
+
+// releaseWorkflowRelPath is the repo-relative path to the release workflow.
+// The Copilot-release-verify block reads this file (via the per-check
+// targetFile field) for its docker/arm64 release-help invariants, mirroring the
+// shell `grep -Fq` probes that ran against
+// ${ROOT_DIR}/.github/workflows/release.yml.
+const releaseWorkflowRelPath = ".github/workflows/release.yml"
+
 // checkKind selects how a check's pattern is matched against the launcher
 // contents.
 type checkKind int
@@ -2225,6 +2252,184 @@ func copilotUnsafeFlagsChecks() []check {
 // 1).
 func CheckCopilotUnsafeFlags(rootDir string) error {
 	return evaluate(rootDir, copilotUnsafeFlagsChecks())
+}
+
+// copilotReleaseHelpFlags lists the eleven managed Copilot flags the shell's
+// `for copilot_release_help_flag in ...` loop asserted the upstream-release
+// verifier requires.  Order matches the shell verbatim so the generated checks
+// reproduce the shell's first-failure stderr exactly.  Every flag is a fixed
+// single-quoted shell literal, matched by `grep -Fq --`.
+var copilotReleaseHelpFlags = []string{
+	"--allow-tool",
+	"--available-tools",
+	"--disable-builtin-mcps",
+	"--disallow-temp-dir",
+	"--log-dir",
+	"--no-ask-user",
+	"--no-auto-update",
+	"--no-custom-instructions",
+	"--no-remote",
+	"--no-remote-export",
+	"--secret-env-vars",
+}
+
+// copilotReleaseVerifyChecks returns the twenty-four Copilot upstream-release
+// verifier invariants in the same order as the former inline block in
+// scripts/verify-invariants.sh (the block between the copilot-unsafe-flags
+// `go_verify_citools` call and the release-workflow native-help-count guard),
+// so a reviewer can diff the two one-to-one.
+//
+// The block reads four files via the per-check targetFile field: the Copilot
+// upstream-release verifier (scripts/verify-upstream-copilot-release.sh), the
+// provider-pin bump script (scripts/update-provider-pins.sh), the routine CI
+// validate job (scripts/ci/job-validate.sh), and the release workflow
+// (.github/workflows/release.yml).  Every probe is a whole-file `grep -Fq`
+// fixed-string containment (kindPresent); every needle is metacharacter-free
+// under `grep -Fq` (fixed-string search), so each is fixed-string containment.
+//
+// Matching semantics mirror the shell exactly:
+//   - The help-mode guard was one shell `if` joining six `! grep -Fq` probes
+//     with `||` under a single message; it is expressed here as six ordered
+//     kindPresent checks sharing that message, which is behaviourally identical
+//     (the first missing probe yields the same stderr and exit 1 as the shell
+//     `if`).  The sixth needle was written with shell double-quote escaping
+//     (`\"`→`"`, `\$`→`$`); it is a `grep -Fq` fixed-string search of the
+//     literal `grep -Eq -- "(^|[^[:alnum:]_-])${flag}([^[:alnum:]_-]|$)"`
+//     (the embedded regex metacharacters are matched literally, not as a regex,
+//     because `grep -Fq` treats the whole needle as a fixed string).
+//   - The managed-flag loop ran `! grep -Fq -- "${copilot_release_help_flag}"`;
+//     each item is a kindPresent check whose message interpolates the flag
+//     exactly as the shell's `echo "... ${copilot_release_help_flag}"` did.
+//   - The checksum-only guard was one shell `if` joining two `! grep -Fq`
+//     probes for the SAME resolved variable needle against two files
+//     (update-provider-pins.sh AND job-validate.sh) with `||` under a single
+//     message; it is expressed here as two ordered kindPresent checks (one per
+//     file) sharing that message, which is behaviourally identical.  The needle
+//     resolves the shell `copilot_checksum_verify_needle` assignment to the
+//     concrete literal `WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum
+//     "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"` (shell
+//     double-quote escaping `\"`→`"`, `\$`→`$`).
+//   - The container-smoke release-help guard (two probes) and the arm64
+//     release-help guard (three probes) each joined their `! grep -Fq` probes
+//     with `||` under a single message against .github/workflows/release.yml;
+//     they are expressed here as ordered kindPresent checks sharing that
+//     message.
+func copilotReleaseVerifyChecks() []check {
+	const helpModeMessage = "Expected Copilot upstream release verifier to track native/Docker help probes separately, support checksum-only paths, and match whole safety flags"
+	cs := []check{
+		// Help-mode guard (six ordered probes sharing one message).
+		{
+			kind:       kindPresent,
+			pattern:    `COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-auto}"`,
+			message:    helpModeMessage,
+			targetFile: verifyUpstreamCopilotReleaseRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    "COPILOT_NATIVE_HELP_DONE=0",
+			message:    helpModeMessage,
+			targetFile: verifyUpstreamCopilotReleaseRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    "COPILOT_DOCKER_HELP_DONE=0",
+			message:    helpModeMessage,
+			targetFile: verifyUpstreamCopilotReleaseRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    "auto | native | docker | checksum)",
+			message:    helpModeMessage,
+			targetFile: verifyUpstreamCopilotReleaseRelPath,
+		},
+		{
+			kind:       kindPresent,
+			pattern:    `[[ "${COPILOT_HELP_MODE}" == "checksum" ]] && return 0`,
+			message:    helpModeMessage,
+			targetFile: verifyUpstreamCopilotReleaseRelPath,
+		},
+		{
+			// kindPresent: `grep -Fq` fixed-string search of the literal
+			// whole-flag matcher; the embedded ERE metacharacters are matched
+			// literally because grep -Fq treats the whole needle as a fixed
+			// string.  The shell needle unescaped `\"`→`"` and `\$`→`$`.
+			kind:       kindPresent,
+			pattern:    `grep -Eq -- "(^|[^[:alnum:]_-])${flag}([^[:alnum:]_-]|$)"`,
+			message:    helpModeMessage,
+			targetFile: verifyUpstreamCopilotReleaseRelPath,
+		},
+	}
+	// The managed-flag loop (eleven fixed flags required by the verifier).
+	for _, flag := range copilotReleaseHelpFlags {
+		cs = append(cs, check{
+			kind:       kindPresent,
+			pattern:    flag,
+			message:    "Expected Copilot upstream release verifier to require managed flag: " + flag,
+			targetFile: verifyUpstreamCopilotReleaseRelPath,
+		})
+	}
+	const checksumNeedle = `WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"`
+	const checksumMessage = "Expected provider bump and routine validate paths to use checksum-only Copilot release verification before smoke images exist"
+	const smokeMessage = "Expected release container-smoke job to force Copilot release help verification inside the runtime image"
+	const arm64Message = "Expected release workflow to verify Copilot release help inside an arm64 runtime image before publication"
+	cs = append(cs,
+		// Checksum-only guard (same needle in two files, sharing one message).
+		check{
+			kind:       kindPresent,
+			pattern:    checksumNeedle,
+			message:    checksumMessage,
+			targetFile: updateProviderPinsRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    checksumNeedle,
+			message:    checksumMessage,
+			targetFile: jobValidateRelPath,
+		},
+		// Container-smoke release-help guard (two release.yml probes sharing one
+		// message).
+		check{
+			kind:       kindPresent,
+			pattern:    "WORKCELL_COPILOT_RELEASE_HELP_MODE: docker",
+			message:    smokeMessage,
+			targetFile: releaseWorkflowRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    "WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:smoke",
+			message:    smokeMessage,
+			targetFile: releaseWorkflowRelPath,
+		},
+		// Arm64 release-help guard (three release.yml probes sharing one message).
+		check{
+			kind:       kindPresent,
+			pattern:    "preflight-arm64-copilot-runtime:",
+			message:    arm64Message,
+			targetFile: releaseWorkflowRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    "WORKCELL_COPILOT_RELEASE_HELP_IMAGE: workcell:copilot-arm64-smoke",
+			message:    arm64Message,
+			targetFile: releaseWorkflowRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    "preflight-arm64-copilot-runtime",
+			message:    arm64Message,
+			targetFile: releaseWorkflowRelPath,
+		},
+	)
+	return cs
+}
+
+// CheckCopilotReleaseVerify runs the twenty-four Copilot upstream-release
+// verifier invariants against the repo rooted at rootDir, in the shell's
+// original order.  It returns nil when every invariant holds (the shell's exit
+// 0), or an error whose message equals the shell's stderr for the first
+// violated invariant (the shell's exit 1).
+func CheckCopilotReleaseVerify(rootDir string) error {
+	return evaluate(rootDir, copilotReleaseVerifyChecks())
 }
 
 // holds reports whether the invariant is satisfied by the launcher text.
