@@ -12,10 +12,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/omkhar/workcell/internal/host/sessions"
+)
+
+// Bounded non-blocking retry for the shared audit-log append lock: ~50 attempts × 20ms ≈
+// a 1s ceiling. High enough that many genuine concurrent appenders (microsecond critical
+// sections) all win, low enough that an adversarial/stuck advisory-lock holder makes the
+// append fail closed instead of hanging.
+const (
+	auditLockAttempts = 50
+	auditLockBackoff  = 20 * time.Millisecond
 )
 
 // encodeAuditPathValue makes a filesystem path safe to interpolate into a
@@ -186,40 +196,117 @@ func openParentDir(trustedRoot, parent string, create bool) (int, error) {
 // would otherwise block waiting for a reader, or divert evidence into a pipe.
 // The Fstat inspects the ACTUAL opened object, so there is no path re-lookup to
 // race. O_NONBLOCK is a no-op for appends to the regular file, so it is left set.
+// validateAuditLogFd rejects anything but a single-linked regular file: a hard link
+// passes S_IFREG but would write audit evidence into an attacker-chosen inode, and a log
+// this helper created and owns has exactly one link.
+func validateAuditLogFd(fd int, path string) error {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return fmt.Errorf("stat audit log %q: %w", path, err)
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG {
+		return fmt.Errorf("audit log %q is not a regular file", path)
+	}
+	if st.Nlink != 1 {
+		return fmt.Errorf("audit log %q is multiply linked (%d links)", path, st.Nlink)
+	}
+	return nil
+}
+
 func appendAuditLine(trustedRoot, path, line string) error {
 	parentFD, err := openAuditParent(trustedRoot, filepath.Dir(path))
 	if err != nil {
 		return err
 	}
 	defer unix.Close(parentFD)
-	leaf, err := unix.Openat(parentFD, filepath.Base(path), unix.O_APPEND|unix.O_CREAT|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
+	base := filepath.Base(path)
+	// Open O_WRONLY first: an EXISTING log with owner-write but NO owner-read (mode 0o200 —
+	// e.g. a read-masking umask + a crash after O_CREAT but before the Fchmod below ran) can
+	// still be opened this way, whereas O_RDWR would EACCES on the absent read bit BEFORE we
+	// could heal it — a recovery availability regression. Validate (regular, single-linked)
+	// then Fchmod owner read+write, so the O_RDWR re-open below and future readers succeed.
+	wfd, err := unix.Openat(parentFD, base, unix.O_APPEND|unix.O_CREAT|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return fmt.Errorf("open audit log %q: %w", path, err)
 	}
-	handle := os.NewFile(uintptr(leaf), path)
-	defer handle.Close()
-	var st unix.Stat_t
-	if err := unix.Fstat(leaf, &st); err != nil {
-		return fmt.Errorf("stat audit log %q: %w", path, err)
-	}
-	if st.Mode&unix.S_IFMT != unix.S_IFREG {
-		return fmt.Errorf("audit log %q is not a regular file", path)
-	}
-	// Reject a hard link: a multiply-linked regular file passes the S_IFREG check
-	// but would write audit evidence into an attacker-chosen inode. A log this
-	// helper created and owns has exactly one link.
-	if st.Nlink != 1 {
-		return fmt.Errorf("audit log %q is multiply linked (%d links)", path, st.Nlink)
-	}
-	// Openat's create mode is umask-masked; Fchmod the (validated regular,
-	// single-linked) log fd to 0o600 so a log created under a restrictive umask is
-	// not left unreadable. Idempotent on an already-0o600 log for later appends.
-	if err := unix.Fchmod(leaf, 0o600); err != nil {
-		return fmt.Errorf("chmod audit log %q: %w", path, err)
-	}
-	if _, err := io.WriteString(handle, line+"\n"); err != nil {
+	if err := validateAuditLogFd(wfd, path); err != nil {
+		_ = unix.Close(wfd)
 		return err
 	}
+	if err := unix.Fchmod(wfd, 0o600); err != nil {
+		_ = unix.Close(wfd)
+		return fmt.Errorf("chmod audit log %q: %w", path, err)
+	}
+	_ = unix.Close(wfd)
+	// Re-open O_RDWR (owner read now granted) for the flock + tail-Pread + append. Same
+	// openat-from-validated-parent + O_NOFOLLOW hardening, and re-validate regular +
+	// single-linked on the new fd.
+	leaf, err := unix.Openat(parentFD, base, unix.O_APPEND|unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		return fmt.Errorf("reopen audit log %q: %w", path, err)
+	}
+	handle := os.NewFile(uintptr(leaf), path)
+	defer handle.Close()
+	if err := validateAuditLogFd(leaf, path); err != nil {
+		return err
+	}
+	// Serialize the tail-check + append against other appenders to this SAME inode with an
+	// advisory exclusive lock on the log fd: the target audit log is shared across sessions
+	// (the per-session flock does not cover it), so without this a concurrent appender
+	// could write a newline-less fragment (or prepend a duplicate heal) BETWEEN our
+	// tail-Pread (which saw a clean '\n') and our O_APPEND write, gluing our line onto that
+	// fragment or injecting a stray blank line. LOCK_EX is advisory and per-inode across
+	// processes; a crashed writer's lock is auto-released by the OS on fd close/process
+	// death, so a dead torn-writer never wedges future appenders (the heal covers its
+	// stranded fragment).
+	//
+	// NON-BLOCKING with a bounded retry, never a blocking LOCK_EX: the log is shared, so a
+	// blocking acquire lets any same-UID process hold the advisory lock indefinitely and
+	// hang every appender (DoS). The real critical section (Fstat + Pread + one WriteString)
+	// is microseconds, so this retry virtually always wins against genuine concurrent
+	// appenders; an adversarial/stuck holder instead makes the append fail closed (the
+	// caller can retry) rather than hang forever.
+	locked := false
+	for attempt := 0; attempt < auditLockAttempts; attempt++ {
+		err := unix.Flock(leaf, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			locked = true
+			break
+		}
+		if err != unix.EWOULDBLOCK && err != unix.EAGAIN {
+			return fmt.Errorf("lock audit log %q: %w", path, err)
+		}
+		time.Sleep(auditLockBackoff)
+	}
+	if !locked {
+		return fmt.Errorf("could not acquire audit log lock %q: contended", path)
+	}
+	// Heal a torn append boundary: if the tail byte is not a newline (a prior short/ENOSPC
+	// append, or a crashed process, left a newline-less fragment at EOF), prepend a
+	// separator so this line lands on its OWN line rather than glued onto the fragment — a
+	// merged line would never byte-match an expected line yet inherit its trailing field,
+	// which conflictingCompleteLine would misread as a conflict, permanently dead-ending
+	// the append-only log. The fragment is left as an inert line (no session_id token →
+	// filterAuditSessionLines ignores it). Size is re-read UNDER the lock: a concurrent
+	// appender may have grown the file since the validation Fstat above.
+	prefix := ""
+	var end unix.Stat_t
+	if err := unix.Fstat(leaf, &end); err != nil {
+		return fmt.Errorf("stat audit log %q: %w", path, err)
+	}
+	if end.Size > 0 {
+		var last [1]byte
+		if _, err := unix.Pread(leaf, last[:], end.Size-1); err != nil {
+			return fmt.Errorf("read audit log tail %q: %w", path, err)
+		}
+		if last[0] != '\n' {
+			prefix = "\n"
+		}
+	}
+	if _, err := io.WriteString(handle, prefix+line+"\n"); err != nil {
+		return err // the deferred Close releases the advisory lock
+	}
+	_ = unix.Flock(leaf, unix.LOCK_UN) // release promptly; deferred Close is a backstop
 	return nil
 }
 
