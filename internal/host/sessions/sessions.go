@@ -54,6 +54,8 @@ type SessionRecord struct {
 	CurrentAssurance      string `json:"current_assurance,omitempty"`
 	FinalAssurance        string `json:"final_assurance,omitempty"`
 	WorkspaceControlPlane string `json:"workspace_control_plane,omitempty"`
+	BootstrapID           string `json:"bootstrap_id,omitempty"`
+	ImageRef              string `json:"image_ref,omitempty"`
 }
 
 type SessionListOptions struct {
@@ -397,6 +399,10 @@ func encodeSessionRecordFrom(existing []byte, updates map[string]string, source 
 			record.FinalAssurance = value
 		case "workspace_control_plane":
 			record.WorkspaceControlPlane = value
+		case "bootstrap_id":
+			record.BootstrapID = value
+		case "image_ref":
+			record.ImageRef = value
 		default:
 			return nil, fmt.Errorf("unsupported session record field %q", key)
 		}
@@ -877,6 +883,8 @@ func validateSessionRecord(record SessionRecord, source string) error {
 		{name: "current_assurance", value: record.CurrentAssurance},
 		{name: "final_assurance", value: record.FinalAssurance},
 		{name: "workspace_control_plane", value: record.WorkspaceControlPlane},
+		{name: "bootstrap_id", value: record.BootstrapID},
+		{name: "image_ref", value: record.ImageRef},
 	} {
 		if strings.ContainsAny(field.value, "\r\n") {
 			return fmt.Errorf("%s: session record field %s may not contain newlines", source, field.name)

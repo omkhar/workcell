@@ -72,8 +72,8 @@ func TestCheckPublicContractRejectsBogusExitCode(t *testing.T) {
 func TestCheckPublicContractRejectsMissingSessionRecordField(t *testing.T) {
 	root := publicContractRepoRoot(t)
 	contractPath := mutatedContractCopy(t, root,
-		`, "workspace_control_plane"]`,
-		`]`,
+		`"workspace_control_plane", `,
+		``,
 	)
 
 	err := CheckPublicContract(root, contractPath)

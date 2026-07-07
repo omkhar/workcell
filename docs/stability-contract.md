@@ -143,7 +143,7 @@ mechanism.
 `session_audit_dir`, `audit_log_path`, `debug_log_path`,
 `file_trace_log_path`, `transcript_log_path`, `started_at`, `observed_at`,
 `finished_at`, `exit_status`, `initial_assurance`, `current_assurance`,
-`final_assurance`, `workspace_control_plane`.
+`final_assurance`, `workspace_control_plane`, `bootstrap_id`, `image_ref`.
 
 `SessionExport` (`session export`) wraps this in `session` and adds
 `audit_records`.
