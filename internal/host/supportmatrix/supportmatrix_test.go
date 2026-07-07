@@ -110,6 +110,58 @@ func TestEvaluateReturnsPreviewOnlyRow(t *testing.T) {
 	}
 }
 
+func TestEvaluateReturnsAppleContainerPreviewRow(t *testing.T) {
+	t.Parallel()
+
+	// Assert against BOTH the fixture and the real reviewed policy file so the
+	// C1 apple-container evaluation row stays parseable and support-invisible.
+	for _, path := range []string{writeSupportMatrixFixture(t), realPolicyMatrixPath(t)} {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := Evaluate(path, Query{
+				HostOS:               "macos",
+				HostArch:             "arm64",
+				HostDistro:           "none",
+				HostDistroVersion:    "none",
+				TargetKind:           "local_vm",
+				TargetProvider:       "apple-container",
+				TargetAssuranceClass: "per-session-vm",
+			})
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			if result.Status != "preview-only" {
+				t.Fatalf("status = %q, want preview-only", result.Status)
+			}
+			if result.Launch != "blocked" {
+				t.Fatalf("launch = %q, want blocked", result.Launch)
+			}
+			if result.Evidence != "certification-only" {
+				t.Fatalf("evidence = %q, want certification-only", result.Evidence)
+			}
+			if result.ValidationLane != "none" {
+				t.Fatalf("validation_lane = %q, want none", result.ValidationLane)
+			}
+			if result.Reason != "apple-silicon-macos-26-apple-container-evaluation-preview" {
+				t.Fatalf("reason = %q, want apple-silicon-macos-26-apple-container-evaluation-preview", result.Reason)
+			}
+		})
+	}
+}
+
+func realPolicyMatrixPath(t *testing.T) string {
+	t.Helper()
+
+	// Test cwd is the package directory: internal/host/supportmatrix.
+	path := filepath.Join("..", "..", "..", "policy", "host-support-matrix.tsv")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("locating reviewed support matrix: %v", err)
+	}
+	return path
+}
+
 func TestEvaluateDefaultsToUnsupported(t *testing.T) {
 	t.Parallel()
 
@@ -180,6 +232,7 @@ func writeSupportMatrixFixture(t *testing.T) string {
 		"macos\tarm64\tnone\tnone\tlocal_vm\tcolima\tstrict\tsupported\tallowed\tcertification-only\tnone\tapple-silicon-macos-reviewed-launch-host",
 		"macos\tarm64\tnone\tnone\tremote_vm\taws-ec2-ssm\tcompat\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-aws-ec2-ssm-preview-certification-only",
 		"macos\tarm64\tnone\tnone\tremote_vm\tgcp-vm\tcompat\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-gcp-vm-preview-certification-only",
+		"macos\tarm64\tnone\tnone\tlocal_vm\tapple-container\tper-session-vm\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-26-apple-container-evaluation-preview",
 		"linux\tamd64\tany\tany\tlocal_vm\tcolima\tstrict\tvalidation-host-only\tblocked\trepo-required\ttrusted-linux-amd64-validator\ttrusted-linux-amd64-validation-host-only",
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
