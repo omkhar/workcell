@@ -1237,14 +1237,14 @@ jobs:
             --bundle dist/workcell-image.spdx.sigstore.json \
             dist/workcell-image.spdx.json
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.publish_manifest.outputs.digest }}
           push-to-registry: true
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           sbom-path: dist/workcell-image.spdx.json
@@ -1252,43 +1252,43 @@ jobs:
           subject-digest: ${{ steps.publish_manifest.outputs.digest }}
           push-to-registry: true
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/${{ env.BUNDLE_NAME }}
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           sbom-path: dist/workcell-source.spdx.json
           subject-path: dist/${{ env.BUNDLE_NAME }}
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell.rb
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-image.digest
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-build-inputs.json
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-control-plane.json
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-builder-environment.json
 
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/SHA256SUMS
