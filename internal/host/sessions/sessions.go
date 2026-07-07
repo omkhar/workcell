@@ -269,16 +269,58 @@ func isTerminalSessionStatus(status string) bool {
 	}
 }
 
+// IsTerminalSessionStatus reports whether status is terminal (exited/failed/
+// aborted); exported so external writers can enforce the same terminal guard.
+func IsTerminalSessionStatus(status string) bool { return isTerminalSessionStatus(status) }
+
 func WriteSessionRecord(path string, updates map[string]string) error {
+	data, err := EncodeSessionRecord(path, updates)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return writeFileAtomically(path, data, 0o600)
+}
+
+// EncodeSessionRecord produces the exact JSON bytes WriteSessionRecord would
+// persist for the given path+updates: it reads any existing record from the path,
+// merges the updates, refuses a terminal→non-terminal transition, normalizes,
+// validates (rejecting \r\n and missing required fields), and marshals. Splitting
+// the byte production from the write lets a caller persist the record through its
+// own atomic writer while reusing this exact serialization and validation.
+// WriteSessionRecord is a thin wrapper over it, so its behavior is unchanged.
+func EncodeSessionRecord(path string, updates map[string]string) ([]byte, error) {
+	var existing []byte
+	if data, err := os.ReadFile(path); err == nil {
+		existing = data
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return encodeSessionRecordFrom(existing, updates, path)
+}
+
+// EncodeSessionRecordFrom is EncodeSessionRecord over already-read existing bytes
+// (nil for none) instead of a path read, so a caller that has read the existing
+// record through its OWN hardened path can merge+validate without an unhardened
+// os.ReadFile inside the encode. Same merge/normalize/validation.
+func EncodeSessionRecordFrom(existing []byte, updates map[string]string) ([]byte, error) {
+	return encodeSessionRecordFrom(existing, updates, "session record")
+}
+
+func encodeSessionRecordFrom(existing []byte, updates map[string]string, source string) ([]byte, error) {
 	record := SessionRecord{Version: 1}
 	existingRecord := SessionRecord{}
 	hadExisting := false
-	if existing, err := ReadSessionRecord(path); err == nil {
-		record = existing
-		existingRecord = existing
+	if existing != nil {
+		decoded, err := DecodeSessionRecord(existing, source)
+		if err != nil {
+			return nil, err
+		}
+		record = decoded
+		existingRecord = decoded
 		hadExisting = true
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
 	}
 
 	for key, value := range updates {
@@ -356,48 +398,51 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 		case "workspace_control_plane":
 			record.WorkspaceControlPlane = value
 		default:
-			return fmt.Errorf("unsupported session record field %q", key)
+			return nil, fmt.Errorf("unsupported session record field %q", key)
 		}
 	}
 
 	if hadExisting && isTerminalSessionStatus(existingRecord.Status) && !isTerminalSessionStatus(record.Status) {
-		return fmt.Errorf("%s: refusing to overwrite terminal session status %q with %q", path, existingRecord.Status, record.Status)
+		return nil, fmt.Errorf("%s: refusing to overwrite terminal session status %q with %q", source, existingRecord.Status, record.Status)
 	}
 
 	record = normalizeSessionRecord(record)
-	if err := validateSessionRecord(record, path); err != nil {
-		return err
+	if err := validateSessionRecord(record, source); err != nil {
+		return nil, err
 	}
 
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	data = append(data, '\n')
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return writeFileAtomically(path, data, 0o600)
+	return append(data, '\n'), nil
 }
 
 func ReadSessionRecord(path string) (SessionRecord, error) {
-	var record SessionRecord
-
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return record, err
+		return SessionRecord{}, err
 	}
+	return DecodeSessionRecord(data, path)
+}
+
+// DecodeSessionRecord parses, normalizes, and validates a session record from its
+// JSON bytes (the read-side counterpart of EncodeSessionRecord). Splitting the
+// decode from the path read lets a caller read the bytes through its own hardened
+// path (e.g. an openat traversal) and reuse this exact parse/normalize/validation.
+// ReadSessionRecord is a thin wrapper over it, so its behavior is unchanged.
+func DecodeSessionRecord(data []byte, source string) (SessionRecord, error) {
+	var record SessionRecord
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&record); err != nil {
 		return record, err
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return record, fmt.Errorf("%s: unexpected trailing content", path)
+		return record, fmt.Errorf("%s: unexpected trailing content", source)
 	}
 	record = normalizeSessionRecord(record)
-	if err := validateSessionRecord(record, path); err != nil {
+	if err := validateSessionRecord(record, source); err != nil {
 		return SessionRecord{}, err
 	}
 	return record, nil
