@@ -66,6 +66,13 @@ func (t AppleContainerTarget) startEventsComplete(current sessions.SessionRecord
 		}},
 	}
 	for _, e := range t.startEventLines(current.StartedAt, sessionID, targetID, current.Workspace, synth) {
+		// Reject a CONFLICTING complete start line (a different complete line for the same
+		// event present alongside the expected one) — not just verify presence — mirroring
+		// the StartSession conflict scan, so FinishSession refuses to finalize over divergent
+		// start evidence rather than only checking the expected line is present.
+		if conflictingCompleteLine(lines, e.name, e.line) {
+			return false, fmt.Errorf("session %q has conflicting complete start evidence for %s — refusing to finalize", sessionID, e.name)
+		}
 		if !slices.Contains(lines, e.line) {
 			return false, nil
 		}
