@@ -973,6 +973,34 @@ func TestWriteSessionRecordRejectsNewlinesInMetadataFields(t *testing.T) {
 	}
 }
 
+func TestWriteSessionRecordRejectsNewlinesInBootstrapFields(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]string{
+		"session_id": "session-1",
+		"profile":    "wcl-fixture",
+		"agent":      "codex",
+		"mode":       "strict",
+		"status":     "running",
+		"workspace":  "/tmp/workspace",
+		"started_at": "2026-04-08T12:00:00Z",
+	}
+	for _, field := range []string{"bootstrap_id", "image_ref"} {
+		updates := make(map[string]string, len(base)+1)
+		for k, v := range base {
+			updates[k] = v
+		}
+		updates[field] = "ok\nsession_started=evil" // record-line injection attempt
+		err := WriteSessionRecord(filepath.Join(t.TempDir(), "record.json"), updates)
+		if err == nil {
+			t.Fatalf("WriteSessionRecord() with a newline in %s unexpectedly succeeded", field)
+		}
+		if !strings.Contains(err.Error(), "may not contain newlines") {
+			t.Fatalf("WriteSessionRecord() %s error = %v, want newline rejection", field, err)
+		}
+	}
+}
+
 func writeSessionFixture(tb testing.TB, path string, record SessionRecord) {
 	tb.Helper()
 

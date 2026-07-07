@@ -123,6 +123,11 @@ func (t AppleContainerTarget) startedRecordFields(req StartSessionRequest, sessi
 		"initial_assurance":       c.Session.Assurance,
 		"current_assurance":       c.Session.Assurance,
 		"workspace_control_plane": c.Session.WorkspaceControlPlane,
+		// Persist the bootstrap evidence into the record so the exhaustive match covers
+		// it: a recovery/idempotent retry carrying a DIFFERENT bootstrap (id/image) is a
+		// distinct start and is rejected, even if no audit line landed before the crash.
+		"bootstrap_id": req.Bootstrap.Manifest.BootstrapID,
+		"image_ref":    req.Bootstrap.Manifest.ImageRef,
 	}
 }
 
