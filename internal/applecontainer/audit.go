@@ -6,6 +6,7 @@ package applecontainer
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -341,8 +342,46 @@ func readFileSafe(trustedRoot, path, label string) ([]byte, error) {
 }
 
 // readAuditLog reads the audit log through readFileSafe.
+// readAuditLog reads the audit log through the hardened reader. If the read fails ONLY
+// because the log is write-only (EACCES — a crash after O_CREAT under a read-masking umask
+// left the read bit off before appendAuditLine's Fchmod), it heals the mode to 0o600 once
+// and re-reads, so recovery reads are not stranded. Every other error (ErrNotExist and the
+// no-follow/regular/Nlink refusals) passes through, and the heal never creates state.
 func readAuditLog(trustedRoot, path string) ([]byte, error) {
+	data, err := readFileSafe(trustedRoot, path, "audit log")
+	if err == nil || !errors.Is(err, os.ErrPermission) {
+		return data, err
+	}
+	if herr := healAuditLogModeForRead(trustedRoot, path); herr != nil {
+		return nil, herr
+	}
 	return readFileSafe(trustedRoot, path, "audit log")
+}
+
+// healAuditLogModeForRead re-establishes owner read on an EXISTING write-only audit log
+// (mode 0o200 — a crash after O_CREAT under a read-masking umask, before appendAuditLine's
+// Fchmod). Opens it O_WRONLY (which a 0o200 log still permits) via the NO-CREATE parent
+// opener + O_NOFOLLOW — a read-path heal must never create a missing parent or log — then
+// re-validates single-linked regular and Fchmods 0o600 so the re-read succeeds. A missing
+// component errors rather than being created.
+func healAuditLogModeForRead(trustedRoot, path string) error {
+	parentFD, err := openParentDirNoCreate(trustedRoot, filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer unix.Close(parentFD)
+	fd, err := unix.Openat(parentFD, filepath.Base(path), unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open audit log %q for mode heal: %w", path, err)
+	}
+	defer unix.Close(fd)
+	if err := validateAuditLogFd(fd, path); err != nil {
+		return err
+	}
+	if err := unix.Fchmod(fd, 0o600); err != nil {
+		return fmt.Errorf("chmod audit log %q: %w", path, err)
+	}
+	return nil
 }
 
 // readSessionRecordSafe reads and decodes the session record through readFileSafe
