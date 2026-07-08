@@ -80,16 +80,22 @@ investigate.
 4. **Halt the target's isolation boundary (defense in depth).** Stopping the
    session (steps 2-3) stops its container; the general principle for a fuller
    halt is then to bring down the target's isolation boundary. That command is
-   **target-specific**, so first confirm which target the session used
-   (`workcell session list --verbose`, or `--inspect` for `target_kind` /
-   `target_provider`), then act on it. At 1.0 the operator-reachable targets on
-   the supported macOS arm64 host are the two `launch=allowed` rows in
+   **target-specific**, so first confirm which target the **suspect session**
+   used. Read it from that session's record — `workcell session show --id
+   SESSION_ID` (or `workcell session list --verbose`) reports the record's
+   `target_kind` and `target_provider`. Do not use `--inspect` for this: it
+   prints your *current* launch options, not the suspect session's target. At 1.0
+   the operator-reachable targets on the supported macOS arm64 host are the two
+   `launch=allowed` rows in
    [`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv):
    - **`local_vm` / Colima (the default, strict target).** All sessions for a
-     profile run inside one dedicated Colima VM. Identify the profile from
-     `workcell session list` or `--inspect`, then stop that VM through Colima
-     directly (`colima stop -p <profile>`) to halt all execution on it. Note:
-     stopping the VM removes the profile's Docker socket, so a later
+     profile run inside one dedicated Colima VM. Take the profile from the session
+     record (`workcell session show --id SESSION_ID`), then stop that VM through
+     Colima directly. Pin the Colima home so you hit the same VM the launcher
+     created — the launcher always invokes Colima with `COLIMA_HOME=~/.colima`
+     (`scripts/workcell:620-632`, `run_host_colima`) — so run
+     `COLIMA_HOME=~/.colima colima stop -p <profile>` to halt all execution on it.
+     Note: stopping the VM removes the profile's Docker socket, so a later
      `workcell session delete` cannot clean container artifacts until the VM is
      running again (see step 7). Host-side collection in step 4 does not need the
      VM, so this halt is safe to do before collecting.
@@ -108,8 +114,9 @@ investigate.
 
 Durable session state lives on the host under the Workcell-owned target-state
 root, and the path is **target-aware**. Identify the target first — the same
-`workcell session list --verbose` / `--inspect` `target_kind` and
-`target_provider` you used in step 2 — then preserve that target's tree.
+`target_kind` and `target_provider` from the suspect session's record
+(`workcell session show --id SESSION_ID`, or `workcell session list --verbose`)
+you read in step 2 — then preserve that target's tree.
 
 The general layout (`internal/host/hoststate/profilepaths.go`
 `ProfileTargetStateDir` /`ProfileSessionsDirPath` / `ProfileAuditLogPath`) is
@@ -292,16 +299,18 @@ Only after evidence is collected and reported:
   Docker socket available, i.e. the Colima VM running. If you halted the VM in
   step 2.4, normal `session delete` refuses container cleanup and tells you to
   retry with the socket available; in that state either restart the VM
-  (`colima start -p <profile>`) and delete, or pass `--record-only` to remove
-  just the durable record (keeping container/log artifacts), or remove the
-  preserved state-root files by hand after evidence collection.
+  (`COLIMA_HOME=~/.colima colima start -p <profile>`) and delete, or pass
+  `--record-only` to remove just the durable record (keeping container/log
+  artifacts), or remove the preserved state-root files by hand after evidence
+  collection.
 - **Reset a suspect Colima profile.** `--repair-profile` is **not** a reset for a
   compromised VM: it only deletes an *unmanaged* profile (one that pre-exists
   without Workcell ownership metadata) as a launch-time conflict repair, and does
   nothing to a Workcell-managed profile. To fully reset a suspect profile, delete
-  it through Colima's own CLI — `colima delete -p <profile> --force` (the
-  launcher pins the Colima home to `~/.colima`, so run it against that home) —
-  then a fresh `workcell` launch recreates a clean managed profile from the
+  it through Colima's own CLI, pinning the same home the launcher uses so you hit
+  the Workcell VM — `COLIMA_HOME=~/.colima colima delete -p <profile> --force`
+  (`scripts/workcell:620-632`) — then a fresh `workcell` launch recreates a clean
+  managed profile from the
   reviewed image. Because the strict runtime container is ephemeral, a clean
   relaunch otherwise starts from the reviewed image already.
 - **Close the loop.** If the incident revealed a genuine boundary weakness (not
