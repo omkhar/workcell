@@ -321,14 +321,24 @@ Only after evidence is collected and reported:
   SESSION_ID` removes the durable record and stopped-session artifacts (use
   `--dry-run` first to preview the cleanup). It has two preconditions: the
   session must be in a terminal status (exited, failed, or stopped — stop it
-  first, per step 2), and cleaning the session **container** needs the profile's
-  Docker socket available, i.e. the Colima VM running. If you halted the VM in
-  step 2.4, normal `session delete` refuses container cleanup and tells you to
-  retry with the socket available; in that state either restart the VM
-  (`COLIMA_HOME=~/.colima colima start -p <profile>`) and delete, or pass
-  `--record-only` to remove just the durable record (keeping container/log
-  artifacts), or remove the preserved state-root files by hand after evidence
-  collection.
+  first, per step 2), and cleaning the session **container** needs the target's
+  Docker socket available (`profile_docker_transport_available`,
+  `scripts/workcell:1649-1675`). Where that socket comes from is target-specific:
+  - **`local_vm` / Colima:** the socket is the Colima VM's Docker socket
+    (`scripts/workcell:1657-1660`), so it is available only while the VM is
+    running. If you halted the VM in step 2.4, restart it with
+    `COLIMA_HOME=~/.colima colima start -p <profile>`, then delete.
+  - **`local_compat` / Docker Desktop:** the socket is a healthy Docker Desktop
+    context reached through the host `docker` binary (`scripts/workcell:1661-1670`),
+    so it is available only while **Docker Desktop itself is running** — ensure
+    the Docker Desktop app/daemon is up, then delete. Do not run `colima start`
+    for this target; Docker Desktop does not use Colima.
+
+  Until the socket is available, normal `session delete` refuses container
+  cleanup and tells you to retry with the socket available; in that state either
+  bring the socket up as above, or pass `--record-only` to remove just the
+  durable record (keeping container/log artifacts), or remove the preserved
+  state-root files by hand after evidence collection.
 - **Reset a suspect Colima profile.** `--repair-profile` is **not** a reset for a
   compromised VM: it only deletes an *unmanaged* profile (one that pre-exists
   without Workcell ownership metadata) as a launch-time conflict repair, and does
