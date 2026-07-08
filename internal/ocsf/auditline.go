@@ -74,29 +74,44 @@ func auditEncodingForProvider(provider string) auditEncoding {
 // could carry a secret-shaped key) is bucketed under one fixed redacted property
 // instead of becoming a JSON property name of its own.
 //
-// Derived from the AUDIT writers only, not hand-curated. Regenerate from the
-// bash audit-append functions (NOT all of scripts/workcell — the whole file also
-// contains write_session_record's git_branch/git_head/git_base SessionRecord
-// fields and the core.*/git_* alias-guard substrings at ~6775-6778, none of
-// which are audit-line keys) plus the apple-container Go writers:
+// Derived from the AUDIT writers only, not hand-curated — the audit LOG, never
+// the session RECORD. write_session_record (go_hostutil session-record-write)
+// emits SessionRecord-only fields that LOOK like audit keys (audit_log_path,
+// debug_log_path, file_trace_log_path, transcript_log_path, session_audit_dir,
+// target_assurance_class, workspace_root, worktree_path, monitor_pid,
+// current_assurance/initial_assurance, live_status, observed_at, started_at,
+// finished_at) but never reach the audit log, so they are EXCLUDED; the
+// core.*/git_* alias-guard substrings (~6775-6778) and git_branch/git_head/
+// git_base are not audit-line keys either.
 //
-//	{ awk '/^append_(launch|exit|session_control)_audit_record\(\)/{f=1} f&&/^}/{f=0}
-//	      f' scripts/workcell | grep -hoE '"[a-z_0-9]+=' | sed 's/"//;s/=//';
-//	  grep -hoE '[a-z_]+=%s' internal/applecontainer/recovery.go \
-//	    internal/applecontainer/target_session.go | sed 's/=%s//';
-//	  printf 'timestamp\nts\nprev_digest\nrecord_digest\nmaterialization_id\naccess_model\nbootstrap_id\nimage_ref\nv\n'; } |
-//	  sort -u | grep -vE '^(0|1)$'
+// The audit-line keys come from FOUR bash append_*_audit_record function bodies
+// (launch, exit, assurance_change, session_control), the EVENT-SPECIFIC inline
+// key=value args passed at every append_session_control_audit_record CALL SITE
+// (source/stdin_mode/container_name/command/argv/force/exit_status/
+// final_assurance/transport_status), the framing keys the
+// append_audit_record_to_path wrapper stamps on every record (timestamp/
+// prev_digest/record_digest), the apple-container Go writers, and the
+// apple-container schema sentinel `v` (auditLineSentinel = " v=1"). Regenerate:
 //
-// (the last printf adds the framing keys the append_audit_record_to_path wrapper
-// stamps plus the apple-container schema sentinel `v` from auditLineSentinel).
-// A new legitimate writer key not yet listed degrades safely to the redacted
-// bucket, not a leak.
+//	{ awk '/^append_(launch|exit|assurance_change|session_control)_audit_record\(\)/{f=1}
+//	       f&&/^}/{f=0} f' scripts/workcell |
+//	    grep -hoE '"[a-z_0-9]+=' | sed 's/"//;s/=//';
+//	  awk '/[[:space:]]append_session_control_audit_record /{c=1}
+//	       c{print} c&&!/\\$/{c=0}' scripts/workcell |
+//	    grep -hoE '"[a-z_0-9]+=' | sed 's/"//;s/=//';
+//	  grep -hoE '[a-z_0-9]+=%s' \
+//	    internal/applecontainer/recovery.go internal/applecontainer/target_session.go |
+//	    sed 's/=%s//';
+//	  printf 'timestamp\nprev_digest\nrecord_digest\nv\n'; } | sort -u
+//
+// (`event` comes from the bash bodies; the apple-container writers emit it as a
+// literal so it is not matched by =%s but is already covered.) A new legitimate
+// writer key not yet listed degrades safely to the redacted bucket, not a leak.
 var knownAuditFields = map[string]struct{}{
 	"access_model":                          {},
 	"agent":                                 {},
 	"agent_autonomy":                        {},
 	"argv":                                  {},
-	"audit_log_path":                        {},
 	"autonomy_assurance":                    {},
 	"bootstrap_applied":                     {},
 	"bootstrap_endpoints":                   {},
@@ -112,34 +127,25 @@ var knownAuditFields = map[string]struct{}{
 	"command":                            {},
 	"container_assurance":                {},
 	"container_name":                     {},
-	"current_assurance":                  {},
 	"debug_log_enabled":                  {},
-	"debug_log_path":                     {},
 	"endpoints":                          {},
 	"event":                              {},
 	"execution_path":                     {},
 	"exit_status":                        {},
-	"file_trace_log_path":                {},
 	"final_assurance":                    {},
-	"finished_at":                        {},
 	"force":                              {},
 	"github_auth_present":                {},
 	"image_ref":                          {},
-	"initial_assurance":                  {},
 	"injection_credential_keys":          {},
 	"injection_policy_sha256":            {},
 	"injection_secret_copy_targets":      {},
 	"injection_ssh_enabled":              {},
-	"live_status":                        {},
 	"log_level":                          {},
 	"materialization_id":                 {},
 	"mode":                               {},
-	"monitor_pid":                        {},
 	"network_policy":                     {},
 	"observability_assurance":            {},
-	"observed_at":                        {},
 	"package_mutation_downgraded":        {},
-	"prepare":                            {},
 	"prev_digest":                        {},
 	"profile":                            {},
 	"provider_auth_mode":                 {},
@@ -152,20 +158,16 @@ var knownAuditFields = map[string]struct{}{
 	"runtime_api":                        {},
 	"session_assurance_final":            {},
 	"session_assurance_initial":          {},
-	"session_audit_dir":                  {},
 	"session_id":                         {},
 	"shared_auth_modes":                  {},
 	"source":                             {},
 	"ssh_config_assurance":               {},
-	"started_at":                         {},
 	"status":                             {},
 	"stdin_mode":                         {},
-	"target_assurance_class":             {},
 	"target_id":                          {},
 	"target_kind":                        {},
 	"target_provider":                    {},
 	"timestamp":                          {},
-	"transcript_log_path":                {},
 	"transcript_logging":                 {},
 	"transport_status":                   {},
 	"ts":                                 {},
@@ -177,9 +179,7 @@ var knownAuditFields = map[string]struct{}{
 	"workspace":               {},
 	"workspace_control_plane": {},
 	"workspace_origin":        {},
-	"workspace_root":          {},
 	"workspace_transport":     {},
-	"worktree_path":           {},
 }
 
 // auditField is one ordered key/value pair decoded from an audit record.
