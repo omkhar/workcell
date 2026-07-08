@@ -1,0 +1,449 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Omkhar Arasaratnam
+
+// Package ocsf maps a Workcell session export onto the Open Cybersecurity Schema
+// Framework (OCSF) and emits it as JSONL — one OCSF event object per line.
+//
+// Class choice: a Workcell session is a sandboxed agent application instance
+// that is started and stopped, so its lifecycle maps to the OCSF
+// "Application Lifecycle" class (class_uid 6002) in the "Application Activity"
+// category (category_uid 6). This file maps the session RECORD to one summary
+// event; a companion change adds one event per audit lifecycle record. The long
+// tail of session fields is preserved under the OCSF `unmapped` object so no
+// evidence is lost while the typed OCSF attributes stay well-defined.
+//
+// Redaction is SHARED with the G2 support-bundle redactor
+// (supportbundle.Redactor): every free-form string that enters an OCSF event is
+// passed through the same rule-set, so no credential, token, or operator home
+// path leaks into the export. Redaction is applied unconditionally — there is no
+// un-redacted OCSF output path.
+package ocsf
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/supportbundle"
+)
+
+// OCSFSchemaVersion is the OCSF schema release the mapping targets. It is
+// emitted as metadata.version so consumers can select the right schema.
+const OCSFSchemaVersion = "1.3.0"
+
+// MappingVersion versions the Workcell field→OCSF-attribute mapping itself,
+// independent of the OCSF schema version. Bump it whenever the mapping in this
+// package changes (a field is remapped, an activity_id reassigned, an attribute
+// added/removed) so consumers can gate on the exact mapping that produced an
+// event. It is emitted as metadata.mapping_version.
+const MappingVersion = "1"
+
+// OCSF Application Lifecycle classification constants.
+const (
+	categoryUID  = 6
+	categoryName = "Application Activity"
+	classUID     = 6002
+	className    = "Application Lifecycle"
+)
+
+// productName / vendorName identify Workcell as the OCSF metadata.product.
+const (
+	productName = "workcell"
+	vendorName  = "Workcell"
+)
+
+// Application Lifecycle activity_ids (OCSF 1.x).
+const (
+	activityUnknown = 0
+	activityStart   = 3
+	activityStop    = 4
+	activityOther   = 99
+)
+
+// OCSF base-event severity_ids.
+const (
+	severityInformational = 1
+	severityMedium        = 3
+)
+
+// OCSF base-event status_ids.
+const (
+	statusUnknown = 0
+	statusSuccess = 1
+	statusFailure = 2
+)
+
+// OCSF device type_id 6 = "Virtual"; a Workcell target is a VM/container.
+const (
+	deviceTypeVirtualID = 6
+	deviceTypeVirtual   = "Virtual"
+)
+
+// Product is the OCSF metadata.product object identifying the emitter.
+type Product struct {
+	Name       string `json:"name"`
+	VendorName string `json:"vendor_name"`
+}
+
+// Metadata is the OCSF base-event metadata object. Version carries the OCSF
+// schema version; MappingVersion is a Workcell extension carrying the mapping
+// version so the two version axes are independently discoverable.
+type Metadata struct {
+	Version        string  `json:"version"`
+	Product        Product `json:"product"`
+	LoggedTime     int64   `json:"logged_time"`
+	MappingVersion string  `json:"mapping_version"`
+}
+
+// App is the OCSF Application object describing the agent session instance.
+// App is the OCSF Product-typed `app` attribute. OCSF 1.3.0 requires
+// vendor_name on Product objects, so it is always emitted (not omitempty).
+type App struct {
+	Name       string `json:"name,omitempty"`
+	VendorName string `json:"vendor_name"`
+	UID        string `json:"uid,omitempty"`
+}
+
+// Device is the OCSF Device object describing the sandbox target.
+type Device struct {
+	TypeID   int    `json:"type_id"`
+	Type     string `json:"type"`
+	Name     string `json:"name,omitempty"`
+	Hostname string `json:"hostname,omitempty"`
+	UID      string `json:"uid,omitempty"`
+}
+
+// Event is a single OCSF Application Lifecycle event. Field order and json tags
+// follow OCSF base-event + Application Lifecycle attribute names. Unmapped holds
+// the redacted long tail of session/audit fields that have no typed OCSF home.
+type Event struct {
+	CategoryUID  int               `json:"category_uid"`
+	CategoryName string            `json:"category_name"`
+	ClassUID     int               `json:"class_uid"`
+	ClassName    string            `json:"class_name"`
+	ActivityID   int               `json:"activity_id"`
+	ActivityName string            `json:"activity_name"`
+	TypeUID      int               `json:"type_uid"`
+	TypeName     string            `json:"type_name"`
+	Time         int64             `json:"time"`
+	TimeDt       string            `json:"time_dt,omitempty"`
+	SeverityID   int               `json:"severity_id"`
+	Severity     string            `json:"severity"`
+	StatusID     int               `json:"status_id"`
+	Status       string            `json:"status"`
+	Message      string            `json:"message"`
+	Metadata     Metadata          `json:"metadata"`
+	App          *App              `json:"app,omitempty"`
+	Device       *Device           `json:"device,omitempty"`
+	Unmapped     map[string]string `json:"unmapped,omitempty"`
+}
+
+// Options carries the host context the mapper needs. Home is the operator home
+// directory; it is forwarded to the shared support-bundle redactor so paths are
+// rewritten to ~ exactly as the support bundle does.
+type Options struct {
+	Home string
+	// Now is the export time stamped into metadata.logged_time. Zero means
+	// time.Now() at call time; tests pin it for deterministic golden output.
+	Now time.Time
+}
+
+// Export maps a session export to OCSF Application Lifecycle events with the
+// shared support-bundle redaction applied to every free-form string. This change
+// emits one summary event for the session record; a companion change appends one
+// event per audit lifecycle record. The error return is reserved for that
+// companion change (a tampered audit record fails the export closed); the
+// session-only mapping here never fails.
+func Export(export sessions.SessionExport, opts Options) ([]Event, error) {
+	r := supportbundle.NewRedactor(opts.Home)
+	return mapExport(export, r.String, opts.Now)
+}
+
+// WriteJSONL writes events as JSON Lines: one compact JSON object per line,
+// terminated by a newline. It is the on-the-wire form of the OCSF export.
+func WriteJSONL(w io.Writer, events []Event) error {
+	bw := bufio.NewWriter(w)
+	enc := json.NewEncoder(bw)
+	enc.SetEscapeHTML(false)
+	for _, ev := range events {
+		if err := enc.Encode(ev); err != nil {
+			return err
+		}
+	}
+	return bw.Flush()
+}
+
+// mapExport is the redaction-injectable core. redact is applied to every
+// free-form string before it enters an event; production passes the shared
+// support-bundle redactor. A test can pass an identity function to prove that,
+// without redaction, a secret-bearing field would leak — then that the shared
+// redactor removes it.
+func mapExport(export sessions.SessionExport, redact func(string) string, now time.Time) ([]Event, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	loggedTime := now.UnixMilli()
+
+	events := []Event{sessionEvent(export.Session, redact, loggedTime)}
+	return events, nil
+}
+
+// meta builds the OCSF metadata object stamped with both version axes.
+func meta(loggedTime int64) Metadata {
+	return Metadata{
+		Version:        OCSFSchemaVersion,
+		Product:        Product{Name: productName, VendorName: vendorName},
+		LoggedTime:     loggedTime,
+		MappingVersion: MappingVersion,
+	}
+}
+
+// activityName maps an activity_id to its OCSF label.
+func activityName(id int) string {
+	switch id {
+	case activityStart:
+		return "Start"
+	case activityStop:
+		return "Stop"
+	case activityOther:
+		return "Other"
+	default:
+		return "Unknown"
+	}
+}
+
+// severityName maps a severity_id to its OCSF label.
+func severityName(id int) string {
+	switch id {
+	case severityMedium:
+		return "Medium"
+	default:
+		return "Informational"
+	}
+}
+
+// statusName maps a status_id to its OCSF label.
+func statusName(id int) string {
+	switch id {
+	case statusSuccess:
+		return "Success"
+	case statusFailure:
+		return "Failure"
+	default:
+		return "Unknown"
+	}
+}
+
+// sessionEvent builds the summary event from the session record. A session that
+// has finished (FinishedAt or ExitStatus set) maps to Stop; otherwise Start.
+func sessionEvent(rec sessions.SessionRecord, redact func(string) string, loggedTime int64) Event {
+	finished := strings.TrimSpace(rec.FinishedAt) != "" || strings.TrimSpace(rec.ExitStatus) != ""
+	activity := activityStart
+	if finished {
+		activity = activityStop
+	}
+
+	severityID := severityFromExit(rec.ExitStatus)
+	statusID := statusUnknown
+	if finished {
+		statusID = statusFromExit(rec.ExitStatus)
+		// A terminal record whose durable status is failed/aborted is a failure
+		// regardless of a 0 (or empty) exit code: the session validator accepts
+		// those terminal statuses independently of the exit value, so a run that
+		// failed or was aborted must not be exported as a Success/Informational
+		// lifecycle event.
+		if isFailedTerminalStatus(rec.Status) {
+			statusID = statusFailure
+			severityID = severityMedium
+		}
+	}
+
+	timeStr := rec.StartedAt
+	if strings.TrimSpace(rec.FinishedAt) != "" {
+		timeStr = rec.FinishedAt
+	}
+	epoch, dt := parseTime(timeStr, redact)
+
+	unmapped := newUnmapped()
+	unmapped.put("session.version", fmt.Sprintf("%d", rec.Version))
+	unmapped.putStr("session.profile", rec.Profile, redact)
+	unmapped.putStr("session.status", rec.Status, redact)
+	unmapped.putStr("session.live_status", rec.LiveStatus, redact)
+	unmapped.putStr("session.ui", rec.UI, redact)
+	unmapped.putStr("session.execution_path", rec.ExecutionPath, redact)
+	unmapped.putStr("session.workspace", rec.Workspace, redact)
+	unmapped.putStr("session.workspace_origin", rec.WorkspaceOrigin, redact)
+	unmapped.putStr("session.workspace_root", rec.WorkspaceRoot, redact)
+	unmapped.putStr("session.worktree_path", rec.WorktreePath, redact)
+	unmapped.putStr("session.workspace_transport", rec.WorkspaceTransport, redact)
+	unmapped.putStr("session.workspace_control_plane", rec.WorkspaceControlPlane, redact)
+	unmapped.putStr("session.git_branch", rec.GitBranch, redact)
+	unmapped.putStr("session.git_head", rec.GitHead, redact)
+	unmapped.putStr("session.git_base", rec.GitBase, redact)
+	unmapped.putStr("session.runtime_api", rec.RuntimeAPI, redact)
+	unmapped.putStr("session.target_kind", rec.TargetKind, redact)
+	unmapped.putStr("session.target_provider", rec.TargetProvider, redact)
+	unmapped.putStr("session.target_id", rec.TargetID, redact)
+	unmapped.putStr("session.target_assurance_class", rec.TargetAssuranceClass, redact)
+	unmapped.putStr("session.initial_assurance", rec.InitialAssurance, redact)
+	unmapped.putStr("session.current_assurance", rec.CurrentAssurance, redact)
+	unmapped.putStr("session.final_assurance", rec.FinalAssurance, redact)
+	unmapped.putStr("session.bootstrap_id", rec.BootstrapID, redact)
+	unmapped.putStr("session.image_ref", rec.ImageRef, redact)
+	unmapped.putStr("session.container_name", rec.ContainerName, redact)
+	unmapped.putStr("session.monitor_pid", rec.MonitorPID, redact)
+	unmapped.putStr("session.session_audit_dir", rec.SessionAuditDir, redact)
+	unmapped.putStr("session.audit_log_path", rec.AuditLogPath, redact)
+	unmapped.putStr("session.debug_log_path", rec.DebugLogPath, redact)
+	unmapped.putStr("session.file_trace_log_path", rec.FileTraceLogPath, redact)
+	unmapped.putStr("session.transcript_log_path", rec.TranscriptLogPath, redact)
+	unmapped.putStr("session.started_at", rec.StartedAt, redact)
+	unmapped.putStr("session.observed_at", rec.ObservedAt, redact)
+	unmapped.putStr("session.finished_at", rec.FinishedAt, redact)
+	unmapped.putStr("session.exit_status", rec.ExitStatus, redact)
+
+	return Event{
+		CategoryUID:  categoryUID,
+		CategoryName: categoryName,
+		ClassUID:     classUID,
+		ClassName:    className,
+		ActivityID:   activity,
+		ActivityName: activityName(activity),
+		TypeUID:      typeUID(activity),
+		TypeName:     className + ": " + activityName(activity),
+		Time:         epoch,
+		TimeDt:       dt,
+		SeverityID:   severityID,
+		Severity:     severityName(severityID),
+		StatusID:     statusID,
+		Status:       statusName(statusID),
+		Message:      "workcell session " + redact(rec.SessionID) + " " + activityName(activity),
+		Metadata:     meta(loggedTime),
+		App:          sessionApp(rec, redact),
+		Device:       sessionDevice(rec, redact),
+		Unmapped:     unmapped.finish(),
+	}
+}
+
+// sessionApp builds the OCSF App object for the agent session. Agent and mode
+// are enumerated values but are still routed through redact for uniformity.
+func sessionApp(rec sessions.SessionRecord, redact func(string) string) *App {
+	name := strings.TrimSpace(rec.Agent)
+	if mode := strings.TrimSpace(rec.Mode); mode != "" {
+		if name != "" {
+			name += "/" + mode
+		} else {
+			name = mode
+		}
+	}
+	if name == "" && strings.TrimSpace(rec.SessionID) == "" {
+		return nil
+	}
+	return &App{Name: redact(name), VendorName: vendorName, UID: redact(rec.SessionID)}
+}
+
+// sessionDevice builds the OCSF Device object for the sandbox target.
+func sessionDevice(rec sessions.SessionRecord, redact func(string) string) *Device {
+	name := strings.TrimSpace(rec.TargetID)
+	host := strings.TrimSpace(rec.ContainerName)
+	if name == "" && host == "" {
+		return nil
+	}
+	return &Device{
+		TypeID:   deviceTypeVirtualID,
+		Type:     deviceTypeVirtual,
+		Name:     redact(name),
+		Hostname: redact(host),
+		UID:      redact(name),
+	}
+}
+
+// typeUID follows the OCSF convention type_uid = class_uid*100 + activity_id.
+func typeUID(activity int) int {
+	return classUID*100 + activity
+}
+
+// severityFromExit returns Medium when a non-empty exit status is non-zero,
+// otherwise Informational.
+func severityFromExit(exitStatus string) int {
+	s := strings.TrimSpace(exitStatus)
+	if s != "" && s != "0" {
+		return severityMedium
+	}
+	return severityInformational
+}
+
+// statusFromExit maps a terminal exit status to Success/Failure. An unset exit
+// status on a terminal event is Success (a clean stop without a recorded code).
+func statusFromExit(exitStatus string) int {
+	s := strings.TrimSpace(exitStatus)
+	if s == "" || s == "0" {
+		return statusSuccess
+	}
+	return statusFailure
+}
+
+// isFailedTerminalStatus reports whether a durable session status is a failure
+// outcome (failed/aborted) that must be exported as a Failure regardless of the
+// recorded exit code. The session validator accepts these terminal statuses
+// independently of the exit value (internal/host/sessions/sessions.go).
+func isFailedTerminalStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "aborted":
+		return true
+	default:
+		return false
+	}
+}
+
+// parseTime parses an RFC3339 timestamp to epoch milliseconds and returns the
+// redacted original string as time_dt. An unparseable value yields time 0 and
+// preserves the (redacted) original for the consumer.
+func parseTime(value string, redact func(string) string) (int64, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, ""
+	}
+	dt := redact(value)
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t.UnixMilli(), dt
+	}
+	return 0, dt
+}
+
+// unmapped accumulates the OCSF `unmapped` object, skipping empty values so the
+// object only carries fields the record actually set.
+type unmapped struct {
+	m map[string]string
+}
+
+func newUnmapped() *unmapped { return &unmapped{m: make(map[string]string)} }
+
+// put records a raw (already-safe) key/value, skipping empties.
+func (u *unmapped) put(key, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	u.m[key] = value
+}
+
+// putStr redacts value through the shared redactor before recording it.
+func (u *unmapped) putStr(key, value string, redact func(string) string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	u.m[key] = redact(value)
+}
+
+// finish returns the accumulated map, or nil when empty so the omitempty tag
+// drops the object entirely.
+func (u *unmapped) finish() map[string]string {
+	if len(u.m) == 0 {
+		return nil
+	}
+	return u.m
+}

@@ -22,6 +22,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/stateroot"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
 	"github.com/omkhar/workcell/internal/injection"
+	"github.com/omkhar/workcell/internal/ocsf"
 	"github.com/omkhar/workcell/internal/publishpr"
 	"github.com/omkhar/workcell/internal/sessionctl"
 	"github.com/omkhar/workcell/internal/supportbundle"
@@ -1182,7 +1183,32 @@ func runHelperSessionShow(args []string) error {
 	return nil
 }
 
+// runHelperSessionExport renders `workcell session export`. It accepts two
+// leading launcher-supplied flags before the session roots: --format=<json|ocsf>
+// selects the output shape (default json, the existing SessionExport indent-JSON)
+// and --real-home=<dir> supplies the operator home used as the OCSF redaction
+// root. Both are stripped here so the remaining args keep the roots+id shape
+// parseSessionRootsSingle expects.
 func runHelperSessionExport(args []string) error {
+	format := "json"
+	realHome := ""
+	for len(args) > 0 {
+		if v, ok := strings.CutPrefix(args[0], "--format="); ok {
+			format = v
+		} else if v, ok := strings.CutPrefix(args[0], "--real-home="); ok {
+			realHome = v
+		} else {
+			break
+		}
+		args = args[1:]
+	}
+
+	switch format {
+	case "json", "ocsf":
+	default:
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("Unsupported session export format: %s", format)}
+	}
+
 	roots, id, err := parseSessionRootsSingle(args)
 	if err != nil {
 		return err
@@ -1192,6 +1218,15 @@ func runHelperSessionExport(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	if format == "ocsf" {
+		events, err := ocsf.Export(exported, ocsf.Options{Home: realHome})
+		if err != nil {
+			return err
+		}
+		return ocsf.WriteJSONL(os.Stdout, events)
+	}
+
 	content, err := json.MarshalIndent(exported, "", "  ")
 	if err != nil {
 		return err

@@ -4250,6 +4250,7 @@ session_main() {
   local emit_verbose=0
   local emit_text=0
   local session_id=""
+  local session_format="json"
   local output_path=""
   local output=""
   local metadata=""
@@ -4502,6 +4503,10 @@ session_main() {
             output_path="$(raw_option_value_or_die "$1" "${2-}")"
             shift 2
             ;;
+          --format)
+            session_format="$(option_value_or_die "$1" "${2-}")"
+            shift 2
+            ;;
           -h | --help)
             session_usage
             exit 0
@@ -4517,8 +4522,21 @@ session_main() {
         echo "workcell session export requires --id." >&2
         exit 2
       }
+      case "${session_format}" in
+        json | ocsf) ;;
+        *)
+          echo "workcell session export --format must be json or ocsf." >&2
+          exit 2
+          ;;
+      esac
       collect_session_lookup_roots || exit 1
-      output="$(go_hostutil helper session-export "${SESSION_LOOKUP_ROOTS[@]}" "${session_id}")"
+      # --format and --real-home lead the helper argv so the roots+id shape the
+      # Go parser expects is preserved. --real-home is the trusted OCSF redaction
+      # root, mirroring the support-bundle redaction root plumbing.
+      output="$(go_hostutil helper session-export \
+        "--format=${session_format}" \
+        "--real-home=${REAL_HOME}" \
+        "${SESSION_LOOKUP_ROOTS[@]}" "${session_id}")"
       if [[ -n "${output_path}" ]]; then
         output_path="$(resolve_host_output_candidate "${output_path}")"
         mkdir -p "$(dirname "${output_path}")"

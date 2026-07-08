@@ -15,7 +15,7 @@ const usageText = `Usage: workcell session start [launch-options] [-- provider-a
        workcell session logs --id SESSION_ID --kind audit|debug|file-trace|transcript
        workcell session timeline --id SESSION_ID
        workcell session diff --id SESSION_ID [--output PATH]
-       workcell session export --id SESSION_ID [--output PATH]
+       workcell session export --id SESSION_ID [--format json|ocsf] [--output PATH]
 
 Commands:
   start
@@ -66,8 +66,10 @@ Commands:
     --output PATH             Write the rendered diff bundle to PATH instead of stdout
 
   export
-    --id SESSION_ID           Export one recorded session plus matching audit records as JSON
-    --output PATH             Write the exported JSON bundle to PATH instead of stdout
+    --id SESSION_ID           Export one recorded session plus matching audit records
+    --format json|ocsf        Output shape: json (default) or ocsf OCSF-mapped JSONL
+                              (one Application Lifecycle event per line, redacted)
+    --output PATH             Write the exported bundle to PATH instead of stdout
 
 Notes:
   - session commands run on the host and do not start the Workcell runtime.
@@ -78,6 +80,10 @@ Notes:
     worktree, from a workspace without a recorded git base, or from a workspace
     that is not a self-contained git worktree.
   - ` + "`" + `session export` + "`" + ` includes audit records that match the recorded session id.
+  - ` + "`" + `session export --format ocsf` + "`" + ` maps the recorded session to an OCSF
+    Application Lifecycle event (class 6002) as JSONL, versioned by
+    metadata.version and metadata.mapping_version, with credentials, tokens,
+    and operator home paths redacted by the shared support-bundle rule-set.
   - ` + "`" + `session delete` + "`" + ` never rewrites the shared profile audit log.
   - ` + "`" + `session delete` + "`" + ` cleans only explicitly recorded session-owned artifacts and
     refuses running sessions or running session containers.
