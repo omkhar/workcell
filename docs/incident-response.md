@@ -335,10 +335,14 @@ Only after evidence is collected and reported:
 - **Tear down the compromised session.** `workcell session delete --id
   SESSION_ID` removes the durable record and stopped-session artifacts (use
   `--dry-run` first to preview the cleanup). It has two preconditions: the
-  session must be in a terminal status (exited, failed, or stopped — stop it
-  first, per step 2), and cleaning the session **container** needs the target's
-  Docker socket available (`profile_docker_transport_available`,
-  `scripts/workcell:1649-1675`). Where that socket comes from is target-specific:
+  session must be in a terminal status — `stopped`, `exited`, `failed`, or
+  `aborted` (`session_is_terminal_status`, `scripts/workcell:3909-3918`); stop it
+  first, per step 2. (A foreground/attached session that exited before it
+  finalized is recorded as `aborted` (`scripts/workcell:975-978`) and is
+  delete-able.) The second precondition is that cleaning the session
+  **container** needs the target's Docker socket available
+  (`profile_docker_transport_available`, `scripts/workcell:1649-1675`). Where that
+  socket comes from is target-specific:
   - **`local_vm` / Colima:** the socket is the Colima VM's Docker socket
     (`scripts/workcell:1657-1660`), so it is available only while the VM is
     running. If you halted the VM in step 2.4, restart it with
