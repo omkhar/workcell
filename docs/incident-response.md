@@ -71,9 +71,15 @@ investigate.
    session with its live status, profile, and id.
 2. **Stop a detached session.** `workcell session stop --id SESSION_ID` performs
    a graceful stop (`docker stop`); add `--force` to kill it immediately
-   (`docker kill`) instead. Either way the container is stopped, not removed, so
-   it stays available as evidence. This works only for **detached** sessions
-   started with `workcell session start`.
+   (`docker kill`) instead. Stop itself does not remove the container, but do
+   **not** rely on the container as evidence: for a detached session the live
+   session monitor reacts to the container exit by capturing its in-container
+   audit/file-trace state, finalizing the durable session record and audit log,
+   and then removing the container (`docker rm -f`) —
+   `session_monitor_main` at `scripts/workcell:4225-4228`. The evidence that
+   survives is the **durable state-root** (record, profile audit log, captured
+   logs), which you collect in step 4 — not the container. This works only for
+   **detached** sessions started with `workcell session start`.
 3. **Stop a foreground session.** An interactive `workcell` launch has no
    `session stop` handle. Terminate the launcher process; the runtime container
    is ephemeral by default (`--container-mutability ephemeral`) and does not
@@ -105,12 +111,11 @@ investigate.
      VM, so there is no `colima stop` to run. `workcell session stop --id
      SESSION_ID --force` force-**stops** the session by killing its container
      (`--force` selects `docker kill` over the graceful `docker stop` —
-     `internal/sessionctl/stop.go:33,116-117`); this contains the breach but
-     leaves the **stopped container in place**, which is what you want — preserve
-     it as evidence. It does **not** remove the container. Removing it is a
-     separate Recover step (`workcell session delete`, which needs the Docker
-     socket and a terminal status — see step 7 — or a manual `docker rm`), done
-     only after evidence is collected.
+     `internal/sessionctl/stop.go:33,116-117`), which contains the breach. As in
+     step 2, `stop` itself does not `docker rm` the container, but the live
+     monitor finalizes the durable record/audit and then removes it, so treat the
+     durable state-root artifacts (collected in step 4) as the evidence rather
+     than the container.
    Do **not** delete the profile, VM, or container yet — teardown is step 7,
    after evidence is collected. The `remote_vm` preview targets (`aws-ec2-ssm`,
    `gcp-vm`) are `preview-only` with `launch=blocked` in the matrix, so no live
