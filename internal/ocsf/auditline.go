@@ -117,9 +117,12 @@ func splitQuotedTokens(line string) ([]string, error) {
 
 // decodeAnsiC decodes the body of a bash ANSI-C `$'...'` block starting at
 // runes[start], returning the decoded string and the index just past the
-// closing quote. It handles the escapes bashQuote emits: \n \t \r \\ \' and the
-// three-digit octal \ooo used for other non-printable bytes. An unterminated
-// block is an error (a corrupt record), keeping decode fail-closed.
+// closing quote. It handles the ANSI-C escapes bash `%q` emits for control
+// bytes: the named forms \a \b \e \f \n \r \t \v, the literal \\ and \', and the
+// three-digit octal \ooo used for any other non-printable byte. (Without the
+// named-control cases, a byte such as BEL would arrive as `$'\a'` and decode to
+// the literal letter "a", silently corrupting the exported evidence.) An
+// unterminated block is an error (a corrupt record), keeping decode fail-closed.
 func decodeAnsiC(runes []rune, start int) (string, int, error) {
 	var b strings.Builder
 	for i := start; i < len(runes); {
@@ -130,14 +133,29 @@ func decodeAnsiC(runes []rune, start int) (string, int, error) {
 		if r == '\\' && i+1 < len(runes) {
 			n := runes[i+1]
 			switch n {
+			case 'a':
+				b.WriteRune('\a') // BEL 0x07
+				i += 2
+			case 'b':
+				b.WriteRune('\b') // BS 0x08
+				i += 2
+			case 'e', 'E':
+				b.WriteRune('\x1b') // ESC 0x1b (bash emits \e; \E accepted too)
+				i += 2
+			case 'f':
+				b.WriteRune('\f') // FF 0x0c
+				i += 2
 			case 'n':
 				b.WriteRune('\n')
+				i += 2
+			case 'r':
+				b.WriteRune('\r')
 				i += 2
 			case 't':
 				b.WriteRune('\t')
 				i += 2
-			case 'r':
-				b.WriteRune('\r')
+			case 'v':
+				b.WriteRune('\v') // VT 0x0b
 				i += 2
 			case '\\':
 				b.WriteRune('\\')

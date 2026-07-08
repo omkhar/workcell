@@ -64,6 +64,56 @@ func TestDecodeAuditLineRoundTripBash(t *testing.T) {
 	}
 }
 
+// TestDecodeAnsiCNamedControlEscapesRoundTripBash proves every ANSI-C named
+// control escape that bash `%q` emits (\a \b \e \f \n \r \t \v) round-trips to
+// its real byte, not the literal letter. bash %q renders these control bytes in
+// the $'...' named form, so without the named-escape cases BEL would decode to
+// "a" and silently corrupt the exported evidence.
+func TestDecodeAnsiCNamedControlEscapesRoundTripBash(t *testing.T) {
+	// One value per named control byte bash %q emits in named form.
+	value := "x\ay\bz\x1bp\fq\nr\rs\tt\vu"
+	q, ok := bashQuoteToken(t, "note="+value)
+	if !ok {
+		t.Skip("bash not available for authoritative round-trip")
+	}
+	fields, err := decodeAuditLine(q)
+	if err != nil {
+		t.Fatalf("decodeAuditLine: %v\ntoken=%q", err, q)
+	}
+	if len(fields) != 1 || fields[0].key != "note" {
+		t.Fatalf("decoded %+v, want one note field (token=%q)", fields, q)
+	}
+	if fields[0].value != value {
+		t.Errorf("control-byte value decoded %q, want %q (token=%q)", fields[0].value, value, q)
+	}
+}
+
+// TestDecodeAnsiCNamedControlEscapes decodes each named control escape directly
+// (independent of a local bash) so the mapping is pinned even where bash is
+// absent.
+func TestDecodeAnsiCNamedControlEscapes(t *testing.T) {
+	cases := map[string]string{
+		`$'\a'`: "\a",
+		`$'\b'`: "\b",
+		`$'\e'`: "\x1b",
+		`$'\E'`: "\x1b",
+		`$'\f'`: "\f",
+		`$'\n'`: "\n",
+		`$'\r'`: "\r",
+		`$'\t'`: "\t",
+		`$'\v'`: "\v",
+	}
+	for enc, want := range cases {
+		fields, err := decodeAuditLine("k=" + enc)
+		if err != nil {
+			t.Fatalf("decodeAuditLine(%q): %v", enc, err)
+		}
+		if len(fields) != 1 || fields[0].value != want {
+			t.Errorf("decode %q: got %+v, want value %q", enc, fields, want)
+		}
+	}
+}
+
 // TestDecodeAuditLineSpacedValueDeterministic pins the concrete escaped form of
 // a space-delimited endpoints allowlist (independent of a local bash), proving
 // the value is not truncated at the first space.
