@@ -95,14 +95,20 @@ root (defaults from the
 
 - session records:
   `~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/<session_id>.json`
-- audit log:
+- audit log (profile-wide, shared by all sessions in the profile):
   `~/.local/state/workcell/targets/local_vm/colima/<profile>/workcell.audit.log`
 - legacy records (compatibility reads):
   `~/.colima/<profile>/sessions/<session_id>.json`
+- legacy profile-wide audit log (a profile-level file **outside** `sessions/`):
+  `~/.colima/<profile>/workcell.audit.log`
 
-The state-root location follows `WORKCELL_STATE_ROOT` (default
-`${XDG_STATE_HOME:-~/.local/state}/workcell`) and `COLIMA_STATE_ROOT` (default
-`~/.colima`) if those are set in the operator's environment.
+The Workcell target-state root follows `WORKCELL_STATE_ROOT` (default
+`${XDG_STATE_HOME:-~/.local/state}/workcell`), which an operator can override in
+the environment. The Colima state root is **not** operator-overridable: the
+launcher unconditionally resets `COLIMA_STATE_ROOT` to `~/.colima`
+(`scripts/workcell` sets `COLIMA_STATE_ROOT="${REAL_HOME}/.colima"`), so the
+legacy Colima path is always under `~/.colima/<profile>/` regardless of any
+`COLIMA_STATE_ROOT` you export.
 
 - **Do not garbage-collect before you collect.** `workcell --gc` (alias
   `workcell gc`) deliberately deletes transient `session-audit.*` scratch, temp
@@ -112,9 +118,13 @@ The state-root location follows `WORKCELL_STATE_ROOT` (default
 - **Do not `session delete`.** `workcell session delete` removes the durable
   record and stopped-session artifacts. Defer it to recovery (step 7).
 - **Snapshot the state root.** Copy the profile's target-state directory
-  (records + `workcell.audit.log`) and any legacy `~/.colima/<profile>/sessions/`
-  records to read-only storage before further action, so the on-disk evidence is
-  preserved even if later steps mutate host state.
+  (session records + the profile-wide `workcell.audit.log`) **and** any legacy
+  files under `~/.colima/<profile>/` — both the legacy `sessions/` records and
+  the legacy profile-level `~/.colima/<profile>/workcell.audit.log`, since a
+  legacy record can point its `audit_log_path` at that profile-level file
+  outside `sessions/`. Copy all of them to read-only storage before further
+  action, so the on-disk evidence is preserved even if later steps mutate host
+  state.
 
 Note: workflow-artifact retention in
 [retention-policy.md](retention-policy.md) governs **CI/release** artifacts, not
@@ -153,8 +163,12 @@ Per-session evidence, for the specific `SESSION_ID`(s) from step 2:
   matching audit records as one JSON bundle (written `0600`).
 - `workcell session diff --id SESSION_ID --output PATH` — the workspace change
   set against the clean launch base.
-- `workcell session logs --id SESSION_ID --kind audit` — the retained audit log
-  for the session. The `debug`, `file-trace`, and `transcript` kinds exist only
+- `workcell session logs --id SESSION_ID --kind audit` — prints the **entire
+  profile-wide** `workcell.audit.log` resolved from the session's record, not a
+  per-session slice: it is shared by every session in the profile, so you see all
+  sessions' events, which is useful for cross-session correlation around the
+  suspect session. Use `session timeline` (above) when you want only the suspect
+  session's entries. The `debug`, `file-trace`, and `transcript` kinds exist only
   when those lower-assurance host logs were explicitly enabled at launch, and may
   contain workspace or agent output — treat them as sensitive (see step 6).
 
@@ -232,11 +246,11 @@ Only after evidence is collected and reported:
   compromised VM: it only deletes an *unmanaged* profile (one that pre-exists
   without Workcell ownership metadata) as a launch-time conflict repair, and does
   nothing to a Workcell-managed profile. To fully reset a suspect profile, delete
-  it through Colima's own CLI — `colima delete -p <profile> --force` (align
-  `COLIMA_HOME` with `COLIMA_STATE_ROOT` if you set a non-default one) — then a
-  fresh `workcell` launch recreates a clean managed profile from the reviewed
-  image. Because the strict runtime container is ephemeral, a clean relaunch
-  otherwise starts from the reviewed image already.
+  it through Colima's own CLI — `colima delete -p <profile> --force` (the
+  launcher pins the Colima home to `~/.colima`, so run it against that home) —
+  then a fresh `workcell` launch recreates a clean managed profile from the
+  reviewed image. Because the strict runtime container is ephemeral, a clean
+  relaunch otherwise starts from the reviewed image already.
 - **Close the loop.** If the incident revealed a genuine boundary weakness (not
   just an expected lower-assurance mode), it belongs in the private advisory so a
   fix and regression test can follow — see the coordinated-disclosure model in
