@@ -4,6 +4,7 @@
 package auditseal
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -406,6 +407,35 @@ func TestVerifyRepairsCorruptPublicKey(t *testing.T) {
 	}
 	if _, err := VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal); err != nil {
 		t.Fatalf("verification must pass after public key repair, got %v", err)
+	}
+}
+
+// TestSignUnsupportedForNoChainProvider proves a session whose audit records
+// carry no digest chain (the apple-container preview target writes plain
+// lifecycle lines without record_digest) is scoped out of signing cleanly: a
+// typed ErrUnsupportedAuditChain, not a confusing chain-broken error or an
+// unverifiable seal.
+func TestSignUnsupportedForNoChainProvider(t *testing.T) {
+	tmp := t.TempDir()
+	signingDir := filepath.Join(tmp, "signing")
+	logPath := writeLog(t, tmp, []string{
+		"timestamp=2026-07-08T00:00:00Z session_id=sess-X event=session_started v=1",
+		"timestamp=2026-07-08T00:00:01Z session_id=sess-X event=session_finished v=1",
+	})
+	if _, err := SignSessionHead(signingDir, logPath, "apple-container", "sess-X", "t"); !errors.Is(err, ErrUnsupportedAuditChain) {
+		t.Fatalf("no-chain provider sign must return ErrUnsupportedAuditChain, got %v", err)
+	}
+	if HasSignableChain(logPath, "apple-container", "sess-X") {
+		t.Fatal("no-chain provider must not report a signable chain")
+	}
+
+	// A genuine chain provider is still signable and verifies.
+	signingDir2, logPath2, seal := signGenuine(t, genuineLog(t), "sess-A")
+	if !HasSignableChain(logPath2, "colima", "sess-A") {
+		t.Fatal("chain provider must report a signable chain")
+	}
+	if _, err := VerifySessionSeal(signingDir2, logPath2, "colima", "sess-A", seal); err != nil {
+		t.Fatalf("chain provider must still verify, got %v", err)
 	}
 }
 

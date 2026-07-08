@@ -65,6 +65,15 @@ const sealVersion = 1
 // signingKeyBasename is the per-host private key file under the signing dir.
 const signingKeyBasename = "signing.key"
 
+// ErrUnsupportedAuditChain reports that a session's audit records carry no
+// digest chain (no record_digest), so there is nothing to sign or verify. The
+// preview-only, launch-blocked apple-container target writes plain lifecycle
+// lines without prev_digest/record_digest; such sessions are scoped OUT of
+// signing cleanly rather than emitting a seal that could never verify. Callers
+// treat it as "unsigned — provider audit chain unsupported": the signing hook
+// skips it, and `session verify` fails closed with that reason.
+var ErrUnsupportedAuditChain = errors.New("auditseal: session audit records have no digest chain (provider audit chain unsupported)")
+
 // Seal is the durable, host-owned signature over a session's audit-chain head.
 // It is stored beside the session record as <record>.audit-sig.json. Only
 // Version, SessionID, KeyID, Algorithm, and Signature are load-bearing for
@@ -207,6 +216,20 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 		return "", fmt.Errorf("auditseal: no audit records for session %s", sessionID)
 	}
 
+	// No-chain provider guard: if this session's head record carries no
+	// record_digest, the provider does not produce a digest chain (e.g. the
+	// preview-only apple-container target). Report it cleanly as unsupported
+	// rather than falling into the mandatory-record_digest error below with a
+	// confusing "chain broken" message. A decode error here is genuine tamper
+	// (bare/duplicate token) and is surfaced as such.
+	headFields, err := ocsf.DecodeAuditLineStrict(lines[lastMatch], targetProvider)
+	if err != nil {
+		return "", fmt.Errorf("auditseal: %w", err)
+	}
+	if !auditFieldsHaveKey(headFields, "record_digest") {
+		return "", ErrUnsupportedAuditChain
+	}
+
 	// Pass 2: strict chain verification over records 0..lastMatch only.
 	expectedPrev := ""
 	head := ""
@@ -259,6 +282,26 @@ func lineHasSessionID(line, sessionID string) bool {
 		}
 	}
 	return false
+}
+
+func auditFieldsHaveKey(fields []ocsf.AuditField, key string) bool {
+	for _, f := range fields {
+		if f.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// HasSignableChain reports whether a session's audit records form a signable
+// digest chain. It returns false only for a provider that produces no chain at
+// all (ErrUnsupportedAuditChain, e.g. apple-container); a present-but-broken
+// chain still counts as "has a chain" (true) so callers describe it as a signed
+// vs unsigned question rather than an unsupported-provider one. Callers use this
+// only to choose a clear human message; the security verdict is the signature.
+func HasSignableChain(auditLogPath, targetProvider, sessionID string) bool {
+	_, err := recomputeSessionHead(auditLogPath, targetProvider, sessionID)
+	return !errors.Is(err, ErrUnsupportedAuditChain)
 }
 
 // loadOrCreateSigningKey returns the per-host ECDSA P-256 signing key under dir,
