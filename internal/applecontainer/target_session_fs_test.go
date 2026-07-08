@@ -17,6 +17,62 @@ import (
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
+// newSessionFixture builds a target with one materialization ("mid") and one
+// bootstrap ("bid") under a fresh temp state root — the shared preamble of
+// every hostile-fs test here. State root is recoverable via stateRootFor.
+func newSessionFixture(t *testing.T) (AppleContainerTarget, MaterializeResult, BootstrapResult) {
+	t.Helper()
+	ctx := context.Background()
+	target, err := NewAppleContainerTarget(Contract{})
+	mustNil(t, err)
+	state := t.TempDir()
+	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
+	mustNil(t, err)
+	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
+	mustNil(t, err)
+	return target, mat, boot
+}
+
+// startReq is the StartSessionRequest literal shared by these tests, parameterized
+// only by the session id.
+func startReq(sid string, mat MaterializeResult, boot BootstrapResult) StartSessionRequest {
+	return StartSessionRequest{SessionID: sid, Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}
+}
+
+// mustNotHang fails the test if f blocks past 5s (an unhardened open/read of a
+// FIFO would hang); returns f's error for the caller's own assertions.
+func mustNotHang(t *testing.T, hangMsg string, f func() error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- f() }()
+	select {
+	case e := <-done:
+		return e
+	case <-time.After(5 * time.Second):
+		t.Fatal(hangMsg)
+		return nil
+	}
+}
+
+// mkfifoOrSkip creates a FIFO at path or skips the test if the runner lacks
+// Mkfifo support.
+func mkfifoOrSkip(t *testing.T, path string) {
+	t.Helper()
+	if err := unix.Mkfifo(path, 0o600); err != nil {
+		t.Skipf("Mkfifo unavailable on this runner: %v", err)
+	}
+}
+
+// validRecordFields is an encode-passing SessionRecord field map: hostile-fs
+// tests use it so a neutralized guard that followed the object would DECODE
+// successfully, isolating the guard as the only thing that can fail the test.
+func validRecordFields() map[string]string {
+	return map[string]string{
+		"session_id": "sid", "profile": "tid", "agent": "codex", "mode": "strict",
+		"status": "running", "workspace": "/ws", "started_at": "2026",
+	}
+}
+
 // TestStartSessionRefusesUnreadableLogBeforePublish: a pre-existing UNREADABLE audit log
 // (a symlink the hardened reader rejects) is present-but-unusable, so fresh-start refuses
 // at the pre-publish read and publishes NO record; once the log is genuinely absent, a
@@ -24,15 +80,8 @@ import (
 func TestStartSessionRefusesUnreadableLogBeforePublish(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	source := writeSampleWorkspace(t)
-	root := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: root, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: source})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: root, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	req := StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}
+	target, mat, boot := newSessionFixture(t)
+	req := startReq("sid", mat, boot)
 
 	// A pre-existing UNREADABLE audit log (here a symlink the hardened reader rejects) is
 	// present-but-unusable, not absent: fresh-start must REFUSE at the pre-publish read and
@@ -66,16 +115,9 @@ func TestStartSessionRefusesUnreadableLogBeforePublish(t *testing.T) {
 func TestFinishSessionRollsBackOnAuditFailure(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
 	final := DefaultContract().Session.FinalStatus
-	source := writeSampleWorkspace(t)
-	root := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: root, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: source})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: root, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	started, err := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot})
+	target, mat, boot := newSessionFixture(t)
+	started, err := target.StartSession(ctx, startReq("sid", mat, boot))
 	mustNil(t, err)
 	finishReq := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
 
@@ -118,20 +160,14 @@ func TestFinishSessionRollsBackOnAuditFailure(t *testing.T) {
 func TestStartSessionRejectsSymlinkedMaterializationDir(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 	// Move the real materialization tree aside (intact) and symlink <id> → it: the
 	// pinned path and byte-compare still match, so only the guard rejects it.
 	matDir := filepath.Join(mat.TargetRoot, "materializations", "mid")
 	aside := filepath.Join(t.TempDir(), "attacker-mat")
 	mustNil(t, os.Rename(matDir, aside))
 	mustNil(t, os.Symlink(aside, matDir))
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 		t.Fatalf("StartSession followed a symlinked materialization directory")
 	} else if !strings.Contains(e.Error(), "symlink") {
 		t.Fatalf("expected symlink rejection, got: %v", e)
@@ -144,33 +180,22 @@ func TestStartSessionRejectsSymlinkedMaterializationDir(t *testing.T) {
 func TestFinishSessionRejectsFIFOAuditLog(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
 	final := DefaultContract().Session.FinalStatus
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	started, err := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot})
+	target, mat, boot := newSessionFixture(t)
+	started, err := target.StartSession(ctx, startReq("sid", mat, boot))
 	mustNil(t, err)
 	mustNil(t, os.Remove(started.AuditLogPath))
-	if err := unix.Mkfifo(started.AuditLogPath, 0o600); err != nil {
-		t.Skipf("Mkfifo unavailable on this runner: %v", err)
-	}
+	mkfifoOrSkip(t, started.AuditLogPath)
 	finishReq := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	done := make(chan error, 1)
-	go func() { _, e := target.FinishSession(ctx, finishReq); done <- e }()
-	select {
-	case e := <-done:
-		if e == nil {
-			t.Fatalf("FinishSession accepted a FIFO audit log")
-		}
-		if !strings.Contains(e.Error(), "not a regular file") {
-			t.Fatalf("expected not-a-regular-file rejection, got: %v", e)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("FinishSession hung reading a FIFO audit log")
+	e := mustNotHang(t, "FinishSession hung reading a FIFO audit log", func() error {
+		_, err := target.FinishSession(ctx, finishReq)
+		return err
+	})
+	if e == nil {
+		t.Fatalf("FinishSession accepted a FIFO audit log")
+	}
+	if !strings.Contains(e.Error(), "not a regular file") {
+		t.Fatalf("expected not-a-regular-file rejection, got: %v", e)
 	}
 	if rec, err := sessions.ReadSessionRecord(started.RecordPath); err != nil {
 		t.Fatal(err)
@@ -184,19 +209,12 @@ func TestFinishSessionRejectsFIFOAuditLog(t *testing.T) {
 func TestStartSessionRejectsSymlinkedSessionsDir(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	source := writeSampleWorkspace(t)
-	root := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: root, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: source})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: root, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 
 	sessionsDir := filepath.Join(boot.TargetRoot, "sessions")
 	mustNil(t, os.MkdirAll(filepath.Dir(sessionsDir), 0o755))
 	mustNil(t, os.Symlink(t.TempDir(), sessionsDir))
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 		t.Fatalf("start session accepted a symlinked sessions directory")
 	}
 }
@@ -206,15 +224,8 @@ func TestStartSessionRejectsSymlinkedSessionsDir(t *testing.T) {
 func TestSessionRejectsSymlinkedTargetRootParent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	source := writeSampleWorkspace(t)
-	root := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: root, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: source})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: root, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	started, err := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot})
+	target, mat, boot := newSessionFixture(t)
+	started, err := target.StartSession(ctx, startReq("sid", mat, boot))
 	mustNil(t, err)
 
 	// Swap the provider dir (a parent of the target root) for a symlink.
@@ -227,7 +238,7 @@ func TestSessionRejectsSymlinkedTargetRootParent(t *testing.T) {
 	if _, e := target.FinishSession(ctx, FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}); e == nil {
 		t.Fatalf("finish accepted a symlinked target-root parent")
 	}
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid2", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid2", mat, boot)); e == nil {
 		t.Fatalf("start accepted a symlinked target-root parent")
 	}
 }
@@ -237,20 +248,13 @@ func TestSessionRejectsSymlinkedTargetRootParent(t *testing.T) {
 func TestStartSessionRejectsSymlinkedWorkspace(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	source := writeSampleWorkspace(t)
-	root := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: root, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: source})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: root, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 
 	evil := t.TempDir()
 	mustNil(t, os.WriteFile(filepath.Join(evil, "secret"), []byte("x\n"), 0o644))
 	mustNil(t, os.RemoveAll(mat.MaterializedWorkspace))
 	mustNil(t, os.Symlink(evil, mat.MaterializedWorkspace))
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 		t.Fatalf("start session accepted a symlinked materialized workspace")
 	}
 }
@@ -260,20 +264,14 @@ func TestStartSessionRejectsSymlinkedWorkspace(t *testing.T) {
 func TestStartSessionRejectsSymlinkedBootstrapDir(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 	// Move the real bootstrap tree aside (manifest intact) and symlink <id> → it: the
 	// pinned path and byte-compare still match, so only the parent-chain guard rejects.
 	bootDir := filepath.Join(boot.TargetRoot, "bootstrap", "bid")
 	aside := filepath.Join(t.TempDir(), "attacker-boot")
 	mustNil(t, os.Rename(bootDir, aside))
 	mustNil(t, os.Symlink(aside, bootDir))
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 		t.Fatalf("StartSession followed a symlinked bootstrap directory")
 	} else if !strings.Contains(e.Error(), "symlink") {
 		t.Fatalf("expected symlink rejection, got: %v", e)
@@ -287,14 +285,8 @@ func TestStartSessionRejectsSymlinkedBootstrapDir(t *testing.T) {
 func startForRecordTest(t *testing.T) (stateRoot, recordPath string) {
 	t.Helper()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	_, err = target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot})
+	target, mat, boot := newSessionFixture(t)
+	_, err := target.StartSession(ctx, startReq("sid", mat, boot))
 	mustNil(t, err)
 	return stateRootFor(boot.TargetRoot), filepath.Join(boot.TargetRoot, "sessions", "sid.json")
 }
@@ -306,10 +298,7 @@ func startForRecordTest(t *testing.T) (stateRoot, recordPath string) {
 // failure.
 func writeValidRecordFile(t *testing.T, path string) {
 	t.Helper()
-	b, err := sessions.EncodeSessionRecordFrom(nil, map[string]string{
-		"session_id": "sid", "profile": "tid", "agent": "codex", "mode": "strict",
-		"status": "running", "workspace": "/ws", "started_at": "2026",
-	})
+	b, err := sessions.EncodeSessionRecordFrom(nil, validRecordFields())
 	mustNil(t, err)
 	mustNil(t, os.WriteFile(path, b, 0o600))
 }
@@ -317,22 +306,56 @@ func writeValidRecordFile(t *testing.T, path string) {
 // TestWriteSessionRecordAtomicRejectsSymlinkedParent: the openat write refuses a
 // symlinked sessions parent (no path re-resolution), closing the record-write
 // TOCTOU independent of StartSession's fast pre-check.
+// symlinkSessionsDirAside renames the sessions dir aside (keeping the real valid record) and
+// replaces it with a symlink to the aside copy, then returns the aside path.
+func symlinkSessionsDirAside(t *testing.T, sessionsDir string) string {
+	t.Helper()
+	aside := sessionsDir + ".real"
+	mustNil(t, os.Rename(sessionsDir, aside))
+	mustNil(t, os.Symlink(aside, sessionsDir))
+	return aside
+}
+
+// validRecordMap is an encode-passing record map so create-path encode cannot be the reason
+// a hostile-fs create fails — only the guard can.
+func validRecordMap(sessionID string) map[string]string {
+	return map[string]string{
+		"session_id": sessionID, "profile": "tid", "agent": "codex", "mode": "strict",
+		"status": "running", "workspace": "/ws", "started_at": "2026",
+	}
+}
+
+// TestWriteSessionRecordAtomicRejectsSymlinkedParent: the WRITE path must reject a symlinked
+// record parent. Uses create=true — the create path does NOT pre-read the existing record
+// (no readFileSafe), so writeRecordBytesAtomic → openAuditParent is what walks the parent
+// O_NOFOLLOW and rejects it (create=false would be rejected by the READ-existing parent walk
+// FIRST, never exercising the writer's parent guard — the guard-isolation flaw). A FRESH
+// (non-existent) record name behind the symlink so that, without the guard, the create would
+// WRITE THROUGH the symlinked parent and SUCCEED — making the write-path parent guard the
+// only possible rejecter. Rejection surfaces as ELOOP on Darwin, ENOTDIR on Linux.
 func TestWriteSessionRecordAtomicRejectsSymlinkedParent(t *testing.T) {
 	t.Parallel()
 	stateRoot, recordPath := startForRecordTest(t)
 	sessionsDir := filepath.Dir(recordPath)
-	aside := sessionsDir + ".real"
-	// aside holds the REAL valid record (created by startForRecordTest), so if the parent
-	// no-follow guard were removed the followed read+merge+write would SUCCEED — only the
-	// symlinked-parent rejection (O_NOFOLLOW walk → ELOOP) can make this fail, not a decode.
-	mustNil(t, os.Rename(sessionsDir, aside))
-	mustNil(t, os.Symlink(aside, sessionsDir))
-	// The parent is opened O_NOFOLLOW|O_DIRECTORY, so the symlinked directory component is
-	// rejected — surfaced as ELOOP on Darwin and ENOTDIR on Linux; either way it is the
-	// O_NOFOLLOW guard, and without it the open would follow to the real dir and succeed.
-	err := writeSessionRecordAtomic(stateRoot, recordPath, map[string]string{"observed_at": "2028"}, false)
+	symlinkSessionsDirAside(t, sessionsDir)
+	fresh := filepath.Join(sessionsDir, "new.json") // does not exist behind the symlink
+	err := writeSessionRecordAtomic(stateRoot, fresh, validRecordMap("new"), true)
 	if !errors.Is(err, unix.ELOOP) && !errors.Is(err, unix.ENOTDIR) {
-		t.Fatalf("atomic write did not reject a symlinked record parent via O_NOFOLLOW: %v", err)
+		t.Fatalf("atomic create did not reject a symlinked record parent via O_NOFOLLOW: %v", err)
+	}
+}
+
+// TestReadSessionRecordSafeRejectsSymlinkedParent: the hardened READ walks the parent
+// O_NOFOLLOW and rejects a symlinked parent — isolated from the write path. The real valid
+// record sits behind the symlink, so without O_NOFOLLOW the read would follow and DECODE it
+// successfully; only the parent guard can make this fail.
+func TestReadSessionRecordSafeRejectsSymlinkedParent(t *testing.T) {
+	t.Parallel()
+	stateRoot, recordPath := startForRecordTest(t)
+	symlinkSessionsDirAside(t, filepath.Dir(recordPath))
+	_, e := readSessionRecordSafe(stateRoot, recordPath)
+	if !errors.Is(e, unix.ELOOP) && !errors.Is(e, unix.ENOTDIR) {
+		t.Fatalf("hardened read did not reject a symlinked record parent via O_NOFOLLOW: %v", e)
 	}
 }
 
@@ -364,18 +387,11 @@ func TestWriteRecordAtomicRejectsFIFOLeaf(t *testing.T) {
 	t.Parallel()
 	stateRoot, recordPath := startForRecordTest(t)
 	mustNil(t, os.Remove(recordPath))
-	if err := unix.Mkfifo(recordPath, 0o600); err != nil {
-		t.Skipf("Mkfifo unavailable on this runner: %v", err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- writeRecordBytesAtomic(stateRoot, recordPath, []byte("x"), false) }()
-	select {
-	case e := <-done:
-		if e == nil {
-			t.Fatalf("atomic rewrite accepted a FIFO record")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("atomic rewrite blocked on a FIFO record")
+	mkfifoOrSkip(t, recordPath)
+	if e := mustNotHang(t, "atomic rewrite blocked on a FIFO record", func() error {
+		return writeRecordBytesAtomic(stateRoot, recordPath, []byte("x"), false)
+	}); e == nil {
+		t.Fatalf("atomic rewrite accepted a FIFO record")
 	}
 }
 
@@ -400,10 +416,7 @@ func TestWriteRecordAtomicRejectsHardlinkedLeaf(t *testing.T) {
 func TestWriteSessionRecordAtomicCreateOnce(t *testing.T) {
 	t.Parallel()
 	stateRoot, recordPath := startForRecordTest(t)
-	valid := map[string]string{
-		"session_id": "sid", "profile": "tid", "agent": "codex", "mode": "strict",
-		"status": "running", "workspace": "/ws", "started_at": "2026",
-	}
+	valid := validRecordFields()
 	// Sanity: the SAME valid map creates cleanly when the target does NOT exist, so a
 	// failure below can only come from the create-on-existing (O_EXCL) check, not encode.
 	fresh := filepath.Join(filepath.Dir(recordPath), "fresh.json")
@@ -413,37 +426,18 @@ func TestWriteSessionRecordAtomicCreateOnce(t *testing.T) {
 	}
 }
 
-// TestWriteSessionRecordAtomicRewriteHappyPath: a normal rewrite through the
-// atomic writer updates the record and stays readable.
-func TestWriteSessionRecordAtomicRewriteHappyPath(t *testing.T) {
-	t.Parallel()
-	stateRoot, recordPath := startForRecordTest(t)
-	mustNil(t, writeSessionRecordAtomic(stateRoot, recordPath, map[string]string{"observed_at": "2099"}, false))
-	rec, err := sessions.ReadSessionRecord(recordPath)
-	mustNil(t, err)
-	if rec.ObservedAt != "2099" {
-		t.Fatalf("rewrite did not persist: observed_at=%q", rec.ObservedAt)
-	}
-}
-
 // TestReadSessionRecordSafeRejectsFIFO: a record swapped for a FIFO is rejected
 // promptly by the hardened reader (O_NONBLOCK), not blocked on like os.ReadFile.
 func TestReadSessionRecordSafeRejectsFIFO(t *testing.T) {
 	t.Parallel()
 	stateRoot, recordPath := startForRecordTest(t)
 	mustNil(t, os.Remove(recordPath))
-	if err := unix.Mkfifo(recordPath, 0o600); err != nil {
-		t.Skipf("Mkfifo unavailable on this runner: %v", err)
-	}
-	done := make(chan error, 1)
-	go func() { _, e := readSessionRecordSafe(stateRoot, recordPath); done <- e }()
-	select {
-	case e := <-done:
-		if e == nil {
-			t.Fatalf("hardened read accepted a FIFO record")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("hardened read blocked on a FIFO record")
+	mkfifoOrSkip(t, recordPath)
+	if e := mustNotHang(t, "hardened read blocked on a FIFO record", func() error {
+		_, err := readSessionRecordSafe(stateRoot, recordPath)
+		return err
+	}); e == nil {
+		t.Fatalf("hardened read accepted a FIFO record")
 	}
 }
 
@@ -483,37 +477,24 @@ func TestReadSessionRecordSafeRejectsHardlink(t *testing.T) {
 func TestFinishSessionRejectsFIFORecord(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	started, err := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot})
+	target, mat, boot := newSessionFixture(t)
+	started, err := target.StartSession(ctx, startReq("sid", mat, boot))
 	mustNil(t, err)
 	mustNil(t, os.Remove(started.RecordPath))
-	if err := unix.Mkfifo(started.RecordPath, 0o600); err != nil {
-		t.Skipf("Mkfifo unavailable on this runner: %v", err)
-	}
-	done := make(chan error, 1)
-	go func() {
-		_, e := target.FinishSession(ctx, FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"})
-		done <- e
-	}()
-	select {
-	case e := <-done:
-		if e == nil {
-			t.Fatalf("FinishSession accepted a FIFO record")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("FinishSession hung reading a FIFO record")
+	mkfifoOrSkip(t, started.RecordPath)
+	if e := mustNotHang(t, "FinishSession hung reading a FIFO record", func() error {
+		_, err := target.FinishSession(ctx, FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"})
+		return err
+	}); e == nil {
+		t.Fatalf("FinishSession accepted a FIFO record")
 	}
 }
 
 // TestRewriteRecordAtomicReplacesInode: a rewrite stages a temp and renames it
 // over the record, so the record's inode CHANGES (atomic replacement) rather than
 // being truncated in place — the property that avoids a truncate-then-lose window.
+// The full atomic-rewrite postcondition is asserted on one fixture: inode changed
+// + content persisted + no staged temp left lingering in the sessions dir.
 func TestRewriteRecordAtomicReplacesInode(t *testing.T) {
 	t.Parallel()
 	stateRoot, recordPath := startForRecordTest(t)
@@ -530,14 +511,6 @@ func TestRewriteRecordAtomicReplacesInode(t *testing.T) {
 	if rec.ObservedAt != "2099" {
 		t.Fatalf("rewrite did not persist: observed_at=%q", rec.ObservedAt)
 	}
-}
-
-// TestRewriteRecordAtomicLeavesNoTemp: a successful rewrite leaves no staged temp
-// file lingering in the sessions dir.
-func TestRewriteRecordAtomicLeavesNoTemp(t *testing.T) {
-	t.Parallel()
-	stateRoot, recordPath := startForRecordTest(t)
-	mustNil(t, writeSessionRecordAtomic(stateRoot, recordPath, map[string]string{"observed_at": "2099"}, false))
 	entries, err := os.ReadDir(filepath.Dir(recordPath))
 	mustNil(t, err)
 	for _, e := range entries {
@@ -555,20 +528,11 @@ func TestWriteSessionRecordAtomicRewriteReadFIFO(t *testing.T) {
 	t.Parallel()
 	stateRoot, recordPath := startForRecordTest(t)
 	mustNil(t, os.Remove(recordPath))
-	if err := unix.Mkfifo(recordPath, 0o600); err != nil {
-		t.Skipf("Mkfifo unavailable on this runner: %v", err)
-	}
-	done := make(chan error, 1)
-	go func() {
-		done <- writeSessionRecordAtomic(stateRoot, recordPath, map[string]string{"observed_at": "2099"}, false)
-	}()
-	select {
-	case e := <-done:
-		if e == nil {
-			t.Fatalf("rewrite accepted a FIFO existing record")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("rewrite blocked reading a FIFO existing record")
+	mkfifoOrSkip(t, recordPath)
+	if e := mustNotHang(t, "rewrite blocked reading a FIFO existing record", func() error {
+		return writeSessionRecordAtomic(stateRoot, recordPath, map[string]string{"observed_at": "2099"}, false)
+	}); e == nil {
+		t.Fatalf("rewrite accepted a FIFO existing record")
 	}
 }
 
@@ -600,17 +564,10 @@ func TestWriteSessionRecordAtomicRewriteReadSymlink(t *testing.T) {
 func TestStartSessionRejectsSymlinkedManifestFile(t *testing.T) {
 	t.Parallel()
 	for _, which := range []string{"materialization", "bootstrap"} {
-		which := which
 		t.Run(which, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			target, err := NewAppleContainerTarget(Contract{})
-			mustNil(t, err)
-			state := t.TempDir()
-			mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-			mustNil(t, err)
-			boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-			mustNil(t, err)
+			target, mat, boot := newSessionFixture(t)
 			mpath := mat.ManifestPath
 			if which == "bootstrap" {
 				mpath = boot.ManifestPath
@@ -624,7 +581,7 @@ func TestStartSessionRejectsSymlinkedManifestFile(t *testing.T) {
 			mustNil(t, os.WriteFile(aside, real, 0o600))
 			mustNil(t, os.Remove(mpath))
 			mustNil(t, os.Symlink(aside, mpath))
-			if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+			if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 				t.Fatalf("StartSession followed a symlinked %s manifest file", which)
 			}
 		})
@@ -646,6 +603,20 @@ func TestCreateRecordAtomicUnlinksOnWriteFailure(t *testing.T) {
 	}
 	if _, err := os.Lstat(recordPath); !os.IsNotExist(err) {
 		t.Fatalf("create left a leftover record after write failure: %v", err)
+	}
+	// The failed create must also unlink its staged temp (sid.json.tmp-<rand>).
+	// This test created the sessions dir empty and the failed create is its only
+	// writer, so the directory must contain NO entries at all afterwards. Removing
+	// stageRecordTemp's unlink-on-failure (the Unlinkat in the writeErr branch)
+	// leaves the temp behind and fails this.
+	entries, err := os.ReadDir(filepath.Dir(recordPath))
+	mustNil(t, err)
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("create failure left staged files in sessions dir: %v", names)
 	}
 }
 
