@@ -36,7 +36,40 @@ Current audit and session evidence is host-local:
   session-owned artifacts, but it does not rewrite the shared profile audit log
 
 Retention remains operator or organization owned. Workcell does not yet provide
-centralized retention policy, SIEM export, or fleet inventory.
+a centralized retention policy or fleet inventory. SIEM ingestion is served by
+the OCSF-mapped export below (an export format, not a hosted pipeline or
+retention service).
+
+### OCSF-Mapped Export
+
+`workcell session export --format ocsf` renders a session and its audit
+lifecycle records as [OCSF](https://schema.ocsf.io/) 1.3.0 JSON Lines — one
+**Application Lifecycle** event (`category_uid` 6, `class_uid` 6002) per line —
+so a SIEM can ingest Workcell session evidence without a bespoke parser. The
+default `--format json` bundle is unchanged.
+
+- **Events.** One summary event for the session record (finished → `activity_id`
+  4 Stop, live → 3 Start), then one event per audit record (started/launch →
+  Start, finished/exit → Stop, else → 99 Other). `metadata.version` is the OCSF
+  schema version (`1.3.0`); `metadata.mapping_version` is the Workcell
+  field→OCSF mapping version (`2` for this multi-event stream) so consumers can
+  gate parsers on either axis independently.
+- **Redaction.** Every field is passed through the shared support-bundle
+  redactor (the same rule-set as [G2 support bundles](../SUPPORT.md)) before it
+  enters an event; there is no un-redacted output path. That redactor masks
+  credentials and tokens and rewrites the operator home prefix to `~` — it does
+  NOT scrub arbitrary non-home paths, so operational metadata such as
+  `session.workspace` or `session.git_branch` (e.g. `/tmp/project`) is retained
+  as-is beyond the home rewrite. Because that regex redaction cannot sanitize
+  arbitrary prose, any operator/agent FREE-FORM payload — the `argv` session
+  message and any unexpected/tampered audit key or value — is instead
+  HARD-REDACTED to a fixed placeholder rather than emitted, so a credential in
+  prose or split-CLI form cannot reach the export even though it evades the
+  regex rules.
+- **Tamper resistance.** A tampered audit line with a duplicate identity key
+  fails the export closed (no forged event); a record whose decoded `session_id`
+  does not match the exported session is dropped (no cross-session
+  attribution); a torn crash fragment maps to Unknown, not Success.
 
 ## Known Gaps
 
