@@ -81,6 +81,15 @@ and are easy to diff.
 - for anything that looks like it exposed a secret, use
   [SECURITY.md](SECURITY.md) instead of a public issue
 
+## Suspected boundary breach
+
+If you suspect a runtime boundary breach — an agent escaping the session, host
+credential exposure, or workspace/control-plane tampering — do not open a public
+issue. Follow the
+[operator boundary-incident response runbook](docs/incident-response.md), which
+uses this support bundle to collect evidence and escalates through
+[SECURITY.md](SECURITY.md).
+
 ## Include this context
 
 - Workcell version or commit SHA

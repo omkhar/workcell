@@ -53,6 +53,14 @@ the three enforcement points (`scripts/workcell`,
 Adding a key requires editing the TOML and updating each enforcer in
 the same PR.
 
+## Operator incident response
+
+If you are an operator responding to a suspected runtime boundary breach — an
+agent escaping the session, host credential exposure, or workspace tampering —
+follow the [operator boundary-incident response runbook](docs/incident-response.md)
+to contain, preserve evidence, collect a redacted support bundle, and escalate
+through the reporting channel above.
+
 ## CI/CD threat model
 
 The [CI/CD threat model](docs/ci-threat-model.md) covers the build and release
