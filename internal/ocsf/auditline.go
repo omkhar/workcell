@@ -68,6 +68,117 @@ func auditEncodingForProvider(provider string) auditEncoding {
 	return encodingBashQuote
 }
 
+// knownAuditFields is the set of audit field NAMES the writers actually emit.
+// The OCSF mapping only turns these into typed `audit.<key>` unmapped
+// properties; any other key (an audit line is mutable text, so a tampered record
+// could carry a secret-shaped key) is bucketed under one fixed redacted property
+// instead of becoming a JSON property name of its own.
+//
+// Derived from the writers, not hand-curated — regenerate with:
+//
+//	{ grep -hoE '"[a-z_0-9]+=' scripts/workcell | sed 's/"//;s/=//';
+//	  grep -hoE '[a-z_]+=%s' internal/applecontainer/recovery.go \
+//	    internal/applecontainer/target_session.go | sed 's/=%s//';
+//	  printf 'timestamp\nts\nprev_digest\nrecord_digest\nmaterialization_id\naccess_model\nbootstrap_id\nimage_ref\n'; } |
+//	  sort -u | grep -vE '^(0|1)$'
+//
+// (the last printf adds the framing keys the append_audit_record_to_path wrapper
+// and the Go writers stamp on every record). A new legitimate writer key that is
+// not yet listed degrades safely to the redacted bucket, not a leak.
+var knownAuditFields = map[string]struct{}{
+	"access_model":                          {},
+	"agent":                                 {},
+	"agent_autonomy":                        {},
+	"argv":                                  {},
+	"audit_log_path":                        {},
+	"autonomy_assurance":                    {},
+	"bootstrap_applied":                     {},
+	"bootstrap_endpoints":                   {},
+	"bootstrap_id":                          {},
+	"cache_assurance":                       {},
+	"cache_profile":                         {},
+	"codex_rules_assurance_configured":      {},
+	"codex_rules_assurance_effective_final": {},
+	"codex_rules_assurance_effective_initial":  {},
+	"codex_rules_mutability_configured":        {},
+	"codex_rules_mutability_effective_final":   {},
+	"codex_rules_mutability_effective_initial": {},
+	"command":                            {},
+	"container_assurance":                {},
+	"container_name":                     {},
+	"current_assurance":                  {},
+	"debug_log_enabled":                  {},
+	"debug_log_path":                     {},
+	"endpoints":                          {},
+	"event":                              {},
+	"execution_path":                     {},
+	"exit_status":                        {},
+	"file_trace_log_path":                {},
+	"final_assurance":                    {},
+	"finished_at":                        {},
+	"force":                              {},
+	"git_base":                           {},
+	"git_branch":                         {},
+	"git_common_dir":                     {},
+	"git_dir":                            {},
+	"git_exec_path":                      {},
+	"git_head":                           {},
+	"git_work_tree":                      {},
+	"github_auth_present":                {},
+	"image_ref":                          {},
+	"initial_assurance":                  {},
+	"injection_credential_keys":          {},
+	"injection_policy_sha256":            {},
+	"injection_secret_copy_targets":      {},
+	"injection_ssh_enabled":              {},
+	"live_status":                        {},
+	"log_level":                          {},
+	"materialization_id":                 {},
+	"mode":                               {},
+	"monitor_pid":                        {},
+	"network_policy":                     {},
+	"observability_assurance":            {},
+	"observed_at":                        {},
+	"package_mutation_downgraded":        {},
+	"prepare":                            {},
+	"prev_digest":                        {},
+	"profile":                            {},
+	"provider_auth_mode":                 {},
+	"provider_auth_modes":                {},
+	"provider_native_sandbox_configured": {},
+	"provider_native_sandbox_effective":  {},
+	"provider_native_sandbox_reason":     {},
+	"reason":                             {},
+	"record_digest":                      {},
+	"runtime_api":                        {},
+	"session_assurance_final":            {},
+	"session_assurance_initial":          {},
+	"session_audit_dir":                  {},
+	"session_id":                         {},
+	"shared_auth_modes":                  {},
+	"source":                             {},
+	"ssh_config_assurance":               {},
+	"started_at":                         {},
+	"status":                             {},
+	"stdin_mode":                         {},
+	"target_assurance_class":             {},
+	"target_id":                          {},
+	"target_kind":                        {},
+	"target_provider":                    {},
+	"timestamp":                          {},
+	"transcript_log_path":                {},
+	"transcript_logging":                 {},
+	"transport_status":                   {},
+	"ts":                                 {},
+	"ui":                                 {},
+	"workspace":                          {},
+	"workspace_control_plane":            {},
+	"workspace_origin":                   {},
+	"workspace_root":                     {},
+	"workspace_transport":                {},
+	"worktree_path":                      {},
+}
+
 // auditField is one ordered key/value pair decoded from an audit record.
 type auditField struct {
 	key   string
