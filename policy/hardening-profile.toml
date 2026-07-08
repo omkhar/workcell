@@ -1,0 +1,109 @@
+# Workcell runtime hardening profile (roadmap A6).
+#
+# This artifact captures the REVIEWED syscall/filesystem hardening posture and
+# the outbound-endpoint inventory that scripts/workcell (and its egress helper
+# scripts/lib/launcher/egress-endpoints.sh) must apply to every runtime launch.
+# It documents the EXPECTED posture only; it does not itself change any runtime
+# behaviour.
+#
+# The deterministic conformance check
+# `workcell-citools hardening-profile-conformance ${ROOT_DIR}` (run from
+# scripts/verify-invariants.sh) reads this file and fails CI when a `target`
+# file drifts from the declared posture: a `required` literal that is removed
+# (e.g. someone drops `--cap-drop ALL` or weakens a tmpfs mount), or a
+# `forbidden` literal that is introduced (e.g. `--privileged` or
+# `seccomp=unconfined`). Every literal is matched as a verbatim substring of the
+# target file, mirroring the fixed-string `rg -q` invariants already enforced by
+# internal/workcellhardening.
+#
+# See docs/outbound-endpoints.md for the human-readable outbound-endpoint
+# inventory and docs/invariants.md for how this fits the invariant surface.
+
+version = 1
+
+# --- Container hardening posture (scripts/workcell docker run assembly) ---
+
+# no-new-privileges strips the ability to gain privileges via setuid/setgid or
+# file capabilities after exec. `--privileged` and unconfined seccomp/AppArmor
+# would each dissolve the container boundary.
+[security_opt]
+target = "scripts/workcell"
+required = ["--security-opt no-new-privileges:true"]
+forbidden = ["--privileged", "seccomp=unconfined", "apparmor=unconfined", "--security-opt label=disable"]
+
+# The runtime drops the full capability set. Mutable sessions re-add ONLY SETUID
+# and SETGID so the entrypoint can re-exec as the mapped host user; nothing else
+# is permitted back in.
+[capabilities]
+target = "scripts/workcell"
+required = ["--cap-drop ALL", "--cap-add SETUID", "--cap-add SETGID"]
+forbidden = ["--cap-add ALL", "--cap-add SYS_ADMIN", "--cap-add NET_ADMIN", "--cap-add NET_RAW"]
+
+# Read-only rootfs for readonly sessions, plus the four hardened tmpfs mounts
+# (nosuid/nodev everywhere; noexec on /tmp; bounded sizes). The mapped-user
+# /run/workcell tmpfs carries the readonly session's only writable scratch.
+[filesystem]
+target = "scripts/workcell"
+required = [
+  "--read-only",
+  "/tmp:nosuid,nodev,noexec,size=1g,mode=1777",
+  "/run:nosuid,nodev,size=64m,mode=755",
+  "/state:exec,nosuid,nodev,size=1g,mode=1777",
+  "/run/workcell:nosuid,nodev,size=4m,mode=755,uid=${HOST_UID},gid=${HOST_GID}",
+]
+forbidden = []
+
+# Bounded PID count caps fork-bomb blast radius.
+[resource_limits]
+target = "scripts/workcell"
+required = ["--pids-limit 1024"]
+forbidden = []
+
+# Readonly sessions run directly as the mapped host UID:GID (no root). Mutable
+# sessions start as 0:0 solely to re-exec as the mapped user via the SETUID/SETGID
+# handoff above.
+[user_posture]
+target = "scripts/workcell"
+required = ["${HOST_UID}:${HOST_GID}", "--user 0:0"]
+forbidden = []
+
+# --- Outbound-endpoint inventory (egress allowlist source of truth) ---
+#
+# Every host:port the per-session egress allowlist may resolve. Removing a
+# provider/target/credential endpoint here-vs-source drifts the inventory and
+# fails the conformance check. See docs/outbound-endpoints.md.
+
+[egress_provider_endpoints]
+target = "scripts/lib/launcher/egress-endpoints.sh"
+required = [
+  "api.openai.com:443", "auth.openai.com:443", "chatgpt.com:443",
+  "api.anthropic.com:443", "claude.ai:443", "console.anthropic.com:443",
+  "api.githubcopilot.com:443", "api.individual.githubcopilot.com:443",
+  "api.github.com:443", "github.com:443",
+  "generativelanguage.googleapis.com:443", "ai.google.dev:443",
+]
+forbidden = []
+
+[egress_target_broker_endpoints]
+target = "scripts/lib/launcher/egress-endpoints.sh"
+required = [
+  "ec2.amazonaws.com:443", "ssm.amazonaws.com:443",
+  "ssmmessages.amazonaws.com:443", "ec2messages.amazonaws.com:443",
+  "compute.googleapis.com:443", "iap.googleapis.com:443",
+  "oslogin.googleapis.com:443",
+]
+forbidden = []
+
+[egress_credential_endpoints]
+target = "scripts/lib/launcher/egress-endpoints.sh"
+required = [
+  "objects.githubusercontent.com:443", "raw.githubusercontent.com:443",
+  "accounts.google.com:443", "oauth2.googleapis.com:443",
+  "sts.googleapis.com:443", "aiplatform.googleapis.com:443",
+]
+forbidden = []
+
+[egress_bootstrap_endpoints]
+target = "scripts/workcell"
+required = ["snapshot-cloudflare.debian.org:443", "snapshot.debian.org:443"]
+forbidden = []

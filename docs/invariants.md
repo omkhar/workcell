@@ -79,6 +79,23 @@ allowlist only through the reviewed injection-policy `[network]` surface
 (`allow_endpoints`/`deny_endpoints`), which can never disable the default or
 change `NETWORK_POLICY`. See the [`[network]` egress section](injection-policy.md#network-egress-network).
 
+The full set of outbound `host:port` endpoints the allowlist may resolve is the
+reviewed [outbound-endpoint inventory](outbound-endpoints.md), captured in
+`policy/hardening-profile.toml` and cross-checked against the launcher by the
+`hardening-profile-conformance` invariant.
+
+## 4a. Container hardening posture is captured and drift-checked
+
+The runtime container's syscall/filesystem hardening posture — dropped
+capabilities (`--cap-drop ALL`, with only `SETUID`/`SETGID` re-added for the
+mutable-mode mapped-user re-exec), `--security-opt no-new-privileges:true`,
+`--read-only` rootfs, the hardened `nosuid,nodev`(`,noexec`) tmpfs mounts,
+`--pids-limit`, and the mapped non-root `--user` — is captured as the reviewed
+`policy/hardening-profile.toml` artifact. The `hardening-profile-conformance`
+invariant asserts scripts/workcell still applies every declared literal and
+contains none of the forbidden ones (`--privileged`, `seccomp=unconfined`), so a
+posture weakening fails CI.
+
 ## 5. Destructive or trust-widening actions need defense in depth
 
 The runtime boundary is primary, but Workcell also uses provider-side defenses
