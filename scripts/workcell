@@ -4278,6 +4278,7 @@ session_main() {
   local profile=""
   local emit_json=0
   local emit_verbose=0
+  local emit_parallel=0
   local emit_text=0
   local session_id=""
   local session_format="json"
@@ -4358,6 +4359,10 @@ session_main() {
             emit_verbose=1
             shift
             ;;
+          --parallel)
+            emit_parallel=1
+            shift
+            ;;
           -h | --help)
             session_usage
             exit 0
@@ -4371,8 +4376,8 @@ session_main() {
       done
       collect_session_lookup_roots || exit 1
       args=("${SESSION_LOOKUP_ROOTS[@]}")
-      if [[ "${emit_json}" -eq 1 ]] && [[ "${emit_verbose}" -eq 1 ]]; then
-        echo "workcell session list accepts either --json or --verbose, not both." >&2
+      if [[ $((emit_json + emit_verbose + emit_parallel)) -gt 1 ]]; then
+        echo "workcell session list accepts at most one of --json, --verbose, or --parallel." >&2
         exit 2
       fi
       if [[ "${emit_json}" -eq 1 ]]; then
@@ -4380,6 +4385,9 @@ session_main() {
       fi
       if [[ "${emit_verbose}" -eq 1 ]]; then
         args+=(--verbose)
+      fi
+      if [[ "${emit_parallel}" -eq 1 ]]; then
+        args+=(--parallel)
       fi
       if [[ -n "${workspace}" ]]; then
         args+=("--workspace=${workspace}")
@@ -4397,6 +4405,8 @@ session_main() {
         printf '%s\n' "${output}"
       elif [[ "${emit_verbose}" -eq 1 ]]; then
         printf 'session_id\tstatus\tlive_status\tcontrol\tagent\tmode\tprofile\ttarget\ttarget_assurance\tworkspace_transport\tgit_branch\tworktree\tstarted_at\tassurance\tworkspace\n'
+        printf '%s\n' "${output}"
+      elif [[ "${emit_parallel}" -eq 1 ]]; then
         printf '%s\n' "${output}"
       else
         printf 'session_id\tstatus\tlive_status\tcontrol\tagent\tmode\tprofile\tstarted_at\tassurance\tworkspace\n'

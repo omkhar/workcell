@@ -1079,6 +1079,7 @@ func runHelperSessionList(args []string) error {
 
 	format := "lines"
 	verbose := false
+	parallel := false
 	opts := sessions.SessionListOptions{}
 	for _, arg := range rest {
 		switch {
@@ -1086,6 +1087,8 @@ func runHelperSessionList(args []string) error {
 			format = "json"
 		case arg == "--verbose":
 			verbose = true
+		case arg == "--parallel":
+			parallel = true
 		case strings.HasPrefix(arg, "--workspace="):
 			opts.Workspace = strings.TrimPrefix(arg, "--workspace=")
 		case strings.HasPrefix(arg, "--profile="):
@@ -1094,13 +1097,25 @@ func runHelperSessionList(args []string) error {
 			return helperUsage()
 		}
 	}
-	if format == "json" && verbose {
-		return fmt.Errorf("session-list accepts either --json or --verbose, not both")
+	selected := 0
+	for _, on := range []bool{format == "json", verbose, parallel} {
+		if on {
+			selected++
+		}
+	}
+	if selected > 1 {
+		return fmt.Errorf("session-list accepts at most one of --json, --verbose, or --parallel")
 	}
 
 	records, err := sessions.ListSessionRecordsInRoots(roots, opts)
 	if err != nil {
 		return err
+	}
+	if parallel {
+		for _, line := range sessions.SessionParallelInventoryLines(sessions.GroupParallelSessions(records)) {
+			fmt.Println(line)
+		}
+		return nil
 	}
 	if format == "json" {
 		content, err := json.MarshalIndent(records, "", "  ")

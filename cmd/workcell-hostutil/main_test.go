@@ -353,6 +353,91 @@ func TestRunHelperSessionListVerboseShowsTargetMetadata(t *testing.T) {
 	}
 }
 
+func TestRunHelperSessionListParallelGroupsSiblingsByOrigin(t *testing.T) {
+	colimaRoot := t.TempDir()
+	// Two isolated sessions launched against the same origin repo: distinct
+	// profiles, workspace clones, and containers, shared workspace_origin.
+	if err := sessions.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-a", "sessions", "session-a.json"), map[string]string{
+		"session_id":        "session-a",
+		"profile":           "wcl-a",
+		"agent":             "codex",
+		"mode":              "strict",
+		"status":            "running",
+		"live_status":       "running",
+		"container_name":    "workcell-a",
+		"monitor_pid":       "4242",
+		"session_audit_dir": "/tmp/audit-a",
+		"workspace":         "/clones/session-a/repo",
+		"workspace_origin":  "/src/repo",
+		"worktree_path":     "/clones/session-a/repo",
+		"git_branch":        "workcell/session-a",
+		"started_at":        "2026-04-08T10:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessions.WriteSessionRecord(filepath.Join(colimaRoot, "wcl-b", "sessions", "session-b.json"), map[string]string{
+		"session_id":        "session-b",
+		"profile":           "wcl-b",
+		"agent":             "claude",
+		"mode":              "development",
+		"status":            "running",
+		"live_status":       "running",
+		"container_name":    "workcell-b",
+		"monitor_pid":       "4243",
+		"session_audit_dir": "/tmp/audit-b",
+		"workspace":         "/clones/session-b/repo",
+		"workspace_origin":  "/src/repo",
+		"worktree_path":     "/clones/session-b/repo",
+		"git_branch":        "workcell/session-b",
+		"started_at":        "2026-04-08T11:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = stdout.ReadFrom(r)
+		close(done)
+	}()
+
+	runErr := run([]string{"helper", "session-list", colimaRoot, "--parallel"})
+	_ = w.Close()
+	<-done
+	_ = r.Close()
+
+	if runErr != nil {
+		t.Fatalf("run() error = %v", runErr)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "origin=/src/repo\nsessions=2\n") {
+		t.Fatalf("parallel output = %q, want a single origin group of two siblings", got)
+	}
+	if !strings.Contains(got, "session_id=session-b\nlive_status=running\ncontrol=detached\nagent=claude\nmode=development\ngit_branch=workcell/session-b\nworktree=/clones/session-b/repo\ncontainer_name=workcell-b\n") {
+		t.Fatalf("parallel output = %q, want detached sibling b fields", got)
+	}
+	if !strings.Contains(got, "session_id=session-a\nlive_status=running\ncontrol=detached\nagent=codex\nmode=strict\ngit_branch=workcell/session-a\nworktree=/clones/session-a/repo\ncontainer_name=workcell-a\n") {
+		t.Fatalf("parallel output = %q, want detached sibling a fields", got)
+	}
+}
+
+func TestRunHelperSessionListParallelRejectsCombinedFormats(t *testing.T) {
+	colimaRoot := t.TempDir()
+	if err := run([]string{"helper", "session-list", colimaRoot, "--parallel", "--json"}); err == nil {
+		t.Fatal("expected error combining --parallel and --json")
+	}
+}
+
 func TestRunHelperSessionShowText(t *testing.T) {
 	colimaRoot := t.TempDir()
 	sessionPath := filepath.Join(colimaRoot, "wcl-one", "sessions", "session-1.json")

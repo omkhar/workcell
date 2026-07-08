@@ -254,6 +254,87 @@ func SessionShowLines(record SessionRecord) []string {
 	}
 }
 
+// ParallelSessionGroup clusters session records that share a parallel-session
+// origin: the repository they were launched against. Parallel isolated sessions
+// on the same repo each get their own workspace clone, git branch, container,
+// and audit dir, but they SHARE one Colima VM: the profile is derived from the
+// original workspace path before the isolated clone swap, so same-repo siblings
+// resolve to the same profile/VM (a distinct VM requires a distinct
+// --colima-profile). This grouping renders that topology by joining sibling
+// sessions on their common origin.
+type ParallelSessionGroup struct {
+	OriginKey string
+	Members   []SessionRecord
+}
+
+// SessionParallelGroupKey returns the origin-repo key that associates parallel
+// sessions launched against the same repository. An isolated detached session
+// records the source repo in workspace_origin and its per-session clone in
+// workspace, so the origin is the stable join key across siblings; a direct
+// (non-isolated) session records the same path in both, so it groups under its
+// own workspace. The key is derived, not stored, so the SessionRecord contract
+// (and its OCSF export) is unchanged.
+func SessionParallelGroupKey(record SessionRecord) string {
+	if origin := strings.TrimSpace(record.WorkspaceOrigin); origin != "" {
+		return origin
+	}
+	return strings.TrimSpace(record.Workspace)
+}
+
+// GroupParallelSessions clusters records by their parallel-session origin key.
+// Groups are ordered by origin key for deterministic rendering; within a group,
+// member order is preserved from the input, so a caller that passes records in
+// the list order (newest-first) sees each sibling set newest-first.
+func GroupParallelSessions(records []SessionRecord) []ParallelSessionGroup {
+	order := make([]string, 0)
+	byKey := make(map[string][]SessionRecord)
+	for _, record := range records {
+		key := SessionParallelGroupKey(record)
+		if _, seen := byKey[key]; !seen {
+			order = append(order, key)
+		}
+		byKey[key] = append(byKey[key], record)
+	}
+	sort.Strings(order)
+	groups := make([]ParallelSessionGroup, 0, len(order))
+	for _, key := range order {
+		groups = append(groups, ParallelSessionGroup{OriginKey: key, Members: byKey[key]})
+	}
+	return groups
+}
+
+// SessionParallelInventoryLines renders the parallel-session topology as one
+// key=value field per line, matching the space-safe idiom of session show
+// --text (SessionShowLines) and the shellproto_field parser: each value is the
+// remainder of its line after the first '=', so a path with embedded spaces
+// (session records only reject newlines, not spaces) round-trips exactly. A
+// group begins with an origin/sessions header pair; each member begins at its
+// session_id line and its subsequent fields expose the per-session isolation
+// boundary (its own worktree, git branch, and container). Field values reuse the
+// same display helpers as the compact and verbose inventories.
+func SessionParallelInventoryLines(groups []ParallelSessionGroup) []string {
+	lines := make([]string, 0)
+	for _, group := range groups {
+		lines = append(lines,
+			fmt.Sprintf("origin=%s", group.OriginKey),
+			fmt.Sprintf("sessions=%d", len(group.Members)),
+		)
+		for _, record := range group.Members {
+			lines = append(lines,
+				fmt.Sprintf("session_id=%s", record.SessionID),
+				fmt.Sprintf("live_status=%s", SessionDisplayLiveStatus(record)),
+				fmt.Sprintf("control=%s", SessionControlMode(record)),
+				fmt.Sprintf("agent=%s", record.Agent),
+				fmt.Sprintf("mode=%s", record.Mode),
+				fmt.Sprintf("git_branch=%s", SessionDisplayGitBranch(record)),
+				fmt.Sprintf("worktree=%s", SessionDisplayWorktree(record)),
+				fmt.Sprintf("container_name=%s", record.ContainerName),
+			)
+		}
+	}
+	return lines
+}
+
 func SessionMatchesWorkspace(record SessionRecord, workspace string) bool {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
