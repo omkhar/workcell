@@ -89,6 +89,37 @@ func TestSessionEventClassification(t *testing.T) {
 	}
 }
 
+// TestFailedTerminalStatusIsFailure proves a terminal record whose durable
+// status is failed/aborted maps to OCSF Failure/Medium even when exit_status is
+// 0 or empty — the outcome must reflect the session status, not the exit code
+// alone (a run can fail or be aborted before a clean exit code is recorded).
+func TestFailedTerminalStatusIsFailure(t *testing.T) {
+	redact := supportbundle.NewRedactor("").String
+	for _, tc := range []struct {
+		name, status, exit  string
+		wantStatus, wantSev int
+	}{
+		{"failed exit0", "failed", "0", statusFailure, severityMedium},
+		{"aborted exit empty", "aborted", "", statusFailure, severityMedium},
+		{"failed exit137", "failed", "137", statusFailure, severityMedium},
+		{"exited exit0 stays success", "exited", "0", statusSuccess, severityInformational},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := sessions.SessionRecord{
+				Version: 1, SessionID: "s", Status: tc.status,
+				ExitStatus: tc.exit, FinishedAt: "2026-07-05T11:30:00Z",
+			}
+			ev := sessionEvent(rec, redact, 0)
+			if ev.StatusID != tc.wantStatus {
+				t.Errorf("status=%q exit=%q: status_id=%d, want %d", tc.status, tc.exit, ev.StatusID, tc.wantStatus)
+			}
+			if ev.SeverityID != tc.wantSev {
+				t.Errorf("status=%q exit=%q: severity_id=%d, want %d", tc.status, tc.exit, ev.SeverityID, tc.wantSev)
+			}
+		})
+	}
+}
+
 func TestRunningSessionMapsToStart(t *testing.T) {
 	exp := sampleExport()
 	exp.Session.FinishedAt = ""

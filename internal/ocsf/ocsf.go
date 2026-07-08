@@ -248,6 +248,15 @@ func sessionEvent(rec sessions.SessionRecord, redact func(string) string, logged
 	statusID := statusUnknown
 	if finished {
 		statusID = statusFromExit(rec.ExitStatus)
+		// A terminal record whose durable status is failed/aborted is a failure
+		// regardless of a 0 (or empty) exit code: the session validator accepts
+		// those terminal statuses independently of the exit value, so a run that
+		// failed or was aborted must not be exported as a Success/Informational
+		// lifecycle event.
+		if isFailedTerminalStatus(rec.Status) {
+			statusID = statusFailure
+			severityID = severityMedium
+		}
 	}
 
 	timeStr := rec.StartedAt
@@ -373,6 +382,19 @@ func statusFromExit(exitStatus string) int {
 		return statusSuccess
 	}
 	return statusFailure
+}
+
+// isFailedTerminalStatus reports whether a durable session status is a failure
+// outcome (failed/aborted) that must be exported as a Failure regardless of the
+// recorded exit code. The session validator accepts these terminal statuses
+// independently of the exit value (internal/host/sessions/sessions.go).
+func isFailedTerminalStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "aborted":
+		return true
+	default:
+		return false
+	}
 }
 
 // parseTime parses an RFC3339 timestamp to epoch milliseconds and returns the
