@@ -36,7 +36,9 @@ Current audit and session evidence is host-local:
   session-owned artifacts, but it does not rewrite the shared profile audit log
 
 Retention remains operator or organization owned. Workcell does not yet provide
-centralized retention policy, SIEM export, or fleet inventory.
+a centralized retention policy or fleet inventory. SIEM ingestion is served by
+the OCSF-mapped export below (an export format, not a hosted pipeline or
+retention service).
 
 ### OCSF-Mapped Export (Phase 17)
 

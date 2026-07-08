@@ -63,6 +63,7 @@ LEGACY_SESSIONS_DIR="${LEGACY_STATE_DIR}/sessions"
 SESSIONS_DIR="${TARGET_STATE_DIR}/sessions"
 AUDIT_LOG="${TARGET_STATE_DIR}/workcell.audit.log"
 EXPORT_PATH="${TMP_DIR}/session-export.json"
+OCSF_EXPORT_PATH="${TMP_DIR}/session-export.ocsf.jsonl"
 WORKSPACE_A="${TMP_DIR}/workspace-a"
 WORKSPACE_B="${TMP_DIR}/workspace-b"
 DIFF_PATH="${TMP_DIR}/session-diff.txt"
@@ -402,6 +403,21 @@ grep -q "^session_export=${EXPORT_PATH}$" <<<"${export_stdout}"
 grep -q "\"session_id\": \"${SESSION_TWO}\"" "${EXPORT_PATH}"
 grep -q '"audit_records": \[' "${EXPORT_PATH}"
 grep -q 'record_digest=ccc' "${EXPORT_PATH}"
+
+# Workflow evidence for the advertised `--format ocsf` export: emits OCSF JSON
+# Lines (one Application Lifecycle event, class_uid 6002, per line) instead of
+# the default JSON bundle. Compact JSONL, so fields have no space after the colon.
+ocsf_export_stdout="$("${ROOT_DIR}/scripts/workcell" session export --id "${SESSION_TWO}" --format ocsf --output "${OCSF_EXPORT_PATH}")"
+grep -q "^session_export=${OCSF_EXPORT_PATH}$" <<<"${ocsf_export_stdout}"
+grep -q '"class_uid":6002' "${OCSF_EXPORT_PATH}"
+grep -q '"category_uid":6' "${OCSF_EXPORT_PATH}"
+grep -q "\"uid\":\"${SESSION_TWO}\"" "${OCSF_EXPORT_PATH}"
+# Every emitted line must be one standalone OCSF object (JSONL), never the
+# indented default-JSON bundle: the default form starts a line with a brace only.
+if grep -qx '{' "${OCSF_EXPORT_PATH}"; then
+  echo "ocsf export emitted indented JSON, not JSONL" >&2
+  exit 1
+fi
 
 tampered_session_logs_output="$(
   "${ROOT_DIR}/scripts/workcell" session logs --id "${SESSION_TAMPERED}" --kind debug 2>&1 >/dev/null || true
