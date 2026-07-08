@@ -78,3 +78,5 @@ Supported launch paths still require the live certification evidence recorded in
 
 For the emitted `--doctor` and `--inspect` lines, see
 [`docs/diagnostics-and-support-matrix.md`](diagnostics-and-support-matrix.md).
+For a suspected runtime boundary breach rather than a support question, follow
+the [operator boundary-incident response runbook](incident-response.md).
