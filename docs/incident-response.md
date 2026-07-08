@@ -201,9 +201,11 @@ Per-session evidence, for the specific `SESSION_ID`(s) from step 2:
 
 - `workcell session show --id SESSION_ID [--text]` — the full durable record.
 - `workcell session timeline --id SESSION_ID` — the session-specific audit
-  trail.
+  trail. Audit records can include raw `session send` message text, so treat this
+  as sensitive (see step 6).
 - `workcell session export --id SESSION_ID --output PATH` — the record plus all
-  matching audit records as one JSON bundle (written `0600`).
+  matching audit records as one JSON bundle (written `0600`). The bundled audit
+  records carry the same raw message text (see step 6).
 - `workcell session diff --id SESSION_ID --output PATH` — the workspace change
   set against the clean launch base: a `[status]` file list plus a `[diff]`
   section of raw file contents. The raw contents are sensitive (see step 6).
@@ -249,7 +251,8 @@ sandbox escapes and secret exposure are prioritized
 Include (redaction-safe by default):
 
 - the redacted `workcell-support-bundle.json` from step 4;
-- the exported session record(s) and timeline for the affected `SESSION_ID`(s);
+- the durable session record(s) for the affected `SESSION_ID`(s) — the
+  structured metadata from `workcell session show`;
 - from `workcell session diff`, the **`[status]` summary only** — the list of
   changed and untracked files (`git status --short`) — plus, if useful, file
   counts and hashes. This is metadata about *which* files changed, not their
@@ -263,24 +266,34 @@ Review and redact before sharing (may contain secrets/proprietary content):
   `git diff` of raw workspace file contents (`render_session_diff_bundle` in
   `scripts/workcell` runs `git diff --no-ext-diff --no-textconv` against the
   launch base), so a compromised session that wrote secrets or changed
-  proprietary files puts that content directly into the diff. Treat it like the
-  `debug`/`file-trace`/`transcript` logs: raw workspace content that must be
-  reviewed and redacted by the operator before it crosses the trust boundary
-  into a report.
+  proprietary files puts that content directly into the diff.
+- The **audit log and anything that reads it** — `workcell session timeline`,
+  `workcell session logs --id SESSION_ID --kind audit`, and the audit records
+  bundled by `workcell session export`. When a detached session was steered with
+  `workcell session send`, the launcher writes the **raw message text** into the
+  audit log as `argv=<message>` (`scripts/workcell:3739-3742`), so the timeline,
+  the audit log, and the exported audit records can contain raw operator/agent
+  message content — including secrets or sensitive data an operator typed.
+
+Treat all of these like the `debug`/`file-trace`/`transcript` logs: raw content
+that must be reviewed and redacted by the operator before it crosses the trust
+boundary into a report.
 
 Do **not** include:
 
 - secrets, credential values, or `.env`-style material;
-- raw workspace content or full agent transcripts unless specifically requested
-  — the `session diff` `[diff]` body and the `debug`/`file-trace`/`transcript`
-  logs are the ones most likely to carry it.
+- raw workspace content, raw audit/timeline message text, or full agent
+  transcripts unless specifically requested — the `session diff` `[diff]` body,
+  the audit log / timeline / `session logs --kind audit` (raw `session send`
+  messages), and the `debug`/`file-trace`/`transcript` logs are the ones most
+  likely to carry it.
 
 The support bundle is redacted by construction, but **skim it once before
-sharing** ([`SUPPORT.md`](../SUPPORT.md#sharing-it-safely)). The session diff and
-lower-assurance logs are **not** redacted — review them yourself first. If any
-artifact you were about to attach looks like it exposed a secret, keep it out of
-the report body and describe it to the maintainer over the private advisory
-instead.
+sharing** ([`SUPPORT.md`](../SUPPORT.md#sharing-it-safely)). The session diff,
+the audit log / timeline / exported audit records, and the lower-assurance logs
+are **not** redacted — review them yourself first. If any artifact you were about
+to attach looks like it exposed a secret, keep it out of the report body and
+describe it to the maintainer over the private advisory instead.
 
 [pvr]: https://github.com/omkhar/workcell/security/advisories/new
 
