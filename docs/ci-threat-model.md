@@ -251,25 +251,40 @@ model.
 
 ### Verification assumptions — and the gap
 
-Verification is **asymmetric**: the pipeline *produces* signatures,
-attestations, and SBOMs comprehensively, but **nothing in CI or in the
-installer verifies Workcell's own release outputs**. The release workflow
-verifies inputs and reproducibility (tag signature via
-`check-release-tag-signature.sh`, byte-for-byte bundle reproducibility via
-`verify-release-bundle.sh`) but does not re-run `cosign verify` or
-`gh attestation verify` on the artifacts it just signed. (Publish-range commit
-signatures are checked separately by `check-publish-commit-signatures.sh` on the
-host-side publish-PR path, not by the release workflow.) The installers
-(`install.sh` → `install-workcell.sh`) install from the local checkout and do
-**not** download or verify a signed release artifact.
+Verification is **partly asymmetric**: the pipeline *produces* signatures,
+attestations, and SBOMs comprehensively. On the consumer side
+`scripts/install-release.sh` now verifies the release fail-closed before
+installing — **by default** the keyless cosign signature over `SHA256SUMS` plus
+binding the downloaded bundle's digest to its entry in that verified
+`SHA256SUMS`. GitHub attestation verification is **opt-in** via `--attestation`;
+the published SBOMs are for downstream SCA, not an install-time gate, so the
+installer does **not** verify them (see
+[known gap 1](#known-gaps-and-future-work)). Meanwhile **CI still does not verify
+Workcell's own release outputs**. The release workflow verifies inputs and
+reproducibility (tag signature via `check-release-tag-signature.sh`,
+byte-for-byte bundle reproducibility via `verify-release-bundle.sh`) but does
+not re-run `cosign verify` or `gh attestation verify` on the artifacts it just
+signed. (Publish-range commit signatures are checked separately by
+`check-publish-commit-signatures.sh` on the host-side publish-PR path, not by
+the release workflow.) The plain installers (`install.sh` →
+`install-workcell.sh`) install from a local checkout and do **not** download or
+verify a signed release artifact — that is what `install-release.sh` adds.
 
-Consequently, the trust-establishing verification step is **entirely
-consumer-driven and documentation-only**: a user who follows the `cosign
-verify` / `gh attestation verify` commands in [provenance.md](provenance.md)
-gets the guarantee; a user who does not gets none. The verification identity
-that a consumer must pin is the release workflow at a tag ref
-(`.../release.yml@refs/tags/.+`) with issuer
-`https://token.actions.githubusercontent.com`.
+On the consumer side, `scripts/install-release.sh` now automates the
+trust-establishing step for consumers who **choose** it: it verifies the signed
+`SHA256SUMS` and the bundle digest fail-closed (via
+`scripts/verify-release-artifact.sh`) before installing, so on that path the
+guarantee no longer depends on a user remembering the manual `cosign verify` /
+`gh attestation verify` commands in [provenance.md](provenance.md). It is opt-in,
+not the default: a user who runs the documented default install (`tar … &&
+./scripts/install.sh`, the plain `install.sh`, or a hand-fetched bundle) still
+gets none — so verification is not yet *forced* (threat 8,
+[known gap 1](#known-gaps-and-future-work)). The verification identity that a consumer (or the installer) pins is the
+release workflow at a tag ref (`.../release.yml@refs/tags/.+`) with issuer
+`https://token.actions.githubusercontent.com`. What remains asymmetric is CI:
+the release workflow verifies inputs and reproducibility but still does not
+re-run `cosign verify` / `gh attestation verify` on the artifacts it just
+signed.
 
 SLSA posture is **Build L2, not L3** (self-documented in
 [provenance.md](provenance.md)): the image build and the provenance/signing
@@ -290,7 +305,7 @@ Residual risk is rated after the existing mitigation.
 | 5 | **Signing-key compromise** | **No long-lived cosign key exists** (keyless OIDC/Fulcio); the git tag/commit key lives off-CI on the maintainer host; releases are immutable (`immutable_github_releases = true`) | Low for cosign; see [incident response](#signing-compromise-incident-response) for the OIDC-identity and GPG-key cases |
 | 6 | **Provenance / attestation forgery** | Attestations bound to the release workflow identity via OIDC; consumers pin `--certificate-identity` / `--signer-workflow`; Rekor transparency; fail-closed attestation pinned by policy | Medium: **Build L2, not L3** — a compromised build step in the same job could get a genuine attestation over a forged digest; and no consumer is *forced* to verify (threat 8) |
 | 7 | **Cache poisoning** from a fork PR into trusted builds | PR-keyed buildx cache scope distinct from `validator-main`; `mode=max` writes gated to `push` events | Low |
-| 8 | **Unverified consumer install** — user runs an artifact that was never verified | Verification commands documented in [provenance.md](provenance.md); immutable releases; `SHA256SUMS` signed | High (by design today): installers do not verify; verification is manual/opt-in — the single most valuable gap to close (tracked toward B6) |
+| 8 | **Unverified consumer install** — user runs an artifact that was never verified | An **opt-in** fail-closed verified path exists: `scripts/install-release.sh` downloads, verifies via `verify-release-artifact.sh` (`cosign verify-blob` of the signed `SHA256SUMS` against the pinned release-workflow identity, plus optional `gh attestation verify`), and only then installs; verification commands also documented in [provenance.md](provenance.md); immutable releases; `SHA256SUMS` signed | Medium: the verified path is fail-closed **but opt-in, not the default** — the documented default install (`tar … && ./scripts/install.sh`, the plain `install.sh`, or any hand-fetched bundle) still does not verify, so a consumer is not *forced* to verify. Reduced from High, not eliminated, until installer verification is the default across all install paths (see [known gap 1](#known-gaps-and-future-work)) |
 | 9 | **Malicious change reaches a release** without review | Signed-commits + anti-rewrite branch ruleset; tag ruleset on `refs/tags/v*`; required status checks; `pr-base-policy.yml` forces `main` base; publish gated on tag-on-green-main and the `release` environment approval; the amd64 image is rebuilt from the archived source bundle (`context: dist/release-source`) | Medium: **single-maintainer** — the tag signer and the release approver are the same identity; no two-person review (a SLSA Source-track control, out of scope for v1.0 Build). The **arm64** image is built from the checked-out release tag (`context: .`), not the repackaged source archive, so only amd64 gets the archive-rebuild property; both platforms still derive from the same signed, immutable tag |
 | 10 | **Oversized/obfuscated PR** hides a malicious diff | `scripts/check-pr-shape.sh` caps PRs at ≤25 files, ≤1200 changed lines, ≤8 areas, 0 binaries (reviewed override raises limits for certified-adapter PRs only) | Low |
 | 11 | **Stored token leaks via script logging** | Token is environment-scoped read-only metadata; passed by env, never echoed by the workflow | Low: depends on `run-hosted-controls-audit.sh` never running `set -x` over the token |
@@ -367,11 +382,30 @@ restored. This is a residual risk, not a mitigated one.
 These are real weaknesses in the current CI/CD posture, stated so they can be
 tracked or accepted deliberately:
 
-1. **No forced consumer verification (threat 8).** Signatures, attestations, and
-   SBOMs are produced but no automated consumer — including the installers —
-   verifies them; verification is manual and documentation-only. Closing this
-   (installer-side `cosign`/`gh attestation verify`) is the highest-value item
-   and is a dependency direction for **B6**.
+1. **Forced consumer verification — PARTIALLY addressed (opt-in verified path
+   exists; not yet the default).** A fail-closed verified install path now
+   exists: `scripts/install-release.sh` downloads, verifies, and only then
+   installs a tagged release via `scripts/verify-release-artifact.sh`, which by
+   default `cosign verify-blob`s the signed `SHA256SUMS` against the pinned
+   release workflow identity (`.../release.yml@refs/tags/.+`, issuer
+   `https://token.actions.githubusercontent.com`) and binds the bundle digest to
+   that verified list, optionally requiring `gh attestation verify`
+   (`--attestation`). A missing `cosign`, absent material, a bad signature, or a
+   digest mismatch each refuse the install; the only bypass is an explicit,
+   acknowledged `--skip-verify` for documented air-gapped installs (see
+   [install.md](install.md#verified-release-install-recommended)). The published
+   SBOMs are for downstream SCA and are deliberately **not** an install-time gate
+   (the installer does not verify them). **This provides consumer signature
+   verification for the signed checksums and bundle, but does not yet fully close
+   the gap:** it is a separate, opt-in entrypoint — the documented default
+   install (`tar … && ./scripts/install.sh`, the plain `install.sh`, or a
+   hand-fetched bundle) still does not verify, so verification is not *forced*.
+   Homebrew installs verify at checksum level via the pinned `sha256` in
+   `workcell.rb`. **Fully closing gap 1** requires making installer verification
+   the default/forced path across all documented install flows and exercising
+   `install-release.sh` end-to-end in CI (the `install-verification` lane today
+   drives the bundle's own `install.sh`, and an end-to-end verified install needs
+   a published release) — tracked under **G3**, install-lifecycle proof.
 2. **SLSA Build L3 not met (threat 6).** Build and provenance generation share a
    job/runner, so provenance is forgeable by a compromised build step. Closing
    it requires moving the build into an isolated trusted reusable workflow (or

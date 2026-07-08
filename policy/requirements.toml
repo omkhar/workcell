@@ -262,6 +262,19 @@ docs = [
   "docs/runtime-target-phase-plan.md",
 ]
 
+[functional.FR-014]
+title = "Verified release install"
+summary = "The recommended release install path downloads a tagged bundle and verifies its keyless cosign signature over the signed SHA256SUMS fail-closed before extracting or installing, refusing on missing tooling, absent verification material, a bad signature, or a digest mismatch, with air-gapped skips gated behind an explicit acknowledgement and reported as unverified."
+evidence = [
+  "scripts/verify-release-artifact.sh",
+  "internal/testkit/release_verify_test.go",
+]
+docs = [
+  "docs/install.md",
+  "docs/provenance.md",
+  "docs/ci-threat-model.md",
+]
+
 [nonfunctional.NFR-001]
 title = "Bounded VM-plus-container execution"
 summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."
