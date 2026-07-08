@@ -349,3 +349,71 @@ Runs `workcell-colimautil` on the host. Identical structure to `go_hostutil()`
 (`ensure_go_run_env`, forwarding `GOPATH`/`GOMODCACHE`/`GOCACHE` from
 `${ROOT_DIR}` via `run_clean_host_command_in_dir`), targeting
 `./cmd/workcell-colimautil` instead.
+
+## Egress-endpoint assembly (`egress-endpoints.sh`)
+
+`scripts/lib/launcher/egress-endpoints.sh` computes the per-session network
+egress allowlist and translates it into the container runtime's `--add-host`
+arguments. It maps each provider, remote-VM broker, and injected credential to
+its fixed `host:port` endpoint set, deduplicates and deny-subtracts the combined
+list through the `workcell-hostutil` Go helper, fails closed when a deny rule
+empties the allowlist, labels whether the launch actually enforces the
+allowlist, and resolves the surviving endpoints into `--add-host` runtime args.
+Every helper depends only on `csv_contains_value` (defined in
+`scripts/workcell`), `go_hostutil` (`scripts/lib/launcher/go-hostutil.sh`, sourced
+before this module), the read-only launch-state globals `AGENT`,
+`INJECTION_CREDENTIAL_KEYS`, `NETWORK_POLICY`, and `TARGET_BACKEND`, and the
+`RUNTIME_NETWORK_ARGS` array `build_runtime_host_aliases` populates — all defined
+before the first call site in the main launch path — which makes the module
+self-contained.
+
+### `provider_endpoints()`
+
+Prints the space-separated `host:port` egress set a provider requires
+(`codex`, `claude`, `copilot`, `gemini`). Returns `1` for any unrecognised
+provider so the caller sees no endpoints.
+
+### `target_broker_endpoints()`
+
+Prints the space-separated `host:port` control-plane endpoints a remote-VM
+broker backend requires (`aws-ec2-ssm`, `gcp-vm`). Returns `0` (empty) for every
+other target, including the local `colima` and `docker-desktop` backends.
+
+### `credential_extra_endpoints()`
+
+Prints additional endpoints implied by the injected credential set
+(`INJECTION_CREDENTIAL_KEYS`): GitHub host/config credentials add the GitHub web
+and raw-content hosts, and — only when `AGENT` is `gemini` — Google OAuth/ADC
+credentials add the Google identity and AI-platform hosts. Prints nothing when
+no credential implies extra egress.
+
+### `dedupe_endpoint_list()` / `subtract_endpoint_list()`
+
+Thin wrappers over the `workcell-hostutil helper` sub-commands
+`dedupe-endpoints` and `subtract-endpoints`. `dedupe_endpoint_list` collapses the
+combined allow set to unique endpoints preserving order; `subtract_endpoint_list`
+removes every endpoint in the deny list from the allow list, preserving allow
+order. Deny always wins over allow, and the subtraction only ever tightens the
+allowlist — it can never add an endpoint or change `NETWORK_POLICY`.
+
+### `fail_empty_egress_after_deny()`
+
+Aborts fail-closed (`exit 1`) with an actionable diagnostic when
+`[network].deny_endpoints` has removed every computed endpoint on the enforced
+colima allowlist path, so a zero-egress session never launches. Called for both
+the `bootstrap` and `session` phases.
+
+### `egress_enforcement_label()`
+
+Prints `allowlist` only when the launch actually enforces the per-session
+default-deny allowlist — `TARGET_BACKEND` is `colima` **and** `NETWORK_POLICY` is
+`allowlist` — and `none` for every other target, making the parity gap explicit
+on the launch summary.
+
+### `build_runtime_host_aliases()`
+
+Resets and repopulates the `RUNTIME_NETWORK_ARGS` array. On the `allowlist`
+policy it resolves the supplied endpoint list to IPs via
+`workcell-hostutil helper resolve-endpoints` and appends one `--add-host
+host:ip` argument per resolved address (bracketing IPv6 literals); on any other
+policy it leaves `RUNTIME_NETWORK_ARGS` empty and returns.

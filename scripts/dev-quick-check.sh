@@ -53,6 +53,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
   "${ROOT_DIR}/scripts/lib/launcher/host-exec.sh"
   "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh"
+  "${ROOT_DIR}/scripts/lib/launcher/egress-endpoints.sh"
   "${ROOT_DIR}/scripts/lib/manage_injection_policy"
   "${ROOT_DIR}/scripts/lib/pty_transcript"
   "${ROOT_DIR}/scripts/lib/render_injection_bundle"
