@@ -183,6 +183,29 @@ var knownAuditFields = map[string]struct{}{
 	"workspace_transport":     {},
 }
 
+// FreeFormPlaceholder replaces the value of a free-form audit field in the OCSF
+// output. The lifecycle event still emits (with its bounded fields), but the
+// arbitrary payload content is withheld so a reviewer knows a value was present
+// without the content being exported.
+const FreeFormPlaceholder = "[REDACTED-FREEFORM]"
+
+// freeFormAuditFields are the audit keys whose VALUE is arbitrary operator- or
+// agent-controlled free text, not a bounded enum/id/path/hash/policy. The
+// generic regex redactor cannot sanitize free prose or split-CLI secrets — e.g.
+// `argv=deploy --password hunter2` or `argv=the api key is sk-live... in words`
+// carry no recognizable token or key=value shape — so these are HARD-REDACTED to
+// FreeFormPlaceholder rather than redact-then-emitted. Every member MUST also be
+// in knownAuditFields (enforced by a test); it is a strict subset that swaps
+// redact-then-emit for a fixed placeholder.
+//
+//   - argv — the operator's detached-session message, recorded verbatim by
+//     session_send_main as `argv=${message}` (scripts/workcell). Bounded control
+//     metadata on the same records (command=session-send, source=host-cli,
+//     stdin_mode, force, exit_status, …) stays redact-then-emit.
+var freeFormAuditFields = map[string]struct{}{
+	"argv": {},
+}
+
 // auditField is one ordered key/value pair decoded from an audit record.
 type auditField struct {
 	key   string

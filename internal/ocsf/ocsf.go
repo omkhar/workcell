@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-// Package ocsf maps a Workcell session export onto the Open Cybersecurity Schema
+// Package ocsf maps a Workcell session export (the session record plus its
+// per-session audit lifecycle records) onto the Open Cybersecurity Schema
 // Framework (OCSF) and emits it as JSONL — one OCSF event object per line.
 //
 // Class choice: a Workcell session is a sandboxed agent application instance
 // that is started and stopped, so its lifecycle maps to the OCSF
 // "Application Lifecycle" class (class_uid 6002) in the "Application Activity"
-// category (category_uid 6). This file maps the session RECORD to one summary
-// event; a companion change adds one event per audit lifecycle record. The long
-// tail of session fields is preserved under the OCSF `unmapped` object so no
-// evidence is lost while the typed OCSF attributes stay well-defined.
+// category (category_uid 6). One summary event is emitted for the session
+// record itself, followed by one event per audit lifecycle record. Event names
+// map to OCSF activity_ids (Start/Stop/Other); the long tail of session and
+// audit fields is preserved under the OCSF `unmapped` object so no evidence is
+// lost while the typed OCSF attributes stay well-defined.
 //
 // Redaction is SHARED with the G2 support-bundle redactor
 // (supportbundle.Redactor): every free-form string that enters an OCSF event is
@@ -40,7 +42,11 @@ const OCSFSchemaVersion = "1.3.0"
 // package changes (a field is remapped, an activity_id reassigned, an attribute
 // added/removed) so consumers can gate on the exact mapping that produced an
 // event. It is emitted as metadata.mapping_version.
-const MappingVersion = "1"
+//
+// "2": the export became a MULTI-EVENT stream — the session-summary event plus
+// one Application Lifecycle event per audit lifecycle record — where "1" emitted
+// only the single session-summary event. Consumers gate their parsers on this.
+const MappingVersion = "2"
 
 // OCSF Application Lifecycle classification constants.
 const (
@@ -153,11 +159,10 @@ type Options struct {
 }
 
 // Export maps a session export to OCSF Application Lifecycle events with the
-// shared support-bundle redaction applied to every free-form string. This change
-// emits one summary event for the session record; a companion change appends one
-// event per audit lifecycle record. The error return is reserved for that
-// companion change (a tampered audit record fails the export closed); the
-// session-only mapping here never fails.
+// shared support-bundle redaction applied to every free-form string. The first
+// event summarizes the session record; each subsequent event is one audit
+// lifecycle record. It fails closed if any audit record is tampered (carries a
+// duplicate key) so a forged record is never emitted as an OCSF event.
 func Export(export sessions.SessionExport, opts Options) ([]Event, error) {
 	r := supportbundle.NewRedactor(opts.Home)
 	return mapExport(export, r.String, opts.Now)
@@ -188,7 +193,23 @@ func mapExport(export sessions.SessionExport, redact func(string) string, now ti
 	}
 	loggedTime := now.UnixMilli()
 
-	events := []Event{sessionEvent(export.Session, redact, loggedTime)}
+	// Select the audit decoder from the session's writer: apple-container
+	// sessions percent-encode path fields, every launcher backend uses bash %q.
+	enc := auditEncodingForProvider(export.Session.TargetProvider)
+
+	events := make([]Event, 0, 1+len(export.AuditRecords))
+	events = append(events, sessionEvent(export.Session, redact, loggedTime))
+	for _, line := range export.AuditRecords {
+		ev, emit, err := auditEvent(line, enc, export.Session, redact, loggedTime)
+		if err != nil {
+			return nil, err
+		}
+		if !emit {
+			// Record belongs to a different (or unstated) session — skip it.
+			continue
+		}
+		events = append(events, ev)
+	}
 	return events, nil
 }
 
@@ -363,6 +384,165 @@ func sessionDevice(rec sessions.SessionRecord, redact func(string) string) *Devi
 	}
 }
 
+// auditEvent builds one OCSF event from a single audit lifecycle record. The
+// line is decoded per the session's writer encoding (bash `%q` so spaced values
+// like the endpoints allowlist survive intact, or the AppleContainer percent
+// form so backslash-bearing paths survive intact) and rejected fail-closed if it
+// carries a duplicate key. The event, session_id, and timestamp keys drive
+// classification and occurrence; the remaining decoded fields become the
+// (redacted) unmapped object. Decode happens BEFORE redaction so the redactor
+// masks the real value.
+//
+// The app and device objects are built from the authoritative SessionRecord, not
+// the audit line: the launcher audit writers do not stamp target_id/target_kind
+// (or agent/mode) on every line, so a line-derived device would be nil on most
+// events even though each OCSF JSONL line is a STANDALONE lifecycle event that
+// must carry its sandbox target. Every audit line here already belongs to this
+// session (SessionAuditRecords filters by session id), so the record is the
+// authoritative source for the session's identity and target.
+func auditEvent(line string, enc auditEncoding, rec sessions.SessionRecord, redact func(string) string, loggedTime int64) (Event, bool, error) {
+	fields, err := decodeAuditLine(line, enc)
+	if err != nil {
+		return Event{}, false, err
+	}
+	lookup := make(map[string]string, len(fields))
+	for _, f := range fields {
+		lookup[f.key] = f.value
+	}
+
+	// Verify the DECODED session_id against the target session. The upstream
+	// prefilter (SessionAuditRecords) whitespace-splits the raw line BEFORE bash
+	// %q decoding, so another session's record whose free-form argv contains the
+	// substring `session_id=<target>` can slip through. The authoritative match
+	// is the decoded key: a record whose real session_id is absent or belongs to
+	// a different session is NOT this session's evidence — skip it (emit=false)
+	// rather than attributing it to this session's app/device.
+	if lookup["session_id"] != rec.SessionID {
+		return Event{}, false, nil
+	}
+
+	eventName := lookup["event"]
+	activity := activityForEvent(eventName)
+	_, eventRecognized := knownAuditEvents[eventName]
+
+	severityID := severityFromExit(lookup["exit_status"])
+	statusID := statusUnknown
+	if activity == activityStop {
+		statusID = statusFromExit(lookup["exit_status"])
+	}
+
+	epoch, dt := parseTime(firstNonEmpty(lookup["timestamp"], lookup["ts"]), redact)
+
+	unmapped := newUnmapped()
+	var unexpected []string
+	for _, f := range fields {
+		switch f.key {
+		case "event", "session_id", "timestamp", "ts":
+			// consumed by classification / occurrence
+			continue
+		}
+		if _, free := freeFormAuditFields[f.key]; free {
+			// Arbitrary operator/agent free text (e.g. the detached-session
+			// message in argv): the regex redactor cannot sanitize prose or
+			// split-CLI secrets, so hard-redact the whole value to a fixed
+			// placeholder. The event still emits; only the payload is withheld.
+			unmapped.put("audit."+f.key, FreeFormPlaceholder)
+			continue
+		}
+		if _, known := knownAuditFields[f.key]; known {
+			unmapped.putStr("audit."+f.key, f.value, redact)
+			continue
+		}
+		// A field NAME no writer emits: an audit line is mutable text, so a
+		// tampered record could carry a secret-shaped KEY as well as a
+		// secret-shaped value (e.g. `deploy --password hunter2=x` decodes to that
+		// whole prose as the key). The regex redactor cannot sanitize free prose
+		// or split-CLI secrets, so NEITHER the key nor the value may reach the
+		// output. Hard-redact BOTH to the fixed placeholder; the count of entries
+		// still signals "N unexpected fields were present" without any
+		// attacker-controlled text.
+		unexpected = append(unexpected, FreeFormPlaceholder+"="+FreeFormPlaceholder)
+	}
+	// A tampered/unrecognized event NAME is itself arbitrary text; route it to
+	// the same hard-redacted bucket so it never reaches a typed OCSF string.
+	if eventName != "" && !eventRecognized {
+		unexpected = append(unexpected, "event="+FreeFormPlaceholder)
+	}
+	if len(unexpected) > 0 {
+		unmapped.put("audit.unexpected_fields", strings.Join(unexpected, " "))
+	}
+
+	// The message echoes the event name only when it is a RECOGNIZED bounded
+	// enum; a tampered/unrecognized event value never reaches the typed message
+	// (the regex redactor cannot sanitize free prose), so fall back to the safe
+	// generic activity name.
+	msgEvent := activityName(activity)
+	if eventRecognized {
+		msgEvent = eventName
+	}
+
+	return Event{
+		CategoryUID:  categoryUID,
+		CategoryName: categoryName,
+		ClassUID:     classUID,
+		ClassName:    className,
+		ActivityID:   activity,
+		ActivityName: activityName(activity),
+		TypeUID:      typeUID(activity),
+		TypeName:     className + ": " + activityName(activity),
+		Time:         epoch,
+		TimeDt:       dt,
+		SeverityID:   severityID,
+		Severity:     severityName(severityID),
+		StatusID:     statusID,
+		Status:       statusName(statusID),
+		Message:      "workcell audit " + msgEvent,
+		Metadata:     meta(loggedTime),
+		App:          sessionApp(rec, redact),
+		Device:       sessionDevice(rec, redact),
+		Unmapped:     unmapped.finish(),
+	}, true, nil
+}
+
+// knownAuditEvents is the bounded set of event= values the writers actually
+// emit: the launcher lifecycle/control events (launch, exit, assurance-change,
+// command, attach, attach-attempt, stop-request, stop-failed) and the
+// apple-container lifecycle events (session_started, session_finished,
+// bootstrap_ready, workspace_materialized). Only a member of this set is echoed
+// into the typed OCSF message; any other (tampered) value is treated as
+// arbitrary text and hard-redacted, never emitted verbatim.
+var knownAuditEvents = map[string]struct{}{
+	"launch":                 {},
+	"exit":                   {},
+	"assurance-change":       {},
+	"command":                {},
+	"attach":                 {},
+	"attach-attempt":         {},
+	"stop-request":           {},
+	"stop-failed":            {},
+	"session_started":        {},
+	"session_finished":       {},
+	"bootstrap_ready":        {},
+	"workspace_materialized": {},
+}
+
+// activityForEvent maps a Workcell audit event name to an OCSF activity_id.
+// Start-shaped and stop-shaped lifecycle events map to Start/Stop; every other
+// recognized lifecycle event (assurance-change, bootstrap_ready,
+// workspace_materialized, …) maps to Other. An empty event name is Unknown.
+func activityForEvent(event string) int {
+	switch event {
+	case "session_started", "launch":
+		return activityStart
+	case "session_finished", "exit":
+		return activityStop
+	case "":
+		return activityUnknown
+	default:
+		return activityOther
+	}
+}
+
 // typeUID follows the OCSF convention type_uid = class_uid*100 + activity_id.
 func typeUID(activity int) int {
 	return classUID*100 + activity
@@ -378,14 +558,21 @@ func severityFromExit(exitStatus string) int {
 	return severityInformational
 }
 
-// statusFromExit maps a terminal exit status to Success/Failure. An unset exit
-// status on a terminal event is Success (a clean stop without a recorded code).
+// statusFromExit maps a terminal exit status to Success/Failure/Unknown. Only an
+// explicit exit_status=0 is Success; a non-zero code is Failure; a MISSING exit
+// status is Unknown, NOT Success — a crash can leave a torn stop/exit record
+// (e.g. `event=session_finished` with the trailing fields lost) that still
+// matches the session id, and fabricating a clean successful outcome from an
+// incomplete record would misreport the session.
 func statusFromExit(exitStatus string) int {
-	s := strings.TrimSpace(exitStatus)
-	if s == "" || s == "0" {
+	switch strings.TrimSpace(exitStatus) {
+	case "0":
 		return statusSuccess
+	case "":
+		return statusUnknown
+	default:
+		return statusFailure
 	}
-	return statusFailure
 }
 
 // isFailedTerminalStatus reports whether a durable session status is a failure
@@ -414,6 +601,16 @@ func parseTime(value string, redact func(string) string) (int64, string) {
 		return t.UnixMilli(), dt
 	}
 	return 0, dt
+}
+
+// firstNonEmpty returns the first trimmed-non-empty argument.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // unmapped accumulates the OCSF `unmapped` object, skipping empty values so the
