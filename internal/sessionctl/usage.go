@@ -80,10 +80,13 @@ Notes:
     worktree, from a workspace without a recorded git base, or from a workspace
     that is not a self-contained git worktree.
   - ` + "`" + `session export` + "`" + ` includes audit records that match the recorded session id.
-  - ` + "`" + `session export --format ocsf` + "`" + ` maps the recorded session to an OCSF
-    Application Lifecycle event (class 6002) as JSONL, versioned by
-    metadata.version and metadata.mapping_version, with credentials, tokens,
-    and operator home paths redacted by the shared support-bundle rule-set.
+  - ` + "`" + `session export --format ocsf` + "`" + ` maps the record and audit lifecycle events to
+    OCSF Application Lifecycle (class 6002) JSONL, versioned by metadata.version
+    and metadata.mapping_version, with credentials, tokens, and operator home
+    paths redacted by the shared support-bundle rule-set. Free-form operator
+    payloads (the detached session message) are not exported: their content is
+    replaced with a fixed placeholder since regex redaction cannot sanitize
+    arbitrary prose.
   - ` + "`" + `session delete` + "`" + ` never rewrites the shared profile audit log.
   - ` + "`" + `session delete` + "`" + ` cleans only explicitly recorded session-owned artifacts and
     refuses running sessions or running session containers.

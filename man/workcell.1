@@ -55,15 +55,17 @@ accepts
 (the default) emits the recorded session and matching audit records as a single
 indented JSON object, while
 .I ocsf
-maps the recorded session to an OCSF-mapped JSON Lines stream (an Open
-Cybersecurity Schema Framework Application Lifecycle event, class_uid 6002,
-per line) versioned by
+emits an OCSF-mapped JSON Lines stream (one Open Cybersecurity Schema Framework
+Application Lifecycle event, class_uid 6002, per line) versioned by
 .B metadata.version
 and
 .BR metadata.mapping_version .
 Credentials, tokens, and operator home paths are redacted from the OCSF output
 by the same rule-set as
-.BR "workcell support-bundle" .
+.BR "workcell support-bundle" ,
+and free-form operator payloads (the detached-session message) are withheld
+entirely \(em their content is replaced with a fixed placeholder because regex
+redaction cannot sanitize arbitrary prose.
 .TP
 .B workcell policy show|validate|diff
 Inspect the merged host-side injection policy without starting the runtime.
