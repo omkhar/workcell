@@ -70,9 +70,10 @@ investigate.
    and workspace transport, or `--json` to script it) shows every recorded
    session with its live status, profile, and id.
 2. **Stop a detached session.** `workcell session stop --id SESSION_ID` performs
-   a graceful stop; add `--force` to force-remove (kill) the container instead.
-   This works only for **detached** sessions started with
-   `workcell session start`.
+   a graceful stop (`docker stop`); add `--force` to kill it immediately
+   (`docker kill`) instead. Either way the container is stopped, not removed, so
+   it stays available as evidence. This works only for **detached** sessions
+   started with `workcell session start`.
 3. **Stop a foreground session.** An interactive `workcell` launch has no
    `session stop` handle. Terminate the launcher process; the runtime container
    is ephemeral by default (`--container-mutability ephemeral`) and does not
@@ -101,8 +102,15 @@ investigate.
      VM, so this halt is safe to do before collecting.
    - **`local_compat` / Docker Desktop (compat, lower assurance).** The isolation
      boundary is the Docker Desktop container/context, not a Workcell-dedicated
-     VM, so there is no `colima stop` to run; `workcell session stop --id
-     SESSION_ID --force` (kill/remove the container) is the boundary teardown.
+     VM, so there is no `colima stop` to run. `workcell session stop --id
+     SESSION_ID --force` force-**stops** the session by killing its container
+     (`--force` selects `docker kill` over the graceful `docker stop` —
+     `internal/sessionctl/stop.go:33,116-117`); this contains the breach but
+     leaves the **stopped container in place**, which is what you want — preserve
+     it as evidence. It does **not** remove the container. Removing it is a
+     separate Recover step (`workcell session delete`, which needs the Docker
+     socket and a terminal status — see step 7 — or a manual `docker rm`), done
+     only after evidence is collected.
    Do **not** delete the profile, VM, or container yet — teardown is step 7,
    after evidence is collected. The `remote_vm` preview targets (`aws-ec2-ssm`,
    `gcp-vm`) are `preview-only` with `launch=blocked` in the matrix, so no live
