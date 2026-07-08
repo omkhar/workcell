@@ -100,9 +100,12 @@ type Metadata struct {
 }
 
 // App is the OCSF Application object describing the agent session instance.
+// App is the OCSF Product-typed `app` attribute. OCSF 1.3.0 requires
+// vendor_name on Product objects, so it is always emitted (not omitempty).
 type App struct {
-	Name string `json:"name,omitempty"`
-	UID  string `json:"uid,omitempty"`
+	Name       string `json:"name,omitempty"`
+	VendorName string `json:"vendor_name"`
+	UID        string `json:"uid,omitempty"`
 }
 
 // Device is the OCSF Device object describing the sandbox target.
@@ -340,7 +343,7 @@ func sessionApp(rec sessions.SessionRecord, redact func(string) string) *App {
 	if name == "" && strings.TrimSpace(rec.SessionID) == "" {
 		return nil
 	}
-	return &App{Name: redact(name), UID: redact(rec.SessionID)}
+	return &App{Name: redact(name), VendorName: vendorName, UID: redact(rec.SessionID)}
 }
 
 // sessionDevice builds the OCSF Device object for the sandbox target.
