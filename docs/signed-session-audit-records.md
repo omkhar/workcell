@@ -44,6 +44,21 @@ dropping any record changes every downstream digest — a standard tamper-eviden
 chain. The **head** of a session is the `record_digest` of the last log record
 carrying that session's `session_id`.
 
+### Append serialization invariant
+
+The chain is linear only if appends are serialized: an appender reads the
+current tail's `record_digest` as the new record's `prev_digest`, so two
+concurrent detached-session control paths (`start`/`send`/`stop`) that read the
+same tail and both append would fork the chain and make verification reject a
+legitimate later record. `append_audit_record_to_path` therefore holds an
+exclusive per-log lock across the read-tail-plus-append critical section. The
+lock is the repo's atomic, crash-safe `acquire-profile-lock` primitive (an
+atomic `mkdir`+`rename` whose owner PID lets a crashed holder be reclaimed)
+applied to a `<audit-log>.lock` directory, so no external `flock(1)` is required
+— it is absent on the macOS host. The critical section is short, so contention
+uses a bounded ~1s backoff; on exhaustion the appender fails closed (skips the
+record) rather than fork the chain. Single-writer behavior is unchanged.
+
 ## Seal (host-side signature)
 
 When the runtime boundary finalizes a session (`finalize_session_audit`, after
@@ -120,6 +135,19 @@ session's signed head:
   identity attestation of a remote signer (contrast the release-artifact keyless
   Sigstore flow in [provenance.md](provenance.md), whose trust anchor is a CI
   workflow identity that does not exist at session runtime).
+
+## Provider coverage
+
+Signing covers providers whose audit records form a digest chain — the
+bash-launcher backends (colima, docker-desktop, aws-ec2-ssm, gcp-vm) whose
+session lifecycle is finalized by `finalize_session_audit`. The preview-only,
+launch-blocked `apple-container` target writes plain lifecycle audit lines
+without `prev_digest`/`record_digest`, so there is no chain to seal: such
+sessions are **unsigned**, and `workcell session verify` reports them
+fail-closed with a clear "no signable digest chain" reason. Signing the
+apple-container lifecycle (its own finalize path) is a documented follow-up; it
+is intentionally out of scope here rather than sealed with an unverifiable
+signature.
 
 ## Coordination with OCSF export
 

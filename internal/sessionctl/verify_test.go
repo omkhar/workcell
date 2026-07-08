@@ -131,6 +131,55 @@ func TestVerifyCLIFailsClosedWhenUnsigned(t *testing.T) {
 	assertExitCode(t, err, 1)
 }
 
+func TestVerifyCLIFailsClosedForNoChainProvider(t *testing.T) {
+	root := t.TempDir()
+	signingDir := filepath.Join(t.TempDir(), "signing")
+	sessionID := "session-ac"
+
+	logPath := filepath.Join(root, "wcl-fixture", "sessions", "workcell.audit.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// apple-container-style lifecycle lines: no record_digest, no chain.
+	if err := os.WriteFile(logPath, []byte(strings.Join([]string{
+		"timestamp=2026-07-08T00:00:00Z session_id=session-ac event=session_started v=1",
+		"timestamp=2026-07-08T00:00:01Z session_id=session-ac event=session_finished v=1",
+	}, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	recordPath := filepath.Join(root, "wcl-fixture", "sessions", sessionID+".json")
+	if err := sessions.WriteSessionRecord(recordPath, map[string]string{
+		"session_id":      sessionID,
+		"profile":         "wcl-fixture",
+		"target_provider": "apple-container",
+		"agent":           "codex",
+		"mode":            "strict",
+		"status":          "exited",
+		"workspace":       "/tmp/workspace",
+		"started_at":      "2026-07-08T00:00:00Z",
+		"finished_at":     "2026-07-08T00:00:09Z",
+		"exit_status":     "0",
+		"final_assurance": "managed-mutable",
+		"audit_log_path":  logPath,
+	}); err != nil {
+		t.Fatalf("write record: %v", err)
+	}
+
+	var buf bytes.Buffer
+	err := verifyMain([]string{
+		"--root=" + root,
+		"--id", sessionID,
+		"--signing-dir=" + signingDir,
+		"--real-home=/nonexistent",
+	}, &buf)
+	assertExitCode(t, err, 1)
+	var ec *cliexit.ExitCodeError
+	errors.As(err, &ec)
+	if !strings.Contains(ec.Message, "no signable digest chain") {
+		t.Fatalf("expected the no-signable-chain reason, got %q", ec.Message)
+	}
+}
+
 func TestVerifyCLIMissingIDIsUsageError(t *testing.T) {
 	var buf bytes.Buffer
 	err := verifyMain([]string{"--signing-dir=/tmp/x"}, &buf)

@@ -69,6 +69,9 @@ func verifyMain(args []string, stdout io.Writer) error {
 	seal, err := auditseal.ReadSeal(sealPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if !auditseal.HasSignableChain(record.AuditLogPath, record.TargetProvider, sessionID) {
+				return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("Session %s uses a provider whose audit records have no signable digest chain (apple-container is preview-only); verification fails closed.", redactor.String(sessionID))}
+			}
 			return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("Session %s is not signed (no audit seal); verification fails closed.", redactor.String(sessionID))}
 		}
 		return &cliexit.ExitCodeError{Code: 1, Message: redactor.String(err.Error())}

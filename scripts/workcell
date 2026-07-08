@@ -2599,29 +2599,80 @@ append_audit_record() {
   append_audit_record_to_path "${audit_path}" "$@"
 }
 
+# acquire_audit_log_lock serializes audit-log appends. The hash chain reads the
+# current tail's record_digest as the next record's prev_digest, so two
+# concurrent detached-session control paths (start/send/stop) racing the
+# read+append would fork the chain and make the verifier reject a legitimate
+# later record. This reuses the atomic, crash-safe profile-lock primitive
+# (acquire-profile-lock + profile-lock-is-stale: an atomic mkdir-rename lock
+# whose owner PID lets a crashed holder be reclaimed) on a per-log lock dir, so
+# no external flock(1) is required (it is absent on the macOS host). The critical
+# section is short, so it uses a ~1s bounded backoff (50 x 20ms) mirroring the
+# Go AppleContainer audit lock; on exhaustion it fails closed (no append) rather
+# than fork the chain.
+acquire_audit_log_lock() {
+  local lock_dir="$1"
+  local attempts=0
+  local acquired_state=""
+  local stale_state=""
+
+  mkdir -p "$(dirname "${lock_dir}")"
+  while true; do
+    if ! acquired_state="$(go_hostutil helper acquire-profile-lock "${lock_dir}" "$$")"; then
+      return 1
+    fi
+    if [[ "${acquired_state}" == "1" ]]; then
+      return 0
+    fi
+    if stale_state="$(profile_lock_is_stale "${lock_dir}")" && [[ "${stale_state}" == "1" ]]; then
+      rm -rf "${lock_dir}"
+      continue
+    fi
+    attempts=$((attempts + 1))
+    if [[ "${attempts}" -ge 50 ]]; then
+      return 1
+    fi
+    sleep 0.02
+  done
+}
+
 append_audit_record_to_path() {
   local audit_path="$1"
   shift
-  local timestamp
-  local prev_digest=""
-  local record_digest=""
+  local lock_dir=""
+  local rc=0
 
   mkdir -p "$(dirname "${audit_path}")"
   umask 077
   touch "${audit_path}"
   chmod 0600 "${audit_path}" 2>/dev/null || true
-  timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  if [[ -s "${audit_path}" ]]; then
-    prev_digest="$(sed -n 's/.*record_digest=\([^ ]*\).*/\1/p' "${audit_path}" | tail -n1)"
+
+  lock_dir="${audit_path}.lock"
+  if ! acquire_audit_log_lock "${lock_dir}"; then
+    echo "Workcell: warning: could not acquire audit-log lock for ${audit_path}; skipped a record to keep the chain linear." >&2
+    return 1
   fi
-  record_digest="$(audit_record_digest "${prev_digest}" "${timestamp}" "$@")"
-  {
-    printf 'timestamp=%q ' "${timestamp}"
-    printf '%q ' "$@"
-    [[ -n "${prev_digest}" ]] && printf 'prev_digest=%q ' "${prev_digest}"
-    printf 'record_digest=%q ' "${record_digest}"
-    printf '\n'
-  } >>"${audit_path}"
+  # Run the read-prev-digest + append critical section under the lock, releasing
+  # on every path (including a set -e abort inside the subshell).
+  (
+    local timestamp
+    local prev_digest=""
+    local record_digest=""
+    timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    if [[ -s "${audit_path}" ]]; then
+      prev_digest="$(sed -n 's/.*record_digest=\([^ ]*\).*/\1/p' "${audit_path}" | tail -n1)"
+    fi
+    record_digest="$(audit_record_digest "${prev_digest}" "${timestamp}" "$@")"
+    {
+      printf 'timestamp=%q ' "${timestamp}"
+      printf '%q ' "$@"
+      [[ -n "${prev_digest}" ]] && printf 'prev_digest=%q ' "${prev_digest}"
+      printf 'record_digest=%q ' "${record_digest}"
+      printf '\n'
+    } >>"${audit_path}"
+  ) || rc=$?
+  rm -rf "${lock_dir}" 2>/dev/null || true
+  return "${rc}"
 }
 
 maybe_fail_after_profile_refresh_for_tests() {

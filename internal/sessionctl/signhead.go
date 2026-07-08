@@ -4,6 +4,7 @@
 package sessionctl
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -60,6 +61,13 @@ func SignHeadMain(args []string) error {
 
 	seal, err := auditseal.SignSessionHead(signingDir, auditLog, provider, sessionID, signedAt)
 	if err != nil {
+		if errors.Is(err, auditseal.ErrUnsupportedAuditChain) {
+			// A provider with no digest chain (e.g. the preview-only
+			// apple-container target) is scoped out of signing: leave the
+			// session unsigned rather than emit a seal that can never verify.
+			// `session verify` reports it as unsigned, fail-closed.
+			return nil
+		}
 		return err
 	}
 	return auditseal.WriteSeal(auditseal.SealPathForRecord(recordPath), seal)
