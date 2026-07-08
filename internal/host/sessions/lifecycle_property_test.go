@@ -311,6 +311,7 @@ var newlineBaseUpdates = map[string]string{
 	"current_assurance":       "managed-mutable",
 	"final_assurance":         "managed-mutable",
 	"workspace_control_plane": "masked",
+	"workspace_repo_mcp":      "denied",
 	"bootstrap_id":            "boot-1",
 	"image_ref":               "img@sha256:aaa",
 }
@@ -481,6 +482,7 @@ func recordToUpdates(r SessionRecord) map[string]string {
 	add("initial_assurance", r.InitialAssurance)
 	add("final_assurance", r.FinalAssurance)
 	add("workspace_control_plane", r.WorkspaceControlPlane)
+	add("workspace_repo_mcp", r.WorkspaceRepoMcp)
 	add("bootstrap_id", r.BootstrapID)
 	add("image_ref", r.ImageRef)
 	return updates

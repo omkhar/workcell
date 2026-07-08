@@ -281,6 +281,7 @@ func sessionEvent(rec sessions.SessionRecord, redact func(string) string, logged
 	unmapped.putStr("session.worktree_path", rec.WorktreePath, redact)
 	unmapped.putStr("session.workspace_transport", rec.WorkspaceTransport, redact)
 	unmapped.putStr("session.workspace_control_plane", rec.WorkspaceControlPlane, redact)
+	unmapped.putStr("session.workspace_repo_mcp", rec.WorkspaceRepoMcp, redact)
 	unmapped.putStr("session.git_branch", rec.GitBranch, redact)
 	unmapped.putStr("session.git_head", rec.GitHead, redact)
 	unmapped.putStr("session.git_base", rec.GitBase, redact)
@@ -401,7 +402,7 @@ func isFailedTerminalStatus(status string) bool {
 }
 
 // parseTime parses an RFC3339 timestamp to epoch milliseconds and returns the
-// redacted original string as time_dt. An unparseable value yields time 0 and
+// redacted original string as time_dt. An unparsable value yields time 0 and
 // preserves the (redacted) original for the consumer.
 func parseTime(value string, redact func(string) string) (int64, string) {
 	value = strings.TrimSpace(value)

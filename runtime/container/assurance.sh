@@ -100,20 +100,36 @@ workcell_effective_codex_rules_assurance() {
 
 emit_session_assurance_notice() {
   local assurance=""
+  local emitted=0
 
   if [[ "${WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED:-0}" == "1" ]]; then
     return 0
   fi
 
+  # Reasons can stack into a '+'-joined label, so match each reason as a
+  # substring and fire every applicable notice; a single ack still emits exactly
+  # its one notice.
   assurance="$(workcell_runtime_state_value WORKCELL_SESSION_ASSURANCE || true)"
   case "${assurance}" in
-    lower-assurance-control-plane-vcs)
+    *control-plane-vcs*)
       echo "Workcell warning: this session intentionally exposed readonly workspace control-plane paths for Git VCS operations. Treat workspace control-plane contents as lower-assurance until container exit." >&2
-      export WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED=1
-      ;;
-    lower-assurance-package-mutation)
-      echo "Workcell warning: this session previously ran package-manager mutations as root. In-container control-plane integrity is now lower-assurance until container exit." >&2
-      export WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED=1
+      emitted=1
       ;;
   esac
+  case "${assurance}" in
+    *repo-mcp*)
+      echo "Workcell warning: this session intentionally honored repo-defined MCP server configs, expanding the agent's outbound reach. Treat the session as lower-assurance until container exit." >&2
+      emitted=1
+      ;;
+  esac
+  case "${assurance}" in
+    *package-mutation*)
+      echo "Workcell warning: this session previously ran package-manager mutations as root. In-container control-plane integrity is now lower-assurance until container exit." >&2
+      emitted=1
+      ;;
+  esac
+  if [[ "${emitted}" -eq 1 ]]; then
+    export WORKCELL_SESSION_ASSURANCE_NOTICE_EMITTED=1
+  fi
+  return 0
 }

@@ -29,7 +29,7 @@ prefixes = ["host_os=", "host_arch=", "support_matrix_status=", "provider_bootst
 # The json tags of internal/host/sessions/sessions.go's SessionRecord and
 # SessionExport structs.
 [session_record_fields]
-fields = ["version", "session_id", "profile", "target_kind", "target_provider", "target_id", "target_assurance_class", "runtime_api", "workspace_transport", "agent", "mode", "status", "ui", "execution_path", "workspace", "workspace_origin", "workspace_root", "worktree_path", "git_branch", "git_head", "git_base", "container_name", "monitor_pid", "live_status", "session_audit_dir", "audit_log_path", "debug_log_path", "file_trace_log_path", "transcript_log_path", "started_at", "observed_at", "finished_at", "exit_status", "initial_assurance", "current_assurance", "final_assurance", "workspace_control_plane", "bootstrap_id", "image_ref"]
+fields = ["version", "session_id", "profile", "target_kind", "target_provider", "target_id", "target_assurance_class", "runtime_api", "workspace_transport", "agent", "mode", "status", "ui", "execution_path", "workspace", "workspace_origin", "workspace_root", "worktree_path", "git_branch", "git_head", "git_base", "container_name", "monitor_pid", "live_status", "session_audit_dir", "audit_log_path", "debug_log_path", "file_trace_log_path", "transcript_log_path", "started_at", "observed_at", "finished_at", "exit_status", "initial_assurance", "current_assurance", "final_assurance", "workspace_control_plane", "workspace_repo_mcp", "bootstrap_id", "image_ref"]
 export_fields = ["session", "audit_records"]
 
 # The injection-policy top-level table whitelist accepted by
@@ -40,7 +40,7 @@ export_fields = ["session", "audit_records"]
 # set-equality against that function, so renaming or dropping a summary line
 # fails the check.
 [session_show_prefixes]
-prefixes = ["session_id=", "profile=", "target_kind=", "target_provider=", "target_id=", "target_summary=", "target_assurance_class=", "runtime_api=", "control=", "agent=", "mode=", "ui=", "execution_path=", "status=", "live_status=", "assurance=", "workspace_transport=", "workspace=", "display_workspace=", "display_worktree=", "display_git_branch=", "workspace_origin=", "workspace_root=", "worktree_path=", "git_branch=", "git_head=", "git_base=", "container_name=", "monitor_pid=", "started_at=", "observed_at=", "finished_at=", "exit_status=", "initial_assurance=", "current_assurance=", "final_assurance=", "workspace_control_plane=", "session_audit_dir=", "audit_log_path=", "debug_log_path=", "file_trace_log_path=", "transcript_log_path="]
+prefixes = ["session_id=", "profile=", "target_kind=", "target_provider=", "target_id=", "target_summary=", "target_assurance_class=", "runtime_api=", "control=", "agent=", "mode=", "ui=", "execution_path=", "status=", "live_status=", "assurance=", "workspace_transport=", "workspace=", "display_workspace=", "display_worktree=", "display_git_branch=", "workspace_origin=", "workspace_root=", "worktree_path=", "git_branch=", "git_head=", "git_base=", "container_name=", "monitor_pid=", "started_at=", "observed_at=", "finished_at=", "exit_status=", "initial_assurance=", "current_assurance=", "final_assurance=", "workspace_control_plane=", "workspace_repo_mcp=", "session_audit_dir=", "audit_log_path=", "debug_log_path=", "file_trace_log_path=", "transcript_log_path="]
 
 [injection_tables]
 tables = ["documents", "ssh", "credentials", "copies", "network"]
