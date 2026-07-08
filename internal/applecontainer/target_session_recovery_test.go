@@ -14,21 +14,30 @@ import (
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
+// targetRootOf derives the canonical target root from a started session's record
+// path (<targetRoot>/sessions/<id>.json).
+func targetRootOf(started SessionResult) string {
+	return filepath.Dir(filepath.Dir(started.RecordPath))
+}
+
+// rewriteManifest re-persists v at path in writeJSON's on-disk format
+// (MarshalIndent + trailing newline, 0o600) so a self-consistent tamper — the
+// Result and the on-disk bytes edited to agree — still passes the byte-compare.
+func rewriteManifest(t *testing.T, path string, v any) {
+	t.Helper()
+	data, err := json.MarshalIndent(v, "", "  ")
+	mustNil(t, err)
+	mustNil(t, os.WriteFile(path, append(data, '\n'), 0o600))
+}
+
 // TestStartSessionRejectsAuditLogOutsideTargetRoot: an AuditLogPath outside the
 // target root is rejected, so the log cannot be written outside the state tree.
 func TestStartSessionRejectsAuditLogOutsideTargetRoot(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	source := writeSampleWorkspace(t)
-	root := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: root, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: source})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: root, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 	boot.AuditLogPath = filepath.Join(t.TempDir(), "outside.log") // outside TargetRoot
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 		t.Fatalf("start accepted an audit log outside the target root")
 	}
 }
@@ -39,18 +48,10 @@ func TestStartSessionRejectsAuditLogOutsideTargetRoot(t *testing.T) {
 func TestStartSessionRejectsAuditLogAtRecordPath(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	source := writeSampleWorkspace(t)
-	root := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: root, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: source})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: root, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-
+	target, mat, boot := newSessionFixture(t)
 	recordPath := filepath.Join(boot.TargetRoot, "sessions", "sid.json")
 	boot.AuditLogPath = recordPath // a target-managed file, but not the constructed log
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 		t.Fatalf("start accepted an audit log pointed at the session record")
 	}
 	if _, err := os.Stat(recordPath); !os.IsNotExist(err) {
@@ -62,15 +63,8 @@ func TestStartSessionRejectsAuditLogAtRecordPath(t *testing.T) {
 // SessionResult for exercising FinishSession's trust-of-persisted-fields.
 func startedForFinishTest(t *testing.T) (AppleContainerTarget, SessionResult) {
 	t.Helper()
-	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	started, err := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot})
+	target, mat, boot := newSessionFixture(t)
+	started, err := target.StartSession(context.Background(), startReq("sid", mat, boot))
 	mustNil(t, err)
 	return target, started
 }
@@ -97,21 +91,31 @@ func tamperRecordFields(t *testing.T, recordPath string, fields map[string]strin
 	mustNil(t, os.WriteFile(recordPath, out, 0o600))
 }
 
+// seedDecoyAuditLog derives the canonical audit log of a started session and
+// writes a target-managed decoy log seeded with the same start events, then
+// tampers the persisted audit_log_path to point at the decoy. The decoy carries
+// the start triplet so even a trust-the-field finalize would pass the
+// start-events check and append there — isolating the re-derive/heal guard as the
+// only thing that can keep the finish canonical. Returns both paths.
+func seedDecoyAuditLog(t *testing.T, started SessionResult) (canonical, decoy string) {
+	t.Helper()
+	targetRoot := targetRootOf(started)
+	canonical = filepath.Join(targetRoot, "workcell.audit.log")
+	decoy = filepath.Join(targetRoot, "decoy.audit.log")
+	content, err := os.ReadFile(canonical)
+	mustNil(t, err)
+	mustNil(t, os.WriteFile(decoy, content, 0o600))
+	tamperRecordField(t, started.RecordPath, "audit_log_path", decoy)
+	return canonical, decoy
+}
+
 // TestFinishSessionRederivesCanonicalAuditLog: a tampered persisted audit_log_path
 // must NOT redirect the finish event — it is re-derived from TargetRoot, so the
 // finish lands in the canonical log and the tampered target is untouched.
 func TestFinishSessionRederivesCanonicalAuditLog(t *testing.T) {
 	t.Parallel()
 	target, started := startedForFinishTest(t)
-	targetRoot := filepath.Dir(filepath.Dir(started.RecordPath))
-	canonical := filepath.Join(targetRoot, "workcell.audit.log")
-	// A target-managed decoy log seeded with this session's start events, so even a
-	// trust-the-field finalize would pass the start-events check and append there.
-	decoy := filepath.Join(targetRoot, "decoy.audit.log")
-	content, err := os.ReadFile(canonical)
-	mustNil(t, err)
-	mustNil(t, os.WriteFile(decoy, content, 0o600))
-	tamperRecordField(t, started.RecordPath, "audit_log_path", decoy)
+	canonical, decoy := seedDecoyAuditLog(t, started)
 
 	if _, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}); e != nil {
 		t.Fatalf("FinishSession failed: %v", e)
@@ -130,13 +134,7 @@ func TestFinishSessionRederivesCanonicalAuditLog(t *testing.T) {
 func TestFinishSessionHealsTamperedAuditLogPath(t *testing.T) {
 	t.Parallel()
 	target, started := startedForFinishTest(t)
-	targetRoot := filepath.Dir(filepath.Dir(started.RecordPath))
-	canonical := filepath.Join(targetRoot, "workcell.audit.log")
-	decoy := filepath.Join(targetRoot, "decoy.audit.log")
-	content, err := os.ReadFile(canonical)
-	mustNil(t, err)
-	mustNil(t, os.WriteFile(decoy, content, 0o600)) // seed so the finalize can proceed
-	tamperRecordField(t, started.RecordPath, "audit_log_path", decoy)
+	canonical, _ := seedDecoyAuditLog(t, started)
 
 	if _, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}); e != nil {
 		t.Fatalf("FinishSession failed: %v", e)
@@ -214,22 +212,14 @@ func TestFinishSessionRejectsTerminalNonExitedStatus(t *testing.T) {
 func TestStartSessionRejectsTamperedManifestContractField(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 
 	// Tamper the materialization manifest's target_provider in BOTH the Result and
-	// on disk (writeJSON format = MarshalIndent + "\n") so the byte-compare matches.
+	// on disk so the byte-compare matches.
 	mat.Manifest.TargetProvider = "evil-provider"
-	data, err := json.MarshalIndent(mat.Manifest, "", "  ")
-	mustNil(t, err)
-	mustNil(t, os.WriteFile(mat.ManifestPath, append(data, '\n'), 0o600))
+	rewriteManifest(t, mat.ManifestPath, mat.Manifest)
 
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 		t.Fatalf("StartSession certified a materialization manifest with a tampered contract field")
 	}
 }
@@ -239,20 +229,12 @@ func TestStartSessionRejectsTamperedManifestContractField(t *testing.T) {
 func TestStartSessionRejectsTamperedBootstrapContractField(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 
 	boot.Manifest.AccessModel = "evil-access"
-	data, err := json.MarshalIndent(boot.Manifest, "", "  ")
-	mustNil(t, err)
-	mustNil(t, os.WriteFile(boot.ManifestPath, append(data, '\n'), 0o600))
+	rewriteManifest(t, boot.ManifestPath, boot.Manifest)
 
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 		t.Fatalf("StartSession certified a bootstrap manifest with a tampered contract field")
 	}
 }
@@ -277,16 +259,12 @@ func TestFinishSessionRejectsNonCanonicalRecordPath(t *testing.T) {
 func TestFinishSessionRejectsWhitespaceSessionID(t *testing.T) {
 	t.Parallel()
 	target, started := startedForFinishTest(t)
-	targetRoot := filepath.Dir(filepath.Dir(started.RecordPath))
+	targetRoot := targetRootOf(started)
 	data, err := os.ReadFile(started.RecordPath)
 	mustNil(t, err)
-	var m map[string]any
-	mustNil(t, json.Unmarshal(data, &m))
-	m["session_id"] = "s id" // a space, so it matches the whitespace filename below
-	out, err := json.Marshal(m)
-	mustNil(t, err)
 	badPath := filepath.Join(targetRoot, "sessions", "s id.json")
-	mustNil(t, os.WriteFile(badPath, out, 0o600))
+	mustNil(t, os.WriteFile(badPath, data, 0o600))
+	tamperRecordField(t, badPath, "session_id", "s id") // a space, so it matches the whitespace filename
 	bad := started
 	bad.RecordPath = badPath
 	_, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: bad, FinishedAt: "2027", ExitStatus: "0"})
@@ -302,20 +280,12 @@ func TestFinishSessionRejectsWhitespaceSessionID(t *testing.T) {
 func TestStartSessionRejectsTamperedManifestExcludedPaths(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 
 	mat.Manifest.ExcludedPaths = []string{"evil"}
-	data, err := json.MarshalIndent(mat.Manifest, "", "  ")
-	mustNil(t, err)
-	mustNil(t, os.WriteFile(mat.ManifestPath, append(data, '\n'), 0o600))
+	rewriteManifest(t, mat.ManifestPath, mat.Manifest)
 
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e == nil {
 		t.Fatalf("StartSession certified a manifest with tampered excluded_paths")
 	}
 }
@@ -326,35 +296,49 @@ func TestStartSessionRejectsTamperedManifestExcludedPaths(t *testing.T) {
 func TestStartSessionAcceptsTrailingSlashTargetRoot(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 	boot.TargetRoot += "/" // trailing slash on one Result only
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e != nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e != nil {
 		t.Fatalf("StartSession rejected a canonical target root with a trailing slash: %v", e)
 	}
 }
 
 // TestStartSessionRejectsDotDotTargetRoot: a `..`-bearing TargetRoot that Cleans to
 // a non-canonical layout is still rejected — normalization does not create a bypass.
+// copyManifestToEvil mirrors a manifest file from the canonical target root to the same
+// relative location under evilDir (creating the parent chain), keeping the bytes identical
+// so the persisted-manifest byte-compare still matches the (unchanged) request manifest.
+func copyManifestToEvil(t *testing.T, srcManifest, canonicalRoot, evilDir string) {
+	t.Helper()
+	dst := strings.Replace(srcManifest, canonicalRoot, evilDir, 1)
+	mustNil(t, os.MkdirAll(filepath.Dir(dst), 0o755))
+	data, err := os.ReadFile(srcManifest)
+	mustNil(t, err)
+	mustNil(t, os.WriteFile(dst, data, 0o600))
+}
+
+// TestStartSessionRejectsDotDotTargetRoot: a `..`-bearing TargetRoot that filepath.Clean
+// collapses to a NON-canonical path must be rejected by the canonical-layout assertion. The
+// fixture is made SELF-CONSISTENT — the manifests are mirrored under the non-canonical
+// sibling dir the `..` cleans to, and the manifest paths point there — so the manifest-path
+// and persisted-manifest checks PASS for the cleaned root, leaving the `..`-in-TargetRoot /
+// non-canonical-layout check (Base != target id) as the ONLY rejecter. (The old fixture moved
+// ONLY TargetRoot, so it was rejected earlier by a manifest-path mismatch — the wrong reason.)
 func TestStartSessionRejectsDotDotTargetRoot(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	mat.TargetRoot += "/../evil"
-	boot.TargetRoot += "/../evil"
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {
-		t.Fatalf("StartSession accepted a ..-bearing (non-canonical after Clean) target root")
+	target, mat, boot := newSessionFixture(t)
+	canonicalRoot := mat.TargetRoot // .../targets/<kind>/<provider>/tid (canonical)
+	evilDir := filepath.Join(filepath.Dir(canonicalRoot), "evil")
+	copyManifestToEvil(t, mat.ManifestPath, canonicalRoot, evilDir)
+	copyManifestToEvil(t, boot.ManifestPath, canonicalRoot, evilDir)
+	mat.TargetRoot = canonicalRoot + "/../evil" // `..` present; Clean → .../evil (Base "evil" != "tid")
+	boot.TargetRoot = canonicalRoot + "/../evil"
+	mat.ManifestPath = strings.Replace(mat.ManifestPath, canonicalRoot, evilDir, 1)
+	boot.ManifestPath = strings.Replace(boot.ManifestPath, canonicalRoot, evilDir, 1)
+	_, e := target.StartSession(ctx, startReq("sid", mat, boot))
+	if e == nil || !strings.Contains(e.Error(), "is not the canonical") {
+		t.Fatalf("StartSession did not reject a ..-bearing non-canonical target root via the layout check: %v", e)
 	}
 }
 
@@ -364,7 +348,7 @@ func TestStartSessionRejectsDotDotTargetRoot(t *testing.T) {
 func TestFinishSessionRejectsRecordPathOutsideSessions(t *testing.T) {
 	t.Parallel()
 	target, started := startedForFinishTest(t)
-	targetRoot := filepath.Dir(filepath.Dir(started.RecordPath))
+	targetRoot := targetRootOf(started)
 	// A valid record copied to a sibling of sessions/, so the target-root canonical
 	// check passes and only the sessions/ pin can reject it.
 	data, err := os.ReadFile(started.RecordPath)
@@ -385,15 +369,9 @@ func TestFinishSessionRejectsRecordPathOutsideSessions(t *testing.T) {
 func TestStartSessionAcceptsDotAuditLogPath(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 	boot.AuditLogPath += "/." // same canonical path, different spelling
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e != nil {
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e != nil {
 		t.Fatalf("StartSession rejected a canonical audit log path spelled with /.: %v", e)
 	}
 }
@@ -404,18 +382,10 @@ func TestStartSessionAcceptsDotAuditLogPath(t *testing.T) {
 func TestStartSessionAcceptsDotManifestWorkspace(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
+	target, mat, boot := newSessionFixture(t)
 	mat.Manifest.MaterializedWorkspace += "/."
-	data, err := json.MarshalIndent(mat.Manifest, "", "  ")
-	mustNil(t, err)
-	mustNil(t, os.WriteFile(mat.ManifestPath, append(data, '\n'), 0o600))
-	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e != nil {
+	rewriteManifest(t, mat.ManifestPath, mat.Manifest)
+	if _, e := target.StartSession(ctx, startReq("sid", mat, boot)); e != nil {
 		t.Fatalf("StartSession rejected a canonical manifest workspace spelled with /.: %v", e)
 	}
 }
@@ -427,11 +397,10 @@ func TestStartSessionAcceptsDotManifestWorkspace(t *testing.T) {
 func TestFinishSessionRejectsNonSegmentSessionID(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"..json", `a\b.json`} {
-		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			target, started := startedForFinishTest(t)
-			targetRoot := filepath.Dir(filepath.Dir(started.RecordPath))
+			targetRoot := targetRootOf(started)
 			bad := started
 			bad.RecordPath = filepath.Join(targetRoot, "sessions", name)
 			_, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: bad, FinishedAt: "2027", ExitStatus: "0"})
