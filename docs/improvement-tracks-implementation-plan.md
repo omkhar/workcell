@@ -552,7 +552,15 @@ shortcut to the Tier 1 evidence bar.
   one minor version, uninstall, rollback, `--gc` — on the release matrix;
   add config/schema compatibility reads where upgrades cross versioned
   formats; automate what GitHub-hosted macOS runners can prove and record
-  the local-operator remainder as certification evidence.
+  the local-operator remainder as certification evidence. The install step
+  must exercise the verified path (`scripts/install-release.sh`, which
+  downloads and `cosign`-verifies the signed `SHA256SUMS` fail-closed before
+  installing) end-to-end against a published release, not just the bundle's
+  own `install.sh`, and make that verified path the default install flow.
+  Together — verification as the forced default across documented install
+  paths plus an end-to-end CI proof — these fully close ci-threat-model known
+  gap 1, which today is only partially addressed (the verified path exists but
+  is opt-in).
 - Exit gates: each lifecycle operation has repeatable evidence; upgrade and
   rollback leave no orphaned Workcell-owned state; docs match behavior.
 - Validation: CI install-matrix lanes extended with upgrade/rollback;
