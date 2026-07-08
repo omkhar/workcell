@@ -62,11 +62,15 @@ default `--format json` bundle is unchanged.
   `workcell support-bundle` (see [../SUPPORT.md](../SUPPORT.md)): credential,
   token, key, and secret material is masked and the operator home prefix is
   rewritten to `~`, so no secret or local username leaks into exported events.
-- **Integrity.** Audit records are decoded from their on-disk `printf %q`
-  encoding before mapping, so space-delimited fields (such as the endpoints
-  allowlist) are preserved intact rather than truncated. A record that carries a
-  duplicate key — the shape a tampered line takes — fails the export closed and
-  emits no events, so a forged record can never surface as an OCSF event.
+- **Integrity.** Audit records are decoded from their on-disk encoding before
+  mapping, chosen per the session's writer: launcher backends
+  (colima/docker-desktop/aws-ec2-ssm/gcp-vm) write bash `printf %q`, so
+  space-delimited fields such as the endpoints allowlist are preserved intact
+  rather than truncated; the Apple-container target percent-encodes its path
+  fields, so a literal backslash in a workspace path survives instead of being
+  mis-read as a shell escape. A record that carries a duplicate key — the shape a
+  tampered line takes — fails the export closed and emits no events, so a forged
+  record can never surface as an OCSF event.
 
 ## Known Gaps
 

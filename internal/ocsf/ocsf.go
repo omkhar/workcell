@@ -186,10 +186,14 @@ func mapExport(export sessions.SessionExport, redact func(string) string, now ti
 	}
 	loggedTime := now.UnixMilli()
 
+	// Select the audit decoder from the session's writer: apple-container
+	// sessions percent-encode path fields, every launcher backend uses bash %q.
+	enc := auditEncodingForProvider(export.Session.TargetProvider)
+
 	events := make([]Event, 0, 1+len(export.AuditRecords))
 	events = append(events, sessionEvent(export.Session, redact, loggedTime))
 	for _, line := range export.AuditRecords {
-		ev, err := auditEvent(line, redact, loggedTime)
+		ev, err := auditEvent(line, enc, redact, loggedTime)
 		if err != nil {
 			return nil, err
 		}
@@ -360,13 +364,15 @@ func sessionDevice(rec sessions.SessionRecord, redact func(string) string) *Devi
 }
 
 // auditEvent builds one OCSF event from a single audit lifecycle record. The
-// line is decoded from its bash `%q` encoding (so spaced values like the
-// endpoints allowlist survive intact) and rejected fail-closed if it carries a
-// duplicate key. The event, session_id, and timestamp keys drive classification
-// and occurrence; the remaining decoded fields become the (redacted) unmapped
-// object. Decode happens BEFORE redaction so the redactor masks the real value.
-func auditEvent(line string, redact func(string) string, loggedTime int64) (Event, error) {
-	fields, err := decodeAuditLine(line)
+// line is decoded per the session's writer encoding (bash `%q` so spaced values
+// like the endpoints allowlist survive intact, or the AppleContainer percent
+// form so backslash-bearing paths survive intact) and rejected fail-closed if it
+// carries a duplicate key. The event, session_id, and timestamp keys drive
+// classification and occurrence; the remaining decoded fields become the
+// (redacted) unmapped object. Decode happens BEFORE redaction so the redactor
+// masks the real value.
+func auditEvent(line string, enc auditEncoding, redact func(string) string, loggedTime int64) (Event, error) {
+	fields, err := decodeAuditLine(line, enc)
 	if err != nil {
 		return Event{}, err
 	}

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omkhar/workcell/internal/applecontainer"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/supportbundle"
 )
@@ -146,7 +147,7 @@ func TestActivityForEvent(t *testing.T) {
 
 func TestFailedExitRaisesSeverity(t *testing.T) {
 	line := "timestamp=2026-07-05T11:30:00Z session_id=s event=exit exit_status=137"
-	ev, err := auditEvent(line, supportbundle.NewRedactor("").String, 0)
+	ev, err := auditEvent(line, encodingBashQuote, supportbundle.NewRedactor("").String, 0)
 	if err != nil {
 		t.Fatalf("auditEvent: %v", err)
 	}
@@ -385,4 +386,73 @@ func fullyPopulatedRecord() sessions.SessionRecord {
 		}
 	}
 	return rec
+}
+
+// TestExportAppleContainerPreservesBackslashPath is the load-bearing end-to-end
+// proof: an apple-container session's workspace_materialized record (percent
+// writer) with a literal backslash in the workspace path exports with the
+// backslash intact, and the SAME record under a launcher provider (bash %q
+// writer) corrupts it — so the OCSF export decodes per the session's writer.
+func TestExportAppleContainerPreservesBackslashPath(t *testing.T) {
+	auditLine := `ts=2026-07-05T11:00:00Z session_id=sess-ac event=workspace_materialized target_kind=local_vm target_provider=apple-container target_id=default workspace_transport=local-materialization materialization_id=m1 workspace_origin=/tmp/src workspace=/tmp/a\b`
+
+	acExport := sessions.SessionExport{
+		Session: sessions.SessionRecord{
+			SessionID:      "sess-ac",
+			Agent:          "claude",
+			Mode:           "yolo",
+			Status:         "running",
+			TargetKind:     applecontainer.TargetKind,
+			TargetProvider: applecontainer.Provider,
+			StartedAt:      "2026-07-05T11:00:00Z",
+		},
+		AuditRecords: []string{auditLine},
+	}
+	events, err := Export(acExport, Options{Now: fixedNow})
+	if err != nil {
+		t.Fatalf("Export apple-container: %v", err)
+	}
+	if got := events[1].Unmapped["audit.workspace"]; got != `/tmp/a\b` {
+		t.Fatalf("apple-container export corrupted the backslash path: got %q want %q", got, `/tmp/a\b`)
+	}
+
+	// Control: the identical record under a launcher provider is decoded as
+	// bash %q and the backslash is (correctly for that writer) treated as an
+	// escape — proving the per-writer selection, not a no-op, is what preserves
+	// the AppleContainer evidence.
+	bashExport := acExport
+	bashExport.Session.TargetProvider = "colima"
+	bashEvents, err := Export(bashExport, Options{Now: fixedNow})
+	if err != nil {
+		t.Fatalf("Export colima: %v", err)
+	}
+	if got := bashEvents[1].Unmapped["audit.workspace"]; got != "/tmp/ab" {
+		t.Fatalf("expected the bash %%q path to drop the backslash (proving selection matters), got %q", got)
+	}
+}
+
+// TestExportAppleContainerRedactsAfterDecode proves redaction still runs AFTER
+// percent-decode on the AppleContainer path: a percent-encoded workspace under
+// the operator home is decoded, then home-rewritten to ~ by the shared redactor.
+func TestExportAppleContainerRedactsAfterDecode(t *testing.T) {
+	auditLine := `ts=2026-07-05T11:00:00Z session_id=sess-ac event=workspace_materialized target_provider=apple-container workspace=/Users/op/a%20b`
+	exp := sessions.SessionExport{
+		Session: sessions.SessionRecord{
+			SessionID:      "sess-ac",
+			Agent:          "claude",
+			Mode:           "yolo",
+			Status:         "running",
+			TargetProvider: applecontainer.Provider,
+			StartedAt:      "2026-07-05T11:00:00Z",
+		},
+		AuditRecords: []string{auditLine},
+	}
+	events, err := Export(exp, Options{Home: "/Users/op", Now: fixedNow})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	// %20 decoded to a space, THEN the home prefix rewritten to ~.
+	if got := events[1].Unmapped["audit.workspace"]; got != "~/a b" {
+		t.Fatalf("percent-decode then home-redact expected ~/a b, got %q", got)
+	}
 }
