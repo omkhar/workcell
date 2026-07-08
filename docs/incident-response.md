@@ -77,15 +77,32 @@ investigate.
    `session stop` handle. Terminate the launcher process; the runtime container
    is ephemeral by default (`--container-mutability ephemeral`) and does not
    persist after the launch exits.
-4. **Halt everything on a profile (defense in depth).** All sessions for a
-   profile run inside one dedicated Colima VM. Identify the profile from
-   `workcell session list` or `--inspect`, then stop that VM through Colima
-   directly (`colima stop -p <profile>`) to halt all execution on it. Do **not**
-   delete the profile or VM yet — teardown is step 7, after evidence is
-   collected. Note: stopping the VM removes the profile's Docker socket, so a
-   later `workcell session delete` cannot clean container artifacts until the VM
-   is running again (see step 7). Host-side collection in step 4 does not need
-   the VM, so this halt is safe to do before collecting.
+4. **Halt the target's isolation boundary (defense in depth).** Stopping the
+   session (steps 2-3) stops its container; the general principle for a fuller
+   halt is then to bring down the target's isolation boundary. That command is
+   **target-specific**, so first confirm which target the session used
+   (`workcell session list --verbose`, or `--inspect` for `target_kind` /
+   `target_provider`), then act on it. At 1.0 the operator-reachable targets on
+   the supported macOS arm64 host are the two `launch=allowed` rows in
+   [`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv):
+   - **`local_vm` / Colima (the default, strict target).** All sessions for a
+     profile run inside one dedicated Colima VM. Identify the profile from
+     `workcell session list` or `--inspect`, then stop that VM through Colima
+     directly (`colima stop -p <profile>`) to halt all execution on it. Note:
+     stopping the VM removes the profile's Docker socket, so a later
+     `workcell session delete` cannot clean container artifacts until the VM is
+     running again (see step 7). Host-side collection in step 4 does not need the
+     VM, so this halt is safe to do before collecting.
+   - **`local_compat` / Docker Desktop (compat, lower assurance).** The isolation
+     boundary is the Docker Desktop container/context, not a Workcell-dedicated
+     VM, so there is no `colima stop` to run; `workcell session stop --id
+     SESSION_ID --force` (kill/remove the container) is the boundary teardown.
+   Do **not** delete the profile, VM, or container yet — teardown is step 7,
+   after evidence is collected. The `remote_vm` preview targets (`aws-ec2-ssm`,
+   `gcp-vm`) are `preview-only` with `launch=blocked` in the matrix, so no live
+   operator session runs on them at 1.0 and they are out of scope here; if you
+   ever tear down a preview broker, follow that target's own teardown, not
+   `colima stop`.
 
 ## 3. Preserve evidence
 
