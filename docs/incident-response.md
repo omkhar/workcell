@@ -82,7 +82,10 @@ investigate.
    `workcell session list` or `--inspect`, then stop that VM through Colima
    directly (`colima stop -p <profile>`) to halt all execution on it. Do **not**
    delete the profile or VM yet — teardown is step 7, after evidence is
-   collected.
+   collected. Note: stopping the VM removes the profile's Docker socket, so a
+   later `workcell session delete` cannot clean container artifacts until the VM
+   is running again (see step 7). Host-side collection in step 4 does not need
+   the VM, so this halt is safe to do before collecting.
 
 ## 3. Preserve evidence
 
@@ -214,13 +217,26 @@ Only after evidence is collected and reported:
 - **Rotate exposed credentials.** If any host secret could have been read,
   rotate it at the source, then re-stage it with `workcell auth unset` /
   `workcell auth set` and confirm with `workcell auth status --agent <provider>`.
-- **Tear down the compromised session.** With the session stopped and evidence
-  preserved, `workcell session delete --id SESSION_ID` removes the record and
-  stopped-session artifacts (use `--dry-run` first to preview the cleanup).
-- **Reset the runtime.** Because the strict runtime container is ephemeral, a
-  clean relaunch starts from the reviewed image. If the Colima profile is
-  suspect, `workcell --repair-profile ...` deletes a conflicting profile before
-  the next launch.
+- **Tear down the compromised session.** `workcell session delete --id
+  SESSION_ID` removes the durable record and stopped-session artifacts (use
+  `--dry-run` first to preview the cleanup). It has two preconditions: the
+  session must be in a terminal status (exited, failed, or stopped — stop it
+  first, per step 2), and cleaning the session **container** needs the profile's
+  Docker socket available, i.e. the Colima VM running. If you halted the VM in
+  step 2.4, normal `session delete` refuses container cleanup and tells you to
+  retry with the socket available; in that state either restart the VM
+  (`colima start -p <profile>`) and delete, or pass `--record-only` to remove
+  just the durable record (keeping container/log artifacts), or remove the
+  preserved state-root files by hand after evidence collection.
+- **Reset a suspect Colima profile.** `--repair-profile` is **not** a reset for a
+  compromised VM: it only deletes an *unmanaged* profile (one that pre-exists
+  without Workcell ownership metadata) as a launch-time conflict repair, and does
+  nothing to a Workcell-managed profile. To fully reset a suspect profile, delete
+  it through Colima's own CLI — `colima delete -p <profile> --force` (align
+  `COLIMA_HOME` with `COLIMA_STATE_ROOT` if you set a non-default one) — then a
+  fresh `workcell` launch recreates a clean managed profile from the reviewed
+  image. Because the strict runtime container is ephemeral, a clean relaunch
+  otherwise starts from the reviewed image already.
 - **Close the loop.** If the incident revealed a genuine boundary weakness (not
   just an expected lower-assurance mode), it belongs in the private advisory so a
   fix and regression test can follow — see the coordinated-disclosure model in
