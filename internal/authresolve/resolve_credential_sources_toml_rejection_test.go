@@ -162,6 +162,7 @@ func TestParseTOMLSubsetShippedPolicyFiles(t *testing.T) {
 	paths := []string{
 		"policy/forbidden-host-paths.toml",
 		"policy/github-hosted-controls.toml",
+		"policy/hardening-profile.toml",
 		"policy/operator-contract.toml",
 		"policy/provider-bumps.toml",
 		"policy/requirements.toml",
