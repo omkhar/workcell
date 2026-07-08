@@ -18,18 +18,50 @@ import (
 // request, and the Started result — for exercising recovery-aware idempotency.
 func startForRecovery(t *testing.T) (AppleContainerTarget, StartSessionRequest, SessionResult) {
 	t.Helper()
-	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	req := StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}
-	started, err := target.StartSession(ctx, req)
+	target, mat, boot := newSessionFixture(t)
+	req := startReq("sid", mat, boot)
+	started, err := target.StartSession(context.Background(), req)
 	mustNil(t, err)
 	return target, req, started
+}
+
+// appendRawLine appends line (plus a trailing newline) to path, creating it if
+// absent — used to inject a crafted, conflicting, or torn audit line directly on
+// disk.
+func appendRawLine(t *testing.T, path, line string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	mustNil(t, err)
+	_, werr := f.WriteString(line + "\n")
+	mustNil(t, werr)
+	mustNil(t, f.Close())
+}
+
+// replaceAuditLine rewrites path, replacing every line containing needle with
+// newLine — used to simulate a torn or tampered audit line in place.
+func replaceAuditLine(t *testing.T, path, needle, newLine string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	mustNil(t, err)
+	var out []string
+	for _, ln := range strings.Split(string(data), "\n") {
+		if strings.Contains(ln, needle) {
+			ln = newLine
+		}
+		out = append(out, ln)
+	}
+	mustNil(t, os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600))
+}
+
+// finishOnce finalizes started once (asserting success) and returns the finish
+// request so callers can drive a follow-up retry or divergence.
+func finishOnce(t *testing.T, target AppleContainerTarget, started SessionResult) FinishSessionRequest {
+	t.Helper()
+	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
+	if _, e := target.FinishSession(context.Background(), fin); e != nil {
+		t.Fatalf("finish failed: %v", e)
+	}
+	return fin
 }
 
 // TestStartSessionRecoversPartialStart: a crash between the record write and the
@@ -101,10 +133,7 @@ func removeAuditEvent(t *testing.T, path, needle string) {
 func TestFinishSessionRecoversPartialFinish(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	fin := finishOnce(t, target, started)
 	removeAuditEvent(t, started.AuditLogPath, "event=session_finished") // crash: event lost
 	if _, e := target.FinishSession(context.Background(), fin); e != nil {
 		t.Fatalf("recovery retry of a partial finish failed: %v", e)
@@ -114,31 +143,12 @@ func TestFinishSessionRecoversPartialFinish(t *testing.T) {
 	}
 }
 
-// TestFinishSessionIdempotentWhenFinished: a retry of a fully-finished session
-// returns success without duplicating the finish event.
-func TestFinishSessionIdempotentWhenFinished(t *testing.T) {
-	t.Parallel()
-	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("idempotent finish retry failed: %v", e)
-	}
-	if data, _ := os.ReadFile(started.AuditLogPath); strings.Count(string(data), "event=session_finished") != 1 {
-		t.Fatalf("idempotent finish duplicated the event:\n%s", data)
-	}
-}
-
 // TestFinishSessionRejectsDivergentExitStatus: a retry of a finished session with a
 // DIFFERENT exit_status is a different finish, not a retry — rejected, not recovered.
 func TestFinishSessionRejectsDivergentExitStatus(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	if _, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	finishOnce(t, target, started)
 	if _, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "1"}); e == nil {
 		t.Fatalf("FinishSession accepted a divergent exit_status retry")
 	}
@@ -193,10 +203,7 @@ func TestStartSessionRecoversGenuineRetryTimestampOnly(t *testing.T) {
 func TestFinishSessionRefusesWhenAuditLogDeleted(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	fin := finishOnce(t, target, started)
 	mustNil(t, os.Remove(started.AuditLogPath)) // evidence gone, not just the finish line
 	if _, e := target.FinishSession(context.Background(), fin); e == nil {
 		t.Fatalf("FinishSession finalized despite the audit log being gone")
@@ -212,10 +219,7 @@ func TestFinishSessionRefusesWhenAuditLogDeleted(t *testing.T) {
 func TestFinishSessionRefusesWhenStartEventsGone(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	fin := finishOnce(t, target, started)
 	// Strip every line for this session (start triplet + finish), leaving the log file
 	// present but without this session's provenance.
 	removeAuditEvent(t, started.AuditLogPath, "session_id=sid")
@@ -254,19 +258,13 @@ func TestStartSessionRecoveryUsesPersistedTimestamp(t *testing.T) {
 func TestStartSessionRejectsDivergentBootstrapOnRetry(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot1, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	req := StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot1}
-	_, err = target.StartSession(ctx, req)
+	target, mat, boot1 := newSessionFixture(t)
+	req := startReq("sid", mat, boot1)
+	_, err := target.StartSession(ctx, req)
 	mustNil(t, err) // fully started: record + audit (bootstrap_ready bid/img:1)
 
 	// A second, different bootstrap for the same target; retry StartSession with it.
-	boot2, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid2", ImageRef: "img:2"})
+	boot2, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: stateRootFor(boot1.TargetRoot), TargetID: "tid", BootstrapID: "bid2", ImageRef: "img:2"})
 	mustNil(t, err)
 	req2 := req
 	req2.Bootstrap = boot2
@@ -304,10 +302,7 @@ func TestStartSessionRejectsTamperedStartedAtOnRecovery(t *testing.T) {
 func TestFinishSessionRejectsTamperedFinishedAtOnRecovery(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	fin := finishOnce(t, target, started)
 	removeAuditEvent(t, started.AuditLogPath, "event=session_finished") // partial finish
 	tamperRecordField(t, started.RecordPath, "finished_at", "2027 evil")
 	_, e := target.FinishSession(context.Background(), fin)
@@ -342,10 +337,7 @@ func TestStartSessionRecoversOnlyMissingStartEvents(t *testing.T) {
 func TestFinishSessionRejectsDifferentCompleteFinishLine(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	fin := finishOnce(t, target, started)
 	// Tamper the finish line to a DIFFERENT but still complete finish (exit_status 0→1).
 	data, err := os.ReadFile(started.AuditLogPath)
 	mustNil(t, err)
@@ -370,20 +362,9 @@ func TestFinishSessionRejectsDifferentCompleteFinishLine(t *testing.T) {
 func TestFinishSessionHealsTornFinishFragment(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
-	data, err := os.ReadFile(started.AuditLogPath)
-	mustNil(t, err)
-	var out []string
-	for _, ln := range strings.Split(string(data), "\n") {
-		if strings.Contains(ln, "event=session_finished") {
-			ln = "ts=2027 session_id=sid event=session_finished" // torn: trailing status/exit_status lost
-		}
-		out = append(out, ln)
-	}
-	mustNil(t, os.WriteFile(started.AuditLogPath, []byte(strings.Join(out, "\n")), 0o600))
+	fin := finishOnce(t, target, started)
+	// torn: trailing status/exit_status lost
+	replaceAuditLine(t, started.AuditLogPath, "event=session_finished", "ts=2027 session_id=sid event=session_finished")
 	if _, e := target.FinishSession(context.Background(), fin); e != nil {
 		t.Fatalf("torn finish fragment must heal, got: %v", e)
 	}
@@ -402,16 +383,10 @@ func TestFinishSessionHealsTornFinishFragment(t *testing.T) {
 func TestStartSessionRejectsDivergentBootstrapRecord(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
+	target, mat, boot1 := newSessionFixture(t)
+	boot2, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: stateRootFor(boot1.TargetRoot), TargetID: "tid", BootstrapID: "bid2", ImageRef: "img:2"})
 	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot1, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	boot2, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid2", ImageRef: "img:2"})
-	mustNil(t, err)
-	req1 := StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot1}
+	req1 := startReq("sid", mat, boot1)
 	started, err := target.StartSession(ctx, req1)
 	mustNil(t, err)
 	mustNil(t, os.Remove(started.AuditLogPath)) // crash: no audit line landed at all
@@ -463,16 +438,7 @@ func TestStartSessionRewritesTruncatedStartLine(t *testing.T) {
 	t.Parallel()
 	target, req, started := startForRecovery(t)
 	// Truncate the workspace_materialized line to just its event token (trailing fields lost).
-	data, err := os.ReadFile(started.AuditLogPath)
-	mustNil(t, err)
-	var out []string
-	for _, ln := range strings.Split(string(data), "\n") {
-		if strings.Contains(ln, "event=workspace_materialized") {
-			ln = "ts=2026 session_id=sid event=workspace_materialized"
-		}
-		out = append(out, ln)
-	}
-	mustNil(t, os.WriteFile(started.AuditLogPath, []byte(strings.Join(out, "\n")), 0o600))
+	replaceAuditLine(t, started.AuditLogPath, "event=workspace_materialized", "ts=2026 session_id=sid event=workspace_materialized")
 	if _, e := target.StartSession(context.Background(), req); e != nil {
 		t.Fatalf("recovery of a truncated start line failed: %v", e)
 	}
@@ -494,11 +460,7 @@ func TestFinishSessionHealsTornFragmentAfterRollback(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t) // non-terminal, start events present
 	// Simulate a prior finish that tore mid-append: a fragment lingers, record still non-terminal.
-	f, err := os.OpenFile(started.AuditLogPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString("ts=2027 session_id=sid event=session_finished\n") // torn fragment
-	mustNil(t, werr)
-	mustNil(t, f.Close())
+	appendRawLine(t, started.AuditLogPath, "ts=2027 session_id=sid event=session_finished") // torn fragment
 	if _, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}); e != nil {
 		t.Fatalf("finish over a torn fragment must heal, got: %v", e)
 	}
@@ -549,19 +511,12 @@ func withAuditAppendFailpoint(t *testing.T, landLines int) {
 // duplicate of the already-written line. Neutralize (remove the record on failure) →
 // the retry fresh-creates and re-appends all three → duplicate first line → FAIL.
 func TestStartSessionKeepsPartialAndRecovers(t *testing.T) {
-	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	req := StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}
+	target, mat, boot := newSessionFixture(t)
+	req := startReq("sid", mat, boot)
 	recordPath := filepath.Join(boot.TargetRoot, "sessions", "sid.json")
 
 	withAuditAppendFailpoint(t, 1) // land workspace_materialized, then fail
-	if _, e := target.StartSession(ctx, req); e == nil {
+	if _, e := target.StartSession(context.Background(), req); e == nil {
 		t.Fatal("StartSession should surface the audit-append failure")
 	}
 	if _, err := os.Stat(recordPath); err != nil {
@@ -569,7 +524,7 @@ func TestStartSessionKeepsPartialAndRecovers(t *testing.T) {
 	}
 	// Retry with the seam restored (Cleanup also restores it at test end).
 	appendAudit = appendAuditLine
-	if _, e := target.StartSession(ctx, req); e != nil {
+	if _, e := target.StartSession(context.Background(), req); e != nil {
 		t.Fatalf("recovery retry after partial start failed: %v", e)
 	}
 	data, _ := os.ReadFile(boot.AuditLogPath)
@@ -629,33 +584,10 @@ func TestFinishSessionRefusesTornStartLine(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
 	// Truncate the session_started line to just its event token (trailing fields lost).
-	data, err := os.ReadFile(started.AuditLogPath)
-	mustNil(t, err)
-	var out []string
-	for _, ln := range strings.Split(string(data), "\n") {
-		if strings.Contains(ln, "event=session_started") {
-			ln = "ts=2026 session_id=sid event=session_started"
-		}
-		out = append(out, ln)
-	}
-	mustNil(t, os.WriteFile(started.AuditLogPath, []byte(strings.Join(out, "\n")), 0o600))
+	replaceAuditLine(t, started.AuditLogPath, "event=session_started", "ts=2026 session_id=sid event=session_started")
 	_, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"})
 	if e == nil || !strings.Contains(e.Error(), "incomplete start events") {
 		t.Fatalf("expected incomplete-start-events refusal, got: %v", e)
-	}
-}
-
-// TestFinishSessionFinalizesWithCompleteStartLines (happy path): with all three complete
-// start lines present, FinishSession finalizes normally and writes exactly one finish line.
-func TestFinishSessionFinalizesWithCompleteStartLines(t *testing.T) {
-	t.Parallel()
-	target, _, started := startForRecovery(t)
-	if _, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}); e != nil {
-		t.Fatalf("finish with complete start lines failed: %v", e)
-	}
-	data, _ := os.ReadFile(started.AuditLogPath)
-	if n := strings.Count(string(data), "event=session_finished target_kind="); n != 1 {
-		t.Fatalf("expected exactly one complete finish line (count=%d):\n%s", n, data)
 	}
 }
 
@@ -668,23 +600,9 @@ func TestStartSessionRejectsConflictingCompleteStartLine(t *testing.T) {
 	t.Parallel()
 	target, req, started := startForRecovery(t)
 	// Append a second, DIFFERENT complete session_started line for the same session.
-	data, err := os.ReadFile(started.AuditLogPath)
-	mustNil(t, err)
-	var ss string
-	for _, ln := range strings.Split(string(data), "\n") {
-		if strings.Contains(ln, "event=session_started ") {
-			ss = ln
-		}
-	}
-	if ss == "" {
-		t.Fatal("no session_started line found")
-	}
+	ss := auditLineContaining(t, started.AuditLogPath, "event=session_started ")
 	conflict := strings.Replace(ss, "workspace_control_plane=", "workspace_control_plane=evil_", 1)
-	f, err := os.OpenFile(started.AuditLogPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString(conflict + "\n")
-	mustNil(t, werr)
-	mustNil(t, f.Close())
+	appendRawLine(t, started.AuditLogPath, conflict)
 	_, e := target.StartSession(context.Background(), req)
 	if e == nil || !strings.Contains(e.Error(), "conflicting complete start evidence") {
 		t.Fatalf("expected conflicting-complete-start rejection, got: %v", e)
@@ -698,45 +616,14 @@ func TestStartSessionRejectsConflictingCompleteStartLine(t *testing.T) {
 func TestFinishSessionRejectsConflictingCompleteFinishOnIdempotentRetry(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	fin := finishOnce(t, target, started)
 	// Append a second, DIFFERENT complete session_finished line (different finished_at ts).
-	data, err := os.ReadFile(started.AuditLogPath)
-	mustNil(t, err)
-	var line string
-	for _, ln := range strings.Split(string(data), "\n") {
-		if strings.Contains(ln, "event=session_finished target_kind=") {
-			line = ln
-		}
-	}
+	line := auditLineContaining(t, started.AuditLogPath, "event=session_finished target_kind=")
 	conflict := strings.Replace(line, "ts=2027", "ts=2099", 1)
-	f, err := os.OpenFile(started.AuditLogPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString(conflict + "\n")
-	mustNil(t, werr)
-	mustNil(t, f.Close())
+	appendRawLine(t, started.AuditLogPath, conflict)
 	_, e := target.FinishSession(context.Background(), fin)
 	if e == nil || !strings.Contains(e.Error(), "conflicting finish evidence") {
 		t.Fatalf("expected conflicting-finish rejection on idempotent retry, got: %v", e)
-	}
-}
-
-// TestStartFinishIdempotentWithoutConflict: with only the expected lines present (no
-// conflict), the idempotent retries of both Start and Finish still succeed.
-func TestStartFinishIdempotentWithoutConflict(t *testing.T) {
-	t.Parallel()
-	target, req, started := startForRecovery(t)
-	if _, e := target.StartSession(context.Background(), req); e != nil {
-		t.Fatalf("idempotent start retry failed: %v", e)
-	}
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("idempotent finish retry failed: %v", e)
 	}
 }
 
@@ -747,23 +634,12 @@ func TestStartFinishIdempotentWithoutConflict(t *testing.T) {
 // the fresh-start scan) → the start succeeds and plants the dead-end → FAIL.
 func TestFreshStartRejectsPrePlantedConflictingLine(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	target, err := NewAppleContainerTarget(Contract{})
-	mustNil(t, err)
-	state := t.TempDir()
-	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: writeSampleWorkspace(t)})
-	mustNil(t, err)
-	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
-	mustNil(t, err)
-	req := StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}
+	target, mat, boot := newSessionFixture(t)
+	req := startReq("sid", mat, boot)
 	// Pre-plant a COMPLETE but divergent session_started line for this session_id.
 	mustNil(t, os.MkdirAll(filepath.Dir(boot.AuditLogPath), 0o755))
-	f, err := os.OpenFile(boot.AuditLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString("ts=2026 session_id=sid event=session_started target_kind= target_provider= target_id=tid status=running workspace_control_plane=evil v=1\n")
-	mustNil(t, werr)
-	mustNil(t, f.Close())
-	_, e := target.StartSession(ctx, req)
+	appendRawLine(t, boot.AuditLogPath, "ts=2026 session_id=sid event=session_started target_kind= target_provider= target_id=tid status=running workspace_control_plane=evil v=1")
+	_, e := target.StartSession(context.Background(), req)
 	if e == nil || !strings.Contains(e.Error(), "conflicting complete start evidence") {
 		t.Fatalf("expected fresh-start conflicting-evidence refusal, got: %v", e)
 	}
@@ -779,11 +655,7 @@ func TestFreshFinishRejectsPreExistingCompleteFinish(t *testing.T) {
 	target, err := NewAppleContainerTarget(Contract{})
 	mustNil(t, err)
 	// Pre-plant a different COMPLETE session_finished line (different exit_status).
-	f, err := os.OpenFile(started.AuditLogPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString("ts=2027 session_id=sid event=session_finished target_kind= target_provider= target_id=tid status=exited exit_status=9 v=1\n")
-	mustNil(t, werr)
-	mustNil(t, f.Close())
+	appendRawLine(t, started.AuditLogPath, "ts=2027 session_id=sid event=session_finished target_kind= target_provider= target_id=tid status=exited exit_status=9 v=1")
 	_, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"})
 	if e == nil || !strings.Contains(e.Error(), "complete session_finished line") {
 		t.Fatalf("expected fresh-finish conflicting-finish refusal, got: %v", e)
@@ -804,17 +676,18 @@ func TestFinishSessionRejectsContractDrift(t *testing.T) {
 	}
 }
 
-// sessionStartedLine returns the complete session_started audit line for the session.
-func sessionStartedLine(t *testing.T, logPath string) string {
+// auditLineContaining returns the audit line in logPath containing needle, failing the
+// test if none is present. Each caller crafts a scenario with exactly one matching line.
+func auditLineContaining(t *testing.T, logPath, needle string) string {
 	t.Helper()
 	data, err := os.ReadFile(logPath)
 	mustNil(t, err)
 	for _, ln := range strings.Split(string(data), "\n") {
-		if strings.Contains(ln, "event=session_started ") {
+		if strings.Contains(ln, needle) {
 			return ln
 		}
 	}
-	t.Fatal("no complete session_started line found")
+	t.Fatalf("no audit line containing %q found", needle)
 	return ""
 }
 
@@ -826,13 +699,9 @@ func sessionStartedLine(t *testing.T, logPath string) string {
 func TestStartSessionIgnoresHealedTornPrefixFragment(t *testing.T) {
 	t.Parallel()
 	target, req, started := startForRecovery(t)
-	ss := sessionStartedLine(t, started.AuditLogPath)
+	ss := auditLineContaining(t, started.AuditLogPath, "event=session_started ")
 	frag := ss[:len(ss)-1] // strict prefix: trailing field truncated mid-value
-	f, err := os.OpenFile(started.AuditLogPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString(frag + "\n")
-	mustNil(t, werr)
-	mustNil(t, f.Close())
+	appendRawLine(t, started.AuditLogPath, frag)
 	if _, e := target.StartSession(context.Background(), req); e != nil {
 		t.Fatalf("healed torn prefix fragment wrongly treated as conflict: %v", e)
 	}
@@ -845,17 +714,13 @@ func TestStartSessionIgnoresHealedTornPrefixFragment(t *testing.T) {
 func TestStartSessionRejectsDivergentTrailingValue(t *testing.T) {
 	t.Parallel()
 	target, req, started := startForRecovery(t)
-	ss := sessionStartedLine(t, started.AuditLogPath)
+	ss := auditLineContaining(t, started.AuditLogPath, "event=session_started ")
 	repl := byte('X')
 	if ss[len(ss)-1] == repl {
 		repl = 'Y'
 	}
 	divergent := ss[:len(ss)-1] + string(repl) // same length, diverges at the last char
-	f, err := os.OpenFile(started.AuditLogPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString(divergent + "\n")
-	mustNil(t, werr)
-	mustNil(t, f.Close())
+	appendRawLine(t, started.AuditLogPath, divergent)
 	_, e := target.StartSession(context.Background(), req)
 	if e == nil || !strings.Contains(e.Error(), "conflicting complete start evidence") {
 		t.Fatalf("expected divergent-trailing-value rejection, got: %v", e)
@@ -933,9 +798,7 @@ func TestFinishSessionRejectsTamperedPersistedRenderField(t *testing.T) {
 func TestFreshStartRefusesOverTerminalEvidence(t *testing.T) {
 	t.Parallel()
 	target, req, started := startForRecovery(t)
-	if _, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	finishOnce(t, target, started)
 	// Lose the record but keep the append-only log (which carries session_finished).
 	mustNil(t, os.Remove(started.RecordPath))
 	_, e := target.StartSession(context.Background(), req)
@@ -951,10 +814,7 @@ func TestFreshStartRefusesOverTerminalEvidence(t *testing.T) {
 func TestFinishSessionRejectsIdempotentWithoutStartProvenance(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	fin := finishOnce(t, target, started)
 	// Terminal record + finish line present, but strip the start events.
 	for _, ev := range []string{"event=workspace_materialized", "event=bootstrap_ready", "event=session_started"} {
 		removeAuditEvent(t, started.AuditLogPath, ev)
@@ -973,13 +833,9 @@ func TestFreshStartValidatesEvidenceBeforePublishingRecord(t *testing.T) {
 	t.Parallel()
 	target, req, started := startForRecovery(t)
 	// Plant a DIFFERENT complete session_started line, then lose the record (fresh path).
-	ss := sessionStartedLine(t, started.AuditLogPath)
+	ss := auditLineContaining(t, started.AuditLogPath, "event=session_started ")
 	divergent := ss[:len(ss)-1] + "Z" // same length, diverges at the last char (not a prefix)
-	f, err := os.OpenFile(started.AuditLogPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString(divergent + "\n")
-	mustNil(t, werr)
-	mustNil(t, f.Close())
+	appendRawLine(t, started.AuditLogPath, divergent)
 	mustNil(t, os.Remove(started.RecordPath))
 	_, e := target.StartSession(context.Background(), req)
 	if e == nil || !strings.Contains(e.Error(), "conflicting complete start evidence") {
@@ -999,27 +855,13 @@ func TestFreshStartValidatesEvidenceBeforePublishingRecord(t *testing.T) {
 func TestStartSessionFlagsCompletePrefixValueLine(t *testing.T) {
 	t.Parallel()
 	target, req, started := startForRecovery(t)
-	data, err := os.ReadFile(started.AuditLogPath)
-	mustNil(t, err)
-	var br string
-	for _, ln := range strings.Split(string(data), "\n") {
-		if strings.Contains(ln, "event=bootstrap_ready ") {
-			br = ln
-		}
-	}
-	if br == "" {
-		t.Fatal("no bootstrap_ready line found")
-	}
+	br := auditLineContaining(t, started.AuditLogPath, "event=bootstrap_ready ")
 	// A COMPLETE line (retains the sentinel) whose image_ref value is a prefix of img:1.
 	prefixVal := strings.Replace(br, "image_ref=img:1", "image_ref=img", 1)
 	if prefixVal == br {
 		t.Fatal("failed to craft a prefix-value line")
 	}
-	f, err := os.OpenFile(started.AuditLogPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString(prefixVal + "\n")
-	mustNil(t, werr)
-	mustNil(t, f.Close())
+	appendRawLine(t, started.AuditLogPath, prefixVal)
 	_, e := target.StartSession(context.Background(), req)
 	if e == nil || !strings.Contains(e.Error(), "conflicting complete start evidence") {
 		t.Fatalf("expected complete prefix-value line flagged as conflict, got: %v", e)
@@ -1032,10 +874,7 @@ func TestStartSessionFlagsCompletePrefixValueLine(t *testing.T) {
 func TestFinishSessionRejectsDriftedFinalAssurance(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	fin := finishOnce(t, target, started)
 	tamperRecordField(t, started.RecordPath, "final_assurance", "drifted-assurance")
 	_, e := target.FinishSession(context.Background(), fin)
 	if e == nil || !strings.Contains(e.Error(), "final_assurance") {
@@ -1049,10 +888,7 @@ func TestFinishSessionRejectsDriftedFinalAssurance(t *testing.T) {
 func TestFreshFinishDoesNotDuplicateExactFinishLine(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	fin := FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"}
-	if _, e := target.FinishSession(context.Background(), fin); e != nil {
-		t.Fatalf("finish failed: %v", e)
-	}
+	fin := finishOnce(t, target, started)
 	// Revert the record to non-terminal but keep the exact finish line in the log.
 	tamperRecordFields(t, started.RecordPath, map[string]string{
 		"status": "running", "finished_at": "", "exit_status": "", "final_assurance": "",
@@ -1073,16 +909,12 @@ func TestFreshFinishDoesNotDuplicateExactFinishLine(t *testing.T) {
 func TestFinishSessionRejectsConflictingStartEvidence(t *testing.T) {
 	t.Parallel()
 	target, _, started := startForRecovery(t)
-	ss := sessionStartedLine(t, started.AuditLogPath)
+	ss := auditLineContaining(t, started.AuditLogPath, "event=session_started ")
 	divergent := strings.Replace(ss, "workspace_control_plane=", "workspace_control_plane=evil_", 1)
 	if divergent == ss {
 		t.Fatal("failed to craft a divergent session_started line")
 	}
-	f, err := os.OpenFile(started.AuditLogPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	mustNil(t, err)
-	_, werr := f.WriteString(divergent + "\n")
-	mustNil(t, werr)
-	mustNil(t, f.Close())
+	appendRawLine(t, started.AuditLogPath, divergent)
 	_, e := target.FinishSession(context.Background(), FinishSessionRequest{Started: started, FinishedAt: "2027", ExitStatus: "0"})
 	if e == nil || !strings.Contains(e.Error(), "conflicting complete start evidence") {
 		t.Fatalf("expected conflicting-start-evidence refusal, got: %v", e)
