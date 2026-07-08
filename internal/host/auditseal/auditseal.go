@@ -161,13 +161,24 @@ type chainRecord struct {
 	prevDigest   string
 	recordDigest string
 	args         []string
-	sessionMatch bool
 }
 
-// recomputeSessionHead reads the authoritative audit log, verifies the hash
-// chain from the first record up to and including the last record bearing
-// sessionID, and returns that record's digest (the session head). Records after
-// the head are not this session's responsibility and are not inspected.
+// recomputeSessionHead reads the authoritative audit log and returns the digest
+// of this session's head — the last record bearing sessionID — after verifying
+// the hash chain from the first record up to and including that head.
+//
+// Scoping (do not fail on unrelated later records): membership is found with a
+// tolerant scan, and the chain is verified only over the records up to and
+// including this session's head. A torn, legacy, or duplicate-key line written
+// by a LATER, unrelated session — anything after this session's head — never
+// affects this session's verdict. Records before the head (including other
+// sessions' interleaved records) ARE verified, because the chain digest links
+// globally and this session's head integrity depends on them.
+//
+// Every record in the verified range is decoded strictly (ocsf
+// DecodeAuditLineStrict): a duplicate key or a bare non-key=value token fails
+// closed, so an appended forged token cannot leave the recomputed digest
+// unchanged.
 func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (string, error) {
 	data, err := os.ReadFile(auditLogPath)
 	if err != nil {
@@ -176,16 +187,31 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 		}
 		return "", err
 	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 
-	records := make([]chainRecord, 0, len(lines))
-	lastMatch := -1
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	raw := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
 		}
-		fields, err := ocsf.DecodeAuditLine(line, targetProvider)
+	}
+
+	// Pass 1: tolerant membership scan to locate this session's head index.
+	lastMatch := -1
+	for i, line := range lines {
+		if lineHasSessionID(line, sessionID) {
+			lastMatch = i
+		}
+	}
+	if lastMatch < 0 {
+		return "", fmt.Errorf("auditseal: no audit records for session %s", sessionID)
+	}
+
+	// Pass 2: strict chain verification over records 0..lastMatch only.
+	expectedPrev := ""
+	head := ""
+	for i := 0; i <= lastMatch; i++ {
+		fields, err := ocsf.DecodeAuditLineStrict(lines[i], targetProvider)
 		if err != nil {
 			return "", fmt.Errorf("auditseal: %w", err)
 		}
@@ -200,27 +226,11 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 				rec.recordDigest = f.Value
 			default:
 				rec.args = append(rec.args, f.Key+"="+f.Value)
-				if f.Key == "session_id" && f.Value == sessionID {
-					rec.sessionMatch = true
-				}
 			}
 		}
 		if rec.recordDigest == "" {
-			return "", errors.New("auditseal: audit record missing record_digest")
+			return "", fmt.Errorf("auditseal: audit chain broken at record %d: missing record_digest", i)
 		}
-		if rec.sessionMatch {
-			lastMatch = len(records)
-		}
-		records = append(records, rec)
-	}
-
-	if lastMatch < 0 {
-		return "", fmt.Errorf("auditseal: no audit records for session %s", sessionID)
-	}
-
-	expectedPrev := ""
-	for i := 0; i <= lastMatch; i++ {
-		rec := records[i]
 		want := hoststate.AuditRecordDigest(rec.prevDigest, rec.timestamp, rec.args)
 		if want != rec.recordDigest {
 			return "", fmt.Errorf("auditseal: audit chain broken at record %d: recomputed digest does not match stored record_digest", i)
@@ -229,8 +239,26 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 			return "", fmt.Errorf("auditseal: audit chain broken at record %d: prev_digest does not link to the previous record", i)
 		}
 		expectedPrev = rec.recordDigest
+		head = rec.recordDigest
 	}
-	return records[lastMatch].recordDigest, nil
+	return head, nil
+}
+
+// lineHasSessionID reports whether a raw audit line carries session_id=<id>. It
+// is deliberately tolerant (whitespace split, no error path) so that a torn or
+// duplicate-key line belonging to some OTHER session cannot make this session's
+// verification fail during the membership scan; strict decoding is applied only
+// to the records that are actually chain-verified. A session id never contains
+// whitespace, so its token survives the split intact regardless of how a
+// neighbouring escaped value tokenizes. Mirrors sessions.auditLineHasSessionID.
+func lineHasSessionID(line, sessionID string) bool {
+	for _, field := range strings.Fields(line) {
+		key, value, ok := strings.Cut(field, "=")
+		if ok && key == "session_id" && value == sessionID {
+			return true
+		}
+	}
+	return false
 }
 
 // loadOrCreateSigningKey returns the per-host ECDSA P-256 signing key under dir,
@@ -238,6 +266,11 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 // the private key is written 0600; if the directory cannot be secured the call
 // fails closed rather than sign with an insecurely stored key. The returned
 // keyID is the hex SHA-256 prefix of the PKIX-encoded public key.
+//
+// The private key is published atomically (write a temp file, then link it into
+// place) so a concurrent reader never observes a partial PEM: on a fresh host
+// two sessions may sign at once, and the loser of the create race adopts the
+// winner's complete key rather than reading an empty file.
 func loadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, "", errors.New("auditseal: signing directory is required")
@@ -248,18 +281,7 @@ func loadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 	keyPath := filepath.Join(dir, signingKeyBasename)
 
 	if data, err := os.ReadFile(keyPath); err == nil {
-		key, kerr := parsePrivateKey(data)
-		if kerr != nil {
-			return nil, "", kerr
-		}
-		keyID, kerr := publicKeyID(&key.PublicKey)
-		if kerr != nil {
-			return nil, "", kerr
-		}
-		if kerr := writePublicKeyIfAbsent(dir, keyID, &key.PublicKey); kerr != nil {
-			return nil, "", kerr
-		}
-		return key, keyID, nil
+		return adoptSigningKey(dir, data)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, "", err
 	}
@@ -273,31 +295,49 @@ func loadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 		return nil, "", fmt.Errorf("auditseal: marshal key: %w", err)
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	// O_EXCL so two concurrent signers cannot clobber each other's key; the
-	// loser re-reads the winner's key.
-	f, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+
+	// Publish the complete key atomically. os.Link fails with ErrExist if a
+	// concurrent signer already created signing.key, in which case we adopt that
+	// (complete) key instead of racing to overwrite it.
+	tmpPath, err := writeTempFile(dir, signingKeyBasename, pemBytes, 0o600)
 	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return loadOrCreateSigningKey(dir)
-		}
 		return nil, "", err
 	}
-	writeErr := func() error {
-		defer f.Close()
-		if _, werr := f.Write(pemBytes); werr != nil {
-			return werr
+	linkErr := os.Link(tmpPath, keyPath)
+	_ = os.Remove(tmpPath)
+	if linkErr != nil {
+		if errors.Is(linkErr, os.ErrExist) {
+			data, rerr := os.ReadFile(keyPath)
+			if rerr != nil {
+				return nil, "", rerr
+			}
+			return adoptSigningKey(dir, data)
 		}
-		return f.Sync()
-	}()
-	if writeErr != nil {
-		_ = os.Remove(keyPath)
-		return nil, "", writeErr
+		return nil, "", linkErr
+	}
+
+	keyID, err := publicKeyID(&key.PublicKey)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := ensurePublicKey(dir, keyID, &key.PublicKey); err != nil {
+		return nil, "", err
+	}
+	return key, keyID, nil
+}
+
+// adoptSigningKey parses an existing private key PEM, derives its key id, and
+// makes sure the matching public key file exists and is valid before returning.
+func adoptSigningKey(dir string, data []byte) (*ecdsa.PrivateKey, string, error) {
+	key, err := parsePrivateKey(data)
+	if err != nil {
+		return nil, "", err
 	}
 	keyID, err := publicKeyID(&key.PublicKey)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := writePublicKeyIfAbsent(dir, keyID, &key.PublicKey); err != nil {
+	if err := ensurePublicKey(dir, keyID, &key.PublicKey); err != nil {
 		return nil, "", err
 	}
 	return key, keyID, nil
@@ -322,10 +362,19 @@ func ensureSecureDir(dir string) error {
 	return nil
 }
 
-func writePublicKeyIfAbsent(dir, keyID string, pub *ecdsa.PublicKey) error {
+// ensurePublicKey makes sure <keyID>.pub exists AND holds exactly the public
+// key derived from the private key. A file that merely exists is not trusted: a
+// prior run that crashed mid-write could leave a truncated or wrong .pub, which
+// would make verification fail against seals this host itself produced. If the
+// file is absent, unparsable, or does not match, it is (re)written atomically
+// from the private key's public half.
+func ensurePublicKey(dir, keyID string, pub *ecdsa.PublicKey) error {
 	path := publicKeyPath(dir, keyID)
-	if _, err := os.Stat(path); err == nil {
-		return nil
+	if data, err := os.ReadFile(path); err == nil {
+		if existing, perr := parsePublicKeyPEM(data); perr == nil && pub.Equal(existing) {
+			return nil
+		}
+		// Present but corrupt or mismatched: repair it below.
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -334,7 +383,46 @@ func writePublicKeyIfAbsent(dir, keyID string, pub *ecdsa.PublicKey) error {
 		return fmt.Errorf("auditseal: marshal public key: %w", err)
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
-	return os.WriteFile(path, pemBytes, 0o644)
+	tmpPath, err := writeTempFile(dir, keyID+".pub", pemBytes, 0o644)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+// writeTempFile writes data to a fresh temp file in dir with the given mode,
+// fsyncs it, and returns its path. Callers publish it into place with os.Link or
+// os.Rename so a concurrent reader of the final path never sees partial bytes.
+func writeTempFile(dir, prefix string, data []byte, perm os.FileMode) (string, error) {
+	f, err := os.CreateTemp(dir, prefix+".*.tmp")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := f.Name()
+	if err := f.Chmod(perm); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	return tmpPath, nil
 }
 
 func loadPublicKey(dir, keyID string) (*ecdsa.PublicKey, error) {
@@ -348,17 +436,25 @@ func loadPublicKey(dir, keyID string) (*ecdsa.PublicKey, error) {
 		}
 		return nil, err
 	}
+	pub, err := parsePublicKeyPEM(data)
+	if err != nil {
+		return nil, fmt.Errorf("auditseal: public key %s: %w", keyID, err)
+	}
+	return pub, nil
+}
+
+func parsePublicKeyPEM(data []byte) (*ecdsa.PublicKey, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("auditseal: public key %s is not valid PEM", keyID)
+		return nil, errors.New("not valid PEM")
 	}
 	pubAny, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("auditseal: parse public key %s: %w", keyID, err)
+		return nil, err
 	}
 	pub, ok := pubAny.(*ecdsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("auditseal: public key %s is not an ECDSA key", keyID)
+		return nil, errors.New("not an ECDSA key")
 	}
 	return pub, nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/omkhar/workcell/internal/host/hoststate"
@@ -287,6 +288,124 @@ func TestSealSidecarRoundTrip(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("seal must be owner-only, got %o", info.Mode().Perm())
+	}
+}
+
+// TestVerifyFailsOnAppendedBareToken is the P1 tamper-hole regression: the OCSF
+// tolerant tokenizer drops bare (non key=value) tokens, so an appended one would
+// otherwise rebuild the same args and the same digest. Strict decoding must
+// reject it.
+func TestVerifyFailsOnAppendedBareToken(t *testing.T) {
+	tmp := t.TempDir()
+	signingDir := filepath.Join(tmp, "signing")
+	lines := buildLog(t, genuineLog(t))
+	logPath := writeLog(t, tmp, lines)
+	seal, err := SignSessionHead(signingDir, logPath, "colima", "sess-A", "t")
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	// Append a bare token to the session-A head record (the exit line, index 3).
+	tampered := make([]string, len(lines))
+	copy(tampered, lines)
+	tampered[3] = tampered[3] + " FORGED"
+	writeLog(t, tmp, tampered)
+	if _, err := VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal); err == nil {
+		t.Fatal("appended bare token must fail verification")
+	}
+}
+
+// TestVerifyIgnoresUnrelatedLaterTornRecord proves a torn/legacy line and a
+// later, unrelated session's record appended AFTER this session's head do not
+// make this session's verification fail (they are outside its verified range).
+func TestVerifyIgnoresUnrelatedLaterTornRecord(t *testing.T) {
+	tmp := t.TempDir()
+	signingDir := filepath.Join(tmp, "signing")
+	// Session A only, sealed at its head.
+	lines := buildLog(t, []record{
+		{session: "sess-A", args: []string{"event=launch"}},
+		{session: "sess-A", args: []string{"event=exit", "exit_status=0"}},
+	})
+	logPath := writeLog(t, tmp, lines)
+	seal, err := SignSessionHead(signingDir, logPath, "colima", "sess-A", "t")
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	// A later session appends a torn/legacy line (no record_digest) and a valid
+	// session-B record. Neither belongs to A, and both are after A's head.
+	appended := append([]string{}, lines...)
+	appended = append(appended,
+		"timestamp=2026-07-08T00:00:05Z session_id=sess-B event=legacy_no_digest",
+		"timestamp=2026-07-08T00:00:06Z session_id=sess-B event=exit record_digest=deadbeef",
+	)
+	writeLog(t, tmp, appended)
+	if _, err := VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal); err != nil {
+		t.Fatalf("unrelated later records must not fail session A, got %v", err)
+	}
+}
+
+// TestConcurrentKeyGenerationIsAtomic proves the temp+link publish never exposes
+// a partial key: concurrent first-time signers all converge on one complete key
+// and leave no temp file behind.
+func TestConcurrentKeyGenerationIsAtomic(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "signing")
+	const n = 8
+	ids := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			_, id, err := loadOrCreateSigningKey(dir)
+			ids[i], errs[i] = id, err
+		}(i)
+	}
+	wg.Wait()
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("goroutine %d: %v", i, errs[i])
+		}
+		if ids[i] != ids[0] {
+			t.Fatalf("goroutines disagree on key id: %s != %s", ids[i], ids[0])
+		}
+	}
+	// The published key parses (never a partial PEM) and no temp files remain.
+	data, err := os.ReadFile(filepath.Join(dir, signingKeyBasename))
+	if err != nil {
+		t.Fatalf("read key: %v", err)
+	}
+	if _, err := parsePrivateKey(data); err != nil {
+		t.Fatalf("published key must parse: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Fatalf("leftover temp file %s", e.Name())
+		}
+	}
+}
+
+// TestVerifyRepairsCorruptPublicKey proves a truncated <keyID>.pub left by a
+// crashed run is repaired on the next sign, so seals verify again.
+func TestVerifyRepairsCorruptPublicKey(t *testing.T) {
+	signingDir, logPath, seal := signGenuine(t, genuineLog(t), "sess-A")
+	pubPath := filepath.Join(signingDir, seal.KeyID+".pub")
+	if err := os.WriteFile(pubPath, []byte("-----BEGIN PUBLIC KEY-----\ntruncat"), 0o644); err != nil {
+		t.Fatalf("corrupt pub: %v", err)
+	}
+	// Corrupt .pub must not verify yet.
+	if _, err := VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal); err == nil {
+		t.Fatal("corrupt public key must fail verification before repair")
+	}
+	// Next sign repairs the public key from the private key.
+	if _, err := SignSessionHead(signingDir, logPath, "colima", "sess-A", "t2"); err != nil {
+		t.Fatalf("re-sign: %v", err)
+	}
+	if _, err := VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal); err != nil {
+		t.Fatalf("verification must pass after public key repair, got %v", err)
 	}
 }
 
