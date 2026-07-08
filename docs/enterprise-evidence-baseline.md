@@ -52,9 +52,11 @@ default `--format json` bundle is unchanged.
   session maps to `activity_id` 4 "Stop", a live one to 3 "Start"), followed by
   one event per audit record. Audit `event=session_started`/`launch` map to
   Start, `session_finished`/`exit` to Stop, and every other lifecycle event to
-  99 "Other". The agent/mode become the OCSF `app` object, the sandbox target
-  the `device` object, and the remaining session/audit fields are preserved
-  verbatim under the OCSF `unmapped` object so no evidence is dropped.
+  99 "Other". The agent/mode become the OCSF `app` object and the sandbox target
+  the `device` object — both sourced from the authoritative session record so
+  every standalone event carries them, even though the launcher audit lines do
+  not repeat the target on each line. The remaining session/audit fields are
+  preserved verbatim under the OCSF `unmapped` object so no evidence is dropped.
 - **Versioning.** Every event carries `metadata.version` (the OCSF schema
   version) and `metadata.mapping_version` (the Workcell mapping version) so
   consumers can pin to an exact mapping and handle future changes.
@@ -70,7 +72,10 @@ default `--format json` bundle is unchanged.
   fields, so a literal backslash in a workspace path survives instead of being
   mis-read as a shell escape. A record that carries a duplicate key — the shape a
   tampered line takes — fails the export closed and emits no events, so a forged
-  record can never surface as an OCSF event.
+  record can never surface as an OCSF event. Only field names the audit writers
+  actually emit become `unmapped` properties; any other key (a mutable audit line
+  could carry a secret-shaped key) is bucketed under one fixed, redacted property
+  rather than becoming a JSON property name, so a secret can never leak in a key.
 
 ## Known Gaps
 

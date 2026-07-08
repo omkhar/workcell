@@ -193,7 +193,7 @@ func mapExport(export sessions.SessionExport, redact func(string) string, now ti
 	events := make([]Event, 0, 1+len(export.AuditRecords))
 	events = append(events, sessionEvent(export.Session, redact, loggedTime))
 	for _, line := range export.AuditRecords {
-		ev, err := auditEvent(line, enc, redact, loggedTime)
+		ev, err := auditEvent(line, enc, export.Session, redact, loggedTime)
 		if err != nil {
 			return nil, err
 		}
@@ -371,7 +371,15 @@ func sessionDevice(rec sessions.SessionRecord, redact func(string) string) *Devi
 // classification and occurrence; the remaining decoded fields become the
 // (redacted) unmapped object. Decode happens BEFORE redaction so the redactor
 // masks the real value.
-func auditEvent(line string, enc auditEncoding, redact func(string) string, loggedTime int64) (Event, error) {
+//
+// The app and device objects are built from the authoritative SessionRecord, not
+// the audit line: the launcher audit writers do not stamp target_id/target_kind
+// (or agent/mode) on every line, so a line-derived device would be nil on most
+// events even though each OCSF JSONL line is a STANDALONE lifecycle event that
+// must carry its sandbox target. Every audit line here already belongs to this
+// session (SessionAuditRecords filters by session id), so the record is the
+// authoritative source for the session's identity and target.
+func auditEvent(line string, enc auditEncoding, rec sessions.SessionRecord, redact func(string) string, loggedTime int64) (Event, error) {
 	fields, err := decodeAuditLine(line, enc)
 	if err != nil {
 		return Event{}, err
@@ -393,13 +401,27 @@ func auditEvent(line string, enc auditEncoding, redact func(string) string, logg
 	epoch, dt := parseTime(firstNonEmpty(lookup["timestamp"], lookup["ts"]), redact)
 
 	unmapped := newUnmapped()
+	var unexpected []string
 	for _, f := range fields {
 		switch f.key {
 		case "event", "session_id", "timestamp", "ts":
 			// consumed by classification / occurrence
 			continue
 		}
-		unmapped.putStr("audit."+f.key, f.value, redact)
+		if _, known := knownAuditFields[f.key]; known {
+			unmapped.putStr("audit."+f.key, f.value, redact)
+			continue
+		}
+		// A field NAME no writer emits: an audit line is mutable text, so a
+		// tampered record could carry a secret-shaped key (e.g. a token as the
+		// key). Never let an unexpected key become a JSON property name — bucket
+		// it under one fixed property with BOTH key and value redacted, so a
+		// secret can never leak in the key position and the tampering is still
+		// visible as evidence.
+		unexpected = append(unexpected, redact(f.key)+"="+redact(f.value))
+	}
+	if len(unexpected) > 0 {
+		unmapped.put("audit.unexpected_fields", strings.Join(unexpected, " "))
 	}
 
 	msgEvent := eventName
@@ -424,41 +446,10 @@ func auditEvent(line string, enc auditEncoding, redact func(string) string, logg
 		Status:       statusName(statusID),
 		Message:      "workcell audit " + redact(msgEvent),
 		Metadata:     meta(loggedTime),
-		App:          auditApp(lookup, redact),
-		Device:       auditDevice(lookup, redact),
+		App:          sessionApp(rec, redact),
+		Device:       sessionDevice(rec, redact),
 		Unmapped:     unmapped.finish(),
 	}, nil
-}
-
-// auditApp builds the App object from an audit record's session/agent fields.
-func auditApp(fields map[string]string, redact func(string) string) *App {
-	name := strings.TrimSpace(fields["agent"])
-	if mode := strings.TrimSpace(fields["mode"]); mode != "" {
-		if name != "" {
-			name += "/" + mode
-		} else {
-			name = mode
-		}
-	}
-	uid := strings.TrimSpace(fields["session_id"])
-	if name == "" && uid == "" {
-		return nil
-	}
-	return &App{Name: redact(name), UID: redact(uid)}
-}
-
-// auditDevice builds the Device object from an audit record's target fields.
-func auditDevice(fields map[string]string, redact func(string) string) *Device {
-	name := strings.TrimSpace(fields["target_id"])
-	if name == "" && strings.TrimSpace(fields["target_kind"]) == "" {
-		return nil
-	}
-	return &Device{
-		TypeID: deviceTypeVirtualID,
-		Type:   deviceTypeVirtual,
-		Name:   redact(name),
-		UID:    redact(name),
-	}
 }
 
 // activityForEvent maps a Workcell audit event name to an OCSF activity_id.

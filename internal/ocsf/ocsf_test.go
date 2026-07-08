@@ -147,7 +147,7 @@ func TestActivityForEvent(t *testing.T) {
 
 func TestFailedExitRaisesSeverity(t *testing.T) {
 	line := "timestamp=2026-07-05T11:30:00Z session_id=s event=exit exit_status=137"
-	ev, err := auditEvent(line, encodingBashQuote, supportbundle.NewRedactor("").String, 0)
+	ev, err := auditEvent(line, encodingBashQuote, sessions.SessionRecord{SessionID: "s"}, supportbundle.NewRedactor("").String, 0)
 	if err != nil {
 		t.Fatalf("auditEvent: %v", err)
 	}
@@ -454,5 +454,90 @@ func TestExportAppleContainerRedactsAfterDecode(t *testing.T) {
 	// %20 decoded to a space, THEN the home prefix rewritten to ~.
 	if got := events[1].Unmapped["audit.workspace"]; got != "~/a b" {
 		t.Fatalf("percent-decode then home-redact expected ~/a b, got %q", got)
+	}
+}
+
+// TestAuditEventDeviceFromRecord is the load-bearing proof for FIX 1: a launcher
+// audit line does NOT stamp target_id/target_kind (only the SessionRecord has
+// them), yet each standalone OCSF lifecycle event must still carry its sandbox
+// device — sourced from the authoritative record, not the sparse line.
+func TestAuditEventDeviceFromRecord(t *testing.T) {
+	line := "timestamp=2026-07-05T11:00:00Z session_id=s1 event=launch profile=default agent=claude mode=yolo workspace=/tmp/w"
+	// Precondition: the line itself carries no target fields, so a line-derived
+	// device would be nil (this is exactly the pre-fix regression).
+	decoded, err := decodeAuditLine(line, encodingBashQuote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range decoded {
+		if f.key == "target_id" || f.key == "target_kind" {
+			t.Fatalf("fixture invalid: line must not carry %s", f.key)
+		}
+	}
+
+	exp := sessions.SessionExport{
+		Session: sessions.SessionRecord{
+			SessionID: "s1", Agent: "claude", Mode: "yolo", Status: "running",
+			TargetKind: "local_vm", TargetProvider: "colima", TargetID: "wcl-default",
+			ContainerName: "wcl-s1", StartedAt: "2026-07-05T11:00:00Z",
+		},
+		AuditRecords: []string{line},
+	}
+	events := mustExport(t, exp, Options{Now: fixedNow})
+	audit := events[1]
+	if audit.Device == nil {
+		t.Fatal("per-audit event lost its device; it must come from the authoritative record")
+	}
+	if audit.Device.Name != "wcl-default" || audit.Device.Hostname != "wcl-s1" {
+		t.Fatalf("device should be the record's target, got %+v", audit.Device)
+	}
+	if audit.App == nil || audit.App.UID != "s1" {
+		t.Fatalf("per-audit app should come from the record, got %+v", audit.App)
+	}
+}
+
+// TestAuditUnexpectedKeyNeverBecomesProperty is the load-bearing proof for FIX 2:
+// a tampered audit line whose KEY is a secret must not turn that secret into an
+// OCSF property name. The unexpected key is bucketed under one fixed, redacted
+// property, so the secret never appears in a key or value.
+func TestAuditUnexpectedKeyNeverBecomesProperty(t *testing.T) {
+	const ghToken = "ghp_" + "0123456789abcdefghijklmnopqrstuvwx"
+	exp := sessions.SessionExport{
+		Session: sessions.SessionRecord{
+			SessionID: "s1", Agent: "claude", Mode: "yolo", Status: "running",
+			StartedAt: "2026-07-05T11:00:00Z",
+		},
+		AuditRecords: []string{
+			// A legitimate known key (workspace) alongside a secret-shaped
+			// unexpected key.
+			"timestamp=2026-07-05T11:00:00Z session_id=s1 event=launch workspace=/tmp/w " + ghToken + "=x",
+		},
+	}
+	events := mustExport(t, exp, Options{Now: fixedNow})
+	var buf bytes.Buffer
+	if err := WriteJSONL(&buf, events); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); strings.Contains(out, ghToken) {
+		t.Fatalf("SECRET LEAK: token-shaped audit key surfaced in the OCSF output:\n%s", out)
+	}
+
+	audit := events[1]
+	for k := range audit.Unmapped {
+		if strings.Contains(k, "ghp_") {
+			t.Fatalf("unexpected secret-shaped key became an OCSF property name: %q", k)
+		}
+	}
+	// The known key still maps to a typed property...
+	if _, ok := audit.Unmapped["audit.workspace"]; !ok {
+		t.Fatalf("known key must still be a typed property, got %+v", audit.Unmapped)
+	}
+	// ...and the unexpected key is bucketed, redacted.
+	v, ok := audit.Unmapped["audit.unexpected_fields"]
+	if !ok {
+		t.Fatalf("unexpected key must be bucketed under audit.unexpected_fields, got %+v", audit.Unmapped)
+	}
+	if !strings.Contains(v, "[REDACTED-TOKEN]") {
+		t.Fatalf("bucketed unexpected field must be redacted, got %q", v)
 	}
 }
