@@ -97,8 +97,7 @@ func TestVerifyFailsOnFlippedByte(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	// Flip a byte in the first session-A record's value (exit_status stays intact
-	// elsewhere): change "event=launch" -> "event=xaunch" on line 0.
+	// Flip a byte in the first session-A record: "event=launch" -> "event=xaunch".
 	tampered := make([]string, len(lines))
 	copy(tampered, lines)
 	tampered[0] = strings.Replace(tampered[0], "event=launch", "event=xaunch", 1)
@@ -177,10 +176,8 @@ func TestVerifyFailsOnDuplicateKey(t *testing.T) {
 
 func TestVerifyFailsWithWrongKey(t *testing.T) {
 	signingDir, logPath, seal := signGenuine(t, genuineLog(t), "sess-A")
-	// Overwrite the pinned public key with a different, unrelated key of the same
-	// id: generate a second key in a scratch dir, then copy its .pub over the
-	// original key id file. Verification must fail because the signature was made
-	// by the original private key.
+	// Overwrite the pinned .pub with an unrelated key's public half: verification
+	// must fail because the signature was made by the original private key.
 	scratch := filepath.Join(t.TempDir(), "other")
 	if _, _, err := loadOrCreateSigningKey(scratch); err != nil {
 		t.Fatalf("scratch key: %v", err)
@@ -292,10 +289,8 @@ func TestSealSidecarRoundTrip(t *testing.T) {
 	}
 }
 
-// TestVerifyFailsOnAppendedBareToken is the P1 tamper-hole regression: the OCSF
-// tolerant tokenizer drops bare (non key=value) tokens, so an appended one would
-// otherwise rebuild the same args and the same digest. Strict decoding must
-// reject it.
+// TestVerifyFailsOnAppendedBareToken is the P1 tamper-hole regression: strict
+// decoding must reject a bare (non key=value) token the tolerant tokenizer drops.
 func TestVerifyFailsOnAppendedBareToken(t *testing.T) {
 	tmp := t.TempDir()
 	signingDir := filepath.Join(tmp, "signing")
@@ -316,8 +311,8 @@ func TestVerifyFailsOnAppendedBareToken(t *testing.T) {
 }
 
 // TestVerifyIgnoresUnrelatedLaterTornRecord proves a torn/legacy line and a
-// later, unrelated session's record appended AFTER this session's head do not
-// make this session's verification fail (they are outside its verified range).
+// later unrelated session's record appended AFTER this session's head do not
+// fail this session (they are outside its verified range).
 func TestVerifyIgnoresUnrelatedLaterTornRecord(t *testing.T) {
 	tmp := t.TempDir()
 	signingDir := filepath.Join(tmp, "signing")
@@ -344,9 +339,8 @@ func TestVerifyIgnoresUnrelatedLaterTornRecord(t *testing.T) {
 	}
 }
 
-// TestConcurrentKeyGenerationIsAtomic proves the temp+link publish never exposes
-// a partial key: concurrent first-time signers all converge on one complete key
-// and leave no temp file behind.
+// TestConcurrentKeyGenerationIsAtomic proves concurrent first-time signers all
+// converge on one complete key (never a partial PEM) with no temp file left.
 func TestConcurrentKeyGenerationIsAtomic(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "signing")
 	const n = 8
@@ -389,8 +383,8 @@ func TestConcurrentKeyGenerationIsAtomic(t *testing.T) {
 	}
 }
 
-// TestVerifyRepairsCorruptPublicKey proves a truncated <keyID>.pub left by a
-// crashed run is repaired on the next sign, so seals verify again.
+// TestVerifyRepairsCorruptPublicKey proves a truncated <keyID>.pub is repaired
+// on the next sign, so seals verify again.
 func TestVerifyRepairsCorruptPublicKey(t *testing.T) {
 	signingDir, logPath, seal := signGenuine(t, genuineLog(t), "sess-A")
 	pubPath := filepath.Join(signingDir, seal.KeyID+".pub")
@@ -410,11 +404,9 @@ func TestVerifyRepairsCorruptPublicKey(t *testing.T) {
 	}
 }
 
-// TestSignUnsupportedForNoChainProvider proves a session whose audit records
-// carry no digest chain (the apple-container preview target writes plain
-// lifecycle lines without record_digest) is scoped out of signing cleanly: a
-// typed ErrUnsupportedAuditChain, not a confusing chain-broken error or an
-// unverifiable seal.
+// TestSignUnsupportedForNoChainProvider proves a no-chain session (apple-container
+// writes lifecycle lines without record_digest) is scoped out of signing with a
+// typed ErrUnsupportedAuditChain, not a chain-broken error or an unverifiable seal.
 func TestSignUnsupportedForNoChainProvider(t *testing.T) {
 	tmp := t.TempDir()
 	signingDir := filepath.Join(tmp, "signing")
@@ -436,6 +428,44 @@ func TestSignUnsupportedForNoChainProvider(t *testing.T) {
 	}
 	if _, err := VerifySessionSeal(signingDir2, logPath2, "colima", "sess-A", seal); err != nil {
 		t.Fatalf("chain provider must still verify, got %v", err)
+	}
+}
+
+// TestVerifyIgnoresSpoofedSessionIDInLaterArgv proves membership uses the
+// DECODED session_id: a later session-B `session send` whose bash-%q argv
+// contains `session_id=sess-A` must not hijack session A's head. Load-bearing —
+// a raw strings.Fields scan would split the escaped argv and match the spoof.
+func TestVerifyIgnoresSpoofedSessionIDInLaterArgv(t *testing.T) {
+	tmp := t.TempDir()
+	signingDir := filepath.Join(tmp, "signing")
+	lines := buildLog(t, []record{
+		{session: "sess-A", args: []string{"event=launch"}},
+		{session: "sess-A", args: []string{"event=exit", "exit_status=0"}},
+	})
+	// A genuine session-B control record whose argv bash-%q encodes to a `\ `
+	// space, so a raw field scan sees a fake `session_id=sess-A` token.
+	spoof := `timestamp=2026-07-08T00:00:05Z session_id=sess-B event=command ` +
+		`argv=run\ session_id=sess-A\ now record_digest=ffffffff`
+	lines = append(lines, spoof)
+	logPath := writeLog(t, tmp, lines)
+
+	// The raw hazard exists (guards the regression), but decoded membership excludes it.
+	if !strings.Contains(spoof, "session_id=sess-A") {
+		t.Fatal("spoof must contain a raw session_id=sess-A token")
+	}
+	if lineHasSessionID(spoof, "colima", "sess-A") {
+		t.Fatal("decoded membership must not match a spoofed argv session_id")
+	}
+	if !lineHasSessionID(spoof, "colima", "sess-B") {
+		t.Fatal("decoded membership must match the record's true session_id")
+	}
+
+	seal, err := SignSessionHead(signingDir, logPath, "colima", "sess-A", "t")
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, err := VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal); err != nil {
+		t.Fatalf("a later spoofed argv session_id must not hijack session A's head: %v", err)
 	}
 }
 

@@ -5,35 +5,19 @@
 // head of a session's existing audit hash-chain host-side and verifies it back
 // from the authoritative durable log.
 //
-// # Hash chain (formalized, not reinvented)
+// scripts/workcell already writes a tamper-evident chain where each record's
+// record_digest = SHA256(prev_digest \x00 timestamp \x00 args...)
+// (hoststate.AuditRecordDigest) links to the previous record's digest; the head
+// of a session is the record_digest of the last record carrying session_id=<id>.
+// SignSessionHead signs a domain-separated session-id+head message with a
+// per-host ECDSA P-256 key (the curve cosign uses); VerifySessionSeal recomputes
+// the chain and head and verifies the signature over the RECOMPUTED head (never
+// a head carried in the seal), so any tamper fails closed.
 //
-// scripts/workcell's append_audit_record_to_path already writes a tamper-evident
-// chain: every record line carries prev_digest and record_digest, where
-//
-//	record_digest = SHA256( prev_digest \x00 timestamp \x00 arg0 \x00 arg1 ... )
-//
-// (hoststate.AuditRecordDigest) and prev_digest is the previous record's
-// record_digest. The HEAD of a session is the record_digest of the LAST log
-// record that carries session_id=<id>.
-//
-// # Seal (this package)
-//
-// SignSessionHead recomputes the chain over the AUTHORITATIVE profile audit log,
-// derives the session HEAD, and signs a domain-separated message binding the
-// session id to that head with a per-host ECDSA P-256 key (the curve cosign uses
-// by default). VerifySessionSeal recomputes the chain and HEAD the same way and
-// verifies the signature over the RECOMPUTED head — it never trusts a head value
-// carried in the seal file — so any tamper (a flipped byte, a reordered, dropped,
-// or duplicate-key record) changes a recomputed digest, breaks chain linkage, or
-// changes the head and fails verification closed.
-//
-// # Trust model
-//
-// This is a boundary/host signature, not an agent signature: the operator host
-// signs the chain head after the runtime boundary finalizes the session record.
-// It detects tampering by any party that lacks the per-host private key. It does
-// NOT defend against a host-root attacker who can read signing.key and re-sign.
-// See docs/signed-session-audit-records.md.
+// This is a boundary/host signature, not an agent signature: it detects tamper
+// by any party lacking the per-host key, but does NOT defend a host-root
+// attacker who can read signing.key and re-sign. See
+// docs/signed-session-audit-records.md.
 package auditseal
 
 import (
@@ -66,12 +50,10 @@ const sealVersion = 1
 const signingKeyBasename = "signing.key"
 
 // ErrUnsupportedAuditChain reports that a session's audit records carry no
-// digest chain (no record_digest), so there is nothing to sign or verify. The
-// preview-only, launch-blocked apple-container target writes plain lifecycle
-// lines without prev_digest/record_digest; such sessions are scoped OUT of
-// signing cleanly rather than emitting a seal that could never verify. Callers
-// treat it as "unsigned — provider audit chain unsupported": the signing hook
-// skips it, and `session verify` fails closed with that reason.
+// digest chain (no record_digest), so there is nothing to sign or verify — the
+// preview-only apple-container target writes plain lifecycle lines. Callers
+// treat it as "unsigned": the signing hook skips it and `session verify` fails
+// closed with that reason, rather than emitting a seal that can never verify.
 var ErrUnsupportedAuditChain = errors.New("auditseal: session audit records have no digest chain (provider audit chain unsupported)")
 
 // Seal is the durable, host-owned signature over a session's audit-chain head.
@@ -174,20 +156,14 @@ type chainRecord struct {
 
 // recomputeSessionHead reads the authoritative audit log and returns the digest
 // of this session's head — the last record bearing sessionID — after verifying
-// the hash chain from the first record up to and including that head.
+// the chain from the first record up to and including that head.
 //
-// Scoping (do not fail on unrelated later records): membership is found with a
-// tolerant scan, and the chain is verified only over the records up to and
-// including this session's head. A torn, legacy, or duplicate-key line written
-// by a LATER, unrelated session — anything after this session's head — never
-// affects this session's verdict. Records before the head (including other
-// sessions' interleaved records) ARE verified, because the chain digest links
-// globally and this session's head integrity depends on them.
-//
-// Every record in the verified range is decoded strictly (ocsf
-// DecodeAuditLineStrict): a duplicate key or a bare non-key=value token fails
-// closed, so an appended forged token cannot leave the recomputed digest
-// unchanged.
+// Scoping: the chain is verified only over records up to this session's head, so
+// a torn/legacy/duplicate-key line from a LATER unrelated session never affects
+// this session; records before the head (including interleaved other-session
+// records) ARE verified since the digest links globally. Every verified record
+// is decoded strictly (DecodeAuditLineStrict): a duplicate key or bare token
+// fails closed, so an appended forged token cannot leave the digest unchanged.
 func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (string, error) {
 	data, err := os.ReadFile(auditLogPath)
 	if err != nil {
@@ -205,10 +181,11 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 		}
 	}
 
-	// Pass 1: tolerant membership scan to locate this session's head index.
+	// Pass 1: locate this session's head via lineHasSessionID, which matches the
+	// DECODED session_id field (see its doc for why a raw scan is unsafe).
 	lastMatch := -1
 	for i, line := range lines {
-		if lineHasSessionID(line, sessionID) {
+		if lineHasSessionID(line, targetProvider, sessionID) {
 			lastMatch = i
 		}
 	}
@@ -216,12 +193,10 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 		return "", fmt.Errorf("auditseal: no audit records for session %s", sessionID)
 	}
 
-	// No-chain provider guard: if this session's head record carries no
-	// record_digest, the provider does not produce a digest chain (e.g. the
-	// preview-only apple-container target). Report it cleanly as unsupported
-	// rather than falling into the mandatory-record_digest error below with a
-	// confusing "chain broken" message. A decode error here is genuine tamper
-	// (bare/duplicate token) and is surfaced as such.
+	// No-chain provider guard: if this session's head record has no
+	// record_digest, the provider produces no digest chain (apple-container);
+	// report it as unsupported rather than a confusing "chain broken" error. A
+	// decode error here is genuine tamper and is surfaced as such.
 	headFields, err := ocsf.DecodeAuditLineStrict(lines[lastMatch], targetProvider)
 	if err != nil {
 		return "", fmt.Errorf("auditseal: %w", err)
@@ -267,18 +242,20 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 	return head, nil
 }
 
-// lineHasSessionID reports whether a raw audit line carries session_id=<id>. It
-// is deliberately tolerant (whitespace split, no error path) so that a torn or
-// duplicate-key line belonging to some OTHER session cannot make this session's
-// verification fail during the membership scan; strict decoding is applied only
-// to the records that are actually chain-verified. A session id never contains
-// whitespace, so its token survives the split intact regardless of how a
-// neighbouring escaped value tokenizes. Mirrors sessions.auditLineHasSessionID.
-func lineHasSessionID(line, sessionID string) bool {
-	for _, field := range strings.Fields(line) {
-		key, value, ok := strings.Cut(field, "=")
-		if ok && key == "session_id" && value == sessionID {
-			return true
+// lineHasSessionID reports whether an audit line's DECODED session_id field
+// equals sessionID. Decoding with the strict tokenizer means free-form content —
+// notably a `session send` argv whose bash-%q `\ ` spaces would split into a
+// fake session_id token under a raw scan — stays a single argv value and cannot
+// forge membership. A line that fails to decode (torn/duplicate-key, perhaps
+// another session's) is a non-member and never fails this session's scan.
+func lineHasSessionID(line, targetProvider, sessionID string) bool {
+	fields, err := ocsf.DecodeAuditLineStrict(line, targetProvider)
+	if err != nil {
+		return false
+	}
+	for _, f := range fields {
+		if f.Key == "session_id" {
+			return f.Value == sessionID
 		}
 	}
 	return false
@@ -294,26 +271,20 @@ func auditFieldsHaveKey(fields []ocsf.AuditField, key string) bool {
 }
 
 // HasSignableChain reports whether a session's audit records form a signable
-// digest chain. It returns false only for a provider that produces no chain at
-// all (ErrUnsupportedAuditChain, e.g. apple-container); a present-but-broken
-// chain still counts as "has a chain" (true) so callers describe it as a signed
-// vs unsigned question rather than an unsupported-provider one. Callers use this
-// only to choose a clear human message; the security verdict is the signature.
+// digest chain; it returns false only for a no-chain provider
+// (ErrUnsupportedAuditChain, e.g. apple-container). Callers use it only to
+// choose a clear human message; the security verdict is the signature.
 func HasSignableChain(auditLogPath, targetProvider, sessionID string) bool {
 	_, err := recomputeSessionHead(auditLogPath, targetProvider, sessionID)
 	return !errors.Is(err, ErrUnsupportedAuditChain)
 }
 
 // loadOrCreateSigningKey returns the per-host ECDSA P-256 signing key under dir,
-// generating it on first use. The directory is created and hardened to 0700 and
-// the private key is written 0600; if the directory cannot be secured the call
-// fails closed rather than sign with an insecurely stored key. The returned
-// keyID is the hex SHA-256 prefix of the PKIX-encoded public key.
-//
-// The private key is published atomically (write a temp file, then link it into
-// place) so a concurrent reader never observes a partial PEM: on a fresh host
-// two sessions may sign at once, and the loser of the create race adopts the
-// winner's complete key rather than reading an empty file.
+// generating it on first use. The dir is hardened to 0700 and the key written
+// 0600; if the dir cannot be secured the call fails closed. keyID is the hex
+// SHA-256 prefix of the PKIX public key. The key is published atomically (temp
+// file then os.Link) so a concurrent reader never sees a partial PEM; the create
+// race loser adopts the winner's complete key.
 func loadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, "", errors.New("auditseal: signing directory is required")
