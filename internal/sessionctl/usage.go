@@ -82,8 +82,8 @@ Notes:
   - ` + "`" + `session export` + "`" + ` includes audit records that match the recorded session id.
   - ` + "`" + `session export --format ocsf` + "`" + ` maps the recorded session to an OCSF
     Application Lifecycle event (class 6002) as JSONL, versioned by
-    metadata.version and metadata.mapping_version, with credentials and paths
-    redacted by the shared support-bundle rule-set.
+    metadata.version and metadata.mapping_version, with credentials, tokens,
+    and operator home paths redacted by the shared support-bundle rule-set.
   - ` + "`" + `session delete` + "`" + ` never rewrites the shared profile audit log.
   - ` + "`" + `session delete` + "`" + ` cleans only explicitly recorded session-owned artifacts and
     refuses running sessions or running session containers.
