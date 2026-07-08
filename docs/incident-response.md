@@ -162,7 +162,8 @@ Per-session evidence, for the specific `SESSION_ID`(s) from step 2:
 - `workcell session export --id SESSION_ID --output PATH` — the record plus all
   matching audit records as one JSON bundle (written `0600`).
 - `workcell session diff --id SESSION_ID --output PATH` — the workspace change
-  set against the clean launch base.
+  set against the clean launch base: a `[status]` file list plus a `[diff]`
+  section of raw file contents. The raw contents are sensitive (see step 6).
 - `workcell session logs --id SESSION_ID --kind audit` — prints the **entire
   profile-wide** `workcell.audit.log` resolved from the session's record, not a
   per-session slice: it is shared by every session in the profile, so you see all
@@ -202,25 +203,41 @@ suspected boundary breach in a public issue. Expect acknowledgment within
 sandbox escapes and secret exposure are prioritized
 ([`SECURITY.md`](../SECURITY.md#response)).
 
-Include:
+Include (redaction-safe by default):
 
 - the redacted `workcell-support-bundle.json` from step 4;
-- the exported session record(s), timeline, and diff for the affected
-  `SESSION_ID`(s);
+- the exported session record(s) and timeline for the affected `SESSION_ID`(s);
+- from `workcell session diff`, the **`[status]` summary only** — the list of
+  changed and untracked files (`git status --short`) — plus, if useful, file
+  counts and hashes. This is metadata about *which* files changed, not their
+  contents;
 - the observed signal, severity, provider, mode, host OS, and the exact commands
   run.
+
+Review and redact before sharing (may contain secrets/proprietary content):
+
+- The `[diff]` section of `workcell session diff` output. It is a full
+  `git diff` of raw workspace file contents (`render_session_diff_bundle` in
+  `scripts/workcell` runs `git diff --no-ext-diff --no-textconv` against the
+  launch base), so a compromised session that wrote secrets or changed
+  proprietary files puts that content directly into the diff. Treat it like the
+  `debug`/`file-trace`/`transcript` logs: raw workspace content that must be
+  reviewed and redacted by the operator before it crosses the trust boundary
+  into a report.
 
 Do **not** include:
 
 - secrets, credential values, or `.env`-style material;
 - raw workspace content or full agent transcripts unless specifically requested
-  — the `debug`/`file-trace`/`transcript` logs are the ones most likely to carry
-  it.
+  — the `session diff` `[diff]` body and the `debug`/`file-trace`/`transcript`
+  logs are the ones most likely to carry it.
 
 The support bundle is redacted by construction, but **skim it once before
-sharing** ([`SUPPORT.md`](../SUPPORT.md#sharing-it-safely)). If any artifact you
-were about to attach looks like it exposed a secret, keep it out of the report
-body and describe it to the maintainer over the private advisory instead.
+sharing** ([`SUPPORT.md`](../SUPPORT.md#sharing-it-safely)). The session diff and
+lower-assurance logs are **not** redacted — review them yourself first. If any
+artifact you were about to attach looks like it exposed a secret, keep it out of
+the report body and describe it to the maintainer over the private advisory
+instead.
 
 [pvr]: https://github.com/omkhar/workcell/security/advisories/new
 
