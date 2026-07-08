@@ -5473,6 +5473,15 @@ fi
 # `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
 go_verify_citools workcell-runtime-security-posture "${ROOT_DIR}" || exit 1
 
+# Assert the runtime's reviewed hardening posture and outbound-endpoint
+# inventory (policy/hardening-profile.toml, roadmap A6) still match what
+# scripts/workcell and scripts/lib/launcher/egress-endpoints.sh apply: the
+# conformance check fails closed if a required security literal (seccomp /
+# --cap-drop / no-new-privileges / read-only / tmpfs / --pids-limit / mapped
+# user) is removed, a forbidden literal (--privileged, seccomp=unconfined) is
+# introduced, or a declared egress endpoint is dropped.
+go_verify_citools hardening-profile-conformance "${ROOT_DIR}" || exit 1
+
 if ! run_workcell_verify \
   --agent codex \
   --no-default-injection-policy \

@@ -26,6 +26,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/gitconfigblocklist"
+	"github.com/omkhar/workcell/internal/hardeningprofile"
 	"github.com/omkhar/workcell/internal/metadatautil"
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
@@ -125,6 +126,7 @@ func subcommands() []subcommand {
 		{"workcell-dualstack-apply-plan", "ROOT_DIR", 1, 1, cmdWorkcellDualStackApplyPlan},
 		{"workcell-publish-base-refcheck", "ROOT_DIR", 1, 1, cmdWorkcellPublishBaseRefcheck},
 		{"workcell-runtime-security-posture", "ROOT_DIR", 1, 1, cmdWorkcellRuntimeSecurityPosture},
+		{"hardening-profile-conformance", "ROOT_DIR", 1, 1, cmdHardeningProfileConformance},
 		{"workcell-smoke-apt-broker-probe", "ROOT_DIR", 1, 1, cmdWorkcellSmokeAptBrokerProbe},
 		{"workcell-copilot-token-handoff-cleanup", "ROOT_DIR", 1, 1, cmdWorkcellCopilotTokenHandoffCleanup},
 		{"workcell-provider-token-unlink", "ROOT_DIR", 1, 1, cmdWorkcellProviderTokenUnlink},
@@ -819,6 +821,15 @@ func cmdWorkcellPublishBaseRefcheck(args []string) error {
 // original stderr message for the first violated invariant.
 func cmdWorkcellRuntimeSecurityPosture(args []string) error {
 	return workcellhardening.CheckRuntimeSecurityPosture(args[0])
+}
+
+// cmdHardeningProfileConformance runs the roadmap A6 hardening-profile
+// conformance check: it asserts that scripts/workcell (and its egress helper)
+// still apply every container-hardening and outbound-endpoint literal declared
+// in the reviewed policy/hardening-profile.toml artifact, failing (exit 1 via
+// die()) with a message identifying the first drifted section/literal.
+func cmdHardeningProfileConformance(args []string) error {
+	return hardeningprofile.Check(args[0])
 }
 
 // cmdWorkcellSmokeAptBrokerProbe runs the six container-smoke apt-broker
