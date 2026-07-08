@@ -23,6 +23,7 @@ func TestUsageTextListsAllSubcommands(t *testing.T) {
 		"workcell session timeline",
 		"workcell session diff",
 		"workcell session export",
+		"workcell session verify",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("UsageText() missing %q", want)

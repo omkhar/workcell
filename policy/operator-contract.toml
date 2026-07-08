@@ -296,6 +296,16 @@ evidence = ["tests/scenarios/shared/test-session-commands.sh"]
 requirements = ["functional.FR-007"]
 target_state = "retain"
 
+[workflows.session_verify]
+title = "Verify signed session audit records"
+support = "supported"
+canonical = "workcell session verify --id SESSION_ID"
+discoverability = ["subcommand-help:session"]
+docs = ["man/workcell.1"]
+evidence = ["internal/sessionctl/verify_test.go", "internal/host/auditseal/auditseal_test.go"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
 [workflows.session_delete]
 title = "Delete durable detached session"
 support = "supported"

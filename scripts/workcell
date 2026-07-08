@@ -168,7 +168,7 @@ usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
-       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export> [options]
+       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify> [options]
        workcell auth <init|set|unset|status> [options]
        workcell policy <show|validate|diff> [options]
        workcell why --credential KEY --agent NAME [options]
@@ -3106,7 +3106,36 @@ finalize_session_audit() {
   fi
   append_exit_audit_record "${profile}" "${execution_path}" "${exit_status}" "${final_assurance}" "${downgraded}"
   write_session_record_final "${final_status}" "${exit_status}" "${final_assurance}"
+  sign_session_audit_head "${profile}"
   FINAL_SESSION_ASSURANCE="${final_assurance}"
+}
+
+# sign_session_audit_head signs the head of this session's audit hash-chain
+# host-side (A5). It is best-effort with respect to teardown: a signing failure
+# is warned and swallowed so it never wedges container cleanup, and an unsigned
+# session simply fails `session verify` closed. Signing itself is fail-closed in
+# the Go helper (it refuses to sign with an insecurely stored key).
+sign_session_audit_head() {
+  local profile="$1"
+  local audit_path=""
+  local target_provider=""
+
+  [[ "${SESSION_RECORD_FINALIZED}" -eq 1 ]] || return 0
+  [[ -n "${SESSION_RECORD_PATH}" ]] || return 0
+  [[ -n "${SESSION_ID}" ]] || return 0
+
+  audit_path="$(profile_audit_log_path "${profile}")"
+  [[ -s "${audit_path}" ]] || return 0
+  target_provider="$(target_provider_for_profile_state "${profile}")"
+
+  if ! go_hostutil session-sign-head \
+    "--signing-dir=${WORKCELL_STATE_ROOT}/signing" \
+    "--audit-log=${audit_path}" \
+    "--session-id=${SESSION_ID}" \
+    "--record-path=${SESSION_RECORD_PATH}" \
+    "--provider=${target_provider}" 2>/dev/null; then
+    echo "Workcell: warning: could not sign session audit head for ${SESSION_ID}; session verify will report it unsigned." >&2
+  fi
 }
 
 write_profile_image_marker() {
@@ -4224,6 +4253,15 @@ session_timeline_main() {
   exit $?
 }
 
+session_verify_main() {
+  collect_session_lookup_roots || exit 1
+  run_go_hostutil_preserve_exit session-verify-cli "${SESSION_LOOKUP_ROOTS[@]}" \
+    "--signing-dir=${WORKCELL_STATE_ROOT}/signing" \
+    "--real-home=${REAL_HOME}" \
+    "$@"
+  exit $?
+}
+
 session_monitor_main() {
   local plan=""
   local monitor_cli_status=0
@@ -4446,6 +4484,9 @@ session_main() {
       ;;
     timeline)
       session_timeline_main "$@"
+      ;;
+    verify)
+      session_verify_main "$@"
       ;;
     diff)
       while [[ $# -gt 0 ]]; do

@@ -16,6 +16,7 @@ const usageText = `Usage: workcell session start [launch-options] [-- provider-a
        workcell session timeline --id SESSION_ID
        workcell session diff --id SESSION_ID [--output PATH]
        workcell session export --id SESSION_ID [--format json|ocsf] [--output PATH]
+       workcell session verify --id SESSION_ID
 
 Commands:
   start
@@ -71,6 +72,9 @@ Commands:
                               (one Application Lifecycle event per line, redacted)
     --output PATH             Write the exported bundle to PATH instead of stdout
 
+  verify
+    --id SESSION_ID           Verify a session's signed, tamper-evident audit records
+
 Notes:
   - session commands run on the host and do not start the Workcell runtime.
   - records are durable host-side metadata for detached, completed, or aborted launches.
@@ -87,6 +91,10 @@ Notes:
     payloads (the detached session message) are not exported: their content is
     replaced with a fixed placeholder since regex redaction cannot sanitize
     arbitrary prose.
+  - ` + "`" + `session verify` + "`" + ` recomputes the session's audit hash-chain from the durable
+    profile log and verifies the host-side signature over the chain head. It is
+    read-only and fails closed on any tampered, reordered, dropped, or unsigned
+    record. Signing is boundary/host-side, not agent-side.
   - ` + "`" + `session delete` + "`" + ` never rewrites the shared profile audit log.
   - ` + "`" + `session delete` + "`" + ` cleans only explicitly recorded session-owned artifacts and
     refuses running sessions or running session containers.
