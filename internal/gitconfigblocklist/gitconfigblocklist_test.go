@@ -121,13 +121,13 @@ func TestCheck(t *testing.T) {
 				// All enforcers have the key "core.askpass" and the prefix
 				// "credential." but the last one lacks the ".helper" suffix.
 				m := map[string]string{
-					"scripts/workcell":                  "core.askpass credential. .helper\n",
-					"runtime/container/bin/git":         "core.askpass credential. .helper\n",
-					"runtime/container/rust/src/lib.rs": "core.askpass credential. nohelper\n",
+					"scripts/workcell":                        "core.askpass credential. .helper\n",
+					"runtime/container/bin/git":               "core.askpass credential. .helper\n",
+					"runtime/container/rust/src/gitpolicy.rs": "core.askpass credential. nohelper\n",
 				}
 				return m
 			}(),
-			wantErr: "git-config blocklist prefix+suffix pattern 'credential.*.helper' missing in %ROOT%/runtime/container/rust/src/lib.rs",
+			wantErr: "git-config blocklist prefix+suffix pattern 'credential.*.helper' missing in %ROOT%/runtime/container/rust/src/gitpolicy.rs",
 		},
 		{
 			name:    "empty keys",

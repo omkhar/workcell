@@ -13,7 +13,7 @@
 //
 //   - scripts/workcell                      (host launcher)
 //   - runtime/container/bin/git             (in-container git wrapper)
-//   - runtime/container/rust/src/lib.rs     (LD_PRELOAD exec guard)
+//   - runtime/container/rust/src/gitpolicy.rs (LD_PRELOAD exec guard)
 //
 // The check reads the TOML `keys = [ ... ]` array and the
 // `[[prefix_suffix_patterns]]` tables and asserts every key (as a fixed
@@ -43,7 +43,7 @@ const tomlRelPath = "policy/git-config-blocklist.toml"
 var enforcerRelPaths = []string{
 	"scripts/workcell",
 	"runtime/container/bin/git",
-	"runtime/container/rust/src/lib.rs",
+	"runtime/container/rust/src/gitpolicy.rs",
 }
 
 // Check runs the git-config blocklist parity invariant against the repo

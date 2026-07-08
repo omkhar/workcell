@@ -144,7 +144,7 @@ var rustMutations = []mutationCase{
 		label:        "root-prefix matcher",
 	},
 	{
-		relativePath: "runtime/container/rust/src/lib.rs",
+		relativePath: "runtime/container/rust/src/gitpolicy.rs",
 		original:     `            | "core.fsmonitor"` + "\n",
 		replacement:  ``,
 		label:        "core.fsmonitor git-config blocking",

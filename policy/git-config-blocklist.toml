@@ -12,7 +12,7 @@
 #     bash case statement in git_config_key_is_blocked() — drops keys
 #     via early-exit at the wrapper level.
 #
-#   - runtime/container/rust/src/lib.rs
+#   - runtime/container/rust/src/gitpolicy.rs
 #     git_config_key_is_blocked() — blocks at exec syscall interception
 #     inside libworkcell_exec_guard.so.
 #
