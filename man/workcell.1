@@ -47,6 +47,22 @@ without starting a second Workcell runtime. Detached sessions default to an
 isolated clean git clone of the selected workspace, while the host-side
 inventory and retained-log commands operate on durable session records plus the
 matching profile audit state.
+.B workcell session export
+accepts
+.B --format
+.IR json | ocsf :
+.I json
+(the default) emits the recorded session and matching audit records as a single
+indented JSON object, while
+.I ocsf
+emits an OCSF-mapped JSON Lines stream (one Open Cybersecurity Schema Framework
+Application Lifecycle event, class_uid 6002, per line) versioned by
+.B metadata.version
+and
+.BR metadata.mapping_version .
+Credentials, tokens, and operator home paths are redacted from the OCSF output
+by the same rule-set as
+.BR "workcell support-bundle" .
 .TP
 .B workcell policy show|validate|diff
 Inspect the merged host-side injection policy without starting the runtime.

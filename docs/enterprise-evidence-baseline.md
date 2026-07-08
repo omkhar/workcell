@@ -38,6 +38,34 @@ Current audit and session evidence is host-local:
 Retention remains operator or organization owned. Workcell does not yet provide
 centralized retention policy, SIEM export, or fleet inventory.
 
+### OCSF-Mapped Export (Phase 17)
+
+`workcell session export --format ocsf` renders the session record and its audit
+lifecycle events as [OCSF](https://schema.ocsf.io/) JSON Lines — one
+**Application Lifecycle** event (`category_uid` 6, `class_uid` 6002) per line —
+so a SIEM can ingest Workcell session evidence without a bespoke parser. The
+default `--format json` bundle is unchanged.
+
+- **Mapping.** One summary event is emitted for the session record (a finished
+  session maps to `activity_id` 4 "Stop", a live one to 3 "Start"), followed by
+  one event per audit record. Audit `event=session_started`/`launch` map to
+  Start, `session_finished`/`exit` to Stop, and every other lifecycle event to
+  99 "Other". The agent/mode become the OCSF `app` object, the sandbox target
+  the `device` object, and the remaining session/audit fields are preserved
+  verbatim under the OCSF `unmapped` object so no evidence is dropped.
+- **Versioning.** Every event carries `metadata.version` (the OCSF schema
+  version) and `metadata.mapping_version` (the Workcell mapping version) so
+  consumers can pin to an exact mapping and handle future changes.
+- **Redaction.** The OCSF output is redacted by the **same** rule-set as
+  `workcell support-bundle` (see [../SUPPORT.md](../SUPPORT.md)): credential,
+  token, key, and secret material is masked and the operator home prefix is
+  rewritten to `~`, so no secret or local username leaks into exported events.
+- **Integrity.** Audit records are decoded from their on-disk `printf %q`
+  encoding before mapping, so space-delimited fields (such as the endpoints
+  allowlist) are preserved intact rather than truncated. A record that carries a
+  duplicate key — the shape a tampered line takes — fails the export closed and
+  emits no events, so a forged record can never surface as an OCSF event.
+
 ## Known Gaps
 
 These are intentionally not claimed today:
