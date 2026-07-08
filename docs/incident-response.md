@@ -86,14 +86,29 @@ investigate.
    persist after the launch exits.
 4. **Halt the target's isolation boundary (defense in depth).** Stopping the
    session (steps 2-3) stops its container; the general principle for a fuller
-   halt is then to bring down the target's isolation boundary. That command is
-   **target-specific**, so first confirm which target the **suspect session**
-   used. Read it from that session's record — `workcell session show --id
-   SESSION_ID` (or `workcell session list --verbose`) reports the record's
-   `target_kind` and `target_provider`. Do not use `--inspect` for this: it
-   prints your *current* launch options, not the suspect session's target. At 1.0
-   the operator-reachable targets on the supported macOS arm64 host are the two
-   `launch=allowed` rows in
+   halt is then to bring down the target's isolation boundary.
+
+   **First, wait for the session to finalize (detached sessions).** For a
+   detached session, `workcell session stop` returns as soon as it issues the
+   stop — it writes `status=stopping` and does **not** wait
+   (`scripts/workcell:3894-3897`). The session monitor then finalizes the durable
+   record and audit log (and only then removes the container) asynchronously
+   (`session_monitor_main`, `scripts/workcell:4222-4228`). If you halt the Colima
+   VM (or stop Docker Desktop) while the status is still `stopping`, you interrupt
+   the monitor mid-finalization and the durable evidence may be captured
+   incompletely. So after `session stop`, **poll `workcell session show --id
+   SESSION_ID` (or `session list --verbose`) until the status is terminal**
+   (`stopped`, `exited`, `failed`, or `aborted` — `session_is_terminal_status`,
+   `scripts/workcell:3909-3918`), which confirms the monitor has finalized the
+   durable record and audit, **before** halting the boundary below.
+
+   The boundary-halt command is **target-specific**, so confirm which target the
+   **suspect session** used. Read it from that session's record — `workcell
+   session show --id SESSION_ID` (or `workcell session list --verbose`) reports
+   the record's `target_kind` and `target_provider`. Do not use `--inspect` for
+   this: it prints your *current* launch options, not the suspect session's
+   target. At 1.0 the operator-reachable targets on the supported macOS arm64 host
+   are the two `launch=allowed` rows in
    [`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv):
    - **`local_vm` / Colima (the default, strict target).** All sessions for a
      profile run inside one dedicated Colima VM. Take the profile from the session
