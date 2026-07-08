@@ -74,17 +74,23 @@ func auditEncodingForProvider(provider string) auditEncoding {
 // could carry a secret-shaped key) is bucketed under one fixed redacted property
 // instead of becoming a JSON property name of its own.
 //
-// Derived from the writers, not hand-curated — regenerate with:
+// Derived from the AUDIT writers only, not hand-curated. Regenerate from the
+// bash audit-append functions (NOT all of scripts/workcell — the whole file also
+// contains write_session_record's git_branch/git_head/git_base SessionRecord
+// fields and the core.*/git_* alias-guard substrings at ~6775-6778, none of
+// which are audit-line keys) plus the apple-container Go writers:
 //
-//	{ grep -hoE '"[a-z_0-9]+=' scripts/workcell | sed 's/"//;s/=//';
+//	{ awk '/^append_(launch|exit|session_control)_audit_record\(\)/{f=1} f&&/^}/{f=0}
+//	      f' scripts/workcell | grep -hoE '"[a-z_0-9]+=' | sed 's/"//;s/=//';
 //	  grep -hoE '[a-z_]+=%s' internal/applecontainer/recovery.go \
 //	    internal/applecontainer/target_session.go | sed 's/=%s//';
-//	  printf 'timestamp\nts\nprev_digest\nrecord_digest\nmaterialization_id\naccess_model\nbootstrap_id\nimage_ref\n'; } |
+//	  printf 'timestamp\nts\nprev_digest\nrecord_digest\nmaterialization_id\naccess_model\nbootstrap_id\nimage_ref\nv\n'; } |
 //	  sort -u | grep -vE '^(0|1)$'
 //
 // (the last printf adds the framing keys the append_audit_record_to_path wrapper
-// and the Go writers stamp on every record). A new legitimate writer key that is
-// not yet listed degrades safely to the redacted bucket, not a leak.
+// stamps plus the apple-container schema sentinel `v` from auditLineSentinel).
+// A new legitimate writer key not yet listed degrades safely to the redacted
+// bucket, not a leak.
 var knownAuditFields = map[string]struct{}{
 	"access_model":                          {},
 	"agent":                                 {},
@@ -117,13 +123,6 @@ var knownAuditFields = map[string]struct{}{
 	"final_assurance":                    {},
 	"finished_at":                        {},
 	"force":                              {},
-	"git_base":                           {},
-	"git_branch":                         {},
-	"git_common_dir":                     {},
-	"git_dir":                            {},
-	"git_exec_path":                      {},
-	"git_head":                           {},
-	"git_work_tree":                      {},
 	"github_auth_present":                {},
 	"image_ref":                          {},
 	"initial_assurance":                  {},
@@ -171,12 +170,16 @@ var knownAuditFields = map[string]struct{}{
 	"transport_status":                   {},
 	"ts":                                 {},
 	"ui":                                 {},
-	"workspace":                          {},
-	"workspace_control_plane":            {},
-	"workspace_origin":                   {},
-	"workspace_root":                     {},
-	"workspace_transport":                {},
-	"worktree_path":                      {},
+	// v is the AppleContainer schema-version sentinel (auditLineSentinel = " v=1"
+	// in internal/applecontainer/session_helpers.go), appended to EVERY rendered
+	// apple-container audit line — a legitimate field, not a tampered key.
+	"v":                       {},
+	"workspace":               {},
+	"workspace_control_plane": {},
+	"workspace_origin":        {},
+	"workspace_root":          {},
+	"workspace_transport":     {},
+	"worktree_path":           {},
 }
 
 // auditField is one ordered key/value pair decoded from an audit record.

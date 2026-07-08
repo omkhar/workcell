@@ -19,6 +19,9 @@ func TestKnownAuditFieldsCoversWriterKeys(t *testing.T) {
 		"target_kind", "target_provider", "target_id",
 		"exit_status", "workspace", "workspace_origin",
 		"record_digest", "prev_digest",
+		// v is the apple-container schema-version sentinel (" v=1"), on every
+		// apple-container audit line — must be typed, not redacted-bucketed.
+		"v",
 	}
 	for _, k := range expected {
 		if _, ok := knownAuditFields[k]; !ok {
@@ -26,10 +29,17 @@ func TestKnownAuditFieldsCoversWriterKeys(t *testing.T) {
 		}
 	}
 	// A tampered/secret-shaped key must NOT be in the allowlist (so it routes to
-	// the redacted bucket instead of becoming a typed property name).
-	for _, k := range []string{"ghp_ExampleToken", "/Users/op/.ssh/id_rsa", ""} {
+	// the redacted bucket instead of becoming a typed property name). The git_*
+	// names are SessionRecord fields / safe-git alias guards, NOT audit-line keys,
+	// so allowlisting them would let a tampered `git_dir=secret` audit line become
+	// a typed (unredacted) property — they must stay OUT.
+	for _, k := range []string{
+		"ghp_ExampleToken", "/Users/op/.ssh/id_rsa", "",
+		"git_dir", "git_work_tree", "git_common_dir", "git_exec_path",
+		"git_branch", "git_head", "git_base",
+	} {
 		if _, ok := knownAuditFields[k]; ok {
-			t.Errorf("knownAuditFields unexpectedly allowlists untrusted key %q", k)
+			t.Errorf("knownAuditFields unexpectedly allowlists untrusted/non-audit key %q", k)
 		}
 	}
 }
