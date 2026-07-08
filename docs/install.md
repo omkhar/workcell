@@ -126,3 +126,11 @@ cd workcell
   `./scripts/install.sh` installs only the missing ones on supported macOS
   hosts by default, or you can install them yourself with
   `brew install colima docker gh git go`.
+
+## Lifecycle and upgrades
+
+Upgrade-in-place (re-run the installer from a newer bundle), rollback,
+uninstall, and `workcell --gc` are covered as repeatable day-two evidence in
+[install-lifecycle.md](install-lifecycle.md), which also records the on-disk
+format-compatibility posture and which lifecycle checks are proven in CI versus
+certified by a local operator.

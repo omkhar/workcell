@@ -1126,3 +1126,79 @@ func TestSessionParallelInventoryLinesSpacePathRoundTrips(t *testing.T) {
 		t.Fatalf("container_name recovered as %q, want %q", fields["container_name"], container)
 	}
 }
+
+// upgradeCompatSessionRecordV1 is a version-1 session record exactly as an
+// already-installed Workcell wrote it to ~/.local/state/workcell/.../sessions.
+// It is a golden on-disk fixture, not a struct round-trip, so it fixes the
+// concrete bytes an in-place upgrade to a newer binary must still be able to
+// read. This is the read half of the G3 install-lifecycle "config/schema
+// compatibility" evidence: session records are the one versioned, runtime-
+// persisted format an upgrade crosses, and v1 is the only version shipped so
+// far, so an upgrade does not cross a format boundary yet — the newer binary
+// must read the same v1 record it wrote. If a future change bumps the format or
+// breaks v1 reading, this fixture-backed test fails, forcing that boundary to be
+// a deliberate, migrated, tested step rather than a silent break.
+const upgradeCompatSessionRecordV1 = `{
+  "version": 1,
+  "session_id": "20260408T100000Z-11111111",
+  "profile": "wcl-upgrade-compat",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "running",
+  "workspace": "/tmp/workspace",
+  "started_at": "2026-04-08T10:00:00Z"
+}
+`
+
+// TestReadSessionRecordReadsPersistedV1Record proves the newer binary reads a
+// session record persisted by an earlier install of the current (v1) format —
+// the forward-read baseline for in-place upgrade. Persisted through a real file
+// (ReadSessionRecord's hardened path), not just DecodeSessionRecord, so it
+// mirrors how an upgraded binary actually loads day-one state.
+func TestReadSessionRecordReadsPersistedV1Record(t *testing.T) {
+	t.Parallel()
+
+	recordPath := filepath.Join(t.TempDir(), "session.json")
+	if err := os.WriteFile(recordPath, []byte(upgradeCompatSessionRecordV1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := ReadSessionRecord(recordPath)
+	if err != nil {
+		t.Fatalf("ReadSessionRecord(persisted v1) error = %v", err)
+	}
+	if record.Version != 1 {
+		t.Fatalf("record.Version = %d, want 1", record.Version)
+	}
+	if record.SessionID != "20260408T100000Z-11111111" || record.Profile != "wcl-upgrade-compat" {
+		t.Fatalf("identity fields not read from persisted v1 record: %+v", record)
+	}
+	if record.Status != "running" || record.Agent != "codex" || record.Mode != "strict" {
+		t.Fatalf("state fields not read from persisted v1 record: %+v", record)
+	}
+}
+
+// TestReadSessionRecordRejectsUnsupportedFutureVersion proves the newer binary
+// fails closed on a session-record version it does not recognize instead of
+// silently misreading it. Combined with the v1 forward-read test above, this
+// pins the current no-boundary state: crossing to a future format version is a
+// deliberate step a maintainer must add migration + a cross-version test for,
+// and a clean, explicit error — not a partial/garbage read — is the contract
+// until then. No test covered this version boundary before.
+func TestReadSessionRecordRejectsUnsupportedFutureVersion(t *testing.T) {
+	t.Parallel()
+
+	future := strings.Replace(upgradeCompatSessionRecordV1, `"version": 1,`, `"version": 2,`, 1)
+	recordPath := filepath.Join(t.TempDir(), "session.json")
+	if err := os.WriteFile(recordPath, []byte(future), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ReadSessionRecord(recordPath)
+	if err == nil {
+		t.Fatal("ReadSessionRecord(version 2) unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "unsupported session record version 2") {
+		t.Fatalf("ReadSessionRecord(version 2) error = %v, want unsupported-version failure", err)
+	}
+}
