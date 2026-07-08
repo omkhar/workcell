@@ -471,9 +471,13 @@ security-boundary product to prove.
 
 ### Track C: Runtime Platform Evolution
 
-- **C1 (next, L):** Apple `container` backend evaluation (macOS 26+) as
-  `local_vm/apple-container` with a recorded go/no-go; Colima stays the
-  reviewed default below macOS 26
+- **C1 (evaluated, L):** Apple `container` backend evaluation (macOS 26+) as
+  `local_vm/apple-container` — **recorded go/no-go: GO on the evaluation
+  (per-session VM, sub-second boot, confirmed on macOS 26.5.1);
+  `preview-only`/`blocked` and support-invisible; Colima stays the reviewed
+  default (and the only option below macOS 26); promotion to a supported
+  backend deferred post-1.0 pending the B6 certification lane.** See
+  [docs/apple-container-evaluation.md](docs/apple-container-evaluation.md)
 - **C2 (next, M):** session start latency program with cached images, an
   optional kept-warm lane, and published reproducible benchmarks
 - **C3 (next, L):** native parallel sessions — one agent per worktree,
