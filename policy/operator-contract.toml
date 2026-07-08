@@ -289,7 +289,7 @@ target_state = "retain"
 [workflows.session_export]
 title = "Export durable session record"
 support = "supported"
-canonical = "workcell session export --id SESSION_ID [--output PATH]"
+canonical = "workcell session export --id SESSION_ID [--format json|ocsf] [--output PATH]"
 discoverability = ["subcommand-help:session"]
 docs = ["man/workcell.1"]
 evidence = ["tests/scenarios/shared/test-session-commands.sh"]
