@@ -6,25 +6,67 @@ package ocsf
 import (
 	"fmt"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/applecontainer"
 )
 
-// Audit records are written by scripts/workcell's append_audit_record_to_path
-// with bash `printf '%q '` per token, so a value containing spaces or control
-// bytes is escaped (spaces → `\ `, newlines → the ANSI-C `$'...'` form). The
-// launch record's `endpoints=` field is a SPACE-DELIMITED allowlist
-// (ALLOW_ENDPOINTS in scripts/workcell), so a naive strings.Fields split would
-// truncate it at the first space. The repo's authoritative encoder is
-// bashQuote in internal/publishpr/host_exec.go (documented as the bash-3.2 form
-// scripts/workcell runs under); no matching decoder existed because the other
-// audit readers (auditLineEvent, auditLineHasSessionID) only inspect the
-// space-free event/session_id keys. decodeAuditLine is the exact inverse of
-// that encoder and is validated against real `bash printf %q` in the tests.
+// Audit records are written by TWO different encoders depending on which target
+// ran the session, and each session's log is written by exactly one of them (the
+// bash launcher's backends — colima/docker-desktop/aws-ec2-ssm/gcp-vm — never
+// share a log with the Go AppleContainer target). F1 selects the decoder per
+// session by the record's target_provider (auditEncodingForProvider):
 //
-// NOTE: this reverses the bash `%q` encoding only. Path values written by the
-// Go audit writer's percent-encoding (encodeAuditPathValue in
-// internal/applecontainer/audit.go) pass through as literals — they are a
-// separate writer's concern and out of F1's scope; conflating the two would
-// risk double-decoding.
+//   - encodingBashQuote — scripts/workcell's append_audit_record_to_path writes
+//     each token with bash `printf '%q '`, so a value with spaces or control
+//     bytes is escaped (spaces → `\ `, newlines → the ANSI-C `$'...'` form). The
+//     launch record's `endpoints=` field is a SPACE-DELIMITED allowlist
+//     (ALLOW_ENDPOINTS), so a naive strings.Fields split would truncate it at the
+//     first space. The authoritative encoder is bashQuote in
+//     internal/publishpr/host_exec.go; splitQuotedTokens is its exact inverse and
+//     is validated against real `bash printf %q` in the tests.
+//   - encodingPercentPath — internal/applecontainer writes plain Sprintf lines
+//     (single-space delimited) and percent-encodes only its path fields via
+//     encodeAuditPathValue (spaces → %20), leaving a literal backslash in a legal
+//     POSIX path UNCHANGED. Running such a line through the `%q` decoder would
+//     treat `\` as an escape and DROP it (`/tmp/a\b` → `/tmp/ab`), corrupting the
+//     workspace evidence. This path tokenizes with strings.Fields and percent-
+//     decodes the encoded fields via the canonical applecontainer.DecodeAuditPathValue.
+//
+// If the source cannot be identified as AppleContainer, the bash `%q` decoder is
+// used (the launcher backends are the common case); the percent decoder is only
+// selected on the unambiguous apple-container provider.
+
+// auditEncoding selects which on-disk audit encoding a record uses.
+type auditEncoding int
+
+const (
+	// encodingBashQuote is scripts/workcell's bash `printf %q` encoding.
+	encodingBashQuote auditEncoding = iota
+	// encodingPercentPath is internal/applecontainer's percent-encoded path form.
+	encodingPercentPath
+)
+
+// percentEncodedAuditFields are the audit field keys the AppleContainer writer
+// percent-encodes (encodeAuditPathValue in internal/applecontainer/recovery.go).
+// Only these are percent-decoded on read-back; every other field is raw Sprintf,
+// so decoding it could corrupt a legitimate literal `%` — keep the inverse exact.
+var percentEncodedAuditFields = map[string]struct{}{
+	"workspace":        {},
+	"workspace_origin": {},
+}
+
+// auditEncodingForProvider selects the audit decoder for a session from its
+// record's target_provider. The Go AppleContainer target (provider
+// "apple-container") writes percent-encoded path fields; every launcher backend
+// writes bash `%q`. The apple-container match is exact and drift-proof (the
+// canonical provider constant), and the safe default for anything else is the
+// bash `%q` decoder.
+func auditEncodingForProvider(provider string) auditEncoding {
+	if strings.TrimSpace(provider) == applecontainer.Provider {
+		return encodingPercentPath
+	}
+	return encodingBashQuote
+}
 
 // auditField is one ordered key/value pair decoded from an audit record.
 type auditField struct {
@@ -32,16 +74,26 @@ type auditField struct {
 	value string
 }
 
-// decodeAuditLine tokenizes a `%q`-encoded audit line into ordered, un-escaped
-// key/value fields. It REJECTS a record that carries a duplicate key
-// (fail-closed): a tampered line such as `session_id=A session_id=B` must be
-// detected rather than silently mapped to first- or last-wins, because the OCSF
-// export is evidence. Tokens without an '=' are tolerated and skipped, matching
-// the existing readers' tolerance for torn crash lines.
-func decodeAuditLine(line string) ([]auditField, error) {
-	tokens, err := splitQuotedTokens(line)
-	if err != nil {
-		return nil, err
+// decodeAuditLine tokenizes an audit line into ordered, un-escaped key/value
+// fields using the encoding the session's writer produced. It REJECTS a record
+// that carries a duplicate key (fail-closed) under either encoding: a tampered
+// line such as `session_id=A session_id=B` must be detected rather than silently
+// mapped to first- or last-wins, because the OCSF export is evidence. Tokens
+// without an '=' are tolerated and skipped, matching the existing readers'
+// tolerance for torn crash lines.
+func decodeAuditLine(line string, enc auditEncoding) ([]auditField, error) {
+	var tokens []string
+	if enc == encodingPercentPath {
+		// Percent-encoded lines never carry an unescaped space (spaces become
+		// %20), so plain whitespace splitting is a faithful tokenizer and a
+		// literal backslash in a path is preserved verbatim.
+		tokens = strings.Fields(line)
+	} else {
+		var err error
+		tokens, err = splitQuotedTokens(line)
+		if err != nil {
+			return nil, err
+		}
 	}
 	fields := make([]auditField, 0, len(tokens))
 	seen := make(map[string]struct{}, len(tokens))
@@ -54,6 +106,11 @@ func decodeAuditLine(line string) ([]auditField, error) {
 			return nil, fmt.Errorf("audit record has duplicate key %q", key)
 		}
 		seen[key] = struct{}{}
+		if enc == encodingPercentPath {
+			if _, isPath := percentEncodedAuditFields[key]; isPath {
+				value = applecontainer.DecodeAuditPathValue(value)
+			}
+		}
 		fields = append(fields, auditField{key: key, value: value})
 	}
 	return fields, nil

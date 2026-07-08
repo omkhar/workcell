@@ -50,6 +50,15 @@ func encodeAuditPathValue(value string) string {
 	return b.String()
 }
 
+// DecodeAuditPathValue is the exported canonical decoder for audit path values
+// this package writes with encodeAuditPathValue. Cross-package readers (the OCSF
+// export in internal/ocsf) reuse it to recover the exact original path from a
+// percent-encoded AppleContainer audit field, so a literal backslash in a legal
+// POSIX path survives instead of being mis-read as a shell escape.
+func DecodeAuditPathValue(value string) string {
+	return decodeAuditPathValue(value)
+}
+
 func decodeAuditPathValue(value string) string {
 	var b strings.Builder
 	for i := 0; i < len(value); {

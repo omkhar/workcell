@@ -7,7 +7,96 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/applecontainer"
 )
+
+func fieldMap(fields []auditField) map[string]string {
+	m := make(map[string]string, len(fields))
+	for _, f := range fields {
+		m[f.key] = f.value
+	}
+	return m
+}
+
+// TestAuditEncodingForProvider proves the decoder is selected from the session's
+// writer: only the apple-container provider selects the percent decoder; every
+// launcher backend (and an unknown/empty provider) uses the bash %q decoder.
+func TestAuditEncodingForProvider(t *testing.T) {
+	if got := auditEncodingForProvider(applecontainer.Provider); got != encodingPercentPath {
+		t.Errorf("apple-container provider should select percent decoding, got %v", got)
+	}
+	for _, p := range []string{"colima", "docker-desktop", "aws-ec2-ssm", "gcp-vm", "", "unknown"} {
+		if got := auditEncodingForProvider(p); got != encodingBashQuote {
+			t.Errorf("provider %q should select bash %%q decoding, got %v", p, got)
+		}
+	}
+}
+
+// TestDecodeAuditLinePercentPreservesBackslash is the load-bearing regression:
+// an AppleContainer record with a literal backslash in a POSIX path must survive
+// intact under the percent decoder, and the OLD unconditional %q decoder is
+// proven to CORRUPT it (dropping the backslash) — so per-writer selection is
+// what preserves the evidence.
+func TestDecodeAuditLinePercentPreservesBackslash(t *testing.T) {
+	// The AppleContainer writer leaves a literal backslash unchanged
+	// (encodeAuditPathValue only percent-encodes %, ctrl, space, high bytes).
+	line := `ts=2026-07-05T11:00:00Z session_id=s event=workspace_materialized target_provider=apple-container workspace_origin=/tmp/src workspace=/tmp/a\b`
+
+	fields, err := decodeAuditLine(line, encodingPercentPath)
+	if err != nil {
+		t.Fatalf("decodeAuditLine percent: %v", err)
+	}
+	if got := fieldMap(fields)["workspace"]; got != `/tmp/a\b` {
+		t.Fatalf("percent decoder must preserve the backslash: got %q want %q", got, `/tmp/a\b`)
+	}
+
+	// Load-bearing: the bash %q decoder corrupts the same value (drops the \).
+	corrupt, err := decodeAuditLine(line, encodingBashQuote)
+	if err != nil {
+		t.Fatalf("decodeAuditLine bashquote: %v", err)
+	}
+	if got := fieldMap(corrupt)["workspace"]; got != "/tmp/ab" {
+		t.Fatalf("expected the %%q decoder to corrupt the backslash path to /tmp/ab (proving selection matters), got %q", got)
+	}
+}
+
+// TestDecodeAuditLinePercentDecodesSpace proves a space in an AppleContainer path
+// (encoded as %20) round-trips back to a real space through the canonical
+// applecontainer decoder.
+func TestDecodeAuditLinePercentDecodesSpace(t *testing.T) {
+	line := `event=workspace_materialized target_provider=apple-container workspace=/tmp/a%20b`
+	fields, err := decodeAuditLine(line, encodingPercentPath)
+	if err != nil {
+		t.Fatalf("decodeAuditLine percent: %v", err)
+	}
+	if got := fieldMap(fields)["workspace"]; got != "/tmp/a b" {
+		t.Fatalf("percent %%20 not decoded to space: got %q", got)
+	}
+}
+
+// TestDecodeAuditLinePercentRejectsDuplicateKey proves dup-key rejection is kept
+// for the percent writer too.
+func TestDecodeAuditLinePercentRejectsDuplicateKey(t *testing.T) {
+	line := `event=workspace_materialized session_id=A session_id=B workspace=/tmp/x`
+	if _, err := decodeAuditLine(line, encodingPercentPath); err == nil {
+		t.Fatal("expected duplicate-key rejection under percent decoding")
+	}
+}
+
+// TestDecodeAuditLinePercentLeavesRawFieldsUntouched proves only the encoded
+// path fields are percent-decoded; a raw field carrying a literal % is not
+// corrupted.
+func TestDecodeAuditLinePercentLeavesRawFieldsUntouched(t *testing.T) {
+	line := `event=workspace_materialized target_provider=apple-container image_ref=repo/name%2Ffoo workspace=/tmp/x`
+	fields, err := decodeAuditLine(line, encodingPercentPath)
+	if err != nil {
+		t.Fatalf("decodeAuditLine percent: %v", err)
+	}
+	if got := fieldMap(fields)["image_ref"]; got != "repo/name%2Ffoo" {
+		t.Fatalf("raw non-path field must not be percent-decoded: got %q", got)
+	}
+}
 
 // bashQuoteToken encodes s exactly as scripts/workcell does — via the real
 // `bash printf %q` that writes the audit records — so the round-trip test is
@@ -49,7 +138,7 @@ func TestDecodeAuditLineRoundTripBash(t *testing.T) {
 	}
 	line := strings.Join(tokens, " ")
 
-	fields, err := decodeAuditLine(line)
+	fields, err := decodeAuditLine(line, encodingBashQuote)
 	if err != nil {
 		t.Fatalf("decodeAuditLine: %v\nline=%q", err, line)
 	}
@@ -76,7 +165,7 @@ func TestDecodeAnsiCOctalBytes(t *testing.T) {
 		`$'\342\200\223'`:     "–", // en dash
 	}
 	for enc, want := range cases {
-		fields, err := decodeAuditLine("k=" + enc)
+		fields, err := decodeAuditLine("k="+enc, encodingBashQuote)
 		if err != nil {
 			t.Fatalf("decodeAuditLine(%q): %v", enc, err)
 		}
@@ -101,7 +190,7 @@ func TestDecodeAuditLineRoundTripBashUTF8LocaleC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bash printf %%q under LC_ALL=C: %v", err)
 	}
-	fields, err := decodeAuditLine("field=" + string(out))
+	fields, err := decodeAuditLine("field="+string(out), encodingBashQuote)
 	if err != nil {
 		t.Fatalf("decodeAuditLine: %v\ntoken=%q", err, out)
 	}
@@ -122,7 +211,7 @@ func TestDecodeAnsiCNamedControlEscapesRoundTripBash(t *testing.T) {
 	if !ok {
 		t.Skip("bash not available for authoritative round-trip")
 	}
-	fields, err := decodeAuditLine(q)
+	fields, err := decodeAuditLine(q, encodingBashQuote)
 	if err != nil {
 		t.Fatalf("decodeAuditLine: %v\ntoken=%q", err, q)
 	}
@@ -150,7 +239,7 @@ func TestDecodeAnsiCNamedControlEscapes(t *testing.T) {
 		`$'\v'`: "\v",
 	}
 	for enc, want := range cases {
-		fields, err := decodeAuditLine("k=" + enc)
+		fields, err := decodeAuditLine("k="+enc, encodingBashQuote)
 		if err != nil {
 			t.Fatalf("decodeAuditLine(%q): %v", enc, err)
 		}
@@ -165,7 +254,7 @@ func TestDecodeAnsiCNamedControlEscapes(t *testing.T) {
 // the value is not truncated at the first space.
 func TestDecodeAuditLineSpacedValueDeterministic(t *testing.T) {
 	line := `event=launch endpoints=a:443\ b:443\ c:443 exit_status=0`
-	fields, err := decodeAuditLine(line)
+	fields, err := decodeAuditLine(line, encodingBashQuote)
 	if err != nil {
 		t.Fatalf("decodeAuditLine: %v", err)
 	}
@@ -189,7 +278,7 @@ func TestDecodeAuditLineRejectsDuplicateKey(t *testing.T) {
 		"event=launch event=exit session_id=A",
 		"a=1 b=2 a=3",
 	} {
-		if _, err := decodeAuditLine(line); err == nil {
+		if _, err := decodeAuditLine(line, encodingBashQuote); err == nil {
 			t.Errorf("expected duplicate-key rejection for %q, got nil error", line)
 		}
 	}
@@ -198,7 +287,7 @@ func TestDecodeAuditLineRejectsDuplicateKey(t *testing.T) {
 // TestDecodeAuditLineTolueratesTornToken keeps the existing readers' tolerance
 // for a torn crash line: a token without '=' is skipped, not an error.
 func TestDecodeAuditLineToleratesTornToken(t *testing.T) {
-	fields, err := decodeAuditLine("event=launch torn_fragment_no_newline session_id=A")
+	fields, err := decodeAuditLine("event=launch torn_fragment_no_newline session_id=A", encodingBashQuote)
 	if err != nil {
 		t.Fatalf("torn token should be tolerated, got %v", err)
 	}
@@ -214,7 +303,7 @@ func TestDecodeAuditLineToleratesTornToken(t *testing.T) {
 // TestDecodeAnsiCNewline proves the ANSI-C $'...' form (how bash %q encodes a
 // newline-bearing value) round-trips to a real newline.
 func TestDecodeAnsiCNewline(t *testing.T) {
-	fields, err := decodeAuditLine(`event=launch note=$'line1\nline2'`)
+	fields, err := decodeAuditLine(`event=launch note=$'line1\nline2'`, encodingBashQuote)
 	if err != nil {
 		t.Fatalf("decodeAuditLine: %v", err)
 	}
@@ -229,7 +318,7 @@ func TestDecodeAnsiCNewline(t *testing.T) {
 
 // TestDecodeAnsiCUnterminated fails closed on a corrupt $'...' block.
 func TestDecodeAnsiCUnterminated(t *testing.T) {
-	if _, err := decodeAuditLine(`event=launch note=$'oops`); err == nil {
+	if _, err := decodeAuditLine(`event=launch note=$'oops`, encodingBashQuote); err == nil {
 		t.Fatal("expected error on unterminated $'...' block")
 	}
 }
