@@ -36,46 +36,7 @@ Current audit and session evidence is host-local:
   session-owned artifacts, but it does not rewrite the shared profile audit log
 
 Retention remains operator or organization owned. Workcell does not yet provide
-a centralized retention policy or fleet inventory. SIEM ingestion is served by
-the OCSF-mapped export below (an export format, not a hosted pipeline or
-retention service).
-
-### OCSF-Mapped Export (Phase 17)
-
-`workcell session export --format ocsf` renders the session record and its audit
-lifecycle events as [OCSF](https://schema.ocsf.io/) JSON Lines — one
-**Application Lifecycle** event (`category_uid` 6, `class_uid` 6002) per line —
-so a SIEM can ingest Workcell session evidence without a bespoke parser. The
-default `--format json` bundle is unchanged.
-
-- **Mapping.** One summary event is emitted for the session record (a finished
-  session maps to `activity_id` 4 "Stop", a live one to 3 "Start"), followed by
-  one event per audit record. Audit `event=session_started`/`launch` map to
-  Start, `session_finished`/`exit` to Stop, and every other lifecycle event to
-  99 "Other". The agent/mode become the OCSF `app` object and the sandbox target
-  the `device` object — both sourced from the authoritative session record so
-  every standalone event carries them, even though the launcher audit lines do
-  not repeat the target on each line. The remaining session/audit fields are
-  preserved verbatim under the OCSF `unmapped` object so no evidence is dropped.
-- **Versioning.** Every event carries `metadata.version` (the OCSF schema
-  version) and `metadata.mapping_version` (the Workcell mapping version) so
-  consumers can pin to an exact mapping and handle future changes.
-- **Redaction.** The OCSF output is redacted by the **same** rule-set as
-  `workcell support-bundle` (see [../SUPPORT.md](../SUPPORT.md)): credential,
-  token, key, and secret material is masked and the operator home prefix is
-  rewritten to `~`, so no secret or local username leaks into exported events.
-- **Integrity.** Audit records are decoded from their on-disk encoding before
-  mapping, chosen per the session's writer: launcher backends
-  (colima/docker-desktop/aws-ec2-ssm/gcp-vm) write bash `printf %q`, so
-  space-delimited fields such as the endpoints allowlist are preserved intact
-  rather than truncated; the Apple-container target percent-encodes its path
-  fields, so a literal backslash in a workspace path survives instead of being
-  mis-read as a shell escape. A record that carries a duplicate key — the shape a
-  tampered line takes — fails the export closed and emits no events, so a forged
-  record can never surface as an OCSF event. Only field names the audit writers
-  actually emit become `unmapped` properties; any other key (a mutable audit line
-  could carry a secret-shaped key) is bucketed under one fixed, redacted property
-  rather than becoming a JSON property name, so a secret can never leak in a key.
+centralized retention policy, SIEM export, or fleet inventory.
 
 ## Known Gaps
 
