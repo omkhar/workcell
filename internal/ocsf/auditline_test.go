@@ -64,6 +64,52 @@ func TestDecodeAuditLineRoundTripBash(t *testing.T) {
 	}
 }
 
+// TestDecodeAnsiCOctalBytes proves octal escapes decode as raw BYTES: a UTF-8
+// multibyte value that bash %q under LC_ALL=C emits as a per-byte octal sequence
+// (é → \303\251, 😀 → \360\237\230\200) must reassemble to the original string,
+// not one rune per byte.
+func TestDecodeAnsiCOctalBytes(t *testing.T) {
+	cases := map[string]string{
+		`$'\303\251'`:         "é",
+		`$'caf\303\251'`:      "café",
+		`$'\360\237\230\200'`: "😀",
+		`$'\342\200\223'`:     "–", // en dash
+	}
+	for enc, want := range cases {
+		fields, err := decodeAuditLine("k=" + enc)
+		if err != nil {
+			t.Fatalf("decodeAuditLine(%q): %v", enc, err)
+		}
+		if len(fields) != 1 || fields[0].value != want {
+			t.Errorf("decode %q: got %+v, want value %q", enc, fields, want)
+		}
+	}
+}
+
+// TestDecodeAuditLineRoundTripBashUTF8LocaleC proves a non-ASCII value round-trips
+// through the real `bash printf %q` run under LC_ALL=C — the session-start locale
+// (scripts/workcell) under which bash emits octal per-byte escapes.
+func TestDecodeAuditLineRoundTripBashUTF8LocaleC(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available for authoritative round-trip")
+	}
+	const value = "workspace=/home/dev/café/naïve-😀"
+	cmd := exec.Command(bash, "-c", `printf '%q' "$1"`, "_", value)
+	cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANG=C")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("bash printf %%q under LC_ALL=C: %v", err)
+	}
+	fields, err := decodeAuditLine("field=" + string(out))
+	if err != nil {
+		t.Fatalf("decodeAuditLine: %v\ntoken=%q", err, out)
+	}
+	if len(fields) != 1 || fields[0].value != value {
+		t.Errorf("LC_ALL=C round-trip: decoded %+v, want value %q (token=%q)", fields, value, out)
+	}
+}
+
 // TestDecodeAnsiCNamedControlEscapesRoundTripBash proves every ANSI-C named
 // control escape that bash `%q` emits (\a \b \e \f \n \r \t \v) round-trips to
 // its real byte, not the literal letter. bash %q renders these control bytes in

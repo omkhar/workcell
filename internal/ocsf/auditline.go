@@ -166,7 +166,11 @@ func decodeAnsiC(runes []rune, start int) (string, int, error) {
 			default:
 				if isOctal(n) && i+3 < len(runes) && isOctal(runes[i+2]) && isOctal(runes[i+3]) {
 					val := (int(n)-'0')*64 + (int(runes[i+2])-'0')*8 + (int(runes[i+3]) - '0')
-					b.WriteRune(rune(val))
+					// Octal escapes are raw BYTES, not runes: under LC_ALL=C bash %q
+					// emits a non-ASCII value as one \ooo per UTF-8 byte (é → \303\251).
+					// WriteByte reassembles the original multibyte sequence; WriteRune
+					// would re-encode each byte 0xC3/0xA9 as its own rune ("Ã©").
+					b.WriteByte(byte(val))
 					i += 4
 				} else {
 					b.WriteRune(n)
