@@ -179,6 +179,7 @@ var knownAuditFields = map[string]struct{}{
 	"workspace":               {},
 	"workspace_control_plane": {},
 	"workspace_origin":        {},
+	"workspace_repo_mcp":      {},
 	"workspace_transport":     {},
 }
 

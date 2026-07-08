@@ -145,3 +145,21 @@ acknowledged, audited, and tested.
 Workcell ships no live MCP defaults in the adapter baselines. Reviewed MCP
 state must arrive through explicit operator inputs, not ambient workspace
 content.
+
+Repo-defined MCP server-definition surfaces (`.mcp.json`, `.github/mcp.json`)
+are classified `deny` in every non-breakglass mode: an untrusted workspace can
+otherwise wire the agent to arbitrary MCP servers, a boundary/exfil risk. The
+launcher overlays a neutralized, schema-valid empty config (`{"mcpServers": {}}`,
+matching the shipped `adapters/claude/mcp-template.json` baseline) over each
+surface so the repo-defined servers never reach the provider process while the
+config stays parseable, and it fails closed — an unparsable or malformed
+workspace config is replaced wholesale rather than honored. This deny is independent of `--allow-control-plane-vcs`: acknowledging
+control-plane Git visibility does not lift it.
+
+An operator opts a workspace's MCP configs back in with the explicit,
+`ack-required` pair `--allow-repo-mcp` plus a dated `--ack-repo-mcp=YYYY-MM-DD`.
+The launcher records the decision as `workspace_repo_mcp=denied` or
+`workspace_repo_mcp=acknowledged` in the session record and the host audit log.
+Codex's `.codex/mcp/config.toml` arrives through the whole-`.codex` directory
+surface and remains governed by the existing control-plane masking; a
+directory-scoped carve-out for it is tracked as follow-up work.

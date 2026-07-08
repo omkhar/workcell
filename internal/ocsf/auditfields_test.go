@@ -32,6 +32,9 @@ func TestKnownAuditFieldsCoversWriterKeys(t *testing.T) {
 		"workspace_origin", "materialization_id", "access_model",
 		"bootstrap_id", "image_ref", "runtime_api", "status",
 		"workspace_transport", "workspace_control_plane",
+		// workspace_repo_mcp: launch/exit bodies record the repo-defined MCP
+		// deny/acknowledge decision (A2).
+		"workspace_repo_mcp",
 		// v is the apple-container schema-version sentinel (" v=1"), on every
 		// apple-container audit line — must be typed, not redacted-bucketed.
 		"v",

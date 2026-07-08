@@ -99,6 +99,7 @@ Examples:
 - `development`
 - package mutation inside a mutable container
 - `--allow-control-plane-vcs`
+- `--allow-repo-mcp`
 - `--allow-arbitrary-command`
 - `breakglass`
 - host-side debug or transcript capture

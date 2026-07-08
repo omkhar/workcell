@@ -62,7 +62,7 @@ docs = [
 
 [functional.FR-004]
 title = "Explicit lower-assurance modes"
-summary = "Development, breakglass, prompt autonomy, arbitrary command, and control-plane VCS paths stay explicit and visibly lower assurance."
+summary = "Development, breakglass, prompt autonomy, arbitrary command, control-plane VCS, and acknowledged repo-defined MCP paths stay explicit and visibly lower assurance."
 evidence = [
   "tests/scenarios/shared/test-assurance-dry-run.sh",
   "scripts/verify-invariants.sh",

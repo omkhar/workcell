@@ -54,6 +54,7 @@ type SessionRecord struct {
 	CurrentAssurance      string `json:"current_assurance,omitempty"`
 	FinalAssurance        string `json:"final_assurance,omitempty"`
 	WorkspaceControlPlane string `json:"workspace_control_plane,omitempty"`
+	WorkspaceRepoMcp      string `json:"workspace_repo_mcp,omitempty"`
 	BootstrapID           string `json:"bootstrap_id,omitempty"`
 	ImageRef              string `json:"image_ref,omitempty"`
 }
@@ -99,6 +100,7 @@ func SessionDiffMetadataLines(record SessionRecord) []string {
 		fmt.Sprintf("container_name=%s", record.ContainerName),
 		fmt.Sprintf("observed_at=%s", record.ObservedAt),
 		fmt.Sprintf("workspace_control_plane=%s", record.WorkspaceControlPlane),
+		fmt.Sprintf("workspace_repo_mcp=%s", record.WorkspaceRepoMcp),
 	}
 }
 
@@ -248,6 +250,7 @@ func SessionShowLines(record SessionRecord) []string {
 		fmt.Sprintf("file_trace_log_path=%s", record.FileTraceLogPath),
 		fmt.Sprintf("transcript_log_path=%s", record.TranscriptLogPath),
 		fmt.Sprintf("workspace_control_plane=%s", record.WorkspaceControlPlane),
+		fmt.Sprintf("workspace_repo_mcp=%s", record.WorkspaceRepoMcp),
 	}
 }
 
@@ -399,6 +402,8 @@ func encodeSessionRecordFrom(existing []byte, updates map[string]string, source 
 			record.FinalAssurance = value
 		case "workspace_control_plane":
 			record.WorkspaceControlPlane = value
+		case "workspace_repo_mcp":
+			record.WorkspaceRepoMcp = value
 		case "bootstrap_id":
 			record.BootstrapID = value
 		case "image_ref":
@@ -883,6 +888,7 @@ func validateSessionRecord(record SessionRecord, source string) error {
 		{name: "current_assurance", value: record.CurrentAssurance},
 		{name: "final_assurance", value: record.FinalAssurance},
 		{name: "workspace_control_plane", value: record.WorkspaceControlPlane},
+		{name: "workspace_repo_mcp", value: record.WorkspaceRepoMcp},
 		{name: "bootstrap_id", value: record.BootstrapID},
 		{name: "image_ref", value: record.ImageRef},
 	} {

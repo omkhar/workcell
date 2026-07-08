@@ -80,8 +80,9 @@ Experimental or explicitly gated (may change; already marked in `--help`):
 - `--ui gui` (not implemented; fails closed).
 - preview targets `aws-ec2-ssm` and `gcp-vm`.
 - `--mode breakglass` (gated behind a dated `--ack-breakglass`),
-  `--allow-arbitrary-command` (behind `--ack-arbitrary-command`), and
-  `--allow-control-plane-vcs` (behind `--ack-control-plane-vcs`).
+  `--allow-arbitrary-command` (behind `--ack-arbitrary-command`),
+  `--allow-control-plane-vcs` (behind `--ack-control-plane-vcs`), and
+  `--allow-repo-mcp` (behind a dated `--ack-repo-mcp`).
 
 ## Stable machine-readable output
 
@@ -143,7 +144,8 @@ mechanism.
 `session_audit_dir`, `audit_log_path`, `debug_log_path`,
 `file_trace_log_path`, `transcript_log_path`, `started_at`, `observed_at`,
 `finished_at`, `exit_status`, `initial_assurance`, `current_assurance`,
-`final_assurance`, `workspace_control_plane`, `bootstrap_id`, `image_ref`.
+`final_assurance`, `workspace_control_plane`, `workspace_repo_mcp`,
+`bootstrap_id`, `image_ref`.
 
 `SessionExport` (`session export`) wraps this in `session` and adds
 `audit_records`.

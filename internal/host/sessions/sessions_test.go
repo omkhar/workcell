@@ -123,6 +123,7 @@ func TestSessionDiffMetadataLines(t *testing.T) {
 		ContainerName:         "workcell-session-1",
 		ObservedAt:            "2026-04-08T12:00:30Z",
 		WorkspaceControlPlane: "masked",
+		WorkspaceRepoMcp:      "denied",
 	})
 
 	want := []string{
@@ -149,6 +150,7 @@ func TestSessionDiffMetadataLines(t *testing.T) {
 		"container_name=workcell-session-1",
 		"observed_at=2026-04-08T12:00:30Z",
 		"workspace_control_plane=masked",
+		"workspace_repo_mcp=denied",
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("SessionDiffMetadataLines() len = %d, want %d", len(lines), len(want))
@@ -749,6 +751,7 @@ func TestSessionShowLines(t *testing.T) {
 		StartedAt:             "2026-04-08T12:00:00Z",
 		ObservedAt:            "2026-04-08T12:00:30Z",
 		WorkspaceControlPlane: "masked",
+		WorkspaceRepoMcp:      "denied",
 	})
 
 	want := []string{
@@ -794,6 +797,7 @@ func TestSessionShowLines(t *testing.T) {
 		"file_trace_log_path=/tmp/file-trace.log",
 		"transcript_log_path=/tmp/transcript.log",
 		"workspace_control_plane=masked",
+		"workspace_repo_mcp=denied",
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("SessionShowLines() len = %d, want %d", len(lines), len(want))

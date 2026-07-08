@@ -314,6 +314,12 @@ Required with
 .B --allow-control-plane-vcs
 to make the lower-assurance control-plane Git lane explicit.
 .TP
+.B --ack-repo-mcp=YYYY-MM-DD
+Required with
+.B --allow-repo-mcp
+to make honoring repo-defined MCP server configs explicit. The date must be
+today's UTC date.
+.TP
 .B --workspace PATH
 Select the workspace to mount inside the runtime. The default is the current
 directory.
@@ -338,6 +344,37 @@ workspace control-plane paths. Workcell records this as
 .BR workspace_control_plane=readonly-vcs
 with
 .BR session_assurance_initial=lower-assurance-control-plane-vcs .
+.TP
+.B --allow-repo-mcp
+Honor repo-defined MCP server configurations
+.RB ( .mcp.json ", " .github/mcp.json )
+that are otherwise denied by default in every non-breakglass mode. An untrusted
+workspace can otherwise wire the agent to arbitrary MCP servers, a
+boundary/exfil risk, so this deny is independent of
+.B --allow-control-plane-vcs
+and requires its own dated
+.BR --ack-repo-mcp .
+Workcell records the decision as
+.B workspace_repo_mcp=denied
+or
+.BR workspace_repo_mcp=acknowledged
+in the session record and audit log. Because acknowledging repo-defined MCP
+servers expands the agent's outbound reach, an acknowledged launch is reported
+as
+.BR session_assurance_initial=lower-assurance-repo-mcp
+and
+.BR execution_path=lower-assurance-repo-mcp ,
+and when it is combined with
+.B --allow-control-plane-vcs
+the reasons stack into
+.B lower-assurance-control-plane-vcs+repo-mcp
+for both
+.B session_assurance_initial
+and
+.B execution_path
+so both warnings are surfaced.
+A symlinked MCP surface, or one reached through a symlinked parent directory,
+is refused.
 .TP
 .B --allow-arbitrary-command
 Launch the runtime image with a direct container entrypoint after

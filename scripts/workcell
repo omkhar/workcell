@@ -220,6 +220,7 @@ Options:
                                 Detached session workspace flow for session start
   --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
+  --allow-repo-mcp              Honor repo-defined MCP server configs (.mcp.json, .github/mcp.json); denied by default
   --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
   --colima-profile NAME         Override derived Colima profile name
   --vm-cpu COUNT                Colima VM CPU count (default: profile value)
@@ -229,6 +230,7 @@ Options:
   --dry-run                     Print the selected runtime command and exit
   -h, --help                    Show this help text
   --ack-control-plane-vcs       Required with --allow-control-plane-vcs
+  --ack-repo-mcp=YYYY-MM-DD      Dated acknowledgement required with --allow-repo-mcp
 
 Workflows:
   Direct launch (strict auto-prepares on first run when needed):
@@ -2049,6 +2051,7 @@ emit_preview_remote_vm_dry_run() {
       "${INJECTION_POLICY_SHA256}" "${INJECTION_CREDENTIAL_KEYS:-none}" "${INJECTION_SSH_ENABLED}" >&2
   fi
   printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
+  printf 'workspace_repo_mcp=%s\n' "$(workspace_repo_mcp_state)" >&2
   printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
   printf 'egress_enforcement=%s\n' "$(egress_enforcement_label)" >&2
   printf 'remote_access_model=brokered remote_broker=%s inbound_public_ssh=blocked live_smoke=certification-only\n' \
@@ -2332,6 +2335,7 @@ write_session_monitor_env_file() {
     AGENT
     AGENT_AUTONOMY
     ALLOW_CONTROL_PLANE_VCS
+    ALLOW_REPO_MCP
     ALLOW_ENDPOINTS
     AUDIT_TRANSCRIPT_PATH
     BOOTSTRAP_APPLIED
@@ -2686,8 +2690,19 @@ codex_rules_effective_assurance_with_session_assurance() {
 }
 
 session_assurance_initial() {
-  if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
-    printf 'lower-assurance-control-plane-vcs\n'
+  # Concurrent risk acknowledgements stack into one '+'-joined reason label so
+  # neither signal is dropped by an earlier return (e.g. both control-plane VCS
+  # visibility and repo-defined MCP servers acknowledged on the same launch).
+  local -a lower_assurance_reasons=()
+  [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]] && lower_assurance_reasons+=("control-plane-vcs")
+  [[ "${ALLOW_REPO_MCP}" -eq 1 ]] && lower_assurance_reasons+=("repo-mcp")
+  if [[ "${#lower_assurance_reasons[@]}" -gt 0 ]]; then
+    local joined_reasons
+    joined_reasons="$(
+      IFS='+'
+      printf '%s' "${lower_assurance_reasons[*]}"
+    )"
+    printf 'lower-assurance-%s\n' "${joined_reasons}"
     return 0
   fi
   if [[ "${CACHE_PROFILE}" == "standard" ]]; then
@@ -2707,6 +2722,18 @@ workspace_control_plane_state() {
     return 0
   fi
   printf 'masked\n'
+}
+
+workspace_repo_mcp_state() {
+  if [[ "${MODE}" == "breakglass" ]]; then
+    printf 'unmasked\n'
+    return 0
+  fi
+  if [[ "${ALLOW_REPO_MCP}" -eq 1 ]]; then
+    printf 'acknowledged\n'
+    return 0
+  fi
+  printf 'denied\n'
 }
 
 session_assurance_final() {
@@ -2826,6 +2853,7 @@ append_launch_audit_record() {
     "execution_path=${execution_path}" \
     "workspace=${WORKSPACE}" \
     "workspace_control_plane=$(workspace_control_plane_state)" \
+    "workspace_repo_mcp=$(workspace_repo_mcp_state)" \
     "endpoints=${ALLOW_ENDPOINTS}" \
     "bootstrap_applied=${BOOTSTRAP_APPLIED}" \
     "bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" \
@@ -2866,6 +2894,7 @@ append_exit_audit_record() {
     "workspace=${WORKSPACE}" \
     "execution_path=${execution_path}" \
     "workspace_control_plane=$(workspace_control_plane_state)" \
+    "workspace_repo_mcp=$(workspace_repo_mcp_state)" \
     "exit_status=${exit_status}" \
     "cache_profile=${CACHE_PROFILE}" \
     "cache_assurance=$(cache_assurance)" \
@@ -2951,7 +2980,8 @@ write_session_record_initial() {
     "initial_assurance=$(session_assurance_initial)" \
     "current_assurance=$(session_assurance_initial)" \
     "live_status=$([[ "${SESSION_DETACHED}" -eq 1 ]] && printf 'starting' || printf 'running')" \
-    "workspace_control_plane=$(workspace_control_plane_state)"
+    "workspace_control_plane=$(workspace_control_plane_state)" \
+    "workspace_repo_mcp=$(workspace_repo_mcp_state)"
   SESSION_RECORD_WRITTEN=1
 }
 
@@ -5059,6 +5089,13 @@ build_recommended_command() {
   if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
     cmd+=(--allow-control-plane-vcs --ack-control-plane-vcs)
   fi
+  if [[ "${ALLOW_REPO_MCP}" -eq 1 ]]; then
+    if [[ -n "${ACK_REPO_MCP_TOKEN}" ]]; then
+      cmd+=(--allow-repo-mcp "--ack-repo-mcp=${ACK_REPO_MCP_TOKEN}")
+    else
+      cmd+=(--allow-repo-mcp --ack-repo-mcp)
+    fi
+  fi
   if [[ "${TARGET_BACKEND}" == "colima" ]]; then
     [[ "${COLIMA_PROFILE_EXPLICIT:-0}" -eq 1 ]] && [[ -n "${COLIMA_PROFILE}" ]] && cmd+=(--colima-profile "${COLIMA_PROFILE}")
     [[ -n "${VM_CPU_OVERRIDE}" ]] && cmd+=(--vm-cpu "${VM_CPU_OVERRIDE}")
@@ -5739,6 +5776,9 @@ validate_mode_requirements() {
   local ack_control_plane_vcs="$8"
   local rebuild="$9"
   local prepare="${10}"
+  local allow_repo_mcp="${11}"
+  local ack_repo_mcp="${12}"
+  local ack_repo_mcp_token="${13}"
 
   if [[ "${mode}" == "breakglass" ]] && [[ "${ack_breakglass}" -eq 0 ]]; then
     echo "breakglass mode requires --ack-breakglass." >&2
@@ -5766,6 +5806,20 @@ validate_mode_requirements() {
 
   if [[ "${mode}" == "breakglass" ]] && [[ "${allow_control_plane_vcs}" -eq 1 ]]; then
     echo "--allow-control-plane-vcs is redundant in breakglass mode." >&2
+    exit 2
+  fi
+
+  if [[ "${allow_repo_mcp}" -eq 1 ]] && [[ "${ack_repo_mcp}" -eq 0 ]]; then
+    echo "repo MCP mode requires --ack-repo-mcp." >&2
+    echo "Use it only when you intentionally want repo-defined MCP servers to reach the agent." >&2
+    exit 2
+  fi
+  if [[ "${ack_repo_mcp}" -eq 1 ]]; then
+    validate_ack_token "--ack-repo-mcp" "${ack_repo_mcp_token}"
+  fi
+
+  if [[ "${mode}" == "breakglass" ]] && [[ "${allow_repo_mcp}" -eq 1 ]]; then
+    echo "--allow-repo-mcp is redundant in breakglass mode." >&2
     exit 2
   fi
 
@@ -6986,6 +7040,57 @@ add_shadow_dir_mount() {
   register_shadow_mount "${source}" "${destination}"
 }
 
+# Repo-defined MCP server-definition surfaces (A2). An untrusted workspace can
+# otherwise wire the agent to arbitrary MCP servers, a boundary/exfil risk, so
+# these are denied by default in every non-breakglass mode and only honored
+# under an explicit dated acknowledgement (--allow-repo-mcp/--ack-repo-mcp).
+WORKSPACE_MCP_FILE_SURFACES=(.mcp.json .github/mcp.json)
+
+workspace_rel_is_mcp_surface() {
+  local rel="$1"
+  local surface=""
+  for surface in "${WORKSPACE_MCP_FILE_SURFACES[@]}"; do
+    [[ "${rel}" == "${surface}" ]] && return 0
+  done
+  return 1
+}
+
+# Overlay a neutralized, server-free MCP config over a repo MCP surface so the
+# repo-defined servers never reach the provider process. Fail-closed: the repo
+# content (committed or working-tree, parseable or not) is replaced wholesale
+# with an empty object, so a malformed workspace config cannot fall open.
+# Canonical zero-server but schema-valid neutral MCP config for a denied
+# surface. A bare {} is schema-empty and can break a provider that expects the
+# server map; an empty `mcpServers` object keeps the file parseable while
+# honoring zero repo-defined servers. Both the Claude project .mcp.json (matches
+# adapters/claude/mcp-template.json) and the Copilot .github/mcp.json use the
+# `mcpServers` map, so both get the same empty-map shape; unknown surfaces fail
+# closed to the same restrictive config.
+denied_mcp_config_json() {
+  local relative_path="$1"
+  case "${relative_path}" in
+    .mcp.json | .github/mcp.json)
+      printf '{"mcpServers": {}}\n'
+      ;;
+    *)
+      printf '{"mcpServers": {}}\n'
+      ;;
+  esac
+}
+
+add_denied_mcp_file_mount() {
+  local workspace="$1"
+  local relative_path="$2"
+  local source="${CONTROL_PLANE_SHADOW_ROOT}/files/${relative_path}"
+  local destination="/workspace/${relative_path}"
+
+  mkdir -p "$(dirname "${source}")"
+  rm -f "${source}"
+  denied_mcp_config_json "${relative_path}" >"${source}"
+  chmod 0444 "${source}"
+  register_shadow_mount "${source}" "${destination}"
+}
+
 workspace_is_git_worktree() {
   local workspace="$1"
 
@@ -7061,6 +7166,30 @@ git_index_has_path() {
 
   workspace_is_git_worktree "${workspace}" || return 1
   run_clean_host_command git -C "${workspace}" ls-files --error-unmatch -- "${relative_path}" >/dev/null 2>&1
+}
+
+# Print the stage-0 git index mode for a tracked path (e.g. 100644 regular,
+# 100755 executable, 120000 symlink, 160000 gitlink). Returns non-zero when the
+# path is not tracked. The index reflects what a clone checks out even when the
+# source worktree lacks the file on disk (sparse-checkout / skip-worktree), so it
+# is the correct existence signal for an isolated dry-run's future clone.
+git_index_path_mode() {
+  local workspace="$1"
+  local relative_path="$2"
+  local entry="" metadata="" mode="" remainder="" stage=""
+
+  workspace_is_git_worktree "${workspace}" || return 1
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    mode="${metadata%% *}"
+    remainder="${metadata#* }"
+    stage="${remainder##* }"
+    if [[ "${stage}" == "0" ]]; then
+      printf '%s\n' "${mode}"
+      return 0
+    fi
+  done < <(run_clean_host_command git -C "${workspace}" ls-files -z --stage -- "${relative_path}")
+  return 1
 }
 
 git_index_materialize_regular_file() {
@@ -7272,19 +7401,98 @@ git_index_control_plane_dir_roots() {
   done < <(run_clean_host_command git -C "${workspace}" ls-files -z --cached)
 }
 
+# Refuse when any parent directory component of a workspace-relative control
+# path is a symlink. A symlinked intermediate directory (e.g. a .github that
+# points outside the workspace) can redirect the leaf to an out-of-workspace
+# host file that Docker would then follow, so we fail closed and never mount or
+# mask through it. Component-wise -L scan mirrors reject_symlinked_host_path_components.
+refuse_symlinked_workspace_parent_component() {
+  local workspace="$1"
+  local relative_path="$2"
+  [[ "${relative_path}" == */* ]] || return 0
+  local parent="${relative_path%/*}"
+  local current="${workspace}"
+  local component=""
+  local -a components=()
+  IFS='/' read -r -a components <<<"${parent}"
+  for component in "${components[@]}"; do
+    [[ -n "${component}" ]] || continue
+    current="${current}/${component}"
+    if [[ -L "${current}" ]]; then
+      echo "Workcell refuses workspace control path ${relative_path}: parent component is a symlink and could redirect it outside the workspace: ${current}" >&2
+      exit 2
+    fi
+  done
+}
+
 register_workspace_control_plane_file_mount() {
   local workspace="$1"
   local relative_path="$2"
   local source_path="${workspace}/${relative_path}"
   local destination="/workspace/${relative_path}"
 
-  [[ -e "${source_path}" ]] || return 0
+  # Presence gate first: control-plane surfaces are optional, so a truly absent
+  # surface returns early without blocking — a legitimately symlinked parent
+  # (e.g. .github) must not fail a launch merely because an optional file under
+  # it is missing. Present means it exists (following symlinks) OR is a symlink
+  # itself (dangling on host) OR is tracked in the git index; that -L/index
+  # coverage keeps a dangling-on-host leaf symlink and a file reached through a
+  # symlinked parent both classified as present.
+  if [[ ! -e "${source_path}" ]] && [[ ! -L "${source_path}" ]] && ! git_index_has_path "${workspace}" "${relative_path}"; then
+    return 0
+  fi
+
+  # Present: confine the whole workspace-relative path before mounting. Refuse a
+  # symlinked parent component (path-traversal out of the workspace) and refuse
+  # a symlinked leaf, so a symlink can never redirect the source to an
+  # out-of-workspace host file that Docker would follow.
+  refuse_symlinked_workspace_parent_component "${workspace}" "${relative_path}"
   if [[ -L "${source_path}" ]]; then
     echo "Workcell refuses symlinked workspace control files even with --allow-control-plane-vcs: ${source_path}" >&2
     exit 2
   fi
   [[ -f "${source_path}" ]] || return 0
   register_shadow_mount "${source_path}" "${destination}"
+}
+
+# Register the acknowledged repo-MCP mount from the session workspace the
+# container runs in. When that workspace exists on disk (a non-isolated launch,
+# or an isolated launch whose clone was already created) it is probed and
+# mounted directly. In an isolated --dry-run the session-owned clone is not
+# created yet, so probing it would falsely show no mount even though a real
+# launch clones the source's committed content and would mount it. In that case
+# the existence decision reflects the source git index (what the clone will
+# contain: committed regular files; untracked source files are not cloned) while
+# the displayed mount source stays the clone path, keeping dry-run evidence
+# faithful to a real launch.
+register_acked_repo_mcp_mount() {
+  local source_workspace="$1"
+  local session_workspace="$2"
+  local relative_path="$3"
+
+  if [[ -d "${session_workspace}" ]]; then
+    register_workspace_control_plane_file_mount "${session_workspace}" "${relative_path}"
+    return 0
+  fi
+
+  # Base existence on the git INDEX, not the source worktree's on-disk file: a
+  # tracked file can be absent on disk under sparse-checkout / skip-worktree yet
+  # the clone will still check it out, so an -f guard on the source would wrongly
+  # skip it. A symlink index entry (mode 120000) is the symlink-refusal case; a
+  # regular blob (100644/100755) registers the future clone mount; any other mode
+  # (e.g. a 160000 gitlink) is not a mountable file.
+  local index_mode=""
+  index_mode="$(git_index_path_mode "${source_workspace}" "${relative_path}")" || return 0
+  if [[ "${index_mode}" == "120000" ]]; then
+    echo "Workcell refuses symlinked workspace control files even with --allow-control-plane-vcs: ${source_workspace}/${relative_path}" >&2
+    exit 2
+  fi
+  case "${index_mode}" in
+    100644 | 100755) ;;
+    *) return 0 ;;
+  esac
+  refuse_symlinked_workspace_parent_component "${source_workspace}" "${relative_path}"
+  register_shadow_mount "${session_workspace}/${relative_path}" "/workspace/${relative_path}"
 }
 
 register_workspace_control_plane_dir_mount() {
@@ -7403,6 +7611,13 @@ add_shadow_git_path_if_present() {
 prepare_workspace_control_plane_shadow() {
   local workspace="$1"
   local mode="$2"
+  # The session workspace the container actually runs in. In an isolated
+  # detached session this is the session-owned clone, distinct from the source
+  # checkout (workspace). Masking reads the source; an acknowledged real-file
+  # MCP mount must come from the session workspace so a running isolated session
+  # stays insulated from post-launch edits to the source checkout. Defaults to
+  # the source when they are the same (direct/in-place workspace).
+  local session_workspace="${3:-$1}"
   local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
   local rel path git_dir git_rel
 
@@ -7461,7 +7676,29 @@ prepare_workspace_control_plane_shadow() {
     done
 
     for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md; do
-      register_workspace_control_plane_file_mount "${workspace}" "${rel}"
+      if workspace_rel_is_mcp_surface "${rel}"; then
+        if [[ "${ALLOW_REPO_MCP}" -eq 1 ]]; then
+          # Acknowledged: mount from the session workspace (the isolated clone in
+          # an isolated session), never the source checkout, so a running
+          # isolated session is insulated from post-launch source edits. In an
+          # isolated dry-run the clone is not created yet, so existence reflects
+          # the source git index while the mount source stays the clone path.
+          register_acked_repo_mcp_mount "${workspace}" "${session_workspace}" "${rel}"
+        else
+          # Only act when the surface is present: -e (follows symlinks), -L (a
+          # dangling-on-host leaf symlink, e.g. .mcp.json -> /workspace/evil.json,
+          # which the container resolves), or tracked in the git index. An absent
+          # optional surface returns without blocking even under a symlinked parent.
+          if [[ -e "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
+            # Present: a symlinked parent could redirect the masked path outside
+            # the workspace, so fail closed before masking through it.
+            refuse_symlinked_workspace_parent_component "${workspace}" "${rel}"
+            add_denied_mcp_file_mount "${workspace}" "${rel}"
+          fi
+        fi
+      else
+        register_workspace_control_plane_file_mount "${workspace}" "${rel}"
+      fi
     done
   else
     while IFS= read -r -d '' path; do
@@ -7483,7 +7720,26 @@ prepare_workspace_control_plane_shadow() {
 
     for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md; do
       if [[ -f "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
-        add_shadow_file_mount "${workspace}" "${rel}"
+        if workspace_rel_is_mcp_surface "${rel}"; then
+          if [[ "${ALLOW_REPO_MCP}" -eq 1 ]]; then
+            # Acknowledged: honor the operator's real working-tree MCP config
+            # read-only (refusing symlinked leaf or parent components), not the
+            # git-index-only shadow snapshot that would stale or placeholder-mask
+            # an acked config. Mount from the session workspace (the isolated
+            # clone in an isolated session), not the source checkout, so a
+            # running isolated session is insulated from post-launch source edits;
+            # an isolated dry-run reflects the source git index while showing the
+            # clone path so the preview matches a real launch.
+            register_acked_repo_mcp_mount "${workspace}" "${session_workspace}" "${rel}"
+          else
+            # A symlinked parent could redirect the masked path outside the
+            # workspace, so fail closed before masking through it.
+            refuse_symlinked_workspace_parent_component "${workspace}" "${rel}"
+            add_denied_mcp_file_mount "${workspace}" "${rel}"
+          fi
+        else
+          add_shadow_file_mount "${workspace}" "${rel}"
+        fi
       fi
     done
   fi
@@ -7533,10 +7789,13 @@ AUTH_STATUS=0
 LOGS_KIND=""
 ALLOW_NONGIT_WORKSPACE=0
 ALLOW_CONTROL_PLANE_VCS=0
+ALLOW_REPO_MCP=0
 ALLOW_ARBITRARY_COMMAND=0
 ACK_BREAKGLASS=0
 ACK_BREAKGLASS_TOKEN=""
 ACK_CONTROL_PLANE_VCS=0
+ACK_REPO_MCP=0
+ACK_REPO_MCP_TOKEN=""
 ACK_ARBITRARY_COMMAND=0
 ACK_ARBITRARY_COMMAND_TOKEN=""
 TEST_FAIL_AFTER_PROFILE_REFRESH=0
@@ -7588,7 +7847,7 @@ if [[ "${1:-}" == "--self-staging-probe" ]]; then
       ;;
   esac
   prepare_injection_bundle "${AGENT}" "${MODE}"
-  prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}"
+  prepare_workspace_control_plane_shadow "${WORKSPACE}" "${MODE}" "${WORKSPACE}"
 
   printf 'workcell_docker_home=%s\n' "${WORKCELL_DOCKER_HOME:-}"
   printf 'injection_bundle_root=%s\n' "${INJECTION_BUNDLE_ROOT}"
@@ -7792,6 +8051,10 @@ while [[ $# -gt 0 ]]; do
       ALLOW_CONTROL_PLANE_VCS=1
       shift
       ;;
+    --allow-repo-mcp)
+      ALLOW_REPO_MCP=1
+      shift
+      ;;
     --allow-arbitrary-command)
       ALLOW_ARBITRARY_COMMAND=1
       shift
@@ -7807,6 +8070,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ack-control-plane-vcs)
       ACK_CONTROL_PLANE_VCS=1
+      shift
+      ;;
+    --ack-repo-mcp)
+      ACK_REPO_MCP=1
+      shift
+      ;;
+    --ack-repo-mcp=*)
+      ACK_REPO_MCP=1
+      ACK_REPO_MCP_TOKEN="${1#*=}"
       shift
       ;;
     --ack-arbitrary-command)
@@ -8046,7 +8318,7 @@ if [[ -n "${LOGS_KIND}" ]]; then
   show_requested_logs
   exit 0
 fi
-validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ACK_BREAKGLASS_TOKEN}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND_TOKEN}" "${ALLOW_CONTROL_PLANE_VCS}" "${ACK_CONTROL_PLANE_VCS}" "${REBUILD}" "${PREPARE}"
+validate_mode_requirements "${MODE}" "${ACK_BREAKGLASS}" "${ACK_BREAKGLASS_TOKEN}" "${ALLOW_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND}" "${ACK_ARBITRARY_COMMAND_TOKEN}" "${ALLOW_CONTROL_PLANE_VCS}" "${ACK_CONTROL_PLANE_VCS}" "${REBUILD}" "${PREPARE}" "${ALLOW_REPO_MCP}" "${ACK_REPO_MCP}" "${ACK_REPO_MCP_TOKEN}"
 if [[ -n "${WORKCELL_TEST_CODEX_AUTH_FILE:-}" ]]; then
   echo "WORKCELL_TEST_CODEX_AUTH_FILE is reserved for the Workcell test harness." >&2
   exit 2
@@ -8262,7 +8534,7 @@ if [[ "${SESSION_DETACHED}" -eq 1 ]] && [[ "$(effective_session_workspace_mode)"
     WORKSPACE="$(create_isolated_session_workspace "${SESSION_SOURCE_WORKSPACE}" "${SESSION_ID}")"
   fi
 fi
-prepare_workspace_control_plane_shadow "${WORKSPACE_SHADOW_SOURCE}" "${MODE}"
+prepare_workspace_control_plane_shadow "${WORKSPACE_SHADOW_SOURCE}" "${MODE}" "${WORKSPACE}"
 prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
 prepare_copilot_token_handoff_mount "$@"
 build_runtime_host_aliases "${ALLOW_ENDPOINTS}"
@@ -8299,8 +8571,10 @@ DOCKER_RUN_BASE+=(
   -e WORKCELL_CONTAINER_MUTABILITY="${CONTAINER_MUTABILITY}"
   -e WORKCELL_SESSION_ASSURANCE_INITIAL="$(session_assurance_initial)"
   -e WORKCELL_ALLOW_CONTROL_PLANE_VCS="${ALLOW_CONTROL_PLANE_VCS}"
+  -e WORKCELL_ALLOW_REPO_MCP="${ALLOW_REPO_MCP}"
   -e WORKCELL_ALLOW_ARBITRARY_COMMAND="${ALLOW_ARBITRARY_COMMAND}"
   -e WORKCELL_WORKSPACE_CONTROL_PLANE_STATE="$(workspace_control_plane_state)"
+  -e WORKCELL_WORKSPACE_REPO_MCP_STATE="$(workspace_repo_mcp_state)"
   -e AGENT_UI="${UI}"
   -e CODEX_PROFILE="${MODE}"
   -e WORKCELL_MODE="${MODE}"
@@ -8386,8 +8660,20 @@ if [[ "${MODE}" == "breakglass" ]]; then
   EXECUTION_PATH="lower-assurance-breakglass"
 elif [[ "${MODE}" == "development" ]]; then
   EXECUTION_PATH="lower-assurance-development"
-elif [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
-  EXECUTION_PATH="lower-assurance-control-plane-vcs"
+else
+  # Concurrent risk acknowledgements stack into one '+'-joined execution path
+  # (mirroring session_assurance_initial) so an acked repo-MCP escape hatch is
+  # visible on execution_path even alongside control-plane VCS visibility.
+  EXECUTION_PATH_REASONS=()
+  [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]] && EXECUTION_PATH_REASONS+=("control-plane-vcs")
+  [[ "${ALLOW_REPO_MCP}" -eq 1 ]] && EXECUTION_PATH_REASONS+=("repo-mcp")
+  if [[ "${#EXECUTION_PATH_REASONS[@]}" -gt 0 ]]; then
+    EXECUTION_PATH_JOINED="$(
+      IFS='+'
+      printf '%s' "${EXECUTION_PATH_REASONS[*]}"
+    )"
+    EXECUTION_PATH="lower-assurance-${EXECUTION_PATH_JOINED}"
+  fi
 fi
 
 if [[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]]; then
