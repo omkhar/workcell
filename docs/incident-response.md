@@ -107,24 +107,42 @@ investigate.
 ## 3. Preserve evidence
 
 Durable session state lives on the host under the Workcell-owned target-state
-root (defaults from the
-[session supervisor design](workcell-session-supervisor-design.md#data-model)):
+root, and the path is **target-aware**. Identify the target first — the same
+`workcell session list --verbose` / `--inspect` `target_kind` and
+`target_provider` you used in step 2 — then preserve that target's tree.
+
+The general layout (`internal/host/hoststate/profilepaths.go`
+`ProfileTargetStateDir` /`ProfileSessionsDirPath` / `ProfileAuditLogPath`) is
+`<target-state-root>/<target_kind>/<target_provider>/<profile>/`, where the
+target-state root is `${WORKCELL_STATE_ROOT}/targets` and `WORKCELL_STATE_ROOT`
+defaults to `${XDG_STATE_HOME:-~/.local/state}/workcell` (`scripts/workcell:91-92`):
 
 - session records:
-  `~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/<session_id>.json`
+  `.../<target_kind>/<target_provider>/<profile>/sessions/<session_id>.json`
 - audit log (profile-wide, shared by all sessions in the profile):
-  `~/.local/state/workcell/targets/local_vm/colima/<profile>/workcell.audit.log`
-- legacy records (compatibility reads):
-  `~/.colima/<profile>/sessions/<session_id>.json`
+  `.../<target_kind>/<target_provider>/<profile>/workcell.audit.log`
+
+For the two operator-reachable targets at 1.0 this resolves to:
+
+- **`local_vm` / Colima (default, strict):**
+  `~/.local/state/workcell/targets/local_vm/colima/<profile>/{sessions/,workcell.audit.log}`
+- **`local_compat` / Docker Desktop (compat):**
+  `~/.local/state/workcell/targets/local_compat/docker-desktop/<profile>/{sessions/,workcell.audit.log}`
+
+The Colima target additionally has a **legacy** tree that compatibility reads
+still accept, and Docker Desktop does **not** (`LegacyProfileSessionsDirPath` /
+`LegacyProfileAuditLogPath` are keyed on the Colima state root):
+
+- legacy records: `~/.colima/<profile>/sessions/<session_id>.json`
 - legacy profile-wide audit log (a profile-level file **outside** `sessions/`):
   `~/.colima/<profile>/workcell.audit.log`
 
-The Workcell target-state root follows `WORKCELL_STATE_ROOT` (default
-`${XDG_STATE_HOME:-~/.local/state}/workcell`), which an operator can override in
-the environment. The Colima state root is **not** operator-overridable: the
+`WORKCELL_STATE_ROOT` is operator-overridable, so if it is set in your
+environment the `targets/...` tree lives under that root instead of
+`~/.local/state/workcell`. The Colima legacy tree is **not** overridable: the
 launcher unconditionally resets `COLIMA_STATE_ROOT` to `~/.colima`
-(`scripts/workcell` sets `COLIMA_STATE_ROOT="${REAL_HOME}/.colima"`), so the
-legacy Colima path is always under `~/.colima/<profile>/` regardless of any
+(`scripts/workcell:90`, `COLIMA_STATE_ROOT="${REAL_HOME}/.colima"`), so the
+legacy Colima path is always `~/.colima/<profile>/` regardless of any
 `COLIMA_STATE_ROOT` you export.
 
 - **Do not garbage-collect before you collect.** `workcell --gc` (alias
@@ -134,14 +152,15 @@ legacy Colima path is always under `~/.colima/<profile>/` regardless of any
   destroys evidence. Do not run it until collection is complete.
 - **Do not `session delete`.** `workcell session delete` removes the durable
   record and stopped-session artifacts. Defer it to recovery (step 7).
-- **Snapshot the state root.** Copy the profile's target-state directory
-  (session records + the profile-wide `workcell.audit.log`) **and** any legacy
-  files under `~/.colima/<profile>/` — both the legacy `sessions/` records and
-  the legacy profile-level `~/.colima/<profile>/workcell.audit.log`, since a
-  legacy record can point its `audit_log_path` at that profile-level file
-  outside `sessions/`. Copy all of them to read-only storage before further
-  action, so the on-disk evidence is preserved even if later steps mutate host
-  state.
+- **Snapshot the state root.** Copy your target's profile directory
+  (`.../<target_kind>/<target_provider>/<profile>/`) whole — session records plus
+  the profile-wide `workcell.audit.log`. For the **Colima** target, also copy the
+  legacy tree under `~/.colima/<profile>/` — both the legacy `sessions/` records
+  and the legacy profile-level `~/.colima/<profile>/workcell.audit.log`, since a
+  legacy record can point its `audit_log_path` at that profile-level file outside
+  `sessions/` (the Docker Desktop target has no legacy tree). Copy all of them to
+  read-only storage before further action, so the on-disk evidence is preserved
+  even if later steps mutate host state.
 
 Note: workflow-artifact retention in
 [retention-policy.md](retention-policy.md) governs **CI/release** artifacts, not
