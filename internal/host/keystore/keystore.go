@@ -37,6 +37,10 @@ import (
 
 const signingKeyBasename = "signing.key"
 
+// fsyncDir is the directory-durability fsync, indirected so tests can inject a
+// writeback failure (ENOSPC/EIO) and confirm the publish fails closed.
+var fsyncDir = unix.Fsync
+
 // LoadOrCreateSigningKey returns the per-host ECDSA P-256 signing key under dir,
 // generating it on first use (dir 0700, key 0600, fail-closed if unsecurable;
 // keyID is the hex SHA-256 prefix of the PKIX public key). The key is published
@@ -84,7 +88,13 @@ func LoadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 		}
 		return nil, "", linkErr
 	}
-	_ = unix.Fsync(dirFd)
+	// Fsync the directory to durably record the new signing.key entry; a
+	// writeback failure here (ENOSPC/EIO) means the key may not survive a crash,
+	// so fail rather than hand back a keyID that would end up in seals verifying
+	// against a key that is not on disk.
+	if err := fsyncDir(dirFd); err != nil {
+		return nil, "", fmt.Errorf("keystore: fsync signing directory after publishing signing.key: %w", err)
+	}
 
 	keyID, err := publicKeyID(&key.PublicKey)
 	if err != nil {
@@ -221,7 +231,12 @@ func ensurePublicKey(dirFd int, keyID string, pub *ecdsa.PublicKey) error {
 		_ = unix.Unlinkat(dirFd, tmpName, 0)
 		return err
 	}
-	_ = unix.Fsync(dirFd)
+	// Fsync the directory so the new .pub entry is durable; propagate a writeback
+	// failure so a keyID is never returned for a sidecar that may be lost on a
+	// crash (verification of those sessions would then fail closed).
+	if err := fsyncDir(dirFd); err != nil {
+		return fmt.Errorf("keystore: fsync signing directory after publishing %s: %w", name, err)
+	}
 	return nil
 }
 

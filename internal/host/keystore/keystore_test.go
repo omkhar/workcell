@@ -178,6 +178,36 @@ func TestLoadFailsOnSymlinkSigningDir(t *testing.T) {
 	}
 }
 
+// TestPublishFailsOnDirFsyncError (L224): a directory-fsync writeback failure in
+// the publish path must fail LoadOrCreateSigningKey (never return a keyID for a
+// key/pub that may not be durable) — for both the private-key and the .pub fsync.
+func TestPublishFailsOnDirFsyncError(t *testing.T) {
+	orig := fsyncDir
+	t.Cleanup(func() { fsyncDir = orig })
+
+	// Fail the FIRST dir fsync (private-key publish).
+	fsyncDir = func(int) error { return unix.ENOSPC }
+	if _, _, err := LoadOrCreateSigningKey(filepath.Join(t.TempDir(), "signing")); err == nil ||
+		!strings.Contains(err.Error(), "fsync signing directory") {
+		t.Fatalf("private-key dir fsync failure must fail closed, got %v", err)
+	}
+
+	// Fail only the SECOND dir fsync (.pub publish): let the key publish fsync
+	// succeed, then fail the next fsync.
+	var calls int
+	fsyncDir = func(fd int) error {
+		calls++
+		if calls == 1 {
+			return orig(fd)
+		}
+		return unix.EIO
+	}
+	if _, _, err := LoadOrCreateSigningKey(filepath.Join(t.TempDir(), "signing")); err == nil ||
+		!strings.Contains(err.Error(), "fsync signing directory") {
+		t.Fatalf(".pub dir fsync failure must fail closed, got %v", err)
+	}
+}
+
 // TestWritesAnchoredToValidatedDirFd (L221): after ensureSecureDir validates and
 // returns the dir fd, a same-parent attacker who swaps the dir PATH for a symlink
 // to another directory must not redirect writes. The publish uses *at relative to
