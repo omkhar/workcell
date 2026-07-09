@@ -244,6 +244,10 @@ delta on that shipped control, not a new lane.
 
 ### B7 (part 1): OpenSSF Best Practices Badge
 
+**Deferred to post-1.0 (2026-07-09 criterion-2/6 amendment).** Originally
+sequenced in v0.13; no longer a 1.0 gate. Listed under post-1.0 in the milestone
+train above; this detail section stays here for continuity of the B7 track.
+
 - Steps: register the project, complete the passing-level questionnaire,
   remediate any unmet criteria, add the badge plus the existing Scorecard
   badge to README.
