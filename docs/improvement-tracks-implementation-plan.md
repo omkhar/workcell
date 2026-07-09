@@ -619,10 +619,10 @@ here for continuity of the B6 track.
   delegations from `scripts/verify-invariants.sh`). A documented narrow residual
   of static repo-file assertions still runs inline in `scripts/verify-invariants.sh`
   using `sed`/`awk` (e.g. the `run_in_vm` order check in
-  `scripts/colima-egress-allowlist.sh`), because this residual depends on
-  runtime ordering and state, making it provably non-static. A genuinely
-  non-static tail also stays in bash by design (`jq -r` guards over runtime
-  `mktemp`-generated manifests, `jq -e` stdin guards, awk/sed helpers, and
+  `scripts/colima-egress-allowlist.sh`); this is an accepted static residual,
+  not a completed migration. A genuinely non-static tail also stays in bash by
+  design (`jq -r` guards over runtime `mktemp`-generated manifests, `jq -e`
+  stdin guards, awk/sed helpers, and
   `HOST_GATE_SCRIPTS` runtime harnesses). Scope narrowing decision (2026-07-09):
   D3 (complete) is satisfied by this recorded narrowing — "bulk of `verify-invariants`
   static invariants in Go; the static remainder, non-static tail, and
