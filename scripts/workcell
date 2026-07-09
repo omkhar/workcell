@@ -8397,6 +8397,13 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=1
       shift
       ;;
+    --version)
+      # Also handled before module sourcing (see the early ROOT_DIR handler)
+      # so the bare form stays toolchain-free; this case keeps --version
+      # honored after other global options on fully provisioned hosts.
+      printf 'workcell %s\n' "$(changelog_version "${ROOT_DIR}")"
+      exit 0
+      ;;
     -h | --help)
       usage
       exit 0
