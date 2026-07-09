@@ -33,6 +33,13 @@ func TestWorkcellVersionFlagCapturesPreReleaseSuffix(t *testing.T) {
 	if got != "workcell v1.2.3-rc.1\n" {
 		t.Fatalf("workcell --version output = %q, want %q", got, "workcell v1.2.3-rc.1\n")
 	}
+
+	hyphenated := "# Changelog\n\n## Unreleased\n\n## v2.0.0-rc-1 - 2099-03-01\n"
+	hyphenPath := writeWorkcellVersionFixture(t, &hyphenated)
+
+	if got := runWorkcellVersion(t, hyphenPath); got != "workcell v2.0.0-rc-1\n" {
+		t.Fatalf("workcell --version output = %q, want %q", got, "workcell v2.0.0-rc-1\n")
+	}
 }
 
 func TestWorkcellVersionFlagReportsUnknownWhenChangelogMissing(t *testing.T) {

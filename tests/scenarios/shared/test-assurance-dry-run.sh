@@ -377,7 +377,7 @@ fi
 grep -q 'unsupported keys' "${TMP_DIR}/network-weaken.stderr"
 
 version_output="$(HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" "${ROOT_DIR}/scripts/workcell" --version)"
-if [[ ! "${version_output}" =~ ^workcell\ v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+if [[ ! "${version_output}" =~ ^workcell\ v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
   echo "unexpected --version output: ${version_output}" >&2
   exit 1
 fi

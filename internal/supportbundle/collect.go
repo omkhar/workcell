@@ -35,7 +35,7 @@ var providerOrder = []string{
 // changelogVersionRe matches a released `## vX.Y.Z ...` CHANGELOG heading,
 // including semver pre-release suffixes (`## vX.Y.Z-rc.1 ...`), so a release
 // candidate never reports itself as the final release.
-var changelogVersionRe = regexp.MustCompile(`^##\s+(v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?)`)
+var changelogVersionRe = regexp.MustCompile(`^##\s+(v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)`)
 
 // InstallSection captures whether Workcell is installed and on what host.
 type InstallSection struct {

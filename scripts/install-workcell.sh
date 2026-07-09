@@ -204,7 +204,7 @@ chmod 0700 "\${DEBUG_DIR}" 2>/dev/null || true
 
 for ARG in "\$@"; do
   case "\${ARG}" in
-    --auth-status | --doctor | --gc | --help | --inspect | --logs | --prepare-only | -h | auth-status | doctor | gc | help | inspect | logs | publish-pr | support-bundle)
+    --auth-status | --doctor | --gc | --help | --inspect | --logs | --prepare-only | --version | -h | auth-status | doctor | gc | help | inspect | logs | publish-pr | support-bundle)
       SKIP_AUTO_DEBUG=1
       ;;
     session)

@@ -190,7 +190,7 @@ source_checkout_version="$(
     changelog_version "$2"
   ' _ "${CHANGELOG_FUNCTIONS_COPY}" "${ROOT_DIR}"
 )"
-[[ "${source_checkout_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
+[[ "${source_checkout_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
   fail "source checkout changelog version was not semver: ${source_checkout_version}"
 
 BUNDLE_ROOT="${TMP_DIR}/bundle-root"

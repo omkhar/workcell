@@ -76,7 +76,7 @@ changelog_version() {
 
   local line
   while IFS= read -r line; do
-    if [[ "${line}" =~ ^##[[:space:]]+(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?) ]]; then
+    if [[ "${line}" =~ ^##[[:space:]]+(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?) ]]; then
       printf '%s\n' "${BASH_REMATCH[1]}"
       return 0
     fi
