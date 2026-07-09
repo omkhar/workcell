@@ -11,10 +11,10 @@
 //
 // Each migrated group is a CheckXxx(rootDir) error function that delegates to
 // evaluate(rootDir, []check). A check declares one kind plus the fields that
-// kind consumes (targetFile / targetFiles / targetPath, pattern / functionName,
-// jsonPath / jsonExpected, minCount, message). evaluate runs the checks in
-// order and returns the first violation's message — so the byte-exact FIRST
-// stderr line on a multi-violation run is preserved, matching the original
+// kind consumes (targetFile / targetFiles / targetPath, pattern / regex /
+// functionName, jsonPath / jsonExpected, minCount, message). evaluate runs the
+// checks in order and returns the first violation's message — so the byte-exact
+// FIRST stderr line on a multi-violation run is preserved, matching the original
 // script's exit-on-first-failure behaviour.
 //
 // Two groups are the exception to the rootDir convention:
@@ -356,8 +356,8 @@ const publishPrMainRelPath = "internal/publishpr/publish_pr_main.go"
 // ${ROOT_DIR}/runtime/container/bin/git`.
 const containerBinGitRelPath = "runtime/container/bin/git"
 
-// checkKind selects how a check's pattern is matched against the launcher
-// contents.
+// checkKind selects how a check's fixed string or regex is matched against the
+// launcher contents.
 type checkKind int
 
 const (
@@ -370,8 +370,8 @@ const (
 	// mirroring a negated `function_block_contains_fixed` under a `||`
 	// guard (present inside the block is a violation → exit 1).
 	kindFunctionBlockAbsent
-	// kindFirstLineRegex requires the launcher's first line to match the
-	// anchored regex, mirroring `head -n1 ... | grep -q '^...$'`.
+	// kindFirstLineRegex requires the launcher's first line to match regex,
+	// mirroring `head -n1 ... | grep -q '^...$'`.
 	kindFirstLineRegex
 	// kindPresent requires the fixed string to appear anywhere in the
 	// launcher, mirroring an affirmative `rg -q FIXED`.
@@ -379,22 +379,22 @@ const (
 	// kindAbsent requires the fixed string NOT to appear anywhere in the
 	// launcher, mirroring a negative `if rg -q FIXED; then ... exit 1`.
 	kindAbsent
-	// kindRegexAbsent requires the regexp pattern NOT to match anywhere in
+	// kindRegexAbsent requires regex NOT to match anywhere in
 	// the launcher, mirroring a negative `if rg -q REGEX; then ... exit 1`
 	// whose REGEX is a genuine regular expression (an unanchored
 	// alternation with active metacharacters), unlike kindAbsent's
 	// fixed-string containment.
 	kindRegexAbsent
-	// kindRegexPresent requires the regexp pattern to match somewhere in the
+	// kindRegexPresent requires regex to match somewhere in the
 	// launcher, mirroring an affirmative `rg -q REGEX` whose REGEX contains an
 	// active metacharacter (e.g. a trailing `.` meaning any char), unlike
 	// kindPresent's fixed-string containment.
 	kindRegexPresent
-	// kindFunctionBlockRegex requires the regexp pattern to match inside the
+	// kindFunctionBlockRegex requires regex to match inside the
 	// top-level bash function body named functionName, mirroring
 	// function_block_contains_regex (sed-range extraction + `grep -q` regex,
 	// NOT `grep -Fq`).  Unlike kindFunctionBlock's fixed-string containment,
-	// the pattern is a genuine regular expression, matched per-line within the
+	// regex is a genuine regular expression, matched per-line within the
 	// extracted block via regexMatchesAnyLine for `grep`/`rg` line-oriented
 	// parity.
 	kindFunctionBlockRegex
@@ -424,14 +424,14 @@ const (
 	// this scopes to a Go function via extractGoFunctionBlock so the same
 	// literal appearing in an unrelated helper or a comment cannot satisfy it.
 	kindGoFunctionBlock
-	// kindFunctionBlockRegexAbsent requires the regexp pattern NOT to match
+	// kindFunctionBlockRegexAbsent requires regex NOT to match
 	// any line inside the top-level bash function body named functionName,
 	// mirroring a NEGATED function_block_contains_regex guard
 	// (`if function_block_contains_regex FILE FUNC PATTERN; then ... exit 1`):
 	// extractNamedFunctionBlock scopes to the block, then regexMatchesAnyLine
 	// tests each line, so a match inside the block is a violation (present →
 	// exit 1).  Unlike kindFunctionBlockAbsent's fixed-string containment the
-	// pattern is a genuine regular expression, and unlike kindFunctionBlockRegex
+	// regex is a genuine regular expression, and unlike kindFunctionBlockRegex
 	// the sense is inverted (present is the violation, not absent).
 	kindFunctionBlockRegexAbsent
 	// kindDirExists requires the repo-relative path targetPath to be an
@@ -507,15 +507,22 @@ const (
 	kindJSONTypeEquals
 )
 
-// check is one hardening invariant: how to match, what to match, which
-// function to scope to (kindFunctionBlock only), which repo-relative file
-// to read (empty means launcherRelPath), and the exact stderr message the
-// shell emitted on violation.
+// check is one hardening invariant: how to match, which fixed string or regex
+// to match, which function to scope to (function-block kinds only), which
+// repo-relative file to read (empty means launcherRelPath), and the exact
+// stderr message the shell emitted on violation.
 type check struct {
 	kind         checkKind
 	functionName string
-	pattern      string
-	message      string
+	// pattern is fixed-string match data for kindPresent/kindAbsent,
+	// kindPresentInAnyFile, kindCountAtLeast, and the fixed function-block
+	// kinds. Regex kinds must use regex instead so fixed strings never flow into
+	// regexp compilation.
+	pattern string
+	// regex is regular-expression match data for kindRegexPresent /
+	// kindRegexAbsent, kindFirstLineRegex, and the regex function-block kinds.
+	regex   string
+	message string
 	// targetFile is the repo-relative file this check reads.  An empty
 	// value defaults to launcherRelPath (scripts/workcell), so every
 	// existing check keeps its original read target unchanged; only the
@@ -530,9 +537,9 @@ type check struct {
 	// `grep -Fq -- NEEDLE f1 f2`.
 	targetFiles []string
 	// minCount is the minimum number of lines of the target file that must
-	// contain pattern for a kindCountAtLeast check to hold.  It is used only
-	// by kindCountAtLeast (every other kind ignores it), mirroring the N in
-	// the shell's `grep -Fc ... -lt N` count guard.
+	// contain pattern for a kindCountAtLeast check to hold.  It is used only by
+	// kindCountAtLeast (every other kind ignores it), mirroring the N in the
+	// shell's `grep -Fc ... -lt N` count guard.
 	minCount int
 	// targetPath is the repo-relative path a filesystem check (kindDirExists /
 	// kindExecutable / kindFileExists) stats under rootDir.  It is used only by
@@ -578,7 +585,7 @@ var checks = []check{
 	},
 	{
 		kind:    kindFirstLineRegex,
-		pattern: `^#!/usr/bin/env -S -i PATH=.* BASH_ENV= ENV= /bin/bash$`,
+		regex:   `^#!/usr/bin/env -S -i PATH=.* BASH_ENV= ENV= /bin/bash$`,
 		message: "Expected scripts/workcell to use env -S -i with an absolute /bin/bash and cleared host environment",
 	},
 	{
@@ -676,6 +683,9 @@ func evaluate(rootDir string, cs []check) error {
 	}
 
 	for _, c := range cs {
+		if err := c.validatePatternFields(); err != nil {
+			return err
+		}
 		if c.kind == kindPresentInAnyFile {
 			// Mirror `grep -Fq -- NEEDLE f1 f2`: the check holds when the
 			// per-file containment predicate (holds) is true for ANY listed
@@ -730,7 +740,7 @@ var configSafetyChecks = []check{
 		// is a genuine unanchored alternation, not a fixed string, so it
 		// must NOT match (present is a violation → exit 1).
 		kind:    kindRegexAbsent,
-		pattern: `WORKCELL_TEST_HARNESS|WORKCELL_(GIT|COLIMA|DOCKER|RUBY)_BIN=`,
+		regex:   `WORKCELL_TEST_HARNESS|WORKCELL_(GIT|COLIMA|DOCKER|RUBY)_BIN=`,
 		message: "Unexpected test-harness host tool override support remains in scripts/workcell",
 	},
 	{
@@ -868,7 +878,7 @@ var runtimeInvariantChecks = []check{
 		// rg treats the trailing `.` as "any char", so match it as a regex for
 		// exact `rg -q` parity (the only active metacharacter in the pattern).
 		kind:    kindRegexPresent,
-		pattern: "strict mode requires --prepare when you explicitly request --rebuild.",
+		regex:   "strict mode requires --prepare when you explicitly request --rebuild.",
 		message: "Expected scripts/workcell to reject explicit strict-mode image rebuild requests",
 	},
 	{
@@ -1079,7 +1089,7 @@ var bootstrapEgressChecks = []check{
 		// kindRegexPresent: the `[^.]+` subdomain wildcard is a genuine
 		// regex, so this matches as a regex rather than a fixed string.
 		kind:    kindRegexPresent,
-		pattern: `docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443`,
+		regex:   `docker-images-prod\.[^.]+\.r2\.cloudflarestorage\.com:443`,
 		message: "Expected scripts/workcell bootstrap endpoints to allow Docker blob storage on Cloudflare R2",
 	},
 	{
@@ -1092,7 +1102,7 @@ var bootstrapEgressChecks = []check{
 		// line-anchored `^ARG COPILOT_RELEASE_URL=` becomes a multiline
 		// `(?m)^ARG ...` so `^` anchors to any Dockerfile line start.
 		kind:       kindRegexPresent,
-		pattern:    `(?m)^ARG COPILOT_RELEASE_URL=`,
+		regex:      `(?m)^ARG COPILOT_RELEASE_URL=`,
 		message:    "Expected runtime Dockerfile to accept a host-resolved Copilot release URL override",
 		targetFile: dockerfileRelPath,
 	},
@@ -1211,13 +1221,13 @@ var gitIndexShadowChecks = []check{
 	{
 		kind:         kindFunctionBlockRegex,
 		functionName: "git_index_materialize_regular_file",
-		pattern:      "cat-file blob",
+		regex:        "cat-file blob",
 		message:      "Expected git_index_materialize_regular_file to materialize tracked blobs without checkout-index",
 	},
 	{
 		kind:         kindFunctionBlockRegex,
 		functionName: "git_index_materialize_regular_file",
-		pattern:      "failed to read tracked blob",
+		regex:        "failed to read tracked blob",
 		message:      "Expected git_index_materialize_regular_file to fail closed when a tracked control-plane blob is unreadable",
 	},
 	{
@@ -1239,7 +1249,7 @@ var gitIndexShadowChecks = []check{
 	{
 		kind:         kindFunctionBlockRegex,
 		functionName: "sanitize_shadowed_git_config",
-		pattern:      "git_config_key_is_blocked",
+		regex:        "git_config_key_is_blocked",
 		message:      "Expected sanitize_shadowed_git_config to reuse the shared blocked git-config key matcher",
 	},
 }
@@ -1281,7 +1291,7 @@ var publishPrShadowMountChecks = []check{
 		// function_block_contains_regex (`grep -q`).
 		kind:         kindFunctionBlockRegex,
 		functionName: "publish_pr_main",
-		pattern:      "core.hooksPath=/dev/null",
+		regex:        "core.hooksPath=/dev/null",
 		message:      "Expected publish_pr_main to disable repo hooks for host-side publish git commands",
 	},
 	{
@@ -1289,7 +1299,7 @@ var publishPrShadowMountChecks = []check{
 		// fidelity with the shell's function_block_contains_regex.
 		kind:         kindFunctionBlockRegex,
 		functionName: "publish_pr_main",
-		pattern:      "--no-verify",
+		regex:        "--no-verify",
 		message:      "Expected publish_pr_main to bypass repo hooks explicitly on host-side commit and push",
 	},
 	{
@@ -1975,7 +1985,7 @@ var copilotDockerRunChecks = []check{
 		// `\$` is a literal `$` — so reintroducing the Copilot token env variable
 		// when launching the provider child is a violation (present → exit 1).
 		kind:       kindRegexAbsent,
-		pattern:    `WORKCELL_COPILOT_GITHUB_TOKEN=.*"\$@"`,
+		regex:      `WORKCELL_COPILOT_GITHUB_TOKEN=.*"\$@"`,
 		message:    "Runtime entrypoint must not reintroduce the Copilot token env variable when launching the provider child",
 		targetFile: entrypointRelPath,
 	},
@@ -2289,7 +2299,7 @@ var copilotPolicyWrapperChecks = []check{
 		// '--available-tools=[^"]*(shell|bash|run|exec)'` is a genuine ERE, not
 		// a fixed string, so it must NOT match (present is a violation → exit 1).
 		kind:       kindRegexAbsent,
-		pattern:    `--available-tools=[^"]*(shell|bash|run|exec)`,
+		regex:      `--available-tools=[^"]*(shell|bash|run|exec)`,
 		message:    "Provider wrapper must not grant Copilot shell-like tools on the safe path",
 		targetFile: providerWrapperRelPath,
 	},
@@ -3232,31 +3242,31 @@ var hostutilEgressRgChecks = []check{
 	// `! rg -q` probes sharing one message).
 	{
 		kind:       kindRegexPresent,
-		pattern:    `run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env`,
+		regex:      `run_clean_host_command_in_dir "\$\{ROOT_DIR\}" env`,
 		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
 		targetFile: goHostutilRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `GOPATH="\$\{GOPATH\}"`,
+		regex:      `GOPATH="\$\{GOPATH\}"`,
 		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
 		targetFile: goHostutilRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `GOMODCACHE="\$\{GOMODCACHE\}"`,
+		regex:      `GOMODCACHE="\$\{GOMODCACHE\}"`,
 		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
 		targetFile: goHostutilRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `GOCACHE="\$\{GOCACHE\}"`,
+		regex:      `GOCACHE="\$\{GOCACHE\}"`,
 		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
 		targetFile: goHostutilRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"`,
+		regex:      `"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"`,
 		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
 		targetFile: goHostutilRelPath,
 	},
@@ -3264,7 +3274,7 @@ var hostutilEgressRgChecks = []check{
 	// (negated `if rg -q ...` → present is a violation).
 	{
 		kind:       kindRegexAbsent,
-		pattern:    `set -- codex --cd `,
+		regex:      `set -- codex --cd `,
 		message:    "runtime/container/entrypoint.sh still injects a blocked default Codex --cd override",
 		targetFile: entrypointRelPath,
 	},
@@ -3272,7 +3282,7 @@ var hostutilEgressRgChecks = []check{
 	// the pattern escapes `$ { }` to match the literal assignment).
 	{
 		kind:       kindRegexAbsent,
-		pattern:    `AGENT_NAME="\$\{AGENT_NAME:-codex\}"`,
+		regex:      `AGENT_NAME="\$\{AGENT_NAME:-codex\}"`,
 		message:    "runtime/container/entrypoint.sh still defaults AGENT_NAME to codex",
 		targetFile: entrypointRelPath,
 	},
@@ -3280,13 +3290,13 @@ var hostutilEgressRgChecks = []check{
 	// before exit (two ordered `! rg -q` probes sharing one message).
 	{
 		kind:       kindRegexPresent,
-		pattern:    `trap 'workcell_run_command_with_file_trace_signal INT' INT`,
+		regex:      `trap 'workcell_run_command_with_file_trace_signal INT' INT`,
 		message:    "Expected runtime/container/entrypoint.sh to trap INT/TERM and finalize file-trace shutdown before exit",
 		targetFile: entrypointRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `trap 'workcell_run_command_with_file_trace_signal TERM' TERM`,
+		regex:      `trap 'workcell_run_command_with_file_trace_signal TERM' TERM`,
 		message:    "Expected runtime/container/entrypoint.sh to trap INT/TERM and finalize file-trace shutdown before exit",
 		targetFile: entrypointRelPath,
 	},
@@ -3295,45 +3305,45 @@ var hostutilEgressRgChecks = []check{
 	// alternation, so present is a violation via kindRegexAbsent).
 	{
 		kind:       kindRegexAbsent,
-		pattern:    `command -v|type -P|which `,
+		regex:      `command -v|type -P|which `,
 		message:    "scripts/colima-egress-allowlist.sh still trusts PATH for executed host tools",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `REAL_HOME=`,
+		regex:      `REAL_HOME=`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to derive the real host home independently of caller HOME",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	// First-line anchored regex mirroring `head -n1 ... | grep -q '^...$'`.
 	{
 		kind:       kindFirstLineRegex,
-		pattern:    `^#!/usr/bin/env -S -i PATH=.* BASH_ENV= ENV= /bin/bash$`,
+		regex:      `^#!/usr/bin/env -S -i PATH=.* BASH_ENV= ENV= /bin/bash$`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to use env -S -i with an absolute /bin/bash and cleared host environment",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `scrub_host_process_env`,
+		regex:      `scrub_host_process_env`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to scrub hostile host process environment before host tool lookup",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT`,
+		regex:      `unset PERL5OPT PERL5LIB PERLLIB PERL_MB_OPT PERL_MM_OPT`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to scrub hostile Perl environment before host tool lookup",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		// `DYLD_\*` escapes the `*`, matching the literal `DYLD_*`.
 		kind:       kindRegexPresent,
-		pattern:    `DYLD_\*`,
+		regex:      `DYLD_\*`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to scrub DYLD_* variables before host tool lookup",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `is_trusted_host_tool_path`,
+		regex:      `is_trusted_host_tool_path`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to canonicalize and trust-check host tool paths",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
@@ -3342,31 +3352,31 @@ var hostutilEgressRgChecks = []check{
 	// probes sharing one message).
 	{
 		kind:       kindRegexPresent,
-		pattern:    `run_clean_repo_command env`,
+		regex:      `run_clean_repo_command env`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `GOPATH="\$\{GOPATH\}"`,
+		regex:      `GOPATH="\$\{GOPATH\}"`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `GOMODCACHE="\$\{GOMODCACHE\}"`,
+		regex:      `GOMODCACHE="\$\{GOMODCACHE\}"`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `GOCACHE="\$\{GOCACHE\}"`,
+		regex:      `GOCACHE="\$\{GOCACHE\}"`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:       kindRegexPresent,
-		pattern:    `"\$\{GO_BIN\}" run ./cmd/workcell-runtimeutil "\$@"`,
+		regex:      `"\$\{GO_BIN\}" run ./cmd/workcell-runtimeutil "\$@"`,
 		message:    "Expected scripts/colima-egress-allowlist.sh to invoke Go runtime helpers under a scrubbed environment with explicit Go caches",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
@@ -3450,7 +3460,7 @@ func dockerfilePinsChecks(rootDir string) []check {
 		for _, spec := range dockerfilePinSpecs {
 			cs = append(cs, check{
 				kind:       kindRegexPresent,
-				pattern:    spec.pattern,
+				regex:      spec.pattern,
 				message:    "Expected " + df + " " + spec.messageSuffix,
 				targetFile: rel,
 			})
@@ -3460,7 +3470,7 @@ func dockerfilePinsChecks(rootDir string) []check {
 		df := rootDir + "/" + rel
 		cs = append(cs, check{
 			kind:       kindRegexPresent,
-			pattern:    `^USER workcell$`,
+			regex:      `^USER workcell$`,
 			message:    "Expected " + df + " to default to the named unprivileged workcell user",
 			targetFile: rel,
 		})
@@ -3678,13 +3688,13 @@ func fnBlockGoBlockGitEnvChecks() []check {
 			// validate_colima_profile block of scripts/workcell.
 			kind:         kindFunctionBlockRegex,
 			functionName: "validate_colima_profile",
-			pattern:      "validate_colima_profile_config",
+			regex:        "validate_colima_profile_config",
 			message:      "Expected validate_colima_profile to re-check the managed Colima config before reusing a running profile",
 		},
 		{
 			kind:         kindFunctionBlockRegex,
 			functionName: "git_alias_value_is_blocked",
-			pattern:      "git_commit_short_arg_is_no_verify",
+			regex:        "git_commit_short_arg_is_no_verify",
 			message:      "Expected git_alias_value_is_blocked to reuse the precise short-option no-verify parser",
 		},
 		{
@@ -3943,28 +3953,28 @@ var dualStackApplyPlanChecks = []check{
 		// keeps its `^` anchor; regexMatchesAnyLine anchors it to each line's
 		// start (rg's line-oriented default), and `\(\)` matches literal `()`.
 		kind:       kindRegexPresent,
-		pattern:    `^render_clear_plan\(\)`,
+		regex:      `^render_clear_plan\(\)`,
 		message:    "Expected dual-stack allowlist helper to render clear rules in the VM apply plan",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:         kindFunctionBlockRegex,
 		functionName: "render_allowlist_apply_plan",
-		pattern:      "render_clear_plan",
+		regex:        "render_clear_plan",
 		message:      "Expected dual-stack allowlist apply plan to include render_clear_plan",
 		targetFile:   colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:         kindFunctionBlockRegex,
 		functionName: "render_allowlist_apply_plan",
-		pattern:      "resolve_vm_endpoint_ips",
+		regex:        "resolve_vm_endpoint_ips",
 		message:      "Expected dual-stack allowlist apply plan to resolve hostnames inside the VM before applying rules",
 		targetFile:   colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:         kindFunctionBlockRegex,
 		functionName: "render_allowlist_apply_plan",
-		pattern:      "getent ahosts",
+		regex:        "getent ahosts",
 		message:      "Expected dual-stack allowlist apply plan to use VM DNS results for hostname endpoints",
 		targetFile:   colimaEgressAllowlistRelPath,
 	},
@@ -3992,7 +4002,7 @@ var dualStackApplyPlanChecks = []check{
 		// the block's own opening line can false-match.
 		kind:         kindFunctionBlockRegexAbsent,
 		functionName: "render_allowlist_apply_plan",
-		pattern:      `^[[:space:]]*clear_rules$`,
+		regex:        `^[[:space:]]*clear_rules$`,
 		message:      "Expected dual-stack allowlist apply plan to avoid invoking clear_rules during render",
 		targetFile:   colimaEgressAllowlistRelPath,
 	},
@@ -4531,13 +4541,13 @@ func hostGateEntrypointSanitizeChecks(rootDir string) []check {
 		cs = append(cs,
 			check{
 				kind:       kindFirstLineRegex,
-				pattern:    `^#!/bin/bash -p$`,
+				regex:      `^#!/bin/bash -p$`,
 				message:    "Expected " + script + " to use an absolute privileged Bash shebang before self-sanitizing its host entrypoint",
 				targetFile: rel,
 			},
 			check{
 				kind:       kindRegexPresent,
-				pattern:    `WORKCELL_SANITIZED_ENTRYPOINT|trusted-entrypoint\.sh`,
+				regex:      `WORKCELL_SANITIZED_ENTRYPOINT|trusted-entrypoint\.sh`,
 				message:    "Expected " + script + " to self-sanitize its host entrypoint before running release or boundary checks",
 				targetFile: rel,
 			},
@@ -4566,7 +4576,7 @@ func CheckHostGateEntrypointSanitize(rootDir string) error {
 var precommitUpstreamPinGateChecks = []check{
 	{
 		kind:       kindRegexPresent,
-		pattern:    `scripts/update-upstream-pins\.sh" --check`,
+		regex:      `scripts/update-upstream-pins\.sh" --check`,
 		message:    "Expected repo pre-commit hook to gate commits on pending pinned upstream updates",
 		targetFile: ".githooks/pre-commit",
 	},
@@ -4620,19 +4630,19 @@ func trustedDockerClientRgChecks(rootDir string) []check {
 		cs = append(cs,
 			check{
 				kind:       kindRegexPresent,
-				pattern:    `source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"`,
+				regex:      `source "\$\{ROOT_DIR\}/scripts/lib/trusted-docker-client\.sh"`,
 				message:    "Expected " + script + " to source the trusted Docker client helper",
 				targetFile: rel,
 			},
 			check{
 				kind:       kindRegexPresent,
-				pattern:    `setup_workcell_trusted_docker_client`,
+				regex:      `setup_workcell_trusted_docker_client`,
 				message:    "Expected " + script + " to seed a trusted Docker client state before using Docker",
 				targetFile: rel,
 			},
 			check{
 				kind:       kindRegexPresent,
-				pattern:    `HOME=/tmp`,
+				regex:      `HOME=/tmp`,
 				message:    "Expected " + script + " to stop preserving caller HOME across its sanitized entrypoint re-exec",
 				targetFile: rel,
 			},
@@ -4642,7 +4652,7 @@ func trustedDockerClientRgChecks(rootDir string) []check {
 		script := rootDir + "/" + rel
 		cs = append(cs, check{
 			kind:       kindRegexPresent,
-			pattern:    `buildx_cmd `,
+			regex:      `buildx_cmd `,
 			message:    "Expected " + script + " to invoke buildx through the trusted absolute plugin path",
 			targetFile: rel,
 		})
@@ -4674,6 +4684,28 @@ func (c check) violationMessage(rootDir string) string {
 	return c.message
 }
 
+func (c check) validatePatternFields() error {
+	if c.usesRegex() {
+		if c.regex == "" || c.pattern != "" {
+			return errors.New("internal workcellhardening regex check must set regex and leave pattern empty")
+		}
+		return nil
+	}
+	if c.regex != "" {
+		return errors.New("internal workcellhardening fixed-string check must not set regex")
+	}
+	return nil
+}
+
+func (c check) usesRegex() bool {
+	switch c.kind {
+	case kindFirstLineRegex, kindRegexAbsent, kindRegexPresent, kindFunctionBlockRegex, kindFunctionBlockRegexAbsent:
+		return true
+	default:
+		return false
+	}
+}
+
 // holds reports whether the invariant is satisfied.  Content kinds inspect
 // text (the target file's contents); filesystem kinds (kindDirExists /
 // kindExecutable / kindFileExists) ignore text and stat rootDir/targetPath
@@ -4688,13 +4720,13 @@ func (c check) holds(text, rootDir string) bool {
 		return !strings.Contains(block, c.pattern)
 	case kindFunctionBlockRegex:
 		block := extractNamedFunctionBlock(text, c.functionName)
-		return regexMatchesAnyLine(c.pattern, block)
+		return regexMatchesAnyLine(c.regex, block)
 	case kindFunctionBlockRegexAbsent:
 		// Negated function_block_contains_regex: a regex match on any line of
 		// the extracted block is a violation, so the invariant holds only when
-		// the pattern matches no line of the block.
+		// regex matches no line of the block.
 		block := extractNamedFunctionBlock(text, c.functionName)
-		return !regexMatchesAnyLine(c.pattern, block)
+		return !regexMatchesAnyLine(c.regex, block)
 	case kindDirExists:
 		// `[[ ! -d "${ROOT_DIR}/PATH" ]]`: holds only when the path exists and
 		// is a directory.
@@ -4719,7 +4751,7 @@ func (c check) holds(text, rootDir string) bool {
 		block := extractGoFunctionBlock(text, c.functionName)
 		return strings.Contains(block, c.pattern)
 	case kindFirstLineRegex:
-		return regexp.MustCompile(c.pattern).MatchString(firstLine(text))
+		return regexp.MustCompile(c.regex).MatchString(firstLine(text))
 	case kindPresent:
 		return strings.Contains(text, c.pattern)
 	case kindPresentInAnyFile:
@@ -4741,9 +4773,9 @@ func (c check) holds(text, rootDir string) bool {
 	case kindAbsent:
 		return !strings.Contains(text, c.pattern)
 	case kindRegexAbsent:
-		return !regexMatchesAnyLine(c.pattern, text)
+		return !regexMatchesAnyLine(c.regex, text)
 	case kindRegexPresent:
-		return regexMatchesAnyLine(c.pattern, text)
+		return regexMatchesAnyLine(c.regex, text)
 	case kindJSONExprEval:
 		// Mirror `jq -e '<jsonPath> == <jsonExpectedRaw>' FILE`: parse the file as
 		// JSON, navigate the dotted object path, and compare the leaf to the RHS
