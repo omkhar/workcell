@@ -178,6 +178,93 @@ func TestLoadFailsOnSymlinkSigningDir(t *testing.T) {
 	}
 }
 
+// TestCheckStatEnforcesOwner (L201): the owner check reads unix.Stat_t.Uid
+// directly (no *unix.Stat_t type assertion on os.FileInfo.Sys(), which is
+// *syscall.Stat_t on Linux and would silently skip the check), so it runs on
+// every platform. A stat whose Uid != euid is rejected; the current euid passes.
+func TestCheckStatEnforcesOwner(t *testing.T) {
+	euid := uint32(os.Geteuid())
+
+	var mine unix.Stat_t
+	mine.Mode = unix.S_IFREG | 0o600
+	mine.Uid = euid
+	if err := checkStat("k", &mine, false, 0o077); err != nil {
+		t.Fatalf("owner==euid must pass: %v", err)
+	}
+
+	var other unix.Stat_t
+	other.Mode = unix.S_IFREG | 0o600
+	other.Uid = euid + 1
+	if err := checkStat("k", &other, false, 0o077); err == nil || !strings.Contains(err.Error(), "not owned by the current user") {
+		t.Fatalf("wrong-owner stat must be rejected, got %v", err)
+	}
+}
+
+// TestLoadFailsOnSymlinkSigningDirTrailingSlash (L181): a trailing separator must
+// not let a final-component symlink slip past O_NOFOLLOW — the dir path is
+// cleaned first.
+func TestLoadFailsOnSymlinkSigningDirTrailingSlash(t *testing.T) {
+	tmp := t.TempDir()
+	realDir := filepath.Join(tmp, "real")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	before, err := os.Stat(realDir)
+	if err != nil {
+		t.Fatalf("stat real: %v", err)
+	}
+	link := filepath.Join(tmp, "signing")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Fatalf("symlink dir: %v", err)
+	}
+	if _, _, err := LoadOrCreateSigningKey(link + string(os.PathSeparator)); err == nil ||
+		!(strings.Contains(err.Error(), "symlink") || strings.Contains(err.Error(), "not a directory")) {
+		t.Fatalf("symlinked signing dir with trailing slash must fail closed, got %v", err)
+	}
+	after, err := os.Stat(realDir)
+	if err != nil {
+		t.Fatalf("stat real after: %v", err)
+	}
+	if before.Mode().Perm() != after.Mode().Perm() {
+		t.Fatalf("symlink target mode changed: %o -> %o", before.Mode().Perm(), after.Mode().Perm())
+	}
+}
+
+// TestReuseFsyncsAfterFailedPublish (L218): if a publish renames the .pub then
+// its dir fsync fails (call errored, .pub live but maybe non-durable), the next
+// successful call must fsync the directory on the reuse fast-path before
+// returning success.
+func TestReuseFsyncsAfterFailedPublish(t *testing.T) {
+	orig := fsyncDir
+	t.Cleanup(func() { fsyncDir = orig })
+	dir := filepath.Join(t.TempDir(), "signing")
+
+	// First call: key-publish fsync OK, .pub-publish fsync fails -> call errors,
+	// but signing.key and <keyID>.pub are both on disk.
+	var n int
+	fsyncDir = func(fd int) error {
+		n++
+		if n == 2 {
+			return unix.EIO
+		}
+		return orig(fd)
+	}
+	if _, _, err := LoadOrCreateSigningKey(dir); err == nil {
+		t.Fatal("first call must fail on the .pub dir fsync")
+	}
+
+	// Second call: adopts the key and reuses the .pub; the reuse path must fsync
+	// the dir (count > 0) and succeed.
+	n = 0
+	fsyncDir = func(fd int) error { n++; return orig(fd) }
+	if _, _, err := LoadOrCreateSigningKey(dir); err != nil {
+		t.Fatalf("second call must succeed: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("the .pub reuse fast-path must fsync the directory")
+	}
+}
+
 // TestPublishFailsOnDirFsyncError (L224): a directory-fsync writeback failure in
 // the publish path must fail LoadOrCreateSigningKey (never return a keyID for a
 // key/pub that may not be durable) — for both the private-key and the .pub fsync.

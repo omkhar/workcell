@@ -133,6 +133,11 @@ func adoptSigningKey(dirFd int) (*ecdsa.PrivateKey, string, error) {
 // directory this validated — never a path that can be swapped. The caller closes
 // the returned fd.
 func ensureSecureDir(dir string) (*os.File, error) {
+	// Strip a trailing separator BEFORE the O_NOFOLLOW open: with a trailing slash
+	// (a configured `.../signing/`) the kernel resolves a final-component symlink
+	// before O_NOFOLLOW takes effect, so a symlinked dir would be accepted. Clean
+	// leaves the real dir name as the final component.
+	dir = filepath.Clean(dir)
 	// Create atomically if absent. os.Mkdir is atomic; a symlink (or anything
 	// else) already at this name makes it fail EEXIST, which we treat as "exists,
 	// verify below" — never adopt a name we did not create without an fd check.
@@ -152,23 +157,23 @@ func ensureSecureDir(dir string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := f.Stat()
+	st, err := fstatFd(int(f.Fd()))
 	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if uint32(st.Mode)&0o077 != 0 {
 		// Repair drifted perms via fchmod ON THE FD (the opened dir, not a name).
 		if cerr := f.Chmod(0o700); cerr != nil {
 			_ = f.Close()
 			return nil, cerr
 		}
-		if info, err = f.Stat(); err != nil {
+		if st, err = fstatFd(int(f.Fd())); err != nil {
 			_ = f.Close()
 			return nil, err
 		}
 	}
-	if err := validateSecureDirInfo(dir, info, 0o077); err != nil {
+	if err := checkStat(dir, &st, true, 0o077); err != nil {
 		_ = f.Close()
 		return nil, err
 	}
@@ -191,15 +196,35 @@ func openSecureDir(dir string) (*os.File, error) {
 	return f, nil
 }
 
-func validateSecureDirInfo(dir string, info os.FileInfo, maxOther os.FileMode) error {
-	if !info.IsDir() {
-		return fmt.Errorf("keystore: %s is not a directory; refusing to trust the key store", dir)
+// fstatFd fstats an open fd, always via unix.Fstat so it returns a *unix.Stat_t
+// on both darwin and linux. os.File.Stat().Sys() is *syscall.Stat_t on Linux (not
+// *unix.Stat_t), so a type assertion to *unix.Stat_t silently fails there and any
+// owner check keyed on it never runs — hence the direct fstat.
+func fstatFd(fd int) (unix.Stat_t, error) {
+	var st unix.Stat_t
+	err := unix.Fstat(fd, &st)
+	return st, err
+}
+
+// checkStat enforces, on a fstat result, that the object is the expected kind (a
+// regular file or a directory), owned by the current euid, and its perm bits set
+// none of maxOther. Reads mode/uid straight from unix.Stat_t so the owner check
+// runs on every platform. st.Mode is uint16 on darwin / uint32 on linux; widen
+// before masking.
+func checkStat(name string, st *unix.Stat_t, wantDir bool, maxOther os.FileMode) error {
+	mode := uint32(st.Mode)
+	if wantDir {
+		if mode&uint32(unix.S_IFMT) != uint32(unix.S_IFDIR) {
+			return fmt.Errorf("keystore: %s is not a directory; refusing to trust the key store", name)
+		}
+	} else if mode&uint32(unix.S_IFMT) != uint32(unix.S_IFREG) {
+		return fmt.Errorf("keystore: %s is not a regular file; refusing to trust the key store", name)
 	}
-	if info.Mode().Perm()&maxOther != 0 {
-		return fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", dir, info.Mode().Perm())
+	if mode&uint32(maxOther) != 0 {
+		return fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", name, mode&0o777)
 	}
-	if st, ok := info.Sys().(*unix.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
-		return fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", dir)
+	if st.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", name)
 	}
 	return nil
 }
@@ -215,6 +240,15 @@ func ensurePublicKey(dirFd int, keyID string, pub *ecdsa.PublicKey) error {
 	// to an atomic rewrite, so a suspect sidecar is never trusted.
 	if data, err := readAtSecure(dirFd, name, 0o022); err == nil {
 		if existing, perr := parsePublicKeyPEM(data); perr == nil && pub.Equal(existing) {
+			// Durability of the reuse path: a prior publish may have renamed this
+			// .pub into place but then failed its directory fsync (returning an
+			// error). This next successful call would otherwise reuse it and return
+			// success without any fsync, so the sidecar could stay non-durable. Fsync
+			// the directory now (and propagate a failure) so reuse also guarantees
+			// durability.
+			if ferr := fsyncDir(dirFd); ferr != nil {
+				return fmt.Errorf("keystore: fsync signing directory for existing %s: %w", name, ferr)
+			}
 			return nil
 		}
 	}
@@ -282,16 +316,18 @@ func LoadPublicKey(dir, keyID string) (*ecdsa.PublicKey, error) {
 // openValidatedDir opens dir O_NOFOLLOW|O_DIRECTORY and fstat-validates it (real
 // dir, owner euid, perms), returning the open fd for *at operations.
 func openValidatedDir(dir string, maxOther os.FileMode) (*os.File, error) {
+	// Strip a trailing separator so O_NOFOLLOW applies to the real final component.
+	dir = filepath.Clean(dir)
 	f, err := openSecureDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	info, err := f.Stat()
+	st, err := fstatFd(int(f.Fd()))
 	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
-	if err := validateSecureDirInfo(dir, info, maxOther); err != nil {
+	if err := checkStat(dir, &st, true, maxOther); err != nil {
 		_ = f.Close()
 		return nil, err
 	}
@@ -321,22 +357,14 @@ func openReadAtSecure(dirFd int, name string, maxOther os.FileMode) (*os.File, e
 		return nil, err
 	}
 	f := os.NewFile(uintptr(fd), name)
-	info, err := f.Stat()
+	st, err := fstatFd(int(f.Fd()))
 	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
-	if info.Mode()&os.ModeType != 0 {
+	if err := checkStat(name, &st, false, maxOther); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("keystore: %s is not a regular file; refusing to trust the key store", name)
-	}
-	if info.Mode().Perm()&maxOther != 0 {
-		_ = f.Close()
-		return nil, fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", name, info.Mode().Perm())
-	}
-	if st, ok := info.Sys().(*unix.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
-		_ = f.Close()
-		return nil, fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", name)
+		return nil, err
 	}
 	return f, nil
 }
