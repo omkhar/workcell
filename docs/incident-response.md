@@ -258,12 +258,26 @@ you can detect truncation or replacement of the durable log against a preserved
 snapshot (step 3). Cross-check the exported records, the timeline, and the
 preserved `workcell.audit.log` for consistency.
 
-**What does not exist yet.** There is **no cryptographic hash-chain
-verification** of session audit records today. Signed, tamper-evident audit
-records with external verification tooling are **roadmapped as A5**
-(["Signed Session Audit Records", milestone v0.15](../ROADMAP.md#track-a-boundary-depth-and-agent-threat-defenses)) —
-a `workcell session verify`-style command is planned there but is **not
-shipped**. Until A5 lands, integrity is host-preservation plus consistency
+**Cryptographic verification (A5).** Session audit records now form a signed,
+tamper-evident hash chain, and `workcell session verify --id SESSION_ID`
+recomputes that chain from the **authoritative** durable profile log and verifies
+the host-side signature over the chain head against the per-host signing key
+(["Signed Session Audit Records"](../ROADMAP.md#track-a-boundary-depth-and-agent-threat-defenses)).
+As a responder, run it against the suspect session: a `session_verify=verified`
+result means the audit chain is intact and its head is signed by this host's key,
+so the recorded events have not been altered offline. It fails closed (non-zero,
+no `verified`) on any tamper the chain detects — a flipped byte, a reordered,
+dropped, or duplicated record, an appended container-side line, an
+exported/copied log substituted for the real one, or a missing/mismatched seal.
+It does **not** defend against an attacker with host root who re-signs a rewritten
+chain with the host key (out of scope per the A5 threat model), so pair a
+`verified` result with the host-preservation and consistency cross-checks above
+rather than treating it as proof the host itself was not compromised.
+
+**What still relies on preservation.** For providers whose audit records carry no
+digest chain (e.g. the preview-only apple-container target), `session verify`
+fails closed as unsupported rather than asserting integrity; there, and for the
+host-root case above, integrity is host-preservation plus consistency
 cross-checks, not signature verification. Do not represent current audit records
 as cryptographically tamper-proof.
 

@@ -99,6 +99,10 @@ func run(args []string) error {
 		return cmdHelperSessionStopCli(args[1:])
 	case "session-timeline-cli":
 		return cmdHelperSessionTimelineCli(args[1:])
+	case "session-verify-cli":
+		return cmdHelperSessionVerifyCli(args[1:])
+	case "session-sign-head":
+		return cmdHelperSessionSignHead(args[1:])
 	case "support-bundle-cli":
 		return cmdHelperSupportBundleCli(args[1:])
 	case "support-bundle-usage":
@@ -370,6 +374,14 @@ func cmdHelperSessionTimelineCli(args []string) error {
 
 func cmdHelperSessionLogsCli(args []string) error {
 	return sessionctl.LogsMain(args)
+}
+
+func cmdHelperSessionVerifyCli(args []string) error {
+	return sessionctl.VerifyMain(args)
+}
+
+func cmdHelperSessionSignHead(args []string) error {
+	return sessionctl.SignHeadMain(args)
 }
 
 func cmdHelperSessionAttachCli(args []string) error {
@@ -1013,7 +1025,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 // already do); previously these returned plain errors and collapsed to the
 // exit-1 fallback, an intra-binary inconsistency (D8).
 func usage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|support-bundle-cli|support-bundle-usage> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-sign-head|support-bundle-cli|support-bundle-usage> [args...]"}
 }
 
 func pathUsage() error {

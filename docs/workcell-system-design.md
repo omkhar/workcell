@@ -371,6 +371,7 @@ surface includes:
 - `workcell session timeline`
 - `workcell session diff`
 - `workcell session export`
+- `workcell session verify`
 
 The supported operator inventory is maintained in
 [`policy/operator-contract.toml`](../policy/operator-contract.toml). This

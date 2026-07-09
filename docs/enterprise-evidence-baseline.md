@@ -29,6 +29,11 @@ Current audit and session evidence is host-local:
 - audit records are append-only text records with timestamps, event fields,
   assurance data, and chained record digests
 - launched sessions write durable JSON records under the same target-state root
+- session audit-chain heads are signed host-side, and
+  `workcell session verify` recomputes the chain from the authoritative log and
+  checks that signature — see
+  [signed-session-audit-records.md](signed-session-audit-records.md) for the
+  format and trust model (boundary/host-signed, not agent-signed)
 - `workcell session timeline` filters audit records for one session
 - `workcell session export` bundles a session record with matching audit records
 - durable session records intentionally survive `workcell --gc`

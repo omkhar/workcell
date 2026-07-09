@@ -746,6 +746,318 @@ grep -q '^target-audit-line$' <<<"${merged_audit_migration_output}"
   exit 1
 }
 
+# Concurrency guard: append_audit_record_to_path serializes the read-prev-digest
+# + append critical section under acquire_audit_log_lock so concurrent session
+# control paths (e.g. an async monitor exit-record racing session-control) cannot
+# each seed the same prev_digest and fork the hash chain. Drive N writers at one
+# log in parallel and assert the resulting chain is a single unbroken line: every
+# record links to the previous record_digest with no duplicate digests. Without
+# the lock each writer would read the same tail and fork, breaking the link.
+CONCURRENT_AUDIT_LOG="${TMP_DIR}/concurrent-audit/workcell.audit.log"
+concurrent_audit_writers="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    audit_path="$2"
+    for i in $(seq 1 8); do
+      append_audit_record_to_path "${audit_path}" event=e-"${i}" session_id=concurrent >/dev/null 2>&1 &
+    done
+    wait
+    printf "wrote=%s\n" "$(wc -l <"${audit_path}" | tr -d " ")"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${CONCURRENT_AUDIT_LOG}"
+)"
+grep -q '^wrote=8$' <<<"${concurrent_audit_writers}" || {
+  echo "concurrent audit appends did not all land (${concurrent_audit_writers})" >&2
+  exit 1
+}
+awk '
+  {
+    d = ""; p = "";
+    for (i = 1; i <= NF; i++) {
+      if ($i ~ /^record_digest=/) { sub(/^record_digest=/, "", $i); d = $i }
+      if ($i ~ /^prev_digest=/) { sub(/^prev_digest=/, "", $i); p = $i }
+    }
+    if (d == "") { printf "audit chain line %d missing record_digest\n", NR > "/dev/stderr"; bad = 1 }
+    if (NR > 1 && p != prev) { printf "audit chain forked at line %d (prev_digest not linked)\n", NR > "/dev/stderr"; bad = 1 }
+    if (seen[d]++) { printf "audit chain duplicated digest at line %d\n", NR > "/dev/stderr"; bad = 1 }
+    prev = d
+  }
+  END { if (bad) exit 1 }
+' "${CONCURRENT_AUDIT_LOG}" || {
+  echo "concurrent audit appends forked the hash chain" >&2
+  exit 1
+}
+
+# Subshell-holder stale reclaim: the audit-log lock records the holder as
+# ${BASHPID} (the real process), not $$. append_audit_record_to_path and the
+# signer take this lock from inside $()/backgrounded ( ) subshells; if such a
+# worker is killed before its cleanup rm -rf, a later append must see the dead
+# holder and reclaim the lock. Simulate exactly that: a backgrounded subshell
+# (BASHPID != parent $$) acquires the lock and is killed uncleanly, then assert a
+# subsequent append RECLAIMS the stale lock and appends quickly — not that it
+# waits out the ~30s budget. (With $$, the killed subshell would record the still
+# live parent PID, the lock would never look stale, and this append would time
+# out and skip.)
+RECLAIM_LOG="${TMP_DIR}/reclaim-audit/workcell.audit.log"
+reclaim_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    audit_path="$2"
+    lock_dir="${audit_path}.lock"
+    mkdir -p "$(dirname "${audit_path}")"
+    append_audit_record_to_path "${audit_path}" event=one session_id=reclaim >/dev/null
+    # Backgrounded subshell acquires the lock (BASHPID != parent $$) then is killed
+    # -9 before releasing it.
+    ( acquire_audit_log_lock "${lock_dir}"; sleep 60 ) &
+    holder_pid=$!
+    for _ in $(seq 1 200); do [[ -e "${lock_dir}" ]] && break; sleep 0.02; done
+    kill -9 "${holder_pid}" 2>/dev/null || true
+    wait "${holder_pid}" 2>/dev/null || true
+    start="$(date +%s)"
+    if append_audit_record_to_path "${audit_path}" event=two session_id=reclaim >/dev/null 2>&1; then
+      second="appended"
+    else
+      second="skipped"
+    fi
+    end="$(date +%s)"
+    printf "second=%s\n" "${second}"
+    printf "waited=%s\n" "$((end - start))"
+    printf "lines=%s\n" "$(wc -l <"${audit_path}" | tr -d " ")"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${RECLAIM_LOG}"
+)"
+grep -q '^second=appended$' <<<"${reclaim_output}" || {
+  echo "append behind a dead subshell holder did not reclaim the stale lock: ${reclaim_output}" >&2
+  exit 1
+}
+grep -q '^lines=2$' <<<"${reclaim_output}" || {
+  echo "reclaim append did not land (chain missing a record): ${reclaim_output}" >&2
+  exit 1
+}
+reclaim_waited="$(sed -n 's/^waited=//p' <<<"${reclaim_output}")"
+[[ "${reclaim_waited}" -le 15 ]] || {
+  echo "reclaim took ${reclaim_waited}s — the lock was not detected stale (holder recorded as \$\$, not BASHPID)" >&2
+  exit 1
+}
+
+# Stop-fallback signing: a detached session finalized via the host-stop-fallback
+# path (monitor no longer live) writes its terminal record WITHOUT running
+# finalize_session_audit, so sign_session_audit_head_explicit is the only thing
+# that produces the .audit-sig sidecar on that path. Drive the helper directly
+# with a fixture chain + record and assert (1) the sidecar is created next to the
+# record, and (2) with no audit-log chain the helper is a fail-closed no-op
+# (guard), so it never claims to sign a session with no chain. (The seal's
+# cryptographic validity and `session verify` end-to-end are covered by the Go
+# signhead/auditseal tests and the detached-lifecycle scenario below.)
+STOP_FALLBACK_FIXTURE="${TMP_DIR}/stop-fallback-sign"
+stop_fallback_sign_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    FIXTURE_ROOT="$2"
+    COLIMA_STATE_ROOT="${FIXTURE_ROOT}/colima"
+    WORKCELL_STATE_ROOT="${FIXTURE_ROOT}/workcell"
+    WORKCELL_TARGET_STATE_ROOT="${WORKCELL_STATE_ROOT}/targets"
+    PROFILE_NAME="stop-fallback-fixture"
+    SESSION_ID="stop-fallback-session"
+    # Pin the provider to a chained one so the head is signable.
+    SESSION_META_PROFILE="${PROFILE_NAME}"
+    SESSION_META_TARGET_PROVIDER="colima"
+    AUDIT_LOG="$(profile_audit_log_path "${PROFILE_NAME}")"
+    RECORD_PATH="$(profile_sessions_dir_path "${PROFILE_NAME}")/${SESSION_ID}.json"
+    mkdir -p "$(dirname "${RECORD_PATH}")"
+    printf "{\"session_id\":\"%s\"}\n" "${SESSION_ID}" >"${RECORD_PATH}"
+    # Build a genuine 2-record chain for the session via the real append path.
+    append_audit_record_to_path "${AUDIT_LOG}" event=launch session_id="${SESSION_ID}" >/dev/null
+    append_audit_record_to_path "${AUDIT_LOG}" event=exit session_id="${SESSION_ID}" source=host-stop-fallback >/dev/null
+    sign_session_audit_head_explicit "${PROFILE_NAME}" "${SESSION_ID}" "${RECORD_PATH}"
+    printf "seal_exists=%s\n" "$([[ -s "${RECORD_PATH%.json}.audit-sig" ]] && echo 1 || echo 0)"
+    # Negative control: a profile with no audit-log chain must yield NO seal.
+    EMPTY_RECORD="$(profile_sessions_dir_path "empty-fixture")/empty.json"
+    mkdir -p "$(dirname "${EMPTY_RECORD}")"
+    printf "{}\n" >"${EMPTY_RECORD}"
+    sign_session_audit_head_explicit "empty-fixture" "empty-session" "${EMPTY_RECORD}"
+    printf "empty_seal_exists=%s\n" "$([[ -e "${EMPTY_RECORD%.json}.audit-sig" ]] && echo 1 || echo 0)"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${STOP_FALLBACK_FIXTURE}"
+)"
+grep -q '^seal_exists=1$' <<<"${stop_fallback_sign_output}" || {
+  echo "stop-fallback path did not create a .audit-sig sidecar: ${stop_fallback_sign_output}" >&2
+  exit 1
+}
+grep -q '^empty_seal_exists=0$' <<<"${stop_fallback_sign_output}" || {
+  echo "stop-fallback signing must be a no-op when there is no audit chain: ${stop_fallback_sign_output}" >&2
+  exit 1
+}
+
+# Legacy-layout signer==verifier invariant: a LEGACY detached session's record
+# lives at <root>/<profile>/sessions/<id>.json and its records are appended to
+# <root>/<profile>/workcell.audit.log. The signer must recompute the head over
+# THAT log (grandparent-of-record), not profile_audit_log_path's newer
+# target-state log, so the seal it writes verifies. This asserts (1) the signer
+# derives the same canonical path `session verify` uses, and (2) the resulting
+# seal passes `session-verify-cli` for the legacy layout.
+LEGACY_SIGN_ROOT="${TMP_DIR}/legacy-sign"
+legacy_sign_verify_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    ROOT="$2"
+    WORKCELL_STATE_ROOT="${ROOT}/wstate"
+    SIGNING_DIR="${WORKCELL_STATE_ROOT}/signing"
+    PROFILE="wcl-legacy"
+    SID="legacy-sess"
+    SESSION_META_PROFILE="${PROFILE}"
+    SESSION_META_TARGET_PROVIDER="colima"
+    PROFILE_DIR="${ROOT}/${PROFILE}"
+    RECORD_PATH="${PROFILE_DIR}/sessions/${SID}.json"
+    LEGACY_LOG="${PROFILE_DIR}/workcell.audit.log"
+    mkdir -p "$(dirname "${RECORD_PATH}")"
+    append_audit_record_to_path "${LEGACY_LOG}" event=launch session_id="${SID}" >/dev/null
+    append_audit_record_to_path "${LEGACY_LOG}" event=exit session_id="${SID}" source=host-stop-fallback >/dev/null
+    printf "{\"version\":1,\"session_id\":\"%s\",\"profile\":\"%s\",\"target_provider\":\"colima\",\"agent\":\"codex\",\"mode\":\"strict\",\"status\":\"exited\",\"workspace\":\"/tmp/ws\",\"started_at\":\"2026-07-08T00:00:00Z\",\"finished_at\":\"2026-07-08T00:00:09Z\",\"exit_status\":\"0\",\"final_assurance\":\"managed-mutable\",\"audit_log_path\":\"%s\"}\n" "${SID}" "${PROFILE}" "${LEGACY_LOG}" >"${RECORD_PATH}"
+    # The signer must derive the SAME path verify derives (grandparent-of-record).
+    signer_path="$(dirname "$(dirname "${RECORD_PATH}")")/workcell.audit.log"
+    printf "signer_matches_legacy_log=%s\n" "$([[ "${signer_path}" == "${LEGACY_LOG}" ]] && echo 1 || echo 0)"
+    sign_session_audit_head_explicit "${PROFILE}" "${SID}" "${RECORD_PATH}"
+    printf "seal_exists=%s\n" "$([[ -s "${RECORD_PATH%.json}.audit-sig" ]] && echo 1 || echo 0)"
+    # Capture verify output BEFORE grepping: piping straight into `grep -q` under
+    # `set -o pipefail` is racy — grep -q exits on the first match (the leading
+    # `session_verify=verified` line) and closes the pipe, so the verifier can take
+    # SIGPIPE writing its remaining lines and exit non-zero, which pipefail then
+    # surfaces as a failed pipeline even though verification succeeded.
+    legacy_verify_out="$(go_hostutil session-verify-cli --root="${ROOT}" --id "${SID}" \
+      "--signing-dir=${SIGNING_DIR}" --real-home=/nonexistent 2>/dev/null || true)"
+    if grep -q "^session_verify=verified$" <<<"${legacy_verify_out}"; then
+      printf "verified=1\n"
+    else
+      printf "verified=0\n"
+    fi
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${LEGACY_SIGN_ROOT}"
+)"
+grep -q '^signer_matches_legacy_log=1$' <<<"${legacy_sign_verify_output}" || {
+  echo "signer path does not equal the legacy canonical log: ${legacy_sign_verify_output}" >&2
+  exit 1
+}
+grep -q '^seal_exists=1$' <<<"${legacy_sign_verify_output}" || {
+  echo "legacy session was not signed over its legacy log: ${legacy_sign_verify_output}" >&2
+  exit 1
+}
+grep -q '^verified=1$' <<<"${legacy_sign_verify_output}" || {
+  echo "legacy session seal did not verify (signer/verifier log mismatch): ${legacy_sign_verify_output}" >&2
+  exit 1
+}
+
+# Stop-path seal-missing recheck (TOCTOU): if the monitor is observed live when
+# session_stop_main checks, but exits before its own finalize signing, the
+# session would be left unsigned (the monitor-dead fallback no-ops for an
+# already-terminal record). session_stop_main now rechecks for a MISSING seal on
+# a terminal record and signs regardless of monitor liveness. Drive the race with
+# the monitor mocked always-live and no seal written: stop must seal it and it
+# must verify. Idempotent case: a terminal record that already has a seal is not
+# re-signed.
+STOP_RECHECK_ROOT="${TMP_DIR}/stop-recheck"
+for stop_recheck_mode in race idem; do
+  stop_recheck_output="$(
+    bash -lc '
+      set -euo pipefail
+      source "$1"
+      trap - EXIT
+      ROOT="$2"
+      MODE="$3"
+      WORKCELL_STATE_ROOT="${ROOT}/wstate"
+      SIGNING_DIR="${WORKCELL_STATE_ROOT}/signing"
+      PROFILE="wcl-stop-recheck"
+      SID="stop-recheck-sess"
+      PROFILE_DIR="${ROOT}/${PROFILE}"
+      RECORD_PATH="${PROFILE_DIR}/sessions/${SID}.json"
+      AUDIT_LOG="${PROFILE_DIR}/workcell.audit.log"
+      PHASE_FILE="${ROOT}/phase"
+      mkdir -p "$(dirname "${RECORD_PATH}")"
+      printf "pre\n" >"${PHASE_FILE}"
+      append_audit_record_to_path "${AUDIT_LOG}" event=launch session_id="${SID}" >/dev/null
+      append_audit_record_to_path "${AUDIT_LOG}" event=exit session_id="${SID}" >/dev/null
+      write_record() {
+        printf "{\"version\":1,\"session_id\":\"%s\",\"profile\":\"%s\",\"target_provider\":\"colima\",\"agent\":\"codex\",\"mode\":\"strict\",\"status\":\"%s\",\"live_status\":\"%s\",\"container_name\":\"c-race\",\"workspace\":\"/tmp/ws\",\"started_at\":\"2026-07-08T00:00:00Z\",\"finished_at\":\"2026-07-08T00:00:09Z\",\"exit_status\":\"0\",\"final_assurance\":\"managed-mutable\",\"audit_log_path\":\"%s\"}\n" "${SID}" "${PROFILE}" "$1" "$2" "${AUDIT_LOG}" >"${RECORD_PATH}"
+      }
+      write_record running running
+      SEAL_PATH="${RECORD_PATH%.json}.audit-sig"
+      if [[ "${MODE}" == "idem" ]]; then
+        # Simulate the live monitor having already signed.
+        SESSION_META_TARGET_PROVIDER=colima
+        sign_session_audit_head_explicit "${PROFILE}" "${SID}" "${RECORD_PATH}"
+        cp "${SEAL_PATH}" "${ROOT}/seal.before"
+      fi
+      # Mocks that route session_stop_main through the running -> stop -> terminal
+      # path with the monitor reported LIVE at every check (the race window).
+      exit() { return "${1:-0}"; }
+      session_run_cli_with_roots() { printf "session_id=%s\nforce=0\nprofile=%s\ncontainer_name=c-race\n" "${SID}" "${PROFILE}"; }
+      resolve_host_tool() { printf "/bin/false\n"; }
+      sanitize_host_docker_env() { :; }
+      load_session_runtime_metadata() {
+        SESSION_META_PROFILE="${PROFILE}"
+        SESSION_META_CONTAINER_NAME="c-race"
+        SESSION_META_RECORD_PATH="${RECORD_PATH}"
+        SESSION_META_CURRENT_ASSURANCE="managed-mutable"
+        SESSION_META_MONITOR_PID="4242"
+        SESSION_META_TARGET_PROVIDER="colima"
+        if [[ "$(<"${PHASE_FILE}")" == "pre" ]]; then
+          SESSION_META_STATUS="running"
+          SESSION_META_LIVE_STATUS="running"
+        else
+          SESSION_META_STATUS="exited"
+          SESSION_META_LIVE_STATUS="stopped"
+        fi
+      }
+      session_container_live_state() { [[ "$(<"${PHASE_FILE}")" == "pre" ]] && printf "running\n" || printf "stopped\n"; }
+      session_monitor_pid_is_live() { return 0; }
+      session_record_stop_request_marker() { return 0; }
+      session_clear_stop_request_marker() { return 0; }
+      append_session_control_audit_record() { :; }
+      session_write_stop_requested_terminal_record() { :; }
+      session_container_exit_code() { printf "0\n"; }
+      emit_loaded_session_control_summary() { :; }
+      # The stop transport "finalizes" the record to terminal (as the monitor
+      # would) but writes NO seal, then the monitor is gone.
+      run_profile_docker_command() {
+        shift
+        case "$1" in
+          stop | kill)
+            printf "post\n" >"${PHASE_FILE}"
+            write_record exited stopped
+            ;;
+          *) return 0 ;;
+        esac
+      }
+      session_stop_main --id "${SID}" >/dev/null 2>&1
+      printf "seal=%s\n" "$([[ -e "${SEAL_PATH}" ]] && echo 1 || echo 0)"
+      verify_out="$(go_hostutil session-verify-cli --root="${ROOT}" --id "${SID}" \
+        "--signing-dir=${SIGNING_DIR}" --real-home=/nonexistent 2>/dev/null || true)"
+      if grep -q "^session_verify=verified$" <<<"${verify_out}"; then printf "verified=1\n"; else printf "verified=0\n"; fi
+      if [[ "${MODE}" == "idem" ]]; then
+        cmp -s "${ROOT}/seal.before" "${SEAL_PATH}" && printf "unchanged=1\n" || printf "unchanged=0\n"
+      fi
+    ' _ "${WORKCELL_FUNCTIONS_COPY}" "${STOP_RECHECK_ROOT}.${stop_recheck_mode}" "${stop_recheck_mode}"
+  )"
+  grep -q '^seal=1$' <<<"${stop_recheck_output}" || {
+    echo "stop-recheck (${stop_recheck_mode}) did not seal a terminal session: ${stop_recheck_output}" >&2
+    exit 1
+  }
+  grep -q '^verified=1$' <<<"${stop_recheck_output}" || {
+    echo "stop-recheck (${stop_recheck_mode}) seal did not verify: ${stop_recheck_output}" >&2
+    exit 1
+  }
+  if [[ "${stop_recheck_mode}" == "idem" ]]; then
+    grep -q '^unchanged=1$' <<<"${stop_recheck_output}" || {
+      echo "stop-recheck idempotence broken: an already-sealed session was re-signed: ${stop_recheck_output}" >&2
+      exit 1
+    }
+  fi
+done
+
 monitor_env_output="$(
   bash -lc '
     set -euo pipefail
@@ -1923,10 +2235,12 @@ session_delete_cleanup_output="$(
     FILE_TRACE_LOG="${PROFILE_DIR}/detached.file-trace.log"
     TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
     SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
+    AUDIT_SEAL_PATH="${RECORD_PATH%.json}.audit-sig"
     mkdir -p "${PROFILE_DIR}/sessions"
     : >"${RECORD_FILE}"
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
+    printf "{\"version\":1}\n" >"${AUDIT_SEAL_PATH}"
     cat >"${RECORD_PATH}" <<EOF_JSON
 {
   "version": 1,
@@ -1980,11 +2294,12 @@ EOF_JSON
     test ! -e "${FILE_TRACE_LOG}"
     test ! -e "${SESSION_AUDIT_DIR}"
     test ! -e "${TRANSCRIPT_LOG}"
+    test ! -e "${AUDIT_SEAL_PATH}"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_CLEANUP_ROOT}" "${SESSION_DELETE_CLEANUP_RECORD}"
 )"
 grep -q '^session_id=detached-fixture$' <<<"${session_delete_cleanup_output}"
 grep -q '^deleted=1$' <<<"${session_delete_cleanup_output}"
-grep -q '^removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_cleanup_output}"
+grep -q '^removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_cleanup_output}"
 grep -q '^kept=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^missing=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^unavailable=none$' <<<"${session_delete_cleanup_output}"
@@ -2048,9 +2363,11 @@ session_delete_record_only_output="$(
     FILE_TRACE_LOG="${PROFILE_DIR}/detached.file-trace.log"
     TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
     SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
+    AUDIT_SEAL_PATH="${RECORD_PATH%.json}.audit-sig"
     mkdir -p "${PROFILE_DIR}/sessions"
     : >"${RECORD_FILE}"
     mkdir -p "${SESSION_AUDIT_DIR}"
+    printf "{\"version\":1}\n" >"${AUDIT_SEAL_PATH}"
     cat >"${RECORD_PATH}" <<EOF_JSON
 {
   "version": 1,
@@ -2097,12 +2414,13 @@ EOF_JSON
     test -e "${FILE_TRACE_LOG}"
     test -e "${SESSION_AUDIT_DIR}"
     test -e "${TRANSCRIPT_LOG}"
+    test -e "${AUDIT_SEAL_PATH}"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_RECORD_ONLY_ROOT}" "${SESSION_DELETE_RECORD_ONLY_RECORD}"
 )"
 grep -q '^deleted=1$' <<<"${session_delete_record_only_output}"
 grep -q '^record_only=1$' <<<"${session_delete_record_only_output}"
 grep -q '^removed=record$' <<<"${session_delete_record_only_output}"
-grep -q '^kept=container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_record_only_output}"
+grep -q '^kept=container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_record_only_output}"
 grep -q '^unavailable=none$' <<<"${session_delete_record_only_output}"
 if [[ -s "${SESSION_DELETE_RECORD_ONLY_RECORD}" ]]; then
   echo "session delete --record-only unexpectedly touched Docker resolution or transport" >&2
@@ -2124,9 +2442,11 @@ session_delete_dry_run_output="$(
     FILE_TRACE_LOG="${PROFILE_DIR}/detached.file-trace.log"
     TRANSCRIPT_LOG="${PROFILE_DIR}/detached.transcript.log"
     SESSION_AUDIT_DIR="${PROFILE_DIR}/session-audit.detached-fixture"
+    AUDIT_SEAL_PATH="${RECORD_PATH%.json}.audit-sig"
     mkdir -p "${PROFILE_DIR}/sessions"
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
+    printf "{\"version\":1}\n" >"${AUDIT_SEAL_PATH}"
     cat >"${RECORD_PATH}" <<EOF_JSON
 {
   "version": 1,
@@ -2177,11 +2497,12 @@ EOF_JSON
     test -e "${FILE_TRACE_LOG}"
     test -e "${SESSION_AUDIT_DIR}"
     test -e "${TRANSCRIPT_LOG}"
+    test -e "${AUDIT_SEAL_PATH}"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_DRY_RUN_ROOT}" "${SESSION_DELETE_DRY_RUN_RECORD}"
 )"
 grep -q '^deleted=0$' <<<"${session_delete_dry_run_output}"
 grep -q '^dry_run=1$' <<<"${session_delete_dry_run_output}"
-grep -q '^would_remove=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log$' <<<"${session_delete_dry_run_output}"
+grep -q '^would_remove=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_dry_run_output}"
 if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_DRY_RUN_RECORD}"; then
   echo "session delete --dry-run unexpectedly removed a container" >&2
   exit 1
@@ -2361,7 +2682,7 @@ EOF_JSON
 grep -q '^attach_output=attached$' <<<"${session_lifecycle_output}"
 grep -q '^send_output=session_id=detached-lifecycle|sent_bytes=7|status=running|live_status=running|control_mode=detached|target_kind=local_vm|target_provider=colima|target_id=wcl-detached-lifecycle|target_summary=local_vm/colima/wcl-detached-lifecycle|target_assurance_class=strict|runtime_api=docker|workspace_transport=workspace-mount|workspace='"${WORKSPACE_A}"'|display_workspace='"${WORKSPACE_A}"'|workspace_origin='"${WORKSPACE_A}"'|display_worktree='"${WORKSPACE_A}"'|worktree_path='"${WORKSPACE_A}"'|display_git_branch=none|git_branch=|assurance=managed-mutable|$' <<<"${session_lifecycle_output}"
 grep -q '^stop_output=session_id=detached-lifecycle|stop_requested=1|status=exited|live_status=stopped|control_mode=detached|target_kind=local_vm|target_provider=colima|target_id=wcl-detached-lifecycle|target_summary=local_vm/colima/wcl-detached-lifecycle|target_assurance_class=strict|runtime_api=docker|workspace_transport=workspace-mount|workspace='"${WORKSPACE_A}"'|display_workspace='"${WORKSPACE_A}"'|workspace_origin='"${WORKSPACE_A}"'|display_worktree='"${WORKSPACE_A}"'|worktree_path='"${WORKSPACE_A}"'|display_git_branch=none|git_branch=|assurance=managed-mutable|$' <<<"${session_lifecycle_output}"
-grep -q '^delete_output=session_id=detached-lifecycle|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${session_lifecycle_output}"
+grep -q '^delete_output=session_id=detached-lifecycle|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal|kept=none|missing=none|unavailable=none|$' <<<"${session_lifecycle_output}"
 test -f "${SESSION_LIFECYCLE_AUDIT_LOG}"
 grep -q '^transport|wcl-detached-lifecycle|attach --no-stdin workcell-session-fixture$' "${SESSION_LIFECYCLE_RECORD}"
 grep -q '^transport|wcl-detached-lifecycle|exec --user ' "${SESSION_LIFECYCLE_RECORD}"
@@ -2665,6 +2986,34 @@ PY
     }
     grep -q "session attach requires a detached session that is still running: ${SESSION_ID}" <<<"${dead_attach_stderr}"
 
+    # The stop-fallback path (monitor was killed above) must still sign the
+    # session head, so `session verify` passes on this genuinely-stopped session
+    # instead of failing it closed as unsigned.
+    test -s "${SESSIONS_DIR}/${SESSION_ID}.audit-sig"
+    verify_stopped="$("${ROOT_DIR}/scripts/workcell" session verify --id "${SESSION_ID}")"
+    grep -q "^session_verify=verified$" <<<"${verify_stopped}"
+    grep -q "^session_id=${SESSION_ID}$" <<<"${verify_stopped}"
+
+    # Trust boundary: the host-owned --signing-dir must not be user-overridable.
+    # A forged .audit-sig under an attacker-controlled key dir must never be
+    # accepted, so a user-supplied --signing-dir is rejected (exit 2) BEFORE the
+    # helper runs and never reports "verified".
+    EVIL_SIGNING_DIR="${PROFILE_DIR}/evil-signing"
+    mkdir -p "${EVIL_SIGNING_DIR}"
+    set +e
+    verify_evil_output="$("${ROOT_DIR}/scripts/workcell" session verify --id "${SESSION_ID}" --signing-dir "${EVIL_SIGNING_DIR}" 2>&1)"
+    verify_evil_rc="$?"
+    set -e
+    [[ "${verify_evil_rc}" -eq 2 ]] || {
+      echo "user-supplied --signing-dir was not rejected (rc=${verify_evil_rc})" >&2
+      exit 1
+    }
+    grep -q "signing-dir is not a user-configurable option" <<<"${verify_evil_output}"
+    if grep -q "session_verify=verified" <<<"${verify_evil_output}"; then
+      echo "rejected verify with forged --signing-dir still reported verified" >&2
+      exit 1
+    fi
+
     delete_output="$("${ROOT_DIR}/scripts/workcell" session delete --id "${SESSION_ID}")"
     grep -q "event=command session_id=${SESSION_ID} source=host-cli command=session-send argv=resume" "${AUDIT_LOG}"
     grep -q "event=stop-request session_id=${SESSION_ID}" "${AUDIT_LOG}"
@@ -2689,7 +3038,7 @@ PY
     grep -q '^cli_stdin_payload=resume$' <<<"${cli_lifecycle_output}"
     grep -Eq '^cli_send_output=session_id=cli-life-[0-9]+[|]sent_bytes=7[|]status=running[|]live_status=running[|]control_mode=detached[|]target_kind=local_vm[|]target_provider=colima[|]target_id=wcl-cli-life-[0-9]+[|]target_summary=local_vm/colima/wcl-cli-life-[0-9]+[|]target_assurance_class=strict[|]runtime_api=docker[|]workspace_transport=isolated-worktree-mount[|]workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]workspace_origin=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_worktree=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]worktree_path=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]display_git_branch=none[|]git_branch=[|]assurance=managed-mutable[|]$' <<<"${cli_lifecycle_output}"
     grep -Eq '^cli_stop_output=session_id=cli-life-[0-9]+[|]stop_requested=1[|]status=exited[|]live_status=stopped[|]control_mode=detached[|]target_kind=local_vm[|]target_provider=colima[|]target_id=wcl-cli-life-[0-9]+[|]target_summary=local_vm/colima/wcl-cli-life-[0-9]+[|]target_assurance_class=strict[|]runtime_api=docker[|]workspace_transport=isolated-worktree-mount[|]workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_workspace=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]workspace_origin=.*/workcell-cli-lifecycle-workspace\.[^|]+[|]display_worktree=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]worktree_path=.*/workcell-cli-lifecycle-workspace\.[^|]+/.git/workcell-sessions/cli-life-[0-9]+/repo[|]display_git_branch=none[|]git_branch=[|]assurance=managed-mutable[|]$' <<<"${cli_lifecycle_output}"
-    grep -q '^cli_delete_output=session_id=cli-life-[0-9]\+|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log|kept=none|missing=none|unavailable=none|$' <<<"${cli_lifecycle_output}"
+    grep -q '^cli_delete_output=session_id=cli-life-[0-9]\+|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal|kept=none|missing=none|unavailable=none|$' <<<"${cli_lifecycle_output}"
   else
     echo "Skipping public CLI detached workload integration: no healthy Docker context available" >&2
   fi

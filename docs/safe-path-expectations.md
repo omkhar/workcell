@@ -62,6 +62,7 @@ workcell session logs --id 20260408T120000Z-1a2b3c4d --kind audit
 workcell session timeline --id 20260408T120000Z-1a2b3c4d
 workcell session diff --id 20260408T120000Z-1a2b3c4d
 workcell session export --id 20260408T120000Z-1a2b3c4d --output /tmp/workcell-session.json
+workcell session verify --id 20260408T120000Z-1a2b3c4d
 workcell policy show
 workcell policy diff
 workcell why --agent codex --mode strict --credential codex_auth
