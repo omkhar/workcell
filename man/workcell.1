@@ -750,6 +750,7 @@ Detached session lifecycle on the host:
 workcell session start --agent codex --workspace /path/to/repo
 workcell session list
 workcell session list --verbose
+workcell session list --parallel
 workcell session send --id SESSION_ID --message "continue with tests"
 workcell session stop --id SESSION_ID
 workcell session show --id SESSION_ID
@@ -759,6 +760,13 @@ workcell session delete --id SESSION_ID
 .PP
 The verbose inventory adds target, workspace transport, git branch, and
 worktree columns without changing the default compact table.
+The parallel inventory instead groups sessions by their origin repository so
+concurrent sessions launched against one repo render as a single topology,
+each sibling on its own isolated worktree, git branch, and container. It emits
+one stable key=value field per line (the same space-safe idiom as
+.B session show --text
+), so a parser recovers each value \(em including a workspace path with embedded
+spaces \(em as the remainder of its line after the first equals sign.
 .B workcell session show --text
 and the detached control commands
 .BR "workcell session start" ,

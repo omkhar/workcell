@@ -50,6 +50,7 @@ workcell --target gcp-vm --target-id workcell-phase8-cert --agent codex --worksp
 workcell --agent codex --mode development --workspace /path/to/repo -- bash -lc 'git status'
 workcell session list
 workcell session list --verbose
+workcell session list --parallel
 workcell session start --agent codex --workspace /path/to/repo
 workcell session delete --id SESSION_ID
 workcell session attach --id 20260408T120000Z-1a2b3c4d
@@ -96,6 +97,18 @@ gates, see [aws-ec2-ssm-preview.md](aws-ec2-ssm-preview.md) and
 
 `workcell session list --verbose` adds target, workspace transport, git branch,
 and worktree columns without changing the default compact inventory view.
+`workcell session list --parallel` groups sessions by their origin repository so
+concurrent sessions launched against one repo (each started with
+`--session-workspace isolated`, which clones a clean workspace into its own git
+branch and container) render as a single parallel topology with each sibling's
+isolated worktree, git branch, and container. Note that same-repo isolated
+siblings share one Colima VM: the profile is derived from the original workspace
+path, so they resolve to the same profile and VM (distinct clones, branches, and
+containers, but a shared VM/kernel). Pass a distinct `--colima-profile` to place
+a session on its own VM. The `--parallel` inventory emits one stable `key=value`
+field per line (the same space-safe idiom as `workcell session show --text`), so
+a parser recovers each value—including a workspace path containing spaces—as the
+remainder of its line after the first `=`.
 `workcell session show --text` renders stable key=value lines for the same
 target-aware record, and `workcell session start|send|stop` emit stable
 key=value summaries so host-side detached control stays scriptable.

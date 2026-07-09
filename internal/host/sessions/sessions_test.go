@@ -1020,3 +1020,109 @@ func writeSessionFixture(tb testing.TB, path string, record SessionRecord) {
 		tb.Fatal(err)
 	}
 }
+
+func TestSessionParallelGroupKeyPrefersOrigin(t *testing.T) {
+	t.Parallel()
+	isolated := SessionRecord{Workspace: "/clones/s1/repo", WorkspaceOrigin: "/src/repo"}
+	if got := SessionParallelGroupKey(isolated); got != "/src/repo" {
+		t.Fatalf("isolated group key = %q, want /src/repo", got)
+	}
+	direct := SessionRecord{Workspace: "/src/repo", WorkspaceOrigin: "/src/repo"}
+	if got := SessionParallelGroupKey(direct); got != "/src/repo" {
+		t.Fatalf("direct group key = %q, want /src/repo", got)
+	}
+	originless := SessionRecord{Workspace: "/src/repo"}
+	if got := SessionParallelGroupKey(originless); got != "/src/repo" {
+		t.Fatalf("originless group key = %q, want /src/repo", got)
+	}
+}
+
+func TestGroupParallelSessionsClustersSiblingsByOrigin(t *testing.T) {
+	t.Parallel()
+	// Two isolated sessions launched against the same repo: distinct workspace
+	// clones and containers, shared origin -> one parallel group of two.
+	sibA := SessionRecord{SessionID: "a", Workspace: "/clones/a/repo", WorkspaceOrigin: "/src/repo", ContainerName: "workcell-a"}
+	sibB := SessionRecord{SessionID: "b", Workspace: "/clones/b/repo", WorkspaceOrigin: "/src/repo", ContainerName: "workcell-b"}
+	other := SessionRecord{SessionID: "c", Workspace: "/src/other", WorkspaceOrigin: "/src/other", ContainerName: "workcell-c"}
+
+	groups := GroupParallelSessions([]SessionRecord{sibA, sibB, other})
+	if len(groups) != 2 {
+		t.Fatalf("group count = %d, want 2", len(groups))
+	}
+	// Groups are ordered by origin key: /src/other before /src/repo.
+	if groups[0].OriginKey != "/src/other" || len(groups[0].Members) != 1 {
+		t.Fatalf("group[0] = %+v, want /src/other with 1 member", groups[0])
+	}
+	if groups[1].OriginKey != "/src/repo" || len(groups[1].Members) != 2 {
+		t.Fatalf("group[1] = %+v, want /src/repo with 2 members", groups[1])
+	}
+	// Member order within a group is preserved from the input (newest-first).
+	if groups[1].Members[0].SessionID != "a" || groups[1].Members[1].SessionID != "b" {
+		t.Fatalf("group[1] member order = %q,%q, want a,b", groups[1].Members[0].SessionID, groups[1].Members[1].SessionID)
+	}
+}
+
+func TestSessionParallelInventoryLinesRendersTopology(t *testing.T) {
+	t.Parallel()
+	groups := []ParallelSessionGroup{{
+		OriginKey: "/src/repo",
+		Members: []SessionRecord{
+			{SessionID: "a", LiveStatus: "running", Agent: "codex", Mode: "strict", GitBranch: "workcell/session-a", Workspace: "/clones/a/repo", WorkspaceOrigin: "/src/repo", WorktreePath: "/clones/a/repo", ContainerName: "workcell-a", MonitorPID: "4242", SessionAuditDir: "/audit/a", Status: "running"},
+		},
+	}}
+	want := []string{
+		"origin=/src/repo",
+		"sessions=1",
+		"session_id=a",
+		"live_status=running",
+		"control=detached",
+		"agent=codex",
+		"mode=strict",
+		"git_branch=workcell/session-a",
+		"worktree=/clones/a/repo",
+		"container_name=workcell-a",
+	}
+	got := SessionParallelInventoryLines(groups)
+	if len(got) != len(want) {
+		t.Fatalf("line count = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("line %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestSessionParallelInventoryLinesSpacePathRoundTrips is the load-bearing proof
+// that the one-field-per-line encoding recovers path values containing spaces
+// exactly. Session records only reject newlines in field values, so a valid
+// workspace like "/tmp/My Repo" must survive rendering; a parser that splits
+// each line on the first '=' (as shellproto_field does) recovers the full path.
+func TestSessionParallelInventoryLinesSpacePathRoundTrips(t *testing.T) {
+	t.Parallel()
+	origin := "/tmp/My Repo"
+	worktree := "/tmp/My Repo/clones/session a/repo"
+	container := "workcell-session a"
+	groups := GroupParallelSessions([]SessionRecord{
+		{SessionID: "s1", LiveStatus: "running", Agent: "codex", Mode: "strict", GitBranch: "workcell/session-s1", Workspace: worktree, WorkspaceOrigin: origin, WorktreePath: worktree, ContainerName: container, Status: "running"},
+	})
+	lines := SessionParallelInventoryLines(groups)
+
+	fields := map[string]string{}
+	for _, line := range lines {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			t.Fatalf("line %q is not key=value", line)
+		}
+		fields[key] = value
+	}
+	if fields["origin"] != origin {
+		t.Fatalf("origin recovered as %q, want %q", fields["origin"], origin)
+	}
+	if fields["worktree"] != worktree {
+		t.Fatalf("worktree recovered as %q, want %q", fields["worktree"], worktree)
+	}
+	if fields["container_name"] != container {
+		t.Fatalf("container_name recovered as %q, want %q", fields["container_name"], container)
+	}
+}

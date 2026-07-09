@@ -44,6 +44,8 @@ Commands:
     --json                    Emit machine-readable JSON instead of the default table with live status and control
     --verbose                 Emit a wider text table with target, workspace transport,
                               branch, and worktree metadata
+    --parallel                Group sessions by origin repository to show the parallel
+                              topology: each sibling's isolated worktree, branch, and container
 
   show
     --id SESSION_ID           Show one recorded session
