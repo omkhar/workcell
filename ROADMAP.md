@@ -485,10 +485,13 @@ security-boundary product to prove.
   allowlist check
 - **B5 (now, S):** audit-trail retention policy with extended
   release-evidence retention and post-expiry attestation/Rekor guidance
-- **B6 (next, L):** real-boundary certification lane on Apple Silicon runner
-  infrastructure, gated on the CI threat model
-- **B7 (now, S → later, L):** OpenSSF Best Practices badge now; funded
-  third-party boundary audit post-1.0
+- **B6 (post-1.0, L):** real-boundary certification lane on Apple Silicon runner
+  infrastructure, gated on the CI threat model — deferred to post-1.0 by the
+  2026-07-09 criterion-6 amendment (no runner funding); 1.0 uses local-operator
+  certification of both boundaries instead
+- **B7 (post-1.0, S + L):** OpenSSF Best Practices badge and funded
+  third-party boundary audit — both deferred to post-1.0 by the 2026-07-09
+  criterion-2/6 amendment
 - **B8 (next, M):** CI efficiency and reliability program — nightly
   reproducibility split, retries, flake tracking, cost visibility
 - **B9 (next, M):** CI/CD threat model covering secrets, runner trust tiers,

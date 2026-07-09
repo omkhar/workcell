@@ -59,11 +59,11 @@ The milestone ordering answers the current landscape directly:
 | Milestone | Theme | Contents |
 |---|---|---|
 | v0.12 | Containment and hygiene | A2, A7, B3, B4, B5, D1, D2, E3, E4 |
-| v0.13 | Boundary depth and stability | A1, A3, A4, B1, B7 (badge), C5, D8, E1, E2, F3, G1 (inventory) |
+| v0.13 | Boundary depth and stability | A1, A3, A4, B1, C5, D8, E1, E2, F3, G1 (inventory) |
 | v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E6, E7, G2, Antigravity Tier 1 adapter track |
-| v0.15 | Enterprise evidence and release assurance | A5, A6, B2, B6, C3, D5, D7, F1, G3 |
+| v0.15 | Enterprise evidence and release assurance | A5, A6, B2, C3, D5, D7, F1, G3 |
 | v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
-| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B7 (audit completion), F2 |
+| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B6 (automated real-boundary lane), B7 (badge + audit completion), F2 |
 
 Items inside a milestone are independently shippable and individually
 reviewable. Later-milestone items may start early when nothing earlier gates
@@ -367,7 +367,8 @@ isolation would be a stronger and lighter boundary than one shared Colima VM.
   verification assumptions, signing-compromise incident response.
 - Exit gates: doc reviewed; SECURITY.md links it.
 - Validation: docs lanes; security review lens.
-- Size: M. Dependencies: none. Gates B6 in v0.15.
+- Size: M. Dependencies: none. Gated B6, now deferred to post-1.0 (2026-07-09
+  criterion-6 amendment).
 
 ### D3 (start): Migrate Largest Orchestration Scripts To Go
 
@@ -679,8 +680,9 @@ shortcut to the Tier 1 evidence bar.
 
 - Steps: scope an external audit of the runtime boundary (Rust shim, VM and
   container configuration, credential staging); pursue funding (OSTIF or
-  sponsor); remediate and publish results. Scheduling the audit is a 1.0
-  criterion; completing it is post-1.0 work.
+  sponsor); remediate and publish results. Scheduling the audit was originally a
+  1.0 criterion but is **deferred to post-1.0 by the 2026-07-09 criterion-2
+  amendment** (no audit sponsor/funding); completing it remains post-1.0 work.
 - Exit gates: audit report published; findings triaged to closure or
   explicit acceptance.
 - Size: L. Dependencies: A3, A4, D5 (audit-ready code).
