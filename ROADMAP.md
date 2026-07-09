@@ -124,8 +124,14 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
    repo-defined MCP and
    agent-config containment (A2), hardening-profile conformance (A6),
    expanded fuzzing (A3), documented unsafe-code invariants (A4), and signed
-   session audit records (A5) are landed; a third-party boundary audit is
-   scheduled or complete (B7).
+   session audit records (A5) are landed. **[Amended 2026-07-09, recorded
+   maintainer decision:]** the third-party boundary audit (B7) is **deferred to
+   post-1.0** rather than required to be scheduled at 1.0. 1.0 boundary
+   assurance rests on the landed A1–A6 hardening plus the documented threat
+   model and invariants; the external audit remains a post-1.0 commitment (see
+   the phase table). Tradeoff recorded honestly: 1.0 ships without independent
+   third-party validation of the boundary, reflecting current maintainer
+   resourcing (no audit sponsor/funding).
 3. Platform: `macos/arm64` strict (Colima) and compat (Docker Desktop) are
    certified on the release matrix; the Apple `container` backend decision
    (C1) is recorded either way; session start latency targets (C2) are met
@@ -138,9 +144,18 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
 5. Operations: install, upgrade, uninstall, rollback, `--gc`, and support
    bundles (G2) are proven end to end on the release matrix (G3).
 6. Release assurance: dual-control releases (B2), mutation-score gating
-   (B3), SLSA L3 gaps closed or explicitly dispositioned (B1), OpenSSF Best
-   Practices badge (B7), and a real-boundary certification lane (B6) are in
-   place.
+   (B3), and SLSA L3 gaps closed or explicitly dispositioned (B1) are in
+   place. **[Amended 2026-07-09, recorded maintainer decision:]** the automated
+   real-boundary certification lane (B6, a self-hosted Apple-Silicon CI runner)
+   and the OpenSSF Best Practices badge (B7 part 1) are **deferred to post-1.0**
+   — no funding or hosting for a self-hosted runner is available, and the B7
+   track is deferred with the audit (criterion 2). In place of the automated B6
+   lane, 1.0 requires **local-operator certification of both launch boundaries
+   (strict Colima + compat Docker Desktop) on the maintainer's Apple-Silicon
+   host**, recorded in the readiness review. Tradeoff recorded honestly: the
+   live Colima/Apple-Silicon boundary is exercised by the maintainer locally,
+   not continuously in hosted CI (which runs only a Docker smoke lane on a
+   `ubuntu-latest` runner).
 7. Adoption surface: tiered docs (E1), architecture diagrams (E2), a
    rendered docs site with demos and reproducible benchmarks (E6), and the
    support-tier and diagnostics guides (E3) are live.
@@ -149,12 +164,15 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
    release lenses — records no unresolved P0/P1 findings, and every support
    matrix row matches shipped behavior.
 
-The G4 evidence package and its go/no-go checklist are drafted for maintainer
-sign-off in
+The G4 evidence package and its go/no-go checklist live in
 [`docs/1.0-readiness-review-draft.md`](docs/1.0-readiness-review-draft.md); the
-B6 (item 6) real-boundary certification lane disposition options are drafted in
+B6 (item 6) real-boundary certification lane disposition options are in
 [`docs/b6-disposition-options-draft.md`](docs/b6-disposition-options-draft.md).
-Both are DRAFTs — the maintainer records the G4 decision and the B6 disposition.
+**Recorded maintainer decisions (2026-07-09):** B6 — defer the automated
+Apple-Silicon runner (no funding); certify both boundaries by the local-operator
+discipline on the maintainer's host (criterion 6, amended above). B7 — defer the
+third-party boundary audit and OpenSSF badge to post-1.0 (criterion 2, amended
+above). See the readiness review for the recorded G4 checklist state.
 
 ### Milestone Train
 
@@ -168,9 +186,9 @@ live in
 | v0.12 | Containment and hygiene | A2, A7, B3, B4, B5, D1, D2, E3, E4 |
 | v0.13 | Boundary depth and stability | A1, A3, A4, B1, B7 (badge), C5, D8, E1, E2, F3, G1 (inventory) |
 | v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E6, E7, G2, Antigravity Tier 1 adapter track |
-| v0.15 | Enterprise evidence and release assurance | A5, A6, B2, B6, C3, D5, D7, F1, G3 |
+| v0.15 | Enterprise evidence and release assurance | A5, A6, B2, C3, D5, D7, F1, G3 |
 | v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
-| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B7 (audit completion), F2 |
+| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B6 (automated real-boundary lane), B7 (badge + audit completion), F2 |
 
 Phase 13 (Linux `amd64` `local_compat` certification candidate) may land
 before or after 1.0 depending on certification evidence; it does not gate
