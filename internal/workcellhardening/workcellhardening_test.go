@@ -7328,3 +7328,64 @@ func TestCheckTrustedDockerClientRgRealRepo(t *testing.T) {
 		t.Fatalf("CheckTrustedDockerClientRg(real repo) = %v, want nil", err)
 	}
 }
+
+// claudeUserSettingsRelPath is the repo-relative path to the shipped Claude
+// adapter user settings file. verify-invariants.sh passes
+// "${ROOT_DIR}/adapters/claude/.claude/settings.json" to the two Claude
+// settings-file guards (CheckClaudeMcpProjectServers and
+// CheckClaudeGuardBashHook); these real-repo assertions read the same file so a
+// mistranscribed jq path or expected literal is caught against the shipped
+// artifact, not just synthetic fixtures. This closes the D3 tail for the Claude
+// and Gemini adapter-settings groups (see the "Parity discipline" note in
+// workcellhardening.go).
+const claudeUserSettingsRelPath = "adapters/claude/.claude/settings.json"
+
+func TestCheckClaudeMcpProjectServersRealRepo(t *testing.T) {
+	settingsPath := filepath.Join("..", "..", claudeUserSettingsRelPath)
+	if _, err := os.Stat(settingsPath); err != nil {
+		t.Skipf("real %s not found: %v", claudeUserSettingsRelPath, err)
+	}
+	if err := CheckClaudeMcpProjectServers(settingsPath); err != nil {
+		t.Fatalf("CheckClaudeMcpProjectServers(real repo) = %v, want nil", err)
+	}
+}
+
+func TestCheckClaudeGuardBashHookRealRepo(t *testing.T) {
+	settingsPath := filepath.Join("..", "..", claudeUserSettingsRelPath)
+	if _, err := os.Stat(settingsPath); err != nil {
+		t.Skipf("real %s not found: %v", claudeUserSettingsRelPath, err)
+	}
+	if err := CheckClaudeGuardBashHook(settingsPath); err != nil {
+		t.Fatalf("CheckClaudeGuardBashHook(real repo) = %v, want nil", err)
+	}
+}
+
+func TestCheckClaudeManagedBypassRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, claudeManagedSettingsRelPath)); err != nil {
+		t.Skipf("real %s not found: %v", claudeManagedSettingsRelPath, err)
+	}
+	if err := CheckClaudeManagedBypass(repoRoot); err != nil {
+		t.Fatalf("CheckClaudeManagedBypass(real repo) = %v, want nil", err)
+	}
+}
+
+func TestCheckGeminiSettingsBaselineRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, geminiSettingsRelPath)); err != nil {
+		t.Skipf("real %s not found: %v", geminiSettingsRelPath, err)
+	}
+	if err := CheckGeminiSettingsBaseline(repoRoot); err != nil {
+		t.Fatalf("CheckGeminiSettingsBaseline(real repo) = %v, want nil", err)
+	}
+}
+
+func TestCheckGeminiSettingsGuardsRealRepo(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(repoRoot, geminiSettingsRelPath)); err != nil {
+		t.Skipf("real %s not found: %v", geminiSettingsRelPath, err)
+	}
+	if err := CheckGeminiSettingsGuards(repoRoot); err != nil {
+		t.Fatalf("CheckGeminiSettingsGuards(real repo) = %v, want nil", err)
+	}
+}

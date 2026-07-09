@@ -600,6 +600,48 @@ shortcut to the Tier 1 evidence bar.
   implementations with equal or better coverage; shell originals removed or
   reduced to thin shims.
 
+- Status (recorded 2026-07-08, evidence-based): the BULK of the
+  `verify-invariants` **static-invariant** scope is migrated to Go and the
+  real-repo test tail is closed, but the migration is NOT complete. Most static
+  file-content, regex, function-block, filesystem (`-d`/`-x`/`-f`), and
+  JSON-expression (`jq -e` scalar/array/index/truthiness/type) invariants live in
+  `internal/workcellhardening` behind `cmd/workcell-citools` subcommands, invoked
+  from `scripts/verify-invariants.sh` via 50 `go_verify_citools` delegations, and
+  every migrated static-file group now carries a `TestCheckXxxRealRepo` assertion
+  against the shipped artifacts (the five Claude/Gemini adapter-settings groups
+  were the last backfilled). A narrow `rg -q .*${ROOT_DIR}` / `grep -Fq` census
+  returns zero, but that census UNDERSTATES the remainder: a residual of static
+  repo-file assertions still runs inline in `scripts/verify-invariants.sh` using
+  `sed`/`awk` rather than `rg`/`grep`. Concrete example: the `run_in_vm`
+  awk-ordering block `sed`-extracts the `run_in_vm()` function from
+  `${ROOT_DIR}/scripts/colima-egress-allowlist.sh` and awk-asserts its
+  initialize-order — a static repo-file content assertion still outside the Go
+  engine. Migrating (or thin-shimming) that static remainder, preserving
+  first-failure order, is the literal D3-complete exit gate — a REMAINING lane,
+  not already-done. A genuinely non-static tail also stays in bash by design
+  (`jq -r` guards over runtime `mktemp`-generated injection-bundle manifests,
+  `jq -e` stdin-pipe guards, one `any(... endswith ...)` array-collection guard,
+  awk/sed helper functions, and the `HOST_GATE_SCRIPTS`
+  self-entrypoint/`BASH_ENV` runtime-execution harnesses). See the "Scope and
+  residual" package doc in `internal/workcellhardening`.
+
+- Open against the literal gate — **maintainer scope decision (not decided
+  here):** three exit-gate clauses are not yet met and should be dispositioned
+  explicitly before D3 is closed as done: (a) a residual of static repo-file
+  assertions (e.g. the `run_in_vm` colima-egress-allowlist order check) still
+  runs inline and remains migratable — migrating that remainder is the literal
+  static-invariant tail; (b) `container-smoke.sh` (4,570 lines) is **not**
+  migrated to Go; (c) `scripts/verify-invariants.sh` is **not** reduced to a thin
+  shim — it remains ~8,447 lines and stays the orchestration entrypoint.
+  Recommended disposition: either (i) keep the broader gate and carry the static
+  remainder + `container-smoke` Go migration as remaining D3 work (a further
+  lane, TDD, first-failure-order preserving), or (ii) explicitly NARROW the D3
+  (complete) gate — a recorded scope reduction the maintainer owns — to "bulk of
+  `verify-invariants` static invariants in Go; the static remainder,
+  non-static tail, and `container-smoke` orchestration stay in bash by design",
+  stating the accepted residual. This does not gate 1.0 correctness; it is a
+  scope-truthfulness decision for the G4 review.
+
 ### D6: Split Oversized Go Validators
 
 - Steps: split `pinnedinputs.go` (1,546 lines) into per-format packages
