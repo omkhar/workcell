@@ -149,6 +149,13 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
    release lenses — records no unresolved P0/P1 findings, and every support
    matrix row matches shipped behavior.
 
+The G4 evidence package and its go/no-go checklist are drafted for maintainer
+sign-off in
+[`docs/1.0-readiness-review-draft.md`](docs/1.0-readiness-review-draft.md); the
+B6 (item 6) real-boundary certification lane disposition options are drafted in
+[`docs/b6-disposition-options-draft.md`](docs/b6-disposition-options-draft.md).
+Both are DRAFTs — the maintainer records the G4 decision and the B6 disposition.
+
 ### Milestone Train
 
 Milestones are sequencing buckets on the existing release cadence; versions
