@@ -493,6 +493,12 @@ shortcut to the Tier 1 evidence bar.
 
 ### B6: Real-Boundary Certification Lane In CI
 
+**Deferred to post-1.0 (2026-07-09 criterion-6 amendment, no runner funding).**
+Originally sequenced in v0.15; no longer a 1.0 gate — listed under post-1.0 in
+the milestone train. 1.0 uses local-operator certification of both boundaries
+instead (see `docs/b6-disposition-options-draft.md`). This detail section stays
+here for continuity of the B6 track.
+
 - Steps: with B9 landed, evaluate self-hosted Apple Silicon runner options
   versus macOS CI services; treat the runner as lower-trust per the threat
   model (no repo secrets beyond scoped runner registration); implement a

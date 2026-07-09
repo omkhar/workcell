@@ -152,7 +152,13 @@ real-boundary Apple Silicon lane) would move to post-1.0.
   recorded as a scope decision in the G4 review.
 - Apple `container` promotion stays blocked post-1.0 (it already is, per C1).
 
-## Recommendation (maintainer decides)
+## Recommendation — chosen: Option B (recorded 2026-07-09)
+
+**The maintainer chose Option B** (see the DECISION RECORDED banner at the top):
+criterion 6 is amended to defer the hosted real-boundary lane, with B6 (Option A)
+scheduled as the first post-1.0 assurance item; 1.0 relies on local-operator
+certification of both supported boundaries. The recommendation that informed it
+was:
 
 **Recommended: Option B for 1.0 — amend criterion 6 to defer the hosted
 real-boundary lane, with B6 (Option A) scheduled as the first post-1.0 assurance
