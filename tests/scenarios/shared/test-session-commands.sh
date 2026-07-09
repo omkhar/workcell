@@ -571,6 +571,81 @@ grep -q '^sessions_dir='"${TARGET_STATE_DIR}/sessions"'$' <<<"${state_path_outpu
 grep -q '^audit_log='"${TARGET_STATE_DIR}/workcell.audit.log"'$' <<<"${state_path_output}"
 grep -q '^lock_dir='"${WORKCELL_STATE_ROOT}/locks/local_vm/colima/${PROFILE}.lock"'$' <<<"${state_path_output}"
 
+# C3 container-level non-interference proof (CI-automatable, no Colima).
+# The 1.0 parallel-session isolation model is CONTAINER-LEVEL: two isolated
+# sessions on the SAME source repo run as distinct containers in one shared
+# Colima VM. The container-level identity boundary is derived DETERMINISTICALLY
+# from the session id: the isolated clone path and the git branch. This exercises
+# the REAL derivation functions (isolated_session_workspace_path and
+# create_isolated_session_workspace) for two distinct session ids against ONE
+# source repo and asserts that same-repo siblings never collide at the
+# clone/branch level, and that a write in one clone is invisible in the other.
+# The LIVE two-container concurrent launch + runtime cross-container
+# non-interference needs Apple Silicon + Colima and is recorded as
+# local-operator-certification in docs/safe-path-expectations.md.
+NONINTERFERENCE_SOURCE="${TMP_DIR}/noninterference-source"
+mkdir -p "${NONINTERFERENCE_SOURCE}"
+git -C "${NONINTERFERENCE_SOURCE}" init -q
+git -C "${NONINTERFERENCE_SOURCE}" config user.name "Workcell Test"
+git -C "${NONINTERFERENCE_SOURCE}" config user.email "workcell@example.com"
+printf 'seed\n' >"${NONINTERFERENCE_SOURCE}/README.md"
+git -C "${NONINTERFERENCE_SOURCE}" add README.md
+git -C "${NONINTERFERENCE_SOURCE}" commit -q -m 'initial'
+NONINTERFERENCE_SESSION_A="20260408T150000Z-aaaa1111-$$"
+NONINTERFERENCE_SESSION_B="20260408T150000Z-bbbb2222-$$"
+noninterference_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
+    SOURCE_WORKSPACE="$2"
+    SESSION_A="$3"
+    SESSION_B="$4"
+    # Deterministic path derivation: distinct session ids on the same source
+    # repo must resolve to distinct isolated clone paths.
+    path_a="$(isolated_session_workspace_path "${SOURCE_WORKSPACE}" "${SESSION_A}")"
+    path_b="$(isolated_session_workspace_path "${SOURCE_WORKSPACE}" "${SESSION_B}")"
+    printf "path_a=%s\n" "${path_a}"
+    printf "path_b=%s\n" "${path_b}"
+    # Real isolated clones (git only, no Colima): each materializes its own
+    # working tree on its own branch workcell/session-<id>.
+    clone_a="$(create_isolated_session_workspace "${SOURCE_WORKSPACE}" "${SESSION_A}")"
+    clone_b="$(create_isolated_session_workspace "${SOURCE_WORKSPACE}" "${SESSION_B}")"
+    printf "clone_a=%s\n" "${clone_a}"
+    printf "clone_b=%s\n" "${clone_b}"
+    printf "branch_a=%s\n" "$(run_workspace_safe_git_command_in_dir "${clone_a}" branch --show-current)"
+    printf "branch_b=%s\n" "$(run_workspace_safe_git_command_in_dir "${clone_b}" branch --show-current)"
+    # Runtime non-interference at the clone level: a write in clone A must not
+    # appear in clone B (distinct working trees, no shared mutable state).
+    printf "clone-a-only\n" >"${clone_a}/noninterference-marker.txt"
+    if [[ -e "${clone_b}/noninterference-marker.txt" ]]; then
+      printf "cross_clone_visible=1\n"
+    else
+      printf "cross_clone_visible=0\n"
+    fi
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${NONINTERFERENCE_SOURCE}" "${NONINTERFERENCE_SESSION_A}" "${NONINTERFERENCE_SESSION_B}"
+)"
+noninterference_path_a="$(sed -n 's/^path_a=//p' <<<"${noninterference_output}")"
+noninterference_path_b="$(sed -n 's/^path_b=//p' <<<"${noninterference_output}")"
+noninterference_branch_a="$(sed -n 's/^branch_a=//p' <<<"${noninterference_output}")"
+noninterference_branch_b="$(sed -n 's/^branch_b=//p' <<<"${noninterference_output}")"
+grep -q "^path_a=${NONINTERFERENCE_SOURCE}/.git/workcell-sessions/${NONINTERFERENCE_SESSION_A}/repo$" <<<"${noninterference_output}"
+grep -q "^path_b=${NONINTERFERENCE_SOURCE}/.git/workcell-sessions/${NONINTERFERENCE_SESSION_B}/repo$" <<<"${noninterference_output}"
+if [[ "${noninterference_path_a}" == "${noninterference_path_b}" ]]; then
+  echo "isolated clone paths collided for distinct same-repo sessions" >&2
+  exit 1
+fi
+grep -q "^clone_a=${NONINTERFERENCE_SOURCE}/.git/workcell-sessions/${NONINTERFERENCE_SESSION_A}/repo$" <<<"${noninterference_output}"
+grep -q "^clone_b=${NONINTERFERENCE_SOURCE}/.git/workcell-sessions/${NONINTERFERENCE_SESSION_B}/repo$" <<<"${noninterference_output}"
+grep -q "^branch_a=workcell/session-${NONINTERFERENCE_SESSION_A}$" <<<"${noninterference_output}"
+grep -q "^branch_b=workcell/session-${NONINTERFERENCE_SESSION_B}$" <<<"${noninterference_output}"
+if [[ "${noninterference_branch_a}" == "${noninterference_branch_b}" ]]; then
+  echo "isolated session branches collided for distinct same-repo sessions" >&2
+  exit 1
+fi
+grep -q '^cross_clone_visible=0$' <<<"${noninterference_output}"
+
 if [[ "${detached_launch_blocked}" -eq 0 ]]; then
   detached_start_custom_state_output="$(
     XDG_STATE_HOME="${custom_state_home}" \
