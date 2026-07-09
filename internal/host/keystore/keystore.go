@@ -116,27 +116,73 @@ func adoptSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 
 // ensureSecureDir creates dir and enforces a real, owner-owned, 0700 directory.
 func ensureSecureDir(dir string) error {
-	// Lstat BEFORE any chmod: a pre-existing symlink must be refused, never
-	// followed (chmod/stat would operate on its target). Create privately if absent.
-	if info, err := os.Lstat(dir); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("keystore: signing directory %s is a symlink; refusing to trust the key store", dir)
+	// Create atomically if absent. os.Mkdir is atomic; a symlink (or anything
+	// else) already at this name makes it fail EEXIST, which we treat as "exists,
+	// verify below" — never adopt a name we did not create without an fd check.
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		if parent := filepath.Dir(dir); parent != dir {
+			if merr := os.MkdirAll(parent, 0o700); merr != nil {
+				return merr
+			}
+			if merr := os.Mkdir(dir, 0o700); merr != nil && !errors.Is(merr, os.ErrExist) {
+				return merr
+			}
+		} else {
+			return err
 		}
-		if !info.IsDir() {
-			return fmt.Errorf("keystore: signing directory %s is not a directory", dir)
-		}
-	} else if errors.Is(err, os.ErrNotExist) {
-		if merr := os.MkdirAll(dir, 0o700); merr != nil {
-			return merr
-		}
-	} else {
+	}
+	// Open the directory as an fd (O_NOFOLLOW refuses a symlink swapped in at the
+	// final component; O_DIRECTORY refuses a non-directory), then validate/repair
+	// the PINNED fd — never chmod a swappable path.
+	f, err := openSecureDir(dir)
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
 		return err
 	}
-	// Final gate: a real, owner-owned, 0700 directory (catches a post-chmod swap).
-	return requireSecureDir(dir, 0o077)
+	if info.Mode().Perm()&0o077 != 0 {
+		// Repair drifted perms via fchmod ON THE FD (the opened dir, not a name).
+		if cerr := f.Chmod(0o700); cerr != nil {
+			return cerr
+		}
+		if info, err = f.Stat(); err != nil {
+			return err
+		}
+	}
+	return validateSecureDirInfo(dir, info, 0o077)
+}
+
+// openSecureDir opens dir as a directory fd, failing on a symlink (O_NOFOLLOW)
+// or a non-directory (O_DIRECTORY), so the caller validates/chmods the pinned fd
+// rather than a path that could be swapped after an lstat.
+func openSecureDir(dir string) (*os.File, error) {
+	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, fmt.Errorf("keystore: %s is a symlink; refusing to trust the key store", dir)
+		}
+		if errors.Is(err, syscall.ENOTDIR) {
+			return nil, fmt.Errorf("keystore: %s is not a directory; refusing to trust the key store", dir)
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
+func validateSecureDirInfo(dir string, info os.FileInfo, maxOther os.FileMode) error {
+	if !info.IsDir() {
+		return fmt.Errorf("keystore: %s is not a directory; refusing to trust the key store", dir)
+	}
+	if info.Mode().Perm()&maxOther != 0 {
+		return fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", dir, info.Mode().Perm())
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", dir)
+	}
+	return nil
 }
 
 // ensurePublicKey makes sure <keyID>.pub exists, holds exactly the derived key,
@@ -283,27 +329,20 @@ func readSecureRegularFile(path string, maxOther os.FileMode) ([]byte, error) {
 }
 
 // requireSecureDir fails closed unless dir is a real (non-symlink), owner-owned
-// directory whose perm bits set none of maxOther. The directory is not read
-// through an fd, so this stays lstat-based (the authoritative check for the
-// key/pub FILES is the open-then-fstat in openSecureRegularFile).
+// directory whose perm bits set none of maxOther. It validates on the OPENED
+// directory fd (open-then-fstat, O_NOFOLLOW|O_DIRECTORY), mirroring the file
+// discipline so a name swap after a check cannot substitute the directory.
 func requireSecureDir(dir string, maxOther os.FileMode) error {
-	info, err := os.Lstat(dir)
+	f, err := openSecureDir(dir)
 	if err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("keystore: %s is a symlink; refusing to trust the key store", dir)
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("keystore: %s is not a directory; refusing to trust the key store", dir)
-	}
-	if info.Mode().Perm()&maxOther != 0 {
-		return fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", dir, info.Mode().Perm())
-	}
-	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
-		return fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", dir)
-	}
-	return nil
+	return validateSecureDirInfo(dir, info, maxOther)
 }
 
 func parsePublicKeyPEM(data []byte) (*ecdsa.PublicKey, error) {

@@ -139,22 +139,60 @@ func TestLoadFailsOnSymlinkKeyToFifoWithoutReading(t *testing.T) {
 	}
 }
 
-// TestLoadFailsOnSymlinkSigningDir: a symlinked signing dir is refused before chmod.
+// TestLoadFailsOnSymlinkSigningDir: a symlinked signing dir is refused by the
+// O_NOFOLLOW|O_DIRECTORY open (before any fchmod), so the symlink TARGET's mode
+// is never changed and no key is written through it. The open rejects a symlink
+// as ELOOP or (with O_DIRECTORY) ENOTDIR depending on the platform; both are a
+// fail-closed refusal.
 func TestLoadFailsOnSymlinkSigningDir(t *testing.T) {
 	tmp := t.TempDir()
 	realDir := filepath.Join(tmp, "real")
-	if err := os.MkdirAll(realDir, 0o700); err != nil {
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
+	}
+	before, err := os.Stat(realDir)
+	if err != nil {
+		t.Fatalf("stat real: %v", err)
 	}
 	dir := filepath.Join(tmp, "signing")
 	if err := os.Symlink(realDir, dir); err != nil {
 		t.Fatalf("symlink dir: %v", err)
 	}
-	if _, _, err := LoadOrCreateSigningKey(dir); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if _, _, err := LoadOrCreateSigningKey(dir); err == nil ||
+		!(strings.Contains(err.Error(), "symlink") || strings.Contains(err.Error(), "not a directory")) {
 		t.Fatalf("symlinked signing dir must fail closed, got %v", err)
+	}
+	// L135: the O_NOFOLLOW open must have refused the symlink WITHOUT chmoding the
+	// target — its mode is unchanged.
+	after, err := os.Stat(realDir)
+	if err != nil {
+		t.Fatalf("stat real after: %v", err)
+	}
+	if before.Mode().Perm() != after.Mode().Perm() {
+		t.Fatalf("symlink target mode changed: %o -> %o (chmod followed the symlink)", before.Mode().Perm(), after.Mode().Perm())
 	}
 	if _, err := os.Stat(filepath.Join(realDir, signingKeyBasename)); !os.IsNotExist(err) {
 		t.Fatalf("no key must be written through a symlinked dir (err=%v)", err)
+	}
+}
+
+// TestLoadRepairsDriftedDirModeViaFchmod: a real, owner-owned signing dir whose
+// mode drifted group/world-accessible is repaired (fchmod on the pinned fd) and
+// signing proceeds.
+func TestLoadRepairsDriftedDirModeViaFchmod(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "signing")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if _, _, err := LoadOrCreateSigningKey(dir); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("drifted dir mode must be repaired to owner-only, got %o", info.Mode().Perm())
 	}
 }
 
