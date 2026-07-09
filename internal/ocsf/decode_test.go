@@ -71,6 +71,21 @@ func TestAuditLineClaimsSessionArgvSpoofWithMalformedTailStaysNonMember(t *testi
 	}
 }
 
+func TestAuditLineTokenizable(t *testing.T) {
+	if !AuditLineTokenizable("timestamp=t event=launch session_id=sess-A record_digest=d", "colima") {
+		t.Fatal("a genuine bash-quoted line must be tokenizable")
+	}
+	// A malformed event field BEFORE session_id makes the whole line untokenizable
+	// (the writer never emits an unterminated ANSI-C block).
+	if AuditLineTokenizable(`timestamp=t event=$'unterminated session_id=sess-A`, "colima") {
+		t.Fatal("an unterminated ANSI-C block must be untokenizable")
+	}
+	// The percent-path encoding splits on whitespace and never errors.
+	if !AuditLineTokenizable(`timestamp=t event=$'unterminated session_id=sess-A`, "apple-container") {
+		t.Fatal("percent-path encoding is always tokenizable")
+	}
+}
+
 func TestAuditLineClaimsSessionToleratesBareToken(t *testing.T) {
 	// A malformed line (bare token) that carries a genuine session_id token still
 	// structurally claims the session, so callers can treat it as tamper.

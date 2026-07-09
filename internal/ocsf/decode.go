@@ -96,3 +96,19 @@ func AuditLineClaimsSession(line, targetProvider, sessionID string) bool {
 	}
 	return false
 }
+
+// AuditLineTokenizable reports whether an audit line can be split into tokens by
+// the provider's tokenizer. The genuine writer always emits tokenizable lines
+// (it closes every bash ANSI-C `$'...'` block), so an UNtokenizable line — one
+// whose quoting is corrupt, e.g. `event=$'unterminated` before session_id — is
+// tamper or damage, not a legitimate record. Its fields, including session_id,
+// are unreadable, so it cannot be attributed to a session; callers fail closed
+// on it rather than silently drop it as a non-member. The percent-path encoding
+// splits on whitespace and is always tokenizable.
+func AuditLineTokenizable(line, targetProvider string) bool {
+	if auditEncodingForProvider(targetProvider) == encodingPercentPath {
+		return true
+	}
+	_, err := splitQuotedTokens(line)
+	return err == nil
+}
