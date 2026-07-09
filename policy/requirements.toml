@@ -160,6 +160,7 @@ evidence = [
   "tests/scenarios/shared/test-copilot-session-dry-run.sh",
   "tests/scenarios/shared/test-session-commands.sh",
   "internal/host/sessions/sessions_test.go",
+  "internal/sessionctl/verify_test.go",
   "internal/host/auditseal/auditseal_test.go",
 ]
 docs = [

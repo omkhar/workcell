@@ -302,7 +302,7 @@ support = "supported"
 canonical = "workcell session verify --id SESSION_ID"
 discoverability = ["subcommand-help:session"]
 docs = ["man/workcell.1"]
-evidence = ["tests/scenarios/shared/test-session-commands.sh", "internal/host/auditseal/auditseal_test.go"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh", "internal/sessionctl/verify_test.go", "internal/host/auditseal/auditseal_test.go"]
 requirements = ["functional.FR-007"]
 target_state = "retain"
 
