@@ -610,6 +610,27 @@ shortcut to the Tier 1 evidence bar.
 - Validation: existing pin-hygiene lanes before/after; mutation coverage.
 - Size: M. Dependencies: none; scheduled late to avoid churn against B4.
 
+- Status (recorded 2026-07-08, evidence-based): PARTIAL. The GitHub Actions
+  workflow format is already extracted into
+  `internal/metadatautil/pinnedinputs_workflows.go` (PR #453). The remaining
+  split is a real behavior-preserving refactor lane, not a doc finalization:
+  `internal/metadatautil/pinnedinputs.go` still holds a single 1,458-line
+  `CheckPinnedInputs` function (lines 51–1509) in which the docker, node, rust,
+  go-toolchain, and provider-version checks are **interleaved**, not contiguous —
+  they share ~43 uses of locals computed once at the top (`runtimeDockerfile`,
+  `repoRoot`, `cargoManifestText`, `rustToolchainText`) and depend on a fixed
+  first-failure order. A clean per-format-package split must first extract
+  cohesive helpers, thread that shared state, and preserve byte-exact error
+  messages and check ordering (the same first-failure-order hazard D3 hit), so it
+  is an L-effort lane best carried as one or more dedicated behavior-preserving
+  PRs (one format per PR: rust, then node/docker/provider, then go-toolchain),
+  each proven identical on the existing pin-hygiene corpus before and after. The
+  D6 "largest dispatcher mains" clause (`cmd/workcell-hostutil/main.go` at 1,300
+  lines) is likewise a separate refactor slice. This does not gate 1.0
+  correctness — the validators already pass — it is a code-health split; the
+  maintainer should decide whether D6 (complete) is required for the 1.0-rc gate
+  or can carry into the rc window / post-1.0 as a code-health item.
+
 ## Post-1.0
 
 ### B7 (part 2): Third-Party Boundary Audit
