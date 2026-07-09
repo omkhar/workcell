@@ -10,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestSigningKeyIsStableAndRotates(t *testing.T) {
@@ -173,6 +175,63 @@ func TestLoadFailsOnSymlinkSigningDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(realDir, signingKeyBasename)); !os.IsNotExist(err) {
 		t.Fatalf("no key must be written through a symlinked dir (err=%v)", err)
+	}
+}
+
+// TestWritesAnchoredToValidatedDirFd (L221): after ensureSecureDir validates and
+// returns the dir fd, a same-parent attacker who swaps the dir PATH for a symlink
+// to another directory must not redirect writes. The publish uses *at relative to
+// the retained fd, so the temp+link land in the ORIGINAL validated directory (via
+// the fd), never the attacker's target.
+func TestWritesAnchoredToValidatedDirFd(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "signing")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("mkdir signing: %v", err)
+	}
+	attacker := filepath.Join(base, "attacker")
+	if err := os.Mkdir(attacker, 0o700); err != nil {
+		t.Fatalf("mkdir attacker: %v", err)
+	}
+
+	f, err := ensureSecureDir(dir)
+	if err != nil {
+		t.Fatalf("ensureSecureDir: %v", err)
+	}
+	defer f.Close()
+	dirFd := int(f.Fd())
+
+	// Swap the validated dir's NAME: move the real dir aside (the fd still refers
+	// to that inode) and point the original path at the attacker's dir.
+	original := filepath.Join(base, "real")
+	if err := os.Rename(dir, original); err != nil {
+		t.Fatalf("move real dir: %v", err)
+	}
+	if err := os.Symlink(attacker, dir); err != nil {
+		t.Fatalf("symlink swap: %v", err)
+	}
+
+	// Publish relative to the retained fd.
+	tmpName, err := writeTempAt(dirFd, signingKeyBasename, []byte("payload"), 0o600)
+	if err != nil {
+		t.Fatalf("writeTempAt: %v", err)
+	}
+	if err := unix.Linkat(dirFd, tmpName, dirFd, signingKeyBasename, 0); err != nil {
+		t.Fatalf("linkat: %v", err)
+	}
+	_ = unix.Unlinkat(dirFd, tmpName, 0)
+
+	// The key landed in the ORIGINAL validated directory (via the fd)...
+	if _, err := os.Stat(filepath.Join(original, signingKeyBasename)); err != nil {
+		t.Fatalf("key must be written into the original validated dir: %v", err)
+	}
+	// ...and NOTHING leaked into the attacker's swapped-in target.
+	entries, err := os.ReadDir(attacker)
+	if err != nil {
+		t.Fatalf("read attacker dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("writes leaked into the attacker's swapped dir: %v", entries)
 	}
 }
 

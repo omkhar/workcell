@@ -7,12 +7,14 @@
 // concern from the audit-chain recompute and sign/verify in package auditseal,
 // which consumes LoadOrCreateSigningKey and LoadPublicKey.
 //
-// Every path is fail-closed and lstat-checked BEFORE any open: the signing dir,
-// the private key, and the public sidecar must each be a non-symlink,
-// owner-owned file of the expected kind (regular file or directory) with no
-// group/world access it should not have — so a symlink, a FIFO/device/socket, a
-// wrong-owner file, or a drifted mode is refused (or, for the public key,
-// atomically repaired from the private key) without ever being opened.
+// The ENTIRE operation is anchored to one validated directory fd. The signing
+// dir is opened O_NOFOLLOW|O_DIRECTORY and fstat-validated (real dir, owner euid,
+// 0700), then every key/pub read and write is performed with *at syscalls
+// relative to that fd (openat/renameat/linkat/unlinkat). So a same-parent
+// attacker who swaps the dir for a symlink after validation cannot redirect any
+// read or write to an attacker-chosen directory: the object validated is the
+// object used. Files opened for content are additionally O_NOFOLLOW (no symlink
+// at the leaf) and fstat-checked (regular file, owner euid, mode) on the fd read.
 package keystore
 
 import (
@@ -29,7 +31,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 const signingKeyBasename = "signing.key"
@@ -37,18 +40,22 @@ const signingKeyBasename = "signing.key"
 // LoadOrCreateSigningKey returns the per-host ECDSA P-256 signing key under dir,
 // generating it on first use (dir 0700, key 0600, fail-closed if unsecurable;
 // keyID is the hex SHA-256 prefix of the PKIX public key). The key is published
-// atomically (temp file then os.Link); the create-race loser adopts the winner.
+// atomically (temp file linked into place relative to the validated dir fd); the
+// create-race loser adopts the winner.
 func LoadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, "", errors.New("keystore: signing directory is required")
 	}
-	if err := ensureSecureDir(dir); err != nil {
+	dirFile, err := ensureSecureDir(dir)
+	if err != nil {
 		return nil, "", err
 	}
-	keyPath := filepath.Join(dir, signingKeyBasename)
+	defer dirFile.Close()
+	dirFd := int(dirFile.Fd())
 
-	if _, err := os.Lstat(keyPath); err == nil {
-		return adoptSigningKey(dir)
+	// Fast path: adopt an existing key. Fstatat (no-follow) relative to the fd.
+	if _, err := fstatatNoFollow(dirFd, signingKeyBasename); err == nil {
+		return adoptSigningKey(dirFd)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, "", err
 	}
@@ -63,40 +70,36 @@ func LoadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 
-	// Publish atomically. os.Link fails with ErrExist if a concurrent signer
-	// already created signing.key; then we adopt that complete key.
-	tmpPath, err := writeTempFile(dir, signingKeyBasename, pemBytes, 0o600)
+	// Publish atomically, all relative to the validated dir fd. Linkat fails
+	// EEXIST if a concurrent signer already created signing.key; then adopt it.
+	tmpName, err := writeTempAt(dirFd, signingKeyBasename, pemBytes, 0o600)
 	if err != nil {
 		return nil, "", err
 	}
-	linkErr := os.Link(tmpPath, keyPath)
-	_ = os.Remove(tmpPath)
+	linkErr := unix.Linkat(dirFd, tmpName, dirFd, signingKeyBasename, 0)
+	_ = unix.Unlinkat(dirFd, tmpName, 0)
 	if linkErr != nil {
 		if errors.Is(linkErr, os.ErrExist) {
-			return adoptSigningKey(dir)
+			return adoptSigningKey(dirFd)
 		}
 		return nil, "", linkErr
 	}
+	_ = unix.Fsync(dirFd)
 
 	keyID, err := publicKeyID(&key.PublicKey)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := ensurePublicKey(dir, keyID, &key.PublicKey); err != nil {
+	if err := ensurePublicKey(dirFd, keyID, &key.PublicKey); err != nil {
 		return nil, "", err
 	}
 	return key, keyID, nil
 }
 
-// adoptSigningKey validates and parses an existing private key, derives its key
-// id, and ensures a matching secure public key file before returning.
-func adoptSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
-	keyPath := filepath.Join(dir, signingKeyBasename)
-	// Open-then-fstat: validate the object we read. A symlinked (e.g. to a
-	// FIFO/device), non-regular, wrong-owner, or group/world-accessible signing.key
-	// is refused, and the fstat is on the exact fd we read from, so a name swap
-	// between check and read cannot substitute the key.
-	data, err := readSecureRegularFile(keyPath, 0o077)
+// adoptSigningKey reads+parses the existing private key relative to the validated
+// dir fd, derives its key id, and ensures a matching secure public key file.
+func adoptSigningKey(dirFd int) (*ecdsa.PrivateKey, string, error) {
+	data, err := readAtSecure(dirFd, signingKeyBasename, 0o077)
 	if err != nil {
 		return nil, "", err
 	}
@@ -108,63 +111,69 @@ func adoptSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if err := ensurePublicKey(dir, keyID, &key.PublicKey); err != nil {
+	if err := ensurePublicKey(dirFd, keyID, &key.PublicKey); err != nil {
 		return nil, "", err
 	}
 	return key, keyID, nil
 }
 
-// ensureSecureDir creates dir and enforces a real, owner-owned, 0700 directory.
-func ensureSecureDir(dir string) error {
+// ensureSecureDir creates dir if absent and returns an OPEN, validated directory
+// fd (real dir, owner euid, 0700). Callers keep it open and perform every
+// key/pub read/write via *at relative to it, so the operation is anchored to the
+// directory this validated — never a path that can be swapped. The caller closes
+// the returned fd.
+func ensureSecureDir(dir string) (*os.File, error) {
 	// Create atomically if absent. os.Mkdir is atomic; a symlink (or anything
 	// else) already at this name makes it fail EEXIST, which we treat as "exists,
 	// verify below" — never adopt a name we did not create without an fd check.
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		if parent := filepath.Dir(dir); parent != dir {
 			if merr := os.MkdirAll(parent, 0o700); merr != nil {
-				return merr
+				return nil, merr
 			}
 			if merr := os.Mkdir(dir, 0o700); merr != nil && !errors.Is(merr, os.ErrExist) {
-				return merr
+				return nil, merr
 			}
 		} else {
-			return err
+			return nil, err
 		}
 	}
-	// Open the directory as an fd (O_NOFOLLOW refuses a symlink swapped in at the
-	// final component; O_DIRECTORY refuses a non-directory), then validate/repair
-	// the PINNED fd — never chmod a swappable path.
 	f, err := openSecureDir(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return err
+		_ = f.Close()
+		return nil, err
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		// Repair drifted perms via fchmod ON THE FD (the opened dir, not a name).
 		if cerr := f.Chmod(0o700); cerr != nil {
-			return cerr
+			_ = f.Close()
+			return nil, cerr
 		}
 		if info, err = f.Stat(); err != nil {
-			return err
+			_ = f.Close()
+			return nil, err
 		}
 	}
-	return validateSecureDirInfo(dir, info, 0o077)
+	if err := validateSecureDirInfo(dir, info, 0o077); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // openSecureDir opens dir as a directory fd, failing on a symlink (O_NOFOLLOW)
-// or a non-directory (O_DIRECTORY), so the caller validates/chmods the pinned fd
-// rather than a path that could be swapped after an lstat.
+// or a non-directory (O_DIRECTORY) at the final component.
 func openSecureDir(dir string) (*os.File, error) {
-	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	f, err := os.OpenFile(dir, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		if errors.Is(err, syscall.ELOOP) {
+		if errors.Is(err, unix.ELOOP) {
 			return nil, fmt.Errorf("keystore: %s is a symlink; refusing to trust the key store", dir)
 		}
-		if errors.Is(err, syscall.ENOTDIR) {
+		if errors.Is(err, unix.ENOTDIR) {
 			return nil, fmt.Errorf("keystore: %s is not a directory; refusing to trust the key store", dir)
 		}
 		return nil, err
@@ -179,23 +188,22 @@ func validateSecureDirInfo(dir string, info os.FileInfo, maxOther os.FileMode) e
 	if info.Mode().Perm()&maxOther != 0 {
 		return fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", dir, info.Mode().Perm())
 	}
-	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
+	if st, ok := info.Sys().(*unix.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
 		return fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", dir)
 	}
 	return nil
 }
 
-// ensurePublicKey makes sure <keyID>.pub exists, holds exactly the derived key,
-// and is stored securely; an absent, corrupt, mismatched, or insecure file is
-// rewritten atomically from the private key.
-func ensurePublicKey(dir, keyID string, pub *ecdsa.PublicKey) error {
-	path := publicKeyPath(dir, keyID)
-	// Open-then-fstat: only a securely-stored (regular, owner-owned, non-symlink,
-	// not group/world-writable) .pub with correct content is reused. Anything else
-	// — absent, symlink, non-regular, insecure mode, corrupt, or mismatched — falls
-	// through to an atomic rewrite from the private key, so a suspect sidecar is
-	// never trusted (and never opened for content beyond the fstat-guarded read).
-	if data, err := readSecureRegularFile(path, 0o022); err == nil {
+// ensurePublicKey makes sure <keyID>.pub (relative to dirFd) exists, holds
+// exactly the derived key, and is stored securely; an absent, corrupt,
+// mismatched, or insecure file is rewritten atomically from the private key —
+// all anchored to the validated dir fd.
+func ensurePublicKey(dirFd int, keyID string, pub *ecdsa.PublicKey) error {
+	name := keyID + ".pub"
+	// Only a securely-stored (regular, owner-owned, non-symlink, not group/world-
+	// writable) .pub with correct content is reused; anything else falls through
+	// to an atomic rewrite, so a suspect sidecar is never trusted.
+	if data, err := readAtSecure(dirFd, name, 0o022); err == nil {
 		if existing, perr := parsePublicKeyPEM(data); perr == nil && pub.Equal(existing) {
 			return nil
 		}
@@ -205,58 +213,33 @@ func ensurePublicKey(dir, keyID string, pub *ecdsa.PublicKey) error {
 		return fmt.Errorf("keystore: marshal public key: %w", err)
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
-	tmpPath, err := writeTempFile(dir, keyID+".pub", pemBytes, 0o644)
+	tmpName, err := writeTempAt(dirFd, name, pemBytes, 0o644)
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := unix.Renameat(dirFd, tmpName, dirFd, name); err != nil {
+		_ = unix.Unlinkat(dirFd, tmpName, 0)
 		return err
 	}
+	_ = unix.Fsync(dirFd)
 	return nil
 }
 
-// writeTempFile writes data to a fresh fsynced temp file in dir for atomic publish via os.Link/os.Rename.
-func writeTempFile(dir, prefix string, data []byte, perm os.FileMode) (string, error) {
-	f, err := os.CreateTemp(dir, prefix+".*.tmp")
-	if err != nil {
-		return "", err
-	}
-	tmpPath := f.Name()
-	if err := f.Chmod(perm); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return "", err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return "", err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", err
-	}
-	return tmpPath, nil
-}
-
-// LoadPublicKey returns the pinned public key <keyID>.pub under dir, after
-// rechecking (lstat, before opening) that the store is owner-secured: verify may
-// run without the private key, so a drifted group/world-writable store would let
-// a local user plant a <keyID>.pub and forge a passing seal.
+// LoadPublicKey returns the pinned public key <keyID>.pub under dir. It opens and
+// fstat-validates the directory fd, then reads the .pub relative to that fd, so
+// verification is anchored to the validated directory and cannot be redirected
+// by a post-validation swap of the dir or the .pub name.
 func LoadPublicKey(dir, keyID string) (*ecdsa.PublicKey, error) {
 	if err := validateKeyID(keyID); err != nil {
 		return nil, err
 	}
-	if err := requireSecureDir(dir, 0o077); err != nil {
+	dirFile, err := openValidatedDir(dir, 0o077)
+	if err != nil {
 		return nil, err
 	}
-	data, err := readSecureRegularFile(publicKeyPath(dir, keyID), 0o022)
+	defer dirFile.Close()
+
+	data, err := readAtSecure(int(dirFile.Fd()), keyID+".pub", 0o022)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("keystore: no pinned public key %s (session was not signed by this host)", keyID)
@@ -268,9 +251,9 @@ func LoadPublicKey(dir, keyID string) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("keystore: public key %s: %w", keyID, err)
 	}
 	// Bind the sidecar to the key id it is filed under: recompute the fingerprint
-	// of the loaded key and require it equals keyID. A stale, corrupt,
-	// incorrectly-repaired, or planted .pub under a valid key-id filename would
-	// otherwise be trusted and let signatures verify against the WRONG key.
+	// of the loaded key and require it equals keyID, so a stale/corrupt/planted
+	// .pub under a valid key-id filename cannot make signatures verify against the
+	// WRONG key.
 	gotID, err := publicKeyID(pub)
 	if err != nil {
 		return nil, err
@@ -281,21 +264,48 @@ func LoadPublicKey(dir, keyID string) (*ecdsa.PublicKey, error) {
 	return pub, nil
 }
 
-// openSecureRegularFile opens path for reading and validates it ON THE OPEN FD
-// (open-then-fstat), so the object validated is the object read — closing the
-// name-swap window a lstat-then-open leaves. O_NOFOLLOW refuses a symlink at the
-// final component; O_NONBLOCK means a FIFO opens immediately (rather than
-// blocking) and is then rejected by the fstat. The fstat enforces a regular file
-// owned by the current euid with no perm bits in maxOther. The caller reads from
-// the returned fd and must Close it.
-func openSecureRegularFile(path string, maxOther os.FileMode) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+// openValidatedDir opens dir O_NOFOLLOW|O_DIRECTORY and fstat-validates it (real
+// dir, owner euid, perms), returning the open fd for *at operations.
+func openValidatedDir(dir string, maxOther os.FileMode) (*os.File, error) {
+	f, err := openSecureDir(dir)
 	if err != nil {
-		if errors.Is(err, syscall.ELOOP) {
-			return nil, fmt.Errorf("keystore: %s is a symlink; refusing to trust the key store", path)
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if err := validateSecureDirInfo(dir, info, maxOther); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// fstatatNoFollow reports the mode of name relative to dirFd without following a
+// final-component symlink; a missing name is os.ErrNotExist.
+func fstatatNoFollow(dirFd int, name string) (unix.Stat_t, error) {
+	var st unix.Stat_t
+	if err := unix.Fstatat(dirFd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return st, err
+	}
+	return st, nil
+}
+
+// openReadAtSecure opens name relative to dirFd for reading and validates the
+// OPEN FD (regular file, owner euid, no perm bit in maxOther). O_NOFOLLOW refuses
+// a symlink at the leaf; O_NONBLOCK means a FIFO opens immediately and is then
+// rejected by the fstat. The object validated is the object read.
+func openReadAtSecure(dirFd int, name string, maxOther os.FileMode) (*os.File, error) {
+	fd, err := unix.Openat(dirFd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		if errors.Is(err, unix.ELOOP) {
+			return nil, fmt.Errorf("keystore: %s is a symlink; refusing to trust the key store", name)
 		}
 		return nil, err
 	}
+	f := os.NewFile(uintptr(fd), name)
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
@@ -303,24 +313,21 @@ func openSecureRegularFile(path string, maxOther os.FileMode) (*os.File, error) 
 	}
 	if info.Mode()&os.ModeType != 0 {
 		_ = f.Close()
-		return nil, fmt.Errorf("keystore: %s is not a regular file; refusing to trust the key store", path)
+		return nil, fmt.Errorf("keystore: %s is not a regular file; refusing to trust the key store", name)
 	}
 	if info.Mode().Perm()&maxOther != 0 {
 		_ = f.Close()
-		return nil, fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", path, info.Mode().Perm())
+		return nil, fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", name, info.Mode().Perm())
 	}
-	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
+	if st, ok := info.Sys().(*unix.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
 		_ = f.Close()
-		return nil, fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", path)
+		return nil, fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", name)
 	}
 	return f, nil
 }
 
-// readSecureRegularFile opens+fstat-validates path (openSecureRegularFile) and
-// returns its full contents, so a post-lstat name swap cannot substitute the
-// bytes read.
-func readSecureRegularFile(path string, maxOther os.FileMode) ([]byte, error) {
-	f, err := openSecureRegularFile(path, maxOther)
+func readAtSecure(dirFd int, name string, maxOther os.FileMode) ([]byte, error) {
+	f, err := openReadAtSecure(dirFd, name, maxOther)
 	if err != nil {
 		return nil, err
 	}
@@ -328,21 +335,41 @@ func readSecureRegularFile(path string, maxOther os.FileMode) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// requireSecureDir fails closed unless dir is a real (non-symlink), owner-owned
-// directory whose perm bits set none of maxOther. It validates on the OPENED
-// directory fd (open-then-fstat, O_NOFOLLOW|O_DIRECTORY), mirroring the file
-// discipline so a name swap after a check cannot substitute the directory.
-func requireSecureDir(dir string, maxOther os.FileMode) error {
-	f, err := openSecureDir(dir)
-	if err != nil {
-		return err
+// writeTempAt creates a fresh temp file relative to dirFd (O_CREAT|O_EXCL|
+// O_NOFOLLOW), writes+fsyncs it, and returns its name for a relative
+// linkat/renameat. It cleans up the temp on any error. The name is unpredictable
+// (random suffix) so it cannot be pre-created by an attacker.
+func writeTempAt(dirFd int, prefix string, data []byte, perm os.FileMode) (string, error) {
+	var rnd [8]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return "", err
 	}
-	defer f.Close()
-	info, err := f.Stat()
+	tmpName := prefix + "." + hex.EncodeToString(rnd[:]) + ".tmp"
+	fd, err := unix.Openat(dirFd, tmpName, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(perm))
 	if err != nil {
-		return err
+		return "", err
 	}
-	return validateSecureDirInfo(dir, info, maxOther)
+	f := os.NewFile(uintptr(fd), tmpName)
+	fail := func(e error) (string, error) {
+		_ = f.Close()
+		_ = unix.Unlinkat(dirFd, tmpName, 0)
+		return "", e
+	}
+	// O_CREAT honours umask, so fchmod to the exact perm on the fd.
+	if err := f.Chmod(perm); err != nil {
+		return fail(err)
+	}
+	if _, err := f.Write(data); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		_ = unix.Unlinkat(dirFd, tmpName, 0)
+		return "", err
+	}
+	return tmpName, nil
 }
 
 func parsePublicKeyPEM(data []byte) (*ecdsa.PublicKey, error) {
@@ -372,10 +399,6 @@ func validateKeyID(keyID string) error {
 		}
 	}
 	return nil
-}
-
-func publicKeyPath(dir, keyID string) string {
-	return filepath.Join(dir, keyID+".pub")
 }
 
 func publicKeyID(pub *ecdsa.PublicKey) (string, error) {
