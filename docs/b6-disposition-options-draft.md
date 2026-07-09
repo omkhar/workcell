@@ -1,10 +1,20 @@
-# B6 Real-Boundary Certification Lane — Disposition Options (DRAFT)
+# B6 Real-Boundary Certification Lane — Disposition Options
 
-**Status: DRAFT for maintainer decision. This document does NOT decide B6.** B6
-(a real-boundary certification lane on Apple Silicon runner infrastructure) is a
-human/funding decision, not an autonomous one. This draft lays out the options,
-their tradeoffs against the merged evidence, and a recommendation. The maintainer
-records the decision.
+**DECISION RECORDED (2026-07-09):** the maintainer chose to **defer the automated
+Apple-Silicon certification lane to post-1.0** — no funding or hosting for a
+self-hosted runner is available (the only Apple-Silicon host is the maintainer's
+own MacBook). In its place, 1.0 requires **local-operator certification of both
+launch boundaries (strict Colima + compat Docker Desktop) on that host**, and
+`ROADMAP.md` criterion 6 is amended accordingly. The assurance tradeoff — the
+live Colima/Apple-Silicon boundary is exercised locally by the maintainer rather
+than continuously in hosted CI (which runs only a Docker smoke lane on a
+`ubuntu-latest` runner) — is recorded in the amended criterion and the readiness
+review. The options and tradeoffs that informed this decision follow.
+
+B6 (a real-boundary certification lane on Apple Silicon runner infrastructure)
+was a human/funding decision, not an autonomous one. This document lays out the
+options, their tradeoffs against the merged evidence, and the recommendation the
+maintainer acted on.
 
 Context: B6 is defined in
 [improvement-tracks-implementation-plan.md → B6](improvement-tracks-implementation-plan.md)
