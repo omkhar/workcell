@@ -25,6 +25,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,14 +33,6 @@ import (
 )
 
 const signingKeyBasename = "signing.key"
-
-// fileKind selects what os.FileMode type requireOwnerSecure accepts.
-type fileKind int
-
-const (
-	regularFile fileKind = iota
-	directory
-)
 
 // LoadOrCreateSigningKey returns the per-host ECDSA P-256 signing key under dir,
 // generating it on first use (dir 0700, key 0600, fail-closed if unsecurable;
@@ -99,13 +92,11 @@ func LoadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 // id, and ensures a matching secure public key file before returning.
 func adoptSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 	keyPath := filepath.Join(dir, signingKeyBasename)
-	// Check BEFORE reading: requireOwnerSecure lstat's the path, so a symlinked
-	// (e.g. to a FIFO/device), non-regular, wrong-owner, or group/world-accessible
-	// signing.key is refused without ever being opened.
-	if err := requireOwnerSecure(keyPath, 0o077, regularFile); err != nil {
-		return nil, "", err
-	}
-	data, err := os.ReadFile(keyPath)
+	// Open-then-fstat: validate the object we read. A symlinked (e.g. to a
+	// FIFO/device), non-regular, wrong-owner, or group/world-accessible signing.key
+	// is refused, and the fstat is on the exact fd we read from, so a name swap
+	// between check and read cannot substitute the key.
+	data, err := readSecureRegularFile(keyPath, 0o077)
 	if err != nil {
 		return nil, "", err
 	}
@@ -145,7 +136,7 @@ func ensureSecureDir(dir string) error {
 		return err
 	}
 	// Final gate: a real, owner-owned, 0700 directory (catches a post-chmod swap).
-	return requireOwnerSecure(dir, 0o077, directory)
+	return requireSecureDir(dir, 0o077)
 }
 
 // ensurePublicKey makes sure <keyID>.pub exists, holds exactly the derived key,
@@ -153,18 +144,14 @@ func ensureSecureDir(dir string) error {
 // rewritten atomically from the private key.
 func ensurePublicKey(dir, keyID string, pub *ecdsa.PublicKey) error {
 	path := publicKeyPath(dir, keyID)
-	// Check BEFORE reading: only open the .pub if it is stored securely (regular,
-	// owner-owned, not a symlink, not group/world-writable), so a symlink-to-FIFO
-	// or device .pub is never opened. If it is secure with correct content, reuse
-	// it; otherwise (insecure, absent, corrupt, or mismatched) fall through to an
-	// atomic rewrite from the private key — never reading a suspect sidecar.
-	if requireOwnerSecure(path, 0o022, regularFile) == nil {
-		if data, err := os.ReadFile(path); err == nil {
-			if existing, perr := parsePublicKeyPEM(data); perr == nil && pub.Equal(existing) {
-				return nil
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
+	// Open-then-fstat: only a securely-stored (regular, owner-owned, non-symlink,
+	// not group/world-writable) .pub with correct content is reused. Anything else
+	// — absent, symlink, non-regular, insecure mode, corrupt, or mismatched — falls
+	// through to an atomic rewrite from the private key, so a suspect sidecar is
+	// never trusted (and never opened for content beyond the fstat-guarded read).
+	if data, err := readSecureRegularFile(path, 0o022); err == nil {
+		if existing, perr := parsePublicKeyPEM(data); perr == nil && pub.Equal(existing) {
+			return nil
 		}
 	}
 	der, err := x509.MarshalPKIXPublicKey(pub)
@@ -220,54 +207,101 @@ func LoadPublicKey(dir, keyID string) (*ecdsa.PublicKey, error) {
 	if err := validateKeyID(keyID); err != nil {
 		return nil, err
 	}
-	if err := requireOwnerSecure(dir, 0o077, directory); err != nil {
+	if err := requireSecureDir(dir, 0o077); err != nil {
 		return nil, err
 	}
-	if err := requireOwnerSecure(publicKeyPath(dir, keyID), 0o022, regularFile); err != nil {
+	data, err := readSecureRegularFile(publicKeyPath(dir, keyID), 0o022)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("keystore: no pinned public key %s (session was not signed by this host)", keyID)
 		}
-		return nil, err
-	}
-	data, err := os.ReadFile(publicKeyPath(dir, keyID))
-	if err != nil {
 		return nil, err
 	}
 	pub, err := parsePublicKeyPEM(data)
 	if err != nil {
 		return nil, fmt.Errorf("keystore: public key %s: %w", keyID, err)
 	}
+	// Bind the sidecar to the key id it is filed under: recompute the fingerprint
+	// of the loaded key and require it equals keyID. A stale, corrupt,
+	// incorrectly-repaired, or planted .pub under a valid key-id filename would
+	// otherwise be trusted and let signatures verify against the WRONG key.
+	gotID, err := publicKeyID(pub)
+	if err != nil {
+		return nil, err
+	}
+	if gotID != keyID {
+		return nil, fmt.Errorf("keystore: public key %s does not bind to its key id (content fingerprints as %s); refusing to trust the key store", keyID, gotID)
+	}
 	return pub, nil
 }
 
-// requireOwnerSecure fails closed unless path is owner-owned, not a symlink, of
-// the expected kind (a REGULAR file, or a directory), and its perm bits set none
-// of maxOther. The kind check (via lstat) refuses a FIFO/device/socket created
-// directly in the owner-only dir — which passes the owner/mode checks but would
-// block or error on open — before anything opens it.
-func requireOwnerSecure(path string, maxOther os.FileMode, kind fileKind) error {
-	info, err := os.Lstat(path)
+// openSecureRegularFile opens path for reading and validates it ON THE OPEN FD
+// (open-then-fstat), so the object validated is the object read — closing the
+// name-swap window a lstat-then-open leaves. O_NOFOLLOW refuses a symlink at the
+// final component; O_NONBLOCK means a FIFO opens immediately (rather than
+// blocking) and is then rejected by the fstat. The fstat enforces a regular file
+// owned by the current euid with no perm bits in maxOther. The caller reads from
+// the returned fd and must Close it.
+func openSecureRegularFile(path string, maxOther os.FileMode) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, fmt.Errorf("keystore: %s is a symlink; refusing to trust the key store", path)
+		}
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if info.Mode()&os.ModeType != 0 {
+		_ = f.Close()
+		return nil, fmt.Errorf("keystore: %s is not a regular file; refusing to trust the key store", path)
+	}
+	if info.Mode().Perm()&maxOther != 0 {
+		_ = f.Close()
+		return nil, fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", path, info.Mode().Perm())
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
+		_ = f.Close()
+		return nil, fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", path)
+	}
+	return f, nil
+}
+
+// readSecureRegularFile opens+fstat-validates path (openSecureRegularFile) and
+// returns its full contents, so a post-lstat name swap cannot substitute the
+// bytes read.
+func readSecureRegularFile(path string, maxOther os.FileMode) ([]byte, error) {
+	f, err := openSecureRegularFile(path, maxOther)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+// requireSecureDir fails closed unless dir is a real (non-symlink), owner-owned
+// directory whose perm bits set none of maxOther. The directory is not read
+// through an fd, so this stays lstat-based (the authoritative check for the
+// key/pub FILES is the open-then-fstat in openSecureRegularFile).
+func requireSecureDir(dir string, maxOther os.FileMode) error {
+	info, err := os.Lstat(dir)
 	if err != nil {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("keystore: %s is a symlink; refusing to trust the key store", path)
+		return fmt.Errorf("keystore: %s is a symlink; refusing to trust the key store", dir)
 	}
-	switch kind {
-	case directory:
-		if !info.IsDir() {
-			return fmt.Errorf("keystore: %s is not a directory; refusing to trust the key store", path)
-		}
-	default:
-		if info.Mode()&os.ModeType != 0 {
-			return fmt.Errorf("keystore: %s is not a regular file; refusing to trust the key store", path)
-		}
+	if !info.IsDir() {
+		return fmt.Errorf("keystore: %s is not a directory; refusing to trust the key store", dir)
 	}
 	if info.Mode().Perm()&maxOther != 0 {
-		return fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", path, info.Mode().Perm())
+		return fmt.Errorf("keystore: %s has insecure permissions %#o; refusing to trust the key store", dir, info.Mode().Perm())
 	}
-	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Uid != uint32(os.Getuid()) {
-		return fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", path)
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("keystore: %s is not owned by the current user; refusing to trust the key store", dir)
 	}
 	return nil
 }

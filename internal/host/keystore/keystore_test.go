@@ -240,6 +240,81 @@ func TestLoadPublicKeyFailsWhenMissing(t *testing.T) {
 	}
 }
 
+// TestLoadPublicKeyRejectsMismatchedContent: a valid-perms <keyID>.pub whose
+// CONTENT is a different key must fail closed — the filename's key id is an
+// integrity check on the contents, so a stale/planted/incorrectly-repaired
+// sidecar cannot make signatures verify against the wrong key.
+func TestLoadPublicKeyRejectsMismatchedContent(t *testing.T) {
+	dirA := filepath.Join(t.TempDir(), "a")
+	_, idA, err := LoadOrCreateSigningKey(dirA)
+	if err != nil {
+		t.Fatalf("key A: %v", err)
+	}
+	// A different key's public half.
+	dirB := filepath.Join(t.TempDir(), "b")
+	_, idB, err := LoadOrCreateSigningKey(dirB)
+	if err != nil {
+		t.Fatalf("key B: %v", err)
+	}
+	pubB, err := os.ReadFile(filepath.Join(dirB, idB+".pub"))
+	if err != nil {
+		t.Fatalf("read pub B: %v", err)
+	}
+	// Plant B's public key under A's key-id filename with valid perms.
+	if err := os.WriteFile(filepath.Join(dirA, idA+".pub"), pubB, 0o644); err != nil {
+		t.Fatalf("plant pub: %v", err)
+	}
+	if _, err := LoadPublicKey(dirA, idA); err == nil || !strings.Contains(err.Error(), "does not bind to its key id") {
+		t.Fatalf("mismatched .pub content must fail closed, got %v", err)
+	}
+	// The genuine .pub for B still loads under B's id.
+	if _, err := LoadPublicKey(dirB, idB); err != nil {
+		t.Fatalf("genuine .pub must load: %v", err)
+	}
+}
+
+// TestLoadPublicKeyRejectsSymlink: the authoritative check is on the opened fd —
+// a symlink at the .pub path is refused by the O_NOFOLLOW open (a post-lstat
+// name swap to a symlink would be caught here, not merely at a prior lstat).
+func TestLoadPublicKeyRejectsSymlink(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "signing")
+	_, keyID, err := LoadOrCreateSigningKey(dir)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	pubPath := filepath.Join(dir, keyID+".pub")
+	moved := pubPath + ".real"
+	if err := os.Rename(pubPath, moved); err != nil {
+		t.Fatalf("move pub: %v", err)
+	}
+	if err := os.Symlink(moved, pubPath); err != nil {
+		t.Fatalf("symlink pub: %v", err)
+	}
+	if _, err := LoadPublicKey(dir, keyID); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlink .pub must be refused by O_NOFOLLOW, got %v", err)
+	}
+}
+
+// TestLoadPublicKeyRejectsFifoWithoutBlocking: a FIFO at the .pub path opens
+// (O_NONBLOCK) but is rejected by the fstat as non-regular, without blocking.
+func TestLoadPublicKeyRejectsFifoWithoutBlocking(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "signing")
+	_, keyID, err := LoadOrCreateSigningKey(dir)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	pubPath := filepath.Join(dir, keyID+".pub")
+	if err := os.Remove(pubPath); err != nil {
+		t.Fatalf("remove pub: %v", err)
+	}
+	if err := syscall.Mkfifo(pubPath, 0o600); err != nil {
+		t.Skipf("mkfifo unsupported: %v", err)
+	}
+	if _, err := LoadPublicKey(dir, keyID); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("FIFO .pub must be rejected by the fstat, got %v", err)
+	}
+}
+
 func TestLoadPublicKeyFailsOnInsecurePerms(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "signing")
 	_, keyID, err := LoadOrCreateSigningKey(dir)
