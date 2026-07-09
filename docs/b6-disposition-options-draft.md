@@ -154,9 +154,11 @@ boundary evidence for the 1.0 claim.
 Rationale grounded in the evidence:
 
 1. 1.0 is a contract-stability and assurance claim, not a platform-reach claim
-   (ROADMAP "Path To 1.0"). Both supported boundaries are already certified by
-   the local-operator discipline; B6 improves *cadence and automation* of that
-   signal, not the boundaries' correctness.
+   (ROADMAP "Path To 1.0"). Both supported boundaries are certified through the
+   local-operator discipline — but that certification is a pending 1.0 checklist
+   item (it must be run and confirmed on the release matrix for both boundaries,
+   not assumed already complete); B6 improves the *cadence and automation* of
+   that signal, not the boundaries' correctness.
 2. Option A introduces a lower-trust runner attack surface. Standing it up
    *before* 1.0 adds security-ops burden and threat-model work to the exact
    window where the contract surface is being frozen — the opposite of what the
