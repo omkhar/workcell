@@ -42,6 +42,12 @@ const signingKeyBasename = "signing.key"
 // and confirm the publish fails closed. Production ignores the label.
 var fsyncDir = func(fd int, label string) error { return unix.Fsync(fd) }
 
+// firstUseBarrier is called immediately before the atomic signing.key publish
+// (Linkat). It is a no-op in production; a concurrency test replaces it with a
+// rendezvous so both first-use racers arrive at the publish together, forcing the
+// EEXIST first-use-loser path to run deterministically.
+var firstUseBarrier = func() {}
+
 // requireNonBlankDir rejects an empty or whitespace-only signing directory, so a
 // blank dir fails closed rather than being cleaned to "." (the current working
 // directory). Shared by both entry points so the guard cannot drift.
@@ -91,6 +97,10 @@ func LoadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	// firstUseBarrier is a no-op in production; a concurrency test replaces it
+	// with a 2-party rendezvous so both first-use racers reach the atomic Linkat
+	// publish together and exactly one observes EEXIST (the loser adopt path).
+	firstUseBarrier()
 	linkErr := unix.Linkat(dirFd, tmpName, dirFd, signingKeyBasename, 0)
 	_ = unix.Unlinkat(dirFd, tmpName, 0)
 	if linkErr != nil {
